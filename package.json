@@ -1,0 +1,76 @@
+{
+  "name": "sacode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SaCode - 基于 Provider 抽象层的多端 AI 助手框架，支持 OpenAI/Anthropic/DeepSeek/Moonshot/智谱，以及 10 个 IM 平台",
+  "keywords": [
+    "ai",
+    "assistant",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "chatbot",
+    "agentic",
+    "function-calling",
+    "mcp",
+    "multi-platform",
+    "wechat",
+    "telegram",
+    "discord",
+    "cli"
+  ],
+  "author": "STAND-ALONE <1635936133@qq.com>",
+  "license": "MulanPSL-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --filter \"./packages/*\" run dev",
+    "build": "pnpm --filter \"./packages/*\" run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:run": "cross-env RUN_E2E_TESTS=true vitest run --config vitest.e2e.config.ts",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",
+    "clean": "pnpm --filter \"./packages/*\" run clean",
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky",
+    "cli": "pnpm --filter @sacode/cli run start",
+    "web": "pnpm --filter @sacode/web run dev",
+    "api": "pnpm --filter @sacode/api run dev",
+    "docs": "typedoc",
+    "docs:watch": "typedoc --watch",
+    "docs:serve": "typedoc --watch --open",
+    "docker:build": "docker build -t sacode-api --target api . && docker build -t sacode-web --target web .",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "vitest": "^2.1.8",
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.16.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.4.2",
+    "typedoc": "^0.27.6",
+    "typescript": "^5.7.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yaml}": [
+      "prettier --write"
+    ]
+  }
+}

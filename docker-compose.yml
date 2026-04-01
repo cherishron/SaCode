@@ -1,0 +1,106 @@
+# SaClaw Docker Compose 配置
+# 使用方式: docker compose up -d
+
+services:
+  # ============================================
+  # API 服务
+  # ============================================
+  api:
+    build:
+      context: .
+      target: api
+    container_name: saclaw-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+    env_file:
+      - .env
+    volumes:
+      - saclaw-data:/app/data
+      - saclaw-logs:/app/logs
+    networks:
+      - saclaw-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Web UI 服务
+  # ============================================
+  web:
+    build:
+      context: .
+      target: web
+    container_name: saclaw-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    environment:
+      - API_URL=${API_URL:-http://api:3000}
+    networks:
+      - saclaw-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Redis 缓存 (可选)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: saclaw-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - saclaw-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # ============================================
+  # iFlow 服务 (可选，如果本地运行)
+  # ============================================
+  # iflow:
+  #   image: iflow/iflow-server:latest
+  #   container_name: saclaw-iflow
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8090:8090"
+  #   volumes:
+  #     - iflow-data:/app/data
+  #   networks:
+  #     - saclaw-network
+
+networks:
+  saclaw-network:
+    driver: bridge
+
+volumes:
+  saclaw-data:
+    driver: local
+  saclaw-logs:
+    driver: local
+  redis-data:
+    driver: local
+  # iflow-data:
+  #   driver: local

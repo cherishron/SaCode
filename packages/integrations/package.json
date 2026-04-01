@@ -1,0 +1,37 @@
+{
+  "name": "@saclaw/integrations",
+  "version": "0.1.0",
+  "description": "GitHub, GitLab, and other platform integrations for SaClaw",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./git": {
+      "types": "./dist/git/index.d.ts",
+      "import": "./dist/git/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "saclaw",
+    "github",
+    "gitlab",
+    "git",
+    "integration"
+  ],
+  "license": "MIT"
+}

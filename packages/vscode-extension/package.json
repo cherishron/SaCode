@@ -1,0 +1,142 @@
+{
+  "name": "@saclaw/vscode-extension",
+  "displayName": "SaClaw - AI Assistant",
+  "description": "SaClaw AI Assistant integration for VS Code",
+  "version": "0.1.0",
+  "publisher": "stand-alone",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "saclaw.chat",
+        "title": "SaClaw: Open Chat"
+      },
+      {
+        "command": "saclaw.explain",
+        "title": "SaClaw: Explain Code"
+      },
+      {
+        "command": "saclaw.refactor",
+        "title": "SaClaw: Refactor Code"
+      },
+      {
+        "command": "saclaw.generateTests",
+        "title": "SaClaw: Generate Tests"
+      },
+      {
+        "command": "saclaw.generateDocs",
+        "title": "SaClaw: Generate Documentation"
+      },
+      {
+        "command": "saclaw.fixCode",
+        "title": "SaClaw: Fix Code Issues"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "saclaw",
+          "title": "SaClaw",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "saclaw": [
+        {
+          "id": "saclaw.chatView",
+          "name": "Chat"
+        },
+        {
+          "id": "saclaw.skillsView",
+          "name": "Skills"
+        },
+        {
+          "id": "saclaw.hooksView",
+          "name": "Hooks"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "saclaw.explain",
+          "when": "editorHasSelection",
+          "group": "saclaw@1"
+        },
+        {
+          "command": "saclaw.refactor",
+          "when": "editorHasSelection",
+          "group": "saclaw@2"
+        },
+        {
+          "command": "saclaw.generateTests",
+          "when": "editorHasSelection",
+          "group": "saclaw@3"
+        },
+        {
+          "command": "saclaw.generateDocs",
+          "when": "editorHasSelection",
+          "group": "saclaw@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SaClaw",
+      "properties": {
+        "saclaw.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "SaClaw API server URL"
+        },
+        "saclaw.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically connect to SaClaw server on startup"
+        },
+        "saclaw.defaultModel": {
+          "type": "string",
+          "default": "claude-3-5-sonnet",
+          "description": "Default AI model to use"
+        },
+        "saclaw.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Maximum tokens per request"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "marketplace": {
+    "platforms": ["vscode", "openvsx"],
+    "releaseNotes": "",
+    "prerelease": false,
+    "tag": "latest"
+  }
+}
