@@ -1,5 +1,5 @@
 /**
- * SaClaw Container Module - 容器管理器
+ * SACODE Container Module - 容器管理器
  */
 
 import type {
@@ -185,7 +185,7 @@ export class ContainerManager {
     const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
     const noun = nouns[Math.floor(Math.random() * nouns.length)];
     const random = Math.random().toString(36).slice(2, 6);
-    return `saclaw-${adj}-${noun}-${random}`;
+    return `SACODE-${adj}-${noun}-${random}`;
   }
 }
 

@@ -21,7 +21,7 @@ export async function listPlugins(): Promise<void> {
   }
 
   console.log();
-  console.log(chalk.gray("Use 'saclaw plugin install <path>' to install a plugin"));
+  console.log(chalk.gray("Use 'SACODE plugin install <path>' to install a plugin"));
 }
 
 export async function installPlugin(path: string): Promise<void> {

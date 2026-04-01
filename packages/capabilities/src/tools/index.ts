@@ -2,6 +2,12 @@ import type { ToolDefinition, CapabilitiesConfig } from "../types";
 import { createFileTools } from "../files";
 import { createBrowserTools, BrowserManager } from "../browser";
 import { createShellTools } from "../shell";
+import { createWebTools } from "../web";
+import { createSearchTools } from "../search";
+import { createLspTools } from "../lsp";
+import { createTaskTools } from "../task";
+import { createAgentTools } from "../agent";
+import { createGitTools } from "../git";
 
 export class ToolRegistry {
   private tools: Map<string, ToolDefinition> = new Map();
@@ -65,6 +71,52 @@ export class CapabilitiesManager {
     for (const tool of shellTools) {
       this.registry.register(tool);
     }
+
+    // 注册 Web 工具
+    const webTools = createWebTools(this.config.web);
+    for (const tool of webTools) {
+      this.registry.register(tool);
+    }
+
+    // 注册搜索工具
+    if (this.config.search) {
+      const searchTools = createSearchTools(this.config.search);
+      for (const tool of searchTools) {
+        this.registry.register(tool);
+      }
+    }
+
+    // 注册 LSP 工具
+    if (this.config.lsp) {
+      const lspTools = createLspTools(this.config.lsp);
+      for (const tool of lspTools) {
+        this.registry.register(tool);
+      }
+    }
+
+    // 注册任务管理工具
+    if (this.config.task) {
+      const taskTools = createTaskTools(this.config.task);
+      for (const tool of taskTools) {
+        this.registry.register(tool);
+      }
+    }
+
+    // 注册 Agent 管理工具
+    if (this.config.agent) {
+      const agentTools = createAgentTools(this.config.agent);
+      for (const tool of agentTools) {
+        this.registry.register(tool);
+      }
+    }
+
+    // 注册 Git 工具
+    if (this.config.git) {
+      const gitTools = createGitTools(this.config.git);
+      for (const tool of gitTools) {
+        this.registry.register(tool);
+      }
+    }
   }
 
   private getBrowserManager(): BrowserManager {
@@ -118,5 +170,57 @@ export const defaultCapabilitiesConfig: CapabilitiesConfig = {
     timeout: 60000,
     useVfox: true, // 默认启用 vfox 集成
     vfoxSdks: [], // 空数组表示自动检测 python/node 等
+  },
+  web: {
+    enabled: true,
+    search: {
+      enabled: true,
+      apiProvider: "duckduckgo",
+      timeout: 10000,
+    },
+    fetch: {
+      enabled: true,
+      defaultTimeout: 30000,
+    },
+    http: {
+      enabled: true,
+      defaultTimeout: 30000,
+      maxRedirects: 5,
+    },
+  },
+  search: {
+    enabled: true,
+    useRipgrep: true,
+    maxResults: 100,
+    timeout: 30000,
+  },
+  lsp: {
+    enabled: true,
+    languageServers: {
+      typescript: {
+        command: "typescript-language-server",
+        args: ["--stdio"],
+        rootPatterns: ["package.json", "tsconfig.json"],
+      },
+      python: {
+        command: "pyright-langserver",
+        args: ["--stdio"],
+        rootPatterns: ["pyproject.toml", "setup.py", ".git"],
+      },
+    },
+    timeout: 30000,
+  },
+  task: {
+    enabled: true,
+    maxTasks: 100,
+  },
+  agent: {
+    enabled: true,
+    maxAgents: 10,
+    maxTeams: 5,
+  },
+  git: {
+    enabled: true,
+    defaultPath: ".",
   },
 };

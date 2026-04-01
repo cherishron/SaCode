@@ -52,8 +52,8 @@ export type {
 export type { StreamChunk as ProviderStreamChunk, StreamChunkType as ProviderStreamChunkType } from "./provider";
 
 // Client
-export { SaClawClient } from "./client";
-export type { SaClawClientOptions, SaClawClientEvents } from "./client";
+export { SACODEClient } from "./client";
+export type { SACODEClientOptions, SACODEClientEvents } from "./client";
 
 // Model
 export {
@@ -601,3 +601,36 @@ export type {
   CommandDiscoveryConfig,
   CommandDiscoveryEvents,
 } from "./commands";
+
+// Cost Tracker (成本追踪)
+export {
+  // Types
+  DEFAULT_COST_TRACKER_CONFIG,
+  CostTrackerError,
+  PricingNotFoundError,
+  // Pricing
+  OPENAI_PRICING,
+  ANTHROPIC_PRICING,
+  DEEPSEEK_PRICING,
+  MOONSHOT_PRICING,
+  ZHIPU_PRICING,
+  MODEL_PRICING_MAP,
+  MODEL_ALIASES,
+  getModelPricing,
+  getDefaultPricing,
+  // Tracker
+  CostTracker,
+  createCostTracker,
+  getCostTracker,
+  resetCostTracker,
+} from "./cost-tracker";
+export type {
+  TokenUsage,
+  CostRecord,
+  ModelPricing,
+  CostStats,
+  ModelCostStats,
+  SessionCostStats,
+  CostTrackerConfig,
+  CostTrackerEvents,
+} from "./cost-tracker";

@@ -192,6 +192,8 @@ import {
   ModelManager,
   CacheManager,
   GroupQueue,
+  CostTracker,
+  getCostTracker,
 } from "@sacode/core";
 
 // 创建客户端
@@ -297,6 +299,7 @@ scheduler.addTask({
 | `ModelManager` | 模型管理器 |
 | `CacheManager` | 缓存管理器 |
 | `GroupQueue` | 群组消息队列 |
+| `CostTracker` | 成本追踪器 |
 
 ---
 
@@ -412,7 +415,7 @@ await dingtalk.editMessage(chatId, messageId, "这是更新后的内容...");
 
 ---
 
-### @saclaw/auth
+### @sacode/auth
 
 **认证模块** - 混合认证系统
 
@@ -426,7 +429,7 @@ import {
   QQOAuthService,
   WeWorkOAuthService,
   type UserWithPassword,
-} from "@saclaw/auth";
+} from "@sacode/auth";
 
 // 本地认证服务
 const authService = new LocalAuthService({
@@ -564,6 +567,242 @@ const users = await prisma.user.findMany();
 |------|------|
 | `api.ts` | REST API 客户端封装 |
 | `websocket.ts` | WebSocket 客户端，支持流式聊天、重连、心跳 |
+
+---
+
+### @sacode/capabilities
+
+**自动化能力** - 文件、浏览器、Shell、Web、搜索、LSP、任务、Agent、Git 等 33 个工具
+
+```typescript
+import { CapabilitiesManager } from "@sacode/capabilities";
+
+const capabilities = new CapabilitiesManager({
+  files: {
+    enabled: true,
+    allowedDirs: ["."],
+    maxSize: 10 * 1024 * 1024,
+    readOnly: false,
+  },
+  web: {
+    enabled: true,
+    search: {
+      enabled: true,
+      apiProvider: "duckduckgo",
+      timeout: 10000,
+    },
+    fetch: {
+      enabled: true,
+      defaultTimeout: 30000,
+    },
+    http: {
+      enabled: true,
+      defaultTimeout: 30000,
+      maxRedirects: 5,
+    },
+  },
+  // ... 其他配置
+});
+
+// 获取所有工具
+const tools = capabilities.getAllTools();
+
+// 执行工具
+const result = await capabilities.executeTool("web_search", {
+  query: "TypeScript 最佳实践",
+  numResults: 5,
+});
+```
+
+**工具分类：**
+
+| 类别 | 工具数量 | 工具列表 |
+|------|---------|---------|
+| 内置工具 | 8 | ask_user_question, exit_plan_mode, image_read, save_memory, todo_read, todo_write, Skill, task |
+| 文件工具 | 6 | read_file, write_file, replace, list_directory, **edit_file**, **delete_file** |
+| 浏览器工具 | 5 | web_search, web_fetch, run_shell_command, image_read, xml_escape |
+| Shell 工具 | 1 | run_shell_command |
+| Web 工具 | 3 | **web_search**, **web_fetch**, **http_request** |
+| 搜索工具 | 1 | **grep_tool** |
+| LSP 工具 | 1 | **lsp_tool** |
+| 任务管理工具 | 3 | **task_create_tool**, **task_update_tool**, **cron_create_tool** |
+| Agent 管理工具 | 3 | **agent_tool**, **team_create_tool**, **team_delete_tool** |
+| Git 工具 | 2 | **enter_worktree_tool**, **exit_worktree_tool** |
+| **总计** | **33** | |
+
+#### Web 工具（3 个）
+
+| 工具 | 说明 |
+|------|------|
+| `web_search` | DuckDuckGo Web 搜索，支持时间范围过滤和多语言搜索 |
+| `web_fetch` | Web 内容获取，自动检测内容类型（JSON、HTML、文本） |
+| `http_request` | 通用 HTTP 客户端，支持所有 HTTP 方法、自定义头、请求体、超时控制 |
+
+```typescript
+// Web 搜索示例
+await capabilities.executeTool("web_search", {
+  query: "TypeScript 最佳实践",
+  numResults: 5,
+  tbs: "qdr:m3", // 过去 3 个月
+});
+
+// Web 获取示例
+await capabilities.executeTool("web_fetch", {
+  url: "https://example.com",
+  prompt: "提取文章的关键信息",
+});
+
+// HTTP 请求示例
+await capabilities.executeTool("http_request", {
+  url: "https://api.example.com/users",
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ name: "John" }),
+  timeout: 5000,
+});
+```
+
+#### 文件工具（6 个）
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` | 读取文件内容 |
+| `write_file` | 写入文件内容 |
+| `replace` | 替换文件中的文本 |
+| `list_directory` | 列出目录内容 |
+| **`edit_file`** | 文件编辑（行范围替换、正则表达式替换、字符串替换） |
+| **`delete_file`** | 文件/目录删除（危险操作） |
+
+```typescript
+// 编辑文件 - 行范围替换
+await capabilities.executeTool("edit_file", {
+  file_path: "/path/to/file.ts",
+  instruction: "将第 10-20 行的代码替换为新的实现",
+  old_string: "旧代码...",
+  new_string: "新代码...",
+});
+
+// 编辑文件 - 正则表达式替换
+await capabilities.executeTool("edit_file", {
+  file_path: "/path/to/file.ts",
+  instruction: "将所有 console.log 替换为 logger.info",
+  old_string: "console\\.log\\(([^)]+)\\)",
+  new_string: "logger.info($1)",
+  mode: "regex",
+});
+
+// 删除文件
+await capabilities.executeTool("delete_file", {
+  file_path: "/path/to/file.txt",
+  recursive: false,
+});
+```
+
+#### 搜索工具（1 个）
+
+| 工具 | 说明 |
+|------|------|
+| **`grep_tool`** | 基于 ripgrep 的高性能代码搜索，支持正则表达式、文件过滤、上下文 |
+
+```typescript
+// 代码搜索示例
+await capabilities.executeTool("grep_tool", {
+  pattern: "function\\s+handleClick",
+  path: "./src",
+  include: "*.ts,*.tsx",
+  case_sensitive: false,
+  context: 3,
+});
+```
+
+#### LSP 工具（1 个）
+
+| 工具 | 说明 |
+|------|------|
+| **`lsp_tool`** | LSP 集成，支持 7 种操作：definition、references、completion、diagnostics、symbols、format、rename |
+
+```typescript
+// LSP 操作示例
+await capabilities.executeTool("lsp_tool", {
+  file: "/path/to/file.ts",
+  line: 42,
+  character: 10,
+  action: "definition",
+  language: "typescript",
+});
+
+// 其他操作: references, completion, diagnostics, symbols, format, rename
+```
+
+#### 任务管理工具（3 个）
+
+| 工具 | 说明 |
+|------|------|
+| **`task_create_tool`** | 创建定时任务（interval/once 类型） |
+| **`task_update_tool`** | 更新现有任务 |
+| **`cron_create_tool`** | 创建 Cron 定时任务 |
+
+```typescript
+// 创建任务示例
+await capabilities.executeTool("task_create_tool", {
+  name: "数据备份",
+  type: "interval",
+  config: { interval: 86400000 }, // 24 小时
+  message: "执行数据库备份",
+  channel: "system",
+});
+
+// 创建 Cron 任务示例
+await capabilities.executeTool("cron_create_tool", {
+  name: "早间提醒",
+  cronExpression: "0 9 * * *",
+  message: "早上好！",
+  channel: "xiaoyi",
+  chatId: "user_123",
+});
+```
+
+#### Agent 管理工具（3 个）
+
+| 工具 | 说明 |
+|------|------|
+| **`agent_tool`** | 子 Agent 调用（sequential、parallel、hierarchical 模式） |
+| **`team_create_tool`** | 创建 Agent 团队 |
+| **`team_delete_tool`** | 删除 Agent 团队 |
+
+```typescript
+// Agent 调用示例
+await capabilities.executeTool("agent_tool", {
+  subagent_type: "python-pro",
+  prompt: "优化这个 Python 函数的性能",
+  coordination_mode: "parallel",
+});
+
+// 创建团队示例
+await capabilities.executeTool("team_create_tool", {
+  name: "全栈开发团队",
+  agents: ["frontend-design", "backend-architect", "code-reviewer"],
+  coordination_mode: "sequential",
+});
+```
+
+#### Git 工具（2 个）
+
+| 工具 | 说明 |
+|------|------|
+| **`enter_worktree_tool`** | 进入 Git Worktree（切换到不同的工作目录） |
+| **`exit_worktree_tool`** | 退出 Git Worktree（返回主仓库） |
+
+```typescript
+// 进入 Worktree
+await capabilities.executeTool("enter_worktree_tool", {
+  branch: "feature/new-feature",
+  path: "./worktrees/feature",
+});
+
+// 退出 Worktree
+await capabilities.executeTool("exit_worktree_tool");
+```
 
 ---
 

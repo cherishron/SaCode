@@ -1,5 +1,5 @@
 /**
- * SaClaw Shared Types - IM 适配器类型
+ * SACODE Shared Types - IM 适配器类型
  *
  * 此模块定义了 IM 平台适配器的共享类型。
  */

@@ -14,7 +14,7 @@
 import EventEmitter from "eventemitter3";
 import type { ExecutionPlan, OrchestrationResult } from "./types";
 import type { Orchestrator } from "./orchestrator";
-import type { SaClawClient } from "../client";
+import type { SACODEClient } from "../client";
 import type { ToolBridge } from "../tools";
 
 // ============================================
@@ -180,12 +180,12 @@ export class SisyphusLoop extends EventEmitter<SisyphusEvents> {
    * 执行 Sisyphus 循环
    *
    * @param plan 执行计划
-   * @param client SaClaw 客户端
+   * @param client SACODE 客户端
    * @param toolBridge 工具桥接层
    */
   async execute(
     plan: ExecutionPlan,
-    client: SaClawClient,
+    client: SACODEClient,
     toolBridge: ToolBridge
   ): Promise<SisyphusResult> {
     if (this.isRunning) {

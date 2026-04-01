@@ -1,11 +1,11 @@
 /**
- * SaClaw IM 适配器类型
+ * SACODE IM 适配器类型
  *
- * 从 @saclaw/types 重新导出共享类型，并添加适配器专用类型。
+ * 从 @SACODE/types 重新导出共享类型，并添加适配器专用类型。
  */
 
 // ============================================================================
-// 从 @saclaw/types 导入共享类型
+// 从 @SACODE/types 导入共享类型
 // ============================================================================
 
 export type {
@@ -26,7 +26,7 @@ export type {
   IMAdapter,
   SendOptions,
   StreamOptions,
-} from "@saclaw/types";
+} from "@SACODE/types";
 
 export {
   isTextContent,
@@ -36,4 +36,4 @@ export {
   isFileContent,
   isLocationContent,
   isStickerContent,
-} from "@saclaw/types";
+} from "@SACODE/types";

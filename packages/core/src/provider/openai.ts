@@ -141,6 +141,7 @@ export class OpenAIProvider extends BaseProvider {
               model: this.model,
               messages,
               stream: true,
+              stream_options: { include_usage: true }, // 启用 Token 使用量统计
             };
 
             if (tools && tools.length > 0) {
@@ -170,10 +171,23 @@ export class OpenAIProvider extends BaseProvider {
           name: string;
           arguments: string;
         } | null = null;
+        let usage: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | undefined;
 
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta;
           const finishReason = chunk.choices[0]?.finish_reason;
+
+          // 处理 Token 使用量（在流的最后返回）
+          if (chunk.usage) {
+            usage = {
+              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              outputTokens: chunk.usage.completion_tokens ?? 0,
+              // OpenAI 不直接提供缓存 Token 信息，但 prompt_tokens_details 可能包含
+              cachedInputTokens: (chunk.usage as OpenAI.Chat.Completions.ChatCompletionChunk.Usage & {
+                prompt_tokens_details?: { cached_tokens?: number };
+              }).prompt_tokens_details?.cached_tokens,
+            };
+          }
 
           // 处理文本内容
           if (delta?.content) {
@@ -237,6 +251,7 @@ export class OpenAIProvider extends BaseProvider {
             yield {
               type: "done",
               stopReason,
+              usage,
             };
 
             this.emitComplete(stopReason);

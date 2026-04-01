@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { getPrismaClient } from "@saclaw/database";
-import { IMAdapterManager, type Platform } from "@saclaw/adapters";
+import { getPrismaClient } from "@sacode/database";
+import { IMAdapterManager, type Platform } from "@sacode/adapters";
 import { EventEmitter } from "events";
 import { authMiddleware } from "../middleware/auth";
 

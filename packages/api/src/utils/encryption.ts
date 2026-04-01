@@ -20,8 +20,8 @@ function getEncryptionKey(): Buffer {
   }
   
   // 使用 scrypt 派生密钥，确保密钥长度正确
-  const password = secret || "saclaw-default-encryption-key-change-in-production";
-  const salt = "saclaw-encryption-salt"; // 固定盐值用于密钥派生
+  const password = secret || "SACODE-default-encryption-key-change-in-production";
+  const salt = "SACODE-encryption-salt"; // 固定盐值用于密钥派生
   
   return scryptSync(password, salt, 32);
 }

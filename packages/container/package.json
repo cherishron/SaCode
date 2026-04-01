@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/container",
+  "name": "@SACODE/container",
   "version": "0.1.0",
-  "description": "SaClaw 容器隔离模块 - Docker容器运行Agent",
+  "description": "SACODE 容器隔离模块 - Docker容器运行Agent",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

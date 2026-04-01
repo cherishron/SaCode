@@ -68,7 +68,7 @@ export async function listCronJobs(options: { all?: boolean }): Promise<void> {
   const jobsToShow = showAll ? jobs : jobs.filter((j) => j.enabled);
 
   if (jobsToShow.length === 0) {
-    console.log(chalk.gray("No cron jobs found. Use 'saclaw cron add' to create one."));
+    console.log(chalk.gray("No cron jobs found. Use 'SACODE cron add' to create one."));
     return;
   }
 

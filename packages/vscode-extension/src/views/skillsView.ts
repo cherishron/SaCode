@@ -5,7 +5,7 @@
  */
 
 import * as vscode from "vscode";
-import { SaClawClient, Skill } from "../client";
+import { SACODEClient, Skill } from "../client";
 
 export class SkillsViewProvider implements vscode.TreeDataProvider<SkillItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<SkillItem | undefined | null | void>();
@@ -15,7 +15,7 @@ export class SkillsViewProvider implements vscode.TreeDataProvider<SkillItem> {
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
-    private readonly _client: SaClawClient
+    private readonly _client: SACODEClient
   ) {
     this.loadSkills();
   }

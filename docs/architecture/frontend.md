@@ -1,6 +1,6 @@
 # 前端架构
 
-> SaClaw Web 前端架构文档 - Vue 3 + Vite + TinyVue
+> SACODE Web 前端架构文档 - Vue 3 + Vite + TinyVue
 
 ## 技术栈
 

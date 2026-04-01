@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { getPrismaClient } from "@saclaw/database";
+import { getPrismaClient } from "@SACODE/database";
 import {
   PluginManager,
   createPluginManager,
   type Plugin,
   type PluginManifest,
   type PluginStats,
-} from "@saclaw/core";
+} from "@SACODE/core";
 import * as path from "path";
 import { authMiddleware } from "../middleware/auth";
 
@@ -21,7 +21,7 @@ let pluginManager: PluginManager | null = null;
 async function getPluginManager(): Promise<PluginManager> {
   if (pluginManager) return pluginManager;
 
-  const pluginsDir = path.resolve(process.cwd(), ".saclaw/plugins");
+  const pluginsDir = path.resolve(process.cwd(), ".SACODE/plugins");
 
   pluginManager = createPluginManager(
     {

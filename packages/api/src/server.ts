@@ -6,8 +6,8 @@ import { createServer } from "http";
 import { config } from "dotenv";
 
 import routes from "./routes/index.js";
-import { SaClawWebSocketServer } from "./websocket/index.js";
-import { createDatabase, disconnectDatabase } from "@saclaw/database";
+import { SACODEWebSocketServer } from "./websocket/index.js";
+import { createDatabase, disconnectDatabase } from "@SACODE/database";
 
 // 加载环境变量
 config();
@@ -24,7 +24,7 @@ app.use(express.urlencoded({ extended: true }));
 // Session
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "saclaw-secret-change-in-production",
+    secret: process.env.SESSION_SECRET || "SACODE-secret-change-in-production",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -38,7 +38,7 @@ app.use(
 app.use("/api", routes);
 
 // WebSocket 服务器
-let wsServer: SaClawWebSocketServer | null = null;
+let wsServer: SACODEWebSocketServer | null = null;
 
 // 环境变量检查
 function validateEnvironment(): void {
@@ -56,10 +56,10 @@ function validateEnvironment(): void {
     if (!process.env.ENCRYPTION_KEY) {
       errors.push("ENCRYPTION_KEY is required in production");
     }
-    if (process.env.JWT_SECRET === "saclaw-dev-secret-change-in-production") {
+    if (process.env.JWT_SECRET === "SACODE-dev-secret-change-in-production") {
       errors.push("JWT_SECRET must be changed from default value in production");
     }
-    if (process.env.SESSION_SECRET === "saclaw-secret-change-in-production") {
+    if (process.env.SESSION_SECRET === "SACODE-secret-change-in-production") {
       errors.push("SESSION_SECRET must be changed from default value in production");
     }
   } else {
@@ -93,14 +93,14 @@ async function start() {
   // 连接数据库
   await createDatabase({
     type: (process.env.DATABASE_TYPE as "sqlite" | "mysql" | "postgres") || "sqlite",
-    path: process.env.DATABASE_PATH || "./data/saclaw.db",
+    path: process.env.DATABASE_PATH || "./data/SACODE.db",
   });
 
   // 启动 WebSocket
-  wsServer = new SaClawWebSocketServer(server);
+  wsServer = new SACODEWebSocketServer(server);
 
   server.listen(port, host, () => {
-    console.log(`🦞 SaClaw API Server running at http://${host}:${port}`);
+    console.log(`🦞 SACODE API Server running at http://${host}:${port}`);
     console.log(`📡 WebSocket available at ws://${host}:${port}/ws`);
     console.log(`📚 API docs at http://${host}:${port}/api`);
   });

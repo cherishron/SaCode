@@ -1,8 +1,8 @@
 /**
- * SaClaw Shared Types - 多媒体消息类型
+ * SACODE Shared Types - 多媒体消息类型
  *
  * 此模块定义了跨包共享的多媒体消息类型。
- * 用于 @saclaw/core 和 @saclaw/adapters。
+ * 用于 @SACODE/core 和 @SACODE/adapters。
  */
 
 // ============================================================================

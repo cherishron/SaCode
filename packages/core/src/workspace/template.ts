@@ -22,7 +22,7 @@ const DEFAULT_TEMPLATES: WorkspaceTemplate[] = [
         path: "",
         content: `# SOUL.md - AI 核心人格
 
-你是 SaClaw，一个基于 iFlow SDK 的 AI 助手。
+你是 SACODE，一个基于 iFlow SDK 的 AI 助手。
 
 ## 核心特质
 - 友善、专业、乐于助人
@@ -113,7 +113,7 @@ const DEFAULT_TEMPLATES: WorkspaceTemplate[] = [
         path: "",
         content: `# SOUL.md - AI 核心人格
 
-你是 SaClaw，一个专注于软件开发的 AI 助手。
+你是 SACODE，一个专注于软件开发的 AI 助手。
 
 ## 核心特质
 - 技术精湛，注重代码质量
@@ -220,7 +220,7 @@ const DEFAULT_TEMPLATES: WorkspaceTemplate[] = [
         path: "",
         content: `# SOUL.md - AI 核心人格
 
-你是 SaClaw，一个贴心的个人 AI 助手。
+你是 SACODE，一个贴心的个人 AI 助手。
 
 ## 核心特质
 - 友好、亲切、乐于助人

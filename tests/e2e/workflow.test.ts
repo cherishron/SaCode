@@ -5,19 +5,19 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
-  SaClawClient,
+  SACODEClient,
   SessionManager,
   SessionMapper,
   MessageRouter,
   TaskScheduler,
   GroupQueue,
   PluginManager,
-} from "@saclaw/core";
+} from "@SACODE/core";
 import {
   IMAdapterManager,
   TelegramAdapter,
   createAdapter,
-} from "@saclaw/adapters";
+} from "@SACODE/adapters";
 
 // Mock WebSocket for Node.js environment
 class MockWebSocket {
@@ -53,7 +53,7 @@ function sleep(ms: number): Promise<void> {
 const shouldRunE2E = process.env.RUN_E2E_TESTS === "true";
 
 describe.skipIf(!shouldRunE2E)("E2E: Full Message Flow", () => {
-  let client: SaClawClient;
+  let client: SACODEClient;
   let sessionManager: SessionManager;
   let sessionMapper: SessionMapper;
   let router: MessageRouter;
@@ -61,7 +61,7 @@ describe.skipIf(!shouldRunE2E)("E2E: Full Message Flow", () => {
 
   beforeAll(async () => {
     // 初始化所有组件
-    client = new SaClawClient({
+    client = new SACODEClient({
       acpUrl: process.env.IFLOW_ACP_URL || "ws://localhost:8090/acp",
       autoStart: false,
       timeout: 30000,

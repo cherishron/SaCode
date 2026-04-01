@@ -333,7 +333,7 @@ export function registerIMCommand(ctx: CommandContext): void {
 export function registerStartCommand(ctx: CommandContext): void {
   ctx.program
     .command("start")
-    .description("启动 SaClaw 服务")
+    .description("启动 SACODE 服务")
     .option("-p, --port <port>", "服务端口", "3000")
     .option("-h, --host <host>", "服务主机", "localhost")
     .option("--api", "只启动 API 服务")

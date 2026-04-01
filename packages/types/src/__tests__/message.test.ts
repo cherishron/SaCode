@@ -1,5 +1,5 @@
 /**
- * @saclaw/types - Message Types Unit Tests
+ * @sacode/types - Message Types Unit Tests
  */
 
 import { describe, it, expect } from "vitest";

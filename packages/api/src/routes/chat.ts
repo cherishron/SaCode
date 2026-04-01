@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { SaClawClient } from "@saclaw/core";
-import { getPrismaClient } from "@saclaw/database";
+import { SACODEClient } from "@SACODE/core";
+import { getPrismaClient } from "@SACODE/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();
 
 // 存储活跃的客户端连接
-const activeClients = new Map<string, SaClawClient>();
+const activeClients = new Map<string, SACODEClient>();
 
 // POST /api/chat
 router.post("/", authMiddleware, async (req: Request, res: Response) => {
@@ -23,7 +23,7 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
     let client = activeClients.get(userId);
     if (!client) {
       // 使用新的 Provider 配置模式
-      client = new SaClawClient({
+      client = new SACODEClient({
         provider: process.env.AI_PROVIDER ? {
           type: process.env.AI_PROVIDER as "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu",
           apiKey: process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || "",
@@ -79,7 +79,7 @@ router.post("/agentic", authMiddleware, async (req: Request, res: Response) => {
     const clientKey = `${userId}-agentic`;
     let client = activeClients.get(clientKey);
     if (!client) {
-      client = new SaClawClient({
+      client = new SACODEClient({
         provider: process.env.AI_PROVIDER ? {
           type: process.env.AI_PROVIDER as "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu",
           apiKey: process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || "",

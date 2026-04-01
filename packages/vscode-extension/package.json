@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/vscode-extension",
-  "displayName": "SaClaw - AI Assistant",
-  "description": "SaClaw AI Assistant integration for VS Code",
+  "name": "@SACODE/vscode-extension",
+  "displayName": "SACODE - AI Assistant",
+  "description": "SACODE AI Assistant integration for VS Code",
   "version": "0.1.0",
   "publisher": "stand-alone",
   "engines": {
@@ -19,51 +19,51 @@
   "contributes": {
     "commands": [
       {
-        "command": "saclaw.chat",
-        "title": "SaClaw: Open Chat"
+        "command": "SACODE.chat",
+        "title": "SACODE: Open Chat"
       },
       {
-        "command": "saclaw.explain",
-        "title": "SaClaw: Explain Code"
+        "command": "SACODE.explain",
+        "title": "SACODE: Explain Code"
       },
       {
-        "command": "saclaw.refactor",
-        "title": "SaClaw: Refactor Code"
+        "command": "SACODE.refactor",
+        "title": "SACODE: Refactor Code"
       },
       {
-        "command": "saclaw.generateTests",
-        "title": "SaClaw: Generate Tests"
+        "command": "SACODE.generateTests",
+        "title": "SACODE: Generate Tests"
       },
       {
-        "command": "saclaw.generateDocs",
-        "title": "SaClaw: Generate Documentation"
+        "command": "SACODE.generateDocs",
+        "title": "SACODE: Generate Documentation"
       },
       {
-        "command": "saclaw.fixCode",
-        "title": "SaClaw: Fix Code Issues"
+        "command": "SACODE.fixCode",
+        "title": "SACODE: Fix Code Issues"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "saclaw",
-          "title": "SaClaw",
+          "id": "SACODE",
+          "title": "SACODE",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "views": {
-      "saclaw": [
+      "SACODE": [
         {
-          "id": "saclaw.chatView",
+          "id": "SACODE.chatView",
           "name": "Chat"
         },
         {
-          "id": "saclaw.skillsView",
+          "id": "SACODE.skillsView",
           "name": "Skills"
         },
         {
-          "id": "saclaw.hooksView",
+          "id": "SACODE.hooksView",
           "name": "Hooks"
         }
       ]
@@ -71,46 +71,46 @@
     "menus": {
       "editor/context": [
         {
-          "command": "saclaw.explain",
+          "command": "SACODE.explain",
           "when": "editorHasSelection",
-          "group": "saclaw@1"
+          "group": "SACODE@1"
         },
         {
-          "command": "saclaw.refactor",
+          "command": "SACODE.refactor",
           "when": "editorHasSelection",
-          "group": "saclaw@2"
+          "group": "SACODE@2"
         },
         {
-          "command": "saclaw.generateTests",
+          "command": "SACODE.generateTests",
           "when": "editorHasSelection",
-          "group": "saclaw@3"
+          "group": "SACODE@3"
         },
         {
-          "command": "saclaw.generateDocs",
+          "command": "SACODE.generateDocs",
           "when": "editorHasSelection",
-          "group": "saclaw@4"
+          "group": "SACODE@4"
         }
       ]
     },
     "configuration": {
-      "title": "SaClaw",
+      "title": "SACODE",
       "properties": {
-        "saclaw.apiUrl": {
+        "SACODE.apiUrl": {
           "type": "string",
           "default": "http://localhost:3000",
-          "description": "SaClaw API server URL"
+          "description": "SACODE API server URL"
         },
-        "saclaw.autoConnect": {
+        "SACODE.autoConnect": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically connect to SaClaw server on startup"
+          "description": "Automatically connect to SACODE server on startup"
         },
-        "saclaw.defaultModel": {
+        "SACODE.defaultModel": {
           "type": "string",
           "default": "claude-3-5-sonnet",
           "description": "Default AI model to use"
         },
-        "saclaw.maxTokens": {
+        "SACODE.maxTokens": {
           "type": "number",
           "default": 4096,
           "description": "Maximum tokens per request"

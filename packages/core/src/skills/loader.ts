@@ -15,7 +15,7 @@ import { SkillSchema, DEFAULT_SKILL_LOADER_OPTIONS } from "./types";
  * 
  * @example
  * ```typescript
- * const loader = new SkillLoader({ skillsDir: ".saclaw/skills" });
+ * const loader = new SkillLoader({ skillsDir: ".SACODE/skills" });
  * const skills = await loader.discover();
  * const prompt = loader.assemblePrompt(["setup", "add-telegram"]);
  * ```

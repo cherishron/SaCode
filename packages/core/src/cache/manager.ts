@@ -32,7 +32,7 @@ interface InternalConfig {
 const DEFAULT_CONFIG: InternalConfig = {
   backend: "memory",
   defaultTTL: 0, // 永不过期
-  keyPrefix: "saclaw:",
+  keyPrefix: "SACODE:",
 };
 
 /**

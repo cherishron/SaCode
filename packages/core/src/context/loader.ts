@@ -68,8 +68,8 @@ export interface ContextLoaderConfig {
  * 默认配置
  */
 export const DEFAULT_CONTEXT_LOADER_CONFIG: ContextLoaderConfig = {
-  userDir: path.join(os.homedir(), ".saclaw"),
-  projectDirName: ".saclaw",
+  userDir: path.join(os.homedir(), ".SACODE"),
+  projectDirName: ".SACODE",
   contextFileName: "SKILL.md",
   enableLazyLoading: true,
   mergeLevels: true,
@@ -166,7 +166,7 @@ export class ContextLoader extends EventEmitter<ContextLoaderEvents> {
   /**
    * 加载用户级上下文
    *
-   * 从 ~/.saclaw/SKILL.md 加载
+   * 从 ~/.SACODE/SKILL.md 加载
    */
   async loadUserContext(): Promise<ContextFile | null> {
     const userContextPath = path.join(
@@ -180,7 +180,7 @@ export class ContextLoader extends EventEmitter<ContextLoaderEvents> {
   /**
    * 加载项目级上下文
    *
-   * 从项目根目录的 .saclaw/SKILL.md 加载
+   * 从项目根目录的 .SACODE/SKILL.md 加载
    */
   async loadProjectContext(): Promise<ContextFile | null> {
     const projectContextPath = path.join(

@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/auth",
+  "name": "@SACODE/auth",
   "version": "0.1.0",
-  "description": "SaClaw 认证模块 - 混合认证与 OAuth 集成",
+  "description": "SACODE 认证模块 - 混合认证与 OAuth 集成",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@saclaw/database": "workspace:*",
+    "@SACODE/database": "workspace:*",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "passport": "^0.7.0",

@@ -165,9 +165,9 @@ export class RPCHandler {
         params: { type: "start", sessionId },
       });
 
-      // TODO: 集成 SaClawClient 进行实际调用
+      // TODO: 集成 SACODEClient 进行实际调用
       // 这里模拟流式响应
-      const mockResponse = `收到消息: ${message}\n\n这是来自 SaClaw Gateway 的响应。`;
+      const mockResponse = `收到消息: ${message}\n\n这是来自 SACODE Gateway 的响应。`;
       
       for (let i = 0; i < mockResponse.length; i += 20) {
         const chunk = mockResponse.slice(i, i + 20);

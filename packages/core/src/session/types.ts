@@ -112,7 +112,7 @@ export interface SessionMappingEntry {
  * 会话映射器配置
  */
 export interface SessionMapperConfig {
-  /** 持久化文件路径，默认 ~/.saclaw/session_mappings.json */
+  /** 持久化文件路径，默认 ~/.SACODE/session_mappings.json */
   persistPath?: string;
   /** 是否启用持久化，默认 true */
   enablePersistence?: boolean;

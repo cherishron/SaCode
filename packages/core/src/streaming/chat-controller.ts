@@ -1,11 +1,11 @@
 /**
  * 流式聊天控制器
  *
- * 将 SaClawClient 的流式输出与 IM 适配器的流式发送能力集成
+ * 将 SACODEClient 的流式输出与 IM 适配器的流式发送能力集成
  */
 
-import { SaClawClient } from "../client/index.js";
-import type { BaseAdapter, StreamSender, IMMessage, Platform } from "@saclaw/adapters";
+import { SACODEClient } from "../client/index.js";
+import type { BaseAdapter, StreamSender, IMMessage, Platform } from "@SACODE/adapters";
 import EventEmitter from "eventemitter3";
 
 // ============================================
@@ -50,7 +50,7 @@ export interface StreamChatEvents {
 // ============================================
 
 export class StreamChatController extends EventEmitter<StreamChatEvents> {
-  private client: SaClawClient;
+  private client: SACODEClient;
   private adapter: BaseAdapter & Partial<StreamSender>;
   private updateInterval: number;
   private updateTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -58,7 +58,7 @@ export class StreamChatController extends EventEmitter<StreamChatEvents> {
   private messageIds: Map<string, string> = new Map();
 
   constructor(
-    client: SaClawClient,
+    client: SACODEClient,
     adapter: BaseAdapter & Partial<StreamSender>,
     options: { updateInterval?: number } = {}
   ) {
@@ -283,7 +283,7 @@ export class StreamChatController extends EventEmitter<StreamChatEvents> {
 // ============================================
 
 export function createStreamChatController(
-  client: SaClawClient,
+  client: SACODEClient,
   adapter: BaseAdapter & Partial<StreamSender>,
   options?: { updateInterval?: number }
 ): StreamChatController {

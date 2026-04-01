@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/integrations",
+  "name": "@SACODE/integrations",
   "version": "0.1.0",
-  "description": "GitHub, GitLab, and other platform integrations for SaClaw",
+  "description": "GitHub, GitLab, and other platform integrations for SACODE",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -27,7 +27,7 @@
     "typescript": "^5.7.0"
   },
   "keywords": [
-    "saclaw",
+    "SACODE",
     "github",
     "gitlab",
     "git",

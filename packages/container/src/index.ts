@@ -1,9 +1,9 @@
 /**
- * SaClaw Container Module
+ * SACODE Container Module
  *
  * 提供容器管理、沙箱配置和资源监控功能。
  *
- * @module @saclaw/container
+ * @module @SACODE/container
  */
 
 // ============================================================================

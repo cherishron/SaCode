@@ -1,7 +1,7 @@
 /**
- * SaClaw API Client
+ * SACODE API Client
  *
- * 与 SaClaw 服务器通信的客户端
+ * 与 SACODE 服务器通信的客户端
  */
 
 import * as vscode from "vscode";
@@ -24,15 +24,15 @@ export interface Skill {
 }
 
 /**
- * SaClaw 客户端类
+ * SACODE 客户端类
  */
-export class SaClawClient {
+export class SACODEClient {
   private apiUrl: string;
   private token: string | undefined;
   private connected: boolean = false;
 
   constructor() {
-    const config = vscode.workspace.getConfiguration("saclaw");
+    const config = vscode.workspace.getConfiguration("SACODE");
     this.apiUrl = config.get<string>("apiUrl") ?? "http://localhost:3000";
   }
 
@@ -52,7 +52,7 @@ export class SaClawClient {
 
       if (response.ok) {
         this.connected = true;
-        console.log("Connected to SaClaw server");
+        console.log("Connected to SACODE server");
       } else {
         throw new Error(`Server returned status: ${response.status}`);
       }
@@ -67,7 +67,7 @@ export class SaClawClient {
    */
   disconnect(): void {
     this.connected = false;
-    console.log("Disconnected from SaClaw server");
+    console.log("Disconnected from SACODE server");
   }
 
   /**
@@ -85,10 +85,10 @@ export class SaClawClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     if (!this.connected) {
-      throw new Error("Not connected to SaClaw server");
+      throw new Error("Not connected to SACODE server");
     }
 
-    const config = vscode.workspace.getConfiguration("saclaw");
+    const config = vscode.workspace.getConfiguration("SACODE");
     const model = config.get<string>("defaultModel") ?? "claude-3-5-sonnet";
     const maxTokens = config.get<number>("maxTokens") ?? 4096;
 
@@ -184,7 +184,7 @@ export class SaClawClient {
    */
   async executeSkill(skillId: string, params: Record<string, any>): Promise<any> {
     if (!this.connected) {
-      throw new Error("Not connected to SaClaw server");
+      throw new Error("Not connected to SACODE server");
     }
 
     try {

@@ -54,7 +54,7 @@ export type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
 // ============================================================================
 
 /**
- * Capabilities 工具定义（来自 @saclaw/capabilities）
+ * Capabilities 工具定义（来自 @sacode/capabilities）
  */
 export interface CapabilitiesToolDefinition {
   name: string;

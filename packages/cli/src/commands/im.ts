@@ -19,7 +19,7 @@ export async function listIMConnections(): Promise<void> {
   }
 
   console.log();
-  console.log(chalk.gray("Use 'saclaw im connect <platform>' to connect"));
+  console.log(chalk.gray("Use 'SACODE im connect <platform>' to connect"));
 }
 
 export async function connectIM(

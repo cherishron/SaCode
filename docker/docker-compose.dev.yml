@@ -1,0 +1,33 @@
+# SaCode Docker Compose - 开发环境
+# 使用方式：docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+      target: development
+    container_name: sacode-api-dev
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ..:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    command: pnpm --filter @sacode/api dev
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+      target: development
+    container_name: sacode-web-dev
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ../packages/web:/app/packages/web
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: pnpm --filter @sacode/web dev

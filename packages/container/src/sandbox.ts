@@ -1,5 +1,5 @@
 /**
- * SaClaw Container Module - 沙箱配置
+ * SACODE Container Module - 沙箱配置
  *
  * 提供容器安全隔离和资源限制配置
  */

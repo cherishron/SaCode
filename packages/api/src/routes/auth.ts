@@ -10,8 +10,8 @@ import {
   WeWorkOAuthService,
   LocalAuthService,
   type UserWithPassword,
-} from "@saclaw/auth";
-import { getPrismaClient } from "@saclaw/database";
+} from "@SACODE/auth";
+import { getPrismaClient } from "@SACODE/database";
 import { randomBytes } from "crypto";
 
 const router = Router();
@@ -26,7 +26,7 @@ function getJwtConfig() {
     console.warn("WARNING: Using default JWT secret. Set JWT_SECRET in production.");
   }
   return {
-    secret: secret || "saclaw-dev-secret-change-in-production",
+    secret: secret || "SACODE-dev-secret-change-in-production",
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   };
 }

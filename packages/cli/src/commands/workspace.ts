@@ -10,7 +10,7 @@ interface WorkspaceTemplate {
   files: string[];
 }
 
-const defaultWorkspacePath = process.env.SACLAW_WORKSPACE || path.join(process.env.HOME || "", ".saclaw", "workspace");
+const defaultWorkspacePath = process.env.SACODE_WORKSPACE || path.join(process.env.HOME || "", ".SACODE", "workspace");
 
 const templates: WorkspaceTemplate[] = [
   {
@@ -91,7 +91,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
 
   // 创建工作空间目录
   await fs.mkdir(workspacePath, { recursive: true });
-  await fs.mkdir(path.join(workspacePath, ".saclaw"), { recursive: true });
+  await fs.mkdir(path.join(workspacePath, ".SACODE"), { recursive: true });
 
   // 创建模板文件
   for (const file of selectedTemplate.files) {
@@ -101,7 +101,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
   }
 
   // 创建配置文件
-  const configPath = path.join(workspacePath, ".saclaw", "settings.json");
+  const configPath = path.join(workspacePath, ".SACODE", "settings.json");
   const config = {
     template: selectedTemplate.id,
     language: "zh-CN",
@@ -109,7 +109,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
     thinking: false,
   };
   await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log(chalk.gray(`  Created: .saclaw/settings.json`));
+  console.log(chalk.gray(`  Created: .SACODE/settings.json`));
 
   console.log(chalk.green("\n✓ Workspace initialized"));
   console.log(chalk.gray(`  Location: ${workspacePath}`));
@@ -130,12 +130,12 @@ export async function showWorkspace(): Promise<void> {
     await fs.access(workspacePath);
   } catch {
     console.log(chalk.yellow("\n⚠️  Workspace not initialized"));
-    console.log(chalk.gray("  Run 'saclaw workspace init' to create one"));
+    console.log(chalk.gray("  Run 'SACODE workspace init' to create one"));
     return;
   }
 
   // 读取配置
-  const configPath = path.join(workspacePath, ".saclaw", "settings.json");
+  const configPath = path.join(workspacePath, ".SACODE", "settings.json");
   try {
     const configData = await fs.readFile(configPath, "utf-8");
     const config = JSON.parse(configData);
@@ -202,7 +202,7 @@ function getTemplateContent(filename: string): string {
   const templates: Record<string, string> = {
     "SOUL.md": `# SOUL.md - AI 核心人格
 
-你是 SaClaw，一个基于 iFlow SDK 的 AI 助手。
+你是 SACODE，一个基于 iFlow SDK 的 AI 助手。
 
 ## 核心特质
 - 友善、专业、乐于助人

@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/capabilities",
+  "name": "@SACODE/capabilities",
   "version": "0.1.0",
-  "description": "SaClaw 能力模块 - 文件系统、浏览器控制、命令执行",
+  "description": "SACODE 能力模块 - 文件系统、浏览器控制、命令执行",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

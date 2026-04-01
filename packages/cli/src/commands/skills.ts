@@ -5,11 +5,11 @@ import {
   SkillInstaller,
   SkillHubAdapter,
   type RegistryType,
-} from "@saclaw/core";
+} from "@SACODE/core";
 import * as path from "path";
 import * as fs from "fs";
 
-const DEFAULT_SKILLS_DIR = ".saclaw/skills";
+const DEFAULT_SKILLS_DIR = ".SACODE/skills";
 
 function getSkillsDir(): string {
   return path.resolve(process.cwd(), DEFAULT_SKILLS_DIR);
@@ -90,7 +90,7 @@ export async function searchSkills(options: {
       if (skill.tags.length > 0) {
         console.log(chalk.blue(`  标签: ${skill.tags.join(", ")}`));
       }
-      console.log(chalk.gray(`  安装: saclaw skills install ${skill.slug}${registryType === "skillhub" ? " --registry skillhub" : ""}`));
+      console.log(chalk.gray(`  安装: SACODE skills install ${skill.slug}${registryType === "skillhub" ? " --registry skillhub" : ""}`));
       console.log();
     }
 
@@ -207,7 +207,7 @@ export async function listSkills(): Promise<void> {
 
   if (!fs.existsSync(skillsDir)) {
     console.log(chalk.yellow("未找到技能目录"));
-    console.log(chalk.gray("使用 'saclaw skills search <query>' 搜索并安装技能"));
+    console.log(chalk.gray("使用 'SACODE skills search <query>' 搜索并安装技能"));
     return;
   }
 
@@ -216,7 +216,7 @@ export async function listSkills(): Promise<void> {
 
   if (results.length === 0) {
     console.log(chalk.yellow("未安装任何技能"));
-    console.log(chalk.gray("使用 'saclaw skills search <query>' 搜索技能"));
+    console.log(chalk.gray("使用 'SACODE skills search <query>' 搜索技能"));
     return;
   }
 

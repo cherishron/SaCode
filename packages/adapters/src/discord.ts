@@ -125,8 +125,8 @@ export class DiscordAdapter extends BaseAdapter {
               intents: 513, // Guilds + GuildMessages + DirectMessages
               properties: {
                 os: "linux",
-                browser: "saclaw",
-                device: "saclaw",
+                browser: "SACODE",
+                device: "SACODE",
               },
             },
           })

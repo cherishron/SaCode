@@ -138,7 +138,7 @@ model SessionMapping {
   id            String   @id @default(uuid())
   channel       String   // 平台
   chatId        String   @map("chat_id")
-  sessionId     String   @unique @map("session_id") // SaClaw 会话 ID
+  sessionId     String   @unique @map("session_id") // sacode 会话 ID
   createdAt     DateTime @default(now()) @map("created_at")
   lastActiveAt  DateTime @default(now()) @map("last_active_at")
 

@@ -1,5 +1,5 @@
 /**
- * @saclaw/marketplace
+ * @sacode/marketplace
  *
  * Marketplace 发布工具包
  */

@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { getPrismaClient } from "@saclaw/database";
+import { getPrismaClient } from "@SACODE/database";
 
 import authRoutes from "./auth";
 import chatRoutes from "./chat";
@@ -25,7 +25,7 @@ router.get("/health", (_req, res: Response) => {
 // API info
 router.get("/", (_req, res: Response) => {
   res.json({
-    name: "SaClaw API",
+    name: "SACODE API",
     version: "0.1.0",
     endpoints: ["/auth", "/chat", "/im", "/capabilities", "/plugins", "/tasks", "/routing", "/models", "/memory", "/im-chat", "/media", "/settings", "/notifications", "/stats"],
   });

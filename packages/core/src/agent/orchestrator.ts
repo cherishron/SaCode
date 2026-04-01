@@ -5,7 +5,7 @@
  */
 
 import EventEmitter from "eventemitter3";
-import type { SaClawClient } from "../client";
+import type { SACODEClient } from "../client";
 import type { ToolBridge } from "../tools";
 import type { AgentRegistry } from "./registry";
 import type {
@@ -37,7 +37,7 @@ export interface OrchestratorEvents {
 
 interface ExecutionContext {
   plan: ExecutionPlan;
-  client: SaClawClient;
+  client: SACODEClient;
   toolBridge: ToolBridge;
   results: Map<string, string>;
   startTime: number;
@@ -80,12 +80,12 @@ export class Orchestrator extends EventEmitter<OrchestratorEvents> {
    * 执行计划
    *
    * @param plan 执行计划
-   * @param client SaClaw 客户端
+   * @param client SACODE 客户端
    * @param toolBridge 工具桥接层
    */
   async executePlan(
     plan: ExecutionPlan,
-    client: SaClawClient,
+    client: SACODEClient,
     toolBridge: ToolBridge
   ): Promise<OrchestrationResult> {
     const startTime = Date.now();
@@ -193,7 +193,7 @@ export class Orchestrator extends EventEmitter<OrchestratorEvents> {
   private async executeStep(
     step: TaskStep,
     context: ExecutionContext,
-    client: SaClawClient,
+    client: SACODEClient,
     toolBridge: ToolBridge
   ): Promise<void> {
     step.status = "running";

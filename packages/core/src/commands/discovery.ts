@@ -1,7 +1,7 @@
 /**
  * 斜杠命令自动发现
  *
- * 扫描 .saclaw/commands/ 目录，自动发现和注册命令
+ * 扫描 .SACODE/commands/ 目录，自动发现和注册命令
  */
 
 import * as fs from "fs";
@@ -68,7 +68,7 @@ export interface CommandDiscoveryConfig {
  * 默认配置
  */
 export const DEFAULT_COMMAND_DISCOVERY_CONFIG: CommandDiscoveryConfig = {
-  commandsDir: ".saclaw/commands",
+  commandsDir: ".SACODE/commands",
   autoDiscover: true,
   watchChanges: true,
   extensions: [".md", ".markdown"],
@@ -97,7 +97,7 @@ export interface CommandDiscoveryEvents {
  * @example
  * ```typescript
  * const discovery = new CommandDiscovery({
- *   commandsDir: ".saclaw/commands",
+ *   commandsDir: ".SACODE/commands",
  * });
  *
  * // 发现所有命令

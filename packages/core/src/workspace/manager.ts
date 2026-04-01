@@ -86,7 +86,7 @@ export class WorkspaceManager {
   async loadConfig(): Promise<void> {
     const configPath = path.join(
       this.options.rootPath,
-      this.options.configFile || ".saclaw",
+      this.options.configFile || ".SACODE",
       "settings.json"
     );
 
@@ -105,7 +105,7 @@ export class WorkspaceManager {
   async saveConfig(): Promise<void> {
     const configDir = path.join(
       this.options.rootPath,
-      this.options.configFile || ".saclaw"
+      this.options.configFile || ".SACODE"
     );
 
     await fs.mkdir(configDir, { recursive: true });
@@ -200,7 +200,7 @@ export class WorkspaceManager {
     // 创建目录结构
     await fs.mkdir(this.options.rootPath, { recursive: true });
     await fs.mkdir(
-      path.join(this.options.rootPath, this.options.configFile || ".saclaw"),
+      path.join(this.options.rootPath, this.options.configFile || ".SACODE"),
       { recursive: true }
     );
 
@@ -264,7 +264,7 @@ export class WorkspaceManager {
       return null;
     }
 
-    // TODO: 集成 @saclaw/container
+    // TODO: 集成 @SACODE/container
     // 这里需要导入ContainerManager并执行命令
     // 使用execOptions来配置容器执行参数
     // 暂时返回null，后续完成container集成后再实现

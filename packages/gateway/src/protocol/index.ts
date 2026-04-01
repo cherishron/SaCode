@@ -1,5 +1,5 @@
 /**
- * SaClaw Gateway Protocol
+ * SACODE Gateway Protocol
  * 
  * 基于 JSON-RPC 2.0 的 WebSocket 协议
  * 参考 OpenClaw Gateway 协议设计

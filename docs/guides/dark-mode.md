@@ -1,10 +1,10 @@
 # 暗黑模式指南
 
-> SaClaw Web 暗黑模式实现指南
+> SACODE Web 暗黑模式实现指南
 
 ## 概述
 
-SaClaw 支持三种主题模式：
+SACODE 支持三种主题模式：
 - **浅色模式** (light) - 默认浅色主题
 - **深色模式** (dark) - 深色主题
 - **跟随系统** (auto) - 根据系统设置自动切换
@@ -22,7 +22,7 @@ SaClaw 支持三种主题模式：
 │  ├── toggleTheme() - 切换主题                                │
 │  └── init() - 初始化主题                                     │
 ├─────────────────────────────────────────────────────────────┤
-│  持久化: localStorage ('saclaw-theme')                       │
+│  持久化: localStorage ('SACODE-theme')                       │
 ├─────────────────────────────────────────────────────────────┤
 │  系统监听: matchMedia('(prefers-color-scheme: dark)')        │
 ├─────────────────────────────────────────────────────────────┤
@@ -87,7 +87,7 @@ export const useThemeStore = defineStore("theme", () => {
   // 设置主题
   function setTheme(newTheme: Theme) {
     theme.value = newTheme;
-    localStorage.setItem("saclaw-theme", newTheme);
+    localStorage.setItem("SACODE-theme", newTheme);
     applyTheme(newTheme);
   }
 

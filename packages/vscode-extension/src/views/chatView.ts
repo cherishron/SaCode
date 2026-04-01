@@ -5,7 +5,7 @@
  */
 
 import * as vscode from "vscode";
-import { SaClawClient, ChatMessage } from "../client";
+import { SACODEClient, ChatMessage } from "../client";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -13,7 +13,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
-    private readonly _client: SaClawClient
+    private readonly _client: SACODEClient
   ) {}
 
   /**
@@ -125,7 +125,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-  <title>SaClaw Chat</title>
+  <title>SACODE Chat</title>
   <style>
     body {
       margin: 0;
@@ -266,7 +266,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <body>
   <div class="container">
     <div class="toolbar">
-      <span style="font-weight: bold;">SaClaw Chat</span>
+      <span style="font-weight: bold;">SACODE Chat</span>
       <button id="clearBtn">Clear</button>
     </div>
     <div class="messages" id="messages"></div>

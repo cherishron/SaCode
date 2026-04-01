@@ -154,9 +154,9 @@ export const defaultToolAdapter: ToolAdapter = {
   },
 
   getJsonSchema(tool: CapabilitiesToolDefinition): Record<string, unknown> {
-    // 检查是否是 Zod Schema
-    if (tool.inputSchema && typeof tool.inputSchema._def === "object") {
-      return zodSchemaToJson(tool.inputSchema);
+    // 检查是否是 Zod Schema（使用类型守卫）
+    if (tool.inputSchema && "_def" in tool.inputSchema) {
+      return zodSchemaToJson(tool.inputSchema as z.ZodType);
     }
     // 假设已经是 JSON Schema 格式
     return tool.inputSchema as unknown as Record<string, unknown>;

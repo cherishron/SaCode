@@ -1,0 +1,64 @@
+# SaCode Docker Ignore
+# 用于 Docker 构建时排除文件
+
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+*.tsbuildinfo
+
+# Development
+.git
+.gitignore
+.github
+.husky
+hooks
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs
+test-results
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test
+coverage
+coverage-e2e
+.nyc_output
+__tests__
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Documentation
+docs
+*.md
+!../README.md
+
+# Misc
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+
+# Project specific
+vue-login-page.jpg
+dev.log
+dev-error.log
+install.sh
+
+# Config (already in root)
+config

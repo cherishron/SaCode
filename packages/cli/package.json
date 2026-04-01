@@ -1,10 +1,10 @@
 {
-  "name": "@saclaw/cli",
+  "name": "@SACODE/cli",
   "version": "0.1.0",
-  "description": "SaClaw CLI 工具",
+  "description": "SACODE CLI 工具",
   "type": "module",
   "bin": {
-    "saclaw": "./dist/cli.js"
+    "SACODE": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@saclaw/core": "workspace:*",
+    "@SACODE/core": "workspace:*",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "enquirer": "^2.4.1",

@@ -190,6 +190,20 @@ export type StreamChunkType =
   | "done";           // 完成
 
 /**
+ * Token 使用量（在流式响应中）
+ */
+export interface StreamUsage {
+  /** 输入 Token 数量 */
+  inputTokens: number;
+  /** 输出 Token 数量 */
+  outputTokens: number;
+  /** 缓存读取的 Token（如果有 Prompt Caching） */
+  cachedInputTokens?: number | undefined;
+  /** 缓存写入的 Token（如果有 Prompt Caching） */
+  cacheWriteTokens?: number | undefined;
+}
+
+/**
  * 流式响应块
  */
 export interface StreamChunk {
@@ -212,6 +226,8 @@ export interface StreamChunk {
   } | undefined;
   /** 停止原因 */
   stopReason?: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | "error" | undefined;
+  /** Token 使用量（在 done 类型中返回） */
+  usage?: StreamUsage | undefined;
   /** 原始响应（调试用） */
   raw?: unknown;
 }
@@ -386,7 +402,7 @@ export const defaultMCPToolConverter: MCPToolConverter = {
 // ============================================================================
 
 /**
- * 将 Provider 流式响应转换为 SaClaw Message
+ * 将 Provider 流式响应转换为 SACODE Message
  */
 export function streamChunkToMessage(
   chunk: StreamChunk,

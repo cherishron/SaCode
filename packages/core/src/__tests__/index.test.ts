@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { SaClawClient, SessionManager, SessionMapper, MessageRouter } from "../index";
+import { SACODEClient, SessionManager, SessionMapper, MessageRouter } from "../index";
 
-describe("SaClawClient", () => {
+describe("SACODEClient", () => {
   it("should create client with config", () => {
-    const client = new SaClawClient({
+    const client = new SACODEClient({
       acpUrl: "ws://localhost:8090/acp",
       autoStart: false,
       timeout: 60000,
@@ -13,7 +13,7 @@ describe("SaClawClient", () => {
   });
 
   it("should have connect and disconnect methods", () => {
-    const client = new SaClawClient({
+    const client = new SACODEClient({
       acpUrl: "ws://localhost:8090/acp",
       autoStart: false,
       timeout: 60000,

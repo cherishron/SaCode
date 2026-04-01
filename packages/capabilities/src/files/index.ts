@@ -8,6 +8,7 @@ import type {
   SearchFilesInput,
   FilesCapabilityConfig,
 } from "../types";
+import { createEditFileTool, createDeleteFileTool } from "./edit";
 
 export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
@@ -79,6 +80,16 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
         return { success: true, path };
       },
     });
+  }
+
+  // edit_file
+  if (!config.readOnly) {
+    tools.push(createEditFileTool(config));
+  }
+
+  // delete_file
+  if (!config.readOnly) {
+    tools.push(createDeleteFileTool(config));
   }
 
   // list_directory

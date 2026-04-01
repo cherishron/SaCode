@@ -1,9 +1,9 @@
-import { createAuthMiddleware, extractBearerToken, LocalAuthService } from "@saclaw/auth";
-import { getPrismaClient } from "@saclaw/database";
+import { createAuthMiddleware, extractBearerToken, LocalAuthService } from "@SACODE/auth";
+import { getPrismaClient } from "@SACODE/database";
 
 // 获取 JWT 配置
 function getJwtConfig() {
-  const secret = process.env.JWT_SECRET || "saclaw-dev-secret-change-in-production";
+  const secret = process.env.JWT_SECRET || "SACODE-dev-secret-change-in-production";
   return { secret, expiresIn: "7d" };
 }
 

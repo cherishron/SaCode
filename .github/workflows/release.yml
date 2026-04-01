@@ -77,8 +77,8 @@ jobs:
           target: api
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/saclaw-api:${{ steps.version.outputs.VERSION }}
-            ${{ secrets.DOCKER_USERNAME }}/saclaw-api:latest
+            ${{ secrets.DOCKER_USERNAME }}/SACODE-api:${{ steps.version.outputs.VERSION }}
+            ${{ secrets.DOCKER_USERNAME }}/SACODE-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -89,8 +89,8 @@ jobs:
           target: web
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/saclaw-web:${{ steps.version.outputs.VERSION }}
-            ${{ secrets.DOCKER_USERNAME }}/saclaw-web:latest
+            ${{ secrets.DOCKER_USERNAME }}/SACODE-web:${{ steps.version.outputs.VERSION }}
+            ${{ secrets.DOCKER_USERNAME }}/SACODE-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

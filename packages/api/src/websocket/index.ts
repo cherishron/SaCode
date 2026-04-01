@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { EventEmitter } from "events";
-import { SaClawClient } from "@saclaw/core";
+import { SACODEClient } from "@SACODE/core";
 import { connectionEvents } from "../routes/im.js";
 
 interface WebSocketClient extends WebSocket {
@@ -29,10 +29,10 @@ interface SessionSubscription {
 // 全局事件发射器，用于外部模块推送消息
 export const wsEvents = new EventEmitter();
 
-export class SaClawWebSocketServer {
+export class SACODEWebSocketServer {
   private wss: WebSocketServer;
   private clients: Map<string, WebSocketClient[]> = new Map();
-  private saclawClients: Map<string, SaClawClient> = new Map();
+  private SACODEClients: Map<string, SACODEClient> = new Map();
   private imSubscribers: Set<WebSocketClient> = new Set();
   private sessionSubscribers: Map<string, Set<WebSocketClient>> = new Map(); // sessionId -> clients
 
@@ -327,9 +327,9 @@ export class SaClawWebSocketServer {
     const mode = payload.mode || "chat";
 
     try {
-      // 获取或创建 SaClaw 客户端（根据模式使用不同的 key）
+      // 获取或创建 SACODE 客户端（根据模式使用不同的 key）
       const clientKey = `${ws.userId}-${mode}`;
-      let client = this.saclawClients.get(clientKey);
+      let client = this.SACODEClients.get(clientKey);
       if (!client) {
         // 构建配置对象（避免 exactOptionalPropertyTypes 问题）
         const clientConfig: {
@@ -376,9 +376,9 @@ export class SaClawWebSocketServer {
           clientConfig.debug = true;
         }
 
-        client = new SaClawClient(clientConfig);
+        client = new SACODEClient(clientConfig);
         await client.connect();
-        this.saclawClients.set(clientKey, client);
+        this.SACODEClients.set(clientKey, client);
       }
 
       // 发送开始信号
@@ -449,12 +449,12 @@ export class SaClawWebSocketServer {
       }
     }
 
-    // 清理 SaClaw 客户端
+    // 清理 SACODE 客户端
     if (ws.userId) {
-      const client = this.saclawClients.get(ws.userId);
+      const client = this.SACODEClients.get(ws.userId);
       if (client) {
         client.disconnect();
-        this.saclawClients.delete(ws.userId);
+        this.SACODEClients.delete(ws.userId);
       }
     }
   }
@@ -506,8 +506,8 @@ export class SaClawWebSocketServer {
   }
 
   close(): void {
-    // 关闭所有 SaClaw 客户端
-    for (const client of this.saclawClients.values()) {
+    // 关闭所有 SACODE 客户端
+    for (const client of this.SACODEClients.values()) {
       client.disconnect();
     }
 

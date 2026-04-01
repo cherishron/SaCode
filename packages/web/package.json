@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/web",
+  "name": "@SACODE/web",
   "version": "0.1.0",
-  "description": "SaClaw Web UI - Vue 3 + TinyVue",
+  "description": "SACODE Web UI - Vue 3 + TinyVue",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,9 +16,9 @@
   "dependencies": {
     "@opentiny/vue": "^3.20.0",
     "@opentiny/vue-icon": "^3.20.0",
-    "@saclaw/api": "workspace:*",
-    "@saclaw/auth": "workspace:*",
-    "@saclaw/core": "workspace:*",
+    "@SACODE/api": "workspace:*",
+    "@SACODE/auth": "workspace:*",
+    "@SACODE/core": "workspace:*",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",

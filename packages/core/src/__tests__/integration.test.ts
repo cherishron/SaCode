@@ -1,11 +1,11 @@
 /**
  * 集成测试 - 核心模块
- * 测试 SaClawClient、SessionManager、MessageRouter 等核心功能的集成
+ * 测试 SACODEClient、SessionManager、MessageRouter 等核心功能的集成
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  SaClawClient,
+  SACODEClient,
   SessionManager,
   SessionMapper,
   MessageRouter,
@@ -234,9 +234,9 @@ describe("Core Integration", () => {
   });
 });
 
-describe("SaClawClient", () => {
+describe("SACODEClient", () => {
   it("should create client with valid config", () => {
-    const client = new SaClawClient({
+    const client = new SACODEClient({
       acpUrl: "ws://localhost:8090/acp",
       autoStart: false,
       timeout: 30000,
@@ -248,7 +248,7 @@ describe("SaClawClient", () => {
   });
 
   it("should use default config values", () => {
-    const client = new SaClawClient({
+    const client = new SACODEClient({
       acpUrl: "ws://localhost:8090/acp",
     });
 

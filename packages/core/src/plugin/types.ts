@@ -1,12 +1,12 @@
 /**
- * SaClaw Plugin System - Type Definitions
+ * SACODE Plugin System - Type Definitions
  *
  * 插件系统类型定义，支持完整的生命周期管理和上下文注入
  */
 
 import type { PrismaClient } from "@prisma/client";
 import type { TaskScheduler } from "../scheduler";
-import type { SaClawClient } from "../client";
+import type { SACODEClient } from "../client";
 
 // ============================================================================
 // Plugin Manifest - 插件清单
@@ -67,8 +67,8 @@ export interface PluginManifest {
   icon?: string;
   /** 插件标签 */
   tags?: string[];
-  /** 最小 SaClaw 版本 */
-  minSaClawVersion?: string;
+  /** 最小 SACODE 版本 */
+  minSACODEVersion?: string;
   /** 是否为系统插件 */
   system?: boolean;
 }
@@ -273,8 +273,8 @@ export interface PluginContext {
   readonly scheduler: TaskScheduler;
   /** 数据库客户端 */
   readonly database: PrismaClient;
-  /** SaClaw 客户端 */
-  readonly client: SaClawClient;
+  /** SACODE 客户端 */
+  readonly client: SACODEClient;
   /** 插件专用存储 */
   readonly storage: PluginStorage;
   /** 注册工具 */

@@ -1,0 +1,53 @@
+{
+  "name": "xiaoyi",
+  "version": "1.0.0",
+  "description": "华为小艺 AI 助手集成插件 - 提供与华为小艺平台的消息收发能力",
+  "main": "index.ts",
+  "author": "STAND-ALONE",
+  "license": "MIT",
+  "homepage": "https://github.com/STAND-ALONE/SACODE",
+  "keywords": ["xiaoyi", "huawei", "ai", "assistant"],
+  "adapterDependencies": ["xiaoyi"],
+  "config": {
+    "ak": {
+      "type": "string",
+      "description": "华为云 Access Key",
+      "required": true
+    },
+    "sk": {
+      "type": "string",
+      "description": "华为云 Secret Key",
+      "required": true
+    },
+    "agentId": {
+      "type": "string",
+      "description": "小艺 Agent ID",
+      "required": true
+    },
+    "region": {
+      "type": "string",
+      "description": "华为云区域",
+      "default": "cn-north-4",
+      "enum": ["cn-north-4", "cn-east-3", "cn-south-1"]
+    },
+    "timeout": {
+      "type": "number",
+      "description": "请求超时时间（毫秒）",
+      "default": 30000,
+      "min": 5000,
+      "max": 120000
+    },
+    "reconnectInterval": {
+      "type": "number",
+      "description": "WebSocket 重连间隔（毫秒）",
+      "default": 5000
+    }
+  },
+  "defaultConfig": {
+    "region": "cn-north-4",
+    "timeout": 30000,
+    "reconnectInterval": 5000
+  },
+  "tags": ["ai", "assistant", "huawei"],
+  "minSACODEVersion": "0.1.0"
+}

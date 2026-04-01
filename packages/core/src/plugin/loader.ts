@@ -1,5 +1,5 @@
 /**
- * SaClaw Plugin System - Plugin Loader
+ * SACODE Plugin System - Plugin Loader
  *
  * 插件加载器：负责加载、验证和执行插件
  */

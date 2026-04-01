@@ -28,7 +28,7 @@ export async function listTools(): Promise<void> {
   }
 
   console.log();
-  console.log(chalk.gray("Use 'saclaw tool run <name> -p key=value' to run a tool"));
+  console.log(chalk.gray("Use 'SACODE tool run <name> -p key=value' to run a tool"));
 }
 
 export async function runTool(

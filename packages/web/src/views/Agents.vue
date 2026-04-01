@@ -148,7 +148,7 @@
           <t-input v-model="createForm.name" placeholder="可选显示名称" />
         </t-form-item>
         <t-form-item label="镜像">
-          <t-input v-model="createForm.image" placeholder="默认 saclaw/agent:latest" />
+          <t-input v-model="createForm.image" placeholder="默认 sacode/agent:latest" />
         </t-form-item>
         <t-form-item label="沙箱级别">
           <t-select v-model="createForm.sandboxLevel">
@@ -360,7 +360,7 @@ const createFormRef = ref();
 const createForm = reactive({
   agentId: '',
   name: '',
-  image: 'saclaw/agent:latest',
+  image: 'sacode/agent:latest',
   sandboxLevel: 'moderate',
   maxExecutionTime: 300000,
   maxIterations: 100,

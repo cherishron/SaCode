@@ -6,7 +6,7 @@
 
 ## Database Type
 
-SaClaw supports multiple database backends:
+SACODE supports multiple database backends:
 - **SQLite** (default, development)
 - **MySQL** (production)
 - **PostgreSQL** (production)

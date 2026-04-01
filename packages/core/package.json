@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/core",
+  "name": "@SACODE/core",
   "version": "0.2.0",
-  "description": "SaClaw 核心引擎 - Provider 抽象层与会话管理",
+  "description": "SACODE 核心引擎 - Provider 抽象层与会话管理",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,8 +21,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@saclaw/container": "workspace:*",
-    "@saclaw/types": "workspace:*",
+    "@SACODE/container": "workspace:*",
+    "@SACODE/types": "workspace:*",
     "eventemitter3": "^5.0.1",
     "execa": "^9.5.2",
     "openai": "^4.85.0",

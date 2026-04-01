@@ -1,6 +1,6 @@
 # User Manual
 
-> SaClaw user guide and documentation
+> SACODE user guide and documentation
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### First Login
 
-1. Open SaClaw in your browser (default: http://localhost:5173)
+1. Open SACODE in your browser (default: http://localhost:5173)
 2. Click "Register" to create an account
 3. Enter username, email, and password
 4. Click "Register" button
@@ -131,7 +131,7 @@ The dashboard provides:
 
 ## Keyboard Shortcuts
 
-SaClaw 提供全局快捷键支持，提高操作效率。
+SACODE 提供全局快捷键支持，提高操作效率。
 
 ### 显示快捷键帮助
 
@@ -248,7 +248,7 @@ SaClaw 提供全局快捷键支持，提高操作效率。
 
 ### 浏览器通知
 
-SaClaw 支持浏览器原生通知：
+SACODE 支持浏览器原生通知：
 
 1. 首次访问时会请求通知权限
 2. 允许后，新通知会显示为浏览器通知
@@ -294,23 +294,23 @@ SaClaw 支持浏览器原生通知：
 ### Installation
 
 ```bash
-npm install -g @saclaw/cli
+npm install -g @SACODE/cli
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `saclaw chat` | Interactive chat |
-| `saclaw chat -m "message"` | Single message |
-| `saclaw config list` | Show configuration |
-| `saclaw im list` | List IM connections |
-| `saclaw start` | Start server |
+| `SACODE chat` | Interactive chat |
+| `SACODE chat -m "message"` | Single message |
+| `SACODE config list` | Show configuration |
+| `SACODE im list` | List IM connections |
+| `SACODE start` | Start server |
 
 ### Interactive Chat
 
 ```bash
-$ saclaw chat
+$ SACODE chat
 
 > Hello!
 AI: Hello! How can I help you today?
@@ -417,14 +417,14 @@ A: For SQLite, copy the database file. For MySQL/PostgreSQL, use standard backup
 
 **Q: Can I self-host?**
 
-A: Yes, SaClaw is designed for self-hosting. See installation guide.
+A: Yes, SACODE is designed for self-hosting. See installation guide.
 
 ---
 
 ## Support
 
-- **Documentation**: https://github.com/STAND-ALONE/SaClaw/docs
-- **Issues**: https://github.com/STAND-ALONE/SaClaw/issues
+- **Documentation**: https://github.com/STAND-ALONE/SACODE/docs
+- **Issues**: https://github.com/STAND-ALONE/SACODE/issues
 - **Email**: 1635936133@qq.com
 
 ---

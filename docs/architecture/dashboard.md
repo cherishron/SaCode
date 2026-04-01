@@ -20,7 +20,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Top Navigation                            │
-│  [Logo]  SaClaw              [Search...]      [User Avatar ▼]   │
+│  [Logo]  SACODE              [Search...]      [User Avatar ▼]   │
 ├────────────────┬────────────────────────────────────────────────┤
 │                │                                                │
 │   Navigation   │                  Content Area                  │
@@ -57,8 +57,8 @@
     <!-- Top Navigation -->
     <header class="top-nav">
       <div class="nav-left">
-        <img src="@/assets/logo.svg" alt="SaClaw" class="logo" />
-        <span class="brand-name">SaClaw</span>
+        <img src="@/assets/logo.svg" alt="SACODE" class="logo" />
+        <span class="brand-name">SACODE</span>
       </div>
       <div class="nav-center">
         <input

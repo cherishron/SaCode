@@ -1,5 +1,5 @@
 /**
- * SaClaw 客户端
+ * SACODE 客户端
  *
  * 支持两种模式：
  * 1. Provider 模式（推荐）：直接调用 AI API（OpenAI、Anthropic 等）
@@ -14,7 +14,7 @@
 
 import EventEmitter from "eventemitter3";
 import type { Message, IFlowConfig, ProviderConfig } from "../types";
-import { SaClawError, ConnectionError } from "../types";
+import { SACODEError, ConnectionError } from "../types";
 import {
   createProvider,
   createProviderFromEnv,
@@ -47,7 +47,7 @@ import {
 // 类型定义
 // ============================================================================
 
-export interface SaClawClientOptions extends Partial<IFlowConfig> {
+export interface SACODEClientOptions extends Partial<IFlowConfig> {
   /** Provider 配置（新） */
   provider?: {
     type: ProviderConfig["type"];
@@ -68,7 +68,7 @@ export interface SaClawClientOptions extends Partial<IFlowConfig> {
   debug?: boolean;
 }
 
-export interface SaClawClientEvents {
+export interface SACODEClientEvents {
   message: (message: Message) => void;
   error: (error: Error) => void;
   connect: () => void;
@@ -82,22 +82,22 @@ export interface SaClawClientEvents {
 }
 
 // ============================================================================
-// SaClaw 客户端
+// SACODE 客户端
 // ============================================================================
 
 /**
- * SaClaw 客户端
+ * SACODE 客户端
  *
  * 使用 Provider 抽象层与 AI 服务通信，支持流式输出和工具调用
  * 实现完整的 Agentic 工具执行循环
  */
-export class SaClawClient extends EventEmitter<SaClawClientEvents> {
+export class SACODEClient extends EventEmitter<SACODEClientEvents> {
   private provider: AIProvider | null = null;
   private toolBridge: ToolBridge | null = null;
   private agentRegistry: AgentRegistry | null = null;
   private planner: Planner | null = null;
   private orchestrator: Orchestrator | null = null;
-  private config: SaClawClientOptions;
+  private config: SACODEClientOptions;
   private connected = false;
   private messageHistory: ChatMessage[] = [];
   private systemPrompt: string | undefined;
@@ -105,7 +105,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
   // 默认配置
   private static readonly DEFAULT_MAX_TOOL_LOOP = 10;
 
-  constructor(options: SaClawClientOptions) {
+  constructor(options: SACODEClientOptions) {
     super();
     this.config = options;
   }
@@ -167,9 +167,9 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
         );
 
         if (this.config.debug) {
-          console.log(`[SaClawClient] Agent infrastructure initialized`);
+          console.log(`[SACODEClient] Agent infrastructure initialized`);
           const stats = this.agentRegistry.getStats();
-          console.log(`[SaClawClient] Registered agents: ${stats.total}`);
+          console.log(`[SACODEClient] Registered agents: ${stats.total}`);
         }
       }
 
@@ -177,8 +177,8 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
       this.emit("connect");
 
       if (this.config.debug) {
-        console.log(`[SaClawClient] Connected to ${this.provider.type} with model ${this.provider.model}`);
-        console.log(`[SaClawClient] Tools available: ${this.toolBridge.getToolCount()}`);
+        console.log(`[SACODEClient] Connected to ${this.provider.type} with model ${this.provider.model}`);
+        console.log(`[SACODEClient] Tools available: ${this.toolBridge.getToolCount()}`);
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -224,14 +224,14 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
       });
 
       // 工具执行循环
-      const maxIterations = this.config.maxToolLoopIterations ?? SaClawClient.DEFAULT_MAX_TOOL_LOOP;
+      const maxIterations = this.config.maxToolLoopIterations ?? SACODEClient.DEFAULT_MAX_TOOL_LOOP;
       let iteration = 0;
 
       while (iteration < maxIterations) {
         iteration++;
 
         if (this.config.debug) {
-          console.log(`[SaClawClient] Starting iteration ${iteration}/${maxIterations}`);
+          console.log(`[SACODEClient] Starting iteration ${iteration}/${maxIterations}`);
         }
 
         // 获取当前工具定义
@@ -286,7 +286,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
         // 如果有工具调用，执行并继续循环
         if (hasToolCalls && toolCalls.length > 0) {
           if (this.config.debug) {
-            console.log(`[SaClawClient] Executing ${toolCalls.length} tool calls`);
+            console.log(`[SACODEClient] Executing ${toolCalls.length} tool calls`);
           }
 
           // 执行所有工具调用
@@ -314,13 +314,13 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
 
       if (iteration >= maxIterations) {
         if (this.config.debug) {
-          console.warn(`[SaClawClient] Reached max tool loop iterations (${maxIterations})`);
+          console.warn(`[SACODEClient] Reached max tool loop iterations (${maxIterations})`);
         }
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.emit("error", err);
-      throw new SaClawError("CHAT_ERROR", `Chat error: ${err.message}`, err);
+      throw new SACODEError("CHAT_ERROR", `Chat error: ${err.message}`, err);
     }
   }
 
@@ -460,7 +460,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
     this.emit("complexity_assessed", assessment);
 
     if (this.config.debug) {
-      console.log(`[SaClawClient] Complexity: ${assessment.level} (score: ${assessment.score})`);
+      console.log(`[SACODEClient] Complexity: ${assessment.level} (score: ${assessment.score})`);
     }
 
     // 简单任务直接执行
@@ -525,7 +525,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
    */
   async generatePlan(goal: string): Promise<ExecutionPlan> {
     if (!this.planner) {
-      throw new SaClawError("AGENT_DISABLED", "Agentic planning is not enabled");
+      throw new SACODEError("AGENT_DISABLED", "Agentic planning is not enabled");
     }
     return this.planner.generatePlan(goal);
   }
@@ -535,7 +535,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
    */
   async executePlan(plan: ExecutionPlan): Promise<OrchestrationResult> {
     if (!this.orchestrator || !this.toolBridge) {
-      throw new SaClawError("AGENT_DISABLED", "Agentic orchestration is not enabled");
+      throw new SACODEError("AGENT_DISABLED", "Agentic orchestration is not enabled");
     }
     return this.orchestrator.executePlan(plan, this, this.toolBridge);
   }
@@ -596,7 +596,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
         this.provider.registerTool(providerTool, tool.handler);
 
         if (this.config.debug) {
-          console.log(`[SaClawClient] Registered tool to provider: ${tool.name}`);
+          console.log(`[SACODEClient] Registered tool to provider: ${tool.name}`);
         }
       }
     }
@@ -626,7 +626,7 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
       this.emit("tool_call_end", result);
 
       if (this.config.debug) {
-        console.log(`[SaClawClient] Tool ${call.function.name} result:`, result.success ? "success" : "failed");
+        console.log(`[SACODEClient] Tool ${call.function.name} result:`, result.success ? "success" : "failed");
       }
     }
 
@@ -639,18 +639,18 @@ export class SaClawClient extends EventEmitter<SaClawClientEvents> {
 // ============================================================================
 
 /**
- * 创建 SaClaw 客户端
+ * 创建 SACODE 客户端
  */
-export function createSaClawClient(options: SaClawClientOptions): SaClawClient {
-  return new SaClawClient(options);
+export function createSACODEClient(options: SACODEClientOptions): SACODEClient {
+  return new SACODEClient(options);
 }
 
 /**
- * 从环境变量创建 SaClaw 客户端
+ * 从环境变量创建 SACODE 客户端
  *
  * 注意：Provider 将在 connect() 时从环境变量创建
  */
-export function createSaClawClientFromEnv(): SaClawClient {
+export function createSACODEClientFromEnv(): SACODEClient {
   // 不传入 provider 配置，让 connect() 从环境变量创建
-  return new SaClawClient({});
+  return new SACODEClient({});
 }

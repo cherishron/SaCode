@@ -3,7 +3,7 @@ import { onScopeDispose, ref, watch } from "vue";
 
 export type Theme = "light" | "dark" | "auto";
 
-const THEME_KEY = "saclaw-theme";
+const THEME_KEY = "SACODE-theme";
 
 function getSystemTheme(): "light" | "dark" {
   if (typeof window !== "undefined" && window.matchMedia) {

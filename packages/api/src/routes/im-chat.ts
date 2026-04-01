@@ -6,19 +6,19 @@
 
 import { Router, type Request, type Response } from "express";
 import {
-  SaClawClient,
+  SACODEClient,
   StreamingManager,
   createStreamChatController,
   type StreamChatOptions,
-} from "@saclaw/core";
-import { createAdapter, type BaseAdapter, type StreamSender } from "@saclaw/adapters";
-import { getPrismaClient } from "@saclaw/database";
+} from "@SACODE/core";
+import { createAdapter, type BaseAdapter, type StreamSender } from "@SACODE/adapters";
+import { getPrismaClient } from "@SACODE/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();
 
 // 存储活跃的客户端和适配器
-const activeClients = new Map<string, SaClawClient>();
+const activeClients = new Map<string, SACODEClient>();
 const activeAdapters = new Map<string, BaseAdapter>();
 const streamingManager = new StreamingManager();
 
@@ -46,7 +46,7 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
     // 获取或创建客户端
     let client = activeClients.get(userId);
     if (!client) {
-      client = new SaClawClient({
+      client = new SACODEClient({
         acpUrl: process.env.IFLOW_ACP_URL || "ws://localhost:8090/acp",
         autoStart: process.env.IFLOW_AUTO_START !== "false",
         timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
@@ -158,7 +158,7 @@ router.post("/stream", authMiddleware, async (req: Request, res: Response) => {
     // 获取或创建客户端
     let client = activeClients.get(userId);
     if (!client) {
-      client = new SaClawClient({
+      client = new SACODEClient({
         acpUrl: process.env.IFLOW_ACP_URL || "ws://localhost:8090/acp",
         autoStart: process.env.IFLOW_AUTO_START !== "false",
         timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),

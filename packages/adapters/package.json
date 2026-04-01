@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/adapters",
+  "name": "@SACODE/adapters",
   "version": "0.1.0",
-  "description": "SaClaw IM 适配器 - 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email",
+  "description": "SACODE IM 适配器 - 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,8 +20,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@saclaw/core": "workspace:*",
-    "@saclaw/types": "workspace:*",
+    "@SACODE/core": "workspace:*",
+    "@SACODE/types": "workspace:*",
     "discord.js": "^14.16.3",
     "pino": "^9.5.0",
     "telegraf": "^4.16.3",

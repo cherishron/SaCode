@@ -1,5 +1,5 @@
 /**
- * SaClaw Plugin System - Plugin Manager
+ * SACODE Plugin System - Plugin Manager
  *
  * 插件管理器：完整的生命周期管理和插件协调
  */
@@ -39,7 +39,7 @@ import * as path from "path";
 import { EventEmitter } from "events";
 import type { PrismaClient } from "@prisma/client";
 import type { TaskScheduler } from "../scheduler";
-import type { SaClawClient } from "../client";
+import type { SACODEClient } from "../client";
 import { PluginLoader, createPluginLoader } from "./loader";
 import type {
   Plugin,
@@ -137,7 +137,7 @@ class PluginContextImpl implements PluginContext {
   readonly adapters: AdapterManager;
   readonly scheduler: TaskScheduler;
   readonly database: PrismaClient;
-  readonly client: SaClawClient;
+  readonly client: SACODEClient;
 
   private tools: Map<string, PluginTool> = new Map();
   private commands: Map<string, PluginCommand> = new Map();
@@ -148,7 +148,7 @@ class PluginContextImpl implements PluginContext {
     adapters: AdapterManager,
     scheduler: TaskScheduler,
     database: PrismaClient,
-    client: SaClawClient,
+    client: SACODEClient,
     pluginConfig: Record<string, unknown>
   ) {
     this.pluginName = pluginName;
@@ -226,7 +226,7 @@ export class PluginManager extends EventEmitter {
   private adapters: AdapterManager;
   private scheduler: TaskScheduler;
   private database: PrismaClient;
-  private client: SaClawClient;
+  private client: SACODEClient;
 
   constructor(
     config: PluginManagerConfig,
@@ -234,7 +234,7 @@ export class PluginManager extends EventEmitter {
       adapters: AdapterManager;
       scheduler: TaskScheduler;
       database: PrismaClient;
-      client: SaClawClient;
+      client: SACODEClient;
     }
   ) {
     super();
@@ -714,7 +714,7 @@ export function createPluginManager(
     adapters: AdapterManager;
     scheduler: TaskScheduler;
     database: PrismaClient;
-    client: SaClawClient;
+    client: SACODEClient;
   }
 ): PluginManager {
   return new PluginManager(config, dependencies);

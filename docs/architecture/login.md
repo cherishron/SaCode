@@ -21,7 +21,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                  │
 │                     ┌─────────────────────┐                      │
-│                     │       SaClaw        │                      │
+│                     │       SACODE        │                      │
 │                     │      Logo + Title   │                      │
 │                     └─────────────────────┘                      │
 │                                                                  │
@@ -59,8 +59,8 @@
     <div class="login-card">
       <!-- Logo Section -->
       <div class="logo-section">
-        <img src="@/assets/logo.svg" alt="SaClaw" class="logo" />
-        <h1>SaClaw</h1>
+        <img src="@/assets/logo.svg" alt="SACODE" class="logo" />
+        <h1>SACODE</h1>
         <p class="subtitle">Multi-platform AI Assistant</p>
       </div>
 

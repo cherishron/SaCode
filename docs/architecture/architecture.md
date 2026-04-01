@@ -1,6 +1,6 @@
 # System Architecture Overview
 
-> SaClaw - Multi-platform AI Assistant Framework
+> SACODE - Multi-platform AI Assistant Framework
 
 ---
 
@@ -306,21 +306,21 @@ IM Platform          Adapter              Core               AI Provider
 
 ```yaml
 services:
-  saclaw-api:
-    image: saclaw-api:latest
+  SACODE-api:
+    image: SACODE-api:latest
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=file:/data/saclaw.db
+      - DATABASE_URL=file:/data/SACODE.db
     volumes:
       - ./data:/data
 
-  saclaw-web:
-    image: saclaw-web:latest
+  SACODE-web:
+    image: SACODE-web:latest
     ports:
       - "80:80"
     depends_on:
-      - saclaw-api
+      - SACODE-api
 
   redis:
     image: redis:alpine

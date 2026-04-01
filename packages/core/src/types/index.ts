@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================================================
-// 从 @saclaw/types 重新导出共享类型
+// 从 @SACODE/types 重新导出共享类型
 // ============================================================================
 
 import type {
@@ -19,7 +19,7 @@ import type {
   IMMessage as _IMMessage,
   IMAdapter as _IMAdapter,
   Platform as _Platform,
-} from "@saclaw/types";
+} from "@SACODE/types";
 
 export type {
   MessageContentType,
@@ -35,10 +35,10 @@ export type {
   Channel,
   IMMessage,
   IMAdapter,
-} from "@saclaw/types";
+} from "@SACODE/types";
 
 // 重命名导出以避免与 session/types.ts 中的 Platform 冲突
-export type { Platform as IMPlatform } from "@saclaw/types";
+export type { Platform as IMPlatform } from "@SACODE/types";
 
 // 本地类型别名，用于当前文件
 type MessageContent = _MessageContent;
@@ -51,7 +51,7 @@ export {
   isFileContent,
   isLocationContent,
   isStickerContent,
-} from "@saclaw/types";
+} from "@SACODE/types";
 
 // ============================================================================
 // 配置类型
@@ -120,7 +120,7 @@ export interface BaseMessage {
 }
 
 // ============================================
-// 消息接口 (使用 @saclaw/types 中的 MessageContent)
+// 消息接口 (使用 @SACODE/types 中的 MessageContent)
 // ============================================
 
 export interface UserMessage extends BaseMessage {
@@ -199,7 +199,7 @@ export type {
 // 事件类型
 // ============================================================================
 
-export const SaClawEventType = {
+export const SACODEEventType = {
   MESSAGE: "message",
   SESSION_CREATE: "session:create",
   SESSION_UPDATE: "session:update",
@@ -209,10 +209,10 @@ export const SaClawEventType = {
   ERROR: "error",
 } as const;
 
-export type SaClawEventTypeType = (typeof SaClawEventType)[keyof typeof SaClawEventType];
+export type SACODEEventTypeType = (typeof SACODEEventType)[keyof typeof SACODEEventType];
 
-export interface SaClawEvent {
-  type: SaClawEventTypeType;
+export interface SACODEEvent {
+  type: SACODEEventTypeType;
   payload: unknown;
   timestamp: Date;
 }
@@ -221,8 +221,8 @@ export interface SaClawEvent {
 // 错误类型
 // ============================================================================
 
-export class SaClawError extends Error {
-  override name = "SaClawError";
+export class SACODEError extends Error {
+  override name = "SACODEError";
   public code: string;
 
   constructor(code: string, message: string, cause?: Error) {
@@ -231,7 +231,7 @@ export class SaClawError extends Error {
   }
 }
 
-export class ConnectionError extends SaClawError {
+export class ConnectionError extends SACODEError {
   override name = "ConnectionError";
 
   constructor(message: string, cause?: Error) {
@@ -239,7 +239,7 @@ export class ConnectionError extends SaClawError {
   }
 }
 
-export class TimeoutError extends SaClawError {
+export class TimeoutError extends SACODEError {
   override name = "TimeoutError";
 
   constructor(message: string, cause?: Error) {
@@ -247,7 +247,7 @@ export class TimeoutError extends SaClawError {
   }
 }
 
-export class SessionError extends SaClawError {
+export class SessionError extends SACODEError {
   override name = "SessionError";
 
   constructor(message: string, cause?: Error) {
@@ -285,17 +285,17 @@ export {
 } from "../provider/types";
 
 // ============================================================================
-// SaClaw 客户端配置（新版 - 支持 Provider）
+// SACODE 客户端配置（新版 - 支持 Provider）
 // ============================================================================
 
 /**
- * SaClaw 客户端配置
+ * SACODE 客户端配置
  *
  * 支持两种配置模式：
  * 1. Provider 模式（推荐）：通过 provider 字段配置 AI 服务
  * 2. Legacy 模式（兼容）：通过 acpUrl 配置 iFlow ACP 服务
  */
-export const SaClawClientConfigSchema = z.object({
+export const SACODEClientConfigSchema = z.object({
   // Provider 模式配置
   provider: z
     .object({
@@ -339,4 +339,4 @@ export const SaClawClientConfigSchema = z.object({
   debug: z.boolean().optional(),
 });
 
-export type SaClawClientConfig = z.infer<typeof SaClawClientConfigSchema>;
+export type SACODEClientConfig = z.infer<typeof SACODEClientConfigSchema>;

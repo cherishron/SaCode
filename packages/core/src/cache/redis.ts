@@ -46,7 +46,7 @@ export class RedisCache<T = unknown>
   constructor(config: RedisConfig) {
     super();
     this.config = config;
-    this.keyPrefix = config.keyPrefix || "saclaw:";
+    this.keyPrefix = config.keyPrefix || "SACODE:";
   }
 
   /**

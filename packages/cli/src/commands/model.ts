@@ -70,7 +70,7 @@ export async function listModels(): Promise<void> {
     console.log();
   }
 
-  console.log(chalk.gray("Use 'saclaw model set <model-id>' to change the default model"));
+  console.log(chalk.gray("Use 'SACODE model set <model-id>' to change the default model"));
 }
 
 /**
@@ -102,7 +102,7 @@ export async function showCurrentModel(): Promise<void> {
   console.log(`  ${chalk.gray("Provider:")} ${currentModel.provider}`);
   console.log(`  ${chalk.gray("Context Window:")} ${currentModel.contextWindow.toLocaleString()} tokens`);
   console.log();
-  console.log(chalk.gray("Use 'saclaw model set <model-id>' to change"));
+  console.log(chalk.gray("Use 'SACODE model set <model-id>' to change"));
 }
 
 /**

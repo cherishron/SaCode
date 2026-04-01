@@ -5,7 +5,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { getPrismaClient } from "@saclaw/database";
+import { getPrismaClient } from "@sacode/database";
 import { wsEvents } from "../websocket/index.js";
 import { authMiddleware } from "../middleware/auth";
 

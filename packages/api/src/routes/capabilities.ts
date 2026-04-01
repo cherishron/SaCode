@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { CapabilitiesManager, defaultCapabilitiesConfig } from "@saclaw/capabilities";
+import { CapabilitiesManager, defaultCapabilitiesConfig } from "@sacode/capabilities";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();

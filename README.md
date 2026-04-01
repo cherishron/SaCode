@@ -1,4 +1,4 @@
-# SaCode - 多端 AI 助手框架
+# SACODE - 多端 AI 助手框架
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
@@ -11,8 +11,8 @@
 
 - [AGENTS.md](./AGENTS.md) - 项目上下文与技术文档
 - [PRD.md](./docs/PRD.md) - 产品需求文档
-- [CONTRIBUTING.md](./CONTRIBUTING.md) - 贡献指南
-- [CHANGELOG.md](./CHANGELOG.md) - 变更日志
+- [CONTRIBUTING.md](./docs/CONTRIBUTING.md) - 贡献指南
+- [CHANGELOG.md](./docs/CHANGELOG.md) - 变更日志
 - [部署指南](./docs/guides/deployment.md) - 生产环境部署
 - [前端架构](./docs/architecture/frontend.md) - Web UI 架构文档
 - [安全设计](./docs/architecture/security.md) - 安全架构文档
@@ -41,11 +41,11 @@
 ## 项目结构
 
 ```
-SaClaw/
+SACODE/
 ├── packages/
 │   ├── core/           # 核心引擎
 │   │   ├── provider/   # AI Provider 抽象层 (OpenAI/Anthropic/DeepSeek/Moonshot/智谱)
-│   │   ├── client/     # SaClawClient (工具执行循环 + Agent 集成)
+│   │   ├── client/     # SACODEClient (工具执行循环 + Agent 集成)
 │   │   ├── tools/      # 工具桥接层 (内置 + Capabilities + MCP)
 │   │   ├── agent/      # Agent 基础设施 (Registry + Planner + Orchestrator)
 │   │   ├── session/    # 会话管理 + 跨渠道映射
@@ -68,7 +68,7 @@ SaClaw/
 │   ├── api/            # REST API + WebSocket
 │   └── web/            # Web UI (Vue 3 + TinyVue)
 │
-├── .saclaw/            # 配置目录
+├── .SACODE/            # 配置目录
 │   ├── commands/       # Slash 命令
 │   ├── plugins/        # 插件目录
 │   └── skills/         # Skills 目录
@@ -89,8 +89,8 @@ SaClaw/
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/sacode.git
-cd sacode
+git clone https://github.com/your-repo/SACODE.git
+cd SACODE
 
 # 安装依赖
 pnpm install
@@ -135,7 +135,7 @@ ENABLE_AGENTIC_PLANNING=true
 # 数据库配置
 # ============================================
 DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/sacode.db
+DATABASE_PATH=./data/SACODE.db
 
 # ============================================
 # 缓存配置 (可选)
@@ -182,26 +182,26 @@ pnpm cli              # 命令行工具
 
 ```bash
 # 交互式聊天
-saclaw chat
+SACODE chat
 
 # 发送单条消息
-saclaw chat -m "你好"
+SACODE chat -m "你好"
 
 # 查看配置
-saclaw config list
+SACODE config list
 
 # 管理 IM 连接
-saclaw im list
-saclaw im connect telegram
+SACODE im list
+SACODE im connect telegram
 ```
 
 ### AI Provider
 
 ```typescript
-import { SaCodeClient, createProvider } from "@sacode/core";
+import { SACODEClient, createProvider } from "@SACODE/core";
 
 // 创建客户端
-const client = new SaCodeClient({
+const client = new SACODEClient({
   provider: {
     type: "openai",
     apiKey: process.env.OPENAI_API_KEY,
@@ -254,7 +254,7 @@ client.registerTool(
 ### 智能路由
 
 ```typescript
-import { SmartRouter } from "@sacode/core";
+import { SmartRouter } from "@SACODE/core";
 
 const router = new SmartRouter();
 
@@ -275,7 +275,7 @@ const result = router.evaluate({ user: { tier: "vip" } });
 ### 长任务管理
 
 ```typescript
-import { LongTaskManager } from "@sacode/core";
+import { LongTaskManager } from "@SACODE/core";
 
 const taskManager = new LongTaskManager();
 
@@ -297,7 +297,7 @@ const task = await taskManager.createTask("analysis", { data: "..." });
 ### 缓存管理
 
 ```typescript
-import { CacheManager } from "@sacode/core";
+import { CacheManager } from "@SACODE/core";
 
 const cache = new CacheManager({
   backend: "memory",
@@ -313,7 +313,7 @@ const value = await cache.getOrSet("user:123", async () => {
 ### 定时任务
 
 ```typescript
-import { TaskScheduler } from "@sacode/core";
+import { TaskScheduler } from "@SACODE/core";
 
 const scheduler = new TaskScheduler();
 
@@ -341,10 +341,10 @@ scheduler.addTask({
 ### MCP 协议
 
 ```typescript
-import { MCPServer } from "@sacode/core";
+import { MCPServer } from "@SACODE/core";
 
 const mcpServer = new MCPServer({
-  name: "sacode-mcp",
+  name: "SACODE-mcp",
   version: "1.0.0",
 });
 
@@ -361,9 +361,9 @@ mcpServer.registerTool({
 ### 插件系统
 
 ```typescript
-import { PluginManager } from "@sacode/core";
+import { PluginManager } from "@SACODE/core";
 
-const manager = new PluginManager({ pluginsDir: "./.sacode/plugins" });
+const manager = new PluginManager({ pluginsDir: "./.SACODE/plugins" });
 await manager.initialize();
 await manager.install("my-plugin", "./plugins/my-plugin");
 await manager.enable("my-plugin");
@@ -447,23 +447,23 @@ pnpm docker:down
 
 | 模块 | 描述 |
 |------|------|
-| @sacode/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
-| @sacode/gateway | WebSocket 控制平面 |
-| @sacode/container | Docker 容器隔离 |
-| @sacode/adapters | IM 平台适配器 (10 个平台) |
-| @sacode/database | Prisma ORM，多数据库适配 |
-| @sacode/auth | Passport.js 认证，JWT，OAuth |
-| @sacode/cli | Commander.js 命令行工具 |
-| @sacode/capabilities | 文件/浏览器/Shell 自动化 |
-| @sacode/api | Express REST API + WebSocket |
-| @sacode/web | Vue 3 + TinyVue + Tailwind CSS |
+| @SACODE/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
+| @SACODE/gateway | WebSocket 控制平面 |
+| @SACODE/container | Docker 容器隔离 |
+| @SACODE/adapters | IM 平台适配器 (10 个平台) |
+| @SACODE/database | Prisma ORM，多数据库适配 |
+| @SACODE/auth | Passport.js 认证，JWT，OAuth |
+| @SACODE/cli | Commander.js 命令行工具 |
+| @SACODE/capabilities | 文件/浏览器/Shell 自动化 |
+| @SACODE/api | Express REST API + WebSocket |
+| @SACODE/web | Vue 3 + TinyVue + Tailwind CSS |
 
 ### 消息流
 
 ```
 用户输入 (CLI/Web/IM)
        ↓
-   SaCodeClient
+   SACODEClient
        ↓
    AI Provider (OpenAI/Anthropic/...)
        ↓

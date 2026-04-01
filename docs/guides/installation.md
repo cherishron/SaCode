@@ -1,6 +1,6 @@
 # Installation Guide
 
-> SaClaw installation and setup instructions
+> SACODE installation and setup instructions
 
 ---
 
@@ -20,8 +20,8 @@
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/STAND-ALONE/SaClaw.git
-cd SaClaw
+git clone https://github.com/STAND-ALONE/SACODE.git
+cd SACODE
 ```
 
 ### 2. Install Dependencies
@@ -45,7 +45,7 @@ HOST=localhost
 
 # Database
 DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/saclaw.db
+DATABASE_PATH=./data/SACODE.db
 
 # AI Provider (choose one)
 AI_PROVIDER=openai
@@ -105,8 +105,8 @@ pnpm docker:build
 ### Docker Configuration
 
 The `docker-compose.yml` includes:
-- SaClaw API server
-- SaClaw Web UI
+- SACODE API server
+- SACODE Web UI
 - Redis (optional, for caching)
 
 ---
@@ -120,7 +120,7 @@ The `docker-compose.yml` includes:
 | `PORT` | No | 3000 | Server port |
 | `HOST` | No | localhost | Server host |
 | `DATABASE_TYPE` | No | sqlite | Database type |
-| `DATABASE_PATH` | No | ./data/saclaw.db | SQLite path |
+| `DATABASE_PATH` | No | ./data/SACODE.db | SQLite path |
 | `DATABASE_URL` | No | - | MySQL/PostgreSQL URL |
 | `JWT_SECRET` | Yes | - | JWT signing secret |
 | `AI_PROVIDER` | No | openai | Default AI provider |
@@ -169,14 +169,14 @@ Default, no additional setup needed.
 
 ```env
 DATABASE_TYPE=mysql
-DATABASE_URL=mysql://user:password@localhost:3306/saclaw
+DATABASE_URL=mysql://user:password@localhost:3306/SACODE
 ```
 
 ### PostgreSQL
 
 ```env
 DATABASE_TYPE=postgres
-DATABASE_URL=postgresql://user:password@localhost:5432/saclaw
+DATABASE_URL=postgresql://user:password@localhost:5432/SACODE
 ```
 
 ### Run Migrations

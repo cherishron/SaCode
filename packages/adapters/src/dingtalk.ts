@@ -255,8 +255,8 @@ export class DingTalkAdapter extends BaseAdapter {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             cardTemplateId: this.config.cardTemplateId,
-            outTrackId: `saclaw_${Date.now()}`,
-            callbackRouteKey: "saclaw_callback",
+            outTrackId: `SACODE_${Date.now()}`,
+            callbackRouteKey: "SACODE_callback",
             cardData: {
               cardParamMap: {
                 [this.config.cardTemplateKey || "content"]: text || "正在思考...",
@@ -375,8 +375,8 @@ export class DingTalkAdapter extends BaseAdapter {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             cardTemplateId: this.config.cardTemplateId,
-            outTrackId: `saclaw_${Date.now()}`,
-            callbackRouteKey: "saclaw_callback",
+            outTrackId: `SACODE_${Date.now()}`,
+            callbackRouteKey: "SACODE_callback",
             cardData: { cardParamMap },
             conversationType: "1",
             receiverUserIdList: [channelId],

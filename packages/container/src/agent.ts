@@ -1,5 +1,5 @@
 /**
- * SaClaw Container Module - Agent 容器
+ * SACODE Container Module - Agent 容器
  *
  * 专门用于运行 AI Agent 的容器实例
  */
@@ -26,7 +26,7 @@ export const AgentConfigSchema = z.object({
   /** Agent 名称 */
   name: z.string().optional(),
   /** 镜像 */
-  image: z.string().default("saclaw/agent:latest"),
+  image: z.string().default("SACODE/agent:latest"),
   /** 工作目录 */
   workdir: z.string().default("/workspace"),
   /** 环境变量 */
@@ -424,7 +424,7 @@ export class AgentContainerManager {
   private logger: Logger;
 
   constructor(options: AgentContainerManagerOptions = {}) {
-    this.defaultImage = options.defaultImage ?? "saclaw/agent:latest";
+    this.defaultImage = options.defaultImage ?? "SACODE/agent:latest";
     this.defaultSandboxLevel = options.defaultSandboxLevel ?? "moderate";
     this.logger = options.logger ?? console;
   }

@@ -11,8 +11,8 @@ import { createPublisher, Platform } from "./publisher";
 const program = new Command();
 
 program
-  .name("saclaw-publish")
-  .description("SaClaw Marketplace Publisher")
+  .name("SACODE-publish")
+  .description("SACODE Marketplace Publisher")
   .version("0.1.0");
 
 // 发布命令

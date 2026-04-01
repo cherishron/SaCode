@@ -1,0 +1,122 @@
+# SaCode Docker Compose 配置
+# 使用方式：docker compose up -d
+
+services:
+  # ============================================
+  # API 服务
+  # ============================================
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: api
+    container_name: sacode-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+    env_file:
+      - ../.env
+    volumes:
+      - sacode-data:/app/data
+      - sacode-logs:/app/logs
+    networks:
+      - sacode-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Web UI 服务
+  # ============================================
+  web:
+    build:
+      context: ..
+      dockerfile: web.Dockerfile
+      target: web
+    container_name: sacode-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    environment:
+      - API_URL=${API_URL:-http://api:3000}
+    networks:
+      - sacode-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Redis 缓存 (可选)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: sacode-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - sacode-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # ============================================
+  # Agent 服务 (可选)
+  # ============================================
+  agent:
+    build:
+      context: ..
+      dockerfile: agent.Dockerfile
+      target: runtime
+    container_name: sacode-agent
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - WORKDIR=/app/workspace
+      - OUTPUT_DIR=/app/output
+    volumes:
+      - agent-workspace:/app/workspace
+      - agent-output:/app/output
+      - agent-logs:/app/logs
+    networks:
+      - sacode-network
+    depends_on:
+      - api
+
+networks:
+  sacode-network:
+    driver: bridge
+
+volumes:
+  sacode-data:
+    driver: local
+  sacode-logs:
+    driver: local
+  redis-data:
+    driver: local
+  agent-workspace:
+    driver: local
+  agent-output:
+    driver: local
+  agent-logs:
+    driver: local

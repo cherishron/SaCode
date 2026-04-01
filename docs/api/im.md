@@ -204,7 +204,7 @@ Content-Type: application/json
 
 {
   "chatId": "-1001234567890",
-  "content": "Hello from SaClaw!"
+  "content": "Hello from SACODE!"
 }
 ```
 

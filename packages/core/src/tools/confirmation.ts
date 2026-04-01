@@ -19,6 +19,7 @@ export type ConfirmationMode =
  */
 export const DANGEROUS_TOOLS = [
   "write_file",
+  "edit_file",
   "delete_file",
   "execute_command",
   "shell_execute",

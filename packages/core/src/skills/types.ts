@@ -94,7 +94,7 @@ export interface SkillLoaderOptions {
  * 默认配置
  */
 export const DEFAULT_SKILL_LOADER_OPTIONS: SkillLoaderOptions = {
-  skillsDir: ".saclaw/skills",
+  skillsDir: ".SACODE/skills",
   recursive: true,
   skillFileName: "SKILL.md",
   autoDiscover: true,

@@ -65,7 +65,7 @@ onUnmounted(() => {
   <div class="dashboard-layout">
     <aside class="sidebar" :class="{ collapsed }">
       <div class="sidebar-header">
-        <h2 v-if="!collapsed">SaClaw</h2>
+        <h2 v-if="!collapsed">sacode</h2>
         <span v-else class="logo-mini">S</span>
       </div>
 

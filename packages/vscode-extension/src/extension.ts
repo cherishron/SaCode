@@ -1,15 +1,15 @@
 /**
- * SaClaw VSCode Extension
+ * SACODE VSCode Extension
  *
  * 提供 AI 辅助开发功能的 VSCode 集成
  */
 
 import * as vscode from "vscode";
-import { SaClawClient } from "./client";
+import { SACODEClient } from "./client";
 import { ChatViewProvider } from "./views/chatView";
 import { SkillsViewProvider } from "./views/skillsView";
 
-let client: SaClawClient | undefined;
+let client: SACODEClient | undefined;
 let chatProvider: ChatViewProvider | undefined;
 let skillsProvider: SkillsViewProvider | undefined;
 
@@ -17,10 +17,10 @@ let skillsProvider: SkillsViewProvider | undefined;
  * 扩展激活
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  console.log("SaClaw extension is activating...");
+  console.log("SACODE extension is activating...");
 
   // 初始化客户端
-  client = new SaClawClient();
+  client = new SACODEClient();
 
   // 注册视图提供者
   chatProvider = new ChatViewProvider(context.extensionUri, client);
@@ -28,11 +28,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
-      "saclaw.chatView",
+      "SACODE.chatView",
       chatProvider
     ),
     vscode.window.registerTreeDataProvider(
-      "saclaw.skillsView",
+      "SACODE.skillsView",
       skillsProvider
     )
   );
@@ -41,12 +41,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerCommands(context);
 
   // 自动连接
-  const config = vscode.workspace.getConfiguration("saclaw");
+  const config = vscode.workspace.getConfiguration("SACODE");
   if (config.get<boolean>("autoConnect")) {
     await connectToServer();
   }
 
-  console.log("SaClaw extension activated");
+  console.log("SACODE extension activated");
 }
 
 /**
@@ -55,14 +55,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 function registerCommands(context: vscode.ExtensionContext): void {
   // 打开聊天
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.chat", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.saclaw");
+    vscode.commands.registerCommand("SACODE.chat", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.SACODE");
     })
   );
 
   // 解释代码
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.explain", async () => {
+    vscode.commands.registerCommand("SACODE.explain", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
         vscode.window.showWarningMessage("No active editor");
@@ -83,7 +83,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // 重构代码
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.refactor", async () => {
+    vscode.commands.registerCommand("SACODE.refactor", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -98,7 +98,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // 生成测试
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.generateTests", async () => {
+    vscode.commands.registerCommand("SACODE.generateTests", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -114,7 +114,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // 生成文档
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.generateDocs", async () => {
+    vscode.commands.registerCommand("SACODE.generateDocs", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -130,7 +130,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // 修复代码
   context.subscriptions.push(
-    vscode.commands.registerCommand("saclaw.fixCode", async () => {
+    vscode.commands.registerCommand("SACODE.fixCode", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -163,15 +163,15 @@ function registerCommands(context: vscode.ExtensionContext): void {
 async function connectToServer(): Promise<void> {
   if (!client) return;
 
-  const config = vscode.workspace.getConfiguration("saclaw");
+  const config = vscode.workspace.getConfiguration("SACODE");
   const apiUrl = config.get<string>("apiUrl") ?? "http://localhost:3000";
 
   try {
     await client.connect(apiUrl);
-    vscode.window.setStatusBarMessage("$(check) SaClaw connected", 3000);
+    vscode.window.setStatusBarMessage("$(check) SACODE connected", 3000);
   } catch (error) {
-    vscode.window.setStatusBarMessage("$(x) SaClaw connection failed", 3000);
-    console.error("Failed to connect to SaClaw server:", error);
+    vscode.window.setStatusBarMessage("$(x) SACODE connection failed", 3000);
+    console.error("Failed to connect to SACODE server:", error);
   }
 }
 
@@ -179,7 +179,7 @@ async function connectToServer(): Promise<void> {
  * 发送消息到聊天视图
  */
 async function sendToChat(message: string): Promise<void> {
-  await vscode.commands.executeCommand("workbench.view.extension.saclaw");
+  await vscode.commands.executeCommand("workbench.view.extension.SACODE");
   
   if (chatProvider) {
     chatProvider.sendMessage(message);
@@ -193,5 +193,5 @@ export function deactivate(): void {
   if (client) {
     client.disconnect();
   }
-  console.log("SaClaw extension deactivated");
+  console.log("SACODE extension deactivated");
 }

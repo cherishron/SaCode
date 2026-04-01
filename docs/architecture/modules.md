@@ -1,13 +1,13 @@
 # Module Design
 
-> SaClaw - Module Overview and Dependencies
+> SACODE - Module Overview and Dependencies
 
 ---
 
 ## 1. Monorepo Structure
 
 ```
-SaClaw/
+SACODE/
 ├── packages/
 │   ├── types/         # Shared Types
 │   ├── core/          # Core Engine
@@ -26,7 +26,7 @@ SaClaw/
 
 ## 2. Module Overview
 
-### 2.1 @saclaw/types
+### 2.1 @SACODE/types
 
 **Purpose**: Shared type definitions for cross-package usage
 
@@ -53,7 +53,7 @@ SaClaw/
 
 ---
 
-### 2.2 @saclaw/core
+### 2.2 @SACODE/core
 
 **Purpose**: Core engine with provider abstraction, session management, routing
 
@@ -61,7 +61,7 @@ SaClaw/
 
 | Export | Description |
 |--------|-------------|
-| `SaClawClient` | Main client class |
+| `SACODEClient` | Main client class |
 | `createProvider` | Provider factory |
 | `SessionManager` | Session management |
 | `SmartRouter` | Rule-based routing |
@@ -69,11 +69,11 @@ SaClaw/
 | `CacheManager` | Caching layer |
 | `MCPServer/Client` | MCP protocol |
 
-**Dependencies**: `@saclaw/types`, `@saclaw/container`
+**Dependencies**: `@SACODE/types`, `@SACODE/container`
 
 ---
 
-### 2.3 @saclaw/gateway
+### 2.3 @SACODE/gateway
 
 **Purpose**: WebSocket control plane for real-time communication
 
@@ -85,11 +85,11 @@ SaClaw/
 | `GatewaySession` | Session handler |
 | `ProtocolHandler` | Message protocol |
 
-**Dependencies**: `@saclaw/core`, `@saclaw/auth`, `@saclaw/database`
+**Dependencies**: `@SACODE/core`, `@SACODE/auth`, `@SACODE/database`
 
 ---
 
-### 2.4 @saclaw/database
+### 2.4 @SACODE/database
 
 **Purpose**: Database abstraction with Prisma ORM
 
@@ -106,7 +106,7 @@ SaClaw/
 
 ---
 
-### 2.5 @saclaw/auth
+### 2.5 @SACODE/auth
 
 **Purpose**: Authentication system (Local + OAuth)
 
@@ -122,11 +122,11 @@ SaClaw/
 | `WeWorkOAuthService` | WeCom OAuth |
 | `createAuthMiddleware` | Auth middleware factory |
 
-**Dependencies**: `@saclaw/database`
+**Dependencies**: `@SACODE/database`
 
 ---
 
-### 2.6 @saclaw/capabilities
+### 2.6 @SACODE/capabilities
 
 **Purpose**: Automation capabilities (files, browser, shell)
 
@@ -144,7 +144,7 @@ SaClaw/
 
 ---
 
-### 2.7 @saclaw/adapters
+### 2.7 @SACODE/adapters
 
 **Purpose**: IM platform adapters (10 platforms)
 
@@ -165,11 +165,11 @@ SaClaw/
 | `SlackAdapter` | Slack adapter |
 | `EmailAdapter` | Email adapter |
 
-**Dependencies**: `@saclaw/types`
+**Dependencies**: `@SACODE/types`
 
 ---
 
-### 2.8 @saclaw/api
+### 2.8 @SACODE/api
 
 **Purpose**: REST API + WebSocket server
 
@@ -185,11 +185,11 @@ SaClaw/
 | `/api/plugins/*` | Plugin management |
 | `/ws` | WebSocket |
 
-**Dependencies**: `@saclaw/core`, `@saclaw/auth`, `@saclaw/database`, `@saclaw/adapters`, `@saclaw/capabilities`
+**Dependencies**: `@SACODE/core`, `@SACODE/auth`, `@SACODE/database`, `@SACODE/adapters`, `@SACODE/capabilities`
 
 ---
 
-### 2.9 @saclaw/web
+### 2.9 @SACODE/web
 
 **Purpose**: Web UI (Vue 3 + TinyVue)
 
@@ -203,11 +203,11 @@ SaClaw/
 | IM | `/dashboard/im` | IM Management |
 | Settings | `/dashboard/settings` | Settings |
 
-**Dependencies**: `@saclaw/api`, `@saclaw/auth`, `@saclaw/core`
+**Dependencies**: `@SACODE/api`, `@SACODE/auth`, `@SACODE/core`
 
 ---
 
-### 2.10 @saclaw/cli
+### 2.10 @SACODE/cli
 
 **Purpose**: Command-line tool
 
@@ -215,17 +215,17 @@ SaClaw/
 
 | Command | Description |
 |---------|-------------|
-| `saclaw chat` | Interactive chat |
-| `saclaw start` | Start server |
-| `saclaw im` | IM management |
-| `saclaw config` | Configuration |
-| `saclaw plugin` | Plugin management |
+| `SACODE chat` | Interactive chat |
+| `SACODE start` | Start server |
+| `SACODE im` | IM management |
+| `SACODE config` | Configuration |
+| `SACODE plugin` | Plugin management |
 
-**Dependencies**: `@saclaw/core`
+**Dependencies**: `@SACODE/core`
 
 ---
 
-### 2.11 @saclaw/container
+### 2.11 @SACODE/container
 
 **Purpose**: Docker container management for agent isolation
 
@@ -245,42 +245,42 @@ SaClaw/
 ## 3. Dependency Graph
 
 ```
-@saclaw/types ──────────────────────────────────────────────┐
+@SACODE/types ──────────────────────────────────────────────┐
      │                                                       │
-     ├──▶ @saclaw/core                                       │
+     ├──▶ @SACODE/core                                       │
      │                                                       │
-     └──▶ @saclaw/adapters                                   │
+     └──▶ @SACODE/adapters                                   │
                                                              │
-@saclaw/container ───────────────────────────────────────────┤
+@SACODE/container ───────────────────────────────────────────┤
      │                                                       │
-     └──▶ @saclaw/core                                       │
+     └──▶ @SACODE/core                                       │
                                                              │
-@saclaw/database ────────────────────────────────────────────┤
+@SACODE/database ────────────────────────────────────────────┤
      │                                                       │
-@saclaw/auth ◀───────────────────────────────────────────────┤
+@SACODE/auth ◀───────────────────────────────────────────────┤
      │                                                       │
-@saclaw/capabilities ─────────────────────────────────────────┤
+@SACODE/capabilities ─────────────────────────────────────────┤
      │                                                       │
-@saclaw/gateway ◀─────────────────────────────────────────────┤
+@SACODE/gateway ◀─────────────────────────────────────────────┤
      │         (depends on auth, core, database)              │
      │                                                       │
-@saclaw/api ◀─────────────────────────────────────────────────┘
+@SACODE/api ◀─────────────────────────────────────────────────┘
      │
-     ├──▶ @saclaw/adapters
-     ├──▶ @saclaw/auth
-     ├──▶ @saclaw/core
-     ├──▶ @saclaw/database
-     └──▶ @saclaw/capabilities
+     ├──▶ @SACODE/adapters
+     ├──▶ @SACODE/auth
+     ├──▶ @SACODE/core
+     ├──▶ @SACODE/database
+     └──▶ @SACODE/capabilities
 
-@saclaw/web
+@SACODE/web
      │
-     ├──▶ @saclaw/api
-     ├──▶ @saclaw/auth
-     └──▶ @saclaw/core
+     ├──▶ @SACODE/api
+     ├──▶ @SACODE/auth
+     └──▶ @SACODE/core
 
-@saclaw/cli
+@SACODE/cli
      │
-     └──▶ @saclaw/core
+     └──▶ @SACODE/core
 ```
 
 ---
@@ -289,17 +289,17 @@ SaClaw/
 
 | Package | Version | Description |
 |---------|---------|-------------|
-| @saclaw/types | 0.1.0 | Shared types |
-| @saclaw/core | 0.2.0 | Provider abstraction layer |
-| @saclaw/gateway | 0.1.0 | WebSocket gateway |
-| @saclaw/container | 0.1.0 | Docker container |
-| @saclaw/database | 0.1.0 | Prisma ORM |
-| @saclaw/auth | 0.1.0 | Authentication |
-| @saclaw/capabilities | 0.1.0 | Automation |
-| @saclaw/adapters | 0.1.0 | IM adapters |
-| @saclaw/api | 0.1.0 | REST API |
-| @saclaw/web | 0.1.0 | Web UI |
-| @saclaw/cli | 0.1.0 | CLI tool |
+| @SACODE/types | 0.1.0 | Shared types |
+| @SACODE/core | 0.2.0 | Provider abstraction layer |
+| @SACODE/gateway | 0.1.0 | WebSocket gateway |
+| @SACODE/container | 0.1.0 | Docker container |
+| @SACODE/database | 0.1.0 | Prisma ORM |
+| @SACODE/auth | 0.1.0 | Authentication |
+| @SACODE/capabilities | 0.1.0 | Automation |
+| @SACODE/adapters | 0.1.0 | IM adapters |
+| @SACODE/api | 0.1.0 | REST API |
+| @SACODE/web | 0.1.0 | Web UI |
+| @SACODE/cli | 0.1.0 | CLI tool |
 
 ---
 

@@ -336,7 +336,7 @@ function createAuthMiddleware(config: AuthMiddlewareConfig) {
 ### 4.2 Usage
 
 ```typescript
-import { createAuthMiddleware, LocalAuthService } from "@saclaw/auth";
+import { createAuthMiddleware, LocalAuthService } from "@sacode/auth";
 
 const authService = new LocalAuthService(config, userRepo);
 

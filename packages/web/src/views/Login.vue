@@ -103,7 +103,7 @@ function handleOAuthLogin(provider: string) {
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
-        <h1>SaClaw</h1>
+        <h1>sacode</h1>
         <p>多端 AI 助手框架</p>
       </div>
 

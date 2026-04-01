@@ -1,10 +1,10 @@
 # Skills 系统
 
-> SaClaw Skills 生态系统文档 - 基于 ClawHub 协议的技能管理
+> SACODE Skills 生态系统文档 - 基于 ClawHub 协议的技能管理
 
 ## 概述
 
-Skills 是 SaClaw 的插件化技能系统，支持从 ClawHub 注册表安装和管理技能包。
+Skills 是 SACODE 的插件化技能系统，支持从 ClawHub 注册表安装和管理技能包。
 
 ## 架构
 
@@ -38,7 +38,7 @@ Skills 是 SaClaw 的插件化技能系统，支持从 ClawHub 注册表安装�
 注册表客户端，用于与 ClawHub API 交互：
 
 ```typescript
-import { SkillRegistry } from "@saclaw/core";
+import { SkillRegistry } from "@SACODE/core";
 
 const registry = new SkillRegistry({
   registryUrl: "https://api.clawhub.dev",
@@ -64,7 +64,7 @@ const files = await registry.download("weather-api", "1.0.0");
 技能安装器，处理本地安装：
 
 ```typescript
-import { SkillInstaller } from "@saclaw/core";
+import { SkillInstaller } from "@SACODE/core";
 
 const installer = new SkillInstaller({
   skillsDir: "./skills",
@@ -92,7 +92,7 @@ const installed = await installer.list();
 技能管理器，加载和执行技能：
 
 ```typescript
-import { SkillManager } from "@saclaw/core";
+import { SkillManager } from "@SACODE/core";
 
 const manager = new SkillManager({ skillsDir: "./skills" });
 
@@ -277,7 +277,7 @@ interface SkillInstallerConfig {
 ### 安装技能
 
 ```typescript
-import { SkillRegistry, SkillInstaller } from "@saclaw/core";
+import { SkillRegistry, SkillInstaller } from "@SACODE/core";
 
 // 创建注册表客户端
 const registry = new SkillRegistry({
@@ -302,7 +302,7 @@ console.log(`安装成功: ${result.path}`);
 ### 执行技能
 
 ```typescript
-import { SkillManager } from "@saclaw/core";
+import { SkillManager } from "@SACODE/core";
 
 const manager = new SkillManager({ skillsDir: "./skills" });
 
@@ -343,19 +343,19 @@ for (const skill of installed) {
 
 ```bash
 # 安装技能
-saclaw skill install weather-api
+SACODE skill install weather-api
 
 # 卸载技能
-saclaw skill uninstall weather-api
+SACODE skill uninstall weather-api
 
 # 更新技能
-saclaw skill update weather-api
+SACODE skill update weather-api
 
 # 列出已安装
-saclaw skill list
+SACODE skill list
 
 # 搜索技能
-saclaw skill search weather
+SACODE skill search weather
 ```
 
 ## 最佳实践
@@ -363,7 +363,7 @@ saclaw skill search weather
 ### 1. 使用类型检查
 
 ```typescript
-import type { Skill, SkillInstallResult } from "@saclaw/core";
+import type { Skill, SkillInstallResult } from "@SACODE/core";
 
 const result: SkillInstallResult = await installer.install("weather-api");
 ```

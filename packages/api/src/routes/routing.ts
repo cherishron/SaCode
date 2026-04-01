@@ -4,8 +4,8 @@ import {
   type RoutingRule,
   type RoutingCondition,
   type RoutingAction,
-} from "@saclaw/core";
-import { getPrismaClient } from "@saclaw/database";
+} from "@sacode/core";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();

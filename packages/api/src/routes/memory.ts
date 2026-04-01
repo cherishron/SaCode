@@ -5,8 +5,8 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { EnhancedMemoryManager, type MemoryEntry } from "@saclaw/core";
-import { getPrismaClient } from "@saclaw/database";
+import { EnhancedMemoryManager, type MemoryEntry } from "@sacode/core";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();

@@ -10,7 +10,7 @@ interface StartOptions {
 export async function startServer(options: StartOptions): Promise<void> {
   const { port, host } = options;
 
-  console.log(chalk.cyan("🚀 Starting SaClaw Server\n"));
+  console.log(chalk.cyan("🚀 Starting SACODE Server\n"));
   console.log(`  Host: ${chalk.green(host)}`);
   console.log(`  Port: ${chalk.green(port)}`);
   console.log();

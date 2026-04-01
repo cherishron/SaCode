@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import ora from "ora";
-import { SaClawClient } from "@saclaw/core";
+import { SACODEClient } from "@SACODE/core";
 
 interface ChatOptions {
   message?: string;
@@ -8,12 +8,12 @@ interface ChatOptions {
 }
 
 export async function startChat(options: ChatOptions): Promise<void> {
-  console.log(chalk.cyan("🦞 SaClaw Chat Mode"));
+  console.log(chalk.cyan("🦞 SACODE Chat Mode"));
   console.log(chalk.gray("Type your message and press Enter. Type 'exit' to quit.\n"));
 
   const spinner = ora("Connecting to iFlow...").start();
 
-  const client = new SaClawClient({
+  const client = new SACODEClient({
     acpUrl: process.env.IFLOW_ACP_URL || "ws://localhost:8090/acp",
     autoStart: process.env.IFLOW_AUTO_START !== "false",
     timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
@@ -65,11 +65,11 @@ export async function startChat(options: ChatOptions): Promise<void> {
 }
 
 async function sendSingleMessage(
-  client: SaClawClient,
+  client: SACODEClient,
   message: string,
   sessionId?: string
 ): Promise<void> {
-  process.stdout.write(chalk.cyan("SaClaw: "));
+  process.stdout.write(chalk.cyan("SACODE: "));
 
   try {
     for await (const msg of client.chat(message, sessionId)) {
@@ -84,11 +84,11 @@ async function sendSingleMessage(
 }
 
 async function sendMessage(
-  client: SaClawClient,
+  client: SACODEClient,
   message: string,
   sessionId?: string
 ): Promise<void> {
-  process.stdout.write(chalk.cyan("SaClaw: "));
+  process.stdout.write(chalk.cyan("SACODE: "));
 
   try {
     for await (const msg of client.chat(message, sessionId)) {
@@ -96,7 +96,7 @@ async function sendMessage(
         process.stdout.write(msg.chunk.text);
       } else if (msg.role === "tool") {
         console.log(chalk.gray(`\n[Tool: ${msg.toolName}] ${msg.status}`));
-        process.stdout.write(chalk.cyan("SaClaw: "));
+        process.stdout.write(chalk.cyan("SACODE: "));
       } else if (msg.role === "system" && "stopReason" in msg) {
         // 任务完成
         if (msg.stopReason === "error") {

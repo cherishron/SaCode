@@ -29,7 +29,7 @@ import type {
 const DEFAULT_CONFIG: Required<Omit<SessionMapperConfig, "persistPath">> & {
   persistPath: string;
 } = {
-  persistPath: join(homedir(), ".saclaw", "session_mappings.json"),
+  persistPath: join(homedir(), ".SACODE", "session_mappings.json"),
   enablePersistence: true,
   sessionTTL: 24 * 60 * 60 * 1000, // 24 小时
   cleanupInterval: 60 * 60 * 1000, // 1 小时

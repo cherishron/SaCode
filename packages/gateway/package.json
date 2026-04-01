@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/gateway",
+  "name": "@SACODE/gateway",
   "version": "0.1.0",
-  "description": "SaClaw Gateway - 统一控制平面",
+  "description": "SACODE Gateway - 统一控制平面",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,9 +25,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@saclaw/auth": "workspace:*",
-    "@saclaw/core": "workspace:*",
-    "@saclaw/database": "workspace:*",
+    "@SACODE/auth": "workspace:*",
+    "@SACODE/core": "workspace:*",
+    "@SACODE/database": "workspace:*",
     "pino": "^9.5.0",
     "uuid": "^11.0.3",
     "ws": "^8.18.0",

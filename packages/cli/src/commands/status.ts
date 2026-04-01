@@ -27,7 +27,7 @@ interface CronStatus {
  * 显示系统状态
  */
 export async function showStatus(): Promise<void> {
-  console.log(chalk.cyan("🔍 SaClaw Status\n"));
+  console.log(chalk.cyan("🔍 SACODE Status\n"));
 
   // 模拟系统状态
   const system: SystemStatus = {
@@ -92,7 +92,7 @@ export async function showDiagnostics(): Promise<void> {
 
   // 检查各项组件
   console.log(chalk.bold("✓ Core Components"));
-  console.log(`  ${chalk.green("●")} SaClawClient`);
+  console.log(`  ${chalk.green("●")} SACODEClient`);
   console.log(`  ${chalk.green("●")} SessionManager`);
   console.log(`  ${chalk.green("●")} MessageRouter`);
   console.log(`  ${chalk.green("●")} TaskScheduler`);

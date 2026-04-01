@@ -1,12 +1,12 @@
 /**
- * SaClaw API - 容器路由
+ * SACODE API - 容器路由
  *
  * 容器管理 API 端点
  */
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import type { Logger } from "@saclaw/core";
+import type { Logger } from "@SACODE/core";
 
 // ============================================================================
 // Types
@@ -130,12 +130,12 @@ export function createContainerRoutes(options: {
       const containers: ContainerInfo[] = [
         {
           id: "abc123def456",
-          name: "saclaw-agent-1",
-          image: "saclaw/agent:latest",
+          name: "SACODE-agent-1",
+          image: "SACODE/agent:latest",
           status: "running",
           created: new Date().toISOString(),
           ports: [],
-          labels: { "saclaw.type": "agent" },
+          labels: { "SACODE.type": "agent" },
         },
       ];
 
@@ -211,7 +211,7 @@ export function createContainerRoutes(options: {
         data: {
           id,
           name: `container_${id.slice(0, 8)}`,
-          image: "saclaw/agent:latest",
+          image: "SACODE/agent:latest",
           status: "running",
           created: new Date().toISOString(),
           state: {

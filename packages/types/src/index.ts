@@ -1,9 +1,9 @@
 /**
- * SaClaw Shared Types
+ * SACODE Shared Types
  *
- * 跨包共享的类型定义，供 @saclaw/core 和 @saclaw/adapters 使用。
+ * 跨包共享的类型定义，供 @SACODE/core 和 @SACODE/adapters 使用。
  *
- * @module @saclaw/types
+ * @module @SACODE/types
  */
 
 // ============================================================================

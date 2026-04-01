@@ -1,5 +1,5 @@
 import EventEmitter from "eventemitter3";
-import type { Message, SaClawEvent, Session } from "../types";
+import type { Message, SACODEEvent, Session } from "../types";
 
 export interface RouterOptions {
   defaultHandler?: (message: Message, session: Session) => Promise<void>;
@@ -8,7 +8,7 @@ export interface RouterOptions {
 export type MessageHandler = (message: Message, session: Session) => Promise<void>;
 
 export class MessageRouter extends EventEmitter<{
-  routed: (event: SaClawEvent) => void;
+  routed: (event: SACODEEvent) => void;
 }> {
   private handlers: Map<string, MessageHandler[]> = new Map();
   private defaultHandler: MessageHandler | undefined;

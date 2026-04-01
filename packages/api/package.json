@@ -1,7 +1,7 @@
 {
-  "name": "@saclaw/api",
+  "name": "@SACODE/api",
   "version": "0.1.0",
-  "description": "SaClaw API 服务 - REST API 与 WebSocket",
+  "description": "SACODE API 服务 - REST API 与 WebSocket",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,10 +21,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@saclaw/adapters": "workspace:*",
-    "@saclaw/auth": "workspace:*",
-    "@saclaw/core": "workspace:*",
-    "@saclaw/database": "workspace:*",
+    "@SACODE/adapters": "workspace:*",
+    "@SACODE/auth": "workspace:*",
+    "@SACODE/core": "workspace:*",
+    "@SACODE/database": "workspace:*",
     "cors": "^2.8.5",
     "express": "^5.0.1",
     "express-session": "^1.18.1",

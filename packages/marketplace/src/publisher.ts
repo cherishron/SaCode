@@ -36,7 +36,7 @@ export class MarketplacePublisher {
    * 发布到所有平台
    */
   async publish(): Promise<PublishResult[]> {
-    console.log(chalk.bold("\n📦 SaClaw Marketplace Publisher\n"));
+    console.log(chalk.bold("\n📦 SACODE Marketplace Publisher\n"));
 
     // 验证版本号
     if (!this.validateVersion()) {

@@ -140,7 +140,7 @@ export const DEFAULT_SCHEDULER_CONFIG: TaskSchedulerConfig = {
   autoStart: true,
   checkInterval: 1000, // 1 秒 (更精确的检查)
   maxConcurrency: 10,
-  storagePath: ".saclaw/tasks.json",
+  storagePath: ".SACODE/tasks.json",
   maxRetries: 3,
   retryDelay: 5000, // 5 秒
   persistTasks: true,

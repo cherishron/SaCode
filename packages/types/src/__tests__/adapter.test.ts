@@ -1,5 +1,5 @@
 /**
- * @saclaw/types - Adapter Types Unit Tests
+ * @sacode/types - Adapter Types Unit Tests
  */
 
 import { describe, it, expect } from "vitest";

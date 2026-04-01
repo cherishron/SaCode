@@ -55,7 +55,7 @@ export class SecurityError extends Error {
  *
  * @example
  * ```typescript
- * const installer = new SkillInstaller({ skillsDir: ".saclaw/skills" });
+ * const installer = new SkillInstaller({ skillsDir: ".SACODE/skills" });
  * await installer.install("calendar-helper");
  * await installer.update("calendar-helper");
  * await installer.uninstall("calendar-helper");
