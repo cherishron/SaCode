@@ -13,9 +13,11 @@ export function registerChatCommand(ctx: CommandContext): void {
 }
 
 export function registerConfigCommand(ctx: CommandContext): void {
-  ctx.program
+  const config = ctx.program
     .command("config")
-    .description("配置管理")
+    .description("配置管理");
+
+  config
     .command("list")
     .description("列出所有配置")
     .action(async () => {
@@ -23,8 +25,7 @@ export function registerConfigCommand(ctx: CommandContext): void {
       await listConfig();
     });
 
-  ctx.program
-    .command("config")
+  config
     .command("set <key> <value>")
     .description("设置配置项")
     .action(async (key: string, value: string) => {
@@ -32,8 +33,7 @@ export function registerConfigCommand(ctx: CommandContext): void {
       await setConfig(key, value);
     });
 
-  ctx.program
-    .command("config")
+  config
     .command("get <key>")
     .description("获取配置项")
     .action(async (key: string) => {
@@ -64,21 +64,17 @@ export function registerSessionCommand(ctx: CommandContext): void {
     });
 
   session
-    .command("clear")
-    .description("清除所有会话映射")
+    .command("clear [sessionId]")
+    .description("清除会话 (不指定则清除所有)")
     .option("-c, --channel <channel>", "按平台过滤")
     .option("--chat-id <chatId>", "按 Chat ID 过滤")
-    .action(async (options: { channel?: string; chatId?: string }) => {
-      const { clearSessions } = await import("./session.js");
-      await clearSessions(options);
-    });
-
-  session
-    .command("clear <sessionId>")
-    .description("清除指定会话")
-    .action(async (sessionId: string) => {
-      const { clearSession } = await import("./session.js");
-      await clearSession(sessionId);
+    .action(async (sessionId?: string, options?: { channel?: string; chatId?: string }) => {
+      const { clearSession, clearSessions } = await import("./session.js");
+      if (sessionId) {
+        await clearSession(sessionId);
+      } else {
+        await clearSessions(options ?? {});
+      }
     });
 }
 
@@ -300,9 +296,11 @@ export function registerWorkspaceCommand(ctx: CommandContext): void {
 }
 
 export function registerIMCommand(ctx: CommandContext): void {
-  ctx.program
+  const im = ctx.program
     .command("im")
-    .description("IM 平台管理")
+    .description("IM 平台管理");
+
+  im
     .command("list")
     .description("列出所有 IM 连接")
     .action(async () => {
@@ -310,8 +308,7 @@ export function registerIMCommand(ctx: CommandContext): void {
       await listIMConnections();
     });
 
-  ctx.program
-    .command("im")
+  im
     .command("connect <platform>")
     .description("连接到 IM 平台")
     .option("-c, --config <config>", "配置 JSON")
@@ -320,8 +317,7 @@ export function registerIMCommand(ctx: CommandContext): void {
       await connectIM(platform, options);
     });
 
-  ctx.program
-    .command("im")
+  im
     .command("disconnect <platform>")
     .description("断开 IM 平台连接")
     .action(async (platform: string) => {
@@ -345,9 +341,11 @@ export function registerStartCommand(ctx: CommandContext): void {
 }
 
 export function registerPluginCommand(ctx: CommandContext): void {
-  ctx.program
+  const plugin = ctx.program
     .command("plugin")
-    .description("插件管理")
+    .description("插件管理");
+
+  plugin
     .command("list")
     .description("列出所有插件")
     .action(async () => {
@@ -355,8 +353,7 @@ export function registerPluginCommand(ctx: CommandContext): void {
       await listPlugins();
     });
 
-  ctx.program
-    .command("plugin")
+  plugin
     .command("install <path>")
     .description("安装插件")
     .action(async (path: string) => {
@@ -364,8 +361,7 @@ export function registerPluginCommand(ctx: CommandContext): void {
       await installPlugin(path);
     });
 
-  ctx.program
-    .command("plugin")
+  plugin
     .command("enable <name>")
     .description("启用插件")
     .action(async (name: string) => {
@@ -373,8 +369,7 @@ export function registerPluginCommand(ctx: CommandContext): void {
       await enablePlugin(name);
     });
 
-  ctx.program
-    .command("plugin")
+  plugin
     .command("disable <name>")
     .description("禁用插件")
     .action(async (name: string) => {
@@ -384,9 +379,11 @@ export function registerPluginCommand(ctx: CommandContext): void {
 }
 
 export function registerToolCommand(ctx: CommandContext): void {
-  ctx.program
+  const tool = ctx.program
     .command("tool")
-    .description("工具管理")
+    .description("工具管理");
+
+  tool
     .command("list")
     .description("列出所有工具")
     .action(async () => {
@@ -394,8 +391,7 @@ export function registerToolCommand(ctx: CommandContext): void {
       await listTools();
     });
 
-  ctx.program
-    .command("tool")
+  tool
     .command("run <name>")
     .description("运行工具")
     .option("-p, --param <params...>", "工具参数 (key=value)")

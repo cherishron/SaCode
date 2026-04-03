@@ -56,7 +56,7 @@ export interface Repository {
   /** 完整名称（owner/repo） */
   fullName: string;
   /** 描述 */
-  description?: string;
+  description: string | undefined;
   /** 是否私有 */
   private: boolean;
   /** 默认分支 */
@@ -64,20 +64,20 @@ export interface Repository {
   /** HTTPS URL */
   htmlUrl: string;
   /** SSH URL */
-  sshUrl?: string;
+  sshUrl: string | undefined;
   /** 克隆 URL */
-  cloneUrl?: string;
+  cloneUrl: string | undefined;
   /** 所有者 */
   owner: {
     login: string;
-    avatarUrl?: string;
+    avatarUrl: string | undefined;
   };
   /** 统计信息 */
-  stats?: {
+  stats: {
     stars: number;
     forks: number;
     issues: number;
-  };
+  } | undefined;
 }
 
 /**
@@ -91,7 +91,7 @@ export interface PullRequest {
   /** 标题 */
   title: string;
   /** 描述 */
-  body?: string;
+  body: string | undefined;
   /** 状态 */
   state: "open" | "closed" | "merged";
   /** 源分支 */
@@ -101,22 +101,22 @@ export interface PullRequest {
   /** 作者 */
   author: {
     login: string;
-    avatarUrl?: string;
+    avatarUrl: string | undefined;
   };
   /** 创建时间 */
   createdAt: string;
   /** 更新时间 */
-  updatedAt?: string;
+  updatedAt: string | undefined;
   /** 合并时间 */
-  mergedAt?: string;
+  mergedAt: string | undefined;
   /** URL */
   htmlUrl: string;
   /** 是否可合并 */
-  mergeable?: boolean;
+  mergeable: boolean | undefined;
   /** 标签 */
-  labels?: string[];
+  labels: string[] | undefined;
   /** 审查者 */
-  reviewers?: string[];
+  reviewers: string[] | undefined;
 }
 
 /**
@@ -130,24 +130,24 @@ export interface Issue {
   /** 标题 */
   title: string;
   /** 描述 */
-  body?: string;
+  body: string | undefined;
   /** 状态 */
   state: "open" | "closed";
   /** 作者 */
   author: {
     login: string;
-    avatarUrl?: string;
+    avatarUrl: string | undefined;
   };
   /** 创建时间 */
   createdAt: string;
   /** 更新时间 */
-  updatedAt?: string;
+  updatedAt: string | undefined;
   /** URL */
   htmlUrl: string;
   /** 标签 */
-  labels?: string[];
+  labels: string[] | undefined;
   /** 指派人 */
-  assignees?: string[];
+  assignees: string[] | undefined;
 }
 
 /**
@@ -159,12 +159,12 @@ export interface Branch {
   /** 是否受保护 */
   protected: boolean;
   /** 最新提交 */
-  commit?: {
+  commit: {
     sha: string;
     message: string;
     author: string;
     date: string;
-  };
+  } | undefined;
 }
 
 /**
@@ -184,15 +184,15 @@ export interface Commit {
     date: string;
   };
   /** 提交者 */
-  committer?: {
+  committer: {
     name: string;
     email: string;
     date: string;
-  };
+  } | undefined;
   /** 父提交 */
-  parents?: string[];
+  parents: string[] | undefined;
   /** URL */
-  htmlUrl?: string;
+  htmlUrl: string | undefined;
 }
 
 /**

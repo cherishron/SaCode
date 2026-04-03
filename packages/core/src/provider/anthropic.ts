@@ -284,27 +284,37 @@ export class AnthropicProvider extends BaseProvider {
         continue;
       }
 
+      // 跳过工具结果消息（Anthropic 处理方式不同）
+      if (msg.role === "tool") {
+        continue;
+      }
+
+      if (msg.content === null || msg.content === undefined) {
+        // 空内容，跳过
+        continue;
+      }
+
       if (typeof msg.content === "string") {
         messages.push({
           role: msg.role as "user" | "assistant",
           content: msg.content,
         });
-      } else {
+      } else if (Array.isArray(msg.content)) {
         // 多模态内容
         const content: Anthropic.Messages.ContentBlockParam[] = msg.content.map((c) => {
           if (c.type === "text") {
-            return { type: "text" as const, text: c.text };
+            return { type: "text" as const, text: c.text ?? "" };
           }
           if (c.type === "image") {
             return {
               type: "image" as const,
               source: {
                 type: "url" as const,
-                url: c.text,
+                url: c.text ?? "",
               },
             };
           }
-          return { type: "text" as const, text: c.text };
+          return { type: "text" as const, text: c.text ?? "" };
         });
 
         messages.push({

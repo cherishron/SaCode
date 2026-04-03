@@ -4,7 +4,7 @@
  * 支持行范围替换、正则表达式替换和字符串替换
  */
 
-import { promises as fs } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import type { ToolDefinition } from "../types";
 import type { EditFileInput, DeleteFileInput, FilesCapabilityConfig } from "../types";
 

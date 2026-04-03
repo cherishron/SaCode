@@ -128,7 +128,7 @@ export class SimpleTokenCounter implements TokenCounter {
         for (const part of msg.content) {
           if (part.type === "text") {
             total += this.count(part.text);
-          } else if (part.type === "image_url") {
+          } else if (part.type === "image") {
             // 图片估算
             total += 85; // 低分辨率图片
           }

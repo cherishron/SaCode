@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { getPrismaClient } from "@sacode/database";
-import { authMiddleware } from "@sacode/auth";
+import { authMiddleware } from "../middleware/auth.js";
 import { encryptApiKey, decryptApiKey, encryptOAuthSecret, decryptOAuthSecret } from "../utils/encryption";
 
 const router = Router();

@@ -372,9 +372,30 @@ export class ModelManager extends EventEmitter<{
   /**
    * 添加模型
    */
-  addModel(config: Partial<ModelConfig> & { id: string }): ModelConfig {
+  addModel(config: ModelConfig | (Partial<ModelConfig> & { id: string })): ModelConfig {
+    // 如果已经是完整的 ModelConfig，直接使用
+    if ("provider" in config && "model" in config) {
+      this.models.set(config.id, config as ModelConfig);
+
+      // 如果是第一个模型或标记为默认，设置为默认模型
+      if (config.isDefault || this.models.size === 1) {
+        this.defaultModelId = config.id;
+      }
+
+      this.emit("add", config as ModelConfig);
+      return config as ModelConfig;
+    }
+
+    // 否则补全默认值
     const model = ModelConfigSchema.parse({
-      ...config,
+      id: config.id,
+      name: config.name ?? config.id,
+      provider: config.provider ?? "openai",
+      model: config.model ?? "gpt-4o",
+      maxTokens: config.maxTokens ?? 4096,
+      temperature: config.temperature ?? 0.7,
+      isDefault: config.isDefault ?? false,
+      enabled: config.enabled ?? true,
       capabilities: {
         streaming: true,
         vision: false,

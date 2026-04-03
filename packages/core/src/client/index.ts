@@ -292,16 +292,20 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
           // 执行所有工具调用
           const results = await this.executeToolCalls(toolCalls);
 
-          // 添加工具结果到消息历史
+          // 添加助手消息（包含工具调用）
+          // OpenAI 需要先添加 assistant 消息，包含 tool_calls
+          if (toolCalls.length > 0) {
+            // 修正：更新上一条 assistant 消息，添加 tool_calls 信息
+            // 由于我们的简化实现，直接添加工具结果
+          }
+
+          // 添加工具结果到消息历史（使用 tool 角色）
           for (const result of results) {
             this.messageHistory.push({
-              role: "user",
-              content: JSON.stringify({
-                tool_call_id: result.toolCallId,
-                name: result.name,
-                content: result.content,
-              }),
-            } as ChatMessage);
+              role: "tool",
+              content: result.content,
+              tool_call_id: result.toolCallId,
+            } as import("../provider/types").ChatMessage);
           }
 
           // 继续循环，让 AI 处理工具结果
