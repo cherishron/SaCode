@@ -1,37 +1,18 @@
 /**
- * CLI UI 模块
- * 
- * 导出 Ink TUI 组件
+ * SaCode CLI UI 导出
  */
 
-export {
-  type Message,
-  type AppState,
-  type BannerProps,
-  type StatusBarProps,
-  type MessageItemProps,
-  type MessageListProps,
-  type InputBoxProps,
-  type ToolCallProps,
-  type ChatAppProps,
-  Banner,
-  StatusBar,
-  ToolCall,
-  MessageItem,
-  MessageList,
-  InputBox,
-  ChatApp,
-  default,
-} from "./App.js";
+// 主应用
+export { ChatApp, default, type Message } from "./App.js";
 
-// 保留原有的渲染函数（用于非 TUI 模式）
-export {
-  type ToolCallInfo,
-  renderToolPanel,
-  renderMarkdown,
-  renderThinking,
-  renderProgress,
-  renderWelcome,
-  renderPrompt,
-  renderAssistantPrefix,
-} from "./renderer.js";
+// 组件
+export { Header } from "./Header.js";
+export { InputBox } from "./InputBox.js";
+export { StatusBar } from "./StatusBar.js";
+
+// 新组件
+export * from "./components/index.js";
+
+// 主题系统
+export * from "./theme/index.js";
+export { theme, colors, borders, toolIcons, statusIcons, spacing, separators, getToolIcon, getStatusColor, getStatusIcon, createSeparator } from "./theme.js";
