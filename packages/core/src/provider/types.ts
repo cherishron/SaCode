@@ -93,12 +93,14 @@ export interface ChatMessageContent {
  * 聊天消息
  */
 export interface ChatMessage {
-  /** 角色：system | user | assistant */
-  role: "system" | "user" | "assistant";
+  /** 角色：system | user | assistant | tool */
+  role: "system" | "user" | "assistant" | "tool";
   /** 消息内容 */
-  content: string | ChatMessageContent[];
+  content: string | ChatMessageContent[] | null;
   /** 名称（可选） */
   name?: string | undefined;
+  /** 工具调用 ID（tool 角色时必需） */
+  tool_call_id?: string | undefined;
 }
 
 /**

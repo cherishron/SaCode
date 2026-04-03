@@ -183,9 +183,7 @@ export class OpenAIProvider extends BaseProvider {
               inputTokens: chunk.usage.prompt_tokens ?? 0,
               outputTokens: chunk.usage.completion_tokens ?? 0,
               // OpenAI 不直接提供缓存 Token 信息，但 prompt_tokens_details 可能包含
-              cachedInputTokens: (chunk.usage as OpenAI.Chat.Completions.ChatCompletionChunk.Usage & {
-                prompt_tokens_details?: { cached_tokens?: number };
-              }).prompt_tokens_details?.cached_tokens,
+              cachedInputTokens: (chunk.usage as any).prompt_tokens_details?.cached_tokens,
             };
           }
 
@@ -325,7 +323,7 @@ export class OpenAIProvider extends BaseProvider {
             role: "user",
             content: msg.content,
           });
-        } else {
+        } else if (Array.isArray(msg.content)) {
           // 多模态内容
           const content = msg.content.map((c) => {
             if (c.type === "text") {
@@ -344,12 +342,33 @@ export class OpenAIProvider extends BaseProvider {
             content,
           });
         }
+        // 如果 content 是 null，跳过此消息
       } else if (msg.role === "assistant") {
         // assistant 只支持文本内容
-        const textContent = typeof msg.content === "string" ? msg.content : msg.content.map(c => c.text).join("");
+        if (msg.content === null || msg.content === undefined) {
+          // 工具调用场景：assistant 可能没有文本内容
+          messages.push({
+            role: "assistant",
+            content: "",
+          });
+        } else if (typeof msg.content === "string") {
+          messages.push({
+            role: "assistant",
+            content: msg.content,
+          });
+        } else if (Array.isArray(msg.content)) {
+          const textContent = msg.content.map(c => c.text).join("");
+          messages.push({
+            role: "assistant",
+            content: textContent,
+          });
+        }
+      } else if (msg.role === "tool") {
+        // 工具结果
         messages.push({
-          role: "assistant",
-          content: textContent,
+          role: "tool",
+          content: typeof msg.content === "string" ? msg.content : "",
+          tool_call_id: msg.tool_call_id ?? "",
         });
       }
     }

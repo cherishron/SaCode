@@ -70,9 +70,10 @@ export class HookExecutor {
       return result;
     } catch (error) {
       // 记录失败
+      const errorObj = error instanceof Error ? error : new Error(String(error));
       const errorResult: HookResult = {
         proceed: false,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: errorObj,
       };
 
       this.recordExecution(
@@ -81,11 +82,11 @@ export class HookExecutor {
         startTime,
         false,
         errorResult,
-        error instanceof Error ? error.message : String(error)
+        errorObj.message
       );
 
       // 钩子执行失败时，默认继续执行（安全策略）
-      return { proceed: true, error: errorResult.error };
+      return { proceed: true, error: errorObj };
     }
   }
 
@@ -170,9 +171,15 @@ export class HookExecutor {
       executedAt: new Date(),
       success,
       duration,
-      result,
-      error,
     };
+
+    // 只在有值时添加可选属性
+    if (result !== undefined) {
+      log.result = result;
+    }
+    if (error !== undefined) {
+      log.error = error;
+    }
 
     this.logs.push(log);
 

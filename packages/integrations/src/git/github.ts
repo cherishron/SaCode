@@ -177,11 +177,16 @@ export class GitHubClient {
       headers.Authorization = `Bearer ${this.config.token}`;
     }
 
-    const response = await fetch(url, {
+    const options: RequestInit = {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    };
+
+    if (body !== undefined) {
+      options.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, options);
 
     if (!response.ok) {
       const error = await response.text();
@@ -492,14 +497,12 @@ export class GitHubClient {
     return {
       name: data.name,
       protected: data.protected,
-      commit: data.commit
-        ? {
-            sha: data.commit.sha,
-            message: data.commit.commit.message,
-            author: data.commit.commit.author.name,
-            date: data.commit.commit.author.date,
-          }
-        : undefined,
+      commit: data.commit ? {
+        sha: data.commit.sha,
+        message: data.commit.commit.message,
+        author: data.commit.commit.author.name,
+        date: data.commit.commit.author.date,
+      } : undefined,
     };
   }
 

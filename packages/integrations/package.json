@@ -16,8 +16,8 @@
     }
   },
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsup src/index.ts src/git/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts src/git/index.ts --format esm --dts --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"
   },

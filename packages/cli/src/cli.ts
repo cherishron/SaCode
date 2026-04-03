@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import {
   registerChatCommand,
   registerConfigCommand,
@@ -15,6 +18,54 @@ import {
   registerStatusCommand,
   registerWorkspaceCommand,
 } from "./commands/index.js";
+
+// ES 模块中的 __dirname 替代方案
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// 加载 .env 文件
+function loadEnv(): void {
+  // 查找 .env 文件：当前目录或父目录
+  const envPaths = [
+    resolve(process.cwd(), ".env"),
+    resolve(process.cwd(), "..", ".env"),
+    resolve(__dirname, "..", "..", "..", ".env"),
+  ];
+
+  for (const envPath of envPaths) {
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, "utf-8");
+      const lines = content.split("\n");
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // 跳过注释和空行
+        if (!trimmed || trimmed.startsWith("#")) continue;
+
+        const equalIndex = trimmed.indexOf("=");
+        if (equalIndex > 0) {
+          const key = trimmed.slice(0, equalIndex).trim();
+          let value = trimmed.slice(equalIndex + 1).trim();
+
+          // 移除引号
+          if (
+            (value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))
+          ) {
+            value = value.slice(1, -1);
+          }
+
+          // 设置环境变量（覆盖已存在的）
+          process.env[key] = value;
+        }
+      }
+      break;
+    }
+  }
+}
+
+// 在任何命令执行前加载环境变量
+loadEnv();
 
 const program = new Command();
 

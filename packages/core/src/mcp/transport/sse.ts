@@ -113,11 +113,11 @@ export class SSETransport
 
         // 监听特定事件类型
         this.eventSource.addEventListener("message", (event) => {
-          this.handleMessage(event);
+          this.handleMessage(event as MessageEvent);
         });
 
         this.eventSource.addEventListener("response", (event) => {
-          this.handleMessage(event);
+          this.handleMessage(event as MessageEvent);
         });
       } catch (error) {
         clearTimeout(timeout);

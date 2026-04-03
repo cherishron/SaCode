@@ -228,14 +228,32 @@ export class CommandDiscovery extends EventEmitter<CommandDiscoveryEvents> {
       // 解析文件内容
       const { frontmatter, body } = this.parseFrontmatter(content);
 
+      // 辅助函数：安全获取字符串属性
+      const getString = (key: string): string | undefined => {
+        const val = frontmatter?.[key];
+        return typeof val === "string" ? val : undefined;
+      };
+
+      // 辅助函数：安全获取数组属性
+      const getStringArray = (key: string): string[] | undefined => {
+        const val = frontmatter?.[key];
+        return Array.isArray(val) ? val as string[] : undefined;
+      };
+
+      // 辅助函数：安全获取布尔属性
+      const getBoolean = (key: string, defaultValue: boolean): boolean => {
+        const val = frontmatter?.[key];
+        return typeof val === "boolean" ? val : defaultValue;
+      };
+
       const command: CommandDefinition = {
-        name: frontmatter?.name ?? commandName,
-        description: frontmatter?.description,
+        name: getString("name") ?? commandName,
+        description: getString("description"),
         content: body.trim(),
-        aliases: frontmatter?.aliases,
-        category: frontmatter?.category,
-        tags: frontmatter?.tags,
-        enabled: frontmatter?.enabled !== false,
+        aliases: getStringArray("aliases"),
+        category: getString("category"),
+        tags: getStringArray("tags"),
+        enabled: getBoolean("enabled", true),
         filePath,
         modifiedAt: stat.mtime,
         isUserDefined: true,

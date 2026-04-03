@@ -586,7 +586,7 @@ export type {
   CachedToolDefinition,
   CacheStrategy,
   PromptCachingConfig,
-  CacheStats,
+  CacheStats as PromptCacheStats,
 } from "./caching";
 
 // Commands (斜杠命令自动发现)
@@ -634,3 +634,16 @@ export type {
   CostTrackerConfig,
   CostTrackerEvents,
 } from "./cost-tracker";
+
+// Preferences (用户偏好管理)
+export {
+  PreferenceManager,
+  createPreferenceManager,
+  getPreferenceManager,
+  DEFAULT_PREFERENCES,
+} from "./preferences";
+export type {
+  UserPreferences,
+  PreferenceChangeEvent,
+  PreferenceManagerEvents,
+} from "./preferences";

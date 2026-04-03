@@ -67,7 +67,7 @@ export interface ConfirmationRequest {
   /** 会话 ID */
   sessionId: string;
   /** 用户 ID */
-  userId?: string;
+  userId: string | undefined;
 }
 
 /**
@@ -81,9 +81,9 @@ export interface ConfirmationResponse {
   /** 响应时间 */
   respondedAt: Date;
   /** 用户 ID */
-  userId?: string;
+  userId: string | undefined;
   /** 备注 */
-  note?: string;
+  note: string | undefined;
 }
 
 /**
@@ -322,7 +322,7 @@ export class ToolConfirmationManager extends EventEmitter<ConfirmationEvents> {
    * 清除所有待处理请求
    */
   clearAll(): void {
-    for (const [id, pending] of this.pendingRequests) {
+    for (const [_id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("All confirmation requests cleared"));
     }
