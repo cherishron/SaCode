@@ -47,3 +47,18 @@ temp/
 # Misc
 *.bak
 *.backup
+
+# External AI Tool Configs (not part of SaCode)
+.agents/
+.claude/
+.codebuddy/
+.continue/
+.iflow/
+.qoder/
+.qwen/
+.trae/
+.workbuddy/
+.sisyphus/
+
+# Skills lock files
+skills-lock.json
