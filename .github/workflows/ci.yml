@@ -9,6 +9,7 @@ on:
 env:
   NODE_VERSION: '22'
   PNPM_VERSION: '9.15.0'
+  BUN_VERSION: '1.3.11'
 
 jobs:
   # ============================================
@@ -69,58 +70,61 @@ jobs:
         run: pnpm typecheck
 
   # ============================================
-  # 单元测试
+  # 单元测试 (Bun)
   # ============================================
   test:
-    name: Test
+    name: Test (Bun)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run tests with Bun
+        run: bun test
+        working-directory: packages/cli
 
   # ============================================
-  # 构建
+  # 构建 (Bun)
   # ============================================
   build:
-    name: Build
+    name: Build (Bun)
     runs-on: ubuntu-latest
     needs: [lint, typecheck]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
+      - name: Build CLI with Bun
+        run: bun run build
+        working-directory: packages/cli
+
+      - name: Build other packages
         run: pnpm build
 
       - name: Upload build artifacts
@@ -158,7 +162,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKER_USERNAME }}/SACODE
+          images: ${{ secrets.DOCKER_USERNAME }}/sacode
           tags: |
             type=ref,event=branch
             type=sha,prefix=

@@ -22,6 +22,7 @@ export const DEFAULT_MODELS: Record<ProviderType, string> = {
   deepseek: "deepseek-chat",
   moonshot: "moonshot-v1-8k",
   zhipu: "glm-4-plus",
+  codingplan: "claude-3-5-sonnet-20241022",
 };
 
 // ============================================================================
@@ -37,6 +38,7 @@ export const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   deepseek: "https://api.deepseek.com/v1",
   moonshot: "https://api.moonshot.cn/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  codingplan: "https://api.codingplan.cn/v1",
 };
 
 // ============================================================================
@@ -62,6 +64,7 @@ export function createProvider(config: ProviderConfig): AIProvider {
     case "deepseek":
     case "moonshot":
     case "zhipu":
+    case "codingplan":
       return createOpenAIProvider({
         ...config,
         type: providerType,
@@ -116,6 +119,12 @@ export interface EnvConfig {
   MOONSHOT_API_KEY?: string;
   /** 智谱 API Key */
   ZHIPU_API_KEY?: string;
+  /** CodingPlan API Key */
+  CODINGPLAN_API_KEY?: string;
+  /** CodingPlan 模型 */
+  CODINGPLAN_MODEL?: string;
+  /** CodingPlan Base URL */
+  CODINGPLAN_BASE_URL?: string;
 }
 
 /**

@@ -8,7 +8,7 @@ export { ChatApp, default, type Message } from "./App.js";
 // 组件
 export { Header } from "./Header.js";
 export { InputBox } from "./InputBox.js";
-export { StatusBar } from "./StatusBar.js";
+export { StatusBar } from "./components/StatusBar.js";
 
 // 新组件
 export * from "./components/index.js";

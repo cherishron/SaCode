@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { getPreferenceManager, type UserPreferences } from "@SACODE/core";
+import { getExtendedConfigManager, ExtendedConfigManager } from "../config/index.js";
 
 // 简单的内存配置存储（环境变量）
 const envConfig = new Map<string, string>([
@@ -54,6 +55,16 @@ export async function listConfig(): Promise<void> {
   }
   
   console.log(chalk.gray(`\n配置文件位置: ${prefManager.getConfigPath()}`));
+
+  // 扩展配置
+  console.log(chalk.bold("\n扩展配置 (~/.sacode/cli-config.json):"));
+  const extManager = getExtendedConfigManager();
+  const extEntries = extManager.listAll();
+  for (const [key, value] of Object.entries(extEntries)) {
+    console.log(`  ${chalk.green(key)}: ${chalk.gray(String(value ?? "(未设置)"))}`);
+  }
+  console.log(chalk.gray(`配置文件位置: ${extManager.getConfigPath()}`));
+  console.log(chalk.gray(`可用的扩展配置项: ${ExtendedConfigManager.getAvailableKeys().join(", ")}`));
 }
 
 export async function setConfig(key: string, value: string): Promise<void> {
@@ -92,12 +103,28 @@ export async function setConfig(key: string, value: string): Promise<void> {
     prefManager.set(prefKey, typedValue as never);
     console.log(chalk.green(`✓ 已设置 ${key} = ${typedValue}`));
     console.log(chalk.gray(`配置已保存到: ${prefManager.getConfigPath()}`));
-  } else {
-    // 环境变量配置（仅内存）
-    envConfig.set(key, value);
-    console.log(chalk.green(`✓ 已设置 ${key} = ${value}`));
-    console.log(chalk.yellow("⚠ 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
+    return;
   }
+
+  // 检查是否是扩展配置
+  const extKey = ExtendedConfigManager.resolveCliKey(key);
+  if (extKey) {
+    const extManager = getExtendedConfigManager();
+    try {
+      extManager.setByCliKey(key, value);
+      const displayValue = extManager.getByCliKey(key);
+      console.log(chalk.green(`✓ 已设置 ${key} = ${Array.isArray(displayValue) ? (displayValue as string[]).join(", ") : displayValue}`));
+      console.log(chalk.gray(`配置已保存到: ${extManager.getConfigPath()}`));
+    } catch (err) {
+      console.log(chalk.red(`设置失败: ${(err as Error).message}`));
+    }
+    return;
+  }
+
+  // 环境变量配置（仅内存）
+  envConfig.set(key, value);
+  console.log(chalk.green(`✓ 已设置 ${key} = ${value}`));
+  console.log(chalk.yellow("⚠ 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
 }
 
 export async function getConfig(key: string): Promise<void> {
@@ -108,14 +135,26 @@ export async function getConfig(key: string): Promise<void> {
     const prefManager = getPreferenceManager();
     const value = prefManager.get(prefKey);
     console.log(`${chalk.green(key)}: ${chalk.gray(String(value))}`);
+    return;
+  }
+
+  // 检查扩展配置
+  const extKey = ExtendedConfigManager.resolveCliKey(key);
+  if (extKey) {
+    const extManager = getExtendedConfigManager();
+    const value = extManager.getByCliKey(key);
+    const display = Array.isArray(value) ? (value as string[]).join(", ") : String(value ?? "(未设置)");
+    console.log(`${chalk.green(key)}: ${chalk.gray(display)}`);
+    return;
+  }
+
+  // 环境变量配置
+  const value = envConfig.get(key);
+  if (value !== undefined) {
+    console.log(`${chalk.green(key)}: ${chalk.gray(value)}`);
   } else {
-    // 环境变量配置
-    const value = envConfig.get(key);
-    if (value !== undefined) {
-      console.log(`${chalk.green(key)}: ${chalk.gray(value)}`);
-    } else {
-      console.log(chalk.yellow(`配置项 '${key}' 未找到`));
-    }
+    console.log(chalk.yellow(`配置项 '${key}' 未找到`));
+    console.log(chalk.gray(`可用的扩展配置项: ${ExtendedConfigManager.getAvailableKeys().join(", ")}`));
   }
 }
 
@@ -130,6 +169,23 @@ export async function resetPreferences(): Promise<void> {
   const prefManager = getPreferenceManager();
   prefManager.reset();
   console.log(chalk.green("✓ 偏好设置已重置为默认值"));
+}
+
+/**
+ * 重置扩展配置
+ */
+export async function resetExtendedConfig(): Promise<void> {
+  const extManager = getExtendedConfigManager();
+  extManager.reset();
+  console.log(chalk.green("✓ 扩展配置已重置为默认值"));
+}
+
+/**
+ * 重置所有配置（偏好 + 扩展）
+ */
+export async function resetAllConfig(): Promise<void> {
+  await resetPreferences();
+  await resetExtendedConfig();
 }
 
 /**

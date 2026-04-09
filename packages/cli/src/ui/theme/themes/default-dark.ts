@@ -87,7 +87,7 @@ export const defaultDarkTheme: ThemeDefinition = {
   type: "dark",
   builtIn: true,
   colors: defaultDarkColors,
-  borderStyle: "round",
+  borderStyle: "none",
   description: "GitHub Dark inspired theme",
   author: "SaCode",
 };

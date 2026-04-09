@@ -41,7 +41,7 @@
     "clean": "pnpm --filter \"./packages/*\" run clean",
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
-    "cli": "node packages/cli/dist/cli.js",
+    "cli": "bun packages/cli/dist/cli.js",
     "web": "pnpm --filter \"./packages/web\" run dev",
     "api": "pnpm --filter \"./packages/api\" run dev",
     "docs": "typedoc",

@@ -5,9 +5,9 @@
  * 支持标题、代码块、列表、表格等元素
  */
 
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useMemo } from "react";
 import { Text, Box } from "ink";
-import { CodeHighlight, InlineCode } from "./CodeHighlight.js";
+import { CodeHighlight } from "./CodeHighlight.js";
 import { getThemeManager, toInkColor } from "../theme/index.js";
 
 // ============================================================================
@@ -85,7 +85,7 @@ export function parseMarkdown(text: string): MarkdownNode[] {
 
       nodes.push({
         type: "code",
-        language,
+        ...(language != null ? { language } : {}),
         content: codeLines.join("\n"),
       });
       i++; // skip closing ```
@@ -206,7 +206,7 @@ function parseInline(text: string): MarkdownNode[] {
       }
       nodes.push({
         type: "inlineCode",
-        content: codeMatch[1],
+        content: codeMatch[1] ?? "",
       });
       remaining = remaining.slice(codeMatch.index + codeMatch[0].length);
       continue;
@@ -220,8 +220,8 @@ function parseInline(text: string): MarkdownNode[] {
       }
       nodes.push({
         type: "link",
-        content: linkMatch[1],
-        href: linkMatch[2],
+        content: linkMatch[1] ?? "",
+        href: linkMatch[2] ?? "",
       });
       remaining = remaining.slice(linkMatch.index + linkMatch[0].length);
       continue;
@@ -309,7 +309,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = memo(
             colors.text.secondary,
             colors.text.comment,
           ];
-          const color = headingColors[Math.min((node.level ?? 1) - 1, 5)];
+          const color = headingColors[Math.min((node.level ?? 1) - 1, 5)] ?? colors.text.primary;
           const prefix = "##".repeat(node.level ?? 1);
 
           return (
@@ -333,15 +333,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = memo(
 
         case "code":
           return (
-            <Box
-              key={key}
-              flexDirection="column"
-              marginTop={1}
-              marginBottom={1}
-              borderStyle="round"
-              borderColor={colors.border.default}
-              paddingX={1}
-            >
+            <Box key={key} flexDirection="column" marginTop={1} marginBottom={1} paddingX={1}>
               {node.language && (
                 <Text dimColor color="gray">
                   {node.language}
@@ -349,9 +341,9 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = memo(
               )}
               <CodeHighlight
                 code={node.content ?? ""}
-                language={node.language}
+                {...(node.language != null ? { language: node.language } : {})}
                 showLineNumbers={(node.content?.split("\n").length ?? 0) > 5}
-                isPending={isPending}
+                {...(isPending ? { isPending: true } : {})}
               />
             </Box>
           );
@@ -405,13 +397,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = memo(
 
         case "blockquote":
           return (
-            <Box
-              key={key}
-              flexDirection="column"
-              borderStyle="round"
-              borderColor={colors.border.default}
-              paddingX={1}
-            >
+            <Box key={key} flexDirection="column" paddingX={1}>
               <Text dimColor italic>
                 {node.children?.map((child, idx) => renderNode(child, idx))}
               </Text>

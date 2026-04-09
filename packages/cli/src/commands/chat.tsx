@@ -4,14 +4,14 @@
  * 使用 Ink 实现 Claude Code 风格的交互界面
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { render } from "ink";
 import chalk from "chalk";
-import {
-  SACODEClient,
-  type ProviderConfig,
-  getPreferenceManager,
-} from "@SACODE/core";
+import { execSync } from "child_process";
+import { SACODEClient, type ProviderConfig, getPreferenceManager, getCostTracker, type WorkMode, type UserPreferences } from "@SACODE/core";
+import { parseSlashCommand, createSlashCommandRegistry, executeSlashCommand } from "../commands/parser.js";
+import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "../commands/types.js";
+import { getThemeManager } from "../ui/theme/index.js";
 import ChatApp, { type Message } from "../ui/App.js";
 
 interface ChatOptions {
@@ -86,6 +86,22 @@ function generateId(): string {
 /**
  * Chat 包装器组件 - 管理 React 状态
  */
+/**
+ * 尝试获取当前 git 分支
+ */
+function getGitBranch(cwd: string): string | undefined {
+  try {
+    return execSync("git branch --show-current", {
+      cwd,
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const ChatWrapper: React.FC<{
   version: string;
   model: string;
@@ -98,30 +114,378 @@ const ChatWrapper: React.FC<{
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [currentTool, setCurrentTool] = useState<Message | null>(null);
+  const [, setCurrentTool] = useState<Message | null>(null);
   const [toolStartTime, setToolStartTime] = useState(0);
+  const [gitBranch, setGitBranch] = useState<string | undefined>(undefined);
+  const [accountInfo, setAccountInfo] = useState<
+    { alias: string; provider: string } | undefined
+  >(undefined);
+
+  // 退出统计相关状态
+  const sessionStartTime = useRef(Date.now());
+  const [messageCount, setMessageCount] = useState(0);
+  const [isExiting, setIsExiting] = useState(false);
+
+  // Reactive model state so UI updates when /model switches
+  const [currentModel, setCurrentModel] = useState(model);
+
+  // Ref for model so registry closures always see latest value
+  const modelRef = useRef(currentModel);
+  modelRef.current = currentModel;
+
+  // ====== Slash 命令 Registry ======
+  const registry = useMemo(() => {
+    const reg = createSlashCommandRegistry();
+    const getBuiltin = (name: string): Omit<SlashCommand, "execute"> =>
+      BUILTIN_SLASH_COMMANDS.find((c) => c.name === name) ?? { name, description: name };
+
+    // /help
+    reg.register({
+      ...getBuiltin("help"),
+      execute: async (ctx) => {
+        const cmds = reg.getAll().filter((c) => !c.hidden);
+        const lines = cmds.map((c) => {
+          const aliases = c.aliases?.length ? ` (${c.aliases.map((a) => "/" + a).join(", ")})` : "";
+          return `  /${c.name.padEnd(12)} - ${c.description}${aliases}`;
+        });
+        ctx.output(`可用命令:\n${lines.join("\n")}`);
+        return { success: true };
+      },
+    });
+
+    // /clear
+    reg.register({
+      ...getBuiltin("clear"),
+      execute: async () => {
+        setMessages([]);
+        return { success: true };
+      },
+    });
+
+    // /exit
+    reg.register({
+      ...getBuiltin("exit"),
+      execute: async () => {
+        handleExit();
+        return { success: true };
+      },
+    });
+
+    // /model
+    reg.register({
+      ...getBuiltin("model"),
+      execute: async (ctx) => {
+        const modelArg = ctx.args.name as string | undefined;
+        const listFlag = ctx.flags.list || ctx.flags.l;
+
+        // /model list 或 /model --list — 列出可用模型
+        if (listFlag || modelArg === "list") {
+          const available = [
+            "gpt-4", "gpt-4o", "gpt-3.5-turbo",
+            "claude-3-opus", "claude-3-sonnet", "claude-3-haiku",
+            "deepseek-chat", "deepseek-coder",
+            "moonshot-v1-8k", "moonshot-v1-32k",
+            "glm-4", "glm-3-turbo",
+          ];
+          const lines = [
+            `当前模型: ${modelRef.current}`,
+            "",
+            "可用模型:",
+            ...available.map((m) => `  ${m === modelRef.current ? "\u25b6 " : "  "}${m}`),
+          ];
+          ctx.output(lines.join("\n"));
+          return { success: true };
+        }
+
+        // /model <name> — 切换模型
+        if (modelArg && modelArg !== "") {
+          preferenceManager.set("defaultModel", modelArg as never);
+          modelRef.current = modelArg;
+          setCurrentModel(modelArg);
+          ctx.output(`已切换模型为: ${modelArg}`);
+          return { success: true };
+        }
+
+        // /model （无参数） — 显示当前模型
+        ctx.output(`当前模型: ${modelRef.current}\n提示: 使用 /model <name> 切换模型，/model list 查看可用模型`);
+        return { success: true };
+      },
+    });
+
+    // /theme
+    reg.register({
+      ...getBuiltin("theme"),
+      execute: async (ctx) => {
+        const themeName = ctx.args.name as string;
+        if (themeName) {
+          const success = getThemeManager().setTheme(themeName);
+          if (success) {
+            ctx.output(`主题已切换为: ${themeName}`);
+          } else {
+            const themes = getThemeManager()
+              .getAvailableThemes()
+              .map((t) => t.name)
+              .join(", ");
+            ctx.error(`未知主题。可用主题: ${themes}`);
+            return { success: false, error: `Unknown theme: ${themeName}` };
+          }
+        } else {
+          const themes = getThemeManager()
+            .getAvailableThemes()
+            .map((t) => t.name)
+            .join(", ");
+          ctx.output(`可用主题: ${themes}`);
+        }
+        return { success: true };
+      },
+    });
+
+    // /lang
+    reg.register({
+      ...getBuiltin("lang"),
+      execute: async (ctx) => {
+        const code = ctx.args.code as string;
+        if (code) {
+          if (["zh-CN", "en-US", "ja-JP", "ko-KR"].includes(code)) {
+            preferenceManager.set("language", code as never);
+            ctx.output(`语言已设置为: ${code}`);
+          } else {
+            ctx.error("不支持的语言。支持: zh-CN, en-US, ja-JP, ko-KR");
+            return { success: false };
+          }
+        } else {
+          ctx.output(`当前语言: ${preferenceManager.getResolvedLanguage()}`);
+        }
+        return { success: true };
+      },
+    });
+
+    // /prefs
+    reg.register({
+      ...getBuiltin("prefs"),
+      execute: async (ctx) => {
+        const subCommand = ctx.args.name as string | undefined;
+
+        // /prefs set <key> <value>
+        if (subCommand === "set") {
+          const rawArgs = (ctx.rawInput ?? "").trim();
+          // 解析 "/prefs set key value"
+          const match = rawArgs.match(/^\/prefs\s+set\s+(\S+)\s+(.+)$/i);
+          if (!match) {
+            ctx.error("用法: /prefs set <key> <value>\n例如: /prefs set workMode plan");
+            return { success: false };
+          }
+          const key = match[1] as string;
+          const value = match[2] as string;
+
+          // 验证 key 是否合法
+          const validKeys: (keyof UserPreferences)[] = [
+            "workMode", "language", "defaultModel", "defaultProvider",
+            "customInstructions", "outputStyle", "showToolDetails",
+            "showThinking", "theme", "timezone",
+          ];
+          if (!validKeys.includes(key as any)) {
+            ctx.error(`无效的配置项: ${key}\n可设置的项: ${validKeys.join(", ")}`);
+            return { success: false };
+          }
+
+          // 类型转换
+          let parsed: any = value;
+          if (value === "true") parsed = true;
+          else if (value === "false") parsed = false;
+
+          preferenceManager.set(key as any, parsed);
+          ctx.output(`已设置 ${key} = ${value}`);
+          return { success: true };
+        }
+
+        // /prefs (无参数) — 显示所有偏好
+        const prefs = preferenceManager.getAll();
+        ctx.output(`偏好设置:\n${JSON.stringify(prefs, null, 2)}\n\n提示: 使用 /prefs set <key> <value> 修改配置`);
+        return { success: true };
+      },
+    });
+
+    // /cost
+    reg.register({
+      ...getBuiltin("cost"),
+      execute: async (ctx) => {
+        try {
+          const tracker = getCostTracker();
+          const stats = tracker.getStats();
+          const lines = [
+            "Token 使用统计:",
+            `  总请求数: ${stats.totalRequests}`,
+            `  输入 Token: ${stats.totalInputTokens.toLocaleString()}`,
+            `  输出 Token: ${stats.totalOutputTokens.toLocaleString()}`,
+            `  总 Token: ${stats.totalTokens.toLocaleString()}`,
+            `  总成本: $${stats.totalCost.toFixed(4)}`,
+          ];
+          ctx.output(lines.join("\n"));
+        } catch {
+          ctx.output("暂无使用统计数据");
+        }
+        return { success: true };
+      },
+    });
+
+    // /history
+    reg.register({
+      ...getBuiltin("history"),
+      execute: async (ctx) => {
+        ctx.output("历史功能暂未实现");
+        return { success: true };
+      },
+    });
+
+    // /compact
+    reg.register({
+      ...getBuiltin("compact"),
+      execute: async (ctx) => {
+        ctx.output("上下文压缩功能暂未实现");
+        return { success: true };
+      },
+    });
+
+    // /recall
+    reg.register({
+      ...getBuiltin("recall"),
+      execute: async (ctx) => {
+        ctx.output("记忆检索功能暂未实现");
+        return { success: true };
+      },
+    });
+
+    // /remember
+    reg.register({
+      ...getBuiltin("remember"),
+      execute: async (ctx) => {
+        ctx.output("记忆保存功能暂未实现");
+        return { success: true };
+      },
+    });
+
+    // /debug
+    reg.register({
+      ...getBuiltin("debug"),
+      execute: async (ctx) => {
+        ctx.output("调试模式功能暂未实现");
+        return { success: true };
+      },
+    });
+
+    return reg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 退出处理函数
+  const handleExit = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      process.exit(0);
+    }, 2000);
+  }, []);
+
+  const slashCommands = useMemo(() => registry.getAll(), [registry]);
+
+  // 启动时获取 git 分支
+  useEffect(() => {
+    setGitBranch(getGitBranch(cwd));
+  }, [cwd]);
+
+  // 尝试获取 CodingPlan 账户信息
+  useEffect(() => {
+    (async () => {
+      try {
+        const { CodingPlanAccountManager } = await import("../auth/account-manager.js");
+        const manager = new CodingPlanAccountManager();
+        const account = await manager.getActiveAccount();
+        const { getProviderPreset } = await import("../auth/providers.js");
+        const preset = getProviderPreset(account.provider);
+        setAccountInfo({
+          alias: account.alias,
+          provider: preset?.name || account.provider,
+        });
+      } catch {
+        // 未配置账户，保持 undefined
+      }
+    })();
+  }, []);
 
   // 处理消息
   const handleMessage = async (userInput: string) => {
     if (isLoading) return;
 
-    // 处理命令
+    // 处理 Slash 命令（通过 registry）
     if (userInput.startsWith("/")) {
-      await handleCommand(userInput);
+      // 纯 "/" 输入静默忽略，不报错
+      if (userInput.trim() === "/") {
+        return;
+      }
+
+      const parsed = parseSlashCommand(userInput);
+      const result = await executeSlashCommand(parsed, registry, {
+        sessionId: options.session,
+        output: (msg: string) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: generateId(),
+              role: "system" as const,
+              content: msg,
+              timestamp: new Date(),
+            },
+          ]);
+        },
+        error: (msg: string) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: generateId(),
+              role: "system" as const,
+              content: `❌ ${msg}`,
+              timestamp: new Date(),
+            },
+          ]);
+        },
+      });
+
+      if (!result.success && result.error) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateId(),
+            role: "system" as const,
+            content: `未知命令或执行失败: ${result.error}`,
+            timestamp: new Date(),
+          },
+        ]);
+      }
       return;
     }
+
+    // 用户消息计数
+    setMessageCount((prev) => prev + 1);
 
     setIsLoading(true);
     setStreamingContent("");
 
-    // 添加用户消息
+    // 添加用户消息（去重检查）
     const userMessage: Message = {
       id: generateId(),
       role: "user",
       content: userInput,
       timestamp: new Date(),
     };
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => {
+      // 检查是否已有相同内容的用户消息（防止重复）
+      const isDuplicate = prev.some(
+        (m) =>
+          m.role === "user" && m.content === userInput && Date.now() - m.timestamp.getTime() < 1000
+      );
+      if (isDuplicate) return prev;
+      return [...prev, userMessage];
+    });
 
     try {
       // 处理 AI 响应
@@ -147,10 +511,10 @@ const ChatWrapper: React.FC<{
             };
             setCurrentTool(newTool);
             setToolStartTime(Date.now());
-            setMessages(prev => [...prev, newTool]);
+            setMessages((prev) => [...prev, newTool]);
           } else {
             // 工具完成
-            setCurrentTool(prev => {
+            setCurrentTool((prev) => {
               if (prev) {
                 return {
                   ...prev,
@@ -167,16 +531,21 @@ const ChatWrapper: React.FC<{
           if ("stopReason" in msg) {
             // 任务完成
             if (msg.stopReason === "error") {
-              setStreamingContent(prev => prev + "\n[发生错误]");
+              setStreamingContent((prev) => prev + "\n[发生错误]");
             }
           } else if ("message" in msg) {
             // 错误消息
-            setStreamingContent(prev => prev + `\n[错误: ${msg.message}]`);
+            setStreamingContent((prev) => prev + `\n[错误: ${msg.message}]`);
           }
         }
       }
 
-      // 添加助手消息
+      // AI 回复计数
+      if (assistantContent) {
+        setMessageCount((prev) => prev + 1);
+      }
+
+      // 添加助手消息（去重检查）
       if (assistantContent) {
         const assistantMessage: Message = {
           id: generateId(),
@@ -184,7 +553,17 @@ const ChatWrapper: React.FC<{
           content: assistantContent,
           timestamp: new Date(),
         };
-        setMessages(prev => [...prev, assistantMessage]);
+        setMessages((prev) => {
+          // 检查是否已有相同内容的助手消息（防止重复）
+          const isDuplicate = prev.some(
+            (m) =>
+              m.role === "assistant" &&
+              m.content === assistantContent &&
+              Date.now() - m.timestamp.getTime() < 1000
+          );
+          if (isDuplicate) return prev;
+          return [...prev, assistantMessage];
+        });
       }
     } catch (error) {
       const errorMessage: Message = {
@@ -193,96 +572,17 @@ const ChatWrapper: React.FC<{
         content: `错误: ${error instanceof Error ? error.message : "未知错误"}`,
         timestamp: new Date(),
       };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
       setStreamingContent("");
     }
   };
 
-  // 处理命令
-  const handleCommand = async (command: string) => {
-    const [cmd, ...args] = command.slice(1).split(" ");
-
-    switch (cmd?.toLowerCase()) {
-      case "help":
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `可用命令:
-  /help     - 显示帮助
-  /clear    - 清屏
-  /lang zh  - 设置语言为中文
-  /lang en  - 设置语言为英文
-  /prefs    - 显示偏好设置
-  /exit     - 退出`,
-          timestamp: new Date(),
-        }]);
-        break;
-
-      case "clear":
-        setMessages([]);
-        break;
-
-      case "lang":
-        if (args[0]) {
-          const newLang = args[0] as "zh-CN" | "en-US";
-          if (["zh-CN", "en-US", "ja-JP", "ko-KR"].includes(newLang)) {
-            preferenceManager.set("language", newLang as never);
-            setMessages(prev => [...prev, {
-              id: generateId(),
-              role: "system",
-              content: `语言已设置为: ${newLang}`,
-              timestamp: new Date(),
-            }]);
-          } else {
-            setMessages(prev => [...prev, {
-              id: generateId(),
-              role: "system",
-              content: `不支持的语言。支持: zh-CN, en-US, ja-JP, ko-KR`,
-              timestamp: new Date(),
-            }]);
-          }
-        } else {
-          setMessages(prev => [...prev, {
-            id: generateId(),
-            role: "system",
-            content: `当前语言: ${preferenceManager.getResolvedLanguage()}`,
-            timestamp: new Date(),
-          }]);
-        }
-        break;
-
-      case "prefs":
-        const prefs = preferenceManager.getAll();
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `偏好设置:\n${JSON.stringify(prefs, null, 2)}`,
-          timestamp: new Date(),
-        }]);
-        break;
-
-      case "exit":
-      case "quit":
-      case "q":
-        process.exit(0);
-        break;
-
-      default:
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `未知命令: ${cmd}`,
-          timestamp: new Date(),
-        }]);
-    }
-  };
-
   return (
     <ChatApp
       version={version}
-      model={model}
+      model={currentModel}
       language={language}
       cwd={cwd}
       onMessage={handleMessage}
@@ -290,6 +590,17 @@ const ChatWrapper: React.FC<{
       isLoading={isLoading}
       streamingContent={streamingContent}
       showHeader={true}
+      gitBranch={gitBranch}
+      accountInfo={accountInfo}
+      slashCommands={slashCommands}
+      isExiting={isExiting}
+      onExit={handleExit}
+      messageCount={messageCount}
+      sessionStartTime={sessionStartTime.current}
+      initialWorkMode={preferenceManager.get("workMode") ?? "smart"}
+      onWorkModeChange={(mode: WorkMode) => {
+        preferenceManager.set("workMode", mode);
+      }}
     />
   );
 };

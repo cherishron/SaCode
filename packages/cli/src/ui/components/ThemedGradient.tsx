@@ -10,7 +10,6 @@ import { Text, Box } from "ink";
 import {
   getThemeManager,
   parseColor,
-  interpolateColor,
   generateGradient,
   type ColorValue,
 } from "../theme/index.js";
@@ -110,7 +109,7 @@ export interface GradientLogoProps {
 export const GradientLogo: React.FC<GradientLogoProps> = memo(
   ({ text = "SaCode", colors }) => {
     return (
-      <ThemedGradient bold colors={colors}>
+      <ThemedGradient bold {...(colors != null ? { colors } : {})}>
         {text}
       </ThemedGradient>
     );

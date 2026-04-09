@@ -643,6 +643,7 @@ export {
   DEFAULT_PREFERENCES,
 } from "./preferences";
 export type {
+  WorkMode,
   UserPreferences,
   PreferenceChangeEvent,
   PreferenceManagerEvents,

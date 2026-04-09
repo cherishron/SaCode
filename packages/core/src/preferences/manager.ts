@@ -129,7 +129,7 @@ export class PreferenceManager extends EventEmitter<PreferenceManagerEvents> {
     const oldValue = this.preferences[key];
     
     if (oldValue !== value) {
-      this.preferences[key] = value;
+      (this.preferences as any)[key] = value;
       this.save();
       
       this.emit("change", {
@@ -152,7 +152,7 @@ export class PreferenceManager extends EventEmitter<PreferenceManagerEvents> {
       const oldValue = this.preferences[k];
       
       if (oldValue !== value) {
-        this.preferences[k] = value as UserPreferences[typeof k];
+        (this.preferences as any)[k] = value;
         changes.push({
           key: k,
           oldValue,

@@ -87,7 +87,7 @@ export const nordTheme: ThemeDefinition = {
   type: "dark",
   builtIn: true,
   colors: nordColors,
-  borderStyle: "round",
+  borderStyle: "none",
   description: "Nord theme - An arctic, north-bluish color palette",
   author: "Nord Theme",
 };

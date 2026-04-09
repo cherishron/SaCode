@@ -87,7 +87,7 @@ export const draculaTheme: ThemeDefinition = {
   type: "dark",
   builtIn: true,
   colors: draculaColors,
-  borderStyle: "round",
+  borderStyle: "none",
   description: "Dracula theme - A dark theme for many editors",
   author: "Dracula Theme",
 };

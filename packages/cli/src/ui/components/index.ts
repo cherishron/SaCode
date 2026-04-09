@@ -10,3 +10,18 @@ export type { MarkdownDisplayProps, MarkdownNode, MarkdownNodeType } from "./Mar
 
 export { ThemedGradient, GradientLogo, GradientSpinner } from "./ThemedGradient.js";
 export type { ThemedGradientProps, GradientLogoProps, GradientSpinnerProps } from "./ThemedGradient.js";
+
+export { Suggestions } from "./Suggestions.js";
+export type { SuggestionsProps } from "./Suggestions.js";
+
+export { ToolCallDisplay } from "./ToolCallDisplay.js";
+export type { ToolCallDisplayProps, ToolStatus } from "./ToolCallDisplay.js";
+
+export { ReverseSearchOverlay } from "./ReverseSearchOverlay.js";
+export type { ReverseSearchOverlayProps } from "./ReverseSearchOverlay.js";
+
+export { GeminiHeader } from "./GeminiHeader.js";
+export { WelcomeScreen } from "./WelcomeScreen.js";
+
+export { ExitSummary } from "./ExitSummary.js";
+export type { ExitSummaryProps } from "./ExitSummary.js";

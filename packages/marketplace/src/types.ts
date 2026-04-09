@@ -18,6 +18,8 @@ export enum Platform {
 export interface PublishConfig {
   /** 包名称 */
   name: string;
+  /** 发布者 */
+  publisher: string;
   /** 版本号 */
   version: string;
   /** 目标平台 */

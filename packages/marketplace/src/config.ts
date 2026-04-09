@@ -4,7 +4,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { PublishConfig, Platform } from "./types";
+import type { PublishConfig } from "./types";
+import { Platform } from "./types";
 
 /**
  * 配置文件名
@@ -16,6 +17,7 @@ export const CONFIG_FILE = "marketplace.config.json";
  */
 export const DEFAULT_CONFIG: PublishConfig = {
   name: "",
+  publisher: "",
   version: "",
   platforms: [Platform.VSCode, Platform.OpenVSX],
   releaseNotes: "",
@@ -64,6 +66,7 @@ export function loadConfigFromPackageJson(cwd: string = process.cwd()): PublishC
 
   return {
     name: packageJson.name,
+    publisher: packageJson.author || "",
     version: packageJson.version,
     platforms: packageJson.marketplace?.platforms || [Platform.VSCode],
     releaseNotes: packageJson.marketplace?.releaseNotes,

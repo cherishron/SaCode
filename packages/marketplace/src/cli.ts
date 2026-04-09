@@ -1,12 +1,12 @@
+#!/usr/bin/env node
 /**
  * Marketplace CLI
  */
 
-#!/usr/bin/env node
-
 import { Command } from "commander";
 import chalk from "chalk";
-import { createPublisher, Platform } from "./publisher";
+import { createPublisher } from "./publisher";
+import { Platform } from "./types";
 
 const program = new Command();
 
@@ -62,7 +62,6 @@ program
   .description("Check marketplace configuration")
   .action(async () => {
     try {
-      const publisher = createPublisher();
       // TODO: 实现配置检查
       console.log(chalk.green("\n✅ Configuration is valid\n"));
     } catch (error) {

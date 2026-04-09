@@ -2,10 +2,16 @@
  * 用户偏好类型定义
  */
 
+/** 工作模式类型 */
+export type WorkMode = "smart" | "yolo" | "plan";
+
 /**
  * 用户偏好配置
  */
 export interface UserPreferences {
+  /** 工作模式 */
+  workMode: WorkMode;
+
   /** 语言偏好 */
   language: "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "auto";
   
@@ -47,6 +53,7 @@ export interface UserPreferences {
  * 默认偏好配置
  */
 export const DEFAULT_PREFERENCES: UserPreferences = {
+  workMode: "smart",
   language: "auto",
   outputStyle: "detailed",
   showToolDetails: true,

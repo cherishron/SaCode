@@ -269,9 +269,9 @@ export function parseColor(color: ColorValue): string | undefined {
   // RGB 格式
   const rgbMatch = trimmed.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
   if (rgbMatch) {
-    const r = parseInt(rgbMatch[1], 10);
-    const g = parseInt(rgbMatch[2], 10);
-    const b = parseInt(rgbMatch[3], 10);
+    const r = parseInt(rgbMatch[1] ?? "0", 10);
+    const g = parseInt(rgbMatch[2] ?? "0", 10);
+    const b = parseInt(rgbMatch[3] ?? "0", 10);
     return rgbToHex(r, g, b);
   }
 
@@ -298,8 +298,8 @@ export function parseColor(color: ColorValue): string | undefined {
  * - 如果是 Ink 颜色名，原样返回
  * - 否则返回十六进制颜色
  */
-export function toInkColor(color: ColorValue): string | undefined {
-  if (!color) return undefined;
+export function toInkColor(color: ColorValue): string {
+  if (!color) return "#ffffff";
 
   const trimmed = color.trim().toLowerCase();
 
@@ -308,8 +308,8 @@ export function toInkColor(color: ColorValue): string | undefined {
     return trimmed;
   }
 
-  // 解析为十六进制
-  return parseColor(color);
+  // 解析为十六进制，提供 fallback
+  return parseColor(color) ?? "#ffffff";
 }
 
 // ============================================================================
@@ -327,9 +327,9 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | und
   if (!result) return undefined;
 
   return {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16),
+    r: parseInt(result[1] ?? "0", 16),
+    g: parseInt(result[2] ?? "0", 16),
+    b: parseInt(result[3] ?? "0", 16),
   };
 }
 
@@ -549,7 +549,7 @@ export function getContrastColor(background: ColorValue): "black" | "white" {
  */
 export function generateGradient(colors: ColorValue[], steps: number): string[] {
   if (colors.length === 0) return [];
-  if (colors.length === 1) return Array(steps).fill(parseColor(colors[0]) ?? "#000000");
+  if (colors.length === 1) return Array(steps).fill(parseColor(colors[0] ?? "#000000") ?? "#000000");
 
   const result: string[] = [];
   const segmentSteps = steps / (colors.length - 1);
@@ -561,13 +561,13 @@ export function generateGradient(colors: ColorValue[], steps: number): string[] 
 
     for (let j = 0; j < segmentLength; j++) {
       const factor = j / segmentLength;
-      result.push(interpolateColor(colors[i], colors[i + 1], factor));
+      result.push(interpolateColor(colors[i] ?? "#000000", colors[i + 1] ?? "#000000", factor));
     }
   }
 
   // 确保返回正确数量的颜色
   while (result.length < steps) {
-    result.push(parseColor(colors[colors.length - 1]) ?? "#000000");
+    result.push(parseColor(colors[colors.length - 1] ?? "#000000") ?? "#000000");
   }
 
   return result.slice(0, steps);

@@ -6,7 +6,7 @@
 
 import chalk from "chalk";
 import { createInterface } from "readline";
-import type { APIKeyInfo, ProviderInfo } from "../lib/api-key-manager.js";
+import type { ProviderInfo } from "../lib/api-key-manager.js";
 import type { ModelInfo } from "../lib/model-manager.js";
 
 /**
@@ -137,7 +137,7 @@ export async function selectProvider(
       // 尝试解析为编号
       const index = parseInt(trimmed, 10);
       if (!isNaN(index) && index >= 1 && index <= providers.length) {
-        resolve(providers[index - 1]);
+        resolve(providers[index - 1] ?? null);
         return;
       }
 
@@ -182,7 +182,7 @@ export async function selectModel(
       // 尝试解析为编号
       const index = parseInt(trimmed, 10);
       if (!isNaN(index) && index >= 1 && index <= models.length) {
-        resolve(models[index - 1]);
+        resolve(models[index - 1] ?? null);
         return;
       }
 
@@ -203,7 +203,7 @@ export async function selectModel(
  * 隐蔽输入（用于 API Key 输入）
  */
 export async function readHiddenInput(prompt: string): Promise<string> {
-  const rl = createInterface({
+  createInterface({
     input: process.stdin,
     output: process.stdout,
   });

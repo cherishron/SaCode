@@ -87,7 +87,7 @@ export const monokaiTheme: ThemeDefinition = {
   type: "dark",
   builtIn: true,
   colors: monokaiColors,
-  borderStyle: "round",
+  borderStyle: "none",
   description: "Monokai theme - Classic dark theme",
   author: "Wimer Hazenberg",
 };

@@ -9,14 +9,23 @@ import chalk from "chalk";
 import ora from "ora";
 import inquirer from "inquirer";
 import semver from "semver";
-import {
-  PublishConfig,
-  PublishOptions,
-  PublishResult,
-  Platform,
-  ExtensionInfo,
-} from "./types";
+import type { Ora } from "ora";
+import type { PublishConfig, PublishOptions, PublishResult } from "./types";
+import { Platform } from "./types";
 import { loadConfigFromPackageJson } from "./config";
+
+/**
+ * 获取平台显示名称
+ */
+function getPlatformDisplayName(platform: Platform): string {
+  const displayNames: Record<Platform, string> = {
+    [Platform.VSCode]: "VSCode Marketplace",
+    [Platform.OpenVSX]: "Open VSX",
+    [Platform.NPM]: "NPM",
+    [Platform.Docker]: "Docker Hub",
+  };
+  return displayNames[platform];
+}
 
 /**
  * 发布器类
@@ -142,7 +151,7 @@ export class MarketplacePublisher {
     console.log(chalk.white(`  版本: ${this.config.version}`));
     console.log(
       chalk.white(
-        `  平台: ${this.config.platforms.map((p) => Platform[p]).join(", ")}`
+        `  平台: ${this.config.platforms.map(getPlatformDisplayName).join(", ")}`
       )
     );
     console.log(chalk.white(`  类型: ${this.config.prerelease ? "预发布" : "正式"}`));
@@ -170,7 +179,7 @@ export class MarketplacePublisher {
    * 发布到指定平台
    */
   private async publishToPlatform(platform: Platform): Promise<PublishResult> {
-    const spinner = ora(`Publishing to ${Platform[platform]}...`).start();
+    const spinner = ora(`Publishing to ${getPlatformDisplayName(platform)}...`).start();
 
     try {
       switch (platform) {
@@ -187,7 +196,7 @@ export class MarketplacePublisher {
       }
     } catch (error) {
       spinner.fail(
-        chalk.red(`Failed to publish to ${Platform[platform]}`)
+        chalk.red(`Failed to publish to ${getPlatformDisplayName(platform)}`)
       );
       return {
         platform,
@@ -201,7 +210,7 @@ export class MarketplacePublisher {
    * 发布到 VSCode Marketplace
    */
   private async publishToVSCode(
-    spinner: ora.Ora
+    spinner: Ora
   ): Promise<PublishResult> {
     try {
       const command = this.config.prerelease
@@ -227,7 +236,7 @@ export class MarketplacePublisher {
    * 发布到 Open VSX
    */
   private async publishToOpenVSX(
-    spinner: ora.Ora
+    spinner: Ora
   ): Promise<PublishResult> {
     try {
       const command = "ovsx publish";
@@ -249,7 +258,7 @@ export class MarketplacePublisher {
   /**
    * 发布到 NPM
    */
-  private async publishToNPM(spinner: ora.Ora): Promise<PublishResult> {
+  private async publishToNPM(spinner: Ora): Promise<PublishResult> {
     try {
       const tag = this.config.prerelease ? "beta" : "latest";
       const command = `npm publish --tag ${tag}`;
@@ -272,7 +281,7 @@ export class MarketplacePublisher {
    * 发布到 Docker Hub
    */
   private async publishToDocker(
-    spinner: ora.Ora
+    spinner: Ora
   ): Promise<PublishResult> {
     try {
       const tag = this.config.prerelease
@@ -311,11 +320,11 @@ export class MarketplacePublisher {
     results.forEach((result) => {
       if (result.success) {
         console.log(
-          chalk.green(`✅ ${Platform[result.platform]}: ${result.url}`)
+          chalk.green(`✅ ${getPlatformDisplayName(result.platform)}: ${result.url}`)
         );
       } else {
         console.log(
-          chalk.red(`❌ ${Platform[result.platform]}: ${result.error}`)
+          chalk.red(`❌ ${getPlatformDisplayName(result.platform)}: ${result.error}`)
         );
       }
     });

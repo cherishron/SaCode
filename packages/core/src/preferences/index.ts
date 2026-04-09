@@ -3,6 +3,7 @@
  */
 
 export {
+  type WorkMode,
   type UserPreferences,
   type PreferenceChangeEvent,
   DEFAULT_PREFERENCES,

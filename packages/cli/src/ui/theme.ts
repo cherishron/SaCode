@@ -14,7 +14,7 @@
 export * from "./theme/index.js";
 
 // 兼容旧 API
-import { getColors, getThemeManager, toInkColor } from "./theme/index.js";
+import { getColors, toInkColor } from "./theme/index.js";
 
 /**
  * 获取当前主题的颜色（兼容旧 API）
@@ -167,7 +167,7 @@ export const separators = {
  * 获取工具图标
  */
 export function getToolIcon(toolName: string): string {
-  return toolIcons[toolName] ?? toolIcons.default;
+  return toolIcons[toolName] ?? toolIcons.default ?? "🔧";
 }
 
 /**
@@ -182,7 +182,7 @@ export function getStatusColor(
     success: toInkColor(getColors().status.success),
     error: toInkColor(getColors().status.error),
   };
-  return statusColorMap[status] ?? statusColorMap.pending;
+  return statusColorMap[status] ?? statusColorMap.pending ?? "#d29922";
 }
 
 /**

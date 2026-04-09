@@ -1,23 +1,39 @@
 /**
  * SaCode CLI TUI 组件
  *
- * 使用 Ink (React for CLI) 实现
- * 参考 Gemini CLI 和 Claude Code 的 UI 设计
+ * 1:1 还原 Gemini CLI 的 Composer 布局
+ * 参考: google-gemini/gemini-cli/packages/cli/src/ui/components/Composer.tsx
+ *
+ * 布局结构 (Gemini CLI Composer):
+ * ┌──────────────────────────────────────────────────────────────────┐
+ * │ [StatusRow]                                                      │
+ * │   Row 1: Loading indicator / Tips                               │
+ * │   Row 2: Modes · Context usage                                  │
+ * ├──────────────────────────────────────────────────────────────────┤
+ * │                                                                  │
+ * │ [Messages]  (DetailedMessagesDisplay)                           │
+ * │                                                                  │
+ * ├──────────────────────────────────────────────────────────────────┤
+ * │ [InputPrompt]  > Type your message or @path/to/file             │
+ * │                [Suggestions]                                     │
+ * ├──────────────────────────────────────────────────────────────────┤
+ * │ [Footer]  ~/project · main · gpt-4o · 45% context · INSERT      │
+ * └──────────────────────────────────────────────────────────────────┘
  */
 
-import React, { useState, useMemo, useCallback } from "react";
-import { Box, Text, useApp, useInput, useStdout, Static, Spacer } from "ink";
-import Spinner from "ink-spinner";
-import { Header } from "./Header.js";
-import { StatusBar as NewStatusBar } from "./StatusBar.js";
-import { InputBox as NewInputBox } from "./InputBox.js";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
+import { Box, Text, useApp, useInput } from "ink";
+import { InputPrompt } from "./InputPrompt.js";
 import { MarkdownDisplay } from "./components/MarkdownDisplay.js";
-import {
-  getThemeManager,
-  toInkColor,
-  getColors,
-  type SemanticColors,
-} from "./theme/index.js";
+import { GeminiHeader } from "./components/GeminiHeader.js";
+import { WelcomeScreen } from "./components/WelcomeScreen.js";
+import { toInkColor, getColors, type SemanticColors } from "./theme/index.js";
+import type { SlashCommand } from "../commands/types.js";
+import { useHistory } from "./hooks/useHistory.js";
+import type { AccountInfo } from "./types.js";
+import type { WorkMode } from "@sacode/core";
+import { getCostTracker } from "@sacode/core";
+import { ExitSummary } from "./components/ExitSummary.js";
 
 // ============================================================================
 // 类型定义
@@ -33,8 +49,6 @@ export interface Message {
   toolStatus?: "pending" | "running" | "success" | "error";
   toolDuration?: number;
   timestamp: Date;
-  /** 是否已完成（用于 Static 组件分离） */
-  completed?: boolean;
 }
 
 // ============================================================================
@@ -42,57 +56,25 @@ export interface Message {
 // ============================================================================
 
 const toolIcons: Record<string, string> = {
-  // 文件操作
   read_file: "📄",
   write_file: "📝",
-  replace: "✏️",
   edit_file: "✏️",
   delete_file: "🗑️",
   list_directory: "📁",
-  glob: "🔍",
   grep_tool: "🔍",
-
-  // Web 操作
   web_search: "🌐",
   web_fetch: "🌐",
-  http_request: "🔗",
-
-  // 系统操作
   run_shell_command: "💻",
-
-  // AI 功能
   think: "💭",
-  plan: "📋",
-
-  // 时间
-  get_current_time: "🕐",
-
-  // 内存/存储
-  save_memory: "💾",
-
-  // 任务管理
-  todo_read: "📋",
-  todo_write: "✅",
-
-  // 用户交互
-  ask_user_question: "❓",
-
-  // 多媒体
-  image_read: "🖼️",
-
-  // Agent
-  task: "🤖",
-
-  // 默认
   default: "🔧",
 };
 
 function getToolIcon(toolName: string): string {
-  return toolIcons[toolName] ?? toolIcons.default;
+  return toolIcons[toolName] ?? toolIcons.default ?? "🔧";
 }
 
 // ============================================================================
-// ToolCall 组件
+// ToolCall 组件 - Gemini CLI 风格：紧凑内联
 // ============================================================================
 
 interface ToolCallProps {
@@ -100,14 +82,7 @@ interface ToolCallProps {
   colors: SemanticColors;
 }
 
-export const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
-  const statusColorMap: Record<string, string> = {
-    pending: colors.status.pending,
-    running: colors.status.running,
-    success: colors.status.success,
-    error: colors.status.error,
-  };
-
+const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
   const statusIconMap: Record<string, string> = {
     pending: "○",
     running: "◐",
@@ -115,68 +90,30 @@ export const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
     error: "✗",
   };
 
-  const statusColor = statusColorMap[message.toolStatus ?? "pending"];
   const statusIcon = statusIconMap[message.toolStatus ?? "pending"];
 
   return (
-    <Box
-      flexDirection="column"
-      marginLeft={2}
-      marginY={0}
-      borderStyle="round"
-      borderColor={toInkColor(colors.border.default)}
-      paddingX={1}
-      width="90%"
-    >
+    <Box flexDirection="column" marginBottom={0}>
       <Box>
-        <Text color={toInkColor(statusColor)} bold>
-          {message.toolStatus === "running" ? (
-            <Spinner type="dots" />
-          ) : (
-            statusIcon
-          )}
+        <Text color={toInkColor(colors.status[message.toolStatus ?? "pending"])}>{statusIcon}</Text>
+        <Text> {getToolIcon(message.toolName ?? "")} </Text>
+        <Text bold color={toInkColor(colors.text.secondary)}>
+          {message.toolName}
         </Text>
-        <Text>
-          {" "}
-          {getToolIcon(message.toolName ?? "")}{" "}
-          <Text color={toInkColor(colors.text.user)} bold>
-            {message.toolName}
-          </Text>
-        </Text>
-        {message.toolArgs && Object.keys(message.toolArgs).length > 0 && (
-          <Text dimColor>
-            {" "}
-            {Object.entries(message.toolArgs)
-              .slice(0, 2)
-              .map(([k, v]) => {
-                const strValue = String(v);
-                return `${k}=${strValue.length > 25 ? strValue.slice(0, 25) + "..." : strValue}`;
-              })
-              .join(" ")}
-          </Text>
-        )}
-        {message.toolDuration !== undefined && (
-          <Text dimColor>
-            {" "}
-            ({message.toolDuration}ms)
-          </Text>
-        )}
+        {message.toolDuration !== undefined && <Text dimColor> ({message.toolDuration}ms)</Text>}
       </Box>
       {message.toolResult && (
-        <Box marginTop={0}>
-          <Text dimColor>├─ </Text>
-          <Text dimColor>
-            {message.toolResult.slice(0, 150)}
-            {message.toolResult.length > 150 ? "..." : ""}
-          </Text>
-        </Box>
+        <Text dimColor>
+          {"  "}└ {message.toolResult.slice(0, 100)}
+          {message.toolResult.length > 100 ? "…" : ""}
+        </Text>
       )}
     </Box>
   );
 };
 
 // ============================================================================
-// MessageItem 组件
+// MessageItem 组件 - 无边框，纯文本流
 // ============================================================================
 
 interface MessageItemProps {
@@ -184,72 +121,36 @@ interface MessageItemProps {
   colors: SemanticColors;
 }
 
-export const MessageItem: React.FC<MessageItemProps> = ({ message, colors }) => {
+const MessageItem: React.FC<MessageItemProps> = ({ message, colors }) => {
   if (message.role === "tool") {
     return <ToolCall message={message} colors={colors} />;
   }
 
   if (message.role === "system") {
     return (
-      <Box
-        marginY={0}
-        paddingX={1}
-        borderStyle="round"
-        borderColor={toInkColor(colors.border.default)}
-        width="100%"
-      >
-        <Text dimColor bold>
-          ⚙ System:
-        </Text>
-        <Text dimColor> {message.content}</Text>
+      <Box>
+        <Text dimColor>⚙ {message.content}</Text>
       </Box>
     );
   }
 
-  const isUser = message.role === "user";
-  const roleColor = isUser ? colors.text.user : colors.text.response;
-  const roleLabel = isUser ? "You" : "AI";
-  const roleIcon = isUser ? "👤" : "🤖";
-
-  // AI 消息使用 Markdown 渲染
-  if (!isUser) {
+  if (message.role === "user") {
     return (
-      <Box
-        marginY={0}
-        paddingX={1}
-        borderStyle="round"
-        borderColor={toInkColor(roleColor)}
-        width="100%"
-        flexDirection="column"
-      >
-        <Box>
-          <Text bold color={toInkColor(roleColor)}>
-            {roleIcon} {roleLabel}:
-          </Text>
-        </Box>
-        <MarkdownDisplay content={message.content} />
+      <Box flexDirection="column">
+        <Text>{message.content}</Text>
       </Box>
     );
   }
 
   return (
-    <Box
-      marginY={0}
-      paddingX={1}
-      borderStyle="round"
-      borderColor={toInkColor(roleColor)}
-      width="100%"
-    >
-      <Text bold color={toInkColor(roleColor)}>
-        {roleIcon} {roleLabel}:
-      </Text>
-      <Text> {message.content}</Text>
+    <Box flexDirection="column">
+      <MarkdownDisplay content={message.content} />
     </Box>
   );
 };
 
 // ============================================================================
-// MessageList 组件 - 使用 Static 优化渲染
+// MessageList 组件
 // ============================================================================
 
 interface MessageListProps {
@@ -258,40 +159,15 @@ interface MessageListProps {
   colors: SemanticColors;
 }
 
-export const MessageList: React.FC<MessageListProps> = ({
-  messages,
-  streamingContent,
-  colors,
-}) => {
-  // 分离已完成的消息（静态）和正在流式输出的内容（动态）
-  const staticMessages = useMemo(
-    () => messages.filter((m) => m.completed !== false),
-    [messages]
-  );
-
+const MessageList: React.FC<MessageListProps> = ({ messages, streamingContent, colors }) => {
   return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-      {/* 静态消息 - 使用 Static 组件避免重复渲染 */}
-      <Static items={staticMessages}>
-        {(message) => (
-          <MessageItem key={message.id} message={message} colors={colors} />
-        )}
-      </Static>
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      {messages.map((message) => (
+        <MessageItem key={message.id} message={message} colors={colors} />
+      ))}
 
-      {/* 流式输出内容 - 动态渲染 */}
       {streamingContent && (
-        <Box
-          borderStyle="round"
-          borderColor={toInkColor(colors.text.response)}
-          paddingX={1}
-          width="100%"
-          flexDirection="column"
-        >
-          <Box>
-            <Text bold color={toInkColor(colors.text.response)}>
-              🤖 AI:
-            </Text>
-          </Box>
+        <Box flexDirection="column">
           <MarkdownDisplay content={streamingContent} isPending />
           <Text color={toInkColor(colors.ui.cursor)}>▌</Text>
         </Box>
@@ -301,64 +177,122 @@ export const MessageList: React.FC<MessageListProps> = ({
 };
 
 // ============================================================================
-// WelcomeScreen 组件
+// StatusRow 组件 - Gemini CLI 风格：两行状态
+// Row 1: Loading / Tips
+// Row 2: Modes · Context usage
 // ============================================================================
 
-interface WelcomeScreenProps {
-  version: string;
+interface StatusRowProps {
+  model: string;
+  contextTokens: number;
+  contextMax: number;
+  isLoading: boolean;
   colors: SemanticColors;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ version, colors }) => {
+const StatusRow: React.FC<StatusRowProps> = ({
+  model: _model,
+  contextTokens,
+  contextMax,
+  isLoading,
+  colors,
+}) => {
+  const contextPercent = contextMax > 0 ? Math.round((contextTokens / contextMax) * 100) : 0;
+
   return (
-    <Box
-      flexDirection="column"
-      justifyContent="center"
-      alignItems="center"
-      height="100%"
-      padding={2}
-    >
-      <Box
-        borderStyle="double"
-        borderColor={toInkColor(colors.border.accent)}
-        paddingX={3}
-        paddingY={1}
-        flexDirection="column"
-        alignItems="center"
-      >
-        <Text color={toInkColor(colors.text.accent)} bold>
-          ✨ SaCode v{version}
-        </Text>
-        <Text color={toInkColor(colors.text.secondary)}>多端 AI 助手</Text>
-      </Box>
-      <Box marginTop={2} flexDirection="column" alignItems="center">
-        <Text color={toInkColor(colors.text.primary)} bold>
-          Hi~ 今天想做点什么?
-        </Text>
-        <Text dimColor marginTop={1}>
-          输入消息开始对话，或输入 /help 获取帮助
-        </Text>
-      </Box>
-      <Box marginTop={2} flexDirection="column" gap={0}>
-        <Text dimColor>
-          <Text color={toInkColor(colors.text.user)}>/help</Text> - 查看帮助
-        </Text>
-        <Text dimColor>
-          <Text color={toInkColor(colors.text.user)}>/clear</Text> - 清除对话
-        </Text>
-        <Text dimColor>
-          <Text color={toInkColor(colors.text.user)}>/exit</Text> - 退出程序
-        </Text>
-        <Text dimColor>
-          <Text color={toInkColor(colors.text.user)}>/theme</Text> - 切换主题
-        </Text>
+    <Box flexDirection="column" width="100%">
+      {/* Row 1: Loading indicator */}
+      {isLoading && (
+        <Box width="100%" flexDirection="row" alignItems="center" marginLeft={1}>
+          <Text color={toInkColor(colors.status.running)}>◐</Text>
+          <Text color={toInkColor(colors.text.secondary)}> Thinking...</Text>
+        </Box>
+      )}
+
+      {/* Row 2: Context usage */}
+      <Box width="100%" flexDirection="row" alignItems="center" marginLeft={1}>
+        <Text color={toInkColor(colors.text.secondary)}>{contextPercent}% context</Text>
       </Box>
     </Box>
   );
 };
 
 // ============================================================================
-// Main App 组件
+// Footer 组件 - Gemini CLI 风格：多列布局，" · " 分隔
+// ~/project · main · gpt-4o · 45% context · INSERT
+// ============================================================================
+
+interface FooterProps {
+  model: string;
+  cwd: string;
+  colors: SemanticColors;
+  terminalWidth: number;
+  contextPercent: number;
+  vimMode?: string | undefined;
+  gitBranch?: string | undefined;
+  workMode?: WorkMode;
+  showThinking?: boolean;
+}
+
+const Footer: React.FC<FooterProps> = ({
+  model: _model,
+  cwd,
+  colors,
+  terminalWidth,
+  contextPercent,
+  vimMode,
+  gitBranch,
+  workMode,
+  showThinking,
+}) => {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const shortCwd = homeDir ? cwd.replace(homeDir, "~") : cwd;
+
+  return (
+    <Box width={terminalWidth} paddingX={1} overflow="hidden">
+      <Text color={toInkColor(colors.text.secondary)}>{shortCwd}</Text>
+      {gitBranch && (
+        <>
+          <Text color={toInkColor(colors.ui.comment)}> · </Text>
+          <Text color={toInkColor(colors.text.secondary)}>{gitBranch}</Text>
+        </>
+      )}
+      <Text color={toInkColor(colors.ui.comment)}> · </Text>
+      <Text color={toInkColor(colors.text.secondary)}>{_model}</Text>
+      <Text color={toInkColor(colors.ui.comment)}> · </Text>
+      <Text color={toInkColor(colors.text.secondary)}>{contextPercent}% context</Text>
+      {vimMode && (
+        <>
+          <Text color={toInkColor(colors.ui.comment)}> · </Text>
+          <Text color={toInkColor(colors.text.accent)}>{vimMode}</Text>
+        </>
+      )}
+      {/* 工作模式指示 */}
+      {workMode && (
+        <>
+          <Text color={toInkColor(colors.ui.comment)}> · </Text>
+          <Text bold color={toInkColor(
+            workMode === "smart" ? colors.status.warning :
+            workMode === "yolo" ? colors.status.error :
+            colors.status.success
+          )}>
+            [{workMode === "smart" ? "SMART" : workMode === "yolo" ? "YOLO" : "PLAN"}]
+          </Text>
+        </>
+      )}
+      {/* 思考模式指示 */}
+      {showThinking && (
+        <>
+          <Text color={toInkColor(colors.ui.comment)}> · </Text>
+          <Text bold color={toInkColor(colors.status.success)}>THINK</Text>
+        </>
+      )}
+    </Box>
+  );
+};
+
+// ============================================================================
+// Main App 组件 - Gemini CLI Composer 布局
 // ============================================================================
 
 interface ChatAppProps {
@@ -371,164 +305,201 @@ interface ChatAppProps {
   isLoading: boolean;
   streamingContent: string;
   showHeader?: boolean;
+  accountInfo?: AccountInfo | undefined;
+  gitBranch?: string | undefined;
+  slashCommands?: SlashCommand[];
+  isExiting?: boolean;
+  onExit?: () => void;
+  messageCount?: number;
+  sessionStartTime?: number;
+  initialWorkMode?: WorkMode;
+  onWorkModeChange?: (mode: WorkMode) => void;
 }
 
 export const ChatApp: React.FC<ChatAppProps> = ({
   version,
   model,
-  language,
+  language: _language,
   cwd,
   onMessage,
   messages,
   isLoading,
   streamingContent,
   showHeader = true,
+  accountInfo,
+  gitBranch,
+  slashCommands = [],
+  isExiting = false,
+  onExit,
+  messageCount = 0,
+  sessionStartTime,
+  initialWorkMode = "smart",
+  onWorkModeChange,
 }) => {
   const { exit } = useApp();
-  const { stdout } = useStdout();
   const [input, setInput] = useState("");
-  const [showHelp, setShowHelp] = useState(false);
+  const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns ?? 80);
+  const [workMode, setWorkMode] = useState<WorkMode>(initialWorkMode);
+  const [showThinking, setShowThinking] = useState<boolean>(true);
 
-  // 获取主题颜色
   const colors = getColors();
 
-  // 处理提交
+  const { history: savedHistory, add: addHistory } = useHistory({
+    filePath: `${process.env.HOME ?? process.env.USERPROFILE ?? "."}/.sacode/chat-history.json`,
+    maxSize: 500,
+  });
+
+  useEffect(() => {
+    const onResize = () => setTerminalWidth(process.stdout.columns ?? 80);
+    process.stdout.on("resize", onResize);
+    return () => {
+      process.stdout.off("resize", onResize);
+    };
+  }, []);
+
+  // slashCommands are now passed from ChatWrapper via props
+
+  const historyItems = useMemo(() => {
+    const sessionHistory = messages.filter((m) => m.role === "user").map((m) => m.content);
+    return [...new Set([...sessionHistory, ...savedHistory])];
+  }, [messages, savedHistory]);
+
+  const cycleWorkMode = useCallback(() => {
+    const modes: WorkMode[] = ["smart", "yolo", "plan"];
+    const currentIndex = modes.indexOf(workMode);
+    const nextMode = modes[(currentIndex + 1) % modes.length]!;
+    setWorkMode(nextMode);
+    onWorkModeChange?.(nextMode);
+  }, [workMode]);
+
+  const toggleThinking = useCallback(() => {
+    setShowThinking((prev) => !prev);
+  }, []);
+
   const handleSubmit = useCallback(
     async (value: string) => {
       const trimmed = value.trim();
       if (!trimmed) return;
 
-      // 检查是否是 /help 命令
-      if (trimmed === "/help") {
-        setShowHelp(true);
-        setInput("");
-        return;
-      }
-
-      // 检查是否是 /clear 命令
-      if (trimmed === "/clear") {
-        // TODO: 实现清屏
-        setInput("");
-        return;
-      }
-
-      // 检查是否是 /exit 命令
-      if (trimmed === "/exit" || trimmed === "/quit") {
-        exit();
-        return;
-      }
-
-      // 检查是否是 /theme 命令
-      if (trimmed.startsWith("/theme")) {
-        const parts = trimmed.split(" ");
-        const themeName = parts[1];
-        if (themeName) {
-          const success = getThemeManager().setTheme(themeName);
-          if (!success) {
-            // 显示可用主题
-            const themes = getThemeManager()
-              .getAvailableThemes()
-              .map((t) => t.name)
-              .join(", ");
-            console.log(`Available themes: ${themes}`);
-          }
-        }
-        setInput("");
-        return;
-      }
-
-      // 检查是否是其他命令
-      if (trimmed.startsWith("/")) {
-        setInput("");
-        return;
-      }
-
-      // 开始对话
+      // 保存到历史（命令和普通消息都要记录）
+      addHistory(trimmed);
       setInput("");
-      setShowHelp(false);
+
+      // 统一委托给 ChatWrapper 处理（slash 命令 + 普通消息）
       await onMessage(trimmed);
     },
-    [exit, onMessage]
+    [onMessage, addHistory]
   );
 
-  // 全局快捷键
   useInput(
     (input, key) => {
       if (key.escape) {
-        exit();
+        if (onExit) {
+          onExit();
+        } else {
+          exit();
+        }
+      }
+      // Alt+M: 循环切换工作模式
+      if (key.meta && input === "m") {
+        cycleWorkMode();
       }
     },
-    { isActive: !isLoading }
+    { isActive: !isLoading && !isExiting }
   );
 
-  // 判断是否显示欢迎屏幕
-  const showWelcome = showHeader && messages.length === 0 && !streamingContent;
+  // ============================================================
+  // Gemini CLI Composer 布局:
+  //
+  // [StatusRow]        ← 加载状态 + 上下文使用
+  // [Messages]         ← 消息列表
+  // [InputPrompt]      ← 输入框 + Suggestions
+  // [Footer]           ← 底部状态栏（cwd · model）
+  // ============================================================
+
+  const hasMessages = messages.length > 0 || streamingContent.length > 0;
+
+  // 退出时渲染统计面板
+  if (isExiting) {
+    let costStats;
+    try {
+      costStats = getCostTracker()?.getStats();
+    } catch {
+      // CostTracker 未初始化
+    }
+    return (
+      <Box flexDirection="column" height="100%">
+        <ExitSummary
+          messageCount={messageCount}
+          sessionDuration={Date.now() - (sessionStartTime ?? Date.now())}
+          workMode={workMode}
+          showThinking={showThinking}
+          model={model}
+          costStats={costStats}
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* 欢迎屏幕或消息列表 */}
-      {showWelcome ? (
-        <WelcomeScreen version={version} colors={colors} />
-      ) : (
-        <>
-          {/* Header - 简洁的顶部栏 */}
-          {showHeader && messages.length > 0 && (
-            <Box
-              paddingX={1}
-              borderStyle="round"
-              borderColor={toInkColor(colors.border.accent)}
-              width="100%"
-            >
-              <Text bold color={toInkColor(colors.text.accent)}>
-                🦞 SaCode
-              </Text>
-              <Text dimColor>
-                {" "}
-                v{version} · {model}
-              </Text>
-              <Spacer />
-              <Text dimColor>
-                <Text color={toInkColor(colors.text.user)}>/help</Text> ·{" "}
-                <Text color={toInkColor(colors.text.secondary)}>Esc 退出</Text>
-              </Text>
-            </Box>
-          )}
-
-          {/* Main Content - 消息列表 */}
-          <Box flexDirection="column" flexGrow={1} overflow="hidden">
-            <MessageList
-              messages={messages}
-              streamingContent={streamingContent}
-              colors={colors}
-            />
-          </Box>
-        </>
+      {/* BrandHeader — 仅在消息为空时显示完整启动画面 */}
+      {showHeader && !hasMessages && (
+        <GeminiHeader
+          version={version}
+          account={accountInfo}
+          model={model}
+          cwd={cwd}
+          terminalWidth={terminalWidth}
+        />
       )}
 
-      {/* 输入区域 */}
-      <Box
-        paddingX={1}
-        borderStyle="round"
-        borderColor={toInkColor(isLoading ? colors.status.warning : colors.border.accent)}
-        width="100%"
-      >
-        <NewInputBox
-          value={input}
-          onChange={setInput}
-          onSubmit={handleSubmit}
+      {/* StatusRow - 顶部状态行 (有消息时显示) */}
+      {showHeader && hasMessages && (
+        <StatusRow
+          model={model}
+          contextTokens={messages.length * 50}
+          contextMax={8192}
           isLoading={isLoading}
-          suggestions={["/help", "/clear", "/lang", "/prefs", "/theme", "/exit"]}
-          history={messages.filter((m) => m.role === "user").map((m) => m.content)}
+          colors={colors}
         />
-      </Box>
+      )}
 
-      {/* StatusBar - 底部状态栏 */}
-      <NewStatusBar
+      {/* WelcomeScreen — 消息为空时显示快速提示 */}
+      {!hasMessages && (
+        <WelcomeScreen terminalWidth={terminalWidth} />
+      )}
+
+      {/* Main Content - 消息列表 */}
+      {hasMessages && (
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+          <MessageList messages={messages} streamingContent={streamingContent} colors={colors} />
+        </Box>
+      )}
+
+      {/* InputPrompt - 输入框 (Gemini CLI 风格) */}
+      <InputPrompt
+        value={input}
+        onChange={setInput}
+        onSubmit={handleSubmit}
+        commands={slashCommands}
+        history={historyItems}
+        isLoading={isLoading}
+        vimMode="insert"
+        onToggleThinking={toggleThinking}
+      />
+
+      {/* Footer - 底部状态栏 (Gemini CLI 风格：多列 " · " 分隔) */}
+      <Footer
         model={model}
-        language={language}
-        mode="Chat"
         cwd={cwd}
-        thinkingEnabled={true}
+        colors={colors}
+        terminalWidth={terminalWidth}
+        contextPercent={messages.length > 0 ? Math.round(((messages.length * 50) / 8192) * 100) : 0}
+        vimMode="insert"
+        gitBranch={gitBranch}
+        workMode={workMode}
+        showThinking={showThinking}
       />
     </Box>
   );

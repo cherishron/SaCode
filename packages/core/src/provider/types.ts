@@ -13,7 +13,7 @@ import type { Message } from "../types";
 /**
  * 支持的 AI Provider 类型
  */
-export type ProviderType = "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu";
+export type ProviderType = "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu" | "codingplan";
 
 /**
  * Provider 类型配置映射
@@ -24,6 +24,7 @@ export const PROVIDER_TYPES = {
   DEEPSEEK: "deepseek",
   MOONSHOT: "moonshot",
   ZHIPU: "zhipu",
+  CODINGPLAN: "codingplan",
 } as const;
 
 // ============================================================================
@@ -54,7 +55,7 @@ export interface BaseProviderConfig {
  * OpenAI Provider 配置
  */
 export interface OpenAIProviderConfig extends BaseProviderConfig {
-  type: "openai" | "deepseek" | "moonshot" | "zhipu";
+  type: "openai" | "deepseek" | "moonshot" | "zhipu" | "codingplan";
   /** 组织 ID */
   organization?: string | undefined;
   /** 项目 ID */

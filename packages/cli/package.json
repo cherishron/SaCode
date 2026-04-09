@@ -1,10 +1,10 @@
 {
   "name": "@SACODE/cli",
   "version": "0.1.0",
-  "description": "SACODE CLI 工具",
+  "description": "SACODE CLI 工具 - 基于 Bun 运行时",
   "type": "module",
   "bin": {
-    "SACODE": "./dist/cli.js"
+    "sacode": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,18 +15,16 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/ui/*.tsx src/commands/*.tsx --format esm --clean",
-    "dev": "tsup src/index.ts src/cli.ts src/ui/*.tsx src/commands/*.tsx --format esm --watch",
-    "start": "node dist/cli.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "dev": "bun run --hot src/cli.ts",
+    "build": "bun run build.ts",
+    "start": "bun run dist/cli.js",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@SACODE/api": "workspace:*",
     "@SACODE/core": "workspace:*",
-    "@SACODE/web": "workspace:*",
     "@inkjs/ui": "^2.0.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
@@ -36,6 +34,7 @@
     "ink": "^6.8.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
+    "nanoid": "^5.0.0",
     "ora": "^8.1.1",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
@@ -43,10 +42,8 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
     "@types/react": "^19.2.14",
-    "tsup": "^8.3.5",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "@types/figlet": "^1.7.0",
+    "typescript": "^5.7.2"
   }
 }

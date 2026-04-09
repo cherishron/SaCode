@@ -215,7 +215,7 @@ export interface ThemeDefinition {
   /** 语义化颜色 */
   colors: SemanticColors;
   /** 边框样式 */
-  borderStyle?: "single" | "double" | "round" | "bold";
+  borderStyle?: "single" | "double" | "round" | "bold" | "none";
   /** 描述 */
   description?: string;
   /** 作者 */
@@ -309,9 +309,7 @@ export const defaultSemanticColors: SemanticColors = {
 /**
  * 创建部分语义化颜色（合并默认值）
  */
-export function createSemanticColors(
-  partial: Partial<SemanticColors>
-): SemanticColors {
+export function createSemanticColors(partial: Partial<SemanticColors>): SemanticColors {
   return {
     text: { ...defaultSemanticColors.text, ...partial.text },
     background: {

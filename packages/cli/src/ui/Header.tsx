@@ -5,10 +5,10 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Box, Text, Spacer } from "ink";
+import { Box, Text } from "ink";
 import figlet from "figlet";
 import { ThemedGradient } from "./components/ThemedGradient.js";
-import { getColors, toInkColor, type SemanticColors } from "./theme/index.js";
+import { getColors, toInkColor } from "./theme/index.js";
 
 interface HeaderProps {
   version: string;
@@ -48,13 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ version, showHelp = true }) => {
   }, []);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={toInkColor(colors.border.accent)}
-      paddingX={1}
-      width="100%"
-    >
+    <Box flexDirection="column" paddingX={1} width="100%">
       {/* ASCII Art Logo with gradient */}
       {asciiLogo && (
         <Box flexDirection="column">
@@ -72,18 +66,12 @@ export const Header: React.FC<HeaderProps> = ({ version, showHelp = true }) => {
           <Text bold color={toInkColor(colors.text.accent)}>
             v{version}
           </Text>
-          <Text dimColor>
-            {" "}
-            · 多端 AI 助手
-          </Text>
+          <Text dimColor> · 多端 AI 助手</Text>
         </Box>
         {showHelp && (
           <Box>
             <Text color={toInkColor(colors.text.user)}>/help</Text>
-            <Text dimColor>
-              {" "}
-              · Ctrl+C 退出
-            </Text>
+            <Text dimColor> · Ctrl+C 退出</Text>
           </Box>
         )}
       </Box>

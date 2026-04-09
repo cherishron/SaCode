@@ -8,7 +8,7 @@ import React, { useState, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
-import { getColors, toInkColor, type SemanticColors } from "./theme/index.js";
+import { getColors, toInkColor } from "./theme/index.js";
 
 interface InputBoxProps {
   value: string;
@@ -98,7 +98,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
 
   // 处理键盘输入
   useInput(
-    (input, key) => {
+    (_input, key) => {
       if (key.tab) {
         handleTabCompletion();
       } else if (key.upArrow) {

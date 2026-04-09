@@ -71,7 +71,7 @@ const hljsClassToSemantic: Record<string, keyof SyntaxColors> = {
   "hljs-emphasis": "variable",
   "hljs-strong": "keyword",
   "hljs-formula": "string",
-  "hljs-link": "link",
+  "hljs-link": "string",
   "hljs-selector-tag": "tag",
   "hljs-selector-id": "attributeName",
   "hljs-selector-class": "attributeName",
@@ -211,8 +211,8 @@ export const CodeHighlight: React.FC<CodeHighlightProps> = memo(
   ({ code, language, showLineNumbers = false, startLine = 1, maxLines, isPending }) => {
     const syntaxColors = getThemeManager().getSemanticColors().syntax;
 
-    // 高亮处理
-    const tokens = useMemo(() => {
+    // 高亮处理（用于整体分析，实际渲染按行处理）
+    useMemo(() => {
       return highlightCodeSimple(code, language, syntaxColors);
     }, [code, language, syntaxColors]);
 
@@ -250,9 +250,9 @@ export const CodeHighlight: React.FC<CodeHighlightProps> = memo(
           {lineTokens.map((token, idx) => (
             <Text
               key={idx}
-              color={token.color ? toInkColor(token.color) : undefined}
-              bold={token.bold}
-              italic={token.italic}
+              {...(token.color ? { color: toInkColor(token.color) } : {})}
+              {...(token.bold ? { bold: true } : {})}
+              {...(token.italic ? { italic: true } : {})}
             >
               {token.content}
             </Text>
@@ -316,7 +316,7 @@ export const InlineCode: React.FC<InlineCodeProps> = memo(({ code, language }) =
         <Text
           key={idx}
           color={token.color ? toInkColor(token.color) : "black"}
-          bold={token.bold}
+          {...(token.bold ? { bold: true } : {})}
         >
           {token.content}
         </Text>

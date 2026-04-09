@@ -1,0 +1,387 @@
+/**
+ * QueryEngine - 查询引擎
+ *
+ * 采用 AsyncGenerator 模式实现流式响应
+ * 参考 Claude Code QueryEngine 设计
+ */
+
+import type {
+  SACODEClient,
+  StreamChunk,
+  ToolCall,
+  ToolDefinition,
+} from "@SACODE/core";
+
+// ============================================================================
+// 类型定义
+// ============================================================================
+
+/**
+ * 查询引擎状态
+ */
+export type QueryEngineState =
+  | "idle"
+  | "checking_compaction"
+  | "compacting"
+  | "streaming"
+  | "executing_tools"
+  | "error"
+  | "done";
+
+/**
+ * 流式事件类型
+ */
+export type StreamEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_start"; toolCall: ToolCall }
+  | { type: "tool_result"; toolCallId: string; result: string; success: boolean }
+  | { type: "tool_denied"; toolCall: ToolCall }
+  | { type: "error"; error: Error }
+  | { type: "state_change"; state: QueryEngineState }
+  | { type: "usage"; inputTokens: number; outputTokens: number }
+  | { type: "done"; stopReason: string };
+
+/**
+ * 消息类型
+ */
+export interface Message {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+}
+
+/**
+ * 工具注册表接口
+ */
+export interface ToolRegistry {
+  getDefinitions(): ToolDefinition[];
+  execute(toolCall: ToolCall): Promise<string>;
+}
+
+/**
+ * 权限引擎接口
+ */
+export interface PermissionEngine {
+  check(toolCall: ToolCall): Promise<boolean>;
+}
+
+/**
+ * Hook 引擎接口
+ */
+export interface HookEngine {
+  run(event: string, ...args: unknown[]): Promise<void>;
+}
+
+/**
+ * 记忆管理器接口
+ */
+export interface MemoryManager {
+  recall(query: string): Promise<string[]>;
+  remember(content: string): Promise<void>;
+}
+
+/**
+ * 查询引擎依赖
+ */
+export interface QueryDeps {
+  client: SACODEClient;
+  tools?: ToolRegistry;
+  permissions?: PermissionEngine;
+  hooks?: HookEngine;
+  memory?: MemoryManager;
+}
+
+/**
+ * 查询选项
+ */
+export interface QueryOptions {
+  /** 系统提示词 */
+  systemPrompt?: string;
+  /** 最大循环次数 */
+  maxLoops?: number;
+  /** 温度参数 */
+  temperature?: number;
+  /** 最大 Token 数 */
+  maxTokens?: number;
+}
+
+/**
+ * Token 使用量
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+// ============================================================================
+// QueryEngine 类
+// ============================================================================
+
+/**
+ * 查询引擎
+ *
+ * 使用 AsyncGenerator 实现流式响应，支持：
+ * - 流式文本输出
+ * - 工具调用执行
+ * - 权限检查
+ * - 钩子系统
+ */
+export class QueryEngine {
+  private state: QueryEngineState = "idle";
+  private messages: Message[] = [];
+  private usage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  private abortController?: AbortController;
+
+  constructor(private deps: QueryDeps) {}
+
+  /**
+   * 获取当前状态
+   */
+  getState(): QueryEngineState {
+    return this.state;
+  }
+
+  /**
+   * 获取消息历史
+   */
+  getMessages(): Message[] {
+    return [...this.messages];
+  }
+
+  /**
+   * 获取 Token 使用量
+   */
+  getUsage(): TokenUsage {
+    return { ...this.usage };
+  }
+
+  /**
+   * 中止当前查询
+   */
+  abort(): void {
+    this.abortController?.abort();
+  }
+
+  /**
+   * 核心查询方法 - AsyncGenerator 流式模式
+   */
+  async *query(
+    userInput: string,
+    options: QueryOptions = {}
+  ): AsyncGenerator<StreamEvent> {
+    const { maxLoops = 10 } = options;
+
+    this.abortController = new AbortController();
+    let loopCount = 0;
+
+    // 添加用户消息
+    if (userInput) {
+      this.messages.push({
+        role: "user",
+        content: userInput,
+      });
+    }
+
+    while (loopCount < maxLoops) {
+      loopCount++;
+
+      // 检查是否已中止
+      if (this.abortController.signal.aborted) {
+        yield { type: "error", error: new Error("Query aborted") };
+        return;
+      }
+
+      // 更新状态
+      yield* this.setState("streaming");
+
+      try {
+        // 流式调用 API
+        const stream = this.deps.client.chat({
+          messages: this.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+          systemPrompt: options.systemPrompt,
+          tools: this.deps.tools?.getDefinitions(),
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+        });
+
+        let assistantContent = "";
+        const toolCalls: ToolCall[] = [];
+
+        for await (const chunk of stream) {
+          // 处理不同类型的 chunk
+          if (chunk.type === "text_delta" && chunk.text) {
+            assistantContent += chunk.text;
+            yield { type: "text_delta", text: chunk.text };
+          } else if (chunk.type === "tool_call" && chunk.toolCall) {
+            toolCalls.push(chunk.toolCall);
+          } else if (chunk.type === "done") {
+            // 更新使用量
+            if (chunk.usage) {
+              this.usage.inputTokens += chunk.usage.inputTokens;
+              this.usage.outputTokens += chunk.usage.outputTokens;
+              this.usage.totalTokens = this.usage.inputTokens + this.usage.outputTokens;
+              yield {
+                type: "usage",
+                inputTokens: chunk.usage.inputTokens,
+                outputTokens: chunk.usage.outputTokens,
+              };
+            }
+
+            // 检查停止原因
+            if (chunk.stopReason === "end_turn" || chunk.stopReason === "stop_sequence") {
+              // 添加助手消息
+              if (assistantContent || toolCalls.length === 0) {
+                this.messages.push({
+                  role: "assistant",
+                  content: assistantContent,
+                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                });
+              }
+
+              yield { type: "done", stopReason: chunk.stopReason };
+              yield* this.setState("done");
+              return;
+            }
+          } else if (chunk.type === "error" && chunk.error) {
+            yield { type: "error", error: new Error(chunk.error.message) };
+            yield* this.setState("error");
+            return;
+          }
+        }
+
+        // 处理工具调用
+        if (toolCalls.length > 0) {
+          yield* this.setState("executing_tools");
+          yield* this.executeTools(toolCalls);
+
+          // 继续循环（等待下一轮响应）
+          continue;
+        }
+
+        // 没有工具调用，结束
+        yield* this.setState("done");
+        return;
+      } catch (error) {
+        yield { type: "error", error: error instanceof Error ? error : new Error(String(error)) };
+        yield* this.setState("error");
+        return;
+      }
+    }
+
+    // 达到最大循环次数
+    yield { type: "done", stopReason: "max_loops" };
+    yield* this.setState("done");
+  }
+
+  /**
+   * 执行工具调用
+   */
+  private async *executeTools(toolCalls: ToolCall[]): AsyncGenerator<StreamEvent> {
+    if (!this.deps.tools) {
+      yield { type: "error", error: new Error("Tool registry not available") };
+      return;
+    }
+
+    // 添加助手消息（包含工具调用）
+    this.messages.push({
+      role: "assistant",
+      content: "",
+      toolCalls,
+    });
+
+    for (const toolCall of toolCalls) {
+      // 权限检查
+      if (this.deps.permissions) {
+        const permitted = await this.deps.permissions.check(toolCall);
+        if (!permitted) {
+          yield { type: "tool_denied", toolCall };
+          // 添加拒绝结果
+          this.messages.push({
+            role: "tool",
+            content: "Tool execution denied by user",
+            toolCallId: toolCall.id,
+          });
+          continue;
+        }
+      }
+
+      // 执行前钩子
+      await this.deps.hooks?.run("beforeTool", toolCall);
+
+      // 发送工具开始事件
+      yield { type: "tool_start", toolCall };
+
+      try {
+        // 执行工具
+        const result = await this.deps.tools.execute(toolCall);
+
+        // 执行后钩子
+        await this.deps.hooks?.run("afterTool", toolCall, result);
+
+        // 发送结果事件
+        yield { type: "tool_result", toolCallId: toolCall.id, result, success: true };
+
+        // 添加工具结果消息
+        this.messages.push({
+          role: "tool",
+          content: result,
+          toolCallId: toolCall.id,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // 发送失败结果
+        yield {
+          type: "tool_result",
+          toolCallId: toolCall.id,
+          result: errorMessage,
+          success: false,
+        };
+
+        // 添加错误结果消息
+        this.messages.push({
+          role: "tool",
+          content: `Error: ${errorMessage}`,
+          toolCallId: toolCall.id,
+        });
+      }
+    }
+  }
+
+  /**
+   * 设置状态并发出事件
+   */
+  private async *setState(state: QueryEngineState): AsyncGenerator<StreamEvent> {
+    this.state = state;
+    yield { type: "state_change", state };
+  }
+
+  /**
+   * 清空消息历史
+   */
+  clearMessages(): void {
+    this.messages = [];
+    this.usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  }
+
+  /**
+   * 重置引擎状态
+   */
+  reset(): void {
+    this.state = "idle";
+    this.clearMessages();
+    this.abortController?.abort();
+    this.abortController = undefined;
+  }
+}
+
+// ============================================================================
+// 导出
+// ============================================================================
+
+export default QueryEngine;
