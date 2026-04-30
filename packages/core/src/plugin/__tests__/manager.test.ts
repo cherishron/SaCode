@@ -100,8 +100,8 @@ describe("PluginManager", () => {
 
   describe("initialize", () => {
     it("should create plugins directory if not exists", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.promises.mkdir).mockResolvedValue(undefined);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      (fs.promises.mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       await manager.initialize();
 
@@ -118,8 +118,8 @@ describe("PluginManager", () => {
         mockDeps
       );
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readdir).mockResolvedValue([]);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
       await discoverManager.initialize();
 
@@ -140,15 +140,15 @@ describe("PluginManager", () => {
         description: "Discovered plugin",
       };
 
-      vi.mocked(fs.existsSync)
+      (fs.existsSync as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(true) // plugins dir
         .mockReturnValueOnce(true); // plugin.json
 
-      vi.mocked(fs.promises.readdir).mockResolvedValue([
+      (fs.promises.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
         { name: "discovered-plugin", isDirectory: () => true } as fs.Dirent,
       ]);
 
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(manifest));
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(manifest));
 
       const plugins = await manager.discover();
 
@@ -158,8 +158,8 @@ describe("PluginManager", () => {
     });
 
     it("should skip non-directory entries", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readdir).mockResolvedValue([
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
         { name: "file.txt", isDirectory: () => false } as fs.Dirent,
       ]);
 
@@ -169,11 +169,11 @@ describe("PluginManager", () => {
     });
 
     it("should skip directories without plugin.json", async () => {
-      vi.mocked(fs.existsSync)
+      (fs.existsSync as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(true) // plugins dir
         .mockReturnValueOnce(false); // plugin.json not found
 
-      vi.mocked(fs.promises.readdir).mockResolvedValue([
+      (fs.promises.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
         { name: "non-plugin-dir", isDirectory: () => true } as fs.Dirent,
       ]);
 
@@ -189,11 +189,11 @@ describe("PluginManager", () => {
         main: "index.js",
       };
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readdir).mockResolvedValue([
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
         { name: "event-plugin", isDirectory: () => true } as fs.Dirent,
       ]);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(manifest));
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(manifest));
 
       const handler = vi.fn();
       manager.on("plugin:discovered", handler);
@@ -210,7 +210,7 @@ describe("PluginManager", () => {
 
   describe("install", () => {
     it("should throw if plugin not found", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
       await expect(manager.install("non-existent")).rejects.toThrow("Plugin not found");
     });

@@ -89,7 +89,7 @@ export class TaskPlanner {
 
     const lines = [`Goal: ${this.plan.goal}`, ""];
     for (const step of this.plan.steps) {
-      const icon = step.status === "done" ? "✓" : step.status === "error" ? "✗" : step.status === "running" ? "⟳" : "○";
+      const icon = step.status === "done" ? "+" : step.status === "error" ? "x" : step.status === "running" ? "~" : "o";
       lines.push(`  ${icon} ${step.description}`);
     }
     return lines.join("\n");

@@ -19,7 +19,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({
   depth = 0,
 }) => {
   const indent = "  ".repeat(depth);
-  const icon = root.type === "directory" ? "📁" : "📄";
+  const icon = root.type === "directory" ? "[D]" : "[F]";
   const color = root.modified ? geminiTheme.colors.warning : geminiTheme.colors.text;
 
   return (

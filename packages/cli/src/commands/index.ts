@@ -177,3 +177,188 @@ export function registerWorkspaceCommand(ctx: CommandContext): void {
       await editFile(filename);
     });
 }
+
+export function registerMemoryCommand(ctx: CommandContext): void {
+  const memory = ctx.program.command("memory").description("会话记忆管理");
+
+  memory
+    .command("list")
+    .description("列出所有会话记忆")
+    .action(async () => {
+      const { listMemory } = await import("./memory.js");
+      await listMemory();
+    });
+
+  memory
+    .command("show <sessionId>")
+    .description("显示会话记忆内容")
+    .action(async (sessionId: string) => {
+      const { showMemory } = await import("./memory.js");
+      await showMemory(sessionId);
+    });
+
+  memory
+    .command("search <query>")
+    .description("搜索记忆内容")
+    .action(async (query: string) => {
+      const { searchMemory } = await import("./memory.js");
+      await searchMemory(query);
+    });
+
+  memory
+    .command("append <sessionId> <content>")
+    .description("追加内容到会话记忆")
+    .action(async (sessionId: string, content: string) => {
+      const { appendMemory } = await import("./memory.js");
+      await appendMemory(sessionId, content);
+    });
+
+  memory
+    .command("compact <sessionId>")
+    .description("压缩会话记忆")
+    .action(async (sessionId: string) => {
+      const { compactMemory } = await import("./memory.js");
+      await compactMemory(sessionId);
+    });
+
+  memory
+    .command("delete <sessionId>")
+    .description("删除会话记忆")
+    .action(async (sessionId: string) => {
+      const { deleteMemory } = await import("./memory.js");
+      await deleteMemory(sessionId);
+    });
+}
+
+export function registerCronCommand(ctx: CommandContext): void {
+  const cron = ctx.program.command("cron").description("定时任务管理");
+
+  cron
+    .command("list")
+    .description("列出所有定时任务")
+    .option("-a, --all", "显示所有任务（包括禁用的）")
+    .action(async (options: { all?: boolean }) => {
+      const { listCronJobs } = await import("./cron.js");
+      await listCronJobs(options);
+    });
+
+  cron
+    .command("add")
+    .description("添加定时任务")
+    .requiredOption("-n, --name <name>", "任务名称")
+    .requiredOption("-m, --message <message>", "任务消息")
+    .option("-t, --type <type>", "任务类型: interval | once | cron", "interval")
+    .option("-e, --every <duration>", "间隔时间 (如: 60, 5m, 2h, 1d)")
+    .option("--cron <expr>", "Cron 表达式 (如: '0 9 * * *')")
+    .option("--at <datetime>", "执行时间 (ISO 格式)")
+    .option("-c, --channel <channel>", "目标平台", "telegram")
+    .option("--chat-id <chatId>", "目标聊天 ID")
+    .option("--disable", "创建时禁用")
+    .action(async (options: {
+      name: string;
+      message: string;
+      type?: "interval" | "once" | "cron";
+      every?: string;
+      cron?: string;
+      at?: string;
+      channel?: string;
+      chatId?: string;
+      disable?: boolean;
+    }) => {
+      const { addCronJob } = await import("./cron.js");
+      await addCronJob(options);
+    });
+
+  cron
+    .command("remove <jobId>")
+    .description("删除定时任务")
+    .action(async (jobId: string) => {
+      const { removeCronJob } = await import("./cron.js");
+      await removeCronJob(jobId);
+    });
+
+  cron
+    .command("enable <jobId>")
+    .description("启用定时任务")
+    .action(async (jobId: string) => {
+      const { enableCronJob } = await import("./cron.js");
+      await enableCronJob(jobId);
+    });
+
+  cron
+    .command("disable <jobId>")
+    .description("禁用定时任务")
+    .action(async (jobId: string) => {
+      const { disableCronJob } = await import("./cron.js");
+      await disableCronJob(jobId);
+    });
+
+  cron
+    .command("run <jobId>")
+    .description("立即运行定时任务")
+    .action(async (jobId: string) => {
+      const { runCronJob } = await import("./cron.js");
+      await runCronJob(jobId);
+    });
+
+  cron
+    .command("stats")
+    .description("显示定时任务统计")
+    .action(async () => {
+      const { showCronStats } = await import("./cron.js");
+      await showCronStats();
+    });
+}
+
+export function registerPluginCommand(ctx: CommandContext): void {
+  const plugin = ctx.program.command("plugin").description("插件管理");
+
+  plugin
+    .command("list")
+    .description("列出所有插件")
+    .action(async () => {
+      const { listPlugins } = await import("./plugin.js");
+      await listPlugins();
+    });
+
+  plugin
+    .command("install <name>")
+    .description("安装插件")
+    .option("-s, --source <source>", "安装源 (git+https://... | npm://<pkg> | /local/path)")
+    .action(async (name: string, options: { source?: string }) => {
+      const { installPlugin } = await import("./plugin.js");
+      await installPlugin(name, options.source);
+    });
+
+  plugin
+    .command("uninstall <name>")
+    .description("卸载插件")
+    .action(async (name: string) => {
+      const { uninstallPlugin } = await import("./plugin.js");
+      await uninstallPlugin(name);
+    });
+
+  plugin
+    .command("enable <name>")
+    .description("启用插件")
+    .action(async (name: string) => {
+      const { enablePlugin } = await import("./plugin.js");
+      await enablePlugin(name);
+    });
+
+  plugin
+    .command("disable <name>")
+    .description("禁用插件")
+    .action(async (name: string) => {
+      const { disablePlugin } = await import("./plugin.js");
+      await disablePlugin(name);
+    });
+
+  plugin
+    .command("info <name>")
+    .description("查看插件详情")
+    .action(async (name: string) => {
+      const { showPluginInfo } = await import("./plugin.js");
+      await showPluginInfo(name);
+    });
+}

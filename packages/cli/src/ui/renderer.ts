@@ -6,6 +6,7 @@
 
 import chalk from "chalk";
 import hljs from "highlight.js";
+import { toolLabels, statusIcons } from "./theme/index.js";
 
 /**
  * 工具调用信息
@@ -28,9 +29,9 @@ export function renderToolPanel(tool: ToolCallInfo): string {
   
   // 图标和状态
   const statusIcon = {
-    running: chalk.yellow("⏳"),
-    success: chalk.green("✓"),
-    error: chalk.red("✗"),
+    running: chalk.yellow(statusIcons.running),
+    success: chalk.green(statusIcons.success),
+    error: chalk.red(statusIcons.error),
   }[tool.status];
   
   const toolIcon = getToolIcon(tool.name);
@@ -51,7 +52,7 @@ export function renderToolPanel(tool: ToolCallInfo): string {
     const argsPreview = formatArgsPreview(tool.args);
     lines.push(
       chalk.cyan("┃ ") +
-      chalk.gray("📋 ") +
+      chalk.gray("[PL] ") +
       argsPreview.slice(0, width - 6) +
       " ".repeat(Math.max(0, width - argsPreview.length - 6)) +
       chalk.cyan("┃")
@@ -63,7 +64,7 @@ export function renderToolPanel(tool: ToolCallInfo): string {
     const timeStr = formatDuration(tool.duration);
     lines.push(
       chalk.cyan("┃ ") +
-      chalk.gray("⏱️  ") +
+      chalk.gray("[TM]  ") +
       timeStr +
       " ".repeat(width - timeStr.length - 6) +
       chalk.cyan("┃")
@@ -75,7 +76,7 @@ export function renderToolPanel(tool: ToolCallInfo): string {
     const resultPreview = tool.result.slice(0, 100).replace(/\n/g, " ");
     lines.push(
       chalk.cyan("┃ ") +
-      chalk.gray("📄 ") +
+      chalk.gray("[R] ") +
       resultPreview +
       (tool.result.length > 100 ? "..." : "") +
       " ".repeat(Math.max(0, width - resultPreview.length - 9)) +
@@ -88,7 +89,7 @@ export function renderToolPanel(tool: ToolCallInfo): string {
     const errorPreview = tool.error.slice(0, 80).replace(/\n/g, " ");
     lines.push(
       chalk.cyan("┃ ") +
-      chalk.red("❌ ") +
+      chalk.red("[ERR] ") +
       chalk.red(errorPreview) +
       " ".repeat(Math.max(0, width - errorPreview.length - 6)) +
       chalk.cyan("┃")
@@ -104,30 +105,7 @@ export function renderToolPanel(tool: ToolCallInfo): string {
  * 获取工具图标
  */
 function getToolIcon(name: string): string {
-  const icons: Record<string, string> = {
-    read_file: "📖",
-    write_file: "📝",
-    replace: "✏️",
-    edit_file: "✏️",
-    delete_file: "🗑️",
-    list_directory: "📁",
-    glob: "🔍",
-    grep_tool: "🔍",
-    web_search: "🌐",
-    web_fetch: "🌐",
-    run_shell_command: "💻",
-    think: "💭",
-    plan: "📋",
-    get_current_time: "🕐",
-    save_memory: "💾",
-    todo_read: "📋",
-    todo_write: "✅",
-    ask_user_question: "❓",
-    image_read: "🖼️",
-    task: "🤖",
-  };
-  
-  return icons[name] ?? "🔧";
+  return toolLabels[name] ?? toolLabels.default ?? "[T]";
 }
 
 /**
@@ -278,7 +256,7 @@ function renderCodeBlock(code: string, lang: string): string {
 export function renderThinking(content: string, collapsed: boolean = true): string {
   const lines: string[] = [];
   
-  lines.push(chalk.dim("┌─ 💭 Thinking " + "─".repeat(35) + "┐"));
+  lines.push(chalk.dim("┌─ [TH] Thinking " + "─".repeat(33) + "┐"));
   
   if (!collapsed) {
     const contentLines = content.split("\n").slice(0, 10);
@@ -314,7 +292,7 @@ export function renderProgress(current: number, total: number, label: string): s
  */
 export function renderWelcome(): string {
   const lines = [
-    chalk.cyan("\n🦞 SACODE - 多端 AI 助手"),
+    chalk.cyan("\n[SACODE] - 多端 AI 助手"),
     chalk.gray("─".repeat(30)),
     chalk.gray("输入消息开始对话，输入 'exit' 退出"),
     chalk.gray("输入 '/help' 查看可用命令"),

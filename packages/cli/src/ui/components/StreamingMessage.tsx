@@ -1,6 +1,6 @@
 import React from "react";
 import { Text, Box } from "ink";
-import { geminiTheme } from "../theme/gemini-theme.js";
+import { getColors, toInkColor } from "../theme/index.js";
 
 interface StreamingMessageProps {
   content: string;
@@ -8,27 +8,32 @@ interface StreamingMessageProps {
   role: "user" | "assistant";
 }
 
+const roleConfig = {
+  user: { tag: "[YOU]", colorKey: "primary" as const },
+  assistant: { tag: "[AI]", colorKey: "accent" as const },
+};
+
 export const StreamingMessage: React.FC<StreamingMessageProps> = ({
   content,
   isStreaming,
   role,
 }) => {
-  const roleLabel = role === "user" ? "You" : "SaCode";
-  const roleColor = role === "user" ? geminiTheme.colors.primary : geminiTheme.colors.accent;
+  const colors = getColors();
+  const config = roleConfig[role];
 
   return (
     <Box flexDirection="column" marginY={1}>
       <Box>
-        <Text bold color={roleColor}>
-          {roleLabel}
+        <Text bold color={toInkColor(colors.text[config.colorKey])}>
+          {config.tag}
         </Text>
         {isStreaming && role === "assistant" && (
-          <Text color={geminiTheme.colors.muted}> ●</Text>
+          <Text color={toInkColor(colors.text.muted)}> *</Text>
         )}
       </Box>
       <Box marginLeft={1} marginTop={0}>
         <Text>{content}</Text>
-        {isStreaming && <Text color={geminiTheme.colors.accent}>▌</Text>}
+        {isStreaming && <Text color={toInkColor(colors.text.accent)}>▌</Text>}
       </Box>
     </Box>
   );

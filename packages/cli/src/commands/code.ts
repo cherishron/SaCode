@@ -19,7 +19,7 @@ async function printStreamEvents(
   for await (const event of events) {
     switch (event.type) {
       case "thought":
-        console.log(chalk.dim.italic(`💭 ${event.text}`));
+        console.log(chalk.dim.italic(`[TH] ${event.text}`));
         break;
       case "content":
         process.stdout.write(event.text);
@@ -27,7 +27,7 @@ async function printStreamEvents(
       case "tool_call":
         console.log(
           chalk.gray(
-            `  ⟳ ${event.name}(${Object.entries(event.args).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 40)}`).join(", ")})`,
+            `  ~ ${event.name}(${Object.entries(event.args).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 40)}`).join(", ")})`,
           ),
         );
         break;
@@ -39,11 +39,11 @@ async function printStreamEvents(
               : JSON.stringify(event.result).slice(0, 100);
           console.log(
             chalk.gray(
-              `  ✓ ${event.name} ${event.duration ? `(${event.duration}ms)` : ""} — ${preview}${String(event.result).length > 100 ? "..." : ""}`,
+              `  + ${event.name} ${event.duration ? `(${event.duration}ms)` : ""} — ${preview}${String(event.result).length > 100 ? "..." : ""}`,
             ),
           );
         } else {
-          console.log(chalk.red(`  ✗ ${event.name} failed`));
+          console.log(chalk.red(`  x ${event.name} failed`));
         }
         break;
       case "citation":

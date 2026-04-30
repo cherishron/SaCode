@@ -1,6 +1,7 @@
 import React from "react";
 import { Text, Box } from "ink";
 import { geminiTheme } from "../theme/gemini-theme.js";
+import { statusIcons } from "../theme/index.js";
 
 interface ToolCall {
   id: string;
@@ -18,9 +19,9 @@ interface ToolCallPanelProps {
 
 const statusIcon = (status: ToolCall["status"]): string => {
   switch (status) {
-    case "running": return "⟳";
-    case "done": return "✓";
-    case "error": return "✗";
+    case "running": return statusIcons.running;
+    case "done": return statusIcons.success;
+    case "error": return statusIcons.error;
   }
 };
 

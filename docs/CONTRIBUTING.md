@@ -120,24 +120,24 @@ SACODE/
 ### 包依赖关系
 
 ```
-@SACODE/types       (无内部依赖 - 共享类型定义)
+@sacode/types       (无内部依赖 - 共享类型定义)
     ↓
-@SACODE/container  (无内部依赖)
+@sacode/container  (无内部依赖)
     ↓
-@SACODE/core       (依赖 types, container)
+@sacode/core       (依赖 types, container)
     ↓
-@SACODE/database   (无内部依赖)
+@sacode/database   (无内部依赖)
     ↓
-@SACODE/auth       (依赖 database)
+@sacode/auth       (依赖 database)
     ↓
-@SACODE/capabilities (无内部依赖)
+@sacode/capabilities (无内部依赖)
     ↓
-@SACODE/adapters   (依赖 types)
+@sacode/adapters   (依赖 types)
     ↓
-@SACODE/api        (依赖 core, database, auth, capabilities, adapters)
+@sacode/api        (依赖 core, database, auth, capabilities, adapters)
     ↓
-@SACODE/web        (依赖 api, auth, core)
-@SACODE/cli        (依赖 core)
+@sacode/web        (依赖 api, auth, core)
+@sacode/cli        (依赖 core)
 ```
 
 ## 代码规范
@@ -389,7 +389,7 @@ pnpm -C packages/database prisma studio
 开发环境日志输出到控制台：
 
 ```typescript
-import { logger } from "@SACODE/core";
+import { logger } from "@sacode/core";
 
 logger.info("操作成功");
 logger.warn("警告信息");

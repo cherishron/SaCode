@@ -1,18 +1,12 @@
-/**
- * 多媒体消息 API 路由
- *
- * 提供语音、图片、文件等多媒体消息的上传和处理功能
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// ============================================
-// 类型定义
-// ============================================
+const router = new Hono<{ Variables: Variables }>();
 
 type ContentType = "text" | "image" | "audio" | "video" | "file" | "mixed";
 
@@ -31,29 +25,18 @@ interface MediaMessage {
   };
 }
 
-// ============================================
-// 路由
-// ============================================
-
-/**
- * POST /api/media/upload
- * 上传媒体文件（占位实现，实际需要集成文件存储服务）
- */
-router.post("/upload", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/media/upload
+router.post("/upload", authMiddleware, async (c) => {
   try {
-    // TODO: 集成实际的文件存储服务（如 S3、OSS、本地存储等）
-    // 当前返回占位 URL
-    const { type, filename, mimeType, size } = req.body;
+    const { type, filename, mimeType, size } = await c.req.json();
 
     if (!type) {
-      res.status(400).json({ error: "type is required" });
-      return;
+      return c.json({ error: "type is required" }, 400);
     }
 
-    // 生成临时 URL（实际项目中应该上传到存储服务）
     const mediaUrl = `https://storage.example.com/${type}/${Date.now()}_${filename ?? "file"}`;
 
-    res.status(201).json({
+    return c.json({
       success: true,
       mediaUrl,
       mediaMeta: {
@@ -61,40 +44,33 @@ router.post("/upload", authMiddleware, async (req: Request, res: Response) => {
         mimeType,
         size,
       },
-    });
+    }, 201);
   } catch (error) {
     console.error("Upload error:", error);
-    res.status(500).json({ error: "Failed to upload media" });
+    return c.json({ error: "Failed to upload media" }, 500);
   }
 });
 
-/**
- * POST /api/media/message
- * 发送多媒体消息
- */
-router.post("/message", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/media/message
+router.post("/message", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId, message }: { sessionId: string; message: MediaMessage } = req.body;
+    const userId = c.get("userId");
+    const { sessionId, message }: { sessionId: string; message: MediaMessage } = await c.req.json();
 
     if (!sessionId || !message) {
-      res.status(400).json({ error: "sessionId and message are required" });
-      return;
+      return c.json({ error: "sessionId and message are required" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 创建多媒体消息
     const chatMessage = await prisma.chatMessage.create({
       data: {
         sessionId,
@@ -106,7 +82,7 @@ router.post("/message", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    res.status(201).json({
+    return c.json({
       success: true,
       message: {
         id: chatMessage.id,
@@ -118,36 +94,30 @@ router.post("/message", authMiddleware, async (req: Request, res: Response) => {
         mediaMeta: chatMessage.mediaMeta ? JSON.parse(chatMessage.mediaMeta) : null,
         createdAt: chatMessage.createdAt,
       },
-    });
+    }, 201);
   } catch (error) {
     console.error("Send media message error:", error);
-    res.status(500).json({ error: "Failed to send media message" });
+    return c.json({ error: "Failed to send media message" }, 500);
   }
 });
 
-/**
- * GET /api/media/session/:sessionId
- * 获取会话的多媒体消息
- */
-router.get("/session/:sessionId", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/media/session/:sessionId
+router.get("/session/:sessionId", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
-    const { type } = req.query;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const type = c.req.query("type");
 
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 构建查询条件
     const where: Record<string, unknown> = { sessionId };
     if (type && typeof type === "string") {
       where.contentType = type;
@@ -158,7 +128,6 @@ router.get("/session/:sessionId", authMiddleware, async (req: Request, res: Resp
       orderBy: { createdAt: "asc" },
     });
 
-    // 解析 mediaMeta
     const parsedMessages = messages.map((m) => ({
       id: m.id,
       sessionId: m.sessionId,
@@ -170,36 +139,26 @@ router.get("/session/:sessionId", authMiddleware, async (req: Request, res: Resp
       createdAt: m.createdAt,
     }));
 
-    res.json(parsedMessages);
+    return c.json(parsedMessages);
   } catch (error) {
     console.error("Get media messages error:", error);
-    res.status(500).json({ error: "Failed to get media messages" });
+    return c.json({ error: "Failed to get media messages" }, 500);
   }
 });
 
-/**
- * POST /api/media/process
- * 处理媒体文件（如语音转文字、图片 OCR 等）
- */
-router.post("/process", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/media/process
+router.post("/process", authMiddleware, async (c) => {
   try {
-    const { mediaUrl, type, operation } = req.body;
+    const { mediaUrl, type, operation } = await c.req.json();
 
     if (!mediaUrl || !type || !operation) {
-      res.status(400).json({ error: "mediaUrl, type, and operation are required" });
-      return;
+      return c.json({ error: "mediaUrl, type, and operation are required" }, 400);
     }
-
-    // TODO: 集成实际的媒体处理服务
-    // - 语音转文字：Whisper API、阿里云语音识别等
-    // - 图片 OCR：百度 OCR、Google Vision API 等
-    // - 图片描述：GPT-4V、Claude Vision 等
 
     let result: Record<string, unknown> = {};
 
     switch (operation) {
       case "transcribe":
-        // 语音转文字
         result = {
           text: "[语音转文字结果占位]",
           duration: 0,
@@ -208,7 +167,6 @@ router.post("/process", authMiddleware, async (req: Request, res: Response) => {
         break;
 
       case "ocr":
-        // 图片 OCR
         result = {
           text: "[OCR 识别结果占位]",
           confidence: 0.95,
@@ -217,7 +175,6 @@ router.post("/process", authMiddleware, async (req: Request, res: Response) => {
         break;
 
       case "describe":
-        // 图片描述
         result = {
           description: "[图片描述占位]",
           tags: [],
@@ -226,11 +183,10 @@ router.post("/process", authMiddleware, async (req: Request, res: Response) => {
         break;
 
       default:
-        res.status(400).json({ error: "Unknown operation" });
-        return;
+        return c.json({ error: "Unknown operation" }, 400);
     }
 
-    res.json({
+    return c.json({
       success: true,
       mediaUrl,
       type,
@@ -239,45 +195,36 @@ router.post("/process", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Process media error:", error);
-    res.status(500).json({ error: "Failed to process media" });
+    return c.json({ error: "Failed to process media" }, 500);
   }
 });
 
-/**
- * POST /api/media/voice
- * 发送语音消息并自动转文字
- */
-router.post("/voice", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/media/voice
+router.post("/voice", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId, mediaUrl, duration, autoTranscribe = true } = req.body;
+    const userId = c.get("userId");
+    const { sessionId, mediaUrl, duration, autoTranscribe = true } = await c.req.json();
 
     if (!sessionId || !mediaUrl) {
-      res.status(400).json({ error: "sessionId and mediaUrl are required" });
-      return;
+      return c.json({ error: "sessionId and mediaUrl are required" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
     let transcribedText: string | undefined;
 
-    // 如果启用自动转文字
     if (autoTranscribe) {
-      // TODO: 调用实际的语音转文字服务
       transcribedText = "[语音转文字结果占位]";
     }
 
-    // 创建语音消息
     const chatMessage = await prisma.chatMessage.create({
       data: {
         sessionId,
@@ -293,7 +240,7 @@ router.post("/voice", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    res.status(201).json({
+    return c.json({
       success: true,
       message: {
         id: chatMessage.id,
@@ -305,48 +252,39 @@ router.post("/voice", authMiddleware, async (req: Request, res: Response) => {
         mediaMeta: chatMessage.mediaMeta ? JSON.parse(chatMessage.mediaMeta) : null,
         createdAt: chatMessage.createdAt,
       },
-    });
+    }, 201);
   } catch (error) {
     console.error("Send voice message error:", error);
-    res.status(500).json({ error: "Failed to send voice message" });
+    return c.json({ error: "Failed to send voice message" }, 500);
   }
 });
 
-/**
- * POST /api/media/image
- * 发送图片消息并自动生成描述
- */
-router.post("/image", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/media/image
+router.post("/image", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId, mediaUrl, width, height, autoDescribe = true } = req.body;
+    const userId = c.get("userId");
+    const { sessionId, mediaUrl, width, height, autoDescribe = true } = await c.req.json();
 
     if (!sessionId || !mediaUrl) {
-      res.status(400).json({ error: "sessionId and mediaUrl are required" });
-      return;
+      return c.json({ error: "sessionId and mediaUrl are required" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
     let description: string | undefined;
 
-    // 如果启用自动描述
     if (autoDescribe) {
-      // TODO: 调用实际的图片描述服务（如 GPT-4V）
       description = "[图片描述占位]";
     }
 
-    // 创建图片消息
     const chatMessage = await prisma.chatMessage.create({
       data: {
         sessionId,
@@ -363,7 +301,7 @@ router.post("/image", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    res.status(201).json({
+    return c.json({
       success: true,
       message: {
         id: chatMessage.id,
@@ -375,10 +313,10 @@ router.post("/image", authMiddleware, async (req: Request, res: Response) => {
         mediaMeta: chatMessage.mediaMeta ? JSON.parse(chatMessage.mediaMeta) : null,
         createdAt: chatMessage.createdAt,
       },
-    });
+    }, 201);
   } catch (error) {
     console.error("Send image message error:", error);
-    res.status(500).json({ error: "Failed to send image message" });
+    return c.json({ error: "Failed to send image message" }, 500);
   }
 });
 

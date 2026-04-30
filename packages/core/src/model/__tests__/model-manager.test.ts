@@ -317,7 +317,7 @@ describe("ModelManager", () => {
   describe("模型切换事件", () => {
     it("应该发射 model:switched 事件", () => {
       const listener = vi.fn();
-      manager.on("model:switched", listener);
+      manager.on("switch", listener);
 
       manager.selectModel("claude-3-sonnet");
 

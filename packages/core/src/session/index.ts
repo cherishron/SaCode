@@ -289,6 +289,13 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
   }
 
   /**
+   * 获取所有会话（别名方法）
+   */
+  getAll(): Session[] {
+    return this.list();
+  }
+
+  /**
    * 获取活跃会话
    */
   listActive(): Session[] {
@@ -300,6 +307,25 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
    */
   listByPlatform(platform: Platform): Session[] {
     return this.list().filter((s) => s.platform === platform);
+  }
+
+  /**
+   * 获取指定平台的会话（别名方法）
+   */
+  getByPlatform(platform: Platform): Session[] {
+    return this.listByPlatform(platform);
+  }
+
+  /**
+   * 获取统计信息
+   */
+  getStats(): { total: number; byPlatform: Record<string, number> } {
+    const byPlatform: Record<string, number> = {};
+    for (const session of this.sessions.values()) {
+      const platform = session.platform ?? "unknown";
+      byPlatform[platform] = (byPlatform[platform] ?? 0) + 1;
+    }
+    return { total: this.sessions.size, byPlatform };
   }
 
   /**
@@ -408,6 +434,7 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
    */
   destroy(): void {
     this.stopCleanupTimer();
+    this.sessions.clear();
     this.mapping.destroy();
     this.removeAllListeners();
   }

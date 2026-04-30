@@ -6,7 +6,6 @@
 
 import { promises as fs } from "node:fs";
 import pathModule from "node:path";
-import { execa } from "execa";
 import type { ToolDefinition } from "../types";
 import type { GrepToolInput, GrepToolResult, SearchCapabilityConfig } from "../types";
 
@@ -15,8 +14,13 @@ import type { GrepToolInput, GrepToolResult, SearchCapabilityConfig } from "../t
  */
 async function checkRipgrepAvailable(): Promise<boolean> {
   try {
-    await execa("rg", ["--version"], { timeout: 5000 });
-    return true;
+    const proc = Bun.spawn(["rg", "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
   } catch {
     return false;
   }
@@ -72,11 +76,14 @@ async function searchWithRipgrep(input: GrepToolInput): Promise<GrepToolResult> 
 
   args.push("--max-count", maxResults.toString());
 
-  // 执行命令
-  const { stdout } = await execa("rg", args, {
+  const proc = Bun.spawn(["rg", ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
     timeout: 30000,
-    reject: false,
   });
+
+  const exitCode = await proc.exited;
+  const stdout = exitCode === 0 ? await new Response(proc.stdout).text() : "";
 
   // 解析输出
   const matches: GrepToolResult["matches"] = [];

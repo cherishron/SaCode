@@ -25,3 +25,9 @@ export { WelcomeScreen } from "./WelcomeScreen.js";
 
 export { ExitSummary } from "./ExitSummary.js";
 export type { ExitSummaryProps } from "./ExitSummary.js";
+
+export { ChoicePrompt } from "./ChoicePrompt.js";
+export type { ChoicePromptProps, ChoiceOption } from "./ChoicePrompt.js";
+
+export { ConfirmationPrompt } from "./ConfirmationPrompt.js";
+export type { ConfirmationPromptProps } from "./ConfirmationPrompt.js";

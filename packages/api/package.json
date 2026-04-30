@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/api",
+  "name": "@sacode/api",
   "version": "0.1.0",
   "description": "SACODE API 服务 - REST API 与 WebSocket",
   "type": "module",
@@ -13,35 +13,30 @@
   },
   "scripts": {
     "build": "tsup src/index.ts src/server.ts --format esm --clean",
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
+    "dev": "bun run --watch src/server.ts",
+    "start": "bun run dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@SACODE/adapters": "workspace:*",
-    "@SACODE/auth": "workspace:*",
-    "@SACODE/core": "workspace:*",
-    "@SACODE/database": "workspace:*",
-    "cors": "^2.8.5",
-    "express": "^5.0.1",
-    "express-session": "^1.18.1",
-    "helmet": "^8.0.0",
+    "@sacode/adapters": "workspace:*",
+    "@sacode/auth": "workspace:*",
+    "@sacode/capabilities": "workspace:*",
+    "@sacode/core": "workspace:*",
+    "@sacode/database": "workspace:*",
+    "@hono/zod-validator": "^0.4.2",
+    "bcryptjs": "^2.4.3",
+    "hono": "^4.7.4",
     "pino": "^9.5.0",
-    "pino-http": "^10.3.0",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
-    "@types/express-session": "^1.18.0",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

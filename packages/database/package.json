@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/database",
+  "name": "@sacode/database",
   "version": "0.1.0",
   "description": "SACODE 数据库模块 - Prisma ORM 与多数据库支持",
   "type": "module",

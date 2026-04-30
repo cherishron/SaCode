@@ -161,7 +161,7 @@ export class TelegramAdapter extends BaseAdapter {
     }
 
     // 如果有文本但没有发送，单独发送
-    const textContent = message.contents.find((c) => c.type === "text");
+    const textContent = message.contents.find((c: MessageContent) => c.type === "text");
     if (textContent && textContent.type === "text" && textContent.text) {
       // 文本已在 sendContent 中处理
     } else if (message.content && !textContent) {

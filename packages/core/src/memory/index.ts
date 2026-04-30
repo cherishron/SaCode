@@ -3,6 +3,7 @@ export * from "./types";
 
 // Manager
 export { MemoryManager, createMemoryManager } from "./manager";
+export type { MemoryCompactCallback } from "./manager";
 
 // Enhanced Manager (SQLite + Vector Search)
 export {

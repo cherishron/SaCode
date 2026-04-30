@@ -97,7 +97,7 @@ describe("SessionMapper", () => {
     it("应该通过会话 ID 查找映射", () => {
       const sessionId = mapper.createMapping("telegram", "123456789");
 
-      const entries = mapper.findBySessionId(sessionId);
+      const entries = mapper.getBySessionId(sessionId);
       expect(entries).toHaveLength(1);
       expect(entries[0]?.sessionId).toBe(sessionId);
     });
@@ -107,7 +107,7 @@ describe("SessionMapper", () => {
       mapper.createMapping("wechat", "wc_1");
       mapper.createMapping("discord", "dc_1");
 
-      const all = mapper.getAllMappings();
+      const all = mapper.getAll();
       expect(all).toHaveLength(3);
     });
 
@@ -183,9 +183,9 @@ describe("SessionMapper", () => {
       const sessionId = mapper.createMapping("telegram", "123456789");
 
       const deleted = mapper.deleteBySessionId(sessionId);
-      expect(deleted).toBe(true);
+      expect(deleted).toBeGreaterThanOrEqual(1);
 
-      const entries = mapper.findBySessionId(sessionId);
+      const entries = mapper.getBySessionId(sessionId);
       expect(entries).toHaveLength(0);
     });
 
@@ -232,9 +232,11 @@ describe("SessionMapper", () => {
     });
 
     it("应该正确解析渠道标识符", () => {
-      const parsed = (mapper as any).parseChannelIdentifier("telegram:123456789");
-      expect(parsed.platform).toBe("telegram");
-      expect(parsed.chatId).toBe("123456789");
+      const channel = (mapper as any).buildChannelIdentifier("telegram", "123456789");
+      const [platform, ...rest] = channel.split(":");
+      const chatId = rest.join(":");
+      expect(platform).toBe("telegram");
+      expect(chatId).toBe("123456789");
     });
   });
 
@@ -248,7 +250,7 @@ describe("SessionMapper", () => {
 
     it("应该生成符合格式的会话 ID", () => {
       const id = (mapper as any).generateSessionId();
-      expect(id).toMatch(/^session_[a-zA-Z0-9]+$/);
+      expect(id).toMatch(/^session_[a-zA-Z0-9_]+$/);
     });
   });
 
@@ -262,7 +264,7 @@ describe("SessionMapper", () => {
         entry.lastActiveAt = new Date(Date.now() - 10000000);
       }
 
-      const cleanedCount = mapper.cleanupExpired(1000); // 1 秒 TTL
+      const cleanedCount = mapper.cleanup(1000); // 1 秒 TTL
       expect(cleanedCount).toBeGreaterThanOrEqual(0);
     });
 
@@ -305,7 +307,7 @@ describe("SessionMapper", () => {
 
       mapper.destroy();
 
-      expect(mapper.getAllMappings()).toHaveLength(0);
+      expect(mapper.getAll()).toHaveLength(0);
     });
   });
 });
@@ -318,7 +320,7 @@ describe("SessionMapper 持久化", () => {
     });
 
     mapper.createMapping("telegram", "123456789");
-    expect(mapper.getAllMappings()).toHaveLength(1);
+    expect(mapper.getAll()).toHaveLength(1);
 
     mapper.destroy();
   });

@@ -7,8 +7,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { render } from "ink";
 import chalk from "chalk";
-import { execSync } from "child_process";
-import { SACODEClient, type ProviderConfig, getPreferenceManager, getCostTracker, type WorkMode, type UserPreferences } from "@SACODE/core";
+import { SACODEClient, type ProviderConfig, getPreferenceManager, getCostTracker, type WorkMode, type UserPreferences } from "@sacode/core";
 import { parseSlashCommand, createSlashCommandRegistry, executeSlashCommand } from "../commands/parser.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommand } from "../commands/types.js";
 import { getThemeManager } from "../ui/theme/index.js";
@@ -91,12 +90,14 @@ function generateId(): string {
  */
 function getGitBranch(cwd: string): string | undefined {
   try {
-    return execSync("git branch --show-current", {
+    const proc = Bun.spawnSync({
+      cmd: ["git", "branch", "--show-current"],
       cwd,
-      encoding: "utf-8",
+      stdout: "pipe",
+      stderr: "pipe",
       timeout: 3000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim() || undefined;
+    });
+    return (proc.stdout?.toString() ?? "").trim() || undefined;
   } catch {
     return undefined;
   }
@@ -374,6 +375,131 @@ const ChatWrapper: React.FC<{
       },
     });
 
+    // /init — 解读当前项目并生成 AGENTS.md
+    reg.register({
+      ...getBuiltin("init"),
+      execute: async (ctx) => {
+        const force = ctx.flags.force as boolean;
+        const fs = await import("fs");
+        const path = await import("path");
+        const agentsPath = path.join(process.cwd(), "AGENTS.md");
+
+        if (fs.existsSync(agentsPath) && !force) {
+          ctx.output("AGENTS.md 已存在。使用 /init --force 覆盖。");
+          return { success: true };
+        }
+
+        ctx.output("正在分析当前项目...");
+
+        try {
+          const { glob } = await import("glob");
+          const pkgPath = path.join(process.cwd(), "package.json");
+
+          let projectInfo = "";
+          if (fs.existsSync(pkgPath)) {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+            projectInfo = `# ${pkg.name || "Project"} 项目上下文\n\n`;
+            projectInfo += `> ${pkg.description || "项目描述待补充"}\n\n---\n\n`;
+            projectInfo += `## 项目概览\n\n`;
+            projectInfo += `- **名称**: ${pkg.name || "unknown"}\n`;
+            projectInfo += `- **版本**: ${pkg.version || "0.0.0"}\n`;
+            projectInfo += `- **许可证**: ${pkg.license || "未指定"}\n`;
+            if (pkg.type) projectInfo += `- **模块类型**: ${pkg.type}\n`;
+            if (pkg.scripts) {
+              projectInfo += `\n## 常用命令\n\n\`\`\`bash\n`;
+              for (const [name, cmd] of Object.entries(pkg.scripts)) {
+                if (name.startsWith("pre") || name.startsWith("post")) continue;
+                projectInfo += `pnpm ${name.padEnd(16)} # ${cmd}\n`;
+              }
+              projectInfo += `\`\`\`\n`;
+            }
+            if (pkg.dependencies) {
+              projectInfo += `\n## 核心依赖\n\n| 包 | 版本 |\n|------|------|\n`;
+              for (const [name, ver] of Object.entries(pkg.dependencies as Record<string, string>)) {
+                projectInfo += `| ${name} | ${ver} |\n`;
+              }
+            }
+          } else {
+            projectInfo = "# 项目上下文\n\n> 请补充项目描述\n\n---\n";
+          }
+
+          projectInfo += `\n## 目录结构\n\n\`\`\`\n`;
+          try {
+            const entries = fs.readdirSync(process.cwd(), { withFileTypes: true });
+            for (const entry of entries) {
+              if (entry.name.startsWith(".") && entry.name !== ".env.example") continue;
+              if (entry.name === "node_modules" || entry.name === "dist") continue;
+              projectInfo += `${entry.isDirectory() ? "[D]" : "[F]"} ${entry.name}/\n`;
+            }
+          } catch { /* ignore */ }
+          projectInfo += `\`\`\`\n`;
+
+          projectInfo += `\n## 开发规范\n\n- 遵循 ESLint 和 Prettier 配置\n- 语义化命名\n- TypeScript 严格模式\n`;
+
+          fs.writeFileSync(agentsPath, projectInfo, "utf-8");
+          ctx.output(`+ AGENTS.md 已生成: ${agentsPath}\n\n提示: 请根据项目实际情况补充和完善内容。`);
+        } catch (error) {
+          ctx.error(`生成 AGENTS.md 失败: ${error instanceof Error ? error.message : "未知错误"}`);
+          return { success: false };
+        }
+
+        return { success: true };
+      },
+    });
+
+    // /session — 管理会话
+    reg.register({
+      ...getBuiltin("session"),
+      execute: async (ctx) => {
+        const action = ctx.args.action as string | undefined;
+
+        if (action === "list") {
+          ctx.output("会话管理功能暂未实现。请等待后续版本更新。");
+          return { success: true };
+        }
+
+        if (action === "clear") {
+          setMessages([]);
+          ctx.output("+ 当前会话消息已清除");
+          return { success: true };
+        }
+
+        ctx.output(`会话管理:\n  /session list  - 查看历史会话\n  /session clear - 清除当前会话\n  /session info  - 查看当前会话信息`);
+        return { success: true };
+      },
+    });
+
+    // /providers — 管理 AI Provider 配置
+    reg.register({
+      ...getBuiltin("providers"),
+      execute: async (ctx) => {
+        const action = ctx.args.action as string | undefined;
+
+        const envKeys: [string, string][] = [
+          ["OpenAI", "OPENAI_API_KEY"],
+          ["Anthropic", "ANTHROPIC_API_KEY"],
+          ["DeepSeek", "DEEPSEEK_API_KEY"],
+          ["Moonshot", "MOONSHOT_API_KEY"],
+          ["智谱 (Zhipu)", "ZHIPU_API_KEY"],
+        ];
+
+        if (action === "add") {
+          ctx.output(`添加 Provider API Key:\n\n  export OPENAI_API_KEY=sk-...\n  export ANTHROPIC_API_KEY=sk-ant-...\n  export DEEPSEEK_API_KEY=sk-...\n  export MOONSHOT_API_KEY=sk-...\n  export ZHIPU_API_KEY=...\n\n或在 ~/.sacode/api-keys.json 中配置。`);
+          return { success: true };
+        }
+
+        const lines = ["已配置的 AI Provider:", ""];
+        for (const [name, key] of envKeys) {
+          const value = process.env[key];
+          const configured = typeof value === "string" && value.length > 0;
+          lines.push(`  ${configured ? "+" : "o"} ${name}${configured ? ` (${value.slice(0, 8)}...)` : " (未配置)"}`);
+        }
+        lines.push("", "提示: 使用 /providers add 查看配置方法");
+        ctx.output(lines.join("\n"));
+        return { success: true };
+      },
+    });
+
     return reg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -443,7 +569,7 @@ const ChatWrapper: React.FC<{
             {
               id: generateId(),
               role: "system" as const,
-              content: `❌ ${msg}`,
+              content: `[ERR] ${msg}`,
               timestamp: new Date(),
             },
           ]);
@@ -616,26 +742,36 @@ export async function startChat(options: ChatOptions): Promise<void> {
   // 获取 Provider 配置
   const providerConfig = getProviderConfigFromEnv();
 
-  // 验证 API Key
+  let client: SACODEClient;
+
   if (!providerConfig.apiKey || providerConfig.apiKey.includes("your-api-key")) {
-    console.log(chalk.red("API key 无效或缺失"));
-    console.log(chalk.gray("请在 .env 文件或环境变量中设置有效的 API Key"));
-    process.exit(1);
-  }
+    console.log(chalk.yellow("[!] API key 未配置或无效"));
+    console.log(chalk.gray("  请使用 /providers 命令配置 API Key"));
+    console.log(chalk.gray("  或在 .env 文件 / 环境变量中设置"));
+    console.log("");
 
-  // 创建客户端
-  const client = new SACODEClient({
-    provider: providerConfig,
-    timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
-  });
+    const dummyConfig: ProviderConfig = {
+      type: "openai",
+      apiKey: "placeholder",
+      model: providerConfig.model ?? "gpt-4",
+    };
+    client = new SACODEClient({
+      provider: dummyConfig,
+      timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+    });
+  } else {
+    client = new SACODEClient({
+      provider: providerConfig,
+      timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+    });
 
-  // 连接
-  try {
-    await client.connect();
-  } catch (error) {
-    console.log(chalk.red("连接 AI 服务失败"));
-    console.log(chalk.red(error instanceof Error ? error.message : "未知错误"));
-    process.exit(1);
+    try {
+      await client.connect();
+    } catch (error) {
+      console.log(chalk.yellow("[!] 连接 AI 服务失败: " + (error instanceof Error ? error.message : "未知错误")));
+      console.log(chalk.gray("  将以离线模式启动，请稍后使用 /providers 配置"));
+      console.log("");
+    }
   }
 
   // 获取当前目录

@@ -1,20 +1,18 @@
-/**
- * SACODEClient Agentic 功能测试
- * 测试 Agentic 规划、编排、复杂度评估等功能
- */
-
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SACODEClient } from "../index";
 import { SACODEError } from "../../types";
+import { createProvider } from "../../provider";
+import { createToolBridge } from "../../tools";
+import { createAgentRegistry, createPlanner, createOrchestrator } from "../../agent";
 
-// Mock Provider
-vi.mock("../provider", async () => {
-  const actual = await vi.importActual("../provider");
+vi.mock("../../provider", async () => {
+  const actual = await vi.importActual("../../provider");
   return {
     ...(actual as object),
     createProvider: vi.fn().mockImplementation(() => ({
       type: "openai",
       model: "gpt-4o",
+      isInitialized: true,
       initialize: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn().mockResolvedValue(undefined),
       chat: vi.fn().mockImplementation(async function* () {
@@ -22,13 +20,27 @@ vi.mock("../provider", async () => {
         yield { type: "done" as const, stopReason: "end_turn" };
       }),
       registerTool: vi.fn(),
+      executeToolCall: vi.fn(),
+      on: vi.fn(),
+      emit: vi.fn(),
+    })),
+    createProviderFromEnv: vi.fn().mockImplementation(() => ({
+      type: "openai",
+      model: "gpt-4o",
+      isInitialized: true,
+      initialize: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      chat: vi.fn().mockImplementation(async function* () {
+        yield { type: "text_delta" as const, text: "Response" };
+        yield { type: "done" as const, stopReason: "end_turn" };
+      }),
+      registerTool: vi.fn(),
     })),
   };
 });
 
-// Mock ToolBridge
-vi.mock("../tools", async () => {
-  const actual = await vi.importActual("../tools");
+vi.mock("../../tools", async () => {
+  const actual = await vi.importActual("../../tools");
   return {
     ...(actual as object),
     createToolBridge: vi.fn().mockImplementation(() => ({
@@ -40,13 +52,14 @@ vi.mock("../tools", async () => {
       registerTool: vi.fn(),
       executeToolCall: vi.fn().mockResolvedValue({ success: true, content: "result", toolCallId: "call_1", name: "test" }),
       executeToolCalls: vi.fn().mockResolvedValue([]),
+      on: vi.fn(),
     })),
+    ToolBridge: vi.fn(),
   };
 });
 
-// Mock Agent 模块
-vi.mock("../agent", async () => {
-  const actual = await vi.importActual("../agent");
+vi.mock("../../agent", async () => {
+  const actual = await vi.importActual("../../agent");
   return {
     ...(actual as object),
     createAgentRegistry: vi.fn().mockImplementation(() => ({
@@ -56,8 +69,8 @@ vi.mock("../agent", async () => {
     createPlanner: vi.fn().mockImplementation(() => ({
       assessComplexity: vi.fn().mockReturnValue({
         level: "complex",
-        score: 0.8,
-        taskCategory: "development" as const,
+        score: 80,
+        taskCategory: "deep" as const,
         factors: {
           techStackCount: 2,
           toolCount: 3,
@@ -68,20 +81,26 @@ vi.mock("../agent", async () => {
       }),
       generatePlan: vi.fn().mockResolvedValue({
         id: "plan-1",
+        description: "Test plan",
         goal: "Test goal",
         steps: [
-          { id: "step-1", name: "Step 1", status: "pending" as const },
-          { id: "step-2", name: "Step 2", status: "pending" as const },
+          { id: "step-1", description: "Step 1", status: "pending" as const },
+          { id: "step-2", description: "Step 2", status: "pending" as const },
         ],
-        metadata: {},
+        status: "draft" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       }),
       on: vi.fn(),
     })),
     createOrchestrator: vi.fn().mockImplementation(() => ({
       executePlan: vi.fn().mockResolvedValue({
+        planId: "plan-1",
         success: true,
         output: "Plan completed successfully",
-        steps: [],
+        completedSteps: 2,
+        totalSteps: 2,
+        duration: 100,
       }),
       on: vi.fn(),
     })),
@@ -102,6 +121,74 @@ describe("SACODEClient Agentic", () => {
   };
 
   beforeEach(async () => {
+    vi.mocked(createProvider).mockImplementation(() => ({
+      type: "openai",
+      model: "gpt-4o",
+      isInitialized: true,
+      initialize: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      chat: vi.fn().mockImplementation(async function* () {
+        yield { type: "text_delta" as const, text: "Hello" };
+        yield { type: "done" as const, stopReason: "end_turn" };
+      }),
+      registerTool: vi.fn(),
+      executeToolCall: vi.fn(),
+      on: vi.fn(),
+      emit: vi.fn(),
+    }));
+    vi.mocked(createToolBridge).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      getToolCount: vi.fn().mockReturnValue(5),
+      getToolNames: vi.fn().mockReturnValue(["think", "plan", "calculate"]),
+      getAllTools: vi.fn().mockReturnValue([]),
+      getProviderToolDefinitions: vi.fn().mockReturnValue([]),
+      registerTool: vi.fn(),
+      executeToolCall: vi.fn().mockResolvedValue({ success: true, content: "result", toolCallId: "call_1", name: "test" }),
+      executeToolCalls: vi.fn().mockResolvedValue([]),
+      on: vi.fn(),
+    }));
+    vi.mocked(createAgentRegistry).mockImplementation(() => ({
+      getStats: vi.fn().mockReturnValue({ total: 3 }),
+      on: vi.fn(),
+    }));
+    vi.mocked(createPlanner).mockImplementation(() => ({
+      assessComplexity: vi.fn().mockReturnValue({
+        level: "complex",
+        score: 80,
+        taskCategory: "deep" as const,
+        factors: {
+          techStackCount: 2,
+          toolCount: 3,
+          estimatedSteps: 5,
+          requiresExternalResources: true,
+          requiresUserInteraction: false,
+        },
+      }),
+      generatePlan: vi.fn().mockResolvedValue({
+        id: "plan-1",
+        description: "Test plan",
+        goal: "Test goal",
+        steps: [
+          { id: "step-1", description: "Step 1", status: "pending" as const },
+          { id: "step-2", description: "Step 2", status: "pending" as const },
+        ],
+        status: "draft" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      on: vi.fn(),
+    }));
+    vi.mocked(createOrchestrator).mockImplementation(() => ({
+      executePlan: vi.fn().mockResolvedValue({
+        planId: "plan-1",
+        success: true,
+        output: "Plan completed successfully",
+        completedSteps: 2,
+        totalSteps: 2,
+        duration: 100,
+      }),
+      on: vi.fn(),
+    }));
     client = new SACODEClient(config);
     await client.connect();
   });
@@ -109,14 +196,14 @@ describe("SACODEClient Agentic", () => {
   describe("Agentic 聊天", () => {
     it("应该评估任务复杂度", async () => {
       const assessment = client.assessComplexity("Build a web application");
-      
+
       expect(assessment).toBeDefined();
       expect(assessment.level).toBe("complex");
       expect(assessment.score).toBeGreaterThan(0);
     });
 
     it("应该为简单任务直接执行", async () => {
-      vi.mocked(await import("../agent")).createPlanner = vi.fn().mockImplementation(() => ({
+      vi.mocked(createPlanner).mockImplementationOnce(() => ({
         assessComplexity: vi.fn().mockReturnValue({
           level: "simple" as const,
           score: 0.2,
@@ -129,7 +216,15 @@ describe("SACODEClient Agentic", () => {
             requiresUserInteraction: false,
           },
         }),
-        generatePlan: vi.fn(),
+        generatePlan: vi.fn().mockResolvedValue({
+          id: "plan-simple",
+          description: "Simple plan",
+          goal: "Simple goal",
+          steps: [],
+          status: "draft" as const,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
         on: vi.fn(),
       }));
 
@@ -137,8 +232,8 @@ describe("SACODEClient Agentic", () => {
       await simpleClient.connect();
 
       const stream = simpleClient.agenticChat("What's the weather?");
-      const chunks: any[] = [];
-      
+      const chunks: unknown[] = [];
+
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -148,35 +243,36 @@ describe("SACODEClient Agentic", () => {
 
     it("应该为复杂任务生成计划", async () => {
       const stream = client.agenticChat("Build a full-stack web application");
-      
-      const chunks: any[] = [];
+
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
 
-      // 应该包含计划类型的数据
-      const planChunk = chunks.find(c => c.type === "plan");
+      const planChunk = chunks.find((c: any) => c.type === "plan");
       expect(planChunk).toBeDefined();
     });
 
     it("应该执行计划并返回结果", async () => {
       const stream = client.agenticChat("Analyze this codebase");
-      
-      const chunks: any[] = [];
+
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
 
-      // 应该包含输出结果
-      expect(chunks.some(c => c.content || c.chunk?.text)).toBe(true);
+      expect(chunks.some((c: any) => c.content || c.chunk?.text)).toBe(true);
     });
 
     it("应该处理执行失败", async () => {
-      vi.mocked(await import("../agent")).createOrchestrator = vi.fn().mockImplementation(() => ({
+      vi.mocked(createOrchestrator).mockImplementationOnce(() => ({
         executePlan: vi.fn().mockResolvedValue({
+          planId: "plan-fail",
           success: false,
           error: "Execution failed",
-          steps: [],
+          completedSteps: 0,
+          totalSteps: 2,
+          duration: 50,
         }),
         on: vi.fn(),
       }));
@@ -185,14 +281,13 @@ describe("SACODEClient Agentic", () => {
       await failClient.connect();
 
       const stream = failClient.agenticChat("Impossible task");
-      const chunks: any[] = [];
-      
+      const chunks: unknown[] = [];
+
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
 
-      // 应该包含错误消息
-      expect(chunks.some(c => c.role === "system" || c.type === "error")).toBe(true);
+      expect(chunks.some((c: any) => c.role === "system" || c.type === "error")).toBe(true);
     });
 
     it("应该在未启用 Agentic 时使用普通聊天", async () => {
@@ -200,12 +295,12 @@ describe("SACODEClient Agentic", () => {
         ...config,
         enableAgenticPlanning: false,
       });
-      
+
       await noAgenticClient.connect();
 
       const stream = noAgenticClient.agenticChat("Hello");
-      const chunks: any[] = [];
-      
+      const chunks: unknown[] = [];
+
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -218,8 +313,8 @@ describe("SACODEClient Agentic", () => {
       client.on("plan_created", planListener);
 
       const stream = client.agenticChat("Build something");
-      for await (const chunk of stream) {
-        // 消费流
+      for await (const _ of stream) {
+        void _;
       }
 
       expect(planListener).toHaveBeenCalled();
@@ -230,8 +325,8 @@ describe("SACODEClient Agentic", () => {
       client.on("plan_completed", completeListener);
 
       const stream = client.agenticChat("Build something");
-      for await (const chunk of stream) {
-        // 消费流
+      for await (const _ of stream) {
+        void _;
       }
 
       expect(completeListener).toHaveBeenCalled();
@@ -242,8 +337,8 @@ describe("SACODEClient Agentic", () => {
       client.on("complexity_assessed", assessListener);
 
       const stream = client.agenticChat("Build something");
-      for await (const chunk of stream) {
-        // 消费流
+      for await (const _ of stream) {
+        void _;
       }
 
       expect(assessListener).toHaveBeenCalled();
@@ -253,7 +348,7 @@ describe("SACODEClient Agentic", () => {
   describe("生成计划", () => {
     it("应该生成执行计划", async () => {
       const plan = await client.generatePlan("Build a REST API");
-      
+
       expect(plan).toBeDefined();
       expect(plan.id).toBeDefined();
       expect(plan.goal).toBe("Test goal");
@@ -266,7 +361,7 @@ describe("SACODEClient Agentic", () => {
         ...config,
         enableAgenticPlanning: false,
       });
-      
+
       await noAgenticClient.connect();
 
       await expect(noAgenticClient.generatePlan("Test")).rejects.toThrow(SACODEError);
@@ -277,7 +372,7 @@ describe("SACODEClient Agentic", () => {
     it("应该执行计划", async () => {
       const plan = await client.generatePlan("Test plan");
       const result = await client.executePlan(plan);
-      
+
       expect(result).toBeDefined();
       expect(result.success).toBe(true);
       expect(result.output).toBeDefined();
@@ -288,10 +383,18 @@ describe("SACODEClient Agentic", () => {
         ...config,
         enableAgenticPlanning: false,
       });
-      
+
       await noAgenticClient.connect();
 
-      await expect(noAgenticClient.executePlan({ id: "test", goal: "test", steps: [], metadata: {} })).rejects.toThrow(SACODEError);
+      await expect(noAgenticClient.executePlan({
+        id: "test",
+        description: "test",
+        goal: "test",
+        steps: [],
+        status: "draft" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })).rejects.toThrow(SACODEError);
     });
   });
 
@@ -322,7 +425,7 @@ describe("SACODEClient Agentic", () => {
         ...config,
         enableAgenticPlanning: false,
       });
-      
+
       await noAgenticClient.connect();
 
       expect(noAgenticClient.getAgentRegistry()).toBeNull();
@@ -340,7 +443,7 @@ describe("SACODEClient Agentic", () => {
         ...config,
         debug: true,
       });
-      
+
       await debugClient.connect();
       debugClient.assessComplexity("Test task");
 

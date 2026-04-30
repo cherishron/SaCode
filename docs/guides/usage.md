@@ -294,7 +294,7 @@ SACODE 支持浏览器原生通知：
 ### Installation
 
 ```bash
-npm install -g @SACODE/cli
+npm install -g @sacode/cli
 ```
 
 ### Commands

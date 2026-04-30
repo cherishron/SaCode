@@ -27,7 +27,7 @@ import { InputPrompt } from "./InputPrompt.js";
 import { MarkdownDisplay } from "./components/MarkdownDisplay.js";
 import { GeminiHeader } from "./components/GeminiHeader.js";
 import { WelcomeScreen } from "./components/WelcomeScreen.js";
-import { toInkColor, getColors, type SemanticColors } from "./theme/index.js";
+import { toInkColor, getColors, getToolIcon, statusIcons, type SemanticColors } from "./theme/index.js";
 import type { SlashCommand } from "../commands/types.js";
 import { useHistory } from "./hooks/useHistory.js";
 import type { AccountInfo } from "./types.js";
@@ -52,28 +52,6 @@ export interface Message {
 }
 
 // ============================================================================
-// 工具图标映射
-// ============================================================================
-
-const toolIcons: Record<string, string> = {
-  read_file: "📄",
-  write_file: "📝",
-  edit_file: "✏️",
-  delete_file: "🗑️",
-  list_directory: "📁",
-  grep_tool: "🔍",
-  web_search: "🌐",
-  web_fetch: "🌐",
-  run_shell_command: "💻",
-  think: "💭",
-  default: "🔧",
-};
-
-function getToolIcon(toolName: string): string {
-  return toolIcons[toolName] ?? toolIcons.default ?? "🔧";
-}
-
-// ============================================================================
 // ToolCall 组件 - Gemini CLI 风格：紧凑内联
 // ============================================================================
 
@@ -83,14 +61,7 @@ interface ToolCallProps {
 }
 
 const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
-  const statusIconMap: Record<string, string> = {
-    pending: "○",
-    running: "◐",
-    success: "✓",
-    error: "✗",
-  };
-
-  const statusIcon = statusIconMap[message.toolStatus ?? "pending"];
+  const statusIcon = statusIcons[message.toolStatus ?? "pending"];
 
   return (
     <Box flexDirection="column" marginBottom={0}>
@@ -105,7 +76,7 @@ const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
       {message.toolResult && (
         <Text dimColor>
           {"  "}└ {message.toolResult.slice(0, 100)}
-          {message.toolResult.length > 100 ? "…" : ""}
+          {message.toolResult.length > 100 ? "..." : ""}
         </Text>
       )}
     </Box>
@@ -113,7 +84,27 @@ const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
 };
 
 // ============================================================================
-// MessageItem 组件 - 无边框，纯文本流
+// RoleLabel 组件 - 统一角色标识
+// ============================================================================
+
+const roleLabels: Record<string, { tag: string; color: keyof SemanticColors["text"] }> = {
+  user: { tag: "[YOU]", color: "primary" },
+  assistant: { tag: "[AI]", color: "accent" },
+  system: { tag: "[SYS]", color: "muted" },
+  tool: { tag: "[T]", color: "secondary" },
+};
+
+const RoleLabel: React.FC<{ role: string; colors: SemanticColors }> = ({ role, colors }) => {
+  const config = roleLabels[role] ?? roleLabels.system;
+  return (
+    <Text bold color={toInkColor(colors.text[config.color])}>
+      {config.tag}
+    </Text>
+  );
+};
+
+// ============================================================================
+// MessageItem 组件 - 带 RoleLabel 的消息展示
 // ============================================================================
 
 interface MessageItemProps {
@@ -129,7 +120,9 @@ const MessageItem: React.FC<MessageItemProps> = ({ message, colors }) => {
   if (message.role === "system") {
     return (
       <Box>
-        <Text dimColor>⚙ {message.content}</Text>
+        <RoleLabel role="system" colors={colors} />
+        <Text> </Text>
+        <Text dimColor>{message.content}</Text>
       </Box>
     );
   }
@@ -137,14 +130,20 @@ const MessageItem: React.FC<MessageItemProps> = ({ message, colors }) => {
   if (message.role === "user") {
     return (
       <Box flexDirection="column">
-        <Text>{message.content}</Text>
+        <RoleLabel role="user" colors={colors} />
+        <Box marginLeft={1}>
+          <Text>{message.content}</Text>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column">
-      <MarkdownDisplay content={message.content} />
+      <RoleLabel role="assistant" colors={colors} />
+      <Box marginLeft={1}>
+        <MarkdownDisplay content={message.content} />
+      </Box>
     </Box>
   );
 };
@@ -204,7 +203,7 @@ const StatusRow: React.FC<StatusRowProps> = ({
       {/* Row 1: Loading indicator */}
       {isLoading && (
         <Box width="100%" flexDirection="row" alignItems="center" marginLeft={1}>
-          <Text color={toInkColor(colors.status.running)}>◐</Text>
+          <Text color={toInkColor(colors.status.running)}>~</Text>
           <Text color={toInkColor(colors.text.secondary)}> Thinking...</Text>
         </Box>
       )}

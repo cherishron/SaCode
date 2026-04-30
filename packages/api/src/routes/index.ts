@@ -1,5 +1,5 @@
-import { Router, type Response } from "express";
-import { getPrismaClient } from "@SACODE/database";
+import { Hono } from "hono";
+import { getPrismaClient } from "@sacode/database";
 
 import authRoutes from "./auth";
 import chatRoutes from "./chat";
@@ -14,17 +14,22 @@ import imChatRoutes from "./im-chat";
 import mediaRoutes from "./media";
 import settingsRoutes from "./settings";
 import notificationsRoutes from "./notifications";
+import containersRoutes from "./containers";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
+
+const router = new Hono<{ Variables: Variables }>();
 
 // Health check
-router.get("/health", (_req, res: Response) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+router.get("/health", (c) => {
+  return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // API info
-router.get("/", (_req, res: Response) => {
-  res.json({
+router.get("/", (c) => {
+  return c.json({
     name: "SACODE API",
     version: "0.1.0",
     endpoints: ["/auth", "/chat", "/im", "/capabilities", "/plugins", "/tasks", "/routing", "/models", "/memory", "/im-chat", "/media", "/settings", "/notifications", "/stats"],
@@ -32,11 +37,10 @@ router.get("/", (_req, res: Response) => {
 });
 
 // Stats endpoint for dashboard
-router.get("/stats", async (_req, res: Response) => {
+router.get("/stats", async (c) => {
   try {
     const prisma = getPrismaClient();
 
-    // 当前统计数据
     const [totalSessions, totalMessages, activeConnections, pluginsCount] = await Promise.all([
       prisma.chatSession.count(),
       prisma.chatMessage.count(),
@@ -44,7 +48,6 @@ router.get("/stats", async (_req, res: Response) => {
       prisma.plugin.count({ where: { enabled: true } }),
     ]);
 
-    // 趋势计算：与上周对比
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -61,7 +64,6 @@ router.get("/stats", async (_req, res: Response) => {
       prisma.chatMessage.count({ where: { createdAt: { gte: twoWeeksAgo, lt: oneWeekAgo } } }),
     ]);
 
-    // 计算趋势百分比
     const sessionsTrend = previousWeekSessions > 0
       ? Math.round(((lastWeekSessions - previousWeekSessions) / previousWeekSessions) * 100)
       : lastWeekSessions > 0 ? 100 : 0;
@@ -70,7 +72,6 @@ router.get("/stats", async (_req, res: Response) => {
       ? Math.round(((lastWeekMessages - previousWeekMessages) / previousWeekMessages) * 100)
       : lastWeekMessages > 0 ? 100 : 0;
 
-    // 获取最近会话
     const recentSessions = await prisma.chatSession.findMany({
       take: 5,
       orderBy: { updatedAt: "desc" },
@@ -86,7 +87,6 @@ router.get("/stats", async (_req, res: Response) => {
       },
     });
 
-    // 活动流：整合会话、连接、任务等活动记录
     const activities: Array<{
       id: string;
       type: "session" | "connection" | "task" | "message";
@@ -96,7 +96,6 @@ router.get("/stats", async (_req, res: Response) => {
       icon: string;
     }> = [];
 
-    // 会话活动
     const sessionActivities = await prisma.chatSession.findMany({
       take: 3,
       orderBy: { updatedAt: "desc" },
@@ -114,7 +113,6 @@ router.get("/stats", async (_req, res: Response) => {
       });
     }
 
-    // 连接活动
     const connectionActivities = await prisma.iMConnection.findMany({
       take: 3,
       orderBy: { updatedAt: "desc" },
@@ -132,7 +130,6 @@ router.get("/stats", async (_req, res: Response) => {
       });
     }
 
-    // 任务活动
     const taskActivities = await prisma.cronTask.findMany({
       take: 3,
       orderBy: { updatedAt: "desc" },
@@ -150,17 +147,15 @@ router.get("/stats", async (_req, res: Response) => {
       });
     }
 
-    // 按时间排序活动流
     activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-    // AI 服务状态（模拟）
     const aiStatus = {
       status: "online" as const,
       model: process.env.DEFAULT_MODEL || "GPT-4",
-      latency: Math.floor(Math.random() * 100) + 50, // 模拟延迟
+      latency: Math.floor(Math.random() * 100) + 50,
     };
 
-    res.json({
+    return c.json({
       totalSessions,
       totalMessages,
       activeConnections,
@@ -194,23 +189,24 @@ router.get("/stats", async (_req, res: Response) => {
     });
   } catch (error) {
     console.error("Stats error:", error);
-    res.status(500).json({ error: "Failed to fetch stats" });
+    return c.json({ error: "Failed to fetch stats" }, 500);
   }
 });
 
-// Mount routes
-router.use("/auth", authRoutes);
-router.use("/chat", chatRoutes);
-router.use("/im", imRoutes);
-router.use("/capabilities", capabilitiesRoutes);
-router.use("/plugins", pluginsRoutes);
-router.use("/tasks", tasksRoutes);
-router.use("/routing", routingRoutes);
-router.use("/models", modelsRoutes);
-router.use("/memory", memoryRoutes);
-router.use("/im-chat", imChatRoutes);
-router.use("/media", mediaRoutes);
-router.use("/settings", settingsRoutes);
-router.use("/notifications", notificationsRoutes);
+// 挂载子路由
+router.route("/auth", authRoutes);
+router.route("/chat", chatRoutes);
+router.route("/im", imRoutes);
+router.route("/capabilities", capabilitiesRoutes);
+router.route("/plugins", pluginsRoutes);
+router.route("/tasks", tasksRoutes);
+router.route("/routing", routingRoutes);
+router.route("/models", modelsRoutes);
+router.route("/memory", memoryRoutes);
+router.route("/im-chat", imChatRoutes);
+router.route("/media", mediaRoutes);
+router.route("/settings", settingsRoutes);
+router.route("/notifications", notificationsRoutes);
+router.route("/containers", containersRoutes);
 
 export default router;

@@ -1,9 +1,9 @@
-# SACODE - 多端 AI 助手框架
+# SaCode - 多端 AI 助手框架
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/Bun-1.3%2B-orange)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
-[![Test Coverage](https://img.shields.io.io/badge/tests-174%20passed-brightgreen)](./vitest.config.ts)
+[![npm](https://img.shields.io/npm/v/@cherishron/sacode-cli.svg)](https://www.npmjs.com/package/@cherishron/sacode-cli)
 
 基于 Provider 抽象层的多平台 AI 助手框架，支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱等 AI 服务，以及微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email 等 10 个 IM 平台。
 
@@ -37,11 +37,14 @@
 - 🛠️ **自动化能力** - 文件操作、浏览器控制、Shell 命令
 - 🐳 **容器隔离** - Docker 容器运行 Agent，支持沙箱模式
 - 🚪 **统一网关** - Gateway 提供 WebSocket 控制平面
+- ⚡ **Bun 运行时** - 使用 Bun 作为主要运行时，Bun.serve() 作为 HTTP 服务
+- 🔥 **Hono 框架** - API 层使用 Hono 替代 Express，轻量高性能
+- 🎭 **Playwright** - 浏览器自动化使用 Playwright 替代 Puppeteer
 
 ## 项目结构
 
 ```
-SACODE/
+SaCode/
 ├── packages/
 │   ├── core/           # 核心引擎
 │   │   ├── provider/   # AI Provider 抽象层 (OpenAI/Anthropic/DeepSeek/Moonshot/智谱)
@@ -63,41 +66,51 @@ SACODE/
 │   ├── adapters/       # IM 适配器 (10 个平台)
 │   ├── database/       # 数据库层 (Prisma)
 │   ├── auth/           # 认证模块
-│   ├── cli/            # 命令行工具
+│   ├── cli/            # 命令行工具 (@cherishron/sacode-cli)
 │   ├── capabilities/   # 自动化能力
-│   ├── api/            # REST API + WebSocket
+│   ├── api/            # REST API + WebSocket (Hono + Bun.serve())
 │   └── web/            # Web UI (Vue 3 + TinyVue)
 │
-├── .SACODE/            # 配置目录
+├── .sacode/            # 配置目录
 │   ├── commands/       # Slash 命令
 │   ├── plugins/        # 插件目录
 │   └── skills/         # Skills 目录
 │
 ├── docs/               # 文档
-└── javisk/             # PCIV 工作流模板
+└── docker/             # Docker 配置
 ```
 
 ## 快速开始
 
-### 环境要求
+### 方式一：全局安装 CLI（推荐）
 
-- Node.js 22+
+```bash
+npm install -g @cherishron/sacode-cli
+
+sacode chat              # 交互式聊天
+sacode chat -m "你好"    # 发送单条消息
+sacode /init             # 初始化项目配置
+```
+
+### 方式二：从源码构建
+
+#### 环境要求
+
+- Bun 1.3+（推荐）或 Node.js 22+
 - pnpm 9+
 - 数据库 (SQLite/MySQL/PostgreSQL)
 
-### 安装
+#### 安装
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-repo/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 
-# 安装依赖
-pnpm install
+bun install              # 或 pnpm install
 
 # 初始化数据库
-pnpm -C packages/database prisma generate
-pnpm -C packages/database prisma db push
+bun -C packages/database prisma generate
+bun -C packages/database prisma db push
 
 # 复制环境变量
 cp .env.example .env
@@ -111,69 +124,46 @@ cp .env.example .env
 # ============================================
 # AI Provider 配置
 # ============================================
-# 选择 AI Provider: openai | anthropic | deepseek | moonshot | zhipu
 AI_PROVIDER=openai
 
 # OpenAI 配置
 OPENAI_API_KEY=sk-your-api-key-here
-# OPENAI_BASE_URL=  # 可选，用于代理或自定义端点
-
-# Anthropic 配置 (如果使用 Claude)
-# ANTHROPIC_API_KEY=sk-ant-your-api-key-here
-
-# 通用 AI 配置
 AI_MODEL=gpt-4o
 AI_TIMEOUT=60000
 
 # 工具循环配置
 MAX_TOOL_LOOP_ITERATIONS=10
-
-# Agentic 规划配置
 ENABLE_AGENTIC_PLANNING=true
 
 # ============================================
 # 数据库配置
 # ============================================
 DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/SACODE.db
+DATABASE_PATH=./data/sacode.db
 
 # ============================================
 # 缓存配置 (可选)
 # ============================================
-CACHE_BACKEND=memory  # memory | redis
-# REDIS_URL=redis://localhost:6379
+CACHE_BACKEND=memory
 
 # ============================================
 # IM 平台配置
 # ============================================
-# Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token
-
-# 小艺 (华为)
 XIAOYI_AK=your_access_key
 XIAOYI_SK=your_secret_key
-XIAOYI_AGENT_ID=your_agent_id
-
-# Discord
 DISCORD_BOT_TOKEN=your_bot_token
-
-# ============================================
-# OAuth 配置 (可选)
-# ============================================
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
 ```
 
 ### 启动
 
 ```bash
-# 开发模式
-pnpm dev
+bun dev                  # 开发所有包
 
 # 或分别启动各服务
-pnpm api              # API 服务
-pnpm web              # Web UI
-pnpm cli              # 命令行工具
+bun api                  # API 服务 (Hono + Bun.serve())
+bun web                  # Web UI
+bun cli                  # 命令行工具
 ```
 
 ## 使用
@@ -181,26 +171,21 @@ pnpm cli              # 命令行工具
 ### CLI
 
 ```bash
-# 交互式聊天
-SACODE chat
-
-# 发送单条消息
-SACODE chat -m "你好"
-
-# 查看配置
-SACODE config list
-
-# 管理 IM 连接
-SACODE im list
-SACODE im connect telegram
+sacode chat              # 交互式聊天
+sacode chat -m "你好"    # 发送单条消息
+sacode /init             # 初始化项目 AGENTS.md
+sacode /session          # 查看会话信息
+sacode /providers        # 查看可用 AI Provider
+sacode config list       # 查看配置
+sacode im list           # 管理 IM 连接
+sacode im connect telegram
 ```
 
 ### AI Provider
 
 ```typescript
-import { SACODEClient, createProvider } from "@SACODE/core";
+import { SACODEClient, createProvider } from "@sacode/core";
 
-// 创建客户端
 const client = new SACODEClient({
   provider: {
     type: "openai",
@@ -211,7 +196,6 @@ const client = new SACODEClient({
 
 await client.connect();
 
-// 流式聊天
 for await (const msg of client.chat("你好")) {
   console.log(msg);
 }
@@ -220,7 +204,6 @@ for await (const msg of client.chat("你好")) {
 ### Agentic 聊天
 
 ```typescript
-// Agentic 聊天（带自动规划）
 for await (const msg of client.agenticChat("帮我分析这个项目的代码质量")) {
   if ("type" in msg) {
     console.log(`[${msg.type}]`, msg);
@@ -233,7 +216,6 @@ for await (const msg of client.agenticChat("帮我分析这个项目的代码质
 ### 工具注册
 
 ```typescript
-// 注册自定义工具
 client.registerTool(
   "get_weather",
   "获取指定城市的天气信息",
@@ -254,11 +236,10 @@ client.registerTool(
 ### 智能路由
 
 ```typescript
-import { SmartRouter } from "@SACODE/core";
+import { SmartRouter } from "@sacode/core";
 
 const router = new SmartRouter();
 
-// 添加路由规则
 router.addRule({
   id: "vip-priority",
   name: "VIP 优先",
@@ -268,87 +249,19 @@ router.addRule({
   actions: [{ type: "route", channel: "premium-support" }],
 });
 
-// 评估路由
 const result = router.evaluate({ user: { tier: "vip" } });
-```
-
-### 长任务管理
-
-```typescript
-import { LongTaskManager } from "@SACODE/core";
-
-const taskManager = new LongTaskManager();
-
-// 注册任务类型
-taskManager.registerTaskType("analysis", {
-  name: "Data Analysis",
-  priority: "high",
-  totalSteps: 3,
-}, async (task, context) => {
-  await context.reportProgress(33, "Step 1/3");
-  // ... 执行任务
-  return { result: "completed" };
-});
-
-// 创建任务
-const task = await taskManager.createTask("analysis", { data: "..." });
-```
-
-### 缓存管理
-
-```typescript
-import { CacheManager } from "@SACODE/core";
-
-const cache = new CacheManager({
-  backend: "memory",
-  defaultTTL: 60000, // 1 分钟
-});
-
-// 获取或设置缓存
-const value = await cache.getOrSet("user:123", async () => {
-  return await fetchUser(123);
-});
-```
-
-### 定时任务
-
-```typescript
-import { TaskScheduler } from "@SACODE/core";
-
-const scheduler = new TaskScheduler();
-
-// Cron 任务 - 每天早上 8 点
-scheduler.addTask({
-  name: "早间提醒",
-  type: "cron",
-  config: { cronExpression: "0 8 * * *" },
-  message: "早上好！",
-  channel: "xiaoyi",
-  chatId: "user_123",
-});
-
-// Interval 任务 - 每 5 分钟
-scheduler.addTask({
-  name: "定时检查",
-  type: "interval",
-  config: { interval: 5 * 60 * 1000 },
-  message: "检查完成",
-  channel: "telegram",
-  chatId: "chat_456",
-});
 ```
 
 ### MCP 协议
 
 ```typescript
-import { MCPServer } from "@SACODE/core";
+import { MCPServer } from "@sacode/core";
 
 const mcpServer = new MCPServer({
-  name: "SACODE-mcp",
+  name: "sacode-mcp",
   version: "1.0.0",
 });
 
-// 注册工具
 mcpServer.registerTool({
   name: "read_file",
   description: "Read a file",
@@ -356,17 +269,6 @@ mcpServer.registerTool({
 }, async (args) => ({
   content: [{ type: "text", text: "file content" }],
 }));
-```
-
-### 插件系统
-
-```typescript
-import { PluginManager } from "@SACODE/core";
-
-const manager = new PluginManager({ pluginsDir: "./.SACODE/plugins" });
-await manager.initialize();
-await manager.install("my-plugin", "./plugins/my-plugin");
-await manager.enable("my-plugin");
 ```
 
 ### Web UI
@@ -418,27 +320,21 @@ await manager.enable("my-plugin");
 ## 开发
 
 ```bash
-pnpm build      # 构建所有包
-pnpm test       # 运行测试
-pnpm lint       # 代码检查
-pnpm typecheck  # 类型检查
-pnpm format     # 格式化代码
+bun install              # 安装依赖
+bun run build            # 构建所有包
+bun test                 # 运行测试
+bun run lint             # 代码检查
+bun run typecheck        # 类型检查
+bun run format           # 格式化代码
 ```
 
 ## Docker
 
 ```bash
-# 构建镜像
-pnpm docker:build
-
-# 启动服务
-pnpm docker:up
-
-# 开发模式
-pnpm docker:dev
-
-# 停止服务
-pnpm docker:down
+bun run docker:build     # 构建镜像
+bun run docker:up        # 启动服务
+bun run docker:dev       # 开发模式
+bun run docker:down      # 停止服务
 ```
 
 ## 架构
@@ -447,16 +343,16 @@ pnpm docker:down
 
 | 模块 | 描述 |
 |------|------|
-| @SACODE/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
-| @SACODE/gateway | WebSocket 控制平面 |
-| @SACODE/container | Docker 容器隔离 |
-| @SACODE/adapters | IM 平台适配器 (10 个平台) |
-| @SACODE/database | Prisma ORM，多数据库适配 |
-| @SACODE/auth | Passport.js 认证，JWT，OAuth |
-| @SACODE/cli | Commander.js 命令行工具 |
-| @SACODE/capabilities | 文件/浏览器/Shell 自动化 |
-| @SACODE/api | Express REST API + WebSocket |
-| @SACODE/web | Vue 3 + TinyVue + Tailwind CSS |
+| @sacode/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
+| @sacode/gateway | WebSocket 控制平面 |
+| @sacode/container | Docker 容器隔离 |
+| @sacode/adapters | IM 平台适配器 (10 个平台) |
+| @sacode/database | Prisma ORM，多数据库适配 |
+| @sacode/auth | Passport.js 认证，JWT，OAuth |
+| @cherishron/sacode-cli | CLI 工具（npm 全局安装包） |
+| @sacode/capabilities | 文件/浏览器/Shell 自动化 |
+| @sacode/api | Hono REST API + WebSocket (Bun.serve()) |
+| @sacode/web | Vue 3 + TinyVue + Tailwind CSS |
 
 ### 消息流
 
@@ -512,42 +408,12 @@ ToolBridge
       输出响应
 ```
 
-### Gateway 架构
-
-```
-客户端 WebSocket
-       ↓
-  Gateway Server
-       ↓
-  ┌────┴────┐
-  ↓         ↓
-Handler   Session
-  ↓
-Router/Task/MCP/Cache/Model
-```
-
 ## 测试
 
-项目包含 174 个测试用例：
-
-| 模块 | 测试数量 |
-|------|----------|
-| SmartRouter | 18 |
-| MCP Protocol | 22 |
-| Scheduler | 19 |
-| ToolBridge | 23 |
-| LongTaskManager | 17 |
-| GroupQueue | 10 |
-| Adapters | 25 |
-| Auth | 14 |
-| Integration | 14 |
-| Core | 8 |
-| Capabilities | 4 |
-
 ```bash
-pnpm test             # 运行所有测试
-pnpm test:watch       # 监视模式
-pnpm test:coverage    # 测试覆盖率
+bun test                 # 运行所有测试
+bun test --watch         # 监视模式
+bun test --coverage      # 测试覆盖率
 ```
 
 ## 贡献

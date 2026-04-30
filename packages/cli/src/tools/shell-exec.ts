@@ -1,10 +1,7 @@
-/**
- * shell_exec 工具 — 执行 Shell 命令
- */
 import type { Tool, ToolResult } from "../agent/types.js";
 
-const DEFAULT_TIMEOUT = 30_000; // 30 seconds
-const MAX_OUTPUT = 10_000; // 10KB output limit
+const DEFAULT_TIMEOUT = 30_000;
+const MAX_OUTPUT = 10_000;
 
 export function createShellExecTool(rootDir: string): Tool {
   return {
@@ -32,7 +29,6 @@ export function createShellExecTool(rootDir: string): Tool {
     requiresApproval: true,
 
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
-      const { execSync } = await import("child_process");
       const { resolve } = await import("path");
 
       const command = String(args.command);
@@ -40,35 +36,33 @@ export function createShellExecTool(rootDir: string): Tool {
       const timeout = Number(args.timeout) || DEFAULT_TIMEOUT;
 
       try {
-        const output = execSync(command, {
+        const proc = Bun.spawnSync({
+          cmd: [command],
           cwd,
-          encoding: "utf-8",
+          env: process.env,
+          stdout: "pipe",
+          stderr: "pipe",
           timeout,
-          maxBuffer: 1024 * 1024, // 1MB buffer
-          stdio: ["pipe", "pipe", "pipe"],
+          maxBuffer: 1024 * 1024,
         });
 
-        const trimmed =
-          output.length > MAX_OUTPUT
-            ? output.slice(0, MAX_OUTPUT) +
-              `\n... [truncated, ${output.length - MAX_OUTPUT} chars omitted]`
-            : output;
+        const stdout = proc.stdout?.toString() ?? "";
+        const stderr = proc.stderr?.toString() ?? "";
 
-        return {
-          success: true,
-          output: trimmed,
-          metadata: { command, cwd, exitCode: 0 },
-        };
-      } catch (err: unknown) {
-        const execError = err as {
-          stdout?: string;
-          stderr?: string;
-          message: string;
-          status?: number;
-        };
+        if (proc.exitCode === 0) {
+          const trimmed =
+            stdout.length > MAX_OUTPUT
+              ? stdout.slice(0, MAX_OUTPUT) +
+                `\n... [truncated, ${stdout.length - MAX_OUTPUT} chars omitted]`
+              : stdout;
 
-        const stdout = execError.stdout || "";
-        const stderr = execError.stderr || "";
+          return {
+            success: true,
+            output: trimmed,
+            metadata: { command, cwd, exitCode: 0 },
+          };
+        }
+
         const combined = [stdout, stderr].filter(Boolean).join("\n");
         const output =
           combined.length > MAX_OUTPUT
@@ -78,11 +72,23 @@ export function createShellExecTool(rootDir: string): Tool {
         return {
           success: false,
           output,
-          error: execError.message,
+          error: stderr || `Process exited with code ${proc.exitCode ?? 1}`,
           metadata: {
             command,
             cwd,
-            exitCode: execError.status ?? 1,
+            exitCode: proc.exitCode ?? 1,
+          },
+        };
+      } catch (err: unknown) {
+        const error = err as Error;
+        return {
+          success: false,
+          output: "",
+          error: error.message,
+          metadata: {
+            command,
+            cwd,
+            exitCode: 1,
           },
         };
       }
@@ -90,5 +96,4 @@ export function createShellExecTool(rootDir: string): Tool {
   };
 }
 
-/** 向后兼容的导出 */
 export const shellExecTool: Tool = createShellExecTool(process.cwd());

@@ -40,6 +40,7 @@ import { EventEmitter } from "events";
 import type { PrismaClient } from "@prisma/client";
 import type { TaskScheduler } from "../scheduler";
 import type { SACODEClient } from "../client";
+import type { ToolBridge } from "../tools/bridge";
 import { PluginLoader, createPluginLoader } from "./loader";
 import type {
   Plugin,
@@ -227,6 +228,10 @@ export class PluginManager extends EventEmitter {
   private scheduler: TaskScheduler;
   private database: PrismaClient;
   private client: SACODEClient;
+  private toolBridge: ToolBridge | null;
+
+  // 插件注册的能力追踪（用于注销）
+  private registeredToolNames: Map<string, string[]> = new Map();
 
   constructor(
     config: PluginManagerConfig,
@@ -235,6 +240,7 @@ export class PluginManager extends EventEmitter {
       scheduler: TaskScheduler;
       database: PrismaClient;
       client: SACODEClient;
+      toolBridge?: ToolBridge;
     }
   ) {
     super();
@@ -251,6 +257,7 @@ export class PluginManager extends EventEmitter {
     this.scheduler = dependencies.scheduler;
     this.database = dependencies.database;
     this.client = dependencies.client;
+    this.toolBridge = dependencies.toolBridge ?? null;
 
     this.loader = createPluginLoader({ loadTimeout: this.config.loadTimeout });
   }
@@ -317,6 +324,12 @@ export class PluginManager extends EventEmitter {
 
   /**
    * 安装插件
+   *
+   * 支持三种安装源：
+   * - 无 source: 从本地插件目录安装
+   * - git+https://... : 从 Git 仓库克隆安装
+   * - npm://<package> 或 <@scope/package>: 从 npm 注册表安装
+   * - /path/to/plugin: 从本地路径安装
    */
   async install(name: string, source?: string): Promise<Plugin> {
     const existing = this.plugins.get(name);
@@ -325,10 +338,9 @@ export class PluginManager extends EventEmitter {
       throw new Error(`Plugin "${name}" is already installed`);
     }
 
-    // 如果是从外部源安装
+    // 从外部源安装
     if (source) {
-      // TODO: 支持从 git/npm/local 安装
-      throw new Error("External plugin installation not yet implemented");
+      await this.installFromSource(name, source);
     }
 
     const pluginPath = path.join(this.config.pluginsDir, name);
@@ -586,11 +598,7 @@ export class PluginManager extends EventEmitter {
       await this.disable(name);
     }
 
-    // 清除缓存
-    const mainPath = path.join(plugin.path, plugin.manifest.main);
-    delete require.cache[require.resolve(mainPath)];
-
-    // 重新加载
+    // 重新加载（ESM import 自带缓存隔离，无需手动清除）
     const context = this.contexts.get(name);
     if (!context) {
       throw new Error(`Plugin context not found: ${name}`);
@@ -641,45 +649,205 @@ export class PluginManager extends EventEmitter {
       if (dep.status !== "enabled") {
         throw new Error(`Dependency not enabled: ${depName}`);
       }
-      // TODO: 版本检查
     }
   }
 
-  private registerCapabilities(plugin: Plugin, context: PluginContextImpl): void {
-    // 注册工具
-    const tools = context.getTools();
-    for (const tool of tools) {
-      // TODO: 注册到全局工具注册表
-      console.log(`[PluginManager] Registered tool: ${tool.name} from ${plugin.name}`);
+  /**
+   * 从外部源安装插件
+   *
+   * 支持的 source 格式：
+   * - git+https://github.com/user/plugin.git  → git clone
+   * - git+https://github.com/user/plugin.git#v1.0  → git clone 指定分支/标签
+   * - npm://@scope/plugin-name  → npm install
+   * - @scope/plugin-name  → npm install (简写)
+   * - /absolute/path/to/plugin  → 本地路径复制
+   * - ./relative/path/to/plugin  → 本地路径复制
+   */
+  private async installFromSource(name: string, source: string): Promise<void> {
+    const targetDir = path.join(this.config.pluginsDir, name);
+
+    // 确保插件目录存在
+    if (!fs.existsSync(this.config.pluginsDir)) {
+      await fs.promises.mkdir(this.config.pluginsDir, { recursive: true });
     }
 
-    // 注册命令
+    if (fs.existsSync(targetDir)) {
+      throw new Error(`Plugin directory already exists: ${targetDir}`);
+    }
+
+    try {
+      if (source.startsWith("git+") || source.endsWith(".git")) {
+        await this.installFromGit(source, targetDir);
+      } else if (source.startsWith("npm://") || source.startsWith("@") || !source.includes("/") && !source.includes("\\")) {
+        const npmPackage = source.startsWith("npm://") ? source.slice(6) : source;
+        await this.installFromNpm(npmPackage, targetDir);
+      } else {
+        await this.installFromLocalPath(source, targetDir);
+      }
+    } catch (e) {
+      // 安装失败时清理
+      if (fs.existsSync(targetDir)) {
+        await fs.promises.rm(targetDir, { recursive: true, force: true });
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * 从 Git 仓库安装插件
+   */
+  private async installFromGit(gitUrl: string, targetDir: string): Promise<void> {
+    const url = gitUrl.startsWith("git+") ? gitUrl.slice(4) : gitUrl;
+
+    const proc = Bun.spawn({
+      cmd: ["git", "clone", "--depth", "1", url, targetDir],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text();
+      throw new Error(`Git clone failed (exit ${exitCode}): ${stderr.trim()}`);
+    }
+
+    // 验证克隆的目录是否是有效插件
+    const manifestPath = path.join(targetDir, "plugin.json");
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error("Cloned repository does not contain a plugin.json manifest");
+    }
+  }
+
+  /**
+   * 从 npm 注册表安装插件
+   */
+  private async installFromNpm(npmPackage: string, targetDir: string): Promise<void> {
+    const tempDir = path.join(this.config.pluginsDir, `.tmp-${Date.now()}`);
+
+    try {
+      await fs.promises.mkdir(tempDir, { recursive: true });
+
+      // 使用 bun install 下载包
+      const proc = Bun.spawn({
+        cmd: ["bun", "add", npmPackage, "--cwd", tempDir],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(`npm install failed (exit ${exitCode}): ${stderr.trim()}`);
+      }
+
+      // 查找包的实际路径
+      const pkgName = npmPackage.startsWith("@") ? npmPackage.split("/").slice(0, 2).join("/") : npmPackage.split("@")[0]!;
+      const pkgPath = path.join(tempDir, "node_modules", pkgName);
+
+      if (!fs.existsSync(pkgPath)) {
+        throw new Error(`Package ${npmPackage} not found after install`);
+      }
+
+      // 验证是否包含 plugin.json
+      const manifestPath = path.join(pkgPath, "plugin.json");
+      if (!fs.existsSync(manifestPath)) {
+        throw new Error(`Package ${npmPackage} does not contain a plugin.json manifest`);
+      }
+
+      // 复制到插件目录
+      await fs.promises.cp(pkgPath, targetDir, { recursive: true });
+    } finally {
+      // 清理临时目录
+      if (fs.existsSync(tempDir)) {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  /**
+   * 从本地路径安装插件
+   */
+  private async installFromLocalPath(localPath: string, targetDir: string): Promise<void> {
+    const resolvedPath = path.resolve(localPath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`Local plugin path not found: ${resolvedPath}`);
+    }
+
+    const manifestPath = path.join(resolvedPath, "plugin.json");
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error(`Local plugin does not contain a plugin.json manifest: ${resolvedPath}`);
+    }
+
+    // 复制到插件目录
+    await fs.promises.cp(resolvedPath, targetDir, { recursive: true });
+  }
+
+  private registerCapabilities(plugin: Plugin, context: PluginContextImpl): void {
+    const registeredNames: string[] = [];
+
+    // 注册工具到 ToolBridge
+    const tools = context.getTools();
+    for (const tool of tools) {
+      if (this.toolBridge) {
+        const params = tool.parameters as Record<string, unknown>;
+        const properties: Record<string, import("../tools/types").ToolParameterSchema> = {};
+        for (const [key, value] of Object.entries(params)) {
+          properties[key] = typeof value === "object" && value !== null && "type" in value
+            ? value as import("../tools/types").ToolParameterSchema
+            : { type: "string", description: String(value) };
+        }
+        this.toolBridge.registerTool({
+          name: `plugin_${plugin.name}_${tool.name}`,
+          description: tool.description,
+          parameters: {
+            type: "object",
+            properties,
+          },
+          source: "custom",
+          handler: async (args: Record<string, unknown>) => {
+            const result = await tool.execute(args, context);
+            return typeof result === "string" ? result : JSON.stringify(result, null, 2);
+          },
+        });
+        registeredNames.push(`plugin_${plugin.name}_${tool.name}`);
+      }
+    }
+
+    // 注册命令（通过事件系统广播，由 CLI/API 层监听）
     const commands = context.getCommands();
     for (const cmd of commands) {
-      // TODO: 注册到全局命令注册表
-      console.log(`[PluginManager] Registered command: /${cmd.name} from ${plugin.name}`);
+      this.emit("plugin:enabled" as keyof PluginManagerEvents, {
+        ...plugin,
+        _registeredCommand: cmd,
+      } as unknown as Plugin);
+      registeredNames.push(`cmd:${cmd.name}`);
     }
 
     // 注册消息处理器
     const handlers = context.getMessageHandlers();
-    for (const _handler of handlers) {
-      // TODO: 注册到消息路由器
-      console.log(`[PluginManager] Registered message handler from ${plugin.name}`);
+    for (const handler of handlers) {
+      this.emit("plugin:enabled" as keyof PluginManagerEvents, {
+        ...plugin,
+        _registeredHandler: handler,
+      } as unknown as Plugin);
+      registeredNames.push(`handler:${handler.platform || "global"}`);
     }
+
+    this.registeredToolNames.set(plugin.name, registeredNames);
   }
 
-  private unregisterCapabilities(_plugin: Plugin, context: PluginContextImpl): void {
-    // 注销工具
-    const tools = context.getTools();
-    for (const tool of tools) {
-      console.log(`[PluginManager] Unregistered tool: ${tool.name}`);
+  private unregisterCapabilities(plugin: Plugin, context: PluginContextImpl): void {
+    const registeredNames = this.registeredToolNames.get(plugin.name) ?? [];
+
+    // 从 ToolBridge 注销工具
+    for (const regName of registeredNames) {
+      if (regName.startsWith("plugin_") && this.toolBridge) {
+        this.toolBridge.unregisterTool(regName);
+      }
     }
 
-    // 注销命令
-    const commands = context.getCommands();
-    for (const cmd of commands) {
-      console.log(`[PluginManager] Unregistered command: /${cmd.name}`);
-    }
+    this.registeredToolNames.delete(plugin.name);
   }
 
   // 事件方法重载
@@ -715,6 +883,7 @@ export function createPluginManager(
     scheduler: TaskScheduler;
     database: PrismaClient;
     client: SACODEClient;
+    toolBridge?: ToolBridge;
   }
 ): PluginManager {
   return new PluginManager(config, dependencies);

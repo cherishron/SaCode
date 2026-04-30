@@ -12,7 +12,7 @@
 import React, { useState, memo } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import { getColors, toInkColor } from "../theme/index.js";
+import { getColors, toInkColor, getToolIcon, toolLabels, statusIcons } from "../theme/index.js";
 
 // ============================================================================
 // 类型定义
@@ -42,60 +42,6 @@ export interface ToolCallDisplayProps {
 }
 
 // ============================================================================
-// 工具图标映射
-// ============================================================================
-
-const TOOL_ICONS: Record<string, string> = {
-  // 文件操作
-  read_file: "📄",
-  write_file: "📝",
-  replace: "✏️",
-  edit_file: "✏️",
-  delete_file: "🗑️",
-  list_directory: "📁",
-  glob: "🔍",
-  grep_tool: "🔍",
-
-  // Web 操作
-  web_search: "🌐",
-  web_fetch: "🌐",
-  http_request: "🔗",
-
-  // 系统操作
-  run_shell_command: "💻",
-
-  // AI 功能
-  think: "💭",
-  plan: "📋",
-
-  // 时间
-  get_current_time: "🕐",
-
-  // 内存/存储
-  save_memory: "💾",
-
-  // 任务管理
-  todo_read: "📋",
-  todo_write: "✅",
-
-  // 用户交互
-  ask_user_question: "❓",
-
-  // 多媒体
-  image_read: "🖼️",
-
-  // Agent
-  task: "🤖",
-
-  // 默认
-  default: "🔧",
-};
-
-function getToolIcon(name: string): string {
-  return TOOL_ICONS[name] ?? TOOL_ICONS.default!;
-}
-
-// ============================================================================
 // ToolCallDisplay 组件
 // ============================================================================
 
@@ -114,12 +60,11 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = memo(
     const colors = getColors();
     const [isExpanded, _setIsExpanded] = useState(expanded);
 
-    // 状态配置
     const statusConfig = {
-      pending: { icon: "○", color: colors.status.pending },
-      running: { icon: "◐", color: colors.status.running },
-      success: { icon: "✓", color: colors.status.success },
-      error: { icon: "✗", color: colors.status.error },
+      pending: { icon: statusIcons.pending, color: colors.status.pending },
+      running: { icon: statusIcons.running, color: colors.status.running },
+      success: { icon: statusIcons.success, color: colors.status.success },
+      error: { icon: statusIcons.error, color: colors.status.error },
     };
 
     const config = statusConfig[status];
@@ -175,7 +120,7 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = memo(
         {/* 思考内容 */}
         {thought && isExpanded && (
           <Box>
-            <Text dimColor>├─ 💭 </Text>
+            <Text dimColor>├─ [TH] </Text>
             <Text dimColor wrap="wrap">
               {thought}
             </Text>

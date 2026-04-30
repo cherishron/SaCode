@@ -1,28 +1,28 @@
-import { Router, type Request, type Response } from "express";
-import { SACODEClient } from "@SACODE/core";
-import { getPrismaClient } from "@SACODE/database";
+import { Hono } from "hono";
+import { SACODEClient } from "@sacode/core";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 存储活跃的客户端连接
+const router = new Hono<{ Variables: Variables }>();
+
 const activeClients = new Map<string, SACODEClient>();
 
 // POST /api/chat
-router.post("/", authMiddleware, async (req: Request, res: Response) => {
+router.post("/", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { message, sessionId } = req.body;
+    const userId = c.get("userId");
+    const { message, sessionId } = await c.req.json();
 
     if (!message) {
-      res.status(400).json({ error: "Message is required" });
-      return;
+      return c.json({ error: "Message is required" }, 400);
     }
 
-    // 获取或创建客户端
     let client = activeClients.get(userId);
     if (!client) {
-      // 使用新的 Provider 配置模式
       client = new SACODEClient({
         provider: process.env.AI_PROVIDER ? {
           type: process.env.AI_PROVIDER as "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu",
@@ -38,14 +38,12 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
       activeClients.set(userId, client);
     }
 
-    // 收集所有响应
     const responses: unknown[] = [];
 
     for await (const msg of client.chat(message, sessionId)) {
       responses.push(msg);
     }
 
-    // 保存消息到数据库
     const prisma = getPrismaClient();
     if (sessionId) {
       await prisma.chatMessage.create({
@@ -57,25 +55,23 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
       });
     }
 
-    res.json({ success: true, responses });
+    return c.json({ success: true, responses });
   } catch (error) {
     console.error("Chat error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/chat/agentic - Agentic 模式聊天（带自动规划）
-router.post("/agentic", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/chat/agentic
+router.post("/agentic", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { message, sessionId, enablePlanning } = req.body;
+    const userId = c.get("userId");
+    const { message, sessionId, enablePlanning } = await c.req.json();
 
     if (!message) {
-      res.status(400).json({ error: "Message is required" });
-      return;
+      return c.json({ error: "Message is required" }, 400);
     }
 
-    // 获取或创建客户端（带 Agentic 规划支持）
     const clientKey = `${userId}-agentic`;
     let client = activeClients.get(clientKey);
     if (!client) {
@@ -95,22 +91,18 @@ router.post("/agentic", authMiddleware, async (req: Request, res: Response) => {
       activeClients.set(clientKey, client);
     }
 
-    // 收集所有响应（包括 Agentic 事件）
     const responses: unknown[] = [];
     const events: Array<{ type: string; data: unknown }> = [];
 
     for await (const msg of client.agenticChat(message, sessionId)) {
       if ("type" in msg && typeof msg.type === "string") {
-        // Agentic 事件（规划、步骤执行等）
         events.push({ type: msg.type, data: msg });
         responses.push(msg);
       } else {
-        // 普通消息响应
         responses.push(msg);
       }
     }
 
-    // 保存消息到数据库
     const prisma = getPrismaClient();
     if (sessionId) {
       await prisma.chatMessage.create({
@@ -122,17 +114,17 @@ router.post("/agentic", authMiddleware, async (req: Request, res: Response) => {
       });
     }
 
-    res.json({ success: true, responses, events });
+    return c.json({ success: true, responses, events });
   } catch (error) {
     console.error("Agentic chat error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
 // GET /api/chat/sessions
-router.get("/sessions", authMiddleware, async (req: Request, res: Response) => {
+router.get("/sessions", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
+    const userId = c.get("userId");
     const prisma = getPrismaClient();
 
     const sessions = await prisma.chatSession.findMany({
@@ -141,40 +133,36 @@ router.get("/sessions", authMiddleware, async (req: Request, res: Response) => {
       take: 50,
     });
 
-    res.json(sessions);
+    return c.json(sessions);
   } catch (error) {
     console.error("Get sessions error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
 // GET /api/chat/sessions/:id/messages
-router.get(
-  "/sessions/:id/messages",
-  authMiddleware,
-  async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const prisma = getPrismaClient();
+router.get("/sessions/:id/messages", authMiddleware, async (c) => {
+  try {
+    const { id } = c.req.param();
+    const prisma = getPrismaClient();
 
-      const messages = await prisma.chatMessage.findMany({
-        where: { sessionId: id },
-        orderBy: { createdAt: "asc" },
-      });
+    const messages = await prisma.chatMessage.findMany({
+      where: { sessionId: id },
+      orderBy: { createdAt: "asc" },
+    });
 
-      res.json(messages);
-    } catch (error) {
-      console.error("Get messages error:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
+    return c.json(messages);
+  } catch (error) {
+    console.error("Get messages error:", error);
+    return c.json({ error: "Internal server error" }, 500);
   }
-);
+});
 
 // POST /api/chat/sessions
-router.post("/sessions", authMiddleware, async (req: Request, res: Response) => {
+router.post("/sessions", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { title, channelId, platform } = req.body;
+    const userId = c.get("userId");
+    const { title, channelId, platform } = await c.req.json();
 
     const prisma = getPrismaClient();
     const session = await prisma.chatSession.create({
@@ -186,18 +174,18 @@ router.post("/sessions", authMiddleware, async (req: Request, res: Response) => 
       },
     });
 
-    res.status(201).json(session);
+    return c.json(session, 201);
   } catch (error) {
     console.error("Create session error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/chat/sessions/:id - 获取会话详情
-router.get("/sessions/:id", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/chat/sessions/:id
+router.get("/sessions/:id", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { id } = req.params;
+    const userId = c.get("userId");
+    const { id } = c.req.param();
     const prisma = getPrismaClient();
 
     const session = await prisma.chatSession.findFirst({
@@ -211,33 +199,30 @@ router.get("/sessions/:id", authMiddleware, async (req: Request, res: Response) 
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    res.json(session);
+    return c.json(session);
   } catch (error) {
     console.error("Get session error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// PATCH /api/chat/sessions/:id - 更新会话
-router.patch("/sessions/:id", authMiddleware, async (req: Request, res: Response) => {
+// PATCH /api/chat/sessions/:id
+router.patch("/sessions/:id", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { id } = req.params;
-    const { title, channelId, platform } = req.body;
+    const userId = c.get("userId");
+    const { id } = c.req.param();
+    const { title, channelId, platform } = await c.req.json();
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const existingSession = await prisma.chatSession.findFirst({
       where: { id, userId },
     });
 
     if (!existingSession) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
     const session = await prisma.chatSession.update({
@@ -250,70 +235,61 @@ router.patch("/sessions/:id", authMiddleware, async (req: Request, res: Response
       },
     });
 
-    res.json(session);
+    return c.json(session);
   } catch (error) {
     console.error("Update session error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// DELETE /api/chat/sessions/:id - 删除会话
-router.delete("/sessions/:id", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/chat/sessions/:id
+router.delete("/sessions/:id", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { id } = req.params;
+    const userId = c.get("userId");
+    const { id } = c.req.param();
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const existingSession = await prisma.chatSession.findFirst({
       where: { id, userId },
     });
 
     if (!existingSession) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 删除会话及其消息
     await prisma.$transaction([
       prisma.chatMessage.deleteMany({ where: { sessionId: id } }),
       prisma.chatSession.delete({ where: { id } }),
     ]);
 
-    res.status(204).send();
+    return c.body(null, 204);
   } catch (error) {
     console.error("Delete session error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/chat/search - 搜索消息（增强版）
-router.get("/search", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/chat/search
+router.get("/search", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const {
-      q,
-      sessionId,
-      role,
-      startDate,
-      endDate,
-      limit = 50,
-      offset = 0,
-      highlight = "true",
-      facets = "false",
-    } = req.query;
+    const userId = c.get("userId");
+    const q = c.req.query("q");
+    const sessionId = c.req.query("sessionId");
+    const role = c.req.query("role");
+    const startDate = c.req.query("startDate");
+    const endDate = c.req.query("endDate");
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+    const highlight = c.req.query("highlight") === "true";
+    const facets = c.req.query("facets") === "true";
 
-    if (!q || typeof q !== "string" || q.trim().length === 0) {
-      res.status(400).json({ error: "Search query is required" });
-      return;
+    if (!q || q.trim().length === 0) {
+      return c.json({ error: "Search query is required" }, 400);
     }
 
     const prisma = getPrismaClient();
     const searchQuery = q.trim();
-    const shouldHighlight = highlight === "true";
-    const shouldIncludeFacets = facets === "true";
 
-    // 构建查询条件
     interface WhereCondition {
       content: { contains: string; mode: "insensitive" };
       sessionId?: string;
@@ -332,31 +308,29 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
       },
     };
 
-    if (sessionId && typeof sessionId === "string") {
+    if (sessionId) {
       where.sessionId = sessionId;
     }
 
-    if (role && typeof role === "string" && (role === "user" || role === "assistant")) {
+    if (role && (role === "user" || role === "assistant")) {
       where.role = role;
     }
 
-    // 时间范围过滤
     if (startDate || endDate) {
       where.createdAt = {};
-      if (startDate && typeof startDate === "string") {
+      if (startDate) {
         where.createdAt.gte = new Date(startDate);
       }
-      if (endDate && typeof endDate === "string") {
+      if (endDate) {
         where.createdAt.lte = new Date(endDate);
       }
     }
 
-    // 执行搜索
     const messages = await prisma.chatMessage.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      take: Math.min(parseInt(limit as string, 10), 100),
-      skip: parseInt(offset as string, 10),
+      take: Math.min(limit, 100),
+      skip: offset,
       include: {
         session: {
           select: {
@@ -367,10 +341,8 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    // 获取总数
     const total = await prisma.chatMessage.count({ where });
 
-    // 高亮处理函数
     function highlightText(text: string, query: string): string {
       if (!query) return text;
       const regex = new RegExp(
@@ -380,15 +352,13 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
       return text.replace(regex, "<mark>$1</mark>");
     }
 
-    // 处理结果
-    const processedMessages = shouldHighlight
+    const processedMessages = highlight
       ? messages.map((msg) => ({
           ...msg,
           contentHighlighted: highlightText(msg.content, searchQuery),
         }))
       : messages;
 
-    // 构建响应
     const response: {
       messages: typeof processedMessages;
       total: number;
@@ -404,16 +374,13 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
       query: searchQuery,
     };
 
-    // 聚合统计
-    if (shouldIncludeFacets) {
-      // 按角色统计
+    if (facets) {
       const byRole = await prisma.chatMessage.groupBy({
         by: ["role"],
         where,
         _count: { id: true },
       });
 
-      // 按会话统计
       const bySessionRaw = await prisma.chatMessage.groupBy({
         by: ["sessionId"],
         where,
@@ -430,7 +397,6 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
 
       const sessionMap = new Map(sessionDetails.map((s) => [s.id, s.title]));
 
-      // 按日期统计（最近 7 天）
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const recentMessages = await prisma.chatMessage.findMany({
@@ -460,48 +426,45 @@ router.get("/search", authMiddleware, async (req: Request, res: Response) => {
       };
     }
 
-    res.json(response);
+    return c.json(response);
   } catch (error) {
     console.error("Search messages error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/chat/search/suggestions - 搜索建议
-router.get("/search/suggestions", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/chat/search/suggestions
+router.get("/search/suggestions", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { q, limit = 5 } = req.query;
+    const userId = c.get("userId");
+    const q = c.req.query("q");
+    const limit = parseInt(c.req.query("limit") || "5", 10);
 
-    if (!q || typeof q !== "string" || q.trim().length < 2) {
-      res.json({ suggestions: [] });
-      return;
+    if (!q || q.trim().length < 2) {
+      return c.json({ suggestions: [] });
     }
 
     const prisma = getPrismaClient();
     const searchQuery = q.trim();
 
-    // 搜索相关会话标题
     const sessions = await prisma.chatSession.findMany({
       where: {
         userId,
         title: { contains: searchQuery },
       },
       select: { id: true, title: true },
-      take: parseInt(limit as string, 10),
+      take: limit,
     });
 
-    // 搜索相关消息内容（提取关键词片段）
     const messages = await prisma.chatMessage.findMany({
       where: {
         content: { contains: searchQuery },
         session: { userId },
       },
       select: { content: true },
-      take: parseInt(limit as string, 10),
+      take: limit,
     });
 
-    // 生成建议
     const suggestions = [
       ...sessions.map((s) => ({
         type: "session" as const,
@@ -514,35 +477,29 @@ router.get("/search/suggestions", authMiddleware, async (req: Request, res: Resp
       })),
     ];
 
-    res.json({ suggestions: suggestions.slice(0, parseInt(limit as string, 10) * 2) });
+    return c.json({ suggestions: suggestions.slice(0, limit * 2) });
   } catch (error) {
     console.error("Search suggestions error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// ==================== 批量操作 API ====================
-
-// POST /api/chat/sessions/batch-delete - 批量删除会话
-router.post("/sessions/batch-delete", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/chat/sessions/batch-delete
+router.post("/sessions/batch-delete", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionIds } = req.body as { sessionIds: string[] };
+    const userId = c.get("userId");
+    const { sessionIds } = await c.req.json() as { sessionIds: string[] };
 
     if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
-      res.status(400).json({ error: "sessionIds is required and must be a non-empty array" });
-      return;
+      return c.json({ error: "sessionIds is required and must be a non-empty array" }, 400);
     }
 
-    // 限制批量操作数量
     if (sessionIds.length > 100) {
-      res.status(400).json({ error: "Cannot delete more than 100 sessions at once" });
-      return;
+      return c.json({ error: "Cannot delete more than 100 sessions at once" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证所有会话都属于当前用户
     const sessions = await prisma.chatSession.findMany({
       where: {
         id: { in: sessionIds },
@@ -555,11 +512,9 @@ router.post("/sessions/batch-delete", authMiddleware, async (req: Request, res: 
     const invalidCount = sessionIds.length - validIds.length;
 
     if (validIds.length === 0) {
-      res.status(404).json({ error: "No valid sessions found" });
-      return;
+      return c.json({ error: "No valid sessions found" }, 404);
     }
 
-    // 批量删除（级联删除消息）
     const result = await prisma.$transaction([
       prisma.chatMessage.deleteMany({
         where: { sessionId: { in: validIds } },
@@ -569,7 +524,7 @@ router.post("/sessions/batch-delete", authMiddleware, async (req: Request, res: 
       }),
     ]);
 
-    res.json({
+    return c.json({
       success: true,
       deleted: result[1].count,
       invalid: invalidCount,
@@ -577,29 +532,26 @@ router.post("/sessions/batch-delete", authMiddleware, async (req: Request, res: 
     });
   } catch (error) {
     console.error("Batch delete sessions error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/chat/messages/batch-delete - 批量删除消息
-router.post("/messages/batch-delete", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/chat/messages/batch-delete
+router.post("/messages/batch-delete", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { messageIds, sessionId } = req.body as {
+    const userId = c.get("userId");
+    const { messageIds, sessionId } = await c.req.json() as {
       messageIds?: string[];
       sessionId?: string;
     };
 
     const prisma = getPrismaClient();
 
-    // 按消息 ID 批量删除
     if (messageIds && Array.isArray(messageIds) && messageIds.length > 0) {
       if (messageIds.length > 500) {
-        res.status(400).json({ error: "Cannot delete more than 500 messages at once" });
-        return;
+        return c.json({ error: "Cannot delete more than 500 messages at once" }, 400);
       }
 
-      // 验证消息所属会话属于当前用户
       const messages = await prisma.chatMessage.findMany({
         where: { id: { in: messageIds } },
         select: { id: true, sessionId: true },
@@ -617,58 +569,52 @@ router.post("/messages/batch-delete", authMiddleware, async (req: Request, res: 
         .map(m => m.id);
 
       if (validMessageIds.length === 0) {
-        res.status(404).json({ error: "No valid messages found" });
-        return;
+        return c.json({ error: "No valid messages found" }, 404);
       }
 
       const result = await prisma.chatMessage.deleteMany({
         where: { id: { in: validMessageIds } },
       });
 
-      res.json({
+      return c.json({
         success: true,
         deleted: result.count,
         invalid: messageIds.length - validMessageIds.length,
       });
-      return;
     }
 
-    // 按会话 ID 删除（清空会话消息）
     if (sessionId) {
-      // 验证会话所有权
       const session = await prisma.chatSession.findFirst({
         where: { id: sessionId, userId },
       });
 
       if (!session) {
-        res.status(404).json({ error: "Session not found" });
-        return;
+        return c.json({ error: "Session not found" }, 404);
       }
 
       const result = await prisma.chatMessage.deleteMany({
         where: { sessionId },
       });
 
-      res.json({
+      return c.json({
         success: true,
         deleted: result.count,
         message: `已清空会话 ${result.count} 条消息`,
       });
-      return;
     }
 
-    res.status(400).json({ error: "messageIds or sessionId is required" });
+    return c.json({ error: "messageIds or sessionId is required" }, 400);
   } catch (error) {
     console.error("Batch delete messages error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/chat/sessions/batch-update - 批量更新会话
-router.post("/sessions/batch-update", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/chat/sessions/batch-update
+router.post("/sessions/batch-update", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionIds, updates } = req.body as {
+    const userId = c.get("userId");
+    const { sessionIds, updates } = await c.req.json() as {
       sessionIds: string[];
       updates: {
         title?: string;
@@ -678,18 +624,15 @@ router.post("/sessions/batch-update", authMiddleware, async (req: Request, res: 
     };
 
     if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
-      res.status(400).json({ error: "sessionIds is required and must be a non-empty array" });
-      return;
+      return c.json({ error: "sessionIds is required and must be a non-empty array" }, 400);
     }
 
     if (sessionIds.length > 100) {
-      res.status(400).json({ error: "Cannot update more than 100 sessions at once" });
-      return;
+      return c.json({ error: "Cannot update more than 100 sessions at once" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证所有会话都属于当前用户
     const validSessions = await prisma.chatSession.findMany({
       where: { id: { in: sessionIds }, userId },
       select: { id: true },
@@ -698,11 +641,9 @@ router.post("/sessions/batch-update", authMiddleware, async (req: Request, res: 
     const validIds = validSessions.map(s => s.id);
 
     if (validIds.length === 0) {
-      res.status(404).json({ error: "No valid sessions found" });
-      return;
+      return c.json({ error: "No valid sessions found" }, 404);
     }
 
-    // 批量更新
     const result = await prisma.chatSession.updateMany({
       where: { id: { in: validIds } },
       data: {
@@ -711,22 +652,22 @@ router.post("/sessions/batch-update", authMiddleware, async (req: Request, res: 
       },
     });
 
-    res.json({
+    return c.json({
       success: true,
       updated: result.count,
       invalid: sessionIds.length - validIds.length,
     });
   } catch (error) {
     console.error("Batch update sessions error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/chat/messages/batch-update - 批量更新消息
-router.post("/messages/batch-update", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/chat/messages/batch-update
+router.post("/messages/batch-update", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { messageIds, updates } = req.body as {
+    const userId = c.get("userId");
+    const { messageIds, updates } = await c.req.json() as {
       messageIds: string[];
       updates: {
         content?: string;
@@ -735,18 +676,15 @@ router.post("/messages/batch-update", authMiddleware, async (req: Request, res: 
     };
 
     if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
-      res.status(400).json({ error: "messageIds is required and must be a non-empty array" });
-      return;
+      return c.json({ error: "messageIds is required and must be a non-empty array" }, 400);
     }
 
     if (messageIds.length > 500) {
-      res.status(400).json({ error: "Cannot update more than 500 messages at once" });
-      return;
+      return c.json({ error: "Cannot update more than 500 messages at once" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证消息所属会话属于当前用户
     const messages = await prisma.chatMessage.findMany({
       where: { id: { in: messageIds } },
       select: { id: true, sessionId: true },
@@ -764,8 +702,7 @@ router.post("/messages/batch-update", authMiddleware, async (req: Request, res: 
       .map(m => m.id);
 
     if (validMessageIds.length === 0) {
-      res.status(404).json({ error: "No valid messages found" });
-      return;
+      return c.json({ error: "No valid messages found" }, 404);
     }
 
     const result = await prisma.chatMessage.updateMany({
@@ -773,14 +710,14 @@ router.post("/messages/batch-update", authMiddleware, async (req: Request, res: 
       data: updates,
     });
 
-    res.json({
+    return c.json({
       success: true,
       updated: result.count,
       invalid: messageIds.length - validMessageIds.length,
     });
   } catch (error) {
     console.error("Batch update messages error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 

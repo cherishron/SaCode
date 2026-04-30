@@ -1,12 +1,15 @@
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { getPrismaClient } from "@sacode/database";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware } from "../middleware/auth";
 import { encryptApiKey, decryptApiKey, encryptOAuthSecret, decryptOAuthSecret } from "../utils/encryption";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
+
+const router = new Hono<{ Variables: Variables }>();
 const prisma = getPrismaClient();
 
-// 支持的 AI 提供商
 const AI_PROVIDERS = [
   { id: "openai", name: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1" },
   { id: "anthropic", name: "Anthropic", defaultBaseUrl: "https://api.anthropic.com" },
@@ -17,23 +20,18 @@ const AI_PROVIDERS = [
   { id: "azure", name: "Azure OpenAI", defaultBaseUrl: "" },
 ] as const;
 
-// 简单的密钥脱敏函数
 function maskApiKey(key: string | null): string {
   if (!key) return "";
   if (key.length <= 8) return "***";
   return `${key.slice(0, 4)}${"*".repeat(Math.min(key.length - 8, 20))}${key.slice(-4)}`;
 }
 
-// 使用 AES-256-GCM 加密/解密（向后兼容旧格式）
 const encryptKey = encryptApiKey;
 const decryptKey = decryptApiKey;
 
-/**
- * GET /api/settings/providers
- * 获取支持的 AI 提供商列表
- */
-router.get("/providers", (_req: Request, res: Response) => {
-  res.json({
+// GET /api/settings/providers
+router.get("/providers", (c) => {
+  return c.json({
     providers: AI_PROVIDERS.map((p) => ({
       id: p.id,
       name: p.name,
@@ -42,18 +40,14 @@ router.get("/providers", (_req: Request, res: Response) => {
   });
 });
 
-/**
- * GET /api/settings/keys
- * 获取所有 API Key 配置
- */
-router.get("/keys", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/settings/keys
+router.get("/keys", authMiddleware, async (c) => {
   try {
     const keys = await prisma.apiKey.findMany({
       orderBy: { createdAt: "asc" },
     });
 
-    // 返回脱敏后的密钥
-    res.json({
+    return c.json({
       keys: keys.map((k) => ({
         id: k.id,
         provider: k.provider,
@@ -68,28 +62,24 @@ router.get("/keys", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Get API keys error:", error);
-    res.status(500).json({ error: "获取 API 密钥失败" });
+    return c.json({ error: "获取 API 密钥失败" }, 500);
   }
 });
 
-/**
- * GET /api/settings/keys/:provider
- * 获取特定提供商的 API Key 配置
- */
-router.get("/keys/:provider", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/settings/keys/:provider
+router.get("/keys/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
+    const provider = c.req.param("provider");
 
     const key = await prisma.apiKey.findUnique({
       where: { provider },
     });
 
     if (!key) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
-    res.json({
+    return c.json({
       id: key.id,
       provider: key.provider,
       name: key.name,
@@ -102,36 +92,27 @@ router.get("/keys/:provider", authMiddleware, async (req: Request, res: Response
     });
   } catch (error) {
     console.error("Get API key error:", error);
-    res.status(500).json({ error: "获取 API 密钥失败" });
+    return c.json({ error: "获取 API 密钥失败" }, 500);
   }
 });
 
-/**
- * POST /api/settings/keys
- * 创建或更新 API Key 配置
- */
-router.post("/keys", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/settings/keys
+router.post("/keys", authMiddleware, async (c) => {
   try {
-    const { provider, apiKey, baseUrl, name, enabled } = req.body;
+    const { provider, apiKey, baseUrl, name, enabled } = await c.req.json();
 
-    // 验证提供商
     const validProvider = AI_PROVIDERS.find((p) => p.id === provider);
     if (!validProvider) {
-      res.status(400).json({ error: "不支持的提供商" });
-      return;
+      return c.json({ error: "不支持的提供商" }, 400);
     }
 
-    // 验证 API Key
     if (!apiKey || typeof apiKey !== "string") {
-      res.status(400).json({ error: "API 密钥不能为空" });
-      return;
+      return c.json({ error: "API 密钥不能为空" }, 400);
     }
 
-    // 加密存储
     const encryptedKey = encryptKey(apiKey);
     const displayName = name || validProvider.name;
 
-    // 使用 upsert 创建或更新
     const result = await prisma.apiKey.upsert({
       where: { provider },
       create: {
@@ -149,7 +130,7 @@ router.post("/keys", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    res.json({
+    return c.json({
       success: true,
       key: {
         id: result.id,
@@ -164,26 +145,22 @@ router.post("/keys", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Save API key error:", error);
-    res.status(500).json({ error: "保存 API 密钥失败" });
+    return c.json({ error: "保存 API 密钥失败" }, 500);
   }
 });
 
-/**
- * PATCH /api/settings/keys/:provider
- * 更新 API Key 配置 (部分更新)
- */
-router.patch("/keys/:provider", authMiddleware, async (req: Request, res: Response) => {
+// PATCH /api/settings/keys/:provider
+router.patch("/keys/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
-    const { apiKey, baseUrl, name, enabled } = req.body;
+    const provider = c.req.param("provider");
+    const { apiKey, baseUrl, name, enabled } = await c.req.json();
 
     const existing = await prisma.apiKey.findUnique({
       where: { provider },
     });
 
     if (!existing) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
     const updateData: {
@@ -203,7 +180,7 @@ router.patch("/keys/:provider", authMiddleware, async (req: Request, res: Respon
       data: updateData,
     });
 
-    res.json({
+    return c.json({
       success: true,
       key: {
         id: result.id,
@@ -217,69 +194,58 @@ router.patch("/keys/:provider", authMiddleware, async (req: Request, res: Respon
     });
   } catch (error) {
     console.error("Update API key error:", error);
-    res.status(500).json({ error: "更新 API 密钥失败" });
+    return c.json({ error: "更新 API 密钥失败" }, 500);
   }
 });
 
-/**
- * DELETE /api/settings/keys/:provider
- * 删除 API Key 配置
- */
-router.delete("/keys/:provider", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/settings/keys/:provider
+router.delete("/keys/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
+    const provider = c.req.param("provider");
 
     const existing = await prisma.apiKey.findUnique({
       where: { provider },
     });
 
     if (!existing) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
     await prisma.apiKey.delete({
       where: { provider },
     });
 
-    res.json({ success: true, message: "API 密钥已删除" });
+    return c.json({ success: true, message: "API 密钥已删除" });
   } catch (error) {
     console.error("Delete API key error:", error);
-    res.status(500).json({ error: "删除 API 密钥失败" });
+    return c.json({ error: "删除 API 密钥失败" }, 500);
   }
 });
 
-/**
- * POST /api/settings/keys/:provider/test
- * 测试 API Key 连接
- */
-router.post("/keys/:provider/test", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/settings/keys/:provider/test
+router.post("/keys/:provider/test", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
+    const provider = c.req.param("provider");
 
     const key = await prisma.apiKey.findUnique({
       where: { provider },
     });
 
     if (!key || !key.enabled) {
-      res.status(404).json({ error: "未找到有效的 API 密钥配置" });
-      return;
+      return c.json({ error: "未找到有效的 API 密钥配置" }, 404);
     }
 
     const decryptedKey = decryptKey(key.apiKey);
     const baseUrl = key.baseUrl || AI_PROVIDERS.find((p) => p.id === provider)?.defaultBaseUrl;
 
-    // 更新最后使用时间
     await prisma.apiKey.update({
       where: { provider },
       data: { lastUsedAt: new Date() },
     });
 
-    // 根据不同提供商测试连接
     let testResult = { success: false, message: "暂不支持该提供商的连接测试" };
 
     if (provider === "openai" || provider === "deepseek" || provider === "moonshot") {
-      // OpenAI 兼容 API 测试
       try {
         const response = await fetch(`${baseUrl}/models`, {
           headers: {
@@ -300,7 +266,6 @@ router.post("/keys/:provider/test", authMiddleware, async (req: Request, res: Re
         testResult = { success: false, message: `网络错误: ${(fetchError as Error).message}` };
       }
     } else if (provider === "anthropic") {
-      // Anthropic API 测试
       try {
         const response = await fetch(`${baseUrl}/v1/messages`, {
           method: "POST",
@@ -317,7 +282,6 @@ router.post("/keys/:provider/test", authMiddleware, async (req: Request, res: Re
         });
 
         if (response.ok || response.status === 400) {
-          // 400 可能是因为内容太短，但说明密钥有效
           testResult = { success: true, message: "连接成功" };
         } else {
           const errorData = await response.json().catch(() => ({}));
@@ -331,28 +295,23 @@ router.post("/keys/:provider/test", authMiddleware, async (req: Request, res: Re
       }
     }
 
-    res.json(testResult);
+    return c.json(testResult);
   } catch (error) {
     console.error("Test API key error:", error);
-    res.status(500).json({ error: "测试连接失败" });
+    return c.json({ error: "测试连接失败" }, 500);
   }
 });
 
-/**
- * POST /api/settings/keys/:provider/verify
- * 验证 API Key 格式 (不保存)
- */
-router.post("/keys/:provider/verify", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/settings/keys/:provider/verify
+router.post("/keys/:provider/verify", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
-    const { apiKey } = req.body;
+    const provider = c.req.param("provider");
+    const { apiKey } = await c.req.json();
 
     if (!apiKey) {
-      res.status(400).json({ valid: false, message: "API 密钥不能为空" });
-      return;
+      return c.json({ valid: false, message: "API 密钥不能为空" }, 400);
     }
 
-    // 根据不同提供商验证格式
     let valid = false;
     let message = "";
 
@@ -386,10 +345,10 @@ router.post("/keys/:provider/verify", authMiddleware, async (req: Request, res: 
         message = valid ? "格式可能正确" : "API Key 长度不足";
     }
 
-    res.json({ valid, message });
+    return c.json({ valid, message });
   } catch (error) {
     console.error("Verify API key error:", error);
-    res.status(500).json({ error: "验证失败" });
+    return c.json({ error: "验证失败" }, 500);
   }
 });
 
@@ -397,7 +356,6 @@ router.post("/keys/:provider/verify", authMiddleware, async (req: Request, res: 
 // OAuth 配置管理
 // ============================================
 
-// 支持的 OAuth 提供商
 const OAUTH_PROVIDERS = [
   { id: "github", name: "GitHub", requiresCallback: true },
   { id: "google", name: "Google", requiresCallback: true },
@@ -406,12 +364,9 @@ const OAUTH_PROVIDERS = [
   { id: "wework", name: "企业微信", requiresCallback: true, requiresCorpId: true, requiresAgentId: true },
 ] as const;
 
-/**
- * GET /api/settings/oauth/providers
- * 获取支持的 OAuth 提供商列表
- */
-router.get("/oauth/providers", (_req: Request, res: Response) => {
-  res.json({
+// GET /api/settings/oauth/providers
+router.get("/oauth/providers", (c) => {
+  return c.json({
     providers: OAUTH_PROVIDERS.map((p) => ({
       id: p.id,
       name: p.name,
@@ -422,56 +377,48 @@ router.get("/oauth/providers", (_req: Request, res: Response) => {
   });
 });
 
-/**
- * GET /api/settings/oauth
- * 获取所有 OAuth 配置
- */
-router.get("/oauth", authMiddleware, async (_req: Request, res: Response) => {
+// GET /api/settings/oauth
+router.get("/oauth", authMiddleware, async (c) => {
   try {
     const configs = await prisma.oAuthConfig.findMany({
       orderBy: { createdAt: "asc" },
     });
 
-    // 返回脱敏后的配置
-    res.json({
-      configs: configs.map((c) => ({
-        id: c.id,
-        provider: c.provider,
-        name: c.name,
-        maskedClientId: maskApiKey(decryptKey(c.clientId)),
-        maskedClientSecret: c.clientSecret ? "***" : "",
-        callbackUrl: c.callbackUrl,
-        corpId: c.corpId,
-        agentId: c.agentId,
-        enabled: c.enabled,
-        createdAt: c.createdAt.toISOString(),
-        updatedAt: c.updatedAt.toISOString(),
+    return c.json({
+      configs: configs.map((co) => ({
+        id: co.id,
+        provider: co.provider,
+        name: co.name,
+        maskedClientId: maskApiKey(decryptKey(co.clientId)),
+        maskedClientSecret: co.clientSecret ? "***" : "",
+        callbackUrl: co.callbackUrl,
+        corpId: co.corpId,
+        agentId: co.agentId,
+        enabled: co.enabled,
+        createdAt: co.createdAt.toISOString(),
+        updatedAt: co.updatedAt.toISOString(),
       })),
     });
   } catch (error) {
     console.error("Get OAuth configs error:", error);
-    res.status(500).json({ error: "获取 OAuth 配置失败" });
+    return c.json({ error: "获取 OAuth 配置失败" }, 500);
   }
 });
 
-/**
- * GET /api/settings/oauth/:provider
- * 获取特定提供商的 OAuth 配置
- */
-router.get("/oauth/:provider", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/settings/oauth/:provider
+router.get("/oauth/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
+    const provider = c.req.param("provider");
 
     const config = await prisma.oAuthConfig.findUnique({
       where: { provider },
     });
 
     if (!config) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
-    res.json({
+    return c.json({
       id: config.id,
       provider: config.provider,
       name: config.name,
@@ -485,44 +432,33 @@ router.get("/oauth/:provider", authMiddleware, async (req: Request, res: Respons
     });
   } catch (error) {
     console.error("Get OAuth config error:", error);
-    res.status(500).json({ error: "获取 OAuth 配置失败" });
+    return c.json({ error: "获取 OAuth 配置失败" }, 500);
   }
 });
 
-/**
- * POST /api/settings/oauth
- * 创建或更新 OAuth 配置
- */
-router.post("/oauth", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/settings/oauth
+router.post("/oauth", authMiddleware, async (c) => {
   try {
-    const { provider, clientId, clientSecret, callbackUrl, corpId, agentId, name, enabled } = req.body;
+    const { provider, clientId, clientSecret, callbackUrl, corpId, agentId, name, enabled } = await c.req.json();
 
-    // 验证提供商
     const validProvider = OAUTH_PROVIDERS.find((p) => p.id === provider);
     if (!validProvider) {
-      res.status(400).json({ error: "不支持的 OAuth 提供商" });
-      return;
+      return c.json({ error: "不支持的 OAuth 提供商" }, 400);
     }
 
-    // 验证必填字段
     if (!clientId || !clientSecret) {
-      res.status(400).json({ error: "Client ID 和 Client Secret 不能为空" });
-      return;
+      return c.json({ error: "Client ID 和 Client Secret 不能为空" }, 400);
     }
 
-    // 企业微信需要额外的 CorpID 和 AgentID
     if (provider === "wework" && !corpId) {
-      res.status(400).json({ error: "企业微信需要提供 CorpID" });
-      return;
+      return c.json({ error: "企业微信需要提供 CorpID" }, 400);
     }
 
-    // 加密存储
     const encryptedClientId = encryptKey(clientId);
     const encryptedClientSecret = encryptKey(clientSecret);
     const displayName = name || validProvider.name;
     const defaultCallbackUrl = `${process.env.BASE_URL || "http://localhost:3000"}/api/auth/oauth/${provider}/callback`;
 
-    // 使用 upsert 创建或更新
     const result = await prisma.oAuthConfig.upsert({
       where: { provider },
       create: {
@@ -546,7 +482,7 @@ router.post("/oauth", authMiddleware, async (req: Request, res: Response) => {
       },
     });
 
-    res.json({
+    return c.json({
       success: true,
       config: {
         id: result.id,
@@ -563,26 +499,22 @@ router.post("/oauth", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Save OAuth config error:", error);
-    res.status(500).json({ error: "保存 OAuth 配置失败" });
+    return c.json({ error: "保存 OAuth 配置失败" }, 500);
   }
 });
 
-/**
- * PATCH /api/settings/oauth/:provider
- * 更新 OAuth 配置 (部分更新)
- */
-router.patch("/oauth/:provider", authMiddleware, async (req: Request, res: Response) => {
+// PATCH /api/settings/oauth/:provider
+router.patch("/oauth/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
-    const { clientId, clientSecret, callbackUrl, corpId, agentId, name, enabled } = req.body;
+    const provider = c.req.param("provider");
+    const { clientId, clientSecret, callbackUrl, corpId, agentId, name, enabled } = await c.req.json();
 
     const existing = await prisma.oAuthConfig.findUnique({
       where: { provider },
     });
 
     if (!existing) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
     const updateData: {
@@ -608,7 +540,7 @@ router.patch("/oauth/:provider", authMiddleware, async (req: Request, res: Respo
       data: updateData,
     });
 
-    res.json({
+    return c.json({
       success: true,
       config: {
         id: result.id,
@@ -624,68 +556,66 @@ router.patch("/oauth/:provider", authMiddleware, async (req: Request, res: Respo
     });
   } catch (error) {
     console.error("Update OAuth config error:", error);
-    res.status(500).json({ error: "更新 OAuth 配置失败" });
+    return c.json({ error: "更新 OAuth 配置失败" }, 500);
   }
 });
 
-/**
- * DELETE /api/settings/oauth/:provider
- * 删除 OAuth 配置
- */
-router.delete("/oauth/:provider", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/settings/oauth/:provider
+router.delete("/oauth/:provider", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
+    const provider = c.req.param("provider");
 
     const existing = await prisma.oAuthConfig.findUnique({
       where: { provider },
     });
 
     if (!existing) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
     await prisma.oAuthConfig.delete({
       where: { provider },
     });
 
-    res.json({ success: true, message: "OAuth 配置已删除" });
+    return c.json({ success: true, message: "OAuth 配置已删除" });
   } catch (error) {
     console.error("Delete OAuth config error:", error);
-    res.status(500).json({ error: "删除 OAuth 配置失败" });
+    return c.json({ error: "删除 OAuth 配置失败" }, 500);
   }
 });
 
-/**
- * POST /api/settings/oauth/:provider/toggle
- * 切换 OAuth 提供商启用状态
- */
-router.post("/oauth/:provider/toggle", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/settings/oauth/:provider/toggle
+router.post("/oauth/:provider/toggle", authMiddleware, async (c) => {
   try {
-    const { provider } = req.params;
-    const { enabled } = req.body;
+    const provider = c.req.param("provider");
+    const { enabled } = await c.req.json();
 
     const existing = await prisma.oAuthConfig.findUnique({
       where: { provider },
     });
 
     if (!existing) {
-      res.status(404).json({ error: "未找到该提供商的配置" });
-      return;
+      return c.json({ error: "未找到该提供商的配置" }, 404);
     }
 
     const result = await prisma.oAuthConfig.update({
       where: { provider },
-      data: { enabled: enabled ?? !existing.enabled },
+      data: { enabled: enabled !== undefined ? enabled : !existing.enabled },
     });
 
-    res.json({
+    return c.json({
       success: true,
-      enabled: result.enabled,
+      config: {
+        id: result.id,
+        provider: result.provider,
+        name: result.name,
+        enabled: result.enabled,
+        updatedAt: result.updatedAt.toISOString(),
+      },
     });
   } catch (error) {
     console.error("Toggle OAuth config error:", error);
-    res.status(500).json({ error: "切换状态失败" });
+    return c.json({ error: "切换 OAuth 配置状态失败" }, 500);
   }
 });
 

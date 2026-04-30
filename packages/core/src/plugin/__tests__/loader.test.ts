@@ -87,8 +87,8 @@ describe("PluginLoader", () => {
         description: "A test plugin",
       };
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(validManifest));
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(validManifest));
 
       const manifest = await loader.loadManifest("/plugins/test-plugin");
 
@@ -98,7 +98,7 @@ describe("PluginLoader", () => {
     });
 
     it("should throw if manifest file not found", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
       await expect(loader.loadManifest("/plugins/missing")).rejects.toThrow(
         "Plugin manifest not found"
@@ -106,8 +106,8 @@ describe("PluginLoader", () => {
     });
 
     it("should throw if manifest has invalid JSON", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue("not valid json");
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue("not valid json");
 
       await expect(loader.loadManifest("/plugins/invalid")).rejects.toThrow(
         "Invalid plugin.json"
@@ -115,8 +115,8 @@ describe("PluginLoader", () => {
     });
 
     it("should throw if name is missing", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
         JSON.stringify({ version: "1.0.0", main: "index.js" })
       );
 
@@ -126,8 +126,8 @@ describe("PluginLoader", () => {
     });
 
     it("should throw if version is missing", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
         JSON.stringify({ name: "test-plugin", main: "index.js" })
       );
 
@@ -137,8 +137,8 @@ describe("PluginLoader", () => {
     });
 
     it("should throw if main is missing", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
         JSON.stringify({ name: "test-plugin", version: "1.0.0" })
       );
 
@@ -148,8 +148,8 @@ describe("PluginLoader", () => {
     });
 
     it("should validate plugin name format (kebab-case)", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
         JSON.stringify({ name: "InvalidName", version: "1.0.0", main: "index.js" })
       );
 
@@ -159,8 +159,8 @@ describe("PluginLoader", () => {
     });
 
     it("should validate version format (semver)", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
         JSON.stringify({ name: "test-plugin", version: "invalid", main: "index.js" })
       );
 
@@ -173,8 +173,8 @@ describe("PluginLoader", () => {
       const versions = ["1.0.0", "0.1.0", "1.0.0-beta", "1.0.0-alpha.1", "1.0.0+build.123"];
 
       for (const version of versions) {
-        vi.mocked(fs.existsSync).mockReturnValue(true);
-        vi.mocked(fs.promises.readFile).mockResolvedValue(
+        (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+        (fs.promises.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
           JSON.stringify({ name: "test-plugin", version, main: "index.js" })
         );
 
@@ -206,7 +206,7 @@ describe("PluginLoader", () => {
     }
 
     it("should validate a valid plugin", () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
       const plugin = createTestPlugin();
 
       const result = loader.validate(plugin);
@@ -329,7 +329,7 @@ describe("PluginLoader", () => {
 
   describe("isPluginDirectory", () => {
     it("should return true for valid plugin directory", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
       const result = await loader.isPluginDirectory("/plugins/test-plugin");
 
@@ -340,7 +340,7 @@ describe("PluginLoader", () => {
     });
 
     it("should return false for non-plugin directory", async () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+      (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
       const result = await loader.isPluginDirectory("/plugins/non-plugin");
 

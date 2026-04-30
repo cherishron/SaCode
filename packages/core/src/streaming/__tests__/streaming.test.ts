@@ -1,10 +1,5 @@
-/**
- * StreamingManager 测试
- * 测试流式输出管理器的核心功能：会话管理、追加、刷新等
- */
-
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { StreamingManager, createStreamingManager } from "../index";
+import { StreamingManager, createStreamingManager, defaultStreamingConfig } from "../index";
 import type { StreamChunk } from "../types";
 
 describe("StreamingManager", () => {
@@ -15,15 +10,12 @@ describe("StreamingManager", () => {
       enabled: true,
       minBufferSize: 10,
       maxBufferSize: 25,
-      flushTimeout: 100,
+      sendInterval: 100,
     });
   });
 
-  afterEach(() => {
-    // 清理所有会话
-    streamingManager.getAllSessions().forEach(session => {
-      streamingManager.endSession(session.id);
-    });
+  afterEach(async () => {
+    await streamingManager.cleanup();
   });
 
   describe("初始化", () => {
@@ -42,7 +34,7 @@ describe("StreamingManager", () => {
         enabled: false,
         minBufferSize: 5,
         maxBufferSize: 15,
-        flushTimeout: 50,
+        sendInterval: 50,
       });
 
       expect(customManager).toBeDefined();
@@ -84,26 +76,24 @@ describe("StreamingManager", () => {
       await streamingManager.startSession("wechat", "chat_2");
       await streamingManager.startSession("discord", "chat_3");
 
-      const sessions = streamingManager.getAllSessions();
+      const sessions = streamingManager.getActiveSessions();
       expect(sessions).toHaveLength(3);
     });
 
-    it("应该结束会话", async () => {
+    it("应该完成会话", async () => {
       const sessionId = await streamingManager.startSession(
         "telegram",
         "chat_123"
       );
 
-      const ended = streamingManager.endSession(sessionId);
-      expect(ended).toBe(true);
+      await streamingManager.completeSession(sessionId);
 
       const session = streamingManager.getSession(sessionId);
       expect(session).toBeUndefined();
     });
 
-    it("应该返回 false 对于不存在的会话结束", () => {
-      const ended = streamingManager.endSession("non-existent");
-      expect(ended).toBe(false);
+    it("应该对不存在的会话完成操作不报错", async () => {
+      await expect(streamingManager.completeSession("non-existent")).resolves.toBeUndefined();
     });
   });
 
@@ -115,8 +105,8 @@ describe("StreamingManager", () => {
       );
 
       const chunk: StreamChunk = {
-        type: "text_delta",
         text: "Hello",
+        isComplete: false,
       };
 
       await streamingManager.appendChunk(sessionId, chunk);
@@ -131,36 +121,12 @@ describe("StreamingManager", () => {
         "chat_123"
       );
 
-      await streamingManager.appendChunk(sessionId, { type: "text_delta", text: "Hello" });
-      await streamingManager.appendChunk(sessionId, { type: "text_delta", text: " " });
-      await streamingManager.appendChunk(sessionId, { type: "text_delta", text: "World" });
+      await streamingManager.appendChunk(sessionId, { text: "Hello", isComplete: false });
+      await streamingManager.appendChunk(sessionId, { text: " ", isComplete: false });
+      await streamingManager.appendChunk(sessionId, { text: "World", isComplete: false });
 
       const session = streamingManager.getSession(sessionId);
       expect(session?.accumulatedText).toContain("Hello World");
-    });
-
-    it("应该处理工具调用块", async () => {
-      const sessionId = await streamingManager.startSession(
-        "telegram",
-        "chat_123"
-      );
-
-      const chunk: StreamChunk = {
-        type: "tool_call",
-        toolCall: {
-          id: "call_1",
-          type: "function",
-          function: {
-            name: "test_tool",
-            arguments: "{}",
-          },
-        },
-      };
-
-      await streamingManager.appendChunk(sessionId, chunk);
-
-      const session = streamingManager.getSession(sessionId);
-      expect(session).toBeDefined();
     });
 
     it("应该处理完成块", async () => {
@@ -170,8 +136,8 @@ describe("StreamingManager", () => {
       );
 
       const chunk: StreamChunk = {
-        type: "done",
-        stopReason: "end_turn",
+        text: "Done",
+        isComplete: true,
       };
 
       await streamingManager.appendChunk(sessionId, chunk);
@@ -180,38 +146,16 @@ describe("StreamingManager", () => {
       expect(session).toBeDefined();
     });
 
-    it("应该处理错误块", async () => {
-      const sessionId = await streamingManager.startSession(
-        "telegram",
-        "chat_123"
-      );
-
-      const chunk: StreamChunk = {
-        type: "error",
-        error: {
-          code: "TEST_ERROR",
-          message: "Test error message",
-        },
-      };
-
-      await streamingManager.appendChunk(sessionId, chunk);
-
-      const session = streamingManager.getSession(sessionId);
-      expect(session).toBeDefined();
-    });
-
-    it("应该返回 false 对于不存在的会话", async () => {
-      const result = await streamingManager.appendChunk("non-existent", {
-        type: "text_delta",
+    it("应该对不存在的会话追加不报错", async () => {
+      await expect(streamingManager.appendChunk("non-existent", {
         text: "Hello",
-      });
-
-      expect(result).toBe(false);
+        isComplete: false,
+      })).resolves.toBeUndefined();
     });
   });
 
-  describe("刷新机制", () => {
-    it("应该刷新缓冲内容", async () => {
+  describe("完成机制", () => {
+    it("应该完成会话并发送剩余内容", async () => {
       const sessionId = await streamingManager.startSession(
         "telegram",
         "chat_123",
@@ -219,61 +163,54 @@ describe("StreamingManager", () => {
       );
 
       await streamingManager.appendChunk(sessionId, {
-        type: "text_delta",
         text: " Additional text",
+        isComplete: false,
       });
 
-      const flushed = await streamingManager.flush(sessionId);
-      expect(flushed).toBe(true);
+      await streamingManager.completeSession(sessionId);
+      const session = streamingManager.getSession(sessionId);
+      expect(session).toBeUndefined();
     });
 
-    it("应该返回 false 对于不存在的会话刷新", async () => {
-      const flushed = await streamingManager.flush("non-existent");
-      expect(flushed).toBe(false);
+    it("应该对不存在的会话完成不报错", async () => {
+      await expect(streamingManager.completeSession("non-existent")).resolves.toBeUndefined();
     });
 
-    it("应该在没有发送器时跳过刷新", async () => {
+    it("应该在没有发送器时完成会话", async () => {
       const sessionId = await streamingManager.startSession(
         "telegram",
         "chat_123"
       );
 
-      // 未注册发送器，刷新应该返回 false
-      const flushed = await streamingManager.flush(sessionId);
-      expect(flushed).toBe(false);
+      await streamingManager.completeSession(sessionId);
+      const session = streamingManager.getSession(sessionId);
+      expect(session).toBeUndefined();
     });
   });
 
   describe("发送器注册", () => {
     it("应该注册发送器", () => {
       const mockSender = {
-        platform: "telegram" as const,
         sendInitial: vi.fn().mockResolvedValue("msg_123"),
-        sendUpdate: vi.fn().mockResolvedValue(true),
-        sendFinal: vi.fn().mockResolvedValue(true),
+        editMessage: vi.fn().mockResolvedValue(undefined),
         supportsStreaming: vi.fn().mockReturnValue(true),
       };
 
       streamingManager.registerSender("telegram", mockSender);
 
-      // 验证发送器已注册
       expect(streamingManager).toBeDefined();
     });
 
     it("应该支持多平台发送器", () => {
       const telegramSender = {
-        platform: "telegram" as const,
         sendInitial: vi.fn().mockResolvedValue("msg_1"),
-        sendUpdate: vi.fn().mockResolvedValue(true),
-        sendFinal: vi.fn().mockResolvedValue(true),
+        editMessage: vi.fn().mockResolvedValue(undefined),
         supportsStreaming: vi.fn().mockReturnValue(true),
       };
 
       const wechatSender = {
-        platform: "wechat" as const,
         sendInitial: vi.fn().mockResolvedValue("msg_2"),
-        sendUpdate: vi.fn().mockResolvedValue(true),
-        sendFinal: vi.fn().mockResolvedValue(true),
+        editMessage: vi.fn().mockResolvedValue(undefined),
         supportsStreaming: vi.fn().mockReturnValue(true),
       };
 
@@ -296,38 +233,28 @@ describe("StreamingManager", () => {
       expect(event.type).toBe("start");
     });
 
-    it("应该发射 append 事件", async () => {
+    it("应该发射 chunk 事件", async () => {
       const listener = vi.fn();
       streamingManager.on("event", listener);
 
       const sessionId = await streamingManager.startSession("telegram", "chat_123");
       await streamingManager.appendChunk(sessionId, {
-        type: "text_delta",
         text: "Hello",
+        isComplete: false,
       });
 
       expect(listener).toHaveBeenCalled();
     });
 
-    it("应该发射 flush 事件", async () => {
-      const listener = vi.fn();
-      streamingManager.on("event", listener);
-
-      const sessionId = await streamingManager.startSession("telegram", "chat_123", "Initial");
-      await streamingManager.flush(sessionId);
-
-      expect(listener).toHaveBeenCalled();
-    });
-
-    it("应该发射 end 事件", async () => {
+    it("应该发射 complete 事件", async () => {
       const listener = vi.fn();
       streamingManager.on("event", listener);
 
       const sessionId = await streamingManager.startSession("telegram", "chat_123");
-      streamingManager.endSession(sessionId);
+      await streamingManager.completeSession(sessionId);
 
       expect(listener).toHaveBeenCalled();
-      const event = listener.mock.calls.find((c: any) => c[0].type === "end");
+      const event = listener.mock.calls.find((c: any) => c[0].type === "complete");
       expect(event).toBeDefined();
     });
   });
@@ -342,20 +269,19 @@ describe("StreamingManager", () => {
 
     it("应该生成符合格式的会话 ID", () => {
       const id = (streamingManager as any).generateSessionId();
-      expect(id).toMatch(/^stream_[a-zA-Z0-9]+$/);
+      expect(id).toMatch(/^stream_\d+_[a-z0-9]+$/);
     });
   });
 
   describe("统计信息", () => {
-    it("应该获取统计信息", async () => {
+    it("应该获取活跃会话信息", async () => {
       await streamingManager.startSession("telegram", "chat_1");
       await streamingManager.startSession("wechat", "chat_2");
       await streamingManager.startSession("discord", "chat_3");
 
-      const stats = streamingManager.getStats();
+      const sessions = streamingManager.getActiveSessions();
 
-      expect(stats.totalSessions).toBe(3);
-      expect(stats.activeSessions).toBe(3);
+      expect(sessions).toHaveLength(3);
     });
   });
 
@@ -431,12 +357,10 @@ describe("createStreamingManager", () => {
 
 describe("defaultStreamingConfig", () => {
   it("应该有正确的默认配置", () => {
-    const { defaultStreamingConfig } = require("../index");
-
     expect(defaultStreamingConfig).toBeDefined();
     expect(defaultStreamingConfig.enabled).toBe(true);
     expect(defaultStreamingConfig.minBufferSize).toBe(10);
     expect(defaultStreamingConfig.maxBufferSize).toBe(25);
-    expect(defaultStreamingConfig.flushTimeout).toBe(100);
+    expect(defaultStreamingConfig.sendInterval).toBe(100);
   });
 });

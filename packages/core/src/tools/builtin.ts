@@ -241,7 +241,7 @@ export const BUILTIN_TOOLS: UnifiedToolDefinition[] = [
     handler: async (args) => {
       const question = args.question as string;
       const options = args.options as string[] | undefined;
-      let output = `❓ **Clarification needed**: ${question}`;
+      let output = `[?] **Clarification needed**: ${question}`;
       if (options && options.length > 0) {
         output += "\n\nOptions:\n";
         options.forEach((opt, index) => {

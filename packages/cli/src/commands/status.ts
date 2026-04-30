@@ -27,7 +27,7 @@ interface CronStatus {
  * 显示系统状态
  */
 export async function showStatus(): Promise<void> {
-  console.log(chalk.cyan("🔍 SACODE Status\n"));
+  console.log(chalk.cyan("[G] SACODE Status\n"));
 
   // 模拟系统状态
   const system: SystemStatus = {
@@ -55,7 +55,7 @@ export async function showStatus(): Promise<void> {
   };
 
   // 系统信息
-  console.log(chalk.bold("📦 System"));
+  console.log(chalk.bold("[SYS] System"));
   console.log(`  ${chalk.gray("Version:")} ${system.version}`);
   console.log(`  ${chalk.gray("Uptime:")} ${formatUptime(system.uptime)}`);
   console.log(`  ${chalk.gray("Mode:")} ${system.mode}`);
@@ -63,7 +63,7 @@ export async function showStatus(): Promise<void> {
   console.log();
 
   // 适配器状态
-  console.log(chalk.bold("📡 Adapters"));
+  console.log(chalk.bold("[NET] Adapters"));
   for (const adapter of adapters) {
     const statusIcon = getStatusIcon(adapter.status);
     const lastSeen = adapter.lastSeen ? formatRelativeTime(adapter.lastSeen) : chalk.gray("never");
@@ -72,13 +72,13 @@ export async function showStatus(): Promise<void> {
   console.log();
 
   // 会话状态
-  console.log(chalk.bold("💬 Sessions"));
+  console.log(chalk.bold("[MSG] Sessions"));
   console.log(`  ${chalk.gray("Active:")} ${chalk.green(sessions.active)}`);
   console.log(`  ${chalk.gray("Total:")} ${sessions.total}`);
   console.log();
 
   // 定时任务状态
-  console.log(chalk.bold("⏰ Scheduled Tasks"));
+  console.log(chalk.bold("[TM] Scheduled Tasks"));
   console.log(`  ${chalk.gray("Active:")} ${chalk.green(cron.active)}`);
   console.log(`  ${chalk.gray("Queued:")} ${cron.queued}`);
   console.log();
@@ -88,23 +88,23 @@ export async function showStatus(): Promise<void> {
  * 显示详细诊断信息
  */
 export async function showDiagnostics(): Promise<void> {
-  console.log(chalk.cyan("🔧 Diagnostics\n"));
+  console.log(chalk.cyan("[T] Diagnostics\n"));
 
   // 检查各项组件
-  console.log(chalk.bold("✓ Core Components"));
-  console.log(`  ${chalk.green("●")} SACODEClient`);
-  console.log(`  ${chalk.green("●")} SessionManager`);
-  console.log(`  ${chalk.green("●")} MessageRouter`);
-  console.log(`  ${chalk.green("●")} TaskScheduler`);
-  console.log(`  ${chalk.green("●")} PluginManager`);
+  console.log(chalk.bold("+ Core Components"));
+  console.log(`  ${chalk.green("*")} SACODEClient`);
+  console.log(`  ${chalk.green("*")} SessionManager`);
+  console.log(`  ${chalk.green("*")} MessageRouter`);
+  console.log(`  ${chalk.green("*")} TaskScheduler`);
+  console.log(`  ${chalk.green("*")} PluginManager`);
   console.log();
 
-  console.log(chalk.bold("⚠️ Warnings"));
-  console.log(`  ${chalk.yellow("○")} MemoryManager - No embeddings configured`);
-  console.log(`  ${chalk.yellow("○")} Container - Docker not running`);
+  console.log(chalk.bold("[!] Warnings"));
+  console.log(`  ${chalk.yellow("o")} MemoryManager - No embeddings configured`);
+  console.log(`  ${chalk.yellow("o")} Container - Docker not running`);
   console.log();
 
-  console.log(chalk.bold("📝 Recent Logs"));
+  console.log(chalk.bold("[LOG] Recent Logs"));
   console.log(chalk.gray("  [2024-01-15 10:30:00] INFO: Telegram adapter connected"));
   console.log(chalk.gray("  [2024-01-15 10:29:00] INFO: Discord adapter connected"));
   console.log(chalk.gray("  [2024-01-15 09:00:00] INFO: Cron job 'Morning Reminder' executed"));
@@ -114,7 +114,7 @@ export async function showDiagnostics(): Promise<void> {
  * 检查服务健康状态
  */
 export async function checkHealth(): Promise<void> {
-  console.log(chalk.cyan("💚 Health Check\n"));
+  console.log(chalk.cyan("[OK] Health Check\n"));
 
   const checks = [
     { name: "API Server", status: "healthy", latency: "23ms" },
@@ -124,7 +124,7 @@ export async function checkHealth(): Promise<void> {
   ];
 
   for (const check of checks) {
-    const statusIcon = check.status === "healthy" ? chalk.green("✓") : chalk.red("✗");
+    const statusIcon = check.status === "healthy" ? chalk.green("+") : chalk.red("x");
     const latencyColor = parseInt(check.latency) < 100 ? chalk.gray : chalk.yellow;
     console.log(`  ${statusIcon} ${check.name.padEnd(20)} ${latencyColor(check.latency)}`);
   }
@@ -138,11 +138,15 @@ export async function checkHealth(): Promise<void> {
 function getStatusIcon(status: string): string {
   switch (status) {
     case "connected":
-      return chalk.green("●");
+      return chalk.green("*");
+    case "degraded":
+      return chalk.yellow("~");
+    case "down":
+      return chalk.red("*");
     case "error":
-      return chalk.red("●");
+      return chalk.red("*");
     default:
-      return chalk.red("○");
+      return chalk.red("o");
   }
 }
 

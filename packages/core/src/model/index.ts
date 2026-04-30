@@ -340,6 +340,7 @@ export class ModelManager extends EventEmitter<{
   private selectionStrategy: ModelSelectionStrategy;
   private roundRobinIndex = 0;
   private customSelector?: (requirements?: ModelCapabilityRequirement) => string | null;
+  private onModelSwitch?: (event: ModelSwitchEvent) => void;
 
   constructor(config: Partial<ModelManagerConfig> = {}) {
     super();
@@ -367,23 +368,30 @@ export class ModelManager extends EventEmitter<{
     if (config.customSelector) {
       this.customSelector = config.customSelector as (requirements?: ModelCapabilityRequirement) => string | null;
     }
+
+    if (config.onModelSwitch) {
+      this.onModelSwitch = config.onModelSwitch as (event: ModelSwitchEvent) => void;
+    }
   }
 
   /**
    * 添加模型
    */
   addModel(config: ModelConfig | (Partial<ModelConfig> & { id: string })): ModelConfig {
-    // 如果已经是完整的 ModelConfig，直接使用
     if ("provider" in config && "model" in config) {
-      this.models.set(config.id, config as ModelConfig);
+      const parsed = ModelConfigSchema.safeParse(config);
+      if (!parsed.success) {
+        throw new Error(`Invalid model config: ${parsed.error.message}`);
+      }
+      const model = parsed.data;
+      this.models.set(model.id, model);
 
-      // 如果是第一个模型或标记为默认，设置为默认模型
-      if (config.isDefault || this.models.size === 1) {
-        this.defaultModelId = config.id;
+      if (model.isDefault || this.models.size === 1) {
+        this.defaultModelId = model.id;
       }
 
-      this.emit("add", config as ModelConfig);
-      return config as ModelConfig;
+      this.emit("add", model);
+      return model;
     }
 
     // 否则补全默认值
@@ -433,9 +441,40 @@ export class ModelManager extends EventEmitter<{
     } as ModelConfig);
   }
 
-  /**
-   * 移除模型
-   */
+  deleteModel(modelId: string): boolean {
+    return this.removeModel(modelId);
+  }
+
+  disableModel(modelId: string): boolean {
+    const model = this.models.get(modelId);
+    if (!model) return false;
+    model.enabled = false;
+    this.emit("update", model);
+    return true;
+  }
+
+  enableModel(modelId: string): boolean {
+    const model = this.models.get(modelId);
+    if (!model) return false;
+    model.enabled = true;
+    this.emit("update", model);
+    return true;
+  }
+
+  getStats(): { total: number; enabled: number; disabled: number; byProvider: Record<string, number> } {
+    const all = this.getAllModels();
+    const byProvider: Record<string, number> = {};
+    for (const m of all) {
+      byProvider[m.provider] = (byProvider[m.provider] ?? 0) + 1;
+    }
+    return {
+      total: all.length,
+      enabled: all.filter((m) => m.enabled).length,
+      disabled: all.filter((m) => !m.enabled).length,
+      byProvider,
+    };
+  }
+
   removeModel(modelId: string): boolean {
     const model = this.models.get(modelId);
     if (!model) {
@@ -576,6 +615,7 @@ export class ModelManager extends EventEmitter<{
     };
 
     this.emit("switch", event);
+    this.onModelSwitch?.(event);
     return model;
   }
 
@@ -597,10 +637,9 @@ export class ModelManager extends EventEmitter<{
     });
 
     if (candidates.length === 0) {
-      return this.getDefaultModel();
+      return undefined;
     }
 
-    // 返回第一个匹配的模型
     return candidates[0];
   }
 
@@ -608,10 +647,15 @@ export class ModelManager extends EventEmitter<{
    * 根据策略选择模型
    */
   selectModel(
-    sessionId?: string,
+    sessionIdOrModelId?: string,
     requirements?: ModelCapabilityRequirement
   ): ModelConfig | undefined {
-    // 如果会话已有模型，优先使用
+    if (sessionIdOrModelId && !requirements && !sessionIdOrModelId.startsWith("session-") && this.models.has(sessionIdOrModelId)) {
+      return this.switchModel(sessionIdOrModelId, undefined, "user");
+    }
+
+    const sessionId = sessionIdOrModelId;
+
     if (sessionId) {
       const sessionModel = this.getSessionModel(sessionId);
       if (sessionModel && sessionModel.enabled) {

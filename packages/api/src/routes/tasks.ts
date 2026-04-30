@@ -1,27 +1,26 @@
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import {
   LongTaskManager,
   type LongTask,
   type TaskDefinition,
-  type LongTaskEvent,
 } from "@sacode/core";
-import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 任务管理器实例
+const router = new Hono<{ Variables: Variables }>();
+
 let taskManager: LongTaskManager | null = null;
 
 function getTaskManager(): LongTaskManager {
   if (!taskManager) {
     taskManager = new LongTaskManager({
       persistTask: async (task: LongTask) => {
-        // 可选：持久化到数据库
         console.log(`[TaskManager] Persisting task ${task.id}`);
       },
       loadTasks: async () => {
-        // 可选：从数据库加载任务
         return [];
       },
     });
@@ -29,10 +28,10 @@ function getTaskManager(): LongTaskManager {
   return taskManager;
 }
 
-// GET /api/tasks - 获取任务列表
-router.get("/", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/tasks
+router.get("/", authMiddleware, async (c) => {
   try {
-    const status = req.query.status as string | undefined;
+    const status = c.req.query("status");
     const manager = getTaskManager();
 
     let tasks: LongTask[];
@@ -42,43 +41,41 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
       tasks = manager.getAllTasks();
     }
 
-    res.json(tasks);
+    return c.json(tasks);
   } catch (error) {
     console.error("Get tasks error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/tasks/types - 获取可用任务类型
-router.get("/types", authMiddleware, async (_req: Request, res: Response) => {
+// GET /api/tasks/types
+router.get("/types", authMiddleware, async (c) => {
   try {
     const manager = getTaskManager();
     const types = manager.getRegisteredTypes();
 
-    res.json(types);
+    return c.json(types);
   } catch (error) {
     console.error("Get task types error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/tasks/types - 注册任务类型
-router.post("/types", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/types
+router.post("/types", authMiddleware, async (c) => {
   try {
-    const { type, definition, executor } = req.body as {
+    const { type, definition, executor } = await c.req.json() as {
       type: string;
       definition: TaskDefinition;
       executor: string;
     };
 
     if (!type || !definition || !executor) {
-      res.status(400).json({ error: "Missing required fields" });
-      return;
+      return c.json({ error: "Missing required fields" }, 400);
     }
 
     const manager = getTaskManager();
 
-    // 创建执行器函数（简化版）
     const executorFn = async () => {
       console.log(`Executing task type: ${type}`);
       return { result: "completed" };
@@ -86,185 +83,182 @@ router.post("/types", authMiddleware, async (req: Request, res: Response) => {
 
     manager.registerType(type, definition, executorFn);
 
-    res.status(201).json({ type, registered: true });
+    return c.json({ type, registered: true }, 201);
   } catch (error) {
     console.error("Register task type error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/tasks - 创建任务
-router.post("/", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks
+router.post("/", authMiddleware, async (c) => {
   try {
-    const { type, ...overrides } = req.body;
+    const { type, ...overrides } = await c.req.json();
 
     if (!type) {
-      res.status(400).json({ error: "Task type is required" });
-      return;
+      return c.json({ error: "Task type is required" }, 400);
     }
 
     const manager = getTaskManager();
     const task = await manager.createTask(type, overrides);
 
-    res.status(201).json(task);
+    return c.json(task, 201);
   } catch (error) {
     console.error("Create task error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/tasks/:id - 获取任务详情
-router.get("/:id", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/tasks/:id
+router.get("/:id", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
     const task = manager.getTask(id);
 
     if (!task) {
-      res.status(404).json({ error: "Task not found" });
-      return;
+      return c.json({ error: "Task not found" }, 404);
     }
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Get task error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/tasks/:id/start - 启动任务
-router.post("/:id/start", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/start
+router.post("/:id/start", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
 
     await manager.startTask(id);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Start task error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 });
 
-// POST /api/tasks/:id/pause - 暂停任务
-router.post("/:id/pause", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/pause
+router.post("/:id/pause", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
 
     await manager.pauseTask(id);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Pause task error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 });
 
-// POST /api/tasks/:id/resume - 恢复任务
-router.post("/:id/resume", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/resume
+router.post("/:id/resume", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
 
     await manager.resumeTask(id);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Resume task error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 });
 
-// POST /api/tasks/:id/cancel - 取消任务
-router.post("/:id/cancel", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/cancel
+router.post("/:id/cancel", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
 
     await manager.cancelTask(id);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Cancel task error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 });
 
-// DELETE /api/tasks/:id - 删除任务
-router.delete("/:id", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/tasks/:id
+router.delete("/:id", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
 
     manager.deleteTask(id);
 
-    res.status(204).send();
+    return c.body(null, 204);
   } catch (error) {
     console.error("Delete task error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/tasks/:id/steps - 获取任务步骤
-router.get("/:id/steps", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/tasks/:id/steps
+router.get("/:id/steps", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
+    const id = c.req.param("id");
     const manager = getTaskManager();
     const task = manager.getTask(id);
 
     if (!task) {
-      res.status(404).json({ error: "Task not found" });
-      return;
+      return c.json({ error: "Task not found" }, 404);
     }
 
-    res.json(task.steps);
+    return c.json(task.steps);
   } catch (error) {
     console.error("Get task steps error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/tasks/:id/steps - 添加任务步骤
-router.post("/:id/steps", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/steps
+router.post("/:id/steps", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
-    const step = req.body;
+    const id = c.req.param("id");
+    const step = await c.req.json();
     const manager = getTaskManager();
 
     await manager.addStep(id, step);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Add task step error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/tasks/:id/progress - 更新进度
-router.post("/:id/progress", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/tasks/:id/progress
+router.post("/:id/progress", authMiddleware, async (c) => {
   try {
-    const { id } = req.params;
-    const { progress, message } = req.body;
+    const id = c.req.param("id");
+    const { progress, message } = await c.req.json();
     const manager = getTaskManager();
 
     await manager.updateProgress(id, progress, message);
     const task = manager.getTask(id);
 
-    res.json(task);
+    return c.json(task);
   } catch (error) {
     console.error("Update progress error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 

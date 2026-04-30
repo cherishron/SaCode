@@ -25,7 +25,7 @@ export const AccountSwitcher: React.FC<AccountSwitcherProps> = ({
       {accounts.map((acc) => (
         <Box key={acc.id} marginLeft={1}>
           <Text color={acc.isActive ? geminiTheme.colors.accent : geminiTheme.colors.muted}>
-            {acc.isActive ? "● " : "○ "}
+            {acc.isActive ? "* " : "o "}
           </Text>
           <Text color={acc.isActive ? geminiTheme.colors.text : geminiTheme.colors.muted}>
             {acc.alias}

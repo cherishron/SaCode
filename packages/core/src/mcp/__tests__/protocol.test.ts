@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MCPServer, MCPClient, MCP_VERSION } from "../protocol";
 import type { Tool, Resource, Prompt, JsonRpcRequest } from "../protocol";
 

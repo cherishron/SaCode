@@ -48,12 +48,14 @@ export class ContextManager {
 
     // Git 状态
     try {
-      const { execSync } = await import("child_process");
-      context.gitStatus = execSync("git status --short", {
+      const proc = Bun.spawnSync({
+        cmd: ["git", "status", "--short"],
         cwd: this.rootDir,
-        encoding: "utf-8",
+        stdout: "pipe",
+        stderr: "pipe",
         timeout: 5000,
-      }).trim();
+      });
+      context.gitStatus = (proc.stdout?.toString() ?? "").trim();
     } catch { /* not a git repo or git not available */ }
 
     return context;

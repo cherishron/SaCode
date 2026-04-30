@@ -5,7 +5,7 @@
  */
 
 import { SACODEClient } from "../client/index.js";
-import type { BaseAdapter, StreamSender, IMMessage, Platform } from "@SACODE/adapters";
+import type { BaseAdapterLike, StreamSender, IMMessage, Platform } from "@sacode/types";
 import EventEmitter from "eventemitter3";
 
 // ============================================
@@ -51,7 +51,7 @@ export interface StreamChatEvents {
 
 export class StreamChatController extends EventEmitter<StreamChatEvents> {
   private client: SACODEClient;
-  private adapter: BaseAdapter & Partial<StreamSender>;
+  private adapter: BaseAdapterLike;
   private updateInterval: number;
   private updateTimers: Map<string, NodeJS.Timeout> = new Map();
   private pendingUpdates: Map<string, string> = new Map();
@@ -59,7 +59,7 @@ export class StreamChatController extends EventEmitter<StreamChatEvents> {
 
   constructor(
     client: SACODEClient,
-    adapter: BaseAdapter & Partial<StreamSender>,
+    adapter: BaseAdapterLike,
     options: { updateInterval?: number } = {}
   ) {
     super();
@@ -284,7 +284,7 @@ export class StreamChatController extends EventEmitter<StreamChatEvents> {
 
 export function createStreamChatController(
   client: SACODEClient,
-  adapter: BaseAdapter & Partial<StreamSender>,
+  adapter: BaseAdapterLike,
   options?: { updateInterval?: number }
 ): StreamChatController {
   return new StreamChatController(client, adapter, options);

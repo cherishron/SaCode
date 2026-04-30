@@ -247,6 +247,21 @@ export class SessionMapper extends EventEmitter<SessionMapperEvents> {
   }
 
   /**
+   * 更新映射的元数据
+   */
+  updateMetadata(platform: Platform, chatId: string, metadata: Record<string, unknown>): void {
+    const channel = this.buildChannelIdentifier(platform, chatId);
+    const entry = this.mappings.get(channel);
+
+    if (entry) {
+      entry.metadata = metadata;
+      entry.lastActiveAt = new Date();
+      this.emit("mapping:updated", { channel, sessionId: entry.sessionId });
+      this.schedulePersist();
+    }
+  }
+
+  /**
    * 删除指定渠道的映射
    */
   deleteMapping(platform: Platform, chatId: string): boolean {
@@ -303,6 +318,17 @@ export class SessionMapper extends EventEmitter<SessionMapperEvents> {
    */
   getByPlatform(platform: Platform): SessionMappingEntry[] {
     return this.getAll().filter((entry) => entry.platform === platform);
+  }
+
+  /**
+   * 获取统计信息
+   */
+  getStats(): { total: number; byPlatform: Record<string, number> } {
+    const byPlatform: Record<string, number> = {};
+    for (const entry of this.mappings.values()) {
+      byPlatform[entry.platform] = (byPlatform[entry.platform] ?? 0) + 1;
+    }
+    return { total: this.mappings.size, byPlatform };
   }
 
   /**
@@ -517,6 +543,7 @@ export class SessionMapper extends EventEmitter<SessionMapperEvents> {
   destroy(): void {
     this.stopCleanupTimer();
     this.persist();
+    this.mappings.clear();
     this.removeAllListeners();
   }
 

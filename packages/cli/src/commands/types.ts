@@ -329,4 +329,47 @@ export const BUILTIN_SLASH_COMMANDS: Omit<SlashCommand, "execute">[] = [
       },
     ],
   },
+  {
+    name: "init",
+    description: "解读当前项目并生成 AGENTS.md",
+    category: "config",
+    flags: [
+      {
+        long: "--force",
+        short: "-f",
+        description: "覆盖已有的 AGENTS.md",
+        type: "boolean",
+      },
+    ],
+  },
+  {
+    name: "session",
+    aliases: ["s"],
+    description: "管理会话",
+    category: "session",
+    args: [
+      {
+        name: "action",
+        description: "操作: list / info / clear / resume",
+        type: "string",
+        required: false,
+        choices: ["list", "info", "clear", "resume"],
+      },
+    ],
+  },
+  {
+    name: "providers",
+    aliases: ["p"],
+    description: "管理 AI Provider 配置",
+    category: "config",
+    args: [
+      {
+        name: "action",
+        description: "操作: list / add / remove / switch",
+        type: "string",
+        required: false,
+        choices: ["list", "add", "remove", "switch"],
+      },
+    ],
+  },
 ];

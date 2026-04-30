@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { StreamEvent, TokenUsage } from "../types.js";
+import type { StreamEvent, TokenUsage, ClarificationOption, ConfirmationDetail } from "../types.js";
 
 interface ToolCallState {
   id: string;
@@ -10,6 +10,17 @@ interface ToolCallState {
   duration?: number;
 }
 
+interface ClarificationState {
+  question: string;
+  options: ClarificationOption[];
+  toolCallId: string;
+}
+
+interface ConfirmationState {
+  detail: ConfirmationDetail;
+  toolCallId: string;
+}
+
 interface StreamingState {
   content: string;
   thoughts: string;
@@ -18,6 +29,8 @@ interface StreamingState {
   isThinking: boolean;
   error?: string;
   tokenUsage?: TokenUsage;
+  clarification?: ClarificationState;
+  confirmation?: ConfirmationState;
 }
 
 export function useStreaming() {
@@ -90,6 +103,25 @@ export function useStreaming() {
           tokenUsage: event.usage,
         }));
         break;
+      case "clarification_request":
+        setState((prev) => ({
+          ...prev,
+          clarification: {
+            question: event.question,
+            options: event.options,
+            toolCallId: event.toolCallId,
+          },
+        }));
+        break;
+      case "confirmation_request":
+        setState((prev) => ({
+          ...prev,
+          confirmation: {
+            detail: event.detail,
+            toolCallId: event.toolCallId,
+          },
+        }));
+        break;
     }
   }, []);
 
@@ -103,5 +135,39 @@ export function useStreaming() {
     });
   }, []);
 
-  return { ...state, processEvent, reset };
+  const resolveClarification = useCallback((value: string) => {
+    setState((prev) => ({
+      ...prev,
+      clarification: undefined,
+      toolCalls: prev.toolCalls.map((tc) =>
+        tc.id === prev.clarification?.toolCallId
+          ? { ...tc, status: "done" as const, result: value }
+          : tc
+      ),
+    }));
+  }, []);
+
+  const resolveConfirmation = useCallback((allowed: boolean) => {
+    setState((prev) => ({
+      ...prev,
+      confirmation: undefined,
+      toolCalls: prev.toolCalls.map((tc) =>
+        tc.id === prev.confirmation?.toolCallId
+          ? {
+              ...tc,
+              status: allowed ? ("done" as const) : ("error" as const),
+              result: allowed ? "confirmed" : "denied",
+            }
+          : tc
+      ),
+    }));
+  }, []);
+
+  return {
+    ...state,
+    processEvent,
+    reset,
+    resolveClarification,
+    resolveConfirmation,
+  };
 }

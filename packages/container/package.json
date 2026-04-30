@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/container",
+  "name": "@sacode/container",
   "version": "0.1.0",
   "description": "SACODE 容器隔离模块 - Docker容器运行Agent",
   "type": "module",
@@ -21,11 +21,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "execa": "^9.5.2",
     "pino": "^9.5.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

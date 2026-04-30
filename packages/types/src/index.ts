@@ -1,9 +1,9 @@
 /**
  * SACODE Shared Types
  *
- * 跨包共享的类型定义，供 @SACODE/core 和 @SACODE/adapters 使用。
+ * 跨包共享的类型定义，供 @sacode/core 和 @sacode/adapters 使用。
  *
- * @module @SACODE/types
+ * @module @sacode/types
  */
 
 // ============================================================================
@@ -46,4 +46,7 @@ export type {
   IMAdapter,
   SendOptions,
   StreamOptions,
+  StreamSender,
+  MediaSupport,
+  BaseAdapterLike,
 } from "./adapter.js";

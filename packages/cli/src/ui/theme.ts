@@ -76,62 +76,51 @@ export const borders = {
 };
 
 /**
- * 工具图标映射
+ * 工具标签映射（文本标识，禁止 emoji）
  */
-export const toolIcons: Record<string, string> = {
-  // 文件操作
-  read_file: "📄",
-  write_file: "📝",
-  replace: "✏️",
-  edit_file: "✏️",
-  delete_file: "🗑️",
-  list_directory: "📁",
-  glob: "🔍",
-  grep_tool: "🔍",
+export const toolLabels: Record<string, string> = {
+  read_file: "[R]",
+  write_file: "[W]",
+  replace: "[E]",
+  edit_file: "[E]",
+  delete_file: "[D]",
+  list_directory: "[LS]",
+  glob: "[G]",
+  grep_tool: "[G]",
 
-  // Web 操作
-  web_search: "🌐",
-  web_fetch: "🌐",
-  http_request: "🔗",
+  web_search: "[NET]",
+  web_fetch: "[NET]",
+  http_request: "[HTTP]",
 
-  // 系统操作
-  run_shell_command: "💻",
+  run_shell_command: "[SH]",
 
-  // AI 功能
-  think: "💭",
-  plan: "📋",
+  think: "[TH]",
+  plan: "[PL]",
 
-  // 时间
-  get_current_time: "🕐",
+  get_current_time: "[TM]",
 
-  // 内存/存储
-  save_memory: "💾",
+  save_memory: "[MEM]",
 
-  // 任务管理
-  todo_read: "📋",
-  todo_write: "✅",
+  todo_read: "[PL]",
+  todo_write: "[TD]",
 
-  // 用户交互
-  ask_user_question: "❓",
+  ask_user_question: "[?]",
 
-  // 多媒体
-  image_read: "🖼️",
+  image_read: "[IMG]",
 
-  // Agent
-  task: "🤖",
+  task: "[AG]",
 
-  // 默认
-  default: "🔧",
+  default: "[T]",
 };
 
 /**
- * 状态图标
+ * 状态图标（文本标识，禁止 emoji）
  */
 export const statusIcons = {
-  pending: "○",
-  running: "◐",
-  success: "✓",
-  error: "✗",
+  pending: "o",
+  running: "~",
+  success: "+",
+  error: "x",
 } as const;
 
 /**
@@ -167,7 +156,7 @@ export const separators = {
  * 获取工具图标
  */
 export function getToolIcon(toolName: string): string {
-  return toolIcons[toolName] ?? toolIcons.default ?? "🔧";
+  return toolLabels[toolName] ?? toolLabels.default ?? "[T]";
 }
 
 /**
@@ -206,7 +195,7 @@ export function createSeparator(width: number, char = separators.horizontal): st
 export const theme = {
   colors,
   borders,
-  toolIcons,
+  toolLabels,
   statusIcons,
   spacing,
   separators,

@@ -1,10 +1,13 @@
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { CapabilitiesManager, defaultCapabilitiesConfig } from "@sacode/capabilities";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// Capabilities manager instance
+const router = new Hono<{ Variables: Variables }>();
+
 let capabilitiesManager: CapabilitiesManager | null = null;
 
 function getCapabilitiesManager(): CapabilitiesManager {
@@ -14,13 +17,13 @@ function getCapabilitiesManager(): CapabilitiesManager {
   return capabilitiesManager;
 }
 
-// GET /api/capabilities - 获取能力列表
-router.get("/", authMiddleware, (req: Request, res: Response) => {
+// GET /api/capabilities
+router.get("/", authMiddleware, (c) => {
   try {
     const manager = getCapabilitiesManager();
     const tools = manager.getRegistry().list();
 
-    res.json(
+    return c.json(
       tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -28,25 +31,25 @@ router.get("/", authMiddleware, (req: Request, res: Response) => {
     );
   } catch (error) {
     console.error("Get capabilities error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/capabilities/:name/execute - 执行能力
-router.post("/:name/execute", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/capabilities/:name/execute
+router.post("/:name/execute", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
-    const { input } = req.body;
+    const { name } = c.req.param();
+    const { input } = await c.req.json();
 
     const manager = getCapabilitiesManager();
     const result = await manager.getRegistry().execute(name, input);
 
-    res.json({ success: true, result });
+    return c.json({ success: true, result });
   } catch (error) {
     console.error("Execute capability error:", error);
-    res.status(500).json({
+    return c.json({
       error: error instanceof Error ? error.message : "Internal server error",
-    });
+    }, 500);
   }
 });
 

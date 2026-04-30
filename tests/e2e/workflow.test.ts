@@ -12,12 +12,12 @@ import {
   TaskScheduler,
   GroupQueue,
   PluginManager,
-} from "@SACODE/core";
+} from "@sacode/core";
 import {
   IMAdapterManager,
   TelegramAdapter,
   createAdapter,
-} from "@SACODE/adapters";
+} from "@sacode/adapters";
 
 // Mock WebSocket for Node.js environment
 class MockWebSocket {

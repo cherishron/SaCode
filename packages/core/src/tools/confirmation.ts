@@ -463,28 +463,28 @@ export class ToolConfirmationManager extends EventEmitter<ConfirmationEvents> {
     args: Record<string, unknown>,
     riskLevel: ConfirmationRequest["riskLevel"]
   ): string {
-    const riskEmoji = {
-      low: "⚠️",
-      medium: "⚠️⚠️",
-      high: "🚨",
-      critical: "🔴🚨",
+    const riskLabel = {
+      low: "[!]",
+      medium: "[!!]",
+      high: "[!!!]",
+      critical: "[CRITICAL]",
     };
 
-    const emoji = riskEmoji[riskLevel];
+    const label = riskLabel[riskLevel];
 
     switch (toolName) {
       case "write_file":
-        return `${emoji} 即将写入文件: ${args.path ?? "unknown"}`;
+        return `${label} 即将写入文件: ${args.path ?? "unknown"}`;
       case "delete_file":
-        return `${emoji} 即将删除文件: ${args.path ?? "unknown"}`;
+        return `${label} 即将删除文件: ${args.path ?? "unknown"}`;
       case "execute_command":
       case "shell_execute":
       case "run_shell_command":
-        return `${emoji} 即将执行命令: ${args.command ?? args.cmd ?? "unknown"}`;
+        return `${label} 即将执行命令: ${args.command ?? args.cmd ?? "unknown"}`;
       case "browser_navigate":
-        return `${emoji} 即将导航到: ${args.url ?? "unknown"}`;
+        return `${label} 即将导航到: ${args.url ?? "unknown"}`;
       default:
-        return `${emoji} 即将执行操作: ${toolName}`;
+        return `${label} 即将执行操作: ${toolName}`;
     }
   }
 }

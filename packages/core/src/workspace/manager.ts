@@ -14,6 +14,7 @@ import type {
 } from "./types.js";
 import { TemplateRegistry, createTemplateRegistry } from "./template.js";
 import { MemoryLoader, createMemoryLoader } from "./memory.js";
+import type { ContainerManager } from "@sacode/container";
 
 const DEFAULT_CONFIG: WorkspaceConfig = {
   rootPath: "",
@@ -43,12 +44,27 @@ export class WorkspaceManager {
   private templateRegistry: TemplateRegistry;
   private memoryLoader: MemoryLoader;
   private eventListeners: Map<string, Set<(event: WorkspaceEvent) => void>> = new Map();
+  private containerManager: ContainerManager | null = null;
 
   constructor(options: WorkspaceManagerOptions) {
     this.options = options;
     this.config = { ...DEFAULT_CONFIG, rootPath: options.rootPath };
     this.templateRegistry = createTemplateRegistry();
     this.memoryLoader = createMemoryLoader({ workspacePath: options.rootPath });
+  }
+
+  /**
+   * 设置容器管理器（由外部注入）
+   */
+  setContainerManager(manager: ContainerManager): void {
+    this.containerManager = manager;
+  }
+
+  /**
+   * 获取容器管理器
+   */
+  getContainerManager(): ContainerManager | null {
+    return this.containerManager;
   }
 
   /**
@@ -264,18 +280,59 @@ export class WorkspaceManager {
       return null;
     }
 
-    // TODO: 集成 @SACODE/container
-    // 这里需要导入ContainerManager并执行命令
-    // 使用execOptions来配置容器执行参数
-    // 暂时返回null，后续完成container集成后再实现
+    // Docker 沙箱模式
+    if (sandbox.mode === "docker") {
+      if (!this.containerManager) {
+        throw new Error("ContainerManager not configured. Call setContainerManager() first.");
+      }
 
-    this.emit({
-      type: "updated",
-      timestamp: Date.now(),
-      data: { action: "execInSandbox", command, options: execOptions },
-    });
+      const containerConfig: Record<string, unknown> = {
+        image: sandbox.container?.image ?? "node:22-alpine",
+        workingDir: sandbox.container?.workingDir ?? execOptions.cwd ?? "/app",
+        autoRemove: true,
+        timeout: execOptions.timeout ?? sandbox.container?.timeout ?? 300000,
+      };
 
-    return null;
+      if (sandbox.container?.env || execOptions.env) {
+        containerConfig.env = { ...sandbox.container?.env, ...execOptions.env };
+      }
+
+      if (sandbox.container?.volumes) {
+        containerConfig.volumes = sandbox.container.volumes;
+      } else {
+        containerConfig.volumes = [
+          { host: this.options.rootPath, container: "/app", readonly: false },
+        ];
+      }
+
+      if (sandbox.container?.memory) {
+        containerConfig.memory = sandbox.container.memory;
+      }
+
+      if (sandbox.container?.cpu) {
+        containerConfig.cpu = sandbox.container.cpu;
+      }
+
+      if (sandbox.container?.network) {
+        containerConfig.network = sandbox.container.network;
+      }
+
+      const result = await this.containerManager.run(
+        containerConfig as import("@sacode/container").ContainerConfig,
+        command
+      );
+
+      this.emit({
+        type: "updated",
+        timestamp: Date.now(),
+        data: { action: "execInSandbox", command, exitCode: result.exitCode },
+      });
+
+      return result;
+    }
+
+    // 其他沙箱模式暂不支持
+    throw new Error(`Sandbox mode "${sandbox.mode}" is not yet supported. Use "docker" mode.`);
   }
 
   /**

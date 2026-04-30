@@ -1,102 +1,59 @@
 import chalk from "chalk";
-import inquirer from "enquirer";
+import type { TaskScheduler, CronTask, CreateTaskInput } from "@sacode/core";
 
-interface CronJob {
-  id: string;
-  name: string;
-  type: "interval" | "once" | "cron";
-  schedule: string;
-  message: string;
-  channel: string;
-  chatId: string;
-  enabled: boolean;
-  lastRunAt: string | null;
-  nextRunAt: string | null;
-  createdAt: string;
+const defaultStoragePath = process.env.SACODE_TASKS_PATH || ".sacode/tasks.json";
+
+let schedulerInstance: TaskScheduler | null = null;
+
+async function getScheduler(): Promise<TaskScheduler> {
+  if (!schedulerInstance) {
+    const { createTaskScheduler } = await import("@sacode/core");
+    schedulerInstance = createTaskScheduler({
+      storagePath: defaultStoragePath,
+      autoStart: false,
+      persistTasks: true,
+    });
+  }
+  return schedulerInstance;
 }
 
-/**
- * 列出所有定时任务
- */
 export async function listCronJobs(options: { all?: boolean }): Promise<void> {
-  console.log(chalk.cyan("⏰ Cron Jobs\n"));
+  const scheduler = await getScheduler();
+  const tasks = scheduler.listTasks();
+  const showAll = options.all ?? false;
+  const tasksToShow = showAll ? tasks : tasks.filter((t) => t.enabled);
 
-  // 模拟数据 - 实际应从数据库获取
-  const jobs: CronJob[] = [
-    {
-      id: "cron_001",
-      name: "Morning Reminder",
-      type: "cron",
-      schedule: "0 9 * * *",
-      message: "Good morning! Have a great day!",
-      channel: "telegram",
-      chatId: "123456789",
-      enabled: true,
-      lastRunAt: "2024-01-15T09:00:00Z",
-      nextRunAt: "2024-01-16T09:00:00Z",
-      createdAt: "2024-01-01T00:00:00Z",
-    },
-    {
-      id: "cron_002",
-      name: "Water Reminder",
-      type: "interval",
-      schedule: "every 3600s",
-      message: "Time to drink water! 💧",
-      channel: "discord",
-      chatId: "987654321",
-      enabled: true,
-      lastRunAt: "2024-01-15T10:00:00Z",
-      nextRunAt: "2024-01-15T11:00:00Z",
-      createdAt: "2024-01-05T00:00:00Z",
-    },
-    {
-      id: "cron_003",
-      name: "Weekly Report",
-      type: "once",
-      schedule: "2024-01-20T10:00:00Z",
-      message: "Weekly report is ready!",
-      channel: "feishu",
-      chatId: "ou_123456",
-      enabled: false,
-      lastRunAt: null,
-      nextRunAt: "2024-01-20T10:00:00Z",
-      createdAt: "2024-01-10T00:00:00Z",
-    },
-  ];
+  console.log(chalk.cyan("[D] Cron Jobs\n"));
 
-  const showAll = options.all || false;
-  const jobsToShow = showAll ? jobs : jobs.filter((j) => j.enabled);
-
-  if (jobsToShow.length === 0) {
-    console.log(chalk.gray("No cron jobs found. Use 'SACODE cron add' to create one."));
+  if (tasksToShow.length === 0) {
+    console.log(chalk.gray("[!] No cron jobs found. Use 'sacode cron add' to create one."));
     return;
   }
 
-  for (const job of jobsToShow) {
-    const statusIcon = job.enabled ? chalk.green("●") : chalk.red("○");
-    const typeIcon = getTypeIcon(job.type);
+  for (const task of tasksToShow) {
+    const statusIcon = task.enabled ? chalk.green("*") : chalk.red("o");
+    const typeIcon = getTypeIcon(task.type);
 
-    console.log(`  ${statusIcon} ${chalk.bold(job.name)} ${typeIcon}`);
-    console.log(`      ${chalk.gray("ID:")} ${job.id}`);
-    console.log(`      ${chalk.gray("Schedule:")} ${job.schedule}`);
-    console.log(`      ${chalk.gray("Message:")} ${job.message.substring(0, 50)}${job.message.length > 50 ? "..." : ""}`);
-    console.log(`      ${chalk.gray("Target:")} ${job.channel}:${job.chatId}`);
+    console.log(`  ${statusIcon} ${chalk.bold(task.name)} ${typeIcon}`);
+    console.log(`      ${chalk.gray("ID:")} ${task.id}`);
+    console.log(`      ${chalk.gray("Schedule:")} ${formatSchedule(task)}`);
+    console.log(`      ${chalk.gray("Message:")} ${task.message.substring(0, 50)}${task.message.length > 50 ? "..." : ""}`);
+    console.log(`      ${chalk.gray("Target:")} ${task.channel}:${task.chatId}`);
 
-    if (job.lastRunAt) {
-      console.log(`      ${chalk.gray("Last Run:")} ${formatDate(job.lastRunAt)}`);
+    if (task.lastRunAt) {
+      console.log(`      ${chalk.gray("Last Run:")} ${formatDate(task.lastRunAt)}`);
     }
-    if (job.nextRunAt) {
-      console.log(`      ${chalk.gray("Next Run:")} ${formatDate(job.nextRunAt)}`);
+    if (task.nextRunAt) {
+      console.log(`      ${chalk.gray("Next Run:")} ${formatDate(task.nextRunAt)}`);
     }
+    console.log(`      ${chalk.gray("Runs:")} ${task.runCount}`);
     console.log();
   }
 
-  console.log(chalk.gray(`Total: ${jobsToShow.length} job(s) (showing ${showAll ? "all" : "enabled only"})`));
+  const stats = scheduler.getStats();
+  console.log(chalk.gray(`Total: ${tasksToShow.length} job(s) (showing ${showAll ? "all" : "enabled only"}) | Global: ${stats.total} total, ${stats.enabled} enabled`));
 }
 
-/**
- * 添加定时任务
- */
 export async function addCronJob(options: {
   name: string;
   message: string;
@@ -108,140 +65,197 @@ export async function addCronJob(options: {
   chatId?: string;
   disable?: boolean;
 }): Promise<void> {
-  const type = options.type || "interval";
-  let schedule = "";
+  const type = options.type ?? "interval";
+
+  const config: CreateTaskInput["config"] = {};
 
   if (type === "interval" && options.every) {
-    schedule = `every ${options.every}s`;
+    const seconds = parseDuration(options.every);
+    if (seconds === null) {
+      console.log(chalk.red("[x] Invalid interval format. Use: 60, 5m, 2h, 1d"));
+      return;
+    }
+    config.interval = seconds;
   } else if (type === "cron" && options.cron) {
-    schedule = options.cron;
+    config.cronExpression = options.cron;
   } else if (type === "once" && options.at) {
-    schedule = options.at;
+    const date = new Date(options.at);
+    if (isNaN(date.getTime())) {
+      console.log(chalk.red("[x] Invalid datetime format. Use ISO format: 2024-01-20T10:00:00Z"));
+      return;
+    }
+    config.executeAt = date;
   } else {
-    console.log(chalk.red("Error: Missing schedule specification"));
-    console.log(chalk.gray("  --every <seconds>  for interval"));
-    console.log(chalk.gray("  --cron <expr>       for cron"));
-    console.log(chalk.gray("  --at <datetime>     for once"));
+    console.log(chalk.red("[x] Missing schedule specification"));
+    console.log(chalk.gray("  --every <duration>  for interval (e.g. 60, 5m, 2h)"));
+    console.log(chalk.gray("  --cron <expr>       for cron (e.g. '0 9 * * *')"));
+    console.log(chalk.gray("  --at <datetime>     for once (e.g. 2024-01-20T10:00:00Z)"));
     return;
   }
 
-  // 交互式获取缺失信息
-  const answers = await inquirer.prompt([
-    {
-      type: "input",
-      name: "channel",
-      message: "Channel:",
-      default: options.channel || "telegram",
-      when: !options.channel,
-    },
-    {
-      type: "input",
-      name: "chatId",
-      message: "Chat ID:",
-      default: options.chatId || "",
-      when: !options.chatId,
-    },
-  ]);
+  const channel = options.channel ?? "telegram";
+  const chatId = options.chatId ?? "";
 
-  const channel = options.channel || answers.channel;
-  const chatId = options.chatId || answers.chatId;
-
-  console.log(chalk.cyan("\n📝 Creating cron job...\n"));
-  console.log(`  ${chalk.gray("Name:")} ${options.name}`);
-  console.log(`  ${chalk.gray("Type:")} ${type}`);
-  console.log(`  ${chalk.gray("Schedule:")} ${schedule}`);
-  console.log(`  ${chalk.gray("Message:")} ${options.message}`);
-  console.log(`  ${chalk.gray("Channel:")} ${channel}`);
-  console.log(`  ${chalk.gray("Chat ID:")} ${chatId}`);
-
-  const confirm = await inquirer.prompt([
-    {
-      type: "confirm",
-      name: "confirm",
-      message: chalk.yellow("Create this cron job?"),
-      default: true,
-    },
-  ]);
-
-  if (!confirm.confirm) {
-    console.log(chalk.gray("Operation cancelled"));
+  if (!chatId) {
+    console.log(chalk.red("[x] Chat ID is required. Use --chat-id <id>"));
     return;
   }
 
-  // TODO: 实际创建逻辑
-  console.log(chalk.green("✓ Cron job created"));
+  const input: CreateTaskInput = {
+    name: options.name,
+    type,
+    config,
+    message: options.message,
+    channel: channel as CreateTaskInput["channel"],
+    chatId,
+    enabled: !options.disable,
+  };
+
+  const scheduler = await getScheduler();
+  const task = await scheduler.addTask(input);
+
+  console.log(chalk.green("+ Cron job created"));
+  console.log(chalk.gray(`  ID:       ${task.id}`));
+  console.log(chalk.gray(`  Name:     ${task.name}`));
+  console.log(chalk.gray(`  Type:     ${task.type}`));
+  console.log(chalk.gray(`  Schedule: ${formatSchedule(task)}`));
+  console.log(chalk.gray(`  Target:   ${task.channel}:${task.chatId}`));
+  if (task.nextRunAt) {
+    console.log(chalk.gray(`  Next Run: ${formatDate(task.nextRunAt)}`));
+  }
 }
 
-/**
- * 删除定时任务
- */
 export async function removeCronJob(jobId: string): Promise<void> {
-  const confirm = await inquirer.prompt([
-    {
-      type: "confirm",
-      name: "confirm",
-      message: chalk.yellow(`Delete cron job ${jobId}?`),
-      default: false,
-    },
-  ]);
+  const scheduler = await getScheduler();
+  const removed = await scheduler.removeTask(jobId);
 
-  if (!confirm.confirm) {
-    console.log(chalk.gray("Operation cancelled"));
+  if (removed) {
+    console.log(chalk.green(`+ Cron job ${jobId} deleted`));
+  } else {
+    console.log(chalk.red(`[x] Cron job not found: ${jobId}`));
+  }
+}
+
+export async function enableCronJob(jobId: string): Promise<void> {
+  const scheduler = await getScheduler();
+  const task = await scheduler.enableTask(jobId);
+
+  if (task) {
+    console.log(chalk.green(`+ Cron job "${task.name}" enabled`));
+    if (task.nextRunAt) {
+      console.log(chalk.gray(`  Next Run: ${formatDate(task.nextRunAt)}`));
+    }
+  } else {
+    console.log(chalk.red(`[x] Cron job not found: ${jobId}`));
+  }
+}
+
+export async function disableCronJob(jobId: string): Promise<void> {
+  const scheduler = await getScheduler();
+  const task = await scheduler.disableTask(jobId);
+
+  if (task) {
+    console.log(chalk.red(`o Cron job "${task.name}" disabled`));
+  } else {
+    console.log(chalk.red(`[x] Cron job not found: ${jobId}`));
+  }
+}
+
+export async function runCronJob(jobId: string): Promise<void> {
+  const scheduler = await getScheduler();
+  const task = scheduler.getTask(jobId);
+
+  if (!task) {
+    console.log(chalk.red(`[x] Cron job not found: ${jobId}`));
     return;
   }
 
-  // TODO: 实际删除逻辑
-  console.log(chalk.green(`✓ Cron job ${jobId} deleted`));
+  console.log(chalk.cyan(`~ Running cron job "${task.name}"...`));
+  const result = await scheduler.runTask(jobId);
+
+  if (result.success) {
+    console.log(chalk.green("+ Cron job executed successfully"));
+    if (result.response) {
+      console.log(chalk.gray(`  Response: ${result.response}`));
+    }
+  } else {
+    console.log(chalk.red(`[x] Cron job execution failed: ${result.error ?? "unknown error"}`));
+  }
 }
 
-/**
- * 启用定时任务
- */
-export async function enableCronJob(jobId: string): Promise<void> {
-  // TODO: 实际启用逻辑
-  console.log(chalk.green(`✓ Cron job ${jobId} enabled`));
-}
+export async function showCronStats(): Promise<void> {
+  const scheduler = await getScheduler();
+  const stats = scheduler.getStats();
 
-/**
- * 禁用定时任务
- */
-export async function disableCronJob(jobId: string): Promise<void> {
-  // TODO: 实际禁用逻辑
-  console.log(chalk.red(`○ Cron job ${jobId} disabled`));
+  console.log(chalk.cyan("[D] Cron Statistics\n"));
+  console.log(`  ${chalk.gray("Total:")}     ${stats.total}`);
+  console.log(`  ${chalk.gray("Enabled:")}   ${chalk.enabled}`);
+  console.log(`  ${chalk.gray("Disabled:")}  ${stats.disabled}`);
+  console.log();
+  console.log(`  ${chalk.gray("By Type:")}`);
+  console.log(`    Interval: ${stats.byType.interval}`);
+  console.log(`    Cron:     ${stats.byType.cron}`);
+  console.log(`    Once:     ${stats.byType.once}`);
+  console.log();
+  console.log(`  ${chalk.gray("Total Runs:")}   ${stats.totalRuns}`);
+  console.log(`  ${chalk.gray("Success Rate:")} ${(stats.successRate * 100).toFixed(1)}%`);
 }
-
-/**
- * 立即运行定时任务
- */
-export async function runCronJob(jobId: string): Promise<void> {
-  console.log(chalk.cyan(`⏳ Running cron job ${jobId}...`));
-  // TODO: 实际运行逻辑
-  console.log(chalk.green("✓ Cron job executed"));
-}
-
-// 辅助函数
 
 function getTypeIcon(type: string): string {
   const icons: Record<string, string> = {
-    interval: "🔄",
-    cron: "📅",
-    once: "⏱️",
+    interval: "[SYNC]",
+    cron: "[CAL]",
+    once: "[TM]",
   };
-  return icons[type] || "⏰";
+  return icons[type] ?? "[TM]";
 }
 
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
+function formatSchedule(task: CronTask): string {
+  switch (task.type) {
+    case "interval":
+      return `every ${task.config.interval}s`;
+    case "cron":
+      return task.config.cronExpression ?? "?";
+    case "once":
+      return task.config.executeAt?.toISOString() ?? "?";
+    default:
+      return "?";
+  }
+}
+
+function formatDate(date: Date): string {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const minutes = Math.floor(diff / (1000 * 60));
+  const absDiff = Math.abs(diff);
+  const minutes = Math.floor(absDiff / (1000 * 60));
+  const hours = Math.floor(absDiff / (1000 * 60 * 60));
 
-  if (minutes < 60) {
-    return chalk.gray(`${minutes}m ago`);
-  } else if (hours < 24) {
-    return chalk.gray(`${hours}h ago`);
+  if (diff > 0) {
+    if (minutes < 60) return chalk.gray(`${minutes}m ago`);
+    if (hours < 24) return chalk.gray(`${hours}h ago`);
   } else {
-    return date.toLocaleDateString() + " " + date.toLocaleTimeString();
+    if (minutes < 60) return chalk.green(`in ${minutes}m`);
+    if (hours < 24) return chalk.green(`in ${hours}h`);
+  }
+
+  return date.toLocaleDateString() + " " + date.toLocaleTimeString();
+}
+
+function parseDuration(input: string): number | null {
+  const num = parseInt(input, 10);
+  if (!isNaN(num) && !input.match(/[a-zA-Z]/)) {
+    return num;
+  }
+
+  const match = input.match(/^(\d+)(s|m|h|d)$/);
+  if (!match) return null;
+
+  const value = parseInt(match[1]!, 10);
+  switch (match[2]) {
+    case "s": return value;
+    case "m": return value * 60;
+    case "h": return value * 3600;
+    case "d": return value * 86400;
+    default: return null;
   }
 }

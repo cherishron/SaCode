@@ -311,37 +311,36 @@ describe("AnthropicProvider", () => {
     });
 
     it("应该处理 content_block_start 事件", async () => {
-      // Mock 包含 tool_use 的流
-      vi.mocked(await import("@anthropic-ai/sdk")).default.mockImplementation(
-        () => ({
-          messages: {
-            stream: vi.fn().mockResolvedValue({
-              [Symbol.asyncIterator]: async function* () {
-                yield {
-                  type: "content_block_start",
-                  index: 0,
-                  content_block: {
-                    type: "tool_use",
-                    id: "tool_1",
-                    name: "get_weather",
-                    input: {},
-                  },
-                };
-                yield {
-                  type: "content_block_stop",
-                  index: 0,
-                };
-                yield {
-                  type: "message_stop",
-                };
-              },
-              finalMessage: vi.fn().mockResolvedValue({
-                stop_reason: "tool_use",
-              }),
-            }),
-          },
-        }) as any
-      );
+      const mockStream = {
+        [Symbol.asyncIterator]: async function* () {
+          yield {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "tool_1",
+              name: "get_weather",
+              input: {},
+            },
+          };
+          yield {
+            type: "content_block_stop",
+            index: 0,
+          };
+          yield {
+            type: "message_stop",
+          };
+        },
+        finalMessage: vi.fn().mockResolvedValue({
+          stop_reason: "tool_use",
+        }),
+      };
+
+      (provider as any).client = {
+        messages: {
+          stream: vi.fn().mockResolvedValue(mockStream),
+        },
+      };
 
       const tool = {
         type: "function" as const,
@@ -364,51 +363,50 @@ describe("AnthropicProvider", () => {
         chunks.push(chunk);
       }
 
-      // 应该包含 tool_call
       expect(chunks.some(c => c.type === "tool_call")).toBe(true);
     });
 
     it("应该处理 input_json_delta 事件", async () => {
-      vi.mocked(await import("@anthropic-ai/sdk")).default.mockImplementation(
-        () => ({
-          messages: {
-            stream: vi.fn().mockResolvedValue({
-              [Symbol.asyncIterator]: async function* () {
-                yield {
-                  type: "content_block_start",
-                  index: 0,
-                  content_block: {
-                    type: "tool_use",
-                    id: "tool_1",
-                    name: "calculate",
-                    input: {},
-                  },
-                };
-                yield {
-                  type: "content_block_delta",
-                  index: 0,
-                  delta: { type: "input_json_delta", partial_json: '{"expr":' },
-                };
-                yield {
-                  type: "content_block_delta",
-                  index: 0,
-                  delta: { type: "input_json_delta", partial_json: '"2+2"}' },
-                };
-                yield {
-                  type: "content_block_stop",
-                  index: 0,
-                };
-                yield {
-                  type: "message_stop",
-                };
-              },
-              finalMessage: vi.fn().mockResolvedValue({
-                stop_reason: "tool_use",
-              }),
-            }),
-          },
-        }) as any
-      );
+      const mockStream = {
+        [Symbol.asyncIterator]: async function* () {
+          yield {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "tool_1",
+              name: "calculate",
+              input: {},
+            },
+          };
+          yield {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '{"expr":' },
+          };
+          yield {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '"2+2"}' },
+          };
+          yield {
+            type: "content_block_stop",
+            index: 0,
+          };
+          yield {
+            type: "message_stop",
+          };
+        },
+        finalMessage: vi.fn().mockResolvedValue({
+          stop_reason: "tool_use",
+        }),
+      };
+
+      (provider as any).client = {
+        messages: {
+          stream: vi.fn().mockResolvedValue(mockStream),
+        },
+      };
 
       const tool = {
         type: "function" as const,
@@ -451,12 +449,16 @@ describe("AnthropicProvider", () => {
         messages: [{ role: "user", content: "Hello" }],
       });
 
-      const chunks: StreamChunk[] = [];
-      for await (const chunk of stream) {
-        chunks.push(chunk);
+      let hasError = false;
+      try {
+        for await (const chunk of stream) {
+          void chunk;
+        }
+      } catch {
+        hasError = true;
       }
 
-      expect(chunks.some(c => c.type === "done")).toBe(true);
+      expect(hasError).toBe(true);
     });
 
     it("应该发射错误事件", async () => {
@@ -490,8 +492,7 @@ describe("AnthropicProvider", () => {
       await provider.initialize();
     });
 
-    it("应该映射 end_turn", () => {
-      // 通过流式输出验证
+    it("应该映射 end_turn", async () => {
       const stream = provider.chat({
         messages: [{ role: "user", content: "Hello" }],
       });

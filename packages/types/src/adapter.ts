@@ -142,3 +142,42 @@ export interface StreamOptions extends SendOptions {
   /** 更新间隔 (毫秒) */
   updateInterval?: number | undefined;
 }
+
+// ============================================================================
+// 流式发送与多媒体支持接口
+// ============================================================================
+
+/**
+ * 流式发送器接口
+ */
+export interface StreamSender {
+  /** 发送初始消息，返回消息 ID（用于后续编辑） */
+  sendInitial(channelId: string, text: string): Promise<string | undefined>;
+  /** 编辑消息（流式更新） */
+  editMessage(channelId: string, messageId: string, text: string): Promise<void>;
+  /** 检查是否支持流式 */
+  supportsStreaming(): boolean;
+}
+
+/**
+ * 多媒体支持接口
+ */
+export interface MediaSupport {
+  /** 是否支持图片 */
+  supportsImage(): boolean;
+  /** 是否支持语音 */
+  supportsAudio(): boolean;
+  /** 是否支持视频 */
+  supportsVideo(): boolean;
+  /** 是否支持文件 */
+  supportsFile(): boolean;
+  /** 是否支持位置 */
+  supportsLocation(): boolean;
+  /** 是否支持表情包 */
+  supportsSticker(): boolean;
+}
+
+/**
+ * BaseAdapter 的类型描述（供 core 包使用，避免循环依赖）
+ */
+export type BaseAdapterLike = IMAdapter & Partial<StreamSender> & Partial<MediaSupport>;

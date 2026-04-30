@@ -3,7 +3,7 @@
  * 参考 Claude Code 权限系统设计
  */
 
-// Local ToolCall type to avoid @SACODE/core dependency issues
+// Local ToolCall type to avoid @sacode/core dependency issues
 export interface ToolCall {
   id?: string;
   function?: {
@@ -150,6 +150,26 @@ export const DEFAULT_RULES: PermissionRule[] = [
   { tool: /^dangerous_/, action: "deny", description: "危险操作" },
 ];
 
+/**
+ * 权限检查详细结果
+ */
+export interface PermissionCheckDetail {
+  /** 是否允许 */
+  allowed: boolean;
+  /** 是否需要用户确认 */
+  needsConfirmation: boolean;
+  /** 风险等级 */
+  riskLevel: "low" | "medium" | "high" | "critical";
+  /** 匹配的规则 */
+  matchedRule?: PermissionRule;
+  /** 确认标题 */
+  title: string;
+  /** 确认消息 */
+  message: string;
+  /** 额外详情 */
+  details: string[];
+}
+
 // ============================================================================
 // 权限引擎
 // ============================================================================
@@ -205,14 +225,42 @@ export class PermissionEngine {
    * 检查权限
    */
   async check(toolCall: ToolCall): Promise<boolean> {
+    const detail = await this.checkWithDetail(toolCall);
+    if (detail.needsConfirmation) {
+      return this.askUser(toolCall);
+    }
+    return detail.allowed;
+  }
+
+  /**
+   * 检查权限（返回详细信息，不触发 UI 交互）
+   */
+  async checkWithDetail(toolCall: ToolCall): Promise<PermissionCheckDetail> {
+    const toolName = toolCall.function?.name ?? toolCall.name ?? "unknown";
+    const args = this.parseArgs(toolCall);
+
     // 旁路模式 - 全部允许
     if (this.mode === "bypass") {
-      return true;
+      return {
+        allowed: true,
+        needsConfirmation: false,
+        riskLevel: "low",
+        title: toolName,
+        message: "旁路模式，自动允许",
+        details: [],
+      };
     }
 
-    // 严格模式 - 全部询问
+    // 严格模式 - 全部需要确认
     if (this.mode === "strict") {
-      return this.askUser(toolCall);
+      return {
+        allowed: false,
+        needsConfirmation: true,
+        riskLevel: "high",
+        title: toolName,
+        message: `严格模式：需要确认 ${toolName}`,
+        details: this.buildDetails(toolName, args),
+      };
     }
 
     // 计划模式 - 只允许读取
@@ -228,39 +276,137 @@ export class PermissionEngine {
         "think",
         "plan",
       ];
-      return readTools.includes(toolCall.function?.name ?? toolCall.name ?? "");
+      const isRead = readTools.includes(toolName);
+      return {
+        allowed: isRead,
+        needsConfirmation: false,
+        riskLevel: isRead ? "low" : "critical",
+        title: toolName,
+        message: isRead ? "计划模式：读取操作允许" : `计划模式：${toolName} 不允许`,
+        details: [],
+      };
     }
 
     // 查找匹配规则
     const rule = this.findRule(toolCall);
 
     if (!rule) {
-      // 没有匹配规则，默认询问
-      return this.askUser(toolCall);
+      return {
+        allowed: false,
+        needsConfirmation: true,
+        riskLevel: "medium",
+        title: toolName,
+        message: `未匹配规则：需要确认 ${toolName}`,
+        details: this.buildDetails(toolName, args),
+      };
     }
 
     // 检查条件
     if (rule.condition) {
-      const args = this.parseArgs(toolCall);
       if (!rule.condition(args)) {
-        // 条件不满足，允许
-        return true;
+        return {
+          allowed: true,
+          needsConfirmation: false,
+          riskLevel: "low",
+          matchedRule: rule,
+          title: toolName,
+          message: "条件不满足，自动允许",
+          details: [],
+        };
       }
     }
 
-    // 根据规则动作处理
     switch (rule.action) {
       case "allow":
-        return true;
+        return {
+          allowed: true,
+          needsConfirmation: false,
+          riskLevel: "low",
+          matchedRule: rule,
+          title: toolName,
+          message: "规则允许",
+          details: [],
+        };
       case "deny":
-        return false;
+        return {
+          allowed: false,
+          needsConfirmation: false,
+          riskLevel: "critical",
+          matchedRule: rule,
+          title: toolName,
+          message: `规则拒绝：${rule.description ?? toolName}`,
+          details: [],
+        };
       case "ask":
-        return this.askUser(toolCall);
       default:
-        return this.askUser(toolCall);
+        return {
+          allowed: false,
+          needsConfirmation: true,
+          riskLevel: this.assessRiskLevel(toolName, args),
+          matchedRule: rule,
+          title: toolName,
+          message: this.buildConfirmMessage(toolName, args),
+          details: this.buildDetails(toolName, args),
+        };
     }
   }
 
+  /**
+   * 评估风险等级
+   */
+  private assessRiskLevel(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): "low" | "medium" | "high" | "critical" {
+    const criticalTools = ["delete_file", "run_shell_command"];
+    const highTools = ["write_file", "edit_file", "replace"];
+    if (criticalTools.includes(toolName)) {
+      if (toolName === "run_shell_command" && isDangerousShell(args)) {
+        return "critical";
+      }
+      return "high";
+    }
+    if (highTools.includes(toolName)) {
+      return "medium";
+    }
+    return "low";
+  }
+
+  /**
+   * 构建确认消息
+   */
+  private buildConfirmMessage(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): string {
+    switch (toolName) {
+      case "write_file":
+        return `即将写入文件: ${String(args.path ?? "unknown")}`;
+      case "edit_file":
+      case "replace":
+        return `即将编辑文件: ${String(args.path ?? "unknown")}`;
+      case "delete_file":
+        return `即将删除文件: ${String(args.path ?? "unknown")}`;
+      case "run_shell_command":
+        return `即将执行命令: ${String(args.command ?? args.cmd ?? "unknown")}`;
+      default:
+        return `即将执行操作: ${toolName}`;
+    }
+  }
+
+  /**
+   * 构建详情列表
+   */
+  private buildDetails(
+    _toolName: string,
+    args: Record<string, unknown>,
+  ): string[] {
+    const details: string[] = [];
+    if (args.path) details.push(`路径: ${String(args.path)}`);
+    if (args.command ?? args.cmd) details.push(`命令: ${String(args.command ?? args.cmd)}`);
+    if (args.url) details.push(`URL: ${String(args.url)}`);
+    return details;
+  }
   /**
    * 查找匹配规则
    */
@@ -305,7 +451,7 @@ export class PermissionEngine {
 
     // 默认行为：打印确认提示（实际应由 UI 处理）
     const toolName = toolCall.function?.name ?? toolCall.name ?? "unknown";
-    console.log(`\n⚠️  需要确认: 允许执行 ${toolName}?`);
+    console.log(`\n[!] 需要确认: 允许执行 ${toolName}?`);
     console.log("   (默认允许，实际应由 UI 处理)");
     return true;
   }

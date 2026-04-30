@@ -1,16 +1,11 @@
-/**
- * SACODE API - 容器路由
- *
- * 容器管理 API 端点
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import { z } from "zod";
-import type { Logger } from "@SACODE/core";
+import { authMiddleware } from "../middleware/auth";
 
-// ============================================================================
-// Types
-// ============================================================================
+type Variables = {
+  userId: string;
+};
 
 interface ContainerInfo {
   id: string;
@@ -40,10 +35,6 @@ interface ContainerExecResult {
   stdout: string;
   stderr: string;
 }
-
-// ============================================================================
-// Validation Schemas
-// ============================================================================
 
 const CreateContainerSchema = z.object({
   name: z.string().min(1).max(64).optional(),
@@ -92,7 +83,7 @@ const ExecContainerSchema = z.object({
 const ListContainersQuerySchema = z.object({
   all: z.coerce.boolean().default(false),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  filters: z.string().optional(), // JSON string
+  filters: z.string().optional(),
 });
 
 const GetLogsQuerySchema = z.object({
@@ -105,77 +96,50 @@ const GetLogsQuerySchema = z.object({
   tail: z.string().default("all"),
 });
 
-// ============================================================================
-// Router Factory
-// ============================================================================
+const router = new Hono<{ Variables: Variables }>();
 
-export function createContainerRoutes(options: {
-  logger: Logger;
-  dockerHost?: string;
-}): Router {
-  const { logger } = options;
-  const router = Router();
+// GET /api/containers
+router.get("/", authMiddleware, async (c) => {
+  try {
+    const query = ListContainersQuerySchema.parse(c.req.query());
 
-  // -------------------------------------------------------------------------
-  // List Containers
-  // -------------------------------------------------------------------------
-  router.get("/", async (req: Request, res: Response) => {
-    try {
-      const query = ListContainersQuerySchema.parse(req.query);
+    const containers: ContainerInfo[] = [
+      {
+        id: "abc123def456",
+        name: "SACODE-agent-1",
+        image: "SACODE/agent:latest",
+        status: "running",
+        created: new Date().toISOString(),
+        ports: [],
+        labels: { "SACODE.type": "agent" },
+      },
+    ];
 
-      // TODO: 实际调用 Docker API
-      // const containers = await docker.listContainers({ all: query.all });
-
-      // 模拟响应
-      const containers: ContainerInfo[] = [
-        {
-          id: "abc123def456",
-          name: "SACODE-agent-1",
-          image: "SACODE/agent:latest",
-          status: "running",
-          created: new Date().toISOString(),
-          ports: [],
-          labels: { "SACODE.type": "agent" },
-        },
-      ];
-
-      res.json({
-        success: true,
-        data: containers.slice(0, query.limit),
-        total: containers.length,
-      });
-    } catch (error) {
-      logger.error("Failed to list containers:", error);
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ success: false, error: error.errors });
-      } else {
-        res.status(500).json({ success: false, error: "Internal server error" });
-      }
+    return c.json({
+      success: true,
+      data: containers.slice(0, query.limit),
+      total: containers.length,
+    });
+  } catch (error) {
+    console.error("Failed to list containers:", error);
+    if (error instanceof z.ZodError) {
+      return c.json({ success: false, error: error.errors }, 400);
     }
-  });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
 
-  // -------------------------------------------------------------------------
-  // Create Container
-  // -------------------------------------------------------------------------
-  router.post("/", async (req: Request, res: Response) => {
-    try {
-      const body = CreateContainerSchema.parse(req.body);
+// POST /api/containers
+router.post("/", authMiddleware, async (c) => {
+  try {
+    const body = CreateContainerSchema.parse(await c.req.json());
 
-      logger.info("Creating container", { name: body.name, image: body.image });
+    console.info("Creating container", { name: body.name, image: body.image });
 
-      // TODO: 实际调用 Docker API
-      // const container = await docker.createContainer({
-      //   name: body.name,
-      //   Image: body.image,
-      //   Cmd: body.cmd,
-      //   Env: Object.entries(body.env ?? {}).map(([k, v]) => `${k}=${v}`),
-      //   WorkingDir: body.workdir,
-      //   ...
-      // });
+    const containerId = `container_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
-      const containerId = `container_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-      res.status(201).json({
+    return c.json(
+      {
         success: true,
         data: {
           id: containerId,
@@ -184,498 +148,439 @@ export function createContainerRoutes(options: {
           status: "created",
           warnings: [],
         },
-      });
-    } catch (error) {
-      logger.error("Failed to create container:", error);
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ success: false, error: error.errors });
-      } else {
-        res.status(500).json({ success: false, error: "Internal server error" });
-      }
+      },
+      201
+    );
+  } catch (error) {
+    console.error("Failed to create container:", error);
+    if (error instanceof z.ZodError) {
+      return c.json({ success: false, error: error.errors }, 400);
     }
-  });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
 
-  // -------------------------------------------------------------------------
-  // Get Container
-  // -------------------------------------------------------------------------
-  router.get("/:id", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
+// GET /api/containers/:id
+router.get("/:id", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
 
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const info = await container.inspect();
-
-      res.json({
-        success: true,
-        data: {
-          id,
-          name: `container_${id.slice(0, 8)}`,
-          image: "SACODE/agent:latest",
-          status: "running",
-          created: new Date().toISOString(),
-          state: {
-            Status: "running",
-            Running: true,
-            Paused: false,
-            Restarting: false,
-            Pid: 12345,
-            ExitCode: 0,
-            StartedAt: new Date().toISOString(),
-          },
-          config: {
-            Cmd: ["/bin/bash"],
-            Env: ["PATH=/usr/local/bin:/usr/bin:/bin"],
-            WorkingDir: "/workspace",
-          },
-          networkSettings: {
-            IPAddress: "172.17.0.2",
-            Ports: {},
-          },
-        },
-      });
-    } catch (error) {
-      logger.error("Failed to get container:", error);
-      res.status(404).json({ success: false, error: "Container not found" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Start Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/start", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-
-      logger.info(`Starting container: ${id}`);
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.start();
-
-      res.json({
-        success: true,
-        data: { id, status: "running" },
-      });
-    } catch (error) {
-      logger.error("Failed to start container:", error);
-      res.status(500).json({ success: false, error: "Failed to start container" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Stop Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/stop", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { t } = req.body; // timeout in seconds
-
-      logger.info(`Stopping container: ${id}`);
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.stop({ t: t ?? 10 });
-
-      res.json({
-        success: true,
-        data: { id, status: "exited" },
-      });
-    } catch (error) {
-      logger.error("Failed to stop container:", error);
-      res.status(500).json({ success: false, error: "Failed to stop container" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Restart Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/restart", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { t } = req.body; // timeout in seconds
-
-      logger.info(`Restarting container: ${id}`);
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.restart({ t: t ?? 10 });
-
-      res.json({
-        success: true,
-        data: { id, status: "running" },
-      });
-    } catch (error) {
-      logger.error("Failed to restart container:", error);
-      res.status(500).json({ success: false, error: "Failed to restart container" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Pause/Unpause Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/pause", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-
-      logger.info(`Pausing container: ${id}`);
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.pause();
-
-      res.json({
-        success: true,
-        data: { id, status: "paused" },
-      });
-    } catch (error) {
-      logger.error("Failed to pause container:", error);
-      res.status(500).json({ success: false, error: "Failed to pause container" });
-    }
-  });
-
-  router.post("/:id/unpause", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-
-      logger.info(`Unpausing container: ${id}`);
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.unpause();
-
-      res.json({
-        success: true,
-        data: { id, status: "running" },
-      });
-    } catch (error) {
-      logger.error("Failed to unpause container:", error);
-      res.status(500).json({ success: false, error: "Failed to unpause container" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Remove Container
-  // -------------------------------------------------------------------------
-  router.delete("/:id", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { force, v } = req.query; // force remove, remove volumes
-
-      logger.info(`Removing container: ${id}`, { force, v });
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.remove({ force: force === 'true', v: v === 'true' });
-
-      res.json({
-        success: true,
-        data: { id, removed: true },
-      });
-    } catch (error) {
-      logger.error("Failed to remove container:", error);
-      res.status(500).json({ success: false, error: "Failed to remove container" });
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Get Container Stats
-  // -------------------------------------------------------------------------
-  router.get("/:id/stats", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { stream } = req.query;
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const stats = await container.stats({ stream: stream === 'true' });
-
-      const stats: ContainerStats = {
+    return c.json({
+      success: true,
+      data: {
         id,
-        cpuPercent: 2.5,
-        memoryUsage: 128 * 1024 * 1024, // 128MB
-        memoryLimit: 512 * 1024 * 1024, // 512MB
-        memoryPercent: 25.0,
-        networkRx: 1024 * 1024, // 1MB
-        networkTx: 512 * 1024, // 512KB
-        blockRead: 2 * 1024 * 1024, // 2MB
-        blockWrite: 1 * 1024 * 1024, // 1MB
-        pids: 5,
-      };
+        name: `container_${id.slice(0, 8)}`,
+        image: "SACODE/agent:latest",
+        status: "running",
+        created: new Date().toISOString(),
+        state: {
+          Status: "running",
+          Running: true,
+          Paused: false,
+          Restarting: false,
+          Pid: 12345,
+          ExitCode: 0,
+          StartedAt: new Date().toISOString(),
+        },
+        config: {
+          Cmd: ["/bin/bash"],
+          Env: ["PATH=/usr/local/bin:/usr/bin:/bin"],
+          WorkingDir: "/workspace",
+        },
+        networkSettings: {
+          IPAddress: "172.17.0.2",
+          Ports: {},
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Failed to get container:", error);
+    return c.json({ success: false, error: "Container not found" }, 404);
+  }
+});
 
-      res.json({
-        success: true,
-        data: stats,
-      });
-    } catch (error) {
-      logger.error("Failed to get container stats:", error);
-      res.status(500).json({ success: false, error: "Failed to get container stats" });
-    }
-  });
+// POST /api/containers/:id/start
+router.post("/:id/start", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
 
-  // -------------------------------------------------------------------------
-  // Get Container Logs
-  // -------------------------------------------------------------------------
-  router.get("/:id/logs", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const query = GetLogsQuerySchema.parse(req.query);
+    console.info(`Starting container: ${id}`);
 
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const logs = await container.logs({
-      //   follow: query.follow,
-      //   stdout: query.stdout,
-      //   stderr: query.stderr,
-      //   since: query.since,
-      //   until: query.until,
-      //   timestamps: query.timestamps,
-      //   tail: query.tail,
-      // });
+    return c.json({
+      success: true,
+      data: { id, status: "running" },
+    });
+  } catch (error) {
+    console.error("Failed to start container:", error);
+    return c.json({ success: false, error: "Failed to start container" }, 500);
+  }
+});
 
-      if (query.follow) {
-        // 流式响应
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.setHeader("Transfer-Encoding", "chunked");
+// POST /api/containers/:id/stop
+router.post("/:id/stop", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+    const t = body.t as number | undefined;
 
-        // 模拟流式日志
+    console.info(`Stopping container: ${id}`);
+
+    return c.json({
+      success: true,
+      data: { id, status: "exited" },
+    });
+  } catch (error) {
+    console.error("Failed to stop container:", error);
+    return c.json({ success: false, error: "Failed to stop container" }, 500);
+  }
+});
+
+// POST /api/containers/:id/restart
+router.post("/:id/restart", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+    const t = body.t as number | undefined;
+
+    console.info(`Restarting container: ${id}`);
+
+    return c.json({
+      success: true,
+      data: { id, status: "running" },
+    });
+  } catch (error) {
+    console.error("Failed to restart container:", error);
+    return c.json({ success: false, error: "Failed to restart container" }, 500);
+  }
+});
+
+// POST /api/containers/:id/pause
+router.post("/:id/pause", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+
+    console.info(`Pausing container: ${id}`);
+
+    return c.json({
+      success: true,
+      data: { id, status: "paused" },
+    });
+  } catch (error) {
+    console.error("Failed to pause container:", error);
+    return c.json({ success: false, error: "Failed to pause container" }, 500);
+  }
+});
+
+// POST /api/containers/:id/unpause
+router.post("/:id/unpause", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+
+    console.info(`Unpausing container: ${id}`);
+
+    return c.json({
+      success: true,
+      data: { id, status: "running" },
+    });
+  } catch (error) {
+    console.error("Failed to unpause container:", error);
+    return c.json({ success: false, error: "Failed to unpause container" }, 500);
+  }
+});
+
+// DELETE /api/containers/:id
+router.delete("/:id", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const force = c.req.query("force");
+    const v = c.req.query("v");
+
+    console.info(`Removing container: ${id}`, { force, v });
+
+    return c.json({
+      success: true,
+      data: { id, removed: true },
+    });
+  } catch (error) {
+    console.error("Failed to remove container:", error);
+    return c.json({ success: false, error: "Failed to remove container" }, 500);
+  }
+});
+
+// GET /api/containers/:id/stats
+router.get("/:id/stats", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const streamParam = c.req.query("stream");
+
+    const stats: ContainerStats = {
+      id,
+      cpuPercent: 2.5,
+      memoryUsage: 128 * 1024 * 1024,
+      memoryLimit: 512 * 1024 * 1024,
+      memoryPercent: 25.0,
+      networkRx: 1024 * 1024,
+      networkTx: 512 * 1024,
+      blockRead: 2 * 1024 * 1024,
+      blockWrite: 1 * 1024 * 1024,
+      pids: 5,
+    };
+
+    return c.json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Failed to get container stats:", error);
+    return c.json({ success: false, error: "Failed to get container stats" }, 500);
+  }
+});
+
+// GET /api/containers/:id/logs
+router.get("/:id/logs", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const query = GetLogsQuerySchema.parse(c.req.query());
+
+    if (query.follow) {
+      return stream(c, async (s) => {
+        s.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Transfer-Encoding": "chunked",
+        });
+
         const interval = setInterval(() => {
-          res.write(`[${new Date().toISOString()}] Log line from container ${id}\n`);
+          s.write(`[${new Date().toISOString()}] Log line from container ${id}\n`);
         }, 1000);
 
-        req.on("close", () => {
-          clearInterval(interval);
+        await new Promise<void>((resolve) => {
+          const cleanup = () => {
+            clearInterval(interval);
+            resolve();
+          };
+          c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+          setTimeout(cleanup, 60000);
         });
-
-        return;
-      }
-
-      res.json({
-        success: true,
-        data: {
-          id,
-          logs: `[${new Date().toISOString()}] Container started\n[${new Date().toISOString()}] Ready\n`,
-        },
       });
-    } catch (error) {
-      logger.error("Failed to get container logs:", error);
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ success: false, error: error.errors });
-      } else {
-        res.status(500).json({ success: false, error: "Failed to get container logs" });
-      }
     }
-  });
 
-  // -------------------------------------------------------------------------
-  // Execute Command in Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/exec", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const body = ExecContainerSchema.parse(req.body);
-
-      logger.info(`Executing command in container: ${id}`, { cmd: body.cmd });
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const exec = await container.exec({
-      //   Cmd: body.cmd,
-      //   Env: Object.entries(body.env ?? {}).map(([k, v]) => `${k}=${v}`),
-      //   WorkingDir: body.workdir,
-      //   User: body.user,
-      //   AttachStdout: true,
-      //   AttachStderr: true,
-      // });
-      // const stream = await exec.start();
-
-      const execId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-      const result: ContainerExecResult = {
-        exitCode: 0,
-        stdout: `Executed: ${body.cmd.join(" ")}\n`,
-        stderr: "",
-      };
-
-      res.json({
-        success: true,
-        data: {
-          execId,
-          containerId: id,
-          ...result,
-        },
-      });
-    } catch (error) {
-      logger.error("Failed to execute in container:", error);
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ success: false, error: error.errors });
-      } else {
-        res.status(500).json({ success: false, error: "Failed to execute command" });
-      }
+    return c.json({
+      success: true,
+      data: {
+        id,
+        logs: `[${new Date().toISOString()}] Container started\n[${new Date().toISOString()}] Ready\n`,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to get container logs:", error);
+    if (error instanceof z.ZodError) {
+      return c.json({ success: false, error: error.errors }, 400);
     }
-  });
+    return c.json({ success: false, error: "Failed to get container logs" }, 500);
+  }
+});
 
-  // -------------------------------------------------------------------------
-  // List Files in Container
-  // -------------------------------------------------------------------------
-  router.get("/:id/files", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { path } = req.query;
+// POST /api/containers/:id/exec
+router.post("/:id/exec", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = ExecContainerSchema.parse(await c.req.json());
 
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // 通过 exec 执行 ls 命令
+    console.info(`Executing command in container: ${id}`, { cmd: body.cmd });
 
-      res.json({
-        success: true,
-        data: {
-          id,
-          path: path ?? "/",
-          files: [
-            { name: "workspace", type: "directory", size: 0 },
-            { name: "app", type: "directory", size: 0 },
-            { name: "config.json", type: "file", size: 1024 },
-          ],
-        },
-      });
-    } catch (error) {
-      logger.error("Failed to list files:", error);
-      res.status(500).json({ success: false, error: "Failed to list files" });
+    const execId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const result: ContainerExecResult = {
+      exitCode: 0,
+      stdout: `Executed: ${body.cmd.join(" ")}\n`,
+      stderr: "",
+    };
+
+    return c.json({
+      success: true,
+      data: {
+        execId,
+        containerId: id,
+        ...result,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to execute in container:", error);
+    if (error instanceof z.ZodError) {
+      return c.json({ success: false, error: error.errors }, 400);
     }
-  });
+    return c.json({ success: false, error: "Failed to execute command" }, 500);
+  }
+});
 
-  // -------------------------------------------------------------------------
-  // Get File from Container
-  // -------------------------------------------------------------------------
-  router.get("/:id/files/*", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const filePath = req.params[0];
+// GET /api/containers/:id/files
+router.get("/:id/files", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const path = c.req.query("path");
 
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const archive = await container.getArchive({ path: filePath });
+    return c.json({
+      success: true,
+      data: {
+        id,
+        path: path ?? "/",
+        files: [
+          { name: "workspace", type: "directory", size: 0 },
+          { name: "app", type: "directory", size: 0 },
+          { name: "config.json", type: "file", size: 1024 },
+        ],
+      },
+    });
+  } catch (error) {
+    console.error("Failed to list files:", error);
+    return c.json({ success: false, error: "Failed to list files" }, 500);
+  }
+});
 
-      res.json({
-        success: true,
-        data: {
-          id,
-          path: filePath,
-          content: "file content here",
-        },
-      });
-    } catch (error) {
-      logger.error("Failed to get file:", error);
-      res.status(500).json({ success: false, error: "Failed to get file" });
-    }
-  });
+// GET /api/containers/:id/files/:path{.+}
+router.get("/:id/files/:path{.+}", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const filePath = c.req.param("path");
 
-  // -------------------------------------------------------------------------
-  // Copy Files to Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/files", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { path, content } = req.body;
+    return c.json({
+      success: true,
+      data: {
+        id,
+        path: filePath,
+        content: "file content here",
+      },
+    });
+  } catch (error) {
+    console.error("Failed to get file:", error);
+    return c.json({ success: false, error: "Failed to get file" }, 500);
+  }
+});
 
-      if (!path || content === undefined) {
-        res.status(400).json({
+// POST /api/containers/:id/files
+router.post("/:id/files", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const { path, content } = await c.req.json();
+
+    if (!path || content === undefined) {
+      return c.json(
+        {
           success: false,
           error: "Missing required fields: path, content",
-        });
-        return;
-      }
-
-      logger.info(`Copying file to container: ${id}`, { path });
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // await container.putArchive(archive, { path: dirname(path) });
-
-      res.json({
-        success: true,
-        data: { id, path, copied: true },
-      });
-    } catch (error) {
-      logger.error("Failed to copy file:", error);
-      res.status(500).json({ success: false, error: "Failed to copy file" });
+        },
+        400
+      );
     }
-  });
 
-  // -------------------------------------------------------------------------
-  // Export Container
-  // -------------------------------------------------------------------------
-  router.get("/:id/export", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
+    console.info(`Copying file to container: ${id}`, { path });
 
-      res.setHeader("Content-Type", "application/x-tar");
-      res.setHeader("Content-Disposition", `attachment; filename="container_${id}.tar"`);
+    return c.json({
+      success: true,
+      data: { id, path, copied: true },
+    });
+  } catch (error) {
+    console.error("Failed to copy file:", error);
+    return c.json({ success: false, error: "Failed to copy file" }, 500);
+  }
+});
 
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const stream = await container.export();
-      // stream.pipe(res);
+// GET /api/containers/:id/export
+router.get("/:id/export", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
 
-      res.status(501).json({
+    return c.json(
+      {
         success: false,
         error: "Export not implemented",
-      });
-    } catch (error) {
-      logger.error("Failed to export container:", error);
-      res.status(500).json({ success: false, error: "Failed to export container" });
-    }
-  });
+      },
+      501
+    );
+  } catch (error) {
+    console.error("Failed to export container:", error);
+    return c.json({ success: false, error: "Failed to export container" }, 500);
+  }
+});
 
-  // -------------------------------------------------------------------------
-  // Create Image from Container
-  // -------------------------------------------------------------------------
-  router.post("/:id/commit", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { repo, tag, message, author, changes } = req.body;
+// POST /api/containers/:id/commit
+router.post("/:id/commit", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const { repo, tag, message, author, changes } = await c.req.json();
 
-      if (!repo) {
-        res.status(400).json({
+    if (!repo) {
+      return c.json(
+        {
           success: false,
           error: "Missing required field: repo",
-        });
-        return;
-      }
-
-      logger.info(`Committing container: ${id}`, { repo, tag });
-
-      // TODO: 实际调用 Docker API
-      // const container = docker.getContainer(id);
-      // const image = await container.commit({
-      //   repo,
-      //   tag: tag ?? 'latest',
-      //   comment: message,
-      //   author,
-      //   changes,
-      // });
-
-      res.json({
-        success: true,
-        data: {
-          id,
-          imageId: `sha256:${Math.random().toString(16).slice(2, 66)}`,
-          repo,
-          tag: tag ?? "latest",
         },
-      });
-    } catch (error) {
-      logger.error("Failed to commit container:", error);
-      res.status(500).json({ success: false, error: "Failed to commit container" });
+        400
+      );
     }
-  });
 
-  return router;
-}
+    console.info(`Committing container: ${id}`, { repo, tag });
 
-// ============================================================================
-// Default Export
-// ============================================================================
+    const imageId = `sha256:${Math.random().toString(16).slice(2, 66)}`;
 
-export default createContainerRoutes;
+    return c.json({
+      success: true,
+      data: {
+        id: imageId,
+        repo,
+        tag: tag ?? "latest",
+      },
+    });
+  } catch (error) {
+    console.error("Failed to commit container:", error);
+    return c.json({ success: false, error: "Failed to commit container" }, 500);
+  }
+});
+
+// POST /api/containers/:id/rename
+router.post("/:id/rename", authMiddleware, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const { name } = await c.req.json();
+
+    if (!name) {
+      return c.json(
+        {
+          success: false,
+          error: "Missing required field: name",
+        },
+        400
+      );
+    }
+
+    console.info(`Renaming container: ${id} -> ${name}`);
+
+    return c.json({
+      success: true,
+      data: { id, name },
+    });
+  } catch (error) {
+    console.error("Failed to rename container:", error);
+    return c.json({ success: false, error: "Failed to rename container" }, 500);
+  }
+});
+
+// POST /api/containers/prune
+router.post("/prune", authMiddleware, async (c) => {
+  try {
+    console.info("Pruning stopped containers");
+
+    return c.json({
+      success: true,
+      data: {
+        containersDeleted: 0,
+        spaceReclaimed: 0,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to prune containers:", error);
+    return c.json({ success: false, error: "Failed to prune containers" }, 500);
+  }
+});
+
+export default router;

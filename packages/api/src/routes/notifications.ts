@@ -1,30 +1,25 @@
-/**
- * 通知系统 API 路由
- *
- * 提供用户通知的 CRUD、已读标记、实时推送等功能
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { getPrismaClient } from "@sacode/database";
 import { wsEvents } from "../websocket/index.js";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 通知类型定义
+const router = new Hono<{ Variables: Variables }>();
+
 export type NotificationType =
-  | "system" // 系统通知
-  | "task_complete" // 任务完成
-  | "task_failed" // 任务失败
-  | "message" // 消息通知
-  | "im_status" // IM 状态变更
-  | "warning" // 警告
-  | "info"; // 信息
+  | "system"
+  | "task_complete"
+  | "task_failed"
+  | "message"
+  | "im_status"
+  | "warning"
+  | "info";
 
-// 通知优先级
 export type NotificationPriority = "low" | "normal" | "high" | "urgent";
 
-// 内存存储通知（简单实现，生产环境应使用数据库）
 interface Notification {
   id: string;
   userId: string;
@@ -38,15 +33,9 @@ interface Notification {
   expiresAt?: Date;
 }
 
-// 通知存储（按用户分组）
 const notificationStore = new Map<string, Notification[]>();
-
-// 通知计数器
 let notificationIdCounter = 0;
 
-/**
- * 创建通知
- */
 function createNotification(
   userId: string,
   type: NotificationType,
@@ -56,7 +45,7 @@ function createNotification(
     priority?: NotificationPriority;
     data?: Record<string, unknown>;
     expiresAt?: Date;
-  }
+  },
 ): Notification {
   const notification: Notification = {
     id: `notif-${++notificationIdCounter}`,
@@ -71,18 +60,15 @@ function createNotification(
     expiresAt: options?.expiresAt,
   };
 
-  // 存储通知
   const userNotifications = notificationStore.get(userId) || [];
   userNotifications.unshift(notification);
 
-  // 限制每个用户最多 100 条通知
   if (userNotifications.length > 100) {
     userNotifications.splice(100);
   }
 
   notificationStore.set(userId, userNotifications);
 
-  // 通过 WebSocket 推送
   wsEvents.emit("notification:created", {
     userId,
     notification,
@@ -91,9 +77,6 @@ function createNotification(
   return notification;
 }
 
-/**
- * 批量创建通知（给所有用户或特定用户组）
- */
 function broadcastNotification(
   type: NotificationType,
   title: string,
@@ -102,7 +85,7 @@ function broadcastNotification(
     priority?: NotificationPriority;
     data?: Record<string, unknown>;
     userIds?: string[];
-  }
+  },
 ): void {
   const userIds = options?.userIds || Array.from(notificationStore.keys());
 
@@ -111,45 +94,37 @@ function broadcastNotification(
   }
 }
 
-/**
- * GET /api/notifications
- * 获取用户通知列表
- */
-router.get("/", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/notifications
+router.get("/", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { unreadOnly, type, limit = 20, offset = 0 } = req.query;
+    const userId = c.get("userId");
+    const unreadOnly = c.req.query("unreadOnly");
+    const type = c.req.query("type");
+    const limit = parseInt(c.req.query("limit") || "20", 10);
+    const offset = parseInt(c.req.query("offset") || "0", 10);
 
     let notifications = notificationStore.get(userId) || [];
 
-    // 过滤已过期通知
     const now = new Date();
     notifications = notifications.filter(
-      (n) => !n.expiresAt || n.expiresAt > now
+      (n) => !n.expiresAt || n.expiresAt > now,
     );
 
-    // 只看未读
     if (unreadOnly === "true") {
       notifications = notifications.filter((n) => !n.read);
     }
 
-    // 按类型过滤
     if (type && typeof type === "string") {
       notifications = notifications.filter((n) => n.type === type);
     }
 
-    // 分页
     const total = notifications.length;
-    const paginatedNotifications = notifications.slice(
-      parseInt(offset as string, 10),
-      parseInt(offset as string, 10) + parseInt(limit as string, 10)
-    );
+    const paginatedNotifications = notifications.slice(offset, offset + limit);
 
-    // 统计
     const allNotifications = notificationStore.get(userId) || [];
     const unreadCount = allNotifications.filter((n) => !n.read).length;
 
-    res.json({
+    return c.json({
       notifications: paginatedNotifications.map((n) => ({
         ...n,
         createdAt: n.createdAt.toISOString(),
@@ -160,50 +135,40 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Get notifications error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-/**
- * GET /api/notifications/unread-count
- * 获取未读通知数量
- */
-router.get("/unread-count", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
+// GET /api/notifications/unread-count
+router.get("/unread-count", authMiddleware, (c) => {
+  const userId = c.get("userId");
   const notifications = notificationStore.get(userId) || [];
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  res.json({ unreadCount });
+  return c.json({ unreadCount });
 });
 
-/**
- * POST /api/notifications/:id/read
- * 标记单条通知为已读
- */
-router.post("/:id/read", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
-  const { id } = req.params;
+// POST /api/notifications/:id/read
+router.post("/:id/read", authMiddleware, (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
 
   const notifications = notificationStore.get(userId) || [];
   const notification = notifications.find((n) => n.id === id);
 
   if (!notification) {
-    res.status(404).json({ error: "Notification not found" });
-    return;
+    return c.json({ error: "Notification not found" }, 404);
   }
 
   notification.read = true;
 
-  res.json({ success: true, notification });
+  return c.json({ success: true, notification });
 });
 
-/**
- * POST /api/notifications/read-all
- * 标记所有通知为已读
- */
-router.post("/read-all", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
-  const { type } = req.body as { type?: NotificationType };
+// POST /api/notifications/read-all
+router.post("/read-all", authMiddleware, async (c) => {
+  const userId = c.get("userId");
+  const { type } = await c.req.json() as { type?: NotificationType };
 
   const notifications = notificationStore.get(userId) || [];
   let count = 0;
@@ -215,64 +180,52 @@ router.post("/read-all", authMiddleware, (req: Request, res: Response) => {
     }
   }
 
-  res.json({ success: true, markedRead: count });
+  return c.json({ success: true, markedRead: count });
 });
 
-/**
- * DELETE /api/notifications/:id
- * 删除单条通知
- */
-router.delete("/:id", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
-  const { id } = req.params;
+// DELETE /api/notifications/:id
+router.delete("/:id", authMiddleware, (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
 
   const notifications = notificationStore.get(userId) || [];
   const index = notifications.findIndex((n) => n.id === id);
 
   if (index === -1) {
-    res.status(404).json({ error: "Notification not found" });
-    return;
+    return c.json({ error: "Notification not found" }, 404);
   }
 
   notifications.splice(index, 1);
   notificationStore.set(userId, notifications);
 
-  res.status(204).send();
+  return c.body(null, 204);
 });
 
-/**
- * DELETE /api/notifications/clear
- * 清除所有通知（可按类型）
- */
-router.delete("/clear", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
-  const { type, readOnly } = req.query;
+// DELETE /api/notifications/clear
+router.delete("/clear", authMiddleware, (c) => {
+  const userId = c.get("userId");
+  const type = c.req.query("type");
+  const readOnly = c.req.query("readOnly");
 
   let notifications = notificationStore.get(userId) || [];
 
   if (type && typeof type === "string") {
-    // 只清除特定类型
     notifications = notifications.filter((n) => n.type !== type);
   } else if (readOnly === "true") {
-    // 只清除已读
     notifications = notifications.filter((n) => !n.read);
   } else {
-    // 清除全部
     notifications = [];
   }
 
   notificationStore.set(userId, notifications);
 
-  res.json({ success: true });
+  return c.json({ success: true });
 });
 
-/**
- * POST /api/notifications/create
- * 创建通知（内部使用）
- */
-router.post("/create", authMiddleware, (req: Request, res: Response) => {
-  const userId = (req as Request & { userId: string }).userId;
-  const { type, title, message, priority, data, expiresAt } = req.body as {
+// POST /api/notifications/create
+router.post("/create", authMiddleware, async (c) => {
+  const userId = c.get("userId");
+  const { type, title, message, priority, data, expiresAt } = await c.req.json() as {
     type: NotificationType;
     title: string;
     message: string;
@@ -282,8 +235,7 @@ router.post("/create", authMiddleware, (req: Request, res: Response) => {
   };
 
   if (!type || !title || !message) {
-    res.status(400).json({ error: "type, title, and message are required" });
-    return;
+    return c.json({ error: "type, title, and message are required" }, 400);
   }
 
   const notification = createNotification(userId, type, title, message, {
@@ -292,44 +244,35 @@ router.post("/create", authMiddleware, (req: Request, res: Response) => {
     expiresAt: expiresAt ? new Date(expiresAt) : undefined,
   });
 
-  res.status(201).json(notification);
+  return c.json(notification, 201);
 });
 
-/**
- * POST /api/notifications/broadcast
- * 广播通知（管理员使用）
- */
-router.post(
-  "/broadcast",
-  authMiddleware,
-  (req: Request, res: Response) => {
-    const { type, title, message, priority, data, userIds } = req.body as {
-      type: NotificationType;
-      title: string;
-      message: string;
-      priority?: NotificationPriority;
-      data?: Record<string, unknown>;
-      userIds?: string[];
-    };
+// POST /api/notifications/broadcast
+router.post("/broadcast", authMiddleware, async (c) => {
+  const { type, title, message, priority, data, userIds } = await c.req.json() as {
+    type: NotificationType;
+    title: string;
+    message: string;
+    priority?: NotificationPriority;
+    data?: Record<string, unknown>;
+    userIds?: string[];
+  };
 
-    if (!type || !title || !message) {
-      res.status(400).json({ error: "type, title, and message are required" });
-      return;
-    }
-
-    broadcastNotification(type, title, message, {
-      priority,
-      data,
-      userIds,
-    });
-
-    res.json({
-      success: true,
-      message: `Notification broadcasted to ${userIds?.length || "all"} users`,
-    });
+  if (!type || !title || !message) {
+    return c.json({ error: "type, title, and message are required" }, 400);
   }
-);
 
-// 导出通知创建函数供其他模块使用
+  broadcastNotification(type, title, message, {
+    priority,
+    data,
+    userIds,
+  });
+
+  return c.json({
+    success: true,
+    message: `Notification broadcasted to ${userIds?.length || "all"} users`,
+  });
+});
+
 export { createNotification, broadcastNotification };
 export default router;

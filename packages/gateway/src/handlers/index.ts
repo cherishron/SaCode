@@ -28,12 +28,40 @@ export interface HandlerContext {
 
 type RPCHandlerFn = (params: Record<string, unknown>, context: HandlerContext) => Promise<unknown | void>;
 
+/**
+ * Gateway 依赖注入接口
+ */
+export interface GatewayDeps {
+  sessionManager: SessionManager;
+  sacodeClient?: {
+    chat: (message: string, sessionId?: string) => AsyncIterable<unknown>;
+    isConnected: () => boolean;
+    connect: () => Promise<void>;
+    disconnect: () => Promise<void>;
+  };
+  imAdapterManager?: {
+    getAll: () => Map<string, { getChannels?: () => Promise<Channel[]> }>;
+    connect: (platform: string, config: Record<string, unknown>) => Promise<unknown>;
+    disconnect: (platform: string) => Promise<void>;
+    has: (platform: string) => boolean;
+  };
+  capabilitiesManager?: {
+    getAllTools: () => Tool[];
+    executeTool: (name: string, input: unknown) => Promise<unknown>;
+  };
+  memoryManager?: {
+    getSessionMemory: (sessionId: string) => Promise<{ content: string }>;
+    updateSessionMemory: (sessionId: string, content: string) => Promise<void>;
+    searchMemory: (query: string, limit?: number) => Promise<MemoryResult[]>;
+  };
+}
+
 export class RPCHandler {
   private handlers: Map<string, RPCHandlerFn> = new Map();
-  private sessionManager: SessionManager;
+  private deps: GatewayDeps;
 
-  constructor(sessionManager: SessionManager) {
-    this.sessionManager = sessionManager;
+  constructor(deps: GatewayDeps) {
+    this.deps = deps;
     this.registerHandlers();
   }
 
@@ -102,21 +130,21 @@ export class RPCHandler {
     const userId = context.userId;
     if (!userId) throw new Error("User not authenticated");
 
-    return this.sessionManager.listByUser(userId);
+    return this.deps.sessionManager.listByUser(userId);
   }
 
   private async sessionGet(params: Record<string, unknown>): Promise<Session | null> {
     const sessionId = params.sessionId as string | undefined;
     if (!sessionId) throw new Error("sessionId required");
 
-    return this.sessionManager.get(sessionId);
+    return this.deps.sessionManager.get(sessionId);
   }
 
   private async sessionCreate(params: Record<string, unknown>, context: HandlerContext): Promise<Session> {
     const userId = context.userId;
     if (!userId) throw new Error("User not authenticated");
 
-    const session = await this.sessionManager.create({
+    const session = await this.deps.sessionManager.create({
       userId,
       type: (params.type as "main" | "dm" | "group") ?? "main",
       channel: params.channel as string | undefined,
@@ -132,7 +160,7 @@ export class RPCHandler {
     const sessionId = params.sessionId as string | undefined;
     if (!sessionId) throw new Error("sessionId required");
 
-    await this.sessionManager.delete(sessionId);
+    await this.deps.sessionManager.delete(sessionId);
     context.broadcast("session.deleted", { sessionId });
 
     return { success: true };
@@ -142,58 +170,86 @@ export class RPCHandler {
     const sessionId = params.sessionId as string | undefined;
     if (!sessionId) throw new Error("sessionId required");
 
-    return this.sessionManager.reset(sessionId);
+    return this.deps.sessionManager.reset(sessionId);
   }
 
   // ============================================
   // Agent 调用
   // ============================================
 
+  private activeStreams = new Map<string, AbortController>();
+
   private async agentSend(params: Record<string, unknown>, context: HandlerContext): Promise<void> {
     const { sessionId, message } = params as AgentSendParams;
     if (!sessionId || !message) throw new Error("sessionId and message required");
 
-    // 获取会话
-    const session = await this.sessionManager.get(sessionId);
+    const session = await this.deps.sessionManager.get(sessionId);
     if (!session) throw new Error("Session not found");
 
+    const abortController = new AbortController();
+    this.activeStreams.set(sessionId, abortController);
+
     try {
-      // 发送开始事件
       context.send({
         jsonrpc: "2.0",
         method: "agent.message",
         params: { type: "start", sessionId },
       });
 
-      // TODO: 集成 SACODEClient 进行实际调用
-      // 这里模拟流式响应
-      const mockResponse = `收到消息: ${message}\n\n这是来自 SACODE Gateway 的响应。`;
-      
-      for (let i = 0; i < mockResponse.length; i += 20) {
-        const chunk = mockResponse.slice(i, i + 20);
+      if (this.deps.sacodeClient) {
+        let tokenCount = 0;
+        const stream = this.deps.sacodeClient.chat(message, sessionId);
+
+        for await (const chunk of stream) {
+          if (abortController.signal.aborted) break;
+
+          const msg = chunk as { role?: string; chunk?: { text?: string }; content?: string; text?: string };
+          if (msg.role === "assistant" && msg.chunk?.text) {
+            context.send({
+              jsonrpc: "2.0",
+              method: "agent.message",
+              params: { type: "text", content: msg.chunk.text, sessionId },
+            });
+            tokenCount += msg.chunk.text.length;
+          } else if (msg.role === "tool") {
+            context.send({
+              jsonrpc: "2.0",
+              method: "agent.message",
+              params: { type: "tool", content: JSON.stringify(msg), sessionId },
+            });
+          } else if (typeof msg.content === "string") {
+            context.send({
+              jsonrpc: "2.0",
+              method: "agent.message",
+              params: { type: "text", content: msg.content, sessionId },
+            });
+            tokenCount += msg.content.length;
+          }
+        }
+
+        await this.deps.sessionManager.updateStats(sessionId, { messageCount: 1, tokenCount });
+      } else {
+        const fallbackResponse = `[OFFLINE] AI 服务未连接，消息已记录: ${message.slice(0, 50)}...`;
         context.send({
           jsonrpc: "2.0",
           method: "agent.message",
-          params: { type: "text", content: chunk, sessionId },
+          params: { type: "text", content: fallbackResponse, sessionId },
         });
-        await new Promise((r) => setTimeout(r, 50));
       }
 
-      // 发送完成事件
       context.send({
         jsonrpc: "2.0",
         method: "agent.complete",
         params: { sessionId },
       });
-
-      // 更新会话统计
-      await this.sessionManager.updateStats(sessionId, { messageCount: 1, tokenCount: mockResponse.length });
     } catch (error) {
       context.send({
         jsonrpc: "2.0",
         method: "agent.error",
         params: { sessionId, error: error instanceof Error ? error.message : "Unknown error" },
       });
+    } finally {
+      this.activeStreams.delete(sessionId);
     }
   }
 
@@ -201,8 +257,14 @@ export class RPCHandler {
     const sessionId = params.sessionId as string | undefined;
     if (!sessionId) throw new Error("sessionId required");
 
-    // TODO: 实现中断逻辑
-    return { success: true };
+    const controller = this.activeStreams.get(sessionId);
+    if (controller) {
+      controller.abort();
+      this.activeStreams.delete(sessionId);
+      return { success: true };
+    }
+
+    return { success: false };
   }
 
   // ============================================
@@ -210,24 +272,48 @@ export class RPCHandler {
   // ============================================
 
   private async channelList(): Promise<Channel[]> {
-    // TODO: 从 IMAdapterManager 获取渠道列表
-    return [];
+    if (!this.deps.imAdapterManager) return [];
+
+    const channels: Channel[] = [];
+    const adapters = this.deps.imAdapterManager.getAll();
+
+    for (const [_platform, adapter] of adapters) {
+      if (adapter.getChannels) {
+        try {
+          const platformChannels = await adapter.getChannels();
+          channels.push(...platformChannels);
+        } catch {
+          // 单平台获取失败不影响其他平台
+        }
+      }
+    }
+
+    return channels;
   }
 
   private async channelConnect(params: Record<string, unknown>): Promise<Channel> {
     const platform = params.platform as string;
-    
-    if (!platform) throw new Error("platform required");
+    const config = params.config as Record<string, unknown> | undefined;
 
-    // TODO: 实现渠道连接
-    throw new Error("Not implemented");
+    if (!platform) throw new Error("platform required");
+    if (!this.deps.imAdapterManager) throw new Error("IM adapter manager not available");
+
+    if (this.deps.imAdapterManager.has(platform)) {
+      throw new Error(`Platform ${platform} already connected`);
+    }
+
+    await this.deps.imAdapterManager.connect(platform, config ?? {});
+    return { id: platform, platform: platform as import("./../protocol/index.js").Platform, name: platform, status: "connected" as const };
   }
 
   private async channelDisconnect(params: Record<string, unknown>): Promise<{ success: boolean }> {
     const channelId = params.channelId as string;
     if (!channelId) throw new Error("channelId required");
 
-    // TODO: 实现渠道断开
+    if (this.deps.imAdapterManager) {
+      await this.deps.imAdapterManager.disconnect(channelId);
+    }
+
     return { success: true };
   }
 
@@ -236,16 +322,17 @@ export class RPCHandler {
   // ============================================
 
   private async toolsList(): Promise<Tool[]> {
-    // TODO: 从 CapabilitiesManager 获取工具列表
-    return [];
+    if (!this.deps.capabilitiesManager) return [];
+    return this.deps.capabilitiesManager.getAllTools();
   }
 
   private async toolsExecute(params: Record<string, unknown>): Promise<unknown> {
-    const { name, input: _input } = params;
+    const { name, input } = params;
     if (!name) throw new Error("Tool name required");
 
-    // TODO: 从 CapabilitiesManager 执行工具
-    throw new Error("Not implemented");
+    if (!this.deps.capabilitiesManager) throw new Error("Capabilities manager not available");
+
+    return this.deps.capabilitiesManager.executeTool(name as string, input);
   }
 
   // ============================================
@@ -253,11 +340,12 @@ export class RPCHandler {
   // ============================================
 
   private async memorySearch(params: Record<string, unknown>): Promise<MemoryResult[]> {
-    const { query, limit: _limit = 10 } = params as MemorySearchParams;
+    const { query, limit = 10 } = params as MemorySearchParams;
     if (!query) throw new Error("query required");
 
-    // TODO: 从 MemoryManager 搜索
-    return [];
+    if (!this.deps.memoryManager) return [];
+
+    return this.deps.memoryManager.searchMemory(query, limit as number);
   }
 
   // ============================================
@@ -268,11 +356,17 @@ export class RPCHandler {
     version: string;
     uptime: number;
     sessions: number;
+    aiConnected: boolean;
+    imPlatforms: number;
+    toolsAvailable: number;
   }> {
     return {
       version: "0.1.0",
       uptime: process.uptime(),
-      sessions: this.sessionManager.size(),
+      sessions: this.deps.sessionManager.size(),
+      aiConnected: this.deps.sacodeClient?.isConnected() ?? false,
+      imPlatforms: this.deps.imAdapterManager?.getAll().size ?? 0,
+      toolsAvailable: this.deps.capabilitiesManager?.getAllTools().length ?? 0,
     };
   }
 }

@@ -1,23 +1,23 @@
-import { Router, type Request, type Response } from "express";
-import { getPrismaClient } from "@SACODE/database";
+import { Hono } from "hono";
+import { getPrismaClient } from "@sacode/database";
 import {
   PluginManager,
   createPluginManager,
   type Plugin,
   type PluginManifest,
   type PluginStats,
-} from "@SACODE/core";
+} from "@sacode/core";
 import * as path from "path";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 插件管理器实例（延迟初始化）
+const router = new Hono<{ Variables: Variables }>();
+
 let pluginManager: PluginManager | null = null;
 
-/**
- * 获取或初始化插件管理器
- */
 async function getPluginManager(): Promise<PluginManager> {
   if (pluginManager) return pluginManager;
 
@@ -52,28 +52,24 @@ async function getPluginManager(): Promise<PluginManager> {
   return pluginManager;
 }
 
-// ============================================================================
-// 插件统计和发现
-// ============================================================================
-
-// GET /api/plugins/stats - 获取插件统计
-router.get("/stats", authMiddleware, async (_req: Request, res: Response) => {
+// GET /api/plugins/stats
+router.get("/stats", authMiddleware, async (c) => {
   try {
     const manager = await getPluginManager();
     const stats: PluginStats = manager.getStats();
-    res.json(stats);
+    return c.json(stats);
   } catch (error) {
     console.error("Get plugin stats error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/plugins/discover - 发现可用插件
-router.get("/discover", authMiddleware, async (_req: Request, res: Response) => {
+// GET /api/plugins/discover
+router.get("/discover", authMiddleware, async (c) => {
   try {
     const manager = await getPluginManager();
     const plugins = await manager.discover();
-    res.json(
+    return c.json(
       plugins.map((p) => ({
         name: p.name,
         version: p.version,
@@ -85,19 +81,15 @@ router.get("/discover", authMiddleware, async (_req: Request, res: Response) => 
     );
   } catch (error) {
     console.error("Discover plugins error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// ============================================================================
-// 插件 CRUD
-// ============================================================================
-
-// GET /api/plugins - 获取插件列表
-router.get("/", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/plugins
+router.get("/", authMiddleware, async (c) => {
   try {
     const manager = await getPluginManager();
-    const { status } = req.query;
+    const status = c.req.query("status");
 
     let plugins = manager.getAll();
 
@@ -105,7 +97,7 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
       plugins = plugins.filter((p) => p.status === status);
     }
 
-    res.json(
+    return c.json(
       plugins.map((p) => ({
         name: p.name,
         version: p.version,
@@ -120,23 +112,22 @@ router.get("/", authMiddleware, async (req: Request, res: Response) => {
     );
   } catch (error) {
     console.error("Get plugins error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// GET /api/plugins/:name - 获取单个插件详情
-router.get("/:name", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/plugins/:name
+router.get("/:name", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
     const plugin = manager.get(name);
 
     if (!plugin) {
-      res.status(404).json({ error: "Plugin not found" });
-      return;
+      return c.json({ error: "Plugin not found" }, 404);
     }
 
-    res.json({
+    return c.json({
       name: plugin.name,
       version: plugin.version,
       manifest: plugin.manifest,
@@ -151,10 +142,10 @@ router.get("/:name", authMiddleware, async (req: Request, res: Response) => {
               name: t.name,
               description: t.description,
             })),
-            commands: plugin.capabilities.commands?.map((c) => ({
-              name: c.name,
-              description: c.description,
-              aliases: c.aliases,
+            commands: plugin.capabilities.commands?.map((cc) => ({
+              name: cc.name,
+              description: cc.description,
+              aliases: cc.aliases,
             })),
             messageHandlers: plugin.capabilities.messageHandlers?.length || 0,
             scheduledTasks: plugin.capabilities.scheduledTasks?.length || 0,
@@ -163,18 +154,17 @@ router.get("/:name", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Get plugin error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// POST /api/plugins - 安装插件
-router.post("/", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/plugins
+router.post("/", authMiddleware, async (c) => {
   try {
-    const { name, source, config } = req.body;
+    const { name, source, config } = await c.req.json();
 
     if (!name) {
-      res.status(400).json({ error: "Plugin name is required" });
-      return;
+      return c.json({ error: "Plugin name is required" }, 400);
     }
 
     const manager = await getPluginManager();
@@ -184,32 +174,28 @@ router.post("/", authMiddleware, async (req: Request, res: Response) => {
       await manager.setConfig(name, config);
     }
 
-    res.status(201).json({
+    return c.json({
       name: plugin.name,
       version: plugin.version,
       status: plugin.status,
-    });
+    }, 201);
   } catch (error) {
     console.error("Install plugin error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// ============================================================================
-// 插件生命周期控制
-// ============================================================================
-
-// POST /api/plugins/:name/enable - 启用插件
-router.post("/:name/enable", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/plugins/:name/enable
+router.post("/:name/enable", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
 
     await manager.enable(name);
 
     const plugin = manager.get(name);
-    res.json({
+    return c.json({
       success: true,
       name,
       status: plugin?.status,
@@ -217,20 +203,20 @@ router.post("/:name/enable", authMiddleware, async (req: Request, res: Response)
   } catch (error) {
     console.error("Enable plugin error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// POST /api/plugins/:name/disable - 禁用插件
-router.post("/:name/disable", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/plugins/:name/disable
+router.post("/:name/disable", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
 
     await manager.disable(name);
 
     const plugin = manager.get(name);
-    res.json({
+    return c.json({
       success: true,
       name,
       status: plugin?.status,
@@ -238,19 +224,19 @@ router.post("/:name/disable", authMiddleware, async (req: Request, res: Response
   } catch (error) {
     console.error("Disable plugin error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// POST /api/plugins/:name/reload - 重载插件
-router.post("/:name/reload", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/plugins/:name/reload
+router.post("/:name/reload", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
 
     const plugin = await manager.reload(name);
 
-    res.json({
+    return c.json({
       success: true,
       name: plugin.name,
       version: plugin.version,
@@ -259,129 +245,112 @@ router.post("/:name/reload", authMiddleware, async (req: Request, res: Response)
   } catch (error) {
     console.error("Reload plugin error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// DELETE /api/plugins/:name - 卸载插件
-router.delete("/:name", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/plugins/:name
+router.delete("/:name", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
 
     await manager.uninstall(name);
 
-    res.json({ success: true, name });
+    return c.json({ success: true, name });
   } catch (error) {
     console.error("Uninstall plugin error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// ============================================================================
-// 插件配置管理
-// ============================================================================
-
-// GET /api/plugins/:name/config - 获取插件配置
-router.get("/:name/config", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/plugins/:name/config
+router.get("/:name/config", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
+    const { name } = c.req.param();
     const manager = await getPluginManager();
 
     const config = manager.getConfig(name);
-    res.json(config);
+    return c.json(config);
   } catch (error) {
     console.error("Get plugin config error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// PUT /api/plugins/:name/config - 更新插件配置
-router.put("/:name/config", authMiddleware, async (req: Request, res: Response) => {
+// PUT /api/plugins/:name/config
+router.put("/:name/config", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
-    const { config } = req.body;
+    const { name } = c.req.param();
+    const { config } = await c.req.json();
 
     if (!config || typeof config !== "object") {
-      res.status(400).json({ error: "Config object is required" });
-      return;
+      return c.json({ error: "Config object is required" }, 400);
     }
 
     const manager = await getPluginManager();
 
-    // 验证配置
     const plugin = manager.get(name);
     if (plugin?.manifest.config) {
       const errors = validateConfig(config, plugin.manifest.config);
       if (errors.length > 0) {
-        res.status(400).json({ error: "Config validation failed", details: errors });
-        return;
+        return c.json({ error: "Config validation failed", details: errors }, 400);
       }
     }
 
     await manager.setConfig(name, config);
 
-    res.json({ success: true, config });
+    return c.json({ success: true, config });
   } catch (error) {
     console.error("Update plugin config error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    return c.json({ error: message }, 400);
   }
 });
 
-// POST /api/plugins/:name/validate - 验证插件配置
-router.post("/:name/validate", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/plugins/:name/validate
+router.post("/:name/validate", authMiddleware, async (c) => {
   try {
-    const { name } = req.params;
-    const { config } = req.body;
+    const { name } = c.req.param();
+    const { config } = await c.req.json();
 
     const manager = await getPluginManager();
     const plugin = manager.get(name);
 
     if (!plugin) {
-      res.status(404).json({ error: "Plugin not found" });
-      return;
+      return c.json({ error: "Plugin not found" }, 404);
     }
 
     if (!plugin.manifest.config) {
-      res.json({ valid: true, warnings: ["Plugin has no config schema"] });
-      return;
+      return c.json({ valid: true, warnings: ["Plugin has no config schema"] });
     }
 
     const errors = validateConfig(config || {}, plugin.manifest.config);
     const warnings: string[] = [];
 
-    // 检查可选配置项缺失
     for (const [key, field] of Object.entries(plugin.manifest.config)) {
       if (
-        "required" in field &&
-        !field.required &&
+        "required" in (field as Record<string, unknown>) &&
+        !(field as Record<string, unknown>).required &&
         config?.[key] === undefined &&
-        field.default === undefined
+        (field as Record<string, unknown>).default === undefined
       ) {
         warnings.push(`Optional config "${key}" is not set`);
       }
     }
 
-    res.json({
+    return c.json({
       valid: errors.length === 0,
       errors,
       warnings,
     });
   } catch (error) {
     console.error("Validate plugin config error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/**
- * 验证配置值
- */
 function validateConfig(
   config: Record<string, unknown>,
   schema: Record<string, unknown>
@@ -403,7 +372,6 @@ function validateConfig(
 
     const value = config[key];
 
-    // 检查必需字段
     if (configField.required && value === undefined) {
       errors.push(`Required config "${key}" is missing`);
       continue;
@@ -411,7 +379,6 @@ function validateConfig(
 
     if (value === undefined) continue;
 
-    // 检查类型
     if (configField.type) {
       const actualType = Array.isArray(value) ? "array" : typeof value;
       if (actualType !== configField.type) {
@@ -422,14 +389,12 @@ function validateConfig(
       }
     }
 
-    // 检查枚举值
     if (configField.enum && !configField.enum.includes(value)) {
       errors.push(
         `Config "${key}" must be one of: ${configField.enum.join(", ")}`
       );
     }
 
-    // 检查数值范围
     if (typeof value === "number") {
       if (configField.min !== undefined && value < configField.min) {
         errors.push(`Config "${key}" must be >= ${configField.min}`);
@@ -439,7 +404,6 @@ function validateConfig(
       }
     }
 
-    // 检查字符串模式
     if (typeof value === "string" && configField.pattern) {
       const regex = new RegExp(configField.pattern);
       if (!regex.test(value)) {

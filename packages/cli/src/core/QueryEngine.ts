@@ -10,7 +10,7 @@ import type {
   StreamChunk,
   ToolCall,
   ToolDefinition,
-} from "@SACODE/core";
+} from "@sacode/core";
 
 // ============================================================================
 // 类型定义
@@ -39,7 +39,9 @@ export type StreamEvent =
   | { type: "error"; error: Error }
   | { type: "state_change"; state: QueryEngineState }
   | { type: "usage"; inputTokens: number; outputTokens: number }
-  | { type: "done"; stopReason: string };
+  | { type: "done"; stopReason: string }
+  | { type: "clarification_request"; question: string; options: { label: string; value: string; description?: string }[]; toolCallId: string }
+  | { type: "confirmation_request"; detail: { title: string; message: string; riskLevel: "low" | "medium" | "high" | "critical"; details?: string[] }; toolCallId: string };
 
 /**
  * 消息类型
@@ -64,6 +66,14 @@ export interface ToolRegistry {
  */
 export interface PermissionEngine {
   check(toolCall: ToolCall): Promise<boolean>;
+  checkWithDetail(toolCall: ToolCall): Promise<{
+    allowed: boolean;
+    needsConfirmation: boolean;
+    riskLevel: "low" | "medium" | "high" | "critical";
+    title: string;
+    message: string;
+    details: string[];
+  }>;
 }
 
 /**
@@ -297,13 +307,33 @@ export class QueryEngine {
     for (const toolCall of toolCalls) {
       // 权限检查
       if (this.deps.permissions) {
-        const permitted = await this.deps.permissions.check(toolCall);
-        if (!permitted) {
+        const detail = await this.deps.permissions.checkWithDetail(toolCall);
+        if (detail.needsConfirmation) {
+          yield {
+            type: "confirmation_request",
+            detail: {
+              title: detail.title,
+              message: detail.message,
+              riskLevel: detail.riskLevel,
+              details: detail.details,
+            },
+            toolCallId: toolCall.id ?? "",
+          };
+          const userDecision = await this.waitForUserResponse(toolCall.id ?? `confirm-${Date.now()}`);
+          if (userDecision !== "confirmed") {
+            yield { type: "tool_denied", toolCall };
+            this.messages.push({
+              role: "tool",
+              content: "Tool execution denied by user",
+              toolCallId: toolCall.id,
+            });
+            continue;
+          }
+        } else if (!detail.allowed) {
           yield { type: "tool_denied", toolCall };
-          // 添加拒绝结果
           this.messages.push({
             role: "tool",
-            content: "Tool execution denied by user",
+            content: `Tool execution denied: ${detail.message}`,
             toolCallId: toolCall.id,
           });
           continue;
@@ -315,6 +345,34 @@ export class QueryEngine {
 
       // 发送工具开始事件
       yield { type: "tool_start", toolCall };
+
+      // 特殊工具：ask_clarification → 发出交互事件
+      const toolName = toolCall.function?.name ?? toolCall.name ?? "";
+      if (toolName === "ask_clarification") {
+        const args = this.parseToolArgs(toolCall);
+        const question = String(args.question ?? "");
+        const rawOptions = args.options as string[] | undefined;
+        const options = (rawOptions ?? []).map((opt, i) => ({
+          label: typeof opt === "string" ? opt : String(opt),
+          value: typeof opt === "string" ? opt : String(opt),
+          description: undefined as string | undefined,
+        }));
+        yield {
+          type: "clarification_request",
+          question,
+          options,
+          toolCallId: toolCall.id,
+        };
+        // 暂停等待用户选择 — 由外部 resolve 回调注入结果
+        const userAnswer = await this.waitForUserResponse(toolCall.id);
+        this.messages.push({
+          role: "tool",
+          content: userAnswer,
+          toolCallId: toolCall.id,
+        });
+        yield { type: "tool_result", toolCallId: toolCall.id, result: userAnswer, success: true };
+        continue;
+      }
 
       try {
         // 执行工具
@@ -359,6 +417,41 @@ export class QueryEngine {
   private async *setState(state: QueryEngineState): AsyncGenerator<StreamEvent> {
     this.state = state;
     yield { type: "state_change", state };
+  }
+
+  // 用户交互响应等待映射
+  private pendingUserResponses = new Map<string, { resolve: (value: string) => void }>();
+
+  /**
+   * 等待用户响应（用于 clarification/confirmation 交互）
+   */
+  private waitForUserResponse(toolCallId: string): Promise<string> {
+    return new Promise<string>((resolve) => {
+      this.pendingUserResponses.set(toolCallId, { resolve });
+    });
+  }
+
+  /**
+   * 解析工具参数
+   */
+  private parseToolArgs(toolCall: ToolCall): Record<string, unknown> {
+    try {
+      const args = toolCall.function?.arguments ?? toolCall.arguments ?? "{}";
+      return typeof args === "string" ? JSON.parse(args) : args;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 外部注入用户响应（由 UI 层调用）
+   */
+  resolveUserResponse(toolCallId: string, value: string): void {
+    const pending = this.pendingUserResponses.get(toolCallId);
+    if (pending) {
+      pending.resolve(value);
+      this.pendingUserResponses.delete(toolCallId);
+    }
   }
 
   /**

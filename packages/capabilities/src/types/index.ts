@@ -80,7 +80,7 @@ export interface DeleteFileInput {
 
 export const BrowserNavigateInputSchema = z.object({
   url: z.string().url().describe("目标 URL"),
-  waitUntil: z.enum(["load", "domcontentloaded", "networkidle0"]).optional(),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
 });
 
 export const BrowserClickInputSchema = z.object({

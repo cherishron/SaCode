@@ -4,13 +4,20 @@ import type { MemoryConfig, SessionMemory, MemoryUpdateEvent } from "./types";
 import { MemoryConfigSchema } from "./types";
 
 /**
+ * AI 压缩回调函数类型
+ *
+ * 接收原始记忆内容，返回压缩后的摘要
+ */
+export type MemoryCompactCallback = (content: string, sessionId: string) => Promise<string>;
+
+/**
  * 会话记忆管理器
- * 
+ *
  * 管理每个会话的持久化记忆，支持：
  * - 读取/更新会话记忆
- * - 自动压缩长记忆
+ * - 自动压缩长记忆（支持 AI 辅助）
  * - 记忆模板初始化
- * 
+ *
  * @example
  * ```typescript
  * const memory = new MemoryManager({ sessionsDir: "sessions" });
@@ -23,9 +30,34 @@ export class MemoryManager {
   private config: MemoryConfig;
   private cache: Map<string, SessionMemory> = new Map();
   private eventListeners: Map<string, ((event: MemoryUpdateEvent) => void)[]> = new Map();
+  private compactCallback: MemoryCompactCallback | null = null;
 
   constructor(config: Partial<MemoryConfig> = {}) {
     this.config = MemoryConfigSchema.parse(config);
+  }
+
+  /**
+   * 设置 AI 压缩回调
+   *
+   * 启用后，compactMemory 将使用 AI 生成高质量摘要，
+   * 而非简单的行过滤。回调函数接收原始内容和会话 ID，
+   * 返回压缩后的摘要文本。
+   *
+   * @example
+   * ```typescript
+   * memory.setCompactCallback(async (content, sessionId) => {
+   *   const response = await provider.chat({
+   *     messages: [
+   *       { role: "system", content: "请将以下会话记忆压缩为简洁的摘要..." },
+   *       { role: "user", content },
+   *     ],
+   *   });
+   *   return response.content;
+   * });
+   * ```
+   */
+  setCompactCallback(callback: MemoryCompactCallback): void {
+    this.compactCallback = callback;
   }
 
   /**
@@ -165,9 +197,9 @@ export class MemoryManager {
 
   /**
    * 压缩记忆
-   * 
-   * 将长记忆压缩为摘要形式
-   * 注意：实际压缩需要调用 AI 模型，这里只做结构处理
+   *
+   * 优先使用 AI 辅助压缩（通过 setCompactCallback 设置），
+   * 若未设置 AI 回调，则使用基于规则的简单压缩。
    */
   async compactMemory(sessionId: string, content?: string): Promise<SessionMemory> {
     const sessionDir = this.resolveSessionDir(sessionId);
@@ -176,35 +208,21 @@ export class MemoryManager {
     const rawContent = content ?? (await this.getSessionMemory(sessionId)).content;
     const previousSize = rawContent.length;
 
-    // 压缩策略：保留标题和重要部分
-    const lines = rawContent.split("\n");
-    const compressed: string[] = [];
-    let inImportantSection = false;
+    let finalContent: string;
 
-    for (const line of lines) {
-      // 保留标题
-      if (line.startsWith("#")) {
-        compressed.push(line);
-        inImportantSection = line.includes("重要") || line.includes("偏好") || line.includes("设置");
-        continue;
+    if (this.compactCallback) {
+      // AI 辅助压缩
+      try {
+        const aiSummary = await this.compactCallback(rawContent, sessionId);
+        finalContent = `# 会话记忆 (AI 压缩)\n\n最后更新: ${new Date().toISOString()}\n\n${aiSummary}`;
+      } catch (e) {
+        // AI 压缩失败时回退到规则压缩
+        finalContent = this.ruleBasedCompact(rawContent);
       }
-
-      // 保留重要部分
-      if (inImportantSection) {
-        compressed.push(line);
-        continue;
-      }
-
-      // 保留带有特定标记的行
-      if (line.includes("重要:") || line.includes("注意:") || line.includes("偏好:")) {
-        compressed.push(line);
-      }
+    } else {
+      // 基于规则的简单压缩
+      finalContent = this.ruleBasedCompact(rawContent);
     }
-
-    const compactedContent = compressed.join("\n").trim();
-    
-    // 添加压缩标记
-    const finalContent = `# 会话记忆 (已压缩)\n\n最后更新: ${new Date().toISOString()}\n\n${compactedContent}`;
 
     await fs.promises.writeFile(memoryFile, finalContent, "utf-8");
 
@@ -220,6 +238,37 @@ export class MemoryManager {
     this.emit("compact", sessionId, previousSize, finalContent.length);
 
     return memory;
+  }
+
+  /**
+   * 基于规则的简单压缩
+   *
+   * 保留标题行、重要标记行和关键部分
+   */
+  private ruleBasedCompact(rawContent: string): string {
+    const lines = rawContent.split("\n");
+    const compressed: string[] = [];
+    let inImportantSection = false;
+
+    for (const line of lines) {
+      if (line.startsWith("#")) {
+        compressed.push(line);
+        inImportantSection = line.includes("重要") || line.includes("偏好") || line.includes("设置");
+        continue;
+      }
+
+      if (inImportantSection) {
+        compressed.push(line);
+        continue;
+      }
+
+      if (line.includes("重要:") || line.includes("注意:") || line.includes("偏好:")) {
+        compressed.push(line);
+      }
+    }
+
+    const compactedContent = compressed.join("\n").trim();
+    return `# 会话记忆 (已压缩)\n\n最后更新: ${new Date().toISOString()}\n\n${compactedContent}`;
   }
 
   /**
@@ -241,6 +290,49 @@ export class MemoryManager {
     this.emit("delete", sessionId, previousSize, 0);
 
     return true;
+  }
+
+  /**
+   * 搜索记忆
+   *
+   * 在所有会话记忆中搜索匹配的内容
+   */
+  async searchMemory(query: string, limit: number = 10): Promise<Array<{ sessionId: string; content: string; relevance: number }>> {
+    const sessions = await this.listSessions();
+    const results: Array<{ sessionId: string; content: string; relevance: number }> = [];
+    const lowerQuery = query.toLowerCase();
+    const queryTerms = lowerQuery.split(/\s+/).filter(Boolean);
+
+    for (const sessionId of sessions) {
+      try {
+        const memory = await this.getSessionMemory(sessionId);
+        const lowerContent = memory.content.toLowerCase();
+
+        let relevance = 0;
+        for (const term of queryTerms) {
+          const count = (lowerContent.match(new RegExp(term, "g")) ?? []).length;
+          relevance += count;
+        }
+
+        if (relevance > 0) {
+          const snippetStart = lowerContent.indexOf(queryTerms[0] ?? "");
+          const start = Math.max(0, snippetStart - 50);
+          const end = Math.min(memory.content.length, snippetStart + 200);
+          const snippet = memory.content.slice(start, end);
+
+          results.push({
+            sessionId,
+            content: snippet,
+            relevance,
+          });
+        }
+      } catch {
+        // 跳过无法读取的会话
+      }
+    }
+
+    results.sort((a, b) => b.relevance - a.relevance);
+    return results.slice(0, limit);
   }
 
   /**

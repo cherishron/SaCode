@@ -5,7 +5,7 @@ import {
   SkillInstaller,
   SkillHubAdapter,
   type RegistryType,
-} from "@SACODE/core";
+} from "@sacode/core";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -58,7 +58,7 @@ export async function searchSkills(options: {
   registry?: RegistryType;
 }): Promise<void> {
   const registryType = options.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n🔍 搜索技能 (${getRegistryDisplayName(registryType)})...\n`));
+  console.log(chalk.cyan(`\n[G] 搜索技能 (${getRegistryDisplayName(registryType)})...\n`));
 
   const registry = createRegistry(registryType);
 
@@ -110,7 +110,7 @@ export async function installSkill(
   options: { version?: string; force?: boolean; registry?: RegistryType }
 ): Promise<void> {
   const registryType = options.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n📦 安装技能: ${slug} (${getRegistryDisplayName(registryType)})\n`));
+  console.log(chalk.cyan(`\n[PKG] 安装技能: ${slug} (${getRegistryDisplayName(registryType)})\n`));
 
   const skillsDir = getSkillsDir();
   const registry = createRegistry(registryType);
@@ -127,7 +127,7 @@ export async function installSkill(
     }
     const skill = await installer.install(slug, installOptions);
 
-    console.log(chalk.green(`✓ 已安装: ${skill.name} v${skill.version}`));
+    console.log(chalk.green(`+ 已安装: ${skill.name} v${skill.version}`));
     if (skill.description) {
       console.log(chalk.gray(`  ${skill.description}`));
     }
@@ -145,7 +145,7 @@ export async function updateSkill(
   options: { version?: string; registry?: RegistryType }
 ): Promise<void> {
   const registryType = options.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n🔄 更新技能: ${slug} (${getRegistryDisplayName(registryType)})\n`));
+  console.log(chalk.cyan(`\n[SYNC] 更新技能: ${slug} (${getRegistryDisplayName(registryType)})\n`));
 
   const skillsDir = getSkillsDir();
   const registry = createRegistry(registryType);
@@ -153,7 +153,7 @@ export async function updateSkill(
 
   try {
     const skill = await installer.update(slug, options.version);
-    console.log(chalk.green(`✓ 已更新: ${skill.name} v${skill.version}`));
+    console.log(chalk.green(`+ 已更新: ${skill.name} v${skill.version}`));
   } catch (error) {
     console.error(chalk.red("更新失败:"), error instanceof Error ? error.message : String(error));
   }
@@ -164,7 +164,7 @@ export async function updateSkill(
  */
 export async function updateAllSkills(options?: { registry?: RegistryType }): Promise<void> {
   const registryType = options?.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n🔄 检查技能更新 (${getRegistryDisplayName(registryType)})...\n`));
+  console.log(chalk.cyan(`\n[SYNC] 检查技能更新 (${getRegistryDisplayName(registryType)})...\n`));
 
   const skillsDir = getSkillsDir();
   const registry = createRegistry(registryType);
@@ -175,7 +175,7 @@ export async function updateAllSkills(options?: { registry?: RegistryType }): Pr
     const updates = await installer.checkUpdates();
 
     if (updates.length === 0) {
-      console.log(chalk.green("✓ 所有技能已是最新版本"));
+      console.log(chalk.green("+ 所有技能已是最新版本"));
       return;
     }
 
@@ -188,7 +188,7 @@ export async function updateAllSkills(options?: { registry?: RegistryType }): Pr
     // 执行更新
     const results = await installer.updateAll();
 
-    console.log(chalk.green(`\n✓ 已更新 ${results.length} 个技能`));
+    console.log(chalk.green(`\n+ 已更新 ${results.length} 个技能`));
     for (const result of results) {
       console.log(`  ${result.slug}: ${result.version}`);
     }
@@ -201,7 +201,7 @@ export async function updateAllSkills(options?: { registry?: RegistryType }): Pr
  * 列出已安装技能
  */
 export async function listSkills(): Promise<void> {
-  console.log(chalk.cyan("\n📋 已安装技能\n"));
+  console.log(chalk.cyan("\n[PL] 已安装技能\n"));
 
   const skillsDir = getSkillsDir();
 
@@ -221,7 +221,7 @@ export async function listSkills(): Promise<void> {
   }
 
   for (const result of results) {
-    const status = result.error ? chalk.red("✗") : chalk.green("✓");
+    const status = result.error ? chalk.red("x") : chalk.green("+");
     console.log(`${status} ${chalk.bold(result.skill.name)}`);
     if (result.skill.version) {
       console.log(chalk.gray(`  版本: ${result.skill.version}`));
@@ -240,14 +240,14 @@ export async function listSkills(): Promise<void> {
  * 卸载技能
  */
 export async function uninstallSkill(slug: string): Promise<void> {
-  console.log(chalk.cyan(`\n🗑️  卸载技能: ${slug}\n`));
+  console.log(chalk.cyan(`\n[D] 卸载技能: ${slug}\n`));
 
   const skillsDir = getSkillsDir();
   const installer = new SkillInstaller({ skillsDir });
 
   try {
     await installer.uninstall(slug);
-    console.log(chalk.green(`✓ 已卸载: ${slug}`));
+    console.log(chalk.green(`+ 已卸载: ${slug}`));
   } catch (error) {
     console.error(chalk.red("卸载失败:"), error instanceof Error ? error.message : String(error));
   }
@@ -261,7 +261,7 @@ export async function loginRegistry(options: {
   registry?: RegistryType;
 }): Promise<void> {
   const registryType = options.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n🔐 登录 ${getRegistryDisplayName(registryType)}\n`));
+  console.log(chalk.cyan(`\n[AUTH] 登录 ${getRegistryDisplayName(registryType)}\n`));
 
   const registry = createRegistry(registryType);
 
@@ -270,10 +270,10 @@ export async function loginRegistry(options: {
     const result = await registry.validateToken();
 
     if (result.valid) {
-      console.log(chalk.green(`✓ 登录成功: ${result.username ?? "unknown"}`));
+      console.log(chalk.green(`+ 登录成功: ${result.username ?? "unknown"}`));
       // TODO: 持久化 token
     } else {
-      console.log(chalk.red("✗ Token 无效"));
+      console.log(chalk.red("x Token 无效"));
     }
   } else {
     console.log(chalk.yellow("请在浏览器中完成登录..."));
@@ -297,7 +297,7 @@ export async function publishSkill(
   options: { slug?: string; version?: string; registry?: RegistryType }
 ): Promise<void> {
   const registryType = options.registry ?? "clawhub";
-  console.log(chalk.cyan(`\n📤 发布技能到 ${getRegistryDisplayName(registryType)}\n`));
+  console.log(chalk.cyan(`\n[PUB] 发布技能到 ${getRegistryDisplayName(registryType)}\n`));
 
   const registry = createRegistry(registryType);
 
@@ -305,7 +305,7 @@ export async function publishSkill(
     // 读取 SKILL.md
     const skillFile = path.join(skillPath, "SKILL.md");
     if (!fs.existsSync(skillFile)) {
-      console.log(chalk.red("✗ 未找到 SKILL.md 文件"));
+      console.log(chalk.red("x 未找到 SKILL.md 文件"));
       return;
     }
 
@@ -314,7 +314,7 @@ export async function publishSkill(
     const result = await loader.load(skillPath);
 
     if (result.error) {
-      console.log(chalk.red(`✗ 加载技能失败: ${result.error}`));
+      console.log(chalk.red(`x 加载技能失败: ${result.error}`));
       return;
     }
 
@@ -353,7 +353,7 @@ export async function publishSkill(
     }
     const publishResult = await registry.publishSkill(publishData);
 
-    console.log(chalk.green(`✓ 已发布: v${publishResult.version}`));
+    console.log(chalk.green(`+ 已发布: v${publishResult.version}`));
     console.log(chalk.gray(`发布时间: ${publishResult.publishedAt.toLocaleString()}`));
   } catch (error) {
     console.error(chalk.red("发布失败:"), error instanceof Error ? error.message : String(error));

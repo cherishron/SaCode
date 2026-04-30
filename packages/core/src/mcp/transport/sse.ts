@@ -87,7 +87,7 @@ export class SSETransport
       }, this.config.connectTimeout);
 
       try {
-        // 创建 EventSource 连接
+        // @ts-expect-error Bun EventSource 构造函数签名与 TS DOM 类型不匹配，运行时正常
         this.eventSource = new EventSource(this.config.url);
 
         this.eventSource.onopen = () => {
@@ -108,16 +108,16 @@ export class SSETransport
         };
 
         this.eventSource.onmessage = (event) => {
-          this.handleMessage(event);
+          this.handleMessage(event as unknown as MessageEvent);
         };
 
         // 监听特定事件类型
         this.eventSource.addEventListener("message", (event) => {
-          this.handleMessage(event as MessageEvent);
+          this.handleMessage(event as unknown as MessageEvent);
         });
 
         this.eventSource.addEventListener("response", (event) => {
-          this.handleMessage(event as MessageEvent);
+          this.handleMessage(event as unknown as MessageEvent);
         });
       } catch (error) {
         clearTimeout(timeout);

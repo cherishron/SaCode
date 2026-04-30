@@ -191,13 +191,15 @@ describe("SessionManager", () => {
 
       const before = session.updatedAt.getTime();
       
-      // 等待一小段时间
+      vi.useFakeTimers();
       vi.advanceTimersByTime(100);
 
       manager.update(session.id, { status: "active" });
 
       const updated = manager.get(session.id);
       expect(updated?.updatedAt.getTime()).toBeGreaterThanOrEqual(before);
+
+      vi.useRealTimers();
     });
   });
 
@@ -229,7 +231,7 @@ describe("SessionManager", () => {
 
       manager.delete(session.id);
 
-      expect(listener).toHaveBeenCalledWith(session);
+      expect(listener).toHaveBeenCalledWith({ sessionId: session.id });
     });
 
     it("应该同时删除映射", () => {

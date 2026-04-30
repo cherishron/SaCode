@@ -72,7 +72,7 @@ const SuggestionItem: React.FC<SuggestionItemProps> = memo(
           bold={isSelected}
           inverse={isSelected}
         >
-          {isSelected ? "❯ " : "  "}/{highlightMatch(command.name, query)}
+          {isSelected ? "> " : "  "}/{highlightMatch(command.name, query)}
         </Text>
         {command.aliases && command.aliases.length > 0 && (
           <Text dimColor>

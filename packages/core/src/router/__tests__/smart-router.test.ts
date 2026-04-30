@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SmartRouter, RuleTemplates } from "../smart-router";
 import type { RoutingRule, RoutingCondition, RoutingAction, Message, Session } from "../smart-router";
 

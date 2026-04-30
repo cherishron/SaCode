@@ -1,10 +1,4 @@
-/**
- * 模型管理 API 路由
- *
- * 提供多模型配置、切换、能力查询等功能
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import {
   ModelManager,
   ModelTemplates,
@@ -14,14 +8,14 @@ import {
 import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 全局模型管理器实例
+const router = new Hono<{ Variables: Variables }>();
+
 let modelManager: ModelManager | null = null;
 
-/**
- * 获取或初始化模型管理器
- */
 function getModelManager(): ModelManager {
   if (!modelManager) {
     modelManager = new ModelManager({
@@ -31,180 +25,147 @@ function getModelManager(): ModelManager {
   return modelManager;
 }
 
-/**
- * GET /api/models/templates
- * 获取可用的模型模板
- */
-router.get("/templates", (_req: Request, res: Response) => {
+// GET /api/models/templates
+router.get("/templates", (c) => {
   const templates = Object.entries(ModelTemplates).map(([id, template]) => ({
     id,
     ...template,
   }));
 
-  res.json(templates);
+  return c.json(templates);
 });
 
-/**
- * GET /api/models
- * 获取所有已配置的模型
- */
-router.get("/", authMiddleware, (_req: Request, res: Response) => {
+// GET /api/models
+router.get("/", authMiddleware, (c) => {
   const manager = getModelManager();
   const models = manager.getAllModels();
 
-  // 隐藏敏感信息
   const safeModels = models.map((m) => ({
     ...m,
     apiKey: m.apiKey ? "********" : undefined,
   }));
 
-  res.json(safeModels);
+  return c.json(safeModels);
 });
 
-/**
- * GET /api/models/default
- * 获取默认模型
- */
-router.get("/default", authMiddleware, (_req: Request, res: Response) => {
+// GET /api/models/default
+router.get("/default", authMiddleware, (c) => {
   const manager = getModelManager();
   const defaultModel = manager.getDefaultModel();
 
   if (!defaultModel) {
-    res.status(404).json({ error: "No default model configured" });
-    return;
+    return c.json({ error: "No default model configured" }, 404);
   }
 
-  res.json({
+  return c.json({
     ...defaultModel,
     apiKey: defaultModel.apiKey ? "********" : undefined,
   });
 });
 
-/**
- * GET /api/models/:id
- * 获取指定模型配置
- */
-router.get("/:id", authMiddleware, (req: Request, res: Response) => {
+// GET /api/models/:id
+router.get("/:id", authMiddleware, (c) => {
   const manager = getModelManager();
-  const model = manager.getModel(req.params.id);
+  const model = manager.getModel(c.req.param("id"));
 
   if (!model) {
-    res.status(404).json({ error: "Model not found" });
-    return;
+    return c.json({ error: "Model not found" }, 404);
   }
 
-  res.json({
+  return c.json({
     ...model,
     apiKey: model.apiKey ? "********" : undefined,
   });
 });
 
-/**
- * POST /api/models
- * 添加新模型
- */
-router.post("/", authMiddleware, (req: Request, res: Response) => {
+// POST /api/models
+router.post("/", authMiddleware, (c) => {
   try {
     const manager = getModelManager();
-    const model = manager.addModel(req.body as Partial<ModelConfig> & { id: string });
+    const body = c.req.json() as Promise<Partial<ModelConfig> & { id: string }>;
+    return body.then((data) => {
+      const model = manager.addModel(data);
 
-    res.status(201).json({
-      ...model,
-      apiKey: model.apiKey ? "********" : undefined,
+      return c.json({
+        ...model,
+        apiKey: model.apiKey ? "********" : undefined,
+      }, 201);
     });
   } catch (error) {
     console.error("Add model error:", error);
-    res.status(400).json({ error: "Invalid model configuration" });
+    return c.json({ error: "Invalid model configuration" }, 400);
   }
 });
 
-/**
- * POST /api/models/from-template
- * 从模板添加模型
- */
-router.post("/from-template", authMiddleware, (req: Request, res: Response) => {
+// POST /api/models/from-template
+router.post("/from-template", authMiddleware, async (c) => {
   try {
-    const { templateId, overrides } = req.body;
+    const { templateId, overrides } = await c.req.json();
     const manager = getModelManager();
 
     const model = manager.addModelFromTemplate(templateId, overrides);
     if (!model) {
-      res.status(404).json({ error: "Template not found" });
-      return;
+      return c.json({ error: "Template not found" }, 404);
     }
 
-    res.status(201).json({
+    return c.json({
       ...model,
       apiKey: model.apiKey ? "********" : undefined,
-    });
+    }, 201);
   } catch (error) {
     console.error("Add model from template error:", error);
-    res.status(400).json({ error: "Failed to add model from template" });
+    return c.json({ error: "Failed to add model from template" }, 400);
   }
 });
 
-/**
- * PATCH /api/models/:id
- * 更新模型配置
- */
-router.patch("/:id", authMiddleware, (req: Request, res: Response) => {
+// PATCH /api/models/:id
+router.patch("/:id", authMiddleware, async (c) => {
   try {
     const manager = getModelManager();
-    const model = manager.updateModel(req.params.id, req.body);
+    const body = await c.req.json();
+    const model = manager.updateModel(c.req.param("id"), body);
 
     if (!model) {
-      res.status(404).json({ error: "Model not found" });
-      return;
+      return c.json({ error: "Model not found" }, 404);
     }
 
-    res.json({
+    return c.json({
       ...model,
       apiKey: model.apiKey ? "********" : undefined,
     });
   } catch (error) {
     console.error("Update model error:", error);
-    res.status(400).json({ error: "Invalid model configuration" });
+    return c.json({ error: "Invalid model configuration" }, 400);
   }
 });
 
-/**
- * DELETE /api/models/:id
- * 删除模型
- */
-router.delete("/:id", authMiddleware, (req: Request, res: Response) => {
+// DELETE /api/models/:id
+router.delete("/:id", authMiddleware, (c) => {
   const manager = getModelManager();
-  const removed = manager.removeModel(req.params.id);
+  const removed = manager.removeModel(c.req.param("id"));
 
   if (!removed) {
-    res.status(404).json({ error: "Model not found" });
-    return;
+    return c.json({ error: "Model not found" }, 404);
   }
 
-  res.status(204).send();
+  return c.body(null, 204);
 });
 
-/**
- * POST /api/models/:id/set-default
- * 设置默认模型
- */
-router.post("/:id/set-default", authMiddleware, (req: Request, res: Response) => {
+// POST /api/models/:id/set-default
+router.post("/:id/set-default", authMiddleware, (c) => {
   const manager = getModelManager();
-  const success = manager.setDefaultModel(req.params.id);
+  const success = manager.setDefaultModel(c.req.param("id"));
 
   if (!success) {
-    res.status(404).json({ error: "Model not found" });
-    return;
+    return c.json({ error: "Model not found" }, 404);
   }
 
-  res.json({ success: true, defaultModelId: req.params.id });
+  return c.json({ success: true, defaultModelId: c.req.param("id") });
 });
 
-/**
- * POST /api/models/select
- * 根据能力需求选择模型
- */
-router.post("/select", authMiddleware, (req: Request, res: Response) => {
-  const { requirements, sessionId } = req.body as {
+// POST /api/models/select
+router.post("/select", authMiddleware, async (c) => {
+  const { requirements, sessionId } = await c.req.json() as {
     requirements?: ModelCapabilityRequirement;
     sessionId?: string;
   };
@@ -213,34 +174,28 @@ router.post("/select", authMiddleware, (req: Request, res: Response) => {
   const model = manager.selectModel(sessionId, requirements);
 
   if (!model) {
-    res.status(404).json({ error: "No suitable model found" });
-    return;
+    return c.json({ error: "No suitable model found" }, 404);
   }
 
-  res.json({
+  return c.json({
     ...model,
     apiKey: model.apiKey ? "********" : undefined,
   });
 });
 
-/**
- * POST /api/models/switch
- * 切换会话模型
- */
-router.post("/switch", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/models/switch
+router.post("/switch", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { modelId, sessionId, reason } = req.body;
+    const userId = c.get("userId");
+    const { modelId, sessionId, reason } = await c.req.json();
 
     const manager = getModelManager();
     const model = manager.switchModel(modelId, sessionId, reason);
 
     if (!model) {
-      res.status(404).json({ error: "Model not found or disabled" });
-      return;
+      return c.json({ error: "Model not found or disabled" }, 404);
     }
 
-    // 如果有会话 ID，更新数据库中的会话模型
     if (sessionId) {
       const prisma = getPrismaClient();
       await prisma.chatSession.update({
@@ -249,7 +204,7 @@ router.post("/switch", authMiddleware, async (req: Request, res: Response) => {
       });
     }
 
-    res.json({
+    return c.json({
       success: true,
       model: {
         ...model,
@@ -258,19 +213,15 @@ router.post("/switch", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Switch model error:", error);
-    res.status(500).json({ error: "Failed to switch model" });
+    return c.json({ error: "Failed to switch model" }, 500);
   }
 });
 
-/**
- * GET /api/models/session/:sessionId
- * 获取会话当前模型
- */
-router.get("/session/:sessionId", authMiddleware, async (req: Request, res: Response) => {
-  const { sessionId } = req.params;
+// GET /api/models/session/:sessionId
+router.get("/session/:sessionId", authMiddleware, async (c) => {
+  const sessionId = c.req.param("sessionId");
   const manager = getModelManager();
 
-  // 先检查数据库中的会话模型
   const prisma = getPrismaClient();
   const session = await prisma.chatSession.findUnique({
     where: { id: sessionId },
@@ -280,61 +231,50 @@ router.get("/session/:sessionId", authMiddleware, async (req: Request, res: Resp
   if (session?.modelId) {
     const model = manager.getModel(session.modelId);
     if (model) {
-      res.json({
+      return c.json({
         ...model,
         apiKey: model.apiKey ? "********" : undefined,
       });
-      return;
     }
   }
 
-  // 使用模型管理器的会话绑定
   const sessionModel = manager.getSessionModel(sessionId);
   if (sessionModel) {
-    res.json({
+    return c.json({
       ...sessionModel,
       apiKey: sessionModel.apiKey ? "********" : undefined,
     });
-    return;
   }
 
-  // 返回默认模型
   const defaultModel = manager.getDefaultModel();
   if (defaultModel) {
-    res.json({
+    return c.json({
       ...defaultModel,
       apiKey: defaultModel.apiKey ? "********" : undefined,
     });
-    return;
   }
 
-  res.status(404).json({ error: "No model available" });
+  return c.json({ error: "No model available" }, 404);
 });
 
-/**
- * POST /api/models/config/import
- * 导入模型配置
- */
-router.post("/config/import", authMiddleware, (req: Request, res: Response) => {
+// POST /api/models/config/import
+router.post("/config/import", authMiddleware, async (c) => {
   try {
     const manager = getModelManager();
-    manager.importConfig(req.body);
-    res.json({ success: true });
+    const body = await c.req.json();
+    manager.importConfig(body);
+    return c.json({ success: true });
   } catch (error) {
     console.error("Import config error:", error);
-    res.status(400).json({ error: "Failed to import configuration" });
+    return c.json({ error: "Failed to import configuration" }, 400);
   }
 });
 
-/**
- * GET /api/models/config/export
- * 导出模型配置
- */
-router.get("/config/export", authMiddleware, (_req: Request, res: Response) => {
+// GET /api/models/config/export
+router.get("/config/export", authMiddleware, (c) => {
   const manager = getModelManager();
   const config = manager.exportConfig();
 
-  // 隐藏敏感信息
   const safeConfig = {
     ...config,
     models: config.models.map((m) => ({
@@ -343,7 +283,7 @@ router.get("/config/export", authMiddleware, (_req: Request, res: Response) => {
     })),
   };
 
-  res.json(safeConfig);
+  return c.json(safeConfig);
 });
 
 export default router;

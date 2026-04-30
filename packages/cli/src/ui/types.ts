@@ -8,6 +8,19 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+export interface ClarificationOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+export interface ConfirmationDetail {
+  title: string;
+  message: string;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  details?: string[];
+}
+
 export type StreamEvent =
   | { type: "content"; text: string }
   | { type: "thought"; text: string }
@@ -15,7 +28,9 @@ export type StreamEvent =
   | { type: "tool_result"; id: string; name: string; result: unknown; success: boolean; duration?: number }
   | { type: "citation"; sources: string[] }
   | { type: "error"; message: string; code?: string }
-  | { type: "finished"; usage: TokenUsage };
+  | { type: "finished"; usage: TokenUsage }
+  | { type: "clarification_request"; question: string; options: ClarificationOption[]; toolCallId: string }
+  | { type: "confirmation_request"; detail: ConfirmationDetail; toolCallId: string };
 
 export interface AccountInfo {
   alias: string;

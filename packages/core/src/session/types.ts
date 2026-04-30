@@ -53,6 +53,8 @@ export interface SessionCreateOptions {
 export interface SessionUpdateOptions {
   /** 更新状态 */
   status?: SessionStatus;
+  /** 更新消息计数 */
+  messageCount?: number;
   /** 更新元数据 */
   metadata?: Record<string, unknown>;
 }

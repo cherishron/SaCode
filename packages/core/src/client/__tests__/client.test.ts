@@ -1,20 +1,17 @@
-/**
- * SACODEClient 测试
- * 测试 SACODEClient 的核心功能：连接、聊天、工具注册等
- */
-
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SACODEClient, createSACODEClient } from "../index";
 import { ConnectionError, SACODEError } from "../../types";
+import { createProvider, createProviderFromEnv } from "../../provider";
+import { createToolBridge } from "../../tools";
 
-// Mock Provider
-vi.mock("../provider", async () => {
-  const actual = await vi.importActual("../provider");
+vi.mock("../../provider", async () => {
+  const actual = await vi.importActual("../../provider");
   return {
     ...(actual as object),
     createProvider: vi.fn().mockImplementation(() => ({
       type: "openai",
       model: "gpt-4o",
+      isInitialized: true,
       initialize: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn().mockResolvedValue(undefined),
       chat: vi.fn().mockImplementation(async function* () {
@@ -29,6 +26,7 @@ vi.mock("../provider", async () => {
     createProviderFromEnv: vi.fn().mockImplementation(() => ({
       type: "openai",
       model: "gpt-4o",
+      isInitialized: true,
       initialize: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn().mockResolvedValue(undefined),
       chat: vi.fn().mockImplementation(async function* () {
@@ -40,9 +38,8 @@ vi.mock("../provider", async () => {
   };
 });
 
-// Mock ToolBridge
-vi.mock("../tools", async () => {
-  const actual = await vi.importActual("../tools");
+vi.mock("../../tools", async () => {
+  const actual = await vi.importActual("../../tools");
   return {
     ...(actual as object),
     createToolBridge: vi.fn().mockImplementation(() => ({
@@ -65,6 +62,52 @@ vi.mock("../tools", async () => {
   };
 });
 
+vi.mock("../../agent", async () => {
+  const actual = await vi.importActual("../../agent");
+  return {
+    ...(actual as object),
+    createAgentRegistry: vi.fn().mockImplementation(() => ({
+      getStats: vi.fn().mockReturnValue({ total: 3 }),
+      on: vi.fn(),
+    })),
+    createPlanner: vi.fn().mockImplementation(() => ({
+      assessComplexity: vi.fn().mockReturnValue({
+        level: "simple",
+        score: 0.1,
+        taskCategory: "quick" as const,
+        factors: {
+          techStackCount: 0,
+          toolCount: 0,
+          estimatedSteps: 1,
+          requiresExternalResources: false,
+          requiresUserInteraction: false,
+        },
+      }),
+      generatePlan: vi.fn().mockResolvedValue({
+        id: "plan-1",
+        description: "Test plan",
+        goal: "Test",
+        steps: [],
+        status: "draft" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      on: vi.fn(),
+    })),
+    createOrchestrator: vi.fn().mockImplementation(() => ({
+      executePlan: vi.fn().mockResolvedValue({
+        planId: "plan-1",
+        success: true,
+        output: "done",
+        completedSteps: 0,
+        totalSteps: 0,
+        duration: 0,
+      }),
+      on: vi.fn(),
+    })),
+  };
+});
+
 describe("SACODEClient", () => {
   let client: SACODEClient;
 
@@ -78,6 +121,42 @@ describe("SACODEClient", () => {
   };
 
   beforeEach(() => {
+    vi.mocked(createProvider).mockImplementation(() => ({
+      type: "openai",
+      model: "gpt-4o",
+      isInitialized: true,
+      initialize: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      chat: vi.fn().mockImplementation(async function* () {
+        yield { type: "text_delta" as const, text: "Hello" };
+        yield { type: "done" as const, stopReason: "end_turn" };
+      }),
+      registerTool: vi.fn(),
+      executeToolCall: vi.fn(),
+      on: vi.fn(),
+      emit: vi.fn(),
+    }));
+    vi.mocked(createToolBridge).mockImplementation(() => {
+      const toolNames: string[] = ["think", "plan", "calculate"];
+      return {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        getToolCount: vi.fn().mockReturnValue(5),
+        getToolNames: vi.fn().mockImplementation(() => [...toolNames]),
+        getAllTools: vi.fn().mockReturnValue([]),
+        getProviderToolDefinitions: vi.fn().mockReturnValue([]),
+        registerTool: vi.fn().mockImplementation((tool: { name: string }) => {
+          toolNames.push(tool.name);
+        }),
+        executeToolCall: vi.fn().mockResolvedValue({
+          success: true,
+          content: "result",
+          toolCallId: "call_1",
+          name: "test_tool",
+        }),
+        executeToolCalls: vi.fn().mockResolvedValue([]),
+        on: vi.fn(),
+      };
+    });
     client = new SACODEClient(baseConfig);
   });
 
@@ -121,14 +200,14 @@ describe("SACODEClient", () => {
 
     it("重复连接应该直接返回", async () => {
       await client.connect();
-      await client.connect(); // 不应重复连接
+      await client.connect();
       expect(client.isConnected()).toBe(true);
     });
 
     it("应该在 Provider 初始化失败时抛出错误", async () => {
-      vi.mocked(await import("../provider")).createProvider = vi.fn().mockRejectedValue(
-        new Error("Invalid API key")
-      );
+      vi.mocked(createProvider).mockImplementationOnce(() => {
+        throw new Error("Invalid API key");
+      });
 
       const invalidClient = new SACODEClient({
         provider: {
@@ -194,7 +273,6 @@ describe("SACODEClient", () => {
 
     it("应该清理消息历史", async () => {
       await client.disconnect();
-      // 断开后消息历史应被清理
       expect(client.isConnected()).toBe(false);
     });
 
@@ -212,7 +290,7 @@ describe("SACODEClient", () => {
     it("应该返回流式响应", async () => {
       const stream = client.chat("Hello");
 
-      const chunks: any[] = [];
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -223,7 +301,7 @@ describe("SACODEClient", () => {
     it("应该支持 sessionId", async () => {
       const stream = client.chat("Hello", "session-123");
 
-      const chunks: any[] = [];
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -236,8 +314,8 @@ describe("SACODEClient", () => {
 
       await expect(async () => {
         const stream = newClient.chat("Hello");
-        for await (const chunk of stream) {
-          // 消费流
+        for await (const _ of stream) {
+          void _;
         }
       }).rejects.toThrow(ConnectionError);
     });
@@ -247,32 +325,38 @@ describe("SACODEClient", () => {
       client.on("message", messageListener);
 
       const stream = client.chat("Hello");
-      for await (const chunk of stream) {
-        // 消费流
+      for await (const _ of stream) {
+        void _;
       }
 
       expect(messageListener).toHaveBeenCalled();
     });
 
     it("应该处理工具调用循环", async () => {
-      // Mock 返回工具调用的响应
-      vi.mocked(await import("../provider")).createProvider = vi.fn().mockImplementation(() => ({
+      vi.mocked(createProvider).mockImplementationOnce(() => ({
         type: "openai",
         model: "gpt-4o",
+        isInitialized: true,
         initialize: vi.fn().mockResolvedValue(undefined),
         destroy: vi.fn().mockResolvedValue(undefined),
         chat: vi.fn().mockImplementation(async function* () {
-          yield { type: "tool_call" as const, toolCall: {
-            id: "call_1",
-            type: "function" as const,
-            function: { name: "calculate", arguments: '{"expr":"2+2"}' },
-          }};
+          yield {
+            type: "tool_call" as const,
+            toolCall: {
+              id: "call_1",
+              type: "function" as const,
+              function: { name: "calculate", arguments: '{"expr":"2+2"}' },
+            },
+          };
           yield { type: "done" as const, stopReason: "tool_use" };
         }),
         registerTool: vi.fn(),
+        executeToolCall: vi.fn(),
+        on: vi.fn(),
+        emit: vi.fn(),
       }));
 
-      vi.mocked(await import("../tools")).createToolBridge = vi.fn().mockImplementation(() => ({
+      vi.mocked(createToolBridge).mockImplementationOnce(() => ({
         initialize: vi.fn().mockResolvedValue(undefined),
         getToolCount: vi.fn().mockReturnValue(5),
         getToolNames: vi.fn().mockReturnValue(["calculate"]),
@@ -286,13 +370,14 @@ describe("SACODEClient", () => {
           name: "calculate",
         }),
         executeToolCalls: vi.fn().mockResolvedValue([]),
+        on: vi.fn(),
       }));
 
       const toolClient = new SACODEClient(baseConfig);
       await toolClient.connect();
 
       const stream = toolClient.chat("Calculate 2+2");
-      const chunks: any[] = [];
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -309,7 +394,7 @@ describe("SACODEClient", () => {
       await maxLoopClient.connect();
 
       const stream = maxLoopClient.chat("Hello");
-      const chunks: any[] = [];
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -365,7 +450,6 @@ describe("SACODEClient", () => {
 
     it("应该设置系统提示词", () => {
       client.setSystemPrompt("You are a helpful assistant");
-      // 设置后应能正常聊天
       expect(client).toBeDefined();
     });
   });
@@ -377,7 +461,6 @@ describe("SACODEClient", () => {
 
     it("应该清除消息历史", () => {
       client.clearHistory();
-      // 清除后应能正常聊天
       expect(client).toBeDefined();
     });
   });
@@ -405,7 +488,7 @@ describe("SACODEClient", () => {
     it("应该接收消息流", async () => {
       const stream = client.receiveMessages();
 
-      const chunks: any[] = [];
+      const chunks: unknown[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
@@ -436,13 +519,19 @@ describe("SACODEClient", () => {
 
   describe("错误处理", () => {
     it("应该在聊天错误时发射 error 事件", async () => {
-      vi.mocked(await import("../provider")).createProvider = vi.fn().mockImplementation(() => ({
+      vi.mocked(createProvider).mockImplementationOnce(() => ({
         type: "openai",
         model: "gpt-4o",
+        isInitialized: true,
         initialize: vi.fn().mockResolvedValue(undefined),
         destroy: vi.fn().mockResolvedValue(undefined),
-        chat: vi.fn().mockRejectedValue(new Error("API error")),
+        chat: vi.fn().mockImplementation(async function* () {
+          throw new Error("API error");
+        }),
         registerTool: vi.fn(),
+        executeToolCall: vi.fn(),
+        on: vi.fn(),
+        emit: vi.fn(),
       }));
 
       const errorClient = new SACODEClient(baseConfig);
@@ -453,8 +542,8 @@ describe("SACODEClient", () => {
 
       await expect(async () => {
         const stream = errorClient.chat("Hello");
-        for await (const chunk of stream) {
-          // 消费流
+        for await (const _ of stream) {
+          void _;
         }
       }).rejects.toThrow(SACODEError);
 
@@ -481,7 +570,7 @@ describe("SACODEClient", () => {
 
 describe("createSACODEClient", () => {
   it("应该创建 SACODEClient 实例", () => {
-    const client = createSACODEClient({
+    const c = createSACODEClient({
       provider: {
         type: "openai" as const,
         apiKey: "sk-test-key",
@@ -489,11 +578,10 @@ describe("createSACODEClient", () => {
       },
     });
 
-    expect(client).toBeInstanceOf(SACODEClient);
+    expect(c).toBeInstanceOf(SACODEClient);
   });
 });
 
-// 需要从 client/index.ts 导出
 function createSACODEClientFromEnv(): SACODEClient {
   return new SACODEClient({});
 }

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { getPreferenceManager, type UserPreferences } from "@SACODE/core";
+import { getPreferenceManager, type UserPreferences } from "@sacode/core";
 import { getExtendedConfigManager, ExtendedConfigManager } from "../config/index.js";
 
 // 简单的内存配置存储（环境变量）
@@ -26,7 +26,7 @@ const preferenceKeyMap: Record<string, keyof UserPreferences> = {
 };
 
 export async function listConfig(): Promise<void> {
-  console.log(chalk.cyan("\n📋 配置\n"));
+  console.log(chalk.cyan("\n[PL] 配置\n"));
 
   // 环境变量配置
   console.log(chalk.bold("环境变量:"));
@@ -101,7 +101,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
     }
     
     prefManager.set(prefKey, typedValue as never);
-    console.log(chalk.green(`✓ 已设置 ${key} = ${typedValue}`));
+    console.log(chalk.green(`+ 已设置 ${key} = ${typedValue}`));
     console.log(chalk.gray(`配置已保存到: ${prefManager.getConfigPath()}`));
     return;
   }
@@ -113,7 +113,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
     try {
       extManager.setByCliKey(key, value);
       const displayValue = extManager.getByCliKey(key);
-      console.log(chalk.green(`✓ 已设置 ${key} = ${Array.isArray(displayValue) ? (displayValue as string[]).join(", ") : displayValue}`));
+      console.log(chalk.green(`+ 已设置 ${key} = ${Array.isArray(displayValue) ? (displayValue as string[]).join(", ") : displayValue}`));
       console.log(chalk.gray(`配置已保存到: ${extManager.getConfigPath()}`));
     } catch (err) {
       console.log(chalk.red(`设置失败: ${(err as Error).message}`));
@@ -123,8 +123,8 @@ export async function setConfig(key: string, value: string): Promise<void> {
 
   // 环境变量配置（仅内存）
   envConfig.set(key, value);
-  console.log(chalk.green(`✓ 已设置 ${key} = ${value}`));
-  console.log(chalk.yellow("⚠ 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
+  console.log(chalk.green(`+ 已设置 ${key} = ${value}`));
+  console.log(chalk.yellow("[!] 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
 }
 
 export async function getConfig(key: string): Promise<void> {
@@ -168,7 +168,7 @@ export function getConfigValue(key: string): string | undefined {
 export async function resetPreferences(): Promise<void> {
   const prefManager = getPreferenceManager();
   prefManager.reset();
-  console.log(chalk.green("✓ 偏好设置已重置为默认值"));
+  console.log(chalk.green("+ 偏好设置已重置为默认值"));
 }
 
 /**
@@ -177,7 +177,7 @@ export async function resetPreferences(): Promise<void> {
 export async function resetExtendedConfig(): Promise<void> {
   const extManager = getExtendedConfigManager();
   extManager.reset();
-  console.log(chalk.green("✓ 扩展配置已重置为默认值"));
+  console.log(chalk.green("+ 扩展配置已重置为默认值"));
 }
 
 /**
@@ -194,6 +194,6 @@ export async function resetAllConfig(): Promise<void> {
 export async function setCustomInstructions(instructions: string): Promise<void> {
   const prefManager = getPreferenceManager();
   prefManager.set("customInstructions", instructions);
-  console.log(chalk.green("✓ 自定义指令已设置"));
+  console.log(chalk.green("+ 自定义指令已设置"));
   console.log(chalk.gray("这将在每次对话中自动注入到系统提示词中"));
 }

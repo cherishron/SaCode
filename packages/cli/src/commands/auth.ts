@@ -53,7 +53,7 @@ export function registerAuthCommand(ctx: CommandContext): void {
           defaultModel: options.model,
         });
 
-        console.log(chalk.green("\n✓ 账户已添加"));
+        console.log(chalk.green("\n+ 账户已添加"));
         console.log(chalk.white(`  ID:       ${account.id}`));
         console.log(chalk.white(`  别名:     ${account.alias}`));
         console.log(chalk.white(`  厂商:     ${account.provider}`));
@@ -61,7 +61,7 @@ export function registerAuthCommand(ctx: CommandContext): void {
         console.log(chalk.white(`  协议:     ${account.protocol}`));
         console.log(chalk.white(`  默认模型: ${account.defaultModel || "未设置"}`));
         if (account.isActive) {
-          console.log(chalk.green(`  状态:     当前激活 ●`));
+          console.log(chalk.green(`  状态:     当前激活 *`));
         }
       } catch (err) {
         console.error(chalk.red(`添加失败: ${err instanceof Error ? err.message : String(err)}`));
@@ -94,7 +94,7 @@ export function registerAuthCommand(ctx: CommandContext): void {
         const preset = manager.getPreset(provider as any);
         console.log(chalk.blue(`  ${preset?.name || provider}`));
         for (const acc of accs) {
-          const active = acc.isActive ? chalk.green("● ") : chalk.gray("○ ");
+          const active = acc.isActive ? chalk.green("* ") : chalk.gray("o ");
           const model = acc.defaultModel ? chalk.gray(` [${acc.defaultModel}]`) : "";
           console.log(`    ${active}${acc.alias} (${acc.id})${model}`);
         }
@@ -112,7 +112,7 @@ export function registerAuthCommand(ctx: CommandContext): void {
       try {
         await manager.switchAccount(accountId);
         const account = await manager.getActiveAccount();
-        console.log(chalk.green(`✓ 已切换到: ${account.alias} (${account.provider})`));
+        console.log(chalk.green(`+ 已切换到: ${account.alias} (${account.provider})`));
       } catch (err) {
         console.error(chalk.red(`切换失败: ${err instanceof Error ? err.message : String(err)}`));
       }
@@ -127,7 +127,7 @@ export function registerAuthCommand(ctx: CommandContext): void {
 
       try {
         await manager.removeAccount(accountId);
-        console.log(chalk.green(`✓ 账户已删除: ${accountId}`));
+        console.log(chalk.green(`+ 账户已删除: ${accountId}`));
       } catch (err) {
         console.error(chalk.red(`删除失败: ${err instanceof Error ? err.message : String(err)}`));
       }
@@ -173,9 +173,9 @@ export function registerAuthCommand(ctx: CommandContext): void {
 
         const result = await manager.validateAccount(account.id);
         if (result.valid) {
-          console.log(chalk.green("✓ 账户有效"));
+          console.log(chalk.green("+ 账户有效"));
         } else {
-          console.log(chalk.red(`✗ 验证失败: ${result.error}`));
+          console.log(chalk.red(`x 验证失败: ${result.error}`));
         }
       } catch (err) {
         console.error(chalk.red(`${err instanceof Error ? err.message : String(err)}`));

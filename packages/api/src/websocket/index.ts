@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { EventEmitter } from "events";
-import { SACODEClient } from "@SACODE/core";
+import { SACODEClient } from "@sacode/core";
 import { connectionEvents } from "../routes/im.js";
 
 interface WebSocketClient extends WebSocket {

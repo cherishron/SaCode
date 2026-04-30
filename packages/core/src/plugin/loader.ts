@@ -170,12 +170,11 @@ export class PluginLoader {
         };
       }
 
-      // 4. 加载模块
+      // 4. 加载模块（ESM 动态 import）
       let factory: PluginFactory;
       try {
-        // 清除缓存以支持热重载
-        delete require.cache[require.resolve(mainPath)];
-        const module = require(mainPath);
+        const moduleUrl = Bun.pathToFileURL(mainPath).href;
+        const module = await import(moduleUrl);
 
         // 支持 export default 和 module.exports
         factory = module.default || module;

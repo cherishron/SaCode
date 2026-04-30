@@ -23,7 +23,7 @@ export function renderProviderList(
 
   providers.forEach((provider, index) => {
     const isConfigured = configuredProviders.has(provider.id);
-    const status = isConfigured ? chalk.green("✓") : chalk.gray("○");
+    const status = isConfigured ? chalk.green("+") : chalk.gray("o");
     const name = chalk.white(provider.name);
     const id = chalk.gray(`(${provider.id})`);
     
@@ -91,7 +91,7 @@ export function renderApiKeyInput(providerName: string): string {
  * 渲染配置成功消息
  */
 export function renderConfigSuccess(providerName: string, modelName?: string): string {
-  let output = `\n${chalk.green("✓")} ${chalk.green.bold("配置成功")}\n\n`;
+  let output = `\n${chalk.green("+")} ${chalk.green.bold("配置成功")}\n\n`;
   output += `  厂商：${chalk.white(providerName)}\n`;
   if (modelName) {
     output += `  模型：${chalk.white(modelName)}\n`;
@@ -104,7 +104,7 @@ export function renderConfigSuccess(providerName: string, modelName?: string): s
  * 渲染配置失败消息
  */
 export function renderConfigError(message: string): string {
-  return `\n${chalk.red("✗")} ${chalk.red.bold("配置失败")}\n\n` +
+  return `\n${chalk.red("x")} ${chalk.red.bold("配置失败")}\n\n` +
     `  ${chalk.red(message)}\n\n` +
     chalk.gray("请检查 API Key 是否正确，或网络连接是否正常\n");
 }

@@ -78,6 +78,9 @@ export {
 // 便捷访问器
 import { getThemeManager } from "./theme-manager.js";
 
+// 工具标签和状态图标（从旧 theme.ts 迁移）
+export { toolLabels, statusIcons, getToolIcon, getStatusIcon } from "../theme.js";
+
 /**
  * 获取当前主题的颜色
  * 这是最常用的访问方式

@@ -3,6 +3,8 @@ import { Command } from "commander";
 import { existsSync, readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { isBunAvailable, getInstallPrompt } from "./lib/runtime-detector.js";
+import { isFirstRun, getOnboardingMessage, markInitialized } from "./lib/first-run.js";
 import {
   registerChatCommand,
   registerConfigCommand,
@@ -11,6 +13,9 @@ import {
   registerWorkspaceCommand,
   registerAuthCommand,
   registerCodeCommand,
+  registerMemoryCommand,
+  registerCronCommand,
+  registerPluginCommand,
 } from "./commands/index.js";
 
 // ES 模块中的 __dirname 替代方案
@@ -61,12 +66,27 @@ function loadEnv(): void {
 // 在任何命令执行前加载环境变量
 loadEnv();
 
+// Bun 运行时检测
+if (!isBunAvailable()) {
+  console.error(getInstallPrompt());
+  process.exit(1);
+}
+
+// 首次运行引导
+if (isFirstRun()) {
+  console.log(getOnboardingMessage());
+  markInitialized();
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.DEEPSEEK_API_KEY) {
+    console.log(""); // 空行分隔
+  }
+}
+
 const program = new Command();
 
 program
-  .name("SACODE")
-  .description("SACODE - 基于 iFlow SDK 的多端 AI 助手")
-  .version("0.1.0")
+  .name("sacode")
+  .description("SaCode - 多端 AI 助手命令行工具")
+  .version("0.2.0")
   .option("-d, --debug", "启用调试模式")
   .option("-c, --config <path>", "指定配置文件路径");
 
@@ -81,6 +101,9 @@ registerWorkspaceCommand(ctx);
 // 新命令
 registerAuthCommand(ctx);
 registerCodeCommand(ctx);
+registerMemoryCommand(ctx);
+registerCronCommand(ctx);
+registerPluginCommand(ctx);
 
 // 默认行为 - 直接进入交互式聊天
 program.action(async (_options) => {

@@ -1,8 +1,3 @@
-/**
- * SACODE Container Module - Docker 运行时
- */
-
-import { execa } from "execa";
 import type {
   ContainerConfig,
   ContainerInfo,
@@ -17,9 +12,6 @@ import {
   ContainerTimeoutError,
 } from "./errors.js";
 
-/**
- * Docker运行时 - 负责与Docker守护进程通信
- */
 export class DockerRunner {
   private runtime: "docker" | "podman";
   private logger: Logger;
@@ -29,9 +21,6 @@ export class DockerRunner {
     this.logger = options.logger ?? console;
   }
 
-  /**
-   * 检查Docker是否可用
-   */
   async isAvailable(): Promise<boolean> {
     try {
       const result = await this.runCommand(["info"]);
@@ -41,9 +30,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 拉取镜像
-   */
   async pullImage(image: string): Promise<void> {
     this.logger.info(`拉取镜像: ${image}`);
     const result = await this.runCommand(["pull", image]);
@@ -55,9 +41,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 创建并启动容器
-   */
   async createContainer(
     config: ContainerConfig,
     command?: string[]
@@ -91,9 +74,6 @@ export class DockerRunner {
     return result.stdout.trim();
   }
 
-  /**
-   * 启动容器
-   */
   async startContainer(containerId: string): Promise<void> {
     const result = await this.runCommand(["start", containerId]);
     if (result.exitCode !== 0) {
@@ -104,9 +84,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 停止容器
-   */
   async stopContainer(containerId: string, timeout = 10): Promise<void> {
     const result = await this.runCommand(["stop", "-t", timeout.toString(), containerId]);
     if (result.exitCode !== 0) {
@@ -117,9 +94,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 删除容器
-   */
   async removeContainer(containerId: string, force = false): Promise<void> {
     const args = ["rm"];
     if (force) args.push("-f");
@@ -134,9 +108,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 获取容器信息
-   */
   async getContainer(containerId: string): Promise<ContainerInfo> {
     const result = await this.runCommand([
       "inspect",
@@ -177,9 +148,6 @@ export class DockerRunner {
     };
   }
 
-  /**
-   * 在容器中执行命令
-   */
   async exec(
     containerId: string,
     command: string[],
@@ -221,9 +189,6 @@ export class DockerRunner {
     }
   }
 
-  /**
-   * 获取容器日志
-   */
   async getLogs(
     containerId: string,
     options: {
@@ -260,9 +225,6 @@ export class DockerRunner {
     });
   }
 
-  /**
-   * 列出容器
-   */
   async listContainers(all = true): Promise<ContainerInfo[]> {
     const args = [
       "ps",
@@ -297,25 +259,22 @@ export class DockerRunner {
     });
   }
 
-  /**
-   * 运行命令
-   */
   private async runCommand(
     args: string[],
     options: { timeout?: number } = {}
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     try {
-      const execaOptions = {
+      const proc = Bun.spawn([this.runtime, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
         ...(options.timeout ? { timeout: options.timeout } : {}),
-        reject: false,
-        stdio: ["ignore", "pipe", "pipe"] as const,
-      };
-      const result = await execa(this.runtime, args, execaOptions);
-      return {
-        exitCode: result.exitCode ?? 1,
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-      };
+      });
+
+      const exitCode = await proc.exited;
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+
+      return { exitCode, stdout, stderr };
     } catch (error) {
       if (error instanceof Error && error.message.includes("timeout")) {
         throw new Error("timeout");

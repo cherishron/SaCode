@@ -62,7 +62,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
   let selectedTemplate = templateId ? templates.find((t) => t.id === templateId) : undefined;
 
   if (!selectedTemplate) {
-    console.log(chalk.cyan("📁 Available Templates\n"));
+    console.log(chalk.cyan("[D] Available Templates\n"));
     for (const t of templates) {
       console.log(`  ${chalk.bold(t.id.padEnd(15))} ${t.name}`);
       console.log(`      ${chalk.gray(t.description)}`);
@@ -111,7 +111,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
   await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
   console.log(chalk.gray(`  Created: .SACODE/settings.json`));
 
-  console.log(chalk.green("\n✓ Workspace initialized"));
+  console.log(chalk.green("\n+ Workspace initialized"));
   console.log(chalk.gray(`  Location: ${workspacePath}`));
 }
 
@@ -121,7 +121,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
 export async function showWorkspace(): Promise<void> {
   const workspacePath = defaultWorkspacePath;
 
-  console.log(chalk.cyan("📁 Workspace\n"));
+  console.log(chalk.cyan("[D] Workspace\n"));
 
   console.log(`  ${chalk.gray("Path:")} ${workspacePath}`);
 
@@ -129,7 +129,7 @@ export async function showWorkspace(): Promise<void> {
   try {
     await fs.access(workspacePath);
   } catch {
-    console.log(chalk.yellow("\n⚠️  Workspace not initialized"));
+    console.log(chalk.yellow("\n[!] Workspace not initialized"));
     console.log(chalk.gray("  Run 'SACODE workspace init' to create one"));
     return;
   }
@@ -143,7 +143,7 @@ export async function showWorkspace(): Promise<void> {
     console.log(`  ${chalk.gray("Language:")} ${config.language || "zh-CN"}`);
     console.log(`  ${chalk.gray("Default Model:")} ${config.defaultModel || "minimax-m2.5"}`);
   } catch {
-    console.log(chalk.yellow("\n⚠️  No configuration found"));
+    console.log(chalk.yellow("\n[!] No configuration found"));
   }
 
   // 列出文件
@@ -151,7 +151,7 @@ export async function showWorkspace(): Promise<void> {
   const files = await fs.readdir(workspacePath, { withFileTypes: true });
   for (const file of files) {
     if (!file.name.startsWith(".")) {
-      const icon = file.isDirectory() ? "📁" : "📄";
+      const icon = file.isDirectory() ? "[D]" : "[F]";
       console.log(`    ${icon} ${file.name}`);
     }
   }
@@ -161,7 +161,7 @@ export async function showWorkspace(): Promise<void> {
  * 列出所有模板
  */
 export async function listTemplates(): Promise<void> {
-  console.log(chalk.cyan("📋 Workspace Templates\n"));
+  console.log(chalk.cyan("[PL] Workspace Templates\n"));
 
   for (const t of templates) {
     console.log(`  ${chalk.bold(t.name)} (${t.id})`);
@@ -185,14 +185,24 @@ export async function editFile(filename: string): Promise<void> {
     return;
   }
 
-  // 使用系统默认编辑器打开
-  const { exec } = await import("child_process");
   const isWindows = process.platform === "win32";
 
   if (isWindows) {
-    exec(`notepad "${filePath}"`);
+    Bun.spawn({
+      cmd: ["notepad", filePath],
+      detached: true,
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
   } else {
-    exec(`${process.env.EDITOR || "vi"} "${filePath}"`);
+    Bun.spawn({
+      cmd: [process.env.EDITOR || "vi", filePath],
+      detached: true,
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
   }
 }
 

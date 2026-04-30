@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/capabilities",
+  "name": "@sacode/capabilities",
   "version": "0.1.0",
   "description": "SACODE 能力模块 - 文件系统、浏览器控制、命令执行",
   "type": "module",
@@ -22,10 +22,11 @@
   "dependencies": {
     "glob": "^11.0.0",
     "pino": "^9.5.0",
-    "puppeteer": "^23.11.1",
+    "playwright": "^1.49.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

@@ -1,4 +1,4 @@
-import puppeteer, { type Browser, type Page } from "puppeteer";
+import { chromium, type Browser, type Page } from "playwright";
 import type {
   ToolDefinition,
   BrowserNavigateInput,
@@ -23,11 +23,12 @@ export class BrowserManager {
       throw new Error("Browser capability is disabled");
     }
 
-    this.browser = await puppeteer.launch({
+    this.browser = await chromium.launch({
       headless: this.config.headless,
     });
 
-    this.page = await this.browser.newPage();
+    const context = await this.browser.newContext();
+    this.page = await context.newPage();
     this.page.setDefaultTimeout(this.config.timeout);
   }
 
@@ -51,13 +52,18 @@ export class BrowserManager {
   }
 }
 
+function mapWaitUntil(waitUntil?: string): "load" | "domcontentloaded" | "networkidle" | undefined {
+  if (!waitUntil) return undefined;
+  if (waitUntil === "networkidle0") return "networkidle";
+  return waitUntil as "load" | "domcontentloaded" | "networkidle";
+}
+
 export function createBrowserTools(
   config: BrowserCapabilityConfig,
   getManager: () => BrowserManager
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
-  // browser_navigate
   tools.push({
     name: "browser_navigate",
     description: "导航到指定 URL",
@@ -81,13 +87,12 @@ export function createBrowserTools(
       }
 
       const page = manager.getPage();
-      await page.goto(url, { waitUntil: waitUntil || "load" });
+      await page.goto(url, { waitUntil: mapWaitUntil(waitUntil) || "load" });
 
       return { url, title: await page.title() };
     },
   });
 
-  // browser_click
   tools.push({
     name: "browser_click",
     description: "点击页面元素",
@@ -117,7 +122,6 @@ export function createBrowserTools(
     },
   });
 
-  // browser_type
   tools.push({
     name: "browser_type",
     description: "在输入框中输入文本",
@@ -143,13 +147,15 @@ export function createBrowserTools(
       const manager = getManager();
       const page = manager.getPage();
 
-      await page.type(selector, text, { delay: delay ?? 0 });
+      await page.fill(selector, text);
+      if (delay && delay > 0) {
+        await page.type(selector, "", { delay });
+      }
 
       return { success: true, selector, text };
     },
   });
 
-  // browser_screenshot
   tools.push({
     name: "browser_screenshot",
     description: "截取页面截图",
@@ -190,7 +196,6 @@ export function createBrowserTools(
     },
   });
 
-  // browser_extract
   tools.push({
     name: "browser_extract",
     description: "提取页面元素内容",

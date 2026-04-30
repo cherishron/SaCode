@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/web",
+  "name": "@sacode/web",
   "version": "0.1.0",
   "description": "SACODE Web UI - Vue 3 + TinyVue",
   "private": true,
@@ -16,9 +16,9 @@
   "dependencies": {
     "@opentiny/vue": "^3.20.0",
     "@opentiny/vue-icon": "^3.20.0",
-    "@SACODE/api": "workspace:*",
-    "@SACODE/auth": "workspace:*",
-    "@SACODE/core": "workspace:*",
+    "@sacode/api": "workspace:*",
+    "@sacode/auth": "workspace:*",
+    "@sacode/core": "workspace:*",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",

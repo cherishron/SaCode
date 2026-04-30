@@ -1,22 +1,16 @@
-/**
- * 会话记忆管理 API 路由
- *
- * 提供会话记忆的存储、检索和管理功能
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
 import { EnhancedMemoryManager, type MemoryEntry } from "@sacode/core";
 import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 记忆管理器实例缓存
+const router = new Hono<{ Variables: Variables }>();
+
 const memoryManagers = new Map<string, EnhancedMemoryManager>();
 
-/**
- * 获取或创建会话的记忆管理器
- */
 async function getMemoryManager(sessionId: string): Promise<EnhancedMemoryManager> {
   if (!memoryManagers.has(sessionId)) {
     const manager = new EnhancedMemoryManager({
@@ -29,28 +23,22 @@ async function getMemoryManager(sessionId: string): Promise<EnhancedMemoryManage
   return memoryManagers.get(sessionId)!;
 }
 
-/**
- * GET /api/memory/:sessionId
- * 获取会话记忆
- */
-router.get("/:sessionId", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/memory/:sessionId
+router.get("/:sessionId", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 返回会话中的记忆内容
-    res.json({
+    return c.json({
       sessionId,
       memory: session.memory ?? "",
       context: session.context ? JSON.parse(session.context) : null,
@@ -58,32 +46,26 @@ router.get("/:sessionId", authMiddleware, async (req: Request, res: Response) =>
     });
   } catch (error) {
     console.error("Get memory error:", error);
-    res.status(500).json({ error: "Failed to get memory" });
+    return c.json({ error: "Failed to get memory" }, 500);
   }
 });
 
-/**
- * PUT /api/memory/:sessionId
- * 更新会话记忆
- */
-router.put("/:sessionId", authMiddleware, async (req: Request, res: Response) => {
+// PUT /api/memory/:sessionId
+router.put("/:sessionId", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
-    const { memory, context, settings } = req.body;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const { memory, context, settings } = await c.req.json();
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 更新会话记忆
     const updated = await prisma.chatSession.update({
       where: { id: sessionId },
       data: {
@@ -94,7 +76,7 @@ router.put("/:sessionId", authMiddleware, async (req: Request, res: Response) =>
       },
     });
 
-    res.json({
+    return c.json({
       success: true,
       sessionId,
       memory: updated.memory,
@@ -103,42 +85,36 @@ router.put("/:sessionId", authMiddleware, async (req: Request, res: Response) =>
     });
   } catch (error) {
     console.error("Update memory error:", error);
-    res.status(500).json({ error: "Failed to update memory" });
+    return c.json({ error: "Failed to update memory" }, 500);
   }
 });
 
-/**
- * GET /api/memory/:sessionId/search
- * 搜索会话记忆
- */
-router.get("/:sessionId/search", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/memory/:sessionId/search
+router.get("/:sessionId/search", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
-    const { query, limit = 10 } = req.query;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const query = c.req.query("query");
+    const limit = c.req.query("limit") || "10";
 
     if (!query || typeof query !== "string") {
-      res.status(400).json({ error: "Query is required" });
-      return;
+      return c.json({ error: "Query is required" }, 400);
     }
 
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器进行向量搜索
     const manager = await getMemoryManager(sessionId);
     const results = await manager.search(query, Number(limit));
 
-    res.json({
+    return c.json({
       query,
       results: results.map((r: MemoryEntry) => ({
         id: r.id,
@@ -150,36 +126,30 @@ router.get("/:sessionId/search", authMiddleware, async (req: Request, res: Respo
     });
   } catch (error) {
     console.error("Search memory error:", error);
-    res.status(500).json({ error: "Failed to search memory" });
+    return c.json({ error: "Failed to search memory" }, 500);
   }
 });
 
-/**
- * POST /api/memory/:sessionId/entries
- * 添加记忆条目
- */
-router.post("/:sessionId/entries", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/memory/:sessionId/entries
+router.post("/:sessionId/entries", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
-    const { content, role, metadata } = req.body;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const { content, role, metadata } = await c.req.json();
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器添加记忆
     const manager = await getMemoryManager(sessionId);
     const entry = await manager.addEntry(content, role, metadata);
 
-    res.status(201).json({
+    return c.json({
       success: true,
       entry: {
         id: entry.id,
@@ -187,73 +157,60 @@ router.post("/:sessionId/entries", authMiddleware, async (req: Request, res: Res
         role: entry.role,
         timestamp: entry.timestamp,
       },
-    });
+    }, 201);
   } catch (error) {
     console.error("Add memory entry error:", error);
-    res.status(500).json({ error: "Failed to add memory entry" });
+    return c.json({ error: "Failed to add memory entry" }, 500);
   }
 });
 
-/**
- * GET /api/memory/:sessionId/context
- * 获取上下文摘要
- */
-router.get("/:sessionId/context", authMiddleware, async (req: Request, res: Response) => {
+// GET /api/memory/:sessionId/context
+router.get("/:sessionId/context", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器获取上下文
     const manager = await getMemoryManager(sessionId);
     const context = await manager.getContext();
 
-    res.json({
+    return c.json({
       sessionId,
       context,
       memory: session.memory,
     });
   } catch (error) {
     console.error("Get context error:", error);
-    res.status(500).json({ error: "Failed to get context" });
+    return c.json({ error: "Failed to get context" }, 500);
   }
 });
 
-/**
- * POST /api/memory/:sessionId/compact
- * 压缩记忆
- */
-router.post("/:sessionId/compact", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/memory/:sessionId/compact
+router.post("/:sessionId/compact", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器压缩记忆
     const manager = await getMemoryManager(sessionId);
     await manager.compact();
 
-    // 更新会话中的记忆内容
     const context = await manager.getContext();
     await prisma.chatSession.update({
       where: { id: sessionId },
@@ -263,81 +220,65 @@ router.post("/:sessionId/compact", authMiddleware, async (req: Request, res: Res
       },
     });
 
-    res.json({
+    return c.json({
       success: true,
       message: "Memory compacted successfully",
     });
   } catch (error) {
     console.error("Compact memory error:", error);
-    res.status(500).json({ error: "Failed to compact memory" });
+    return c.json({ error: "Failed to compact memory" }, 500);
   }
 });
 
-/**
- * DELETE /api/memory/:sessionId/entries/:entryId
- * 删除记忆条目
- */
-router.delete(
-  "/:sessionId/entries/:entryId",
-  authMiddleware,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as Request & { userId: string }).userId;
-      const { sessionId, entryId } = req.params;
-      const prisma = getPrismaClient();
-
-      // 验证会话所有权
-      const session = await prisma.chatSession.findFirst({
-        where: { id: sessionId, userId },
-      });
-
-      if (!session) {
-        res.status(404).json({ error: "Session not found" });
-        return;
-      }
-
-      // 使用增强记忆管理器删除条目
-      const manager = await getMemoryManager(sessionId);
-      const deleted = await manager.deleteEntry(entryId);
-
-      if (!deleted) {
-        res.status(404).json({ error: "Entry not found" });
-        return;
-      }
-
-      res.status(204).send();
-    } catch (error) {
-      console.error("Delete memory entry error:", error);
-      res.status(500).json({ error: "Failed to delete memory entry" });
-    }
-  }
-);
-
-/**
- * POST /api/memory/:sessionId/export
- * 导出会话记忆
- */
-router.post("/:sessionId/export", authMiddleware, async (req: Request, res: Response) => {
+// DELETE /api/memory/:sessionId/entries/:entryId
+router.delete("/:sessionId/entries/:entryId", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const entryId = c.req.param("entryId");
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器导出
+    const manager = await getMemoryManager(sessionId);
+    const deleted = await manager.deleteEntry(entryId);
+
+    if (!deleted) {
+      return c.json({ error: "Entry not found" }, 404);
+    }
+
+    return c.body(null, 204);
+  } catch (error) {
+    console.error("Delete memory entry error:", error);
+    return c.json({ error: "Failed to delete memory entry" }, 500);
+  }
+});
+
+// POST /api/memory/:sessionId/export
+router.post("/:sessionId/export", authMiddleware, async (c) => {
+  try {
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const prisma = getPrismaClient();
+
+    const session = await prisma.chatSession.findFirst({
+      where: { id: sessionId, userId },
+    });
+
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
     const manager = await getMemoryManager(sessionId);
     const exported = await manager.export();
 
-    res.json({
+    return c.json({
       sessionId,
       exported,
       memory: session.memory,
@@ -346,42 +287,36 @@ router.post("/:sessionId/export", authMiddleware, async (req: Request, res: Resp
     });
   } catch (error) {
     console.error("Export memory error:", error);
-    res.status(500).json({ error: "Failed to export memory" });
+    return c.json({ error: "Failed to export memory" }, 500);
   }
 });
 
-/**
- * POST /api/memory/:sessionId/import
- * 导入会话记忆
- */
-router.post("/:sessionId/import", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/memory/:sessionId/import
+router.post("/:sessionId/import", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId } = req.params;
-    const { entries } = req.body;
+    const userId = c.get("userId");
+    const sessionId = c.req.param("sessionId");
+    const { entries } = await c.req.json();
     const prisma = getPrismaClient();
 
-    // 验证会话所有权
     const session = await prisma.chatSession.findFirst({
       where: { id: sessionId, userId },
     });
 
     if (!session) {
-      res.status(404).json({ error: "Session not found" });
-      return;
+      return c.json({ error: "Session not found" }, 404);
     }
 
-    // 使用增强记忆管理器导入
     const manager = await getMemoryManager(sessionId);
     await manager.import(entries);
 
-    res.json({
+    return c.json({
       success: true,
       message: `Imported ${entries.length} entries`,
     });
   } catch (error) {
     console.error("Import memory error:", error);
-    res.status(500).json({ error: "Failed to import memory" });
+    return c.json({ error: "Failed to import memory" }, 500);
   }
 });
 

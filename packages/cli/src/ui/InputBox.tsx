@@ -140,7 +140,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
           </Box>
         ) : (
           <Text bold color={toInkColor(colors.text.accent)}>
-            ➜{" "}
+            {">"}{" "}
           </Text>
         )}
 

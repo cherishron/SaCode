@@ -1,43 +1,7 @@
-import type { IMAdapter, Platform, IMMessage, IMMediaMessage, Channel } from "./types/index.js";
+import type { IMAdapter, Platform, IMMessage, IMMediaMessage, Channel, StreamSender, MediaSupport } from "./types/index.js";
 
-/**
- * 流式发送器接口
- */
-export interface StreamSender {
-  /**
-   * 发送初始消息
-   * @returns 消息 ID (用于后续编辑)
-   */
-  sendInitial(channelId: string, text: string): Promise<string | undefined>;
-
-  /**
-   * 编辑消息 (流式更新)
-   */
-  editMessage(channelId: string, messageId: string, text: string): Promise<void>;
-
-  /**
-   * 检查是否支持流式
-   */
-  supportsStreaming(): boolean;
-}
-
-/**
- * 多媒体支持接口
- */
-export interface MediaSupport {
-  /** 是否支持图片 */
-  supportsImage(): boolean;
-  /** 是否支持语音 */
-  supportsAudio(): boolean;
-  /** 是否支持视频 */
-  supportsVideo(): boolean;
-  /** 是否支持文件 */
-  supportsFile(): boolean;
-  /** 是否支持位置 */
-  supportsLocation(): boolean;
-  /** 是否支持表情包 */
-  supportsSticker(): boolean;
-}
+// Re-export StreamSender and MediaSupport from @sacode/types
+export type { StreamSender, MediaSupport } from "./types/index.js";
 
 export abstract class BaseAdapter implements IMAdapter, Partial<StreamSender>, Partial<MediaSupport> {
   abstract platform: Platform;

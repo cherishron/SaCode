@@ -1,13 +1,16 @@
-import { createAuthMiddleware, extractBearerToken, LocalAuthService } from "@SACODE/auth";
-import { getPrismaClient } from "@SACODE/database";
+import { createMiddleware } from "hono/factory";
+import { LocalAuthService } from "@sacode/auth";
+import { getPrismaClient } from "@sacode/database";
 
-// 获取 JWT 配置
+type Variables = {
+  userId: string;
+};
+
 function getJwtConfig() {
   const secret = process.env.JWT_SECRET || "SACODE-dev-secret-change-in-production";
   return { secret, expiresIn: "7d" };
 }
 
-// 创建 LocalAuthService 用于 token 验证
 function createAuthService(): LocalAuthService {
   const prisma = getPrismaClient();
   return new LocalAuthService({
@@ -20,15 +23,36 @@ function createAuthService(): LocalAuthService {
   });
 }
 
-// 统一的认证中间件
-export const authMiddleware = createAuthMiddleware({
-  getTokenFromHeader: extractBearerToken,
-  verifyToken: (token: string) => {
-    const service = createAuthService();
-    return service.verifyToken(token);
-  },
-  getUserById: async (id: string) => {
-    const prisma = getPrismaClient();
-    return prisma.user.findUnique({ where: { id } });
-  },
+function extractBearerToken(authHeader: string | undefined): string | null {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+  return authHeader.slice(7);
+}
+
+export const authMiddleware = createMiddleware<{ Variables: Variables }>(async (c, next) => {
+  const token = extractBearerToken(c.req.header("Authorization"));
+
+  if (!token) {
+    return c.json({ error: "No token provided" }, 401);
+  }
+
+  const service = createAuthService();
+  const decoded = service.verifyToken(token);
+
+  if (!decoded) {
+    return c.json({ error: "Invalid token" }, 401);
+  }
+
+  const prisma = getPrismaClient();
+  const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+
+  if (!user) {
+    return c.json({ error: "User not found" }, 401);
+  }
+
+  c.set("userId", user.id);
+  await next();
 });
+
+export { extractBearerToken };

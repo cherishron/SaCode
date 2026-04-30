@@ -169,6 +169,7 @@ export type {
   MemoryConfig,
   SessionMemory,
   MemoryUpdateEvent,
+  MemoryCompactCallback,
   EnhancedMemoryConfig,
   MemorySearchResult,
   EmbeddingService,

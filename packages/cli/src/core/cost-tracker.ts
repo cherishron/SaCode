@@ -233,7 +233,7 @@ export class CostTracker {
       this.thresholdTriggered = true;
       this.onThreshold?.(summary);
       console.warn(
-        `⚠️  成本阈值警告! 总成本: $${summary.totalCost.toFixed(4)}, 总 Token: ${summary.totalTokens.toLocaleString()}`
+        `[!] 成本阈值警告! 总成本: $${summary.totalCost.toFixed(4)}, 总 Token: ${summary.totalTokens.toLocaleString()}`
       );
     }
   }

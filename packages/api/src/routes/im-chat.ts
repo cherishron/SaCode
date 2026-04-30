@@ -1,49 +1,42 @@
-/**
- * IM 流式聊天 API 路由
- *
- * 提供通过 IM 平台进行流式聊天的功能
- */
-
-import { Router, type Request, type Response } from "express";
+import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import {
   SACODEClient,
   StreamingManager,
   createStreamChatController,
   type StreamChatOptions,
-} from "@SACODE/core";
-import { createAdapter, type BaseAdapter, type StreamSender } from "@SACODE/adapters";
-import { getPrismaClient } from "@SACODE/database";
+} from "@sacode/core";
+import { createAdapter, type BaseAdapter, type StreamSender } from "@sacode/adapters";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
-const router = Router();
+type Variables = {
+  userId: string;
+};
 
-// 存储活跃的客户端和适配器
+const router = new Hono<{ Variables: Variables }>();
+
 const activeClients = new Map<string, SACODEClient>();
 const activeAdapters = new Map<string, BaseAdapter>();
 const streamingManager = new StreamingManager();
 
-/**
- * POST /api/im-chat/send
- * 通过 IM 平台发送流式消息
- */
-router.post("/send", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/im-chat/send
+router.post("/send", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { 
-      sessionId, 
-      platform, 
-      channelId, 
-      message, 
+    const userId = c.get("userId");
+    const {
+      sessionId,
+      platform,
+      channelId,
+      message,
       initialMessage,
-      updateInterval 
-    } = req.body;
+      updateInterval,
+    } = await c.req.json();
 
     if (!platform || !channelId || !message) {
-      res.status(400).json({ error: "platform, channelId, and message are required" });
-      return;
+      return c.json({ error: "platform, channelId, and message are required" }, 400);
     }
 
-    // 获取或创建客户端
     let client = activeClients.get(userId);
     if (!client) {
       client = new SACODEClient({
@@ -55,7 +48,6 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
       activeClients.set(userId, client);
     }
 
-    // 获取或创建适配器
     const adapterKey = `${userId}:${platform}`;
     let adapter = activeAdapters.get(adapterKey);
     if (!adapter) {
@@ -65,8 +57,7 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
       });
 
       if (!connection) {
-        res.status(404).json({ error: `No ${platform} connection found` });
-        return;
+        return c.json({ error: `No ${platform} connection found` }, 404);
       }
 
       const config = JSON.parse(connection.config);
@@ -75,20 +66,17 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
       activeAdapters.set(adapterKey, adapter);
     }
 
-    // 创建流式聊天控制器
     const streamController = createStreamChatController(
       client,
       adapter as BaseAdapter & Partial<StreamSender>,
-      { updateInterval }
+      { updateInterval },
     );
 
-    // 设置事件监听
     const events: unknown[] = [];
     streamController.on("chunk", (data) => {
       events.push({ type: "chunk", ...data });
     });
 
-    // 执行流式聊天
     const options: StreamChatOptions = {
       sessionId,
       channelId,
@@ -99,7 +87,6 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
 
     const result = await streamController.chat(options);
 
-    // 保存消息到数据库
     if (sessionId) {
       const prisma = getPrismaClient();
       await prisma.chatMessage.createMany({
@@ -117,14 +104,13 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
         ],
       });
 
-      // 更新会话
       await prisma.chatSession.update({
         where: { id: sessionId },
         data: { updatedAt: new Date() },
       });
     }
 
-    res.json({
+    return c.json({
       success: result.success,
       content: result.content,
       messageId: result.messageId,
@@ -132,30 +118,20 @@ router.post("/send", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("IM chat error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-/**
- * POST /api/im-chat/stream
- * WebSocket 风格的流式聊天（返回 SSE）
- */
-router.post("/stream", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/im-chat/stream
+router.post("/stream", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { sessionId, platform, channelId, message } = req.body;
+    const userId = c.get("userId");
+    const { sessionId, platform, channelId, message } = await c.req.json();
 
     if (!platform || !channelId || !message) {
-      res.status(400).json({ error: "platform, channelId, and message are required" });
-      return;
+      return c.json({ error: "platform, channelId, and message are required" }, 400);
     }
 
-    // 设置 SSE headers
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    // 获取或创建客户端
     let client = activeClients.get(userId);
     if (!client) {
       client = new SACODEClient({
@@ -167,52 +143,49 @@ router.post("/stream", authMiddleware, async (req: Request, res: Response) => {
       activeClients.set(userId, client);
     }
 
-    // 流式聊天并发送 SSE
-    let accumulatedContent = "";
+    return stream(c, async (stream) => {
+      c.header("Content-Type", "text/event-stream");
+      c.header("Cache-Control", "no-cache");
+      c.header("Connection", "keep-alive");
 
-    try {
-      for await (const chunk of client.chat(message, sessionId)) {
-        const content = typeof chunk === "string" ? chunk : 
-          (chunk as { content?: string; text?: string })?.content ?? 
-          (chunk as { text?: string })?.text ?? "";
+      let accumulatedContent = "";
 
-        if (content) {
-          accumulatedContent += content;
-          res.write(`data: ${JSON.stringify({ type: "chunk", content })}\n\n`);
+      try {
+        for await (const chunk of client.chat(message, sessionId)) {
+          const content = typeof chunk === "string" ? chunk :
+            (chunk as { content?: string; text?: string })?.content ??
+            (chunk as { text?: string })?.text ?? "";
+
+          if (content) {
+            accumulatedContent += content;
+            await stream.write(`data: ${JSON.stringify({ type: "chunk", content })}\n\n`);
+          }
         }
+
+        await stream.write(`data: ${JSON.stringify({ type: "complete", content: accumulatedContent })}\n\n`);
+      } catch (streamError) {
+        await stream.write(`data: ${JSON.stringify({ type: "error", error: String(streamError) })}\n\n`);
       }
-
-      // 发送完成事件
-      res.write(`data: ${JSON.stringify({ type: "complete", content: accumulatedContent })}\n\n`);
-    } catch (streamError) {
-      res.write(`data: ${JSON.stringify({ type: "error", error: String(streamError) })}\n\n`);
-    }
-
-    res.end();
+    });
   } catch (error) {
     console.error("IM stream chat error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-/**
- * POST /api/im-chat/broadcast
- * 向多个 IM 平台广播消息
- */
-router.post("/broadcast", authMiddleware, async (req: Request, res: Response) => {
+// POST /api/im-chat/broadcast
+router.post("/broadcast", authMiddleware, async (c) => {
   try {
-    const userId = (req as Request & { userId: string }).userId;
-    const { message, platforms, channelId } = req.body;
+    const userId = c.get("userId");
+    const { message, platforms, channelId } = await c.req.json();
 
     if (!message || !platforms || !Array.isArray(platforms)) {
-      res.status(400).json({ error: "message and platforms array are required" });
-      return;
+      return c.json({ error: "message and platforms array are required" }, 400);
     }
 
     const prisma = getPrismaClient();
     const results: Array<{ platform: string; success: boolean; error?: string }> = [];
 
-    // 获取所有连接
     const connections = await prisma.iMConnection.findMany({
       where: {
         platform: { in: platforms },
@@ -224,7 +197,7 @@ router.post("/broadcast", authMiddleware, async (req: Request, res: Response) =>
       try {
         const adapterKey = `${userId}:${connection.platform}`;
         let adapter = activeAdapters.get(adapterKey);
-        
+
         if (!adapter) {
           const config = JSON.parse(connection.config);
           adapter = createAdapter({ platform: connection.platform, config }) as BaseAdapter;
@@ -245,21 +218,18 @@ router.post("/broadcast", authMiddleware, async (req: Request, res: Response) =>
       }
     }
 
-    res.json({ results });
+    return c.json({ results });
   } catch (error) {
     console.error("Broadcast error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-/**
- * GET /api/im-chat/status
- * 获取 IM 聊天状态
- */
-router.get("/status", authMiddleware, async (_req: Request, res: Response) => {
+// GET /api/im-chat/status
+router.get("/status", authMiddleware, (c) => {
   const activeSessions = streamingManager.getActiveSessions();
 
-  res.json({
+  return c.json({
     activeClients: activeClients.size,
     activeAdapters: activeAdapters.size,
     activeStreamingSessions: activeSessions.length,
@@ -272,9 +242,6 @@ router.get("/status", authMiddleware, async (_req: Request, res: Response) => {
   });
 });
 
-/**
- * 清理函数
- */
 export function cleanupImChat(): void {
   for (const client of activeClients.values()) {
     client.disconnect();

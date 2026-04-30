@@ -254,28 +254,26 @@ describe("BaseProvider", () => {
     });
 
     it("应该在失败时重试", async () => {
-      provider.setShouldFail(2);
+      provider.sleep = vi.fn().mockResolvedValue(undefined);
+      const operation = vi.fn()
+        .mockRejectedValueOnce(new ProviderError("test", "SERVICE_UNAVAILABLE", "Error 1"))
+        .mockRejectedValueOnce(new ProviderError("test", "SERVICE_UNAVAILABLE", "Error 2"))
+        .mockResolvedValue("success");
 
-      const stream = provider.chat({ messages: [] });
-      const results: StreamChunk[] = [];
+      const result = await provider.testWithRetry(operation, "test-op");
 
-      for await (const chunk of stream) {
-        results.push(chunk);
-      }
-
-      expect(results.some(r => r.type === "text_delta")).toBe(true);
+      expect(result).toBe("success");
+      expect(operation).toHaveBeenCalledTimes(3);
     });
 
     it("应该达到最大重试次数后抛出错误", async () => {
-      provider.setShouldFail(DEFAULT_RETRY_CONFIG.maxRetries + 2);
+      provider.sleep = vi.fn().mockResolvedValue(undefined);
+      const operation = vi.fn().mockRejectedValue(
+        new ProviderError("test", "SERVICE_UNAVAILABLE", "Always fails")
+      );
 
-      const stream = provider.chat({ messages: [] });
-
-      await expect(async () => {
-        for await (const chunk of stream) {
-          // 消费流
-        }
-      }).not.rejects; // 流式输出通过 error chunk 返回错误
+      await expect(provider.testWithRetry(operation, "test-op")).rejects.toThrow(ProviderError);
+      expect(operation).toHaveBeenCalledTimes(DEFAULT_RETRY_CONFIG.maxRetries + 1);
     });
 
     it("应该对不可重试的错误立即抛出", async () => {
@@ -288,10 +286,8 @@ describe("BaseProvider", () => {
 
     it("应该使用指数退避策略", async () => {
       const delays: number[] = [];
-      const originalSleep = provider.sleep.bind(provider);
       provider.sleep = vi.fn(async (ms: number) => {
         delays.push(ms);
-        return originalSleep(ms);
       });
 
       const operation = vi.fn()
@@ -302,7 +298,7 @@ describe("BaseProvider", () => {
       await provider.testWithRetry(operation, "test-op");
 
       expect(delays.length).toBe(2);
-      expect(delays[0]).toBeLessThan(delays[1]); // 指数退避
+      expect(delays[0]).toBeLessThan(delays[1]);
     });
   });
 

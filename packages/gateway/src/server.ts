@@ -19,7 +19,7 @@ import {
   type RPCNotification,
   type EventType,
 } from "./protocol/index.js";
-import { RPCHandler, type HandlerContext } from "./handlers/index.js";
+import { RPCHandler, type HandlerContext, type GatewayDeps } from "./handlers/index.js";
 import { SessionManager } from "./session/index.js";
 import { SubscriptionManager } from "./subscription.js";
 
@@ -42,6 +42,7 @@ export interface GatewayConfig {
   heartbeatInterval?: number;
   maxConnections?: number;
   authRequired?: boolean;
+  deps?: Partial<Omit<GatewayDeps, "sessionManager">>;
 }
 
 export class GatewayServer {
@@ -51,7 +52,7 @@ export class GatewayServer {
   private subscriptionManager: SubscriptionManager;
   private rpcHandler: RPCHandler;
   private heartbeatTimer?: NodeJS.Timeout;
-  private config: Required<GatewayConfig>;
+  private config: Required<Omit<GatewayConfig, "deps">> & Pick<GatewayConfig, "deps">;
 
   constructor(server: HTTPServer, config: GatewayConfig = {}) {
     this.config = {
@@ -59,12 +60,18 @@ export class GatewayServer {
       heartbeatInterval: config.heartbeatInterval ?? 30000,
       maxConnections: config.maxConnections ?? 1000,
       authRequired: config.authRequired ?? true,
+      deps: config.deps ?? {},
     };
 
     this.wss = new WebSocketServer({ server, path: this.config.path });
     this.sessionManager = new SessionManager();
     this.subscriptionManager = new SubscriptionManager();
-    this.rpcHandler = new RPCHandler(this.sessionManager);
+
+    const handlerDeps: GatewayDeps = {
+      sessionManager: this.sessionManager,
+      ...config.deps,
+    };
+    this.rpcHandler = new RPCHandler(handlerDeps);
 
     this.setupHandlers();
     this.startHeartbeat();
