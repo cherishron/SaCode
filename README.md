@@ -1,11 +1,18 @@
-# SaCode - 多端 AI 助手框架
+# SaCode — 全栈 AI 助手开发框架
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bun](https://img.shields.io/badge/Bun-1.3%2B-orange)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
 [![npm](https://img.shields.io/npm/v/@cherishron/sacode-cli.svg)](https://www.npmjs.com/package/@cherishron/sacode-cli)
 
-基于 Provider 抽象层的多平台 AI 助手框架，支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱等 AI 服务，以及微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email 等 10 个 IM 平台。
+> 统一 AI 接入 · 多端 IM 覆盖 · Agentic 工具编排 · 现代化技术栈
+
+**SaCode** 是一个企业级 AI 助手开发框架，提供从 CLI 到 Web 再到 IM 的全栈解决方案。
+
+- **统一 AI 接入**：通过 Provider 抽象层无缝对接 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 大 AI 服务
+- **多端 IM 覆盖**：内置 10 个 IM 平台适配器（微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email）
+- **Agentic 工具编排**：Registry + Planner + Orchestrator 三层架构，支持 40+ 内置工具和 MCP 协议扩展
+- **现代化技术栈**：Bun 运行时 + TypeScript 严格模式 + Vue 3 + Hono + Prisma ORM
 
 ## 文档
 
@@ -17,65 +24,63 @@
 - [前端架构](./docs/architecture/frontend.md) - Web UI 架构文档
 - [安全设计](./docs/architecture/security.md) - 安全架构文档
 
-## 特性
+## 核心能力
 
-- 🤖 **Provider 抽象层** - 支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 个 AI 服务
-- 🔄 **Function Calling Loop** - 完整的 Agentic 工具执行循环
-- 🛠️ **工具桥接层** - 统一管理内置工具、Capabilities 工具、MCP 工具
-- 🧠 **Agent 基础设施** - Registry + Planner + Orchestrator 实现 Agentic 规划
-- 💬 **多端 IM 支持** - 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
-- 🔗 **跨渠道会话管理** - SessionMapper 实现多平台会话统一映射
-- 🧭 **智能路由** - SmartRouter 支持规则引擎、条件匹配、多渠道路由
-- ⏱️ **长任务管理** - LongTaskManager 支持后台任务、进度跟踪、中断恢复
-- 🔌 **MCP 协议** - 完整的 Model Context Protocol 服务端/客户端实现
-- 🗄️ **缓存系统** - CacheManager 支持 Memory/Redis 双后端、LRU 淘汰
-- 🎛️ **模型管理** - ModelManager 支持多模型切换、能力匹配、负载均衡
-- ⏰ **定时任务系统** - 支持 interval/once/cron 三种定时任务类型
-- 🔌 **插件系统** - 可扩展的插件架构，支持生命周期钩子
-- 🌐 **现代化 Web UI** - Vue 3 + TinyVue + Tailwind CSS
-- 🔐 **混合认证** - 本地认证 + OAuth (GitHub/Google/微信/QQ/企业微信)
-- 🛠️ **自动化能力** - 文件操作、浏览器控制、Shell 命令
-- 🐳 **容器隔离** - Docker 容器运行 Agent，支持沙箱模式
-- 🚪 **统一网关** - Gateway 提供 WebSocket 控制平面
-- ⚡ **Bun 运行时** - 使用 Bun 作为主要运行时，Bun.serve() 作为 HTTP 服务
-- 🔥 **Hono 框架** - API 层使用 Hono 替代 Express，轻量高性能
-- 🎭 **Playwright** - 浏览器自动化使用 Playwright 替代 Puppeteer
+### 🤖 统一 AI 接入
+- **Provider 抽象层**：支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 大 AI 服务
+- **Function Calling Loop**：完整的 Agentic 工具执行循环
+- **流式输出**：SSE 流式响应，实时输出
+- **模型路由**：按用途分类（聊天、代码、嵌入等）
+
+### 💬 多端 IM 覆盖
+- **10 个平台**：微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
+- **统一接口**：`IMAdapter` 接口，`createAdapter()` 工厂函数
+- **跨渠道会话**：SessionMapper 实现多平台会话统一映射
+- **智能路由**：SmartRouter 支持规则引擎、条件匹配
+
+### 🧠 Agentic 工具编排
+- **三层架构**：Registry + Planner + Orchestrator
+- **专家 Agent**：7 个专业 Agent（代码、架构、前端、后端等）
+- **40+ 内置工具**：文件操作、浏览器控制、Shell 命令、Web 搜索、LSP 集成
+- **MCP 协议**：完整的 Model Context Protocol 服务端/客户端实现
+
+### 🛠️ 自动化能力
+- **文件系统**：读写、编辑、删除、目录遍历
+- **浏览器控制**：Playwright 驱动，支持截图、点击、表单填写
+- **Shell 命令**：安全执行，支持白名单
+- **代码搜索**：ripgrep 高性能代码搜索
+- **LSP 集成**：7 种操作（定义、引用、补全、诊断等）
+
+### 🔐 认证与安全
+- **混合认证**：本地账号 + OAuth（GitHub、Google、微信、QQ、企业微信）
+- **JWT + Session**：双重认证机制
+- **权限管理**：基于角色的访问控制（RBAC）
+- **容器隔离**：Docker 容器运行 Agent，支持沙箱模式
+
+### 🗄️ 数据与缓存
+- **多数据库**：SQLite（默认）、MySQL、PostgreSQL
+- **Prisma ORM**：类型安全的数据库访问
+- **缓存系统**：Memory/Redis 双后端，LRU 淘汰
+- **定时任务**：interval/once/cron 三种类型
 
 ## 项目结构
 
 ```
 SaCode/
 ├── packages/
-│   ├── core/           # 核心引擎
-│   │   ├── provider/   # AI Provider 抽象层 (OpenAI/Anthropic/DeepSeek/Moonshot/智谱)
-│   │   ├── client/     # SACODEClient (工具执行循环 + Agent 集成)
-│   │   ├── tools/      # 工具桥接层 (内置 + Capabilities + MCP)
-│   │   ├── agent/      # Agent 基础设施 (Registry + Planner + Orchestrator)
-│   │   ├── session/    # 会话管理 + 跨渠道映射
-│   │   ├── router/     # 消息路由 + SmartRouter
-│   │   ├── model/      # 模型管理器
-│   │   ├── cache/      # 缓存层 (Memory + Redis)
-│   │   ├── scheduler/  # 定时任务调度器
-│   │   ├── task/       # 长任务管理器
-│   │   ├── mcp/        # MCP 协议实现
-│   │   ├── streaming/  # 流式输出管理
-│   │   └── plugin/     # 插件系统
-│   │
-│   ├── gateway/        # 统一控制平面
-│   ├── container/      # 容器隔离
-│   ├── adapters/       # IM 适配器 (10 个平台)
-│   ├── database/       # 数据库层 (Prisma)
-│   ├── auth/           # 认证模块
-│   ├── cli/            # 命令行工具 (@cherishron/sacode-cli)
-│   ├── capabilities/   # 自动化能力
-│   ├── api/            # REST API + WebSocket (Hono + Bun.serve())
-│   └── web/            # Web UI (Vue 3 + TinyVue)
+│   ├── core/           # 核心引擎（Provider/Agent/Session/Router/Task/MCP）
+│   ├── cli/            # 命令行工具（Commander.js + React Ink TUI）
+│   ├── api/            # REST API + WebSocket（Hono + Bun.serve()）
+│   ├── web/            # Web UI（Vue 3 + TinyVue + Tailwind CSS）
+│   ├── adapters/       # IM 适配器（10 平台统一接口）
+│   ├── capabilities/   # 自动化能力（文件/浏览器/Shell/Web/LSP/Git）
+│   ├── auth/           # 认证模块（本地认证 + OAuth 5 提供商）
+│   ├── database/       # 数据库层（Prisma ORM + SQLite/MySQL/PostgreSQL）
+│   ├── gateway/        # 统一网关（WebSocket 控制平面）
+│   ├── container/      # 容器隔离（Docker Agent 运行时）
+│   └── types/          # 共享类型定义（无内部依赖）
 │
-├── .sacode/            # 配置目录
-│   ├── commands/       # Slash 命令
-│   ├── plugins/        # 插件目录
-│   └── skills/         # Skills 目录
-│
+├── .sacode/            # 配置目录（commands/plugins/skills）
 ├── docs/               # 文档
 └── docker/             # Docker 配置
 ```

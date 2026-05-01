@@ -22,6 +22,17 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// 从 package.json 读取版本号
+function getPackageVersion(): string {
+  try {
+    const packageJsonPath = resolve(__dirname, "..", "package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+    return packageJson.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 // 加载 .env 文件
 function loadEnv(): void {
   // 查找 .env 文件：当前目录或父目录
@@ -86,7 +97,7 @@ const program = new Command();
 program
   .name("sacode")
   .description("SaCode - 多端 AI 助手命令行工具")
-  .version("0.2.0")
+  .version(getPackageVersion())
   .option("-d, --debug", "启用调试模式")
   .option("-c, --config <path>", "指定配置文件路径");
 

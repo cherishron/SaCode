@@ -224,17 +224,40 @@ export class MemoryManager {
       return [];
     }
 
-    // 简单的关键词匹配（实际应使用 LLM 进行语义搜索）
-    const queryWords = query.toLowerCase().split(/\s+/);
+    // 改进的语义匹配
+    const queryLower = query.toLowerCase();
+    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
     const scored: Array<{ entry: MemoryEntry; score: number }> = [];
+
+    // 类型关键词映射
+    const typeKeywords: Record<string, string[]> = {
+      user: ["用户", "偏好", "设置", "user", "preference"],
+      project: ["项目", "代码", "结构", "project", "code"],
+      feedback: ["反馈", "错误", "问题", "feedback", "error"],
+      reference: ["参考", "文档", "链接", "reference", "doc"],
+      session: ["会话", "对话", "历史", "session", "chat"],
+    };
 
     for (const entry of this.index.entries) {
       const text = `${entry.file} ${entry.summary} ${entry.type}`.toLowerCase();
       let score = 0;
 
+      // 完整查询匹配（权重最高）
+      if (text.includes(queryLower)) {
+        score += 10;
+      }
+
+      // 单词匹配
       for (const word of queryWords) {
         if (text.includes(word)) {
-          score += 1;
+          score += 2;
+        }
+      }
+
+      // 类型匹配
+      for (const [type, keywords] of Object.entries(typeKeywords)) {
+        if (entry.type === type && keywords.some(k => queryLower.includes(k))) {
+          score += 3;
         }
       }
 
@@ -254,7 +277,7 @@ export class MemoryManager {
       const filePath = path.join(this.memoryDir, entry.file);
       if (fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
-        results.push(`## ${entry.file}\n\n${content}`);
+        results.push(`## ${entry.summary}\n\n${content}`);
       }
     }
 
@@ -321,10 +344,14 @@ export class MemoryManager {
 
     const entry = this.index.entries[index];
 
-    // 删除文件
+    // 删除文件（带错误处理）
     const filePath = path.join(this.memoryDir, entry.file);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      console.error(`[Memory] 删除文件失败: ${filePath}`, error);
     }
 
     // 更新索引
@@ -339,12 +366,107 @@ export class MemoryManager {
    * 整合记忆（合并相似记忆）
    */
   async consolidate(): Promise<void> {
-    if (!this.index) return;
+    if (!this.index || this.index.entries.length === 0) return;
 
-    // TODO: 实现 LLM 辅助的记忆整合
-    // 1. 识别相似记忆
-    // 2. 合并内容
-    // 3. 更新索引
+    // 按类型分组
+    const grouped = new Map<MemoryType, MemoryEntry[]>();
+    for (const entry of this.index.entries) {
+      const group = grouped.get(entry.type) ?? [];
+      group.push(entry);
+      grouped.set(entry.type, group);
+    }
+
+    // 合并同类型的相似记忆
+    const newEntries: MemoryEntry[] = [];
+    const merged = new Set<string>();
+
+    for (const [type, entries] of grouped) {
+      if (entries.length <= 1) {
+        newEntries.push(...entries);
+        continue;
+      }
+
+      for (let i = 0; i < entries.length; i++) {
+        if (merged.has(entries[i]!.file)) continue;
+
+        let mergedContent = "";
+        const summaryParts: string[] = [];
+        const filesToMerge: string[] = [];
+
+        for (let j = i; j < entries.length; j++) {
+          if (merged.has(entries[j]!.file)) continue;
+
+          // 相似度检查
+          const similarity = this.calculateSimilarity(
+            entries[i]!.summary,
+            entries[j]!.summary
+          );
+
+          if (similarity > 0.5 || i === j) {
+            const filePath = path.join(this.memoryDir, entries[j]!.file);
+            if (fs.existsSync(filePath)) {
+              const content = fs.readFileSync(filePath, "utf-8");
+              mergedContent += content + "\n\n---\n\n";
+              summaryParts.push(entries[j]!.summary);
+              filesToMerge.push(entries[j]!.file);
+              merged.add(entries[j]!.file);
+            }
+          }
+        }
+
+        if (filesToMerge.length > 1) {
+          // 创建合并后的文件
+          const newFilename = `${type}_consolidated_${Date.now()}.md`;
+          const newPath = path.join(this.memoryDir, newFilename);
+          fs.writeFileSync(newPath, mergedContent, "utf-8");
+
+          // 删除原文件（带错误处理）
+          for (const file of filesToMerge) {
+            const filePath = path.join(this.memoryDir, file);
+            try {
+              if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+              }
+            } catch (error) {
+              // 记录错误但继续处理
+              console.error(`[Memory] 删除文件失败: ${filePath}`, error);
+            }
+          }
+
+          // 添加新条目
+          newEntries.push({
+            file: newFilename,
+            type,
+            summary: summaryParts.join("; "),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+        } else {
+          newEntries.push(entries[i]!);
+        }
+      }
+    }
+
+    // 更新索引
+    this.index.entries = newEntries;
+    this.index.lastUpdated = new Date().toISOString();
+    await this.saveIndex();
+  }
+
+  /**
+   * 计算文本相似度
+   */
+  private calculateSimilarity(text1: string, text2: string): number {
+    const words1 = new Set(text1.toLowerCase().split(/\s+/));
+    const words2 = new Set(text2.toLowerCase().split(/\s+/));
+
+    let intersection = 0;
+    for (const word of words1) {
+      if (words2.has(word)) intersection++;
+    }
+
+    const union = words1.size + words2.size - intersection;
+    return union > 0 ? intersection / union : 0;
   }
 
   /**
@@ -367,11 +489,15 @@ export class MemoryManager {
   async clear(): Promise<void> {
     if (!this.index) return;
 
-    // 删除所有记忆文件
+    // 删除所有记忆文件（带错误处理）
     for (const entry of this.index.entries) {
       const filePath = path.join(this.memoryDir, entry.file);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (error) {
+        console.error(`[Memory] 删除文件失败: ${filePath}`, error);
       }
     }
 

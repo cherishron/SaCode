@@ -31,3 +31,9 @@ export type { ChoicePromptProps, ChoiceOption } from "./ChoicePrompt.js";
 
 export { ConfirmationPrompt } from "./ConfirmationPrompt.js";
 export type { ConfirmationPromptProps } from "./ConfirmationPrompt.js";
+
+// 新增导出组件
+export { StatusBar } from "./StatusBar.js";
+export { StreamingMessage } from "./StreamingMessage.js";
+export { ToolCallPanel } from "./ToolCallPanel.js";
+export { ThinkingIndicator } from "./ThinkingIndicator.js";

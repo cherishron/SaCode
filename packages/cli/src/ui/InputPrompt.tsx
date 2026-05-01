@@ -260,6 +260,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         } else {
           onChange("");
         }
+      } else if (input === "?" && value === "") {
+        // ? 键在输入为空时显示快捷键帮助（由 App 组件处理）
+        // 这里不做任何处理，让事件冒泡到 App 组件
       } else {
         // Show suggestions when typing '/' or when value already starts with '/'
         if (input === "/" || value.startsWith("/")) {
@@ -275,8 +278,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   // 默认占位符
   const defaultPlaceholder = useMemo(() => {
-    if (isLoading) return "Thinking...";
-    return "Type a message or / for commands";
+    if (isLoading) return "思考中...";
+    return "输入消息或 / 获取命令列表";
   }, [isLoading]);
 
   return (

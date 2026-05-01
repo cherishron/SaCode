@@ -155,13 +155,15 @@ export class Coordinator {
    * 将复杂任务分解为可执行的子任务
    */
   private async plan(task: string): Promise<CoordinatorPlan> {
-    // 简单的任务分解逻辑
-    // 实际应该使用 LLM 进行智能分解
-
     const subTasks: SubTask[] = [];
 
-    // 检测任务类型
-    if (task.includes("分析") || task.includes("理解") || task.includes("探索")) {
+    // 更精细的任务类型识别
+    const hasAnalysis = /分析|理解|探索|研究|调查|review|analyze|explore/i.test(task);
+    const hasImplementation = /实现|开发|写|创建|添加|修复|implement|create|add|fix/i.test(task);
+    const hasTesting = /测试|验证|检查|test|verify|check/i.test(task);
+    const hasDocumentation = /文档|说明|记录|document|readme/i.test(task);
+
+    if (hasAnalysis) {
       subTasks.push({
         id: "explore",
         description: `探索和分析: ${task}`,
@@ -170,7 +172,7 @@ export class Coordinator {
       });
     }
 
-    if (task.includes("实现") || task.includes("开发") || task.includes("写代码")) {
+    if (hasImplementation) {
       subTasks.push({
         id: "implement",
         description: `实现功能: ${task}`,
@@ -180,7 +182,7 @@ export class Coordinator {
       });
     }
 
-    if (task.includes("测试") || task.includes("验证")) {
+    if (hasTesting) {
       subTasks.push({
         id: "test",
         description: `测试和验证: ${task}`,
@@ -190,16 +192,15 @@ export class Coordinator {
       });
     }
 
-    if (task.includes("审查") || task.includes("检查")) {
+    if (hasDocumentation) {
       subTasks.push({
-        id: "review",
-        description: `代码审查: ${task}`,
-        agent: "code-reviewer",
-        priority: "medium",
+        id: "document",
+        description: `文档编写: ${task}`,
+        agent: "typescript-pro",
+        priority: "low",
       });
     }
 
-    // 默认任务
     if (subTasks.length === 0) {
       subTasks.push({
         id: "main",
@@ -312,27 +313,45 @@ export class Coordinator {
    * 合成结果
    */
   private async synthesize(
-    task: string,
+    _task: string,
     subResults: Map<string, SubTaskResult>
   ): Promise<string> {
-    // 简单的结果合成
-    // 实际应该使用 LLM 进行智能合成
-
     const parts: string[] = [];
+    const successful: SubTaskResult[] = [];
+    const failed: SubTaskResult[] = [];
 
-    for (const [id, result] of subResults) {
+    for (const [, result] of subResults) {
       if (result.success) {
-        parts.push(`### ${id}\n\n${result.content}`);
+        successful.push(result);
       } else {
-        parts.push(`### ${id} (失败)\n\n错误: ${result.error}`);
+        failed.push(result);
       }
     }
 
-    if (parts.length === 0) {
-      return "任务执行完成，但没有产生结果。";
+    if (successful.length > 0) {
+      parts.push("## 执行结果\n");
+      for (const result of successful) {
+        parts.push(`### ✅ ${result.taskId}\n`);
+        parts.push(result.content);
+        parts.push(`\n*执行时长: ${result.duration}ms*\n`);
+      }
     }
 
-    return parts.join("\n\n---\n\n");
+    if (failed.length > 0) {
+      parts.push("\n## ❌ 失败任务\n");
+      for (const result of failed) {
+        parts.push(`### ${result.taskId}\n`);
+        parts.push(`错误: ${result.error}`);
+        parts.push("");
+      }
+    }
+
+    const maxDuration = subResults.size > 0
+      ? Math.max(...Array.from(subResults.values()).map((r) => r.duration))
+      : 0;
+    parts.push(`\n---\n**统计**: ${successful.length} 成功, ${failed.length} 失败, 总耗时 ${maxDuration}ms`);
+
+    return parts.join("\n");
   }
 }
 

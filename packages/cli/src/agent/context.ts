@@ -114,17 +114,45 @@ export class ContextManager {
   }
 
   /**
-   * 上下文压缩 — 当消息过多时进行摘要
+   * 上下文压缩 — 当消息过多时进行智能摘要
    */
   compactHistory(keepLast: number = 10): void {
     if (this.messages.length <= keepLast) return;
 
+    const toCompress = this.messages.slice(0, -keepLast);
+    const toKeep = this.messages.slice(-keepLast);
+
+    // 提取关键信息
+    const userMsgs = toCompress.filter(m => m.role === "user");
+    const toolResults = toCompress.filter(m => m.role === "tool");
+
+    // 构建智能摘要
+    const summaryParts: string[] = [
+      `[对话历史压缩: ${toCompress.length} 条消息]`,
+    ];
+
+    // 提取用户请求摘要
+    if (userMsgs.length > 0) {
+      const userTopics = userMsgs
+        .map(m => m.content?.slice(0, 100) ?? "")
+        .filter(Boolean)
+        .slice(0, 3);
+      if (userTopics.length > 0) {
+        summaryParts.push(`用户请求: ${userTopics.join("; ")}`);
+      }
+    }
+
+    // 提取工具使用情况
+    if (toolResults.length > 0) {
+      summaryParts.push(`使用了 ${toolResults.length} 次工具`);
+    }
+
     const summary: ConversationMessage = {
       role: "system",
-      content: `[Previous conversation summarized: ${this.messages.length - keepLast} messages compressed]`,
+      content: summaryParts.join("\n"),
     };
 
-    this.messages = [summary, ...this.messages.slice(-keepLast)];
+    this.messages = [summary, ...toKeep];
   }
 
   /**

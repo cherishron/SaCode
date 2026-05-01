@@ -3,14 +3,9 @@
  */
 
 export type CodingPlanProvider =
-  | "aliyun"
-  | "volcengine"
-  | "baidu"
-  | "tencent"
-  | "zhipu"
-  | "minimax"
-  | "ucloud"
-  | "kimi"
+  | "mimo"
+  | "longcat"
+  | "volcark"
   | "custom";
 
 export interface ProviderPreset {

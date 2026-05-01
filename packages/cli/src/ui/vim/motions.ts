@@ -36,7 +36,8 @@ export function executeMotion(
       return Math.min(len, cursor + count);
     case "j":
     case "k":
-      // 简化实现：单行编辑器中上下不移动
+      // 设计决策：单行编辑器中上下移动无意义
+      // 如果未来支持多行编辑器，可以实现行间移动
       return cursor;
     case "w": {
       let pos = cursor;

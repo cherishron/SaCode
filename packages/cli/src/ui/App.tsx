@@ -90,7 +90,7 @@ const ToolCall: React.FC<ToolCallProps> = ({ message, colors }) => {
 const roleLabels: Record<string, { tag: string; color: keyof SemanticColors["text"] }> = {
   user: { tag: "[YOU]", color: "primary" },
   assistant: { tag: "[AI]", color: "accent" },
-  system: { tag: "[SYS]", color: "muted" },
+  system: { tag: "[SA]", color: "muted" },
   tool: { tag: "[T]", color: "secondary" },
 };
 
@@ -260,7 +260,7 @@ const Footer: React.FC<FooterProps> = ({
       <Text color={toInkColor(colors.text.secondary)}>{_model}</Text>
       <Text color={toInkColor(colors.ui.comment)}> · </Text>
       <Text color={toInkColor(colors.text.secondary)}>{contextPercent}% context</Text>
-      {vimMode && (
+      {vimMode && vimMode !== "insert" && (
         <>
           <Text color={toInkColor(colors.ui.comment)}> · </Text>
           <Text color={toInkColor(colors.text.accent)}>{vimMode}</Text>
@@ -313,6 +313,7 @@ interface ChatAppProps {
   sessionStartTime?: number;
   initialWorkMode?: WorkMode;
   onWorkModeChange?: (mode: WorkMode) => void;
+  contextMax?: number;
 }
 
 export const ChatApp: React.FC<ChatAppProps> = ({
@@ -334,6 +335,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   sessionStartTime,
   initialWorkMode = "smart",
   onWorkModeChange,
+  contextMax = 8192,
 }) => {
   const { exit } = useApp();
   const [input, setInput] = useState("");
@@ -343,8 +345,14 @@ export const ChatApp: React.FC<ChatAppProps> = ({
 
   const colors = getColors();
 
+  // 根据项目目录生成唯一的历史文件路径
+  const projectHash = useMemo(() => {
+    const crypto = require("crypto");
+    return crypto.createHash("md5").update(cwd).digest("hex").slice(0, 8);
+  }, [cwd]);
+
   const { history: savedHistory, add: addHistory } = useHistory({
-    filePath: `${process.env.HOME ?? process.env.USERPROFILE ?? "."}/.sacode/chat-history.json`,
+    filePath: `${process.env.HOME ?? process.env.USERPROFILE ?? "."}/.sacode/history/${projectHash}.json`,
     maxSize: 500,
   });
 
@@ -403,6 +411,35 @@ export const ChatApp: React.FC<ChatAppProps> = ({
       if (key.meta && input === "m") {
         cycleWorkMode();
       }
+      // ?: 显示快捷键帮助
+      if (input === "?") {
+        const helpText = [
+          "快捷键帮助:",
+          "",
+          "  ?        - 显示此帮助",
+          "  Esc      - 退出",
+          "  Alt+M    - 切换工作模式",
+          "  Tab      - 切换思考模式",
+          "  ↑↓       - 浏览历史记录",
+          "  Ctrl+R   - 反向搜索",
+          "",
+          "Slash 命令:",
+          "  /help    - 显示所有命令",
+          "  /auth    - 管理账户",
+          "  /models  - 管理模型",
+          "  /theme   - 切换主题",
+          "  /init    - 生成 AGENTS.md",
+        ];
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateId(),
+            role: "system" as const,
+            content: helpText.join("\n"),
+            timestamp: new Date(),
+          },
+        ]);
+      }
     },
     { isActive: !isLoading && !isExiting }
   );
@@ -458,7 +495,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         <StatusRow
           model={model}
           contextTokens={messages.length * 50}
-          contextMax={8192}
+          contextMax={contextMax}
           isLoading={isLoading}
           colors={colors}
         />
@@ -494,7 +531,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         cwd={cwd}
         colors={colors}
         terminalWidth={terminalWidth}
-        contextPercent={messages.length > 0 ? Math.round(((messages.length * 50) / 8192) * 100) : 0}
+        contextPercent={messages.length > 0 ? Math.max(0, 100 - Math.round(((messages.length * 50) / contextMax) * 100)) : 100}
         vimMode="insert"
         gitBranch={gitBranch}
         workMode={workMode}

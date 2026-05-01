@@ -182,9 +182,9 @@ export const BUILTIN_SLASH_COMMANDS: Omit<SlashCommand, "execute">[] = [
     category: "general",
   },
   {
-    name: "model",
+    name: "models",
     aliases: ["m"],
-    description: "切换或查看模型",
+    description: "管理模型（交互式选择）",
     category: "model",
     args: [
       {
@@ -358,17 +358,42 @@ export const BUILTIN_SLASH_COMMANDS: Omit<SlashCommand, "execute">[] = [
     ],
   },
   {
-    name: "providers",
-    aliases: ["p"],
-    description: "管理 AI Provider 配置",
+    name: "auth",
+    description: "管理认证账户（CodingPlan + 环境变量）",
     category: "config",
     args: [
       {
         name: "action",
-        description: "操作: list / add / remove / switch",
+        description: "操作: list / add / env",
         type: "string",
         required: false,
-        choices: ["list", "add", "remove", "switch"],
+        choices: ["list", "add", "env"],
+      },
+    ],
+    flags: [
+      {
+        long: "--provider",
+        short: "-p",
+        description: "厂商 (aliyun/volcengine/baidu/tencent/zhipu/minimax/ucloud/kimi/jdcloud/mimo/longcat/volcark/custom)",
+        type: "string",
+      },
+      {
+        long: "--key",
+        short: "-k",
+        description: "API Key",
+        type: "string",
+      },
+      {
+        long: "--url",
+        short: "-u",
+        description: "自定义 API 端点 (custom 厂商必填)",
+        type: "string",
+      },
+      {
+        long: "--alias",
+        short: "-a",
+        description: "账户别名",
+        type: "string",
       },
     ],
   },

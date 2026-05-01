@@ -205,6 +205,27 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
   }
 
   /**
+   * 更新模型配置
+   *
+   * @param model 新的模型名称
+   * @param baseUrl 可选的新 baseUrl
+   */
+  async updateModel(model: string, baseUrl?: string): Promise<void> {
+    if (this.config.provider) {
+      this.config.provider.model = model;
+      if (baseUrl) {
+        this.config.provider.baseUrl = baseUrl;
+      }
+    }
+
+    // 如果已连接，重新连接以使用新模型
+    if (this.connected) {
+      await this.disconnect();
+      await this.connect();
+    }
+  }
+
+  /**
    * 流式聊天（带工具执行循环）
    */
   async *chat(message: string, sessionId?: string): AsyncGenerator<Message> {

@@ -72,16 +72,38 @@ export interface CompactionResult {
 /**
  * 估算消息的 Token 数
  *
- * 简单估算：约 4 个字符 = 1 Token
+ * 改进的估算：
+ * - 英文：约 4 个字符 = 1 Token
+ * - 中文：约 1.5 个字符 = 1 Token（中文 Token 效率更高）
+ * - 代码：约 3 个字符 = 1 Token
  */
 export function estimateTokens(message: Message): number {
   const content = message.content ?? "";
   const toolCalls = message.toolCalls ?? [];
 
-  let tokens = Math.ceil(content.length / 4);
+  // 更精确的代码检测
+  const hasCodeBlock = content.includes("```");
+  const hasCodePattern = /(?:function|const|let|var|class|import|export|if|for|while|return)\s/.test(content);
+  const hasCode = hasCodeBlock || hasCodePattern;
 
+  // 分离中文和英文字符
+  const chineseChars = (content.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  const englishChars = content.length - chineseChars;
+
+  // 根据内容类型估算
+  let tokens = 0;
+  if (hasCode) {
+    // 代码内容：约 3 字符 = 1 Token
+    tokens = Math.ceil(content.length / 3);
+  } else {
+    // 混合内容：英文 4 字符/Token，中文 1.5 字符/Token
+    tokens = Math.ceil(englishChars / 4) + Math.ceil(chineseChars / 1.5);
+  }
+
+  // Tool calls 额外开销
   for (const tc of toolCalls) {
-    tokens += Math.ceil((tc.function.name + tc.function.arguments).length / 4);
+    const callContent = tc.function.name + tc.function.arguments;
+    tokens += Math.ceil(callContent.length / 4) + 10;
   }
 
   return tokens;
@@ -329,3 +351,52 @@ export class CompactionEngine {
 // ============================================================================
 
 export default CompactionEngine;
+
+/**
+ * 便捷函数：压缩消息列表
+ *
+ * @param messages 消息列表
+ * @param maxTokens 最大 Token 数（默认 128000）
+ * @returns 压缩后的消息列表
+ */
+export async function compactMessages(
+  messages: Message[],
+  maxTokens: number = 128_000
+): Promise<Message[]> {
+  const engine = new CompactionEngine();
+  const currentTokens = estimateTotalTokens(messages);
+
+  if (currentTokens <= maxTokens * 0.8) {
+    return messages;
+  }
+
+  const result = await engine.compact(messages, {
+    maxTokens,
+    currentTokens,
+  });
+
+  // 根据压缩级别处理
+  const ratio = currentTokens / maxTokens;
+
+  if (ratio >= 0.95) {
+    // 截断：只保留最近 20% 的消息
+    const keepCount = Math.ceil(messages.length * 0.2);
+    return messages.slice(-keepCount);
+  } else if (ratio >= 0.9) {
+    // 会话记忆：保留最近 30%
+    const keepCount = Math.ceil(messages.length * 0.3);
+    return messages.slice(-keepCount);
+  } else if (ratio >= 0.85) {
+    // 自动压缩：保留最近 50%
+    const keepCount = Math.ceil(messages.length * 0.5);
+    return messages.slice(-keepCount);
+  } else {
+    // 微压缩：清理旧工具结果
+    return messages.map(m => {
+      if (m.role === "tool" && m.content && m.content.length > 500) {
+        return { ...m, content: "[已压缩: 工具结果]" };
+      }
+      return m;
+    });
+  }
+}

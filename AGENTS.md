@@ -1,6 +1,13 @@
-# SaCode — 多端 AI 助手框架
+# SaCode — 全栈 AI 助手开发框架
 
-> TypeScript Monorepo · Provider 抽象层 · 10 IM 平台 · Agentic 编排
+> 统一 AI 接入 · 多端 IM 覆盖 · Agentic 工具编排 · 现代化技术栈
+
+**SaCode** 是一个企业级 AI 助手开发框架，提供从 CLI 到 Web 再到 IM 的全栈解决方案。
+
+- **统一 AI 接入**：通过 Provider 抽象层无缝对接 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 大 AI 服务
+- **多端 IM 覆盖**：内置 10 个 IM 平台适配器（微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email）
+- **Agentic 工具编排**：Registry + Planner + Orchestrator 三层架构，支持 40+ 内置工具和 MCP 协议扩展
+- **现代化技术栈**：Bun 运行时 + TypeScript 严格模式 + Vue 3 + Hono + Prisma ORM
 
 ---
 
@@ -190,40 +197,6 @@ bun docker:dev          # 启动开发环境 Docker Compose
 
 ---
 
-## 测试
-
-- **框架**: Vitest (根 `vitest.config.ts`)
-- **目录**: `__tests__/` 子目录模式
-- **覆盖率阈值**: 行≥50%, 函数≥50%, 分支≥40%, 语句≥50%
-- **自定义工具**: `tests/setup.ts` — `MockWebSocket`, `createMockMessage`, `createMockSession`
-- **并行**: 线程池 1-4 线程
-- **报告格式**: 默认 + JUnit XML
-- **输出目录**: `./test-results/junit.xml`
-
-缺失测试的包: `web`, `database`, `gateway`
-
----
-
-## Docker
-
-- `docker/api.Dockerfile` — 多阶段构建 (API + Web 目标)
-- `docker/agent.Dockerfile` — 安全隔离 Agent 容器
-- `docker/docker-compose.yml` — 生产部署 (API + Web + Agent + Redis)
-- `docker/docker-compose.dev.yml` — 开发环境叠加
-
----
-
-## CI/CD
-
-- `.github/workflows/ci.yml` — Bun (lint/typecheck/test/build)
-- `.github/workflows/release.yml` — 自动 Docker 镜像构建 + 推送
-- `scripts/build.js` — 清理/构建/验证
-- `scripts/docker-build.js` — 多镜像并行构建
-- `scripts/release.js` — 交互式版本管理 + changelog
-- **Git Hooks**: Husky + lint-staged（提交前自动 lint 和 format）
-
----
-
 ## 反模式警告
 
 - **core 依赖 container** — 非典型，因 core 需要 Docker 隔离
@@ -232,152 +205,6 @@ bun docker:dev          # 启动开发环境 Docker Compose
 - **CLI `@ts-expect-error`** — `agent/context.ts:15` 为 token budget 预留
 - **Redis `@ts-expect-error`** — `cache/redis.ts:121` 因 ioredis 可选依赖
 - **API 使用 Hono** — 替代 Express，更轻量且性能更好
-
----
-
-## 环境变量
-
-关键变量（完整列表见 `.env.example`）：
-
-```env
-# 服务器配置
-PORT=3000
-HOST=localhost
-NODE_ENV=development
-
-# 安全密钥 (生产环境必须设置)
-JWT_SECRET=
-SESSION_SECRET=
-ENCRYPTION_KEY=
-
-# AI Provider (推荐)
-AI_PROVIDER=openai         # openai|anthropic|deepseek|moonshot|zhipu
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o
-
-# 数据库
-DATABASE_TYPE=sqlite       # sqlite|mysql|postgres
-DATABASE_PATH=./data/sacode.db
-
-# Redis 缓存 (可选)
-REDIS_ENABLED=false
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# IM 平台
-TELEGRAM_BOT_TOKEN=
-DISCORD_BOT_TOKEN=
-XIAOYI_AK=
-XIAOYI_SK=
-
-# OAuth
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-WECHAT_APP_ID=
-WECHAT_APP_SECRET=
-QQ_APP_ID=
-QQ_APP_KEY=
-
-# 能力配置
-CAP_FILES_ENABLED=true
-CAP_BROWSER_ENABLED=true
-CAP_SHELL_ENABLED=true
-
-# Web UI
-FRONTEND_URL=http://localhost:5173
-API_BASE_URL=http://localhost:3000
-```
-
----
-
-## 核心特性
-
-### AI Provider 抽象层
-- **支持 5 个主流 AI 提供商**: OpenAI, Anthropic, DeepSeek, Moonshot, 智谱
-- **统一接口**: `createProvider()` 工厂函数，自动路由到不同提供商
-- **流式输出**: 完整支持 SSE 流式响应
-- **模型分类**: 按用途分类路由（聊天、代码、嵌入等）
-
-### 多端 IM 支持
-- **10 个平台**: 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
-- **统一接口**: `IMAdapter` 接口，`createAdapter()` 工厂函数
-- **高级功能**: 钉钉 AI Card 流式输出、Telegram Bot API、Discord Gateway
-
-### Agentic 编排
-- **专家 Agent 系统**: 7 个专业 Agent（代码、架构、前端、后端等）
-- **自主规划**: Ralph 模式自动识别任务类型并规划执行
-- **PCIV 流程**: Prime → Clarify → Implement → Validate 四阶段开发流程
-- **Ultrawork**: 自动化执行循环，Todo 强制执行
-
-### 自动化能力
-- **文件系统**: 读写、编辑、删除、目录遍历
-- **浏览器控制**: Playwright 驱动，支持截图、点击、表单填写
-- **Shell 命令**: 安全执行，支持白名单
-- **Web 搜索**: DuckDuckGo 搜索 + HTTP 客户端
-- **代码搜索**: ripgrep 高性能代码搜索
-- **LSP 集成**: 7 种操作（定义、引用、补全、诊断等）
-- **Git Worktree**: 多分支并行开发支持
-
-### 认证与安全
-- **混合认证**: 本地账号 + OAuth 5 提供商（GitHub、Google、微信、QQ、企业微信）
-- **JWT + Session**: 双重认证机制
-- **权限管理**: 基于角色的访问控制（RBAC）
-- **沙盒模式**: Docker 容器隔离，安全执行危险操作
-
-### 数据库支持
-- **多数据库**: SQLite（默认）、MySQL、PostgreSQL
-- **Prisma ORM**: 类型安全的数据库访问
-- **17 个模型**: 用户、会话、消息、任务、插件等
-- **迁移管理**: 自动化数据库迁移和版本控制
-
-### 插件系统
-- **MCP 协议**: Model Context Protocol 支持
-- **Skill Hub**: 技能注册中心（ClawHub + SkillHub）
-- **热加载**: 动态加载和卸载插件
-- **依赖管理**: 自动解析插件依赖
-
----
-
-## 开发工作流
-
-1. **克隆项目**
-   ```bash
-   git clone https://gitcode.com/STAND-ALONE/SaCode.git
-   cd SaCode
-   ```
-
-2. **安装依赖**
-   ```bash
-   bun install
-   ```
-
-3. **配置环境变量**
-   ```bash
-   cp .env.example .env
-   # 编辑 .env 文件，填入必要的 API 密钥
-   ```
-
-4. **初始化数据库**
-   ```bash
-   bun run --filter @sacode/database db:push
-   ```
-
-5. **启动开发服务器**
-   ```bash
-   # 终端 1: 启动 API
-   bun api
-
-   # 终端 2: 启动 Web UI
-   bun web
-
-   # 终端 3: 启动 CLI
-   bun cli
-   ```
-
-6. **运行测试**
-   ```bash
-   bun test
-   ```
 
 ---
 
