@@ -64,7 +64,7 @@ Agent CLI Shell / Web 管理 / 微信入口 / Webhook API
 ## 项目结构
 
 ```
-SACODE/
+SaCode/
 ├── packages/
 │   ├── core/           # 核心引擎
 │   │   ├── provider/   # AI Provider 抽象层 (OpenAI/Anthropic/DeepSeek/Moonshot/智谱)
@@ -86,12 +86,15 @@ SACODE/
 │   ├── adapters/       # IM 适配器 (10 个平台)
 │   ├── database/       # 数据库层 (Prisma)
 │   ├── auth/           # 认证模块
-│   ├── cli/            # 命令行工具
+│   ├── cli/            # Agent CLI Server 入口
 │   ├── capabilities/   # 自动化能力
 │   ├── api/            # REST API + WebSocket
 │   └── web/            # Web UI (Vue 3 + TinyVue)
 │
-├── .SACODE/            # 配置目录
+├── .sacode/            # 用户级配置 (~/.sacode/)
+│   ├── providers.json  # Provider 和模型配置
+│   ├── agents.json     # Agent 配置与协作开关
+│   ├── preferences.json # 用户偏好与语言配置
 │   ├── commands/       # Slash 命令
 │   ├── plugins/        # 插件目录
 │   └── skills/         # Skills 目录
@@ -113,8 +116,8 @@ SACODE/
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 
 # 安装依赖
 pnpm install
@@ -126,36 +129,28 @@ pnpm --filter @sacode/cli build
 
 ### 配置
 
-优先使用 CLI 初始化最小配置：
+使用 CLI 初始化用户级配置（配置文件存储在 `~/.sacode/`，不依赖项目 `.env`）：
 
 ```bash
-node packages/cli/dist/cli.js config init
+# 初始化 Provider 配置（写入 ~/.sacode/providers.json）
+node packages/cli/dist/cli.js config init --provider openai --model gpt-4o
+
+# 或配置 DeepSeek
+node packages/cli/dist/cli.js config init --provider deepseek --model deepseek-chat --base-url https://api.deepseek.com/v1
+
+# 诊断环境（检查配置是否可用）
 node packages/cli/dist/cli.js doctor
+
+# 配置交互语言
+node packages/cli/dist/cli.js config language zh-CN
 ```
 
-生成的 `.env` 只包含当前 CLI 所需的 Provider 配置。也可以手动编辑 `.env`：
+API Key 通过 shell 环境变量提供，不写入配置文件：
 
-```env
-# ============================================
-# AI Provider 配置
-# ============================================
-# 选择 AI Provider: openai | anthropic | deepseek | moonshot | zhipu
-AI_PROVIDER=openai
-
-# OpenAI 配置
-OPENAI_API_KEY=sk-your-api-key-here
-# OPENAI_BASE_URL=  # 可选，用于代理或自定义端点
-
-# Anthropic 配置 (如果使用 Claude)
-# ANTHROPIC_API_KEY=sk-ant-your-api-key-here
-
-# 模型配置
-OPENAI_MODEL=gpt-4o
-
-# 其他 Provider 示例
-# AI_PROVIDER=deepseek
-# DEEPSEEK_API_KEY=sk-your-api-key-here
-# DEEPSEEK_MODEL=deepseek-chat
+```bash
+export OPENAI_API_KEY=sk-your-api-key-here
+# 或
+export DEEPSEEK_API_KEY=sk-your-api-key-here
 ```
 
 ### 启动
@@ -181,7 +176,7 @@ node packages/cli/dist/cli.js --stream-json "Read package.json"
 
 ```bash
 # 进入 Agent CLI Shell（核心交互方式）
-SACODE
+sacode
 
 # Shell 内可用输入方式
 /help
@@ -189,40 +184,45 @@ SACODE
 /models
 /providers
 /agents
+/agent use coder
+/agent collab on
+/agent dispatch on
+/lang zh-CN
 /tools
 帮我分析这个项目
 
 # 初始化配置
-SACODE config init
+sacode config init --provider openai --model gpt-4o
 
 # 诊断环境
-SACODE doctor
-SACODE doctor --json
+sacode doctor
+sacode doctor --json
 
 # 交互式聊天
-SACODE chat
+sacode chat
 
 # 单次 prompt
-SACODE "帮我分析这个项目"
-SACODE -p "帮我分析这个项目"
+sacode "帮我分析这个项目"
+sacode -p "帮我分析这个项目"
 
 # JSON / NDJSON 输出，供脚本、Web、外部入口复用
-SACODE --json "Say OK"
-SACODE --stream-json "Read package.json"
+sacode --json "Say OK"
+sacode --stream-json "Read package.json"
 
 # 工具管理
-SACODE tool list
-SACODE tool run read_file -P path=package.json limit=5
+sacode tool list
+sacode tool run read_file -P path=package.json limit=5
+
+# 配置交互语言
+sacode config language zh-CN
 
 # 查看配置
-SACODE config list
+sacode config list
 ```
 
-> 发布前命令名会统一为小写 `sacode`；当前源码中的 bin 仍为 `SACODE`。
+### Agent CLI Shell
 
-### Agent CLI Shell 方向
-
-传统子命令会继续保留给脚本和部署诊断，但 SaCode 的核心交互会逐步收敛到 Agent CLI Shell：
+SaCode 的核心交互是 Agent CLI Shell：输入 `sacode` 进入交互式环境，Shell 内支持 slash commands 和自然语言。
 
 ```text
 $ sacode
@@ -234,18 +234,19 @@ Type /help for commands
 
 > /models
 > /model use deepseek/deepseek-coder
-> /agent coder
+> /agent use coder
+> /agent collab on
+> /agent dispatch on
 > 帮我修复当前项目的测试失败
 ```
 
-未来微信、Web 和 Webhook 输入也会复用同一套 slash command router，因此 `/models`、`/agents`、`/doctor` 这类命令在终端和外部入口中应保持一致语义。
+微信、Web 和 Webhook 输入也会复用同一套 slash command router，因此 `/models`、`/agents`、`/doctor` 这类命令在终端和外部入口中应保持一致语义。
 
 ### AI Provider
 
 ```typescript
 import { SACODEClient, createProvider } from "@sacode/core";
 
-// 创建客户端
 const client = new SACODEClient({
   provider: {
     type: "openai",
@@ -389,7 +390,7 @@ scheduler.addTask({
 import { MCPServer } from "@sacode/core";
 
 const mcpServer = new MCPServer({
-  name: "SACODE-mcp",
+  name: "sacode-mcp",
   version: "1.0.0",
 });
 
@@ -408,7 +409,7 @@ mcpServer.registerTool({
 ```typescript
 import { PluginManager } from "@sacode/core";
 
-const manager = new PluginManager({ pluginsDir: "./.SACODE/plugins" });
+const manager = new PluginManager({ pluginsDir: "./.sacode/plugins" });
 await manager.initialize();
 await manager.install("my-plugin", "./plugins/my-plugin");
 await manager.enable("my-plugin");

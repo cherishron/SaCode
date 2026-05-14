@@ -33,7 +33,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 
 ```bash
 # 使用 CLI 连接
-SACODE im connect telegram
+sacode im connect telegram
 
 # 或通过 API
 POST /api/im/connect

@@ -343,19 +343,19 @@ for (const skill of installed) {
 
 ```bash
 # 安装技能
-SACODE skill install weather-api
+sacode skill install weather-api
 
 # 卸载技能
-SACODE skill uninstall weather-api
+sacode skill uninstall weather-api
 
 # 更新技能
-SACODE skill update weather-api
+sacode skill update weather-api
 
 # 列出已安装
-SACODE skill list
+sacode skill list
 
 # 搜索技能
-SACODE skill search weather
+sacode skill search weather
 ```
 
 ## 最佳实践

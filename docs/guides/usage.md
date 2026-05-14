@@ -1,6 +1,6 @@
 # User Manual
 
-> SACODE user guide and documentation
+> SaCode user guide and documentation
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### First Login
 
-1. Open SACODE in your browser (default: http://localhost:5173)
+1. Open SaCode in your browser (default: http://localhost:5173)
 2. Click "Register" to create an account
 3. Enter username, email, and password
 4. Click "Register" button
@@ -131,7 +131,7 @@ The dashboard provides:
 
 ## Keyboard Shortcuts
 
-SACODE 提供全局快捷键支持，提高操作效率。
+SaCode 提供全局快捷键支持，提高操作效率。
 
 ### 显示快捷键帮助
 
@@ -248,7 +248,7 @@ SACODE 提供全局快捷键支持，提高操作效率。
 
 ### 浏览器通知
 
-SACODE 支持浏览器原生通知：
+SaCode 支持浏览器原生通知：
 
 1. 首次访问时会请求通知权限
 2. 允许后，新通知会显示为浏览器通知
@@ -473,7 +473,7 @@ A: For SQLite, copy the database file. For MySQL/PostgreSQL, use standard backup
 
 **Q: Can I self-host?**
 
-A: Yes, SACODE is designed for self-hosting. See installation guide.
+A: Yes, SaCode is designed for self-hosting. See installation guide.
 
 ---
 

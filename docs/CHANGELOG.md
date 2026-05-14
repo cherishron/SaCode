@@ -185,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Project Structure Refactoring**:
   - Created `@sacode/types` shared package to eliminate duplicate type definitions
-  - Merged `javisk/` directory into `.SACODE/` for unified PCIV workflow configuration
+  - Merged `javisk/` directory into `.sacode/` for unified PCIV workflow configuration
   - Refactored `@sacode/container` package with modular architecture:
     - `types.ts` - Container type definitions with Zod schemas
     - `errors.ts` - Container-specific error classes

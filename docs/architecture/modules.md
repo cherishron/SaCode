@@ -1,13 +1,12 @@
 # Module Design
 
-> SACODE - Module Overview and Dependencies
+> SaCode - Module Overview and Dependencies
 
 ---
 
-## 1. Monorepo Structure
+## 1. Overview
 
-```
-SACODE/
+SaCode/
 ├── packages/
 │   ├── types/         # Shared Types
 │   ├── core/          # Core Engine

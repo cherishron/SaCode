@@ -61,8 +61,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/STAND-ALONE/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 
 # 安装依赖
 pnpm install
@@ -71,8 +71,8 @@ pnpm install
 pnpm -C packages/database prisma generate
 pnpm -C packages/database prisma db push
 
-# 复制环境变量
-cp .env.example .env
+# 初始化用户级配置
+node packages/cli/dist/cli.js config init --provider openai --model gpt-4o
 ```
 
 ### 开发命令
@@ -100,20 +100,20 @@ pnpm format                 # Prettier 格式化
 ## 项目结构
 
 ```
-SACODE/
+SaCode/
 ├── packages/
 │   ├── core/           # 核心引擎 - Provider 抽象层
 │   ├── adapters/       # IM 适配器 - 10 个平台
 │   ├── database/       # 数据库层 - Prisma ORM
 │   ├── auth/           # 认证模块 - Passport.js
-│   ├── cli/            # 命令行工具 - Commander.js
+│   ├── cli/            # Agent CLI Server - Commander.js + Ink
 │   ├── capabilities/   # 自动化能力 - 文件/浏览器/Shell
 │   ├── api/            # REST API + WebSocket - Express
 │   └── web/            # Web UI - Vue 3 + Vite + TinyVue
 │
 ├── docs/               # 文档
 ├── tests/              # 测试文件
-├── .SACODE/            # SACODE 配置
+├── .sacode/            # SaCode 用户级配置 (~/.sacode/)
 └── javisk/             # PCIV 工作流模板
 ```
 

@@ -48,7 +48,7 @@ WECHAT_SECRET=your_secret
 
 ```bash
 # 使用 CLI
-SACODE im connect wechat
+sacode im connect wechat
 
 # 或通过 API
 POST /api/im/connect

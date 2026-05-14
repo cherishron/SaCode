@@ -26,13 +26,11 @@ name: "Setup"
 
 ### 2. 配置 iFlow SDK
 
-引导用户配置 `.env` 文件：
+引导用户配置 Provider 和偏好（写入 `~/.sacode/`）：
 
-```env
-# iFlow SDK 配置
-IFLOW_ACP_URL=ws://localhost:8090/acp
-IFLOW_AUTO_START=true
-IFLOW_TIMEOUT=60000
+```bash
+sacode config init --provider openai --model gpt-4o
+sacode config language zh-CN
 
 # 数据库配置
 DATABASE_TYPE=sqlite
