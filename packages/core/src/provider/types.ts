@@ -101,6 +101,8 @@ export interface ChatMessage {
   name?: string | undefined;
   /** 工具调用 ID（tool 角色时必需） */
   tool_call_id?: string | undefined;
+  /** 工具调用（assistant 角色触发工具时使用） */
+  tool_calls?: ToolCall[] | undefined;
 }
 
 /**

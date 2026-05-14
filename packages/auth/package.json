@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/auth",
+  "name": "@sacode/auth",
   "version": "0.1.0",
   "description": "SACODE 认证模块 - 混合认证与 OAuth 集成",
   "type": "module",
@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@SACODE/database": "workspace:*",
+    "@sacode/database": "workspace:*",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "passport": "^0.7.0",

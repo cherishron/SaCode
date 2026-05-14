@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Provider Abstraction Layer (@SACODE/core/provider)
+#### Provider Abstraction Layer (@sacode/core/provider)
 
 - `Provider` interface - Unified AI provider abstraction
 - `OpenAIProvider` - OpenAI GPT models support (gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Streaming response support for all providers
 - Error handling with retry mechanism
 
-#### ToolBridge (@SACODE/core/tools)
+#### ToolBridge (@sacode/core/tools)
 
 - `ToolBridge` - Unified tool management layer
 - `ToolRegistry` - Centralized tool registration with Zod schema support
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zod to JSON Schema conversion for tool parameters
 - Tool execution with timeout and error handling
 
-#### Agent Infrastructure (@SACODE/core/agent)
+#### Agent Infrastructure (@sacode/core/agent)
 
 - `AgentRegistry` - Agent management with 4 default agents:
   - `general` - General-purpose assistant
@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **JWT Authentication Fix** - Critical security vulnerability resolved
   - Fixed token verification bypass in API routes where `verifyToken: (token) => ({ userId: token })` allowed any token to access the system
-  - Created unified authentication middleware (`@SACODE/api/src/middleware/auth.ts`) using `LocalAuthService` with proper JWT verification
+  - Created unified authentication middleware (`@sacode/api/src/middleware/auth.ts`) using `LocalAuthService` with proper JWT verification
   - Updated 11 API route files to use the secure shared middleware
 
 - **OAuth State Persistence** - Production-ready OAuth flow
@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Auto-cleanup of expired states (5-minute TTL)
 
 - **Sensitive Data Encryption** - AES-256-GCM encryption for secrets
-  - Created `@SACODE/api/src/utils/encryption.ts` with proper cryptographic implementation
+  - Created `@sacode/api/src/utils/encryption.ts` with proper cryptographic implementation
   - Replaced insecure Base64 encoding with AES-256-GCM authenticated encryption
   - Uses scrypt for key derivation with random IV per encryption
   - Backward compatible with legacy Base64 format (auto-migration)
@@ -134,8 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `OAuthState` Prisma model for OAuth state persistence
-- `@SACODE/api/src/middleware/auth.ts` - Shared authentication middleware
-- `@SACODE/api/src/utils/encryption.ts` - AES-256-GCM encryption utilities
+- `@sacode/api/src/middleware/auth.ts` - Shared authentication middleware
+- `@sacode/api/src/utils/encryption.ts` - AES-256-GCM encryption utilities
 - `ENCRYPTION_KEY` environment variable in `.env.example`
 
 ### Files Modified
@@ -171,7 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **@SACODE/types** - Shared types package for cross-package type definitions
+- **@sacode/types** - Shared types package for cross-package type definitions
   - Multimedia message types (ImageContent, AudioContent, VideoContent, etc.)
   - IM adapter types (Platform, IMConfig, IMMessage, IMAdapter, etc.)
   - Type guards for content validation
@@ -184,9 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Project Structure Refactoring**:
-  - Created `@SACODE/types` shared package to eliminate duplicate type definitions
+  - Created `@sacode/types` shared package to eliminate duplicate type definitions
   - Merged `javisk/` directory into `.SACODE/` for unified PCIV workflow configuration
-  - Refactored `@SACODE/container` package with modular architecture:
+  - Refactored `@sacode/container` package with modular architecture:
     - `types.ts` - Container type definitions with Zod schemas
     - `errors.ts` - Container-specific error classes
     - `docker-runner.ts` - Docker/Podman runtime abstraction
@@ -203,7 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Core Module (@SACODE/core)
+#### Core Module (@sacode/core)
 
 - `SACODEClient` - iFlow SDK client wrapper with ACP protocol support
 - `SessionManager` - Session lifecycle management
@@ -222,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamingManager` - Streaming response management
 - `ModelManager` - Multi-model support with auto-switching
 
-#### Adapters (@SACODE/adapters)
+#### Adapters (@sacode/adapters)
 
 - `WechatAdapter` - WeChat adapter (WebSocket)
 - `QQAdapter` - QQ adapter (OneBot protocol)
@@ -235,7 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SlackAdapter` - Slack Web API adapter
 - `EmailAdapter` - Email adapter (IMAP + SMTP)
 
-#### Authentication (@SACODE/auth)
+#### Authentication (@sacode/auth)
 
 - `LocalAuthService` - Local authentication with bcrypt + JWT
 - OAuth providers:
@@ -246,7 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `WeWorkOAuthService`
 - Authentication middleware for Express
 
-#### Database (@SACODE/database)
+#### Database (@sacode/database)
 
 - Prisma ORM integration
 - Multi-database support (SQLite/MySQL/PostgreSQL)
@@ -255,7 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - IMConnection, Plugin, SystemConfig
   - CronTask, SessionMapping
 
-#### API (@SACODE/api)
+#### API (@sacode/api)
 
 - REST API endpoints:
   - Authentication (`/api/auth/*`)
@@ -265,7 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Plugins (`/api/plugins`)
 - WebSocket support for real-time communication
 
-#### Web UI (@SACODE/web)
+#### Web UI (@sacode/web)
 
 - Vue 3 + Vite + TinyVue frontend
 - Pages:
@@ -277,7 +277,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dark mode support
 - Responsive design
 
-#### CLI (@SACODE/cli)
+#### CLI (@sacode/cli)
 
 - Commander.js based CLI tool
 - Commands:
@@ -288,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `plugin` - Plugin management
   - `tool` - Tool execution
 
-#### Capabilities (@SACODE/capabilities)
+#### Capabilities (@sacode/capabilities)
 
 - File operations (read/write/list/search)
 - Browser automation (Puppeteer)

@@ -1,5 +1,6 @@
 import chalk from "chalk";
-import { getPreferenceManager, type UserPreferences } from "@SACODE/core";
+import { getPreferenceManager, type UserPreferences } from "@sacode/core";
+import { initUserConfig, isSupportedProvider, type SupportedProvider } from "../lib/config-init.js";
 
 // 简单的内存配置存储（环境变量）
 const envConfig = new Map<string, string>([
@@ -56,6 +57,30 @@ export async function listConfig(): Promise<void> {
   console.log(chalk.gray(`\n配置文件位置: ${prefManager.getConfigPath()}`));
 }
 
+export async function initConfig(options: {
+  provider?: string;
+  model?: string;
+  apiKeyEnv?: string;
+  baseUrl?: string;
+} = {}): Promise<void> {
+  const provider = options.provider ?? "openai";
+  if (!isSupportedProvider(provider)) {
+    console.log(chalk.red(`不支持的 provider: ${provider}`));
+    console.log(chalk.gray("支持: openai, anthropic, deepseek, moonshot, zhipu"));
+    return;
+  }
+
+  const result = await initUserConfig({
+    provider: provider as SupportedProvider,
+    model: options.model,
+    baseUrl: options.baseUrl,
+    apiKeyEnv: options.apiKeyEnv,
+  });
+
+  console.log(chalk.green(`已更新用户级 Provider 配置: ${result.path}`));
+  console.log(chalk.gray(`请在 shell 环境中设置 ${result.apiKeyEnv} 后运行: sacode doctor`));
+}
+
 export async function setConfig(key: string, value: string): Promise<void> {
   // 检查是否是偏好设置
   const prefKey = preferenceKeyMap[key];
@@ -96,7 +121,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
     // 环境变量配置（仅内存）
     envConfig.set(key, value);
     console.log(chalk.green(`✓ 已设置 ${key} = ${value}`));
-    console.log(chalk.yellow("⚠ 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
+    console.log(chalk.yellow("此配置仅在当前进程有效；模型和语言等持久配置请使用用户级配置命令。"));
   }
 }
 
@@ -117,6 +142,28 @@ export async function getConfig(key: string): Promise<void> {
       console.log(chalk.yellow(`配置项 '${key}' 未找到`));
     }
   }
+}
+
+export async function configureLanguage(language?: string): Promise<void> {
+  const prefManager = getPreferenceManager();
+  prefManager.load();
+  if (!language) {
+    console.log(`language: ${chalk.gray(prefManager.get("language"))}`);
+    console.log(`resolved: ${chalk.gray(prefManager.getResolvedLanguage())}`);
+    console.log(chalk.gray(`配置文件位置: ${prefManager.getConfigPath()}`));
+    return;
+  }
+
+  const validLangs = ["zh-CN", "en-US", "ja-JP", "ko-KR", "auto"];
+  if (!validLangs.includes(language)) {
+    console.log(chalk.red(`无效的语言: ${language}`));
+    console.log(chalk.gray(`支持的语言: ${validLangs.join(", ")}`));
+    return;
+  }
+
+  prefManager.set("language", language as UserPreferences["language"]);
+  console.log(chalk.green(`language 已设置为 ${language}`));
+  console.log(chalk.gray(`配置已保存到: ${prefManager.getConfigPath()}`));
 }
 
 export function getConfigValue(key: string): string | undefined {

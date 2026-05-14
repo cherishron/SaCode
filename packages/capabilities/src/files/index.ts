@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import { glob } from "glob";
 import type {
   ToolDefinition,
@@ -8,7 +9,7 @@ import type {
   SearchFilesInput,
   FilesCapabilityConfig,
 } from "../types";
-import { createEditFileTool, createDeleteFileTool } from "./edit";
+import { createEditFileTool } from "./edit";
 
 export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
@@ -31,12 +32,7 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
       }
 
       const { path, limit, offset = 0 } = input as ReadFileInput;
-
-      // 检查路径是否在允许目录内
-      const isAllowed = config.allowedDirs.some((dir) => path.startsWith(dir));
-      if (!isAllowed && config.allowedDirs.length > 0) {
-        throw new Error(`Path not in allowed directories: ${path}`);
-      }
+      await ensureAllowedPath(path, config.allowedDirs);
 
       const content = await fs.readFile(path, "utf-8");
 
@@ -69,12 +65,7 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
         }
 
         const { path, content } = input as WriteFileInput;
-
-        // 检查路径是否在允许目录内
-        const isAllowed = config.allowedDirs.some((dir) => path.startsWith(dir));
-        if (!isAllowed && config.allowedDirs.length > 0) {
-          throw new Error(`Path not in allowed directories: ${path}`);
-        }
+        await ensureAllowedPath(path, config.allowedDirs, { allowMissingTarget: true });
 
         await fs.writeFile(path, content, "utf-8");
         return { success: true, path };
@@ -85,11 +76,6 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
   // edit_file
   if (!config.readOnly) {
     tools.push(createEditFileTool(config));
-  }
-
-  // delete_file
-  if (!config.readOnly) {
-    tools.push(createDeleteFileTool(config));
   }
 
   // list_directory
@@ -110,6 +96,7 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
       }
 
       const { path, recursive = false } = input as ListDirectoryInput;
+      await ensureAllowedPath(path, config.allowedDirs);
 
       const entries = await fs.readdir(path, { withFileTypes: true, recursive });
 
@@ -139,6 +126,7 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
       }
 
       const { pattern, path = "." } = input as SearchFilesInput;
+      await ensureAllowedPath(path, config.allowedDirs);
 
       const files = await glob(pattern, { cwd: path });
       return files;
@@ -146,4 +134,28 @@ export function createFileTools(config: FilesCapabilityConfig): ToolDefinition[]
   });
 
   return tools;
+}
+
+async function ensureAllowedPath(
+  targetPath: string,
+  allowedDirs: string[],
+  options: { allowMissingTarget?: boolean } = {}
+): Promise<void> {
+  if (allowedDirs.length === 0) return;
+
+  const resolvedTarget = path.resolve(targetPath);
+  const targetToCheck = options.allowMissingTarget
+    ? path.dirname(resolvedTarget)
+    : resolvedTarget;
+  const realTarget = await fs.realpath(targetToCheck);
+
+  for (const dir of allowedDirs) {
+    const realAllowed = await fs.realpath(path.resolve(dir));
+    const relative = path.relative(realAllowed, realTarget);
+    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return;
+    }
+  }
+
+  throw new Error(`Path not in allowed directories: ${targetPath}`);
 }

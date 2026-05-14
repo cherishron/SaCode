@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/container",
+  "name": "@sacode/container",
   "version": "0.1.0",
   "description": "SACODE 容器隔离模块 - Docker容器运行Agent",
   "type": "module",

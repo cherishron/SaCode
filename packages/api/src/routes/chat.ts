@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { SACODEClient } from "@SACODE/core";
-import { getPrismaClient } from "@SACODE/database";
+import { SACODEClient } from "@sacode/core";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();

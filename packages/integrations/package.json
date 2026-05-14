@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/integrations",
+  "name": "@sacode/integrations",
   "version": "0.1.0",
   "description": "GitHub, GitLab, and other platform integrations for SACODE",
   "type": "module",

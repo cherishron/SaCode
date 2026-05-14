@@ -53,10 +53,10 @@ export interface SACODEClientOptions extends Partial<IFlowConfig> {
     type: ProviderConfig["type"];
     apiKey: string;
     model?: string;
-    baseUrl?: string;
-    timeout?: number;
-    maxRetries?: number;
-    debug?: boolean;
+    baseUrl?: string | undefined;
+    timeout?: number | undefined;
+    maxRetries?: number | undefined;
+    debug?: boolean | undefined;
   };
   /** 工具桥接层配置 */
   toolBridge?: ToolBridgeConfig;
@@ -276,7 +276,7 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
               this.messageHistory.push({
                 role: "assistant",
                 content: assistantContent || null,
-                // 注：部分 AI SDK 需要单独处理 tool_calls
+                tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
               } as ChatMessage);
             }
             break;
@@ -291,13 +291,6 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
 
           // 执行所有工具调用
           const results = await this.executeToolCalls(toolCalls);
-
-          // 添加助手消息（包含工具调用）
-          // OpenAI 需要先添加 assistant 消息，包含 tool_calls
-          if (toolCalls.length > 0) {
-            // 修正：更新上一条 assistant 消息，添加 tool_calls 信息
-            // 由于我们的简化实现，直接添加工具结果
-          }
 
           // 添加工具结果到消息历史（使用 tool 角色）
           for (const result of results) {

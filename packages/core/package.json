@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/core",
+  "name": "@sacode/core",
   "version": "0.2.0",
   "description": "SACODE 核心引擎 - Provider 抽象层与会话管理",
   "type": "module",
@@ -17,12 +17,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:src": "tsc --noEmit -p tsconfig.src.json"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@SACODE/container": "workspace:*",
-    "@SACODE/types": "workspace:*",
+    "@sacode/container": "workspace:*",
+    "@sacode/types": "workspace:*",
     "eventemitter3": "^5.0.1",
     "execa": "^9.5.2",
     "openai": "^4.85.0",

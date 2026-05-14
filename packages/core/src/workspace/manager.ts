@@ -264,7 +264,7 @@ export class WorkspaceManager {
       return null;
     }
 
-    // TODO: 集成 @SACODE/container
+    // TODO: 集成 @sacode/container
     // 这里需要导入ContainerManager并执行命令
     // 使用execOptions来配置容器执行参数
     // 暂时返回null，后续完成container集成后再实现

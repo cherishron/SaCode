@@ -314,7 +314,7 @@ export function renderProgress(current: number, total: number, label: string): s
  */
 export function renderWelcome(): string {
   const lines = [
-    chalk.cyan("\n🦞 SACODE - 多端 AI 助手"),
+    chalk.cyan("\nSaCode - 多端 AI 助手"),
     chalk.gray("─".repeat(30)),
     chalk.gray("输入消息开始对话，输入 'exit' 退出"),
     chalk.gray("输入 '/help' 查看可用命令"),
@@ -335,5 +335,5 @@ export function renderPrompt(): string {
  * 渲染 AI 响应前缀
  */
 export function renderAssistantPrefix(): string {
-  return chalk.cyan("SACODE: ");
+  return chalk.cyan("sacode: ");
 }

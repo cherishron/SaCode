@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/types",
+  "name": "@sacode/types",
   "version": "1.0.0",
   "description": "SACODE shared type definitions",
   "type": "module",

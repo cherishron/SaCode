@@ -375,6 +375,9 @@ export {
   convertMCPTools,
   toProviderToolDefinitions,
   BUILTIN_TOOLS,
+  ToolConfirmationManager,
+  createToolConfirmationManager,
+  DEFAULT_CONFIRMATION_CONFIG,
   getBuiltinToolNames,
   getBuiltinTool,
   isBuiltinTool,
@@ -393,6 +396,11 @@ export type {
   ToolCallPlan,
   ToolOrchestrationResult,
   ToolDefinitionConverter,
+  ConfirmationMode,
+  ConfirmationRequest,
+  ConfirmationResponse,
+  ConfirmationConfig,
+  ConfirmationEvents,
 } from "./tools";
 
 // Agent (Agentic 规划与编排)

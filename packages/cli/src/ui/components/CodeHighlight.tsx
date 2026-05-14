@@ -71,7 +71,7 @@ const hljsClassToSemantic: Record<string, keyof SyntaxColors> = {
   "hljs-emphasis": "variable",
   "hljs-strong": "keyword",
   "hljs-formula": "string",
-  "hljs-link": "link",
+  "hljs-link": "string",
   "hljs-selector-tag": "tag",
   "hljs-selector-id": "attributeName",
   "hljs-selector-class": "attributeName",

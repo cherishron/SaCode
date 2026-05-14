@@ -10,8 +10,8 @@ import {
   WeWorkOAuthService,
   LocalAuthService,
   type UserWithPassword,
-} from "@SACODE/auth";
-import { getPrismaClient } from "@SACODE/database";
+} from "@sacode/auth";
+import { getPrismaClient } from "@sacode/database";
 import { randomBytes } from "crypto";
 
 const router = Router();

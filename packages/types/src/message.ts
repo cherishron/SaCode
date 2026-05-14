@@ -2,7 +2,7 @@
  * SACODE Shared Types - 多媒体消息类型
  *
  * 此模块定义了跨包共享的多媒体消息类型。
- * 用于 @SACODE/core 和 @SACODE/adapters。
+ * 用于 @sacode/core 和 @sacode/adapters。
  */
 
 // ============================================================================

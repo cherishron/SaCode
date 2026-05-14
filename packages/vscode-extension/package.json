@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/vscode-extension",
+  "name": "@sacode/vscode-extension",
   "displayName": "SACODE - AI Assistant",
   "description": "SACODE AI Assistant integration for VS Code",
   "version": "0.1.0",

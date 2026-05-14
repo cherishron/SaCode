@@ -1,11 +1,29 @@
-# SACODE - 多端 AI 助手框架
+# SaCode - 可部署的 Agent CLI Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
 [![Test Coverage](https://img.shields.io.io/badge/tests-174%20passed-brightgreen)](./vitest.config.ts)
 
-基于 Provider 抽象层的多平台 AI 助手框架，支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱等 AI 服务，以及微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email 等 10 个 IM 平台。
+SaCode 的最终产品形态是可部署的 Agent CLI Server：CLI 是主程序、控制面和执行器。核心体验是输入 `sacode` 进入 Agent CLI Shell，在 Shell 内通过 `/models`、`/providers`、`/agents`、`/doctor` 等 slash commands 或自然语言完成配置、诊断和任务执行。后续 Web 管理、微信入口、Webhook/API 会复用同一套命令路由、权限、审计和工具执行边界。
+
+SaCode 基于 Provider 抽象层，支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱等 AI 服务；长期会通过可配置入口接入微信、Web 管理和其他 IM/Webhook 平台，让用户可以在终端或外部对话窗口中指挥同一个 CLI Agent 工作。
+
+## 产品定位
+
+```text
+Agent CLI Shell / Web 管理 / 微信入口 / Webhook API
+              ↓
+        SaCode CLI Server
+              ↓
+ Slash Commands + Natural Language Agent
+              ↓
+ Provider + Models + Agents + Tools + Permissions + Audit
+```
+
+- **当前阶段**：优先打磨 `sacode` Agent CLI Shell，确保配置、诊断、聊天、工具、JSON 事件流和安全审批可靠。
+- **后续阶段**：通过 `sacode serve` 扩展 HTTP API、Web 管理、微信/Webhook 入口。
+- **安全边界**：外部入口必须通过正常服务/API/Webhook/Adapter 接入，不把运行环境当作隧道或中转节点；所有入口共用权限、审批和审计规则。
 
 ## 文档
 
@@ -19,11 +37,16 @@
 
 ## 特性
 
-- 🤖 **Provider 抽象层** - 支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 个 AI 服务
-- 🔄 **Function Calling Loop** - 完整的 Agentic 工具执行循环
-- 🛠️ **工具桥接层** - 统一管理内置工具、Capabilities 工具、MCP 工具
+- **可部署 CLI Server** - CLI 是主程序和执行器，后续通过 `sacode serve` 暴露 Web/API/微信入口
+- **Agent CLI Shell** - 输入 `sacode` 进入交互式 Shell，支持 slash commands 和自然语言任务
+- **CLI 主链路** - 支持 `doctor`、`config init`、单次 prompt、TUI、JSON/NDJSON 输出和工具运行
+- **可配置模型系统** - 规划支持 Provider -> 接入方式 -> 多模型列表，并可一键测试模型
+- **多 Agent 协作** - 规划支持不同 Agent 使用不同模型、权限和工具，并支持子 Agent 调度
+- **Provider 抽象层** - 支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 个 AI 服务
+- **Function Calling Loop** - 完整的 Agentic 工具执行循环
+- **工具桥接层** - 统一管理内置工具、Capabilities 工具、MCP 工具
 - 🧠 **Agent 基础设施** - Registry + Planner + Orchestrator 实现 Agentic 规划
-- 💬 **多端 IM 支持** - 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
+- **外部入口规划** - 微信、Web 管理、Webhook/API 等入口通过配置接入 CLI Server
 - 🔗 **跨渠道会话管理** - SessionMapper 实现多平台会话统一映射
 - 🧭 **智能路由** - SmartRouter 支持规则引擎、条件匹配、多渠道路由
 - ⏱️ **长任务管理** - LongTaskManager 支持后台任务、进度跟踪、中断恢复
@@ -32,11 +55,11 @@
 - 🎛️ **模型管理** - ModelManager 支持多模型切换、能力匹配、负载均衡
 - ⏰ **定时任务系统** - 支持 interval/once/cron 三种定时任务类型
 - 🔌 **插件系统** - 可扩展的插件架构，支持生命周期钩子
-- 🌐 **现代化 Web UI** - Vue 3 + TinyVue + Tailwind CSS
-- 🔐 **混合认证** - 本地认证 + OAuth (GitHub/Google/微信/QQ/企业微信)
-- 🛠️ **自动化能力** - 文件操作、浏览器控制、Shell 命令
-- 🐳 **容器隔离** - Docker 容器运行 Agent，支持沙箱模式
-- 🚪 **统一网关** - Gateway 提供 WebSocket 控制平面
+- **现代化 Web UI** - Vue 3 + TinyVue + Tailwind CSS，后续作为 CLI Server 的管理界面
+- **混合认证** - 本地认证 + OAuth (GitHub/Google/微信/QQ/企业微信)
+- **自动化能力** - 文件操作、浏览器控制、Shell 命令
+- **容器隔离** - Docker 容器运行 Agent，支持沙箱模式
+- **统一网关** - Gateway 提供 WebSocket 控制平面
 
 ## 项目结构
 
@@ -83,7 +106,8 @@ SACODE/
 
 - Node.js 22+
 - pnpm 9+
-- 数据库 (SQLite/MySQL/PostgreSQL)
+- CLI 核心功能只需要可用的 AI Provider API Key
+- Web/API/微信入口等服务端能力后续需要数据库与服务配置
 
 ### 安装
 
@@ -95,17 +119,21 @@ cd SACODE
 # 安装依赖
 pnpm install
 
-# 初始化数据库
-pnpm -C packages/database prisma generate
-pnpm -C packages/database prisma db push
-
-# 复制环境变量
-cp .env.example .env
+# 构建 core/cli 主链路
+pnpm --filter @sacode/core build
+pnpm --filter @sacode/cli build
 ```
 
 ### 配置
 
-编辑 `.env` 文件：
+优先使用 CLI 初始化最小配置：
+
+```bash
+node packages/cli/dist/cli.js config init
+node packages/cli/dist/cli.js doctor
+```
+
+生成的 `.env` 只包含当前 CLI 所需的 Provider 配置。也可以手动编辑 `.env`：
 
 ```env
 # ============================================
@@ -121,59 +149,30 @@ OPENAI_API_KEY=sk-your-api-key-here
 # Anthropic 配置 (如果使用 Claude)
 # ANTHROPIC_API_KEY=sk-ant-your-api-key-here
 
-# 通用 AI 配置
-AI_MODEL=gpt-4o
-AI_TIMEOUT=60000
+# 模型配置
+OPENAI_MODEL=gpt-4o
 
-# 工具循环配置
-MAX_TOOL_LOOP_ITERATIONS=10
-
-# Agentic 规划配置
-ENABLE_AGENTIC_PLANNING=true
-
-# ============================================
-# 数据库配置
-# ============================================
-DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/SACODE.db
-
-# ============================================
-# 缓存配置 (可选)
-# ============================================
-CACHE_BACKEND=memory  # memory | redis
-# REDIS_URL=redis://localhost:6379
-
-# ============================================
-# IM 平台配置
-# ============================================
-# Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-
-# 小艺 (华为)
-XIAOYI_AK=your_access_key
-XIAOYI_SK=your_secret_key
-XIAOYI_AGENT_ID=your_agent_id
-
-# Discord
-DISCORD_BOT_TOKEN=your_bot_token
-
-# ============================================
-# OAuth 配置 (可选)
-# ============================================
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
+# 其他 Provider 示例
+# AI_PROVIDER=deepseek
+# DEEPSEEK_API_KEY=sk-your-api-key-here
+# DEEPSEEK_MODEL=deepseek-chat
 ```
 
 ### 启动
 
 ```bash
-# 开发模式
-pnpm dev
+# 诊断 CLI 环境
+node packages/cli/dist/cli.js doctor
 
-# 或分别启动各服务
-pnpm api              # API 服务
-pnpm web              # Web UI
-pnpm cli              # 命令行工具
+# 单次任务
+node packages/cli/dist/cli.js "请总结这个项目"
+
+# 进入 Agent CLI Shell
+node packages/cli/dist/cli.js
+
+# 结构化输出
+node packages/cli/dist/cli.js --json "Say OK"
+node packages/cli/dist/cli.js --stream-json "Read package.json"
 ```
 
 ## 使用
@@ -181,24 +180,70 @@ pnpm cli              # 命令行工具
 ### CLI
 
 ```bash
+# 进入 Agent CLI Shell（核心交互方式）
+SACODE
+
+# Shell 内可用输入方式
+/help
+/doctor
+/models
+/providers
+/agents
+/tools
+帮我分析这个项目
+
+# 初始化配置
+SACODE config init
+
+# 诊断环境
+SACODE doctor
+SACODE doctor --json
+
 # 交互式聊天
 SACODE chat
 
-# 发送单条消息
-SACODE chat -m "你好"
+# 单次 prompt
+SACODE "帮我分析这个项目"
+SACODE -p "帮我分析这个项目"
+
+# JSON / NDJSON 输出，供脚本、Web、外部入口复用
+SACODE --json "Say OK"
+SACODE --stream-json "Read package.json"
+
+# 工具管理
+SACODE tool list
+SACODE tool run read_file -P path=package.json limit=5
 
 # 查看配置
 SACODE config list
-
-# 管理 IM 连接
-SACODE im list
-SACODE im connect telegram
 ```
+
+> 发布前命令名会统一为小写 `sacode`；当前源码中的 bin 仍为 `SACODE`。
+
+### Agent CLI Shell 方向
+
+传统子命令会继续保留给脚本和部署诊断，但 SaCode 的核心交互会逐步收敛到 Agent CLI Shell：
+
+```text
+$ sacode
+
+SaCode Agent CLI
+Workspace: /path/to/project
+Model: deepseek/deepseek-chat
+Type /help for commands
+
+> /models
+> /model use deepseek/deepseek-coder
+> /agent coder
+> 帮我修复当前项目的测试失败
+```
+
+未来微信、Web 和 Webhook 输入也会复用同一套 slash command router，因此 `/models`、`/agents`、`/doctor` 这类命令在终端和外部入口中应保持一致语义。
 
 ### AI Provider
 
 ```typescript
-import { SACODEClient, createProvider } from "@SACODE/core";
+import { SACODEClient, createProvider } from "@sacode/core";
 
 // 创建客户端
 const client = new SACODEClient({
@@ -254,7 +299,7 @@ client.registerTool(
 ### 智能路由
 
 ```typescript
-import { SmartRouter } from "@SACODE/core";
+import { SmartRouter } from "@sacode/core";
 
 const router = new SmartRouter();
 
@@ -275,7 +320,7 @@ const result = router.evaluate({ user: { tier: "vip" } });
 ### 长任务管理
 
 ```typescript
-import { LongTaskManager } from "@SACODE/core";
+import { LongTaskManager } from "@sacode/core";
 
 const taskManager = new LongTaskManager();
 
@@ -297,7 +342,7 @@ const task = await taskManager.createTask("analysis", { data: "..." });
 ### 缓存管理
 
 ```typescript
-import { CacheManager } from "@SACODE/core";
+import { CacheManager } from "@sacode/core";
 
 const cache = new CacheManager({
   backend: "memory",
@@ -313,7 +358,7 @@ const value = await cache.getOrSet("user:123", async () => {
 ### 定时任务
 
 ```typescript
-import { TaskScheduler } from "@SACODE/core";
+import { TaskScheduler } from "@sacode/core";
 
 const scheduler = new TaskScheduler();
 
@@ -341,7 +386,7 @@ scheduler.addTask({
 ### MCP 协议
 
 ```typescript
-import { MCPServer } from "@SACODE/core";
+import { MCPServer } from "@sacode/core";
 
 const mcpServer = new MCPServer({
   name: "SACODE-mcp",
@@ -361,7 +406,7 @@ mcpServer.registerTool({
 ### 插件系统
 
 ```typescript
-import { PluginManager } from "@SACODE/core";
+import { PluginManager } from "@sacode/core";
 
 const manager = new PluginManager({ pluginsDir: "./.SACODE/plugins" });
 await manager.initialize();
@@ -447,16 +492,16 @@ pnpm docker:down
 
 | 模块 | 描述 |
 |------|------|
-| @SACODE/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
-| @SACODE/gateway | WebSocket 控制平面 |
-| @SACODE/container | Docker 容器隔离 |
-| @SACODE/adapters | IM 平台适配器 (10 个平台) |
-| @SACODE/database | Prisma ORM，多数据库适配 |
-| @SACODE/auth | Passport.js 认证，JWT，OAuth |
-| @SACODE/cli | Commander.js 命令行工具 |
-| @SACODE/capabilities | 文件/浏览器/Shell 自动化 |
-| @SACODE/api | Express REST API + WebSocket |
-| @SACODE/web | Vue 3 + TinyVue + Tailwind CSS |
+| @sacode/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
+| @sacode/gateway | WebSocket 控制平面 |
+| @sacode/container | Docker 容器隔离 |
+| @sacode/adapters | IM 平台适配器 (10 个平台) |
+| @sacode/database | Prisma ORM，多数据库适配 |
+| @sacode/auth | Passport.js 认证，JWT，OAuth |
+| @sacode/cli | Commander.js 命令行工具 |
+| @sacode/capabilities | 文件/浏览器/Shell 自动化 |
+| @sacode/api | Express REST API + WebSocket |
+| @sacode/web | Vue 3 + TinyVue + Tailwind CSS |
 
 ### 消息流
 

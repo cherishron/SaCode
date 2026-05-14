@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/capabilities",
+  "name": "@sacode/capabilities",
   "version": "0.1.0",
   "description": "SACODE 能力模块 - 文件系统、浏览器控制、命令执行",
   "type": "module",
@@ -12,8 +12,8 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
-    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "build": "tsup src/index.ts --format esm --dts --clean --external glob --external cross-spawn --external puppeteer --external pino --external zod",
+    "dev": "tsup src/index.ts --format esm --dts --watch --external glob --external cross-spawn --external puppeteer --external pino --external zod",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",

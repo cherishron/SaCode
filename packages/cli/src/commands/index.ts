@@ -5,6 +5,9 @@ export function registerChatCommand(ctx: CommandContext): void {
     .command("chat")
     .description("启动交互式聊天模式")
     .option("-m, --message <message>", "发送单条消息")
+    .option("-p, --print", "单次输出模式，执行后退出")
+    .option("--json", "以 JSON 输出单次结果")
+    .option("--stream-json", "以 NDJSON 事件流输出单次结果")
     .option("-s, --session <sessionId>", "指定会话 ID")
     .action(async (options) => {
       const { startChat } = await import("./chat.js");
@@ -12,10 +15,33 @@ export function registerChatCommand(ctx: CommandContext): void {
     });
 }
 
+export function registerDoctorCommand(ctx: CommandContext): void {
+  ctx.program
+    .command("doctor")
+    .description("诊断本地 SaCode CLI 环境")
+    .option("--json", "以 JSON 输出诊断报告")
+    .action(async (options: { json?: boolean }) => {
+      const { showDoctor } = await import("./doctor.js");
+      await showDoctor({ json: options.json ?? ctx.program.opts().json });
+    });
+}
+
 export function registerConfigCommand(ctx: CommandContext): void {
   const config = ctx.program
     .command("config")
     .description("配置管理");
+
+  config
+    .command("init")
+    .description("初始化用户级 SaCode 配置")
+    .option("-p, --provider <provider>", "Provider 类型 (openai|anthropic|deepseek|moonshot|zhipu)", "openai")
+    .option("-m, --model <model>", "默认模型")
+    .option("--api-key-env <name>", "API Key 环境变量名")
+    .option("--base-url <url>", "Provider base URL")
+    .action(async (options: { provider?: string; model?: string; apiKeyEnv?: string; baseUrl?: string }) => {
+      const { initConfig } = await import("./config.js");
+      await initConfig(options);
+    });
 
   config
     .command("list")
@@ -39,6 +65,14 @@ export function registerConfigCommand(ctx: CommandContext): void {
     .action(async (key: string) => {
       const { getConfig } = await import("./config.js");
       await getConfig(key);
+    });
+
+  config
+    .command("language [language]")
+    .description("查看或设置交互语言 (auto|zh-CN|en-US|ja-JP|ko-KR)")
+    .action(async (language?: string) => {
+      const { configureLanguage } = await import("./config.js");
+      await configureLanguage(language);
     });
 }
 
@@ -329,7 +363,7 @@ export function registerIMCommand(ctx: CommandContext): void {
 export function registerStartCommand(ctx: CommandContext): void {
   ctx.program
     .command("start")
-    .description("启动 SACODE 服务")
+    .description("启动 SaCode 服务")
     .option("-p, --port <port>", "服务端口", "3000")
     .option("-h, --host <host>", "服务主机", "localhost")
     .option("--api", "只启动 API 服务")
@@ -394,7 +428,7 @@ export function registerToolCommand(ctx: CommandContext): void {
   tool
     .command("run <name>")
     .description("运行工具")
-    .option("-p, --param <params...>", "工具参数 (key=value)")
+    .option("-P, --param <params...>", "工具参数 (key=value)")
     .action(async (name: string, options: { param?: string[] }) => {
       const { runTool } = await import("./tool.js");
       await runTool(name, options);

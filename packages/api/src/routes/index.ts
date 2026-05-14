@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { getPrismaClient } from "@SACODE/database";
+import { getPrismaClient } from "@sacode/database";
 
 import authRoutes from "./auth";
 import chatRoutes from "./chat";

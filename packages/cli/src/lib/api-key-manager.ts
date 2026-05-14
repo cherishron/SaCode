@@ -200,9 +200,9 @@ export class APIKeyManager {
     }
 
     // 更新偏好设置
-    const { getPreferenceManager } = await import("@SACODE/core");
+    const { getPreferenceManager } = await import("@sacode/core");
     const prefs = getPreferenceManager();
-    prefs.set("defaultProvider", providerId);
+    prefs.set("defaultProvider", providerId as "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu");
     
     return { success: true };
   }

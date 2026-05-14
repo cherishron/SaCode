@@ -38,7 +38,7 @@ Skills 是 SACODE 的插件化技能系统，支持从 ClawHub 注册表安装�
 注册表客户端，用于与 ClawHub API 交互：
 
 ```typescript
-import { SkillRegistry } from "@SACODE/core";
+import { SkillRegistry } from "@sacode/core";
 
 const registry = new SkillRegistry({
   registryUrl: "https://api.clawhub.dev",
@@ -64,7 +64,7 @@ const files = await registry.download("weather-api", "1.0.0");
 技能安装器，处理本地安装：
 
 ```typescript
-import { SkillInstaller } from "@SACODE/core";
+import { SkillInstaller } from "@sacode/core";
 
 const installer = new SkillInstaller({
   skillsDir: "./skills",
@@ -92,7 +92,7 @@ const installed = await installer.list();
 技能管理器，加载和执行技能：
 
 ```typescript
-import { SkillManager } from "@SACODE/core";
+import { SkillManager } from "@sacode/core";
 
 const manager = new SkillManager({ skillsDir: "./skills" });
 
@@ -277,7 +277,7 @@ interface SkillInstallerConfig {
 ### 安装技能
 
 ```typescript
-import { SkillRegistry, SkillInstaller } from "@SACODE/core";
+import { SkillRegistry, SkillInstaller } from "@sacode/core";
 
 // 创建注册表客户端
 const registry = new SkillRegistry({
@@ -302,7 +302,7 @@ console.log(`安装成功: ${result.path}`);
 ### 执行技能
 
 ```typescript
-import { SkillManager } from "@SACODE/core";
+import { SkillManager } from "@sacode/core";
 
 const manager = new SkillManager({ skillsDir: "./skills" });
 
@@ -363,7 +363,7 @@ SACODE skill search weather
 ### 1. 使用类型检查
 
 ```typescript
-import type { Skill, SkillInstallResult } from "@SACODE/core";
+import type { Skill, SkillInstallResult } from "@sacode/core";
 
 const result: SkillInstallResult = await installer.install("weather-api");
 ```

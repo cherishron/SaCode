@@ -335,9 +335,9 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ version, colors }) => {
         <Text color={toInkColor(colors.text.primary)} bold>
           Hi~ 今天想做点什么?
         </Text>
-        <Text dimColor marginTop={1}>
-          输入消息开始对话，或输入 /help 获取帮助
-        </Text>
+        <Box marginTop={1}>
+          <Text dimColor>输入消息开始对话，或输入 /help 获取帮助</Text>
+        </Box>
       </Box>
       <Box marginTop={2} flexDirection="column" gap={0}>
         <Text dimColor>

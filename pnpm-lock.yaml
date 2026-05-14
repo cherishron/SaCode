@@ -44,10 +44,10 @@ importers:
 
   packages/adapters:
     dependencies:
-      '@SACODE/core':
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
-      '@SACODE/types':
+      '@sacode/types':
         specifier: workspace:*
         version: link:../types
       discord.js:
@@ -78,16 +78,19 @@ importers:
 
   packages/api:
     dependencies:
-      '@SACODE/adapters':
+      '@sacode/adapters':
         specifier: workspace:*
         version: link:../adapters
-      '@SACODE/auth':
+      '@sacode/auth':
         specifier: workspace:*
         version: link:../auth
-      '@SACODE/core':
+      '@sacode/capabilities':
+        specifier: workspace:*
+        version: link:../capabilities
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
-      '@SACODE/database':
+      '@sacode/database':
         specifier: workspace:*
         version: link:../database
       cors:
@@ -145,7 +148,7 @@ importers:
 
   packages/auth:
     dependencies:
-      '@SACODE/database':
+      '@sacode/database':
         specifier: workspace:*
         version: link:../database
       bcryptjs:
@@ -234,13 +237,16 @@ importers:
 
   packages/cli:
     dependencies:
-      '@SACODE/api':
+      '@sacode/api':
         specifier: workspace:*
         version: link:../api
-      '@SACODE/core':
+      '@sacode/capabilities':
+        specifier: workspace:*
+        version: link:../capabilities
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
-      '@SACODE/web':
+      '@sacode/web':
         specifier: workspace:*
         version: link:../web
       '@inkjs/ui':
@@ -329,10 +335,10 @@ importers:
 
   packages/core:
     dependencies:
-      '@SACODE/container':
+      '@sacode/container':
         specifier: workspace:*
         version: link:../container
-      '@SACODE/types':
+      '@sacode/types':
         specifier: workspace:*
         version: link:../types
       '@anthropic-ai/sdk':
@@ -415,13 +421,13 @@ importers:
 
   packages/gateway:
     dependencies:
-      '@SACODE/auth':
+      '@sacode/auth':
         specifier: workspace:*
         version: link:../auth
-      '@SACODE/core':
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
-      '@SACODE/database':
+      '@sacode/database':
         specifier: workspace:*
         version: link:../database
       pino:
@@ -470,7 +476,7 @@ importers:
 
   packages/marketplace:
     dependencies:
-      '@SACODE/core':
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
       '@types/node':
@@ -534,13 +540,13 @@ importers:
 
   packages/web:
     dependencies:
-      '@SACODE/api':
+      '@sacode/api':
         specifier: workspace:*
         version: link:../api
-      '@SACODE/auth':
+      '@sacode/auth':
         specifier: workspace:*
         version: link:../auth
-      '@SACODE/core':
+      '@sacode/core':
         specifier: workspace:*
         version: link:../core
       '@opentiny/vue':

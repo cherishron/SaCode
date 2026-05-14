@@ -4,10 +4,11 @@ import helmet from "helmet";
 import session from "express-session";
 import { createServer } from "http";
 import { config } from "dotenv";
+import path from "node:path";
 
 import routes from "./routes/index.js";
 import { SACODEWebSocketServer } from "./websocket/index.js";
-import { createDatabase, disconnectDatabase } from "@SACODE/database";
+import { createDatabase, disconnectDatabase } from "@sacode/database";
 
 // 加载环境变量
 config();
@@ -20,6 +21,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use("/media", express.static(path.resolve(process.env.MEDIA_STORAGE_DIR ?? "data/media")));
 
 // Session
 app.use(

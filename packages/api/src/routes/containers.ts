@@ -6,7 +6,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import type { Logger } from "@SACODE/core";
+import type { Logger } from "@sacode/core";
 
 // ============================================================================
 // Types

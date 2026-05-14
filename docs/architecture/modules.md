@@ -26,7 +26,7 @@ SACODE/
 
 ## 2. Module Overview
 
-### 2.1 @SACODE/types
+### 2.1 @sacode/types
 
 **Purpose**: Shared type definitions for cross-package usage
 
@@ -53,7 +53,7 @@ SACODE/
 
 ---
 
-### 2.2 @SACODE/core
+### 2.2 @sacode/core
 
 **Purpose**: Core engine with provider abstraction, session management, routing
 
@@ -69,11 +69,11 @@ SACODE/
 | `CacheManager` | Caching layer |
 | `MCPServer/Client` | MCP protocol |
 
-**Dependencies**: `@SACODE/types`, `@SACODE/container`
+**Dependencies**: `@sacode/types`, `@sacode/container`
 
 ---
 
-### 2.3 @SACODE/gateway
+### 2.3 @sacode/gateway
 
 **Purpose**: WebSocket control plane for real-time communication
 
@@ -85,11 +85,11 @@ SACODE/
 | `GatewaySession` | Session handler |
 | `ProtocolHandler` | Message protocol |
 
-**Dependencies**: `@SACODE/core`, `@SACODE/auth`, `@SACODE/database`
+**Dependencies**: `@sacode/core`, `@sacode/auth`, `@sacode/database`
 
 ---
 
-### 2.4 @SACODE/database
+### 2.4 @sacode/database
 
 **Purpose**: Database abstraction with Prisma ORM
 
@@ -106,7 +106,7 @@ SACODE/
 
 ---
 
-### 2.5 @SACODE/auth
+### 2.5 @sacode/auth
 
 **Purpose**: Authentication system (Local + OAuth)
 
@@ -122,11 +122,11 @@ SACODE/
 | `WeWorkOAuthService` | WeCom OAuth |
 | `createAuthMiddleware` | Auth middleware factory |
 
-**Dependencies**: `@SACODE/database`
+**Dependencies**: `@sacode/database`
 
 ---
 
-### 2.6 @SACODE/capabilities
+### 2.6 @sacode/capabilities
 
 **Purpose**: Automation capabilities (files, browser, shell)
 
@@ -144,7 +144,7 @@ SACODE/
 
 ---
 
-### 2.7 @SACODE/adapters
+### 2.7 @sacode/adapters
 
 **Purpose**: IM platform adapters (10 platforms)
 
@@ -165,11 +165,11 @@ SACODE/
 | `SlackAdapter` | Slack adapter |
 | `EmailAdapter` | Email adapter |
 
-**Dependencies**: `@SACODE/types`
+**Dependencies**: `@sacode/types`
 
 ---
 
-### 2.8 @SACODE/api
+### 2.8 @sacode/api
 
 **Purpose**: REST API + WebSocket server
 
@@ -185,11 +185,11 @@ SACODE/
 | `/api/plugins/*` | Plugin management |
 | `/ws` | WebSocket |
 
-**Dependencies**: `@SACODE/core`, `@SACODE/auth`, `@SACODE/database`, `@SACODE/adapters`, `@SACODE/capabilities`
+**Dependencies**: `@sacode/core`, `@sacode/auth`, `@sacode/database`, `@sacode/adapters`, `@sacode/capabilities`
 
 ---
 
-### 2.9 @SACODE/web
+### 2.9 @sacode/web
 
 **Purpose**: Web UI (Vue 3 + TinyVue)
 
@@ -203,29 +203,43 @@ SACODE/
 | IM | `/dashboard/im` | IM Management |
 | Settings | `/dashboard/settings` | Settings |
 
-**Dependencies**: `@SACODE/api`, `@SACODE/auth`, `@SACODE/core`
+**Dependencies**: `@sacode/api`, `@sacode/auth`, `@sacode/core`
 
 ---
 
-### 2.10 @SACODE/cli
+### 2.10 @sacode/cli
 
-**Purpose**: Command-line tool
+**Purpose**: Deployable Agent CLI Server entrypoint. The CLI is the primary executable, control plane, and local/server-side runner. Terminal usage is the current priority; Web management, WeChat, Webhook, and API entrypoints will be configured on top of the same CLI Server model later.
 
 **Commands**:
 
 | Command | Description |
 |---------|-------------|
-| `SACODE chat` | Interactive chat |
-| `SACODE start` | Start server |
-| `SACODE im` | IM management |
-| `SACODE config` | Configuration |
-| `SACODE plugin` | Plugin management |
+| `sacode config init` | Create user-level Provider configuration under `~/.sacode/` |
+| `sacode config language <language>` | Persist interactive language preference |
+| `sacode doctor` | Diagnose CLI/server environment without printing secrets |
+| `sacode chat` | Interactive TUI chat |
+| `sacode "prompt"` | One-shot prompt execution |
+| `sacode --json "prompt"` | Final JSON output for scripts and external entrypoints |
+| `sacode --stream-json "prompt"` | NDJSON event stream for Web/API integrations |
+| `sacode tool list` | List available tools |
+| `sacode tool run <name>` | Run a tool directly |
 
-**Dependencies**: `@SACODE/core`
+**Planned external entrypoints**:
+
+| Entrypoint | Direction |
+|------------|-----------|
+| `sacode serve` | HTTP API and Web management server |
+| Web admin | Configure providers, entrypoints, sessions, logs, and permissions |
+| WeChat/Webhook adapters | Forward messages into the CLI Server through authenticated service endpoints |
+
+External entrypoints must not execute raw shell commands directly. They should translate messages into command/agent requests and reuse the same permissions, confirmations, and audit boundary as the CLI.
+
+**Dependencies**: `@sacode/core`
 
 ---
 
-### 2.11 @SACODE/container
+### 2.11 @sacode/container
 
 **Purpose**: Docker container management for agent isolation
 
@@ -245,42 +259,42 @@ SACODE/
 ## 3. Dependency Graph
 
 ```
-@SACODE/types ──────────────────────────────────────────────┐
+@sacode/types ──────────────────────────────────────────────┐
      │                                                       │
-     ├──▶ @SACODE/core                                       │
+     ├──▶ @sacode/core                                       │
      │                                                       │
-     └──▶ @SACODE/adapters                                   │
+     └──▶ @sacode/adapters                                   │
                                                              │
-@SACODE/container ───────────────────────────────────────────┤
+@sacode/container ───────────────────────────────────────────┤
      │                                                       │
-     └──▶ @SACODE/core                                       │
+     └──▶ @sacode/core                                       │
                                                              │
-@SACODE/database ────────────────────────────────────────────┤
+@sacode/database ────────────────────────────────────────────┤
      │                                                       │
-@SACODE/auth ◀───────────────────────────────────────────────┤
+@sacode/auth ◀───────────────────────────────────────────────┤
      │                                                       │
-@SACODE/capabilities ─────────────────────────────────────────┤
+@sacode/capabilities ─────────────────────────────────────────┤
      │                                                       │
-@SACODE/gateway ◀─────────────────────────────────────────────┤
+@sacode/gateway ◀─────────────────────────────────────────────┤
      │         (depends on auth, core, database)              │
      │                                                       │
-@SACODE/api ◀─────────────────────────────────────────────────┘
+@sacode/api ◀─────────────────────────────────────────────────┘
      │
-     ├──▶ @SACODE/adapters
-     ├──▶ @SACODE/auth
-     ├──▶ @SACODE/core
-     ├──▶ @SACODE/database
-     └──▶ @SACODE/capabilities
+     ├──▶ @sacode/adapters
+     ├──▶ @sacode/auth
+     ├──▶ @sacode/core
+     ├──▶ @sacode/database
+     └──▶ @sacode/capabilities
 
-@SACODE/web
+@sacode/web
      │
-     ├──▶ @SACODE/api
-     ├──▶ @SACODE/auth
-     └──▶ @SACODE/core
+     ├──▶ @sacode/api
+     ├──▶ @sacode/auth
+     └──▶ @sacode/core
 
-@SACODE/cli
+@sacode/cli
      │
-     └──▶ @SACODE/core
+     └──▶ @sacode/core
 ```
 
 ---
@@ -289,17 +303,17 @@ SACODE/
 
 | Package | Version | Description |
 |---------|---------|-------------|
-| @SACODE/types | 0.1.0 | Shared types |
-| @SACODE/core | 0.2.0 | Provider abstraction layer |
-| @SACODE/gateway | 0.1.0 | WebSocket gateway |
-| @SACODE/container | 0.1.0 | Docker container |
-| @SACODE/database | 0.1.0 | Prisma ORM |
-| @SACODE/auth | 0.1.0 | Authentication |
-| @SACODE/capabilities | 0.1.0 | Automation |
-| @SACODE/adapters | 0.1.0 | IM adapters |
-| @SACODE/api | 0.1.0 | REST API |
-| @SACODE/web | 0.1.0 | Web UI |
-| @SACODE/cli | 0.1.0 | CLI tool |
+| @sacode/types | 0.1.0 | Shared types |
+| @sacode/core | 0.2.0 | Provider abstraction layer |
+| @sacode/gateway | 0.1.0 | WebSocket gateway |
+| @sacode/container | 0.1.0 | Docker container |
+| @sacode/database | 0.1.0 | Prisma ORM |
+| @sacode/auth | 0.1.0 | Authentication |
+| @sacode/capabilities | 0.1.0 | Automation |
+| @sacode/adapters | 0.1.0 | IM adapters |
+| @sacode/api | 0.1.0 | REST API |
+| @sacode/web | 0.1.0 | Web UI |
+| @sacode/cli | 0.1.0 | CLI tool |
 
 ---
 

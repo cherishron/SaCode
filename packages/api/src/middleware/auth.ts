@@ -1,5 +1,5 @@
-import { createAuthMiddleware, extractBearerToken, LocalAuthService } from "@SACODE/auth";
-import { getPrismaClient } from "@SACODE/database";
+import { createAuthMiddleware, extractBearerToken, LocalAuthService } from "@sacode/auth";
+import { getPrismaClient } from "@sacode/database";
 
 // 获取 JWT 配置
 function getJwtConfig() {

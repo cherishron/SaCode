@@ -98,15 +98,15 @@ export async function showSession(sessionId: string): Promise<void> {
 /**
  * 清除会话映射
  */
-export async function clearSessions(options: { channel?: string; chatId?: string }): Promise<void> {
-  const answers = await inquirer.prompt([
+export async function clearSessions(_options: { channel?: string; chatId?: string }): Promise<void> {
+  const answers = await inquirer.prompt<{ confirm: boolean }>([
     {
       type: "confirm",
       name: "confirm",
       message: chalk.yellow("Are you sure you want to clear session mappings?"),
       default: false,
     },
-  ]);
+  ] as any);
 
   if (!answers.confirm) {
     console.log(chalk.gray("Operation cancelled"));
@@ -121,14 +121,14 @@ export async function clearSessions(options: { channel?: string; chatId?: string
  * 清除指定会话
  */
 export async function clearSession(sessionId: string): Promise<void> {
-  const answers = await inquirer.prompt([
+  const answers = await inquirer.prompt<{ confirm: boolean }>([
     {
       type: "confirm",
       name: "confirm",
       message: chalk.yellow(`Are you sure you want to clear session ${sessionId}?`),
       default: false,
     },
-  ]);
+  ] as any);
 
   if (!answers.confirm) {
     console.log(chalk.gray("Operation cancelled"));

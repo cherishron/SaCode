@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/api",
+  "name": "@sacode/api",
   "version": "0.1.0",
   "description": "SACODE API 服务 - REST API 与 WebSocket",
   "type": "module",
@@ -21,10 +21,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@SACODE/adapters": "workspace:*",
-    "@SACODE/auth": "workspace:*",
-    "@SACODE/core": "workspace:*",
-    "@SACODE/database": "workspace:*",
+    "@sacode/adapters": "workspace:*",
+    "@sacode/auth": "workspace:*",
+    "@sacode/capabilities": "workspace:*",
+    "@sacode/core": "workspace:*",
+    "@sacode/database": "workspace:*",
     "cors": "^2.8.5",
     "express": "^5.0.1",
     "express-session": "^1.18.1",

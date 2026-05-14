@@ -344,24 +344,43 @@ export class OpenAIProvider extends BaseProvider {
         }
         // 如果 content 是 null，跳过此消息
       } else if (msg.role === "assistant") {
-        // assistant 只支持文本内容
+        const toolCalls = msg.tool_calls?.map((toolCall) => ({
+          id: toolCall.id,
+          type: "function" as const,
+          function: {
+            name: toolCall.function.name,
+            arguments: toolCall.function.arguments,
+          },
+        }));
+
         if (msg.content === null || msg.content === undefined) {
-          // 工具调用场景：assistant 可能没有文本内容
-          messages.push({
+          const assistantMessage: ChatCompletionMessageParam = {
             role: "assistant",
             content: "",
-          });
+          };
+          if (toolCalls && toolCalls.length > 0) {
+            assistantMessage.tool_calls = toolCalls;
+          }
+          messages.push(assistantMessage);
         } else if (typeof msg.content === "string") {
-          messages.push({
+          const assistantMessage: ChatCompletionMessageParam = {
             role: "assistant",
             content: msg.content,
-          });
+          };
+          if (toolCalls && toolCalls.length > 0) {
+            assistantMessage.tool_calls = toolCalls;
+          }
+          messages.push(assistantMessage);
         } else if (Array.isArray(msg.content)) {
           const textContent = msg.content.map(c => c.text).join("");
-          messages.push({
+          const assistantMessage: ChatCompletionMessageParam = {
             role: "assistant",
             content: textContent,
-          });
+          };
+          if (toolCalls && toolCalls.length > 0) {
+            assistantMessage.tool_calls = toolCalls;
+          }
+          messages.push(assistantMessage);
         }
       } else if (msg.role === "tool") {
         // 工具结果

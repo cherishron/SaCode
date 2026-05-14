@@ -291,26 +291,77 @@ SACODE 支持浏览器原生通知：
 
 ## CLI Usage
 
+SaCode 的 CLI 是当前阶段的主入口，也是后续服务器部署、Web 管理和微信/Webhook 外部入口的执行基础。核心交互方式是输入 `sacode` 进入 Agent CLI Shell，然后在 Shell 内使用 slash commands 或自然语言完成配置、诊断和任务执行；传统 `sacode xxx` 子命令保留给脚本和部署自动化。
+
 ### Installation
 
 ```bash
-npm install -g @SACODE/cli
+npm install -g @cherishron/sacode-cli
+```
+
+当前仓库开发模式可先使用构建产物：
+
+```bash
+pnpm --filter @sacode/core build
+pnpm --filter @sacode/cli build
+node packages/cli/dist/cli.js doctor
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `SACODE chat` | Interactive chat |
-| `SACODE chat -m "message"` | Single message |
-| `SACODE config list` | Show configuration |
-| `SACODE im list` | List IM connections |
-| `SACODE start` | Start server |
+| `sacode` | Enter Agent CLI Shell |
+| `sacode config init` | Create user-level Provider configuration under `~/.sacode/` |
+| `sacode config language zh-CN` | Persist interactive language preference |
+| `sacode doctor` | Diagnose local CLI environment without printing secrets |
+| `sacode chat` | Interactive TUI chat |
+| `sacode "message"` | Single prompt, print mode by default |
+| `sacode --json "message"` | Single prompt with final JSON output |
+| `sacode --stream-json "message"` | Single prompt with NDJSON event stream |
+| `sacode tool list` | List available tools |
+| `sacode tool run read_file -P path=package.json limit=5` | Run a tool directly |
 
-### Interactive Chat
+### Agent CLI Shell
 
 ```bash
-$ SACODE chat
+$ sacode
+
+SaCode Agent CLI
+Workspace: /path/to/project
+Model: deepseek/deepseek-chat
+Type /help for commands
+
+> /help
+> /doctor
+> /models
+> /providers
+> /agents
+> /tools
+> 帮我分析这个项目
+```
+
+Shell 内 slash commands 会作为未来 Web、微信和 Webhook 输入的统一命令语义。当前核心命令包括：
+
+| Shell Command | Description |
+|---------------|-------------|
+| `/help` | Show command help |
+| `/doctor` | Diagnose current environment |
+| `/providers` | List and manage Provider entries |
+| `/models` | List and switch configured models |
+| `/model test` | Test the selected model |
+| `/agents` | List configured agents |
+| `/agent use <name>` | Switch active agent |
+| `/agent collab on|off` | Enable or disable multi-agent collaboration |
+| `/agent dispatch on|off` | Enable or disable sub-agent dispatch |
+| `/tools` | List available tools |
+| `/context` | Show workspace context |
+| `/permissions` | Show permission profile |
+
+### Interactive Chat Compatibility
+
+```bash
+$ sacode chat
 
 > Hello!
 AI: Hello! How can I help you today?
@@ -328,9 +379,14 @@ Goodbye!
 | Option | Description |
 |--------|-------------|
 | `-m, --message` | Send single message |
-| `-p, --provider` | Specify AI provider |
-| `--model` | Specify AI model |
+| `-p, --print` | Print mode for one-shot prompts |
+| `--json` | Emit a final JSON object |
+| `--stream-json` | Emit newline-delimited JSON events |
 | `-h, --help` | Show help |
+
+### Product Direction
+
+最终形态是可部署的 Agent CLI Server：CLI 正常可用后，会通过 `sacode serve` 扩展 HTTP API、Web 管理、微信入口和 Webhook 入口。外部入口不会直接拼接 shell 命令，而是复用 Agent CLI Shell 的 slash command router 和自然语言 agent runner，并通过统一权限、审批和审计边界调用 CLI Agent 能力。
 
 ---
 

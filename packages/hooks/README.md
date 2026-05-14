@@ -34,7 +34,7 @@ packages/hooks/
 
 ```typescript
 // 简单函数导出
-import type { HookContext, HookResult } from "@SACODE/core";
+import type { HookContext, HookResult } from "@sacode/core";
 
 export default async function myHook(
   context: HookContext
@@ -50,7 +50,7 @@ export default async function myHook(
 或者导出完整的钩子定义：
 
 ```typescript
-import type { HookDefinition } from "@SACODE/core";
+import type { HookDefinition } from "@sacode/core";
 
 const hook: HookDefinition = {
   name: "my-hook",

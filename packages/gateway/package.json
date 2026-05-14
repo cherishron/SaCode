@@ -1,5 +1,5 @@
 {
-  "name": "@SACODE/gateway",
+  "name": "@sacode/gateway",
   "version": "0.1.0",
   "description": "SACODE Gateway - 统一控制平面",
   "type": "module",
@@ -25,9 +25,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@SACODE/auth": "workspace:*",
-    "@SACODE/core": "workspace:*",
-    "@SACODE/database": "workspace:*",
+    "@sacode/auth": "workspace:*",
+    "@sacode/core": "workspace:*",
+    "@sacode/database": "workspace:*",
     "pino": "^9.5.0",
     "uuid": "^11.0.3",
     "ws": "^8.18.0",

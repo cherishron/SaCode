@@ -5,7 +5,7 @@
  */
 
 import { SACODEClient } from "../client/index.js";
-import type { BaseAdapter, StreamSender, IMMessage, Platform } from "@SACODE/adapters";
+import type { BaseAdapter, StreamSender, IMMessage, Platform } from "@sacode/adapters";
 import EventEmitter from "eventemitter3";
 
 // ============================================

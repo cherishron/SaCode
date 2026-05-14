@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================================================
-// 从 @SACODE/types 重新导出共享类型
+// 从 @sacode/types 重新导出共享类型
 // ============================================================================
 
 import type {
@@ -19,7 +19,7 @@ import type {
   IMMessage as _IMMessage,
   IMAdapter as _IMAdapter,
   Platform as _Platform,
-} from "@SACODE/types";
+} from "@sacode/types";
 
 export type {
   MessageContentType,
@@ -35,10 +35,10 @@ export type {
   Channel,
   IMMessage,
   IMAdapter,
-} from "@SACODE/types";
+} from "@sacode/types";
 
 // 重命名导出以避免与 session/types.ts 中的 Platform 冲突
-export type { Platform as IMPlatform } from "@SACODE/types";
+export type { Platform as IMPlatform } from "@sacode/types";
 
 // 本地类型别名，用于当前文件
 type MessageContent = _MessageContent;
@@ -51,7 +51,7 @@ export {
   isFileContent,
   isLocationContent,
   isStickerContent,
-} from "@SACODE/types";
+} from "@sacode/types";
 
 // ============================================================================
 // 配置类型
@@ -120,7 +120,7 @@ export interface BaseMessage {
 }
 
 // ============================================
-// 消息接口 (使用 @SACODE/types 中的 MessageContent)
+// 消息接口 (使用 @sacode/types 中的 MessageContent)
 // ============================================
 
 export interface UserMessage extends BaseMessage {

@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { getPrismaClient } from "@SACODE/database";
+import { getPrismaClient } from "@sacode/database";
 import {
   PluginManager,
   createPluginManager,
   type Plugin,
   type PluginManifest,
   type PluginStats,
-} from "@SACODE/core";
+} from "@sacode/core";
 import * as path from "path";
 import { authMiddleware } from "../middleware/auth";
 

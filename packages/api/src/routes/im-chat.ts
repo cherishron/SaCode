@@ -10,9 +10,9 @@ import {
   StreamingManager,
   createStreamChatController,
   type StreamChatOptions,
-} from "@SACODE/core";
-import { createAdapter, type BaseAdapter, type StreamSender } from "@SACODE/adapters";
-import { getPrismaClient } from "@SACODE/database";
+} from "@sacode/core";
+import { createAdapter, type BaseAdapter, type StreamSender } from "@sacode/adapters";
+import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();

@@ -5,23 +5,55 @@
  */
 
 import React, { useState } from "react";
+import type { Readable } from "node:stream";
 import { render } from "ink";
 import chalk from "chalk";
 import {
   SACODEClient,
   type ProviderConfig,
+  type ToolCall,
+  type ToolCallResult,
+  type ConfirmationRequest,
   getPreferenceManager,
-} from "@SACODE/core";
+} from "@sacode/core";
 import ChatApp, { type Message } from "../ui/App.js";
+import { createCliToolRegistryAdapter } from "../lib/capabilities.js";
+import {
+  collectWorkspaceContext,
+  formatWorkspaceContext,
+  workspaceContextToPrompt,
+} from "../lib/workspace-context.js";
+import {
+  createAssistantDeltaEvent,
+  createCompleteEvent,
+  createStartEvent,
+  createSystemEvent,
+  getPrintOutputFormat,
+  serializeJsonEvent,
+  type JsonEvent,
+  type PrintOutputFormat,
+} from "../lib/print-output.js";
+import { routeSlashCommand } from "../lib/command-router.js";
+import { buildAgentDispatchPlan, ensureAgentStore } from "../lib/agent-store.js";
+import { ensureProviderStore, providerConfigFromStore } from "../lib/provider-store.js";
 
 interface ChatOptions {
   message?: string;
   session?: string;
+  print?: boolean;
+  json?: boolean;
+  streamJson?: boolean;
 }
 
 /**
  * 从环境变量获取 Provider 配置
  */
+async function getProviderConfig(): Promise<ProviderConfig> {
+  const storeConfig = providerConfigFromStore(await ensureProviderStore());
+  if (storeConfig) return storeConfig;
+  return getProviderConfigFromEnv();
+}
+
 function getProviderConfigFromEnv(): ProviderConfig {
   const providerType = (process.env.AI_PROVIDER ?? "openai") as ProviderConfig["type"];
 
@@ -76,6 +108,49 @@ function getProviderConfigFromEnv(): ProviderConfig {
   }
 }
 
+interface CliClientContext {
+  client: SACODEClient;
+  capabilities: ReturnType<typeof createCliToolRegistryAdapter>["capabilities"];
+  registry: ReturnType<typeof createCliToolRegistryAdapter>["registry"];
+  confirmationMode: ReturnType<typeof createCliToolRegistryAdapter>["confirmationMode"];
+  providerConfig: ProviderConfig;
+  cwd: string;
+}
+
+async function createCliClient(): Promise<CliClientContext> {
+  const providerConfig = await getProviderConfig();
+
+  if (!providerConfig.apiKey || providerConfig.apiKey.includes("your-api-key")) {
+    throw new Error("API key 无效或缺失，请在 .env 文件或环境变量中设置有效的 API Key");
+  }
+
+  const cwd = process.cwd();
+  const { capabilities, registry, confirmationMode } = createCliToolRegistryAdapter(cwd, {
+    confirm: confirmChatToolExecution,
+  });
+  const client = new SACODEClient({
+    provider: providerConfig,
+    timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+    toolBridge: {
+      capabilitiesRegistry: registry,
+    },
+  });
+
+  try {
+    await client.connect();
+  } catch (error) {
+    await capabilities.shutdown();
+    throw error;
+  }
+
+  return { client, capabilities, registry, confirmationMode, providerConfig, cwd };
+}
+
+async function closeCliClient(context: CliClientContext): Promise<void> {
+  await context.client.disconnect();
+  await context.capabilities.shutdown();
+}
+
 /**
  * 生成唯一 ID
  */
@@ -91,15 +166,59 @@ const ChatWrapper: React.FC<{
   model: string;
   language: string;
   cwd: string;
+  workspaceContext: string;
   client: SACODEClient;
+  confirmationMode: CliClientContext["confirmationMode"];
   options: ChatOptions;
   preferenceManager: ReturnType<typeof getPreferenceManager>;
-}> = ({ version, model, language, cwd, client, options, preferenceManager }) => {
+}> = ({ version, model, language, cwd, workspaceContext, client, confirmationMode, options, preferenceManager }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [currentTool, setCurrentTool] = useState<Message | null>(null);
-  const [toolStartTime, setToolStartTime] = useState(0);
+  const initialMessageSent = React.useRef(false);
+
+  React.useEffect(() => {
+    const startedAt = new Map<string, number>();
+
+    const onToolStart = (toolCall: ToolCall) => {
+      const args = parseToolArgs(toolCall.function.arguments);
+      const started = Date.now();
+      startedAt.set(toolCall.id, started);
+
+      const toolMessage: Message = {
+        id: toolCall.id,
+        role: "tool",
+        content: "",
+        toolName: toolCall.function.name,
+        toolArgs: args,
+        toolStatus: "running",
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, toolMessage]);
+    };
+
+    const onToolEnd = (result: ToolCallResult) => {
+      const duration = Date.now() - (startedAt.get(result.toolCallId) ?? Date.now());
+      setMessages(prev => prev.map(message => (
+        message.id === result.toolCallId
+          ? {
+              ...message,
+              toolStatus: result.success ? "success" : "error",
+              toolResult: result.content,
+              toolDuration: duration,
+            }
+          : message
+      )));
+    };
+
+    client.on("tool_call_start", onToolStart);
+    client.on("tool_call_end", onToolEnd);
+
+    return () => {
+      client.off("tool_call_start", onToolStart);
+      client.off("tool_call_end", onToolEnd);
+    };
+  }, [client]);
 
   // 处理消息
   const handleMessage = async (userInput: string) => {
@@ -124,6 +243,17 @@ const ChatWrapper: React.FC<{
     setMessages(prev => [...prev, userMessage]);
 
     try {
+      const agentPlan = buildAgentDispatchPlan(await ensureAgentStore(), userInput);
+      if (agentPlan.enabled) {
+        const agentMessage: Message = {
+          id: generateId(),
+          role: "system",
+          content: formatAgentPlan(agentPlan),
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, agentMessage]);
+      }
+
       // 处理 AI 响应
       let assistantContent = "";
 
@@ -133,35 +263,6 @@ const ChatWrapper: React.FC<{
           // 助手消息 - 流式文本
           assistantContent += msg.chunk.text;
           setStreamingContent(assistantContent);
-        } else if (msg.role === "tool") {
-          // 工具调用消息
-          if (msg.status === "running") {
-            // 新工具开始
-            const newTool: Message = {
-              id: generateId(),
-              role: "tool",
-              content: "",
-              toolName: msg.toolName,
-              toolStatus: "running",
-              timestamp: new Date(),
-            };
-            setCurrentTool(newTool);
-            setToolStartTime(Date.now());
-            setMessages(prev => [...prev, newTool]);
-          } else {
-            // 工具完成
-            setCurrentTool(prev => {
-              if (prev) {
-                return {
-                  ...prev,
-                  toolStatus: msg.status === "success" ? "success" : "error",
-                  toolDuration: Date.now() - toolStartTime,
-                  toolResult: msg.status === "success" ? "完成" : "失败",
-                };
-              }
-              return prev;
-            });
-          }
         } else if (msg.role === "system") {
           // 系统消息
           if ("stopReason" in msg) {
@@ -200,83 +301,41 @@ const ChatWrapper: React.FC<{
     }
   };
 
+  React.useEffect(() => {
+    if (!options.message || initialMessageSent.current) return;
+    initialMessageSent.current = true;
+    void handleMessage(options.message);
+  });
+
   // 处理命令
   const handleCommand = async (command: string) => {
-    const [cmd, ...args] = command.slice(1).split(" ");
+    const result = await routeSlashCommand(command, {
+      tools: client.getAvailableTools(),
+      workspaceContext,
+      model,
+      language,
+      session: options.session,
+      confirmationMode,
+      preferences: preferenceManager.getAll() as unknown as Record<string, unknown>,
+      setLanguage: (newLanguage) => preferenceManager.set("language", newLanguage as never),
+    });
 
-    switch (cmd?.toLowerCase()) {
-      case "help":
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `可用命令:
-  /help     - 显示帮助
-  /clear    - 清屏
-  /lang zh  - 设置语言为中文
-  /lang en  - 设置语言为英文
-  /prefs    - 显示偏好设置
-  /exit     - 退出`,
-          timestamp: new Date(),
-        }]);
-        break;
-
-      case "clear":
-        setMessages([]);
-        break;
-
-      case "lang":
-        if (args[0]) {
-          const newLang = args[0] as "zh-CN" | "en-US";
-          if (["zh-CN", "en-US", "ja-JP", "ko-KR"].includes(newLang)) {
-            preferenceManager.set("language", newLang as never);
-            setMessages(prev => [...prev, {
-              id: generateId(),
-              role: "system",
-              content: `语言已设置为: ${newLang}`,
-              timestamp: new Date(),
-            }]);
-          } else {
-            setMessages(prev => [...prev, {
-              id: generateId(),
-              role: "system",
-              content: `不支持的语言。支持: zh-CN, en-US, ja-JP, ko-KR`,
-              timestamp: new Date(),
-            }]);
-          }
-        } else {
-          setMessages(prev => [...prev, {
-            id: generateId(),
-            role: "system",
-            content: `当前语言: ${preferenceManager.getResolvedLanguage()}`,
-            timestamp: new Date(),
-          }]);
-        }
-        break;
-
-      case "prefs":
-        const prefs = preferenceManager.getAll();
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `偏好设置:\n${JSON.stringify(prefs, null, 2)}`,
-          timestamp: new Date(),
-        }]);
-        break;
-
-      case "exit":
-      case "quit":
-      case "q":
-        process.exit(0);
-        break;
-
-      default:
-        setMessages(prev => [...prev, {
-          id: generateId(),
-          role: "system",
-          content: `未知命令: ${cmd}`,
-          timestamp: new Date(),
-        }]);
+    if (result.type === "clear") {
+      setMessages([]);
+      return;
     }
+
+    if (result.type === "exit") {
+      process.exit(0);
+      return;
+    }
+
+    setMessages(prev => [...prev, {
+      id: generateId(),
+      role: "system",
+      content: result.content,
+      timestamp: new Date(),
+    }]);
   };
 
   return (
@@ -294,50 +353,77 @@ const ChatWrapper: React.FC<{
   );
 };
 
+function parseToolArgs(args: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(args);
+    return typeof parsed === "object" && parsed !== null
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function confirmChatToolExecution(request: ConfirmationRequest): Promise<boolean> {
+  const isTty = process.stdin.isTTY && process.stdout.isTTY;
+  if (!isTty) return false;
+
+  process.stdout.write(`\nTool confirmation required\n`);
+  process.stdout.write(`  Tool: ${request.toolName}\n`);
+  process.stdout.write(`  Risk: ${request.riskLevel}\n`);
+  process.stdout.write(`  Reason: ${request.reason}\n`);
+  process.stdout.write(`Allow this tool execution? [y/N] `);
+
+  return new Promise((resolve) => {
+    const onData = (data: Buffer) => {
+      process.stdin.off("data", onData);
+      const normalized = data.toString().trim().toLowerCase();
+      resolve(normalized === "y" || normalized === "yes");
+    };
+    process.stdin.once("data", onData);
+  });
+}
+
 /**
  * 启动 Chat TUI
  */
 export async function startChat(options: ChatOptions): Promise<void> {
+  const outputFormat = getPrintOutputFormat(options);
+  if (options.message && (options.print || outputFormat !== "text")) {
+    await runPrintChat(options.message, options.session, outputFormat);
+    return;
+  }
+
+  if (!options.message && !process.stdin.isTTY) {
+    await runNonInteractiveSlashCommands(options.session);
+    return;
+  }
+
   // 加载用户偏好
   const preferenceManager = getPreferenceManager();
   preferenceManager.load();
+  const workspaceSummary = await collectWorkspaceContext(process.cwd());
+  const workspaceContext = formatWorkspaceContext(workspaceSummary);
 
-  // 获取 Provider 配置
-  const providerConfig = getProviderConfigFromEnv();
-
-  // 验证 API Key
-  if (!providerConfig.apiKey || providerConfig.apiKey.includes("your-api-key")) {
-    console.log(chalk.red("API key 无效或缺失"));
-    console.log(chalk.gray("请在 .env 文件或环境变量中设置有效的 API Key"));
-    process.exit(1);
-  }
-
-  // 创建客户端
-  const client = new SACODEClient({
-    provider: providerConfig,
-    timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
-  });
-
-  // 连接
+  let context: CliClientContext;
   try {
-    await client.connect();
+    context = await createCliClient();
   } catch (error) {
     console.log(chalk.red("连接 AI 服务失败"));
     console.log(chalk.red(error instanceof Error ? error.message : "未知错误"));
     process.exit(1);
   }
 
-  // 获取当前目录
-  const cwd = process.cwd();
-
   // 渲染 TUI
   const { unmount } = render(
     <ChatWrapper
       version="1.0.0"
-      model={providerConfig.model ?? "default"}
+      model={context.providerConfig.model ?? "default"}
       language={preferenceManager.getResolvedLanguage()}
-      cwd={cwd}
-      client={client}
+      cwd={context.cwd}
+      workspaceContext={workspaceContext}
+      client={context.client}
+      confirmationMode={context.confirmationMode}
       options={options}
       preferenceManager={preferenceManager}
     />
@@ -346,10 +432,196 @@ export async function startChat(options: ChatOptions): Promise<void> {
   // 清理
   const cleanup = () => {
     unmount();
-    client.disconnect();
+    void closeCliClient(context);
   };
 
   process.on("exit", cleanup);
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+}
+
+async function runNonInteractiveSlashCommands(session: string | undefined): Promise<void> {
+  const input = await readStream(process.stdin);
+  const commands = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (commands.length === 0) return;
+
+  const preferenceManager = getPreferenceManager();
+  preferenceManager.load();
+  const cwd = process.cwd();
+  const workspaceSummary = await collectWorkspaceContext(cwd);
+  const { capabilities, registry, confirmationMode } = createCliToolRegistryAdapter(cwd);
+
+  try {
+    for (const command of commands) {
+      if (!command.startsWith("/")) {
+        process.stderr.write(`非交互模式仅支持 slash commands。自然语言任务请使用 -p: ${command}\n`);
+        process.exitCode = 1;
+        continue;
+      }
+
+      const result = await routeSlashCommand(command, {
+        tools: registry.list().map((tool) => tool.name),
+        workspaceContext: formatWorkspaceContext(workspaceSummary),
+        model: (await getProviderConfig()).model ?? "default",
+        language: preferenceManager.getResolvedLanguage(),
+        session,
+        confirmationMode,
+        preferences: preferenceManager.getAll() as unknown as Record<string, unknown>,
+        setLanguage: (newLanguage) => preferenceManager.set("language", newLanguage as never),
+      });
+
+      if (result.type === "exit") break;
+      if (result.type === "clear") continue;
+      process.stdout.write(`${result.content}\n`);
+    }
+  } finally {
+    await capabilities.shutdown();
+  }
+}
+
+async function readStream(stream: Readable): Promise<string> {
+  let input = "";
+  for await (const chunk of stream) {
+    input += String(chunk);
+  }
+  return input;
+}
+
+async function runPrintChat(
+  message: string,
+  session: string | undefined,
+  outputFormat: PrintOutputFormat
+): Promise<void> {
+  let context: CliClientContext;
+  try {
+    context = await createCliClient();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "连接 AI 服务失败";
+    if (outputFormat === "text") {
+      console.error(chalk.red(errorMessage));
+    } else {
+      writeJsonLine({ type: "error", error: errorMessage });
+    }
+    process.exit(1);
+  }
+
+  let content = "";
+  const events: JsonEvent[] = [];
+  const errors: string[] = [];
+  const toolStartedAt = new Map<string, number>();
+  const startedAt = Date.now();
+  const workspaceSummary = await collectWorkspaceContext(context.cwd);
+
+  const onToolStart = (toolCall: ToolCall) => {
+    const args = parseToolArgs(toolCall.function.arguments);
+    toolStartedAt.set(toolCall.id, Date.now());
+    const event = {
+      type: "tool_start",
+      id: toolCall.id,
+      name: toolCall.function.name,
+      args,
+    };
+    events.push(event);
+
+    if (outputFormat === "stream-json") {
+      writeJsonLine(event);
+    } else if (outputFormat === "text") {
+      process.stderr.write(`\n[tool:start] ${toolCall.function.name}\n`);
+    }
+  };
+
+  const onToolEnd = (result: ToolCallResult) => {
+    const durationMs = Date.now() - (toolStartedAt.get(result.toolCallId) ?? Date.now());
+    const event = {
+      type: "tool_result",
+      id: result.toolCallId,
+      name: result.name,
+      success: result.success,
+      durationMs,
+      content: result.content,
+    };
+    events.push(event);
+    if (!result.success) errors.push(`Tool ${result.name} failed: ${result.content}`);
+
+    if (outputFormat === "stream-json") {
+      writeJsonLine(event);
+    } else if (outputFormat === "text") {
+      process.stderr.write(`[tool:${result.success ? "ok" : "error"}] ${result.name} (${durationMs}ms)\n`);
+    }
+  };
+
+  context.client.on("tool_call_start", onToolStart);
+  context.client.on("tool_call_end", onToolEnd);
+
+  try {
+    if (outputFormat === "stream-json") {
+      writeJsonLine(createStartEvent({ session, providerConfig: context.providerConfig, workspace: workspaceSummary }));
+    }
+
+      const agentPlan = buildAgentDispatchPlan(await ensureAgentStore(), message);
+      const contextualMessage = `${workspaceContextToPrompt(workspaceSummary)}${agentPlan.enabled ? `\n\n${formatAgentPlan(agentPlan)}` : ""}\n\nUser request:\n${message}`;
+    for await (const msg of context.client.chat(contextualMessage, session)) {
+      if (msg.role === "assistant" && "chunk" in msg) {
+        content += msg.chunk.text;
+        if (outputFormat === "text") {
+          process.stdout.write(msg.chunk.text);
+        } else if (outputFormat === "stream-json") {
+          writeJsonLine(createAssistantDeltaEvent(msg.chunk.text));
+        }
+      } else if (msg.role === "system" && "message" in msg) {
+        const event = createSystemEvent(msg.message);
+        errors.push(msg.message);
+        events.push(event);
+        if (outputFormat === "text") {
+          process.stderr.write(`\n${msg.message}\n`);
+        } else if (outputFormat === "stream-json") {
+          writeJsonLine(event);
+        }
+      }
+    }
+
+    const durationMs = Date.now() - startedAt;
+    const completedEvent = createCompleteEvent({
+      content,
+      session,
+      providerConfig: context.providerConfig,
+      durationMs,
+      errors,
+      workspace: workspaceSummary,
+    });
+
+    if (outputFormat === "text") {
+      process.stdout.write("\n");
+    } else if (outputFormat === "json") {
+      writeJsonLine(createCompleteEvent({
+        content,
+        session,
+        providerConfig: context.providerConfig,
+        durationMs,
+        errors,
+        workspace: workspaceSummary,
+        events,
+      }));
+    } else {
+      writeJsonLine(completedEvent);
+    }
+  } finally {
+    context.client.off("tool_call_start", onToolStart);
+    context.client.off("tool_call_end", onToolEnd);
+    await closeCliClient(context);
+  }
+}
+
+function formatAgentPlan(plan: ReturnType<typeof buildAgentDispatchPlan>): string {
+  const lines = [
+    "Agent dispatch plan:",
+    `- primary: ${plan.primaryAgent ? `${plan.primaryAgent.id} (${plan.primaryAgent.model})` : "none"}`,
+    `- subAgents: ${plan.subAgents.map((agent) => `${agent.id} (${agent.model})`).join(", ") || "none"}`,
+    `- reason: ${plan.reason}`,
+  ];
+  return lines.join("\n");
+}
+
+function writeJsonLine(event: JsonEvent): void {
+  process.stdout.write(serializeJsonEvent(event));
 }

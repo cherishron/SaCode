@@ -5,10 +5,14 @@
  */
 
 import { Router, type Request, type Response } from "express";
+import fs from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
 import { getPrismaClient } from "@sacode/database";
 import { authMiddleware } from "../middleware/auth";
 
 const router = Router();
+const DEFAULT_MEDIA_DIR = "data/media";
 
 // ============================================
 // 类型定义
@@ -37,29 +41,38 @@ interface MediaMessage {
 
 /**
  * POST /api/media/upload
- * 上传媒体文件（占位实现，实际需要集成文件存储服务）
+ * 上传媒体文件
  */
 router.post("/upload", authMiddleware, async (req: Request, res: Response) => {
   try {
-    // TODO: 集成实际的文件存储服务（如 S3、OSS、本地存储等）
-    // 当前返回占位 URL
-    const { type, filename, mimeType, size } = req.body;
+    const { type, filename, mimeType, contentBase64 } = req.body;
 
     if (!type) {
       res.status(400).json({ error: "type is required" });
       return;
     }
 
-    // 生成临时 URL（实际项目中应该上传到存储服务）
-    const mediaUrl = `https://storage.example.com/${type}/${Date.now()}_${filename ?? "file"}`;
+    if (typeof contentBase64 !== "string" || contentBase64.length === 0) {
+      res.status(400).json({ error: "contentBase64 is required" });
+      return;
+    }
+
+    const buffer = Buffer.from(contentBase64, "base64");
+    if (buffer.length === 0) {
+      res.status(400).json({ error: "contentBase64 is invalid" });
+      return;
+    }
+
+    const storage = await saveLocalMediaFile({ type, filename, content: buffer });
 
     res.status(201).json({
       success: true,
-      mediaUrl,
+      mediaUrl: storage.mediaUrl,
       mediaMeta: {
-        filename,
+        filename: storage.filename,
         mimeType,
-        size,
+        size: buffer.length,
+        storage: "local",
       },
     });
   } catch (error) {
@@ -190,52 +203,17 @@ router.post("/process", authMiddleware, async (req: Request, res: Response) => {
       return;
     }
 
-    // TODO: 集成实际的媒体处理服务
-    // - 语音转文字：Whisper API、阿里云语音识别等
-    // - 图片 OCR：百度 OCR、Google Vision API 等
-    // - 图片描述：GPT-4V、Claude Vision 等
-
-    let result: Record<string, unknown> = {};
-
-    switch (operation) {
-      case "transcribe":
-        // 语音转文字
-        result = {
-          text: "[语音转文字结果占位]",
-          duration: 0,
-          language: "zh",
-        };
-        break;
-
-      case "ocr":
-        // 图片 OCR
-        result = {
-          text: "[OCR 识别结果占位]",
-          confidence: 0.95,
-          regions: [],
-        };
-        break;
-
-      case "describe":
-        // 图片描述
-        result = {
-          description: "[图片描述占位]",
-          tags: [],
-          objects: [],
-        };
-        break;
-
-      default:
-        res.status(400).json({ error: "Unknown operation" });
-        return;
+    if (!isSupportedMediaOperation(operation)) {
+      res.status(400).json({ error: "Unknown operation" });
+      return;
     }
 
-    res.json({
-      success: true,
+    res.status(501).json({
+      error: "Media processing service is not configured",
       mediaUrl,
       type,
       operation,
-      result,
+      requiredEnv: mediaOperationEnv(operation),
     });
   } catch (error) {
     console.error("Process media error:", error);
@@ -271,10 +249,12 @@ router.post("/voice", authMiddleware, async (req: Request, res: Response) => {
 
     let transcribedText: string | undefined;
 
-    // 如果启用自动转文字
     if (autoTranscribe) {
-      // TODO: 调用实际的语音转文字服务
-      transcribedText = "[语音转文字结果占位]";
+      res.status(501).json({
+        error: "Voice transcription service is not configured",
+        requiredEnv: mediaOperationEnv("transcribe"),
+      });
+      return;
     }
 
     // 创建语音消息
@@ -340,10 +320,12 @@ router.post("/image", authMiddleware, async (req: Request, res: Response) => {
 
     let description: string | undefined;
 
-    // 如果启用自动描述
     if (autoDescribe) {
-      // TODO: 调用实际的图片描述服务（如 GPT-4V）
-      description = "[图片描述占位]";
+      res.status(501).json({
+        error: "Image description service is not configured",
+        requiredEnv: mediaOperationEnv("describe"),
+      });
+      return;
     }
 
     // 创建图片消息
@@ -383,3 +365,38 @@ router.post("/image", authMiddleware, async (req: Request, res: Response) => {
 });
 
 export default router;
+
+async function saveLocalMediaFile(input: { type: string; filename?: string; content: Buffer }): Promise<{ filename: string; mediaUrl: string }> {
+  const safeType = sanitizePathSegment(input.type);
+  const originalName = sanitizeFilename(input.filename ?? "file.bin");
+  const filename = `${Date.now()}_${crypto.randomUUID()}_${originalName}`;
+  const mediaDir = path.resolve(process.env.MEDIA_STORAGE_DIR ?? DEFAULT_MEDIA_DIR, safeType);
+  await fs.mkdir(mediaDir, { recursive: true });
+  await fs.writeFile(path.join(mediaDir, filename), input.content);
+  const baseUrl = process.env.MEDIA_PUBLIC_BASE_URL ?? "/media";
+  return { filename, mediaUrl: `${baseUrl.replace(/\/$/, "")}/${safeType}/${filename}` };
+}
+
+function sanitizePathSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]/g, "-") || "file";
+}
+
+function sanitizeFilename(value: string): string {
+  const basename = path.basename(value).replace(/[^a-zA-Z0-9._-]/g, "-");
+  return basename || "file.bin";
+}
+
+function isSupportedMediaOperation(value: unknown): value is "transcribe" | "ocr" | "describe" {
+  return value === "transcribe" || value === "ocr" || value === "describe";
+}
+
+function mediaOperationEnv(operation: "transcribe" | "ocr" | "describe"): string[] {
+  switch (operation) {
+    case "transcribe":
+      return ["MEDIA_TRANSCRIBE_PROVIDER", "MEDIA_TRANSCRIBE_API_KEY"];
+    case "ocr":
+      return ["MEDIA_OCR_PROVIDER", "MEDIA_OCR_API_KEY"];
+    case "describe":
+      return ["MEDIA_VISION_PROVIDER", "MEDIA_VISION_API_KEY"];
+  }
+}

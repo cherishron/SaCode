@@ -126,7 +126,7 @@ export async function addCronJob(options: {
   }
 
   // 交互式获取缺失信息
-  const answers = await inquirer.prompt([
+  const answers = await inquirer.prompt<{ channel?: string; chatId?: string }>([
     {
       type: "input",
       name: "channel",
@@ -141,7 +141,7 @@ export async function addCronJob(options: {
       default: options.chatId || "",
       when: !options.chatId,
     },
-  ]);
+  ] as any);
 
   const channel = options.channel || answers.channel;
   const chatId = options.chatId || answers.chatId;
@@ -154,14 +154,14 @@ export async function addCronJob(options: {
   console.log(`  ${chalk.gray("Channel:")} ${channel}`);
   console.log(`  ${chalk.gray("Chat ID:")} ${chatId}`);
 
-  const confirm = await inquirer.prompt([
+  const confirm = await inquirer.prompt<{ confirm: boolean }>([
     {
       type: "confirm",
       name: "confirm",
       message: chalk.yellow("Create this cron job?"),
       default: true,
     },
-  ]);
+  ] as any);
 
   if (!confirm.confirm) {
     console.log(chalk.gray("Operation cancelled"));
@@ -176,14 +176,14 @@ export async function addCronJob(options: {
  * 删除定时任务
  */
 export async function removeCronJob(jobId: string): Promise<void> {
-  const confirm = await inquirer.prompt([
+  const confirm = await inquirer.prompt<{ confirm: boolean }>([
     {
       type: "confirm",
       name: "confirm",
       message: chalk.yellow(`Delete cron job ${jobId}?`),
       default: false,
     },
-  ]);
+  ] as any);
 
   if (!confirm.confirm) {
     console.log(chalk.gray("Operation cancelled"));

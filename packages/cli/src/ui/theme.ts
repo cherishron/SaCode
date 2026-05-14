@@ -177,12 +177,12 @@ export function getStatusColor(
   status: "pending" | "running" | "success" | "error"
 ): string {
   const statusColorMap: Record<string, string> = {
-    pending: toInkColor(getColors().status.pending),
-    running: toInkColor(getColors().status.running),
-    success: toInkColor(getColors().status.success),
-    error: toInkColor(getColors().status.error),
+    pending: toInkColor(getColors().status.pending) ?? "white",
+    running: toInkColor(getColors().status.running) ?? "white",
+    success: toInkColor(getColors().status.success) ?? "green",
+    error: toInkColor(getColors().status.error) ?? "red",
   };
-  return statusColorMap[status] ?? statusColorMap.pending;
+  return statusColorMap[status] ?? statusColorMap.pending ?? "white";
 }
 
 /**

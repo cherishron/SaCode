@@ -152,7 +152,7 @@ export class PreferenceManager extends EventEmitter<PreferenceManagerEvents> {
       const oldValue = this.preferences[k];
       
       if (oldValue !== value) {
-        this.preferences[k] = value as UserPreferences[typeof k];
+        this.setPreferenceValue(k, value as UserPreferences[typeof k]);
         changes.push({
           key: k,
           oldValue,
@@ -235,6 +235,13 @@ export class PreferenceManager extends EventEmitter<PreferenceManagerEvents> {
     if (!existsSync(this.configDir)) {
       mkdirSync(this.configDir, { recursive: true });
     }
+  }
+
+  private setPreferenceValue<K extends keyof UserPreferences>(
+    key: K,
+    value: UserPreferences[K]
+  ): void {
+    this.preferences[key] = value;
   }
 }
 
