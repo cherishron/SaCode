@@ -1,6 +1,6 @@
 # 部署指南
 
-> SACODE 生产环境部署文档
+> SaCode 生产环境部署文档
 
 ## 目录
 
@@ -52,12 +52,12 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/STAND-ALONE/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 
-# 创建环境变量文件
-cp .env.example .env
-# 编辑 .env 文件配置环境变量
+# 初始化用户级配置
+node packages/cli/dist/cli.js config init --provider openai --model gpt-4o
+# 编辑 ~/.sacode/providers.json 或设置环境变量
 ```
 
 ### 2. 构建镜像
@@ -67,8 +67,8 @@ cp .env.example .env
 pnpm docker:build
 
 # 或分别构建
-docker build -t SACODE-api --target api .
-docker build -t SACODE-web --target web .
+docker build -t sacode-api --target api .
+docker build -t sacode-web --target web .
 ```
 
 ### 3. 使用 Docker Compose
@@ -92,12 +92,12 @@ version: "3.8"
 
 services:
   api:
-    image: SACODE-api
+    image: sacode-api
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://user:pass@postgres:5432/SACODE
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/sacode
       - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
@@ -112,7 +112,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: SACODE-web
+    image: sacode-web
     ports:
       - "80:80"
     depends_on:
@@ -122,13 +122,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=SACODE
+      - POSTGRES_USER=sacode
       - POSTGRES_PASSWORD=your_secure_password
-      - POSTGRES_DB=SACODE
+      - POSTGRES_DB=sacode
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U SACODE"]
+      test: ["CMD-SHELL", "pg_isready -U sacode"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -172,8 +172,8 @@ npm install -g pnpm@9
 ### 3. 安装依赖
 
 ```bash
-git clone https://github.com/STAND-ALONE/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 pnpm install
 ```
 
@@ -186,8 +186,9 @@ pnpm build
 ### 5. 配置环境变量
 
 ```bash
-cp .env.example .env
-# 编辑 .env 配置生产环境变量
+# 初始化用户级配置
+node packages/cli/dist/cli.js config init --provider openai --model gpt-4o
+# 编辑 ~/.sacode/providers.json 或设置环境变量
 ```
 
 ### 6. 初始化数据库
@@ -207,10 +208,10 @@ pnpm prisma migrate deploy
 npm install -g pm2
 
 # 启动 API 服务
-pm2 start packages/api/dist/index.js --name SACODE-api
+pm2 start packages/api/dist/index.js --name sacode-api
 
 # 启动 Web 服务
-pm2 start packages/web/dist/index.js --name SACODE-web
+pm2 start packages/web/dist/index.js --name sacode-web
 
 # 保存 PM2 配置
 pm2 save
@@ -229,7 +230,7 @@ HOST=0.0.0.0
 
 # 数据库
 DATABASE_TYPE=postgresql
-DATABASE_URL=postgresql://user:password@localhost:5432/SACODE
+DATABASE_URL=postgresql://user:password@localhost:5432/sacode
 
 # Redis (可选)
 REDIS_URL=redis://localhost:6379
@@ -309,21 +310,21 @@ FEISHU_APP_SECRET=your-app-secret
 
 ```env
 DATABASE_TYPE=postgresql
-DATABASE_URL=postgresql://SACODE:password@localhost:5432/SACODE
+DATABASE_URL=postgresql://sacode:password@localhost:5432/sacode
 ```
 
 ### MySQL
 
 ```env
 DATABASE_TYPE=mysql
-DATABASE_URL=mysql://SACODE:password@localhost:3306/SACODE
+DATABASE_URL=mysql://sacode:password@localhost:3306/sacode
 ```
 
 ### SQLite (开发环境)
 
 ```env
 DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/SACODE.db
+DATABASE_PATH=./data/sacode.db
 ```
 
 ### 数据库迁移
@@ -341,7 +342,7 @@ pnpm -C packages/database prisma migrate deploy
 ### Nginx 配置
 
 ```nginx
-# /etc/nginx/sites-available/SACODE
+# /etc/nginx/sites-available/sacode
 server {
     listen 80;
     server_name your-domain.com;
@@ -397,7 +398,7 @@ your-domain.com {
     tls your-email@example.com
 
     # 前端
-    root * /var/www/SACODE/web
+    root * /var/www/sacode/web
     file_server
 
     # API
@@ -432,8 +433,8 @@ docker compose logs -f api
 docker compose logs -f web
 
 # PM2 日志
-pm2 logs SACODE-api
-pm2 logs SACODE-web
+pm2 logs sacode-api
+pm2 logs sacode-web
 ```
 
 ### 监控指标
@@ -498,13 +499,13 @@ pnpm audit --fix
 
 ```bash
 # PostgreSQL 备份
-pg_dump -U SACODE SACODE > backup_$(date +%Y%m%d).sql
+pg_dump -U sacode sacode > backup_$(date +%Y%m%d).sql
 
 # 自动备份脚本
 #!/bin/bash
 BACKUP_DIR=/backups
 DATE=$(date +%Y%m%d_%H%M%S)
-pg_dump -U SACODE SACODE | gzip > $BACKUP_DIR/SACODE_$DATE.sql.gz
+pg_dump -U sacode sacode | gzip > $BACKUP_DIR/sacode_$DATE.sql.gz
 # 保留最近 7 天
 find $BACKUP_DIR -name "*.gz" -mtime +7 -delete
 ```

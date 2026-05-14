@@ -5,6 +5,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import path from "node:path";
 import type { ToolDefinition } from "../types";
 import type { EditFileInput, DeleteFileInput, FilesCapabilityConfig } from "../types";
 
@@ -135,11 +136,7 @@ export function createEditFileTool(config: FilesCapabilityConfig): ToolDefinitio
 
       const { path, edits, createBackup = true, dryRun = false } = typedInput;
 
-      // 检查路径是否在允许目录内
-      const isAllowed = config.allowedDirs.some((dir) => path.startsWith(dir));
-      if (!isAllowed && config.allowedDirs.length > 0) {
-        throw new Error(`Path not in allowed directories: ${path}`);
-      }
+      await ensureAllowedPath(path, config.allowedDirs);
 
       try {
         // 读取文件内容
@@ -236,11 +233,7 @@ export function createDeleteFileTool(config: FilesCapabilityConfig): ToolDefinit
 
       const { path, recursive = false, force = false, moveToTrash = true } = typedInput;
 
-      // 检查路径是否在允许目录内
-      const isAllowed = config.allowedDirs.some((dir) => path.startsWith(dir));
-      if (!isAllowed && config.allowedDirs.length > 0) {
-        throw new Error(`Path not in allowed directories: ${path}`);
-      }
+      await ensureAllowedPath(path, config.allowedDirs);
 
       try {
         // 检查路径是否存在
@@ -273,4 +266,20 @@ export function createDeleteFileTool(config: FilesCapabilityConfig): ToolDefinit
       }
     },
   };
+}
+
+async function ensureAllowedPath(targetPath: string, allowedDirs: string[]): Promise<void> {
+  if (allowedDirs.length === 0) return;
+
+  const realTarget = await fs.realpath(path.resolve(targetPath));
+
+  for (const dir of allowedDirs) {
+    const realAllowed = await fs.realpath(path.resolve(dir));
+    const relative = path.relative(realAllowed, realTarget);
+    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return;
+    }
+  }
+
+  throw new Error(`Path not in allowed directories: ${targetPath}`);
 }

@@ -6,6 +6,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+  ContentBlockParam,
   MessageParam,
   Tool as AnthropicTool,
 } from "@anthropic-ai/sdk/resources/messages";
@@ -284,8 +285,17 @@ export class AnthropicProvider extends BaseProvider {
         continue;
       }
 
-      // 跳过工具结果消息（Anthropic 处理方式不同）
       if (msg.role === "tool") {
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: msg.tool_call_id ?? "",
+              content: typeof msg.content === "string" ? msg.content : "",
+            },
+          ],
+        });
         continue;
       }
 
@@ -295,6 +305,26 @@ export class AnthropicProvider extends BaseProvider {
       }
 
       if (typeof msg.content === "string") {
+        if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+          const content: ContentBlockParam[] = [];
+          if (msg.content) {
+            content.push({ type: "text", text: msg.content });
+          }
+          for (const toolCall of msg.tool_calls) {
+            content.push({
+              type: "tool_use",
+              id: toolCall.id,
+              name: toolCall.function.name,
+              input: this.parseToolInput(toolCall.function.arguments),
+            });
+          }
+          messages.push({
+            role: "assistant",
+            content,
+          });
+          continue;
+        }
+
         messages.push({
           role: msg.role as "user" | "assistant",
           content: msg.content,
@@ -325,6 +355,17 @@ export class AnthropicProvider extends BaseProvider {
     }
 
     return messages;
+  }
+
+  private parseToolInput(input: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(input);
+      return typeof parsed === "object" && parsed !== null
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
   }
 
   /**

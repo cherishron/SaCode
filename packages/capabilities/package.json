@@ -12,8 +12,8 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
-    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "build": "tsup src/index.ts --format esm --dts --clean --external glob --external cross-spawn --external puppeteer --external pino --external zod",
+    "dev": "tsup src/index.ts --format esm --dts --watch --external glob --external cross-spawn --external puppeteer --external pino --external zod",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",

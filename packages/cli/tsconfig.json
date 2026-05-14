@@ -5,7 +5,11 @@
     "outDir": "./dist",
     "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "jsx": "react-jsx",
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "exactOptionalPropertyTypes": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

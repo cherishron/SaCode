@@ -274,7 +274,9 @@ export const CapabilitiesToolConverter: ToolDefinitionConverter<CapabilitiesTool
     // 尝试从 Zod Schema 转换
     let parameters: ToolParameterSchema;
     
-    if (source.inputSchema && typeof source.inputSchema._def === "object") {
+    const inputSchema = source.inputSchema as { _def?: unknown } | undefined;
+
+    if (inputSchema && typeof inputSchema._def === "object") {
       // 是 Zod Schema
       parameters = zodToJsonSchema(source.inputSchema as unknown as z.ZodType<unknown>);
     } else if (source.inputSchema && typeof source.inputSchema === "object") {

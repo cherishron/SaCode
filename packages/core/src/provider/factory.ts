@@ -55,6 +55,11 @@ export const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
 export function createProvider(config: ProviderConfig): AIProvider {
   const providerType = config.type;
 
+  const registeredFactory = providerRegistry.get(providerType);
+  if (registeredFactory) {
+    return registeredFactory(config);
+  }
+
   // 补充默认值
   const model = config.model ?? DEFAULT_MODELS[providerType];
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URLS[providerType];

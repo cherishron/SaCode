@@ -336,6 +336,7 @@ export async function publishSkill(
     await collectFiles(skillPath, skillPath);
 
     // 发布
+    const skillName = result.skill.name ?? result.skill.slug ?? "untitled-skill";
     const publishData: {
       slug: string;
       name: string;
@@ -343,8 +344,8 @@ export async function publishSkill(
       files: Record<string, string>;
       tags?: string[];
     } = {
-      slug: options.slug ?? result.skill.slug ?? result.skill.name.toLowerCase().replace(/\s+/g, "-"),
-      name: result.skill.name,
+      slug: options.slug ?? result.skill.slug ?? skillName.toLowerCase().replace(/\s+/g, "-"),
+      name: skillName,
       version: options.version ?? result.skill.version ?? "1.0.0",
       files,
     };

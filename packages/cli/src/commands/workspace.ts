@@ -42,14 +42,14 @@ export async function initWorkspace(templateId?: string): Promise<void> {
   // 检查工作空间是否已存在
   try {
     await fs.access(workspacePath);
-    const answers = await inquirer.prompt([
+    const answers = await inquirer.prompt<{ overwrite: boolean }>([
       {
         type: "confirm",
         name: "overwrite",
         message: chalk.yellow("Workspace already exists. Overwrite?"),
         default: false,
       },
-    ]);
+    ] as any);
     if (!answers.overwrite) {
       console.log(chalk.gray("Operation cancelled"));
       return;
@@ -69,7 +69,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
     }
     console.log();
 
-    const answers = await inquirer.prompt([
+    const answers = await inquirer.prompt<{ template: string }>([
       {
         type: "list",
         name: "template",
@@ -77,7 +77,7 @@ export async function initWorkspace(templateId?: string): Promise<void> {
         choices: templates.map((t) => ({ name: t.name, value: t.id })),
         default: "default",
       },
-    ]);
+    ] as any);
 
     selectedTemplate = templates.find((t) => t.id === answers.template);
   }

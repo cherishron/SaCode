@@ -857,34 +857,23 @@ export interface IMAdapter {
 **命令设计**:
 
 ```bash
-# 交互式聊天
-sacode chat
+# 启动交互式 AI 助手
+sacode
 
-# 发送单条消息
-sacode chat -m "你好"
+# 初始化配置
+sacode config init
 
-# 启动服务
-sacode start [--port 3000]
+# 设置语言偏好
+sacode config language
 
-# IM 管理
-sacode im connect telegram
-sacode im status
+# 诊断检查
+sacode doctor
 
-# 配置管理
-sacode config set provider.timeout 120000
-sacode config list
-
-# 插件管理
-sacode plugin install ./my-plugin
-sacode plugin list
+# 模型管理
+sacode model
 
 # 工具管理
-sacode tool run read_file --path ./README.md
-sacode tool list
-
-# 技能管理
-sacode skill search telegram
-sacode skill install add-telegram
+sacode tool
 ```
 
 ### 7.9 @sacode/api - API 服务
@@ -960,18 +949,20 @@ sacode skill install add-telegram
 
 ## 九、配置设计
 
-### 9.1 主配置文件
+### 9.1 用户级配置
+
+配置文件存储在用户级目录 `~/.sacode/` 下，无需 `.env` 文件。使用 `sacode config init` 初始化配置，`sacode config language` 设置语言偏好。
 
 ```yaml
-# config/default.yaml
+# ~/.sacode/config.yaml
 server:
   port: 3000
   host: localhost
 
 provider:
   type: openai  # openai | anthropic | deepseek | moonshot | zhipu
-  apiKey: ${OPENAI_API_KEY}
-  baseUrl: ${OPENAI_BASE_URL}
+  apiKey: sk-xxx  # 直接在配置文件中填写
+  baseUrl: ""  # 可选，自定义 API 地址
   timeout: 60000
 
 cache:
@@ -987,25 +978,25 @@ auth:
   oauth:
     github:
       enabled: true
-      clientId: ${GITHUB_CLIENT_ID}
-      clientSecret: ${GITHUB_CLIENT_SECRET}
+      clientId: your-client-id
+      clientSecret: your-client-secret
     google:
       enabled: true
-      clientId: ${GOOGLE_CLIENT_ID}
-      clientSecret: ${GOOGLE_CLIENT_SECRET}
+      clientId: your-client-id
+      clientSecret: your-client-secret
     wechat:
       enabled: false
-      appId: ${WECHAT_APP_ID}
-      appSecret: ${WECHAT_APP_SECRET}
+      appId: your-app-id
+      appSecret: your-app-secret
     wework:
       enabled: false
-      corpId: ${WEWORK_CORP_ID}
-      agentId: ${WEWORK_AGENT_ID}
-      secret: ${WEWORK_SECRET}
+      corpId: your-corp-id
+      agentId: your-agent-id
+      secret: your-secret
     qq:
       enabled: false
-      appId: ${QQ_APP_ID}
-      appKey: ${QQ_APP_KEY}
+      appId: your-app-id
+      appKey: your-app-key
 
 database:
   type: sqlite  # sqlite | mysql | postgres
@@ -1016,13 +1007,13 @@ database:
     port: 3306
     database: sacode
     username: root
-    password: ${MYSQL_PASSWORD}
+    password: your-password
   postgres:
     host: localhost
     port: 5432
     database: sacode
     username: postgres
-    password: ${POSTGRES_PASSWORD}
+    password: your-password
 
 channels:
   - type: wechat
@@ -1031,18 +1022,18 @@ channels:
     enabled: false
   - type: telegram
     enabled: false
-    token: ${TELEGRAM_BOT_TOKEN}
+    token: your-bot-token
   - type: discord
     enabled: false
-    token: ${DISCORD_BOT_TOKEN}
+    token: your-bot-token
   - type: dingtalk
     enabled: false
   - type: feishu
     enabled: false
   - type: xiaoyi
     enabled: false
-    ak: ${XIAOYI_AK}
-    sk: ${XIAOYI_SK}
+    ak: your-ak
+    sk: your-sk
   - type: whatsapp
     enabled: false
   - type: slack

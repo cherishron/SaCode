@@ -59,11 +59,7 @@ export type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
 export interface CapabilitiesToolDefinition {
   name: string;
   description: string;
-  inputSchema: {
-    _def?: unknown;
-    shape?: () => Record<string, unknown>;
-    [key: string]: unknown;
-  };
+  inputSchema: unknown;
   execute: (input: unknown) => Promise<unknown>;
 }
 

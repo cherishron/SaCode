@@ -13,8 +13,8 @@
 ## 安装
 
 ```bash
-# 通过 SACODE CLI 安装
-SACODE plugin install xiaoyi
+# 通过 SaCode CLI 安装
+sacode plugin install xiaoyi
 ```
 
 ## 配置
@@ -35,7 +35,7 @@ SACODE plugin install xiaoyi
 ### 通过工具调用
 
 ```typescript
-import { PluginManager } from "@SACODE/core";
+import { PluginManager } from "@sacode/core";
 
 const pluginManager = new PluginManager(/* ... */);
 await pluginManager.enable("xiaoyi");
@@ -106,8 +106,8 @@ context.registerMessageHandler({
 
 ## 依赖
 
-- `@SACODE/core` >= 0.1.0
-- `@SACODE/adapters` (xiaoyi adapter)
+- `@sacode/core` >= 0.1.0
+- `@sacode/adapters` (xiaoyi adapter)
 
 ## 许可证
 

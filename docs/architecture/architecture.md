@@ -306,21 +306,21 @@ IM Platform          Adapter              Core               AI Provider
 
 ```yaml
 services:
-  SACODE-api:
-    image: SACODE-api:latest
+  sacode-api:
+    image: sacode-api:latest
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=file:/data/SACODE.db
+      - DATABASE_URL=file:/data/sacode.db
     volumes:
       - ./data:/data
 
-  SACODE-web:
-    image: SACODE-web:latest
+  sacode-web:
+    image: sacode-web:latest
     ports:
       - "80:80"
     depends_on:
-      - SACODE-api
+      - sacode-api
 
   redis:
     image: redis:alpine

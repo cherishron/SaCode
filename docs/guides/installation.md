@@ -1,6 +1,6 @@
 # Installation Guide
 
-> SACODE installation and setup instructions
+> SaCode 安装和配置说明
 
 ---
 
@@ -20,8 +20,8 @@
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/STAND-ALONE/SACODE.git
-cd SACODE
+git clone https://github.com/STAND-ALONE/SaCode.git
+cd SaCode
 ```
 
 ### 2. Install Dependencies
@@ -30,33 +30,28 @@ cd SACODE
 pnpm install
 ```
 
-### 3. Configure Environment
+### 3. Configure Provider
 
 ```bash
-cp .env.example .env
+# Initialize user-level provider configuration (writes to ~/.sacode/providers.json)
+node packages/cli/dist/cli.js config init --provider openai --model gpt-4o
+
+# Or configure DeepSeek
+node packages/cli/dist/cli.js config init --provider deepseek --model deepseek-chat --base-url https://api.deepseek.com/v1
+
+# Diagnose configuration
+node packages/cli/dist/cli.js doctor
+
+# Set interactive language
+node packages/cli/dist/cli.js config language zh-CN
 ```
 
-Edit `.env` with your configuration:
+Set API Key via shell environment variable:
 
-```env
-# Server
-PORT=3000
-HOST=localhost
-
-# Database
-DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/SACODE.db
-
-# AI Provider (choose one)
-AI_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-
-# OR
-AI_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-
-# JWT Secret
-JWT_SECRET=your-secret-key-here
+```bash
+export OPENAI_API_KEY=sk-your-api-key-here
+# Or
+export DEEPSEEK_API_KEY=sk-your-api-key-here
 ```
 
 ### 4. Initialize Database
@@ -120,7 +115,7 @@ The `docker-compose.yml` includes:
 | `PORT` | No | 3000 | Server port |
 | `HOST` | No | localhost | Server host |
 | `DATABASE_TYPE` | No | sqlite | Database type |
-| `DATABASE_PATH` | No | ./data/SACODE.db | SQLite path |
+| `DATABASE_PATH` | No | ./data/sacode.db | SQLite path |
 | `DATABASE_URL` | No | - | MySQL/PostgreSQL URL |
 | `JWT_SECRET` | Yes | - | JWT signing secret |
 | `AI_PROVIDER` | No | openai | Default AI provider |
@@ -169,14 +164,14 @@ Default, no additional setup needed.
 
 ```env
 DATABASE_TYPE=mysql
-DATABASE_URL=mysql://user:password@localhost:3306/SACODE
+DATABASE_URL=mysql://user:password@localhost:3306/sacode
 ```
 
 ### PostgreSQL
 
 ```env
 DATABASE_TYPE=postgres
-DATABASE_URL=postgresql://user:password@localhost:5432/SACODE
+DATABASE_URL=postgresql://user:password@localhost:5432/sacode
 ```
 
 ### Run Migrations

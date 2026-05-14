@@ -351,8 +351,8 @@ interface SkillInstallerConfig {
 - [x] 重试机制
 - [x] 校验和验证
 - [x] 可配置 API URL
-- [ ] 输入内容验证（待实现）
-- [ ] 权限分级（待实现）
+- [ ] 输入内容验证
+- [ ] 权限分级
 
 ---
 
