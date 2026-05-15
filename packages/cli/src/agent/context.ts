@@ -3,6 +3,7 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { resolve, join } from "path";
+import { spawnSync } from "node:child_process";
 import type { ProjectContext, ConversationMessage } from "./types.js";
 
 const MAX_TREE_DEPTH = 3;
@@ -12,7 +13,7 @@ const IGNORE_DIRS = new Set(["node_modules", ".git", "dist", ".next", ".cache", 
 export class ContextManager {
   private rootDir: string;
   private messages: ConversationMessage[] = [];
-  // @ts-expect-error reserved for future token budget management
+  // Reserved for future token budget management.
   private _maxContextTokens: number;
 
   constructor(rootDir: string, maxContextTokens: number = 128_000) {
@@ -48,14 +49,12 @@ export class ContextManager {
 
     // Git 状态
     try {
-      const proc = Bun.spawnSync({
-        cmd: ["git", "status", "--short"],
+      const proc = spawnSync("git", ["status", "--short"], {
         cwd: this.rootDir,
-        stdout: "pipe",
-        stderr: "pipe",
+        encoding: "utf-8",
         timeout: 5000,
       });
-      context.gitStatus = (proc.stdout?.toString() ?? "").trim();
+      context.gitStatus = proc.stdout.trim();
     } catch { /* not a git repo or git not available */ }
 
     return context;

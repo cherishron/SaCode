@@ -104,9 +104,9 @@ export async function runTool(
 
   try {
     const { SACODEClient } = await import("@sacode/core");
-    const { getProviderConfigFromEnv } = await import("./chat.js");
+    const { resolveProviderConfig } = await import("../lib/provider-config.js");
 
-    const providerConfig = getProviderConfigFromEnv();
+    const providerConfig = await resolveProviderConfig();
     const client = new SACODEClient({
       provider: providerConfig,
       timeout: 60000,
@@ -137,8 +137,11 @@ export async function runTool(
     if (toolBridge) {
       const result = await toolBridge.executeToolCall({
         id: `call_${Date.now()}`,
-        name: tool.name,
-        arguments: params as Record<string, unknown>,
+        type: "function",
+        function: {
+          name: tool.name,
+          arguments: JSON.stringify(params),
+        },
       });
 
       if (result.success) {

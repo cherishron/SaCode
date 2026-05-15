@@ -1,5 +1,8 @@
 import type { CommandContext } from "./types.js";
 import chalk from "chalk";
+import { ensureAgentStore } from "../lib/agent-store.js";
+import type { AgentRunnerEvent } from "../agent/runner.js";
+import { filterToolsForAgent } from "../agent/tool-filter.js";
 
 /**
  * 代码智能命令 — Claude Code 风格
@@ -14,10 +17,25 @@ import chalk from "chalk";
 
 /** 打印流式事件的通用处理器 */
 async function printStreamEvents(
-  events: AsyncGenerator<import("../agent/types.js").StreamEvent>,
+  events: AsyncGenerator<AgentRunnerEvent>,
 ): Promise<void> {
   for await (const event of events) {
     switch (event.type) {
+      case "runner_plan":
+        if (event.enabled) {
+          const subAgents = event.subAgents.length > 0 ? event.subAgents.join(", ") : "none";
+          console.log(chalk.dim(`Plan: primary=${event.primaryAgent ?? "none"}, sub-agents=${subAgents}, reason=${event.reason}`));
+        }
+        break;
+      case "agent_start":
+        console.log(chalk.dim(`[${event.role}] ${event.agentId} started`));
+        break;
+      case "agent_complete":
+        console.log(chalk.dim(`[${event.role}] ${event.agentId} completed`));
+        break;
+      case "agent_summary":
+        console.log(chalk.gray(`[sub] ${event.agentId} summary: ${event.summary || "(empty)"}`));
+        break;
       case "thought":
         console.log(chalk.dim.italic(`[TH] ${event.text}`));
         break;
@@ -63,24 +81,25 @@ async function printStreamEvents(
   }
 }
 
-/** 创建 AgenticLoop 实例 */
-async function createLoop(opts: { maxIterations?: number } = {}) {
-  const { AgenticLoop } = await import("../agent/loop.js");
+/** 创建 AgentRunner 实例 */
+async function createRunner(opts: { maxIterations?: number } = {}) {
+  const { AgentRunner } = await import("../agent/runner.js");
   const { createDefaultTools } = await import("../tools/index.js");
 
   const rootDir = process.cwd();
-  const tools = createDefaultTools(rootDir);
+  const agentStore = await ensureAgentStore();
 
-  return new AgenticLoop(
-    {
-      maxIterations: opts.maxIterations || 25,
-      tools,
-      contextWindow: 128_000,
-      autoApprove: ["file_read", "file_search", "code_search"],
-      requireApproval: ["file_write", "shell_exec", "diff_apply"],
-    },
+  return new AgentRunner({
     rootDir,
-  );
+    agentStore,
+    maxIterations: opts.maxIterations || 25,
+    contextWindow: 128_000,
+    autoApprove: ["file_read", "file_search", "code_search"],
+    requireApproval: ["file_write", "shell_exec", "diff_apply"],
+    toolResolver: ({ agent, rootDir: agentRootDir }) => {
+      return filterToolsForAgent(createDefaultTools(agentRootDir), agent);
+    },
+  });
 }
 
 export function registerCodeCommand(ctx: CommandContext): void {
@@ -134,8 +153,8 @@ export function registerCodeCommand(ctx: CommandContext): void {
         }
 
         try {
-          const loop = await createLoop();
-          await printStreamEvents(loop.run(trimmed));
+          const runner = await createRunner();
+          await printStreamEvents(runner.run(trimmed));
         } catch (err) {
           console.error(
             chalk.red(
@@ -159,11 +178,11 @@ export function registerCodeCommand(ctx: CommandContext): void {
     .action(async (prompt: string, opts: { iterations: string }) => {
       console.log(chalk.blue(`Running: "${prompt}"...\n`));
 
-      const loop = await createLoop({
+      const runner = await createRunner({
         maxIterations: parseInt(opts.iterations, 10) || 25,
       });
 
-      await printStreamEvents(loop.run(prompt));
+      await printStreamEvents(runner.run(prompt));
     });
 
   // ─── sacode code explain <file> ───
@@ -173,9 +192,9 @@ export function registerCodeCommand(ctx: CommandContext): void {
     .action(async (file: string) => {
       console.log(chalk.blue(`Analyzing ${file}...\n`));
 
-      const loop = await createLoop({ maxIterations: 5 });
+      const runner = await createRunner({ maxIterations: 5 });
       await printStreamEvents(
-        loop.run(
+        runner.run(
           `Please read and explain the code in file: ${file}. Provide a clear summary of what it does, its key functions, and any notable patterns.`,
         ),
       );
@@ -220,9 +239,9 @@ export function registerCodeCommand(ctx: CommandContext): void {
     .action(async (file: string) => {
       console.log(chalk.blue(`Analyzing ${file} for refactoring...\n`));
 
-      const loop = await createLoop({ maxIterations: 10 });
+      const runner = await createRunner({ maxIterations: 10 });
       await printStreamEvents(
-        loop.run(
+        runner.run(
           `Read the file ${file} and suggest refactoring improvements. Analyze code quality, identify code smells, and propose specific improvements. Do not make changes, only suggest.`,
         ),
       );

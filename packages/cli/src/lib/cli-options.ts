@@ -43,8 +43,14 @@ export function parseToolParams(params: string[] | undefined, cwd = process.cwd(
 }
 
 function normalizeWorkspacePath(value: string, cwd: string): string {
-  if (!value || value.startsWith("/")) return value;
-  return path.resolve(cwd, value);
+  if (!value) return value;
+  if (path.isAbsolute(value)) return value;
+  const resolved = path.resolve(cwd, value);
+  const cwdResolved = path.resolve(cwd);
+  if (!resolved.startsWith(cwdResolved + path.sep) && resolved !== cwdResolved) {
+    throw new Error(`Path must be within workspace: ${value}`);
+  }
+  return resolved;
 }
 
 function parseParamValue(value: string): unknown {

@@ -309,6 +309,27 @@ describe("SACODEClient", () => {
       expect(chunks.length).toBeGreaterThan(0);
     });
 
+    it("应该支持单次调用覆盖模型", async () => {
+      const stream = client.chatWithOptions({
+        message: "Hello",
+        sessionId: "session-123",
+        modelOverride: "claude-3-5-sonnet-20241022",
+      });
+
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      const provider = vi.mocked(createProvider).mock.results.at(-1)?.value;
+      expect(provider?.chat).toHaveBeenCalled();
+      expect(vi.mocked(provider!.chat).mock.calls.at(-1)?.[0]).toMatchObject({
+        sessionId: "session-123",
+        modelOverride: "claude-3-5-sonnet-20241022",
+      });
+      expect(chunks.length).toBeGreaterThan(0);
+    });
+
     it("应该在未连接时抛出错误", async () => {
       const newClient = new SACODEClient(baseConfig);
 

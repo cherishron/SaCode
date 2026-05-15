@@ -229,6 +229,17 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
    * 流式聊天（带工具执行循环）
    */
   async *chat(message: string, sessionId?: string): AsyncGenerator<Message> {
+    yield* this.chatWithOptions({ message, sessionId });
+  }
+
+  /**
+   * 流式聊天（支持单次调用覆盖配置）
+   */
+  async *chatWithOptions(options: {
+    message: string;
+    sessionId?: string;
+    modelOverride?: string;
+  }): AsyncGenerator<Message> {
     if (!this.provider || !this.connected) {
       throw new ConnectionError("Not connected to AI provider");
     }
@@ -241,7 +252,7 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
       // 添加用户消息到历史
       this.messageHistory.push({
         role: "user",
-        content: message,
+        content: options.message,
       });
 
       // 工具执行循环
@@ -261,9 +272,10 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
         // 调用 Provider
         const stream = this.provider.chat({
           messages: this.messageHistory,
+          modelOverride: options.modelOverride,
           systemPrompt: this.systemPrompt,
           tools: tools.length > 0 ? tools : undefined,
-          sessionId,
+          sessionId: options.sessionId,
         });
 
         // 处理流式响应
@@ -272,7 +284,7 @@ export class SACODEClient extends EventEmitter<SACODEClientEvents> {
         const toolCalls: ToolCall[] = [];
 
         for await (const chunk of stream) {
-          const transformedMessage = streamChunkToMessage(chunk, sessionId);
+          const transformedMessage = streamChunkToMessage(chunk, options.sessionId);
 
           if (transformedMessage) {
             this.emit("message", transformedMessage);

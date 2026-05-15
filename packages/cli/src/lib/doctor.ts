@@ -184,6 +184,6 @@ function defaultModelFor(type: string): string {
       return "glm-4-plus";
     case "openai":
     default:
-      return "gpt-4";
+      return "gpt-4o";
   }
 }

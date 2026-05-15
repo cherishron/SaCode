@@ -117,7 +117,7 @@ export class AnthropicProvider extends BaseProvider {
         const stream = await this.withRetry(
           async () => {
             const params: Anthropic.Messages.MessageCreateParams = {
-              model: this.model,
+              model: options.modelOverride ?? this.model,
               messages,
               max_tokens: options.maxTokens ?? 4096,
             };

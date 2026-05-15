@@ -138,7 +138,7 @@ export class OpenAIProvider extends BaseProvider {
         const stream = await this.withRetry(
           async () => {
             const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
-              model: this.model,
+              model: options.modelOverride ?? this.model,
               messages,
               stream: true,
               stream_options: { include_usage: true }, // 启用 Token 使用量统计

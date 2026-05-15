@@ -79,3 +79,18 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 不保留或依赖项目 `.env` 作为主要配置方式；模型、Provider、Agent、语言等配置应写入 npm 安装后用户级配置路径。
   - 多 Agent 协作和子 Agent 调度需要实现，并且应支持开启或关闭。
   - 交互语言需要可配置并持久化。
+
+[分支开发约束]
+- Date: 2026-05-14
+- Context: 用户要求不要自行创建分支，只能通过 dev 分支开发
+- Instructions:
+  - 后续开发只能在 `dev` 分支上进行。
+  - 不要自行创建新的功能分支或切换到其他分支开发，除非用户明确要求。
+
+[CLI Agent 运行时兼容约定]
+- Date: 2026-05-15
+- Context: Agent 在执行 AgentRunner 骨架实现时发现
+- Category: 代码模式
+- Instructions:
+  - `packages/cli/src/agent/` 层应优先使用 Node 兼容 API，不要新增对 Bun 全局对象的直接依赖。
+  - Git 或进程调用统一使用 Node `child_process`，以便在当前 Node 验证链路下可执行类型检查和测试。

@@ -175,7 +175,8 @@ function normalizeAgent(value: unknown): AgentConfigEntry | null {
 
 function shouldDispatchAgent(agent: AgentConfigEntry, terms: string): boolean {
   const haystack = `${agent.id} ${agent.name} ${agent.description ?? ""} ${agent.tools.join(" ")}`.toLowerCase();
-  return haystack.split(/[^a-z0-9_-]+/).some((token) => token.length > 2 && terms.includes(token));
+  const termTokens = new Set(terms.split(/[^a-z0-9_-]+/).filter((t) => t.length > 2));
+  return haystack.split(/[^a-z0-9_-]+/).some((token) => termTokens.has(token));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

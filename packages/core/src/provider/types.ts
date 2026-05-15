@@ -164,6 +164,8 @@ export interface ToolCallResult {
 export interface ChatCompletionOptions {
   /** 消息历史 */
   messages: ChatMessage[];
+  /** 本次调用临时覆盖模型 */
+  modelOverride?: string | undefined;
   /** 系统提示词 */
   systemPrompt?: string | undefined;
   /** 工具定义 */

@@ -13,11 +13,15 @@ export class AgenticLoop {
   private iterationCount = 0;
   private recentToolCalls: string[] = [];
   private client: SACODEClient | null = null;
+  private sessionId?: string;
+  private modelOverride?: string;
 
   constructor(
     config: AgenticLoopConfig,
     rootDir: string,
     client?: SACODEClient,
+    sessionId?: string,
+    modelOverride?: string,
   ) {
     this.config = {
       ...config,
@@ -26,6 +30,8 @@ export class AgenticLoop {
     this.contextManager = new ContextManager(rootDir, config.contextWindow);
     this.toolExecutor = new ToolExecutor(config.tools, config.autoApprove);
     this.client = client ?? null;
+    this.sessionId = sessionId;
+    this.modelOverride = modelOverride;
   }
 
   /**
@@ -159,7 +165,11 @@ export class AgenticLoop {
       const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      const stream = this.client.chat(userContent);
+      const stream = this.client.chatWithOptions({
+        message: userContent,
+        sessionId: this.sessionId,
+        modelOverride: this.modelOverride,
+      });
 
       for await (const chunk of stream) {
         const msg = chunk as {

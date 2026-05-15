@@ -25,6 +25,17 @@ const preferenceKeyMap: Record<string, keyof UserPreferences> = {
   timezone: "timezone",
 };
 
+function parsePreferenceValue<K extends keyof UserPreferences>(
+  key: K,
+  value: string,
+): UserPreferences[K] {
+  if (key === "showToolDetails" || key === "showThinking") {
+    return (value === "true" || value === "1" || value === "yes") as UserPreferences[K];
+  }
+
+  return value as UserPreferences[K];
+}
+
 export async function listConfig(): Promise<void> {
   console.log(chalk.cyan("\n[PL] 配置\n"));
 
@@ -73,13 +84,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
   
   if (prefKey) {
     const prefManager = getPreferenceManager();
-    
-    // 类型转换
-    let typedValue: string | boolean = value;
-    if (["showToolDetails", "showThinking"].includes(prefKey)) {
-      typedValue = value === "true" || value === "1" || value === "yes";
-    }
-    
+
     // 验证语言值
     if (prefKey === "language") {
       const validLangs = ["zh-CN", "en-US", "ja-JP", "ko-KR", "auto"];
@@ -99,9 +104,10 @@ export async function setConfig(key: string, value: string): Promise<void> {
         return;
       }
     }
-    
-    prefManager.set(prefKey, typedValue as never);
-    console.log(chalk.green(`+ 已设置 ${key} = ${typedValue}`));
+
+    const typedValue = parsePreferenceValue(prefKey, value);
+    prefManager.set(prefKey, typedValue);
+    console.log(chalk.green(`+ 已设置 ${key} = ${String(typedValue)}`));
     console.log(chalk.gray(`配置已保存到: ${prefManager.getConfigPath()}`));
     return;
   }
@@ -124,7 +130,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
   // 环境变量配置（仅内存）
   envConfig.set(key, value);
   console.log(chalk.green(`+ 已设置 ${key} = ${value}`));
-  console.log(chalk.yellow("[!] 此配置仅在当前会话有效，永久设置请修改 .env 文件"));
+  console.log(chalk.yellow("[!] 此配置仅在当前会话有效，永久设置请写入 ~/.sacode 配置或系统环境变量"));
 }
 
 export async function getConfig(key: string): Promise<void> {

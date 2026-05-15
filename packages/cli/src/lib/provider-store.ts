@@ -144,7 +144,9 @@ export async function upsertProviderModel(input: {
 }
 
 export function findModel(data: ProviderStoreData, modelRef: string): { provider: ProviderConfigEntry; model: ModelConfigEntry } | null {
-  const [providerId, modelId] = modelRef.split("/");
+  const parts = modelRef.split("/");
+  if (parts.length < 2 || parts.length > 2) return null;
+  const [providerId, modelId] = parts;
   if (!providerId || !modelId) return null;
   const provider = data.providers.find((item) => item.id === providerId);
   const model = provider?.models.find((item) => item.id === modelId);
