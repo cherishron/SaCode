@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { ensureAgentStore } from "../lib/agent-store.js";
 import type { AgentRunnerEvent } from "../agent/runner.js";
 import { filterToolsForAgent } from "../agent/tool-filter.js";
+import { adaptCoreClient } from "../agent/client.js";
 
 /**
  * 代码智能命令 — Claude Code 风格
@@ -85,6 +86,7 @@ async function printStreamEvents(
 async function createRunner(opts: { maxIterations?: number } = {}) {
   const { AgentRunner } = await import("../agent/runner.js");
   const { createDefaultTools } = await import("../tools/index.js");
+  const { SACODEClient } = await import("@sacode/core");
 
   const rootDir = process.cwd();
   const agentStore = await ensureAgentStore();
@@ -96,6 +98,14 @@ async function createRunner(opts: { maxIterations?: number } = {}) {
     contextWindow: 128_000,
     autoApprove: ["file_read", "file_search", "code_search"],
     requireApproval: ["file_write", "shell_exec", "diff_apply"],
+    clientFactory: async (providerConfig) => {
+      const client = new SACODEClient({
+        provider: providerConfig,
+        timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+      });
+      await client.connect();
+      return adaptCoreClient(client);
+    },
     toolResolver: ({ agent, rootDir: agentRootDir }) => {
       return filterToolsForAgent(createDefaultTools(agentRootDir), agent);
     },

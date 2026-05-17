@@ -1,7 +1,7 @@
 import type { StreamEvent, AgenticLoopConfig, ConversationMessage } from "./types.js";
 import { ContextManager } from "./context.js";
 import { ToolExecutor } from "./executor.js";
-import type { SACODEClient } from "@sacode/core";
+import type { AgentRuntimeClient } from "./client.js";
 
 const DEFAULT_MAX_ITERATIONS = 25;
 const LOOP_DETECTION_THRESHOLD = 3;
@@ -12,14 +12,14 @@ export class AgenticLoop {
   private toolExecutor: ToolExecutor;
   private iterationCount = 0;
   private recentToolCalls: string[] = [];
-  private client: SACODEClient | null = null;
+  private client: AgentRuntimeClient | null = null;
   private sessionId?: string;
   private modelOverride?: string;
 
   constructor(
     config: AgenticLoopConfig,
     rootDir: string,
-    client?: SACODEClient,
+    client?: AgentRuntimeClient,
     sessionId?: string,
     modelOverride?: string,
   ) {
@@ -37,7 +37,7 @@ export class AgenticLoop {
   /**
    * 设置 SACODEClient 实例（支持运行时注入）
    */
-  setClient(client: SACODEClient): void {
+  setClient(client: AgentRuntimeClient): void {
     this.client = client;
   }
 

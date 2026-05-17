@@ -7,7 +7,7 @@
 
 import type {
   SACODEClient,
-  StreamChunk,
+  Message as CoreMessage,
   ToolCall,
   ToolDefinition,
 } from "@sacode/core";
@@ -208,43 +208,26 @@ export class QueryEngine {
 
       try {
         // 流式调用 API
-        const stream = this.deps.client.chat({
-          messages: this.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          systemPrompt: options.systemPrompt,
-          tools: this.deps.tools?.getDefinitions(),
-          temperature: options.temperature,
-          maxTokens: options.maxTokens,
+        const stream = this.deps.client.chatWithOptions({
+          message: userInput,
         });
 
         let assistantContent = "";
         const toolCalls: ToolCall[] = [];
 
         for await (const chunk of stream) {
-          // 处理不同类型的 chunk
-          if (chunk.type === "text_delta" && chunk.text) {
-            assistantContent += chunk.text;
-            yield { type: "text_delta", text: chunk.text };
-          } else if (chunk.type === "tool_call" && chunk.toolCall) {
-            toolCalls.push(chunk.toolCall);
-          } else if (chunk.type === "done") {
-            // 更新使用量
-            if (chunk.usage) {
-              this.usage.inputTokens += chunk.usage.inputTokens;
-              this.usage.outputTokens += chunk.usage.outputTokens;
-              this.usage.totalTokens = this.usage.inputTokens + this.usage.outputTokens;
-              yield {
-                type: "usage",
-                inputTokens: chunk.usage.inputTokens,
-                outputTokens: chunk.usage.outputTokens,
-              };
-            }
+          const message = chunk as CoreMessage;
 
-            // 检查停止原因
-            if (chunk.stopReason === "end_turn" || chunk.stopReason === "stop_sequence") {
-              // 添加助手消息
+          if (message.role === "assistant" && message.chunk?.text) {
+            assistantContent += message.chunk.text;
+            yield { type: "text_delta", text: message.chunk.text };
+          } else if (message.role === "tool") {
+            const toolCall = createToolCallFromMessage(message);
+            if (toolCall) {
+              toolCalls.push(toolCall);
+            }
+          } else if (message.role === "system" && "stopReason" in message) {
+            if (message.stopReason === "end_turn" || message.stopReason === "stop_sequence") {
               if (assistantContent || toolCalls.length === 0) {
                 this.messages.push({
                   role: "assistant",
@@ -253,12 +236,12 @@ export class QueryEngine {
                 });
               }
 
-              yield { type: "done", stopReason: chunk.stopReason };
+              yield { type: "done", stopReason: message.stopReason };
               yield* this.setState("done");
               return;
             }
-          } else if (chunk.type === "error" && chunk.error) {
-            yield { type: "error", error: new Error(chunk.error.message) };
+          } else if (message.role === "system" && "message" in message) {
+            yield { type: "error", error: new Error(message.message) };
             yield* this.setState("error");
             return;
           }
@@ -317,9 +300,9 @@ export class QueryEngine {
               riskLevel: detail.riskLevel,
               details: detail.details,
             },
-            toolCallId: toolCall.id ?? "",
+            toolCallId: toolCall.id,
           };
-          const userDecision = await this.waitForUserResponse(toolCall.id ?? `confirm-${Date.now()}`);
+          const userDecision = await this.waitForUserResponse(toolCall.id);
           if (userDecision !== "confirmed") {
             yield { type: "tool_denied", toolCall };
             this.messages.push({
@@ -347,7 +330,7 @@ export class QueryEngine {
       yield { type: "tool_start", toolCall };
 
       // 特殊工具：ask_clarification → 发出交互事件
-      const toolName = toolCall.function?.name ?? toolCall.name ?? "";
+      const toolName = toolCall.function.name;
       if (toolName === "ask_clarification") {
         const args = this.parseToolArgs(toolCall);
         const question = String(args.question ?? "");
@@ -436,7 +419,7 @@ export class QueryEngine {
    */
   private parseToolArgs(toolCall: ToolCall): Record<string, unknown> {
     try {
-      const args = toolCall.function?.arguments ?? toolCall.arguments ?? "{}";
+      const args = toolCall.function.arguments;
       return typeof args === "string" ? JSON.parse(args) : args;
     } catch {
       return {};
@@ -478,3 +461,18 @@ export class QueryEngine {
 // ============================================================================
 
 export default QueryEngine;
+
+function createToolCallFromMessage(message: Extract<CoreMessage, { role: "tool" }>): ToolCall | null {
+  if (!message.toolName) {
+    return null;
+  }
+
+  return {
+    id: message.id,
+    type: "function",
+    function: {
+      name: message.toolName,
+      arguments: "{}",
+    },
+  };
+}

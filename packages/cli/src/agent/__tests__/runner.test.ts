@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgentRunner } from "../runner";
+import type { AgentRuntimeClient } from "../client";
 import type { AgentConfigEntry, AgentStoreData } from "../../lib/agent-store";
 import type { StreamEvent, Tool } from "../types";
 
@@ -148,5 +149,48 @@ describe("AgentRunner", () => {
 
     expect(seenOverrides).toContain("lead:openai/gpt-4o");
     expect(seenOverrides).toContain("reviewer:anthropic/claude-3-5-sonnet");
+  });
+
+  it("creates per-agent clients from model refs when clientFactory is provided", async () => {
+    const createdClients: string[] = [];
+    const runner = new AgentRunner({
+      rootDir: "/workspace/SaCode",
+      agentStore: createStore({
+        collaborationEnabled: true,
+        subAgentDispatchEnabled: true,
+        agents: [
+          createAgent("lead", { model: "openai/gpt-4o", subAgents: ["reviewer"] }),
+          createAgent("reviewer", { model: "anthropic/claude-3-5-sonnet", description: "review code quality" }),
+        ],
+      }),
+      toolResolver: () => [] satisfies Tool[],
+      providerConfigResolver: async (modelRef) => {
+        if (modelRef === "openai/gpt-4o") {
+          return { type: "openai", apiKey: "test", model: "gpt-4o" };
+        }
+        return { type: "anthropic", apiKey: "test", model: "claude-3-5-sonnet" };
+      },
+      clientFactory: async (config) => {
+        createdClients.push(`${config.type}/${config.model}`);
+        return {
+          isConnected: () => true,
+          chatWithOptions: async function* (): AsyncGenerator<unknown> {
+            yield { role: "assistant", content: "ok" };
+          },
+        } satisfies AgentRuntimeClient;
+      },
+      loopFactory: ({ client }) => ({
+        run: async function* (): AsyncGenerator<StreamEvent> {
+          expect(client).toBeDefined();
+          yield { type: "content", text: "done" };
+          yield { type: "finished", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        },
+      }),
+    });
+
+    await collectEvents(runner, "please review code");
+
+    expect(createdClients).toContain("openai/gpt-4o");
+    expect(createdClients).toContain("anthropic/claude-3-5-sonnet");
   });
 });

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildAgentDispatchPlan, ensureAgentStore, formatAgents, getAgentStorePath, saveAgentStore, setAgentCollaboration, setSubAgentDispatch } from "../agent-store";
+import { buildAgentDispatchPlan, ensureAgentStore, formatAgents, getAgentStorePath, removeAgent, saveAgentStore, setAgentCollaboration, setSubAgentDispatch, setDefaultAgent, upsertAgent, validateAgentStore } from "../agent-store";
 
 describe("agent store", () => {
   let configDir: string;
@@ -42,6 +42,8 @@ describe("agent store", () => {
     const data = await ensureAgentStore({ configDir });
     expect(formatAgents(data)).toContain("* coder (Coder)");
     expect(formatAgents(data)).toContain("model: deepseek/deepseek-coder");
+    expect(formatAgents(data)).toContain("status: enabled");
+    expect(formatAgents(data)).toContain("referencedBy: none");
   });
 
   it("supports collaboration and sub-agent dispatch switches", async () => {
@@ -77,5 +79,166 @@ describe("agent store", () => {
     expect(plan.enabled).toBe(true);
     expect(plan.primaryAgent?.id).toBe("lead");
     expect(plan.subAgents.map((agent) => agent.id)).toEqual(["reviewer"]);
+  });
+
+  it("rejects self-referencing sub-agents", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["lead"],
+      }],
+    })).toThrow("Agent cannot reference itself as sub-agent: lead");
+  });
+
+  it("rejects unknown sub-agent references", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["missing"],
+      }],
+    })).toThrow("Unknown sub-agent reference: lead -> missing");
+  });
+
+  it("rejects disabled sub-agent references", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["reviewer"],
+      }, {
+        id: "reviewer",
+        name: "Reviewer",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: false,
+        subAgents: [],
+      }],
+    })).toThrow("Disabled sub-agent reference: lead -> reviewer");
+  });
+
+  it("rejects disabled default agent", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: false,
+      subAgentDispatchEnabled: false,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: false,
+        subAgents: [],
+      }],
+    })).toThrow("Default agent is disabled: lead");
+  });
+
+  it("rejects removing referenced agents", async () => {
+    await saveAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["reviewer"],
+      }, {
+        id: "reviewer",
+        name: "Reviewer",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: [],
+      }],
+    }, { configDir });
+
+    await expect(removeAgent("reviewer", { configDir })).rejects.toThrow("Agent is still referenced by: lead");
+  });
+
+  it("rejects short sub-agent cycles", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["reviewer"],
+      }, {
+        id: "reviewer",
+        name: "Reviewer",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["lead"],
+      }],
+    })).toThrow("Agent sub-agent cycle detected: lead -> reviewer -> lead");
+  });
+
+  it("rejects long sub-agent cycles", () => {
+    expect(() => validateAgentStore({
+      defaultAgent: "lead",
+      collaborationEnabled: true,
+      subAgentDispatchEnabled: true,
+      agents: [{
+        id: "lead",
+        name: "Lead",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["reviewer"],
+      }, {
+        id: "reviewer",
+        name: "Reviewer",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["planner"],
+      }, {
+        id: "planner",
+        name: "Planner",
+        model: "openai/gpt-4o",
+        tools: [],
+        permissionProfile: "local-safe",
+        enabled: true,
+        subAgents: ["lead"],
+      }],
+    })).toThrow("Agent sub-agent cycle detected: lead -> reviewer -> planner -> lead");
   });
 });

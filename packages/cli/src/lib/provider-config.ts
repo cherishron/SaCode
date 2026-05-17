@@ -1,5 +1,5 @@
 import type { ProviderConfig } from "@sacode/core";
-import { loadProviderStore, providerConfigFromStore } from "./provider-store.js";
+import { loadProviderStore, providerConfigForModelRef, providerConfigFromStore, testModelConfiguration } from "./provider-store.js";
 
 const DEFAULT_MODEL = "gpt-4o";
 
@@ -63,4 +63,22 @@ export async function resolveProviderConfig(
   }
 
   return getProviderConfigFromEnv(env);
+}
+
+export async function resolveProviderConfigForModelRef(
+  modelRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ProviderConfig> {
+  const store = await loadProviderStore();
+  const validation = testModelConfiguration(store, modelRef);
+  if (!validation.ok) {
+    throw new Error(validation.message);
+  }
+
+  const config = providerConfigForModelRef(store, modelRef, env);
+  if (!config) {
+    throw new Error(`模型不存在: ${modelRef}`);
+  }
+
+  return config;
 }

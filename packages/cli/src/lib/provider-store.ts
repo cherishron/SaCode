@@ -171,14 +171,17 @@ export function testModelConfiguration(data: ProviderStoreData, modelRef: string
   };
 }
 
-export function providerConfigFromStore(data: ProviderStoreData, env: NodeJS.ProcessEnv = process.env): {
+export function providerConfigForModelRef(
+  data: ProviderStoreData,
+  modelRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): {
   type: "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu";
   apiKey: string;
   model: string;
   baseUrl?: string;
 } | null {
-  if (!data.defaultModel) return null;
-  const match = findModel(data, data.defaultModel);
+  const match = findModel(data, modelRef);
   if (!match) return null;
 
   const type = providerTypeFor(match.provider);
@@ -188,6 +191,16 @@ export function providerConfigFromStore(data: ProviderStoreData, env: NodeJS.Pro
     model: match.model.id,
     ...(match.provider.baseUrl && { baseUrl: match.provider.baseUrl }),
   };
+}
+
+export function providerConfigFromStore(data: ProviderStoreData, env: NodeJS.ProcessEnv = process.env): {
+  type: "openai" | "anthropic" | "deepseek" | "moonshot" | "zhipu";
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+} | null {
+  if (!data.defaultModel) return null;
+  return providerConfigForModelRef(data, data.defaultModel, env);
 }
 
 export async function ensureProviderStore(options: ProviderStoreOptions = {}): Promise<ProviderStoreData> {

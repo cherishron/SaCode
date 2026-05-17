@@ -8,6 +8,7 @@ import {
   formatModels,
   formatProviders,
   getProviderStorePath,
+  providerConfigForModelRef,
   providerConfigFromStore,
   testModelConfiguration,
   loadProviderStore,
@@ -77,6 +78,12 @@ describe("provider store", () => {
 
     expect(updated.defaultModel).toBe("deepseek/deepseek-chat");
     expect(providerConfigFromStore(updated, { DEEPSEEK_API_KEY: "secret" })).toEqual({
+      type: "deepseek",
+      apiKey: "secret",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com/v1",
+    });
+    expect(providerConfigForModelRef(updated, "deepseek/deepseek-chat", { DEEPSEEK_API_KEY: "secret" })).toEqual({
       type: "deepseek",
       apiKey: "secret",
       model: "deepseek-chat",

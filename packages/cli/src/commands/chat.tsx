@@ -28,6 +28,7 @@ import { loadChatRuntime, registerCleanup } from "./chat/bootstrap.js";
 import { handleRunnerEvent } from "./chat/events.js";
 import { createChatSlashRegistry } from "./chat/registry.js";
 import { filterToolsForAgent } from "../agent/tool-filter.js";
+import { adaptCoreClient } from "../agent/client.js";
 import { ensureAgentStore } from "../lib/agent-store.js";
 
 export interface ChatOptions {
@@ -272,16 +273,25 @@ const ChatWrapper: React.FC<{
     try {
       const { AgentRunner } = await import("../agent/runner.js");
       const { createDefaultTools } = await import("../tools/index.js");
+      const { SACODEClient } = await import("@sacode/core");
       const agentStore = await ensureAgentStore();
       const runner = new AgentRunner({
         rootDir: cwd,
         agentStore,
-        client,
+        client: adaptCoreClient(client),
         sessionId: options.session,
         contextWindow: 128_000,
         maxIterations: 25,
         autoApprove: ["file_read", "file_search", "code_search"],
         requireApproval: ["file_write", "shell_exec", "diff_apply"],
+        clientFactory: async (providerConfig) => {
+          const agentClient = new SACODEClient({
+            provider: providerConfig,
+            timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+          });
+          await agentClient.connect();
+          return adaptCoreClient(agentClient);
+        },
         toolResolver: ({ agent, rootDir: agentRootDir }) => {
           return filterToolsForAgent(createDefaultTools(agentRootDir), agent);
         },

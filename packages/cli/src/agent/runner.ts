@@ -1,8 +1,9 @@
-import type { SACODEClient } from "@sacode/core";
 import { AgenticLoop } from "./loop.js";
+import type { AgentRuntimeClient } from "./client.js";
 import type { AgentConfigEntry, AgentStoreData } from "../lib/agent-store.js";
 import { buildAgentDispatchPlan } from "../lib/agent-store.js";
 import type { AgenticLoopConfig, StreamEvent, Tool } from "./types.js";
+import type { ProviderConfig } from "@sacode/core";
 
 export interface AgentRunnerToolResolverContext {
   agent: AgentConfigEntry;
@@ -12,7 +13,7 @@ export interface AgentRunnerToolResolverContext {
 export interface AgentRunnerLoopFactoryContext {
   agent: AgentConfigEntry;
   rootDir: string;
-  client?: SACODEClient;
+  client?: AgentRuntimeClient;
   sessionId?: string;
   modelOverride?: string;
   tools: Tool[];
@@ -26,7 +27,9 @@ export interface AgentRunnerOptions {
   maxIterations?: number;
   autoApprove?: string[];
   requireApproval?: string[];
-  client?: SACODEClient;
+  client?: AgentRuntimeClient;
+  clientFactory?: (config: ProviderConfig) => Promise<AgentRuntimeClient>;
+  providerConfigResolver?: (modelRef: string) => Promise<ProviderConfig>;
   toolResolver?: (context: AgentRunnerToolResolverContext) => Tool[];
   loopFactory?: (context: AgentRunnerLoopFactoryContext) => Pick<AgenticLoop, "run">;
 }
@@ -49,9 +52,12 @@ export class AgentRunner {
   private readonly maxIterations: number;
   private readonly autoApprove: string[];
   private readonly requireApproval: string[];
-  private readonly client?: SACODEClient;
+  private readonly client?: AgentRuntimeClient;
+  private readonly clientFactory?: (config: ProviderConfig) => Promise<AgentRuntimeClient>;
+  private readonly providerConfigResolver?: (modelRef: string) => Promise<ProviderConfig>;
   private readonly toolResolver: (context: AgentRunnerToolResolverContext) => Tool[];
   private readonly loopFactory: (context: AgentRunnerLoopFactoryContext) => Pick<AgenticLoop, "run">;
+  private readonly clientCache = new Map<string, Promise<AgentRuntimeClient>>();
 
   constructor(options: AgentRunnerOptions) {
     this.rootDir = options.rootDir;
@@ -62,6 +68,8 @@ export class AgentRunner {
     this.autoApprove = options.autoApprove ?? ["file_read", "file_search", "code_search"];
     this.requireApproval = options.requireApproval ?? ["file_write", "shell_exec", "diff_apply"];
     this.client = options.client;
+    this.clientFactory = options.clientFactory;
+    this.providerConfigResolver = options.providerConfigResolver;
     this.toolResolver = options.toolResolver ?? (() => []);
     this.loopFactory = options.loopFactory ?? ((context) => this.createLoop(context));
   }
@@ -93,7 +101,7 @@ export class AgentRunner {
 
     const promptWithDelegation = this.composePrimaryPrompt(prompt, summaries);
     yield { type: "agent_start", agentId: plan.primaryAgent.id, role: "primary" };
-    const primaryLoop = this.createAgentLoop(plan.primaryAgent);
+    const primaryLoop = await this.createAgentLoop(plan.primaryAgent);
 
     for await (const event of primaryLoop.run(promptWithDelegation)) {
       yield this.attachAgentContext(event, plan.primaryAgent.id, "primary");
@@ -113,7 +121,7 @@ export class AgentRunner {
     const results = await Promise.all(
       subAgents.map(async (agent) => {
         const events: AgentRunnerEvent[] = [{ type: "agent_start", agentId: agent.id, role: "sub" }];
-        const loop = this.createAgentLoop(agent);
+        const loop = await this.createAgentLoop(agent);
         let summary = "";
 
         for await (const event of loop.run(this.composeSubAgentPrompt(prompt, agent))) {
@@ -137,16 +145,46 @@ export class AgentRunner {
     return results.flat();
   }
 
-  private createAgentLoop(agent: AgentConfigEntry): Pick<AgenticLoop, "run"> {
+  private async createAgentLoop(agent: AgentConfigEntry): Promise<Pick<AgenticLoop, "run">> {
     const tools = this.toolResolver({ agent, rootDir: this.rootDir });
+    const client = await this.resolveClientForAgent(agent);
     return this.loopFactory({
       agent,
       rootDir: this.rootDir,
       ...(this.sessionId ? { sessionId: this.sessionId } : {}),
       ...(agent.model ? { modelOverride: agent.model } : {}),
       tools,
-      ...(this.client ? { client: this.client } : {}),
+      ...(client ? { client } : {}),
     });
+  }
+
+  private async resolveClientForAgent(agent: AgentConfigEntry): Promise<AgentRuntimeClient | undefined> {
+    if (!agent.model) {
+      return this.client;
+    }
+
+    if (!this.clientFactory) {
+      return this.client;
+    }
+
+    if (!this.clientCache.has(agent.model)) {
+      this.clientCache.set(agent.model, this.createAgentClient(agent.model));
+    }
+
+    return this.clientCache.get(agent.model);
+  }
+
+  private async createAgentClient(modelRef: string): Promise<AgentRuntimeClient> {
+    if (!this.clientFactory) {
+      if (!this.client) {
+        throw new Error(`No client factory available for agent model: ${modelRef}`);
+      }
+      return this.client;
+    }
+
+    const resolveProviderConfigForModelRef = this.providerConfigResolver ?? (await import("../lib/provider-config.js")).resolveProviderConfigForModelRef;
+    const config = await resolveProviderConfigForModelRef(modelRef);
+    return this.clientFactory(config);
   }
 
   private createLoop(context: AgentRunnerLoopFactoryContext): AgenticLoop {
