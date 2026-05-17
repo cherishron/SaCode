@@ -4,6 +4,20 @@ import type { CommandContext } from "./types";
 export { registerAuthCommand } from "./auth.js";
 export { registerCodeCommand } from "./code.js";
 
+export function registerStartCommand(ctx: CommandContext): void {
+  ctx.program
+    .command("start")
+    .description("启动本地 API 与 Web 服务")
+    .option("-p, --port <port>", "API 服务端口", "3000")
+    .option("-H, --host <host>", "服务监听地址", "127.0.0.1")
+    .option("--api", "仅启动 API 服务")
+    .option("--web", "仅启动 Web 服务")
+    .action(async (options: { port: string; host: string; api?: boolean; web?: boolean }) => {
+      const { startServer } = await import("./start.js");
+      await startServer(options);
+    });
+}
+
 export function registerChatCommand(ctx: CommandContext): void {
   ctx.program
     .command("chat")

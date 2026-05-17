@@ -10,6 +10,11 @@ import {
   registerConfigCommand,
   registerModelCommand,
   registerAuthCommand,
+  registerCodeCommand,
+  registerCronCommand,
+  registerPluginCommand,
+  registerWorkspaceCommand,
+  registerStartCommand,
 } from "./commands/index.js";
 
 // ES 模块中的 __dirname 替代方案
@@ -55,6 +60,11 @@ registerChatCommand(ctx);
 registerConfigCommand(ctx);
 registerModelCommand(ctx);
 registerAuthCommand(ctx);
+registerCodeCommand(ctx);
+registerCronCommand(ctx);
+registerPluginCommand(ctx);
+registerWorkspaceCommand(ctx);
+registerStartCommand(ctx);
 
 // 默认行为 - 直接进入交互式聊天
 program.action(async (_options) => {
