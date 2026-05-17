@@ -41,4 +41,61 @@ describe("command registration", () => {
       "start",
     ]));
   });
+
+  it("registers expected command structure for restored entry points", () => {
+    const program = new Command();
+    const ctx = { program };
+
+    registerCodeCommand(ctx);
+    registerCronCommand(ctx);
+    registerPluginCommand(ctx);
+    registerWorkspaceCommand(ctx);
+    registerStartCommand(ctx);
+
+    const start = program.commands.find((command) => command.name() === "start");
+    const workspace = program.commands.find((command) => command.name() === "workspace");
+    const code = program.commands.find((command) => command.name() === "code");
+    const cron = program.commands.find((command) => command.name() === "cron");
+    const plugin = program.commands.find((command) => command.name() === "plugin");
+
+    expect(start?.options.map((option) => option.flags)).toEqual(expect.arrayContaining([
+      "-p, --port <port>",
+      "-H, --host <host>",
+      "--api",
+      "--web",
+    ]));
+
+    expect(workspace?.commands.map((command) => command.name())).toEqual(expect.arrayContaining([
+      "init",
+      "show",
+      "templates",
+      "edit",
+    ]));
+
+    expect(code?.commands.map((command) => command.name())).toEqual(expect.arrayContaining([
+      "run",
+      "explain",
+      "search",
+      "refactor",
+    ]));
+
+    expect(cron?.commands.map((command) => command.name())).toEqual(expect.arrayContaining([
+      "list",
+      "add",
+      "remove",
+      "enable",
+      "disable",
+      "run",
+      "stats",
+    ]));
+
+    expect(plugin?.commands.map((command) => command.name())).toEqual(expect.arrayContaining([
+      "list",
+      "install",
+      "uninstall",
+      "enable",
+      "disable",
+      "info",
+    ]));
+  });
 });
