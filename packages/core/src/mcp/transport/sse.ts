@@ -87,7 +87,7 @@ export class SSETransport
       }, this.config.connectTimeout);
 
       try {
-        // @ts-expect-error Bun EventSource 构造函数签名与 TS DOM 类型不匹配，运行时正常
+        // EventSource is available at runtime in supported environments.
         this.eventSource = new EventSource(this.config.url);
 
         this.eventSource.onopen = () => {

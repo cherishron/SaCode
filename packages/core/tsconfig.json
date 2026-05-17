@@ -9,7 +9,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noImplicitReturns": false,
-    "types": ["bun"]
+    "types": ["node"]
   },
   "include": ["src/**/*"],
   "exclude": [
