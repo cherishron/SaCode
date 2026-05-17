@@ -10,7 +10,8 @@ export function isBunAvailable(): boolean {
 
 export function getBunVersion(): string | undefined {
   if (!isBun) return undefined;
-  return (globalThis as Record<string, unknown>).Bun?.version as string | undefined;
+  const bun = (globalThis as { Bun?: { version?: string } }).Bun;
+  return bun?.version;
 }
 
 export function getInstallPrompt(): string {

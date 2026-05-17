@@ -25,7 +25,7 @@ async function getPluginManager(): Promise<PluginManager> {
 
 export async function listPlugins(): Promise<void> {
   const manager = await getPluginManager();
-  const plugins = manager.listPlugins();
+  const plugins = manager.getAll();
 
   console.log(chalk.cyan("[D] Plugins\n"));
 
@@ -100,7 +100,7 @@ export async function disablePlugin(name: string): Promise<void> {
 
 export async function showPluginInfo(name: string): Promise<void> {
   const manager = await getPluginManager();
-  const plugin = manager.getPlugin(name);
+  const plugin = manager.get(name);
 
   if (!plugin) {
     console.log(chalk.red(`[x] Plugin not found: ${name}`));

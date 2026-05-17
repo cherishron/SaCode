@@ -79,7 +79,7 @@ export {
 import { getThemeManager } from "./theme-manager.js";
 
 // 工具标签和状态图标（从旧 theme.ts 迁移）
-export { toolLabels, statusIcons, getToolIcon, getStatusIcon } from "../theme.js";
+export { toolLabels, toolIcons, statusIcons, getToolIcon, getStatusIcon } from "../theme.js";
 
 /**
  * 获取当前主题的颜色
@@ -87,7 +87,11 @@ export { toolLabels, statusIcons, getToolIcon, getStatusIcon } from "../theme.js
  */
 export const colors = {
   get text() {
-    return getThemeManager().getSemanticColors().text;
+    const text = getThemeManager().getSemanticColors().text;
+    return {
+      ...text,
+      muted: text.secondary,
+    };
   },
   get background() {
     return getThemeManager().getSemanticColors().background;
@@ -99,7 +103,11 @@ export const colors = {
     return getThemeManager().getSemanticColors().status;
   },
   get ui() {
-    return getThemeManager().getSemanticColors().ui;
+    const semantic = getThemeManager().getSemanticColors();
+    return {
+      ...semantic.ui,
+      border: semantic.border.default,
+    };
   },
   get syntax() {
     return getThemeManager().getSemanticColors().syntax;
@@ -110,7 +118,7 @@ export const colors = {
  * 获取特定语义颜色的快捷方法
  */
 export function getTextColor(type: keyof import("./semantic-tokens.js").TextColors): string {
-  return getThemeManager().getSemanticColors().text[type];
+  return getThemeManager().getSemanticColors().text[type] ?? getThemeManager().getSemanticColors().text.secondary;
 }
 
 export function getBackgroundColor(type: keyof import("./semantic-tokens.js").BackgroundColors): string {
@@ -119,9 +127,9 @@ export function getBackgroundColor(type: keyof import("./semantic-tokens.js").Ba
 }
 
 export function getStatusColor(type: keyof import("./semantic-tokens.js").StatusColors): string {
-  return getThemeManager().getSemanticColors().status[type];
+  return getThemeManager().getSemanticColors().status[type] ?? "#1f6feb";
 }
 
 export function getSyntaxColor(type: keyof import("./semantic-tokens.js").SyntaxColors): string {
-  return getThemeManager().getSemanticColors().syntax[type];
+  return getThemeManager().getSemanticColors().syntax[type] ?? "#e0e0e0";
 }

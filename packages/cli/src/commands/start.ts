@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { spawn } from "node:child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -11,10 +12,10 @@ interface StartOptions {
   web?: boolean;
 }
 
-type BunSubprocess = ReturnType<typeof Bun.spawn>;
+type NodeSubprocess = ReturnType<typeof spawn>;
 
-let apiProcess: BunSubprocess | null = null;
-let webProcess: BunSubprocess | null = null;
+let apiProcess: NodeSubprocess | null = null;
+let webProcess: NodeSubprocess | null = null;
 
 export async function startServer(options: StartOptions): Promise<void> {
   const { port, host } = options;
@@ -55,21 +56,19 @@ async function startApiServer(host: string, port: string): Promise<void> {
 
   console.log(chalk.gray("Starting API server..."));
 
-  apiProcess = Bun.spawn({
-    cmd: ["bun", "run", "src/server.ts"],
+  apiProcess = spawn("bun", ["run", "src/server.ts"], {
     cwd: apiPackagePath,
     env: { ...process.env, PORT: port, HOST: host },
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
+    stdio: "inherit",
   });
 
   await new Promise<void>((resolve, reject) => {
-    apiProcess!.exited.then((code) => {
-      if (code !== 0) {
+    apiProcess!.once("exit", (code: number | null) => {
+      if (code !== 0 && code !== null) {
         reject(new Error(`API server exited with code ${code}`));
       }
-    }).catch(reject);
+    });
+    apiProcess!.once("error", reject);
 
     setTimeout(() => {
       console.log(chalk.green("+ API server started\n"));
@@ -83,13 +82,10 @@ async function startWebServer(host: string, port: number): Promise<void> {
 
   console.log(chalk.gray("Starting Web UI (Vite preview)..."));
 
-  webProcess = Bun.spawn({
-    cmd: ["bun", "run", "vite", "preview", "--port", port.toString(), "--host", host],
+  webProcess = spawn("bun", ["run", "vite", "preview", "--port", port.toString(), "--host", host], {
     cwd: webPackagePath,
     env: { ...process.env },
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
+    stdio: "inherit",
   });
 
   await new Promise<void>((resolve) => {

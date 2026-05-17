@@ -1,4 +1,5 @@
 import type { Tool, ToolResult } from "../agent/types.js";
+import { spawnSync } from "node:child_process";
 
 const DEFAULT_TIMEOUT = 30_000;
 const MAX_OUTPUT = 10_000;
@@ -36,20 +37,19 @@ export function createShellExecTool(rootDir: string): Tool {
       const timeout = Number(args.timeout) || DEFAULT_TIMEOUT;
 
       try {
-        const proc = Bun.spawnSync({
-          cmd: [command],
+        const proc = spawnSync(command, {
           cwd,
           env: process.env,
-          stdout: "pipe",
-          stderr: "pipe",
+          shell: true,
+          encoding: "utf-8",
           timeout,
           maxBuffer: 1024 * 1024,
         });
 
-        const stdout = proc.stdout?.toString() ?? "";
-        const stderr = proc.stderr?.toString() ?? "";
+        const stdout = proc.stdout ?? "";
+        const stderr = proc.stderr ?? "";
 
-        if (proc.exitCode === 0) {
+        if (proc.status === 0) {
           const trimmed =
             stdout.length > MAX_OUTPUT
               ? stdout.slice(0, MAX_OUTPUT) +
@@ -72,11 +72,11 @@ export function createShellExecTool(rootDir: string): Tool {
         return {
           success: false,
           output,
-          error: stderr || `Process exited with code ${proc.exitCode ?? 1}`,
+          error: stderr || `Process exited with code ${proc.status ?? 1}`,
           metadata: {
             command,
             cwd,
-            exitCode: proc.exitCode ?? 1,
+            exitCode: proc.status ?? 1,
           },
         };
       } catch (err: unknown) {

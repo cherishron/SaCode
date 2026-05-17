@@ -5,6 +5,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { spawnSync } from "node:child_process";
 
 // ============================================================================
 // 类型定义
@@ -137,23 +138,19 @@ export class ContextCollector {
       const gitDir = path.join(this.cwd, ".git");
       if (!fs.existsSync(gitDir)) return undefined;
 
-      const statusProc = Bun.spawnSync({
-        cmd: ["git", "status", "--short"],
+      const statusProc = spawnSync("git", ["status", "--short"], {
         cwd: this.cwd,
-        stdout: "pipe",
-        stderr: "pipe",
+        encoding: "utf-8",
         timeout: 5000,
       });
-      const status = statusProc.stdout?.toString() ?? "";
+      const status = statusProc.stdout ?? "";
 
-      const branchProc = Bun.spawnSync({
-        cmd: ["git", "branch", "--show-current"],
+      const branchProc = spawnSync("git", ["branch", "--show-current"], {
         cwd: this.cwd,
-        stdout: "pipe",
-        stderr: "pipe",
+        encoding: "utf-8",
         timeout: 5000,
       });
-      const branch = (branchProc.stdout?.toString() ?? "").trim();
+      const branch = (branchProc.stdout ?? "").trim();
 
       return `Branch: ${branch}\n${status.trim() || "Working tree clean"}`;
     } catch {

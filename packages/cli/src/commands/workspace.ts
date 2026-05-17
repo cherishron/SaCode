@@ -2,6 +2,7 @@ import chalk from "chalk";
 import inquirer from "enquirer";
 import fs from "fs/promises";
 import path from "path";
+import { spawn } from "node:child_process";
 
 interface WorkspaceTemplate {
   id: string;
@@ -188,21 +189,17 @@ export async function editFile(filename: string): Promise<void> {
   const isWindows = process.platform === "win32";
 
   if (isWindows) {
-    Bun.spawn({
-      cmd: ["notepad", filePath],
+    const child = spawn("notepad", [filePath], {
       detached: true,
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
+      stdio: "ignore",
     });
+    child.unref();
   } else {
-    Bun.spawn({
-      cmd: [process.env.EDITOR || "vi", filePath],
+    const child = spawn(process.env.EDITOR || "vi", [filePath], {
       detached: true,
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
+      stdio: "ignore",
     });
+    child.unref();
   }
 }
 

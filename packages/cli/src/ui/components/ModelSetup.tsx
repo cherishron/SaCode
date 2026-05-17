@@ -71,12 +71,12 @@ export const ModelSetup: React.FC<ModelSetupProps> = ({
   );
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={toInkColor(colors.ui.border)} paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={toInkColor(colors.ui.border ?? colors.ui.comment)} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={toInkColor(colors.text.accent)}>
           选择模型
         </Text>
-        <Text color={toInkColor(colors.text.muted)}>
+        <Text color={toInkColor(colors.text.muted ?? colors.text.secondary)}>
           {" "}(厂商: {providerName})
         </Text>
       </Box>
@@ -84,11 +84,11 @@ export const ModelSetup: React.FC<ModelSetupProps> = ({
       {models.map((model, index) => (
         <Box key={model}>
           <Text
-            color={
-              index === selectedIndex
-                ? toInkColor(colors.text.accent)
-                : toInkColor(colors.text.muted)
-            }
+              color={
+                index === selectedIndex
+                  ? toInkColor(colors.text.accent)
+                  : toInkColor(colors.text.muted ?? colors.text.secondary)
+              }
             bold={index === selectedIndex}
             inverse={index === selectedIndex}
           >

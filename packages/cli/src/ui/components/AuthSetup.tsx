@@ -132,7 +132,7 @@ export const AuthSetup: React.FC<AuthSetupProps> = ({
             color={
               index === selectedIndex
                 ? toInkColor(colors.text.accent)
-                : toInkColor(colors.text.muted)
+                : toInkColor(colors.text.muted ?? colors.text.secondary)
             }
             bold={index === selectedIndex}
             inverse={index === selectedIndex}
@@ -339,7 +339,7 @@ export const AuthSetup: React.FC<AuthSetupProps> = ({
   };
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={toInkColor(colors.ui.border)} paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={toInkColor(colors.ui.border ?? colors.ui.comment)} paddingX={1}>
       {renderStep()}
     </Box>
   );

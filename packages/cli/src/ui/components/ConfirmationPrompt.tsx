@@ -90,7 +90,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
           color={
             selectedAction === "allow"
               ? "red"
-              : toInkColor(colors.text.muted)
+              : toInkColor(colors.text.muted ?? colors.text.secondary)
           }
         >
           {selectedAction === "allow" ? "> " : "  "}允许(Y)
@@ -102,7 +102,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = ({
           color={
             selectedAction === "deny"
               ? toInkColor(colors.text.accent)
-              : toInkColor(colors.text.muted)
+              : toInkColor(colors.text.muted ?? colors.text.secondary)
           }
         >
           {selectedAction === "deny" ? "> " : "  "}拒绝(N)

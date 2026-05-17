@@ -113,6 +113,9 @@ export const toolLabels: Record<string, string> = {
   default: "[T]",
 };
 
+// 兼容旧命名
+export const toolIcons = toolLabels;
+
 /**
  * 状态图标（文本标识，禁止 emoji）
  */

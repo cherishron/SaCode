@@ -28,7 +28,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({
           {config.tag}
         </Text>
         {isStreaming && role === "assistant" && (
-          <Text color={toInkColor(colors.text.muted)}> *</Text>
+          <Text color={toInkColor(colors.text.muted ?? colors.text.secondary)}> *</Text>
         )}
       </Box>
       <Box marginLeft={1} marginTop={0}>

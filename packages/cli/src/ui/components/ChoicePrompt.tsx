@@ -95,7 +95,7 @@ export const ChoicePrompt: React.FC<ChoicePromptProps> = ({
                 color={
                   index === selectedIndex
                     ? toInkColor(colors.text.accent)
-                    : toInkColor(colors.text.muted)
+                    : toInkColor(colors.text.muted ?? colors.text.secondary)
                 }
                 bold={index === selectedIndex}
                 inverse={index === selectedIndex}

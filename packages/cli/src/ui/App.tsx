@@ -96,8 +96,9 @@ const roleLabels: Record<string, { tag: string; color: keyof SemanticColors["tex
 
 const RoleLabel: React.FC<{ role: string; colors: SemanticColors }> = ({ role, colors }) => {
   const config = roleLabels[role] ?? roleLabels.system;
+  const colorValue = colors.text[config.color] ?? colors.text.secondary;
   return (
-    <Text bold color={toInkColor(colors.text[config.color])}>
+    <Text bold color={toInkColor(colorValue)}>
       {config.tag}
     </Text>
   );
@@ -342,8 +343,24 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns ?? 80);
   const [workMode, setWorkMode] = useState<WorkMode>(initialWorkMode);
   const [showThinking, setShowThinking] = useState<boolean>(true);
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
 
   const colors = getColors();
+  const mergedMessages = useMemo(() => [...messages, ...localMessages], [messages, localMessages]);
+
+  const generateId = useCallback(() => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`, []);
+
+  const appendSystemMessage = useCallback((content: string) => {
+    setLocalMessages((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        role: "system",
+        content,
+        timestamp: new Date(),
+      },
+    ]);
+  }, [generateId]);
 
   // 根据项目目录生成唯一的历史文件路径
   const projectHash = useMemo(() => {
@@ -367,9 +384,9 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   // slashCommands are now passed from ChatWrapper via props
 
   const historyItems = useMemo(() => {
-    const sessionHistory = messages.filter((m) => m.role === "user").map((m) => m.content);
+    const sessionHistory = mergedMessages.filter((m) => m.role === "user").map((m) => m.content);
     return [...new Set([...sessionHistory, ...savedHistory])];
-  }, [messages, savedHistory]);
+  }, [mergedMessages, savedHistory]);
 
   const cycleWorkMode = useCallback(() => {
     const modes: WorkMode[] = ["smart", "yolo", "plan"];
@@ -430,15 +447,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
           "  /theme   - 切换主题",
           "  /init    - 生成 AGENTS.md",
         ];
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: generateId(),
-            role: "system" as const,
-            content: helpText.join("\n"),
-            timestamp: new Date(),
-          },
-        ]);
+        appendSystemMessage(helpText.join("\n"));
       }
     },
     { isActive: !isLoading && !isExiting }
@@ -453,7 +462,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
   // [Footer]           ← 底部状态栏（cwd · model）
   // ============================================================
 
-  const hasMessages = messages.length > 0 || streamingContent.length > 0;
+  const hasMessages = mergedMessages.length > 0 || streamingContent.length > 0;
 
   // 退出时渲染统计面板
   if (isExiting) {
@@ -509,7 +518,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
       {/* Main Content - 消息列表 */}
       {hasMessages && (
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          <MessageList messages={messages} streamingContent={streamingContent} colors={colors} />
+          <MessageList messages={mergedMessages} streamingContent={streamingContent} colors={colors} />
         </Box>
       )}
 
@@ -531,7 +540,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         cwd={cwd}
         colors={colors}
         terminalWidth={terminalWidth}
-        contextPercent={messages.length > 0 ? Math.max(0, 100 - Math.round(((messages.length * 50) / contextMax) * 100)) : 100}
+        contextPercent={mergedMessages.length > 0 ? Math.max(0, 100 - Math.round(((mergedMessages.length * 50) / contextMax) * 100)) : 100}
         vimMode="insert"
         gitBranch={gitBranch}
         workMode={workMode}

@@ -32,12 +32,13 @@ export async function listCronJobs(options: { all?: boolean }): Promise<void> {
 
   for (const task of tasksToShow) {
     const statusIcon = task.enabled ? chalk.green("*") : chalk.red("o");
-    const typeIcon = getTypeIcon(task.type);
+    const typeIcon = getTypeIcon(task.type ?? "once");
+    const message = task.message ?? "";
 
     console.log(`  ${statusIcon} ${chalk.bold(task.name)} ${typeIcon}`);
     console.log(`      ${chalk.gray("ID:")} ${task.id}`);
     console.log(`      ${chalk.gray("Schedule:")} ${formatSchedule(task)}`);
-    console.log(`      ${chalk.gray("Message:")} ${task.message.substring(0, 50)}${task.message.length > 50 ? "..." : ""}`);
+    console.log(`      ${chalk.gray("Message:")} ${message.substring(0, 50)}${message.length > 50 ? "..." : ""}`);
     console.log(`      ${chalk.gray("Target:")} ${task.channel}:${task.chatId}`);
 
     if (task.lastRunAt) {
@@ -189,7 +190,7 @@ export async function showCronStats(): Promise<void> {
 
   console.log(chalk.cyan("[D] Cron Statistics\n"));
   console.log(`  ${chalk.gray("Total:")}     ${stats.total}`);
-  console.log(`  ${chalk.gray("Enabled:")}   ${chalk.enabled}`);
+  console.log(`  ${chalk.gray("Enabled:")}   ${stats.enabled}`);
   console.log(`  ${chalk.gray("Disabled:")}  ${stats.disabled}`);
   console.log();
   console.log(`  ${chalk.gray("By Type:")}`);
@@ -211,13 +212,14 @@ function getTypeIcon(type: string): string {
 }
 
 function formatSchedule(task: CronTask): string {
+  const config = task.config ?? {};
   switch (task.type) {
     case "interval":
-      return `every ${task.config.interval}s`;
+      return `every ${config.interval ?? "?"}s`;
     case "cron":
-      return task.config.cronExpression ?? "?";
+      return config.cronExpression ?? "?";
     case "once":
-      return task.config.executeAt?.toISOString() ?? "?";
+      return config.executeAt?.toISOString() ?? "?";
     default:
       return "?";
   }

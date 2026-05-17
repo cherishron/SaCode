@@ -31,6 +31,8 @@ export interface TextColors {
   primary: ColorValue;
   /** 次要文本颜色 - 用于辅助信息 */
   secondary: ColorValue;
+  /** 兼容旧命名：静音文本颜色 */
+  muted?: ColorValue;
   /** 链接颜色 */
   link: ColorValue;
   /** 强调文本颜色 */
@@ -121,6 +123,8 @@ export interface StatusColors {
 export interface UIColors {
   /** 注释颜色 */
   comment: ColorValue;
+  /** 兼容旧命名：边框颜色 */
+  border?: ColorValue;
   /** 符号颜色 */
   symbol: ColorValue;
   /** 激活状态颜色 */
@@ -230,6 +234,7 @@ export const defaultSemanticColors: SemanticColors = {
   text: {
     primary: "#e0e0e0",
     secondary: "#808080",
+    muted: "#808080",
     link: "#6cb6ff",
     accent: "#ff7b72",
     response: "#7ee787",
@@ -271,6 +276,7 @@ export const defaultSemanticColors: SemanticColors = {
   },
   ui: {
     comment: "#6e7681",
+    border: "#30363d",
     symbol: "#79c0ff",
     active: "#1f6feb",
     dark: "#010409",
