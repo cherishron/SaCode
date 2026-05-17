@@ -27,9 +27,11 @@ import {
 import { loadChatRuntime, registerCleanup } from "./chat/bootstrap.js";
 import { handleRunnerEvent } from "./chat/events.js";
 import { createChatSlashRegistry } from "./chat/registry.js";
+import { tryExecuteSharedSlashCommand } from "./chat/shared-router.js";
 import { filterToolsForAgent } from "../agent/tool-filter.js";
 import { adaptCoreClient } from "../agent/client.js";
 import { ensureAgentStore } from "../lib/agent-store.js";
+import { ensureProviderStore } from "../lib/provider-store.js";
 
 export interface ChatOptions {
   message?: string;
@@ -120,6 +122,8 @@ const ChatWrapper: React.FC<{
   const [showAuthSetup, setShowAuthSetup] = useState(false);
   const [showModelSetup, setShowModelSetup] = useState(false);
   const [modelSetupData, setModelSetupData] = useState<{ models: string[]; providerName: string }>({ models: [], providerName: "" });
+  const [providerStore, setProviderStore] = useState<Awaited<ReturnType<typeof ensureProviderStore>> | undefined>(undefined);
+  const [agentStore, setAgentStore] = useState<Awaited<ReturnType<typeof ensureAgentStore>> | undefined>(undefined);
 
   // Reactive model state so UI updates when /model switches
   const [currentModel, setCurrentModel] = useState(model);
@@ -177,6 +181,17 @@ const ChatWrapper: React.FC<{
     setGitBranch(getGitBranch(cwd));
   }, [cwd]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        setProviderStore(await ensureProviderStore());
+        setAgentStore(await ensureAgentStore());
+      } catch {
+        // ignore bootstrap errors here, actual commands will surface details
+      }
+    })();
+  }, []);
+
   // 尝试获取 CodingPlan 账户信息
   useEffect(() => {
     (async () => {
@@ -203,6 +218,41 @@ const ChatWrapper: React.FC<{
     if (userInput.startsWith("/")) {
       // 纯 "/" 输入静默忽略，不报错
       if (userInput.trim() === "/") {
+        return;
+      }
+
+      const handledBySharedRouter = await tryExecuteSharedSlashCommand({
+        input: userInput,
+        tools: ["read_file", "write_file", "shell_exec", "code_search"],
+        workspaceContext: `工作目录: ${cwd}`,
+        model: modelRef.current,
+        language: preferenceManager.getResolvedLanguage(),
+        session: options.session,
+        preferences: { ...preferenceManager.getAll() },
+        providerStore,
+        agentStore,
+        setLanguage: (nextLanguage) => {
+          preferenceManager.set("language", nextLanguage as UserPreferences["language"]);
+        },
+        setCurrentModel,
+        handleExit,
+        appendSystemMessage: (content) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: generateId(),
+              role: "system" as const,
+              content,
+              timestamp: new Date(),
+            },
+          ]);
+        },
+        clearMessages: () => {
+          setMessages([]);
+        },
+      });
+
+      if (handledBySharedRouter) {
         return;
       }
 
