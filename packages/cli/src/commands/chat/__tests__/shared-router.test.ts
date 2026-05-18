@@ -33,8 +33,13 @@ describe("shared chat slash router", () => {
   it("detects commands that should use shared router", () => {
     expect(shouldUseSharedSlashRouter("/agent list")).toBe(true);
     expect(shouldUseSharedSlashRouter("/model use openai/gpt-4o")).toBe(true);
+    expect(shouldUseSharedSlashRouter("/auth list")).toBe(true);
+    expect(shouldUseSharedSlashRouter("/session list")).toBe(true);
+    expect(shouldUseSharedSlashRouter("/recall 项目配置")).toBe(true);
+    expect(shouldUseSharedSlashRouter("/remember 使用 TypeScript 严格模式")).toBe(true);
     expect(shouldUseSharedSlashRouter("/theme dark")).toBe(false);
     expect(shouldUseSharedSlashRouter("/auth add")).toBe(false);
+    expect(shouldUseSharedSlashRouter("/session clear")).toBe(false);
   });
 
   it("maps shared message result into system output", async () => {

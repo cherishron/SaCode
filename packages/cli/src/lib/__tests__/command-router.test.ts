@@ -18,6 +18,110 @@ vi.mock("../doctor", () => ({
   runDoctor: vi.fn(async () => ({ ok: true, checks: [], provider: {}, workspace: {} })),
 }));
 
+vi.mock("../session-store", () => ({
+  listSessionInfos: vi.fn(() => [{
+    id: "s1",
+    channel: "telegram",
+    chatId: "chat-1",
+    lastActiveAt: "2026-05-17T01:00:00.000Z",
+    messageCount: 5,
+    tokenCount: 120,
+    model: "deepseek-chat",
+  }]),
+  loadSessionInfo: vi.fn((sessionId: string) => sessionId === "s1" ? {
+    id: "s1",
+    channel: "telegram",
+    chatId: "chat-1",
+    lastActiveAt: "2026-05-17T01:00:00.000Z",
+    messageCount: 5,
+    tokenCount: 120,
+    model: "deepseek-chat",
+  } : null),
+  formatSessionList: vi.fn(() => "Sessions\n\n- s1\nTotal: 1 session(s)"),
+  formatSessionInfo: vi.fn(() => "Session: s1\nChannel: telegram\nChat ID: chat-1"),
+}));
+
+vi.mock("../../core/memory", () => ({
+  MemoryManager: class {
+    async initialize() {
+      return undefined;
+    }
+
+    async recall(query: string) {
+      if (query === "项目配置") {
+        return ["项目使用 TypeScript 严格模式"];
+      }
+      return [];
+    }
+
+    async remember() {
+      return undefined;
+    }
+  },
+}));
+
+vi.mock("../../auth/account-manager", () => ({
+  CodingPlanAccountManager: class {
+    async listAccounts() {
+      return [{
+        id: "acc-1",
+        alias: "Primary",
+        provider: "deepseek",
+        protocol: "openai",
+        baseUrl: "https://api.deepseek.com/v1",
+        defaultModel: "deepseek-chat",
+        apiKey: "sk-test-secret",
+        isActive: true,
+        createdAt: "2026-05-17T00:00:00.000Z",
+        lastUsedAt: "2026-05-17T01:00:00.000Z",
+      }];
+    }
+
+    getPreset(provider: string) {
+      return { name: provider };
+    }
+
+    async getActiveAccount() {
+      return {
+        id: "acc-1",
+        alias: "Primary",
+        provider: "deepseek",
+        protocol: "openai",
+        baseUrl: "https://api.deepseek.com/v1",
+        defaultModel: "deepseek-chat",
+        apiKey: "sk-test-secret",
+        isActive: true,
+        createdAt: "2026-05-17T00:00:00.000Z",
+        lastUsedAt: "2026-05-17T01:00:00.000Z",
+      };
+    }
+
+    async validateAccount() {
+      return { valid: true };
+    }
+
+    async switchAccount() {
+      return undefined;
+    }
+
+    async removeAccount() {
+      return undefined;
+    }
+  },
+}));
+
+vi.mock("../../auth/providers", () => ({
+  listProviders: () => [{
+    id: "deepseek",
+    name: "DeepSeek",
+    protocol: "openai",
+    models: ["deepseek-chat"],
+    openaiBaseUrl: "https://api.deepseek.com/v1",
+    keyPrefix: "sk-",
+    docs: "https://example.com/docs",
+  }],
+}));
+
 function createContext(overrides: Partial<CommandRouterContext> = {}): CommandRouterContext {
   return {
     tools: ["read_file", "write_file"],
@@ -96,6 +200,36 @@ describe("command router", () => {
 
     expect(models.type === "message" ? models.content : "").toContain("* deepseek/deepseek-chat");
     expect(providers.type === "message" ? providers.content : "").toContain("DeepSeek");
+  });
+
+  it("routes auth informational commands", async () => {
+    const authList = await routeSlashCommand("/auth list", createContext());
+    const authCurrent = await routeSlashCommand("/auth current", createContext());
+    const authProviders = await routeSlashCommand("/auth providers", createContext());
+
+    expect(authList.type === "message" ? authList.content : "").toContain("CodingPlan 账户");
+    expect(authList.type === "message" ? authList.content : "").toContain("Primary");
+    expect(authCurrent.type === "message" ? authCurrent.content : "").toContain("当前账户:");
+    expect(authProviders.type === "message" ? authProviders.content : "").toContain("支持的 CodingPlan 厂商:");
+  });
+
+  it("routes readonly session commands", async () => {
+    const sessionList = await routeSlashCommand("/session list", createContext());
+    const sessionInfo = await routeSlashCommand("/session info s1", createContext());
+
+    expect(sessionList.type === "message" ? sessionList.content : "").toContain("Sessions");
+    expect(sessionList.type === "message" ? sessionList.content : "").toContain("s1");
+    expect(sessionInfo.type === "message" ? sessionInfo.content : "").toContain("Session: s1");
+    expect(sessionInfo.type === "message" ? sessionInfo.content : "").toContain("telegram");
+  });
+
+  it("routes memory commands", async () => {
+    const recallResult = await routeSlashCommand("/recall 项目配置", createContext());
+    const rememberResult = await routeSlashCommand("/remember 项目使用 TypeScript 严格模式", createContext());
+
+    expect(recallResult.type === "message" ? recallResult.content : "").toContain("找到 1 条相关记忆");
+    expect(recallResult.type === "message" ? recallResult.content : "").toContain("TypeScript 严格模式");
+    expect(rememberResult.type === "message" ? rememberResult.content : "").toContain("已保存到记忆");
   });
 
   it("routes model use and model test commands", async () => {

@@ -3,6 +3,7 @@ import { ensureAgentStore, formatAgents, removeAgent, setAgentCollaboration, set
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { ensureProviderStore, formatModels, formatProviders, setDefaultModel, testModelConfiguration, type ProviderStoreData } from "./provider-store";
 import { resolveProviderConfigForModelRef } from "./provider-config";
+import { formatSessionInfo, formatSessionList, listSessionInfos, loadSessionInfo } from "./session-store";
 
 export interface CommandRouterContext {
   tools: string[];
@@ -29,10 +30,14 @@ const HELP_TEXT = `可用命令:
   /tools         - 显示可用工具
   /context       - 显示当前上下文概览
   /permissions   - 显示当前权限模式
+  /session       - 查看会话信息
+  /recall        - 检索记忆
+  /remember      - 保存记忆
   /models        - 显示已配置模型
   /model use     - 切换默认模型
   /model test    - 检查模型配置
   /providers     - 显示已配置 Provider
+  /auth          - 管理认证账户
   /agents        - 显示已配置 Agent
   /agent use     - 切换默认 Agent
   /agent add     - 添加 Agent
@@ -75,12 +80,20 @@ export async function routeSlashCommand(
       return { type: "message", content: formatContext(context) };
     case "permissions":
       return { type: "message", content: formatPermissions(context.confirmationMode) };
+    case "session":
+      return handleSessionCommand(args, context);
+    case "recall":
+      return handleRecallCommand(args);
+    case "remember":
+      return handleRememberCommand(args);
     case "models":
       return { type: "message", content: formatModels(context.providerStore ?? await ensureProviderStore()) };
     case "model":
       return handleModelCommand(args, context);
     case "providers":
       return { type: "message", content: formatProviders(context.providerStore ?? await ensureProviderStore()) };
+    case "auth":
+      return handleAuthCommand(args);
     case "agents":
       return { type: "message", content: formatAgents(context.agentStore ?? await ensureAgentStore()) };
     case "agent":
@@ -404,6 +417,232 @@ async function handleAgentCommand(args: string[], context: CommandRouterContext)
   }
 
   return { type: "message", content: "用法: /agent use <agent-id>、/agent add <agent-id> <provider/model>、/agent edit <agent-id> <field> <value>、/agent clone <source-id> <target-id>、/agent list [--json]、/agent export、/agent import [--merge|--replace] <json>、/agent enable <agent-id>、/agent disable <agent-id>、/agent set-tools <agent-id> <values>、/agent set-subagents <agent-id> <values>、/agent remove <agent-id>、/agent show <agent-id>、/agent doctor、/agent test <agent-id>、/agent collab on|off、/agent dispatch on|off" };
+}
+
+async function handleAuthCommand(args: string[]): Promise<CommandRouterResult> {
+  const [action, ...rest] = args;
+
+  try {
+    const { CodingPlanAccountManager } = await import("../auth/account-manager.js");
+    const { listProviders } = await import("../auth/providers.js");
+    const manager = new CodingPlanAccountManager();
+
+    if (!action) {
+      const accounts = await manager.listAccounts();
+      const lines = ["认证管理", ""];
+      if (accounts.length > 0) {
+        lines.push("CodingPlan 账户:");
+        for (const account of accounts) {
+          const active = account.isActive ? " (当前)" : "";
+          lines.push(`  ${account.alias || account.provider}${active}`);
+        }
+        lines.push("");
+      }
+      lines.push(
+        "可用操作:",
+        "  /auth list      - 查看账户列表",
+        "  /auth current   - 查看当前账户",
+        "  /auth providers - 查看支持的厂商",
+        "  /auth env       - 查看环境变量配置",
+        "  /auth validate  - 验证当前账户",
+        "  /auth switch <accountId> - 切换账户",
+        "  /auth remove <accountId> - 删除账户",
+        "  /auth add       - 在 TUI 中打开交互式添加",
+      );
+      return { type: "message", content: lines.join("\n") };
+    }
+
+    if (action === "list") {
+      const accounts = await manager.listAccounts();
+      if (accounts.length === 0) {
+        return { type: "message", content: "暂无 CodingPlan 账户\n\n使用 /auth add 添加账户" };
+      }
+
+      const grouped = new Map<string, typeof accounts>();
+      for (const account of accounts) {
+        const key = account.provider;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)?.push(account);
+      }
+
+      const lines = ["CodingPlan 账户:", ""];
+      for (const [provider, providerAccounts] of grouped) {
+        const preset = manager.getPreset(provider as never);
+        lines.push(`  ${preset?.name || provider}`);
+        for (const account of providerAccounts) {
+          const active = account.isActive ? "* " : "o ";
+          const model = account.defaultModel ? ` [${account.defaultModel}]` : "";
+          lines.push(`    ${active}${account.alias} (${account.id})${model}`);
+        }
+      }
+      return { type: "message", content: lines.join("\n") };
+    }
+
+    if (action === "current") {
+      const account = await manager.getActiveAccount();
+      const preset = manager.getPreset(account.provider as never);
+      return {
+        type: "message",
+        content: [
+          "当前账户:",
+          `  别名:     ${account.alias}`,
+          `  厂商:     ${preset?.name || account.provider}`,
+          `  协议:     ${account.protocol}`,
+          `  端点:     ${account.baseUrl}`,
+          `  默认模型: ${account.defaultModel || "未设置"}`,
+          `  API Key:  ${account.apiKey.slice(0, 8)}${"*".repeat(20)}`,
+          `  创建时间: ${account.createdAt}`,
+          ...(account.lastUsedAt ? [`  最近使用: ${account.lastUsedAt}`] : []),
+        ].join("\n"),
+      };
+    }
+
+    if (action === "providers") {
+      const providers = listProviders();
+      const lines = ["支持的 CodingPlan 厂商:", ""];
+      for (const provider of providers) {
+        const protocols = provider.protocol === "both" ? "OpenAI + Anthropic" : provider.protocol;
+        lines.push(`  ${provider.name} (${provider.id})`);
+        lines.push(`    协议: ${protocols}`);
+        lines.push(`    模型: ${provider.models.join(", ")}`);
+        if (provider.openaiBaseUrl) lines.push(`    OpenAI:    ${provider.openaiBaseUrl}`);
+        if (provider.anthropicBaseUrl) lines.push(`    Anthropic: ${provider.anthropicBaseUrl}`);
+        if (provider.keyPrefix) lines.push(`    Key 前缀:  ${provider.keyPrefix}`);
+        if (provider.docs) lines.push(`    文档: ${provider.docs}`);
+        lines.push("");
+      }
+      return { type: "message", content: lines.join("\n") };
+    }
+
+    if (action === "env") {
+      const envKeys: [string, string][] = [["OpenAI", "OPENAI_API_KEY"], ["Anthropic", "ANTHROPIC_API_KEY"], ["DeepSeek", "DEEPSEEK_API_KEY"], ["Moonshot", "MOONSHOT_API_KEY"], ["智谱 (Zhipu)", "ZHIPU_API_KEY"]];
+      const lines = ["环境变量 API Key 配置:", ""];
+      for (const [name, envKey] of envKeys) {
+        const value = process.env[envKey];
+        const configured = typeof value === "string" && value.length > 0;
+        lines.push(`  ${configured ? "+" : "o"} ${name}${configured ? " (已配置)" : " (未配置)"}`);
+      }
+      lines.push("", "提示: 在系统环境变量或 ~/.sacode Provider 配置中设置 API Key");
+      return { type: "message", content: lines.join("\n") };
+    }
+
+    if (action === "validate") {
+      const account = await manager.getActiveAccount();
+      const result = await manager.validateAccount(account.id);
+      return {
+        type: "message",
+        content: result.valid
+          ? `账户有效: ${account.alias} (${account.provider})`
+          : `账户验证失败: ${result.error ?? "unknown error"}`,
+      };
+    }
+
+    if (action === "switch") {
+      const accountId = rest[0];
+      if (!accountId) {
+        return { type: "message", content: "用法: /auth switch <accountId>" };
+      }
+      await manager.switchAccount(accountId);
+      const account = await manager.getActiveAccount();
+      return { type: "message", content: `已切换到: ${account.alias} (${account.provider})` };
+    }
+
+    if (action === "remove") {
+      const accountId = rest[0];
+      if (!accountId) {
+        return { type: "message", content: "用法: /auth remove <accountId>" };
+      }
+      await manager.removeAccount(accountId);
+      return { type: "message", content: `账户已删除: ${accountId}` };
+    }
+
+    if (action === "add") {
+      return { type: "message", content: "请在交互式 TUI 中使用 /auth add 打开添加账户向导，或使用 sacode auth add --provider <provider> --key <apiKey>。" };
+    }
+
+    return { type: "message", content: "用法: /auth [list|current|providers|env|validate|switch|remove|add]" };
+  } catch (error) {
+    return { type: "message", content: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function handleSessionCommand(args: string[], context: CommandRouterContext): Promise<CommandRouterResult> {
+  const [action, value] = args;
+
+  if (!action) {
+    return {
+      type: "message",
+      content: [
+        "会话管理:",
+        "  /session list              - 查看历史会话",
+        "  /session info <sessionId>  - 查看指定会话详情",
+        "  /session clear             - 当前仅在 TUI/传统命令中支持",
+        ...(context.session ? [`  当前会话: ${context.session}`] : []),
+      ].join("\n"),
+    };
+  }
+
+  if (action === "list") {
+    return { type: "message", content: formatSessionList(listSessionInfos()) };
+  }
+
+  if (action === "info") {
+    const sessionId = value ?? context.session;
+    if (!sessionId) {
+      return { type: "message", content: "用法: /session info <sessionId>" };
+    }
+
+    const session = loadSessionInfo(sessionId);
+    if (!session) {
+      return { type: "message", content: `Session not found: ${sessionId}` };
+    }
+
+    return { type: "message", content: formatSessionInfo(session) };
+  }
+
+  if (action === "clear") {
+    return { type: "message", content: "当前 shell 中的 /session clear 仍保留为 TUI/传统命令交互式操作。请使用 /clear 清空当前消息，或使用 sacode session clear 执行带确认的删除。" };
+  }
+
+  return { type: "message", content: "用法: /session [list|info|clear]" };
+}
+
+async function handleRecallCommand(args: string[]): Promise<CommandRouterResult> {
+  const query = args.join(" ").trim();
+  if (!query) {
+    return { type: "message", content: "用法: /recall <搜索关键词>\n例如: /recall 项目配置" };
+  }
+
+  try {
+    const { MemoryManager } = await import("../core/memory.js");
+    const manager = new MemoryManager({ memoryDir: ".sacode/memory" });
+    await manager.initialize();
+    const results = await manager.recall(query);
+    if (results.length === 0) {
+      return { type: "message", content: `未找到与 \"${query}\" 相关的记忆` };
+    }
+
+    return { type: "message", content: `找到 ${results.length} 条相关记忆:\n\n${results.join("\n\n---\n\n")}` };
+  } catch {
+    return { type: "message", content: "记忆系统暂时不可用" };
+  }
+}
+
+async function handleRememberCommand(args: string[]): Promise<CommandRouterResult> {
+  const content = args.join(" ").trim();
+  if (!content) {
+    return { type: "message", content: "用法: /remember <记忆内容>\n例如: /remember 项目使用 TypeScript 严格模式" };
+  }
+
+  try {
+    const { MemoryManager } = await import("../core/memory.js");
+    const manager = new MemoryManager({ memoryDir: ".sacode/memory" });
+    await manager.initialize();
+    await manager.remember(content, "session");
+    return { type: "message", content: `+ 已保存到记忆: ${content.slice(0, 50)}...` };
+  } catch {
+    return { type: "message", content: "记忆系统暂时不可用" };
+  }
 }
 
 async function applyAgentEdit(

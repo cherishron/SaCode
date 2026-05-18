@@ -7,9 +7,13 @@ const SHARED_COMMANDS = new Set([
   "tools",
   "context",
   "permissions",
+  "session",
+  "recall",
+  "remember",
   "models",
   "model",
   "providers",
+  "auth",
   "agents",
   "agent",
   "lang",
@@ -38,7 +42,18 @@ export interface SharedSlashRouterDependencies {
 }
 
 export function shouldUseSharedSlashRouter(input: string): boolean {
-  const command = input.trim().replace(/^\//, "").split(/\s+/)[0]?.toLowerCase();
+  const tokens = input.trim().replace(/^\//, "").split(/\s+/);
+  const command = tokens[0]?.toLowerCase();
+  const subcommand = tokens[1]?.toLowerCase();
+
+  if (command === "auth" && (!subcommand || subcommand === "add")) {
+    return false;
+  }
+
+  if (command === "session" && (!subcommand || subcommand === "clear")) {
+    return false;
+  }
+
   return Boolean(command && SHARED_COMMANDS.has(command));
 }
 
