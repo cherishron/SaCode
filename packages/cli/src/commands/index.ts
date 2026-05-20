@@ -7,12 +7,15 @@ export { registerCodeCommand } from "./code.js";
 export function registerStartCommand(ctx: CommandContext): void {
   ctx.program
     .command("start")
-    .description("启动本地 API 与 Web 服务")
+    .alias("serve")
+    .description("启动本地 API 与 Web 服务（serve 为别名）")
     .option("-p, --port <port>", "API 服务端口", "3000")
     .option("-H, --host <host>", "服务监听地址", "127.0.0.1")
     .option("--api", "仅启动 API 服务")
     .option("--web", "仅启动 Web 服务")
-    .action(async (options: { port: string; host: string; api?: boolean; web?: boolean }) => {
+    .option("--gateway", "启用 WebSocket Gateway")
+    .option("--wechat", "启用微信入口（需配置 adapters）")
+    .action(async (options: { port: string; host: string; api?: boolean; web?: boolean; gateway?: boolean; wechat?: boolean }) => {
       const { startServer } = await import("./start.js");
       await startServer(options);
     });

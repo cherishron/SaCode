@@ -10,6 +10,8 @@ interface StartOptions {
   host: string;
   api?: boolean;
   web?: boolean;
+  gateway?: boolean;
+  wechat?: boolean;
 }
 
 type NodeSubprocess = ReturnType<typeof spawn>;
@@ -18,18 +20,20 @@ let apiProcess: NodeSubprocess | null = null;
 let webProcess: NodeSubprocess | null = null;
 
 export async function startServer(options: StartOptions): Promise<void> {
-  const { port, host } = options;
+  const { port, host, gateway, wechat } = options;
 
   console.log(chalk.cyan("\n[SACODE] Starting Server\n"));
   console.log(`  Host: ${chalk.green(host)}`);
   console.log(`  Port: ${chalk.green(port)}`);
+  if (gateway) console.log(`  Gateway: ${chalk.green("enabled")}`);
+  if (wechat) console.log(`  WeChat: ${chalk.yellow("configured (requires adapters setup)")}`);
   console.log();
 
   const startApi = options.api || !options.web;
   const startWeb = options.web || !options.api;
 
   if (startApi) {
-    await startApiServer(host, port);
+    await startApiServer(host, port, gateway);
   }
 
   if (startWeb) {
@@ -40,9 +44,13 @@ export async function startServer(options: StartOptions): Promise<void> {
   console.log(chalk.cyan("═══════════════════════════════════════"));
   if (startApi) {
     console.log(chalk.green(`[NET] API Server:  http://${host}:${port}`));
+    console.log(chalk.green(`[NET] WebSocket:   ws://${host}:${port}/ws`));
   }
   if (startWeb) {
     console.log(chalk.green(`[NET] Web UI:      http://${host}:5173`));
+  }
+  if (wechat) {
+    console.log(chalk.yellow(`[NET] WeChat:      Configure in ~/.sacode/adapters.json`));
   }
   console.log(chalk.cyan("═══════════════════════════════════════"));
   console.log(chalk.gray("\nPress Ctrl+C to stop all services\n"));
@@ -51,14 +59,21 @@ export async function startServer(options: StartOptions): Promise<void> {
   process.on("SIGTERM", cleanup);
 }
 
-async function startApiServer(host: string, port: string): Promise<void> {
+async function startApiServer(host: string, port: string, gateway?: boolean): Promise<void> {
   const apiPackagePath = path.join(__dirname, "../../api");
 
   console.log(chalk.gray("Starting API server..."));
 
+  const env = {
+    ...process.env,
+    PORT: port,
+    HOST: host,
+    GATEWAY_ENABLED: gateway ? "true" : "false",
+  };
+
   apiProcess = spawn("bun", ["run", "src/server.ts"], {
     cwd: apiPackagePath,
-    env: { ...process.env, PORT: port, HOST: host },
+    env,
     stdio: "inherit",
   });
 
@@ -72,6 +87,9 @@ async function startApiServer(host: string, port: string): Promise<void> {
 
     setTimeout(() => {
       console.log(chalk.green("+ API server started\n"));
+      if (gateway) {
+        console.log(chalk.green("+ WebSocket Gateway enabled\n"));
+      }
       resolve();
     }, 2000);
   });

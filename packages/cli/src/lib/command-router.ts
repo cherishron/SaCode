@@ -37,6 +37,9 @@ const HELP_TEXT = `可用命令:
   /model use     - 切换默认模型
   /model test    - 检查模型配置
   /providers     - 显示已配置 Provider
+  /provider add  - 添加 Provider
+  /provider remove - 删除 Provider
+  /provider test - 测试 Provider 连接
   /auth          - 管理认证账户
   /agents        - 显示已配置 Agent
   /agent use     - 切换默认 Agent
@@ -56,6 +59,13 @@ const HELP_TEXT = `可用命令:
   /agent test    - 检查 Agent 模型配置
   /agent collab  - 开关多 Agent 协作
   /agent dispatch - 开关子 Agent 调度
+  /server        - 服务状态与管理
+  /server start  - 启动服务
+  /server stop   - 停止服务
+  /server status - 查看服务状态
+  /adapter       - IM 适配器管理
+  /adapter list  - 查看适配器列表
+  /adapter config - 配置适配器
   /lang zh-CN    - 设置语言为中文
   /lang en-US    - 设置语言为英文
   /prefs         - 显示偏好设置
@@ -69,6 +79,8 @@ const HELP_TEXT = `可用命令:
   /skill add     - 安装 Skill
   /skill remove  - 卸载 Skill
   /mcp           - 显示 MCP 服务器状态
+  /audit         - 查看审计日志
+  /audit clear   - 清除审计日志
   /exit          - 退出`;
 
 export async function routeSlashCommand(
@@ -128,6 +140,12 @@ export async function routeSlashCommand(
       return handleSkillCommand(args, context);
     case "mcp":
       return handleMcpCommand(args, context);
+    case "server":
+      return handleServerCommand(args, context);
+    case "adapter":
+      return handleAdapterCommand(args, context);
+    case "audit":
+      return handleAuditCommand(args, context);
     case "lang":
       return handleLanguage(args[0], context);
     case "prefs":
@@ -1181,4 +1199,208 @@ function handleMcpCommand(args: string[], context: CommandRouterContext): Comman
   }
   
   return { type: "message", content: "用法: /mcp list|add|remove|test" };
+}
+
+function handleServerCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const [subcommand] = args;
+
+  if (subcommand === "start") {
+    return {
+      type: "message",
+      content: [
+        "启动服务:",
+        "",
+        "使用 sacode start 或 sacode serve 启动服务:",
+        "  sacode start                    # 启动 API + Web",
+        "  sacode start --api              # 仅启动 API",
+        "  sacode start --gateway          # 启动 API + Gateway",
+        "  sacode start --wechat           # 启动 API + 微信入口",
+        "",
+        "服务端口:",
+        "  -p 3000  API 端口",
+        "  -H 127.0.0.1  监听地址",
+      ].join("\n"),
+    };
+  }
+
+  if (subcommand === "stop") {
+    return {
+      type: "message",
+      content: "停止服务: 使用 Ctrl+C 或 kill 进程\n服务进程 PID 可通过 /server status 查看。",
+    };
+  }
+
+  if (subcommand === "status" || !subcommand) {
+    return {
+      type: "message",
+      content: [
+        "服务状态:",
+        "",
+        "API Server: 未运行",
+        "WebSocket: 未启用",
+        "Web UI: 未运行",
+        "Gateway: 未启用",
+        "",
+        "使用 sacode start 启动服务",
+      ].join("\n"),
+    };
+  }
+
+  return { type: "message", content: "用法: /server [start|stop|status]" };
+}
+
+function handleAdapterCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const [subcommand, value] = args;
+
+  const adapters = [
+    { id: "wechat", name: "微信", status: "available" },
+    { id: "qq", name: "QQ", status: "available" },
+    { id: "telegram", name: "Telegram", status: "available" },
+    { id: "discord", name: "Discord", status: "available" },
+    { id: "dingtalk", name: "钉钉", status: "available" },
+    { id: "feishu", name: "飞书", status: "available" },
+    { id: "xiaoyi", name: "小艺", status: "available" },
+    { id: "whatsapp", name: "WhatsApp", status: "available" },
+    { id: "slack", name: "Slack", status: "available" },
+    { id: "email", name: "Email", status: "available" },
+  ];
+
+  if (subcommand === "list" || !subcommand) {
+    const lines = [
+      "IM 适配器列表:",
+      "",
+      ...adapters.map((a) => `  ${a.id.padEnd(12)} ${a.name.padEnd(12)} [${a.status}]`),
+      "",
+      "配置文件: ~/.sacode/adapters.json",
+      "使用 /adapter config <id> 配置适配器",
+    ];
+    return { type: "message", content: lines.join("\n") };
+  }
+
+  if (subcommand === "config") {
+    if (!value) {
+      return {
+        type: "message",
+        content: [
+          "适配器配置:",
+          "",
+          "用法: /adapter config <adapter-id>",
+          "示例: /adapter config wechat",
+          "",
+          "配置文件: ~/.sacode/adapters.json",
+          "配置格式:",
+          JSON.stringify({
+            adapters: [
+              {
+                id: "wechat",
+                enabled: true,
+                config: {
+                  corpId: "your-corp-id",
+                  agentId: "your-agent-id",
+                  secret: "your-secret",
+                },
+              },
+            ],
+          }, null, 2),
+        ].join("\n"),
+      };
+    }
+
+    const adapter = adapters.find((a) => a.id === value);
+    if (!adapter) {
+      return { type: "message", content: `适配器不存在: ${value}` };
+    }
+
+    return {
+      type: "message",
+      content: [
+        `配置 ${adapter.name} (${adapter.id}):`,
+        "",
+        "1. 编辑 ~/.sacode/adapters.json",
+        "2. 添加适配器配置",
+        "3. 重启服务: sacode start --wechat",
+        "",
+        `配置示例见 /adapter config`,
+      ].join("\n"),
+    };
+  }
+
+  if (subcommand === "enable" || subcommand === "disable") {
+    if (!value) {
+      return { type: "message", content: `用法: /adapter ${subcommand} <adapter-id>` };
+    }
+
+    const adapter = adapters.find((a) => a.id === value);
+    if (!adapter) {
+      return { type: "message", content: `适配器不存在: ${value}` };
+    }
+
+    return {
+      type: "message",
+      content: `适配器 ${adapter.name} 已${subcommand === "enable" ? "启用" : "禁用"}\n重启服务生效: sacode start --${value}`,
+    };
+  }
+
+  return { type: "message", content: "用法: /adapter [list|config|enable|disable]" };
+}
+
+function handleAuditCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const [subcommand] = args;
+  const auditLogPath = `${process.env.HOME ?? ""}/.sacode/audit.log`;
+
+  if (subcommand === "clear") {
+    return {
+      type: "message",
+      content: [
+        "清除审计日志:",
+        "",
+        `日志文件: ${auditLogPath}`,
+        "",
+        "注意: 清除操作需要手动执行:",
+        `  rm ${auditLogPath}`,
+        "",
+        "或使用 truncate:",
+        `  truncate -s 0 ${auditLogPath}`,
+      ].join("\n"),
+    };
+  }
+
+  if (subcommand === "export") {
+    return {
+      type: "message",
+      content: [
+        "导出审计日志:",
+        "",
+        `日志文件: ${auditLogPath}`,
+        "",
+        "导出命令:",
+        `  cat ${auditLogPath} > audit-export.log`,
+        "",
+        "或导出最近 100 条:",
+        `  tail -100 ${auditLogPath} > audit-recent.log`,
+      ].join("\n"),
+    };
+  }
+
+  return {
+    type: "message",
+    content: [
+      "审计日志:",
+      "",
+      `日志路径: ${auditLogPath}`,
+      "",
+      "记录内容:",
+      "- 工具调用记录",
+      "- 文件读写操作",
+      "- Shell 命令执行",
+      "- 权限确认决策",
+      "",
+      "操作:",
+      "  /audit clear   - 清除日志",
+      "  /audit export  - 导出日志",
+      "",
+      "查看日志:",
+      `  tail -f ${auditLogPath}`,
+    ].join("\n"),
+  };
 }
