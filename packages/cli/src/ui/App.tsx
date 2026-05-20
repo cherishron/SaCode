@@ -400,6 +400,34 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     setShowThinking((prev) => !prev);
   }, []);
 
+  const handleShellCommand = useCallback(async (command: string) => {
+    appendSystemMessage(`[Shell] 执行: ${command}`);
+    
+    try {
+      const { spawn } = require("child_process");
+      const proc = spawn(command, [], {
+        shell: true,
+        cwd,
+        stdio: "pipe",
+      });
+      
+      let output = "";
+      proc.stdout.on("data", (data: Buffer) => {
+        output += data.toString();
+      });
+      proc.stderr.on("data", (data: Buffer) => {
+        output += data.toString();
+      });
+      
+      proc.on("close", (code: number) => {
+        const result = output.trim() || "(无输出)";
+        appendSystemMessage(`[Shell] 完成 (exit ${code}):\n${result.slice(0, 500)}${result.length > 500 ? "..." : ""}`);
+      });
+    } catch (error) {
+      appendSystemMessage(`[Shell] 错误: ${error instanceof Error ? error.message : "未知错误"}`);
+    }
+  }, [cwd, appendSystemMessage]);
+
   const handleSubmit = useCallback(
     async (value: string) => {
       const trimmed = value.trim();
@@ -532,6 +560,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         isLoading={isLoading}
         vimMode="insert"
         onToggleThinking={toggleThinking}
+        onShellCommand={handleShellCommand}
       />
 
       {/* Footer - 底部状态栏 (Gemini CLI 风格：多列 " · " 分隔) */}

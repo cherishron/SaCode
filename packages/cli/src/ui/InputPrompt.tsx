@@ -45,6 +45,10 @@ export interface InputPromptProps {
   showSuggestions?: boolean;
   /** 切换思考模式回调 */
   onToggleThinking?: () => void;
+  /** 多行输入回调 */
+  onMultilineChange?: (enabled: boolean) => void;
+  /** Shell 命令执行回调 */
+  onShellCommand?: (command: string) => void;
 }
 
 // ============================================================================
@@ -85,17 +89,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   placeholder,
   showSuggestions: externalShowSuggestions,
   onToggleThinking,
+  onMultilineChange,
+  onShellCommand,
 }) => {
   const colors = getColors();
 
-  // 用于跟踪 Meta/Alt 键状态，防止 TextInput 捕获 meta 组合键的字符
   const isMetaKeyDown = useRef(false);
 
-  // 状态
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [tempInput, setTempInput] = useState("");
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [internalShowSuggestions, setInternalShowSuggestions] = useState(false);
+  
+  const [isMultilineMode, setIsMultilineMode] = useState(false);
+  const [isShellMode, setIsShellMode] = useState(false);
+  const [multilineBuffer, setMultilineBuffer] = useState<string[]>([]);
 
   // 反向搜索
   const reverseSearch = useReverseSearch({
@@ -196,7 +204,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // 键盘输入处理
   useInput(
     (input, key) => {
-      // 反向搜索模式
       if (isReverseSearchMode) {
         if (key.return) {
           reverseSearch.confirm();
@@ -213,18 +220,41 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // 正常模式
       if (key.ctrl && input === "r") {
-        // Ctrl+R 进入反向搜索
         setIsReverseSearchMode(true);
         reverseSearch.start();
         return;
       }
 
-      // 忽略 Meta/Alt 组合键，让父组件处理
+      if (key.ctrl && input === "m") {
+        const newMode = !isMultilineMode;
+        setIsMultilineMode(newMode);
+        if (!newMode) {
+          const fullContent = [...multilineBuffer, value].join("\n");
+          if (fullContent.trim()) {
+            onSubmit(fullContent);
+          }
+          setMultilineBuffer([]);
+          onChange("");
+        } else {
+          setMultilineBuffer([]);
+        }
+        onMultilineChange?.(newMode);
+        return;
+      }
+
+      if (key.ctrl && input === "k") {
+        const newMode = !isShellMode;
+        setIsShellMode(newMode);
+        if (!newMode && value.trim()) {
+          onShellCommand?.(value);
+          onChange("");
+        }
+        return;
+      }
+
       if (key.meta) {
         isMetaKeyDown.current = true;
-        // 短暂延迟后重置，因为 TextInput 的 onChange 可能在 useInput 之后触发
         setTimeout(() => { isMetaKeyDown.current = false; }, 50);
         return;
       }
@@ -248,27 +278,36 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           handleHistoryDown();
         }
       } else if (key.return) {
-        // When suggestions are visible, Enter selects the highlighted suggestion
         if (showSuggestions && filteredCommands.length > 0) {
           handleTabCompletion();
+        } else if (isMultilineMode) {
+          setMultilineBuffer((prev) => [...prev, value]);
+          onChange("");
+        } else if (isShellMode) {
+          onShellCommand?.(value);
+          onChange("");
         } else {
           handleSubmit();
         }
       } else if (key.escape) {
         if (showSuggestions) {
           setInternalShowSuggestions(false);
+        } else if (isMultilineMode) {
+          setIsMultilineMode(false);
+          setMultilineBuffer([]);
+          onChange("");
+          onMultilineChange?.(false);
+        } else if (isShellMode) {
+          setIsShellMode(false);
+          onChange("");
         } else {
           onChange("");
         }
       } else if (input === "?" && value === "") {
-        // ? 键在输入为空时显示快捷键帮助（由 App 组件处理）
-        // 这里不做任何处理，让事件冒泡到 App 组件
       } else {
-        // Show suggestions when typing '/' or when value already starts with '/'
         if (input === "/" || value.startsWith("/")) {
           setInternalShowSuggestions(true);
         } else {
-          // Hide suggestions when not in command mode
           setInternalShowSuggestions(false);
         }
       }
@@ -279,8 +318,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // 默认占位符
   const defaultPlaceholder = useMemo(() => {
     if (isLoading) return "思考中...";
-    return "输入消息或 / 获取命令列表";
-  }, [isLoading]);
+    if (isShellMode) return "Shell 模式: 输入命令执行";
+    if (isMultilineMode) return `多行模式: 已输入 ${multilineBuffer.length} 行`;
+    return "输入消息或 / 获取命令列表 | Ctrl+M 多行 | Ctrl+K Shell";
+  }, [isLoading, isShellMode, isMultilineMode, multilineBuffer.length]);
 
   return (
     <Box flexDirection="column" width="100%">

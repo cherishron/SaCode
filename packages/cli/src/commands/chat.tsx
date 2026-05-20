@@ -541,7 +541,6 @@ export async function startChat(options: ChatOptions): Promise<void> {
   preferenceManager.load();
   const { client, providerConfig, cwd, version } = await loadChatRuntime();
 
-  // 渲染 TUI
   const { unmount } = render(
     <ChatWrapper
       version={version}
@@ -555,4 +554,61 @@ export async function startChat(options: ChatOptions): Promise<void> {
   );
 
   registerCleanup(client, unmount);
+}
+
+/**
+ * 单次问答模式 - 不启动 TUI，直接处理查询并输出结果
+ */
+export async function handleSingleQuery(query: string): Promise<void> {
+  const preferenceManager = getPreferenceManager();
+  preferenceManager.load();
+  const { client, cwd } = await loadChatRuntime();
+
+  try {
+    await client.connect();
+    const { AgentRunner } = await import("../agent/runner.js");
+    const { createDefaultTools } = await import("../tools/index.js");
+    const { SACODEClient } = await import("@sacode/core");
+    const agentStore = await ensureAgentStore();
+
+    const runner = new AgentRunner({
+      rootDir: cwd,
+      agentStore,
+      client: adaptCoreClient(client),
+      sessionId: `single-${Date.now()}`,
+      contextWindow: 128_000,
+      maxIterations: 25,
+      autoApprove: ["file_read", "file_search", "code_search"],
+      requireApproval: ["file_write", "shell_exec", "diff_apply"],
+      clientFactory: async (providerConfig) => {
+        const agentClient = new SACODEClient({
+          provider: providerConfig,
+          timeout: parseInt(process.env.IFLOW_TIMEOUT || "60000", 10),
+        });
+        await agentClient.connect();
+        return adaptCoreClient(agentClient);
+      },
+      toolResolver: ({ agent, rootDir: agentRootDir }) => {
+        return filterToolsForAgent(createDefaultTools(agentRootDir), agent);
+      },
+    });
+
+    let output = "";
+    for await (const event of runner.run(query)) {
+      if (event.type === "content") {
+        output = event.text;
+      } else if (event.type === "tool_result") {
+        console.error(`[Tool] ${event.name}: ${event.success ? "success" : "error"}`);
+      }
+    }
+
+    if (output) {
+      console.log(output);
+    }
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+    process.exit(1);
+  } finally {
+    await client.disconnect();
+  }
 }

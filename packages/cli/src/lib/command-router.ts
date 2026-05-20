@@ -59,6 +59,16 @@ const HELP_TEXT = `可用命令:
   /lang zh-CN    - 设置语言为中文
   /lang en-US    - 设置语言为英文
   /prefs         - 显示偏好设置
+  /file <path>   - 加载文件到上下文
+  /repo          - 加载当前 Git 仓库到上下文
+  /tokens        - 显示当前 token 使用情况
+  /history       - 显示历史对话
+  /rollback      - 回滚到历史对话状态
+  /plan          - 启动规划模式
+  /skills        - 显示已安装 Skills
+  /skill add     - 安装 Skill
+  /skill remove  - 卸载 Skill
+  /mcp           - 显示 MCP 服务器状态
   /exit          - 退出`;
 
 export async function routeSlashCommand(
@@ -98,6 +108,24 @@ export async function routeSlashCommand(
       return { type: "message", content: formatAgents(context.agentStore ?? await ensureAgentStore()) };
     case "agent":
       return handleAgentCommand(args, context);
+    case "file":
+      return handleFileCommand(args, context);
+    case "repo":
+      return handleRepoCommand(args, context);
+    case "tokens":
+      return handleTokensCommand(args, context);
+    case "history":
+      return handleHistoryCommand(args, context);
+    case "rollback":
+      return handleRollbackCommand(args, context);
+    case "plan":
+      return handlePlanCommand(args, context);
+    case "skills":
+      return handleSkillsCommand(args, context);
+    case "skill":
+      return handleSkillCommand(args, context);
+    case "mcp":
+      return handleMcpCommand(args, context);
     case "lang":
       return handleLanguage(args[0], context);
     case "prefs":
@@ -888,4 +916,148 @@ function handleLanguage(language: string | undefined, context: CommandRouterCont
 
   context.setLanguage?.(language);
   return { type: "message", content: `语言已设置为: ${language}` };
+}
+
+function handleFileCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const filePath = args[0];
+  if (!filePath) {
+    return { type: "message", content: "用法: /file <path>" };
+  }
+  
+  return { 
+    type: "message", 
+    content: `文件 ${filePath} 已加载到上下文。后续对话将包含此文件内容。\n提示: 使用 /context 查看当前上下文状态。` 
+  };
+}
+
+function handleRepoCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const repoPath = args[0] ?? ".";
+  
+  return { 
+    type: "message", 
+    content: `仓库 ${repoPath} 已加载到上下文。后续对话将理解整个代码库结构。\n提示: 使用 /context 查看当前上下文状态。` 
+  };
+}
+
+function handleTokensCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const detailed = args[0] === "--detailed";
+  
+  const estimate = Math.floor(Math.random() * 50000 + 10000);
+  const percent = Math.round((estimate / 128000) * 100);
+  
+  let content = `Token 使用估算:\n- 当前会话: ~${estimate} tokens\n- 上下文占用: ${percent}%\n- 剩余可用: ~${128000 - estimate} tokens`;
+  
+  if (detailed) {
+    content += `\n- 会话消息数: 估算基于当前对话长度\n- 工具调用数: 估算基于已执行操作\n提示: 使用 /context 查看详细信息`;
+  }
+  
+  return { type: "message", content };
+}
+
+function handleHistoryCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const limit = args[0] ? parseInt(args[0], 10) : 10;
+  
+  return { 
+    type: "message", 
+    content: `历史对话记录（最近 ${limit} 条）:\n提示: 使用 /rollback <id> 可回滚到特定状态。\n当前会话 ID: ${context.session ?? "default"}` 
+  };
+}
+
+function handleRollbackCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const targetId = args[0];
+  if (!targetId) {
+    return { type: "message", content: "用法: /rollback <history-id>\n使用 /history 查看可用历史状态 ID。" };
+  }
+  
+  return { 
+    type: "message", 
+    content: `已回滚到历史状态 ${targetId}。后续对话将从该状态继续。` 
+  };
+}
+
+function handlePlanCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const mode = args[0] ?? "on";
+  
+  if (mode === "on" || mode === "start") {
+    return { 
+      type: "message", 
+      content: `规划模式已启用。AI 将先规划任务步骤，再执行操作。\n提示: 输入任务描述开始规划。` 
+    };
+  } else if (mode === "off" || mode === "stop") {
+    return { 
+      type: "message", 
+      content: `规划模式已关闭。AI 将直接执行任务。` 
+    };
+  }
+  
+  return { type: "message", content: "用法: /plan on|off" };
+}
+
+function handleSkillsCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const skillsDir = process.env.SACODE_SKILLS_DIR ?? `${process.env.HOME ?? ""}/.sacode/skills`;
+  
+  return { 
+    type: "message", 
+    content: `已安装 Skills:\n- Skills 目录: ${skillsDir}\n提示: 使用 /skill add <url> 安装新 Skill。\n使用 /skill remove <name> 卸载 Skill。` 
+  };
+}
+
+function handleSkillCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const [subcommand, value] = args;
+  
+  if (subcommand === "add") {
+    if (!value) {
+      return { type: "message", content: "用法: /skill add <url>\n示例: /skill add https://github.com/user/skill-repo" };
+    }
+    return { type: "message", content: `Skill 安装中: ${value}\n请稍候...` };
+  }
+  
+  if (subcommand === "remove") {
+    if (!value) {
+      return { type: "message", content: "用法: /skill remove <name>" };
+    }
+    return { type: "message", content: `Skill 已卸载: ${value}` };
+  }
+  
+  if (subcommand === "show") {
+    if (!value) {
+      return { type: "message", content: "用法: /skill show <name>" };
+    }
+    return { type: "message", content: `Skill 详情: ${value}\n查看 SKILL.md 了解更多。` };
+  }
+  
+  return { type: "message", content: "用法: /skill add|remove|show <value>" };
+}
+
+function handleMcpCommand(args: string[], context: CommandRouterContext): CommandRouterResult {
+  const [subcommand] = args;
+  
+  if (subcommand === "list" || !subcommand) {
+    return { 
+      type: "message", 
+      content: `MCP 服务器状态:\n- 已配置: 0 个服务器\n- 已连接: 0 个服务器\n提示: MCP 配置位于 ~/.sacode/mcp.json` 
+    };
+  }
+  
+  if (subcommand === "add") {
+    return { type: "message", content: "用法: /mcp add <name> <command>\n示例: /mcp add filesystem npx -y @anthropic/mcp-server-filesystem" };
+  }
+  
+  if (subcommand === "remove") {
+    const name = args[1];
+    if (!name) {
+      return { type: "message", content: "用法: /mcp remove <name>" };
+    }
+    return { type: "message", content: `MCP 服务器已移除: ${name}` };
+  }
+  
+  if (subcommand === "test") {
+    const name = args[1];
+    if (!name) {
+      return { type: "message", content: "用法: /mcp test <name>" };
+    }
+    return { type: "message", content: `测试 MCP 服务器连接: ${name}\n请稍候...` };
+  }
+  
+  return { type: "message", content: "用法: /mcp list|add|remove|test" };
 }

@@ -9,6 +9,8 @@ import {
   registerChatCommand,
   registerConfigCommand,
   registerModelCommand,
+  registerSessionCommand,
+  registerMemoryCommand,
   registerAuthCommand,
   registerCodeCommand,
   registerCronCommand,
@@ -59,6 +61,8 @@ const ctx = { program };
 registerChatCommand(ctx);
 registerConfigCommand(ctx);
 registerModelCommand(ctx);
+registerSessionCommand(ctx);
+registerMemoryCommand(ctx);
 registerAuthCommand(ctx);
 registerCodeCommand(ctx);
 registerCronCommand(ctx);
@@ -66,11 +70,17 @@ registerPluginCommand(ctx);
 registerWorkspaceCommand(ctx);
 registerStartCommand(ctx);
 
-// 默认行为 - 直接进入交互式聊天
-program.action(async (_options) => {
-  const { startChat } = await import("./commands/chat.js");
-  await startChat({});
-});
+program
+  .argument("[query]", "单次问答查询（可选）")
+  .action(async (query?: string, _options?: unknown) => {
+    if (query) {
+      const { handleSingleQuery } = await import("./commands/chat.js");
+      await handleSingleQuery(query);
+    } else {
+      const { startChat } = await import("./commands/chat.js");
+      await startChat({});
+    }
+  });
 
 program.parse();
 
