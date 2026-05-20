@@ -49,6 +49,8 @@ export interface InputPromptProps {
   onMultilineChange?: (enabled: boolean) => void;
   /** Shell 命令执行回调 */
   onShellCommand?: (command: string) => void;
+  /** 模型切换回调 */
+  onModelSwitch?: () => void;
 }
 
 // ============================================================================
@@ -91,6 +93,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onToggleThinking,
   onMultilineChange,
   onShellCommand,
+  onModelSwitch,
 }) => {
   const colors = getColors();
 
@@ -253,6 +256,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
+      if (key.ctrl && input === "p") {
+        onModelSwitch?.();
+        return;
+      }
+
       if (key.meta) {
         isMetaKeyDown.current = true;
         setTimeout(() => { isMetaKeyDown.current = false; }, 50);
@@ -320,7 +328,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     if (isLoading) return "思考中...";
     if (isShellMode) return "Shell 模式: 输入命令执行";
     if (isMultilineMode) return `多行模式: 已输入 ${multilineBuffer.length} 行`;
-    return "输入消息或 / 获取命令列表 | Ctrl+M 多行 | Ctrl+K Shell";
+    return "输入消息或 / 获取命令列表 | Ctrl+M 多行 | Ctrl+K Shell | Ctrl+P 切换模型";
   }, [isLoading, isShellMode, isMultilineMode, multilineBuffer.length]);
 
   return (

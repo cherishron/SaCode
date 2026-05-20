@@ -102,6 +102,8 @@ export async function routeSlashCommand(
       return handleModelCommand(args, context);
     case "providers":
       return { type: "message", content: formatProviders(context.providerStore ?? await ensureProviderStore()) };
+    case "provider":
+      return handleProviderCommand(args, context);
     case "auth":
       return handleAuthCommand(args);
     case "agents":
@@ -592,6 +594,125 @@ async function handleAuthCommand(args: string[]): Promise<CommandRouterResult> {
   } catch (error) {
     return { type: "message", content: error instanceof Error ? error.message : String(error) };
   }
+}
+
+async function handleProviderCommand(args: string[], context: CommandRouterContext): Promise<CommandRouterResult> {
+  const [subcommand, value, ...rest] = args;
+
+  if (!subcommand) {
+    const providerStore = context.providerStore ?? await ensureProviderStore();
+    return {
+      type: "message",
+      content: [
+        "Provider 管理:",
+        "",
+        "可用操作:",
+        "  /provider list              - 查看 Provider 列表",
+        "  /provider add <id> <baseUrl> <apiKeyEnv> - 添加 Provider",
+        "  /provider remove <id>       - 删除 Provider",
+        "  /provider test <providerId/modelId> - 测试模型连接",
+        "",
+        `当前配置: ${providerStore.providers.length} 个 Provider`,
+      ].join("\n"),
+    };
+  }
+
+  if (subcommand === "list") {
+    const providerStore = context.providerStore ?? await ensureProviderStore();
+    return { type: "message", content: formatProviders(providerStore) };
+  }
+
+  if (subcommand === "add") {
+    const [baseUrl, apiKeyEnv] = rest;
+    if (!value || !baseUrl) {
+      return {
+        type: "message",
+        content: "用法: /provider add <id> <baseUrl> [apiKeyEnv]\n示例: /provider add openai https://api.openai.com/v1 OPENAI_API_KEY",
+      };
+    }
+
+    const providerStore = context.providerStore ?? await ensureProviderStore();
+    const existingProvider = providerStore.providers.find((p) => p.id === value);
+    if (existingProvider) {
+      return { type: "message", content: `Provider 已存在: ${value}` };
+    }
+
+    const newProvider = {
+      id: value,
+      name: toTitleCase(value),
+      adapter: "openai-compatible" as const,
+      baseUrl,
+      apiKeyEnv: apiKeyEnv || `${value.toUpperCase()}_API_KEY`,
+      models: [],
+    };
+
+    if (context.providerStore) {
+      context.providerStore.providers.push(newProvider);
+    } else {
+      const { upsertProvider } = await import("./provider-store.js");
+      await upsertProvider(newProvider);
+    }
+
+    return { type: "message", content: `Provider 已添加: ${value}\nBaseUrl: ${baseUrl}\nApiKeyEnv: ${newProvider.apiKeyEnv}` };
+  }
+
+  if (subcommand === "remove") {
+    if (!value) {
+      return { type: "message", content: "用法: /provider remove <id>" };
+    }
+
+    const providerStore = context.providerStore ?? await ensureProviderStore();
+    const provider = providerStore.providers.find((p) => p.id === value);
+    if (!provider) {
+      return { type: "message", content: `Provider 不存在: ${value}` };
+    }
+
+    if (providerStore.providers.length === 1) {
+      return { type: "message", content: "无法删除最后一个 Provider" };
+    }
+
+    if (context.providerStore) {
+      context.providerStore.providers = providerStore.providers.filter((p) => p.id !== value);
+    } else {
+      const { removeProvider } = await import("./provider-store.js");
+      await removeProvider(value);
+    }
+
+    return { type: "message", content: `Provider 已删除: ${value}` };
+  }
+
+  if (subcommand === "test") {
+    if (!value) {
+      return { type: "message", content: "用法: /provider test <providerId/modelId>\n示例: /provider test openai/gpt-4o" };
+    }
+
+    const providerStore = context.providerStore ?? await ensureProviderStore();
+    const validation = testModelConfiguration(providerStore, value);
+    
+    if (!validation.ok) {
+      return { type: "message", content: `配置验证失败: ${validation.message}` };
+    }
+
+    const apiKey = process.env[validation.provider!.apiKeyEnv];
+    if (!apiKey) {
+      return { type: "message", content: `API Key 未配置: ${validation.provider!.apiKeyEnv}\n请设置环境变量或使用 /auth add 添加账户` };
+    }
+
+    return {
+      type: "message",
+      content: [
+        `Provider: ${validation.provider!.name}`,
+        `Model: ${validation.model!.id}`,
+        `Adapter: ${validation.provider!.adapter}`,
+        `BaseUrl: ${validation.provider!.baseUrl || "default"}`,
+        `API Key: ${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`,
+        "",
+        "配置验证通过，模型可用。",
+      ].join("\n"),
+    };
+  }
+
+  return { type: "message", content: "用法: /provider [list|add|remove|test]" };
 }
 
 async function handleSessionCommand(args: string[], context: CommandRouterContext): Promise<CommandRouterResult> {

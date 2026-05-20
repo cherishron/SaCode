@@ -428,6 +428,19 @@ export const ChatApp: React.FC<ChatAppProps> = ({
     }
   }, [cwd, appendSystemMessage]);
 
+  const handleModelSwitch = useCallback(() => {
+    appendSystemMessage([
+      "模型切换提示:",
+      "",
+      "使用 /model use <provider>/<model> 切换模型",
+      "示例: /model use openai/gpt-4o",
+      "示例: /model use anthropic/claude-3-5-sonnet",
+      "",
+      "使用 /models 查看所有可用模型",
+      "使用 /providers 查看所有 Provider",
+    ].join("\n"));
+  }, [appendSystemMessage]);
+
   const handleSubmit = useCallback(
     async (value: string) => {
       const trimmed = value.trim();
@@ -561,6 +574,7 @@ export const ChatApp: React.FC<ChatAppProps> = ({
         vimMode="insert"
         onToggleThinking={toggleThinking}
         onShellCommand={handleShellCommand}
+        onModelSwitch={handleModelSwitch}
       />
 
       {/* Footer - 底部状态栏 (Gemini CLI 风格：多列 " · " 分隔) */}

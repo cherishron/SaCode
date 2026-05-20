@@ -296,3 +296,65 @@ function isProviderAdapter(value: unknown): value is ProviderAdapter {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+export interface ProviderUpsertInput {
+  id: string;
+  name?: string;
+  adapter?: ProviderAdapter;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  models?: ModelConfigEntry[];
+}
+
+export async function upsertProvider(input: ProviderUpsertInput, options: ProviderStoreOptions = {}): Promise<ProviderStoreData> {
+  const providerId = normalizeId(input.id);
+  if (!providerId) throw new Error("Provider id is required");
+
+  const data = await ensureProviderStore(options);
+  const providers = [...data.providers];
+  const providerIndex = providers.findIndex((provider) => provider.id === providerId);
+
+  const newProvider: ProviderConfigEntry = {
+    id: providerId,
+    name: input.name ?? toTitleCase(providerId),
+    adapter: input.adapter ?? "openai-compatible",
+    baseUrl: input.baseUrl,
+    apiKeyEnv: input.apiKeyEnv ?? apiKeyEnvFor(providerId),
+    models: input.models ?? [],
+  };
+
+  if (providerIndex >= 0) {
+    providers[providerIndex] = newProvider;
+  } else {
+    providers.push(newProvider);
+  }
+
+  const updated = { ...data, providers };
+  await saveProviderStore(updated, options);
+  return updated;
+}
+
+export async function removeProvider(providerId: string, options: ProviderStoreOptions = {}): Promise<ProviderStoreData> {
+  const normalizedId = normalizeId(providerId);
+  const data = await ensureProviderStore(options);
+  
+  const providers = data.providers.filter((provider) => provider.id !== normalizedId);
+  if (providers.length === data.providers.length) {
+    throw new Error(`Provider not found: ${normalizedId}`);
+  }
+
+  const defaultModel = data.defaultModel?.startsWith(`${normalizedId}/`)
+    ? providers[0]?.models[0] ? `${providers[0].id}/${providers[0].models[0].id}` : undefined
+    : data.defaultModel;
+
+  const updated = { ...data, providers, ...(defaultModel && { defaultModel }) };
+  await saveProviderStore(updated, options);
+  return updated;
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .split(/[-_]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
