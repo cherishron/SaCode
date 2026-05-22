@@ -1,0 +1,173 @@
+# SaCode 交叉编译指南
+
+本文档说明如何在 Linux 环境下交叉编译 Windows 可执行文件。
+
+---
+
+## 背景
+
+SaCode 的 npm 包需要同时包含 Linux 和 Windows 二进制。在 Linux CI 环境中，我们可以通过 mingw-w64 工具链交叉编译 Windows 目标，无需真实的 Windows 机器。
+
+---
+
+## 前置条件
+
+### 1. Rust Windows 目标
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+```
+
+### 2. mingw-w64 工具链
+
+```bash
+# Debian/Ubuntu
+apt-get install mingw-w64
+
+# Arch Linux
+pacman -S mingw-w64
+
+# Fedora
+dnf install mingw64-gcc
+```
+
+---
+
+## Cargo 配置
+
+`.cargo/config.toml` 需包含 linker 配置：
+
+```toml
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-gcc-ar"
+```
+
+---
+
+## 编译命令
+
+### Linux 本机编译
+
+```bash
+cargo build --release --target x86_64-unknown-linux-gnu
+```
+
+输出: `target/release/sacode` 或 `target/x86_64-unknown-linux-gnu/release/sacode`
+
+### Windows 交叉编译
+
+```bash
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
+输出: `target/x86_64-pc-windows-gnu/release/sacode.exe`
+
+---
+
+## 使用 cross 工具（可选）
+
+如果有 Docker 环境，可以使用 `cross` 工具：
+
+```bash
+# 安装 cross
+cargo install cross --git https://github.com/cross-rs/cross
+
+# 交叉编译（需要 Docker）
+cross build --release --target x86_64-pc-windows-gnu
+```
+
+**注意**: `cross` 需要 Docker 或 Podman 容器引擎。
+
+---
+
+## 二进制位置
+
+| 目标平台 | 输出路径 |
+|----------|----------|
+| Linux x64 | `target/release/sacode` 或 `target/x86_64-unknown-linux-gnu/release/sacode` |
+| Windows x64 | `target/x86_64-pc-windows-gnu/release/sacode.exe` |
+
+---
+
+## 放入 npm 包
+
+```bash
+# Linux
+cp target/release/sacode npm-package/platforms/sacode-linux-x64
+chmod +x npm-package/platforms/sacode-linux-x64
+
+# Windows
+cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
+```
+
+---
+
+## GNU vs MSVC
+
+### GNU 目标 (`x86_64-pc-windows-gnu`)
+
+- 优点: Linux 上可交叉编译，无需 Windows SDK
+- 缺点: 依赖 mingw 运行时，可能有兼容性问题
+- 适用: CI 环境快速构建
+
+### MSVC 目标 (`x86_64-pc-windows-msvc`)
+
+- 优点: 原生 Windows 工具链，兼容性最好
+- 缺点: 需要在 Windows 上构建或使用复杂交叉编译设置
+- 适用: 官方 Windows CI (`windows-latest`)
+
+---
+
+## 当前方案
+
+SaCode 采用混合策略：
+
+- **本地/Linux CI**: 使用 `x86_64-pc-windows-gnu` 交叉编译
+- **官方 GitHub Actions**: 使用 `windows-latest` 构建 `x86_64-pc-windows-msvc`
+
+两者生成的二进制都可正常运行。
+
+---
+
+## 注意事项
+
+### 1. 依赖限制
+
+某些 Rust crate 可能不支持 GNU 目标或需要额外配置。遇到链接错误时，检查 crate 文档。
+
+### 2. 文件大小
+
+交叉编译的 Windows 二进制通常比 MSVC 版本大，因为包含更多运行时代码。
+
+### 3. 动态链接
+
+GNU 目标可能依赖 `libgcc_s_seh-1.dll` 等动态库。静态链接可通过 linker flag 配置：
+
+```toml
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-gcc-ar"
+rustflags = ["-C", "linker=static"]
+```
+
+---
+
+## 验证编译结果
+
+```bash
+# 检查文件是否存在
+ls target/x86_64-pc-windows-gnu/release/sacode.exe
+
+# 检查文件类型
+file target/x86_64-pc-windows-gnu/release/sacode.exe
+# 输出: PE32+ executable (console) x86-64, for MS Windows
+```
+
+---
+
+## 相关配置文件
+
+- `.cargo/config.toml` - linker 和 target 配置
+- `Cargo.toml` - 工作区和包配置
+- `rust-toolchain.toml` - Rust 版本固定

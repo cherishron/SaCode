@@ -1,360 +1,166 @@
-# SaCode — 全栈 AI 助手开发框架
+# SaCode
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Bun](https://img.shields.io/badge/Bun-1.3%2B-orange)](https://bun.sh/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
-[![npm](https://img.shields.io/npm/v/@cherishron/sacode-cli.svg)](https://www.npmjs.com/package/@cherishron/sacode-cli)
+SaCode 是一个终端优先的 AI 编程工具。
 
-> 统一 AI 接入 · 多端 IM 覆盖 · Agentic 工具编排 · 现代化技术栈
+当前仓库已经完成第一步骨架迁移：从根目录单体 Rust 程序切换为 workspace 结构，为后续由不同模型和开发者协作扩展功能提供稳定基础。
 
-**SaCode** 是一个企业级 AI 助手开发框架，提供从 CLI 到 Web 再到 IM 的全栈解决方案。
+## 当前结构
 
-- **统一 AI 接入**：通过 Provider 抽象层无缝对接 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 大 AI 服务
-- **多端 IM 覆盖**：内置 10 个 IM 平台适配器（微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email）
-- **Agentic 工具编排**：Registry + Planner + Orchestrator 三层架构，支持 40+ 内置工具和 MCP 协议扩展
-- **现代化技术栈**：Bun 运行时 + TypeScript 严格模式 + Vue 3 + Hono + Prisma ORM
+```text
+.
+├── Cargo.toml
+├── rust-toolchain.toml
+├── .cargo/
+│   └── config.toml
+├── kernel/
+├── runtime/
+├── interfaces/
+│   └── cli/
+├── docs/
+├── legacy/
+│   └── src/
+└── LICENSE
+```
+
+## 已落地骨架
+
+### `kernel/`
+
+负责纯逻辑层，当前包含：
+
+1. `agent`：Planner（规划）、Coder（执行意图生成）、Reviewer（审查）、Supervisor（调度闭环）
+2. `model`：Profiles、Provider、Router、ChatRequest/Response
+3. `schema`：Task、Session、Choice、ExecutionMode、Checkpoint、Review、Plan、Step
+4. `event`：统一事件模型（Event、ApprovalAction、FileChangeType）
+5. `error`：统一结果类型
+
+### `runtime/`
+
+负责副作用和能力层，当前包含：
+
+1. `tools`：FS（read/search/edit）、Shell（exec 带超时和安全限制）、Git（diff/commit）、Code（ast/symbol）
+2. `workspace`：Scanner、Graph、Context
+3. `store`：DB、Cache
+4. `plugin`：Loader、Registry
+5. `streaming`：SSE
+6. `spec`：ToolSpec 协议定义
+7. `provider`：ProviderClient（OpenAI、DeepSeek、Ollama）
+
+### `interfaces/cli/`
+
+负责 `sacode` 命令入口，当前包含：
+
+1. `bin/sacode.rs`：可执行入口
+2. `cmd/`：命令解析、主执行回路、profile、plugin、init 子命令
+3. `ui/`：Ghost、Chat、Agent、Palette、Widgets 占位
+4. `repl.rs`：可运行 REPL 模式
+
+## 当前可用能力
+
+已经可以运行完整 CLI 功能：
+
+```bash
+# 默认进入终端 TUI
+cargo run -p sacode-cli --bin sacode
+
+# 任务执行
+cargo run -p sacode-cli --bin sacode -- "分析这个仓库" --mode plan
+cargo run -p sacode-cli --bin sacode -- "找 bug" --mode yolo --json
+
+# Profile 管理
+cargo run -p sacode-cli --bin sacode -- profile ls
+cargo run -p sacode-cli --bin sacode -- profile show
+
+# Plugin/Tool 查看
+cargo run -p sacode-cli --bin sacode -- plugin list
+
+# REPL 模式
+cargo run -p sacode-cli --bin sacode -- repl
+
+# 显式进入终端 TUI
+cargo run -p sacode-cli --bin sacode -- tui
+```
+
+支持：
+
+1. `--mode plan|build|yolo`
+2. `--json`
+3. 从 `stdin` 读取输入
+4. 输出规划结果和工具清单
+5. Profile 和 Plugin 子命令
+6. REPL 交互模式
+7. 默认终端 TUI 入口
+
+示例：
+
+```bash
+cat README.md | cargo run -p sacode-cli --bin sacode -- "总结输入内容" --json
+```
 
 ## 文档
 
-- [AGENTS.md](./AGENTS.md) - 项目上下文与技术文档
-- [PRD.md](./docs/PRD.md) - 产品需求文档
-- [CONTRIBUTING.md](./docs/CONTRIBUTING.md) - 贡献指南
-- [CHANGELOG.md](./docs/CHANGELOG.md) - 变更日志
-- [部署指南](./docs/guides/deployment.md) - 生产环境部署
-- [前端架构](./docs/architecture/frontend.md) - Web UI 架构文档
-- [安全设计](./docs/architecture/security.md) - 安全架构文档
+1. 产品需求文档：`docs/PRD.md`
+2. API/CLI 文档：`docs/API.md`
+3. 发布流程：`docs/release/RELEASE.md`
+4. 交叉编译：`docs/build/CROSS_COMPILE.md`
+5. 版本变更：`CHANGELOG.md`
 
-## 核心能力
+## 发布
 
-### 🤖 统一 AI 接入
-- **Provider 抽象层**：支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 大 AI 服务
-- **Function Calling Loop**：完整的 Agentic 工具执行循环
-- **流式输出**：SSE 流式响应，实时输出
-- **模型路由**：按用途分类（聊天、代码、嵌入等）
+当前 npm 包名为 `@cherishron/sacode`。
 
-### 💬 多端 IM 覆盖
-- **10 个平台**：微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
-- **统一接口**：`IMAdapter` 接口，`createAdapter()` 工厂函数
-- **跨渠道会话**：SessionMapper 实现多平台会话统一映射
-- **智能路由**：SmartRouter 支持规则引擎、条件匹配
+当前已验证的 npm 平台产物：
 
-### 🧠 Agentic 工具编排
-- **三层架构**：Registry + Planner + Orchestrator
-- **专家 Agent**：7 个专业 Agent（代码、架构、前端、后端等）
-- **40+ 内置工具**：文件操作、浏览器控制、Shell 命令、Web 搜索、LSP 集成
-- **MCP 协议**：完整的 Model Context Protocol 服务端/客户端实现
+1. Linux x64
+2. Windows x64
 
-### 🛠️ 自动化能力
-- **文件系统**：读写、编辑、删除、目录遍历
-- **浏览器控制**：Playwright 驱动，支持截图、点击、表单填写
-- **Shell 命令**：安全执行，支持白名单
-- **代码搜索**：ripgrep 高性能代码搜索
-- **LSP 集成**：7 种操作（定义、引用、补全、诊断等）
+### 发布流程
 
-### 🔐 认证与安全
-- **混合认证**：本地账号 + OAuth（GitHub、Google、微信、QQ、企业微信）
-- **JWT + Session**：双重认证机制
-- **权限管理**：基于角色的访问控制（RBAC）
-- **容器隔离**：Docker 容器运行 Agent，支持沙箱模式
+完整发布流程参见 `docs/release/RELEASE.md`。
 
-### 🗄️ 数据与缓存
-- **多数据库**：SQLite（默认）、MySQL、PostgreSQL
-- **Prisma ORM**：类型安全的数据库访问
-- **缓存系统**：Memory/Redis 双后端，LRU 淘汰
-- **定时任务**：interval/once/cron 三种类型
-
-## 项目结构
-
-```
-SaCode/
-├── packages/
-│   ├── core/           # 核心引擎（Provider/Agent/Session/Router/Task/MCP）
-│   ├── cli/            # 命令行工具（Commander.js + React Ink TUI）
-│   ├── api/            # REST API + WebSocket（Hono + Bun.serve()）
-│   ├── web/            # Web UI（Vue 3 + TinyVue + Tailwind CSS）
-│   ├── adapters/       # IM 适配器（10 平台统一接口）
-│   ├── capabilities/   # 自动化能力（文件/浏览器/Shell/Web/LSP/Git）
-│   ├── auth/           # 认证模块（本地认证 + OAuth 5 提供商）
-│   ├── database/       # 数据库层（Prisma ORM + SQLite/MySQL/PostgreSQL）
-│   ├── gateway/        # 统一网关（WebSocket 控制平面）
-│   ├── container/      # 容器隔离（Docker Agent 运行时）
-│   └── types/          # 共享类型定义（无内部依赖）
-│
-├── .sacode/            # 配置目录（commands/plugins/skills）
-├── docs/               # 文档
-└── docker/             # Docker 配置
-```
-
-## 快速开始
-
-### 方式一：全局安装 CLI（推荐）
+关键步骤：
 
 ```bash
-npm install -g @cherishron/sacode-cli
+# 交叉编译
+cargo build --release --target x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-pc-windows-gnu
 
-sacode chat              # 交互式聊天
-sacode chat -m "你好"    # 发送单条消息
-sacode /init             # 初始化项目配置
+# 准备 npm 包
+cp target/release/sacode npm-package/platforms/sacode-linux-x64
+cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
+
+# 写入清单
+node scripts/write-platform-manifest.js <version>
+
+# 发布检查
+node scripts/check-release.js --strict-platforms
+
+# npm 发布
+cd npm-package && npm publish
 ```
 
-### 方式二：从源码构建
-
-#### 环境要求
-
-- Bun 1.3+（推荐）或 Node.js 22+
-- pnpm 9+
-- 数据库 (SQLite/MySQL/PostgreSQL)
-
-#### 安装
+或使用 GitHub Actions 自动发布：
 
 ```bash
-git clone https://github.com/STAND-ALONE/SaCode.git
-cd SaCode
-
-bun install              # 或 pnpm install
-
-# 初始化数据库
-bun -C packages/database prisma generate
-bun -C packages/database prisma db push
-
-# 复制环境变量
-cp .env.example .env
+git tag v<version>
+git push origin v<version>
 ```
 
-### 配置
+## 归档
 
-编辑 `.env` 文件：
+1. 旧单体代码已归档到 `legacy/src/`，约 5200 行，不再参与编译，可作为历史参考。
 
-```env
-# ============================================
-# AI Provider 配置
-# ============================================
-AI_PROVIDER=openai
+## 下一步建议
 
-# OpenAI 配置
-OPENAI_API_KEY=sk-your-api-key-here
-AI_MODEL=gpt-4o
-AI_TIMEOUT=60000
-
-# 工具循环配置
-MAX_TOOL_LOOP_ITERATIONS=10
-ENABLE_AGENTIC_PLANNING=true
-
-# ============================================
-# 数据库配置
-# ============================================
-DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/sacode.db
-
-# ============================================
-# 缓存配置 (可选)
-# ============================================
-CACHE_BACKEND=memory
-
-# ============================================
-# IM 平台配置
-# ============================================
-TELEGRAM_BOT_TOKEN=your_bot_token
-XIAOYI_AK=your_access_key
-XIAOYI_SK=your_secret_key
-DISCORD_BOT_TOKEN=your_bot_token
-```
-
-### 启动
-
-```bash
-bun dev                  # 开发所有包
-
-# 或分别启动各服务
-bun api                  # API 服务 (Hono + Bun.serve())
-bun web                  # Web UI
-bun cli                  # 命令行工具
-```
-
-## 使用
-
-### CLI
-
-```bash
-sacode chat              # 交互式聊天
-sacode chat -m "你好"    # 发送单条消息
-sacode /init             # 初始化项目 AGENTS.md
-sacode /session          # 查看会话信息
-sacode /providers        # 查看可用 AI Provider
-sacode config list       # 查看配置
-sacode im list           # 管理 IM 连接
-sacode im connect telegram
-```
-
-### AI Provider
-
-```typescript
-import { SACODEClient, createProvider } from "@sacode/core";
-
-const client = new SACODEClient({
-  provider: {
-    type: "openai",
-    apiKey: process.env.OPENAI_API_KEY,
-    model: "gpt-4o",
-  },
-});
-
-await client.connect();
-
-for await (const msg of client.chat("你好")) {
-  console.log(msg);
-}
-```
-
-### Agentic 聊天
-
-```typescript
-for await (const msg of client.agenticChat("帮我分析这个项目的代码质量")) {
-  if ("type" in msg) {
-    console.log(`[${msg.type}]`, msg);
-  } else {
-    console.log(msg.content || msg.chunk?.text);
-  }
-}
-```
-
-### 工具注册
-
-```typescript
-client.registerTool(
-  "get_weather",
-  "获取指定城市的天气信息",
-  {
-    type: "object",
-    properties: {
-      city: { type: "string", description: "城市名称" },
-    },
-    required: ["city"],
-  },
-  async (args) => {
-    const weather = await fetchWeather(args.city as string);
-    return JSON.stringify(weather);
-  }
-);
-```
-
-### 智能路由
-
-```typescript
-import { SmartRouter } from "@sacode/core";
-
-const router = new SmartRouter();
-
-router.addRule({
-  id: "vip-priority",
-  name: "VIP 优先",
-  priority: 100,
-  enabled: true,
-  conditions: [{ field: "user.tier", operator: "eq", value: "vip" }],
-  actions: [{ type: "route", channel: "premium-support" }],
-});
-
-const result = router.evaluate({ user: { tier: "vip" } });
-```
-
-### MCP 协议
-
-```typescript
-import { MCPServer } from "@sacode/core";
-
-const mcpServer = new MCPServer({
-  name: "sacode-mcp",
-  version: "1.0.0",
-});
-
-mcpServer.registerTool({
-  name: "read_file",
-  description: "Read a file",
-  inputSchema: { type: "object", properties: { path: { type: "string" } } },
-}, async (args) => ({
-  content: [{ type: "text", text: "file content" }],
-}));
-```
-
-### Web UI
-
-访问 http://localhost:5173 打开 Web 界面。
-
-### API
-
-| 路由 | 方法 | 功能 |
-|------|------|------|
-| `/api/auth/login` | POST | 登录 |
-| `/api/auth/register` | POST | 注册 |
-| `/api/chat/sessions` | GET | 获取会话列表 |
-| `/api/chat` | POST | 发送消息 |
-| `/api/chat/agentic` | POST | Agentic 模式聊天 |
-| `/api/tasks` | GET/POST | 任务列表/创建 |
-| `/api/tasks/:id/start` | POST | 启动任务 |
-| `/api/routing/rules` | GET/POST | 路由规则管理 |
-| `/api/models` | GET | 模型列表 |
-| `/api/im` | GET | 获取 IM 连接 |
-| `/api/capabilities` | GET | 获取能力列表 |
-| `/api/plugins` | GET | 获取插件列表 |
-
-## 支持的 AI Provider
-
-| Provider | 类型 | 模型示例 |
-|----------|------|----------|
-| OpenAI | `openai` | gpt-4o, gpt-4-turbo, gpt-3.5-turbo |
-| Anthropic | `anthropic` | claude-3-5-sonnet, claude-3-opus |
-| DeepSeek | `deepseek` | deepseek-chat, deepseek-coder |
-| Moonshot | `moonshot` | moonshot-v1-8k, moonshot-v1-32k |
-| 智谱 | `zhipu` | glm-4, glm-4-flash |
-
-## 支持的 IM 平台
-
-| 平台 | 适配器 | 技术方案 | getChannels |
-|------|--------|----------|-------------|
-| 微信 | `WechatAdapter` | WebSocket | ✓ 联系人列表 |
-| QQ | `QQAdapter` | OneBot 协议 | ✓ 群列表 |
-| Telegram | `TelegramAdapter` | Bot API | ✓ 聊天列表 |
-| Discord | `DiscordAdapter` | Gateway + REST | ✓ Guilds + Channels |
-| 钉钉 | `DingTalkAdapter` | REST API + AI Card | ✓ 群列表 + 部门 |
-| 飞书 | `FeishuAdapter` | Open API | ✓ |
-| 小艺 | `XiaoyiAdapter` | AK/SK + WebSocket | ✓ |
-| WhatsApp | `WhatsAppAdapter` | baileys 桥接 | ✓ |
-| Slack | `SlackAdapter` | Web API + Socket Mode | ✓ |
-| Email | `EmailAdapter` | IMAP + SMTP | ✓ 邮箱文件夹 |
-
-## 开发
-
-```bash
-bun install              # 安装依赖
-bun run build            # 构建所有包
-bun test                 # 运行测试
-bun run lint             # 代码检查
-bun run typecheck        # 类型检查
-bun run format           # 格式化代码
-```
-
-## Docker
-
-```bash
-bun run docker:build     # 构建镜像
-bun run docker:up        # 启动服务
-bun run docker:dev       # 开发模式
-bun run docker:down      # 停止服务
-```
-
-## 架构
-
-### 核心模块
-
-| 模块 | 描述 |
-|------|------|
-| @sacode/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
-| @sacode/gateway | WebSocket 控制平面 |
-| @sacode/container | Docker 容器隔离 |
-| @sacode/adapters | IM 平台适配器 (10 个平台) |
+1. 接入真实工具执行（fs.read、shell.exec）
+2. 实现审批流（ApprovalRequested/ApprovalResolved）
+3. 实现完整 TUI 界面（Ratatui）
+4. 补充单元测试和集成测试
+5. 添加 streaming 响应支持
+6. 实现真实的 Checkpoint 保存和恢复
 | @sacode/database | Prisma ORM，多数据库适配 |
 | @sacode/auth | Passport.js 认证，JWT，OAuth |
-| @cherishron/sacode-cli | CLI 工具（npm 全局安装包） |
+| @cherishron/sacode | CLI 工具（npm 全局安装包） |
 | @sacode/capabilities | 文件/浏览器/Shell 自动化 |
 | @sacode/api | Hono REST API + WebSocket (Bun.serve()) |
 | @sacode/web | Vue 3 + TinyVue + Tailwind CSS |
