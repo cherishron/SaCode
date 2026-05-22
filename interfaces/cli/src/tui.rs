@@ -46,7 +46,7 @@ impl App {
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+C 或 Esc 退出.".to_string(),
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 退出，按 Esc 清空输入.".to_string(),
                     timestamp: timestamp.clone(),
                 },
             ],
@@ -124,11 +124,16 @@ impl App {
 
     fn handle_key_event(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
+            KeyCode::Esc => {
+                self.input.clear();
+            }
             KeyCode::Enter => self.send_message(),
-            KeyCode::Char(c) => self.input.push(c),
+            KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.input.push(c);
+            }
             KeyCode::Backspace => {
                 self.input.pop();
             }
