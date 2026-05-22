@@ -11,13 +11,20 @@ npm install -g @cherishron/sacode
 ## Usage
 
 ```bash
-sacode
-sacode "分析代码结构"
-sacode "修复登录 bug" --mode build
+sacode                     # 进入聊天式 TUI
+sacode "分析代码结构"       # Build 模式执行
+sacode "修复 bug" --mode build
 sacode --help
 ```
 
-`sacode` 无参数时会直接进入终端 TUI。
+## TUI Interface
+
+默认进入聊天式终端 UI：
+
+- **Ctrl+Q**: 退出
+- **Esc**: 清空输入
+- **↑/↓**: 滚动历史
+- **Enter**: 发送任务
 
 ## Modes
 
@@ -30,8 +37,8 @@ sacode --help
 ```bash
 sacode profile ls       # 列出配置
 sacode checkpoint list  # 列出保存点
-sacode tui              # 显式进入终端 TUI
 sacode repl             # 进入 REPL 模式
+sacode daemon           # 启动 HTTP/SSE 服务
 ```
 
 ## Configuration

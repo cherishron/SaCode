@@ -1,246 +1,141 @@
 # SaCode
 
-SaCode 是一个终端优先的 AI 编程工具。
+SaCode 是一个终端优先的 AI 编程工具，已完成从 Node/TS 到 Rust 的完整迁移。
 
-当前仓库已经完成第一步骨架迁移：从根目录单体 Rust 程序切换为 workspace 结构，为后续由不同模型和开发者协作扩展功能提供稳定基础。
+## 安装
 
-## 当前结构
+```bash
+npm install -g @cherishron/sacode
+sacode --version
+```
+
+## 项目结构
 
 ```text
 .
-├── Cargo.toml
-├── rust-toolchain.toml
-├── .cargo/
-│   └── config.toml
-├── kernel/
-├── runtime/
-├── interfaces/
-│   └── cli/
-├── docs/
-├── legacy/
-│   └── src/
-└── LICENSE
+├── Cargo.toml          # Workspace 配置
+├── kernel/             # 纯逻辑层
+├── runtime/            # 副作用层
+├── interfaces/cli/     # CLI 入口
+├── npm-package/        # npm 发布包
+└── docs/               # 文档
 ```
 
-## 已落地骨架
+## 核心架构
 
 ### `kernel/`
 
-负责纯逻辑层，当前包含：
+纯逻辑层，无副作用：
 
-1. `agent`：Planner（规划）、Coder（执行意图生成）、Reviewer（审查）、Supervisor（调度闭环）
-2. `model`：Profiles、Provider、Router、ChatRequest/Response
-3. `schema`：Task、Session、Choice、ExecutionMode、Checkpoint、Review、Plan、Step
-4. `event`：统一事件模型（Event、ApprovalAction、FileChangeType）
-5. `error`：统一结果类型
+- `agent`: Planner、Coder、Reviewer、Supervisor
+- `schema`: Task、Session、Plan、Step、Checkpoint
+- `event`: 统一事件模型
+- `error`: 统一错误类型
 
 ### `runtime/`
 
-负责副作用和能力层，当前包含：
+副作用和能力层：
 
-1. `tools`：FS（read/search/edit）、Shell（exec 带超时和安全限制）、Git（diff/commit）、Code（ast/symbol）
-2. `workspace`：Scanner、Graph、Context
-3. `store`：DB、Cache
-4. `plugin`：Loader、Registry
-5. `streaming`：SSE
-6. `spec`：ToolSpec 协议定义
-7. `provider`：ProviderClient（OpenAI、DeepSeek、Ollama）
+- `tools`: FS、Shell、Git 工具
+- `provider`: ProviderClient (OpenAI、DeepSeek、Ollama)
+- `plugin`: WASM 插件加载
+- `daemon`: SSE 服务
+- `sandbox`: 执行沙箱
 
 ### `interfaces/cli/`
 
-负责 `sacode` 命令入口，当前包含：
+CLI 入口 `sacode` 命令：
 
-1. `bin/sacode.rs`：可执行入口
-2. `cmd/`：命令解析、主执行回路、profile、plugin、init 子命令
-3. `ui/`：Ghost、Chat、Agent、Palette、Widgets 占位
-4. `repl.rs`：可运行 REPL 模式
+- 默认进入聊天式 TUI
+- 支持 Ghost、REPL、Daemon 模式
 
-## 当前可用能力
+## CLI 使用
 
-已经可以运行完整 CLI 功能：
+### TUI 模式（默认）
 
 ```bash
-# 默认进入终端 TUI
-cargo run -p sacode-cli --bin sacode
-
-# 任务执行
-cargo run -p sacode-cli --bin sacode -- "分析这个仓库" --mode plan
-cargo run -p sacode-cli --bin sacode -- "找 bug" --mode yolo --json
-
-# Profile 管理
-cargo run -p sacode-cli --bin sacode -- profile ls
-cargo run -p sacode-cli --bin sacode -- profile show
-
-# Plugin/Tool 查看
-cargo run -p sacode-cli --bin sacode -- plugin list
-
-# REPL 模式
-cargo run -p sacode-cli --bin sacode -- repl
-
-# 显式进入终端 TUI
-cargo run -p sacode-cli --bin sacode -- tui
+sacode                    # 进入聊天式终端 UI
 ```
 
-支持：
+TUI 界面为聊天式交互：
+- 上方显示对话历史
+- 底部输入框接收任务
+- 支持 Ctrl+Q 退出、Esc 清空输入
 
-1. `--mode plan|build|yolo`
-2. `--json`
-3. 从 `stdin` 读取输入
-4. 输出规划结果和工具清单
-5. Profile 和 Plugin 子命令
-6. REPL 交互模式
-7. 默认终端 TUI 入口
-
-示例：
+### Ghost 模式
 
 ```bash
-cat README.md | cargo run -p sacode-cli --bin sacode -- "总结输入内容" --json
+sacode "分析代码结构"              # Build 模式执行
+sacode "设计方案" --mode plan      # 仅规划
+sacode "格式化代码" --mode yolo    # 全自动执行
+cat README.md | sacode "总结"      # stdin 输入
+sacode "找 bug" --json             # JSON 输出
 ```
+
+### REPL 模式
+
+```bash
+sacode repl               # 进入 REPL 交互
+```
+
+### Daemon 模式
+
+```bash
+sacode daemon --port 3000 # 启动 HTTP + SSE 服务
+```
+
+## 子命令
+
+```bash
+sacode profile ls         # 列出 profile
+sacode profile use <name> # 切换 profile
+sacode plugin ls          # 列出插件
+sacode checkpoint list    # 列出 checkpoint
+sacode init               # 初始化配置
+```
+
+## 工具系统
+
+| 工具 | 描述 | 需审批 |
+|------|------|--------|
+| fs.read | 读取文件 | 否 |
+| fs.search | 搜索内容 | 否 |
+| fs.write | 写入文件 | 是 |
+| git.diff | Git diff | 否 |
+| shell.exec | Shell 命令 | 是 |
 
 ## 文档
 
-1. 产品需求文档：`docs/PRD.md`
-2. API/CLI 文档：`docs/API.md`
-3. 发布流程：`docs/release/RELEASE.md`
-4. 交叉编译：`docs/build/CROSS_COMPILE.md`
-5. 版本变更：`CHANGELOG.md`
+- `docs/PRD.md`: 产品需求文档
+- `docs/API.md`: API/CLI 文档
+- `docs/release/RELEASE.md`: 发布流程
+- `docs/build/CROSS_COMPILE.md`: 交叉编译
+- `CHANGELOG.md`: 版本变更
 
 ## 发布
 
-当前 npm 包名为 `@cherishron/sacode`。
-
-当前已验证的 npm 平台产物：
-
-1. Linux x64
-2. Windows x64
-
-### 发布流程
-
-完整发布流程参见 `docs/release/RELEASE.md`。
-
-关键步骤：
-
 ```bash
-# 交叉编译
-cargo build --release --target x86_64-unknown-linux-gnu
+# 版本同步
+node scripts/sync-version.js <version>
+
+# 构建产物
+cargo build --release
 cargo build --release --target x86_64-pc-windows-gnu
 
-# 准备 npm 包
-cp target/release/sacode npm-package/platforms/sacode-linux-x64
-cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
-
-# 写入清单
+# 平台清单
 node scripts/write-platform-manifest.js <version>
 
 # 发布检查
 node scripts/check-release.js --strict-platforms
 
 # npm 发布
-cd npm-package && npm publish
-```
-
-或使用 GitHub Actions 自动发布：
-
-```bash
-git tag v<version>
-git push origin v<version>
+cd npm-package && npm publish --access public
 ```
 
 ## 归档
 
-1. 旧单体代码已归档到 `legacy/src/`，约 5200 行，不再参与编译，可作为历史参考。
-
-## 下一步建议
-
-1. 接入真实工具执行（fs.read、shell.exec）
-2. 实现审批流（ApprovalRequested/ApprovalResolved）
-3. 实现完整 TUI 界面（Ratatui）
-4. 补充单元测试和集成测试
-5. 添加 streaming 响应支持
-6. 实现真实的 Checkpoint 保存和恢复
-| @sacode/database | Prisma ORM，多数据库适配 |
-| @sacode/auth | Passport.js 认证，JWT，OAuth |
-| @cherishron/sacode | CLI 工具（npm 全局安装包） |
-| @sacode/capabilities | 文件/浏览器/Shell 自动化 |
-| @sacode/api | Hono REST API + WebSocket (Bun.serve()) |
-| @sacode/web | Vue 3 + TinyVue + Tailwind CSS |
-
-### 消息流
-
-```
-用户输入 (CLI/Web/IM)
-       ↓
-   SACODEClient
-       ↓
-   AI Provider (OpenAI/Anthropic/...)
-       ↓
-    AI 模型响应
-       ↓
-  ┌────┴────┐
-  ↓         ↓
-工具调用   直接响应
-  ↓
-ToolBridge
-  ↓
-┌────────┴────────┐
-↓                 ↓
-内置工具      外部工具
-(think/plan)  (MCP/Capabilities)
-  ↓
-继续对话循环
-  ↓
-   输出到用户
-```
-
-### Agentic 流程
-
-```
-用户请求
-    ↓
-复杂度评估
-    ↓
-┌────┴────┐
-↓         ↓
-简单     复杂
-↓         ↓
-直接执行  生成计划
-          ↓
-      Orchestrator
-          ↓
-    ┌────┴────┐
-    ↓         ↓
-  Agent    执行步骤
-  分配     (带重试)
-    ↓         ↓
-    └────┬────┘
-         ↓
-      结果汇总
-         ↓
-      输出响应
-```
-
-## 测试
-
-```bash
-bun test                 # 运行所有测试
-bun test --watch         # 监视模式
-bun test --coverage      # 测试覆盖率
-```
-
-## 贡献
-
-欢迎贡献代码！请阅读 [贡献指南](./CONTRIBUTING.md) 了解详情。
-
-- 提交 Issue 报告 Bug 或建议新功能
-- 提交 Pull Request 贡献代码
-- 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
+`legacy/` 保留旧 Node/TS 代码作为历史参考，不参与编译。
 
 ## 许可证
 
-[MIT](./LICENSE) © STAND-ALONE
-
-## 作者
-
-**STAND-ALONE**
-- Email: 1635936133@qq.com
-- GitHub: [@STAND-ALONE](https://github.com/STAND-ALONE)
+[MulanPSL-2.0](./LICENSE)
