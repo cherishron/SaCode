@@ -1,0 +1,61 @@
+name: Build Test
+
+on:
+  pull_request:
+    paths:
+      - 'npm-package/**'
+      - '.github/workflows/**'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Prepare binary
+        run: |
+          mkdir -p npm-package/platforms
+          cp target/release/sacode npm-package/platforms/sacode-linux-x64
+          chmod +x npm-package/platforms/sacode-linux-x64
+
+      - name: Write platform manifest
+        run: node scripts/write-platform-manifest.js $(node -p "require('./npm-package/package.json').version")
+
+      - name: Check release consistency
+        run: node scripts/check-release.js
+
+      - name: Test npm package
+        run: |
+          cd npm-package
+          node bin/sacode.js --version
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Prepare binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path npm-package/platforms | Out-Null
+          Copy-Item target/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
+
+      - name: Write platform manifest
+        run: node scripts/write-platform-manifest.js $(node -p "require('./npm-package/package.json').version")
+
+      - name: Test Windows binary
+        run: node npm-package/bin/sacode.js --version

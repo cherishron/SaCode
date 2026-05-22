@@ -1,0 +1,27 @@
+[package]
+name = "sacode-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SaCode runtime layer"
+
+[dependencies]
+anyhow.workspace = true
+async-stream = "0.3"
+axum = "0.7"
+chrono = "0.4"
+extism = "1.0"
+futures = "0.3"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sacode-kernel = { path = "../kernel" }
+tokio = { workspace = true, features = ["sync", "net", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+wait-timeout = "0.2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

@@ -1,17 +1,19 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build
-dist/
-*.tsbuildinfo
-.next/
-out/
+# Rust build output
+/target/
 
 # Environment
 .env
 .env.local
 .env.*.local
+
+# SQLite and local data
+*.db
+*.db-journal
+data/
+
+# Logs
+logs/
+*.log
 
 # IDE
 .idea/
@@ -23,42 +25,11 @@ out/
 .DS_Store
 Thumbs.db
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-pnpm-debug.log*
-
-# Testing
-coverage/
-.nyc_output/
-test-results/
-
-# Database
-*.db
-*.db-journal
-data/
-
 # Temp
 tmp/
 temp/
 .cache/
 
-# Misc
+# Backup
 *.bak
 *.backup
-
-# External AI Tool Configs (not part of SaCode)
-.agents/
-.claude/
-.codebuddy/
-.continue/
-.iflow/
-.qoder/
-.qwen/
-.trae/
-.workbuddy/
-.sisyphus/
-
-# Skills lock files
-skills-lock.json
