@@ -7,110 +7,144 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::CrosstermBackend,
+    backend:: CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
 use sacode_kernel::{ExecutionMode, Supervisor, Task};
 
-struct App {
-    task: String,
-    mode: ExecutionMode,
-    events: Vec<String>,
-    plan_steps: Vec<String>,
-    tool_results: Vec<String>,
-    should_quit: bool,
-    input_mode: InputMode,
-    input: String,
+struct Message {
+    role: MessageRole,
+    content: String,
+    timestamp: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InputMode {
-    Normal,
-    Editing,
+enum MessageRole {
+    User,
+    Assistant,
+    System,
+}
+
+struct App {
+    messages: Vec<Message>,
+    input: String,
+    should_quit: bool,
+    scroll_offset: usize,
+    processing: bool,
 }
 
 impl App {
     fn new() -> Self {
+        let now = chrono::Local::now();
+        let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
+        
         Self {
-            task: String::new(),
-            mode: ExecutionMode::Build,
-            events: Vec::new(),
-            plan_steps: Vec::new(),
-            tool_results: Vec::new(),
-            should_quit: false,
-            input_mode: InputMode::Editing,
+            messages: vec![
+                Message {
+                    role: MessageRole::System,
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+C 或 Esc 退出.".to_string(),
+                    timestamp: timestamp.clone(),
+                },
+            ],
             input: String::new(),
+            should_quit: false,
+            scroll_offset: 0,
+            processing: false,
         }
     }
 
-    fn execute_task(&mut self) {
-        if self.input.is_empty() {
+    fn send_message(&mut self) {
+        if self.input.is_empty() || self.processing {
             return;
         }
 
-        self.task = self.input.clone();
+        let now = chrono::Local::now();
+        let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
+
+        self.messages.push(Message {
+            role: MessageRole::User,
+            content: self.input.clone(),
+            timestamp: timestamp.clone(),
+        });
+
+        let user_input = self.input.clone();
         self.input.clear();
-        self.input_mode = InputMode::Editing;
+        self.processing = true;
 
         let supervisor = Supervisor::new();
-        let task = Task::new(self.task.clone(), self.mode, None);
+        let task = Task::new(user_input, ExecutionMode::Build, None);
         let result = supervisor.execute(&task);
 
-        self.events.clear();
-        self.plan_steps.clear();
-        self.tool_results.clear();
-
-        for event in &result.output.events {
-            match event {
-                sacode_kernel::Event::Message { content } => self.events.push(format!("MSG: {}", content)),
-                sacode_kernel::Event::Thinking { content } => self.events.push(format!("THINK: {}", content)),
-                sacode_kernel::Event::Done { summary } => self.events.push(format!("DONE: {}", summary)),
-                sacode_kernel::Event::Error { message } => self.events.push(format!("ERROR: {}", message)),
-                sacode_kernel::Event::ToolCallStarted { name, .. } => self.events.push(format!("TOOL_START: {}", name)),
-                sacode_kernel::Event::ToolCallFinished { name, success, .. } => self.events.push(format!("TOOL_END: {} ({})", name, if *success { "ok" } else { "fail" })),
-                _ => {}
+        let response = if result.output.events.is_empty() {
+            "任务已完成.".to_string()
+        } else {
+            let mut lines = Vec::new();
+            for event in &result.output.events {
+                match event {
+                    sacode_kernel::Event::Message { content } => lines.push(content.clone()),
+                    sacode_kernel::Event::Thinking { content } => lines.push(format!("💭 {}", content)),
+                    sacode_kernel::Event::Done { summary } => lines.push(summary.clone()),
+                    sacode_kernel::Event::Error { message } => lines.push(format!("❌ {}", message)),
+                    _ => {}
+                }
             }
-        }
+            lines.join("\n")
+        };
 
-        for step in &result.output.plan.steps {
-            self.plan_steps.push(format!("{}. {} [{:?}]", step.id, step.description, step.status));
-        }
+        let now = chrono::Local::now();
+        let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
 
-        for (step_id, intents) in &result.tool_calls {
-            for intent in intents {
-                self.tool_results.push(format!("Step {} - {}", step_id, intent.name));
-            }
+        self.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: response,
+            timestamp,
+        });
+
+        self.processing = false;
+        self.scroll_to_bottom();
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = self.messages.len().saturating_sub(1);
+    }
+
+    fn scroll_up(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+
+    fn scroll_down(&mut self) {
+        if self.scroll_offset < self.messages.len().saturating_sub(1) {
+            self.scroll_offset += 1;
         }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
-        match self.input_mode {
-            InputMode::Normal => match key.code {
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Char('i') => self.input_mode = InputMode::Editing,
-                KeyCode::Char('m') => {
-                    self.mode = match self.mode {
-                        ExecutionMode::Plan => ExecutionMode::Build,
-                        ExecutionMode::Build => ExecutionMode::Yolo,
-                        ExecutionMode::Yolo => ExecutionMode::Plan,
-                    };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+            }
+            KeyCode::Enter => self.send_message(),
+            KeyCode::Char(c) => self.input.push(c),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Up => self.scroll_up(),
+            KeyCode::Down => self.scroll_down(),
+            KeyCode::PageUp => {
+                for _ in 0..5 {
+                    self.scroll_up();
                 }
-                KeyCode::Enter => self.execute_task(),
-                _ => {}
-            },
-            InputMode::Editing => match key.code {
-                KeyCode::Enter => self.execute_task(),
-                KeyCode::Char(c) => self.input.push(c),
-                KeyCode::Backspace => {
-                    self.input.pop();
+            }
+            KeyCode::PageDown => {
+                for _ in 0..5 {
+                    self.scroll_down();
                 }
-                KeyCode::Esc => self.input_mode = InputMode::Normal,
-                _ => {}
-            },
+            }
+            _ => {}
         }
     }
 }
@@ -154,58 +188,107 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
 fn ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(1)
+        .margin(0)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
+            Constraint::Min(5),
             Constraint::Length(3),
         ])
         .split(frame.area());
 
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("SaCode TUI", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(" | "),
-        Span::styled(format!("Mode: {:?}", app.mode), Style::default().fg(Color::Yellow)),
-        Span::raw(" | "),
-        Span::styled("[q]quit [i]input [m]mode", Style::default().fg(Color::Gray)),
-    ]))
-    .block(Block::default().borders(Borders::ALL).title("Header"));
-    frame.render_widget(header, chunks[0]);
+    let messages_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)))
+        .title(Span::styled(
+            " SaCode ",
+            Style::default().fg(Color::Rgb(80, 200, 120)).add_modifier(Modifier::BOLD),
+        ))
+        .title_style(Style::default());
 
-    let main_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+    let inner_area = messages_block.inner(chunks[0]);
+    frame.render_widget(messages_block, chunks[0]);
 
-    let plan_items: Vec<ListItem> = app.plan_steps
-        .iter()
-        .map(|s| ListItem::new(Line::from(Span::raw(s))))
-        .collect();
-    let plan_list = List::new(plan_items)
-        .block(Block::default().borders(Borders::ALL).title("Plan"));
-    frame.render_widget(plan_list, main_chunks[0]);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut current_y = 0;
+    let max_y = inner_area.height as usize;
 
-    let event_items: Vec<ListItem> = app.events
-        .iter()
-        .take(20)
-        .map(|s| ListItem::new(Line::from(Span::raw(s))))
-        .collect();
-    let event_list = List::new(event_items)
-        .block(Block::default().borders(Borders::ALL).title("Events"));
-    frame.render_widget(event_list, main_chunks[1]);
+    for msg in app.messages.iter().skip(app.scroll_offset) {
+        if current_y >= max_y {
+            break;
+        }
 
-    let input_style = match app.input_mode {
-        InputMode::Normal => Style::default().fg(Color::Gray),
-        InputMode::Editing => Style::default().fg(Color::Yellow),
-    };
+        let role_style = match msg.role {
+            MessageRole::User => Style::default().fg(Color::Rgb(100, 149, 237)),
+            MessageRole::Assistant => Style::default().fg(Color::Rgb(80, 200, 120)),
+            MessageRole::System => Style::default().fg(Color::Rgb(150, 150, 150)),
+        };
 
-    let input_text = if app.input.is_empty() {
-        "Type your task and press Enter".to_string()
+        let role_label = match msg.role {
+            MessageRole::User => "你",
+            MessageRole::Assistant => "SaCode",
+            MessageRole::System => "系统",
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(&msg.timestamp, Style::default().fg(Color::Rgb(120, 120, 140))),
+            Span::raw(" "),
+            Span::styled(role_label, role_style.add_modifier(Modifier::BOLD)),
+        ]));
+
+        current_y += 1;
+
+        for content_line in msg.content.lines() {
+            if current_y >= max_y {
+                break;
+            }
+            lines.push(Line::from(Span::styled(
+                content_line,
+                Style::default().fg(Color::Rgb(200, 200, 210)),
+            )));
+            current_y += 1;
+        }
+
+        if current_y < max_y {
+            lines.push(Line::from(""));
+            current_y += 1;
+        }
+    }
+
+    let messages_paragraph = Paragraph::new(lines);
+    frame.render_widget(messages_paragraph, inner_area);
+
+    if app.messages.len() > max_y {
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+            .thumb_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+        
+        let mut scrollbar_state = ScrollbarState::new(app.messages.len())
+            .position(app.scroll_offset);
+        
+        frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
+    }
+
+    let input_text = if app.processing {
+        Span::styled("处理中...", Style::default().fg(Color::Rgb(200, 200, 100)))
+    } else if app.input.is_empty() {
+        Span::styled("输入你的编程任务...", Style::default().fg(Color::Rgb(100, 100, 120)))
     } else {
-        format!(">>> {}", app.input)
+        Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     };
 
-    let input = Paragraph::new(Line::from(Span::styled(input_text, input_style)))
-        .block(Block::default().borders(Borders::ALL).title("Input"));
-    frame.render_widget(input, chunks[2]);
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+
+    let input_paragraph = Paragraph::new(Line::from(input_text))
+        .block(input_block);
+    frame.render_widget(input_paragraph, chunks[1]);
+
+    if !app.processing && !app.input.is_empty() {
+        let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
+        let cursor_y = chunks[1].y + 1;
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
 }

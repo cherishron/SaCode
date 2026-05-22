@@ -16,6 +16,7 @@ path = "src/bin/sacode-tui.rs"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 serde.workspace = true
