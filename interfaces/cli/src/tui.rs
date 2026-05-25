@@ -2425,6 +2425,32 @@ match self.provider_store.save_named(name, &config, true) {
                     self.input.pop();
                 }
             }
+            KeyCode::Tab => {
+                if self.input_mode == InputMode::CommandLevel1 {
+                    if let Some(cmd) = self.filtered_level1.get(self.selected_level1_index) {
+                        self.input = cmd.name.clone();
+                        if cmd.direct_execute {
+                            self.confirm_level1_selection();
+                        } else if !cmd.sub_commands.is_empty() {
+                            self.input.push(' ');
+                            self.input_mode = InputMode::CommandLevel2;
+                            self.current_level1 = Some(cmd.clone());
+                            self.filtered_sub_commands = cmd.sub_commands.clone();
+                            self.selected_sub_index = 0;
+                        }
+                    }
+                } else if self.input_mode == InputMode::CommandLevel2 {
+                    if let Some(sub) = self.filtered_sub_commands.get(self.selected_sub_index) {
+                        let current = self.input.split_whitespace().collect::<Vec<_>>();
+                        if current.len() >= 2 {
+                            self.input = format!("{} {}", current[0], sub.name);
+                            if sub.needs_input {
+                                self.input.push(' ');
+                            }
+                        }
+                    }
+                }
+            }
             KeyCode::Up => self.scroll_up(),
             KeyCode::Down => self.scroll_down(),
             KeyCode::PageUp => {
@@ -2688,6 +2714,20 @@ fn render_selector(frame: &mut Frame, app: &App) {
 
     if app.input_mode == InputMode::ProviderSelect && content_areas.len() > 1 {
         render_provider_details(frame, app, content_areas[1]);
+    }
+
+    if app.input_mode == InputMode::ProviderSelect {
+        let hint_line = Line::styled(
+            "Enter: 切换 | r: 重命名 | d: 删除 | Esc: 取消",
+            Style::default().fg(Color::Rgb(120, 120, 140)),
+        );
+        let hint_area = ratatui::layout::Rect {
+            x: area.x,
+            y: area.y + area.height,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 }
 
@@ -2981,6 +3021,24 @@ fn render_mcp_selector(frame: &mut Frame, app: &App) {
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    let action = app.pending_mcp_action.as_deref().unwrap_or("show");
+    let hint = match action {
+        "show" => "查看详情",
+        "remove" => "删除",
+        _ => "选择",
+    };
+    let hint_line = Line::styled(
+        format!("Enter: {} | Esc: 取消", hint),
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: area.x,
+        y: area.y + area.height,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
@@ -2997,7 +3055,7 @@ fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
     let end = (start + visible_count).min(app.checkpoint_options.len());
 
     let action = app.pending_checkpoint_action.as_deref().unwrap_or("show");
-    let _hint = match action {
+    let hint = match action {
         "restore" => "恢复",
         "delete" => "删除",
         _ => "选择",
@@ -3020,6 +3078,18 @@ fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    let hint_line = Line::styled(
+        format!("Enter: {} | Esc: 取消", hint),
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: area.x,
+        y: area.y + area.height,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_mode_selector(frame: &mut Frame, app: &App) {
@@ -3064,4 +3134,16 @@ fn render_mode_selector(frame: &mut Frame, app: &App) {
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    let hint_line = Line::styled(
+        "Enter: 切换模式 | Esc: 取消",
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: area.x,
+        y: area.y + area.height,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
