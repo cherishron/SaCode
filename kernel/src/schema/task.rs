@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -11,6 +12,16 @@ pub enum ExecutionMode {
 impl Default for ExecutionMode {
     fn default() -> Self {
         Self::Build
+    }
+}
+
+impl fmt::Display for ExecutionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecutionMode::Plan => write!(f, "plan"),
+            ExecutionMode::Build => write!(f, "build"),
+            ExecutionMode::Yolo => write!(f, "yolo"),
+        }
     }
 }
 

@@ -52,9 +52,15 @@ struct App {
     selected_provider_index: usize,
     model_options: Vec<String>,
     selected_model_index: usize,
+    connect_options: Vec<(String, String, bool)>,
+    selected_connect_index: usize,
+    pending_connect_provider: Option<(String, String)>,
     task_tx: Sender<AsyncResult>,
     task_rx: Receiver<AsyncResult>,
     busy_message: String,
+    all_commands: Vec<CommandDef>,
+    filtered_commands: Vec<CommandDef>,
+    selected_command_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +71,61 @@ enum InputMode {
     ProviderSelect,
     ProviderRename,
     ModelSelect,
+    ConnectSelect,
+    ConnectApiKey,
+    CommandSelect,
+}
+
+#[derive(Clone)]
+struct CommandDef {
+    name: String,
+    description: String,
+    category: String,
+}
+
+impl CommandDef {
+    fn new(name: &str, description: &str, category: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            category: category.to_string(),
+        }
+    }
+}
+
+fn get_all_commands() -> Vec<CommandDef> {
+    vec![
+        CommandDef::new("/login", "配置 Provider 和 API Key", "provider"),
+        CommandDef::new("/models", "选择当前使用的模型", "provider"),
+        CommandDef::new("/providers", "管理 Provider 列表", "provider"),
+        CommandDef::new("/provider-rename", "重命名 Provider", "provider"),
+        CommandDef::new("/provider-remove", "删除 Provider", "provider"),
+        CommandDef::new("/connect", "快速接入预设 Provider", "provider"),
+        CommandDef::new("/skills", "查看可用 Skills", "skill"),
+        CommandDef::new("/skill show", "查看 Skill 详情", "skill"),
+        CommandDef::new("/skill run", "运行 Skill", "skill"),
+        CommandDef::new("/skill add", "添加 Skill", "skill"),
+        CommandDef::new("/skill remove", "删除 Skill", "skill"),
+        CommandDef::new("/mcp", "查看 MCP 服务列表", "mcp"),
+        CommandDef::new("/mcp-show", "查看 MCP 服务详情", "mcp"),
+        CommandDef::new("/mcp-remove", "删除 MCP 服务", "mcp"),
+    ]
+}
+
+fn fuzzy_match(query: &str, target: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query_chars: Vec<char> = query.chars().collect();
+    let target_chars: Vec<char> = target.chars().collect();
+    
+    let mut query_idx = 0;
+    for target_char in target_chars.iter() {
+        if query_idx < query_chars.len() && *target_char == query_chars[query_idx] {
+            query_idx += 1;
+        }
+    }
+    query_idx == query_chars.len()
 }
 
 enum AsyncResult {
@@ -114,12 +175,13 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let current_provider = resolve_named_provider(&workdir);
         let (task_tx, task_rx) = mpsc::channel();
+        let all_commands = get_all_commands();
         
         Self {
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 退出，按 Esc 清空输入.".to_string(),
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 退出，按 Esc 清空输入.\n输入 / 可显示命令列表.".to_string(),
                     timestamp: timestamp.clone(),
                 },
             ],
@@ -137,9 +199,21 @@ impl App {
             selected_provider_index: 0,
             model_options: Vec::new(),
             selected_model_index: 0,
+            connect_options: vec![
+                ("ollama".to_string(), "http://127.0.0.1:11434/v1".to_string(), false),
+                ("deepseek".to_string(), "https://api.deepseek.com/v1".to_string(), true),
+                ("mimo".to_string(), "https://token-plan-cn.xiaomimimo.com/v1".to_string(), true),
+                ("longcat".to_string(), "https://api.longcat.chat/openai/v1".to_string(), true),
+                ("openai".to_string(), "https://api.openai.com/v1".to_string(), true),
+            ],
+            selected_connect_index: 0,
+            pending_connect_provider: None,
             task_tx,
             task_rx,
             busy_message: String::new(),
+            all_commands,
+            filtered_commands: Vec::new(),
+            selected_command_index: 0,
         }
     }
 
@@ -168,6 +242,12 @@ impl App {
             }
             InputMode::ModelSelect => {
                 self.confirm_model_selection();
+                return;
+            }
+            InputMode::ConnectSelect | InputMode::ConnectApiKey => {
+                return;
+            }
+            InputMode::CommandSelect => {
                 return;
             }
         }
@@ -444,19 +524,8 @@ impl App {
         }
 
         if self.input == "/connect" {
-            self.push_system_message(
-                "快速接入预设 Provider:\n\n\
-                1. Ollama (本地)\n   URL: http://127.0.0.1:11434/v1\n\n\
-                2. DeepSeek\n   URL: https://api.deepseek.com/v1\n\n\
-                3. Xiaomi MiMo (Token Plan)\n   URL: https://token-plan-cn.xiaomimimo.com/v1\n\n\
-                4. LongCat\n   URL: https://api.longcat.chat/openai\n\n\
-                5. OpenAI\n   URL: https://api.openai.com/v1\n\n\
-                输入 /connect <编号> <api_key> 即可接入。\n\
-                例如: /connect 3 tp-xxxx\n\
-                例如: /connect 4 ak-xxxx\n\
-                或者: /connect 1 (ollama 不需要 key)\n\
-                接入后会自动拉取可用模型，用 /models 切换。"
-            );
+            self.input_mode = InputMode::ConnectSelect;
+            self.selected_connect_index = 0;
             self.input.clear();
             return true;
         }
@@ -687,6 +756,108 @@ match self.provider_store.save_named(name, &config, true) {
             Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
         }
         self.input.clear();
+    }
+
+    fn confirm_connect_selection(&mut self) {
+        let Some((name, base_url, needs_key)) = self.connect_options.get(self.selected_connect_index).cloned() else {
+            self.push_system_message("当前没有可选 provider。");
+            self.input_mode = InputMode::Chat;
+            return;
+        };
+
+        if needs_key {
+            self.pending_connect_provider = Some((name.clone(), base_url));
+            self.input_mode = InputMode::ConnectApiKey;
+            self.push_system_message(&format!("请输入 {} 的 API Key (回车确认，Esc 取消)。", name));
+        } else {
+            self.save_connect_provider(&name, &base_url, String::new());
+            self.input_mode = InputMode::Chat;
+        }
+        self.input.clear();
+    }
+
+    fn finish_connect(&mut self) {
+        let Some((name, base_url)) = self.pending_connect_provider.clone() else {
+            self.push_system_message("当前没有待连接的 provider。");
+            self.input_mode = InputMode::Chat;
+            return;
+        };
+
+        let api_key = self.input.trim().to_string();
+        self.save_connect_provider(&name, &base_url, api_key);
+        self.pending_connect_provider = None;
+        self.input_mode = InputMode::Chat;
+        self.input.clear();
+    }
+
+    fn save_connect_provider(&mut self, name: &str, base_url: &str, api_key: String) {
+        let config = crate::provider_config::ProviderConfig {
+            base_url: base_url.to_string(),
+            api_key,
+            model: String::new(),
+        };
+
+        match self.provider_store.save_named(name, &config, true) {
+            Ok(()) => {
+                let models = fetch_models(&config).ok().unwrap_or_default();
+                let (final_models, default_model) = if !models.is_empty() {
+                    (models.clone(), models[0].clone())
+                } else {
+                    let fallbacks = fallback_models(name);
+                    let default = fallbacks.first().cloned().unwrap_or_default();
+                    (fallbacks, default)
+                };
+
+                let mut final_config = config;
+                final_config.model = default_model.clone();
+                if !default_model.is_empty() {
+                    let _ = self.provider_store.save_named(name, &final_config, true);
+                    let mut spec = self
+                        .sacode_store
+                        .provider(name)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
+                            name: name.to_string(),
+                            base_url: base_url.to_string(),
+                            api_key: String::new(),
+                            models: std::collections::BTreeMap::new(),
+                        });
+                    spec.name = name.to_string();
+                    spec.base_url = base_url.to_string();
+                    spec.api_key = final_config.api_key.clone();
+                    for model in &final_models {
+                        spec.models.entry(model.clone()).or_insert_with(|| sacode_kernel::model::ModelRule {
+                            name: model.clone(),
+                            ..Default::default()
+                        });
+                    }
+                    let _ = self.sacode_store.upsert_provider(name, spec);
+                    let _ = self.sacode_store.set_model(name, &default_model);
+                }
+
+                self.current_provider = Some(crate::provider_config::NamedProviderConfig {
+                    name: name.to_string(),
+                    config: final_config,
+                });
+
+                let mut msg = format!("Provider {} 已连接。", name);
+                if !final_models.is_empty() {
+                    msg.push_str("\n可用模型:");
+                    for m in &final_models {
+                        msg.push_str(&format!("\n  - {}", m));
+                    }
+                    if !default_model.is_empty() {
+                        msg.push_str(&format!("\n默认: {}", default_model));
+                    }
+                    msg.push_str("\n输入 /models 可切换模型。");
+                } else {
+                    msg.push_str("\n未能获取模型列表，请确认 API Key 正确后使用 /models 选择模型。");
+                }
+                self.push_system_message(&msg);
+            }
+            Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
+        }
     }
 
     fn rename_provider_command(&mut self) {
@@ -1056,6 +1227,10 @@ match self.provider_store.save_named(name, &config, true) {
         if matches!(self.input_mode, InputMode::LoginBaseUrl | InputMode::LoginApiKey) {
             self.push_system_message("已取消登录配置。");
         }
+        if self.input_mode == InputMode::CommandSelect {
+            self.filtered_commands.clear();
+            self.selected_command_index = 0;
+        }
         self.input_mode = InputMode::Chat;
     }
 
@@ -1083,15 +1258,59 @@ match self.provider_store.save_named(name, &config, true) {
         }
     }
 
+    fn filter_commands(&mut self) {
+        let query = self.input.trim_start_matches('/').to_lowercase();
+        if query.is_empty() {
+            self.filtered_commands = self.all_commands.clone();
+        } else {
+            self.filtered_commands = self.all_commands
+                .iter()
+                .filter(|cmd| {
+                    let name_lower = cmd.name.to_lowercase();
+                    let desc_lower = cmd.description.to_lowercase();
+                    let cat_lower = cmd.category.to_lowercase();
+                    fuzzy_match(&query, &name_lower)
+                        || fuzzy_match(&query, &desc_lower)
+                        || fuzzy_match(&query, &cat_lower)
+                })
+                .cloned()
+                .collect();
+        }
+        self.selected_command_index = 0;
+    }
+
+    fn confirm_command_selection(&mut self) {
+        if let Some(cmd) = self.filtered_commands.get(self.selected_command_index) {
+            self.input = cmd.name.clone();
+            self.input_mode = InputMode::Chat;
+            self.filtered_commands.clear();
+            self.selected_command_index = 0;
+        }
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
             KeyCode::Esc => {
-                self.cancel_current_mode();
+                if self.input_mode == InputMode::CommandSelect {
+                    self.input_mode = InputMode::Chat;
+                    self.filtered_commands.clear();
+                    self.selected_command_index = 0;
+                    self.input.clear();
+                } else {
+                    self.cancel_current_mode();
+                }
             }
-            KeyCode::Enter => self.send_message(),
+            KeyCode::Enter => {
+                match self.input_mode {
+                    InputMode::ConnectSelect => self.confirm_connect_selection(),
+                    InputMode::ConnectApiKey => self.finish_connect(),
+                    InputMode::CommandSelect => self.confirm_command_selection(),
+                    _ => self.send_message(),
+                }
+            }
             KeyCode::Char('r') if self.input_mode == InputMode::ProviderSelect => {
                 self.start_provider_rename();
             }
@@ -1114,11 +1333,49 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_model_index += 1;
                 }
             }
-            KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                self.input.push(c);
+            KeyCode::Up if self.input_mode == InputMode::ConnectSelect => {
+                self.selected_connect_index = self.selected_connect_index.saturating_sub(1);
             }
-            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect) => {
-                self.input.pop();
+            KeyCode::Down if self.input_mode == InputMode::ConnectSelect => {
+                if self.selected_connect_index + 1 < self.connect_options.len() {
+                    self.selected_connect_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::CommandSelect => {
+                self.selected_command_index = self.selected_command_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::CommandSelect => {
+                if self.selected_command_index + 1 < self.filtered_commands.len() {
+                    self.selected_command_index += 1;
+                }
+            }
+            KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
+                self.input_mode = InputMode::CommandSelect;
+                self.filtered_commands = self.all_commands.clone();
+                self.selected_command_index = 0;
+                self.input.push('/');
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                if self.input_mode == InputMode::CommandSelect {
+                    self.input.push(c);
+                    self.filter_commands();
+                } else {
+                    self.input.push(c);
+                }
+            }
+            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect) => {
+                if self.input_mode == InputMode::CommandSelect {
+                    self.input.pop();
+                    if self.input.is_empty() || !self.input.starts_with('/') {
+                        self.input_mode = InputMode::Chat;
+                        self.filtered_commands.clear();
+                        self.selected_command_index = 0;
+                    } else {
+                        self.filter_commands();
+                    }
+                } else {
+                    self.input.pop();
+                }
             }
             KeyCode::Up => self.scroll_up(),
             KeyCode::Down => self.scroll_down(),
@@ -1267,14 +1524,19 @@ fn ui(frame: &mut Frame, app: &App) {
         Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input_mode == InputMode::ModelSelect {
         Span::styled("使用上下方向键选择模型，按 Enter 确认", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::CommandSelect {
+        Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input.is_empty() {
         let placeholder = match app.input_mode {
-            InputMode::Chat => "输入你的编程任务，或使用 /login /providers /models...",
+            InputMode::Chat => "输入你的编程任务，或输入 / 显示命令列表...",
             InputMode::LoginBaseUrl => "输入 provider 名称和 Base URL...",
             InputMode::LoginApiKey => "输入 API Key...",
             InputMode::ProviderSelect => "使用方向键选择 provider...",
             InputMode::ProviderRename => "输入新的 provider 名称...",
             InputMode::ModelSelect => "使用方向键选择模型...",
+            InputMode::ConnectSelect => "使用方向键选择预设 provider...",
+            InputMode::ConnectApiKey => "输入 API Key...",
+            InputMode::CommandSelect => "输入命令名称进行搜索...",
         };
         Span::styled(placeholder, Style::default().fg(Color::Rgb(100, 100, 120)))
     } else {
@@ -1289,7 +1551,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[1]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandSelect) {
         let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[1].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -1297,6 +1559,14 @@ fn ui(frame: &mut Frame, app: &App) {
 
     if matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect) {
         render_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::ConnectSelect {
+        render_connect_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::CommandSelect {
+        render_command_selector(frame, app, chunks[1]);
     }
 }
 
@@ -1347,6 +1617,40 @@ fn render_selector(frame: &mut Frame, app: &App) {
     if app.input_mode == InputMode::ProviderSelect && content_areas.len() > 1 {
         render_provider_details(frame, app, content_areas[1]);
     }
+}
+
+fn render_connect_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 70, 50);
+    let block = Block::default()
+        .title("快速接入 Provider")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let start = app.selected_connect_index.saturating_sub(MODELS_HINT_LIMIT / 2);
+    let end = (start + MODELS_HINT_LIMIT).min(app.connect_options.len());
+    let lines: Vec<Line> = app.connect_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, (name, base_url, needs_key))| {
+            let label = if *needs_key {
+                format!("{} - {} (需要 API Key)", name, base_url)
+            } else {
+                format!("{} - {} (本地)", name, base_url)
+            };
+            let is_selected = offset + start == app.selected_connect_index;
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(180, 180, 190))
+            };
+            Line::styled(label, style)
+        })
+        .collect();
+
+    let list = Paragraph::new(lines).block(Block::default());
+    frame.render_widget(list, inner);
 }
 
 fn render_provider_details(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -1413,4 +1717,49 @@ fn centered_rect(area: ratatui::layout::Rect, width_percent: u16, height_percent
             Constraint::Percentage((100 - width_percent) / 2),
         ])
         .split(vertical[1])[1]
+}
+
+fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
+    if app.filtered_commands.is_empty() {
+        return;
+    }
+
+    let max_height = 10u16;
+    let popup_height = max_height.min(app.filtered_commands.len() as u16 + 2);
+    
+    let popup_area = ratatui::layout::Rect {
+        x: input_area.x,
+        y: input_area.y.saturating_sub(popup_height),
+        width: input_area.width,
+        height: popup_height,
+    };
+
+    let block = Block::default()
+        .title(" 命令列表 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let visible_count = inner.height as usize;
+    let start = app.selected_command_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.filtered_commands.len());
+
+    let lines: Vec<Line> = app.filtered_commands[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, cmd)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_command_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{} - {}", prefix, cmd.name, cmd.description), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }

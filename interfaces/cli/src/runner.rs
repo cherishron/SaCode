@@ -1,7 +1,7 @@
 use std::{env, path::Path};
 
 use anyhow::Result;
-use sacode_kernel::{Event, ExecutionMode, Supervisor, Task};
+use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
 use sacode_kernel::model::{ToolDefinition};
 use sacode_runtime::{McpConfigStore, ProviderClient, ToolRegistry};
 use serde::Serialize;
@@ -28,6 +28,50 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
+}
+
+impl RunnerOutput {
+    pub fn from_execution_report(
+        report: &ExecutionReport,
+        prompt: String,
+        mode: ExecutionMode,
+        max_iterations: usize,
+        workspace: String,
+    ) -> Self {
+        let tool_names: Vec<String> = report.tool_records.iter()
+            .map(|r| r.tool_name.clone())
+            .collect();
+        
+        let tool_results: Vec<ToolResult> = report.tool_records.iter()
+            .map(|r| ToolResult {
+                iteration: 0,
+                step_id: r.step_id.unwrap_or(0),
+                name: r.tool_name.clone(),
+                success: r.success,
+                summary: if r.success { "success" } else { "failed" }.to_string(),
+            })
+            .collect();
+        
+        let plan = report.plan.clone().unwrap_or_else(|| {
+            sacode_kernel::Plan {
+                task: prompt.clone(),
+                steps: Vec::new(),
+                mode: mode.to_string(),
+            }
+        });
+        
+        Self {
+            prompt,
+            mode,
+            max_iterations,
+            tool_names,
+            workspace,
+            plan,
+            events: report.events.clone(),
+            tool_results,
+            provider_response: Err("orchestrator mode does not call provider".to_string()),
+        }
+    }
 }
 
 pub async fn run_task(prompt: &str, mode: ExecutionMode, approval: ApprovalPolicy, max_iterations: usize) -> Result<RunnerOutput> {

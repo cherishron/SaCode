@@ -11,11 +11,13 @@ use std::{env, io::IsTerminal};
 use std::path::PathBuf;
 
 use anyhow::Result;
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, ExecutionContext, Task, Supervisor};
+pub use sacode_kernel::ApprovalPolicy;
+use sacode_runtime::{RuntimeOrchestrator, CheckpointStorage, ToolRegistry, SandboxExecutor, SandboxPolicy};
 #[cfg(test)]
 use sacode_kernel::{Event, ToolCallIntent};
 #[cfg(test)]
-use sacode_runtime::{call_mcp_tool, ProviderClient, ToolRegistry};
+use sacode_runtime::{call_mcp_tool, ProviderClient};
 use serde::Serialize;
 use tokio::io::{self, AsyncReadExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -25,12 +27,13 @@ use crate::mistakes::MistakeBookStore;
 #[cfg(test)]
 use crate::provider_runtime::resolve_provider;
 use crate::repl::ReplSession;
-use crate::runner::{format_output, run_task_with_stdin};
+use crate::runner::{format_output, run_task_with_stdin, RunnerOutput};
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliCommand {
     Run,
+    Orchestrator,
     Profile,
     Plugin,
     Skill,
@@ -53,13 +56,6 @@ pub struct CliOptions {
     pub json: bool,
     pub approval: ApprovalPolicy,
     pub sub_args: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApprovalPolicy {
-    Prompt,
-    AutoApprove,
-    AutoDeny,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,6 +119,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Help => print_help(),
         CliCommand::Version => println!("sacode {}", env!("CARGO_PKG_VERSION")),
         CliCommand::Run => run_task(options).await?,
+        CliCommand::Orchestrator => run_with_orchestrator(options).await?,
         CliCommand::Profile => profile::run(options.sub_args)?,
         CliCommand::Plugin => plugin::run(options.sub_args).await?,
         CliCommand::Skill => skill::run(options.sub_args)?,
@@ -170,6 +167,33 @@ async fn run_task(options: CliOptions) -> Result<()> {
         println!("Stdin: {}", preview(&stdin));
     }
 
+    Ok(())
+}
+
+async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
+    let workdir = env::current_dir()?;
+    
+    let task = Task::new(options.prompt.clone(), options.mode, None);
+    let context = ExecutionContext::new(task).with_approval(options.approval);
+    
+    let supervisor = Supervisor::new();
+    let tools = ToolRegistry::builtin();
+    let sandbox = SandboxExecutor::new(SandboxPolicy::build());
+    let checkpoints = CheckpointStorage::new(&workdir);
+    
+    let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
+    let report = orchestrator.execute(&context)?;
+    
+    let output = RunnerOutput::from_execution_report(
+        &report,
+        options.prompt.clone(),
+        options.mode,
+        options.max_iterations,
+        workdir.to_string_lossy().to_string(),
+    );
+    
+    println!("{}", format_output(&output));
+    
     Ok(())
 }
 
@@ -756,6 +780,18 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "orchestrator" {
+        return CliOptions {
+            command: CliCommand::Orchestrator,
+            prompt: args[1..].join(" "),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: Vec::new(),
+        };
+    }
+
     let mut command = CliCommand::Run;
     let mut prompt = Vec::new();
     let mut mode = ExecutionMode::Build;
@@ -834,6 +870,7 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!("  sacode \"<task>\" [--mode plan|build|yolo] [--max-iterations N] [--json] [--approve|--deny]");
+    println!("  sacode orchestrator \"<task>\"");
     println!("  sacode profile [ls|use <name>|show]");
     println!("  sacode plugin [list]");
     println!("  sacode skill [list|show <name>|run <name> [args...]]");
