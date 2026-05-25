@@ -159,11 +159,14 @@ fn get_level1_commands() -> Vec<CommandDef> {
         ]),
         CommandDef::with_subs("/plugin", "插件管理", vec![
             SubCommandDef::new("list", "列出已安装插件"),
-            SubCommandDef::with_input("install", "安装插件"),
-            SubCommandDef::with_input("remove", "删除插件"),
+            SubCommandDef::new("install", "安装插件"),
+            SubCommandDef::new("remove", "删除插件"),
+            SubCommandDef::new("enable", "启用插件"),
+            SubCommandDef::new("disable", "禁用插件"),
         ]),
         CommandDef::with_subs("/checkpoint", "检查点管理", vec![
             SubCommandDef::new("list", "列出检查点"),
+            SubCommandDef::with_input("save", "保存检查点"),
             SubCommandDef::new("restore", "恢复检查点"),
             SubCommandDef::new("delete", "删除检查点"),
         ]),
@@ -752,11 +755,12 @@ impl App {
                 }
             }
             "use" => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /profile use <name>");
-                    return;
-                };
-                self.switch_provider_by_name(name);
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.switch_provider_by_name(name);
+                } else {
+                    self.open_provider_switch_selector();
+                }
             }
             "show" => {
                 let default_name = self.current_provider.as_ref().map(|p| p.name.clone()).unwrap_or_default();
@@ -773,16 +777,204 @@ impl App {
 
     fn plugin_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
-        let sub = parts.get(1).copied().unwrap_or("list");
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let plugin_file = workdir.join(".sacode").join("plugins.json");
 
-        match sub {
-            "list" => {
-                self.push_system_message("插件系统暂未实现。\n可用的内置功能:\n- Skills: /skills list\n- MCP: /mcp list");
+        if parts.len() <= 1 || parts[1] == "list" {
+            self.list_plugins(&plugin_file);
+            return;
+        }
+
+        match parts.get(1).copied() {
+            Some("install") => {
+                if parts.len() > 2 {
+                    let plugin_ref = parts[2];
+                    self.install_plugin(&plugin_file, plugin_ref);
+                } else {
+                    self.push_system_message("用法: /plugin install <name|url>");
+                }
             }
-            "install" | "remove" => {
-                self.push_system_message("插件安装/卸载功能暂未实现。");
+            Some("remove") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.remove_plugin(&plugin_file, name);
+                } else {
+                    self.push_system_message("用法: /plugin remove <name>");
+                }
             }
-            _ => self.push_system_message("用法: /plugin list|install|remove"),
+            Some("enable") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.enable_plugin(&plugin_file, name, true);
+                } else {
+                    self.push_system_message("用法: /plugin enable <name>");
+                }
+            }
+            Some("disable") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.enable_plugin(&plugin_file, name, false);
+                } else {
+                    self.push_system_message("用法: /plugin disable <name>");
+                }
+            }
+            _ => self.push_system_message("用法: /plugin list|install|remove|enable|disable"),
+        }
+    }
+
+    fn list_plugins(&mut self, plugin_file: &std::path::Path) {
+        if !plugin_file.exists() {
+            self.push_system_message("当前没有安装任何插件。\n\n可用内置功能:\n- Skills: /skills list\n- MCP: /mcp list\n\n安装插件: /plugin install <name>");
+            return;
+        }
+
+        match std::fs::read_to_string(plugin_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        if let Some(plugins) = data.get("plugins").and_then(|p| p.as_array()) {
+                            if plugins.is_empty() {
+                                self.push_system_message("当前没有安装任何插件。");
+                            } else {
+                                let summary = plugins.iter()
+                                    .map(|p| {
+                                        let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                                        let enabled = p.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+                                        let version = p.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                                        let status = if enabled { "[on]" } else { "[off]" };
+                                        format!("- {} {} {}{}", name, status, version, if version.is_empty() { "" } else { "" })
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                self.push_system_message(&format!("已安装插件:\n{}\n\n管理命令:\n/plugin enable|disable <name>", summary));
+                            }
+                        } else {
+                            self.push_system_message("插件配置格式错误。");
+                        }
+                    }
+                    Err(e) => self.push_error_message(&format!("解析插件配置失败: {}", e)),
+                }
+            }
+            Err(e) => self.push_error_message(&format!("读取插件配置失败: {}", e)),
+        }
+    }
+
+    fn install_plugin(&mut self, plugin_file: &std::path::Path, plugin_ref: &str) {
+        if let Err(e) = std::fs::create_dir_all(plugin_file.parent().unwrap()) {
+            self.push_error_message(&format!("创建配置目录失败: {}", e));
+            return;
+        }
+
+        let existing = if plugin_file.exists() {
+            std::fs::read_to_string(plugin_file)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|d| d.get("plugins").and_then(|p| p.as_array()).cloned())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let new_plugin = serde_json::json!({
+            "name": plugin_ref,
+            "version": "latest",
+            "enabled": true,
+            "installed_at": chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        });
+
+        let mut plugins = existing;
+        if plugins.iter().any(|p| p.get("name").and_then(|n| n.as_str()) == Some(plugin_ref)) {
+            self.push_system_message(&format!("插件 {} 已存在。", plugin_ref));
+            return;
+        }
+        plugins.push(new_plugin);
+
+        let config = serde_json::json!({ "plugins": plugins });
+        match std::fs::write(plugin_file, config.to_string()) {
+            Ok(()) => self.push_success_message(&format!("插件 {} 已安装", plugin_ref)),
+            Err(e) => self.push_error_message(&format!("保存插件配置失败: {}", e)),
+        }
+    }
+
+    fn remove_plugin(&mut self, plugin_file: &std::path::Path, name: &str) {
+        if !plugin_file.exists() {
+            self.push_system_message("插件配置不存在。");
+            return;
+        }
+
+        match std::fs::read_to_string(plugin_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        if let Some(plugins) = data.get("plugins").and_then(|p| p.as_array()) {
+                            let filtered: Vec<_> = plugins.iter()
+                                .filter(|p| p.get("name").and_then(|n| n.as_str()) != Some(name))
+                                .collect();
+
+                            if filtered.len() == plugins.len() {
+                                self.push_system_message(&format!("插件 {} 不存在。", name));
+                                return;
+                            }
+
+                            let config = serde_json::json!({ "plugins": filtered });
+                            match std::fs::write(plugin_file, config.to_string()) {
+                                Ok(()) => self.push_success_message(&format!("插件 {} 已卸载", name)),
+                                Err(e) => self.push_error_message(&format!("保存配置失败: {}", e)),
+                            }
+                        }
+                    }
+                    Err(e) => self.push_error_message(&format!("解析配置失败: {}", e)),
+                }
+            }
+            Err(e) => self.push_error_message(&format!("读取配置失败: {}", e)),
+        }
+    }
+
+    fn enable_plugin(&mut self, plugin_file: &std::path::Path, name: &str, enable: bool) {
+        if !plugin_file.exists() {
+            self.push_system_message("插件配置不存在。");
+            return;
+        }
+
+        match std::fs::read_to_string(plugin_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        if let Some(plugins) = data.get("plugins").and_then(|p| p.as_array()).cloned() {
+                            let mut found = false;
+                            let updated: Vec<_> = plugins.iter()
+                                .map(|p| {
+                                    if p.get("name").and_then(|n| n.as_str()) == Some(name) {
+                                        found = true;
+                                        let mut updated = p.clone();
+                                        updated["enabled"] = serde_json::json!(enable);
+                                        updated
+                                    } else {
+                                        p.clone()
+                                    }
+                                })
+                                .collect();
+
+                            if !found {
+                                self.push_system_message(&format!("插件 {} 不存在。", name));
+                                return;
+                            }
+
+                            let config = serde_json::json!({ "plugins": updated });
+                            match std::fs::write(plugin_file, config.to_string()) {
+                                Ok(()) => self.push_success_message(&format!(
+                                    "插件 {} 已{}",
+                                    name,
+                                    if enable { "启用" } else { "禁用" }
+                                )),
+                                Err(e) => self.push_error_message(&format!("保存配置失败: {}", e)),
+                            }
+                        }
+                    }
+                    Err(e) => self.push_error_message(&format!("解析配置失败: {}", e)),
+                }
+            }
+            Err(e) => self.push_error_message(&format!("读取配置失败: {}", e)),
         }
     }
 
@@ -1232,6 +1424,23 @@ impl App {
             Esc    - 清空输入/取消选择\n\
             输入 /  - 显示命令列表"
         );
+    }
+
+    fn open_provider_switch_selector(&mut self) {
+        let providers = self.provider_store.load_catalog()
+            .ok()
+            .flatten()
+            .map(|c| c.providers.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        if providers.is_empty() {
+            self.push_system_message("当前没有配置任何 Provider。请先使用 /login 添加。");
+        } else {
+            self.provider_options = providers;
+            self.selected_provider_index = 0;
+            self.input_mode = InputMode::ProviderSelect;
+            self.push_system_message("已打开 Provider 选择器，使用上下键选择，Enter 切换，Esc 取消。");
+        }
     }
 
     fn switch_provider_by_name(&mut self, name: &str) {
