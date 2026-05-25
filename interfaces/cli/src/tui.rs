@@ -65,6 +65,15 @@ struct App {
     current_level1: Option<CommandDef>,
     filtered_sub_commands: Vec<SubCommandDef>,
     selected_sub_index: usize,
+    skills_options: Vec<(String, String)>,
+    selected_skills_index: usize,
+    pending_skill_action: Option<String>,
+    mcp_options: Vec<(String, String, bool)>,
+    selected_mcp_index: usize,
+    pending_mcp_action: Option<String>,
+    checkpoint_options: Vec<String>,
+    selected_checkpoint_index: usize,
+    pending_checkpoint_action: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +88,12 @@ enum InputMode {
     ConnectApiKey,
     CommandLevel1,
     CommandLevel2,
+    SkillsSelect,
+    McpSelect,
+    CheckpointSelect,
+    SkillInput,
+    McpInput,
+    CheckpointInput,
 }
 
 #[derive(Clone)]
@@ -285,6 +300,15 @@ impl App {
             current_level1: None,
             filtered_sub_commands: Vec::new(),
             selected_sub_index: 0,
+            skills_options: Vec::new(),
+            selected_skills_index: 0,
+            pending_skill_action: None,
+            mcp_options: Vec::new(),
+            selected_mcp_index: 0,
+            pending_mcp_action: None,
+            checkpoint_options: Vec::new(),
+            selected_checkpoint_index: 0,
+            pending_checkpoint_action: None,
         }
     }
 
@@ -319,6 +343,27 @@ impl App {
                 return;
             }
             InputMode::CommandLevel1 | InputMode::CommandLevel2 => {
+                return;
+            }
+            InputMode::SkillsSelect => {
+                return;
+            }
+            InputMode::McpSelect => {
+                return;
+            }
+            InputMode::CheckpointSelect => {
+                return;
+            }
+            InputMode::SkillInput => {
+                self.finish_skill_input();
+                return;
+            }
+            InputMode::McpInput => {
+                self.finish_mcp_input();
+                return;
+            }
+            InputMode::CheckpointInput => {
+                self.finish_checkpoint_input();
                 return;
             }
         }
@@ -743,17 +788,164 @@ impl App {
 
     fn checkpoint_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
-        let sub = parts.get(1).copied().unwrap_or("list");
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let checkpoint_dir = workdir.join(".sacode").join("checkpoints");
 
-        match sub {
-            "list" => {
-                self.push_system_message("检查点功能暂未实现。\n检查点可用于保存和恢复对话状态。");
-            }
-            "restore" | "delete" => {
-                self.push_system_message("检查点恢复/删除功能暂未实现。");
-            }
-            _ => self.push_system_message("用法: /checkpoint list|restore|delete"),
+        if parts.len() <= 1 || parts[1] == "list" {
+            self.open_checkpoint_selector(&checkpoint_dir);
+            return;
         }
+
+        match parts.get(1).copied() {
+            Some("restore") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.restore_checkpoint(&checkpoint_dir, name);
+                } else {
+                    self.pending_checkpoint_action = Some("restore".to_string());
+                    self.open_checkpoint_selector(&checkpoint_dir);
+                }
+            }
+            Some("delete") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.delete_checkpoint(&checkpoint_dir, name);
+                } else {
+                    self.pending_checkpoint_action = Some("delete".to_string());
+                    self.open_checkpoint_selector(&checkpoint_dir);
+                }
+            }
+            Some("save") => {
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    self.save_checkpoint(&checkpoint_dir, name);
+                } else {
+                    self.push_system_message("用法: /checkpoint save <name>");
+                }
+            }
+            _ => self.push_system_message("用法: /checkpoint list|save|restore|delete"),
+        }
+    }
+
+    fn open_checkpoint_selector(&mut self, checkpoint_dir: &std::path::Path) {
+        if !checkpoint_dir.exists() {
+            self.push_system_message("当前没有检查点。使用 /checkpoint save <name> 创建检查点。");
+            return;
+        }
+        
+        let checkpoints: Vec<String> = std::fs::read_dir(checkpoint_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false))
+                    .map(|e| e.path().file_stem().unwrap().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if checkpoints.is_empty() {
+            self.push_system_message("当前没有检查点。");
+        } else {
+            self.checkpoint_options = checkpoints;
+            self.selected_checkpoint_index = 0;
+            self.input_mode = InputMode::CheckpointSelect;
+        }
+    }
+
+    fn confirm_checkpoint_selection(&mut self) {
+        let selected_name = self.checkpoint_options.get(self.selected_checkpoint_index).cloned();
+        if let Some(name) = selected_name {
+            let action = self.pending_checkpoint_action.clone();
+            let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+            let checkpoint_dir = workdir.join(".sacode").join("checkpoints");
+            
+            self.input_mode = InputMode::Chat;
+            self.checkpoint_options.clear();
+            self.selected_checkpoint_index = 0;
+            self.pending_checkpoint_action = None;
+            
+            match action.as_deref() {
+                Some("restore") => self.restore_checkpoint(&checkpoint_dir, &name),
+                Some("delete") => self.delete_checkpoint(&checkpoint_dir, &name),
+                _ => self.push_system_message(&format!("检查点: {}", name)),
+            }
+        }
+    }
+
+    fn save_checkpoint(&mut self, checkpoint_dir: &std::path::Path, name: &str) {
+        if let Err(e) = std::fs::create_dir_all(checkpoint_dir) {
+            self.push_error_message(&format!("创建检查点目录失败: {}", e));
+            return;
+        }
+        
+        let checkpoint_file = checkpoint_dir.join(format!("{}.json", name));
+        let checkpoint_data = serde_json::json!({
+            "timestamp": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            "messages": self.messages.iter().map(|m| serde_json::json!({
+                "role": match m.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::System => "system",
+                },
+                "content": m.content,
+                "timestamp": m.timestamp,
+            })).collect::<Vec<_>>(),
+        });
+        
+        match std::fs::write(&checkpoint_file, checkpoint_data.to_string()) {
+            Ok(()) => self.push_success_message(&format!("检查点 {} 已保存", name)),
+            Err(e) => self.push_error_message(&format!("保存检查点失败: {}", e)),
+        }
+    }
+
+    fn restore_checkpoint(&mut self, checkpoint_dir: &std::path::Path, name: &str) {
+        let checkpoint_file = checkpoint_dir.join(format!("{}.json", name));
+        
+        match std::fs::read_to_string(&checkpoint_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        if let Some(msgs) = data.get("messages").and_then(|m| m.as_array()) {
+                            self.messages = msgs.iter().filter_map(|m| {
+                                let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("system");
+                                let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                                let timestamp = m.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+                                
+                                Some(Message {
+                                    role: match role {
+                                        "user" => MessageRole::User,
+                                        "assistant" => MessageRole::Assistant,
+                                        _ => MessageRole::System,
+                                    },
+                                    content: content.to_string(),
+                                    timestamp: timestamp.to_string(),
+                                })
+                            }).collect();
+                            self.push_success_message(&format!("检查点 {} 已恢复", name));
+                            self.scroll_to_bottom();
+                        }
+                    }
+                    Err(e) => self.push_error_message(&format!("解析检查点失败: {}", e)),
+                }
+            }
+            Err(e) => self.push_error_message(&format!("读取检查点失败: {}", e)),
+        }
+    }
+
+    fn delete_checkpoint(&mut self, checkpoint_dir: &std::path::Path, name: &str) {
+        let checkpoint_file = checkpoint_dir.join(format!("{}.json", name));
+        
+        match std::fs::remove_file(&checkpoint_file) {
+            Ok(()) => self.push_success_message(&format!("检查点 {} 已删除", name)),
+            Err(e) => self.push_error_message(&format!("删除检查点失败: {}", e)),
+        }
+    }
+
+    fn finish_checkpoint_input(&mut self) {
+        self.input_mode = InputMode::Chat;
+        self.pending_checkpoint_action = None;
+        self.send_message();
     }
 
     fn mode_command(&mut self, input: &str) {
@@ -793,64 +985,116 @@ impl App {
         let registry = SkillRegistry::new(std::path::Path::new("."));
         
         if parts.len() <= 1 || parts[1] == "list" {
-            match registry.list() {
-                Ok(skills) if skills.is_empty() => self.push_system_message("当前没有可用 skills。"),
-                Ok(skills) => {
-                    let summary = skills
-                        .into_iter()
-                        .map(|skill| format!("- {}: {}", skill.name, skill.description))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    self.push_system_message(&format!("可用 skills:\n{}", summary));
-                }
-                Err(error) => self.push_system_message(&format!("读取 skills 失败: {}", error)),
-            }
+            self.open_skills_selector();
             return;
         }
 
         match parts.get(1).copied() {
             Some("show") => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skills show <name>");
-                    return;
-                };
-                match registry.get(name) {
-                    Ok(skill) => self.push_system_message(&format!("Skill {}\n{}\n\n{}", skill.name, skill.description, skill.prompt)),
-                    Err(error) => self.push_system_message(&format!("读取 skill 失败: {}", error)),
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    match registry.get(name) {
+                        Ok(skill) => self.push_system_message(&format!("Skill {}\n{}\n\n{}", skill.name, skill.description, skill.prompt)),
+                        Err(error) => self.push_system_message(&format!("读取 skill 失败: {}", error)),
+                    }
+                } else {
+                    self.open_skills_selector_for_action("show");
                 }
             }
             Some("run") => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skills run <name> [args...]");
-                    return;
-                };
-                match registry.render_prompt(name, &parts[3..].join(" "), std::path::Path::new(".")) {
-                    Ok(rendered) => self.push_system_message(&rendered),
-                    Err(error) => self.push_system_message(&format!("运行 skill 失败: {}", error)),
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    match registry.render_prompt(name, &parts[3..].join(" "), std::path::Path::new(".")) {
+                        Ok(rendered) => self.push_system_message(&rendered),
+                        Err(error) => self.push_system_message(&format!("运行 skill 失败: {}", error)),
+                    }
+                } else {
+                    self.open_skills_selector_for_action("run");
                 }
             }
             Some("add") => {
-                if parts.len() < 5 {
+                if parts.len() >= 5 {
+                    match registry.save_project_skill(parts[2], parts[3], &parts[4..].join(" ")) {
+                        Ok(path) => self.push_success_message(&format!("Skill 已保存到 {}", path.display())),
+                        Err(error) => self.push_error_message(&format!("保存 skill 失败: {}", error)),
+                    }
+                } else {
                     self.push_system_message("用法: /skills add <name> <description> <prompt>");
-                    return;
-                }
-                match registry.save_project_skill(parts[2], parts[3], &parts[4..].join(" ")) {
-                    Ok(path) => self.push_system_message(&format!("项目 skill 已保存到 {}", path.display())),
-                    Err(error) => self.push_system_message(&format!("保存 skill 失败: {}", error)),
                 }
             }
             Some("remove") => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skills remove <name>");
-                    return;
-                };
-                match registry.remove_project_skill(name) {
-                    Ok(()) => self.push_system_message(&format!("项目 skill {} 已删除。", name)),
-                    Err(error) => self.push_system_message(&format!("删除 skill 失败: {}", error)),
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    match registry.remove_project_skill(name) {
+                        Ok(()) => self.push_success_message(&format!("Skill {} 已删除", name)),
+                        Err(error) => self.push_error_message(&format!("删除 skill 失败: {}", error)),
+                    }
+                } else {
+                    self.open_skills_selector_for_action("remove");
                 }
             }
             _ => self.push_system_message("用法: /skills list|show|run|add|remove"),
         }
+    }
+
+    fn open_skills_selector(&mut self) {
+        let registry = SkillRegistry::new(std::path::Path::new("."));
+        match registry.list() {
+            Ok(skills) if skills.is_empty() => self.push_system_message("当前没有可用 skills"),
+            Ok(skills) => {
+                self.skills_options = skills
+                    .into_iter()
+                    .map(|s| (s.name, s.description))
+                    .collect();
+                self.selected_skills_index = 0;
+                self.input_mode = InputMode::SkillsSelect;
+            }
+            Err(error) => self.push_error_message(&format!("读取 skills 失败: {}", error)),
+        }
+    }
+
+    fn open_skills_selector_for_action(&mut self, action: &str) {
+        self.pending_skill_action = Some(action.to_string());
+        self.open_skills_selector();
+    }
+
+    fn confirm_skills_selection(&mut self) {
+        let selected_skill = self.skills_options.get(self.selected_skills_index).cloned();
+        if let Some((name, _desc)) = selected_skill {
+            let action = self.pending_skill_action.clone();
+            self.input_mode = InputMode::Chat;
+            self.skills_options.clear();
+            self.selected_skills_index = 0;
+            self.pending_skill_action = None;
+            
+            match action.as_deref() {
+                Some("show") => {
+                    self.input = format!("/skills show {}", name);
+                    self.send_message();
+                }
+                Some("run") => {
+                    self.input = format!("/skills run {}", name);
+                    self.push_system_message(&format!("已选择 skill: {}，请输入参数后回车执行", name));
+                }
+                Some("remove") => {
+                    let registry = SkillRegistry::new(std::path::Path::new("."));
+                    match registry.remove_project_skill(&name) {
+                        Ok(()) => self.push_success_message(&format!("Skill {} 已删除", name)),
+                        Err(error) => self.push_error_message(&format!("删除 skill 失败: {}", error)),
+                    }
+                }
+                _ => {
+                    self.input = format!("/skills show {}", name);
+                    self.send_message();
+                }
+            }
+        }
+    }
+
+    fn finish_skill_input(&mut self) {
+        self.input_mode = InputMode::Chat;
+        self.pending_skill_action = None;
+        self.send_message();
     }
 
     fn mcp_command(&mut self, input: &str) {
@@ -858,47 +1102,98 @@ impl App {
         let store = McpConfigStore::new(std::path::Path::new("."));
 
         if parts.len() <= 1 || parts[1] == "list" {
-            match store.load() {
-                Ok(config) if config.mcp.is_empty() => self.push_system_message("当前没有配置 MCP 服务。"),
-                Ok(config) => {
-                    let summary = config.mcp
-                        .into_iter()
-                        .map(|(name, server)| format!("- {}: {} {}", name, if server.enabled { "[on]" } else { "[off]" }, server.url))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    self.push_system_message(&format!("MCP 服务:\n{}", summary));
-                }
-                Err(error) => self.push_system_message(&format!("读取 MCP 配置失败: {}", error)),
-            }
+            self.open_mcp_selector();
             return;
         }
 
         match parts.get(1).copied() {
             Some("show") => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /mcp show <name>");
-                    return;
-                };
-                match store.get(name) {
-                    Ok(server) => self.push_system_message(&format!(
-                        "Name: {}\nType: {}\nEnabled: {}\nURL: {}",
-                        name, server.server_type, server.enabled, server.url
-                    )),
-                    Err(error) => self.push_system_message(&format!("读取 MCP 服务失败: {}", error)),
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    match store.get(name) {
+                        Ok(server) => self.push_system_message(&format!(
+                            "Name: {}\nType: {}\nEnabled: {}\nURL: {}",
+                            name, server.server_type, server.enabled, server.url
+                        )),
+                        Err(error) => self.push_error_message(&format!("读取 MCP 服务失败: {}", error)),
+                    }
+                } else {
+                    self.open_mcp_selector_for_action("show");
                 }
             }
             Some("remove") => {
-                let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /mcp remove <name>");
-                    return;
-                };
-                match store.remove(name) {
-                    Ok(()) => self.push_system_message(&format!("MCP 服务 {} 已删除。", name)),
-                    Err(error) => self.push_system_message(&format!("删除 MCP 服务失败: {}", error)),
+                if parts.len() > 2 {
+                    let name = parts[2];
+                    match store.remove(name) {
+                        Ok(()) => self.push_success_message(&format!("MCP 服务 {} 已删除", name)),
+                        Err(error) => self.push_error_message(&format!("删除 MCP 服务失败: {}", error)),
+                    }
+                } else {
+                    self.open_mcp_selector_for_action("remove");
                 }
             }
             _ => self.push_system_message("用法: /mcp list|show|remove"),
         }
+    }
+
+    fn open_mcp_selector(&mut self) {
+        let store = McpConfigStore::new(std::path::Path::new("."));
+        match store.load() {
+            Ok(config) if config.mcp.is_empty() => self.push_system_message("当前没有配置 MCP 服务"),
+            Ok(config) => {
+                self.mcp_options = config.mcp
+                    .into_iter()
+                    .map(|(name, server)| (name, server.url, server.enabled))
+                    .collect();
+                self.selected_mcp_index = 0;
+                self.input_mode = InputMode::McpSelect;
+            }
+            Err(error) => self.push_error_message(&format!("读取 MCP 配置失败: {}", error)),
+        }
+    }
+
+    fn open_mcp_selector_for_action(&mut self, action: &str) {
+        self.pending_mcp_action = Some(action.to_string());
+        self.open_mcp_selector();
+    }
+
+    fn confirm_mcp_selection(&mut self) {
+        let selected_mcp = self.mcp_options.get(self.selected_mcp_index).cloned();
+        if let Some((name, url, enabled)) = selected_mcp {
+            let action = self.pending_mcp_action.clone();
+            self.input_mode = InputMode::Chat;
+            self.mcp_options.clear();
+            self.selected_mcp_index = 0;
+            self.pending_mcp_action = None;
+            
+            match action.as_deref() {
+                Some("show") => {
+                    self.push_system_message(&format!(
+                        "MCP 服务: {}\nURL: {}\n状态: {}",
+                        name, url, if enabled { "启用" } else { "禁用" }
+                    ));
+                }
+                Some("remove") => {
+                    let store = McpConfigStore::new(std::path::Path::new("."));
+                    match store.remove(&name) {
+                        Ok(()) => self.push_success_message(&format!("MCP 服务 {} 已删除", name)),
+                        Err(error) => self.push_error_message(&format!("删除失败: {}", error)),
+                    }
+                }
+                _ => {
+                    self.push_system_message(&format!(
+                        "MCP 服务: {}\nURL: {}\n状态: {}",
+                        name, url, if enabled { "启用" } else { "禁用" }
+                    ));
+                }
+            }
+        }
+    }
+
+    fn finish_mcp_input(&mut self) {
+        self.input_mode = InputMode::Chat;
+        self.pending_mcp_action = None;
+        self.send_message();
     }
 
     fn tools_command(&mut self) {
@@ -1537,17 +1832,35 @@ match self.provider_store.save_named(name, &config, true) {
         self.input.clear();
         self.pending_base_url = None;
         self.pending_provider_name = None;
+        self.pending_skill_action = None;
+        self.pending_mcp_action = None;
+        self.pending_checkpoint_action = None;
         if self.input_mode == InputMode::ProviderSelect {
-            self.push_system_message("已取消 provider 选择。");
+            self.push_system_message("已取消 provider 选择");
         }
         if self.input_mode == InputMode::ProviderRename {
-            self.push_system_message("已取消 provider 重命名。");
+            self.push_system_message("已取消 provider 重命名");
         }
         if self.input_mode == InputMode::ModelSelect {
-            self.push_system_message("已取消模型选择。");
+            self.push_system_message("已取消模型选择");
         }
         if matches!(self.input_mode, InputMode::LoginBaseUrl | InputMode::LoginApiKey) {
-            self.push_system_message("已取消登录配置。");
+            self.push_system_message("已取消登录配置");
+        }
+        if self.input_mode == InputMode::SkillsSelect {
+            self.push_system_message("已取消 skills 选择");
+            self.skills_options.clear();
+            self.selected_skills_index = 0;
+        }
+        if self.input_mode == InputMode::McpSelect {
+            self.push_system_message("已取消 MCP 选择");
+            self.mcp_options.clear();
+            self.selected_mcp_index = 0;
+        }
+        if self.input_mode == InputMode::CheckpointSelect {
+            self.push_system_message("已取消检查点选择");
+            self.checkpoint_options.clear();
+            self.selected_checkpoint_index = 0;
         }
         self.filtered_level1.clear();
         self.filtered_sub_commands.clear();
@@ -1562,6 +1875,26 @@ match self.provider_store.save_named(name, &config, true) {
         self.messages.push(Message {
             role: MessageRole::System,
             content: content.to_string(),
+            timestamp,
+        });
+        self.scroll_to_bottom();
+    }
+
+    fn push_success_message(&mut self, content: &str) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        self.messages.push(Message {
+            role: MessageRole::System,
+            content: format!("[成功] {}", content),
+            timestamp,
+        });
+        self.scroll_to_bottom();
+    }
+
+    fn push_error_message(&mut self, content: &str) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        self.messages.push(Message {
+            role: MessageRole::System,
+            content: format!("[错误] {}", content),
             timestamp,
         });
         self.scroll_to_bottom();
@@ -1679,6 +2012,12 @@ match self.provider_store.save_named(name, &config, true) {
                     InputMode::ConnectApiKey => self.finish_connect(),
                     InputMode::CommandLevel1 => self.confirm_level1_selection(),
                     InputMode::CommandLevel2 => self.confirm_sub_selection(),
+                    InputMode::SkillsSelect => self.confirm_skills_selection(),
+                    InputMode::McpSelect => self.confirm_mcp_selection(),
+                    InputMode::CheckpointSelect => self.confirm_checkpoint_selection(),
+                    InputMode::SkillInput => self.finish_skill_input(),
+                    InputMode::McpInput => self.finish_mcp_input(),
+                    InputMode::CheckpointInput => self.finish_checkpoint_input(),
                     _ => self.send_message(),
                 }
             }
@@ -1728,6 +2067,30 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_sub_index += 1;
                 }
             }
+            KeyCode::Up if self.input_mode == InputMode::SkillsSelect => {
+                self.selected_skills_index = self.selected_skills_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::SkillsSelect => {
+                if self.selected_skills_index + 1 < self.skills_options.len() {
+                    self.selected_skills_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::McpSelect => {
+                self.selected_mcp_index = self.selected_mcp_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::McpSelect => {
+                if self.selected_mcp_index + 1 < self.mcp_options.len() {
+                    self.selected_mcp_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::CheckpointSelect => {
+                self.selected_checkpoint_index = self.selected_checkpoint_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::CheckpointSelect => {
+                if self.selected_checkpoint_index + 1 < self.checkpoint_options.len() {
+                    self.selected_checkpoint_index += 1;
+                }
+            }
             KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
                 self.input_mode = InputMode::CommandLevel1;
                 self.filtered_level1 = self.level1_commands.clone();
@@ -1745,7 +2108,7 @@ match self.provider_store.save_named(name, &config, true) {
                     self.input.push(c);
                 }
             }
-            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect) => {
+            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect) => {
                 if self.input_mode == InputMode::CommandLevel1 {
                     self.input.pop();
                     if self.input.is_empty() || !self.input.starts_with('/') {
@@ -1932,6 +2295,12 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::ConnectApiKey => "输入 API Key...",
             InputMode::CommandLevel1 => "输入命令名称进行搜索...",
             InputMode::CommandLevel2 => "输入子命令名称进行搜索...",
+            InputMode::SkillsSelect => "使用方向键选择 Skill...",
+            InputMode::McpSelect => "使用方向键选择 MCP 服务...",
+            InputMode::CheckpointSelect => "使用方向键选择检查点...",
+            InputMode::SkillInput => "输入 Skill 参数...",
+            InputMode::McpInput => "输入 MCP 参数...",
+            InputMode::CheckpointInput => "输入检查点名称...",
         };
         Span::styled(placeholder, Style::default().fg(Color::Rgb(100, 100, 120)))
     } else {
@@ -1946,7 +2315,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[1]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect) {
         let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[1].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -1962,6 +2331,18 @@ fn ui(frame: &mut Frame, app: &App) {
 
     if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
         render_command_selector(frame, app, chunks[1]);
+    }
+
+    if app.input_mode == InputMode::SkillsSelect {
+        render_skills_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::McpSelect {
+        render_mcp_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::CheckpointSelect {
+        render_checkpoint_selector(frame, app);
     }
 }
 
@@ -2215,6 +2596,130 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
                 Style::default().fg(Color::Rgb(200, 200, 210))
             };
             Line::styled(format!("{}{}{} - {}", prefix, sub.name, input_hint, sub.description), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_skills_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 60, 40);
+    let block = Block::default()
+        .title(" Skills 列表 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(80, 160, 200)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let visible_count = inner.height as usize;
+    let start = app.selected_skills_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.skills_options.len());
+
+    let action = app.pending_skill_action.as_deref().unwrap_or("show");
+    let hint = match action {
+        "show" => "查看详情",
+        "run" => "运行",
+        "remove" => "删除",
+        _ => "选择",
+    };
+
+    let lines: Vec<Line> = app.skills_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, (name, desc))| {
+            let index = start + offset;
+            let is_selected = index == app.selected_skills_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{} - {}", prefix, name, desc), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+    
+    let hint_line = Line::styled(
+        format!("Enter: {} | Esc: 取消", hint),
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: area.x,
+        y: area.y + area.height,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
+}
+
+fn render_mcp_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 60, 40);
+    let block = Block::default()
+        .title(" MCP 服务列表 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(80, 160, 200)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let visible_count = inner.height as usize;
+    let start = app.selected_mcp_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.mcp_options.len());
+
+    let lines: Vec<Line> = app.mcp_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, (name, url, enabled))| {
+            let index = start + offset;
+            let is_selected = index == app.selected_mcp_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let status = if *enabled { "[on]" } else { "[off]" };
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{} {} {}", prefix, name, status, url), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 50, 35);
+    let block = Block::default()
+        .title(" 检查点列表 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(100, 180, 160)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let visible_count = inner.height as usize;
+    let start = app.selected_checkpoint_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.checkpoint_options.len());
+
+    let action = app.pending_checkpoint_action.as_deref().unwrap_or("show");
+    let _hint = match action {
+        "restore" => "恢复",
+        "delete" => "删除",
+        _ => "选择",
+    };
+
+    let lines: Vec<Line> = app.checkpoint_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, name)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_checkpoint_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{}", prefix, name), style)
         })
         .collect();
 
