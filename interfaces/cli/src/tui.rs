@@ -58,9 +58,13 @@ struct App {
     task_tx: Sender<AsyncResult>,
     task_rx: Receiver<AsyncResult>,
     busy_message: String,
-    all_commands: Vec<CommandDef>,
-    filtered_commands: Vec<CommandDef>,
-    selected_command_index: usize,
+    execution_mode: ExecutionMode,
+    level1_commands: Vec<CommandDef>,
+    filtered_level1: Vec<CommandDef>,
+    selected_level1_index: usize,
+    current_level1: Option<CommandDef>,
+    filtered_sub_commands: Vec<SubCommandDef>,
+    selected_sub_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,42 +77,105 @@ enum InputMode {
     ModelSelect,
     ConnectSelect,
     ConnectApiKey,
-    CommandSelect,
+    CommandLevel1,
+    CommandLevel2,
 }
 
 #[derive(Clone)]
 struct CommandDef {
     name: String,
     description: String,
-    category: String,
+    sub_commands: Vec<SubCommandDef>,
+    direct_execute: bool,
+}
+
+#[derive(Clone)]
+struct SubCommandDef {
+    name: String,
+    description: String,
+    needs_input: bool,
 }
 
 impl CommandDef {
-    fn new(name: &str, description: &str, category: &str) -> Self {
+    fn simple(name: &str, description: &str) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
-            category: category.to_string(),
+            sub_commands: Vec::new(),
+            direct_execute: true,
+        }
+    }
+
+    fn with_subs(name: &str, description: &str, subs: Vec<SubCommandDef>) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            sub_commands: subs,
+            direct_execute: false,
         }
     }
 }
 
-fn get_all_commands() -> Vec<CommandDef> {
+impl SubCommandDef {
+    fn new(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            needs_input: false,
+        }
+    }
+
+    fn with_input(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            needs_input: true,
+        }
+    }
+}
+
+fn get_level1_commands() -> Vec<CommandDef> {
     vec![
-        CommandDef::new("/login", "配置 Provider 和 API Key", "provider"),
-        CommandDef::new("/models", "选择当前使用的模型", "provider"),
-        CommandDef::new("/providers", "管理 Provider 列表", "provider"),
-        CommandDef::new("/provider-rename", "重命名 Provider", "provider"),
-        CommandDef::new("/provider-remove", "删除 Provider", "provider"),
-        CommandDef::new("/connect", "快速接入预设 Provider", "provider"),
-        CommandDef::new("/skills", "查看可用 Skills", "skill"),
-        CommandDef::new("/skill show", "查看 Skill 详情", "skill"),
-        CommandDef::new("/skill run", "运行 Skill", "skill"),
-        CommandDef::new("/skill add", "添加 Skill", "skill"),
-        CommandDef::new("/skill remove", "删除 Skill", "skill"),
-        CommandDef::new("/mcp", "查看 MCP 服务列表", "mcp"),
-        CommandDef::new("/mcp-show", "查看 MCP 服务详情", "mcp"),
-        CommandDef::new("/mcp-remove", "删除 MCP 服务", "mcp"),
+        CommandDef::simple("/init", "初始化项目配置"),
+        CommandDef::with_subs("/profile", "配置管理", vec![
+            SubCommandDef::new("ls", "列出所有配置"),
+            SubCommandDef::new("use", "切换当前配置"),
+            SubCommandDef::new("show", "显示当前配置详情"),
+        ]),
+        CommandDef::with_subs("/plugin", "插件管理", vec![
+            SubCommandDef::new("list", "列出已安装插件"),
+            SubCommandDef::with_input("install", "安装插件"),
+            SubCommandDef::with_input("remove", "删除插件"),
+        ]),
+        CommandDef::with_subs("/checkpoint", "检查点管理", vec![
+            SubCommandDef::new("list", "列出检查点"),
+            SubCommandDef::new("restore", "恢复检查点"),
+            SubCommandDef::new("delete", "删除检查点"),
+        ]),
+        CommandDef::with_subs("/mode", "执行模式", vec![
+            SubCommandDef::new("plan", "规划模式"),
+            SubCommandDef::new("build", "构建模式"),
+            SubCommandDef::new("yolo", "自动执行模式"),
+        ]),
+        CommandDef::with_subs("/skills", "Skills 管理", vec![
+            SubCommandDef::new("list", "列出可用 Skills"),
+            SubCommandDef::with_input("show", "查看 Skill 详情"),
+            SubCommandDef::with_input("run", "运行 Skill"),
+            SubCommandDef::with_input("add", "添加 Skill"),
+            SubCommandDef::with_input("remove", "删除 Skill"),
+        ]),
+        CommandDef::with_subs("/mcp", "MCP 管理", vec![
+            SubCommandDef::new("list", "列出 MCP 服务"),
+            SubCommandDef::with_input("show", "查看 MCP 详情"),
+            SubCommandDef::with_input("remove", "删除 MCP 服务"),
+        ]),
+        CommandDef::simple("/providers", "管理 Provider"),
+        CommandDef::simple("/models", "选择模型"),
+        CommandDef::simple("/login", "配置 Provider 登录"),
+        CommandDef::simple("/connect", "快速接入 Provider"),
+        CommandDef::simple("/tools", "显示可用工具"),
+        CommandDef::simple("/help", "显示帮助"),
+        CommandDef::simple("/exit", "退出"),
     ]
 }
 
@@ -175,7 +242,7 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let current_provider = resolve_named_provider(&workdir);
         let (task_tx, task_rx) = mpsc::channel();
-        let all_commands = get_all_commands();
+        let level1_commands = get_level1_commands();
         
         Self {
             messages: vec![
@@ -211,9 +278,13 @@ impl App {
             task_tx,
             task_rx,
             busy_message: String::new(),
-            all_commands,
-            filtered_commands: Vec::new(),
-            selected_command_index: 0,
+            execution_mode: ExecutionMode::Build,
+            level1_commands,
+            filtered_level1: Vec::new(),
+            selected_level1_index: 0,
+            current_level1: None,
+            filtered_sub_commands: Vec::new(),
+            selected_sub_index: 0,
         }
     }
 
@@ -247,7 +318,7 @@ impl App {
             InputMode::ConnectSelect | InputMode::ConnectApiKey => {
                 return;
             }
-            InputMode::CommandSelect => {
+            InputMode::CommandLevel1 | InputMode::CommandLevel2 => {
                 return;
             }
         }
@@ -301,19 +372,20 @@ impl App {
     fn spawn_chat_task(&self, user_input: String) {
         let sender = self.task_tx.clone();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let mode = self.execution_mode;
         thread::spawn(move || {
-            let response = App::execute_user_message_in_background(&workdir, &user_input);
+            let response = App::execute_user_message_in_background(&workdir, &user_input, mode);
             let _ = sender.send(AsyncResult::ChatCompleted(response));
         });
     }
 
-    fn execute_user_message_in_background(workdir: &std::path::Path, user_input: &str) -> String {
+    fn execute_user_message_in_background(workdir: &std::path::Path, user_input: &str, mode: ExecutionMode) -> String {
         let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => runtime,
             Err(error) => return format!("后台运行时初始化失败: {}", error),
         };
         let _ = workdir;
-        match runtime.block_on(run_task(user_input, ExecutionMode::Build, crate::cmd::ApprovalPolicy::AutoDeny, 1)) {
+        match runtime.block_on(run_task(user_input, mode, crate::cmd::ApprovalPolicy::AutoDeny, 1)) {
             Ok(output) => format_chat_output(&output),
             Err(error) => format!("任务执行失败: {}", error),
         }
@@ -497,41 +569,77 @@ impl App {
     }
 
     fn handle_local_command(&mut self) -> bool {
-        if self.input == "/skills" {
-            self.show_skills_command();
+        let input = self.input.clone();
+        let trimmed = input.trim();
+        
+        if trimmed == "/init" {
+            self.init_command();
             self.input.clear();
             return true;
         }
 
-        if self.input.starts_with("/skill ") {
-            self.skill_command();
-            return true;
-        }
-
-        if self.input == "/mcp" {
-            self.show_mcp_command();
+        if trimmed.starts_with("/profile ") || trimmed == "/profile" {
+            self.profile_command(&input);
             self.input.clear();
             return true;
         }
 
-        if self.input.starts_with("/mcp-show ") {
-            self.show_single_mcp_command();
+        if trimmed.starts_with("/plugin ") || trimmed == "/plugin" {
+            self.plugin_command(&input);
+            self.input.clear();
             return true;
         }
 
-        if self.input.starts_with("/mcp-remove ") {
-            self.remove_mcp_command();
+        if trimmed.starts_with("/checkpoint ") || trimmed == "/checkpoint" {
+            self.checkpoint_command(&input);
+            self.input.clear();
             return true;
         }
 
-        if self.input == "/connect" {
+        if trimmed.starts_with("/mode ") || trimmed == "/mode" {
+            self.mode_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/skills ") || trimmed == "/skills" || trimmed == "/skill" {
+            self.skills_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/mcp ") || trimmed == "/mcp" {
+            self.mcp_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/tools" {
+            self.tools_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/help" {
+            self.help_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/exit" {
+            self.should_quit = true;
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/connect" {
             self.input_mode = InputMode::ConnectSelect;
             self.selected_connect_index = 0;
             self.input.clear();
             return true;
         }
 
-        if self.input.starts_with("/connect ") {
+        if trimmed.starts_with("/connect ") {
             self.connect_provider_command();
             return true;
         }
@@ -539,30 +647,171 @@ impl App {
         false
     }
 
-    fn show_skills_command(&mut self) {
-        let registry = SkillRegistry::new(std::path::Path::new("."));
-        match registry.list() {
-            Ok(skills) if skills.is_empty() => self.push_system_message("当前没有可用 skills。"),
-            Ok(skills) => {
-                let summary = skills
-                    .into_iter()
-                    .map(|skill| format!("- {}: {} ({})", skill.name, skill.description, skill.path.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.push_system_message(&format!("可用 skills:\n{}", summary));
+    fn init_command(&mut self) {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let sacode_dir = workdir.join(".sacode");
+        
+        if sacode_dir.exists() {
+            self.push_system_message(".sacode 目录已存在。如需重新初始化，请先删除该目录。");
+            return;
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&sacode_dir) {
+            self.push_system_message(&format!("创建 .sacode 目录失败: {}", e));
+            return;
+        }
+
+        let config_path = sacode_dir.join("config.json");
+        let default_config = serde_json::json!({
+            "providers": {},
+            "current": ""
+        });
+        
+        if let Err(e) = std::fs::write(&config_path, default_config.to_string()) {
+            self.push_system_message(&format!("创建 config.json 失败: {}", e));
+            return;
+        }
+
+        self.push_system_message(&format!(
+            "项目已初始化。\n配置文件: {}\n请使用 /login 配置 Provider。",
+            config_path.display()
+        ));
+    }
+
+    fn profile_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("ls");
+
+        match sub {
+            "ls" => {
+                let providers = self.provider_store.load_catalog()
+                    .ok()
+                    .flatten()
+                    .map(|c| c.providers.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if providers.is_empty() {
+                    self.push_system_message("当前没有配置任何 Provider。");
+                } else {
+                    let current = self.current_provider.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+                    let list = providers.iter()
+                        .map(|name| {
+                            if name == &current {
+                                format!("* {}", name)
+                            } else {
+                                format!("  {}", name)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.push_system_message(&format!("Provider 配置列表:\n{}\n当前: {}", list, current));
+                }
             }
-            Err(error) => self.push_system_message(&format!("读取 skills 失败: {}", error)),
+            "use" => {
+                let Some(name) = parts.get(2) else {
+                    self.push_system_message("用法: /profile use <name>");
+                    return;
+                };
+                self.switch_provider_by_name(name);
+            }
+            "show" => {
+                let default_name = self.current_provider.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+                let name = parts.get(2).copied().unwrap_or(&default_name);
+                if name.is_empty() {
+                    self.push_system_message("用法: /profile show [name]");
+                    return;
+                }
+                self.show_provider_detail(name);
+            }
+            _ => self.push_system_message("用法: /profile ls|use|show"),
         }
     }
 
-    fn skill_command(&mut self) {
-        let parts: Vec<&str> = self.input.split_whitespace().collect();
+    fn plugin_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("list");
+
+        match sub {
+            "list" => {
+                self.push_system_message("插件系统暂未实现。\n可用的内置功能:\n- Skills: /skills list\n- MCP: /mcp list");
+            }
+            "install" | "remove" => {
+                self.push_system_message("插件安装/卸载功能暂未实现。");
+            }
+            _ => self.push_system_message("用法: /plugin list|install|remove"),
+        }
+    }
+
+    fn checkpoint_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("list");
+
+        match sub {
+            "list" => {
+                self.push_system_message("检查点功能暂未实现。\n检查点可用于保存和恢复对话状态。");
+            }
+            "restore" | "delete" => {
+                self.push_system_message("检查点恢复/删除功能暂未实现。");
+            }
+            _ => self.push_system_message("用法: /checkpoint list|restore|delete"),
+        }
+    }
+
+    fn mode_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("");
+
+        match sub {
+            "plan" => {
+                self.execution_mode = ExecutionMode::Plan;
+                self.push_system_message("执行模式已切换为 Plan（规划模式）。\nAI 将先规划步骤，再逐步执行。");
+            }
+            "build" => {
+                self.execution_mode = ExecutionMode::Build;
+                self.push_system_message("执行模式已切换为 Build（构建模式）。\nAI 将直接执行任务。");
+            }
+            "yolo" => {
+                self.execution_mode = ExecutionMode::Yolo;
+                self.push_system_message("执行模式已切换为 Yolo（自动执行模式）。\nAI 将自动执行，减少确认步骤。");
+            }
+            "" => {
+                let mode_name = match self.execution_mode {
+                    ExecutionMode::Plan => "plan",
+                    ExecutionMode::Build => "build",
+                    ExecutionMode::Yolo => "yolo",
+                };
+                self.push_system_message(&format!(
+                    "当前执行模式: {}\n用法: /mode plan|build|yolo",
+                    mode_name
+                ));
+            }
+            _ => self.push_system_message("用法: /mode plan|build|yolo"),
+        }
+    }
+
+    fn skills_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
         let registry = SkillRegistry::new(std::path::Path::new("."));
+        
+        if parts.len() <= 1 || parts[1] == "list" {
+            match registry.list() {
+                Ok(skills) if skills.is_empty() => self.push_system_message("当前没有可用 skills。"),
+                Ok(skills) => {
+                    let summary = skills
+                        .into_iter()
+                        .map(|skill| format!("- {}: {}", skill.name, skill.description))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.push_system_message(&format!("可用 skills:\n{}", summary));
+                }
+                Err(error) => self.push_system_message(&format!("读取 skills 失败: {}", error)),
+            }
+            return;
+        }
+
         match parts.get(1).copied() {
             Some("show") => {
                 let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skill show <name>");
-                    self.input.clear();
+                    self.push_system_message("用法: /skills show <name>");
                     return;
                 };
                 match registry.get(name) {
@@ -572,8 +821,7 @@ impl App {
             }
             Some("run") => {
                 let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skill run <name> [args...]");
-                    self.input.clear();
+                    self.push_system_message("用法: /skills run <name> [args...]");
                     return;
                 };
                 match registry.render_prompt(name, &parts[3..].join(" "), std::path::Path::new(".")) {
@@ -583,8 +831,7 @@ impl App {
             }
             Some("add") => {
                 if parts.len() < 5 {
-                    self.push_system_message("用法: /skill add <name> <description> <prompt>");
-                    self.input.clear();
+                    self.push_system_message("用法: /skills add <name> <description> <prompt>");
                     return;
                 }
                 match registry.save_project_skill(parts[2], parts[3], &parts[4..].join(" ")) {
@@ -594,8 +841,7 @@ impl App {
             }
             Some("remove") => {
                 let Some(name) = parts.get(2) else {
-                    self.push_system_message("用法: /skill remove <name>");
-                    self.input.clear();
+                    self.push_system_message("用法: /skills remove <name>");
                     return;
                 };
                 match registry.remove_project_skill(name) {
@@ -603,59 +849,133 @@ impl App {
                     Err(error) => self.push_system_message(&format!("删除 skill 失败: {}", error)),
                 }
             }
-            _ => self.push_system_message("可用命令: /skill show|run|add|remove ..."),
+            _ => self.push_system_message("用法: /skills list|show|run|add|remove"),
         }
-        self.input.clear();
     }
 
-    fn show_mcp_command(&mut self) {
+    fn mcp_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
         let store = McpConfigStore::new(std::path::Path::new("."));
-        match store.load() {
-            Ok(config) if config.mcp.is_empty() => self.push_system_message("当前没有配置 MCP 服务。"),
-            Ok(config) => {
-                let summary = config
-                    .mcp
-                    .into_iter()
-                    .map(|(name, server)| format!("- {}: {} {}", name, if server.enabled { "enabled" } else { "disabled" }, server.url))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.push_system_message(&format!("MCP 服务:\n{}", summary));
+
+        if parts.len() <= 1 || parts[1] == "list" {
+            match store.load() {
+                Ok(config) if config.mcp.is_empty() => self.push_system_message("当前没有配置 MCP 服务。"),
+                Ok(config) => {
+                    let summary = config.mcp
+                        .into_iter()
+                        .map(|(name, server)| format!("- {}: {} {}", name, if server.enabled { "[on]" } else { "[off]" }, server.url))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.push_system_message(&format!("MCP 服务:\n{}", summary));
+                }
+                Err(error) => self.push_system_message(&format!("读取 MCP 配置失败: {}", error)),
             }
-            Err(error) => self.push_system_message(&format!("读取 MCP 配置失败: {}", error)),
+            return;
+        }
+
+        match parts.get(1).copied() {
+            Some("show") => {
+                let Some(name) = parts.get(2) else {
+                    self.push_system_message("用法: /mcp show <name>");
+                    return;
+                };
+                match store.get(name) {
+                    Ok(server) => self.push_system_message(&format!(
+                        "Name: {}\nType: {}\nEnabled: {}\nURL: {}",
+                        name, server.server_type, server.enabled, server.url
+                    )),
+                    Err(error) => self.push_system_message(&format!("读取 MCP 服务失败: {}", error)),
+                }
+            }
+            Some("remove") => {
+                let Some(name) = parts.get(2) else {
+                    self.push_system_message("用法: /mcp remove <name>");
+                    return;
+                };
+                match store.remove(name) {
+                    Ok(()) => self.push_system_message(&format!("MCP 服务 {} 已删除。", name)),
+                    Err(error) => self.push_system_message(&format!("删除 MCP 服务失败: {}", error)),
+                }
+            }
+            _ => self.push_system_message("用法: /mcp list|show|remove"),
         }
     }
 
-    fn show_single_mcp_command(&mut self) {
-        let parts: Vec<&str> = self.input.split_whitespace().collect();
-        let Some(name) = parts.get(1) else {
-            self.push_system_message("用法: /mcp-show <name>");
-            self.input.clear();
-            return;
-        };
-        let store = McpConfigStore::new(std::path::Path::new("."));
-        match store.get(name) {
-            Ok(server) => self.push_system_message(&format!(
-                "Name: {}\nType: {}\nEnabled: {}\nURL: {}",
-                name, server.server_type, server.enabled, server.url
-            )),
-            Err(error) => self.push_system_message(&format!("读取 MCP 服务失败: {}", error)),
-        }
-        self.input.clear();
+    fn tools_command(&mut self) {
+        self.push_system_message(
+            "可用工具类别:\n\
+            - 文件操作: Read, Write, Edit, Glob, Grep\n\
+            - 命令执行: Bash\n\
+            - 任务管理: Task\n\
+            - 交互式: Question\n\
+            - 网络请求: WebFetch\n\
+            - Skills: Skill\n\
+            \n工具由 runtime 自动注册，根据配置动态可用。"
+        );
     }
 
-    fn remove_mcp_command(&mut self) {
-        let parts: Vec<&str> = self.input.split_whitespace().collect();
-        let Some(name) = parts.get(1) else {
-            self.push_system_message("用法: /mcp-remove <name>");
-            self.input.clear();
-            return;
-        };
-        let store = McpConfigStore::new(std::path::Path::new("."));
-        match store.remove(name) {
-            Ok(()) => self.push_system_message(&format!("MCP 服务 {} 已删除。", name)),
-            Err(error) => self.push_system_message(&format!("删除 MCP 服务失败: {}", error)),
+    fn help_command(&mut self) {
+        self.push_system_message(
+            "SaCode 帮助:\n\
+            \n一级命令:\n\
+            /init      - 初始化项目配置\n\
+            /profile   - 配置管理 (ls/use/show)\n\
+            /plugin    - 插件管理 (list/install/remove)\n\
+            /checkpoint - 检查点管理 (list/restore/delete)\n\
+            /mode      - 执行模式 (plan/build/yolo)\n\
+            /skills    - Skills 管理 (list/show/run/add/remove)\n\
+            /mcp       - MCP 管理 (list/show/remove)\n\
+            /providers - 管理 Provider\n\
+            /models    - 选择模型\n\
+            /login     - 配置 Provider 登录\n\
+            /connect   - 快速接入 Provider\n\
+            /tools     - 显示可用工具\n\
+            /help      - 显示帮助\n\
+            /exit      - 退出\n\
+            \n快捷键:\n\
+            Ctrl+Q - 退出\n\
+            Esc    - 清空输入/取消选择\n\
+            输入 /  - 显示命令列表"
+        );
+    }
+
+    fn switch_provider_by_name(&mut self, name: &str) {
+        let catalog = self.provider_store.load_catalog()
+            .ok()
+            .flatten();
+        
+        match catalog {
+            Some(c) if c.providers.contains_key(name) => {
+                let config = c.providers.get(name).cloned().unwrap();
+                self.current_provider = Some(crate::provider_config::NamedProviderConfig {
+                    name: name.to_string(),
+                    config,
+                });
+                self.push_system_message(&format!("Provider 已切换为 {}。", name));
+            }
+            _ => self.push_system_message(&format!("Provider {} 不存在。", name)),
         }
-        self.input.clear();
+    }
+
+    fn show_provider_detail(&mut self, name: &str) {
+        match self.sacode_store.provider(name) {
+            Ok(Some(spec)) => {
+                let current_model = self.current_provider
+                    .as_ref()
+                    .filter(|p| p.name == name)
+                    .map(|p| p.config.model.clone())
+                    .unwrap_or_else(|| spec.models.keys().next().cloned().unwrap_or_default());
+                self.push_system_message(&format!(
+                    "Provider: {}\nBase URL: {}\nAPI Key: {}\nModels: {}\n当前模型: {}",
+                    name,
+                    spec.base_url,
+                    if spec.api_key.is_empty() { "未配置" } else { "已配置" },
+                    spec.models.keys().cloned().collect::<Vec<_>>().join(", "),
+                    current_model
+                ));
+            }
+            _ => self.push_system_message(&format!("Provider {} 不存在或无法读取。", name)),
+}
     }
 
     fn connect_provider_command(&mut self) {
@@ -1229,10 +1549,11 @@ match self.provider_store.save_named(name, &config, true) {
         if matches!(self.input_mode, InputMode::LoginBaseUrl | InputMode::LoginApiKey) {
             self.push_system_message("已取消登录配置。");
         }
-        if self.input_mode == InputMode::CommandSelect {
-            self.filtered_commands.clear();
-            self.selected_command_index = 0;
-        }
+        self.filtered_level1.clear();
+        self.filtered_sub_commands.clear();
+        self.selected_level1_index = 0;
+        self.selected_sub_index = 0;
+        self.current_level1 = None;
         self.input_mode = InputMode::Chat;
     }
 
@@ -1260,33 +1581,72 @@ match self.provider_store.save_named(name, &config, true) {
         }
     }
 
-    fn filter_commands(&mut self) {
+    fn filter_level1_commands(&mut self) {
         let query = self.input.trim_start_matches('/').to_lowercase();
         if query.is_empty() {
-            self.filtered_commands = self.all_commands.clone();
+            self.filtered_level1 = self.level1_commands.clone();
         } else {
-            self.filtered_commands = self.all_commands
+            self.filtered_level1 = self.level1_commands
                 .iter()
                 .filter(|cmd| {
-                    let name_lower = cmd.name.to_lowercase();
-                    let desc_lower = cmd.description.to_lowercase();
-                    let cat_lower = cmd.category.to_lowercase();
-                    fuzzy_match(&query, &name_lower)
-                        || fuzzy_match(&query, &desc_lower)
-                        || fuzzy_match(&query, &cat_lower)
+                    fuzzy_match(&query, &cmd.name.to_lowercase())
+                        || fuzzy_match(&query, &cmd.description.to_lowercase())
                 })
                 .cloned()
                 .collect();
         }
-        self.selected_command_index = 0;
+        self.selected_level1_index = 0;
     }
 
-    fn confirm_command_selection(&mut self) {
-        if let Some(cmd) = self.filtered_commands.get(self.selected_command_index) {
-            self.input = cmd.name.clone();
+    fn filter_sub_commands(&mut self) {
+        let query = self.input.split_whitespace().last().unwrap_or("").to_lowercase();
+        if let Some(level1) = &self.current_level1 {
+            if query.is_empty() {
+                self.filtered_sub_commands = level1.sub_commands.clone();
+            } else {
+                self.filtered_sub_commands = level1.sub_commands
+                    .iter()
+                    .filter(|sub| {
+                        fuzzy_match(&query, &sub.name.to_lowercase())
+                            || fuzzy_match(&query, &sub.description.to_lowercase())
+                    })
+                    .cloned()
+                    .collect();
+            }
+            self.selected_sub_index = 0;
+        }
+    }
+
+    fn confirm_level1_selection(&mut self) {
+        if let Some(cmd) = self.filtered_level1.get(self.selected_level1_index) {
+            if cmd.direct_execute {
+                self.input = cmd.name.clone();
+                self.input_mode = InputMode::Chat;
+                self.filtered_level1.clear();
+                self.selected_level1_index = 0;
+            } else {
+                self.current_level1 = Some(cmd.clone());
+                self.filtered_sub_commands = cmd.sub_commands.clone();
+                self.selected_sub_index = 0;
+                self.input = cmd.name.clone() + " ";
+                self.input_mode = InputMode::CommandLevel2;
+            }
+        }
+    }
+
+    fn confirm_sub_selection(&mut self) {
+        if let (Some(level1), Some(sub)) = (
+            &self.current_level1,
+            self.filtered_sub_commands.get(self.selected_sub_index),
+        ) {
+            self.input = format!("{} {}", level1.name, sub.name);
+            if sub.needs_input {
+                self.input.push(' ');
+            }
             self.input_mode = InputMode::Chat;
-            self.filtered_commands.clear();
-            self.selected_command_index = 0;
+            self.filtered_sub_commands.clear();
+            self.selected_sub_index = 0;
+            self.current_level1 = None;
         }
     }
 
@@ -1296,10 +1656,18 @@ match self.provider_store.save_named(name, &config, true) {
                 self.should_quit = true;
             }
             KeyCode::Esc => {
-                if self.input_mode == InputMode::CommandSelect {
+                if self.input_mode == InputMode::CommandLevel2 {
+                    self.input_mode = InputMode::CommandLevel1;
+                    self.filtered_sub_commands.clear();
+                    self.selected_sub_index = 0;
+                    if let Some(level1) = &self.current_level1 {
+                        self.input = level1.name.clone();
+                    }
+                } else if self.input_mode == InputMode::CommandLevel1 {
                     self.input_mode = InputMode::Chat;
-                    self.filtered_commands.clear();
-                    self.selected_command_index = 0;
+                    self.filtered_level1.clear();
+                    self.selected_level1_index = 0;
+                    self.current_level1 = None;
                     self.input.clear();
                 } else {
                     self.cancel_current_mode();
@@ -1309,7 +1677,8 @@ match self.provider_store.save_named(name, &config, true) {
                 match self.input_mode {
                     InputMode::ConnectSelect => self.confirm_connect_selection(),
                     InputMode::ConnectApiKey => self.finish_connect(),
-                    InputMode::CommandSelect => self.confirm_command_selection(),
+                    InputMode::CommandLevel1 => self.confirm_level1_selection(),
+                    InputMode::CommandLevel2 => self.confirm_sub_selection(),
                     _ => self.send_message(),
                 }
             }
@@ -1343,37 +1712,60 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_connect_index += 1;
                 }
             }
-            KeyCode::Up if self.input_mode == InputMode::CommandSelect => {
-                self.selected_command_index = self.selected_command_index.saturating_sub(1);
+            KeyCode::Up if self.input_mode == InputMode::CommandLevel1 => {
+                self.selected_level1_index = self.selected_level1_index.saturating_sub(1);
             }
-            KeyCode::Down if self.input_mode == InputMode::CommandSelect => {
-                if self.selected_command_index + 1 < self.filtered_commands.len() {
-                    self.selected_command_index += 1;
+            KeyCode::Down if self.input_mode == InputMode::CommandLevel1 => {
+                if self.selected_level1_index + 1 < self.filtered_level1.len() {
+                    self.selected_level1_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::CommandLevel2 => {
+                self.selected_sub_index = self.selected_sub_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::CommandLevel2 => {
+                if self.selected_sub_index + 1 < self.filtered_sub_commands.len() {
+                    self.selected_sub_index += 1;
                 }
             }
             KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
-                self.input_mode = InputMode::CommandSelect;
-                self.filtered_commands = self.all_commands.clone();
-                self.selected_command_index = 0;
+                self.input_mode = InputMode::CommandLevel1;
+                self.filtered_level1 = self.level1_commands.clone();
+                self.selected_level1_index = 0;
                 self.input.push('/');
             }
             KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                if self.input_mode == InputMode::CommandSelect {
+                if self.input_mode == InputMode::CommandLevel1 {
                     self.input.push(c);
-                    self.filter_commands();
+                    self.filter_level1_commands();
+                } else if self.input_mode == InputMode::CommandLevel2 {
+                    self.input.push(c);
+                    self.filter_sub_commands();
                 } else {
                     self.input.push(c);
                 }
             }
             KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect) => {
-                if self.input_mode == InputMode::CommandSelect {
+                if self.input_mode == InputMode::CommandLevel1 {
                     self.input.pop();
                     if self.input.is_empty() || !self.input.starts_with('/') {
                         self.input_mode = InputMode::Chat;
-                        self.filtered_commands.clear();
-                        self.selected_command_index = 0;
+                        self.filtered_level1.clear();
+                        self.selected_level1_index = 0;
                     } else {
-                        self.filter_commands();
+                        self.filter_level1_commands();
+                    }
+                } else if self.input_mode == InputMode::CommandLevel2 {
+                    self.input.pop();
+                    if let Some(level1) = &self.current_level1 {
+                        if self.input == level1.name || !self.input.starts_with(&level1.name) {
+                            self.input_mode = InputMode::CommandLevel1;
+                            self.filtered_sub_commands.clear();
+                            self.selected_sub_index = 0;
+                            self.filter_level1_commands();
+                        } else {
+                            self.filter_sub_commands();
+                        }
                     }
                 } else {
                     self.input.pop();
@@ -1526,7 +1918,7 @@ fn ui(frame: &mut Frame, app: &App) {
         Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input_mode == InputMode::ModelSelect {
         Span::styled("使用上下方向键选择模型，按 Enter 确认", Style::default().fg(Color::Rgb(120, 170, 220)))
-    } else if app.input_mode == InputMode::CommandSelect {
+    } else if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
         Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input.is_empty() {
         let placeholder = match app.input_mode {
@@ -1538,7 +1930,8 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::ModelSelect => "使用方向键选择模型...",
             InputMode::ConnectSelect => "使用方向键选择预设 provider...",
             InputMode::ConnectApiKey => "输入 API Key...",
-            InputMode::CommandSelect => "输入命令名称进行搜索...",
+            InputMode::CommandLevel1 => "输入命令名称进行搜索...",
+            InputMode::CommandLevel2 => "输入子命令名称进行搜索...",
         };
         Span::styled(placeholder, Style::default().fg(Color::Rgb(100, 100, 120)))
     } else {
@@ -1553,7 +1946,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[1]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandSelect) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2) {
         let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[1].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -1567,7 +1960,7 @@ fn ui(frame: &mut Frame, app: &App) {
         render_connect_selector(frame, app);
     }
 
-    if app.input_mode == InputMode::CommandSelect {
+    if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
         render_command_selector(frame, app, chunks[1]);
     }
 }
@@ -1722,12 +2115,26 @@ fn centered_rect(area: ratatui::layout::Rect, width_percent: u16, height_percent
 }
 
 fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
-    if app.filtered_commands.is_empty() {
-        return;
+    match app.input_mode {
+        InputMode::CommandLevel1 => {
+            if app.filtered_level1.is_empty() {
+                return;
+            }
+            render_level1_selector(frame, app, input_area);
+        }
+        InputMode::CommandLevel2 => {
+            if app.filtered_sub_commands.is_empty() {
+                return;
+            }
+            render_level2_selector(frame, app, input_area);
+        }
+        _ => {}
     }
+}
 
-    let max_height = 10u16;
-    let popup_height = max_height.min(app.filtered_commands.len() as u16 + 2);
+fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
+    let max_height = 12u16;
+    let popup_height = max_height.min(app.filtered_level1.len() as u16 + 2);
     
     let popup_area = ratatui::layout::Rect {
         x: input_area.x,
@@ -1744,22 +2151,70 @@ fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::la
     frame.render_widget(block, popup_area);
 
     let visible_count = inner.height as usize;
-    let start = app.selected_command_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.filtered_commands.len());
+    let start = app.selected_level1_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.filtered_level1.len());
 
-    let lines: Vec<Line> = app.filtered_commands[start..end]
+    let lines: Vec<Line> = app.filtered_level1[start..end]
         .iter()
         .enumerate()
         .map(|(offset, cmd)| {
             let index = start + offset;
-            let is_selected = index == app.selected_command_index;
+            let is_selected = index == app.selected_level1_index;
             let prefix = if is_selected { "> " } else { "  " };
+            let has_subs = if cmd.sub_commands.is_empty() { "" } else { " +" };
             let style = if is_selected {
                 Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
             } else {
                 Style::default().fg(Color::Rgb(200, 200, 210))
             };
-            Line::styled(format!("{}{} - {}", prefix, cmd.name, cmd.description), style)
+            Line::styled(format!("{}{}{} - {}", prefix, cmd.name, has_subs, cmd.description), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
+    let max_height = 8u16;
+    let popup_height = max_height.min(app.filtered_sub_commands.len() as u16 + 2);
+    
+    let popup_area = ratatui::layout::Rect {
+        x: input_area.x,
+        y: input_area.y.saturating_sub(popup_height),
+        width: input_area.width,
+        height: popup_height,
+    };
+
+    let title = app.current_level1
+        .as_ref()
+        .map(|cmd| format!(" {} 子命令 ", cmd.name))
+        .unwrap_or_else(|| " 子命令 ".to_string());
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(80, 160, 200)));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let visible_count = inner.height as usize;
+    let start = app.selected_sub_index.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(app.filtered_sub_commands.len());
+
+    let lines: Vec<Line> = app.filtered_sub_commands[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, sub)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_sub_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let input_hint = if sub.needs_input { " ..." } else { "" };
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{}{} - {}", prefix, sub.name, input_hint, sub.description), style)
         })
         .collect();
 
