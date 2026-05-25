@@ -24,26 +24,74 @@ sacode --help                        # 显示帮助
 - **↑/↓**：滚动历史消息
 - **PageUp/PageDown**：快速滚动
 - **Enter**：发送任务
+- **/login**：配置 OpenAI 兼容 provider
+- **/providers**：查看并切换当前 provider
+- **/provider-rename**：重命名 provider
+- **/provider-remove**：删除非当前 provider
+- **/models**：拉取模型列表并选择默认模型
+
+TUI provider 配置流程：
+
+```text
+1. 输入 /login
+2. 输入 Base URL
+3. 输入 API Key
+4. 输入 /providers 并切换当前 provider
+5. 输入 /models
+6. 使用上下键选择模型并回车确认
+```
 
 ### 子命令
 
 ```bash
-sacode profile ls                    # 列出所有 profile
+sacode profile ls                    # 列出所有 profile（项目级）
 sacode profile use <name>            # 切换 profile
-sacode profile add <name> <config>   # 添加 profile
+sacode profile show                  # 显示当前 profile
 
-sacode plugin ls                     # 列出插件
-sacode plugin load <wasm_path>       # 加载 WASM 插件
-sacode plugin unload <name>          # 卸载插件
+sacode plugin ls                     # 列出插件与 MCP 工具
+
+sacode skill list                    # 列出 skills
+sacode skill show <name>             # 查看 skill 定义
+sacode skill add <name> <desc> <prompt> # 新增项目级 skill
+sacode skill remove <name>           # 删除项目级 skill
+sacode skill run <name> [args...]    # 渲染 skill prompt
+
+sacode mcp list                      # 列出 MCP 服务
+sacode mcp show <name>               # 查看 MCP 服务配置
+sacode mcp add <name> <url>          # 添加远程 MCP 服务
+sacode mcp enable <name>             # 启用 MCP 服务
+sacode mcp disable <name>            # 停用 MCP 服务
+sacode mcp remove <name>             # 删除 MCP 服务
+sacode mcp inspect <name>            # 探测远程 MCP 服务信息
+sacode mcp tools <name>              # 列出远程 MCP 工具
+sacode mcp call <server> <tool> <json> # 调用远程 MCP 工具
+
+sacode mistakes list                 # 列出错题本
+sacode mistakes show <index>         # 查看单条错题详情
 
 sacode checkpoint list               # 列出所有 checkpoint
 sacode checkpoint show <file>        # 查看 checkpoint 详情
 sacode checkpoint restore <file>     # 恢复 checkpoint
 sacode checkpoint clean              # 清理所有 checkpoint
 
-sacode init                          # 初始化项目配置
+sacode init                          # 初始化项目，生成 AGENTS.md
 sacode tui                           # 显式进入终端 TUI
 sacode repl                          # 进入 REPL 模式
+```
+
+REPL/TUI 内置命令补充：
+
+```text
+/login      配置 OpenAI 兼容 provider
+/providers  查看并切换当前 provider
+/provider-rename 重命名 provider
+/provider-remove 删除非当前 provider
+/models     拉取模型列表并设置默认模型
+/skills     列出可用 skills
+/skill show|run|add|remove 管理 skills
+/mcp        列出 MCP 服务
+/mcp-show <name> 查看 MCP 服务
+/mcp-remove <name> 删除 MCP 服务
 ```
 
 ## 工具系统
@@ -57,6 +105,59 @@ sacode repl                          # 进入 REPL 模式
 | fs.write | 写入工作区内文件内容 | 是 |
 | git.diff | 获取 git diff | 否 |
 | shell.exec | 执行 shell 命令 | 是 |
+| web.fetch | 获取网页内容 | 否 |
+| web.search | 联网搜索公开信息 | 否 |
+
+### Skills
+
+- 工作区默认目录：`skills/`
+- 项目级覆盖目录：`.sacode/skills/`（同名优先）
+- 可通过 `sacode /commit`、`sacode /review-pr` 直接调用
+- 当前内置 skill：`commit`、`review-pr`、`explain`
+- 新增 CLI 命令：
+  - `skill add <name> <desc> <prompt>`
+  - `skill remove <name>`
+  - `skill run <name> [args...]`
+- 支持 REPL/TUI：
+  - `/skills`
+  - `/skill show|run|add|remove`
+- 支持模板变量：`{{args}}`、`{{cwd}}`、`{{skill_name}}`、`{{description}}`
+
+### MCP 配置
+
+配置文件位置：`.sacode/mcp.json`
+
+示例：
+
+```json
+{
+  "mcp": {
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+当前 MCP 子命令能力：
+
+- `mcp list`
+- `mcp show <name>`
+- `mcp add`
+- `mcp enable`
+- `mcp disable`
+- `mcp remove <name>`
+- `mcp inspect`
+- `mcp tools`
+- `mcp call`
+
+REPL/TUI 新增：
+
+- `/mcp`
+- `/mcp-show <name>`
+- `/mcp-remove <name>`
 
 ### 工具调用格式
 
@@ -91,42 +192,96 @@ sacode repl                          # 进入 REPL 模式
 
 ## 模型配置
 
+### 本地 provider 配置
+
+位置：`.sacode/provider.json`
+
+```json
+{
+  "current": "openai",
+  "providers": {
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-xxx",
+      "model": "gpt-4o-mini"
+    },
+    "local": {
+      "base_url": "http://127.0.0.1:11434/v1",
+      "api_key": "ollama",
+      "model": "qwen2.5-coder"
+    }
+  }
+}
+```
+
+当前行为：
+
+- TUI 和 REPL 优先读取 `.sacode/provider.json`
+- `current` 决定当前默认 provider
+- `/login` 会新增或覆盖命名 provider
+- `/providers` 用于切换当前 provider
+- `/provider-rename <old> <new>` 用于重命名 provider
+- `/provider-remove <name>` 用于删除非当前 provider
+- 未配置本地 provider 时，CLI 继续回退到环境变量模型选择逻辑
+- OpenAI 兼容接口要求支持 `/models` 和 `/chat/completions`
+
 ### Profile 配置文件
 
-位置: `~/.sacode/profiles.yaml`
+位置：项目级 `.sacode/profile.json`
 
-```yaml
-current: default
-
-providers:
-  openai:
-    api_key_env: OPENAI_API_KEY
-    base_url: https://api.openai.com/v1
-  deepseek:
-    api_key_env: DEEPSEEK_API_KEY
-    base_url: https://api.deepseek.com/v1
-  ollama:
-    base_url: http://127.0.0.1:11434
-
-profiles:
-  default:
-    agents:
-      planner: { provider: openai, model: gpt-4o }
-      coder: { provider: deepseek, model: deepseek-coder }
-      reviewer: { provider: openai, model: gpt-4o-mini }
-  
-  economy:
-    agents:
-      planner: { provider: deepseek, model: deepseek-chat }
-      coder: { provider: deepseek, model: deepseek-coder }
-      reviewer: { provider: ollama, model: llama3 }
-  
-  local:
-    agents:
-      planner: { provider: ollama, model: qwen2 }
-      coder: { provider: ollama, model: qwen2-coder }
-      reviewer: { provider: ollama, model: llama3 }
+```json
+{
+  "current": "default",
+  "profiles": {
+    "default": {
+      "planner": "gpt-4o",
+      "coder": "deepseek-coder",
+      "reviewer": "gpt-4o-mini"
+    },
+    "economy": {
+      "planner": "deepseek-chat",
+      "coder": "deepseek-coder",
+      "reviewer": "gpt-4o-mini"
+    },
+    "local": {
+      "planner": "ollama/qwen2.5-coder:7b",
+      "coder": "ollama/qwen2.5-coder:7b",
+      "reviewer": "gpt-4o-mini"
+    }
+  }
+}
 ```
+
+当前行为：
+
+- `sacode profile ls` 列出项目级 profiles
+- `sacode profile use <name>` 切换项目级当前 profile
+- 配置保存在 `.sacode/profile.json`
+
+### 错题本
+
+位置：项目级 `.sacode/mistakes.json`
+
+当前行为：
+
+- 记录三类失败：
+  - `/init` 过程中模型生成失败
+  - 工具调用失败
+  - 主模型调用失败
+- 命令：
+  - `sacode mistakes list`
+  - `sacode mistakes show <index>`
+
+### 项目初始化
+
+`sacode init` 当前行为：
+
+1. 创建 `.sacode/` 目录
+2. 调用当前 provider 分析项目结构
+3. 生成项目级 `AGENTS.md`
+4. 初始化 `.sacode/profile.json`
+5. 初始化 `.sacode/mistakes.json`
+6. 写入 `.sacode/project.json` 记录元信息
 
 ### 环境变量
 

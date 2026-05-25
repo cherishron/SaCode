@@ -2,6 +2,8 @@ use std::process::Command;
 
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
+const MAX_SEARCH_MATCHES: usize = 50;
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "fs.search".to_string(),
@@ -66,7 +68,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         Ok(result) => {
             if result.status.success() || result.stdout.is_empty() == false {
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                let matches: Vec<serde_json::Value> = stdout
+                let all_matches: Vec<serde_json::Value> = stdout
                     .lines()
                     .filter_map(|line| {
                         let parts: Vec<&str> = line.splitn(2, ':').collect();
@@ -93,10 +95,15 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                         }
                     })
                     .collect();
+                let count = all_matches.len();
+                let truncated = count > MAX_SEARCH_MATCHES;
+                let matches: Vec<serde_json::Value> = all_matches.into_iter().take(MAX_SEARCH_MATCHES).collect();
 
                 Ok(ToolOutput::success(serde_json::json!({
                     "matches": matches,
-                    "count": matches.len()
+                    "count": count,
+                    "returned": MAX_SEARCH_MATCHES.min(count),
+                    "truncated": truncated
                 })))
             } else {
                 Ok(ToolOutput::success(serde_json::json!({

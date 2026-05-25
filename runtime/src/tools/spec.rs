@@ -58,4 +58,8 @@ impl ToolSpec {
     pub fn needs_approval(&self) -> bool {
         self.approval_required || !self.is_read_only()
     }
+
+    pub fn to_tool_definition(&self) -> sacode_kernel::model::ToolDefinition {
+        sacode_kernel::model::ToolDefinition::function(&self.name, &self.description, self.input_schema.clone())
+    }
 }

@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::project_profile::ProjectProfileStore;
+
 pub fn run(args: Vec<String>) -> Result<()> {
     if args.is_empty() {
         show_default();
@@ -26,22 +28,59 @@ pub fn run(args: Vec<String>) -> Result<()> {
 }
 
 fn list_profiles() {
+    let store = ProjectProfileStore::new(std::path::Path::new("."));
+    let config = match store.ensure_exists() {
+        Ok(config) => config,
+        Err(error) => {
+            println!("Failed to load project profiles: {}", error);
+            return;
+        }
+    };
+
     println!("Profiles:");
-    println!("  default   (current) - planner:gpt-4o, coder:deepseek-coder, reviewer:gpt-4o-mini");
-    println!("  economy   - planner:deepseek-chat, coder:deepseek-coder");
-    println!("  local     - planner:ollama/qwen2.5-coder:7b");
+    for (name, profile) in config.profiles {
+        let current = if name == config.current { " (current)" } else { "" };
+        println!(
+            "  {}{} - planner:{}, coder:{}, reviewer:{}",
+            name,
+            current,
+            profile.planner,
+            profile.coder,
+            profile.reviewer
+        );
+    }
 }
 
 fn use_profile(name: &str) {
-    println!("Switched to profile: {}", name);
-    println!("Note: Profile switching requires ~/.sacode/profiles.yaml");
+    let store = ProjectProfileStore::new(std::path::Path::new("."));
+    match store.set_current(name) {
+        Ok(_) => {
+            println!("Switched to profile: {}", name);
+            println!("Saved to .sacode/profile.json");
+        }
+        Err(error) => println!("Failed to switch profile: {}", error),
+    }
 }
 
 fn show_current() {
-    println!("Current profile: default");
-    println!("Planner:  gpt-4o (openai)");
-    println!("Coder:    deepseek-coder (deepseek)");
-    println!("Reviewer: gpt-4o-mini (openai)");
+    let store = ProjectProfileStore::new(std::path::Path::new("."));
+    let config = match store.ensure_exists() {
+        Ok(config) => config,
+        Err(error) => {
+            println!("Failed to load current profile: {}", error);
+            return;
+        }
+    };
+
+    let Some(profile) = config.profiles.get(&config.current) else {
+        println!("Current profile is unavailable");
+        return;
+    };
+
+    println!("Current profile: {}", config.current);
+    println!("Planner:  {}", profile.planner);
+    println!("Coder:    {}", profile.coder);
+    println!("Reviewer: {}", profile.reviewer);
 }
 
 fn show_default() {

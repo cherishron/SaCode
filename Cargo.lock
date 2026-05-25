@@ -2074,7 +2074,9 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -2235,12 +2237,13 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sacode-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "chrono",
  "crossterm",
  "ratatui",
+ "reqwest",
  "sacode-kernel",
  "sacode-runtime",
  "serde",
@@ -2252,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-kernel"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "serde",
@@ -2261,7 +2264,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-runtime"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-stream",

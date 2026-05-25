@@ -13,6 +13,7 @@ npm install -g @cherishron/sacode
 ```bash
 sacode                     # 进入聊天式 TUI
 sacode "分析代码结构"       # Build 模式执行
+sacode /commit             # 使用 skill
 sacode "修复 bug" --mode build
 sacode --help
 ```
@@ -36,6 +37,8 @@ sacode --help
 
 ```bash
 sacode profile ls       # 列出配置
+sacode skill list       # 列出 skills
+sacode mcp list         # 列出 MCP 服务
 sacode checkpoint list  # 列出保存点
 sacode repl             # 进入 REPL 模式
 sacode daemon           # 启动 HTTP/SSE 服务

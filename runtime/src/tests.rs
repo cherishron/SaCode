@@ -19,6 +19,8 @@ fn test_tool_registry() {
     assert!(names.contains(&"fs.search"));
     assert!(names.contains(&"git.diff"));
     assert!(names.contains(&"shell.exec"));
+    assert!(names.contains(&"web.fetch"));
+    assert!(names.contains(&"web.search"));
 }
 
 #[test]

@@ -31,15 +31,17 @@ impl CoderAgent {
             let input = match tool.as_str() {
                 "fs.read" => serde_json::json!({ "path": "README.md" }),
                 "fs.search" => serde_json::json!({ "pattern": "fn" }),
+                "web.search" => serde_json::json!({ "query": step.description }),
                 "git.diff" => serde_json::json!({}),
                 "shell.exec" => serde_json::json!({ "command": "pwd" }),
+                value if value.starts_with("mcp.") => serde_json::json!({ "query": step.description }),
                 _ => serde_json::json!({}),
             };
 
             ToolCallIntent {
                 name: tool.clone(),
                 input,
-                requires_approval: tool == "shell.exec",
+                requires_approval: tool == "shell.exec" || tool.starts_with("mcp."),
             }
         }).collect();
 

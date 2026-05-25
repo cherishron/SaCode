@@ -3,6 +3,7 @@ pub mod fs;
 pub mod git;
 pub mod shell;
 pub mod spec;
+pub mod web;
 
 pub use spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
@@ -21,6 +22,8 @@ impl ToolRegistry {
         tools.insert("fs.write".to_string(), fs::write::spec());
         tools.insert("git.diff".to_string(), git::diff::spec());
         tools.insert("shell.exec".to_string(), shell::exec::spec());
+        tools.insert("web.fetch".to_string(), web::fetch::spec());
+        tools.insert("web.search".to_string(), web::search::spec());
         Self { tools }
     }
 
@@ -39,6 +42,8 @@ impl ToolRegistry {
             "fs.write" => fs::write::execute(input),
             "git.diff" => git::diff::execute(input),
             "shell.exec" => shell::exec::execute(input),
+            "web.fetch" => web::fetch::execute(input),
+            "web.search" => web::search::execute(input),
             _ => anyhow::bail!("unknown tool: {}", name),
         }
     }

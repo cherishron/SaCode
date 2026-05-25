@@ -72,14 +72,6 @@ impl Supervisor {
 
             step.mark_completed();
 
-            for intent in &coder_output.tool_calls {
-                events.push(Event::ToolCallFinished {
-                    name: intent.name.clone(),
-                    output: serde_json::json!({ "executed": true }),
-                    success: true,
-                });
-            }
-
             let reviewer_output = self.reviewer.review_step(step, &coder_output.result);
             events.extend(reviewer_output.events.clone());
 

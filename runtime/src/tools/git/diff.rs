@@ -2,6 +2,9 @@ use std::process::Command;
 
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
+const MAX_DIFF_CHARS: usize = 4000;
+const MAX_DIFF_FILES: usize = 50;
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "git.diff".to_string(),
@@ -65,6 +68,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
             if result.status.success() || !stdout.is_empty() {
                 let diff_output = stdout.to_string();
+                let diff_preview = truncate_chars(&diff_output, MAX_DIFF_CHARS);
 
                 let files: Vec<String> = diff_output
                     .lines()
@@ -73,14 +77,19 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                         line.split('|').next().unwrap_or("").trim().to_string()
                     })
                     .collect();
+                let file_count = files.len();
+                let truncated = diff_output.len() > MAX_DIFF_CHARS || file_count > MAX_DIFF_FILES;
+                let files: Vec<String> = files.into_iter().take(MAX_DIFF_FILES).collect();
 
                 let stats = parse_stats(&diff_output);
 
                 Ok(ToolOutput::success(serde_json::json!({
-                    "diff": diff_output,
+                    "diff": diff_preview,
                     "files": files,
+                    "file_count": file_count,
                     "stats": stats,
-                    "cached": cached
+                    "cached": cached,
+                    "truncated": truncated
                 })))
             } else if !stderr.is_empty() {
                 Ok(ToolOutput::failure(stderr.to_string()))
@@ -133,4 +142,14 @@ fn parse_stats(output: &str) -> serde_json::Value {
         "insertions": insertions,
         "deletions": deletions
     })
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}...", preview)
+    } else {
+        preview
+    }
 }

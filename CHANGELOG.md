@@ -7,7 +7,64 @@
 
 ---
 
+## [0.1.9] - 2026-05-25
+
+### 新增
+
+- LLM-driven tool calling（替代硬编码 supervisor 流程）
+  - `tool_chat()` 多轮工具调用循环（最多 12 轮）
+  - 模型自主决定调用哪些工具、解析结果、继续对话
+  - `ToolDefinition` / `ToolCall` / `FunctionCall` 结构体
+  - `ChatMessage` 支持 `tool_calls`、`tool_call_id`、`name`、`reasoning_content`
+  - `ChatRequest` 支持 `tools`、`thinking` 字段
+  - Approval policy 集成：基于 `ToolSpec.needs_approval()` 判断
+
+- 小米 MiMo thinking 模式（仅 MiMo 系列模型）
+  - 请求自动附带 `thinking: {type: "enabled"}`
+  - 响应解析 `reasoning_content` 字段
+  - 多轮对话保留 `reasoning_content`（否则 MiMo API 返回 400）
+  - `ProviderKind::Mimo` 自动检测（URL 含 xiaomimimo/token-plan 或 model 以 mimo 开头）
+
+- `/connect` 快速接入预设 Provider
+  - REPL: 交互式选择预设 + 输入 API key
+  - TUI: `/connect` 显示预设列表，`/connect <编号> [key]` 快速配置
+  - 预设: MiMo Token Plan、OpenAI、DeepSeek、Ollama
+
+- 共享 runner 模块
+  - `interfaces/cli/src/runner.rs` 统一 CLI/REPL/TUI 执行链
+  - `format_output()` / `format_chat_output()` 含 reasoning 展示
+
+- 单元测试覆盖
+  - kernel: ChatRequest 构造、needs_thinking、ChatMessage 工厂方法、ToolDefinition 序列化
+  - runtime: ChatResponse 反序列化（含 reasoning_content + tool_calls）、ToolChatResult
+  - cli: detect_provider_kind 5 种场景
+
+### 变更
+
+- `ChatMessage.content` 从 `String` 改为 `Option<String>`（所有消费方已更新）
+- CLI/REPL/TUI 执行路径统一调用 `run_task()` → `run_tool_chat()`
+- 旧 `cmd/mod.rs` 执行逻辑标记 `#[cfg(test)]` 仅供测试保留
+
+---
+
 ## [0.1.8] - 2026-05-22
+
+### 新增
+
+- skills 系统基础版
+  - `skills/` 目录
+  - `skill list` / `skill show`
+  - slash skill 调用：`/commit`、`/review-pr`、`/explain`
+
+- MCP 配置基础版
+  - `.sacode/mcp.json`
+  - `mcp list` / `mcp add` / `mcp enable` / `mcp disable`
+  - `mcp inspect` / `mcp tools`
+  - `mcp call`
+
+- 联网工具基础版
+  - `web.fetch`
+  - `web.search`
 
 ### 修复
 

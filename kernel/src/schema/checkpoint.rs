@@ -6,6 +6,7 @@ use crate::schema::Task;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub task: Task,
+    pub current_iteration: usize,
     pub current_step: usize,
     pub executed_tools: Vec<ToolRecord>,
     pub pending_approval: Option<String>,
@@ -28,6 +29,7 @@ impl Checkpoint {
         let now = chrono_now();
         Self {
             task,
+            current_iteration: 0,
             current_step: 0,
             executed_tools: Vec::new(),
             pending_approval: None,
@@ -58,6 +60,11 @@ impl Checkpoint {
 
     pub fn advance_step(&mut self) {
         self.current_step += 1;
+        self.updated_at = chrono_now();
+    }
+
+    pub fn set_iteration(&mut self, iteration: usize) {
+        self.current_iteration = iteration;
         self.updated_at = chrono_now();
     }
 
