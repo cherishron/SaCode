@@ -400,6 +400,7 @@ impl App {
             return;
         };
 
+        self.input_mode = InputMode::Chat;
         self.processing = true;
         self.busy_message = format!("正在切换 provider 到 {}...", provider_name);
         self.spawn_switch_provider_task(provider_name);
@@ -914,6 +915,7 @@ match self.provider_store.save_named(name, &config, true) {
             return;
         };
 
+        self.input_mode = InputMode::Chat;
         self.processing = true;
         self.busy_message = format!("正在切换默认模型到 {}...", selected_model);
         self.spawn_save_model_task(current_provider.name, current_provider.config, selected_model);
@@ -1422,7 +1424,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+                if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
                     app.handle_key_event(key);
                 }
             }
