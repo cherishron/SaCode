@@ -74,6 +74,8 @@ struct App {
     checkpoint_options: Vec<String>,
     selected_checkpoint_index: usize,
     pending_checkpoint_action: Option<String>,
+    mode_options: Vec<String>,
+    selected_mode_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +96,7 @@ enum InputMode {
     SkillInput,
     McpInput,
     CheckpointInput,
+    ModeSelect,
 }
 
 #[derive(Clone)]
@@ -312,6 +315,12 @@ impl App {
             checkpoint_options: Vec::new(),
             selected_checkpoint_index: 0,
             pending_checkpoint_action: None,
+            mode_options: vec![
+                "plan".to_string(),
+                "build".to_string(),
+                "yolo".to_string(),
+            ],
+            selected_mode_index: 0,
         }
     }
 
@@ -367,6 +376,9 @@ impl App {
             }
             InputMode::CheckpointInput => {
                 self.finish_checkpoint_input();
+                return;
+            }
+            InputMode::ModeSelect => {
                 return;
             }
         }
@@ -1065,6 +1077,29 @@ impl App {
         }
     }
 
+    fn confirm_mode_selection(&mut self) {
+        let mode_name = self.mode_options.get(self.selected_mode_index).cloned();
+        if let Some(name) = mode_name {
+            self.input_mode = InputMode::Chat;
+            
+            match name.as_str() {
+                "plan" => {
+                    self.execution_mode = ExecutionMode::Plan;
+                    self.push_success_message("执行模式已切换为 Plan（规划模式）");
+                }
+                "build" => {
+                    self.execution_mode = ExecutionMode::Build;
+                    self.push_success_message("执行模式已切换为 Build（构建模式）");
+                }
+                "yolo" => {
+                    self.execution_mode = ExecutionMode::Yolo;
+                    self.push_success_message("执行模式已切换为 Yolo（自动执行模式）");
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn save_checkpoint(&mut self, checkpoint_dir: &std::path::Path, name: &str) {
         if let Err(e) = std::fs::create_dir_all(checkpoint_dir) {
             self.push_error_message(&format!("创建检查点目录失败: {}", e));
@@ -1158,18 +1193,21 @@ impl App {
                 self.push_system_message("执行模式已切换为 Yolo（自动执行模式）。\nAI 将自动执行，减少确认步骤。");
             }
             "" => {
-                let mode_name = match self.execution_mode {
-                    ExecutionMode::Plan => "plan",
-                    ExecutionMode::Build => "build",
-                    ExecutionMode::Yolo => "yolo",
-                };
-                self.push_system_message(&format!(
-                    "当前执行模式: {}\n用法: /mode plan|build|yolo",
-                    mode_name
-                ));
+                self.open_mode_selector();
             }
             _ => self.push_system_message("用法: /mode plan|build|yolo"),
         }
+    }
+
+    fn open_mode_selector(&mut self) {
+        let current_mode = match self.execution_mode {
+            ExecutionMode::Plan => 0,
+            ExecutionMode::Build => 1,
+            ExecutionMode::Yolo => 2,
+        };
+        self.selected_mode_index = current_mode;
+        self.input_mode = InputMode::ModeSelect;
+        self.push_system_message("已打开模式选择器，使用上下键选择，Enter 切换，Esc 取消。");
     }
 
     fn skills_command(&mut self, input: &str) {
@@ -1407,8 +1445,8 @@ impl App {
             \n一级命令:\n\
             /init      - 初始化项目配置\n\
             /profile   - 配置管理 (ls/use/show)\n\
-            /plugin    - 插件管理 (list/install/remove)\n\
-            /checkpoint - 检查点管理 (list/restore/delete)\n\
+            /plugin    - 插件管理 (list/install/remove/enable/disable)\n\
+            /checkpoint - 检查点管理 (list/save/restore/delete)\n\
             /mode      - 执行模式 (plan/build/yolo)\n\
             /skills    - Skills 管理 (list/show/run/add/remove)\n\
             /mcp       - MCP 管理 (list/show/remove)\n\
@@ -2224,6 +2262,7 @@ match self.provider_store.save_named(name, &config, true) {
                     InputMode::SkillsSelect => self.confirm_skills_selection(),
                     InputMode::McpSelect => self.confirm_mcp_selection(),
                     InputMode::CheckpointSelect => self.confirm_checkpoint_selection(),
+                    InputMode::ModeSelect => self.confirm_mode_selection(),
                     InputMode::SkillInput => self.finish_skill_input(),
                     InputMode::McpInput => self.finish_mcp_input(),
                     InputMode::CheckpointInput => self.finish_checkpoint_input(),
@@ -2298,6 +2337,14 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Down if self.input_mode == InputMode::CheckpointSelect => {
                 if self.selected_checkpoint_index + 1 < self.checkpoint_options.len() {
                     self.selected_checkpoint_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::ModeSelect => {
+                self.selected_mode_index = self.selected_mode_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::ModeSelect => {
+                if self.selected_mode_index + 1 < self.mode_options.len() {
+                    self.selected_mode_index += 1;
                 }
             }
             KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
@@ -2507,6 +2554,7 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::SkillsSelect => "使用方向键选择 Skill...",
             InputMode::McpSelect => "使用方向键选择 MCP 服务...",
             InputMode::CheckpointSelect => "使用方向键选择检查点...",
+            InputMode::ModeSelect => "使用方向键选择执行模式...",
             InputMode::SkillInput => "输入 Skill 参数...",
             InputMode::McpInput => "输入 MCP 参数...",
             InputMode::CheckpointInput => "输入检查点名称...",
@@ -2552,6 +2600,10 @@ fn ui(frame: &mut Frame, app: &App) {
 
     if app.input_mode == InputMode::CheckpointSelect {
         render_checkpoint_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::ModeSelect {
+        render_mode_selector(frame, app);
     }
 }
 
@@ -2929,6 +2981,50 @@ fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
                 Style::default().fg(Color::Rgb(200, 200, 210))
             };
             Line::styled(format!("{}{}", prefix, name), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_mode_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 40, 30);
+    let block = Block::default()
+        .title(" 执行模式 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(180, 120, 200)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mode_desc = [
+        ("plan", "Plan - 规划模式\nAI 将先规划步骤，再逐步执行"),
+        ("build", "Build - 构建模式\nAI 将直接执行任务"),
+        ("yolo", "Yolo - 自动执行模式\nAI 将自动执行，减少确认步骤"),
+    ];
+
+    let current_index = match app.execution_mode {
+        ExecutionMode::Plan => 0,
+        ExecutionMode::Build => 1,
+        ExecutionMode::Yolo => 2,
+    };
+
+    let lines: Vec<Line> = app.mode_options
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let is_selected = index == app.selected_mode_index;
+            let is_current = index == current_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let current_mark = if is_current { " [当前]" } else { "" };
+            let desc = mode_desc.iter().find(|(n, _)| *n == *name).map(|(_, d)| *d).unwrap_or("");
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else if is_current {
+                Style::default().fg(Color::Rgb(180, 120, 200)).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            Line::styled(format!("{}{}{}\n{}", prefix, name, current_mark, desc), style)
         })
         .collect();
 
