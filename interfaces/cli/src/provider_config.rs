@@ -410,10 +410,9 @@ pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<String>> {
 pub fn fallback_models(provider_name: &str) -> Vec<String> {
     match provider_name {
         "ollama" => vec![
-            "llama3.2".to_string(),
-            "llama3.1".to_string(),
-            "qwen2.5".to_string(),
-            "deepseek-r1".to_string(),
+            "glm-4-flash".to_string(),
+            "deepseek-v3".to_string(),
+            "qwen2.5:7b".to_string(),
         ],
         "mimo" => vec![
             "mimo-v2.5-pro".to_string(),
