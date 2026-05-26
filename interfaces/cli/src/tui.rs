@@ -1,8 +1,8 @@
-use std::{collections::{HashSet, VecDeque}, env, io, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, fs, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -14,12 +14,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
+use serde::Serialize;
 use sacode_kernel::ExecutionMode;
 
 use crate::provider_config::{NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore, fallback_models, fetch_models};
-use crate::provider_runtime::resolve_named_provider;
-use crate::runner::{format_chat_output, run_task};
-use sacode_runtime::{McpConfigStore, SkillRegistry, ToolRegistry};
+use crate::provider_runtime::{resolve_named_provider, resolve_provider};
+use sacode_runtime::{McpConfigStore, ProviderClient, SkillRegistry, ToolRegistry};
 
 const MODELS_HINT_LIMIT: usize = 8;
 
@@ -37,6 +37,7 @@ enum MessageRole {
 }
 
 struct App {
+    workdir: PathBuf,
     messages: Vec<Message>,
     input: String,
     should_quit: bool,
@@ -81,12 +82,39 @@ struct App {
     canceled_task_ids: HashSet<u64>,
     queued_messages: VecDeque<QueuedMessage>,
     todo_plan: Option<TodoPlan>,
+    sent_history: Vec<String>,
+    history_index: Option<usize>,
+    current_history_draft: String,
+    active_child: Option<Child>,
+    session_id: String,
+    session_options: Vec<SessionInfo>,
+    selected_session_index: usize,
+    prompt_template: PromptTemplate,
 }
 
 #[derive(Debug, Clone)]
 struct QueuedMessage {
     id: u64,
     content: String,
+}
+
+#[derive(Debug, Clone)]
+struct SessionInfo {
+    id: String,
+    updated_at: String,
+    title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StoredMessage {
+    role: String,
+    content: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Clone)]
+struct PromptTemplate {
+    optimize_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +158,7 @@ enum InputMode {
     McpInput,
     CheckpointInput,
     ModeSelect,
+    SessionSelect,
 }
 
 #[derive(Clone)]
@@ -188,6 +217,9 @@ impl SubCommandDef {
 fn get_level1_commands() -> Vec<CommandDef> {
     vec![
         CommandDef::simple("/init", "初始化项目配置"),
+        CommandDef::simple("/new", "创建新会话"),
+        CommandDef::simple("/sessions", "切换历史会话"),
+        CommandDef::simple("/clear", "清空当前上下文"),
         CommandDef::with_subs("/profile", "配置管理", vec![
             SubCommandDef::new("ls", "列出所有配置"),
             SubCommandDef::new("use", "切换当前配置"),
@@ -262,6 +294,10 @@ enum AsyncResult {
         response: String,
         plan: Option<sacode_kernel::Plan>,
     },
+    InputOptimized {
+        original: String,
+        optimized: String,
+    },
     LoginCompleted {
         provider_name: String,
         config: ProviderConfig,
@@ -308,12 +344,17 @@ impl App {
         let current_provider = resolve_named_provider(&workdir);
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
-        
-        Self {
+        let session_id = format!("session-{}", now.format("%Y%m%d%H%M%S"));
+        let prompt_template = PromptTemplate {
+            optimize_input: "请将下面这段用户输入整理为更清晰、更可执行的编程任务描述，保留原始意图，直接输出改写后的任务文本：".to_string(),
+        };
+
+        let mut app = Self {
+            workdir,
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 Ctrl+C 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 /exit 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
                     timestamp: timestamp.clone(),
                 },
             ],
@@ -370,7 +411,18 @@ impl App {
             canceled_task_ids: HashSet::new(),
             queued_messages: VecDeque::new(),
             todo_plan: None,
-        }
+            sent_history: Vec::new(),
+            history_index: None,
+            current_history_draft: String::new(),
+            active_child: None,
+            session_id,
+            session_options: Vec::new(),
+            selected_session_index: 0,
+            prompt_template,
+        };
+
+        app.load_latest_session();
+        app
     }
 
     fn send_message(&mut self) {
@@ -427,6 +479,9 @@ impl App {
                 self.finish_checkpoint_input();
                 return;
             }
+            InputMode::SessionSelect => {
+                return;
+            }
             InputMode::ModeSelect => {
                 return;
             }
@@ -461,6 +516,13 @@ impl App {
             return;
         }
 
+        let trimmed_input = self.input.trim().to_string();
+        if !trimmed_input.is_empty() {
+            self.sent_history.push(trimmed_input);
+        }
+        self.history_index = None;
+        self.current_history_draft.clear();
+
         let now = chrono::Local::now();
         let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
 
@@ -473,6 +535,7 @@ impl App {
         let user_input = self.input.clone();
         self.input.clear();
         self.enqueue_or_start_message(user_input);
+        self.save_current_session();
         self.scroll_to_bottom();
     }
 
@@ -510,12 +573,24 @@ impl App {
         self.spawn_chat_task(queued.id, queued.content);
     }
 
-    fn spawn_chat_task(&self, task_id: u64, user_input: String) {
+    fn spawn_chat_task(&mut self, task_id: u64, user_input: String) {
         let sender = self.task_tx.clone();
-        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let workdir = self.workdir.clone();
         let mode = self.execution_mode;
+        let Some(mut child) = Self::spawn_chat_child(&workdir, &user_input, mode) else {
+            let _ = sender.send(AsyncResult::ChatCompleted {
+                task_id,
+                prompt: user_input,
+                response: "任务执行失败: 无法启动后台执行进程".to_string(),
+                plan: None,
+            });
+            return;
+        };
+
+        let stdout = child.stdout.take();
+        self.active_child = Some(child);
         thread::spawn(move || {
-            let (response, plan) = App::execute_user_message_in_background(&workdir, &user_input, mode);
+            let (response, plan) = App::execute_user_message_in_background(stdout);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
@@ -525,23 +600,149 @@ impl App {
         });
     }
 
-    fn execute_user_message_in_background(workdir: &std::path::Path, user_input: &str, mode: ExecutionMode) -> (String, Option<sacode_kernel::Plan>) {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(error) => return (format!("后台运行时初始化失败: {}", error), None),
+    fn spawn_chat_child(workdir: &PathBuf, user_input: &str, mode: ExecutionMode) -> Option<Child> {
+        let exe = env::current_exe().ok()?;
+        Command::new(exe)
+            .arg(user_input)
+            .arg("--mode")
+            .arg(mode.to_string())
+            .arg("--deny")
+            .arg("--max-iterations")
+            .arg("1")
+            .arg("--json")
+            .current_dir(workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    fn execute_user_message_in_background(stdout: Option<impl Read>) -> (String, Option<sacode_kernel::Plan>) {
+        let Some(mut stdout) = stdout else {
+            return ("任务执行失败: 未获取到后台输出".to_string(), None);
         };
-        let _ = workdir;
-        match runtime.block_on(run_task(user_input, mode, crate::cmd::ApprovalPolicy::AutoDeny, 1)) {
-            Ok(output) => {
-                let plan = if output.plan.steps.is_empty() {
-                    None
-                } else {
-                    Some(output.plan.clone())
-                };
-                (format_chat_output(&output), plan)
-            }
-            Err(error) => (format!("任务执行失败: {}", error), None),
+
+        let mut output = String::new();
+        if stdout.read_to_string(&mut output).is_err() {
+            return ("任务执行失败: 读取后台输出失败".to_string(), None);
         }
+
+        let parsed: serde_json::Value = match serde_json::from_str(&output) {
+            Ok(value) => value,
+            Err(error) => return (format!("任务执行失败: 解析后台输出失败: {}\n{}", error, output.trim()), None),
+        };
+
+        let response = parsed
+            .get("provider_response")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Self::format_cli_events(parsed.get("events")))
+            .unwrap_or_else(|| "任务已完成。".to_string());
+        let plan = parsed
+            .get("plan")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<sacode_kernel::Plan>(value).ok())
+            .filter(|plan| !plan.steps.is_empty());
+        (response, plan)
+    }
+
+    fn format_cli_events(events: Option<&serde_json::Value>) -> Option<String> {
+        let events = events?.as_array()?;
+        let mut lines = Vec::new();
+        for event in events {
+            let kind = event.get("type").and_then(|value| value.as_str()).unwrap_or("");
+            match kind {
+                "message" => {
+                    if let Some(content) = event.get("content").and_then(|value| value.as_str()) {
+                        lines.push(content.to_string());
+                    }
+                }
+                "thinking" => {
+                    if let Some(content) = event.get("content").and_then(|value| value.as_str()) {
+                        lines.push(format!("[思考] {}", content));
+                    }
+                }
+                "tool_call_finished" => {
+                    let name = event.get("name").and_then(|value| value.as_str()).unwrap_or("工具");
+                    let success = event.get("success").and_then(|value| value.as_bool()).unwrap_or(false);
+                    let output = event.get("output").cloned().unwrap_or(serde_json::Value::Null);
+                    let summary = Self::summarize_json_output(&output);
+                    let status = if success { "完成" } else { "失败" };
+                    if summary.is_empty() {
+                        lines.push(format!("[工具] {} {}", name, status));
+                    } else {
+                        lines.push(format!("[工具] {} {}: {}", name, status, summary));
+                    }
+                }
+                "done" => {
+                    if let Some(summary) = event.get("summary").and_then(|value| value.as_str()) {
+                        lines.push(summary.to_string());
+                    }
+                }
+                "error" => {
+                    if let Some(message) = event.get("message").and_then(|value| value.as_str()) {
+                        lines.push(format!("[错误] {}", message));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+
+    fn summarize_json_output(output: &serde_json::Value) -> String {
+        if output.is_null() {
+            return String::new();
+        }
+        if let Some(content) = output.get("content") {
+            return Self::preview_json_text(content);
+        }
+        Self::preview_json_text(output)
+    }
+
+    fn preview_json_text(value: &serde_json::Value) -> String {
+        let text = if let Some(text) = value.as_str() {
+            text.to_string()
+        } else {
+            serde_json::to_string(value).unwrap_or_default()
+        };
+        let trimmed = text.trim();
+        let mut chars = trimmed.chars();
+        let preview: String = chars.by_ref().take(120).collect();
+        if chars.next().is_some() {
+            format!("{}...", preview)
+        } else {
+            preview
+        }
+    }
+
+    fn spawn_optimize_input_task(&self, input: String) {
+        let sender = self.task_tx.clone();
+        let workdir = self.workdir.clone();
+        let prompt = format!("{}\n\n{}", self.prompt_template.optimize_input, input);
+        thread::spawn(move || {
+            let optimized = Self::run_simple_chat_prompt(&workdir, &prompt).unwrap_or_else(|| input.clone());
+            let _ = sender.send(AsyncResult::InputOptimized {
+                original: input,
+                optimized,
+            });
+        });
+    }
+
+    fn run_simple_chat_prompt(workdir: &PathBuf, prompt: &str) -> Option<String> {
+        let provider = resolve_provider(workdir);
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+        let text = runtime.block_on(async move {
+            ProviderClient::new().simple_chat(&provider, prompt).await.ok()
+        })?;
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
     }
 
     fn start_login(&mut self) {
@@ -731,6 +932,24 @@ impl App {
             return true;
         }
 
+        if trimmed == "/new" {
+            self.new_session_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/sessions" {
+            self.open_session_selector();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/clear" {
+            self.clear_current_context();
+            self.input.clear();
+            return true;
+        }
+
         if trimmed.starts_with("/profile ") || trimmed == "/profile" {
             self.profile_command(&input);
             self.input.clear();
@@ -813,8 +1032,7 @@ impl App {
     }
 
     fn init_command(&mut self) {
-        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        let sacode_dir = workdir.join(".sacode");
+        let sacode_dir = self.workdir.join(".sacode");
         
         if sacode_dir.exists() {
             self.push_system_message(".sacode 目录已存在。如需重新初始化，请先删除该目录。");
@@ -841,6 +1059,215 @@ impl App {
             "项目已初始化。\n配置文件: {}\n请使用 /login 配置 Provider。",
             config_path.display()
         ));
+    }
+
+    fn session_dir(&self) -> PathBuf {
+        self.workdir.join(".sacode").join("sessions")
+    }
+
+    fn session_path(&self, session_id: &str) -> PathBuf {
+        self.session_dir().join(format!("{}.json", session_id))
+    }
+
+    fn ensure_session_dir(&self) -> io::Result<()> {
+        fs::create_dir_all(self.session_dir())
+    }
+
+    fn session_title(&self) -> String {
+        self.messages
+            .iter()
+            .rev()
+            .find(|message| message.role == MessageRole::User)
+            .map(|message| message.content.lines().next().unwrap_or("新会话").chars().take(36).collect())
+            .unwrap_or_else(|| "新会话".to_string())
+    }
+
+    fn serialize_messages(&self) -> Vec<StoredMessage> {
+        self.messages
+            .iter()
+            .map(|message| StoredMessage {
+                role: match message.role {
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Assistant => "assistant".to_string(),
+                    MessageRole::System => "system".to_string(),
+                },
+                content: message.content.clone(),
+                timestamp: message.timestamp.clone(),
+            })
+            .collect()
+    }
+
+    fn save_current_session(&self) {
+        if self.ensure_session_dir().is_err() {
+            return;
+        }
+        let session = serde_json::json!({
+            "id": self.session_id,
+            "updated_at": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            "messages": self.serialize_messages(),
+            "title": self.session_title(),
+        });
+        let _ = fs::write(self.session_path(&self.session_id), session.to_string());
+    }
+
+    fn load_latest_session(&mut self) {
+        let sessions = self.list_sessions();
+        if let Some(session) = sessions.first() {
+            self.load_session_by_id(&session.id, false);
+        } else {
+            self.save_current_session();
+        }
+    }
+
+    fn list_sessions(&self) -> Vec<SessionInfo> {
+        let dir = self.session_dir();
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+
+        let mut sessions: Vec<SessionInfo> = entries
+            .flatten()
+            .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+            .filter_map(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .filter_map(|value| {
+                Some(SessionInfo {
+                    id: value.get("id")?.as_str()?.to_string(),
+                    updated_at: value.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    title: value.get("title").and_then(|v| v.as_str()).unwrap_or("新会话").to_string(),
+                })
+            })
+            .collect();
+
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions
+    }
+
+    fn load_session_by_id(&mut self, session_id: &str, announce: bool) {
+        let path = self.session_path(session_id);
+        let Ok(content) = fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return;
+        };
+        let Some(messages) = value.get("messages").and_then(|v| v.as_array()) else {
+            return;
+        };
+
+        self.session_id = session_id.to_string();
+        self.messages = messages
+            .iter()
+            .map(|message| Message {
+                role: match message.get("role").and_then(|v| v.as_str()).unwrap_or("system") {
+                    "user" => MessageRole::User,
+                    "assistant" => MessageRole::Assistant,
+                    _ => MessageRole::System,
+                },
+                content: message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                timestamp: message.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            })
+            .collect();
+        self.scroll_to_bottom();
+        if announce {
+            self.push_success_message(&format!("已切换到会话 {}", session_id));
+        }
+    }
+
+    fn new_session_command(&mut self) {
+        let now = chrono::Local::now();
+        self.session_id = format!("session-{}", now.format("%Y%m%d%H%M%S"));
+        self.messages = vec![Message {
+            role: MessageRole::System,
+            content: "SaCode - 新会话\n\n上下键可浏览输入历史，/sessions 可切换历史会话。".to_string(),
+            timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+        }];
+        self.queued_messages.clear();
+        self.todo_plan = None;
+        self.processing = false;
+        self.active_task_id = None;
+        self.busy_message.clear();
+        self.save_current_session();
+        self.push_success_message("已创建新会话");
+    }
+
+    fn clear_current_context(&mut self) {
+        let now = chrono::Local::now();
+        self.messages = vec![Message {
+            role: MessageRole::System,
+            content: "当前会话上下文已清空。".to_string(),
+            timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+        }];
+        self.queued_messages.clear();
+        self.todo_plan = None;
+        self.processing = false;
+        self.active_task_id = None;
+        self.busy_message.clear();
+        self.save_current_session();
+        self.scroll_to_bottom();
+    }
+
+    fn open_session_selector(&mut self) {
+        self.session_options = self.list_sessions();
+        self.selected_session_index = self
+            .session_options
+            .iter()
+            .position(|session| session.id == self.session_id)
+            .unwrap_or(0);
+        self.input_mode = InputMode::SessionSelect;
+        self.push_system_message("已打开会话列表，使用上下方向键选择，Enter 切换，Esc 取消。");
+    }
+
+    fn confirm_session_selection(&mut self) {
+        let selected = self.session_options.get(self.selected_session_index).cloned();
+        self.input_mode = InputMode::Chat;
+        if let Some(session) = selected {
+            self.load_session_by_id(&session.id, true);
+        }
+    }
+
+    fn navigate_history_up(&mut self) {
+        if self.sent_history.is_empty() {
+            return;
+        }
+        match self.history_index {
+            None => {
+                self.current_history_draft = self.input.clone();
+                self.history_index = Some(self.sent_history.len().saturating_sub(1));
+            }
+            Some(index) => {
+                self.history_index = Some(index.saturating_sub(1));
+            }
+        }
+        if let Some(index) = self.history_index {
+            self.input = self.sent_history.get(index).cloned().unwrap_or_default();
+        }
+    }
+
+    fn navigate_history_down(&mut self) {
+        let Some(index) = self.history_index else {
+            return;
+        };
+        if index + 1 < self.sent_history.len() {
+            self.history_index = Some(index + 1);
+            self.input = self.sent_history.get(index + 1).cloned().unwrap_or_default();
+        } else {
+            self.history_index = None;
+            self.input = self.current_history_draft.clone();
+            self.current_history_draft.clear();
+        }
+    }
+
+    fn handle_paste(&mut self, content: String) {
+        if matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::SessionSelect) {
+            return;
+        }
+        self.input.push_str(&content);
+        if self.input_mode == InputMode::CommandLevel1 {
+            self.filter_level1_commands();
+        }
+        if self.input_mode == InputMode::CommandLevel2 {
+            self.filter_sub_commands();
+        }
     }
 
     fn profile_command(&mut self, input: &str) {
@@ -1329,7 +1756,13 @@ impl App {
                 if parts.len() > 2 {
                     let name = parts[2];
                     match registry.get(name) {
-                        Ok(skill) => self.push_system_message(&format!("Skill {}\n{}\n\n{}", skill.name, skill.description, skill.prompt)),
+                        Ok(skill) => self.push_system_message(&format!(
+                            "Skill {} [{}]\n{}\n\n{}",
+                            skill.name,
+                            skill.source.label(),
+                            skill.description,
+                            skill.prompt
+                        )),
                         Err(error) => self.push_system_message(&format!("读取 skill 失败: {}", error)),
                     }
                 } else {
@@ -1379,7 +1812,7 @@ impl App {
             Ok(skills) => {
                 self.skills_options = skills
                     .into_iter()
-                    .map(|s| (s.name, s.description))
+                    .map(|s| (s.name, format!("{} [{}]", s.description, s.source.label())))
                     .collect();
                 self.selected_skills_index = 0;
                 self.input_mode = InputMode::SkillsSelect;
@@ -1459,7 +1892,7 @@ impl App {
             Some("remove") => {
                 if parts.len() > 2 {
                     let name = parts[2];
-                    match store.remove(name) {
+                    match store.remove(name, sacode_runtime::McpSource::Project) {
                         Ok(()) => self.push_success_message(&format!("MCP 服务 {} 已删除", name)),
                         Err(error) => self.push_error_message(&format!("删除 MCP 服务失败: {}", error)),
                     }
@@ -1473,12 +1906,18 @@ impl App {
 
     fn open_mcp_selector(&mut self) {
         let store = McpConfigStore::new(std::path::Path::new("."));
-        match store.load() {
-            Ok(config) if config.mcp.is_empty() => self.push_system_message("当前没有配置 MCP 服务"),
-            Ok(config) => {
-                self.mcp_options = config.mcp
+        match store.list_entries() {
+            Ok(entries) if entries.is_empty() => self.push_system_message("当前没有配置 MCP 服务"),
+            Ok(entries) => {
+                self.mcp_options = entries
                     .into_iter()
-                    .map(|(name, server)| (name, server.url, server.enabled))
+                    .map(|entry| {
+                        (
+                            entry.name,
+                            format!("{} [{}]", entry.server.url, entry.source.label()),
+                            entry.server.enabled,
+                        )
+                    })
                     .collect();
                 self.selected_mcp_index = 0;
                 self.input_mode = InputMode::McpSelect;
@@ -1510,7 +1949,7 @@ impl App {
                 }
                 Some("remove") => {
                     let store = McpConfigStore::new(std::path::Path::new("."));
-                    match store.remove(&name) {
+                    match store.remove(&name, sacode_runtime::McpSource::Project) {
                         Ok(()) => self.push_success_message(&format!("MCP 服务 {} 已删除", name)),
                         Err(error) => self.push_error_message(&format!("删除失败: {}", error)),
                     }
@@ -1694,6 +2133,9 @@ impl App {
             "SaCode 帮助:\n\
             \n一级命令:\n\
             /init      - 初始化项目配置\n\
+            /new       - 创建新会话\n\
+            /sessions  - 切换历史会话\n\
+            /clear     - 清空当前上下文\n\
             /profile   - 配置管理 (ls/use/show)\n\
             /plugin    - 插件管理 (list/install/remove/enable/disable)\n\
             /checkpoint - 检查点管理 (list/save/restore/delete)\n\
@@ -1711,8 +2153,9 @@ impl App {
             /exit      - 退出\n\
             \n快捷键:\n\
             Ctrl+Q - 退出\n\
-            Ctrl+C - 退出\n\
+            Ctrl+A - 优化当前输入\n\
             Esc    - 取消当前任务或取消选择\n\
+            上下键  - 浏览已发送输入历史\n\
             输入 /  - 显示命令列表"
         );
     }
@@ -2229,6 +2672,7 @@ match self.provider_store.save_named(name, &config, true) {
                 AsyncResult::ChatCompleted { task_id, prompt, response, plan } => {
                     if self.canceled_task_ids.remove(&task_id) {
                         if self.active_task_id == Some(task_id) {
+                            self.active_child = None;
                             self.processing = false;
                             self.active_task_id = None;
                             self.busy_message.clear();
@@ -2248,6 +2692,7 @@ match self.provider_store.save_named(name, &config, true) {
                     if let Some(plan) = plan {
                         self.capture_todo_plan(&prompt, plan);
                     }
+                    self.active_child = None;
                     self.processing = false;
                     self.active_task_id = None;
                     self.busy_message.clear();
@@ -2322,7 +2767,18 @@ match self.provider_store.save_named(name, &config, true) {
                     self.busy_message.clear();
                     self.push_system_message(&format!("默认模型已切换为 {}。", selected_model));
                 }
+                AsyncResult::InputOptimized { original, optimized } => {
+                    let optimized = optimized.trim().to_string();
+                    if optimized.is_empty() {
+                        self.push_system_message("输入优化未返回结果，保留原始内容。");
+                        self.input = original;
+                    } else {
+                        self.input = optimized;
+                        self.push_success_message("已优化当前输入");
+                    }
+                }
                 AsyncResult::Failed { context, message } => {
+                    self.active_child = None;
                     self.processing = false;
                     self.active_task_id = None;
                     self.busy_message.clear();
@@ -2353,6 +2809,9 @@ match self.provider_store.save_named(name, &config, true) {
         if let Some(task_id) = self.active_task_id {
             self.canceled_task_ids.insert(task_id);
             self.busy_message = format!("正在取消任务 #{}...", task_id);
+            if let Some(child) = &mut self.active_child {
+                let _ = child.kill();
+            }
         }
     }
 
@@ -2398,6 +2857,11 @@ match self.provider_store.save_named(name, &config, true) {
             self.checkpoint_options.clear();
             self.selected_checkpoint_index = 0;
         }
+        if self.input_mode == InputMode::SessionSelect {
+            self.push_system_message("已取消会话切换");
+            self.session_options.clear();
+            self.selected_session_index = 0;
+        }
         self.filtered_level1.clear();
         self.filtered_sub_commands.clear();
         self.selected_level1_index = 0;
@@ -2413,6 +2877,7 @@ match self.provider_store.save_named(name, &config, true) {
             content: content.to_string(),
             timestamp,
         });
+        self.save_current_session();
         self.scroll_to_bottom();
     }
 
@@ -2423,6 +2888,7 @@ match self.provider_store.save_named(name, &config, true) {
             content: format!("[成功] {}", content),
             timestamp,
         });
+        self.save_current_session();
         self.scroll_to_bottom();
     }
 
@@ -2433,6 +2899,7 @@ match self.provider_store.save_named(name, &config, true) {
             content: format!("[错误] {}", content),
             timestamp,
         });
+        self.save_current_session();
         self.scroll_to_bottom();
     }
 
@@ -2524,9 +2991,6 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                self.should_quit = true;
-            }
             KeyCode::Esc => {
                 if self.processing && self.input_mode == InputMode::Chat {
                     self.cancel_active_task();
@@ -2559,6 +3023,7 @@ match self.provider_store.save_named(name, &config, true) {
                     InputMode::McpSelect => self.confirm_mcp_selection(),
                     InputMode::CheckpointSelect => self.confirm_checkpoint_selection(),
                     InputMode::ModeSelect => self.confirm_mode_selection(),
+                    InputMode::SessionSelect => self.confirm_session_selection(),
                     InputMode::SkillInput => self.finish_skill_input(),
                     InputMode::McpInput => self.finish_mcp_input(),
                     InputMode::CheckpointInput => self.finish_checkpoint_input(),
@@ -2641,6 +3106,26 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Down if self.input_mode == InputMode::ModeSelect => {
                 if self.selected_mode_index + 1 < self.mode_options.len() {
                     self.selected_mode_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::SessionSelect => {
+                self.selected_session_index = self.selected_session_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::SessionSelect => {
+                if self.selected_session_index + 1 < self.session_options.len() {
+                    self.selected_session_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::Chat => {
+                self.navigate_history_up();
+            }
+            KeyCode::Down if self.input_mode == InputMode::Chat => {
+                self.navigate_history_down();
+            }
+            KeyCode::Char('a') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                if !self.input.trim().is_empty() {
+                    self.spawn_optimize_input_task(self.input.trim().to_string());
+                    self.push_system_message("正在优化当前输入...");
                 }
             }
             KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
@@ -2732,7 +3217,7 @@ match self.provider_store.save_named(name, &config, true) {
 pub fn run_tui() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -2743,7 +3228,8 @@ pub fn run_tui() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 
@@ -2756,10 +3242,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
         terminal.draw(|frame| ui(frame, app))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
-                    app.handle_key_event(key);
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
+                        app.handle_key_event(key);
+                    }
                 }
+                Event::Paste(text) => app.handle_paste(text),
+                _ => {}
             }
         }
     }
@@ -2932,6 +3422,7 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::SkillInput => "输入 Skill 参数...",
             InputMode::McpInput => "输入 MCP 参数...",
             InputMode::CheckpointInput => "输入检查点名称...",
+            InputMode::SessionSelect => "使用方向键选择历史会话...",
         };
         Span::styled(placeholder, Style::default().fg(Color::Rgb(100, 100, 120)))
     } else {
@@ -2979,6 +3470,42 @@ fn ui(frame: &mut Frame, app: &App) {
     if app.input_mode == InputMode::ModeSelect {
         render_mode_selector(frame, app);
     }
+
+    if app.input_mode == InputMode::SessionSelect {
+        render_session_selector(frame, app);
+    }
+}
+
+fn render_session_selector(frame: &mut Frame, app: &App) {
+    let area = centered_rect(frame.area(), 72, 55);
+    let block = Block::default()
+        .title("历史会话")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let start = app.selected_session_index.saturating_sub(MODELS_HINT_LIMIT / 2);
+    let end = (start + MODELS_HINT_LIMIT).min(app.session_options.len());
+    let lines: Vec<Line> = app.session_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, session)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_session_index;
+            let style = if is_selected {
+                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+            } else {
+                Style::default().fg(Color::Rgb(190, 190, 205))
+            };
+            Line::styled(
+                format!("{} [{}] {}", session.updated_at, session.id, session.title),
+                style,
+            )
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_selector(frame: &mut Frame, app: &App) {

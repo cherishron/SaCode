@@ -1,0 +1,22 @@
+[package]
+name = "sacode-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SaCode LSP server"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util", "net", "sync", "rt-multi-thread", "macros"] }
+tracing.workspace = true
+tower-lsp.workspace = true
+sacode-kernel = { path = "../../kernel" }
+sacode-runtime = { path = "../../runtime" }
+sacode-acp = { path = "../acp", optional = true }
+
+[features]
+default = []
+acp-bridge = ["sacode-acp"]

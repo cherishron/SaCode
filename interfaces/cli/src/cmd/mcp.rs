@@ -1,9 +1,15 @@
 use anyhow::Result;
-use sacode_runtime::{call_mcp_tool, inspect_server, list_mcp_tools, McpConfigStore};
+use sacode_runtime::{
+    call_mcp_tool, inspect_server, list_mcp_tools, McpConfigStore, McpSource, SaCodeConfig,
+    SkillHubClient,
+};
 use std::path::PathBuf;
 
 pub async fn run(args: Vec<String>) -> Result<()> {
-    let store = McpConfigStore::new(&PathBuf::from("."));
+    let workdir = PathBuf::from(".");
+    let store = McpConfigStore::new(&workdir);
+    let config = SaCodeConfig::new(&workdir);
+    let client = SkillHubClient::new();
 
     if args.is_empty() {
         show_default();
@@ -12,6 +18,20 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 
     match args[0].as_str() {
         "list" | "ls" => list_servers(&store)?,
+        "search" => {
+            if args.len() < 2 {
+                println!("Usage: sacode mcp search <keyword>");
+            } else {
+                search_mcp(&client, &args[1]).await?;
+            }
+        }
+        "install" => {
+            if args.len() < 2 {
+                println!("Usage: sacode mcp install <name> [--global|-g]");
+            } else {
+                install_mcp(&client, &config, &args[1], is_global(&args[2..])).await?;
+            }
+        }
         "show" => {
             if args.len() < 2 {
                 println!("Usage: sacode mcp show <name>");
@@ -23,15 +43,15 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             if args.len() < 3 {
                 println!("Usage: sacode mcp add <name> <url>");
             } else {
-                store.add_remote(&args[1], &args[2])?;
+                store.add_remote(&args[1], &args[2], McpSource::Project)?;
                 println!("Added MCP server: {}", args[1]);
             }
         }
         "enable" => {
             if args.len() < 2 {
-                println!("Usage: sacode mcp enable <name>");
+                println!("Usage: sacode mcp enable <name> [--global|-g]");
             } else {
-                store.set_enabled(&args[1], true)?;
+                store.set_enabled(&args[1], true, source_from_args(&args[2..]))?;
                 println!("Enabled MCP server: {}", args[1]);
             }
         }
@@ -58,23 +78,23 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         }
         "disable" => {
             if args.len() < 2 {
-                println!("Usage: sacode mcp disable <name>");
+                println!("Usage: sacode mcp disable <name> [--global|-g]");
             } else {
-                store.set_enabled(&args[1], false)?;
+                store.set_enabled(&args[1], false, source_from_args(&args[2..]))?;
                 println!("Disabled MCP server: {}", args[1]);
             }
         }
         "remove" | "rm" => {
             if args.len() < 2 {
-                println!("Usage: sacode mcp remove <name>");
+                println!("Usage: sacode mcp remove <name> [--global|-g]");
             } else {
-                store.remove(&args[1])?;
+                store.remove(&args[1], source_from_args(&args[2..]))?;
                 println!("Removed MCP server: {}", args[1]);
             }
         }
         _ => {
             println!("Unknown mcp command: {}", args[0]);
-            println!("Available: list, show, add, enable, disable, remove, inspect, tools, call");
+            println!("Available: search, install, list, show, add, enable, disable, remove, inspect, tools, call");
         }
     }
 
@@ -82,22 +102,52 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 }
 
 fn list_servers(store: &McpConfigStore) -> Result<()> {
-    let config = store.load()?;
-    if config.mcp.is_empty() {
+    let entries = store.list_entries()?;
+    if entries.is_empty() {
         println!("No MCP servers configured.");
         return Ok(());
     }
 
-    println!("MCP servers:");
-    for (name, server) in config.mcp {
+    println!("MCP Servers:");
+    for entry in entries {
         println!(
-            "  {} - {} - {} - {}",
-            name,
-            server.server_type,
-            if server.enabled { "enabled" } else { "disabled" },
-            server.url
+            "  {} - {} {} [{}]",
+            entry.name,
+            entry.server.url,
+            if entry.server.enabled { "enabled" } else { "disabled" },
+            entry.source.label()
         );
     }
+    Ok(())
+}
+
+async fn search_mcp(client: &SkillHubClient, keyword: &str) -> Result<()> {
+    let servers = client.search_mcp(keyword).await?;
+    if servers.is_empty() {
+        println!("No MCP servers found.");
+        return Ok(());
+    }
+
+    println!("SkillHub MCP results:");
+    for server in servers {
+        println!("  {} - {} - {}", server.name, server.url, server.description);
+    }
+    Ok(())
+}
+
+async fn install_mcp(client: &SkillHubClient, config: &SaCodeConfig, name: &str, global: bool) -> Result<()> {
+    let path = if global {
+        config.user_mcp_config()
+    } else {
+        config.project_mcp_config()
+    };
+    client.install_mcp(name, &path).await?;
+    println!(
+        "Installed MCP server {} to {} [{}]",
+        name,
+        path.display(),
+        if global { "user" } else { "project" }
+    );
     Ok(())
 }
 
@@ -152,15 +202,17 @@ async fn call(store: &McpConfigStore, server_name: &str, tool_name: &str, json_a
 
 fn show_default() {
     println!("MCP commands:");
-    println!("  sacode mcp list                 - List configured MCP servers");
-    println!("  sacode mcp show <name>          - Show local MCP server config");
-    println!("  sacode mcp add <name> <url>     - Add a remote MCP server");
-    println!("  sacode mcp enable <name>        - Enable a server");
-    println!("  sacode mcp disable <name>       - Disable a server");
-    println!("  sacode mcp remove <name>        - Remove a server");
-    println!("  sacode mcp inspect <name>       - Inspect remote MCP server");
-    println!("  sacode mcp tools <name>         - List remote MCP tools");
-    println!("  sacode mcp call <server> <tool> <json> - Call remote MCP tool");
+    println!("  sacode mcp search <keyword>");
+    println!("  sacode mcp install <name> [--global|-g]");
+    println!("  sacode mcp list");
+    println!("  sacode mcp show <name>");
+    println!("  sacode mcp add <name> <url>");
+    println!("  sacode mcp enable <name> [--global|-g]");
+    println!("  sacode mcp disable <name> [--global|-g]");
+    println!("  sacode mcp remove <name> [--global|-g]");
+    println!("  sacode mcp inspect <name>");
+    println!("  sacode mcp tools <name>");
+    println!("  sacode mcp call <server> <tool> <json>");
 }
 
 fn show_server(store: &McpConfigStore, name: &str) -> Result<()> {
@@ -170,4 +222,16 @@ fn show_server(store: &McpConfigStore, name: &str) -> Result<()> {
     println!("Enabled: {}", server.enabled);
     println!("URL: {}", server.url);
     Ok(())
+}
+
+fn is_global(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--global" || arg == "-g")
+}
+
+fn source_from_args(args: &[String]) -> McpSource {
+    if is_global(args) {
+        McpSource::User
+    } else {
+        McpSource::Project
+    }
 }

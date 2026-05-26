@@ -27,3 +27,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 sacode-kernel = { path = "../../kernel" }
 sacode-runtime = { path = "../../runtime" }
+sacode-acp = { path = "../acp" }
+sacode-lsp = { path = "../lsp" }

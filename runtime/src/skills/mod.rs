@@ -1,9 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}};
+use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
 
-const PROJECT_SKILLS_DIR: &str = ".sacode/skills";
-const SKILLS_DIR: &str = "skills";
+use crate::config::SaCodeConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillSpec {
@@ -11,27 +10,48 @@ pub struct SkillSpec {
     pub description: String,
     pub prompt: String,
     pub path: PathBuf,
+    pub source: SkillSource,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SkillSource {
+    User,
+    Project,
+    Workspace,
+    Builtin,
+}
+
+impl SkillSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+            Self::Workspace => "workspace",
+            Self::Builtin => "builtin",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct SkillRegistry {
-    project_root: PathBuf,
-    workspace_root: PathBuf,
+    config: SaCodeConfig,
 }
 
 impl SkillRegistry {
     pub fn new(workdir: &Path) -> Self {
-        Self {
-            project_root: workdir.join(PROJECT_SKILLS_DIR),
-            workspace_root: workdir.join(SKILLS_DIR),
-        }
+        Self::new_from_config(SaCodeConfig::new(workdir))
+    }
+
+    pub fn new_from_config(config: SaCodeConfig) -> Self {
+        Self { config }
     }
 
     pub fn ensure_defaults(&self) -> Result<()> {
-        fs::create_dir_all(&self.workspace_root)?;
+        let workspace_root = self.config.workspace_skills_dir();
+        fs::create_dir_all(&workspace_root)?;
 
         for (name, description, prompt) in default_skills() {
-            let path = self.workspace_root.join(format!("{}.md", name));
+            let path = workspace_root.join(format!("{}.md", name));
             if !path.exists() {
                 let body = format!(
                     "# {name}\n\nDescription: {description}\n\n## Prompt\n\n{prompt}\n"
@@ -45,10 +65,23 @@ impl SkillRegistry {
 
     pub fn list(&self) -> Result<Vec<SkillSpec>> {
         self.ensure_defaults()?;
-        let mut skills = std::collections::BTreeMap::new();
+        let mut skills = BTreeMap::new();
 
-        self.collect_skills_from_dir(&self.workspace_root, &mut skills)?;
-        self.collect_skills_from_dir(&self.project_root, &mut skills)?;
+        self.collect_skills_from_dir(
+            &self.config.workspace_skills_dir(),
+            SkillSource::Workspace,
+            &mut skills,
+        )?;
+        self.collect_skills_from_dir(
+            &self.config.user_skills_dir(),
+            SkillSource::User,
+            &mut skills,
+        )?;
+        self.collect_skills_from_dir(
+            &self.config.project_skills_dir(),
+            SkillSource::Project,
+            &mut skills,
+        )?;
 
         Ok(skills.into_values().collect())
     }
@@ -71,9 +104,15 @@ impl SkillRegistry {
             .replace("{{description}}", &skill.description))
     }
 
-    pub fn save_project_skill(&self, name: &str, description: &str, prompt: &str) -> Result<PathBuf> {
-        fs::create_dir_all(&self.project_root)?;
-        let path = self.project_root.join(format!("{}.md", name.trim()));
+    pub fn save_skill(&self, name: &str, description: &str, prompt: &str, source: SkillSource) -> Result<PathBuf> {
+        let dir = match source {
+            SkillSource::User => self.config.user_skills_dir(),
+            SkillSource::Project => self.config.project_skills_dir(),
+            SkillSource::Workspace => self.config.workspace_skills_dir(),
+            SkillSource::Builtin => anyhow::bail!("cannot save builtin skill"),
+        };
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.md", name.trim()));
         let body = format!(
             "# {}\n\nDescription: {}\n\n## Prompt\n\n{}\n",
             name.trim(),
@@ -84,19 +123,33 @@ impl SkillRegistry {
         Ok(path)
     }
 
-    pub fn remove_project_skill(&self, name: &str) -> Result<()> {
-        let path = self.project_root.join(format!("{}.md", name.trim()));
+    pub fn save_project_skill(&self, name: &str, description: &str, prompt: &str) -> Result<PathBuf> {
+        self.save_skill(name, description, prompt, SkillSource::Project)
+    }
+
+    pub fn remove_skill(&self, name: &str, source: SkillSource) -> Result<()> {
+        let path = match source {
+            SkillSource::User => self.config.user_skills_dir().join(format!("{}.md", name.trim())),
+            SkillSource::Project => self.config.project_skills_dir().join(format!("{}.md", name.trim())),
+            SkillSource::Workspace => self.config.workspace_skills_dir().join(format!("{}.md", name.trim())),
+            SkillSource::Builtin => anyhow::bail!("cannot remove builtin skill"),
+        };
         if !path.exists() {
-            anyhow::bail!("project skill not found: {}", name);
+            anyhow::bail!("skill not found: {}", name);
         }
         fs::remove_file(path)?;
         Ok(())
     }
 
+    pub fn remove_project_skill(&self, name: &str) -> Result<()> {
+        self.remove_skill(name, SkillSource::Project)
+    }
+
     fn collect_skills_from_dir(
         &self,
         dir: &Path,
-        skills: &mut std::collections::BTreeMap<String, SkillSpec>,
+        source: SkillSource,
+        skills: &mut BTreeMap<String, SkillSpec>,
     ) -> Result<()> {
         if !dir.exists() {
             return Ok(());
@@ -110,7 +163,7 @@ impl SkillRegistry {
             }
 
             let content = fs::read_to_string(&path)?;
-            let skill = parse_skill_file(&path, &content);
+            let skill = parse_skill_file(&path, &content, source);
             skills.insert(skill.name.clone(), skill);
         }
 
@@ -118,7 +171,7 @@ impl SkillRegistry {
     }
 }
 
-fn parse_skill_file(path: &Path, content: &str) -> SkillSpec {
+fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpec {
     let default_name = path
         .file_stem()
         .and_then(|value| value.to_str())
@@ -159,6 +212,7 @@ fn parse_skill_file(path: &Path, content: &str) -> SkillSpec {
         description,
         prompt: prompt.trim().to_string(),
         path: path.to_path_buf(),
+        source,
     }
 }
 

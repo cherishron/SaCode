@@ -1,9 +1,12 @@
+mod acp;
 mod checkpoint;
 mod init;
+mod lsp;
 mod mistakes;
 mod mcp;
 mod plugin;
 mod profile;
+mod serve;
 mod skill;
 
 use std::{env, io::IsTerminal};
@@ -38,6 +41,9 @@ pub enum CliCommand {
     Plugin,
     Skill,
     Mcp,
+    Acp,
+    Lsp,
+    Serve,
     Init,
     Mistakes,
     Repl,
@@ -122,8 +128,11 @@ pub async fn run() -> Result<()> {
         CliCommand::Orchestrator => run_with_orchestrator(options).await?,
         CliCommand::Profile => profile::run(options.sub_args)?,
         CliCommand::Plugin => plugin::run(options.sub_args).await?,
-        CliCommand::Skill => skill::run(options.sub_args)?,
+        CliCommand::Skill => skill::run(options.sub_args).await?,
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
+        CliCommand::Acp => acp::run(options.sub_args).await?,
+        CliCommand::Lsp => lsp::run(options.sub_args).await?,
+        CliCommand::Serve => serve::run(options.sub_args).await?,
         CliCommand::Init => init::run().await?,
         CliCommand::Mistakes => mistakes::run(options.sub_args)?,
         CliCommand::Repl => run_repl().await?,
@@ -720,6 +729,42 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "acp" {
+        return CliOptions {
+            command: CliCommand::Acp,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "lsp" {
+        return CliOptions {
+            command: CliCommand::Lsp,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "serve" {
+        return CliOptions {
+            command: CliCommand::Serve,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
     if first == "init" {
         return CliOptions {
             command: CliCommand::Init,
@@ -873,8 +918,11 @@ fn print_help() {
     println!("  sacode orchestrator \"<task>\"");
     println!("  sacode profile [ls|use <name>|show]");
     println!("  sacode plugin [list]");
-    println!("  sacode skill [list|show <name>|run <name> [args...]]");
-    println!("  sacode mcp [list|show <name>|add <name> <url>|enable <name>|disable <name>|remove <name>|inspect <name>|tools <name>|call <server> <tool> <json>]");
+    println!("  sacode skill [search|install|list|show|update|remove|run]");
+    println!("  sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]");
+    println!("  sacode acp [serve|status] [--host HOST] [--port PORT]");
+    println!("  sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]");
+    println!("  sacode serve [--acp] [--lsp]");
     println!("  sacode init");
     println!("  sacode mistakes [list|show <index>]");
     println!("  sacode repl");
@@ -965,6 +1013,30 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Mcp);
         assert_eq!(options.sub_args, vec!["list".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_acp_subcommand() {
+        let options = parse_args(vec!["acp".to_string(), "serve".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Acp);
+        assert_eq!(options.sub_args, vec!["serve".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_lsp_subcommand() {
+        let options = parse_args(vec!["lsp".to_string(), "serve".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Lsp);
+        assert_eq!(options.sub_args, vec!["serve".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_serve_subcommand() {
+        let options = parse_args(vec!["serve".to_string(), "--acp".to_string(), "--lsp".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Serve);
+        assert_eq!(options.sub_args, vec!["--acp".to_string(), "--lsp".to_string()]);
     }
 
     #[test]

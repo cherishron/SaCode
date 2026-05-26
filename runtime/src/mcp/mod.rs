@@ -3,9 +3,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
 
+use crate::config::SaCodeConfig;
 use crate::tools::{SideEffectLevel, ToolSpec};
-
-const MCP_CONFIG_FILE: &str = ".sacode/mcp.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
@@ -43,38 +42,68 @@ pub struct McpToolCallResult {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum McpSource {
+    User,
+    Project,
+}
+
+impl McpSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    pub server: McpServerConfig,
+    pub source: McpSource,
+}
+
 #[derive(Debug, Clone)]
 pub struct McpConfigStore {
-    path: PathBuf,
+    config: SaCodeConfig,
 }
 
 impl McpConfigStore {
     pub fn new(workdir: &Path) -> Self {
-        Self {
-            path: workdir.join(MCP_CONFIG_FILE),
-        }
+        Self::new_from_config(SaCodeConfig::new(workdir))
+    }
+
+    pub fn new_from_config(config: SaCodeConfig) -> Self {
+        Self { config }
     }
 
     pub fn load(&self) -> Result<McpConfig> {
-        if !self.path.exists() {
+        self.config.load_merged_mcp_config()
+    }
+
+    pub fn load_from_source(&self, source: McpSource) -> Result<McpConfig> {
+        let path = self.path_for_source(source);
+        if !path.exists() {
             return Ok(McpConfig::default());
         }
 
-        let content = fs::read_to_string(&self.path)?;
+        let content = fs::read_to_string(&path)?;
         Ok(serde_json::from_str(&content)?)
     }
 
-    pub fn save(&self, config: &McpConfig) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
+    pub fn save_to_source(&self, config: &McpConfig, source: McpSource) -> Result<()> {
+        let path = self.path_for_source(source);
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&self.path, serde_json::to_string_pretty(config)?)?;
+        fs::write(&path, serde_json::to_string_pretty(config)?)?;
         Ok(())
     }
 
-    pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
-        let mut config = self.load()?;
+    pub fn add_remote(&self, name: &str, url: &str, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
         config.mcp.insert(
             name.to_string(),
             McpServerConfig {
@@ -83,17 +112,17 @@ impl McpConfigStore {
                 enabled: true,
             },
         );
-        self.save(&config)
+        self.save_to_source(&config, source)
     }
 
-    pub fn set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
-        let mut config = self.load()?;
+    pub fn set_enabled(&self, name: &str, enabled: bool, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
         let server = config
             .mcp
             .get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("mcp server not found: {}", name))?;
         server.enabled = enabled;
-        self.save(&config)
+        self.save_to_source(&config, source)
     }
 
     pub fn get(&self, name: &str) -> Result<McpServerConfig> {
@@ -105,12 +134,39 @@ impl McpConfigStore {
             .ok_or_else(|| anyhow::anyhow!("mcp server not found: {}", name))
     }
 
-    pub fn remove(&self, name: &str) -> Result<()> {
-        let mut config = self.load()?;
+    pub fn remove(&self, name: &str, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
         if config.mcp.remove(name).is_none() {
             anyhow::bail!("mcp server not found: {}", name);
         }
-        self.save(&config)
+        self.save_to_source(&config, source)
+    }
+
+    pub fn list_entries(&self) -> Result<Vec<McpServerEntry>> {
+        let mut merged: BTreeMap<String, McpServerEntry> = BTreeMap::new();
+
+        for source in [McpSource::User, McpSource::Project] {
+            let config = self.load_from_source(source)?;
+            for (name, server) in config.mcp {
+                merged.insert(
+                    name.clone(),
+                    McpServerEntry {
+                        name,
+                        server,
+                        source,
+                    },
+                );
+            }
+        }
+
+        Ok(merged.into_values().collect())
+    }
+
+    fn path_for_source(&self, source: McpSource) -> PathBuf {
+        match source {
+            McpSource::User => self.config.user_mcp_config(),
+            McpSource::Project => self.config.project_mcp_config(),
+        }
     }
 }
 

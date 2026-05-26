@@ -2,7 +2,7 @@ use std::{env, io::{self, BufRead, Write}};
 
 use anyhow::Result;
 use sacode_kernel::ExecutionMode;
-use sacode_runtime::{McpConfigStore, SkillRegistry, ToolRegistry};
+use sacode_runtime::{McpConfigStore, McpSource, SkillRegistry, ToolRegistry};
 
 use crate::{
     cmd::ApprovalPolicy,
@@ -161,7 +161,7 @@ impl ReplSession {
         match registry.list() {
             Ok(skills) => {
                 for skill in skills {
-                    println!("  {} - {}", skill.name, skill.description);
+                    println!("  {} - {} [{}]", skill.name, skill.description, skill.source.label());
                 }
             }
             Err(error) => println!("  failed to load skills: {}", error),
@@ -173,15 +173,16 @@ impl ReplSession {
         let store = McpConfigStore::new(std::path::Path::new("."));
         println!();
         println!("Configured MCP servers:");
-        match store.load() {
-            Ok(config) if config.mcp.is_empty() => println!("  none"),
-            Ok(config) => {
-                for (name, server) in config.mcp {
+        match store.list_entries() {
+            Ok(entries) if entries.is_empty() => println!("  none"),
+            Ok(entries) => {
+                for entry in entries {
                     println!(
-                        "  {} - {} - {}",
-                        name,
-                        if server.enabled { "enabled" } else { "disabled" },
-                        server.url
+                        "  {} - {} - {} [{}]",
+                        entry.name,
+                        if entry.server.enabled { "enabled" } else { "disabled" },
+                        entry.server.url,
+                        entry.source.label()
                     );
                 }
             }
@@ -203,6 +204,7 @@ impl ReplSession {
                 println!();
                 println!("Name: {}", skill.name);
                 println!("Description: {}", skill.description);
+                println!("Source: {}", skill.source.label());
                 println!("Path: {}", skill.path.display());
                 println!();
                 println!("Prompt:");
@@ -266,7 +268,7 @@ impl ReplSession {
             return Ok(());
         };
         let store = McpConfigStore::new(std::path::Path::new("."));
-        store.remove(name)?;
+        store.remove(name, McpSource::Project)?;
         println!("Removed MCP server {}", name);
         println!();
         Ok(())

@@ -8,7 +8,13 @@ use axum::{
 use http_body_util::BodyExt;
 use tower::util::ServiceExt;
 
-use crate::{create_daemon, tools::{self, ToolRegistry, ToolOutput}};
+use crate::{
+    create_daemon,
+    config::SaCodeConfig,
+    mcp::{McpConfig, McpConfigStore, McpServerConfig, McpSource},
+    skills::SkillRegistry,
+    tools::{self, ToolRegistry, ToolOutput},
+};
 
 #[test]
 fn test_tool_registry() {
@@ -85,6 +91,110 @@ fn test_fs_write_rejects_parent_escape() {
     std::env::set_current_dir(original_dir).expect("restore current dir");
 
     assert!(error.to_string().contains("outside workspace"));
+}
+
+#[test]
+fn test_skill_registry_prefers_project_over_user_over_workspace() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let home_dir = temp_dir.path().join("home");
+    let workdir = temp_dir.path().join("workspace");
+
+    fs::create_dir_all(home_dir.join(".sacode/skills")).expect("create user skills dir");
+    fs::create_dir_all(workdir.join("skills")).expect("create workspace skills dir");
+    fs::create_dir_all(workdir.join(".sacode/skills")).expect("create project skills dir");
+
+    fs::write(
+        workdir.join("skills/deploy.md"),
+        "# deploy\n\nDescription: workspace\n\n## Prompt\n\nworkspace prompt\n",
+    )
+    .expect("write workspace skill");
+    fs::write(
+        home_dir.join(".sacode/skills/deploy.md"),
+        "# deploy\n\nDescription: user\n\n## Prompt\n\nuser prompt\n",
+    )
+    .expect("write user skill");
+    fs::write(
+        workdir.join(".sacode/skills/deploy.md"),
+        "# deploy\n\nDescription: project\n\n## Prompt\n\nproject prompt\n",
+    )
+    .expect("write project skill");
+
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home_dir);
+
+    let registry = SkillRegistry::new(&workdir);
+    let skill = registry.get("deploy").expect("load merged skill");
+
+    match previous_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
+
+    assert_eq!(skill.description, "project");
+    assert_eq!(skill.prompt, "project prompt");
+    assert_eq!(skill.source.label(), "project");
+}
+
+#[test]
+fn test_mcp_store_prefers_project_over_user() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let home_dir = temp_dir.path().join("home");
+    let workdir = temp_dir.path().join("workspace");
+
+    fs::create_dir_all(&home_dir).expect("create home dir");
+    fs::create_dir_all(&workdir).expect("create workspace dir");
+
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home_dir);
+
+    let config = SaCodeConfig::new(&workdir);
+    let store = McpConfigStore::new_from_config(config.clone());
+
+    store
+        .save_to_source(
+            &McpConfig {
+                mcp: std::collections::BTreeMap::from([(
+                    "github".to_string(),
+                    McpServerConfig {
+                        server_type: "remote".to_string(),
+                        url: "https://user.example/mcp".to_string(),
+                        enabled: true,
+                    },
+                )]),
+            },
+            McpSource::User,
+        )
+        .expect("save user mcp config");
+
+    store
+        .save_to_source(
+            &McpConfig {
+                mcp: std::collections::BTreeMap::from([(
+                    "github".to_string(),
+                    McpServerConfig {
+                        server_type: "remote".to_string(),
+                        url: "https://project.example/mcp".to_string(),
+                        enabled: false,
+                    },
+                )]),
+            },
+            McpSource::Project,
+        )
+        .expect("save project mcp config");
+
+    let merged = store.load().expect("load merged mcp config");
+    let entries = store.list_entries().expect("list merged entries");
+
+    match previous_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
+
+    let github = merged.mcp.get("github").expect("merged github config");
+    assert_eq!(github.url, "https://project.example/mcp");
+    assert!(!github.enabled);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].source.label(), "project");
 }
 
 #[tokio::test]
