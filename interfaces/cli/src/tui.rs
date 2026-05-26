@@ -1,4 +1,4 @@
-use std::{env, io, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, io, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
 use crossterm::{
@@ -76,6 +76,39 @@ struct App {
     pending_checkpoint_action: Option<String>,
     mode_options: Vec<String>,
     selected_mode_index: usize,
+    next_task_id: u64,
+    active_task_id: Option<u64>,
+    canceled_task_ids: HashSet<u64>,
+    queued_messages: VecDeque<QueuedMessage>,
+    todo_plan: Option<TodoPlan>,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedMessage {
+    id: u64,
+    content: String,
+}
+
+#[derive(Debug, Clone)]
+struct TodoPlan {
+    source_task: String,
+    items: Vec<TodoItem>,
+    confirmed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TodoItem {
+    id: usize,
+    description: String,
+    status: TodoStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TodoStatus {
+    Pending,
+    Running,
+    Completed,
+    Skipped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +228,12 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/login", "配置 Provider 登录"),
         CommandDef::simple("/connect", "快速接入 Provider"),
         CommandDef::simple("/tools", "显示可用工具"),
+        CommandDef::with_subs("/todo", "任务列表管理", vec![
+            SubCommandDef::new("show", "显示当前待办"),
+            SubCommandDef::new("confirm", "确认并执行待办"),
+            SubCommandDef::new("clear", "清空待办"),
+        ]),
+        CommandDef::simple("/cancel", "取消当前任务"),
         CommandDef::simple("/help", "显示帮助"),
         CommandDef::simple("/exit", "退出"),
     ]
@@ -217,7 +256,12 @@ fn fuzzy_match(query: &str, target: &str) -> bool {
 }
 
 enum AsyncResult {
-    ChatCompleted(String),
+    ChatCompleted {
+        task_id: u64,
+        prompt: String,
+        response: String,
+        plan: Option<sacode_kernel::Plan>,
+    },
     LoginCompleted {
         provider_name: String,
         config: ProviderConfig,
@@ -269,7 +313,7 @@ impl App {
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 退出，按 Esc 清空输入.\n输入 / 可显示命令列表.".to_string(),
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 Ctrl+C 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
                     timestamp: timestamp.clone(),
                 },
             ],
@@ -321,11 +365,16 @@ impl App {
                 "yolo".to_string(),
             ],
             selected_mode_index: 0,
+            next_task_id: 1,
+            active_task_id: None,
+            canceled_task_ids: HashSet::new(),
+            queued_messages: VecDeque::new(),
+            todo_plan: None,
         }
     }
 
     fn send_message(&mut self) {
-        if self.input.is_empty() || self.processing {
+        if self.input.is_empty() {
             return;
         }
 
@@ -423,31 +472,75 @@ impl App {
 
         let user_input = self.input.clone();
         self.input.clear();
-        self.processing = true;
-        self.busy_message = format!("正在请求 {}...", self.current_model_name());
-        self.spawn_chat_task(user_input);
+        self.enqueue_or_start_message(user_input);
         self.scroll_to_bottom();
     }
 
-    fn spawn_chat_task(&self, user_input: String) {
+    fn enqueue_or_start_message(&mut self, user_input: String) {
+        let task_id = self.next_task_id;
+        self.next_task_id += 1;
+
+        if self.processing {
+            self.queued_messages.push_back(QueuedMessage {
+                id: task_id,
+                content: user_input.clone(),
+            });
+            self.push_system_message(&format!(
+                "任务已加入等待队列 #{}，前方还有 {} 项。",
+                task_id,
+                self.queued_messages.len().saturating_sub(1)
+            ));
+            return;
+        }
+
+        self.start_queued_message(QueuedMessage {
+            id: task_id,
+            content: user_input,
+        });
+    }
+
+    fn start_queued_message(&mut self, queued: QueuedMessage) {
+        self.processing = true;
+        self.active_task_id = Some(queued.id);
+        self.busy_message = format!(
+            "正在执行 #{}，模型 {}，Esc 取消当前任务",
+            queued.id,
+            self.current_model_name()
+        );
+        self.spawn_chat_task(queued.id, queued.content);
+    }
+
+    fn spawn_chat_task(&self, task_id: u64, user_input: String) {
         let sender = self.task_tx.clone();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         let mode = self.execution_mode;
         thread::spawn(move || {
-            let response = App::execute_user_message_in_background(&workdir, &user_input, mode);
-            let _ = sender.send(AsyncResult::ChatCompleted(response));
+            let (response, plan) = App::execute_user_message_in_background(&workdir, &user_input, mode);
+            let _ = sender.send(AsyncResult::ChatCompleted {
+                task_id,
+                prompt: user_input,
+                response,
+                plan,
+            });
         });
     }
 
-    fn execute_user_message_in_background(workdir: &std::path::Path, user_input: &str, mode: ExecutionMode) -> String {
+    fn execute_user_message_in_background(workdir: &std::path::Path, user_input: &str, mode: ExecutionMode) -> (String, Option<sacode_kernel::Plan>) {
         let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => runtime,
-            Err(error) => return format!("后台运行时初始化失败: {}", error),
+            Err(error) => return (format!("后台运行时初始化失败: {}", error), None),
         };
         let _ = workdir;
         match runtime.block_on(run_task(user_input, mode, crate::cmd::ApprovalPolicy::AutoDeny, 1)) {
-            Ok(output) => format_chat_output(&output),
-            Err(error) => format!("任务执行失败: {}", error),
+            Ok(output) => {
+                let plan = if output.plan.steps.is_empty() {
+                    None
+                } else {
+                    Some(output.plan.clone())
+                };
+                (format_chat_output(&output), plan)
+            }
+            Err(error) => (format!("任务执行失败: {}", error), None),
         }
     }
 
@@ -676,6 +769,18 @@ impl App {
 
         if trimmed == "/tools" {
             self.tools_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/todo ") || trimmed == "/todo" {
+            self.todo_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/cancel" {
+            self.cancel_command();
             self.input.clear();
             return true;
         }
@@ -1474,6 +1579,116 @@ impl App {
         ));
     }
 
+    fn cancel_command(&mut self) {
+        if self.processing {
+            self.cancel_active_task();
+            return;
+        }
+
+        if self.queued_messages.is_empty() {
+            self.push_system_message("当前没有正在执行或等待中的任务。");
+        } else {
+            let count = self.queued_messages.len();
+            self.queued_messages.clear();
+            self.push_system_message(&format!("已清空等待队列，共移除 {} 项。", count));
+        }
+    }
+
+    fn todo_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("show");
+
+        match sub {
+            "show" => self.show_todo_plan(),
+            "confirm" => self.confirm_todo_plan(),
+            "clear" => {
+                self.todo_plan = None;
+                self.push_system_message("已清空当前待办列表。");
+            }
+            _ => self.push_system_message("用法: /todo show|confirm|clear"),
+        }
+    }
+
+    fn capture_todo_plan(&mut self, source_task: &str, plan: sacode_kernel::Plan) {
+        if plan.steps.len() < 2 {
+            return;
+        }
+
+        let items = plan.steps.iter().map(|step| TodoItem {
+            id: step.id,
+            description: step.description.clone(),
+            status: TodoStatus::Pending,
+        }).collect::<Vec<_>>();
+
+        self.todo_plan = Some(TodoPlan {
+            source_task: source_task.to_string(),
+            items,
+            confirmed: false,
+        });
+
+        self.show_todo_plan();
+        self.push_system_message("如需按待办顺序继续执行，输入 /todo confirm。");
+    }
+
+    fn show_todo_plan(&mut self) {
+        let Some(plan) = &self.todo_plan else {
+            self.push_system_message("当前没有待办列表。先发送一个需要规划的任务。");
+            return;
+        };
+
+        let mut lines = vec![format!("任务规划: {}", plan.source_task)];
+        for item in &plan.items {
+            let status = match item.status {
+                TodoStatus::Pending => "pending",
+                TodoStatus::Running => "running",
+                TodoStatus::Completed => "completed",
+                TodoStatus::Skipped => "skipped",
+            };
+            lines.push(format!("{}. [{}] {}", item.id, status, item.description));
+        }
+        lines.push(format!("确认状态: {}", if plan.confirmed { "已确认" } else { "待确认" }));
+        self.push_system_message(&lines.join("\n"));
+    }
+
+    fn confirm_todo_plan(&mut self) {
+        let Some(plan) = &mut self.todo_plan else {
+            self.push_system_message("当前没有待办列表可确认。");
+            return;
+        };
+
+        if plan.confirmed {
+            self.push_system_message("当前待办已经确认过，正在按顺序执行。");
+            return;
+        }
+
+        plan.confirmed = true;
+        let pending_items = plan.items.iter_mut().filter(|item| item.status == TodoStatus::Pending).map(|item| {
+            item.status = TodoStatus::Running;
+            (item.id, item.description.clone())
+        }).collect::<Vec<_>>();
+
+        for (_, description) in &pending_items {
+            self.enqueue_or_start_message(description.clone());
+        }
+
+        if pending_items.is_empty() {
+            self.push_system_message("待办列表中没有可执行项。");
+        } else {
+            self.push_system_message(&format!("已确认待办，加入执行队列 {} 项。", pending_items.len()));
+        }
+    }
+
+    fn mark_todo_completed(&mut self, prompt: &str) {
+        if let Some(plan) = &mut self.todo_plan {
+            for item in &mut plan.items {
+                if item.description == prompt && item.status == TodoStatus::Running {
+                    item.status = TodoStatus::Completed;
+                    break;
+                }
+            }
+        }
+    }
+
     fn help_command(&mut self) {
         self.push_system_message(
             "SaCode 帮助:\n\
@@ -1490,11 +1705,14 @@ impl App {
             /login     - 配置 Provider 登录\n\
             /connect   - 快速接入 Provider\n\
             /tools     - 显示可用工具\n\
+            /todo      - 任务列表管理 (show/confirm/clear)\n\
+            /cancel    - 取消当前任务或清空等待队列\n\
             /help      - 显示帮助\n\
             /exit      - 退出\n\
             \n快捷键:\n\
             Ctrl+Q - 退出\n\
-            Esc    - 清空输入/取消选择\n\
+            Ctrl+C - 退出\n\
+            Esc    - 取消当前任务或取消选择\n\
             输入 /  - 显示命令列表"
         );
     }
@@ -2008,16 +2226,33 @@ match self.provider_store.save_named(name, &config, true) {
     fn poll_async_results(&mut self) {
         while let Ok(result) = self.task_rx.try_recv() {
             match result {
-                AsyncResult::ChatCompleted(response) => {
+                AsyncResult::ChatCompleted { task_id, prompt, response, plan } => {
+                    if self.canceled_task_ids.remove(&task_id) {
+                        if self.active_task_id == Some(task_id) {
+                            self.processing = false;
+                            self.active_task_id = None;
+                            self.busy_message.clear();
+                            self.push_system_message(&format!("已取消任务 #{}: {}", task_id, prompt));
+                            self.start_next_queued_message();
+                        }
+                        continue;
+                    }
+
                     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
                     self.messages.push(Message {
                         role: MessageRole::Assistant,
                         content: response,
                         timestamp,
                     });
+                    self.mark_todo_completed(&prompt);
+                    if let Some(plan) = plan {
+                        self.capture_todo_plan(&prompt, plan);
+                    }
                     self.processing = false;
+                    self.active_task_id = None;
                     self.busy_message.clear();
                     self.scroll_to_bottom();
+                    self.start_next_queued_message();
                 }
                 AsyncResult::LoginCompleted { provider_name, config, models } => {
                     self.current_provider = Some(NamedProviderConfig {
@@ -2089,6 +2324,7 @@ match self.provider_store.save_named(name, &config, true) {
                 }
                 AsyncResult::Failed { context, message } => {
                     self.processing = false;
+                    self.active_task_id = None;
                     self.busy_message.clear();
                     if matches!(
                         context,
@@ -2097,8 +2333,26 @@ match self.provider_store.save_named(name, &config, true) {
                         self.input_mode = InputMode::Chat;
                     }
                     self.push_system_message(&message);
+                    self.start_next_queued_message();
                 }
             }
+        }
+    }
+
+    fn start_next_queued_message(&mut self) {
+        if self.processing {
+            return;
+        }
+
+        if let Some(next) = self.queued_messages.pop_front() {
+            self.start_queued_message(next);
+        }
+    }
+
+    fn cancel_active_task(&mut self) {
+        if let Some(task_id) = self.active_task_id {
+            self.canceled_task_ids.insert(task_id);
+            self.busy_message = format!("正在取消任务 #{}...", task_id);
         }
     }
 
@@ -2270,7 +2524,14 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
+            KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+            }
             KeyCode::Esc => {
+                if self.processing && self.input_mode == InputMode::Chat {
+                    self.cancel_active_task();
+                    return;
+                }
                 if self.input_mode == InputMode::CommandLevel2 {
                     self.input_mode = InputMode::CommandLevel1;
                     self.filtered_sub_commands.clear();
@@ -2511,6 +2772,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .margin(0)
         .constraints([
             Constraint::Min(5),
+            Constraint::Length(4),
             Constraint::Length(3),
         ])
         .split(frame.area());
@@ -2590,6 +2852,47 @@ fn ui(frame: &mut Frame, app: &App) {
         frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
     }
 
+    let queue_block = Block::default()
+        .title(" 执行队列 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+    let queue_inner = queue_block.inner(chunks[1]);
+    frame.render_widget(queue_block, chunks[1]);
+
+    let mut queue_lines = Vec::new();
+    if let Some(task_id) = app.active_task_id {
+        queue_lines.push(Line::from(Span::styled(
+            format!("运行中 #{} {}", task_id, app.busy_message),
+            Style::default().fg(Color::Rgb(200, 200, 100)).add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        queue_lines.push(Line::from(Span::styled(
+            "当前没有执行中的任务",
+            Style::default().fg(Color::Rgb(120, 120, 140)),
+        )));
+    }
+
+    if app.queued_messages.is_empty() {
+        queue_lines.push(Line::from(Span::styled(
+            "等待队列为空",
+            Style::default().fg(Color::Rgb(120, 120, 140)),
+        )));
+    } else {
+        for queued in app.queued_messages.iter().take(2) {
+            queue_lines.push(Line::from(Span::styled(
+                format!("等待 #{} {}", queued.id, queued.content),
+                Style::default().fg(Color::Rgb(170, 170, 190)),
+            )));
+        }
+        if app.queued_messages.len() > 2 {
+            queue_lines.push(Line::from(Span::styled(
+                format!("还有 {} 项等待中", app.queued_messages.len() - 2),
+                Style::default().fg(Color::Rgb(120, 120, 140)),
+            )));
+        }
+    }
+    frame.render_widget(Paragraph::new(queue_lines), queue_inner);
+
     let input_text = if app.processing {
         Span::styled(&app.busy_message, Style::default().fg(Color::Rgb(200, 200, 100)))
     } else if app.input_mode == InputMode::ProviderSelect {
@@ -2641,11 +2944,11 @@ fn ui(frame: &mut Frame, app: &App) {
 
     let input_paragraph = Paragraph::new(Line::from(input_text))
         .block(input_block);
-    frame.render_widget(input_paragraph, chunks[1]);
+    frame.render_widget(input_paragraph, chunks[2]);
 
     if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect) {
-        let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
-        let cursor_y = chunks[1].y + 1;
+        let cursor_x = chunks[2].x + 1 + app.input.len() as u16;
+        let cursor_y = chunks[2].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 
@@ -2658,7 +2961,7 @@ fn ui(frame: &mut Frame, app: &App) {
     }
 
     if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
-        render_command_selector(frame, app, chunks[1]);
+        render_command_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::SkillsSelect {
