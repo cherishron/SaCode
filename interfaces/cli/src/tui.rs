@@ -2593,11 +2593,21 @@ fn ui(frame: &mut Frame, app: &App) {
     let input_text = if app.processing {
         Span::styled(&app.busy_message, Style::default().fg(Color::Rgb(200, 200, 100)))
     } else if app.input_mode == InputMode::ProviderSelect {
-        Span::styled("使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
     } else if app.input_mode == InputMode::ProviderRename {
         Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input_mode == InputMode::ModelSelect {
-        Span::styled("使用上下方向键选择模型，按 Enter 确认", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择模型，Enter 确认，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::ConnectSelect {
+        Span::styled("使用上下方向键选择预设 Provider，Enter 确认，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::SkillsSelect {
+        Span::styled("使用上下方向键选择 Skill，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::McpSelect {
+        Span::styled("使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::CheckpointSelect {
+        Span::styled("使用上下方向键选择检查点，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+    } else if app.input_mode == InputMode::ModeSelect {
+        Span::styled("使用上下方向键选择执行模式，Enter 切换，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
     } else if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
         Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
     } else if app.input.is_empty() {
@@ -2633,7 +2643,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[1]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect) {
         let cursor_x = chunks[1].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[1].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -2889,6 +2899,18 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    let hint_line = Line::styled(
+        "Enter: 选择 | Tab: 补全 | Esc: 取消",
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: popup_area.x,
+        y: popup_area.y + popup_area.height,
+        width: popup_area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
@@ -2936,6 +2958,18 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    let hint_line = Line::styled(
+        "Enter: 执行 | Tab: 补全 | Esc: 返回",
+        Style::default().fg(Color::Rgb(120, 120, 140)),
+    );
+    let hint_area = ratatui::layout::Rect {
+        x: popup_area.x,
+        y: popup_area.y + popup_area.height,
+        width: popup_area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_skills_selector(frame: &mut Frame, app: &App) {
