@@ -24,6 +24,8 @@ use crate::plugin_config::PluginConfigStore;
 use crate::task_store::{PersistentTask, TaskPriority, TaskStatus, TaskStore};
 use sacode_runtime::{McpConfigStore, ProjectAccessConfigStore, ProviderClient, SkillRegistry, ToolRegistry};
 use crate::cmd::{config, diff, doctor, hooks, ide, init::{InitMode, initialize_project}, insight, keybindings, memory, outstyle, status, vim};
+use crate::cmd::update;
+use crate::version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus};
 
 const MODELS_HINT_LIMIT: usize = 8;
 
@@ -112,6 +114,7 @@ struct App {
     config_enum_options: Vec<(String, String)>,
     selected_config_enum_index: usize,
     pending_config_key: Option<String>,
+    pending_question: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -557,6 +560,14 @@ enum AsyncResult {
         config: ProviderConfig,
         selected_model: String,
     },
+    VersionChecked {
+        current_version: String,
+        remote_version: Option<String>,
+        has_update: bool,
+    },
+    UpdateCompleted {
+        message: String,
+    },
     Failed {
         context: AsyncContext,
         message: String,
@@ -571,6 +582,7 @@ enum AsyncContext {
     SaveProvider,
     LoadModels,
     SaveModel,
+    Update,
 }
 
 impl App {
@@ -678,10 +690,12 @@ impl App {
             config_enum_options: Vec::new(),
             selected_config_enum_index: 0,
             pending_config_key: None,
+            pending_question: None,
         };
 
         app.load_latest_session();
         app.ensure_default_context7();
+        app.spawn_version_check();
         app
     }
 
@@ -804,13 +818,14 @@ impl App {
         let now = chrono::Local::now();
         let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
 
+        let display_input = self.input.clone();
         self.messages.push(Message {
             role: MessageRole::User,
-            content: self.input.clone(),
+            content: display_input,
             timestamp: timestamp.clone(),
         });
 
-        let user_input = self.input.clone();
+        let user_input = self.decorate_pending_answer(&self.input.clone());
         self.input.clear();
         self.enqueue_or_start_message(user_input);
         self.save_current_session();
@@ -988,6 +1003,25 @@ impl App {
         } else {
             format!("[等待用户回答] {}\n可选项: {}", title, options.join(", "))
         }
+    }
+
+    fn pending_question_title(question: &serde_json::Value) -> String {
+        question
+            .get("question")
+            .and_then(|value| value.as_str())
+            .unwrap_or("需要用户回答后继续执行。")
+            .to_string()
+    }
+
+    fn decorate_pending_answer(&mut self, prompt: &str) -> String {
+        let Some(question) = self.pending_question.take() else {
+            return prompt.to_string();
+        };
+        format!(
+            "你上一轮通过 interaction.ask 提出了这个问题：\n{}\n\n用户给出的回答是：\n{}\n\n请基于这个回答继续完成原任务。",
+            Self::pending_question_title(&question),
+            prompt.trim()
+        )
     }
 
     fn build_task_prompt(&self, user_input: &str) -> String {
@@ -1513,6 +1547,12 @@ impl App {
 
         if trimmed.starts_with("/tasks ") || trimmed == "/tasks" {
             self.tasks_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/update ") || trimmed == "/update" {
+            self.update_command(&input);
             self.input.clear();
             return true;
         }
@@ -3047,6 +3087,7 @@ impl App {
             /theme     - 切换主题模板 (github/vscode/idea)\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\
+            /update    - 检查或更新当前 sacode 版本\n\
             /cancel    - 取消当前任务或清空等待队列\n\
             /help      - 显示帮助\n\
             /quit      - 退出\n\
@@ -3101,6 +3142,7 @@ impl App {
                     config::ConfigCategory::Context => "上下文",
                     config::ConfigCategory::Execution => "执行",
                     config::ConfigCategory::Editor => "编辑器",
+                    config::ConfigCategory::Update => "更新",
                 }
                 .to_string(),
                 value: config::current_value_text(&effective, item.key).unwrap_or_default(),
@@ -3346,6 +3388,64 @@ impl App {
             Ok(output) => self.push_system_message(&output),
             Err(error) => self.push_error_message(&format!("读取配置失败: {}", error)),
         }
+    }
+
+    fn spawn_version_check(&self) {
+        let sender = self.task_tx.clone();
+        let version_config = config::effective_config(&self.workdir)
+            .map(|cfg| VersionCheckConfig {
+                check_on_startup: cfg.update_check_on_startup,
+                cache_duration_hours: cfg.update_cache_duration_hours as i64,
+                channel: cfg.update_channel,
+            })
+            .unwrap_or_default();
+        thread::spawn(move || {
+            if let Ok(status) = VersionChecker::with_config(version_config).check_for_update() {
+                match status {
+                    VersionStatus::UpdateAvailable { current_version, remote_version } => {
+                        let _ = sender.send(AsyncResult::VersionChecked {
+                            current_version,
+                            remote_version: Some(remote_version),
+                            has_update: true,
+                        });
+                    }
+                    VersionStatus::UpToDate { current_version } => {
+                        let _ = sender.send(AsyncResult::VersionChecked {
+                            current_version,
+                            remote_version: None,
+                            has_update: false,
+                        });
+                    }
+                    VersionStatus::Unknown => {}
+                }
+            }
+        });
+    }
+
+    fn update_command(&mut self, input: &str) {
+        if self.processing {
+            self.push_system_message("当前有任务正在执行，请等待完成后再更新 sacode。");
+            return;
+        }
+        self.processing = true;
+        self.busy_message = "正在更新 sacode...".to_string();
+        let sender = self.task_tx.clone();
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        thread::spawn(move || match update::execute(args) {
+            Ok(result) => {
+                let _ = sender.send(AsyncResult::UpdateCompleted { message: result.message });
+            }
+            Err(error) => {
+                let _ = sender.send(AsyncResult::Failed {
+                    context: AsyncContext::Update,
+                    message: format!("更新 sacode 失败: {}", error),
+                });
+            }
+        });
     }
 
     fn outstyle_command(&mut self, input: &str) {
@@ -3951,8 +4051,12 @@ match self.provider_store.save_named(name, &config, true) {
                         content: response,
                         timestamp,
                     });
-                    if pending_question.is_some() {
-                        self.push_system_message("当前任务需要用户补充回答，后续可直接在输入框回复。真正的暂停恢复流程仍待接入。 ");
+                    self.pending_question = pending_question.clone();
+                    if let Some(question) = pending_question.as_ref() {
+                        self.push_system_message(&format!(
+                            "当前任务等待用户回答。你下一条输入会作为补充回答继续执行：{}",
+                            Self::pending_question_title(question)
+                        ));
                     }
                     if let Some(usage) = usage {
                         self.record_usage(usage);
@@ -4036,6 +4140,18 @@ match self.provider_store.save_named(name, &config, true) {
                     self.processing = false;
                     self.busy_message.clear();
                     self.push_system_message(&format!("默认模型已切换为 {}。", selected_model));
+                }
+                AsyncResult::VersionChecked { current_version, remote_version, has_update } => {
+                    if has_update {
+                        if let Some(remote_version) = remote_version {
+                            self.push_system_message(&update_prompt(&current_version, &remote_version));
+                        }
+                    }
+                }
+                AsyncResult::UpdateCompleted { message } => {
+                    self.processing = false;
+                    self.busy_message.clear();
+                    self.push_system_message(&message);
                 }
                 AsyncResult::InputOptimized { original, optimized, model_name } => {
                     self.processing = false;

@@ -17,6 +17,7 @@ mod profile;
 pub mod outstyle;
 mod serve;
 mod skill;
+pub mod update;
 pub mod status;
 pub mod vim;
 
@@ -71,6 +72,7 @@ pub enum CliCommand {
     Tui,
     Checkpoint,
     Status,
+    Update,
     Help,
     Version,
 }
@@ -182,6 +184,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Tui => tui::run_tui()?,
         CliCommand::Checkpoint => checkpoint::run(options.sub_args)?,
         CliCommand::Status => status::run().await?,
+        CliCommand::Update => update::run(options.sub_args)?,
         CliCommand::Vim => vim::run(options.sub_args)?,
     }
 
@@ -1019,6 +1022,18 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "update" {
+        return CliOptions {
+            command: CliCommand::Update,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
     if first == "orchestrator" {
         return CliOptions {
             command: CliCommand::Orchestrator,
@@ -1131,6 +1146,7 @@ fn print_help() {
     println!("  sacode init-deep  # 深度初始化，生成严格协作配置和工作流");
     println!("  sacode mistakes [list|show <index>]");
     println!("  sacode status");
+    println!("  sacode update [--check|--force]");
     println!("  sacode repl");
     println!("  sacode tui");
     println!("  sacode --help");
@@ -1314,6 +1330,14 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Status);
         assert!(options.sub_args.is_empty());
+    }
+
+    #[test]
+    fn parse_args_parses_update_subcommand() {
+        let options = parse_args(vec!["update".to_string(), "--check".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Update);
+        assert_eq!(options.sub_args, vec!["--check".to_string()]);
     }
 
     #[test]

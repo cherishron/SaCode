@@ -20,6 +20,7 @@ pub enum ConfigCategory {
     Context,
     Execution,
     Editor,
+    Update,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +56,9 @@ pub struct EffectiveConfig {
     pub approval_policy: String,
     pub output_style: String,
     pub vim_mode: bool,
+    pub update_check_on_startup: bool,
+    pub update_cache_duration_hours: usize,
+    pub update_channel: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -75,6 +79,12 @@ pub struct ConfigOverrides {
     pub output_style: Option<String>,
     #[serde(default)]
     pub vim_mode: Option<bool>,
+    #[serde(default)]
+    pub update_check_on_startup: Option<bool>,
+    #[serde(default)]
+    pub update_cache_duration_hours: Option<usize>,
+    #[serde(default)]
+    pub update_channel: Option<String>,
 }
 
 pub fn run(args: Vec<String>) -> Result<()> {
@@ -164,6 +174,30 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
             value_type: ConfigValueType::Bool,
             category: ConfigCategory::Editor,
         },
+        ConfigItemMeta {
+            key: "update.check_on_startup",
+            display_name: "启动检查更新",
+            description: "启动 REPL 或 TUI 时自动检查新版本",
+            value_type: ConfigValueType::Bool,
+            category: ConfigCategory::Update,
+        },
+        ConfigItemMeta {
+            key: "update.cache_duration_hours",
+            display_name: "更新缓存时长",
+            description: "版本检查缓存的有效小时数",
+            value_type: ConfigValueType::Number { min: 1, max: 168, step: 1 },
+            category: ConfigCategory::Update,
+        },
+        ConfigItemMeta {
+            key: "update.channel",
+            display_name: "更新通道",
+            description: "版本检查使用的更新通道",
+            value_type: ConfigValueType::Enum {
+                options: vec!["stable", "beta"],
+                labels: vec!["稳定版", "Beta"],
+            },
+            category: ConfigCategory::Update,
+        },
     ]
 }
 
@@ -205,6 +239,9 @@ pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String>
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
         "vim_mode" => bool_text(config.vim_mode),
+        "update.check_on_startup" => bool_text(config.update_check_on_startup),
+        "update.cache_duration_hours" => config.update_cache_duration_hours.to_string(),
+        "update.channel" => config.update_channel.clone(),
         _ => return None,
     })
 }
@@ -219,6 +256,9 @@ pub fn current_raw_value(config: &EffectiveConfig, key: &str) -> Option<String> 
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
         "vim_mode" => config.vim_mode.to_string(),
+        "update.check_on_startup" => config.update_check_on_startup.to_string(),
+        "update.cache_duration_hours" => config.update_cache_duration_hours.to_string(),
+        "update.channel" => config.update_channel.clone(),
         _ => return None,
     })
 }
@@ -323,6 +363,9 @@ fn scope_value_text(config: &ConfigOverrides, key: &str) -> String {
         "approval_policy" => config.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
         "output_style" => config.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
         "vim_mode" => config.vim_mode.map(bool_text).unwrap_or_else(|| "未设置".to_string()),
+        "update.check_on_startup" => config.update_check_on_startup.map(bool_text).unwrap_or_else(|| "未设置".to_string()),
+        "update.cache_duration_hours" => config.update_cache_duration_hours.map(|value| value.to_string()).unwrap_or_else(|| "未设置".to_string()),
+        "update.channel" => config.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
         _ => "未设置".to_string(),
     }
 }
@@ -340,6 +383,9 @@ fn set_override_value(config: &mut ConfigOverrides, key: &str, value: &str) -> R
         "approval_policy" => config.approval_policy = Some(normalize_approval_policy(value)?),
         "output_style" => config.output_style = Some(normalize_output_style(value)?),
         "vim_mode" => config.vim_mode = Some(parse_bool(value)?),
+        "update.check_on_startup" => config.update_check_on_startup = Some(parse_bool(value)?),
+        "update.cache_duration_hours" => config.update_cache_duration_hours = Some(parse_number(value, 1, 168)?),
+        "update.channel" => config.update_channel = Some(normalize_update_channel(value)?),
         _ => bail!("未知配置项: {}", key),
     }
     Ok(())
@@ -355,6 +401,9 @@ fn clear_override_value(config: &mut ConfigOverrides, key: &str) -> Result<()> {
         "approval_policy" => config.approval_policy = None,
         "output_style" => config.output_style = None,
         "vim_mode" => config.vim_mode = None,
+        "update.check_on_startup" => config.update_check_on_startup = None,
+        "update.cache_duration_hours" => config.update_cache_duration_hours = None,
+        "update.channel" => config.update_channel = None,
         _ => bail!("未知配置项: {}", key),
     }
     Ok(())
@@ -399,6 +448,14 @@ fn normalize_approval_policy(value: &str) -> Result<String> {
         "prompt" | "ask" => Ok("prompt".to_string()),
         "deny" | "reject" => Ok("deny".to_string()),
         _ => bail!("approval_policy 只支持 auto、prompt、deny"),
+    }
+}
+
+fn normalize_update_channel(value: &str) -> Result<String> {
+    match value.trim().to_lowercase().as_str() {
+        "stable" => Ok("stable".to_string()),
+        "beta" => Ok("beta".to_string()),
+        _ => bail!("update.channel 只支持 stable、beta"),
     }
 }
 
@@ -508,6 +565,9 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         approval_policy: "prompt".to_string(),
         output_style: "concise".to_string(),
         vim_mode: false,
+        update_check_on_startup: true,
+        update_cache_duration_hours: 24,
+        update_channel: "stable".to_string(),
     };
 
     apply_overrides(&mut effective, &user);
@@ -540,6 +600,15 @@ fn apply_overrides(target: &mut EffectiveConfig, overrides: &ConfigOverrides) {
     if let Some(value) = overrides.vim_mode {
         target.vim_mode = value;
     }
+    if let Some(value) = overrides.update_check_on_startup {
+        target.update_check_on_startup = value;
+    }
+    if let Some(value) = overrides.update_cache_duration_hours {
+        target.update_cache_duration_hours = value;
+    }
+    if let Some(value) = &overrides.update_channel {
+        target.update_channel = value.clone();
+    }
 }
 
 fn extract_overrides(raw: &serde_json::Value) -> ConfigOverrides {
@@ -552,6 +621,9 @@ fn extract_overrides(raw: &serde_json::Value) -> ConfigOverrides {
         approval_policy: raw.get("approval_policy").and_then(|value| value.as_str()).map(|value| value.to_string()),
         output_style: raw.get("outstyle").or_else(|| raw.get("output_style")).and_then(|value| value.as_str()).map(|value| value.to_string()),
         vim_mode: raw.get("vim_mode").and_then(|value| value.as_bool()),
+        update_check_on_startup: raw.get("update").and_then(|value| value.get("check_on_startup")).and_then(|value| value.as_bool()),
+        update_cache_duration_hours: raw.get("update").and_then(|value| value.get("cache_duration_hours")).and_then(|value| value.as_u64()).map(|value| value as usize),
+        update_channel: raw.get("update").and_then(|value| value.get("channel")).and_then(|value| value.as_str()).map(|value| value.to_string()),
     }
 }
 
@@ -567,7 +639,28 @@ fn write_overrides(raw: &mut serde_json::Value, overrides: &ConfigOverrides) -> 
     set_optional_string(object, "outstyle", overrides.output_style.clone());
     object.remove("output_style");
     set_optional_bool(object, "vim_mode", overrides.vim_mode);
+    set_optional_update(object, overrides);
     Ok(())
+}
+
+fn set_optional_update(map: &mut serde_json::Map<String, serde_json::Value>, overrides: &ConfigOverrides) {
+    let has_any = overrides.update_check_on_startup.is_some()
+        || overrides.update_cache_duration_hours.is_some()
+        || overrides.update_channel.is_some();
+    if !has_any {
+        map.remove("update");
+        return;
+    }
+
+    let mut update = map
+        .get("update")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    set_optional_bool(&mut update, "check_on_startup", overrides.update_check_on_startup);
+    set_optional_usize(&mut update, "cache_duration_hours", overrides.update_cache_duration_hours);
+    set_optional_string(&mut update, "channel", overrides.update_channel.clone());
+    map.insert("update".to_string(), serde_json::Value::Object(update));
 }
 
 fn set_optional_string(map: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: Option<String>) {

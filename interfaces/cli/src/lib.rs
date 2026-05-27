@@ -9,5 +9,6 @@ pub mod runner;
 pub mod task_store;
 pub mod tui;
 pub mod ui;
+pub mod version_check;
 
 pub use cmd::{CliCommand, CliOptions, run};

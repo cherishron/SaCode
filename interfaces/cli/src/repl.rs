@@ -5,10 +5,11 @@ use sacode_kernel::ExecutionMode;
 use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry};
 
 use crate::{
-    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, vim, ApprovalPolicy},
+    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, update, vim, ApprovalPolicy},
     cmd::init::{InitMode, initialize_project, mode_name},
     provider_config::{fetch_models, fallback_models, ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
     runner::{format_output, run_task},
+    version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
 };
 
 #[derive(Debug)]
@@ -19,6 +20,7 @@ pub struct ReplSession {
     access_store: ProjectAccessConfigStore,
     session_summary: Option<String>,
     recent_messages: VecDeque<ReplMessage>,
+    pending_question: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,12 +38,27 @@ impl ReplSession {
             access_store: ProjectAccessConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
             session_summary: None,
             recent_messages: VecDeque::new(),
+            pending_question: None,
         }
     }
 
     pub async fn run(&mut self) -> Result<()> {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         let _ = status::ensure_default_context7(&workdir).await;
+        let runtime_config = config::effective_config(&workdir).ok();
+        let version_config = runtime_config
+            .as_ref()
+            .map(|cfg| VersionCheckConfig {
+                check_on_startup: cfg.update_check_on_startup,
+                cache_duration_hours: cfg.update_cache_duration_hours as i64,
+                channel: cfg.update_channel.clone(),
+            })
+            .unwrap_or_default();
+        if let Ok(VersionStatus::UpdateAvailable { current_version, remote_version }) = VersionChecker::with_config(version_config).check_for_update() {
+            println!();
+            println!("{}", update_prompt(&current_version, &remote_version));
+            println!();
+        }
         let stdin = io::stdin();
         let mut lines = stdin.lock().lines();
 
@@ -116,6 +133,7 @@ impl ReplSession {
             "/provider-remove" => self.remove_provider()?,
             "/models" => self.select_model()?,
             "/status" => self.show_status().await?,
+            "/update" => self.handle_update_command(&parts[1..])?,
             "/clear" => self.clear_screen(),
             "/add-dir" => self.add_dir_command(&parts[1..])?,
             cmd => println!("Unknown command: {}", cmd),
@@ -125,7 +143,8 @@ impl ReplSession {
     }
 
     async fn handle_task(&mut self, prompt: &str) -> Result<()> {
-        let effective_prompt = self.build_task_prompt(prompt);
+        let effective_input = self.decorate_pending_answer(prompt);
+        let effective_prompt = self.build_task_prompt(&effective_input);
         let runtime_config = config::effective_config(&env::current_dir().unwrap_or_else(|_| ".".into())).ok();
         let approval = runtime_config
             .as_ref()
@@ -137,15 +156,34 @@ impl ReplSession {
             .unwrap_or(ApprovalPolicy::Prompt);
         let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(1);
         let output = run_task(&effective_prompt, self.mode, approval, max_iterations).await?;
-        self.push_recent_message("user", prompt);
+        self.push_recent_message("user", &effective_input);
         if let Ok(response) = &output.provider_response {
             self.push_recent_message("assistant", response);
         }
+        self.pending_question = output.pending_question.clone();
         println!();
         println!("{}", format_output(&output));
+        if let Some(question) = self.pending_question.as_ref() {
+            println!("[等待用户回答] {}", pending_question_title(question));
+            if let Some(options) = pending_question_options(question) {
+                println!("可选项: {}", options.join(", "));
+            }
+            println!();
+        }
         println!();
 
         Ok(())
+    }
+
+    fn decorate_pending_answer(&mut self, prompt: &str) -> String {
+        let Some(question) = self.pending_question.take() else {
+            return prompt.to_string();
+        };
+        format!(
+            "你上一轮通过 interaction.ask 提出了这个问题：\n{}\n\n用户给出的回答是：\n{}\n\n请基于这个回答继续完成原任务。",
+            pending_question_title(&question),
+            prompt.trim()
+        )
     }
 
     fn show_help(&self) {
@@ -162,6 +200,7 @@ impl ReplSession {
         println!("  /provider-remove - Remove a non-current provider");
         println!("  /models          - Fetch and select default model");
         println!("  /status          - Show MCP and plugin link status");
+        println!("  /update [--check|--force] - 检查或更新 sacode");
         println!("  /doctor          - Diagnose current setup and readiness");
         println!("  /diff            - Show current git diff summary");
         println!("  /hooks           - Show runtime hooks and lifecycle points");
@@ -208,6 +247,11 @@ impl ReplSession {
             println!("  {}", name);
         }
         println!();
+    }
+
+    fn handle_update_command(&mut self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        update::run(args)
     }
 
     fn clear_screen(&self) {
@@ -846,6 +890,28 @@ impl ReplSession {
         }
         println!();
         Ok(())
+    }
+}
+
+fn pending_question_title(question: &serde_json::Value) -> String {
+    question
+        .get("question")
+        .and_then(|value| value.as_str())
+        .unwrap_or("需要用户补充回答后继续执行。")
+        .to_string()
+}
+
+fn pending_question_options(question: &serde_json::Value) -> Option<Vec<String>> {
+    let options = question
+        .get("options")
+        .and_then(|value| value.as_array())?
+        .iter()
+        .filter_map(|item| item.get("label").and_then(|value| value.as_str()).map(|value| value.to_string()))
+        .collect::<Vec<_>>();
+    if options.is_empty() {
+        None
+    } else {
+        Some(options)
     }
 }
 
