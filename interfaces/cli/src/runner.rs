@@ -1,12 +1,12 @@
-use std::{env, path::Path};
+use std::{env, path::Path, time::{Duration, Instant}};
 
 use anyhow::Result;
 use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
-use sacode_kernel::model::{ToolDefinition};
+use sacode_kernel::model::{ChatUsage, ToolDefinition};
 use sacode_runtime::{McpConfigStore, ProviderClient, ToolRegistry};
 use serde::Serialize;
 
-use crate::{cmd::ApprovalPolicy, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
+use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolResult {
@@ -28,6 +28,10 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
+    pub usage: Option<ChatUsage>,
+    pub api_duration_ms: u64,
+    pub tool_duration_ms: u64,
+    pub total_duration_ms: u64,
 }
 
 impl RunnerOutput {
@@ -70,6 +74,10 @@ impl RunnerOutput {
             events: report.events.clone(),
             tool_results,
             provider_response: Err("orchestrator mode does not call provider".to_string()),
+            usage: None,
+            api_duration_ms: 0,
+            tool_duration_ms: 0,
+            total_duration_ms: 0,
         }
     }
 }
@@ -85,7 +93,9 @@ pub async fn run_task_with_stdin(
     max_iterations: usize,
     stdin: Option<String>,
 ) -> Result<RunnerOutput> {
+    let total_started_at = Instant::now();
     let workdir = env::current_dir()?;
+    let _ = status::ensure_default_context7(&workdir).await;
     let expanded_prompt = maybe_expand_skill_prompt(prompt, &workdir)?;
     let effective_prompt = if let Some(ref stdin) = stdin {
         format!("{}\n\n--- stdin ---\n{}", expanded_prompt, stdin)
@@ -107,18 +117,22 @@ pub async fn run_task_with_stdin(
     let system_prompt = build_system_prompt(&workdir, mode, &tool_names);
 
     let provider = resolve_provider(&workdir);
-    let provider_response = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
+    let (provider_response, usage, api_duration_ms, tool_duration_ms) = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
         if tool_defs.is_empty() {
             let client = ProviderClient::new();
-            client.simple_chat(&provider, &effective_prompt).await.map_err(|error| {
-                let _ = MistakeBookStore::new(&workdir).append("provider:chat", "主模型调用失败", error.to_string());
-                error.to_string()
-            })
+            let api_started_at = Instant::now();
+            match client.simple_chat_with_usage(&provider, &effective_prompt).await {
+                Ok((text, usage)) => (Ok(text), usage, elapsed_ms(api_started_at.elapsed()), 0),
+                Err(error) => {
+                    let _ = MistakeBookStore::new(&workdir).append("provider:chat", "主模型调用失败", error.to_string());
+                    (Err(error.to_string()), None, elapsed_ms(api_started_at.elapsed()), 0)
+                }
+            }
         } else {
             run_tool_chat(&provider, &system_prompt, &effective_prompt, tool_defs, &tools, &workdir, approval, max_iterations).await
         }
     } else {
-        Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string())
+        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, 0, 0)
     };
 
     let task = Task::new(expanded_prompt.clone(), mode, stdin);
@@ -135,6 +149,10 @@ pub async fn run_task_with_stdin(
         events: vec![Event::message(format!("任务通过模型 tool calling 模式执行"))],
         tool_results: vec![],
         provider_response,
+        usage,
+        api_duration_ms,
+        tool_duration_ms,
+        total_duration_ms: elapsed_ms(total_started_at.elapsed()),
     })
 }
 
@@ -147,12 +165,15 @@ async fn run_tool_chat(
     workdir: &Path,
     approval: ApprovalPolicy,
     _max_iterations: usize,
-) -> std::result::Result<String, String> {
+) -> (std::result::Result<String, String>, Option<ChatUsage>, u64, u64) {
     let client = ProviderClient::new();
     let tools_clone = tools.clone();
     let workdir_clone = workdir.to_path_buf();
+    let tool_duration = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    let tool_executor = |name: &str, args: &serde_json::Value| -> Result<serde_json::Value> {
+    let tool_duration_for_executor = tool_duration.clone();
+    let tool_executor = move |name: &str, args: &serde_json::Value| -> Result<serde_json::Value> {
+        let tool_started_at = Instant::now();
         let spec = tools_clone.get(name);
         let needs_approval = spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
 
@@ -169,6 +190,7 @@ async fn run_tool_chat(
             if let Ok(Some((server_name, tool_name))) = sacode_runtime::find_enabled_search_tool_sync(&store) {
                 if let Ok(server) = store.get(&server_name) {
                     if let Ok(mcp_result) = sacode_runtime::call_mcp_tool_sync(&server, &tool_name, args.clone()) {
+                        tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
                         return Ok(serde_json::json!({
                             "content": mcp_result.content,
                             "server": server_name,
@@ -184,6 +206,7 @@ async fn run_tool_chat(
             let store = McpConfigStore::new(&workdir_clone);
             if let Ok(server) = store.get(server_name) {
                 if let Ok(mcp_result) = sacode_runtime::call_mcp_tool_sync(&server, tool_name_suffix, args.clone()) {
+                    tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
                     return Ok(serde_json::json!({
                         "content": mcp_result.content,
                         "server": server_name,
@@ -191,11 +214,12 @@ async fn run_tool_chat(
                     }));
                 }
             }
+            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
             return Ok(serde_json::json!({ "error": format!("MCP server {} not found or call failed", server_name) }));
         }
 
         if let Some(_spec) = spec {
-            match tools_clone.execute(name, args.clone()) {
+            let result = match tools_clone.execute(name, args.clone()) {
                 Ok(output) => Ok(if output.success { output.data } else {
                     let _ = MistakeBookStore::new(&workdir_clone).append(
                         format!("tool:{}", name),
@@ -212,15 +236,18 @@ async fn run_tool_chat(
                     );
                     Ok(serde_json::json!({ "error": error.to_string() }))
                 }
-            }
+            };
+            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
+            result
         } else {
+            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
             Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
         }
     };
 
-    client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor)
-        .await
-        .map(|result| {
+    let api_started_at = Instant::now();
+    match client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await {
+        Ok(result) => {
             let mut lines = Vec::new();
             if let Some(reasoning) = &result.reasoning_content {
                 if !reasoning.is_empty() {
@@ -232,12 +259,27 @@ async fn run_tool_chat(
             if result.tool_calls_made > 0 {
                 lines.push(format!("\n[执行了 {} 次工具调用，共 {} 轮对话]", result.tool_calls_made, result.rounds));
             }
-            lines.join("\n")
-        })
-        .map_err(|error| {
+            (
+                Ok(lines.join("\n")),
+                result.usage,
+                elapsed_ms(api_started_at.elapsed()),
+                tool_duration.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        }
+        Err(error) => {
             let _ = MistakeBookStore::new(workdir).append("provider:tool_chat", "模型 tool calling 循环失败", error.to_string());
-            error.to_string()
-        })
+            (
+                Err(error.to_string()),
+                None,
+                elapsed_ms(api_started_at.elapsed()),
+                tool_duration.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        }
+    }
+}
+
+fn elapsed_ms(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn build_system_prompt(workdir: &Path, mode: ExecutionMode, tool_names: &[String]) -> String {
@@ -249,7 +291,7 @@ fn build_system_prompt(workdir: &Path, mode: ExecutionMode, tool_names: &[String
     };
     let tools_list = tool_names.join(", ");
 
-    format!(
+    let mut prompt = format!(
         "你是 SaCode AI 编程助手。工作目录: {}\n执行模式: {}\n可用工具: {}\n\n\
         你可以调用工具来完成任务。每次回复你可以选择：\n\
         1. 直接回复文本给用户\n\
@@ -258,7 +300,19 @@ fn build_system_prompt(workdir: &Path, mode: ExecutionMode, tool_names: &[String
         请尽量高效完成任务，避免冗余调用。\
         如果任务超出你的能力范围，请如实告知用户。",
         workspace, mode_hint, tools_list
-    )
+    );
+
+    if let Some(style_instruction) = outstyle::outstyle_instruction(workdir) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&style_instruction);
+    }
+
+    if let Some(insight_instruction) = insight::insight_instruction(workdir) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&insight_instruction);
+    }
+
+    prompt
 }
 
 fn build_tool_definitions(registry: &ToolRegistry, tool_names: &[String]) -> Vec<ToolDefinition> {

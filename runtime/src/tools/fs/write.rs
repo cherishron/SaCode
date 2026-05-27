@@ -1,33 +1,5 @@
 use crate::tools::{ToolSpec, ToolOutput, SideEffectLevel};
-
-fn resolve_workspace_path(path: &str) -> anyhow::Result<std::path::PathBuf> {
-    let workspace_root = std::env::current_dir()?;
-    let requested_path = std::path::PathBuf::from(path);
-    let joined_path = if requested_path.is_absolute() {
-        requested_path
-    } else {
-        workspace_root.join(requested_path)
-    };
-
-    let mut normalized = std::path::PathBuf::new();
-    for component in joined_path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !normalized.pop() {
-                    anyhow::bail!("path is outside workspace");
-                }
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-
-    if normalized.starts_with(&workspace_root) {
-        Ok(normalized)
-    } else {
-        anyhow::bail!("path is outside workspace")
-    }
-}
+use super::access::resolve_allowed_path;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -66,7 +38,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     
     let mode = input["mode"].as_str().unwrap_or("write");
 
-    let path_buf = resolve_workspace_path(path)?;
+    let path_buf = resolve_allowed_path(path)?;
     
     if let Some(parent) = path_buf.parent() {
         if !parent.exists() {

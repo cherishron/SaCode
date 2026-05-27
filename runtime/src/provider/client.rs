@@ -1,6 +1,6 @@
 use anyhow::Result;
 use reqwest::Client;
-use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ModelProvider, ProviderKind, ThinkingConfig, ToolDefinition};
+use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig, ToolDefinition};
 
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
@@ -23,6 +23,7 @@ pub struct ToolChatResult {
     pub reasoning_content: Option<String>,
     pub tool_calls_made: usize,
     pub rounds: usize,
+    pub usage: Option<ChatUsage>,
 }
 
 impl ProviderClient {
@@ -61,12 +62,20 @@ impl ProviderClient {
     }
 
     pub async fn simple_chat(&self, provider: &ModelProvider, prompt: &str) -> Result<String> {
+        self.simple_chat_with_usage(provider, prompt)
+            .await
+            .map(|result| result.0)
+    }
+
+    pub async fn simple_chat_with_usage(&self, provider: &ModelProvider, prompt: &str) -> Result<(String, Option<ChatUsage>)> {
         let request = build_request(provider, vec![ChatMessage::user(prompt)], None, false);
         let response = self.chat(provider, request).await?;
+        let usage = response.usage.clone();
 
         response.choices
             .first()
             .map(|c| c.message.content.clone().unwrap_or_default())
+            .map(|content| (content, usage))
             .ok_or_else(|| anyhow::anyhow!("No response from provider"))
     }
 
@@ -87,11 +96,23 @@ impl ProviderClient {
         ];
         let mut tool_calls_made = 0;
         let mut rounds = 0;
+        let mut usage = ChatUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        };
+        let mut has_usage = false;
         for _ in 0..MAX_TOOL_ROUNDS {
             rounds += 1;
             let request = build_request(provider, messages.clone(), Some(tools.clone()), false);
 
             let response = self.chat(provider, request).await?;
+            if let Some(round_usage) = response.usage.clone() {
+                usage.prompt_tokens += round_usage.prompt_tokens;
+                usage.completion_tokens += round_usage.completion_tokens;
+                usage.total_tokens += round_usage.total_tokens;
+                has_usage = true;
+            }
 
             let assistant_msg = response.choices
                 .first()
@@ -108,6 +129,7 @@ impl ProviderClient {
                     reasoning_content: reasoning,
                     tool_calls_made,
                     rounds,
+                    usage: has_usage.then_some(usage),
                 });
             }
 
@@ -149,6 +171,7 @@ impl ProviderClient {
             reasoning_content: reasoning,
             tool_calls_made,
             rounds,
+            usage: has_usage.then_some(usage),
         })
     }
 

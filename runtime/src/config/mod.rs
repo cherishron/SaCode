@@ -9,6 +9,7 @@ const PROJECT_ROOT_DIR: &str = ".sacode";
 const SKILLS_DIR: &str = "skills";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const IDE_CONFIG_FILE: &str = "server.json";
+const PROJECT_ACCESS_FILE: &str = "dirs.json";
 
 #[derive(Debug, Clone)]
 pub struct SaCodeConfig {
@@ -53,6 +54,10 @@ impl SaCodeConfig {
 
     pub fn project_server_config(&self) -> PathBuf {
         self.project_dir.join(IDE_CONFIG_FILE)
+    }
+
+    pub fn project_access_config(&self) -> PathBuf {
+        self.project_dir.join(PROJECT_ACCESS_FILE)
     }
 
     pub fn load_merged_mcp_config(&self) -> Result<McpConfig> {
@@ -134,4 +139,82 @@ impl IdeServerConfigStore {
 
 fn default_host() -> String {
     "127.0.0.1".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectAccessConfig {
+    #[serde(default)]
+    pub allowed_dirs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectAccessConfigStore {
+    path: PathBuf,
+}
+
+impl ProjectAccessConfigStore {
+    pub fn new(workdir: &Path) -> Self {
+        Self {
+            path: SaCodeConfig::new(workdir).project_access_config(),
+        }
+    }
+
+    pub fn load(&self) -> Result<ProjectAccessConfig> {
+        if !self.path.exists() {
+            return Ok(ProjectAccessConfig::default());
+        }
+
+        let content = std::fs::read_to_string(&self.path)?;
+        let mut config: ProjectAccessConfig = serde_json::from_str(&content)?;
+        normalize_allowed_dirs(&mut config.allowed_dirs);
+        Ok(config)
+    }
+
+    pub fn save(&self, config: &ProjectAccessConfig) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut normalized = config.clone();
+        normalize_allowed_dirs(&mut normalized.allowed_dirs);
+        std::fs::write(&self.path, serde_json::to_string_pretty(&normalized)?)?;
+        Ok(())
+    }
+
+    pub fn add_dir(&self, path: &Path) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            anyhow::bail!("path must be absolute")
+        }
+        if !path.exists() {
+            anyhow::bail!("directory not found: {}", path.display())
+        }
+        if !path.is_dir() {
+            anyhow::bail!("path is not a directory: {}", path.display())
+        }
+
+        let canonical = path.canonicalize()?;
+        let canonical_str = canonical.to_string_lossy().to_string();
+
+        let mut config = self.load()?;
+        if !config.allowed_dirs.iter().any(|entry| entry == &canonical_str) {
+            config.allowed_dirs.push(canonical_str);
+        }
+        self.save(&config)?;
+        Ok(canonical)
+    }
+
+    pub fn allowed_dirs(&self) -> Result<Vec<PathBuf>> {
+        Ok(self
+            .load()?
+            .allowed_dirs
+            .into_iter()
+            .map(PathBuf::from)
+            .collect())
+    }
+}
+
+fn normalize_allowed_dirs(dirs: &mut Vec<String>) {
+    dirs.retain(|dir| !dir.trim().is_empty());
+    dirs.sort();
+    dirs.dedup();
 }

@@ -45,3 +45,84 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 执行中的对话需要显示等待区，并支持取消当前任务。
   - 后续发送的任务需要进入等待队列，当前任务完成后自动继续执行下一项。
   - 当对话中存在明确步骤规划时，需要展示 todo 列表，并在用户确认后按 todo 顺序执行。
+
+[避免编译测试]
+- Date: 2026-05-26
+- Context: 当前这一轮功能修改期间
+- Instructions:
+  - 先不要运行编译和测试命令，优先完成代码改动与静态检查。
+
+[项目记忆命令]
+- Date: 2026-05-26
+- Context: 用户要求加入 /memory 系列命令时
+- Instructions:
+  - 项目级记忆统一使用 `.monkeycode/MEMORY.md`。
+  - `/memory` 命令优先围绕项目级记忆文件提供查看、搜索、摘要和追加能力。
+
+[IDE 集成命令]
+- Date: 2026-05-26
+- Context: 用户要求加入 /ide 命令时
+- Instructions:
+  - `/ide` 主入口应面向 VS Code、Cursor、JetBrains 等开发工具接入。
+  - 底层 `.sacode/server.json` 查看和 ACP/LSP host/port 设置能力放到 `/ide config`。
+
+[输出风格命令]
+- Date: 2026-05-26
+- Context: 用户要求加入三种 AI 输出习惯命令时
+- Instructions:
+  - 输出风格命令名使用 `/outstyle`。
+  - `/outstyle` 默认写入用户级配置。
+  - 当前项目如需单独覆盖，使用项目级覆盖方式。
+  - 输出风格至少支持 concise、explanatory、teaching 三种模式。
+
+[诊断命令]
+- Date: 2026-05-26
+- Context: 用户要求加入 /doctor 命令时
+- Instructions:
+  - `/doctor` 用于检查当前项目的 provider、模型、输出风格、MCP、插件和项目记忆是否就绪。
+
+[交互与检查命令]
+- Date: 2026-05-26
+- Context: 用户要求加入 /vim、/hooks、/keybindings、/diff 命令时
+- Instructions:
+  - `/vim` 用于切换 Vim 风格导航，默认写用户级配置，并允许项目级覆盖。
+  - `/keybindings` 用于展示当前可用快捷键与 Vim 导航状态。
+  - `/hooks` 用于展示当前内置 hook 与生命周期点。
+  - `/diff` 用于展示当前仓库的 Git 差异摘要。
+
+[TUI 上下文压缩]
+- Date: 2026-05-26
+- Context: Agent 在执行 `/compress` 命令实现时发现
+- Category: 工作流协作
+- Instructions:
+  - TUI `/compress`：摘要持久化到 `.sacode/sessions/*.json` 的 `summary` 字段，后续任务自动拼接历史摘要 + 最近对话 + 当前请求
+  - REPL `/compress`：内存摘要 + `recent_messages`（最近 12 条），后续任务拼接历史摘要 + 最近对话 + 当前请求
+  - 执行任务中禁止压缩，避免截断运行状态
+
+[编程洞察机制]
+- Date: 2026-05-26
+- Context: Agent 在实现 `/insight` 命令并注入系统提示时发现
+- Category: 工作流协作
+- Instructions:
+  - `/insight` 分析聊天记录生成个性化编程洞察：任务类型、技术栈、常见问题、AI 帮助模式、高频关键词、代码风格偏好、错误处理模式
+  - 洞察持久化到 `.sacode/insights.json`，采用累计更新机制（每次运行增量更新）
+  - `runner.rs` 的 `build_system_prompt` 自动注入洞察到后续任务的系统提示，让 AI 了解用户偏好
+  - CLI：`sacode insight`；REPL/TUI：`/insight`
+
+[用户级 insight 网页]
+- Date: 2026-05-27
+- Context: 用户要求重构 `/insight` 的产出形式和修复闭环时
+- Instructions:
+  - `/insight` 需要生成用户级 `.sacode` 下的网页报告，而不是只输出终端文本。
+  - 网页报告需要包含统计、习惯说明、洞察结果、优化项、修复指令。
+  - 报告生成成功后需要自动打开，方便用户在浏览器中查看和复制修复指令。
+  - 修复指令的落点是用户级 `AGENTS.md`、用户级记忆或用户级规则，用于定义哪些行为可以怎样做。
+  - 后续项目级协作需要基于这些用户级记忆和规则持续规避问题并学习偏好。
+
+[用户级继承结构]
+- Date: 2026-05-27
+- Context: 用户要求重新划分 `.sacode` 的用户级与项目级目录时
+- Instructions:
+  - 用户级 `.sacode` 需要包含 `mcps`、`skills`、`plugin` 等跨项目能力配置。
+  - 项目级 `.sacode` 需要继承用户级配置，再叠加当前项目覆盖项。
+  - 所有项目的会话归档应放在用户级目录下，项目级只保留当前项目运行态和短期数据。

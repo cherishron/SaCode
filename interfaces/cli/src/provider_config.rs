@@ -37,7 +37,8 @@ pub struct ProviderConfigStore {
 
 #[derive(Debug, Clone)]
 pub struct SaCodeConfigStore {
-    path: PathBuf,
+    user_path: PathBuf,
+    project_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,38 +206,63 @@ impl ProviderConfigStore {
 
 impl SaCodeConfigStore {
     pub fn new(workdir: &Path) -> Self {
+        let user_path = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(SACODE_CONFIG_FILE);
         Self {
-            path: workdir.join(SACODE_CONFIG_FILE),
+            user_path,
+            project_path: workdir.join(SACODE_CONFIG_FILE),
         }
     }
 
     pub fn load(&self) -> Result<Option<SaCodeConfig>> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
+        self.load_from_path(&self.project_path)
+    }
 
-        let content = fs::read_to_string(&self.path)?;
-        let mut config: SaCodeConfig = serde_json::from_str(&content)?;
+    pub fn load_user(&self) -> Result<Option<SaCodeConfig>> {
+        self.load_from_path(&self.user_path)
+    }
+
+    pub fn load_effective(&self) -> Result<SaCodeConfig> {
+        let mut config = self.load_user()?.unwrap_or_else(default_sacode_config);
+        if let Some(project) = self.load()? {
+            if !project.model.trim().is_empty() {
+                config.model = project.model;
+            }
+            if !project.small_model.trim().is_empty() {
+                config.small_model = project.small_model;
+            }
+            if !project.outstyle.trim().is_empty() {
+                config.outstyle = project.outstyle;
+            }
+            if project.vim_mode {
+                config.vim_mode = true;
+            }
+            config.provider.extend(project.provider);
+        }
         self.normalize(&mut config);
-        Ok(Some(config))
+        Ok(config)
     }
 
     pub fn load_or_default(&self) -> Result<SaCodeConfig> {
-        Ok(self.load()?.unwrap_or_else(|| SaCodeConfig {
-            model: String::new(),
-            small_model: String::new(),
-            provider: preset_providers(),
-        }))
+        Ok(self.load()?.unwrap_or_else(default_sacode_config))
     }
 
     pub fn save(&self, config: &SaCodeConfig) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut normalized = config.clone();
-        self.normalize(&mut normalized);
-        fs::write(&self.path, serde_json::to_string_pretty(&normalized)?)?;
-        Ok(())
+        self.save_to_path(&self.project_path, config)
+    }
+
+    pub fn save_user(&self, config: &SaCodeConfig) -> Result<()> {
+        self.save_to_path(&self.user_path, config)
+    }
+
+    pub fn user_path(&self) -> &Path {
+        &self.user_path
+    }
+
+    pub fn project_path(&self) -> &Path {
+        &self.project_path
     }
 
     pub fn upsert_provider(&self, name: &str, spec: ProviderSpec) -> Result<SaCodeConfig> {
@@ -333,6 +359,37 @@ impl SaCodeConfigStore {
             }
             provider.models = normalized_models;
         }
+    }
+
+    fn load_from_path(&self, path: &Path) -> Result<Option<SaCodeConfig>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(path)?;
+        let mut config: SaCodeConfig = serde_json::from_str(&content)?;
+        self.normalize(&mut config);
+        Ok(Some(config))
+    }
+
+    fn save_to_path(&self, path: &Path, config: &SaCodeConfig) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut normalized = config.clone();
+        self.normalize(&mut normalized);
+        fs::write(path, serde_json::to_string_pretty(&normalized)?)?;
+        Ok(())
+    }
+}
+
+fn default_sacode_config() -> SaCodeConfig {
+    SaCodeConfig {
+        model: String::new(),
+        small_model: String::new(),
+        outstyle: String::new(),
+        vim_mode: false,
+        provider: preset_providers(),
     }
 }
 

@@ -2,6 +2,8 @@ use std::process::Command;
 
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
+use super::access::resolve_allowed_path;
+
 const MAX_SEARCH_MATCHES: usize = 50;
 
 pub fn spec() -> ToolSpec {
@@ -50,6 +52,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("pattern is required"));
     }
 
+    let resolved_path = resolve_allowed_path(path)?;
+
     let mut cmd = Command::new("grep");
     cmd.arg("-n");
     cmd.arg("-r");
@@ -60,7 +64,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     cmd.arg(pattern);
-    cmd.arg(path);
+    cmd.arg(&resolved_path);
 
     let output = cmd.output();
 

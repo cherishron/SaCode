@@ -1,7 +1,8 @@
 use std::fs;
-use std::path::Path;
 
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
+
+use super::access::resolve_allowed_path;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -41,12 +42,12 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("path is required"));
     }
 
-    let file_path = Path::new(path);
+    let file_path = resolve_allowed_path(path)?;
     if !file_path.exists() {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }
 
-    let content = fs::read_to_string(file_path)?;
+    let content = fs::read_to_string(&file_path)?;
     let all_lines: Vec<&str> = content.lines().collect();
     let total_lines = all_lines.len();
 

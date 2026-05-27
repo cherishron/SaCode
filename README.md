@@ -137,7 +137,8 @@ sacode mcp call <server> <tool> <json>
 sacode mistakes list      # 列出错题本
 sacode mistakes show <index> # 查看单条错题详情
 sacode checkpoint list    # 列出 checkpoint
-sacode init               # 初始化项目，生成 AGENTS.md
+sacode init               # 轻量初始化项目，生成 AGENTS.md
+sacode init-deep          # 深度初始化项目，补充工作流与 MCP 模板
 ```
 
 ## 工具系统
@@ -177,8 +178,8 @@ sacode init               # 初始化项目，生成 AGENTS.md
   - `sacode mcp show <name>`
   - `sacode mcp remove <name>`
 - 新增 REPL/TUI 命令：
-  - `/mcp-show <name>`
-  - `/mcp-remove <name>`
+  - `/mcps-show <name>`
+  - `/mcps-remove <name>`
 
 示例：
 
@@ -242,6 +243,11 @@ SaCode 在项目根目录下维护 `.sacode/` 目录：
 1. 调用当前 provider 分析项目结构
 2. 生成 `AGENTS.md`（优先使用模型，失败则本地模板）
 3. 初始化 `.sacode/` 下的配置文件
+
+`init-deep` 会在上述基础上额外生成：
+
+1. `.sacode/workflows.json`
+2. `.sacode/mcp.json`
 
 ## 文档
 

@@ -74,7 +74,8 @@ sacode checkpoint show <file>        # 查看 checkpoint 详情
 sacode checkpoint restore <file>     # 恢复 checkpoint
 sacode checkpoint clean              # 清理所有 checkpoint
 
-sacode init                          # 初始化项目，生成 AGENTS.md
+sacode init                          # 轻量初始化项目，生成 AGENTS.md
+sacode init-deep                     # 深度初始化项目，补充工作流与 MCP 模板
 sacode tui                           # 显式进入终端 TUI
 sacode repl                          # 进入 REPL 模式
 ```
@@ -89,9 +90,9 @@ REPL/TUI 内置命令补充：
 /models     拉取模型列表并设置默认模型
 /skills     列出可用 skills
 /skill show|run|add|remove 管理 skills
-/mcp        列出 MCP 服务
-/mcp-show <name> 查看 MCP 服务
-/mcp-remove <name> 删除 MCP 服务
+/mcps       列出 MCP 服务
+/mcps-show <name> 查看 MCP 服务
+/mcps-remove <name> 删除 MCP 服务
 ```
 
 ## 工具系统
@@ -155,9 +156,9 @@ REPL/TUI 内置命令补充：
 
 REPL/TUI 新增：
 
-- `/mcp`
-- `/mcp-show <name>`
-- `/mcp-remove <name>`
+- `/mcps`
+- `/mcps-show <name>`
+- `/mcps-remove <name>`
 
 ### 工具调用格式
 

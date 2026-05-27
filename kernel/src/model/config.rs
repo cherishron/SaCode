@@ -9,6 +9,10 @@ pub struct SaCodeConfig {
     #[serde(default)]
     pub small_model: String,
     #[serde(default)]
+    pub outstyle: String,
+    #[serde(default)]
+    pub vim_mode: bool,
+    #[serde(default)]
     pub provider: BTreeMap<String, ProviderSpec>,
 }
 

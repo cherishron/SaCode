@@ -1,3 +1,4 @@
+pub mod access;
 pub mod edit;
 pub mod read;
 pub mod search;

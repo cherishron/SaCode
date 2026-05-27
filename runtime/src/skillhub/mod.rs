@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use reqwest::Client;
+use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -62,6 +63,23 @@ impl SkillHubClient {
         let client = http_client()?;
         let url = format!("{}/api/skills/{}/download", self.base_url.trim_end_matches('/'), name);
         let response = client.get(url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("skill download failed ({}): {}", status, body);
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !(content_type.starts_with("text/markdown")
+            || content_type.starts_with("text/plain")
+            || content_type.starts_with("application/octet-stream"))
+        {
+            anyhow::bail!("unexpected skill content-type: {}", content_type);
+        }
         let content = response.text().await?;
 
         fs::create_dir_all(target_dir)?;
@@ -75,7 +93,21 @@ impl SkillHubClient {
         let client = http_client()?;
         let url = format!("{}/api/mcp/{}/install", self.base_url.trim_end_matches('/'), name);
         let response = client.get(url).send().await?;
-        let meta: SkillHubMcpMeta = response.json().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("mcp install failed ({}): {}", status, body);
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !content_type.starts_with("application/json") {
+            anyhow::bail!("unexpected mcp content-type: {}", content_type);
+        }
+        let meta: SkillHubMcpMeta = response.json().await.context("failed to parse mcp install response as json")?;
 
         let mut config = if config_path.exists() {
             let content = fs::read_to_string(config_path)?;

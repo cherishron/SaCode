@@ -1,13 +1,23 @@
 mod acp;
 mod checkpoint;
-mod init;
+pub mod doctor;
+pub mod diff;
+pub mod hooks;
+pub mod ide;
+pub mod init;
+pub mod insight;
+pub mod keybindings;
 mod lsp;
+pub mod memory;
 mod mistakes;
 mod mcp;
 mod plugin;
 mod profile;
+pub mod outstyle;
 mod serve;
 mod skill;
+pub mod status;
+pub mod vim;
 
 use std::{env, io::IsTerminal};
 #[cfg(test)]
@@ -39,16 +49,26 @@ pub enum CliCommand {
     Orchestrator,
     Profile,
     Plugin,
+    Doctor,
+    Diff,
+    Hooks,
+    Ide,
+    Keybindings,
+    Outstyle,
+    Vim,
     Skill,
     Mcp,
     Acp,
     Lsp,
+    Memory,
+    Insight,
     Serve,
     Init,
     Mistakes,
     Repl,
     Tui,
     Checkpoint,
+    Status,
     Help,
     Version,
 }
@@ -76,6 +96,10 @@ struct CliResponse {
     tool_results: serde_json::Value,
     stdin_preview: Option<String>,
     provider_response: Option<String>,
+    usage: Option<sacode_kernel::model::ChatUsage>,
+    api_duration_ms: u64,
+    tool_duration_ms: u64,
+    total_duration_ms: u64,
 }
 
 #[cfg(test)]
@@ -128,16 +152,33 @@ pub async fn run() -> Result<()> {
         CliCommand::Orchestrator => run_with_orchestrator(options).await?,
         CliCommand::Profile => profile::run(options.sub_args)?,
         CliCommand::Plugin => plugin::run(options.sub_args).await?,
+        CliCommand::Doctor => doctor::run().await?,
+        CliCommand::Diff => diff::run(options.sub_args)?,
+        CliCommand::Hooks => hooks::run()?,
+        CliCommand::Ide => ide::run(options.sub_args)?,
+        CliCommand::Keybindings => keybindings::run()?,
+        CliCommand::Outstyle => outstyle::run(options.sub_args)?,
         CliCommand::Skill => skill::run(options.sub_args).await?,
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
         CliCommand::Acp => acp::run(options.sub_args).await?,
         CliCommand::Lsp => lsp::run(options.sub_args).await?,
+        CliCommand::Memory => memory::run(options.sub_args)?,
+        CliCommand::Insight => insight::run()?,
         CliCommand::Serve => serve::run(options.sub_args).await?,
-        CliCommand::Init => init::run().await?,
+        CliCommand::Init => {
+            let mode = if options.sub_args.first().map(|value| value.as_str()) == Some("deep") {
+                init::InitMode::Deep
+            } else {
+                init::InitMode::Basic
+            };
+            init::run(mode).await?
+        }
         CliCommand::Mistakes => mistakes::run(options.sub_args)?,
         CliCommand::Repl => run_repl().await?,
         CliCommand::Tui => tui::run_tui()?,
         CliCommand::Checkpoint => checkpoint::run(options.sub_args)?,
+        CliCommand::Status => status::run().await?,
+        CliCommand::Vim => vim::run(options.sub_args)?,
     }
 
     Ok(())
@@ -165,6 +206,10 @@ async fn run_task(options: CliOptions) -> Result<()> {
             tool_results: serde_json::to_value(&output.tool_results)?,
             stdin_preview: stdin.map(|value| preview(&value)),
             provider_response: output.provider_response.clone().ok(),
+            usage: output.usage.clone(),
+            api_duration_ms: output.api_duration_ms,
+            tool_duration_ms: output.tool_duration_ms,
+            total_duration_ms: output.total_duration_ms,
         };
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -705,6 +750,90 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "doctor" {
+        return CliOptions {
+            command: CliCommand::Doctor,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "diff" {
+        return CliOptions {
+            command: CliCommand::Diff,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "hooks" {
+        return CliOptions {
+            command: CliCommand::Hooks,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "ide" {
+        return CliOptions {
+            command: CliCommand::Ide,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "keybindings" {
+        return CliOptions {
+            command: CliCommand::Keybindings,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "outstyle" {
+        return CliOptions {
+            command: CliCommand::Outstyle,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "vim" {
+        return CliOptions {
+            command: CliCommand::Vim,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
     if first == "skill" {
         return CliOptions {
             command: CliCommand::Skill,
@@ -720,6 +849,30 @@ fn parse_args(args: Vec<String>) -> CliOptions {
     if first == "mcp" {
         return CliOptions {
             command: CliCommand::Mcp,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "memory" {
+        return CliOptions {
+            command: CliCommand::Memory,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "insight" {
+        return CliOptions {
+            command: CliCommand::Insight,
             prompt: String::new(),
             mode: ExecutionMode::Build,
             max_iterations: 1,
@@ -773,7 +926,19 @@ fn parse_args(args: Vec<String>) -> CliOptions {
             max_iterations: 1,
             json: false,
             approval: ApprovalPolicy::Prompt,
-            sub_args: Vec::new(),
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "init-deep" {
+        return CliOptions {
+            command: CliCommand::Init,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: vec!["deep".to_string()],
         };
     }
 
@@ -816,6 +981,18 @@ fn parse_args(args: Vec<String>) -> CliOptions {
     if first == "checkpoint" {
         return CliOptions {
             command: CliCommand::Checkpoint,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "status" {
+        return CliOptions {
+            command: CliCommand::Status,
             prompt: String::new(),
             mode: ExecutionMode::Build,
             max_iterations: 1,
@@ -918,13 +1095,24 @@ fn print_help() {
     println!("  sacode orchestrator \"<task>\"");
     println!("  sacode profile [ls|use <name>|show]");
     println!("  sacode plugin [list]");
+    println!("  sacode doctor");
+    println!("  sacode diff [--cached]");
+    println!("  sacode hooks");
+    println!("  sacode ide [status|vscode|cursor|jetbrains|config show|path|set acp|lsp --host HOST --port PORT]");
+    println!("  sacode keybindings");
+    println!("  sacode outstyle [show|concise|explain|teach|clear|path|project ...]");
+    println!("  sacode vim [show|on|off|project show|on|off]");
     println!("  sacode skill [search|install|list|show|update|remove|run]");
     println!("  sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]");
+    println!("  sacode memory [show|search <query>|append <content>|path|summary]");
+    println!("  sacode insight");
     println!("  sacode acp [serve|status] [--host HOST] [--port PORT]");
     println!("  sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]");
     println!("  sacode serve [--acp] [--lsp]");
-    println!("  sacode init");
+    println!("  sacode init       # 轻量初始化，识别技术栈和基础项目信息");
+    println!("  sacode init-deep  # 深度初始化，生成严格协作配置和工作流");
     println!("  sacode mistakes [list|show <index>]");
+    println!("  sacode status");
     println!("  sacode repl");
     println!("  sacode tui");
     println!("  sacode --help");
@@ -1000,6 +1188,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_parses_doctor_subcommand() {
+        let options = parse_args(vec!["doctor".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Doctor);
+        assert!(options.sub_args.is_empty());
+    }
+
+    #[test]
+    fn parse_args_parses_diff_subcommand() {
+        let options = parse_args(vec!["diff".to_string(), "--cached".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Diff);
+        assert_eq!(options.sub_args, vec!["--cached".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_hooks_subcommand() {
+        let options = parse_args(vec!["hooks".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Hooks);
+    }
+
+    #[test]
+    fn parse_args_parses_ide_subcommand() {
+        let options = parse_args(vec!["ide".to_string(), "status".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Ide);
+        assert_eq!(options.sub_args, vec!["status".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_outstyle_subcommand() {
+        let options = parse_args(vec!["outstyle".to_string(), "teach".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Outstyle);
+        assert_eq!(options.sub_args, vec!["teach".to_string()]);
+    }
+
+    #[test]
     fn parse_args_parses_skill_subcommand() {
         let options = parse_args(vec!["skill".to_string(), "list".to_string()]);
 
@@ -1013,6 +1240,22 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Mcp);
         assert_eq!(options.sub_args, vec!["list".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_memory_subcommand() {
+        let options = parse_args(vec!["memory".to_string(), "show".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Memory);
+        assert_eq!(options.sub_args, vec!["show".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_insight_subcommand() {
+        let options = parse_args(vec!["insight".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Insight);
+        assert!(options.sub_args.is_empty());
     }
 
     #[test]
@@ -1045,6 +1288,14 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Mistakes);
         assert_eq!(options.sub_args, vec!["list".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_status_subcommand() {
+        let options = parse_args(vec!["status".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Status);
+        assert!(options.sub_args.is_empty());
     }
 
     #[test]

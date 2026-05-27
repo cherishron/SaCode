@@ -1,10 +1,12 @@
-use std::{env, io::{self, BufRead, Write}};
+use std::{collections::VecDeque, env, io::{self, BufRead, Write}};
 
 use anyhow::Result;
 use sacode_kernel::ExecutionMode;
-use sacode_runtime::{McpConfigStore, McpSource, SkillRegistry, ToolRegistry};
+use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry};
 
 use crate::{
+    cmd::{diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, vim},
+    cmd::init::{InitMode, initialize_project, mode_name},
     cmd::ApprovalPolicy,
     provider_config::{fetch_models, fallback_models, ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
     runner::{format_output, run_task},
@@ -15,6 +17,15 @@ pub struct ReplSession {
     mode: ExecutionMode,
     provider_store: ProviderConfigStore,
     sacode_store: SaCodeConfigStore,
+    access_store: ProjectAccessConfigStore,
+    session_summary: Option<String>,
+    recent_messages: VecDeque<ReplMessage>,
+}
+
+#[derive(Debug, Clone)]
+struct ReplMessage {
+    role: &'static str,
+    content: String,
 }
 
 impl ReplSession {
@@ -23,10 +34,15 @@ impl ReplSession {
             mode: ExecutionMode::Build,
             provider_store: ProviderConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
             sacode_store: SaCodeConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
+            access_store: ProjectAccessConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
+            session_summary: None,
+            recent_messages: VecDeque::new(),
         }
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let _ = status::ensure_default_context7(&workdir).await;
         let stdin = io::stdin();
         let mut lines = stdin.lock().lines();
 
@@ -45,7 +61,7 @@ impl ReplSession {
             }
 
             if trimmed.starts_with('/') {
-                if self.handle_command(trimmed)? {
+                if self.handle_command(trimmed).await? {
                     break;
                 }
                 continue;
@@ -58,7 +74,7 @@ impl ReplSession {
         Ok(())
     }
 
-    fn handle_command(&mut self, cmd: &str) -> Result<bool> {
+    async fn handle_command(&mut self, cmd: &str) -> Result<bool> {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         if parts.is_empty() {
             return Ok(false);
@@ -67,6 +83,8 @@ impl ReplSession {
         match parts[0] {
             "/exit" | "/quit" | "/q" => return Ok(true),
             "/help" | "/h" => self.show_help(),
+            "/init" => self.run_init(InitMode::Basic).await?,
+            "/init-deep" => self.run_init(InitMode::Deep).await?,
             "/connect" => self.connect_provider()?,
             "/mode" => {
                 if parts.len() > 1 {
@@ -77,17 +95,29 @@ impl ReplSession {
                 }
             }
             "/tools" => self.show_tools(),
+            "/doctor" => self.show_doctor().await?,
+            "/diff" => self.show_diff(&parts[1..])?,
+            "/hooks" => self.show_hooks()?,
+            "/ide" => self.show_ide(&parts[1..])?,
+            "/keybindings" => self.show_keybindings()?,
+            "/outstyle" => self.show_outstyle(&parts[1..])?,
+            "/vim" => self.show_vim(&parts[1..])?,
             "/skills" => self.show_skills(),
             "/skill" => self.handle_skill_command(&parts[1..])?,
-            "/mcp" => self.show_mcp(),
-            "/mcp-show" => self.show_single_mcp(&parts[1..])?,
-            "/mcp-remove" => self.remove_mcp(&parts[1..])?,
+            "/mcps" => self.show_mcp(),
+            "/memory" => self.show_memory(&parts[1..])?,
+            "/compress" => self.compress_context(),
+            "/insight" => self.show_insight()?,
+            "/mcps-show" => self.show_single_mcp(&parts[1..])?,
+            "/mcps-remove" => self.remove_mcp(&parts[1..])?,
             "/login" => self.login_provider()?,
             "/providers" => self.select_provider()?,
             "/provider-rename" => self.rename_provider()?,
             "/provider-remove" => self.remove_provider()?,
             "/models" => self.select_model()?,
+            "/status" => self.show_status().await?,
             "/clear" => self.clear_screen(),
+            "/add-dir" => self.add_dir_command(&parts[1..])?,
             cmd => println!("Unknown command: {}", cmd),
         }
 
@@ -95,7 +125,12 @@ impl ReplSession {
     }
 
     async fn handle_task(&mut self, prompt: &str) -> Result<()> {
-        let output = run_task(prompt, self.mode, ApprovalPolicy::Prompt, 1).await?;
+        let effective_prompt = self.build_task_prompt(prompt);
+        let output = run_task(&effective_prompt, self.mode, ApprovalPolicy::Prompt, 1).await?;
+        self.push_recent_message("user", prompt);
+        if let Ok(response) = &output.provider_response {
+            self.push_recent_message("assistant", response);
+        }
         println!();
         println!("{}", format_output(&output));
         println!();
@@ -107,6 +142,8 @@ impl ReplSession {
         println!();
         println!("Commands:");
         println!("  /help, /h        - Show this help");
+        println!("  /init            - Lightweight project initialization");
+        println!("  /init-deep       - Deep project initialization");
         println!("  /mode [plan|build|yolo] - Set or show mode");
         println!("  /login           - Configure OpenAI-compatible provider");
         println!("  /connect         - Quick connect to a preset provider");
@@ -114,12 +151,24 @@ impl ReplSession {
         println!("  /provider-rename - Rename a provider");
         println!("  /provider-remove - Remove a non-current provider");
         println!("  /models          - Fetch and select default model");
+        println!("  /status          - Show MCP and plugin link status");
+        println!("  /doctor          - Diagnose current setup and readiness");
+        println!("  /diff            - Show current git diff summary");
+        println!("  /hooks           - Show runtime hooks and lifecycle points");
+        println!("  /ide             - Show IDE integration guide or config");
+        println!("  /keybindings     - Show TUI keybindings");
+        println!("  /outstyle        - Show or set user output style, or project override");
+        println!("  /vim             - Show or set Vim-style navigation");
         println!("  /tools           - Show available tools");
+        println!("  /add-dir <path>  - Add a project directory by absolute path");
         println!("  /skills          - Show available skills");
         println!("  /skill <subcommand> - Manage or run skills");
-        println!("  /mcp             - Show configured MCP servers");
-        println!("  /mcp-show <name> - Show one MCP server");
-        println!("  /mcp-remove <name> - Remove one MCP server");
+        println!("  /mcps            - Show configured MCP servers");
+        println!("  /memory          - Show, search, append, path, or summary project memory");
+        println!("  /compress        - Compress current REPL context");
+        println!("  /insight         - 生成并打开用户级 insight 网页报告");
+        println!("  /mcps-show <name> - Show one MCP server");
+        println!("  /mcps-remove <name> - Remove one MCP server");
         println!("  /clear           - Clear screen");
         println!("  /exit, /quit, /q - Exit REPL");
         println!();
@@ -152,6 +201,174 @@ impl ReplSession {
 
     fn clear_screen(&self) {
         println!();
+    }
+
+    fn build_task_prompt(&self, prompt: &str) -> String {
+        let mut sections = Vec::new();
+
+        if let Some(summary) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+            sections.push(format!(
+                "以下是当前 REPL 会话的历史摘要，请在后续任务中延续这些上下文与约束：\n{}",
+                summary.trim()
+            ));
+        }
+
+        let recent = self.recent_messages.iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().map(|message| {
+            format!("[{}] {}", message.role, message.content.trim())
+        }).collect::<Vec<_>>();
+        if !recent.is_empty() {
+            sections.push(format!("以下是最近对话，请结合这些内容继续处理：\n{}", recent.join("\n\n")));
+        }
+
+        sections.push(format!("当前用户请求：\n{}", prompt.trim()));
+        sections.join("\n\n---\n\n")
+    }
+
+    fn push_recent_message(&mut self, role: &'static str, content: &str) {
+        self.recent_messages.push_back(ReplMessage {
+            role,
+            content: content.to_string(),
+        });
+        while self.recent_messages.len() > 12 {
+            self.recent_messages.pop_front();
+        }
+    }
+
+    fn compress_context(&mut self) {
+        let summary = self.build_context_summary();
+        if summary.is_empty() {
+            println!("Current REPL context is too short to compress.");
+            println!();
+            return;
+        }
+
+        self.session_summary = Some(summary.clone());
+        self.recent_messages.clear();
+        println!("Compressed current REPL context.");
+        println!();
+        println!("Summary preview:");
+        println!("{}", summary);
+        println!();
+    }
+
+    fn build_context_summary(&self) -> String {
+        if self.recent_messages.len() <= 2 {
+            return String::new();
+        }
+
+        let mut lines = Vec::new();
+        if let Some(existing) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+            lines.push("Existing summary:".to_string());
+            lines.push(existing.trim().to_string());
+        }
+
+        lines.push("Recent REPL summary:".to_string());
+        for message in self.recent_messages.iter().take(12) {
+            let compact = message.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let snippet = compact.chars().take(220).collect::<String>();
+            lines.push(format!("- {}: {}", message.role, snippet));
+        }
+        lines.join("\n")
+    }
+
+    fn show_insight(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        
+        let messages: Vec<(&str, &str)> = self.recent_messages
+            .iter()
+            .map(|m| (m.role, m.content.as_str()))
+            .collect();
+
+        if messages.is_empty() {
+            println!("No chat history to analyze. Send some messages first.");
+            println!();
+            return Ok(());
+        }
+
+        println!("正在分析 {} 条消息并生成用户级 insight 网页报告...", messages.len());
+        println!();
+
+        let report = insight::analyze_messages(&messages, &workdir)?;
+        println!("{}", insight::render_success_message(&report));
+        println!();
+        
+        Ok(())
+    }
+
+    async fn show_status(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let installed = status::ensure_default_context7(&workdir).await?;
+        if installed {
+            println!("Installed default MCP: context7 [official remote]");
+        }
+        println!("{}", status::render_status(&workdir).await?);
+        Ok(())
+    }
+
+    async fn show_doctor(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", doctor::render_doctor(&workdir).await?);
+        Ok(())
+    }
+
+    fn show_diff(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        println!("{}", diff::render_diff(args)?);
+        Ok(())
+    }
+
+    fn show_hooks(&self) -> Result<()> {
+        println!("{}", hooks::render_hooks());
+        Ok(())
+    }
+
+    fn show_keybindings(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", keybindings::render_keybindings(&workdir)?);
+        Ok(())
+    }
+
+    fn show_vim(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", vim::render_vim(&workdir, &args)?);
+        Ok(())
+    }
+
+    fn add_dir_command(&self, parts: &[&str]) -> Result<()> {
+        let Some(raw_path) = parts.first() else {
+            println!("Usage: /add-dir <absolute-path>");
+            return Ok(());
+        };
+
+        let path = std::path::Path::new(raw_path);
+        let added = self.access_store.add_dir(path)?;
+        println!(
+            "Added directory access: {}\nStored in .sacode/dirs.json",
+            added.display()
+        );
+        Ok(())
+    }
+
+    async fn run_init(&self, mode: InitMode) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let summary = initialize_project(&workdir, mode).await?;
+        println!();
+        println!("{} complete", mode_name(summary.mode));
+        println!("Project: {}", summary.project_name);
+        println!("Detected stack: {}", summary.stack_summary.join(", "));
+        for command in summary.detected_commands {
+            println!("  - {}", command);
+        }
+        println!("Generated AGENTS.md");
+        if summary.generated_workflows {
+            println!("Generated .sacode/workflows.json");
+        }
+        if summary.generated_mcp_template {
+            println!("Generated .sacode/mcp.json");
+        }
+        println!();
+        Ok(())
     }
 
     fn show_skills(&self) {
@@ -189,6 +406,33 @@ impl ReplSession {
             Err(error) => println!("  failed to load MCP config: {}", error),
         }
         println!();
+    }
+
+    fn show_memory(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", memory::render_memory(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_ide(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", ide::render_ide(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_outstyle(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", outstyle::render_outstyle(&workdir, &args)?);
+        println!();
+        Ok(())
     }
 
     fn handle_skill_command(&self, parts: &[&str]) -> Result<()> {
@@ -246,7 +490,7 @@ impl ReplSession {
 
     fn show_single_mcp(&self, parts: &[&str]) -> Result<()> {
         let Some(name) = parts.first() else {
-            println!("Usage: /mcp-show <name>");
+            println!("Usage: /mcps-show <name>");
             println!();
             return Ok(());
         };
@@ -263,7 +507,7 @@ impl ReplSession {
 
     fn remove_mcp(&self, parts: &[&str]) -> Result<()> {
         let Some(name) = parts.first() else {
-            println!("Usage: /mcp-remove <name>");
+            println!("Usage: /mcps-remove <name>");
             println!();
             return Ok(());
         };

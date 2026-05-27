@@ -64,12 +64,20 @@ impl LanguageServer for SaCodeLanguageServer {
     }
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        let items = completion_items(
-            &self.documents.lock().expect("document mutex poisoned"),
-            &self.sessions,
-            &params.text_document_position.text_document.uri,
-            params.text_document_position.position,
-        );
+        let documents = self.documents.lock().expect("document mutex poisoned").clone();
+        let sessions = self.sessions.clone();
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let items = tokio::task::spawn_blocking(move || {
+            completion_items(&documents, &sessions, &uri, position)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            vec![CompletionItem::new_simple(
+                "sacode.ai".to_string(),
+                "AI completion is temporarily unavailable".to_string(),
+            )]
+        });
         Ok(Some(CompletionResponse::Array(items)))
     }
 

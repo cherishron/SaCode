@@ -1,4 +1,4 @@
-use std::{collections::{HashSet, VecDeque}, env, fs, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, fs, hash::{Hash, Hasher}, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
 use crossterm::{
@@ -16,10 +16,13 @@ use ratatui::{
 };
 use serde::Serialize;
 use sacode_kernel::ExecutionMode;
+use sacode_kernel::model::{ChatUsage, ProviderKind};
 
 use crate::provider_config::{NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore, fallback_models, fetch_models};
 use crate::provider_runtime::{resolve_named_provider, resolve_provider};
-use sacode_runtime::{McpConfigStore, ProviderClient, SkillRegistry, ToolRegistry};
+use crate::plugin_config::PluginConfigStore;
+use sacode_runtime::{McpConfigStore, ProjectAccessConfigStore, ProviderClient, SkillRegistry, ToolRegistry};
+use crate::cmd::{diff, doctor, hooks, ide, init::{InitMode, initialize_project}, insight, keybindings, memory, outstyle, status, vim};
 
 const MODELS_HINT_LIMIT: usize = 8;
 
@@ -39,6 +42,7 @@ enum MessageRole {
 struct App {
     workdir: PathBuf,
     messages: Vec<Message>,
+    session_summary: Option<String>,
     input: String,
     should_quit: bool,
     scroll_offset: usize,
@@ -46,6 +50,7 @@ struct App {
     input_mode: InputMode,
     provider_store: ProviderConfigStore,
     sacode_store: SaCodeConfigStore,
+    access_store: ProjectAccessConfigStore,
     current_provider: Option<NamedProviderConfig>,
     pending_base_url: Option<String>,
     pending_provider_name: Option<String>,
@@ -90,6 +95,136 @@ struct App {
     session_options: Vec<SessionInfo>,
     selected_session_index: usize,
     prompt_template: PromptTemplate,
+    last_input_optimization: Option<InputOptimizationSnapshot>,
+    pending_input_optimization: Option<PendingInputOptimizationPreview>,
+    usage_stats: UsageStats,
+    perf_stats: PerformanceStats,
+    theme: ThemePalette,
+}
+
+#[derive(Debug, Clone, Default)]
+struct UsageStats {
+    requests: u64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    estimated_cost_usd: f64,
+    last_model: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PricingRule {
+    input_per_million: f64,
+    output_per_million: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ThemePalette {
+    name: &'static str,
+    border: Color,
+    accent: Color,
+    accent_strong: Color,
+    user: Color,
+    assistant: Color,
+    system: Color,
+    text: Color,
+    muted: Color,
+    subtle: Color,
+    warning: Color,
+    selected_fg: Color,
+    selected_bg: Color,
+    panel_border: Color,
+}
+
+impl ThemePalette {
+    fn github() -> Self {
+        Self {
+            name: "GitHub",
+            border: Color::Rgb(208, 215, 222),
+            accent: Color::Rgb(9, 105, 218),
+            accent_strong: Color::Rgb(31, 111, 235),
+            user: Color::Rgb(9, 105, 218),
+            assistant: Color::Rgb(26, 127, 55),
+            system: Color::Rgb(101, 109, 118),
+            text: Color::Rgb(36, 41, 47),
+            muted: Color::Rgb(87, 96, 106),
+            subtle: Color::Rgb(101, 109, 118),
+            warning: Color::Rgb(154, 103, 0),
+            selected_fg: Color::Rgb(255, 255, 255),
+            selected_bg: Color::Rgb(9, 105, 218),
+            panel_border: Color::Rgb(208, 215, 222),
+        }
+    }
+
+    fn vscode() -> Self {
+        Self {
+            name: "VSCode",
+            border: Color::Rgb(60, 60, 60),
+            accent: Color::Rgb(55, 148, 255),
+            accent_strong: Color::Rgb(0, 122, 204),
+            user: Color::Rgb(86, 156, 214),
+            assistant: Color::Rgb(78, 201, 176),
+            system: Color::Rgb(156, 220, 254),
+            text: Color::Rgb(212, 212, 212),
+            muted: Color::Rgb(156, 163, 175),
+            subtle: Color::Rgb(106, 115, 125),
+            warning: Color::Rgb(220, 220, 170),
+            selected_fg: Color::Rgb(255, 255, 255),
+            selected_bg: Color::Rgb(9, 71, 113),
+            panel_border: Color::Rgb(51, 51, 51),
+        }
+    }
+
+    fn idea() -> Self {
+        Self {
+            name: "IntelliJ IDEA",
+            border: Color::Rgb(74, 74, 74),
+            accent: Color::Rgb(104, 151, 187),
+            accent_strong: Color::Rgb(79, 140, 201),
+            user: Color::Rgb(104, 151, 187),
+            assistant: Color::Rgb(166, 194, 97),
+            system: Color::Rgb(128, 128, 128),
+            text: Color::Rgb(169, 183, 198),
+            muted: Color::Rgb(128, 128, 128),
+            subtle: Color::Rgb(96, 99, 102),
+            warning: Color::Rgb(255, 198, 109),
+            selected_fg: Color::Rgb(255, 255, 255),
+            selected_bg: Color::Rgb(33, 66, 131),
+            panel_border: Color::Rgb(74, 74, 74),
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "github" => Some(Self::github()),
+            "vscode" | "vs-code" | "vs_code" => Some(Self::vscode()),
+            "intellij" | "idea" | "intellij-idea" | "intellij_idea" => Some(Self::idea()),
+            _ => None,
+        }
+    }
+
+    fn names() -> &'static str {
+        "github, vscode, idea"
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PerformanceStats {
+    session_started_at: chrono::DateTime<chrono::Local>,
+    total_task_duration_ms: u64,
+    api_duration_ms: u64,
+    tool_duration_ms: u64,
+}
+
+impl Default for PerformanceStats {
+    fn default() -> Self {
+        Self {
+            session_started_at: chrono::Local::now(),
+            total_task_duration_ms: 0,
+            api_duration_ms: 0,
+            tool_duration_ms: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -112,9 +247,29 @@ struct StoredMessage {
     timestamp: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct StoredSessionSummary {
+    content: String,
+    compressed_at: String,
+}
+
 #[derive(Debug, Clone)]
 struct PromptTemplate {
     optimize_input: String,
+}
+
+#[derive(Debug, Clone)]
+struct InputOptimizationSnapshot {
+    original: String,
+    optimized: String,
+    model_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct PendingInputOptimizationPreview {
+    original: String,
+    optimized: String,
+    model_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +314,7 @@ enum InputMode {
     CheckpointInput,
     ModeSelect,
     SessionSelect,
+    InputOptimizePreview,
 }
 
 #[derive(Clone)]
@@ -216,10 +372,12 @@ impl SubCommandDef {
 
 fn get_level1_commands() -> Vec<CommandDef> {
     vec![
-        CommandDef::simple("/init", "初始化项目配置"),
+        CommandDef::simple("/init", "轻量初始化项目配置"),
+        CommandDef::simple("/init-deep", "深度初始化项目配置"),
         CommandDef::simple("/new", "创建新会话"),
         CommandDef::simple("/sessions", "切换历史会话"),
         CommandDef::simple("/clear", "清空当前上下文"),
+        CommandDef::simple("/compress", "压缩当前会话上下文"),
         CommandDef::with_subs("/profile", "配置管理", vec![
             SubCommandDef::new("ls", "列出所有配置"),
             SubCommandDef::new("use", "切换当前配置"),
@@ -250,7 +408,7 @@ fn get_level1_commands() -> Vec<CommandDef> {
             SubCommandDef::with_input("add", "添加 Skill"),
             SubCommandDef::with_input("remove", "删除 Skill"),
         ]),
-        CommandDef::with_subs("/mcp", "MCP 管理", vec![
+        CommandDef::with_subs("/mcps", "MCP 管理", vec![
             SubCommandDef::new("list", "列出 MCP 服务"),
             SubCommandDef::with_input("show", "查看 MCP 详情"),
             SubCommandDef::with_input("remove", "删除 MCP 服务"),
@@ -259,7 +417,20 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/models", "选择模型"),
         CommandDef::simple("/login", "配置 Provider 登录"),
         CommandDef::simple("/connect", "快速接入 Provider"),
+        CommandDef::simple("/add-dir", "添加项目可访问目录"),
+        CommandDef::simple("/status", "查看 MCP 与插件状态"),
+        CommandDef::simple("/doctor", "诊断当前配置与可用性"),
+        CommandDef::simple("/diff", "查看当前 Git 差异摘要"),
+        CommandDef::simple("/hooks", "查看运行时 Hook 与生命周期"),
+        CommandDef::simple("/ide", "查看 IDE 接入向导或配置"),
+        CommandDef::simple("/keybindings", "查看快捷键说明"),
+        CommandDef::simple("/outstyle", "切换 AI 输出风格（默认用户级）"),
+        CommandDef::simple("/vim", "切换 Vim 风格导航"),
+        CommandDef::simple("/memory", "查看或管理项目记忆"),
+        CommandDef::simple("/insight", "生成并打开用户级 insight 网页报告"),
         CommandDef::simple("/tools", "显示可用工具"),
+        CommandDef::simple("/stats", "查看 token 与费用统计"),
+        CommandDef::simple("/theme", "切换主题模板"),
         CommandDef::with_subs("/todo", "任务列表管理", vec![
             SubCommandDef::new("show", "显示当前待办"),
             SubCommandDef::new("confirm", "确认并执行待办"),
@@ -267,6 +438,7 @@ fn get_level1_commands() -> Vec<CommandDef> {
         ]),
         CommandDef::simple("/cancel", "取消当前任务"),
         CommandDef::simple("/help", "显示帮助"),
+        CommandDef::simple("/quit", "退出"),
         CommandDef::simple("/exit", "退出"),
     ]
 }
@@ -287,16 +459,34 @@ fn fuzzy_match(query: &str, target: &str) -> bool {
     query_idx == query_chars.len()
 }
 
+fn format_duration_ms(ms: u64) -> String {
+    if ms < 1_000 {
+        return format!("{}ms", ms);
+    }
+    let seconds = ms as f64 / 1_000.0;
+    if seconds < 60.0 {
+        return format!("{:.2}s", seconds);
+    }
+    let minutes = (seconds / 60.0).floor() as u64;
+    let remain_seconds = seconds - (minutes as f64 * 60.0);
+    format!("{}m {:.2}s", minutes, remain_seconds)
+}
+
 enum AsyncResult {
     ChatCompleted {
         task_id: u64,
         prompt: String,
         response: String,
         plan: Option<sacode_kernel::Plan>,
+        usage: Option<ChatUsage>,
+        api_duration_ms: u64,
+        tool_duration_ms: u64,
+        total_duration_ms: u64,
     },
     InputOptimized {
         original: String,
         optimized: String,
+        model_name: String,
     },
     LoginCompleted {
         provider_name: String,
@@ -327,6 +517,7 @@ enum AsyncResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AsyncContext {
+    OptimizeInput,
     Login,
     LoadProviders,
     SaveProvider,
@@ -341,6 +532,7 @@ impl App {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         let provider_store = ProviderConfigStore::new(&workdir);
         let sacode_store = SaCodeConfigStore::new(&workdir);
+        let access_store = ProjectAccessConfigStore::new(&workdir);
         let current_provider = resolve_named_provider(&workdir);
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
@@ -354,10 +546,11 @@ impl App {
             messages: vec![
                 Message {
                     role: MessageRole::System,
-                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 /exit 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
+                    content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 /quit 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
                     timestamp: timestamp.clone(),
                 },
             ],
+            session_summary: None,
             input: String::new(),
             should_quit: false,
             scroll_offset: 0,
@@ -365,6 +558,7 @@ impl App {
             input_mode: InputMode::Chat,
             provider_store,
             sacode_store,
+            access_store,
             current_provider,
             pending_base_url: None,
             pending_provider_name: None,
@@ -419,9 +613,15 @@ impl App {
             session_options: Vec::new(),
             selected_session_index: 0,
             prompt_template,
+            last_input_optimization: None,
+            pending_input_optimization: None,
+            usage_stats: UsageStats::default(),
+            perf_stats: PerformanceStats::default(),
+            theme: ThemePalette::github(),
         };
 
         app.load_latest_session();
+        app.ensure_default_context7();
         app
     }
 
@@ -483,6 +683,10 @@ impl App {
                 return;
             }
             InputMode::ModeSelect => {
+                return;
+            }
+            InputMode::InputOptimizePreview => {
+                self.apply_pending_input_optimization();
                 return;
             }
         }
@@ -577,12 +781,17 @@ impl App {
         let sender = self.task_tx.clone();
         let workdir = self.workdir.clone();
         let mode = self.execution_mode;
-        let Some(mut child) = Self::spawn_chat_child(&workdir, &user_input, mode) else {
+        let prompt = self.build_task_prompt(&user_input);
+        let Some(mut child) = Self::spawn_chat_child(&workdir, &prompt, mode) else {
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
                 plan: None,
+                usage: None,
+                api_duration_ms: 0,
+                tool_duration_ms: 0,
+                total_duration_ms: 0,
             });
             return;
         };
@@ -590,12 +799,16 @@ impl App {
         let stdout = child.stdout.take();
         self.active_child = Some(child);
         thread::spawn(move || {
-            let (response, plan) = App::execute_user_message_in_background(stdout);
+            let (response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms) = App::execute_user_message_in_background(stdout);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
                 response,
                 plan,
+                usage,
+                api_duration_ms,
+                tool_duration_ms,
+                total_duration_ms,
             });
         });
     }
@@ -617,19 +830,19 @@ impl App {
             .ok()
     }
 
-    fn execute_user_message_in_background(stdout: Option<impl Read>) -> (String, Option<sacode_kernel::Plan>) {
+    fn execute_user_message_in_background(stdout: Option<impl Read>) -> (String, Option<sacode_kernel::Plan>, Option<ChatUsage>, u64, u64, u64) {
         let Some(mut stdout) = stdout else {
-            return ("任务执行失败: 未获取到后台输出".to_string(), None);
+            return ("任务执行失败: 未获取到后台输出".to_string(), None, None, 0, 0, 0);
         };
 
         let mut output = String::new();
         if stdout.read_to_string(&mut output).is_err() {
-            return ("任务执行失败: 读取后台输出失败".to_string(), None);
+            return ("任务执行失败: 读取后台输出失败".to_string(), None, None, 0, 0, 0);
         }
 
         let parsed: serde_json::Value = match serde_json::from_str(&output) {
             Ok(value) => value,
-            Err(error) => return (format!("任务执行失败: 解析后台输出失败: {}\n{}", error, output.trim()), None),
+            Err(error) => return (format!("任务执行失败: 解析后台输出失败: {}\n{}", error, output.trim()), None, None, 0, 0, 0),
         };
 
         let response = parsed
@@ -644,7 +857,80 @@ impl App {
             .cloned()
             .and_then(|value| serde_json::from_value::<sacode_kernel::Plan>(value).ok())
             .filter(|plan| !plan.steps.is_empty());
-        (response, plan)
+        let usage = parsed
+            .get("usage")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<ChatUsage>(value).ok());
+        let api_duration_ms = parsed
+            .get("api_duration_ms")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let tool_duration_ms = parsed
+            .get("tool_duration_ms")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let total_duration_ms = parsed
+            .get("total_duration_ms")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        (response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms)
+    }
+
+    fn build_task_prompt(&self, user_input: &str) -> String {
+        let mut sections = Vec::new();
+
+        if let Some(summary) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+            sections.push(format!(
+                "以下是当前会话的历史摘要，请在后续任务中延续这些上下文与约束：\n{}",
+                summary.trim()
+            ));
+        }
+
+        let recent_messages = self.recent_context_messages(user_input, 6);
+        if !recent_messages.is_empty() {
+            sections.push(format!(
+                "以下是最近对话，请结合这些内容继续处理：\n{}",
+                recent_messages.join("\n\n")
+            ));
+        }
+
+        sections.push(format!("当前用户请求：\n{}", user_input.trim()));
+        sections.join("\n\n---\n\n")
+    }
+
+    fn recent_context_messages(&self, current_input: &str, max_items: usize) -> Vec<String> {
+        let mut skipped_current_user = false;
+
+        self.messages
+            .iter()
+            .rev()
+            .filter(|message| {
+                if skipped_current_user {
+                    return matches!(message.role, MessageRole::User | MessageRole::Assistant);
+                }
+
+                let is_current_user_message = matches!(message.role, MessageRole::User)
+                    && message.content.trim() == current_input.trim();
+                if is_current_user_message {
+                    skipped_current_user = true;
+                    return false;
+                }
+
+                matches!(message.role, MessageRole::User | MessageRole::Assistant)
+            })
+            .take(max_items)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|message| {
+                let role = match message.role {
+                    MessageRole::User => "用户",
+                    MessageRole::Assistant => "助手",
+                    MessageRole::System => "系统",
+                };
+                format!("[{}] {}", role, message.content.trim())
+            })
+            .collect()
     }
 
     fn format_cli_events(events: Option<&serde_json::Value>) -> Option<String> {
@@ -724,25 +1010,42 @@ impl App {
 
     fn spawn_optimize_input_task(&self, input: String) {
         let sender = self.task_tx.clone();
-        let workdir = self.workdir.clone();
+        let model_name = self.current_model_name();
+        let provider = self
+            .current_provider
+            .as_ref()
+            .map(|provider| provider.config.to_model_provider())
+            .unwrap_or_else(|| resolve_provider(&self.workdir));
         let prompt = format!("{}\n\n{}", self.prompt_template.optimize_input, input);
         thread::spawn(move || {
-            let optimized = Self::run_simple_chat_prompt(&workdir, &prompt).unwrap_or_else(|| input.clone());
-            let _ = sender.send(AsyncResult::InputOptimized {
-                original: input,
-                optimized,
-            });
+            match Self::run_simple_chat_prompt(&provider, &prompt) {
+                Ok(optimized) => {
+                    let _ = sender.send(AsyncResult::InputOptimized {
+                        original: input,
+                        optimized,
+                        model_name,
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::OptimizeInput,
+                        message: format!("优化当前输入失败: {}", error),
+                    });
+                }
+            }
         });
     }
 
-    fn run_simple_chat_prompt(workdir: &PathBuf, prompt: &str) -> Option<String> {
-        let provider = resolve_provider(workdir);
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
-        let text = runtime.block_on(async move {
-            ProviderClient::new().simple_chat(&provider, prompt).await.ok()
-        })?;
+    fn run_simple_chat_prompt(provider: &sacode_kernel::model::ModelProvider, prompt: &str) -> Result<String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let text = runtime.block_on(async move { ProviderClient::new().simple_chat(provider, prompt).await })?;
         let trimmed = text.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
+        if trimmed.is_empty() {
+            anyhow::bail!("模型未返回可用结果")
+        }
+        Ok(trimmed.to_string())
     }
 
     fn start_login(&mut self) {
@@ -927,7 +1230,13 @@ impl App {
         let trimmed = input.trim();
         
         if trimmed == "/init" {
-            self.init_command();
+            self.init_command(InitMode::Basic);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/init-deep" {
+            self.init_command(InitMode::Deep);
             self.input.clear();
             return true;
         }
@@ -946,6 +1255,12 @@ impl App {
 
         if trimmed == "/clear" {
             self.clear_current_context();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/compress" {
+            self.compress_current_context();
             self.input.clear();
             return true;
         }
@@ -980,7 +1295,7 @@ impl App {
             return true;
         }
 
-        if trimmed.starts_with("/mcp ") || trimmed == "/mcp" {
+        if trimmed.starts_with("/mcps ") || trimmed == "/mcps" {
             self.mcp_command(&input);
             self.input.clear();
             return true;
@@ -988,6 +1303,84 @@ impl App {
 
         if trimmed == "/tools" {
             self.tools_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/status" {
+            self.status_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/doctor" {
+            self.doctor_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/diff") {
+            self.diff_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/hooks" {
+            self.hooks_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/ide ") || trimmed == "/ide" {
+            self.ide_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/keybindings" {
+            self.keybindings_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/outstyle ") || trimmed == "/outstyle" {
+            self.outstyle_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/vim ") || trimmed == "/vim" {
+            self.vim_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/memory ") || trimmed == "/memory" {
+            self.memory_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/insight" {
+            self.insight_command();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/add-dir ") || trimmed == "/add-dir" {
+            self.add_dir_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/stats" {
+            self.show_usage_stats();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/theme") {
+            self.theme_command(&input);
             self.input.clear();
             return true;
         }
@@ -1010,7 +1403,7 @@ impl App {
             return true;
         }
 
-        if trimmed == "/exit" {
+        if trimmed == "/quit" || trimmed == "/exit" {
             self.should_quit = true;
             self.input.clear();
             return true;
@@ -1031,46 +1424,75 @@ impl App {
         false
     }
 
-    fn init_command(&mut self) {
-        let sacode_dir = self.workdir.join(".sacode");
-        
-        if sacode_dir.exists() {
-            self.push_system_message(".sacode 目录已存在。如需重新初始化，请先删除该目录。");
-            return;
-        }
+    fn init_command(&mut self, mode: InitMode) {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.push_error_message(&format!("初始化运行时创建失败: {}", error));
+                return;
+            }
+        };
 
-        if let Err(e) = std::fs::create_dir_all(&sacode_dir) {
-            self.push_system_message(&format!("创建 .sacode 目录失败: {}", e));
-            return;
+        match runtime.block_on(initialize_project(&self.workdir, mode)) {
+            Ok(summary) => {
+                let mut lines = vec![format!("{} 完成。", crate::cmd::init::mode_name(summary.mode))];
+                lines.push(format!("项目: {}", summary.project_name));
+                lines.push(format!("技术栈: {}", summary.stack_summary.join("、")));
+                if !summary.detected_commands.is_empty() {
+                    lines.push("识别命令:".to_string());
+                    for command in summary.detected_commands {
+                        lines.push(format!("- {}", command));
+                    }
+                }
+                lines.push("已生成 AGENTS.md。".to_string());
+                lines.push("已写入 .sacode/project.json。".to_string());
+                if summary.generated_workflows {
+                    lines.push("已生成 .sacode/workflows.json。".to_string());
+                }
+                if summary.generated_mcp_template {
+                    lines.push("已生成 .sacode/mcp.json。".to_string());
+                }
+                self.push_success_message(&lines.join("\n"));
+            }
+            Err(error) => self.push_error_message(&format!("初始化失败: {}", error)),
         }
-
-        let config_path = sacode_dir.join("config.json");
-        let default_config = serde_json::json!({
-            "providers": {},
-            "current": ""
-        });
-        
-        if let Err(e) = std::fs::write(&config_path, default_config.to_string()) {
-            self.push_system_message(&format!("创建 config.json 失败: {}", e));
-            return;
-        }
-
-        self.push_system_message(&format!(
-            "项目已初始化。\n配置文件: {}\n请使用 /login 配置 Provider。",
-            config_path.display()
-        ));
     }
 
-    fn session_dir(&self) -> PathBuf {
+    fn project_session_dir(&self) -> PathBuf {
         self.workdir.join(".sacode").join("sessions")
     }
 
-    fn session_path(&self, session_id: &str) -> PathBuf {
-        self.session_dir().join(format!("{}.json", session_id))
+    fn user_session_dir(&self) -> PathBuf {
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        home.join(".sacode")
+            .join("sessions")
+            .join("by-workspace")
+            .join(self.workspace_hash())
     }
 
-    fn ensure_session_dir(&self) -> io::Result<()> {
-        fs::create_dir_all(self.session_dir())
+    fn project_current_session_path(&self) -> PathBuf {
+        self.project_session_dir().join("current.json")
+    }
+
+    fn user_session_path(&self, session_id: &str) -> PathBuf {
+        self.user_session_dir().join(format!("{}.json", session_id))
+    }
+
+    fn legacy_project_session_path(&self, session_id: &str) -> PathBuf {
+        self.project_session_dir().join(format!("{}.json", session_id))
+    }
+
+    fn ensure_session_dirs(&self) -> io::Result<()> {
+        fs::create_dir_all(self.project_session_dir())?;
+        fs::create_dir_all(self.user_session_dir())
+    }
+
+    fn workspace_hash(&self) -> String {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.workdir.to_string_lossy().hash(&mut hasher);
+        format!("{:x}", hasher.finish())
     }
 
     fn session_title(&self) -> String {
@@ -1097,20 +1519,34 @@ impl App {
             .collect()
     }
 
+    fn serialized_session_summary(&self) -> Option<StoredSessionSummary> {
+        self.session_summary.as_ref().map(|content| StoredSessionSummary {
+            content: content.clone(),
+            compressed_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        })
+    }
+
     fn save_current_session(&self) {
-        if self.ensure_session_dir().is_err() {
+        if self.ensure_session_dirs().is_err() {
             return;
         }
         let session = serde_json::json!({
             "id": self.session_id,
             "updated_at": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             "messages": self.serialize_messages(),
+            "summary": self.serialized_session_summary(),
             "title": self.session_title(),
         });
-        let _ = fs::write(self.session_path(&self.session_id), session.to_string());
+        let _ = fs::write(self.project_current_session_path(), session.to_string());
+        let _ = fs::write(self.user_session_path(&self.session_id), session.to_string());
     }
 
     fn load_latest_session(&mut self) {
+        let current_path = self.project_current_session_path();
+        if current_path.exists() {
+            self.load_session_from_path(current_path, false);
+            return;
+        }
         let sessions = self.list_sessions();
         if let Some(session) = sessions.first() {
             self.load_session_by_id(&session.id, false);
@@ -1120,30 +1556,49 @@ impl App {
     }
 
     fn list_sessions(&self) -> Vec<SessionInfo> {
-        let dir = self.session_dir();
-        let Ok(entries) = fs::read_dir(dir) else {
-            return Vec::new();
-        };
-
-        let mut sessions: Vec<SessionInfo> = entries
-            .flatten()
-            .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-            .filter_map(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-            .filter_map(|value| {
-                Some(SessionInfo {
-                    id: value.get("id")?.as_str()?.to_string(),
-                    updated_at: value.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    title: value.get("title").and_then(|v| v.as_str()).unwrap_or("新会话").to_string(),
-                })
-            })
-            .collect();
+        let mut seen = HashSet::new();
+        let mut sessions = self.read_sessions_from_dir(&self.user_session_dir(), &mut seen);
+        sessions.extend(self.read_sessions_from_dir(&self.project_session_dir(), &mut seen));
 
         sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         sessions
     }
 
     fn load_session_by_id(&mut self, session_id: &str, announce: bool) {
-        let path = self.session_path(session_id);
+        let user_path = self.user_session_path(session_id);
+        let path = if user_path.exists() {
+            user_path
+        } else {
+            self.legacy_project_session_path(session_id)
+        };
+        self.load_session_from_path(path, announce);
+    }
+
+    fn read_sessions_from_dir(&self, dir: &std::path::Path, seen: &mut HashSet<String>) -> Vec<SessionInfo> {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+
+        entries
+            .flatten()
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+            .filter_map(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .filter_map(|value| {
+                let id = value.get("id")?.as_str()?.to_string();
+                if !seen.insert(id.clone()) {
+                    return None;
+                }
+                Some(SessionInfo {
+                    id,
+                    updated_at: value.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    title: value.get("title").and_then(|v| v.as_str()).unwrap_or("新会话").to_string(),
+                })
+            })
+            .collect()
+    }
+
+    fn load_session_from_path(&mut self, path: PathBuf, announce: bool) {
         let Ok(content) = fs::read_to_string(path) else {
             return;
         };
@@ -1154,7 +1609,16 @@ impl App {
             return;
         };
 
-        self.session_id = session_id.to_string();
+        self.session_id = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.session_id)
+            .to_string();
+        self.session_summary = value
+            .get("summary")
+            .and_then(|summary| summary.get("content"))
+            .and_then(|content| content.as_str())
+            .map(|content| content.to_string());
         self.messages = messages
             .iter()
             .map(|message| Message {
@@ -1169,7 +1633,7 @@ impl App {
             .collect();
         self.scroll_to_bottom();
         if announce {
-            self.push_success_message(&format!("已切换到会话 {}", session_id));
+            self.push_success_message(&format!("已切换到会话 {}", self.session_id));
         }
     }
 
@@ -1181,6 +1645,7 @@ impl App {
             content: "SaCode - 新会话\n\n上下键可浏览输入历史，/sessions 可切换历史会话。".to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
         }];
+        self.session_summary = None;
         self.queued_messages.clear();
         self.todo_plan = None;
         self.processing = false;
@@ -1197,6 +1662,7 @@ impl App {
             content: "当前会话上下文已清空。".to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
         }];
+        self.session_summary = None;
         self.queued_messages.clear();
         self.todo_plan = None;
         self.processing = false;
@@ -1321,8 +1787,12 @@ impl App {
 
     fn plugin_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
-        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        let plugin_file = workdir.join(".sacode").join("plugins.json");
+        let global = parts.iter().any(|part| *part == "--global" || *part == "-g");
+        let plugin_file = if global {
+            PluginConfigStore::new(&self.workdir).user_path().to_path_buf()
+        } else {
+            PluginConfigStore::new(&self.workdir).project_path().to_path_buf()
+        };
 
         if parts.len() <= 1 || parts[1] == "list" {
             self.list_plugins(&plugin_file);
@@ -1335,7 +1805,7 @@ impl App {
                     let plugin_ref = parts[2];
                     self.install_plugin(&plugin_file, plugin_ref);
                 } else {
-                    self.push_system_message("用法: /plugin install <name|url>");
+                    self.push_system_message("用法: /plugin install <name|url> [--global|-g]");
                 }
             }
             Some("remove") => {
@@ -1343,7 +1813,7 @@ impl App {
                     let name = parts[2];
                     self.remove_plugin(&plugin_file, name);
                 } else {
-                    self.push_system_message("用法: /plugin remove <name>");
+                    self.push_system_message("用法: /plugin remove <name> [--global|-g]");
                 }
             }
             Some("enable") => {
@@ -1351,7 +1821,7 @@ impl App {
                     let name = parts[2];
                     self.enable_plugin(&plugin_file, name, true);
                 } else {
-                    self.push_system_message("用法: /plugin enable <name>");
+                    self.push_system_message("用法: /plugin enable <name> [--global|-g]");
                 }
             }
             Some("disable") => {
@@ -1359,48 +1829,41 @@ impl App {
                     let name = parts[2];
                     self.enable_plugin(&plugin_file, name, false);
                 } else {
-                    self.push_system_message("用法: /plugin disable <name>");
+                    self.push_system_message("用法: /plugin disable <name> [--global|-g]");
                 }
             }
-            _ => self.push_system_message("用法: /plugin list|install|remove|enable|disable"),
+            _ => self.push_system_message("用法: /plugin list|install|remove|enable|disable [--global|-g]"),
         }
     }
 
-    fn list_plugins(&mut self, plugin_file: &std::path::Path) {
-        if !plugin_file.exists() {
-            self.push_system_message("当前没有安装任何插件。\n\n可用内置功能:\n- Skills: /skills list\n- MCP: /mcp list\n\n安装插件: /plugin install <name>");
+    fn list_plugins(&mut self, _plugin_file: &std::path::Path) {
+        let store = PluginConfigStore::new(&self.workdir);
+        let entries = match store.list_entries() {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.push_error_message(&format!("读取插件配置失败: {}", error));
+                return;
+            }
+        };
+
+        if entries.is_empty() {
+            self.push_system_message("当前没有安装任何插件。\n\n可用内置功能:\n- Skills: /skills list\n- MCP: /mcps list\n\n安装插件: /plugin install <name>");
             return;
         }
 
-        match std::fs::read_to_string(plugin_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(data) => {
-                        if let Some(plugins) = data.get("plugins").and_then(|p| p.as_array()) {
-                            if plugins.is_empty() {
-                                self.push_system_message("当前没有安装任何插件。");
-                            } else {
-                                let summary = plugins.iter()
-                                    .map(|p| {
-                                        let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-                                        let enabled = p.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
-                                        let version = p.get("version").and_then(|v| v.as_str()).unwrap_or("");
-                                        let status = if enabled { "[on]" } else { "[off]" };
-                                        format!("- {} {} {}{}", name, status, version, if version.is_empty() { "" } else { "" })
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                self.push_system_message(&format!("已安装插件:\n{}\n\n管理命令:\n/plugin enable|disable <name>", summary));
-                            }
-                        } else {
-                            self.push_system_message("插件配置格式错误。");
-                        }
-                    }
-                    Err(e) => self.push_error_message(&format!("解析插件配置失败: {}", e)),
-                }
-            }
-            Err(e) => self.push_error_message(&format!("读取插件配置失败: {}", e)),
-        }
+        let summary = entries.iter()
+            .map(|entry| {
+                let version = if entry.plugin.version.trim().is_empty() {
+                    "latest"
+                } else {
+                    entry.plugin.version.as_str()
+                };
+                let status = if entry.plugin.enabled { "[on]" } else { "[off]" };
+                format!("- {} {} {} [{}]", entry.plugin.name, status, version, entry.source.label())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.push_system_message(&format!("已安装插件:\n{}\n\n管理命令:\n/plugin enable|disable <name>", summary));
     }
 
     fn install_plugin(&mut self, plugin_file: &std::path::Path, plugin_ref: &str) {
@@ -1900,7 +2363,7 @@ impl App {
                     self.open_mcp_selector_for_action("remove");
                 }
             }
-            _ => self.push_system_message("用法: /mcp list|show|remove"),
+            _ => self.push_system_message("用法: /mcps list|show|remove"),
         }
     }
 
@@ -2128,36 +2591,328 @@ impl App {
         }
     }
 
+    fn compress_current_context(&mut self) {
+        if self.processing {
+            self.push_system_message("当前有任务正在执行，请等待完成后再压缩会话。");
+            return;
+        }
+
+        let summary = self.build_session_summary();
+        if summary.is_empty() {
+            self.push_system_message("当前会话内容较少，暂时无需压缩。");
+            return;
+        }
+
+        self.session_summary = Some(summary.clone());
+        let now = chrono::Local::now();
+        self.messages = vec![Message {
+            role: MessageRole::System,
+            content: format!(
+                "当前会话已压缩。后续任务会自动携带历史摘要。\n\n摘要预览:\n{}",
+                summary
+            ),
+            timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+        }];
+        self.queued_messages.clear();
+        self.todo_plan = None;
+        self.processing = false;
+        self.active_task_id = None;
+        self.busy_message.clear();
+        self.save_current_session();
+        self.scroll_to_bottom();
+    }
+
+    fn build_session_summary(&self) -> String {
+        let messages = self
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User | MessageRole::Assistant))
+            .collect::<Vec<_>>();
+
+        if messages.len() <= 2 {
+            return String::new();
+        }
+
+        let mut lines = Vec::new();
+        if let Some(existing) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+            lines.push("已有摘要:".to_string());
+            lines.push(existing.trim().to_string());
+        }
+
+        lines.push("本轮对话摘要:".to_string());
+        for message in messages.iter().take(12) {
+            let role = match message.role {
+                MessageRole::User => "用户",
+                MessageRole::Assistant => "助手",
+                MessageRole::System => continue,
+            };
+            let compact = message.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let snippet = compact.chars().take(220).collect::<String>();
+            lines.push(format!("- {}: {}", role, snippet));
+        }
+
+        lines.join("\n")
+    }
+
     fn help_command(&mut self) {
         self.push_system_message(
             "SaCode 帮助:\n\
             \n一级命令:\n\
-            /init      - 初始化项目配置\n\
+            /init      - 轻量初始化项目配置\n\
+            /init-deep - 深度初始化项目配置\n\
             /new       - 创建新会话\n\
             /sessions  - 切换历史会话\n\
             /clear     - 清空当前上下文\n\
+            /compress  - 压缩当前会话上下文\n\
             /profile   - 配置管理 (ls/use/show)\n\
             /plugin    - 插件管理 (list/install/remove/enable/disable)\n\
             /checkpoint - 检查点管理 (list/save/restore/delete)\n\
             /mode      - 执行模式 (plan/build/yolo)\n\
             /skills    - Skills 管理 (list/show/run/add/remove)\n\
-            /mcp       - MCP 管理 (list/show/remove)\n\
+            /mcps      - MCP 管理 (list/show/remove)\n\
             /providers - 管理 Provider\n\
             /models    - 选择模型\n\
             /login     - 配置 Provider 登录\n\
             /connect   - 快速接入 Provider\n\
+            /add-dir   - 添加项目可访问目录\n\
+            /status    - 查看 MCP 与插件状态\n\
+            /doctor    - 诊断当前配置与可用性\n\
+            /diff      - 查看当前 Git 差异摘要\n\
+            /hooks     - 查看运行时 Hook 与生命周期\n\
+            /ide       - 查看 IDE 接入向导或配置\n\
+            /keybindings - 查看快捷键说明\n\
+            /outstyle  - 切换 AI 输出风格（默认用户级）\n\
+            /vim       - 切换 Vim 风格导航\n\
+            /memory    - 查看或管理项目记忆\n\
+            /insight   - 生成编程洞察\n\
             /tools     - 显示可用工具\n\
+            /stats     - 查看 token 与费用统计\n\
+            /theme     - 切换主题模板 (github/vscode/idea)\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /cancel    - 取消当前任务或清空等待队列\n\
             /help      - 显示帮助\n\
+            /quit      - 退出\n\
             /exit      - 退出\n\
             \n快捷键:\n\
-            Ctrl+Q - 退出\n\
+            Ctrl+Q - 等价于 /quit\n\
             Ctrl+A - 优化当前输入\n\
+            Ctrl+Z - 撤回上次输入优化\n\
             Esc    - 取消当前任务或取消选择\n\
             上下键  - 浏览已发送输入历史\n\
             输入 /  - 显示命令列表"
         );
+    }
+
+    fn show_usage_stats(&mut self) {
+        let pricing = self.current_pricing_rule()
+            .map(|rule| format!("${:.2}/M in, ${:.2}/M out", rule.input_per_million, rule.output_per_million))
+            .unwrap_or_else(|| "待配置".to_string());
+        self.push_system_message(&format!(
+            "Token 与费用统计\n请求数: {}\n输入 tokens: {}\n输出 tokens: {}\n总 tokens: {}\n估算费用: ${:.6}\n当前模型: {}\n计价规则: {}",
+            self.usage_stats.requests,
+            self.usage_stats.prompt_tokens,
+            self.usage_stats.completion_tokens,
+            self.usage_stats.total_tokens,
+            self.usage_stats.estimated_cost_usd,
+            if self.usage_stats.last_model.is_empty() { self.current_model_name() } else { self.usage_stats.last_model.clone() },
+            pricing,
+        ));
+    }
+
+    fn ensure_default_context7(&mut self) {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.push_error_message(&format!("创建运行时失败: {}", error));
+                return;
+            }
+        };
+
+        match runtime.block_on(status::ensure_default_context7(&self.workdir)) {
+            Ok(true) => self.push_system_message("已默认安装 Context7 MCP [official remote]。"),
+            Ok(false) => {}
+            Err(error) => self.push_error_message(&format!("默认安装 Context7 失败: {}", error)),
+        }
+    }
+
+    fn status_command(&mut self) {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.push_error_message(&format!("创建运行时失败: {}", error));
+                return;
+            }
+        };
+
+        match runtime.block_on(status::render_status(&self.workdir)) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取状态失败: {}", error)),
+        }
+    }
+
+    fn doctor_command(&mut self) {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.push_error_message(&format!("创建运行时失败: {}", error));
+                return;
+            }
+        };
+
+        match runtime.block_on(doctor::render_doctor(&self.workdir)) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("诊断失败: {}", error)),
+        }
+    }
+
+    fn diff_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match diff::render_diff(args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取 diff 失败: {}", error)),
+        }
+    }
+
+    fn hooks_command(&mut self) {
+        self.push_system_message(&hooks::render_hooks());
+    }
+
+    fn memory_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match memory::render_memory(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取记忆失败: {}", error)),
+        }
+    }
+
+    fn insight_command(&mut self) {
+        let messages: Vec<(String, String)> = self.messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User | MessageRole::Assistant))
+            .map(|message| {
+                let role = match message.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::System => "system",
+                };
+                (role.to_string(), message.content.clone())
+            })
+            .collect();
+
+        if messages.is_empty() {
+            self.push_system_message("当前会话没有对话记录，请先发送一些消息再生成洞察。");
+            return;
+        }
+
+        let messages_ref: Vec<(&str, &str)> = messages.iter()
+            .map(|(role, content)| (role.as_str(), content.as_str()))
+            .collect();
+
+        self.push_system_message(&format!("正在分析 {} 条消息并生成用户级 insight 网页报告...", messages.len()));
+
+        match insight::analyze_messages(&messages_ref, &self.workdir) {
+            Ok(insight_report) => {
+                self.push_system_message(&insight::render_success_message(&insight_report));
+            }
+            Err(error) => {
+                self.push_error_message(&format!("生成洞察失败: {}", error));
+            }
+        }
+    }
+
+    fn ide_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match ide::render_ide(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取 IDE 配置失败: {}", error)),
+        }
+    }
+
+    fn outstyle_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match outstyle::render_outstyle(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("设置输出风格失败: {}", error)),
+        }
+    }
+
+    fn keybindings_command(&mut self) {
+        match keybindings::render_keybindings(&self.workdir) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取快捷键失败: {}", error)),
+        }
+    }
+
+    fn vim_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match vim::render_vim(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("设置 Vim 模式失败: {}", error)),
+        }
+    }
+
+    fn add_dir_command(&mut self, input: &str) {
+        let mut parts = input.split_whitespace();
+        let _ = parts.next();
+        let Some(raw_path) = parts.next() else {
+            self.push_system_message("用法: /add-dir <绝对路径>");
+            return;
+        };
+
+        match self.access_store.add_dir(std::path::Path::new(raw_path)) {
+            Ok(path) => self.push_success_message(&format!(
+                "已添加目录访问权限: {}\n后续当前项目可持续读取和修改该目录，配置保存在 .sacode/dirs.json。",
+                path.display()
+            )),
+            Err(error) => self.push_error_message(&format!("添加目录失败: {}", error)),
+        }
+    }
+
+    fn theme_command(&mut self, input: &str) {
+        let mut parts = input.split_whitespace();
+        let _ = parts.next();
+        let Some(theme_name) = parts.next() else {
+            self.push_system_message(&format!(
+                "当前主题: {}\n可用主题: {}\n用法: /theme <name>",
+                self.theme.name,
+                ThemePalette::names(),
+            ));
+            return;
+        };
+
+        match ThemePalette::from_name(theme_name) {
+            Some(theme) => {
+                self.theme = theme;
+                self.push_system_message(&format!("主题已切换为 {}。", self.theme.name));
+            }
+            None => {
+                self.push_system_message(&format!(
+                    "未知主题: {}\n可用主题: {}",
+                    theme_name,
+                    ThemePalette::names(),
+                ));
+            }
+        }
     }
 
     fn open_provider_switch_selector(&mut self) {
@@ -2669,7 +3424,7 @@ match self.provider_store.save_named(name, &config, true) {
     fn poll_async_results(&mut self) {
         while let Ok(result) = self.task_rx.try_recv() {
             match result {
-                AsyncResult::ChatCompleted { task_id, prompt, response, plan } => {
+                AsyncResult::ChatCompleted { task_id, prompt, response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms } => {
                     if self.canceled_task_ids.remove(&task_id) {
                         if self.active_task_id == Some(task_id) {
                             self.active_child = None;
@@ -2688,6 +3443,10 @@ match self.provider_store.save_named(name, &config, true) {
                         content: response,
                         timestamp,
                     });
+                    if let Some(usage) = usage {
+                        self.record_usage(usage);
+                    }
+                    self.record_performance(api_duration_ms, tool_duration_ms, total_duration_ms);
                     self.mark_todo_completed(&prompt);
                     if let Some(plan) = plan {
                         self.capture_todo_plan(&prompt, plan);
@@ -2767,14 +3526,21 @@ match self.provider_store.save_named(name, &config, true) {
                     self.busy_message.clear();
                     self.push_system_message(&format!("默认模型已切换为 {}。", selected_model));
                 }
-                AsyncResult::InputOptimized { original, optimized } => {
+                AsyncResult::InputOptimized { original, optimized, model_name } => {
+                    self.processing = false;
+                    self.busy_message.clear();
                     let optimized = optimized.trim().to_string();
                     if optimized.is_empty() {
                         self.push_system_message("输入优化未返回结果，保留原始内容。");
                         self.input = original;
                     } else {
-                        self.input = optimized;
-                        self.push_success_message("已优化当前输入");
+                        self.pending_input_optimization = Some(PendingInputOptimizationPreview {
+                            original,
+                            optimized,
+                            model_name: model_name.clone(),
+                        });
+                        self.input_mode = InputMode::InputOptimizePreview;
+                        self.push_system_message(&format!("{} 已返回输入优化建议，按 Enter 应用，按 Esc 取消。", model_name));
                     }
                 }
                 AsyncResult::Failed { context, message } => {
@@ -2784,7 +3550,11 @@ match self.provider_store.save_named(name, &config, true) {
                     self.busy_message.clear();
                     if matches!(
                         context,
-                        AsyncContext::LoadProviders | AsyncContext::SaveProvider | AsyncContext::LoadModels | AsyncContext::SaveModel
+                        AsyncContext::OptimizeInput
+                            | AsyncContext::LoadProviders
+                            | AsyncContext::SaveProvider
+                            | AsyncContext::LoadModels
+                            | AsyncContext::SaveModel
                     ) {
                         self.input_mode = InputMode::Chat;
                     }
@@ -2821,6 +3591,55 @@ match self.provider_store.save_named(name, &config, true) {
             .map(|provider| format!("{}:{}", provider.name, provider.config.model))
             .filter(|model| !model.is_empty())
             .unwrap_or_else(|| "内置执行".to_string())
+    }
+
+    fn record_usage(&mut self, usage: ChatUsage) {
+        self.usage_stats.requests += 1;
+        self.usage_stats.prompt_tokens += usage.prompt_tokens as u64;
+        self.usage_stats.completion_tokens += usage.completion_tokens as u64;
+        self.usage_stats.total_tokens += usage.total_tokens as u64;
+        self.usage_stats.last_model = self.current_model_name();
+        if let Some(rule) = self.current_pricing_rule() {
+            self.usage_stats.estimated_cost_usd +=
+                (usage.prompt_tokens as f64 / 1_000_000.0) * rule.input_per_million +
+                (usage.completion_tokens as f64 / 1_000_000.0) * rule.output_per_million;
+        }
+    }
+
+    fn record_performance(&mut self, api_duration_ms: u64, tool_duration_ms: u64, total_duration_ms: u64) {
+        self.perf_stats.api_duration_ms += api_duration_ms;
+        self.perf_stats.tool_duration_ms += tool_duration_ms;
+        self.perf_stats.total_task_duration_ms += total_duration_ms;
+    }
+
+    fn session_active_duration_ms(&self) -> u64 {
+        let duration = chrono::Local::now() - self.perf_stats.session_started_at;
+        duration.num_milliseconds().max(0) as u64
+    }
+
+    fn shutdown_summary(&self) -> String {
+        format!(
+            "sacode 已经关闭。再见！\n性能：\n总耗时：{}\nsacode 活动时间：{}\napi时间：{}\n工具时间：{}",
+            format_duration_ms(self.perf_stats.total_task_duration_ms),
+            format_duration_ms(self.session_active_duration_ms()),
+            format_duration_ms(self.perf_stats.api_duration_ms),
+            format_duration_ms(self.perf_stats.tool_duration_ms),
+        )
+    }
+
+    fn current_pricing_rule(&self) -> Option<PricingRule> {
+        let provider = self.current_provider.as_ref()?;
+        let model = provider.config.model.to_lowercase();
+        match provider.config.to_model_provider().kind {
+            ProviderKind::Deepseek => Some(PricingRule { input_per_million: 0.27, output_per_million: 1.10 }),
+            ProviderKind::Mimo => Some(PricingRule { input_per_million: 0.80, output_per_million: 2.00 }),
+            ProviderKind::Openai if model.contains("gpt-4.1-mini") || model.contains("gpt-4o-mini") => {
+                Some(PricingRule { input_per_million: 0.15, output_per_million: 0.60 })
+            }
+            ProviderKind::Openai if model.contains("gpt-4.1") => Some(PricingRule { input_per_million: 2.00, output_per_million: 8.00 }),
+            ProviderKind::Openai if model.contains("gpt-4o") => Some(PricingRule { input_per_million: 2.50, output_per_million: 10.00 }),
+            _ => None,
+        }
     }
 
     fn cancel_current_mode(&mut self) {
@@ -2862,6 +3681,9 @@ match self.provider_store.save_named(name, &config, true) {
             self.session_options.clear();
             self.selected_session_index = 0;
         }
+        if self.input_mode == InputMode::InputOptimizePreview {
+            self.pending_input_optimization = None;
+        }
         self.filtered_level1.clear();
         self.filtered_sub_commands.clear();
         self.selected_level1_index = 0;
@@ -2890,6 +3712,45 @@ match self.provider_store.save_named(name, &config, true) {
         });
         self.save_current_session();
         self.scroll_to_bottom();
+    }
+
+    fn undo_last_input_optimization(&mut self) {
+        let Some(snapshot) = self.last_input_optimization.clone() else {
+            self.push_system_message("当前没有可撤回的输入优化记录。");
+            return;
+        };
+
+        if self.input != snapshot.optimized {
+            self.push_system_message("当前输入已变化，保留现有内容。请手动调整后继续。");
+            return;
+        }
+
+        self.input = snapshot.original.clone();
+        self.last_input_optimization = None;
+        self.push_success_message(&format!("已撤回 {} 的输入优化", snapshot.model_name));
+    }
+
+    fn apply_pending_input_optimization(&mut self) {
+        let Some(preview) = self.pending_input_optimization.clone() else {
+            self.input_mode = InputMode::Chat;
+            return;
+        };
+
+        self.last_input_optimization = Some(InputOptimizationSnapshot {
+            original: preview.original,
+            optimized: preview.optimized.clone(),
+            model_name: preview.model_name.clone(),
+        });
+        self.input = preview.optimized;
+        self.pending_input_optimization = None;
+        self.input_mode = InputMode::Chat;
+        self.push_success_message(&format!("已使用 {} 优化当前输入，Ctrl+Z 可撤回", preview.model_name));
+    }
+
+    fn cancel_pending_input_optimization(&mut self) {
+        self.pending_input_optimization = None;
+        self.input_mode = InputMode::Chat;
+        self.push_system_message("已取消本次输入优化预览。");
     }
 
     fn push_error_message(&mut self, content: &str) {
@@ -2987,6 +3848,12 @@ match self.provider_store.save_named(name, &config, true) {
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
+        let vim_mode = self
+            .sacode_store
+            .load_effective()
+            .map(|config| config.vim_mode)
+            .unwrap_or(false);
+
         match key.code {
             KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 self.should_quit = true;
@@ -2994,6 +3861,10 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Esc => {
                 if self.processing && self.input_mode == InputMode::Chat {
                     self.cancel_active_task();
+                    return;
+                }
+                if self.input_mode == InputMode::InputOptimizePreview {
+                    self.cancel_pending_input_optimization();
                     return;
                 }
                 if self.input_mode == InputMode::CommandLevel2 {
@@ -3027,6 +3898,7 @@ match self.provider_store.save_named(name, &config, true) {
                     InputMode::SkillInput => self.finish_skill_input(),
                     InputMode::McpInput => self.finish_mcp_input(),
                     InputMode::CheckpointInput => self.finish_checkpoint_input(),
+                    InputMode::InputOptimizePreview => self.apply_pending_input_optimization(),
                     _ => self.send_message(),
                 }
             }
@@ -3035,6 +3907,19 @@ match self.provider_store.save_named(name, &config, true) {
             }
             KeyCode::Char('d') if self.input_mode == InputMode::ProviderSelect => {
                 self.remove_selected_provider();
+            }
+            KeyCode::Char('h') if vim_mode => {
+                if self.input_mode == InputMode::CommandLevel2 || self.input_mode != InputMode::Chat {
+                    self.cancel_current_mode();
+                }
+            }
+            KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::ProviderSelect => {
+                if self.selected_provider_index + 1 < self.provider_options.len() {
+                    self.selected_provider_index += 1;
+                }
+            }
+            KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::ProviderSelect => {
+                self.selected_provider_index = self.selected_provider_index.saturating_sub(1);
             }
             KeyCode::Up if self.input_mode == InputMode::ProviderSelect => {
                 self.selected_provider_index = self.selected_provider_index.saturating_sub(1);
@@ -3060,6 +3945,17 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_connect_index += 1;
                 }
             }
+            KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::CommandLevel1 => {
+                self.selected_level1_index = self.selected_level1_index.saturating_sub(1);
+            }
+            KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::CommandLevel1 => {
+                if self.selected_level1_index + 1 < self.filtered_level1.len() {
+                    self.selected_level1_index += 1;
+                }
+            }
+            KeyCode::Char('l') if vim_mode && self.input_mode == InputMode::CommandLevel1 => {
+                self.confirm_level1_selection();
+            }
             KeyCode::Up if self.input_mode == InputMode::CommandLevel1 => {
                 self.selected_level1_index = self.selected_level1_index.saturating_sub(1);
             }
@@ -3075,6 +3971,17 @@ match self.provider_store.save_named(name, &config, true) {
                 if self.selected_sub_index + 1 < self.filtered_sub_commands.len() {
                     self.selected_sub_index += 1;
                 }
+            }
+            KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::CommandLevel2 => {
+                self.selected_sub_index = self.selected_sub_index.saturating_sub(1);
+            }
+            KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::CommandLevel2 => {
+                if self.selected_sub_index + 1 < self.filtered_sub_commands.len() {
+                    self.selected_sub_index += 1;
+                }
+            }
+            KeyCode::Char('l') if vim_mode && self.input_mode == InputMode::CommandLevel2 => {
+                self.confirm_sub_selection();
             }
             KeyCode::Up if self.input_mode == InputMode::SkillsSelect => {
                 self.selected_skills_index = self.selected_skills_index.saturating_sub(1);
@@ -3116,6 +4023,12 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_session_index += 1;
                 }
             }
+            KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::Chat => {
+                self.navigate_history_up();
+            }
+            KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::Chat => {
+                self.navigate_history_down();
+            }
             KeyCode::Up if self.input_mode == InputMode::Chat => {
                 self.navigate_history_up();
             }
@@ -3123,9 +4036,16 @@ match self.provider_store.save_named(name, &config, true) {
                 self.navigate_history_down();
             }
             KeyCode::Char('a') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                if !self.input.trim().is_empty() {
+                if !self.processing && !self.input.trim().is_empty() {
+                    self.processing = true;
+                    self.busy_message = "正在使用当前模型优化输入...".to_string();
                     self.spawn_optimize_input_task(self.input.trim().to_string());
                     self.push_system_message("正在优化当前输入...");
+                }
+            }
+            KeyCode::Char('z') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                if !self.processing {
+                    self.undo_last_input_optimization();
                 }
             }
             KeyCode::Char('/') if self.input_mode == InputMode::Chat && self.input.is_empty() => {
@@ -3209,6 +4129,8 @@ match self.provider_store.save_named(name, &config, true) {
                     self.scroll_down();
                 }
             }
+            KeyCode::Char('k') if vim_mode => self.scroll_up(),
+            KeyCode::Char('j') if vim_mode => self.scroll_down(),
             _ => {}
         }
     }
@@ -3232,6 +4154,7 @@ pub fn run_tui() -> Result<()> {
         DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
+    println!("{}", app.shutdown_summary());
 
     res
 }
@@ -3257,6 +4180,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
 }
 
 fn ui(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(0)
@@ -3267,17 +4191,25 @@ fn ui(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
+    let top_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(34),
+        ])
+        .split(chunks[0]);
+
     let messages_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)))
+        .border_style(Style::default().fg(theme.border))
         .title(Span::styled(
-            format!(" SaCode [{}] ", app.current_model_name()),
-            Style::default().fg(Color::Rgb(80, 200, 120)).add_modifier(Modifier::BOLD),
+            format!(" SaCode [{} | {}] ", app.current_model_name(), theme.name),
+            Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
         ))
         .title_style(Style::default());
 
-    let inner_area = messages_block.inner(chunks[0]);
-    frame.render_widget(messages_block, chunks[0]);
+    let inner_area = messages_block.inner(top_chunks[0]);
+    frame.render_widget(messages_block, top_chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
     let mut current_y = 0;
@@ -3289,9 +4221,9 @@ fn ui(frame: &mut Frame, app: &App) {
         }
 
         let role_style = match msg.role {
-            MessageRole::User => Style::default().fg(Color::Rgb(100, 149, 237)),
-            MessageRole::Assistant => Style::default().fg(Color::Rgb(80, 200, 120)),
-            MessageRole::System => Style::default().fg(Color::Rgb(150, 150, 150)),
+            MessageRole::User => Style::default().fg(theme.user),
+            MessageRole::Assistant => Style::default().fg(theme.assistant),
+            MessageRole::System => Style::default().fg(theme.system),
         };
 
         let role_label = match msg.role {
@@ -3301,7 +4233,7 @@ fn ui(frame: &mut Frame, app: &App) {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(&msg.timestamp, Style::default().fg(Color::Rgb(120, 120, 140))),
+            Span::styled(&msg.timestamp, Style::default().fg(theme.subtle)),
             Span::raw(" "),
             Span::styled(role_label, role_style.add_modifier(Modifier::BOLD)),
         ]));
@@ -3314,7 +4246,7 @@ fn ui(frame: &mut Frame, app: &App) {
             }
             lines.push(Line::from(Span::styled(
                 content_line,
-                Style::default().fg(Color::Rgb(200, 200, 210)),
+                Style::default().fg(theme.text),
             )));
             current_y += 1;
         }
@@ -3333,8 +4265,8 @@ fn ui(frame: &mut Frame, app: &App) {
             .orientation(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
-            .track_style(Style::default().fg(Color::Rgb(60, 60, 80)))
-            .thumb_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+            .track_style(Style::default().fg(theme.panel_border))
+            .thumb_style(Style::default().fg(theme.border));
         
         let mut scrollbar_state = ScrollbarState::new(app.messages.len())
             .position(app.scroll_offset);
@@ -3342,10 +4274,34 @@ fn ui(frame: &mut Frame, app: &App) {
         frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
     }
 
+    let stats_block = Block::default()
+        .title(" Token 与费用 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+    let stats_inner = stats_block.inner(top_chunks[1]);
+    frame.render_widget(stats_block, top_chunks[1]);
+
+    let pricing = app.current_pricing_rule()
+        .map(|rule| format!("${:.2}/M in", rule.input_per_million))
+        .unwrap_or_else(|| "待配置".to_string());
+    let stats_lines = vec![
+        Line::from(Span::styled(format!("请求: {}", app.usage_stats.requests), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("输入: {}", app.usage_stats.prompt_tokens), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("输出: {}", app.usage_stats.completion_tokens), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("总计: {}", app.usage_stats.total_tokens), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("费用: ${:.6}", app.usage_stats.estimated_cost_usd), Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(format!("总耗时: {}", format_duration_ms(app.perf_stats.total_task_duration_ms)), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("API: {}", format_duration_ms(app.perf_stats.api_duration_ms)), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("工具: {}", format_duration_ms(app.perf_stats.tool_duration_ms)), Style::default().fg(theme.text))),
+        Line::from(Span::styled(format!("模型: {}", if app.usage_stats.last_model.is_empty() { app.current_model_name() } else { app.usage_stats.last_model.clone() }), Style::default().fg(theme.muted))),
+        Line::from(Span::styled(format!("计价: {}", pricing), Style::default().fg(theme.subtle))),
+    ];
+    frame.render_widget(Paragraph::new(stats_lines), stats_inner);
+
     let queue_block = Block::default()
         .title(" 执行队列 ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+        .border_style(Style::default().fg(theme.border));
     let queue_inner = queue_block.inner(chunks[1]);
     frame.render_widget(queue_block, chunks[1]);
 
@@ -3353,56 +4309,58 @@ fn ui(frame: &mut Frame, app: &App) {
     if let Some(task_id) = app.active_task_id {
         queue_lines.push(Line::from(Span::styled(
             format!("运行中 #{} {}", task_id, app.busy_message),
-            Style::default().fg(Color::Rgb(200, 200, 100)).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
         )));
     } else {
         queue_lines.push(Line::from(Span::styled(
             "当前没有执行中的任务",
-            Style::default().fg(Color::Rgb(120, 120, 140)),
+            Style::default().fg(theme.subtle),
         )));
     }
 
     if app.queued_messages.is_empty() {
         queue_lines.push(Line::from(Span::styled(
             "等待队列为空",
-            Style::default().fg(Color::Rgb(120, 120, 140)),
+            Style::default().fg(theme.subtle),
         )));
     } else {
         for queued in app.queued_messages.iter().take(2) {
             queue_lines.push(Line::from(Span::styled(
                 format!("等待 #{} {}", queued.id, queued.content),
-                Style::default().fg(Color::Rgb(170, 170, 190)),
+                Style::default().fg(theme.muted),
             )));
         }
         if app.queued_messages.len() > 2 {
             queue_lines.push(Line::from(Span::styled(
                 format!("还有 {} 项等待中", app.queued_messages.len() - 2),
-                Style::default().fg(Color::Rgb(120, 120, 140)),
+                Style::default().fg(theme.subtle),
             )));
         }
     }
     frame.render_widget(Paragraph::new(queue_lines), queue_inner);
 
     let input_text = if app.processing {
-        Span::styled(&app.busy_message, Style::default().fg(Color::Rgb(200, 200, 100)))
+        Span::styled(&app.busy_message, Style::default().fg(theme.warning))
     } else if app.input_mode == InputMode::ProviderSelect {
-        Span::styled("使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ProviderRename {
-        Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
+        Span::styled(&app.input, Style::default().fg(theme.text))
     } else if app.input_mode == InputMode::ModelSelect {
-        Span::styled("使用上下方向键选择模型，Enter 确认，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择模型，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ConnectSelect {
-        Span::styled("使用上下方向键选择预设 Provider，Enter 确认，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择预设 Provider，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::SkillsSelect {
-        Span::styled("使用上下方向键选择 Skill，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择 Skill，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::McpSelect {
-        Span::styled("使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::CheckpointSelect {
-        Span::styled("使用上下方向键选择检查点，Enter 执行操作，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择检查点，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ModeSelect {
-        Span::styled("使用上下方向键选择执行模式，Enter 切换，Esc 取消", Style::default().fg(Color::Rgb(120, 170, 220)))
+        Span::styled("使用上下方向键选择执行模式，Enter 切换，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::InputOptimizePreview {
+        Span::styled("查看输入优化预览，Enter 应用，Esc 取消", Style::default().fg(theme.accent))
     } else if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
-        Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
+        Span::styled(&app.input, Style::default().fg(theme.text))
     } else if app.input.is_empty() {
         let placeholder = match app.input_mode {
             InputMode::Chat => "输入你的编程任务，或输入 / 显示命令列表...",
@@ -3423,21 +4381,32 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::McpInput => "输入 MCP 参数...",
             InputMode::CheckpointInput => "输入检查点名称...",
             InputMode::SessionSelect => "使用方向键选择历史会话...",
+            InputMode::InputOptimizePreview => "查看输入优化预览...",
         };
-        Span::styled(placeholder, Style::default().fg(Color::Rgb(100, 100, 120)))
+        Span::styled(placeholder, Style::default().fg(theme.subtle))
     } else {
-        Span::styled(&app.input, Style::default().fg(Color::Rgb(200, 200, 210)))
+        Span::styled(&app.input, Style::default().fg(theme.text))
     };
 
     let input_block = Block::default()
+        .title(Span::styled(
+            format!(" cwd: {} ", app.workdir.display()),
+            Style::default().fg(theme.subtle),
+        ))
+        .title_alignment(ratatui::layout::Alignment::Left)
+        .title(Span::styled(
+            format!(" v{} ", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme.subtle),
+        ))
+        .title_alignment(ratatui::layout::Alignment::Right)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(100, 100, 120)));
+        .border_style(Style::default().fg(theme.border));
 
     let input_paragraph = Paragraph::new(Line::from(input_text))
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[2]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::InputOptimizePreview) {
         let cursor_x = chunks[2].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[2].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -3474,14 +4443,19 @@ fn ui(frame: &mut Frame, app: &App) {
     if app.input_mode == InputMode::SessionSelect {
         render_session_selector(frame, app);
     }
+
+    if app.input_mode == InputMode::InputOptimizePreview {
+        render_input_optimization_preview(frame, app);
+    }
 }
 
 fn render_session_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
     let area = centered_rect(frame.area(), 72, 55);
     let block = Block::default()
         .title("历史会话")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+        .border_style(Style::default().fg(theme.accent));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -3494,9 +4468,9 @@ fn render_session_selector(frame: &mut Frame, app: &App) {
             let index = start + offset;
             let is_selected = index == app.selected_session_index;
             let style = if is_selected {
-                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
-                Style::default().fg(Color::Rgb(190, 190, 205))
+                Style::default().fg(theme.text)
             };
             Line::styled(
                 format!("{} [{}] {}", session.updated_at, session.id, session.title),
@@ -3508,7 +4482,60 @@ fn render_session_selector(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
+    let Some(preview) = &app.pending_input_optimization else {
+        return;
+    };
+
+    let area = centered_rect(frame.area(), 78, 62);
+    let block = Block::default()
+        .title(format!("输入优化预览 [{}]", preview.model_name))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Percentage(44),
+            Constraint::Length(1),
+            Constraint::Percentage(44),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let original_lines = preview
+        .original
+        .lines()
+        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.user))))
+        .collect::<Vec<_>>();
+    let optimized_lines = preview
+        .optimized
+        .lines()
+        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.assistant))))
+        .collect::<Vec<_>>();
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("原始输入", Style::default().fg(theme.user).add_modifier(Modifier::BOLD)))),
+        sections[0],
+    );
+    frame.render_widget(Paragraph::new(original_lines), sections[1]);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("优化建议", Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD)))),
+        sections[2],
+    );
+    frame.render_widget(Paragraph::new(optimized_lines), sections[3]);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("Enter: 应用 | Esc: 取消", Style::default().fg(theme.subtle)))),
+        sections[4],
+    );
+}
+
 fn render_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
     let area = centered_rect(frame.area(), 70, 50);
     let (title, options, selected_index) = match app.input_mode {
         InputMode::ProviderSelect => ("管理 Provider", &app.provider_options, app.selected_provider_index),
@@ -3517,7 +4544,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+        .border_style(Style::default().fg(theme.accent));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -3542,9 +4569,9 @@ fn render_selector(frame: &mut Frame, app: &App) {
             let is_selected = index == selected_index;
             let prefix = if is_selected { "> " } else { "  " };
             let style = if is_selected {
-                Style::default().fg(Color::Rgb(120, 170, 220)).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Rgb(200, 200, 210))
+                Style::default().fg(theme.text)
             };
             Line::from(Span::styled(format!("{}{}", prefix, option), style))
         })
@@ -3559,7 +4586,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
     if app.input_mode == InputMode::ProviderSelect {
         let hint_line = Line::styled(
             "Enter: 切换 | r: 重命名 | d: 删除 | Esc: 取消",
-            Style::default().fg(Color::Rgb(120, 120, 140)),
+            Style::default().fg(theme.subtle),
         );
         let hint_area = ratatui::layout::Rect {
             x: area.x,
@@ -3572,11 +4599,12 @@ fn render_selector(frame: &mut Frame, app: &App) {
 }
 
 fn render_connect_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
     let area = centered_rect(frame.area(), 70, 50);
     let block = Block::default()
         .title("快速接入 Provider")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+        .border_style(Style::default().fg(theme.accent));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -3593,9 +4621,9 @@ fn render_connect_selector(frame: &mut Frame, app: &App) {
             };
             let is_selected = offset + start == app.selected_connect_index;
             let style = if is_selected {
-                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
-                Style::default().fg(Color::Rgb(180, 180, 190))
+                Style::default().fg(theme.text)
             };
             Line::styled(label, style)
         })
@@ -3690,6 +4718,7 @@ fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::la
 }
 
 fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
+    let theme = app.theme;
     let max_height = 12u16;
     let popup_height = max_height.min(app.filtered_level1.len() as u16 + 2);
     
@@ -3703,7 +4732,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
     let block = Block::default()
         .title(" 命令列表 ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(120, 170, 220)));
+        .border_style(Style::default().fg(theme.accent_strong));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
@@ -3720,9 +4749,9 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
             let prefix = if is_selected { "> " } else { "  " };
             let has_subs = if cmd.sub_commands.is_empty() { "" } else { " +" };
             let style = if is_selected {
-                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
-                Style::default().fg(Color::Rgb(200, 200, 210))
+                Style::default().fg(theme.text)
             };
             Line::styled(format!("{}{}{} - {}", prefix, cmd.name, has_subs, cmd.description), style)
         })
@@ -3732,7 +4761,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
 
     let hint_line = Line::styled(
         "Enter: 选择 | Tab: 补全 | Esc: 取消",
-        Style::default().fg(Color::Rgb(120, 120, 140)),
+        Style::default().fg(theme.subtle),
     );
     let hint_area = ratatui::layout::Rect {
         x: popup_area.x,
@@ -3744,6 +4773,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
 }
 
 fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
+    let theme = app.theme;
     let max_height = 8u16;
     let popup_height = max_height.min(app.filtered_sub_commands.len() as u16 + 2);
     
@@ -3762,7 +4792,7 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(80, 160, 200)));
+        .border_style(Style::default().fg(theme.accent_strong));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
@@ -3779,9 +4809,9 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
             let prefix = if is_selected { "> " } else { "  " };
             let input_hint = if sub.needs_input { " ..." } else { "" };
             let style = if is_selected {
-                Style::default().fg(Color::Rgb(255, 255, 255)).bg(Color::Rgb(60, 120, 180))
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
-                Style::default().fg(Color::Rgb(200, 200, 210))
+                Style::default().fg(theme.text)
             };
             Line::styled(format!("{}{}{} - {}", prefix, sub.name, input_hint, sub.description), style)
         })
@@ -3791,7 +4821,7 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
 
     let hint_line = Line::styled(
         "Enter: 执行 | Tab: 补全 | Esc: 返回",
-        Style::default().fg(Color::Rgb(120, 120, 140)),
+        Style::default().fg(theme.subtle),
     );
     let hint_area = ratatui::layout::Rect {
         x: popup_area.x,
