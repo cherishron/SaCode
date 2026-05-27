@@ -1,8 +1,9 @@
-use std::{collections::{HashSet, VecDeque}, env, fs, future::Future, hash::{Hash, Hasher}, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, fs, future::Future, hash::{Hash, Hasher}, io::{self, Read}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
+use arboard::Clipboard;
 use crossterm::{
-    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -61,6 +62,8 @@ struct App {
     selected_provider_index: usize,
     model_options: Vec<String>,
     selected_model_index: usize,
+    theme_options: Vec<String>,
+    selected_theme_index: usize,
     connect_options: Vec<(String, String, bool)>,
     selected_connect_index: usize,
     pending_connect_provider: Option<(String, String)>,
@@ -92,6 +95,7 @@ struct App {
     selected_mode_index: usize,
     next_task_id: u64,
     active_task_id: Option<u64>,
+    active_task_started_at: Option<chrono::DateTime<chrono::Local>>,
     canceled_task_ids: HashSet<u64>,
     queued_messages: VecDeque<QueuedMessage>,
     todo_plan: Option<TodoPlan>,
@@ -248,6 +252,13 @@ struct QueuedMessage {
     content: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueuePanelMode {
+    Idle,
+    Running,
+    PendingOnly,
+}
+
 #[derive(Debug, Clone)]
 struct SessionInfo {
     id: String,
@@ -317,6 +328,7 @@ enum InputMode {
     ProviderSelect,
     ProviderRename,
     ModelSelect,
+    ThemeSelect,
     ConnectSelect,
     ConnectApiKey,
     CommandLevel1,
@@ -344,6 +356,7 @@ struct ConfigEntry {
     description: String,
     category: String,
     value: String,
+    scope_value: String,
 }
 
 #[derive(Clone)]
@@ -627,6 +640,8 @@ impl App {
             selected_provider_index: 0,
             model_options: Vec::new(),
             selected_model_index: 0,
+            theme_options: vec!["github".to_string(), "vscode".to_string(), "idea".to_string()],
+            selected_theme_index: 0,
             connect_options: vec![
                 ("ollama".to_string(), "http://127.0.0.1:11434/v1".to_string(), false),
                 ("deepseek".to_string(), "https://api.deepseek.com/v1".to_string(), true),
@@ -668,6 +683,7 @@ impl App {
             selected_mode_index: 0,
             next_task_id: 1,
             active_task_id: None,
+            active_task_started_at: None,
             canceled_task_ids: HashSet::new(),
             queued_messages: VecDeque::new(),
             todo_plan: None,
@@ -700,12 +716,12 @@ impl App {
     }
 
     fn send_message(&mut self) {
-        if self.input.is_empty() {
-            return;
-        }
-
         match self.input_mode {
-            InputMode::Chat => {}
+            InputMode::Chat => {
+                if self.input.is_empty() {
+                    return;
+                }
+            }
             InputMode::LoginBaseUrl => {
                 self.finish_login_base_url();
                 return;
@@ -724,6 +740,10 @@ impl App {
             }
             InputMode::ModelSelect => {
                 self.confirm_model_selection();
+                return;
+            }
+            InputMode::ThemeSelect => {
+                self.confirm_theme_selection();
                 return;
             }
             InputMode::ConnectSelect | InputMode::ConnectApiKey => {
@@ -858,6 +878,7 @@ impl App {
     fn start_queued_message(&mut self, queued: QueuedMessage) {
         self.processing = true;
         self.active_task_id = Some(queued.id);
+        self.active_task_started_at = Some(chrono::Local::now());
         self.busy_message = format!(
             "正在执行 #{}，模型 {}，Esc 取消当前任务",
             queued.id,
@@ -905,7 +926,12 @@ impl App {
     }
 
     fn spawn_chat_child(workdir: &PathBuf, user_input: &str, mode: ExecutionMode) -> Option<Child> {
-        let exe = env::current_exe().ok()?;
+        let current_exe = env::current_exe().ok()?;
+        let exe = current_exe
+            .parent()
+            .map(|dir| dir.join("sacode"))
+            .filter(|path| path.exists())
+            .unwrap_or(current_exe);
         let effective = config::effective_config(workdir).ok();
         let approval_arg = match effective.as_ref().map(|value| value.approval_policy.as_str()) {
             Some("auto") => "--approve",
@@ -1805,6 +1831,7 @@ impl App {
         self.todo_plan = None;
         self.processing = false;
         self.active_task_id = None;
+        self.active_task_started_at = None;
         self.busy_message.clear();
         self.save_current_session();
         self.push_success_message("已创建新会话");
@@ -1822,6 +1849,7 @@ impl App {
         self.todo_plan = None;
         self.processing = false;
         self.active_task_id = None;
+        self.active_task_started_at = None;
         self.busy_message.clear();
         self.save_current_session();
         self.scroll_to_bottom();
@@ -1879,7 +1907,7 @@ impl App {
     }
 
     fn handle_paste(&mut self, content: String) {
-        if matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::SessionSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) {
+        if matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::SessionSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) {
             return;
         }
         self.input.push_str(&content);
@@ -1889,6 +1917,53 @@ impl App {
         if self.input_mode == InputMode::CommandLevel2 {
             self.filter_sub_commands();
         }
+    }
+
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            self.paste_from_system_clipboard();
+        }
+    }
+
+    fn paste_from_system_clipboard(&mut self) {
+        let mut clipboard = match Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(error) => {
+                self.push_error_message(&format!("读取系统剪贴板失败: {}", error));
+                return;
+            }
+        };
+
+        if let Ok(text) = clipboard.get_text() {
+            if !text.trim().is_empty() {
+                self.handle_paste(text);
+                return;
+            }
+        }
+
+        match clipboard.get_image() {
+            Ok(image) => match self.save_pasted_image(&image.bytes.into_owned(), image.width, image.height) {
+                Ok(path) => {
+                    let snippet = format!("[粘贴图片: {}]", path.display());
+                    self.handle_paste(snippet);
+                    self.push_success_message(&format!("已粘贴剪贴板图片: {}", path.display()));
+                }
+                Err(error) => self.push_error_message(&format!("保存剪贴板图片失败: {}", error)),
+            },
+            Err(error) => {
+                self.push_system_message(&format!("剪贴板中没有可用文本或图片: {}", error));
+            }
+        }
+    }
+
+    fn save_pasted_image(&self, rgba_bytes: &[u8], width: usize, height: usize) -> Result<PathBuf> {
+        let dir = self.workdir.join(".sacode").join("pasted");
+        fs::create_dir_all(&dir)?;
+        let filename = format!("paste-{}.ppm", chrono::Local::now().format("%Y%m%d%H%M%S%3f"));
+        let path = dir.join(filename);
+        let ppm = encode_ppm(rgba_bytes, width, height);
+        fs::write(&path, ppm)?;
+        Ok(relative_to_workdir(&self.workdir, &path))
     }
 
     fn profile_command(&mut self, input: &str) {
@@ -2365,7 +2440,18 @@ impl App {
         let registry = SkillRegistry::new(std::path::Path::new("."));
         
         if parts.len() <= 1 || parts[1] == "list" {
-            self.open_skills_selector();
+            match registry.list() {
+                Ok(skills) if skills.is_empty() => self.push_system_message("当前没有可用 skills"),
+                Ok(skills) => {
+                    let content = skills
+                        .into_iter()
+                        .map(|skill| format!("- {} [{}]\n  {}", skill.name, skill.source.label(), skill.description))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.push_system_message(&format!("可用 Skills:\n{}", content));
+                }
+                Err(error) => self.push_error_message(&format!("读取 skills 失败: {}", error)),
+            }
             return;
         }
 
@@ -3002,6 +3088,7 @@ impl App {
         self.todo_plan = None;
         self.processing = false;
         self.active_task_id = None;
+        self.active_task_started_at = None;
         self.busy_message.clear();
         self.save_current_session();
         self.scroll_to_bottom();
@@ -3120,6 +3207,7 @@ impl App {
 
     fn reload_config_items(&mut self) -> Result<()> {
         let effective = config::effective_config(&self.workdir)?;
+        let scoped = config::scope_config(&self.workdir, self.config_scope)?;
         self.config_items = config::get_all_config_items()
             .into_iter()
             .map(|item| ConfigEntry {
@@ -3135,6 +3223,39 @@ impl App {
                 }
                 .to_string(),
                 value: config::current_value_text(&effective, item.key).unwrap_or_default(),
+                scope_value: match self.config_scope {
+                    config::ConfigScope::User => config::render_config(&self.workdir, &["user".to_string(), "show".to_string()])
+                        .ok()
+                        .and_then(|_| Some(match item.key.as_ref() {
+                            "language" => scoped.language.clone().unwrap_or_else(|| "未设置".to_string()),
+                            "auto_compress" => scoped.auto_compress.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                            "compress_threshold" => scoped.compress_threshold.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                            "compress_tail_turns" => scoped.compress_tail_turns.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                            "max_iterations" => scoped.max_iterations.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                            "approval_policy" => scoped.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
+                            "output_style" => scoped.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
+                            "vim_mode" => scoped.vim_mode.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                            "update.check_on_startup" => scoped.update_check_on_startup.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                            "update.cache_duration_hours" => scoped.update_cache_duration_hours.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                            "update.channel" => scoped.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
+                            _ => "未设置".to_string(),
+                        }))
+                        .unwrap_or_else(|| "未设置".to_string()),
+                    config::ConfigScope::Project => match item.key {
+                        "language" => scoped.language.clone().unwrap_or_else(|| "未设置".to_string()),
+                        "auto_compress" => scoped.auto_compress.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                        "compress_threshold" => scoped.compress_threshold.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                        "compress_tail_turns" => scoped.compress_tail_turns.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                        "max_iterations" => scoped.max_iterations.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                        "approval_policy" => scoped.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
+                        "output_style" => scoped.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
+                        "vim_mode" => scoped.vim_mode.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                        "update.check_on_startup" => scoped.update_check_on_startup.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+                        "update.cache_duration_hours" => scoped.update_cache_duration_hours.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+                        "update.channel" => scoped.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
+                        _ => "未设置".to_string(),
+                    },
+                },
             })
             .collect();
         if self.selected_config_index >= self.config_items.len() {
@@ -3465,14 +3586,35 @@ impl App {
         let mut parts = input.split_whitespace();
         let _ = parts.next();
         let Some(theme_name) = parts.next() else {
-            self.push_system_message(&format!(
-                "当前主题: {}\n可用主题: {}\n用法: /theme <name>",
-                self.theme.name,
-                ThemePalette::names(),
-            ));
+            self.open_theme_selector();
             return;
         };
 
+        self.apply_theme_by_name(theme_name);
+    }
+
+    fn open_theme_selector(&mut self) {
+        self.selected_theme_index = self
+            .theme_options
+            .iter()
+            .position(|theme| theme.eq_ignore_ascii_case(self.theme.name))
+            .unwrap_or(0);
+        self.input_mode = InputMode::ThemeSelect;
+        self.push_system_message("已打开主题选择器，使用上下方向键选择，回车确认，Esc 取消。");
+    }
+
+    fn confirm_theme_selection(&mut self) {
+        let Some(theme_name) = self.theme_options.get(self.selected_theme_index).cloned() else {
+            self.input_mode = InputMode::Chat;
+            self.push_system_message("当前没有可选主题。");
+            return;
+        };
+
+        self.input_mode = InputMode::Chat;
+        self.apply_theme_by_name(&theme_name);
+    }
+
+    fn apply_theme_by_name(&mut self, theme_name: &str) {
         match ThemePalette::from_name(theme_name) {
             Some(theme) => {
                 self.theme = theme;
@@ -4003,6 +4145,7 @@ match self.provider_store.save_named(name, &config, true) {
                             self.active_child = None;
                             self.processing = false;
                             self.active_task_id = None;
+                            self.active_task_started_at = None;
                             self.busy_message.clear();
                             self.push_system_message(&format!("已取消任务 #{}: {}", task_id, prompt));
                             self.start_next_queued_message();
@@ -4034,6 +4177,7 @@ match self.provider_store.save_named(name, &config, true) {
                     self.active_child = None;
                     self.processing = false;
                     self.active_task_id = None;
+                    self.active_task_started_at = None;
                     self.busy_message.clear();
                     self.scroll_to_bottom();
                     self.start_next_queued_message();
@@ -4119,7 +4263,6 @@ match self.provider_store.save_named(name, &config, true) {
                     self.push_system_message(&message);
                 }
                 AsyncResult::InputOptimized { original, optimized, model_name } => {
-                    self.processing = false;
                     self.busy_message.clear();
                     let optimized = optimized.trim().to_string();
                     if optimized.is_empty() {
@@ -4137,8 +4280,11 @@ match self.provider_store.save_named(name, &config, true) {
                 }
                 AsyncResult::Failed { context, message } => {
                     self.active_child = None;
-                    self.processing = false;
-                    self.active_task_id = None;
+                    if !matches!(context, AsyncContext::OptimizeInput) {
+                        self.processing = false;
+                        self.active_task_id = None;
+                        self.active_task_started_at = None;
+                    }
                     self.busy_message.clear();
                     if matches!(
                         context,
@@ -4175,6 +4321,90 @@ match self.provider_store.save_named(name, &config, true) {
                 let _ = child.kill();
             }
         }
+    }
+
+    fn active_task_elapsed_seconds(&self) -> u64 {
+        let Some(started_at) = self.active_task_started_at else {
+            return 0;
+        };
+        (chrono::Local::now() - started_at).num_seconds().max(0) as u64
+    }
+
+    fn queue_panel_mode(&self) -> QueuePanelMode {
+        if self.processing && self.active_task_id.is_some() {
+            QueuePanelMode::Running
+        } else if self.queued_messages.is_empty() {
+            QueuePanelMode::Idle
+        } else {
+            QueuePanelMode::PendingOnly
+        }
+    }
+
+    fn queue_panel_height(&self) -> u16 {
+        match self.queue_panel_mode() {
+            QueuePanelMode::Idle => 0,
+            QueuePanelMode::Running => {
+                if self.queued_messages.len() > 2 {
+                    4
+                } else if self.queued_messages.is_empty() {
+                    1
+                } else {
+                    1 + self.queued_messages.len() as u16
+                }
+            }
+            QueuePanelMode::PendingOnly => {
+                if self.queued_messages.len() > 2 {
+                    3
+                } else {
+                    1 + self.queued_messages.len() as u16
+                }
+            }
+        }
+    }
+
+    fn queue_panel_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if self.processing {
+            let elapsed = self.active_task_elapsed_seconds();
+            lines.push(Line::from(vec![
+                Span::styled("⠦ ", Style::default().fg(self.theme.warning).add_modifier(Modifier::BOLD)),
+                Span::styled("生成中 ", Style::default().fg(self.theme.warning).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}s", elapsed), Style::default().fg(self.theme.warning)),
+                Span::styled(" ... ", Style::default().fg(self.theme.warning)),
+                Span::styled("(按esc取消)", Style::default().fg(self.theme.subtle)),
+            ]));
+        } else if !self.queued_messages.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("待执行", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
+                Span::styled(format!(" {} 项", self.queued_messages.len()), Style::default().fg(self.theme.subtle)),
+            ]));
+        }
+
+        if !self.queued_messages.is_empty() {
+            let previews = self
+                .queued_messages
+                .iter()
+                .take(2)
+                .map(|queued| {
+                    let preview = queued.content.lines().next().unwrap_or("").trim();
+                    let compact: String = preview.chars().take(28).collect();
+                    let suffix = if preview.chars().count() > 28 { "..." } else { "" };
+                    Line::from(vec![
+                        Span::styled(format!("#{} ", queued.id), Style::default().fg(self.theme.subtle)),
+                        Span::styled(format!("{}{}", compact, suffix), Style::default().fg(self.theme.muted)),
+                    ])
+                })
+                .collect::<Vec<_>>();
+            lines.extend(previews);
+            if self.queued_messages.len() > 2 {
+                lines.push(Line::from(Span::styled(
+                    format!("... 还有 {} 项待执行", self.queued_messages.len() - 2),
+                    Style::default().fg(self.theme.subtle),
+                )));
+            }
+        }
+
+        lines
     }
 
     fn current_model_name(&self) -> String {
@@ -4249,6 +4479,10 @@ match self.provider_store.save_named(name, &config, true) {
         }
         if self.input_mode == InputMode::ModelSelect {
             self.push_system_message("已取消模型选择");
+        }
+        if self.input_mode == InputMode::ThemeSelect {
+            self.push_system_message("已取消主题选择");
+            self.selected_theme_index = 0;
         }
         if matches!(self.input_mode, InputMode::LoginBaseUrl | InputMode::LoginApiKey) {
             self.push_system_message("已取消登录配置");
@@ -4498,6 +4732,7 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Enter => {
                 match self.input_mode {
                     InputMode::ConnectSelect => self.confirm_connect_selection(),
+                    InputMode::ThemeSelect => self.confirm_theme_selection(),
                     InputMode::ConnectApiKey => self.finish_connect(),
                     InputMode::CommandLevel1 => self.confirm_level1_selection(),
                     InputMode::CommandLevel2 => self.confirm_sub_selection(),
@@ -4551,6 +4786,14 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Down if self.input_mode == InputMode::ModelSelect => {
                 if self.selected_model_index + 1 < self.model_options.len() {
                     self.selected_model_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::ThemeSelect => {
+                self.selected_theme_index = self.selected_theme_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::ThemeSelect => {
+                if self.selected_theme_index + 1 < self.theme_options.len() {
+                    self.selected_theme_index += 1;
                 }
             }
             KeyCode::Up if self.input_mode == InputMode::ConnectSelect => {
@@ -4676,8 +4919,7 @@ match self.provider_store.save_named(name, &config, true) {
                 self.navigate_history_down();
             }
             KeyCode::Char('a') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                if !self.processing && !self.input.trim().is_empty() {
-                    self.processing = true;
+                if !self.input.trim().is_empty() {
                     self.busy_message = "正在使用当前模型优化输入...".to_string();
                     self.spawn_optimize_input_task(self.input.trim().to_string());
                     self.push_system_message("正在优化当前输入...");
@@ -4705,7 +4947,7 @@ match self.provider_store.save_named(name, &config, true) {
                     self.input.push(c);
                 }
             }
-            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) => {
+            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) => {
                 if self.input_mode == InputMode::CommandLevel1 {
                     self.input.pop();
                     if self.input.is_empty() || !self.input.starts_with('/') {
@@ -4814,6 +5056,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
                     }
                 }
                 Event::Paste(text) => app.handle_paste(text),
+                Event::Mouse(mouse) => app.handle_mouse_event(mouse),
                 _ => {}
             }
         }
@@ -4837,12 +5080,13 @@ where
 
 fn ui(frame: &mut Frame, app: &App) {
     let theme = app.theme;
+    let queue_height = app.queue_panel_height();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(0)
         .constraints([
             Constraint::Min(5),
-            Constraint::Length(4),
+            Constraint::Length(queue_height),
             Constraint::Length(3),
         ])
         .split(frame.area());
@@ -4954,55 +5198,20 @@ fn ui(frame: &mut Frame, app: &App) {
     ];
     frame.render_widget(Paragraph::new(stats_lines), stats_inner);
 
-    let queue_block = Block::default()
-        .title(" 执行队列 ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-    let queue_inner = queue_block.inner(chunks[1]);
-    frame.render_widget(queue_block, chunks[1]);
-
-    let mut queue_lines = Vec::new();
-    if let Some(task_id) = app.active_task_id {
-        queue_lines.push(Line::from(Span::styled(
-            format!("运行中 #{} {}", task_id, app.busy_message),
-            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
-        )));
-    } else {
-        queue_lines.push(Line::from(Span::styled(
-            "当前没有执行中的任务",
-            Style::default().fg(theme.subtle),
-        )));
+    if queue_height > 0 {
+        let queue_lines = app.queue_panel_lines();
+        let queue_paragraph = Paragraph::new(queue_lines);
+        frame.render_widget(queue_paragraph, chunks[1]);
     }
 
-    if app.queued_messages.is_empty() {
-        queue_lines.push(Line::from(Span::styled(
-            "等待队列为空",
-            Style::default().fg(theme.subtle),
-        )));
-    } else {
-        for queued in app.queued_messages.iter().take(2) {
-            queue_lines.push(Line::from(Span::styled(
-                format!("等待 #{} {}", queued.id, queued.content),
-                Style::default().fg(theme.muted),
-            )));
-        }
-        if app.queued_messages.len() > 2 {
-            queue_lines.push(Line::from(Span::styled(
-                format!("还有 {} 项等待中", app.queued_messages.len() - 2),
-                Style::default().fg(theme.subtle),
-            )));
-        }
-    }
-    frame.render_widget(Paragraph::new(queue_lines), queue_inner);
-
-    let input_text = if app.processing {
-        Span::styled(&app.busy_message, Style::default().fg(theme.warning))
-    } else if app.input_mode == InputMode::ProviderSelect {
+    let input_text = if app.input_mode == InputMode::ProviderSelect {
         Span::styled("使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ProviderRename {
         Span::styled(&app.input, Style::default().fg(theme.text))
     } else if app.input_mode == InputMode::ModelSelect {
         Span::styled("使用上下方向键选择模型，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::ThemeSelect {
+        Span::styled("使用上下方向键选择主题，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ConnectSelect {
         Span::styled("使用上下方向键选择预设 Provider，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::SkillsSelect {
@@ -5033,6 +5242,7 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::ProviderSelect => "使用方向键选择 provider...",
             InputMode::ProviderRename => "输入新的 provider 名称...",
             InputMode::ModelSelect => "使用方向键选择模型...",
+            InputMode::ThemeSelect => "使用方向键选择主题...",
             InputMode::ConnectSelect => "使用方向键选择预设 provider...",
             InputMode::ConnectApiKey => "输入 API Key...",
             InputMode::CommandLevel1 => "输入命令名称进行搜索...",
@@ -5075,13 +5285,13 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[2]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect | InputMode::InputOptimizePreview) {
+    if !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect | InputMode::InputOptimizePreview) {
         let cursor_x = chunks[2].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[2].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 
-    if matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect) {
+    if matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect) {
         render_selector(frame, app);
     }
 
@@ -5286,7 +5496,7 @@ fn render_config_selector(frame: &mut Frame, app: &App) {
             };
             vec![
                 Line::styled(
-                    format!("[{}] {:<16} {:<14} {}", item.category, item.name, item.value, item.key),
+                    format!("[{}] {:<16} 生效:{:<12} 当前:{:<12} {}", item.category, item.name, item.value, item.scope_value, item.key),
                     style,
                 ),
                 Line::styled(format!("    {}", item.description), Style::default().fg(theme.subtle)),
@@ -5336,6 +5546,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame.area(), 70, 50);
     let (title, options, selected_index) = match app.input_mode {
         InputMode::ProviderSelect => ("管理 Provider", &app.provider_options, app.selected_provider_index),
+        InputMode::ThemeSelect => ("选择主题", &app.theme_options, app.selected_theme_index),
         _ => ("选择模型", &app.model_options, app.selected_model_index),
     };
     let block = Block::default()
@@ -5366,7 +5577,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
             let is_selected = index == selected_index;
             let prefix = if is_selected { "> " } else { "  " };
             let style = if is_selected {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text)
             };
@@ -5380,11 +5591,15 @@ fn render_selector(frame: &mut Frame, app: &App) {
         render_provider_details(frame, app, content_areas[1]);
     }
 
-    if app.input_mode == InputMode::ProviderSelect {
-        let hint_line = Line::styled(
-            "Enter: 切换 | r: 重命名 | d: 删除 | Esc: 取消",
-            Style::default().fg(theme.subtle),
-        );
+    let hint_text = match app.input_mode {
+        InputMode::ProviderSelect => Some("Enter: 切换 | r: 重命名 | d: 删除 | Esc: 取消"),
+        InputMode::ThemeSelect => Some("Enter: 应用主题 | Esc: 取消"),
+        InputMode::ModelSelect => Some("Enter: 应用模型 | Esc: 取消"),
+        _ => None,
+    };
+
+    if let Some(text) = hint_text {
+        let hint_line = Line::styled(text, Style::default().fg(theme.subtle));
         let hint_area = ratatui::layout::Rect {
             x: area.x,
             y: area.y + area.height,
@@ -5494,6 +5709,22 @@ fn centered_rect(area: ratatui::layout::Rect, width_percent: u16, height_percent
             Constraint::Percentage((100 - width_percent) / 2),
         ])
         .split(vertical[1])[1]
+}
+
+fn encode_ppm(rgba_bytes: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut output = format!("P6\n{} {}\n255\n", width, height).into_bytes();
+    for chunk in rgba_bytes.chunks(4) {
+        if chunk.len() >= 3 {
+            output.extend_from_slice(&chunk[..3]);
+        }
+    }
+    output
+}
+
+fn relative_to_workdir(workdir: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(workdir)
+        .map(|value| value.to_path_buf())
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {

@@ -15,6 +15,7 @@ rust-version = "1.75"
 license = "MulanPSL-2.0"
 
 [workspace.dependencies]
+arboard = { version = "3", default-features = true, features = ["image-data"] }
 anyhow = "1"
 chrono = "0.4"
 crossterm = "0.28"
