@@ -1,4 +1,4 @@
-use std::{collections::{HashSet, VecDeque}, env, fs, hash::{Hash, Hasher}, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, fs, future::Future, hash::{Hash, Hasher}, io::{self, Read}, path::PathBuf, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
 use crossterm::{
@@ -1185,10 +1185,7 @@ impl App {
     }
 
     fn run_simple_chat_prompt(provider: &sacode_kernel::model::ModelProvider, prompt: &str) -> Result<String> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        let text = runtime.block_on(async move { ProviderClient::new().simple_chat(provider, prompt).await })?;
+        let text = block_on_cli_future(async move { ProviderClient::new().simple_chat(provider, prompt).await })?;
         let trimmed = text.trim();
         if trimmed.is_empty() {
             anyhow::bail!("模型未返回可用结果")
@@ -1591,15 +1588,7 @@ impl App {
     }
 
     fn init_command(&mut self, mode: InitMode) {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.push_error_message(&format!("初始化运行时创建失败: {}", error));
-                return;
-            }
-        };
-
-        match runtime.block_on(initialize_project(&self.workdir, mode)) {
+        match block_on_cli_future(initialize_project(&self.workdir, mode)) {
             Ok(summary) => {
                 let mut lines = vec![format!("{} 完成。", crate::cmd::init::mode_name(summary.mode))];
                 lines.push(format!("项目: {}", summary.project_name));
@@ -3254,15 +3243,7 @@ impl App {
     }
 
     fn ensure_default_context7(&mut self) {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.push_error_message(&format!("创建运行时失败: {}", error));
-                return;
-            }
-        };
-
-        match runtime.block_on(status::ensure_default_context7(&self.workdir)) {
+        match block_on_cli_future(status::ensure_default_context7(&self.workdir)) {
             Ok(true) => self.push_system_message("已默认安装 Context7 MCP [official remote]。"),
             Ok(false) => {}
             Err(error) => self.push_error_message(&format!("默认安装 Context7 失败: {}", error)),
@@ -3270,30 +3251,14 @@ impl App {
     }
 
     fn status_command(&mut self) {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.push_error_message(&format!("创建运行时失败: {}", error));
-                return;
-            }
-        };
-
-        match runtime.block_on(status::render_status(&self.workdir)) {
+        match block_on_cli_future(status::render_status(&self.workdir)) {
             Ok(output) => self.push_system_message(&output),
             Err(error) => self.push_error_message(&format!("读取状态失败: {}", error)),
         }
     }
 
     fn doctor_command(&mut self) {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                self.push_error_message(&format!("创建运行时失败: {}", error));
-                return;
-            }
-        };
-
-        match runtime.block_on(doctor::render_doctor(&self.workdir)) {
+        match block_on_cli_future(doctor::render_doctor(&self.workdir)) {
             Ok(output) => self.push_system_message(&output),
             Err(error) => self.push_error_message(&format!("诊断失败: {}", error)),
         }
@@ -4854,6 +4819,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
         }
     }
     Ok(())
+}
+
+fn block_on_cli_future<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(future)
+    }
 }
 
 fn ui(frame: &mut Frame, app: &App) {
