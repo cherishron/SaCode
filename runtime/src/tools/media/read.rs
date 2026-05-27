@@ -22,7 +22,10 @@ pub fn spec() -> ToolSpec {
                 "path": { "type": "string" },
                 "mime_type": { "type": "string" },
                 "data": { "type": "string" },
-                "size_bytes": { "type": "integer" }
+                "size_bytes": { "type": "integer" },
+                "width": { "type": ["integer", "null"] },
+                "height": { "type": ["integer", "null"] },
+                "summary": { "type": "string" }
             }
         }),
         side_effect_level: SideEffectLevel::ReadOnly,
@@ -46,18 +49,23 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let bytes = fs::read(&file_path)?;
     let mime_type = detect_mime_type(path);
+    let (width, height) = detect_dimensions(path, &bytes);
     let data = match mode {
         "base64" => encode_base64(&bytes),
-        "ocr" => format!("OCR 暂未实现，请先使用 base64 模式。mime_type={}", mime_type),
-        "describe" => format!("内容描述暂未实现，请先使用 base64 模式。mime_type={}", mime_type),
+        "ocr" => format_ocr_placeholder(&file_path.display().to_string(), mime_type, width, height),
+        "describe" => format_describe_placeholder(&file_path.display().to_string(), mime_type, width, height, bytes.len()),
         _ => return Ok(ToolOutput::failure("mode must be one of: base64, ocr, describe")),
     };
+    let summary = format_summary(mime_type, bytes.len(), width, height);
 
     Ok(ToolOutput::success(serde_json::json!({
         "path": file_path.display().to_string(),
         "mime_type": mime_type,
         "data": data,
-        "size_bytes": bytes.len()
+        "size_bytes": bytes.len(),
+        "width": width,
+        "height": height,
+        "summary": summary
     })))
 }
 
@@ -70,6 +78,69 @@ fn detect_mime_type(path: &str) -> &'static str {
         "ppm" => "image/x-portable-pixmap",
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
+    }
+}
+
+fn detect_dimensions(path: &str, bytes: &[u8]) -> (Option<u32>, Option<u32>) {
+    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "png" => parse_png_dimensions(bytes),
+        "ppm" => parse_ppm_dimensions(bytes),
+        _ => (None, None),
+    }
+}
+
+fn parse_png_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return (None, None);
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    (Some(width), Some(height))
+}
+
+fn parse_ppm_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
+    let text = String::from_utf8_lossy(bytes);
+    let mut parts = text.split_whitespace();
+    let magic = parts.next();
+    let width = parts.next().and_then(|value| value.parse::<u32>().ok());
+    let height = parts.next().and_then(|value| value.parse::<u32>().ok());
+    if magic == Some("P6") {
+        (width, height)
+    } else {
+        (None, None)
+    }
+}
+
+fn format_summary(mime_type: &str, size_bytes: usize, width: Option<u32>, height: Option<u32>) -> String {
+    match (width, height) {
+        (Some(width), Some(height)) => format!("{}，{} bytes，{}x{}", mime_type, size_bytes, width, height),
+        _ => format!("{}，{} bytes", mime_type, size_bytes),
+    }
+}
+
+fn format_describe_placeholder(path: &str, mime_type: &str, width: Option<u32>, height: Option<u32>, size_bytes: usize) -> String {
+    match (width, height) {
+        (Some(width), Some(height)) => format!(
+            "图片描述能力暂未接入。文件: {}，类型: {}，尺寸: {}x{}，大小: {} bytes。可先读取 base64，或接入视觉模型后在此返回结构化描述。",
+            path, mime_type, width, height, size_bytes
+        ),
+        _ => format!(
+            "图片描述能力暂未接入。文件: {}，类型: {}，大小: {} bytes。可先读取 base64，或接入视觉模型后在此返回结构化描述。",
+            path, mime_type, size_bytes
+        ),
+    }
+}
+
+fn format_ocr_placeholder(path: &str, mime_type: &str, width: Option<u32>, height: Option<u32>) -> String {
+    match (width, height) {
+        (Some(width), Some(height)) => format!(
+            "OCR 能力暂未接入。文件: {}，类型: {}，尺寸: {}x{}。后续可在这里返回识别文本和位置信息。",
+            path, mime_type, width, height
+        ),
+        _ => format!(
+            "OCR 能力暂未接入。文件: {}，类型: {}。后续可在这里返回识别文本和位置信息。",
+            path, mime_type
+        ),
     }
 }
 

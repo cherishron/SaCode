@@ -205,6 +205,33 @@ fn test_media_read_base64_mode() {
 }
 
 #[test]
+fn test_media_read_ppm_describe_mode_includes_dimensions() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(
+        temp_dir.path().join("image.ppm"),
+        b"P6\n2 1\n255\n\xff\x00\x00\x00\xff\x00",
+    )
+    .expect("write ppm file");
+
+    let result = tools::media::read::execute(serde_json::json!({
+        "path": "image.ppm",
+        "mode": "describe"
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    assert_eq!(result.data["mime_type"], "image/x-portable-pixmap");
+    assert_eq!(result.data["width"], 2);
+    assert_eq!(result.data["height"], 1);
+    assert!(result.data["summary"].as_str().unwrap_or("").contains("2x1"));
+    assert!(result.data["data"].as_str().unwrap_or("").contains("图片描述能力暂未接入"));
+}
+
+#[test]
 fn test_interaction_ask_returns_pending_state() {
     let result = tools::interaction::ask::execute(serde_json::json!({
         "question": "继续吗？",
