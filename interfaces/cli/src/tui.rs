@@ -1944,7 +1944,10 @@ impl App {
         match clipboard.get_image() {
             Ok(image) => match self.save_pasted_image(&image.bytes.into_owned(), image.width, image.height) {
                 Ok(path) => {
-                    let snippet = format!("[粘贴图片: {}]", path.display());
+                    let snippet = format!(
+                        "我刚粘贴了一张图片，文件路径是 `{}`。如果需要读取图片内容，请调用 `media.read` 工具处理这个文件。",
+                        path.display()
+                    );
                     self.handle_paste(snippet);
                     self.push_success_message(&format!("已粘贴剪贴板图片: {}", path.display()));
                 }
@@ -3223,45 +3226,30 @@ impl App {
                 }
                 .to_string(),
                 value: config::current_value_text(&effective, item.key).unwrap_or_default(),
-                scope_value: match self.config_scope {
-                    config::ConfigScope::User => config::render_config(&self.workdir, &["user".to_string(), "show".to_string()])
-                        .ok()
-                        .and_then(|_| Some(match item.key.as_ref() {
-                            "language" => scoped.language.clone().unwrap_or_else(|| "未设置".to_string()),
-                            "auto_compress" => scoped.auto_compress.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                            "compress_threshold" => scoped.compress_threshold.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                            "compress_tail_turns" => scoped.compress_tail_turns.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                            "max_iterations" => scoped.max_iterations.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                            "approval_policy" => scoped.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
-                            "output_style" => scoped.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
-                            "vim_mode" => scoped.vim_mode.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                            "update.check_on_startup" => scoped.update_check_on_startup.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                            "update.cache_duration_hours" => scoped.update_cache_duration_hours.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                            "update.channel" => scoped.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
-                            _ => "未设置".to_string(),
-                        }))
-                        .unwrap_or_else(|| "未设置".to_string()),
-                    config::ConfigScope::Project => match item.key {
-                        "language" => scoped.language.clone().unwrap_or_else(|| "未设置".to_string()),
-                        "auto_compress" => scoped.auto_compress.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                        "compress_threshold" => scoped.compress_threshold.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                        "compress_tail_turns" => scoped.compress_tail_turns.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                        "max_iterations" => scoped.max_iterations.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                        "approval_policy" => scoped.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
-                        "output_style" => scoped.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
-                        "vim_mode" => scoped.vim_mode.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                        "update.check_on_startup" => scoped.update_check_on_startup.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
-                        "update.cache_duration_hours" => scoped.update_cache_duration_hours.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
-                        "update.channel" => scoped.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
-                        _ => "未设置".to_string(),
-                    },
-                },
+                scope_value: Self::config_scope_value_text(&scoped, item.key),
             })
             .collect();
         if self.selected_config_index >= self.config_items.len() {
             self.selected_config_index = self.config_items.len().saturating_sub(1);
         }
         Ok(())
+    }
+
+    fn config_scope_value_text(scoped: &config::ConfigOverrides, key: &str) -> String {
+        match key {
+            "language" => scoped.language.clone().unwrap_or_else(|| "未设置".to_string()),
+            "auto_compress" => scoped.auto_compress.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+            "compress_threshold" => scoped.compress_threshold.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+            "compress_tail_turns" => scoped.compress_tail_turns.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+            "max_iterations" => scoped.max_iterations.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+            "approval_policy" => scoped.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
+            "output_style" => scoped.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
+            "vim_mode" => scoped.vim_mode.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+            "update.check_on_startup" => scoped.update_check_on_startup.map(|v| if v { "true".to_string() } else { "false".to_string() }).unwrap_or_else(|| "未设置".to_string()),
+            "update.cache_duration_hours" => scoped.update_cache_duration_hours.map(|v| v.to_string()).unwrap_or_else(|| "未设置".to_string()),
+            "update.channel" => scoped.update_channel.clone().unwrap_or_else(|| "未设置".to_string()),
+            _ => "未设置".to_string(),
+        }
     }
 
     fn toggle_config_scope(&mut self) {

@@ -67,6 +67,7 @@ fn detect_mime_type(path: &str) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "ppm" => "image/x-portable-pixmap",
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
     }
