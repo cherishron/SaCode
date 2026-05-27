@@ -1,6 +1,8 @@
 pub mod access;
 pub mod edit;
+pub mod list;
 pub mod read;
+pub mod read_multi;
 pub mod search;
 pub mod write;
 

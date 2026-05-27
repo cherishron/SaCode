@@ -23,8 +23,14 @@ fn test_tool_registry() {
     
     assert!(names.contains(&"fs.read"));
     assert!(names.contains(&"fs.search"));
+    assert!(names.contains(&"fs.edit"));
+    assert!(names.contains(&"fs.read_multi"));
+    assert!(names.contains(&"fs.list"));
     assert!(names.contains(&"git.diff"));
+    assert!(names.contains(&"interaction.ask"));
+    assert!(names.contains(&"media.read"));
     assert!(names.contains(&"shell.exec"));
+    assert!(names.contains(&"task.spawn"));
     assert!(names.contains(&"web.fetch"));
     assert!(names.contains(&"web.search"));
 }
@@ -91,6 +97,124 @@ fn test_fs_write_rejects_parent_escape() {
     std::env::set_current_dir(original_dir).expect("restore current dir");
 
     assert!(error.to_string().contains("outside workspace"));
+}
+
+#[test]
+fn test_fs_edit_replace_single() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(temp_dir.path().join("edit.txt"), "hello world").expect("seed file");
+
+    let result = tools::fs::edit::execute(serde_json::json!({
+        "path": "edit.txt",
+        "old_string": "world",
+        "new_string": "sacode"
+    }))
+    .expect("tool execution should succeed");
+
+    let updated = fs::read_to_string(temp_dir.path().join("edit.txt")).expect("read updated file");
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    assert_eq!(updated, "hello sacode");
+}
+
+#[test]
+fn test_fs_edit_not_found() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(temp_dir.path().join("edit.txt"), "hello world").expect("seed file");
+
+    let result = tools::fs::edit::execute(serde_json::json!({
+        "path": "edit.txt",
+        "old_string": "missing",
+        "new_string": "sacode"
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(!result.success);
+    assert!(result.message.unwrap_or_default().contains("not found"));
+}
+
+#[test]
+fn test_fs_read_multi_reads_multiple_files() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(temp_dir.path().join("a.txt"), "a1\na2").expect("write a");
+    fs::write(temp_dir.path().join("b.txt"), "b1\nb2").expect("write b");
+
+    let result = tools::fs::read_multi::execute(serde_json::json!({
+        "paths": ["a.txt", "b.txt"],
+        "limit_per_file": 10
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    assert_eq!(result.data["success_count"], 2);
+    assert_eq!(result.data["failed_count"], 0);
+}
+
+#[test]
+fn test_fs_list_lists_directory_entries() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::create_dir_all(temp_dir.path().join("nested")).expect("create dir");
+    fs::write(temp_dir.path().join("root.txt"), "x").expect("write file");
+
+    let result = tools::fs::list::execute(serde_json::json!({
+        "path": ".",
+        "recursive": false,
+        "include_hidden": false
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    let entries = result.data["entries"].as_array().expect("entries array");
+    assert!(entries.iter().any(|entry| entry["name"] == "root.txt"));
+    assert!(entries.iter().any(|entry| entry["name"] == "nested"));
+}
+
+#[test]
+fn test_media_read_base64_mode() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(temp_dir.path().join("image.png"), vec![0x48, 0x69]).expect("write binary file");
+
+    let result = tools::media::read::execute(serde_json::json!({
+        "path": "image.png",
+        "mode": "base64"
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    assert_eq!(result.data["mime_type"], "image/png");
+    assert_eq!(result.data["data"], "SGk=");
+}
+
+#[test]
+fn test_interaction_ask_returns_pending_state() {
+    let result = tools::interaction::ask::execute(serde_json::json!({
+        "question": "继续吗？",
+        "options": [{ "label": "是", "description": "继续执行" }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["pending"], true);
+    assert_eq!(result.data["question"], "继续吗？");
 }
 
 #[test]

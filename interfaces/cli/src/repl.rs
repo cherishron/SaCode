@@ -5,9 +5,8 @@ use sacode_kernel::ExecutionMode;
 use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry};
 
 use crate::{
-    cmd::{diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, vim},
+    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, vim, ApprovalPolicy},
     cmd::init::{InitMode, initialize_project, mode_name},
-    cmd::ApprovalPolicy,
     provider_config::{fetch_models, fallback_models, ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
     runner::{format_output, run_task},
 };
@@ -99,6 +98,7 @@ impl ReplSession {
             "/diff" => self.show_diff(&parts[1..])?,
             "/hooks" => self.show_hooks()?,
             "/ide" => self.show_ide(&parts[1..])?,
+            "/config" => self.show_config(&parts[1..])?,
             "/keybindings" => self.show_keybindings()?,
             "/outstyle" => self.show_outstyle(&parts[1..])?,
             "/vim" => self.show_vim(&parts[1..])?,
@@ -126,7 +126,17 @@ impl ReplSession {
 
     async fn handle_task(&mut self, prompt: &str) -> Result<()> {
         let effective_prompt = self.build_task_prompt(prompt);
-        let output = run_task(&effective_prompt, self.mode, ApprovalPolicy::Prompt, 1).await?;
+        let runtime_config = config::effective_config(&env::current_dir().unwrap_or_else(|_| ".".into())).ok();
+        let approval = runtime_config
+            .as_ref()
+            .map(|cfg| match cfg.approval_policy.as_str() {
+                "auto" => ApprovalPolicy::AutoApprove,
+                "deny" => ApprovalPolicy::AutoDeny,
+                _ => ApprovalPolicy::Prompt,
+            })
+            .unwrap_or(ApprovalPolicy::Prompt);
+        let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(1);
+        let output = run_task(&effective_prompt, self.mode, approval, max_iterations).await?;
         self.push_recent_message("user", prompt);
         if let Ok(response) = &output.provider_response {
             self.push_recent_message("assistant", response);
@@ -156,6 +166,7 @@ impl ReplSession {
         println!("  /diff            - Show current git diff summary");
         println!("  /hooks           - Show runtime hooks and lifecycle points");
         println!("  /ide             - Show IDE integration guide or config");
+        println!("  /config          - Show or set layered runtime config");
         println!("  /keybindings     - Show TUI keybindings");
         println!("  /outstyle        - Show or set user output style, or project override");
         println!("  /vim             - Show or set Vim-style navigation");
@@ -292,6 +303,13 @@ impl ReplSession {
         println!("{}", insight::render_success_message(&report));
         println!();
         
+        Ok(())
+    }
+
+    fn show_config(&self, parts: &[&str]) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        println!("{}", config::render_config(&workdir, &args)?);
         Ok(())
     }
 

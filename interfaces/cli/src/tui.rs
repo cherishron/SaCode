@@ -21,8 +21,9 @@ use sacode_kernel::model::{ChatUsage, ProviderKind};
 use crate::provider_config::{NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore, fallback_models, fetch_models};
 use crate::provider_runtime::{resolve_named_provider, resolve_provider};
 use crate::plugin_config::PluginConfigStore;
+use crate::task_store::{PersistentTask, TaskPriority, TaskStatus, TaskStore};
 use sacode_runtime::{McpConfigStore, ProjectAccessConfigStore, ProviderClient, SkillRegistry, ToolRegistry};
-use crate::cmd::{diff, doctor, hooks, ide, init::{InitMode, initialize_project}, insight, keybindings, memory, outstyle, status, vim};
+use crate::cmd::{config, diff, doctor, hooks, ide, init::{InitMode, initialize_project}, insight, keybindings, memory, outstyle, status, vim};
 
 const MODELS_HINT_LIMIT: usize = 8;
 
@@ -77,6 +78,11 @@ struct App {
     mcp_options: Vec<(String, String, bool)>,
     selected_mcp_index: usize,
     pending_mcp_action: Option<String>,
+    task_store: TaskStore,
+    task_options: Vec<PersistentTask>,
+    selected_task_index: usize,
+    pending_task_action: Option<TaskAction>,
+    pending_task_edit_id: Option<u64>,
     checkpoint_options: Vec<String>,
     selected_checkpoint_index: usize,
     pending_checkpoint_action: Option<String>,
@@ -100,6 +106,12 @@ struct App {
     usage_stats: UsageStats,
     perf_stats: PerformanceStats,
     theme: ThemePalette,
+    config_scope: config::ConfigScope,
+    config_items: Vec<ConfigEntry>,
+    selected_config_index: usize,
+    config_enum_options: Vec<(String, String)>,
+    selected_config_enum_index: usize,
+    pending_config_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -308,13 +320,27 @@ enum InputMode {
     CommandLevel2,
     SkillsSelect,
     McpSelect,
+    TasksSelect,
     CheckpointSelect,
     SkillInput,
     McpInput,
     CheckpointInput,
+    TaskInput,
     ModeSelect,
     SessionSelect,
     InputOptimizePreview,
+    ConfigSelect,
+    ConfigEnumSelect,
+    ConfigNumberInput,
+}
+
+#[derive(Debug, Clone)]
+struct ConfigEntry {
+    key: String,
+    name: String,
+    description: String,
+    category: String,
+    value: String,
 }
 
 #[derive(Clone)]
@@ -330,6 +356,15 @@ struct SubCommandDef {
     name: String,
     description: String,
     needs_input: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskAction {
+    Show,
+    Start,
+    Done,
+    Cancel,
+    Edit,
 }
 
 impl CommandDef {
@@ -423,6 +458,7 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/diff", "查看当前 Git 差异摘要"),
         CommandDef::simple("/hooks", "查看运行时 Hook 与生命周期"),
         CommandDef::simple("/ide", "查看 IDE 接入向导或配置"),
+        CommandDef::simple("/config", "交互式管理用户级与项目级配置"),
         CommandDef::simple("/keybindings", "查看快捷键说明"),
         CommandDef::simple("/outstyle", "切换 AI 输出风格（默认用户级）"),
         CommandDef::simple("/vim", "切换 Vim 风格导航"),
@@ -435,6 +471,17 @@ fn get_level1_commands() -> Vec<CommandDef> {
             SubCommandDef::new("show", "显示当前待办"),
             SubCommandDef::new("confirm", "确认并执行待办"),
             SubCommandDef::new("clear", "清空待办"),
+        ]),
+        CommandDef::with_subs("/tasks", "持久任务管理", vec![
+            SubCommandDef::new("list", "列出所有任务"),
+            SubCommandDef::with_input("add", "添加新任务"),
+            SubCommandDef::with_input("show", "查看任务详情"),
+            SubCommandDef::with_input("edit", "编辑任务描述"),
+            SubCommandDef::with_input("start", "开始执行任务"),
+            SubCommandDef::with_input("done", "标记任务完成"),
+            SubCommandDef::with_input("cancel", "取消任务"),
+            SubCommandDef::new("clear", "清理已完成任务"),
+            SubCommandDef::new("export", "导出任务列表"),
         ]),
         CommandDef::simple("/cancel", "取消当前任务"),
         CommandDef::simple("/help", "显示帮助"),
@@ -477,6 +524,7 @@ enum AsyncResult {
         task_id: u64,
         prompt: String,
         response: String,
+        pending_question: Option<serde_json::Value>,
         plan: Option<sacode_kernel::Plan>,
         usage: Option<ChatUsage>,
         api_duration_ms: u64,
@@ -533,6 +581,7 @@ impl App {
         let provider_store = ProviderConfigStore::new(&workdir);
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let access_store = ProjectAccessConfigStore::new(&workdir);
+        let task_store = TaskStore::new(&workdir);
         let current_provider = resolve_named_provider(&workdir);
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
@@ -591,6 +640,11 @@ impl App {
             mcp_options: Vec::new(),
             selected_mcp_index: 0,
             pending_mcp_action: None,
+            task_store,
+            task_options: Vec::new(),
+            selected_task_index: 0,
+            pending_task_action: None,
+            pending_task_edit_id: None,
             checkpoint_options: Vec::new(),
             selected_checkpoint_index: 0,
             pending_checkpoint_action: None,
@@ -618,6 +672,12 @@ impl App {
             usage_stats: UsageStats::default(),
             perf_stats: PerformanceStats::default(),
             theme: ThemePalette::github(),
+            config_scope: config::ConfigScope::Project,
+            config_items: Vec::new(),
+            selected_config_index: 0,
+            config_enum_options: Vec::new(),
+            selected_config_enum_index: 0,
+            pending_config_key: None,
         };
 
         app.load_latest_session();
@@ -664,7 +724,17 @@ impl App {
             InputMode::McpSelect => {
                 return;
             }
+            InputMode::TasksSelect => {
+                return;
+            }
             InputMode::CheckpointSelect => {
+                return;
+            }
+            InputMode::ConfigSelect | InputMode::ConfigEnumSelect => {
+                return;
+            }
+            InputMode::ConfigNumberInput => {
+                self.finish_config_number_input();
                 return;
             }
             InputMode::SkillInput => {
@@ -677,6 +747,10 @@ impl App {
             }
             InputMode::CheckpointInput => {
                 self.finish_checkpoint_input();
+                return;
+            }
+            InputMode::TaskInput => {
+                self.finish_task_input();
                 return;
             }
             InputMode::SessionSelect => {
@@ -787,6 +861,7 @@ impl App {
                 task_id,
                 prompt: user_input,
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
+                pending_question: None,
                 plan: None,
                 usage: None,
                 api_duration_ms: 0,
@@ -799,11 +874,12 @@ impl App {
         let stdout = child.stdout.take();
         self.active_child = Some(child);
         thread::spawn(move || {
-            let (response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms) = App::execute_user_message_in_background(stdout);
+            let (response, pending_question, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms) = App::execute_user_message_in_background(stdout);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
                 response,
+                pending_question,
                 plan,
                 usage,
                 api_duration_ms,
@@ -815,13 +891,25 @@ impl App {
 
     fn spawn_chat_child(workdir: &PathBuf, user_input: &str, mode: ExecutionMode) -> Option<Child> {
         let exe = env::current_exe().ok()?;
+        let effective = config::effective_config(workdir).ok();
+        let approval_arg = match effective.as_ref().map(|value| value.approval_policy.as_str()) {
+            Some("auto") => "--approve",
+            Some("deny") => "--deny",
+            _ => "--deny",
+        };
+        let max_iterations = effective
+            .as_ref()
+            .map(|value| value.max_iterations)
+            .unwrap_or(1)
+            .max(1)
+            .to_string();
         Command::new(exe)
             .arg(user_input)
             .arg("--mode")
             .arg(mode.to_string())
-            .arg("--deny")
+            .arg(approval_arg)
             .arg("--max-iterations")
-            .arg("1")
+            .arg(max_iterations)
             .arg("--json")
             .current_dir(workdir)
             .stdout(Stdio::piped())
@@ -830,20 +918,22 @@ impl App {
             .ok()
     }
 
-    fn execute_user_message_in_background(stdout: Option<impl Read>) -> (String, Option<sacode_kernel::Plan>, Option<ChatUsage>, u64, u64, u64) {
+    fn execute_user_message_in_background(stdout: Option<impl Read>) -> (String, Option<serde_json::Value>, Option<sacode_kernel::Plan>, Option<ChatUsage>, u64, u64, u64) {
         let Some(mut stdout) = stdout else {
-            return ("任务执行失败: 未获取到后台输出".to_string(), None, None, 0, 0, 0);
+            return ("任务执行失败: 未获取到后台输出".to_string(), None, None, None, 0, 0, 0);
         };
 
         let mut output = String::new();
         if stdout.read_to_string(&mut output).is_err() {
-            return ("任务执行失败: 读取后台输出失败".to_string(), None, None, 0, 0, 0);
+            return ("任务执行失败: 读取后台输出失败".to_string(), None, None, None, 0, 0, 0);
         }
 
         let parsed: serde_json::Value = match serde_json::from_str(&output) {
             Ok(value) => value,
-            Err(error) => return (format!("任务执行失败: 解析后台输出失败: {}\n{}", error, output.trim()), None, None, 0, 0, 0),
+            Err(error) => return (format!("任务执行失败: 解析后台输出失败: {}\n{}", error, output.trim()), None, None, None, 0, 0, 0),
         };
+
+        let pending_question = parsed.get("pending_question").cloned().filter(|value| !value.is_null());
 
         let response = parsed
             .get("provider_response")
@@ -851,6 +941,7 @@ impl App {
             .map(|value| value.to_string())
             .filter(|value| !value.trim().is_empty())
             .or_else(|| Self::format_cli_events(parsed.get("events")))
+            .or_else(|| pending_question.as_ref().map(Self::format_pending_question))
             .unwrap_or_else(|| "任务已完成。".to_string());
         let plan = parsed
             .get("plan")
@@ -873,7 +964,30 @@ impl App {
             .get("total_duration_ms")
             .and_then(|value| value.as_u64())
             .unwrap_or(0);
-        (response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms)
+        (response, pending_question, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms)
+    }
+
+    fn format_pending_question(question: &serde_json::Value) -> String {
+        let title = question
+            .get("question")
+            .and_then(|value| value.as_str())
+            .unwrap_or("需要用户回答后继续执行。");
+        let options = question
+            .get("options")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("label").and_then(|value| value.as_str()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if options.is_empty() {
+            format!("[等待用户回答] {}", title)
+        } else {
+            format!("[等待用户回答] {}\n可选项: {}", title, options.join(", "))
+        }
     }
 
     fn build_task_prompt(&self, user_input: &str) -> String {
@@ -1337,6 +1451,12 @@ impl App {
             return true;
         }
 
+        if trimmed.starts_with("/config ") || trimmed == "/config" {
+            self.config_command(&input);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed == "/keybindings" {
             self.keybindings_command();
             self.input.clear();
@@ -1387,6 +1507,12 @@ impl App {
 
         if trimmed.starts_with("/todo ") || trimmed == "/todo" {
             self.todo_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/tasks ") || trimmed == "/tasks" {
+            self.tasks_command(&input);
             self.input.clear();
             return true;
         }
@@ -1724,7 +1850,7 @@ impl App {
     }
 
     fn handle_paste(&mut self, content: String) {
-        if matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::SessionSelect) {
+        if matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::SessionSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) {
             return;
         }
         self.input.push_str(&content);
@@ -2511,6 +2637,236 @@ impl App {
         }
     }
 
+    fn tasks_command(&mut self, input: &str) {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("list");
+
+        match sub {
+            "list" => self.show_tasks_list(),
+            "add" => {
+                let description = input.split_whitespace().skip(2).collect::<Vec<_>>().join(" ");
+                if description.trim().is_empty() {
+                    self.pending_task_action = None;
+                    self.pending_task_edit_id = None;
+                    self.input_mode = InputMode::TaskInput;
+                    self.push_system_message("请输入新任务描述，按 Enter 保存。")
+                } else {
+                    self.create_task(&description);
+                }
+            }
+            "show" => self.handle_task_action_arg(parts.get(2).copied(), TaskAction::Show),
+            "edit" => {
+                let edit_text = input.split_whitespace().skip(3).collect::<Vec<_>>().join(" ");
+                if let Some(id_text) = parts.get(2).copied() {
+                    match id_text.parse::<u64>() {
+                        Ok(id) if !edit_text.trim().is_empty() => self.edit_task(id, &edit_text),
+                        Ok(id) => {
+                            self.pending_task_action = Some(TaskAction::Edit);
+                            self.pending_task_edit_id = Some(id);
+                            self.input_mode = InputMode::TaskInput;
+                            self.push_system_message(&format!("请输入任务 #{} 的新描述，按 Enter 保存。", id));
+                        }
+                        Err(_) => self.push_error_message("任务 ID 必须是数字。"),
+                    }
+                } else {
+                    self.open_task_selector(TaskAction::Edit);
+                }
+            }
+            "start" => self.handle_task_action_arg(parts.get(2).copied(), TaskAction::Start),
+            "done" => self.handle_task_action_arg(parts.get(2).copied(), TaskAction::Done),
+            "cancel" => self.handle_task_action_arg(parts.get(2).copied(), TaskAction::Cancel),
+            "clear" => self.clear_completed_tasks(),
+            "export" => self.export_tasks(),
+            _ => self.push_system_message("用法: /tasks list|add|show|edit|start|done|cancel|clear|export"),
+        }
+    }
+
+    fn show_tasks_list(&mut self) {
+        match self.task_store.list() {
+            Ok(tasks) => {
+                self.task_options = tasks.clone();
+                self.selected_task_index = 0;
+                if tasks.is_empty() {
+                    self.push_system_message("当前没有持久化任务。使用 /tasks add <desc> 创建新任务。");
+                    return;
+                }
+
+                let mut lines = vec![format!("任务列表 ({})", self.task_store.path().display())];
+                for task in tasks {
+                    lines.push(format!(
+                        "[{}] {:<11} {:<6} {}",
+                        task.id,
+                        task.status.label(),
+                        task.priority.label(),
+                        task.description,
+                    ));
+                }
+                self.push_system_message(&lines.join("\n"));
+            }
+            Err(error) => self.push_error_message(&format!("读取任务失败: {}", error)),
+        }
+    }
+
+    fn create_task(&mut self, description: &str) {
+        match self.task_store.add(description, TaskPriority::Medium) {
+            Ok(task) => {
+                self.push_success_message(&format!("已创建任务 #{}: {}", task.id, task.description));
+                self.refresh_task_options();
+            }
+            Err(error) => self.push_error_message(&format!("创建任务失败: {}", error)),
+        }
+    }
+
+    fn edit_task(&mut self, id: u64, description: &str) {
+        match self.task_store.update_description(id, description) {
+            Ok(task) => {
+                self.push_success_message(&format!("已更新任务 #{}: {}", task.id, task.description));
+                self.refresh_task_options();
+            }
+            Err(error) => self.push_error_message(&format!("更新任务失败: {}", error)),
+        }
+    }
+
+    fn show_task_detail(&mut self, id: u64) {
+        match self.task_store.get(id) {
+            Ok(Some(task)) => {
+                let detail = format!(
+                    "任务 #{}\n描述: {}\n状态: {}\n优先级: {}\n创建时间: {}\n更新时间: {}\n完成时间: {}\n标签: {}\n备注: {}",
+                    task.id,
+                    task.description,
+                    task.status.label(),
+                    task.priority.label(),
+                    task.created_at,
+                    task.updated_at,
+                    task.completed_at.as_deref().unwrap_or("-"),
+                    if task.tags.is_empty() { "-".to_string() } else { task.tags.join(", ") },
+                    task.notes.unwrap_or_else(|| "-".to_string()),
+                );
+                self.push_system_message(&detail);
+            }
+            Ok(None) => self.push_error_message(&format!("任务不存在: {}", id)),
+            Err(error) => self.push_error_message(&format!("读取任务失败: {}", error)),
+        }
+    }
+
+    fn set_task_status(&mut self, id: u64, status: TaskStatus) {
+        match self.task_store.set_status(id, status) {
+            Ok(task) => {
+                self.push_success_message(&format!(
+                    "任务 #{} 已更新为 {}: {}",
+                    task.id,
+                    task.status.label(),
+                    task.description,
+                ));
+                self.refresh_task_options();
+            }
+            Err(error) => self.push_error_message(&format!("更新任务状态失败: {}", error)),
+        }
+    }
+
+    fn clear_completed_tasks(&mut self) {
+        match self.task_store.clear_completed() {
+            Ok(count) => {
+                self.refresh_task_options();
+                self.push_success_message(&format!("已清理 {} 个已完成任务。", count));
+            }
+            Err(error) => self.push_error_message(&format!("清理任务失败: {}", error)),
+        }
+    }
+
+    fn export_tasks(&mut self) {
+        match self.task_store.export_markdown() {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("导出任务失败: {}", error)),
+        }
+    }
+
+    fn handle_task_action_arg(&mut self, id_text: Option<&str>, action: TaskAction) {
+        if let Some(id_text) = id_text {
+            match id_text.parse::<u64>() {
+                Ok(id) => self.execute_task_action(action, id),
+                Err(_) => self.push_error_message("任务 ID 必须是数字。"),
+            }
+        } else {
+            self.open_task_selector(action);
+        }
+    }
+
+    fn execute_task_action(&mut self, action: TaskAction, id: u64) {
+        match action {
+            TaskAction::Show => self.show_task_detail(id),
+            TaskAction::Edit => {
+                self.pending_task_action = Some(TaskAction::Edit);
+                self.pending_task_edit_id = Some(id);
+                self.input_mode = InputMode::TaskInput;
+                self.push_system_message(&format!("请输入任务 #{} 的新描述，按 Enter 保存。", id));
+            }
+            TaskAction::Start => self.set_task_status(id, TaskStatus::InProgress),
+            TaskAction::Done => self.set_task_status(id, TaskStatus::Completed),
+            TaskAction::Cancel => self.set_task_status(id, TaskStatus::Cancelled),
+        }
+    }
+
+    fn open_task_selector(&mut self, action: TaskAction) {
+        match self.task_store.list() {
+            Ok(tasks) => {
+                if tasks.is_empty() {
+                    self.push_system_message("当前没有可选择的任务。先使用 /tasks add 创建任务。");
+                    return;
+                }
+                self.task_options = tasks;
+                self.selected_task_index = 0;
+                self.pending_task_action = Some(action);
+                self.pending_task_edit_id = None;
+                self.input_mode = InputMode::TasksSelect;
+                self.push_system_message("已打开任务列表，使用上下方向键选择，Enter 确认，Esc 取消。");
+            }
+            Err(error) => self.push_error_message(&format!("读取任务失败: {}", error)),
+        }
+    }
+
+    fn confirm_task_selection(&mut self) {
+        let selected = self.task_options.get(self.selected_task_index).cloned();
+        self.input_mode = InputMode::Chat;
+        if let (Some(task), Some(action)) = (selected, self.pending_task_action.take()) {
+            self.execute_task_action(action, task.id);
+        }
+    }
+
+    fn finish_task_input(&mut self) {
+        let content = self.input.trim().to_string();
+        self.input.clear();
+        self.input_mode = InputMode::Chat;
+
+        if content.is_empty() {
+            self.push_system_message("任务描述不能为空。已取消输入。");
+            self.pending_task_action = None;
+            self.pending_task_edit_id = None;
+            return;
+        }
+
+        match self.pending_task_action.take() {
+            Some(TaskAction::Edit) => {
+                if let Some(id) = self.pending_task_edit_id.take() {
+                    self.edit_task(id, &content);
+                }
+            }
+            _ => {
+                self.pending_task_edit_id = None;
+                self.create_task(&content);
+            }
+        }
+    }
+
+    fn refresh_task_options(&mut self) {
+        if let Ok(tasks) = self.task_store.list() {
+            self.task_options = tasks;
+            if self.selected_task_index >= self.task_options.len() {
+                self.selected_task_index = self.task_options.len().saturating_sub(1);
+            }
+        }
+    }
+
     fn capture_todo_plan(&mut self, source_task: &str, plan: sacode_kernel::Plan) {
         if plan.steps.len() < 2 {
             return;
@@ -2680,6 +3036,7 @@ impl App {
             /diff      - 查看当前 Git 差异摘要\n\
             /hooks     - 查看运行时 Hook 与生命周期\n\
             /ide       - 查看 IDE 接入向导或配置\n\
+            /config    - 交互式管理分层配置\n\
             /keybindings - 查看快捷键说明\n\
             /outstyle  - 切换 AI 输出风格（默认用户级）\n\
             /vim       - 切换 Vim 风格导航\n\
@@ -2689,6 +3046,7 @@ impl App {
             /stats     - 查看 token 与费用统计\n\
             /theme     - 切换主题模板 (github/vscode/idea)\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
+            /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\
             /cancel    - 取消当前任务或清空等待队列\n\
             /help      - 显示帮助\n\
             /quit      - 退出\n\
@@ -2717,6 +3075,140 @@ impl App {
             if self.usage_stats.last_model.is_empty() { self.current_model_name() } else { self.usage_stats.last_model.clone() },
             pricing,
         ));
+    }
+
+    fn open_config_selector(&mut self) {
+        match self.reload_config_items() {
+            Ok(()) => {
+                self.input_mode = InputMode::ConfigSelect;
+                self.input.clear();
+                self.push_system_message("已打开配置管理，使用上下键导航，Enter 修改，Tab 切换用户/项目级，Esc 取消。");
+            }
+            Err(error) => self.push_error_message(&format!("读取配置失败: {}", error)),
+        }
+    }
+
+    fn reload_config_items(&mut self) -> Result<()> {
+        let effective = config::effective_config(&self.workdir)?;
+        self.config_items = config::get_all_config_items()
+            .into_iter()
+            .map(|item| ConfigEntry {
+                key: item.key.to_string(),
+                name: item.display_name.to_string(),
+                description: item.description.to_string(),
+                category: match item.category {
+                    config::ConfigCategory::General => "通用",
+                    config::ConfigCategory::Context => "上下文",
+                    config::ConfigCategory::Execution => "执行",
+                    config::ConfigCategory::Editor => "编辑器",
+                }
+                .to_string(),
+                value: config::current_value_text(&effective, item.key).unwrap_or_default(),
+            })
+            .collect();
+        if self.selected_config_index >= self.config_items.len() {
+            self.selected_config_index = self.config_items.len().saturating_sub(1);
+        }
+        Ok(())
+    }
+
+    fn toggle_config_scope(&mut self) {
+        self.config_scope = match self.config_scope {
+            config::ConfigScope::User => config::ConfigScope::Project,
+            config::ConfigScope::Project => config::ConfigScope::User,
+        };
+        if let Err(error) = self.reload_config_items() {
+            self.push_error_message(&format!("刷新配置失败: {}", error));
+        }
+    }
+
+    fn confirm_config_selection(&mut self) {
+        let Some(entry) = self.config_items.get(self.selected_config_index).cloned() else {
+            return;
+        };
+        let Some(meta) = config::config_item(&entry.key) else {
+            return;
+        };
+        self.pending_config_key = Some(entry.key.clone());
+        match meta.value_type {
+            config::ConfigValueType::Bool => {
+                match config::effective_config(&self.workdir)
+                    .and_then(|effective| {
+                        let current = config::current_raw_value(&effective, &entry.key).unwrap_or_else(|| "false".to_string());
+                        let next = if current == "true" { "false" } else { "true" };
+                        config::set_value(&self.workdir, self.config_scope, &entry.key, next)
+                    }) {
+                    Ok(message) => {
+                        let _ = self.reload_config_items();
+                        self.push_success_message(&message);
+                    }
+                    Err(error) => self.push_error_message(&format!("更新配置失败: {}", error)),
+                }
+            }
+            config::ConfigValueType::Enum { options, labels } => {
+                self.config_enum_options = options
+                    .into_iter()
+                    .zip(labels.into_iter())
+                    .map(|(value, label)| (value.to_string(), label.to_string()))
+                    .collect();
+                let current = config::effective_config(&self.workdir)
+                    .ok()
+                    .and_then(|effective| config::current_raw_value(&effective, &entry.key))
+                    .unwrap_or_default();
+                self.selected_config_enum_index = self
+                    .config_enum_options
+                    .iter()
+                    .position(|(value, _)| *value == current)
+                    .unwrap_or(0);
+                self.input_mode = InputMode::ConfigEnumSelect;
+            }
+            config::ConfigValueType::Number { .. } => {
+                self.input = config::effective_config(&self.workdir)
+                    .ok()
+                    .and_then(|effective| config::current_raw_value(&effective, &entry.key))
+                    .unwrap_or_default();
+                self.input_mode = InputMode::ConfigNumberInput;
+            }
+        }
+    }
+
+    fn confirm_config_enum_selection(&mut self) {
+        let Some(key) = self.pending_config_key.clone() else {
+            self.input_mode = InputMode::ConfigSelect;
+            return;
+        };
+        let Some((value, _)) = self.config_enum_options.get(self.selected_config_enum_index).cloned() else {
+            self.input_mode = InputMode::ConfigSelect;
+            return;
+        };
+        match config::set_value(&self.workdir, self.config_scope, &key, &value) {
+            Ok(message) => {
+                self.input_mode = InputMode::ConfigSelect;
+                self.config_enum_options.clear();
+                self.pending_config_key = None;
+                let _ = self.reload_config_items();
+                self.push_success_message(&message);
+            }
+            Err(error) => self.push_error_message(&format!("更新配置失败: {}", error)),
+        }
+    }
+
+    fn finish_config_number_input(&mut self) {
+        let Some(key) = self.pending_config_key.clone() else {
+            self.input_mode = InputMode::ConfigSelect;
+            return;
+        };
+        let value = self.input.trim().to_string();
+        match config::set_value(&self.workdir, self.config_scope, &key, &value) {
+            Ok(message) => {
+                self.input.clear();
+                self.input_mode = InputMode::ConfigSelect;
+                self.pending_config_key = None;
+                let _ = self.reload_config_items();
+                self.push_success_message(&message);
+            }
+            Err(error) => self.push_error_message(&format!("更新配置失败: {}", error)),
+        }
     }
 
     fn ensure_default_context7(&mut self) {
@@ -2837,6 +3329,22 @@ impl App {
         match ide::render_ide(&self.workdir, &args) {
             Ok(output) => self.push_system_message(&output),
             Err(error) => self.push_error_message(&format!("读取 IDE 配置失败: {}", error)),
+        }
+    }
+
+    fn config_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        if args.is_empty() {
+            self.open_config_selector();
+            return;
+        }
+        match config::render_config(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取配置失败: {}", error)),
         }
     }
 
@@ -3424,7 +3932,7 @@ match self.provider_store.save_named(name, &config, true) {
     fn poll_async_results(&mut self) {
         while let Ok(result) = self.task_rx.try_recv() {
             match result {
-                AsyncResult::ChatCompleted { task_id, prompt, response, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms } => {
+                AsyncResult::ChatCompleted { task_id, prompt, response, pending_question, plan, usage, api_duration_ms, tool_duration_ms, total_duration_ms } => {
                     if self.canceled_task_ids.remove(&task_id) {
                         if self.active_task_id == Some(task_id) {
                             self.active_child = None;
@@ -3443,6 +3951,9 @@ match self.provider_store.save_named(name, &config, true) {
                         content: response,
                         timestamp,
                     });
+                    if pending_question.is_some() {
+                        self.push_system_message("当前任务需要用户补充回答，后续可直接在输入框回复。真正的暂停恢复流程仍待接入。 ");
+                    }
                     if let Some(usage) = usage {
                         self.record_usage(usage);
                     }
@@ -3671,6 +4182,13 @@ match self.provider_store.save_named(name, &config, true) {
             self.mcp_options.clear();
             self.selected_mcp_index = 0;
         }
+        if self.input_mode == InputMode::TasksSelect {
+            self.push_system_message("已取消任务选择");
+            self.task_options.clear();
+            self.selected_task_index = 0;
+            self.pending_task_action = None;
+            self.pending_task_edit_id = None;
+        }
         if self.input_mode == InputMode::CheckpointSelect {
             self.push_system_message("已取消检查点选择");
             self.checkpoint_options.clear();
@@ -3681,9 +4199,21 @@ match self.provider_store.save_named(name, &config, true) {
             self.session_options.clear();
             self.selected_session_index = 0;
         }
+        if self.input_mode == InputMode::ConfigSelect {
+            self.push_system_message("已取消配置管理");
+            self.config_items.clear();
+            self.selected_config_index = 0;
+        }
+        if self.input_mode == InputMode::ConfigEnumSelect {
+            self.config_enum_options.clear();
+        }
+        if self.input_mode == InputMode::ConfigNumberInput {
+            self.input.clear();
+        }
         if self.input_mode == InputMode::InputOptimizePreview {
             self.pending_input_optimization = None;
         }
+        self.pending_config_key = None;
         self.filtered_level1.clear();
         self.filtered_sub_commands.clear();
         self.selected_level1_index = 0;
@@ -3892,12 +4422,17 @@ match self.provider_store.save_named(name, &config, true) {
                     InputMode::CommandLevel2 => self.confirm_sub_selection(),
                     InputMode::SkillsSelect => self.confirm_skills_selection(),
                     InputMode::McpSelect => self.confirm_mcp_selection(),
+                    InputMode::TasksSelect => self.confirm_task_selection(),
                     InputMode::CheckpointSelect => self.confirm_checkpoint_selection(),
                     InputMode::ModeSelect => self.confirm_mode_selection(),
                     InputMode::SessionSelect => self.confirm_session_selection(),
+                    InputMode::ConfigSelect => self.confirm_config_selection(),
+                    InputMode::ConfigEnumSelect => self.confirm_config_enum_selection(),
+                    InputMode::ConfigNumberInput => self.finish_config_number_input(),
                     InputMode::SkillInput => self.finish_skill_input(),
                     InputMode::McpInput => self.finish_mcp_input(),
                     InputMode::CheckpointInput => self.finish_checkpoint_input(),
+                    InputMode::TaskInput => self.finish_task_input(),
                     InputMode::InputOptimizePreview => self.apply_pending_input_optimization(),
                     _ => self.send_message(),
                 }
@@ -4007,6 +4542,14 @@ match self.provider_store.save_named(name, &config, true) {
                     self.selected_checkpoint_index += 1;
                 }
             }
+            KeyCode::Up if self.input_mode == InputMode::TasksSelect => {
+                self.selected_task_index = self.selected_task_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::TasksSelect => {
+                if self.selected_task_index + 1 < self.task_options.len() {
+                    self.selected_task_index += 1;
+                }
+            }
             KeyCode::Up if self.input_mode == InputMode::ModeSelect => {
                 self.selected_mode_index = self.selected_mode_index.saturating_sub(1);
             }
@@ -4021,6 +4564,22 @@ match self.provider_store.save_named(name, &config, true) {
             KeyCode::Down if self.input_mode == InputMode::SessionSelect => {
                 if self.selected_session_index + 1 < self.session_options.len() {
                     self.selected_session_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::ConfigSelect => {
+                self.selected_config_index = self.selected_config_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::ConfigSelect => {
+                if self.selected_config_index + 1 < self.config_items.len() {
+                    self.selected_config_index += 1;
+                }
+            }
+            KeyCode::Up if self.input_mode == InputMode::ConfigEnumSelect => {
+                self.selected_config_enum_index = self.selected_config_enum_index.saturating_sub(1);
+            }
+            KeyCode::Down if self.input_mode == InputMode::ConfigEnumSelect => {
+                if self.selected_config_enum_index + 1 < self.config_enum_options.len() {
+                    self.selected_config_enum_index += 1;
                 }
             }
             KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::Chat => {
@@ -4065,7 +4624,7 @@ match self.provider_store.save_named(name, &config, true) {
                     self.input.push(c);
                 }
             }
-            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect) => {
+            KeyCode::Backspace if !matches!(self.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect) => {
                 if self.input_mode == InputMode::CommandLevel1 {
                     self.input.pop();
                     if self.input.is_empty() || !self.input.starts_with('/') {
@@ -4105,6 +4664,8 @@ match self.provider_store.save_named(name, &config, true) {
                             self.selected_sub_index = 0;
                         }
                     }
+                } else if self.input_mode == InputMode::ConfigSelect {
+                    self.toggle_config_scope();
                 } else if self.input_mode == InputMode::CommandLevel2 {
                     if let Some(sub) = self.filtered_sub_commands.get(self.selected_sub_index) {
                         let current = self.input.split_whitespace().collect::<Vec<_>>();
@@ -4355,8 +4916,16 @@ fn ui(frame: &mut Frame, app: &App) {
         Span::styled("使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::CheckpointSelect {
         Span::styled("使用上下方向键选择检查点，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::TasksSelect {
+        Span::styled("使用上下方向键选择任务，Enter 执行操作，Esc 取消", Style::default().fg(theme.accent))
     } else if app.input_mode == InputMode::ModeSelect {
         Span::styled("使用上下方向键选择执行模式，Enter 切换，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::ConfigSelect {
+        Span::styled("使用上下方向键选择配置项，Enter 修改，Tab 切换用户/项目级，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::ConfigEnumSelect {
+        Span::styled("使用上下方向键选择配置值，Enter 确认，Esc 取消", Style::default().fg(theme.accent))
+    } else if app.input_mode == InputMode::ConfigNumberInput {
+        Span::styled(&app.input, Style::default().fg(theme.text))
     } else if app.input_mode == InputMode::InputOptimizePreview {
         Span::styled("查看输入优化预览，Enter 应用，Esc 取消", Style::default().fg(theme.accent))
     } else if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
@@ -4376,10 +4945,15 @@ fn ui(frame: &mut Frame, app: &App) {
             InputMode::SkillsSelect => "使用方向键选择 Skill...",
             InputMode::McpSelect => "使用方向键选择 MCP 服务...",
             InputMode::CheckpointSelect => "使用方向键选择检查点...",
+            InputMode::TasksSelect => "使用方向键选择任务...",
             InputMode::ModeSelect => "使用方向键选择执行模式...",
+            InputMode::ConfigSelect => "使用方向键选择配置项...",
+            InputMode::ConfigEnumSelect => "使用方向键选择配置值...",
+            InputMode::ConfigNumberInput => "输入新的数字配置值...",
             InputMode::SkillInput => "输入 Skill 参数...",
             InputMode::McpInput => "输入 MCP 参数...",
             InputMode::CheckpointInput => "输入检查点名称...",
+            InputMode::TaskInput => "输入任务描述...",
             InputMode::SessionSelect => "使用方向键选择历史会话...",
             InputMode::InputOptimizePreview => "查看输入优化预览...",
         };
@@ -4406,7 +4980,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .block(input_block);
     frame.render_widget(input_paragraph, chunks[2]);
 
-    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::InputOptimizePreview) {
+    if !app.processing && !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect | InputMode::InputOptimizePreview) {
         let cursor_x = chunks[2].x + 1 + app.input.len() as u16;
         let cursor_y = chunks[2].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -4432,12 +5006,24 @@ fn ui(frame: &mut Frame, app: &App) {
         render_mcp_selector(frame, app);
     }
 
+    if app.input_mode == InputMode::TasksSelect {
+        render_task_selector(frame, app);
+    }
+
     if app.input_mode == InputMode::CheckpointSelect {
         render_checkpoint_selector(frame, app);
     }
 
     if app.input_mode == InputMode::ModeSelect {
         render_mode_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::ConfigSelect {
+        render_config_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::ConfigEnumSelect {
+        render_config_enum_selector(frame, app);
     }
 
     if app.input_mode == InputMode::SessionSelect {
@@ -4474,6 +5060,45 @@ fn render_session_selector(frame: &mut Frame, app: &App) {
             };
             Line::styled(
                 format!("{} [{}] {}", session.updated_at, session.id, session.title),
+                style,
+            )
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_task_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
+    let area = centered_rect(frame.area(), 72, 55);
+    let block = Block::default()
+        .title("持久任务")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let start = app.selected_task_index.saturating_sub(MODELS_HINT_LIMIT / 2);
+    let end = (start + MODELS_HINT_LIMIT).min(app.task_options.len());
+    let lines: Vec<Line> = app.task_options[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, task)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_task_index;
+            let style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            Line::styled(
+                format!(
+                    "#{} {:<11} {:<6} {}",
+                    task.id,
+                    task.status.label(),
+                    task.priority.label(),
+                    task.description,
+                ),
                 style,
             )
         })
@@ -4532,6 +5157,83 @@ fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
         Paragraph::new(Line::from(Span::styled("Enter: 应用 | Esc: 取消", Style::default().fg(theme.subtle)))),
         sections[4],
     );
+}
+
+fn render_config_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
+    let area = centered_rect(frame.area(), 78, 68);
+    let title = format!(
+        "配置管理 [{}级]",
+        match app.config_scope {
+            config::ConfigScope::User => "用户",
+            config::ConfigScope::Project => "项目",
+        }
+    );
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let start = app.selected_config_index.saturating_sub(5);
+    let end = (start + 10).min(app.config_items.len());
+    let lines: Vec<Line> = app.config_items[start..end]
+        .iter()
+        .enumerate()
+        .flat_map(|(offset, item)| {
+            let index = start + offset;
+            let is_selected = index == app.selected_config_index;
+            let style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            vec![
+                Line::styled(
+                    format!("[{}] {:<16} {:<14} {}", item.category, item.name, item.value, item.key),
+                    style,
+                ),
+                Line::styled(format!("    {}", item.description), Style::default().fg(theme.subtle)),
+            ]
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_config_enum_selector(frame: &mut Frame, app: &App) {
+    let theme = app.theme;
+    let title = app
+        .pending_config_key
+        .as_deref()
+        .and_then(config::config_item)
+        .map(|item| format!("选择: {}", item.display_name))
+        .unwrap_or_else(|| "选择配置值".to_string());
+    let area = centered_rect(frame.area(), 56, 38);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = app
+        .config_enum_options
+        .iter()
+        .enumerate()
+        .map(|(index, (value, label))| {
+            let is_selected = index == app.selected_config_enum_index;
+            let style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            Line::styled(format!("{} ({})", label, value), style)
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_selector(frame: &mut Frame, app: &App) {

@@ -24,6 +24,7 @@ pub struct ToolChatResult {
     pub tool_calls_made: usize,
     pub rounds: usize,
     pub usage: Option<ChatUsage>,
+    pub pending_question: Option<serde_json::Value>,
 }
 
 impl ProviderClient {
@@ -130,6 +131,7 @@ impl ProviderClient {
                     tool_calls_made,
                     rounds,
                     usage: has_usage.then_some(usage),
+                    pending_question: None,
                 });
             }
 
@@ -142,6 +144,15 @@ impl ProviderClient {
                     .unwrap_or_else(|_| serde_json::json!({}));
 
                 let tool_result = tool_executor(&tool_call.function.name, &args);
+                let pending_question = if tool_call.function.name == "interaction.ask" {
+                    tool_result
+                        .as_ref()
+                        .ok()
+                        .filter(|data| data.get("pending").and_then(|value| value.as_bool()) == Some(true))
+                        .cloned()
+                } else {
+                    None
+                };
 
                 let result_content = match tool_result {
                     Ok(data) => serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string()),
@@ -153,6 +164,19 @@ impl ProviderClient {
                     &tool_call.function.name,
                     result_content,
                 ));
+
+                if let Some(pending_question) = pending_question {
+                    let reasoning = messages.iter().rev().find_map(|m| m.reasoning_content.clone());
+                    return Ok(ToolChatResult {
+                        messages,
+                        final_text: "需要用户回答后继续执行。".to_string(),
+                        reasoning_content: reasoning,
+                        tool_calls_made,
+                        rounds,
+                        usage: has_usage.then_some(usage),
+                        pending_question: Some(pending_question),
+                    });
+                }
             }
         }
 
@@ -172,6 +196,7 @@ impl ProviderClient {
             tool_calls_made,
             rounds,
             usage: has_usage.then_some(usage),
+            pending_question: None,
         })
     }
 
@@ -406,6 +431,8 @@ mod tests {
             reasoning_content: Some("thinking".to_string()),
             tool_calls_made: 2,
             rounds: 3,
+            usage: None,
+            pending_question: None,
         };
         assert_eq!(result.final_text, "done");
         assert_eq!(result.reasoning_content.unwrap(), "thinking");

@@ -1,5 +1,6 @@
 mod acp;
 mod checkpoint;
+pub mod config;
 pub mod doctor;
 pub mod diff;
 pub mod hooks;
@@ -53,6 +54,7 @@ pub enum CliCommand {
     Diff,
     Hooks,
     Ide,
+    Config,
     Keybindings,
     Outstyle,
     Vim,
@@ -96,6 +98,7 @@ struct CliResponse {
     tool_results: serde_json::Value,
     stdin_preview: Option<String>,
     provider_response: Option<String>,
+    pending_question: Option<serde_json::Value>,
     usage: Option<sacode_kernel::model::ChatUsage>,
     api_duration_ms: u64,
     tool_duration_ms: u64,
@@ -156,6 +159,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Diff => diff::run(options.sub_args)?,
         CliCommand::Hooks => hooks::run()?,
         CliCommand::Ide => ide::run(options.sub_args)?,
+        CliCommand::Config => config::run(options.sub_args)?,
         CliCommand::Keybindings => keybindings::run()?,
         CliCommand::Outstyle => outstyle::run(options.sub_args)?,
         CliCommand::Skill => skill::run(options.sub_args).await?,
@@ -206,6 +210,7 @@ async fn run_task(options: CliOptions) -> Result<()> {
             tool_results: serde_json::to_value(&output.tool_results)?,
             stdin_preview: stdin.map(|value| preview(&value)),
             provider_response: output.provider_response.clone().ok(),
+            pending_question: output.pending_question.clone(),
             usage: output.usage.clone(),
             api_duration_ms: output.api_duration_ms,
             tool_duration_ms: output.tool_duration_ms,
@@ -798,6 +803,18 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "config" {
+        return CliOptions {
+            command: CliCommand::Config,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
     if first == "keybindings" {
         return CliOptions {
             command: CliCommand::Keybindings,
@@ -1099,6 +1116,7 @@ fn print_help() {
     println!("  sacode diff [--cached]");
     println!("  sacode hooks");
     println!("  sacode ide [status|vscode|cursor|jetbrains|config show|path|set acp|lsp --host HOST --port PORT]");
+    println!("  sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]");
     println!("  sacode keybindings");
     println!("  sacode outstyle [show|concise|explain|teach|clear|path|project ...]");
     println!("  sacode vim [show|on|off|project show|on|off]");

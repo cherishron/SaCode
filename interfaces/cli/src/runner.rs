@@ -28,6 +28,7 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
+    pub pending_question: Option<serde_json::Value>,
     pub usage: Option<ChatUsage>,
     pub api_duration_ms: u64,
     pub tool_duration_ms: u64,
@@ -74,6 +75,7 @@ impl RunnerOutput {
             events: report.events.clone(),
             tool_results,
             provider_response: Err("orchestrator mode does not call provider".to_string()),
+            pending_question: None,
             usage: None,
             api_duration_ms: 0,
             tool_duration_ms: 0,
@@ -117,22 +119,22 @@ pub async fn run_task_with_stdin(
     let system_prompt = build_system_prompt(&workdir, mode, &tool_names);
 
     let provider = resolve_provider(&workdir);
-    let (provider_response, usage, api_duration_ms, tool_duration_ms) = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
+    let (provider_response, pending_question, usage, api_duration_ms, tool_duration_ms) = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
         if tool_defs.is_empty() {
             let client = ProviderClient::new();
             let api_started_at = Instant::now();
             match client.simple_chat_with_usage(&provider, &effective_prompt).await {
-                Ok((text, usage)) => (Ok(text), usage, elapsed_ms(api_started_at.elapsed()), 0),
+                Ok((text, usage)) => (Ok(text), None, usage, elapsed_ms(api_started_at.elapsed()), 0),
                 Err(error) => {
                     let _ = MistakeBookStore::new(&workdir).append("provider:chat", "主模型调用失败", error.to_string());
-                    (Err(error.to_string()), None, elapsed_ms(api_started_at.elapsed()), 0)
+                    (Err(error.to_string()), None, None, elapsed_ms(api_started_at.elapsed()), 0)
                 }
             }
         } else {
             run_tool_chat(&provider, &system_prompt, &effective_prompt, tool_defs, &tools, &workdir, approval, max_iterations).await
         }
     } else {
-        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, 0, 0)
+        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, None, 0, 0)
     };
 
     let task = Task::new(expanded_prompt.clone(), mode, stdin);
@@ -149,6 +151,7 @@ pub async fn run_task_with_stdin(
         events: vec![Event::message(format!("任务通过模型 tool calling 模式执行"))],
         tool_results: vec![],
         provider_response,
+        pending_question,
         usage,
         api_duration_ms,
         tool_duration_ms,
@@ -165,7 +168,7 @@ async fn run_tool_chat(
     workdir: &Path,
     approval: ApprovalPolicy,
     _max_iterations: usize,
-) -> (std::result::Result<String, String>, Option<ChatUsage>, u64, u64) {
+) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
     let client = ProviderClient::new();
     let tools_clone = tools.clone();
     let workdir_clone = workdir.to_path_buf();
@@ -261,6 +264,7 @@ async fn run_tool_chat(
             }
             (
                 Ok(lines.join("\n")),
+                result.pending_question,
                 result.usage,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(std::sync::atomic::Ordering::Relaxed),
@@ -270,6 +274,7 @@ async fn run_tool_chat(
             let _ = MistakeBookStore::new(workdir).append("provider:tool_chat", "模型 tool calling 循环失败", error.to_string());
             (
                 Err(error.to_string()),
+                None,
                 None,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(std::sync::atomic::Ordering::Relaxed),
@@ -341,6 +346,11 @@ pub fn format_output(output: &RunnerOutput) -> String {
             lines.push(response.clone());
         }
         Err(error) => lines.push(format!("Provider: {}", error)),
+    }
+
+    if let Some(question) = &output.pending_question {
+        lines.push("Pending Question:".to_string());
+        lines.push(summarize_tool_output(question));
     }
 
     lines.push("Plan:".to_string());

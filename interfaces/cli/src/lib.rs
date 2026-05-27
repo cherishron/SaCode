@@ -6,6 +6,7 @@ pub mod provider_runtime;
 pub mod project_profile;
 pub mod repl;
 pub mod runner;
+pub mod task_store;
 pub mod tui;
 pub mod ui;
 
