@@ -5,5 +5,5 @@ mod router;
 
 pub use config::{ModelLimit, ModelRule, Modalities, ProviderSpec, SaCodeConfig, TemperatureRule, TopPRule, preset_providers};
 pub use profiles::{AgentProfile, Profiles};
-pub use provider::{ChatChoice, ChatMessage, ChatRequest, ChatResponse, ChatUsage, FunctionCall, FunctionDefinition, ModelProvider, ProviderKind, ThinkingConfig, ToolCall, ToolDefinition};
+pub use provider::{ChatChoice, ChatMessage, ChatRequest, ChatResponse, ChatUsage, FunctionCall, FunctionDefinition, ImageUrlPart, MessageContent, MessagePart, ModelProvider, ProviderKind, ThinkingConfig, ToolCall, ToolDefinition};
 pub use router::ModelRouter;

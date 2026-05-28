@@ -202,6 +202,7 @@ fn test_media_read_base64_mode() {
     assert!(result.success);
     assert_eq!(result.data["mime_type"], "image/png");
     assert_eq!(result.data["data"], "SGk=");
+    assert_eq!(result.data["source"], "base64");
 }
 
 #[test]
@@ -225,10 +226,35 @@ fn test_media_read_ppm_describe_mode_includes_dimensions() {
 
     assert!(result.success);
     assert_eq!(result.data["mime_type"], "image/x-portable-pixmap");
+    assert_eq!(result.data["source"], "fallback");
     assert_eq!(result.data["width"], 2);
     assert_eq!(result.data["height"], 1);
     assert!(result.data["summary"].as_str().unwrap_or("").contains("2x1"));
     assert!(result.data["data"].as_str().unwrap_or("").contains("图片描述能力暂未接入"));
+}
+
+#[test]
+fn test_media_read_png_ocr_without_visual_provider_falls_back() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
+    fs::write(
+        temp_dir.path().join("image.png"),
+        vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1],
+    )
+    .expect("write png header");
+
+    let result = tools::media::read::execute(serde_json::json!({
+        "path": "image.png",
+        "mode": "ocr"
+    }))
+    .expect("tool execution should succeed");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert!(result.success);
+    assert_eq!(result.data["source"], "fallback");
+    assert!(result.data["data"].as_str().unwrap_or("").contains("OCR 能力暂未接入"));
 }
 
 #[test]

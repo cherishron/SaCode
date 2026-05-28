@@ -1,9 +1,9 @@
-use std::{collections::{HashSet, VecDeque}, env, fs, future::Future, hash::{Hash, Hasher}, io::{self, Read}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
+use std::{collections::{HashSet, VecDeque}, env, fs, future::Future, hash::{Hash, Hasher}, io::{self, Read, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::mpsc::{self, Receiver, Sender}, thread};
 
 use anyhow::Result;
 use arboard::Clipboard;
 use crossterm::{
-    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind},
+    event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -29,11 +29,13 @@ use crate::cmd::update;
 use crate::version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus};
 
 const MODELS_HINT_LIMIT: usize = 8;
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 struct Message {
     role: MessageRole,
     content: String,
     timestamp: String,
+    collapsed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +121,23 @@ struct App {
     selected_config_enum_index: usize,
     pending_config_key: Option<String>,
     pending_question: Option<serde_json::Value>,
+    spinner_index: usize,
+    log_path: PathBuf,
+    git_changes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FoldAction {
+    Collapse,
+    Expand,
+    Toggle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidebarSection {
+    Todo,
+    Task,
+    Git,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -271,6 +290,7 @@ struct StoredMessage {
     role: String,
     content: String,
     timestamp: String,
+    collapsed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -608,6 +628,7 @@ impl App {
         let access_store = ProjectAccessConfigStore::new(&workdir);
         let task_store = TaskStore::new(&workdir);
         let current_provider = resolve_named_provider(&workdir);
+        let log_path = user_sacode_dir().join("logs/tui.log");
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
         let session_id = format!("session-{}", now.format("%Y%m%d%H%M%S"));
@@ -622,6 +643,7 @@ impl App {
                     role: MessageRole::System,
                     content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 /quit 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
                     timestamp: timestamp.clone(),
+                    collapsed: false,
                 },
             ],
             session_summary: None,
@@ -707,9 +729,13 @@ impl App {
             selected_config_enum_index: 0,
             pending_config_key: None,
             pending_question: None,
+            spinner_index: 0,
+            log_path,
+            git_changes: Vec::new(),
         };
 
         app.load_latest_session();
+        app.refresh_git_changes();
         app.ensure_default_context7();
         app.spawn_version_check();
         app
@@ -843,7 +869,9 @@ impl App {
             role: MessageRole::User,
             content: display_input,
             timestamp: timestamp.clone(),
+            collapsed: false,
         });
+        self.log_event("user_message", &self.messages.last().map(|msg| msg.content.clone()).unwrap_or_default());
 
         let user_input = self.decorate_pending_answer(&self.input.clone());
         self.input.clear();
@@ -866,6 +894,7 @@ impl App {
                 task_id,
                 self.queued_messages.len().saturating_sub(1)
             ));
+            self.log_event("queue_push", &format!("#{} {}", task_id, user_input.trim()));
             return;
         }
 
@@ -879,11 +908,13 @@ impl App {
         self.processing = true;
         self.active_task_id = Some(queued.id);
         self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.busy_message = format!(
             "正在执行 #{}，模型 {}，Esc 取消当前任务",
             queued.id,
             self.current_model_name()
         );
+        self.log_event("queue_start", &format!("#{} {}", queued.id, queued.content.trim()));
         self.spawn_chat_task(queued.id, queued.content);
     }
 
@@ -976,12 +1007,13 @@ impl App {
 
         let pending_question = parsed.get("pending_question").cloned().filter(|value| !value.is_null());
 
-        let response = parsed
+        let cli_events = Self::format_cli_events(parsed.get("events"));
+        let provider_response = parsed
             .get("provider_response")
             .and_then(|value| value.as_str())
             .map(|value| value.to_string())
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| Self::format_cli_events(parsed.get("events")))
+            .filter(|value| !value.trim().is_empty());
+        let response = Self::merge_cli_response(cli_events, provider_response)
             .or_else(|| pending_question.as_ref().map(Self::format_pending_question))
             .unwrap_or_else(|| "任务已完成。".to_string());
         let plan = parsed
@@ -1123,6 +1155,10 @@ impl App {
                         lines.push(format!("[思考] {}", content));
                     }
                 }
+                "tool_call_started" => {
+                    let name = event.get("name").and_then(|value| value.as_str()).unwrap_or("工具");
+                    lines.push(format!("[工具] {} 开始执行", name));
+                }
                 "tool_call_finished" => {
                     let name = event.get("name").and_then(|value| value.as_str()).unwrap_or("工具");
                     let success = event.get("success").and_then(|value| value.as_bool()).unwrap_or(false);
@@ -1156,14 +1192,29 @@ impl App {
         }
     }
 
+    fn merge_cli_response(events: Option<String>, provider_response: Option<String>) -> Option<String> {
+        match (events, provider_response) {
+            (Some(events), Some(response)) => Some(format!("{}\n\n[回复]\n{}", events.trim(), response.trim())),
+            (Some(events), None) => Some(events),
+            (None, Some(response)) => Some(response),
+            (None, None) => None,
+        }
+    }
+
     fn summarize_json_output(output: &serde_json::Value) -> String {
         if output.is_null() {
             return String::new();
         }
+        let source_prefix = output
+            .get("source")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("[{}] ", value))
+            .unwrap_or_default();
         if let Some(content) = output.get("content") {
-            return Self::preview_json_text(content);
+            return format!("{}{}", source_prefix, Self::preview_json_text(content));
         }
-        Self::preview_json_text(output)
+        format!("{}{}", source_prefix, Self::preview_json_text(output))
     }
 
     fn preview_json_text(value: &serde_json::Value) -> String {
@@ -1556,6 +1607,36 @@ impl App {
             return true;
         }
 
+        if trimmed == "/copy last" {
+            self.copy_last_assistant_message();
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/fold last" {
+            self.fold_last_assistant_message(FoldAction::Collapse);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/expand last" {
+            self.fold_last_assistant_message(FoldAction::Expand);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/fold all" {
+            self.fold_all_assistant_messages(FoldAction::Collapse);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed == "/expand all" {
+            self.fold_all_assistant_messages(FoldAction::Expand);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed.starts_with("/theme") {
             self.theme_command(&input);
             self.input.clear();
@@ -1696,6 +1777,7 @@ impl App {
                 },
                 content: message.content.clone(),
                 timestamp: message.timestamp.clone(),
+                collapsed: message.collapsed,
             })
             .collect()
     }
@@ -1810,6 +1892,7 @@ impl App {
                 },
                 content: message.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 timestamp: message.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                collapsed: message.get("collapsed").and_then(|v| v.as_bool()).unwrap_or(false),
             })
             .collect();
         self.scroll_to_bottom();
@@ -1825,6 +1908,7 @@ impl App {
             role: MessageRole::System,
             content: "SaCode - 新会话\n\n上下键可浏览输入历史，/sessions 可切换历史会话。".to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
         }];
         self.session_summary = None;
         self.queued_messages.clear();
@@ -1843,6 +1927,7 @@ impl App {
             role: MessageRole::System,
             content: "当前会话上下文已清空。".to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
         }];
         self.session_summary = None;
         self.queued_messages.clear();
@@ -1945,7 +2030,7 @@ impl App {
             Ok(image) => match self.save_pasted_image(&image.bytes.into_owned(), image.width, image.height) {
                 Ok(path) => {
                     let snippet = format!(
-                        "我刚粘贴了一张图片，文件路径是 `{}`。如果需要读取图片内容，请调用 `media.read` 工具处理这个文件。",
+                        "我刚粘贴了一张图片，文件路径是 `{}`。如果需要读取图片内容，请调用 `media.read` 工具处理这个文件。当前模型支持图片时会自动执行 OCR 或描述，并在结果中标注来源，例如 provider 或 fallback。",
                         path.display()
                     );
                     self.handle_paste(snippet);
@@ -2375,6 +2460,7 @@ impl App {
                                     },
                                     content: content.to_string(),
                                     timestamp: timestamp.to_string(),
+                                    collapsed: m.get("collapsed").and_then(|v| v.as_bool()).unwrap_or(false),
                                 })
                             }).collect();
                             self.push_success_message(&format!("检查点 {} 已恢复", name));
@@ -2983,6 +3069,7 @@ impl App {
                 self.selected_task_index = self.task_options.len().saturating_sub(1);
             }
         }
+        self.refresh_git_changes();
     }
 
     fn capture_todo_plan(&mut self, source_task: &str, plan: sacode_kernel::Plan) {
@@ -2999,11 +3086,13 @@ impl App {
         self.todo_plan = Some(TodoPlan {
             source_task: source_task.to_string(),
             items,
-            confirmed: false,
+            confirmed: true,
         });
 
-        self.show_todo_plan();
-        self.push_system_message("如需按待办顺序继续执行，输入 /todo confirm。");
+        self.push_system_message(&format!(
+            "已生成 todo 计划，共 {} 项。后续由 AI 在回复中自行推进；右侧面板可查看进度。",
+            self.todo_plan.as_ref().map(|plan| plan.items.len()).unwrap_or(0)
+        ));
     }
 
     fn show_todo_plan(&mut self) {
@@ -3033,7 +3122,7 @@ impl App {
         };
 
         if plan.confirmed {
-            self.push_system_message("当前待办已经确认过，正在按顺序执行。");
+            self.push_system_message("当前待办已经处于自动执行状态。右侧面板会持续展示进度。");
             return;
         }
 
@@ -3086,6 +3175,7 @@ impl App {
                 summary
             ),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
         }];
         self.queued_messages.clear();
         self.todo_plan = None;
@@ -3163,6 +3253,11 @@ impl App {
             /insight   - 生成编程洞察\n\
             /tools     - 显示可用工具\n\
             /stats     - 查看 token 与费用统计\n\
+            /copy last - 复制最后一条助手回复\n\
+            /fold last - 折叠最后一条助手回复\n\
+            /expand last - 展开最后一条助手回复\n\
+            /fold all  - 折叠全部助手回复\n\
+            /expand all - 展开全部助手回复\n\
             /theme     - 切换主题模板 (github/vscode/idea)\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\
@@ -3174,6 +3269,7 @@ impl App {
             \n快捷键:\n\
             Ctrl+Q - 等价于 /quit\n\
             Ctrl+A - 优化当前输入\n\
+            Ctrl+S - 折叠或展开最后一条助手回复\n\
             Ctrl+Z - 撤回上次输入优化\n\
             Esc    - 取消当前任务或取消选择\n\
             上下键  - 浏览已发送输入历史\n\
@@ -3642,12 +3738,9 @@ impl App {
         
         match catalog {
             Some(c) if c.providers.contains_key(name) => {
-                let config = c.providers.get(name).cloned().unwrap();
-                self.current_provider = Some(crate::provider_config::NamedProviderConfig {
-                    name: name.to_string(),
-                    config,
-                });
-                self.push_system_message(&format!("Provider 已切换为 {}。", name));
+                self.processing = true;
+                self.busy_message = format!("正在切换 provider 到 {}...", name);
+                self.spawn_switch_provider_task(name.to_string());
             }
             _ => self.push_system_message(&format!("Provider {} 不存在。", name)),
         }
@@ -4047,9 +4140,15 @@ match self.provider_store.save_named(name, &config, true) {
                 }
             };
             let model_name = config
-                .provider
-                .get(&provider_name)
-                .and_then(|spec| spec.models.keys().next().cloned())
+                .resolve_model(&config.model)
+                .filter(|(name, _)| name == &provider_name)
+                .map(|(_, model_name)| model_name)
+                .or_else(|| {
+                    config
+                        .provider
+                        .get(&provider_name)
+                        .and_then(|spec| spec.models.keys().next().cloned())
+                })
                 .unwrap_or_default();
             if let Err(error) = sacode_store.set_model(&provider_name, &model_name) {
                 let _ = sender.send(AsyncResult::Failed {
@@ -4134,8 +4233,10 @@ match self.provider_store.save_named(name, &config, true) {
                             self.processing = false;
                             self.active_task_id = None;
                             self.active_task_started_at = None;
+                            self.spinner_index = 0;
                             self.busy_message.clear();
                             self.push_system_message(&format!("已取消任务 #{}: {}", task_id, prompt));
+                            self.log_event("task_canceled", &format!("#{} {}", task_id, prompt.trim()));
                             self.start_next_queued_message();
                         }
                         continue;
@@ -4146,7 +4247,9 @@ match self.provider_store.save_named(name, &config, true) {
                         role: MessageRole::Assistant,
                         content: response,
                         timestamp,
+                        collapsed: false,
                     });
+                    self.log_event("assistant_response", &self.messages.last().map(|msg| msg.content.clone()).unwrap_or_default());
                     self.pending_question = pending_question.clone();
                     if let Some(question) = pending_question.as_ref() {
                         self.push_system_message(&format!(
@@ -4166,7 +4269,9 @@ match self.provider_store.save_named(name, &config, true) {
                     self.processing = false;
                     self.active_task_id = None;
                     self.active_task_started_at = None;
+                    self.spinner_index = 0;
                     self.busy_message.clear();
+                    self.refresh_git_changes();
                     self.scroll_to_bottom();
                     self.start_next_queued_message();
                 }
@@ -4181,6 +4286,7 @@ match self.provider_store.save_named(name, &config, true) {
                         .position(|model| model == &config.model)
                         .unwrap_or(0);
                     self.processing = false;
+                    self.spinner_index = 0;
                     self.busy_message.clear();
                     self.push_system_message(&format!(
                         "Provider {} 已保存，已发现 {} 个模型。当前默认模型: {}。输入 /providers 可切换 provider，输入 /models 可重新选择模型。",
@@ -4191,6 +4297,7 @@ match self.provider_store.save_named(name, &config, true) {
                 }
                 AsyncResult::ProvidersLoaded { providers, current_provider } => {
                     self.processing = false;
+                    self.spinner_index = 0;
                     self.busy_message.clear();
                     if providers.is_empty() {
                         self.push_system_message("当前没有可用 provider，请先输入 /login。");
@@ -4211,11 +4318,13 @@ match self.provider_store.save_named(name, &config, true) {
                     });
                     self.input_mode = InputMode::Chat;
                     self.processing = false;
+                    self.spinner_index = 0;
                     self.busy_message.clear();
                     self.push_system_message(&format!("当前 provider 已切换为 {}。", provider_name));
                 }
                 AsyncResult::ModelsLoaded { models, current_model } => {
                     self.processing = false;
+                    self.spinner_index = 0;
                     self.busy_message.clear();
                     if models.is_empty() {
                         self.push_system_message("Provider 返回了空模型列表。");
@@ -4269,9 +4378,10 @@ match self.provider_store.save_named(name, &config, true) {
                 AsyncResult::Failed { context, message } => {
                     self.active_child = None;
                     if !matches!(context, AsyncContext::OptimizeInput) {
-                        self.processing = false;
-                        self.active_task_id = None;
-                        self.active_task_started_at = None;
+                    self.processing = false;
+                    self.active_task_id = None;
+                    self.active_task_started_at = None;
+                    self.spinner_index = 0;
                     }
                     self.busy_message.clear();
                     if matches!(
@@ -4305,10 +4415,207 @@ match self.provider_store.save_named(name, &config, true) {
         if let Some(task_id) = self.active_task_id {
             self.canceled_task_ids.insert(task_id);
             self.busy_message = format!("正在取消任务 #{}...", task_id);
+            self.log_event("cancel_requested", &format!("#{}", task_id));
             if let Some(child) = &mut self.active_child {
                 let _ = child.kill();
             }
         }
+    }
+
+    fn copy_last_assistant_message(&mut self) {
+        let Some(last_message) = self.messages.iter().rev().find(|message| matches!(message.role, MessageRole::Assistant)) else {
+            self.push_system_message("当前没有可复制的助手回复。");
+            return;
+        };
+
+        let mut clipboard = match Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(error) => {
+                self.push_error_message(&format!("打开系统剪贴板失败: {}", error));
+                return;
+            }
+        };
+
+        match clipboard.set_text(last_message.content.clone()) {
+            Ok(()) => {
+                self.log_event("copy_last", &last_message.content);
+                self.push_success_message("已复制最后一条助手回复到系统剪贴板。");
+            }
+            Err(error) => self.push_error_message(&format!("复制到系统剪贴板失败: {}", error)),
+        }
+    }
+
+    fn fold_last_assistant_message(&mut self, action: FoldAction) {
+        let Some(index) = self.messages.iter().rposition(|message| matches!(message.role, MessageRole::Assistant)) else {
+            self.push_system_message("当前没有可折叠的助手回复。");
+            return;
+        };
+
+        let changed = self.apply_fold_action(index, action);
+        if changed {
+            self.save_current_session();
+            self.scroll_to_bottom();
+        }
+    }
+
+    fn fold_all_assistant_messages(&mut self, action: FoldAction) {
+        let mut changed = 0usize;
+        for index in 0..self.messages.len() {
+            if matches!(self.messages[index].role, MessageRole::Assistant) && self.apply_fold_action(index, action) {
+                changed += 1;
+            }
+        }
+
+        if changed > 0 {
+            self.save_current_session();
+            self.push_success_message(&format!("已更新 {} 条助手回复的折叠状态。", changed));
+        } else {
+            self.push_system_message("当前没有需要更新折叠状态的助手回复。");
+        }
+    }
+
+    fn apply_fold_action(&mut self, index: usize, action: FoldAction) -> bool {
+        let Some(message) = self.messages.get_mut(index) else {
+            return false;
+        };
+
+        let target = match action {
+            FoldAction::Collapse => true,
+            FoldAction::Expand => false,
+            FoldAction::Toggle => !message.collapsed,
+        };
+
+        if message.collapsed == target {
+            return false;
+        }
+
+        message.collapsed = target;
+        let timestamp = message.timestamp.clone();
+        let state = if target { "collapsed" } else { "expanded" };
+        let log_content = format!("{} {}", state, timestamp);
+        self.log_event("message_fold", &log_content);
+        true
+    }
+
+    fn tick(&mut self) {
+        if self.processing {
+            self.spinner_index = (self.spinner_index + 1) % SPINNER_FRAMES.len();
+        }
+    }
+
+    fn spinner_frame(&self) -> &'static str {
+        SPINNER_FRAMES[self.spinner_index % SPINNER_FRAMES.len()]
+    }
+
+    fn log_event(&self, kind: &str, content: &str) {
+        if let Some(parent) = self.log_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+        {
+            let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let line = format!(
+                "{} [{}] {}\n",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                kind,
+                compact
+            );
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
+
+    fn sidebar_section_lines(&self, section: SidebarSection) -> Vec<Line<'static>> {
+        match section {
+            SidebarSection::Todo => {
+                let Some(plan) = &self.todo_plan else {
+                    return vec![Line::from(Span::styled(
+                        "当前没有 todo 计划",
+                        Style::default().fg(self.theme.subtle),
+                    ))];
+                };
+
+                let mut lines = vec![Line::from(Span::styled(
+                    format!("来源: {}", plan.source_task.chars().take(18).collect::<String>()),
+                    Style::default().fg(self.theme.subtle),
+                ))];
+                lines.extend(plan.items.iter().map(|item| {
+                    let marker = match item.status {
+                        TodoStatus::Pending => "[ ]",
+                        TodoStatus::Running => "[>]",
+                        TodoStatus::Completed => "[x]",
+                        TodoStatus::Skipped => "[-]",
+                    };
+                    let preview = item.description.chars().take(20).collect::<String>();
+                    Line::from(Span::styled(
+                        format!("{} {}. {}", marker, item.id, preview),
+                        Style::default().fg(self.theme.text),
+                    ))
+                }));
+                lines
+            }
+            SidebarSection::Task => {
+                if self.task_options.is_empty() {
+                    return vec![Line::from(Span::styled(
+                        "当前没有 task",
+                        Style::default().fg(self.theme.subtle),
+                    ))];
+                }
+
+                self.task_options
+                    .iter()
+                    .take(8)
+                    .map(|task| {
+                        Line::from(Span::styled(
+                            format!("#{} [{}] {}", task.id, task.status.label(), task.description.chars().take(18).collect::<String>()),
+                            Style::default().fg(self.theme.text),
+                        ))
+                    })
+                    .collect()
+            }
+            SidebarSection::Git => {
+                if self.git_changes.is_empty() {
+                    return vec![Line::from(Span::styled(
+                        "当前没有 Git 变更",
+                        Style::default().fg(self.theme.subtle),
+                    ))];
+                }
+
+                self.git_changes
+                    .iter()
+                    .filter(|entry| *entry != "?? .sacode/")
+                    .take(8)
+                    .map(|entry| {
+                        let preview = entry.chars().take(30).collect::<String>();
+                        Line::from(Span::styled(
+                            preview,
+                            Style::default().fg(self.theme.text),
+                        ))
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn refresh_git_changes(&mut self) {
+        let output = Command::new("git")
+            .arg("status")
+            .arg("--short")
+            .current_dir(&self.workdir)
+            .output();
+
+        self.git_changes = match output {
+            Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .filter(|line| line != "?? .sacode/")
+                .collect(),
+            Ok(output) => vec![format!("git status 失败: {}", String::from_utf8_lossy(&output.stderr).trim())],
+            Err(error) => vec![format!("读取 Git 变更失败: {}", error)],
+        };
     }
 
     fn active_task_elapsed_seconds(&self) -> u64 {
@@ -4355,7 +4662,7 @@ match self.provider_store.save_named(name, &config, true) {
         if self.processing {
             let elapsed = self.active_task_elapsed_seconds();
             lines.push(Line::from(vec![
-                Span::styled("⠦ ", Style::default().fg(self.theme.warning).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{} ", self.spinner_frame()), Style::default().fg(self.theme.warning).add_modifier(Modifier::BOLD)),
                 Span::styled("生成中 ", Style::default().fg(self.theme.warning).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("{}s", elapsed), Style::default().fg(self.theme.warning)),
                 Span::styled(" ... ", Style::default().fg(self.theme.warning)),
@@ -4531,7 +4838,9 @@ match self.provider_store.save_named(name, &config, true) {
             role: MessageRole::System,
             content: content.to_string(),
             timestamp,
+            collapsed: false,
         });
+        self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
     }
@@ -4542,7 +4851,9 @@ match self.provider_store.save_named(name, &config, true) {
             role: MessageRole::System,
             content: format!("[成功] {}", content),
             timestamp,
+            collapsed: false,
         });
+        self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
     }
@@ -4592,7 +4903,9 @@ match self.provider_store.save_named(name, &config, true) {
             role: MessageRole::System,
             content: format!("[错误] {}", content),
             timestamp,
+            collapsed: false,
         });
+        self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
     }
@@ -4913,6 +5226,9 @@ match self.provider_store.save_named(name, &config, true) {
                     self.push_system_message("正在优化当前输入...");
                 }
             }
+            KeyCode::Char('s') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.fold_last_assistant_message(FoldAction::Toggle);
+            }
             KeyCode::Char('z') if self.input_mode == InputMode::Chat && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 if !self.processing {
                     self.undo_last_input_optimization();
@@ -5011,7 +5327,7 @@ match self.provider_store.save_named(name, &config, true) {
 pub fn run_tui() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -5022,7 +5338,6 @@ pub fn run_tui() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture,
         DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
@@ -5034,6 +5349,7 @@ pub fn run_tui() -> Result<()> {
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     while !app.should_quit {
         app.poll_async_results();
+        app.tick();
         terminal.draw(|frame| ui(frame, app))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
@@ -5050,6 +5366,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
         }
     }
     Ok(())
+}
+
+fn user_sacode_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".sacode")
 }
 
 fn block_on_cli_future<F, T>(future: F) -> Result<T>
@@ -5071,13 +5394,28 @@ fn ui(frame: &mut Frame, app: &App) {
     let queue_height = app.queue_panel_height();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(0)
+        .margin(1)
         .constraints([
-            Constraint::Min(5),
-            Constraint::Length(queue_height),
+            Constraint::Length(4),
+            Constraint::Min(12),
+            Constraint::Length(queue_height.max(1)),
+            Constraint::Length(3),
             Constraint::Length(3),
         ])
         .split(frame.area());
+
+    let header_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+    let header_inner = header_block.inner(chunks[0]);
+    frame.render_widget(header_block, chunks[0]);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled("SACODE", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
+        ]).alignment(ratatui::layout::Alignment::Center),
+        header_inner,
+    );
 
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -5085,15 +5423,12 @@ fn ui(frame: &mut Frame, app: &App) {
             Constraint::Min(10),
             Constraint::Length(34),
         ])
-        .split(chunks[0]);
+        .split(chunks[1]);
 
     let messages_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(
-            format!(" SaCode [{} | {}] ", app.current_model_name(), theme.name),
-            Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
-        ))
+        .title(Span::styled(" 消息 ", Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD)))
         .title_style(Style::default());
 
     let inner_area = messages_block.inner(top_chunks[0]);
@@ -5103,7 +5438,7 @@ fn ui(frame: &mut Frame, app: &App) {
     let mut current_y = 0;
     let max_y = inner_area.height as usize;
 
-    for msg in app.messages.iter().skip(app.scroll_offset) {
+        for msg in app.messages.iter().skip(app.scroll_offset) {
         if current_y >= max_y {
             break;
         }
@@ -5120,23 +5455,42 @@ fn ui(frame: &mut Frame, app: &App) {
             MessageRole::System => "系统",
         };
 
-        lines.push(Line::from(vec![
-            Span::styled(&msg.timestamp, Style::default().fg(theme.subtle)),
-            Span::raw(" "),
-            Span::styled(role_label, role_style.add_modifier(Modifier::BOLD)),
-        ]));
+            lines.push(Line::from(vec![
+                Span::styled(&msg.timestamp, Style::default().fg(theme.subtle)),
+                Span::raw(" "),
+                Span::styled(role_label, role_style.add_modifier(Modifier::BOLD)),
+                Span::raw(" "),
+                Span::styled(
+                    if msg.collapsed { "[折叠]" } else { "[展开]" },
+                    Style::default().fg(theme.subtle),
+                ),
+            ]));
 
         current_y += 1;
 
-        for content_line in msg.content.lines() {
-            if current_y >= max_y {
-                break;
+        if msg.collapsed {
+            if current_y < max_y {
+                let compact = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
+                let mut chars = compact.chars();
+                let preview: String = chars.by_ref().take(100).collect();
+                let suffix = if chars.next().is_some() { "..." } else { "" };
+                lines.push(Line::from(Span::styled(
+                    format!("{}{}", preview, suffix),
+                    Style::default().fg(theme.text),
+                )));
+                current_y += 1;
             }
-            lines.push(Line::from(Span::styled(
-                content_line,
-                Style::default().fg(theme.text),
-            )));
-            current_y += 1;
+        } else {
+            for content_line in msg.content.lines() {
+                if current_y >= max_y {
+                    break;
+                }
+                lines.push(Line::from(Span::styled(
+                    content_line,
+                    Style::default().fg(theme.text),
+                )));
+                current_y += 1;
+            }
         }
 
         if current_y < max_y {
@@ -5162,34 +5516,43 @@ fn ui(frame: &mut Frame, app: &App) {
         frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
     }
 
-    let stats_block = Block::default()
-        .title(" Token 与费用 ")
+    let sidebar_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(36),
+            Constraint::Percentage(34),
+            Constraint::Percentage(30),
+        ])
+        .split(top_chunks[1]);
+
+    let todo_block = Block::default()
+        .title(" todo任务列表 ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border));
-    let stats_inner = stats_block.inner(top_chunks[1]);
-    frame.render_widget(stats_block, top_chunks[1]);
+    let todo_inner = todo_block.inner(sidebar_chunks[0]);
+    frame.render_widget(todo_block, sidebar_chunks[0]);
+    frame.render_widget(Paragraph::new(app.sidebar_section_lines(SidebarSection::Todo)), todo_inner);
 
-    let pricing = app.current_pricing_rule()
-        .map(|rule| format!("${:.2}/M in", rule.input_per_million))
-        .unwrap_or_else(|| "待配置".to_string());
-    let stats_lines = vec![
-        Line::from(Span::styled(format!("请求: {}", app.usage_stats.requests), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("输入: {}", app.usage_stats.prompt_tokens), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("输出: {}", app.usage_stats.completion_tokens), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("总计: {}", app.usage_stats.total_tokens), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("费用: ${:.6}", app.usage_stats.estimated_cost_usd), Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled(format!("总耗时: {}", format_duration_ms(app.perf_stats.total_task_duration_ms)), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("API: {}", format_duration_ms(app.perf_stats.api_duration_ms)), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("工具: {}", format_duration_ms(app.perf_stats.tool_duration_ms)), Style::default().fg(theme.text))),
-        Line::from(Span::styled(format!("模型: {}", if app.usage_stats.last_model.is_empty() { app.current_model_name() } else { app.usage_stats.last_model.clone() }), Style::default().fg(theme.muted))),
-        Line::from(Span::styled(format!("计价: {}", pricing), Style::default().fg(theme.subtle))),
-    ];
-    frame.render_widget(Paragraph::new(stats_lines), stats_inner);
+    let task_block = Block::default()
+        .title(" task任务列表 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+    let task_inner = task_block.inner(sidebar_chunks[1]);
+    frame.render_widget(task_block, sidebar_chunks[1]);
+    frame.render_widget(Paragraph::new(app.sidebar_section_lines(SidebarSection::Task)), task_inner);
+
+    let git_block = Block::default()
+        .title(" git变更文件 ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+    let git_inner = git_block.inner(sidebar_chunks[2]);
+    frame.render_widget(git_block, sidebar_chunks[2]);
+    frame.render_widget(Paragraph::new(app.sidebar_section_lines(SidebarSection::Git)), git_inner);
 
     if queue_height > 0 {
         let queue_lines = app.queue_panel_lines();
         let queue_paragraph = Paragraph::new(queue_lines);
-        frame.render_widget(queue_paragraph, chunks[1]);
+        frame.render_widget(queue_paragraph, chunks[2]);
     }
 
     let input_text = if app.input_mode == InputMode::ProviderSelect {
@@ -5271,13 +5634,23 @@ fn ui(frame: &mut Frame, app: &App) {
 
     let input_paragraph = Paragraph::new(Line::from(input_text))
         .block(input_block);
-    frame.render_widget(input_paragraph, chunks[2]);
+    frame.render_widget(input_paragraph, chunks[3]);
 
     if !app.input.is_empty() && !matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect | InputMode::ConnectSelect | InputMode::CommandLevel1 | InputMode::CommandLevel2 | InputMode::SkillsSelect | InputMode::McpSelect | InputMode::TasksSelect | InputMode::CheckpointSelect | InputMode::ModeSelect | InputMode::ConfigSelect | InputMode::ConfigEnumSelect | InputMode::InputOptimizePreview) {
-        let cursor_x = chunks[2].x + 1 + app.input.len() as u16;
-        let cursor_y = chunks[2].y + 1;
+        let cursor_x = chunks[3].x + 1 + app.input.len() as u16;
+        let cursor_y = chunks[3].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(format!("{}  ", app.workdir.display()), Style::default().fg(theme.subtle)),
+        Span::styled(format!("{}  ", if app.usage_stats.last_model.is_empty() { app.current_model_name() } else { app.usage_stats.last_model.clone() }), Style::default().fg(theme.assistant)),
+        Span::styled(format!("上下文剩余: {}  ", "100%"), Style::default().fg(theme.text)),
+        Span::styled(format!("执行: {}  ", app.execution_mode), Style::default().fg(theme.text)),
+        Span::styled("思考模式: true", Style::default().fg(theme.text)),
+    ]))
+    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.border)));
+    frame.render_widget(footer, chunks[4]);
 
     if matches!(app.input_mode, InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect) {
         render_selector(frame, app);
@@ -5288,7 +5661,7 @@ fn ui(frame: &mut Frame, app: &App) {
     }
 
     if matches!(app.input_mode, InputMode::CommandLevel1 | InputMode::CommandLevel2) {
-        render_command_selector(frame, app, chunks[2]);
+        render_command_selector(frame, app, chunks[3]);
     }
 
     if app.input_mode == InputMode::SkillsSelect {

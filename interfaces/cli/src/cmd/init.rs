@@ -150,7 +150,7 @@ async fn generate_agents_md(workdir: &Path, summary: &ProjectSummary, mode: Init
             let content = response
                 .choices
                 .first()
-                .map(|choice| strip_code_fences(&choice.message.content.clone().unwrap_or_default()))
+                .map(|choice| strip_code_fences(choice.message.text().unwrap_or_default()))
                 .filter(|content| !content.trim().is_empty())
                 .unwrap_or_else(|| fallback_agents_md(summary, mode));
             AgentsContent {

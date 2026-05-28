@@ -75,7 +75,19 @@ impl ProviderClient {
 
         response.choices
             .first()
-            .map(|c| c.message.content.clone().unwrap_or_default())
+            .map(|c| c.message.text().unwrap_or_default().to_string())
+            .map(|content| (content, usage))
+            .ok_or_else(|| anyhow::anyhow!("No response from provider"))
+    }
+
+    pub async fn simple_chat_messages_with_usage(&self, provider: &ModelProvider, messages: Vec<ChatMessage>) -> Result<(String, Option<ChatUsage>)> {
+        let request = build_request(provider, messages, None, false);
+        let response = self.chat(provider, request).await?;
+        let usage = response.usage.clone();
+
+        response.choices
+            .first()
+            .map(|c| c.message.text().unwrap_or_default().to_string())
             .map(|content| (content, usage))
             .ok_or_else(|| anyhow::anyhow!("No response from provider"))
     }
@@ -121,7 +133,7 @@ impl ProviderClient {
                 .ok_or_else(|| anyhow::anyhow!("No response from provider in round {}", rounds))?;
 
             if !assistant_msg.has_tool_calls() {
-                let final_text = assistant_msg.content.clone().unwrap_or_default();
+                let final_text = assistant_msg.text().unwrap_or_default().to_string();
                 let reasoning = assistant_msg.reasoning_content.clone();
                 messages.push(assistant_msg);
                 return Ok(ToolChatResult {
@@ -181,7 +193,7 @@ impl ProviderClient {
         }
 
         let final_text = messages.last()
-            .and_then(|m| m.content.clone())
+            .and_then(|m| m.text().map(|text| text.to_string()))
             .unwrap_or_default();
         let reasoning = messages.iter().rev().find_map(|m| m.reasoning_content.clone());
 
@@ -410,7 +422,7 @@ mod tests {
         let msg = &resp.choices[0].message;
         assert!(!msg.has_tool_calls());
         assert!(msg.has_reasoning());
-        assert_eq!(msg.content.clone().unwrap(), "The file contains project info.");
+        assert_eq!(msg.text().unwrap(), "The file contains project info.");
         assert_eq!(msg.reasoning_content.clone().unwrap(), "I analyzed the content");
     }
 

@@ -54,7 +54,7 @@ pub struct ChatRequest {
 pub struct ChatMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<MessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +63,27 @@ pub struct ChatMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Parts(Vec<MessagePart>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum MessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: ImageUrlPart },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageUrlPart {
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,7 +199,18 @@ impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user".to_string(),
-            content: Some(content.into()),
+            content: Some(MessageContent::Text(content.into())),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    pub fn user_parts(parts: Vec<MessagePart>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(MessageContent::Parts(parts)),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
@@ -189,7 +221,7 @@ impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: "system".to_string(),
-            content: Some(content.into()),
+            content: Some(MessageContent::Text(content.into())),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
@@ -200,7 +232,7 @@ impl ChatMessage {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: "assistant".to_string(),
-            content: Some(content.into()),
+            content: Some(MessageContent::Text(content.into())),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
@@ -222,7 +254,7 @@ impl ChatMessage {
     pub fn assistant_with_reasoning(content: Option<String>, reasoning_content: Option<String>, tool_calls: Option<Vec<ToolCall>>) -> Self {
         Self {
             role: "assistant".to_string(),
-            content,
+            content: content.map(MessageContent::Text),
             reasoning_content,
             tool_calls,
             tool_call_id: None,
@@ -233,7 +265,7 @@ impl ChatMessage {
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: "tool".to_string(),
-            content: Some(content.into()),
+            content: Some(MessageContent::Text(content.into())),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
@@ -244,7 +276,7 @@ impl ChatMessage {
     pub fn tool_result_named(tool_call_id: impl Into<String>, name: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: "tool".to_string(),
-            content: Some(content.into()),
+            content: Some(MessageContent::Text(content.into())),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
@@ -262,6 +294,13 @@ impl ChatMessage {
 
     pub fn has_reasoning(&self) -> bool {
         self.reasoning_content.is_some() && !self.reasoning_content.as_ref().unwrap().is_empty()
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self.content.as_ref() {
+            Some(MessageContent::Text(text)) => Some(text.as_str()),
+            _ => None,
+        }
     }
 }
 
@@ -402,7 +441,7 @@ mod tests {
             },
         }]);
         assert!(msg.has_tool_calls());
-        assert!(msg.content.is_none());
+        assert!(msg.text().is_none());
     }
 
     #[test]
@@ -413,16 +452,33 @@ mod tests {
             None,
         );
         assert!(msg.has_reasoning());
-        assert_eq!(msg.reasoning_content.unwrap(), "thinking process");
-        assert_eq!(msg.content.unwrap(), "result");
+        assert_eq!(msg.reasoning_content.as_deref().unwrap(), "thinking process");
+        assert_eq!(msg.text().unwrap(), "result");
+    }
+
+    #[test]
+    fn user_parts_message_serializes_with_content_parts() {
+        let msg = ChatMessage::user_parts(vec![
+            MessagePart::Text {
+                text: "describe this image".to_string(),
+            },
+            MessagePart::ImageUrl {
+                image_url: ImageUrlPart {
+                    url: "data:image/png;base64,AAAA".to_string(),
+                },
+            },
+        ]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"content\":["));
+        assert!(json.contains("\"type\":\"image_url\""));
     }
 
     #[test]
     fn tool_result_message_fields() {
         let msg = ChatMessage::tool_result("call_1", "file content");
         assert_eq!(msg.role, "tool");
-        assert_eq!(msg.tool_call_id.unwrap(), "call_1");
-        assert_eq!(msg.content.unwrap(), "file content");
+        assert_eq!(msg.tool_call_id.as_deref().unwrap(), "call_1");
+        assert_eq!(msg.text().unwrap(), "file content");
     }
 
     #[test]

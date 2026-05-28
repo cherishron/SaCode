@@ -172,6 +172,7 @@ async fn run_tool_chat(
     let client = ProviderClient::new();
     let tools_clone = tools.clone();
     let workdir_clone = workdir.to_path_buf();
+    let provider_for_tools = provider.clone();
     let tool_duration = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     let tool_duration_for_executor = tool_duration.clone();
@@ -222,7 +223,12 @@ async fn run_tool_chat(
         }
 
         if let Some(_spec) = spec {
-            let result = match tools_clone.execute(name, args.clone()) {
+            let tool_input = if name == "media.read" {
+                enrich_media_read_args(args, &provider_for_tools)
+            } else {
+                args.clone()
+            };
+            let result = match tools_clone.execute(name, tool_input) {
                 Ok(output) => Ok(if output.success { output.data } else {
                     let _ = MistakeBookStore::new(&workdir_clone).append(
                         format!("tool:{}", name),
@@ -281,6 +287,29 @@ async fn run_tool_chat(
             )
         }
     }
+}
+
+fn enrich_media_read_args(args: &serde_json::Value, provider: &sacode_kernel::model::ModelProvider) -> serde_json::Value {
+    let mut enriched = args.clone();
+    let Some(object) = enriched.as_object_mut() else {
+        return enriched;
+    };
+
+    if !object.contains_key("model") {
+        object.insert("model".to_string(), serde_json::Value::String(provider.model.clone()));
+    }
+    if !object.contains_key("base_url") {
+        if let Some(base_url) = provider.base_url.as_ref().filter(|value| !value.is_empty()) {
+            object.insert("base_url".to_string(), serde_json::Value::String(base_url.clone()));
+        }
+    }
+    if !object.contains_key("api_key") {
+        if let Some(api_key) = provider.api_key.as_ref().filter(|value| !value.is_empty()) {
+            object.insert("api_key".to_string(), serde_json::Value::String(api_key.clone()));
+        }
+    }
+
+    enriched
 }
 
 fn elapsed_ms(duration: Duration) -> u64 {
@@ -447,12 +476,18 @@ pub fn summarize_tool_output(output: &serde_json::Value) -> String {
     if output.is_null() {
         return String::new();
     }
+    let source_prefix = output
+        .get("source")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("[{}] ", value))
+        .unwrap_or_default();
     if let Some(content) = output.get("content") {
         let text = serde_json::to_string(content).unwrap_or_else(|_| String::new());
-        return preview(&text);
+        return format!("{}{}", source_prefix, preview(&text));
     }
     let text = serde_json::to_string(output).unwrap_or_else(|_| String::new());
-    preview(&text)
+    format!("{}{}", source_prefix, preview(&text))
 }
 
 fn maybe_expand_skill_prompt(prompt: &str, workdir: &Path) -> Result<String> {
@@ -483,4 +518,45 @@ fn preview(input: &str) -> String {
     let mut chars = trimmed.chars();
     let preview: String = chars.by_ref().take(80).collect();
     if chars.next().is_some() { format!("{preview}...") } else { preview }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enrich_media_read_args;
+    use sacode_kernel::model::ModelProvider;
+
+    #[test]
+    fn enrich_media_read_args_injects_current_provider() {
+        let provider = ModelProvider::openai("gpt-4o")
+            .with_api_key("secret")
+            .with_base_url("https://api.openai.com/v1");
+        let input = serde_json::json!({
+            "path": ".sacode/pasted/test.png",
+            "mode": "describe"
+        });
+
+        let enriched = enrich_media_read_args(&input, &provider);
+        assert_eq!(enriched.get("model").and_then(|value| value.as_str()), Some("gpt-4o"));
+        assert_eq!(enriched.get("base_url").and_then(|value| value.as_str()), Some("https://api.openai.com/v1"));
+        assert_eq!(enriched.get("api_key").and_then(|value| value.as_str()), Some("secret"));
+    }
+
+    #[test]
+    fn enrich_media_read_args_preserves_explicit_values() {
+        let provider = ModelProvider::openai("gpt-4o")
+            .with_api_key("secret")
+            .with_base_url("https://api.openai.com/v1");
+        let input = serde_json::json!({
+            "path": ".sacode/pasted/test.png",
+            "mode": "ocr",
+            "model": "mimo-v2.5-pro",
+            "base_url": "https://custom.example/v1",
+            "api_key": "custom-key"
+        });
+
+        let enriched = enrich_media_read_args(&input, &provider);
+        assert_eq!(enriched.get("model").and_then(|value| value.as_str()), Some("mimo-v2.5-pro"));
+        assert_eq!(enriched.get("base_url").and_then(|value| value.as_str()), Some("https://custom.example/v1"));
+        assert_eq!(enriched.get("api_key").and_then(|value| value.as_str()), Some("custom-key"));
+    }
 }
