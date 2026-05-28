@@ -140,6 +140,15 @@ pub async fn run_task_with_stdin(
     let task = Task::new(expanded_prompt.clone(), mode, stdin);
     let supervisor = Supervisor::new();
     let result = supervisor.execute(&task);
+    let plan = if pending_question.is_some() {
+        sacode_kernel::Plan {
+            task: expanded_prompt.clone(),
+            steps: Vec::new(),
+            mode: mode.to_string(),
+        }
+    } else {
+        result.output.plan
+    };
 
     Ok(RunnerOutput {
         prompt: expanded_prompt,
@@ -147,7 +156,7 @@ pub async fn run_task_with_stdin(
         max_iterations,
         tool_names,
         workspace: workdir.to_string_lossy().to_string(),
-        plan: result.output.plan,
+        plan,
         events: vec![Event::message(format!("任务通过模型 tool calling 模式执行"))],
         tool_results: vec![],
         provider_response,

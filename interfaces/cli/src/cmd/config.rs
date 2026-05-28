@@ -52,6 +52,7 @@ pub struct EffectiveConfig {
     pub auto_compress: bool,
     pub compress_threshold: usize,
     pub compress_tail_turns: usize,
+    pub execution_mode: String,
     pub max_iterations: usize,
     pub approval_policy: String,
     pub output_style: String,
@@ -71,6 +72,8 @@ pub struct ConfigOverrides {
     pub compress_threshold: Option<usize>,
     #[serde(default)]
     pub compress_tail_turns: Option<usize>,
+    #[serde(default)]
+    pub execution_mode: Option<String>,
     #[serde(default)]
     pub max_iterations: Option<usize>,
     #[serde(default)]
@@ -149,6 +152,16 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
             description: "压缩后保留的最近对话轮数",
             value_type: ConfigValueType::Number { min: 5, max: 30, step: 1 },
             category: ConfigCategory::Context,
+        },
+        ConfigItemMeta {
+            key: "execution_mode",
+            display_name: "默认执行模式",
+            description: "新任务默认使用的执行模式",
+            value_type: ConfigValueType::Enum {
+                options: vec!["plan", "build", "yolo"],
+                labels: vec!["规划", "构建", "Yolo"],
+            },
+            category: ConfigCategory::Execution,
         },
         ConfigItemMeta {
             key: "max_iterations",
@@ -235,6 +248,7 @@ pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String>
         "auto_compress" => bool_text(config.auto_compress),
         "compress_threshold" => config.compress_threshold.to_string(),
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
+        "execution_mode" => config.execution_mode.clone(),
         "max_iterations" => config.max_iterations.to_string(),
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
@@ -252,6 +266,7 @@ pub fn current_raw_value(config: &EffectiveConfig, key: &str) -> Option<String> 
         "auto_compress" => config.auto_compress.to_string(),
         "compress_threshold" => config.compress_threshold.to_string(),
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
+        "execution_mode" => config.execution_mode.clone(),
         "max_iterations" => config.max_iterations.to_string(),
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
@@ -359,6 +374,7 @@ fn scope_value_text(config: &ConfigOverrides, key: &str) -> String {
         "auto_compress" => config.auto_compress.map(bool_text).unwrap_or_else(|| "未设置".to_string()),
         "compress_threshold" => config.compress_threshold.map(|value| value.to_string()).unwrap_or_else(|| "未设置".to_string()),
         "compress_tail_turns" => config.compress_tail_turns.map(|value| value.to_string()).unwrap_or_else(|| "未设置".to_string()),
+        "execution_mode" => config.execution_mode.clone().unwrap_or_else(|| "未设置".to_string()),
         "max_iterations" => config.max_iterations.map(|value| value.to_string()).unwrap_or_else(|| "未设置".to_string()),
         "approval_policy" => config.approval_policy.clone().unwrap_or_else(|| "未设置".to_string()),
         "output_style" => config.output_style.clone().unwrap_or_else(|| "未设置".to_string()),
@@ -379,6 +395,7 @@ fn set_override_value(config: &mut ConfigOverrides, key: &str, value: &str) -> R
         "auto_compress" => config.auto_compress = Some(parse_bool(value)?),
         "compress_threshold" => config.compress_threshold = Some(parse_number(value, 5, 50)?),
         "compress_tail_turns" => config.compress_tail_turns = Some(parse_number(value, 5, 30)?),
+        "execution_mode" => config.execution_mode = Some(normalize_execution_mode(value)?),
         "max_iterations" => config.max_iterations = Some(parse_number(value, 1, 10)?),
         "approval_policy" => config.approval_policy = Some(normalize_approval_policy(value)?),
         "output_style" => config.output_style = Some(normalize_output_style(value)?),
@@ -397,6 +414,7 @@ fn clear_override_value(config: &mut ConfigOverrides, key: &str) -> Result<()> {
         "auto_compress" => config.auto_compress = None,
         "compress_threshold" => config.compress_threshold = None,
         "compress_tail_turns" => config.compress_tail_turns = None,
+        "execution_mode" => config.execution_mode = None,
         "max_iterations" => config.max_iterations = None,
         "approval_policy" => config.approval_policy = None,
         "output_style" => config.output_style = None,
@@ -456,6 +474,15 @@ fn normalize_update_channel(value: &str) -> Result<String> {
         "stable" => Ok("stable".to_string()),
         "beta" => Ok("beta".to_string()),
         _ => bail!("update.channel 只支持 stable、beta"),
+    }
+}
+
+fn normalize_execution_mode(value: &str) -> Result<String> {
+    match value.trim().to_lowercase().as_str() {
+        "plan" => Ok("plan".to_string()),
+        "build" => Ok("build".to_string()),
+        "yolo" => Ok("yolo".to_string()),
+        _ => bail!("execution_mode 只支持 plan、build、yolo"),
     }
 }
 
@@ -561,6 +588,7 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         auto_compress: true,
         compress_threshold: 15,
         compress_tail_turns: 15,
+        execution_mode: "yolo".to_string(),
         max_iterations: 1,
         approval_policy: "prompt".to_string(),
         output_style: "concise".to_string(),
@@ -587,6 +615,9 @@ fn apply_overrides(target: &mut EffectiveConfig, overrides: &ConfigOverrides) {
     }
     if let Some(value) = overrides.compress_tail_turns {
         target.compress_tail_turns = value;
+    }
+    if let Some(value) = &overrides.execution_mode {
+        target.execution_mode = value.clone();
     }
     if let Some(value) = overrides.max_iterations {
         target.max_iterations = value;
@@ -617,6 +648,7 @@ fn extract_overrides(raw: &serde_json::Value) -> ConfigOverrides {
         auto_compress: raw.get("auto_compress").and_then(|value| value.as_bool()),
         compress_threshold: raw.get("compress_threshold").and_then(|value| value.as_u64()).map(|value| value as usize),
         compress_tail_turns: raw.get("compress_tail_turns").and_then(|value| value.as_u64()).map(|value| value as usize),
+        execution_mode: raw.get("execution_mode").and_then(|value| value.as_str()).map(|value| value.to_string()),
         max_iterations: raw.get("max_iterations").and_then(|value| value.as_u64()).map(|value| value as usize),
         approval_policy: raw.get("approval_policy").and_then(|value| value.as_str()).map(|value| value.to_string()),
         output_style: raw.get("outstyle").or_else(|| raw.get("output_style")).and_then(|value| value.as_str()).map(|value| value.to_string()),
@@ -634,6 +666,7 @@ fn write_overrides(raw: &mut serde_json::Value, overrides: &ConfigOverrides) -> 
     set_optional_bool(object, "auto_compress", overrides.auto_compress);
     set_optional_usize(object, "compress_threshold", overrides.compress_threshold);
     set_optional_usize(object, "compress_tail_turns", overrides.compress_tail_turns);
+    set_optional_string(object, "execution_mode", overrides.execution_mode.clone());
     set_optional_usize(object, "max_iterations", overrides.max_iterations);
     set_optional_string(object, "approval_policy", overrides.approval_policy.clone());
     set_optional_string(object, "outstyle", overrides.output_style.clone());
