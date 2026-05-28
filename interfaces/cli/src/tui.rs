@@ -25,7 +25,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
 use sacode_kernel::model::{ChatRequest, ChatUsage, ProviderKind};
@@ -161,7 +161,6 @@ struct App {
 enum FoldAction {
     Collapse,
     Expand,
-    Toggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -573,6 +572,7 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/tools", "显示可用工具"),
         CommandDef::simple("/stats", "查看 token 与费用统计"),
         CommandDef::simple("/theme", "切换主题模板"),
+        CommandDef::simple("/loop", "循环执行任务直到完成"),
         CommandDef::with_subs(
             "/todo",
             "任务列表管理",
@@ -676,6 +676,9 @@ enum AsyncResult {
         remote_version: Option<String>,
         has_update: bool,
     },
+    InitCompleted {
+        message: String,
+    },
     UpdateCompleted {
         message: String,
     },
@@ -693,6 +696,7 @@ enum AsyncContext {
     SaveProvider,
     LoadModels,
     SaveModel,
+    Init,
     Update,
 }
 
@@ -1061,7 +1065,7 @@ impl App {
                 api_duration_ms,
                 tool_duration_ms,
                 total_duration_ms,
-            ) = App::execute_user_message_in_background(stdout);
+            ) = App::execute_user_message_in_background(stdout, &user_input);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
@@ -1095,11 +1099,23 @@ impl App {
         let max_iterations = effective
             .as_ref()
             .map(|value| value.max_iterations)
-            .unwrap_or(1)
+            .unwrap_or(6)
             .max(1)
             .to_string();
-        Command::new(exe)
-            .arg(user_input)
+        let mut command = Command::new(exe);
+        if let Some(loop_task) = user_input
+            .strip_prefix("/loop ")
+            .map(str::trim)
+            .filter(|task| !task.is_empty())
+        {
+            command.arg(format!(
+                "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
+                loop_task
+            ));
+        } else {
+            command.arg(user_input);
+        }
+        command
             .arg("--mode")
             .arg(mode.to_string())
             .arg(approval_arg)
@@ -1115,6 +1131,7 @@ impl App {
 
     fn execute_user_message_in_background(
         stdout: Option<impl Read>,
+        _source_task: &str,
     ) -> (
         String,
         Option<serde_json::Value>,
@@ -1149,14 +1166,27 @@ impl App {
             );
         }
 
-        let parsed: serde_json::Value = match serde_json::from_str(&output) {
+        let trimmed_output = output.trim();
+        if trimmed_output.is_empty() {
+            return (
+                "任务执行失败: 后台进程没有返回 JSON 输出。请查看用户日志定位启动错误。"
+                    .to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+            );
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(trimmed_output) {
             Ok(value) => value,
             Err(error) => {
                 return (
                     format!(
                         "任务执行失败: 解析后台输出失败: {}\n{}",
-                        error,
-                        output.trim()
+                        error, trimmed_output
                     ),
                     None,
                     None,
@@ -1182,7 +1212,7 @@ impl App {
             .get("plan")
             .cloned()
             .and_then(|value| serde_json::from_value::<sacode_kernel::Plan>(value).ok())
-            .filter(Self::should_show_todo_plan);
+            .filter(|_| Self::has_explicit_todo_signal(&parsed));
         let usage = parsed
             .get("usage")
             .cloned()
@@ -1495,54 +1525,12 @@ impl App {
         None
     }
 
-    fn should_show_todo_plan(plan: &sacode_kernel::Plan) -> bool {
-        if plan.steps.len() < 3 {
-            return false;
-        }
-
-        plan.steps.iter().any(|step| {
-            !step.tools.is_empty()
-                || step.status != sacode_kernel::StepStatus::Pending
-                || Self::looks_actionable_step(&step.description)
-                || Self::looks_actionable_step(&step.expected_output)
-        })
-    }
-
-    fn looks_actionable_step(value: &str) -> bool {
-        let lower = value.trim().to_lowercase();
-        if lower.len() < 10 {
-            return false;
-        }
-        [
-            "修改",
-            "创建",
-            "实现",
-            "新增",
-            "修复",
-            "更新",
-            "运行",
-            "测试",
-            "检查",
-            "读取",
-            "编辑",
-            "提交",
-            "推送",
-            "modify",
-            "create",
-            "implement",
-            "add",
-            "fix",
-            "update",
-            "run",
-            "test",
-            "check",
-            "read",
-            "edit",
-            "commit",
-            "push",
-        ]
-        .iter()
-        .any(|keyword| lower.contains(keyword))
+    fn has_explicit_todo_signal(value: &serde_json::Value) -> bool {
+        value
+            .get("todo")
+            .or_else(|| value.get("todos"))
+            .or_else(|| value.get("todo_plan"))
+            .is_some()
     }
 
     fn recent_context_messages(&self, current_input: &str, max_items: usize) -> Vec<String> {
@@ -1971,6 +1959,12 @@ impl App {
             return true;
         }
 
+        if trimmed.starts_with("/loop ") || trimmed == "/loop" {
+            self.loop_command(&input);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed == "/new" {
             self.new_session_command();
             self.input.clear();
@@ -2203,32 +2197,63 @@ impl App {
     }
 
     fn init_command(&mut self, mode: InitMode) {
-        match block_on_cli_future(initialize_project(&self.workdir, mode)) {
-            Ok(summary) => {
-                let mut lines = vec![format!(
-                    "{} 完成。",
-                    crate::cmd::init::mode_name(summary.mode)
-                )];
-                lines.push(format!("项目: {}", summary.project_name));
-                lines.push(format!("技术栈: {}", summary.stack_summary.join("、")));
-                if !summary.detected_commands.is_empty() {
-                    lines.push("识别命令:".to_string());
-                    for command in summary.detected_commands {
-                        lines.push(format!("- {}", command));
+        self.push_system_message(match mode {
+            InitMode::Basic => "已开始轻量初始化，完成后会自动显示结果。",
+            InitMode::Deep => "已开始深度初始化，完成后会自动显示结果。",
+        });
+        self.spawn_init_task(mode);
+    }
+
+    fn spawn_init_task(&self, mode: InitMode) {
+        let sender = self.task_tx.clone();
+        let workdir = self.workdir.clone();
+        thread::spawn(
+            move || match block_on_cli_future(initialize_project(&workdir, mode)) {
+                Ok(summary) => {
+                    let mut lines = vec![format!(
+                        "{} 完成。",
+                        crate::cmd::init::mode_name(summary.mode)
+                    )];
+                    lines.push(format!("项目: {}", summary.project_name));
+                    lines.push(format!("技术栈: {}", summary.stack_summary.join("、")));
+                    if !summary.detected_commands.is_empty() {
+                        lines.push("识别命令:".to_string());
+                        for command in summary.detected_commands {
+                            lines.push(format!("- {}", command));
+                        }
                     }
+                    lines.push("已生成 AGENTS.md。".to_string());
+                    lines.push("已写入 .sacode/project.json。".to_string());
+                    if summary.generated_workflows {
+                        lines.push("已生成 .sacode/workflows.json。".to_string());
+                    }
+                    if summary.generated_mcp_template {
+                        lines.push("已生成 .sacode/mcp.json。".to_string());
+                    }
+                    let _ = sender.send(AsyncResult::InitCompleted {
+                        message: lines.join("\n"),
+                    });
                 }
-                lines.push("已生成 AGENTS.md。".to_string());
-                lines.push("已写入 .sacode/project.json。".to_string());
-                if summary.generated_workflows {
-                    lines.push("已生成 .sacode/workflows.json。".to_string());
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Init,
+                        message: format!("初始化失败: {}", error),
+                    });
                 }
-                if summary.generated_mcp_template {
-                    lines.push("已生成 .sacode/mcp.json。".to_string());
-                }
-                self.push_success_message(&lines.join("\n"));
-            }
-            Err(error) => self.push_error_message(&format!("初始化失败: {}", error)),
+            },
+        );
+    }
+
+    fn loop_command(&mut self, input: &str) {
+        let task = input.trim_start_matches("/loop").trim();
+        if task.is_empty() {
+            self.push_system_message("用法: /loop <任务描述>");
+            return;
         }
+        self.enqueue_or_start_message(format!(
+            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
+            task
+        ));
     }
 
     fn project_session_dir(&self) -> PathBuf {
@@ -2579,8 +2604,19 @@ impl App {
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-            self.paste_from_system_clipboard();
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Right) => self.paste_from_system_clipboard(),
+            MouseEventKind::ScrollUp => {
+                for _ in 0..3 {
+                    self.scroll_up();
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                for _ in 0..3 {
+                    self.scroll_down();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3782,10 +3818,6 @@ impl App {
     }
 
     fn capture_todo_plan(&mut self, source_task: &str, plan: sacode_kernel::Plan) {
-        if !Self::should_show_todo_plan(&plan) {
-            return;
-        }
-
         let items = plan
             .steps
             .iter()
@@ -5291,6 +5323,11 @@ impl App {
                         }
                     }
                 }
+                AsyncResult::InitCompleted { message } => {
+                    self.push_success_message(&message);
+                    self.refresh_git_changes();
+                    self.scroll_to_bottom();
+                }
                 AsyncResult::UpdateCompleted { message } => {
                     self.processing = false;
                     self.busy_message.clear();
@@ -5431,6 +5468,29 @@ impl App {
         }
     }
 
+    fn toggle_all_message_folds(&mut self) {
+        let should_collapse = self
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::Assistant))
+            .any(|message| !message.collapsed);
+        let action = if should_collapse {
+            FoldAction::Collapse
+        } else {
+            FoldAction::Expand
+        };
+        self.fold_all_assistant_messages(action);
+    }
+
+    fn cycle_execution_mode(&mut self) {
+        let next = match self.execution_mode {
+            ExecutionMode::Plan => "build",
+            ExecutionMode::Build => "yolo",
+            ExecutionMode::Yolo => "plan",
+        };
+        self.apply_execution_mode(next, true);
+    }
+
     fn apply_fold_action(&mut self, index: usize, action: FoldAction) -> bool {
         let Some(message) = self.messages.get_mut(index) else {
             return false;
@@ -5439,7 +5499,6 @@ impl App {
         let target = match action {
             FoldAction::Collapse => true,
             FoldAction::Expand => false,
-            FoldAction::Toggle => !message.collapsed,
         };
 
         if message.collapsed == target {
@@ -5578,8 +5637,7 @@ impl App {
                 PathBuf::from(root)
             }
             Ok(_) => {
-                self.git_changes =
-                    vec![format!("当前目录不是 Git 仓库: {}", self.workdir.display())];
+                self.git_changes = vec!["当前目录不是 Git 仓库".to_string()];
                 return;
             }
             Err(error) => {
@@ -5745,7 +5803,7 @@ impl App {
         }
     }
 
-    fn toggle_thinking_model(&mut self) {
+    fn toggle_thinking_mode(&mut self) {
         let Some(current_provider) = self.current_provider.clone() else {
             self.push_system_message(
                 "当前没有可切换的 provider。先使用 /login 或 /connect 配置模型。",
@@ -6440,7 +6498,7 @@ impl App {
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.fold_last_assistant_message(FoldAction::Toggle);
+                self.toggle_all_message_folds();
             }
             KeyCode::Char('t')
                 if self.input_mode == InputMode::Chat
@@ -6448,15 +6506,15 @@ impl App {
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.toggle_thinking_model();
+                self.toggle_thinking_mode();
             }
-            KeyCode::Char('y')
+            KeyCode::Char('m')
                 if self.input_mode == InputMode::Chat
                     && key
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.apply_execution_mode("yolo", true);
+                self.cycle_execution_mode();
             }
             KeyCode::Char('z')
                 if self.input_mode == InputMode::Chat
@@ -6896,7 +6954,9 @@ fn ui(frame: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border));
 
-    let input_paragraph = Paragraph::new(Line::from(input_text)).block(input_block);
+    let input_paragraph = Paragraph::new(Line::from(input_text))
+        .block(input_block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(input_paragraph, chunks[3]);
 
     if !app.input.is_empty()
@@ -6919,8 +6979,14 @@ fn ui(frame: &mut Frame, app: &App) {
                 | InputMode::TodoConfirm
         )
     {
-        let cursor_x = chunks[3].x + 1 + app.input.len() as u16;
-        let cursor_y = chunks[3].y + 1;
+        let input_width = chunks[3].width.saturating_sub(2).max(1) as usize;
+        let input_chars = app.input.chars().count();
+        let cursor_line = input_chars / input_width;
+        let cursor_col = input_chars % input_width;
+        let max_line = chunks[3].height.saturating_sub(2) as usize;
+        let visible_line = cursor_line.min(max_line);
+        let cursor_x = chunks[3].x + 1 + cursor_col as u16;
+        let cursor_y = chunks[3].y + 1 + visible_line as u16;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 
@@ -6942,7 +7008,7 @@ fn ui(frame: &mut Frame, app: &App) {
             Style::default().fg(theme.text),
         ),
         Span::styled(
-            "Ctrl+T 思考  Ctrl+Y Yolo  Ctrl+S 折叠  /keybindings",
+            format!("cwd:{}", app.workdir.display()),
             Style::default().fg(theme.subtle),
         ),
     ]));
@@ -7074,6 +7140,7 @@ fn render_message_lines(app: &App) -> Vec<RenderedMessageLine> {
 fn render_session_selector(frame: &mut Frame, app: &App) {
     let theme = app.theme;
     let area = centered_rect(frame.area(), 72, 55);
+    clear_area(frame, area);
     let block = Block::default()
         .title("历史会话")
         .borders(Borders::ALL)
@@ -7109,6 +7176,7 @@ fn render_session_selector(frame: &mut Frame, app: &App) {
 fn render_task_selector(frame: &mut Frame, app: &App) {
     let theme = app.theme;
     let area = centered_rect(frame.area(), 72, 55);
+    clear_area(frame, area);
     let block = Block::default()
         .title("持久任务")
         .borders(Borders::ALL)
@@ -7154,6 +7222,7 @@ fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
     };
 
     let area = centered_rect(frame.area(), 78, 62);
+    clear_area(frame, area);
     let block = Block::default()
         .title(format!("输入优化预览 [{}]", preview.model_name))
         .borders(Borders::ALL)
@@ -7217,6 +7286,7 @@ fn render_pending_question_panel(frame: &mut Frame, app: &App) {
     }
 
     let area = centered_rect(frame.area(), 78, 62);
+    clear_area(frame, area);
     let block = Block::default()
         .title("等待用户回答")
         .borders(Borders::ALL)
@@ -7340,6 +7410,7 @@ fn render_pending_question_panel(frame: &mut Frame, app: &App) {
 fn render_config_selector(frame: &mut Frame, app: &App) {
     let theme = app.theme;
     let area = centered_rect(frame.area(), 78, 68);
+    clear_area(frame, area);
     let title = format!(
         "配置管理 [{}级]",
         match app.config_scope {
@@ -7395,6 +7466,7 @@ fn render_config_enum_selector(frame: &mut Frame, app: &App) {
         .map(|item| format!("选择: {}", item.display_name))
         .unwrap_or_else(|| "选择配置值".to_string());
     let area = centered_rect(frame.area(), 56, 38);
+    clear_area(frame, area);
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -7423,6 +7495,7 @@ fn render_config_enum_selector(frame: &mut Frame, app: &App) {
 fn render_selector(frame: &mut Frame, app: &App) {
     let theme = app.theme;
     let area = centered_rect(frame.area(), 70, 50);
+    clear_area(frame, area);
     let (title, options, selected_index) = match app.input_mode {
         InputMode::ProviderSelect => (
             "管理 Provider",
@@ -7492,6 +7565,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
             width: area.width,
             height: 1,
         };
+        clear_area(frame, hint_area);
         frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 }
@@ -7499,6 +7573,7 @@ fn render_selector(frame: &mut Frame, app: &App) {
 fn render_connect_selector(frame: &mut Frame, app: &App) {
     let theme = app.theme;
     let area = centered_rect(frame.area(), 70, 50);
+    clear_area(frame, area);
     let block = Block::default()
         .title("快速接入 Provider")
         .borders(Borders::ALL)
@@ -7639,6 +7714,10 @@ fn centered_rect(
         .split(vertical[1])[1]
 }
 
+fn clear_area(frame: &mut Frame, area: ratatui::layout::Rect) {
+    frame.render_widget(Clear, area);
+}
+
 fn render_sidebar_section(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
@@ -7713,6 +7792,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         width: input_area.width,
         height: popup_height,
     };
+    clear_area(frame, popup_area);
 
     let block = Block::default()
         .title(" 命令列表 ")
@@ -7761,6 +7841,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         width: popup_area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
@@ -7775,6 +7856,7 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         width: input_area.width,
         height: popup_height,
     };
+    clear_area(frame, popup_area);
 
     let title = app
         .current_level1
@@ -7825,11 +7907,13 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::lay
         width: popup_area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_skills_selector(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame.area(), 60, 40);
+    clear_area(frame, area);
     let block = Block::default()
         .title(" Skills 列表 ")
         .borders(Borders::ALL)
@@ -7879,11 +7963,13 @@ fn render_skills_selector(frame: &mut Frame, app: &App) {
         width: area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_mcp_selector(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame.area(), 60, 40);
+    clear_area(frame, area);
     let block = Block::default()
         .title(" MCP 服务列表 ")
         .borders(Borders::ALL)
@@ -7932,11 +8018,13 @@ fn render_mcp_selector(frame: &mut Frame, app: &App) {
         width: area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame.area(), 50, 35);
+    clear_area(frame, area);
     let block = Block::default()
         .title(" 检查点列表 ")
         .borders(Borders::ALL)
@@ -7987,11 +8075,13 @@ fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
         width: area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_mode_selector(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame.area(), 40, 30);
+    clear_area(frame, area);
     let block = Block::default()
         .title(" 执行模式 ")
         .borders(Borders::ALL)
@@ -8055,5 +8145,6 @@ fn render_mode_selector(frame: &mut Frame, app: &App) {
         width: area.width,
         height: 1,
     };
+    clear_area(frame, hint_area);
     frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
