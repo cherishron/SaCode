@@ -311,7 +311,7 @@ GET /health
 Response:
 {
   "status": "healthy",
-  "version": "0.1.12"
+  "version": "0.1.13"
 }
 ```
 
