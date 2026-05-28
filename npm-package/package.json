@@ -1,6 +1,6 @@
 {
   "name": "@cherishron/sacode",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Terminal-first AI coding assistant - supports Linux and Windows",
   "license": "MIT",
   "main": "bin/sacode.js",

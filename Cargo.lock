@@ -2521,7 +2521,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sacode-acp"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "sacode-kernel",
@@ -2534,7 +2534,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-cli"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-kernel"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "serde",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-lsp"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "sacode-acp",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "sacode-runtime"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "async-stream",
