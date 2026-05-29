@@ -6,7 +6,7 @@ use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillR
 
 use crate::{
     cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, update, vim, ApprovalPolicy},
-    cmd::init::{InitMode, initialize_project, mode_name},
+    cmd::init::{apply_init_draft, build_init_draft, mode_name, DraftAction, InitMode},
     provider_config::{fetch_models, fallback_models, ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
     runner::{format_output, run_task},
     version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
@@ -414,20 +414,49 @@ impl ReplSession {
 
     async fn run_init(&self, mode: InitMode) -> Result<()> {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        let summary = initialize_project(&workdir, mode).await?;
+        let draft = build_init_draft(&workdir, mode).await?;
         println!();
-        println!("{} complete", mode_name(summary.mode));
-        println!("Project: {}", summary.project_name);
-        println!("Detected stack: {}", summary.stack_summary.join(", "));
-        for command in summary.detected_commands {
+        println!("{} draft ready", mode_name(draft.mode));
+        println!("Project: {}", draft.project_name);
+        println!("Detected stack: {}", draft.stack_summary.join(", "));
+        for command in &draft.detected_commands {
             println!("  - {}", command);
         }
-        println!("Generated AGENTS.md");
-        if summary.generated_workflows {
-            println!("Generated .sacode/workflows.json");
+        println!();
+        println!("Draft files:");
+        for file in &draft.agents_files {
+            let action = match file.action {
+                DraftAction::Create => "create",
+                DraftAction::Update => "update",
+            };
+            println!("  - [{}] {} :: {}", action, file.relative_path, file.summary);
         }
-        if summary.generated_mcp_template {
-            println!("Generated .sacode/mcp.json");
+        if draft.generated_workflows {
+            println!("Will generate .sacode/workflows.json");
+        }
+        if draft.generated_mcp_template {
+            println!("Will generate .sacode/mcp.json");
+        }
+        println!("Apply draft now? [y/N]");
+        print!("> ");
+        io::stdout().flush()?;
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            let summary = apply_init_draft(&workdir, &draft).await?;
+            println!();
+            println!("{} applied", mode_name(summary.mode));
+            if summary.generated_agents {
+                println!("Generated AGENTS.md draft files");
+            }
+            if summary.generated_workflows {
+                println!("Generated .sacode/workflows.json");
+            }
+            if summary.generated_mcp_template {
+                println!("Generated .sacode/mcp.json");
+            }
+        } else {
+            println!("Draft kept in preview only.");
         }
         println!();
         Ok(())

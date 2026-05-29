@@ -41,35 +41,28 @@ sacode skill list       # 列出 skills
 sacode mcp list         # 列出 MCP 服务
 sacode checkpoint list  # 列出保存点
 sacode repl             # 进入 REPL 模式
-sacode daemon           # 启动 HTTP/SSE 服务
+sacode serve --acp --lsp
 ```
 
 ## Configuration
 
-创建 `~/.sacode/profiles.yaml`:
+项目级配置和运行数据默认写入 `.sacode/`：
 
-```yaml
-current: default
-
-providers:
-  openai:
-    api_key_env: OPENAI_API_KEY
-  deepseek:
-    api_key_env: DEEPSEEK_API_KEY
-
-profiles:
-  default:
-    agents:
-      planner: { provider: openai, model: gpt-4o }
-      coder: { provider: deepseek, model: deepseek-coder }
+```text
+.sacode/
+├── provider.json
+├── mcp.json
+├── profile.json
+├── mistakes.json
+├── project.json
+├── skills/
+└── checkpoints/
 ```
 
 ## Supported Platforms
 
 - Linux x64
 - Windows x64
-
-macOS binaries are planned and are not included in the current npm package.
 
 ## License
 

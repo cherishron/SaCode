@@ -11,6 +11,20 @@ pub struct SkillSpec {
     pub prompt: String,
     pub path: PathBuf,
     pub source: SkillSource,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub rating: Option<f32>,
+    #[serde(default)]
+    pub download_count: Option<u64>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,10 +127,48 @@ impl SkillRegistry {
         };
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.md", name.trim()));
+        let now = chrono::Local::now().to_rfc3339();
         let body = format!(
-            "# {}\n\nDescription: {}\n\n## Prompt\n\n{}\n",
+            "# {}\n\nDescription: {}\n\nVersion: 1.0.0\n\nAuthor: local\n\nCreated: {}\n\nUpdated: {}\n\n## Prompt\n\n{}\n",
             name.trim(),
             description.trim(),
+            now,
+            now,
+            prompt.trim()
+        );
+        fs::write(&path, body)?;
+        Ok(path)
+    }
+
+    pub fn save_skill_with_meta(
+        &self,
+        name: &str,
+        description: &str,
+        prompt: &str,
+        version: &str,
+        author: &str,
+        tags: Vec<String>,
+        source: SkillSource,
+    ) -> Result<PathBuf> {
+        let dir = match source {
+            SkillSource::User => self.config.user_skills_dir(),
+            SkillSource::Project => self.config.project_skills_dir(),
+            SkillSource::Workspace => self.config.workspace_skills_dir(),
+            SkillSource::Builtin => anyhow::bail!("cannot save builtin skill"),
+        };
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.md", name.trim()));
+        let now = chrono::Local::now().to_rfc3339();
+        let tags_str = if tags.is_empty() { String::new() } else { tags.join(", ") };
+        let body = format!(
+            "# {}\n\nDescription: {}\n\nVersion: {}\n\nAuthor: {}\n\nTags: {}\n\nCreated: {}\n\nUpdated: {}\n\n## Prompt\n\n{}\n",
+            name.trim(),
+            description.trim(),
+            version.trim(),
+            author.trim(),
+            tags_str,
+            now,
+            now,
             prompt.trim()
         );
         fs::write(&path, body)?;
@@ -182,6 +234,11 @@ fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpe
     let mut description = String::new();
     let mut prompt = String::new();
     let mut in_prompt = false;
+    let mut version = None;
+    let mut author = None;
+    let mut tags = Vec::new();
+    let mut created_at = None;
+    let mut updated_at = None;
 
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("# ") {
@@ -191,6 +248,31 @@ fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpe
 
         if let Some(rest) = line.strip_prefix("Description: ") {
             description = rest.trim().to_string();
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Version: ") {
+            version = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Author: ") {
+            author = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Tags: ") {
+            tags = rest.split(',').map(|tag| tag.trim().to_string()).collect();
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Created: ") {
+            created_at = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Updated: ") {
+            updated_at = Some(rest.trim().to_string());
             continue;
         }
 
@@ -213,6 +295,13 @@ fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpe
         prompt: prompt.trim().to_string(),
         path: path.to_path_buf(),
         source,
+        version,
+        author,
+        rating: None,
+        download_count: None,
+        tags,
+        created_at,
+        updated_at,
     }
 }
 

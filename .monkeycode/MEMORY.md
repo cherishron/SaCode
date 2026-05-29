@@ -63,6 +63,35 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 当存在等待用户回答的任务时，普通输入继续进入消息队列；只有显式 `/answer ...` 或输入框为空时按回车，才用于恢复当前等待中的任务。
   - 等待回答如果包含多个问题，TUI 需要使用 tabs 切换问题；有选项时支持上下左右和回车操作，并保留自定义输入回答能力。
 
+[执行模式授权策略]
+- Date: 2026-05-28
+- Context: 用户补充 build/plan/yolo 与工具审批策略的关系时
+- Instructions:
+  - 工具审批策略需要根据执行模式动态生效，而不是固定使用 deny。
+  - `plan` 模式只允许读取类工具，完全禁止写入和修改类工具。
+  - `build` 模式对修改类工具执行审批，支持单次授权和本次会话永久授权。
+  - `yolo` 模式对修改类工具自动授权，无需再询问。
+
+[Init 命令流程]
+- Date: 2026-05-28
+- Context: 用户定义 `/init` 命令的标准执行流程时
+- Instructions:
+  - `/init` 需要先遍历目录结构，识别项目类型，并尊重 `.gitignore`` 跳过无关文件。
+  - `/init` 需要读取关键配置文件，例如 `package.json`、`tsconfig.json`、`pyproject.toml`、`requirements.txt`、`Cargo.toml`、`vite.config.*`，提取技术栈、依赖和 scripts。
+  - `/init` 需要分析架构与约定，包括源码目录、入口文件、路由层、测试目录，以及 ESLint、Prettier、Black 等格式工具配置。
+  - `/init` 需要先生成结构化 `AGENTS.md` 草稿。
+  - `/init` 需要先展示草稿供用户确认；存在旧 `AGENTS.md` 时优先增量改进，而不是静默覆盖。
+
+[Init-deep 分层 AGENTS]
+- Date: 2026-05-28
+- Context: 用户定义 `/init-deep` 的目录级 AGENTS.md 产出方式时
+- Instructions:
+  - `/init-deep` 需要在关键目录生成多个 `AGENTS.md`，利用目录就近加载机制提供按需上下文。
+  - 根目录 `AGENTS.md` 保持极简，只保留技术栈总览和全局规则，控制在约 50 到 150 行。
+  - `src/`、`src/api/`、`src/components/`、`tests/` 等关键目录需要生成对应的局部 `AGENTS.md`，写入该层专属约定。
+  - 只有在目录具备独立职责和稳定约定时，才生成该目录下的局部 `AGENTS.md`。
+  - 局部 `AGENTS.md` 负责承载该目录的职责、导入规范、错误处理、鉴权、UI 约定、测试约定等就近规则，避免把根文件撑大。
+
 [避免编译测试]
 - Date: 2026-05-26
 - Context: 当前这一轮功能修改期间
@@ -116,6 +145,32 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - REPL `/compress`：内存摘要 + `recent_messages`（最近 12 条），后续任务拼接历史摘要 + 最近对话 + 当前请求
   - 执行任务中禁止压缩，避免截断运行状态
 
+[架构审计 P0 阻塞问题]
+- Date: 2026-05-28
+- Context: Agent 在执行 dev 分支系统性审计时发现
+- Category: 排错调试
+- Instructions:
+  - shell.exec 与 fs.search 在 Windows 上完全失效：`runtime/src/tools/shell/exec.rs:54` 使用 `Command::new("sh")`，`runtime/src/tools/fs/search.rs:57` 使用 `Command::new("grep")`，Windows 上不存在这些命令，需要用 `cfg(target_os)` 分平台处理。
+  - 输入框光标定位与多行软换行数学计算存在边缘风险：`layout_input_lines` 每次遍历整串文本重建所有行，`cursor_col` 记录的是 Unicode 宽度累计而非字符列位置，`ui()` 中第一次 `input_inner_width` 与第二次不一致导致高度与内容不匹配。
+  - `/loop` 循环任务缺少 `max_iterations` 上限与 `error_count` 失败计数，可能无限循环或连续失败仍续跑。
+
+[架构审计 P1 功能完整性问题]
+- Date: 2026-05-28
+- Context: Agent 在执行 dev 分支系统性审计时发现
+- Category: 排错调试
+- Instructions:
+  - init 增量更新 AGENTS.md 未保留用户手动修改：`apply_init_draft` 直接 `fs::write` 覆盖文件，`build_init_draft` 只检查文件是否存在决定 `DraftAction::Update` 或 `DraftAction::Create`，但更新时直接覆盖，用户定制内容会丢失。
+  - init 扫描逻辑对 `.gitignore` 语义不完整：`load_gitignore_patterns` 只做简单行提取与前后斜杠裁剪，没有通配符展开、否定模式、目录匹配语义，可能扫描过多无关文件或漏掉应跳过的目录。
+
+[架构审计 P2 架构健壮性问题]
+- Date: 2026-05-28
+- Context: Agent 在执行 dev 分支系统性审计时发现
+- Category: 排错调试
+- Instructions:
+  - 沙箱功能弱：`runtime/src/sandbox/executor.rs` 只是命令白名单检查，没有真正的文件系统隔离（chroot、namespace）、网络隔离、Windows 上无法使用 Unix 特有的安全机制（seccomp、pledge）。
+  - SideEffectLevel 与 ApprovalPolicy 对齐良好：`runtime/src/tools/spec.rs` 的 `SideEffectLevel`（ReadOnly/Modify/Execute）与 `kernel/src/execution/approval.rs` 的 `ApprovalPolicy`（Prompt/AutoApprove/AutoDeny）在 `runner.rs` 中正确配合。
+  - 文档一致性已对齐：README、AGENTS.md、npm-package/README.md 已去除旧 TS/迁移叙述，聚焦 Rust 实现。
+
 [编程洞察机制]
 - Date: 2026-05-26
 - Context: Agent 在实现 `/insight` 命令并注入系统提示时发现
@@ -143,3 +198,21 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 用户级 `.sacode` 需要包含 `mcps`、`skills`、`plugin` 等跨项目能力配置。
   - 项目级 `.sacode` 需要继承用户级配置，再叠加当前项目覆盖项。
   - 所有项目的会话归档应放在用户级目录下，项目级只保留当前项目运行态和短期数据。
+
+[P1 功能闭环修复]
+- Date: 2026-05-28
+- Context: Agent 在执行 P1 功能闭环任务时
+- Category: 构建方法
+- Instructions:
+  - Modal 统一容器：所有弹窗使用 `render_modal_block` 或 `render_relative_modal_block`（包括命令选择器、Skills/MCP/Checkpoint 选择器）。
+  - Init `.gitignore` 语义：引入 `ignore = "0.4"` crate 实现完整 gitignore 语义（通配符、否定模式、目录匹配）。
+  - AGENTS.md 增量更新：已有文件时读取旧内容，追加到 `## Auto-generated updates` 段落，保留用户手动修改。
+  - `/loop` 熔断机制：`LoopState` 增加 `max_iterations=10` 和 `error_count`，连续失败 3 次自动停止，达到上限提示"已达到最大轮次上限"。
+
+[tui.rs 模块拆分与日志确认]
+- Date: 2026-05-28
+- Context: Agent 在执行代码清理任务时
+- Category: 构建方法
+- Instructions:
+  - tui.rs 巨石文件拆分：创建 `tui/mod.rs`（主模块）和 `tui/input.rs`（输入框逻辑），抽取纯函数 `layout_input_lines`、`is_editable_input_mode`、`display_workdir`。
+  - 日志实现确认：`append_raw_log` 已正确记录 stderr 和 JSON 解析错误到 `~/.sacode/logs/tui.log`。

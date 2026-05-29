@@ -9,6 +9,7 @@ description = "SaCode runtime layer"
 [dependencies]
 anyhow.workspace = true
 async-stream = "0.3"
+async-trait = "0.1"
 axum = "0.7"
 chrono = "0.4"
 extism = "1.0"
@@ -19,6 +20,7 @@ serde_json.workspace = true
 sacode-kernel = { path = "../kernel" }
 tokio = { workspace = true, features = ["sync", "net", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tracing.workspace = true
 wait-timeout = "0.2"
 
 [dev-dependencies]

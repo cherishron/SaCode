@@ -14,4 +14,7 @@ pub use agent::{AgentOutput, CoderAgent, CoderOutput, ToolCallIntent, PlannerAge
 pub use execution::{ApprovalPolicy, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, StepContext, ToolExecutionContext, ToolExecutionRecord};
 pub use event::{Event, ApprovalAction, FileChangeType};
 pub use hook::{Hook, HookContext, HookResult};
-pub use schema::{ExecutionMode, Task, Checkpoint, Review, Plan, Step, StepStatus};
+pub use schema::{
+    BackoffStrategy, Checkpoint, ExecutionMode, Plan, QueueStats, RetryCondition, RetryPolicy,
+    Review, ScheduledTask, Step, StepStatus, Task, TaskPriority, TaskQueueStatus, TaskResult,
+};

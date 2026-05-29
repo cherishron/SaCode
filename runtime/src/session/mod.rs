@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 
-use sacode_kernel::{ApprovalPolicy, Checkpoint, Event, ExecutionContext, ExecutionMode, Supervisor, Task, ToolExecutionRecord};
+use sacode_kernel::{ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionContext, ExecutionMode, Supervisor, Task, ToolExecutionRecord};
 
 use crate::CheckpointStorage;
 use crate::ToolRegistry;
@@ -60,6 +60,52 @@ impl SessionService {
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
         session.status = SessionStatus::Cancelled;
         Ok(())
+    }
+
+    pub fn compress_session(&self, session_id: &str) -> Result<CompressionResult> {
+        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        let original_count = session.events.len();
+        let original_tokens = session.estimate_event_tokens();
+
+        session.compress()?;
+
+        Ok(CompressionResult {
+            original_event_count: original_count,
+            compressed_event_count: session.compressed_event_count.unwrap_or(original_count),
+            original_token_count: original_tokens,
+            compressed_token_count: session.estimate_event_tokens(),
+            compression_ratio: session.compression_ratio.unwrap_or(1.0),
+            summary: session.compressed_summary.clone().unwrap_or_default(),
+        })
+    }
+
+    pub fn auto_compress_session(&self, session_id: &str, threshold: u32) -> Result<Option<CompressionResult>> {
+        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        if !session.should_compress(threshold) {
+            return Ok(None);
+        }
+
+        let original_count = session.events.len();
+        let original_tokens = session.estimate_event_tokens();
+
+        session.compress()?;
+
+        Ok(Some(CompressionResult {
+            original_event_count: original_count,
+            compressed_event_count: session.compressed_event_count.unwrap_or(original_count),
+            original_token_count: original_tokens,
+            compressed_token_count: session.estimate_event_tokens(),
+            compression_ratio: session.compression_ratio.unwrap_or(1.0),
+            summary: session.compressed_summary.clone().unwrap_or_default(),
+        }))
     }
 
     pub fn load_session(&self, workdir: &Path, checkpoint_name: &str) -> Result<SessionHandle> {
@@ -167,6 +213,11 @@ struct SessionState {
     events: Vec<Event>,
     last_checkpoint: Option<String>,
     last_tool_records: Vec<ToolExecutionRecord>,
+    compressed_summary: Option<String>,
+    compression_ratio: Option<f32>,
+    original_event_count: Option<usize>,
+    compressed_event_count: Option<usize>,
+    last_compressed_at: Option<String>,
 }
 
 impl SessionState {
@@ -179,6 +230,11 @@ impl SessionState {
             events: Vec::new(),
             last_checkpoint: None,
             last_tool_records: Vec::new(),
+            compressed_summary: None,
+            compression_ratio: None,
+            original_event_count: None,
+            compressed_event_count: None,
+            last_compressed_at: None,
         }
     }
 
@@ -190,6 +246,58 @@ impl SessionState {
             tools: self.tools.clone(),
             last_checkpoint: self.last_checkpoint.clone(),
         }
+    }
+
+    fn estimate_event_tokens(&self) -> u32 {
+        self.events.iter().map(|event| estimate_event_tokens(event)).sum()
+    }
+
+    fn should_compress(&self, threshold: u32) -> bool {
+        self.estimate_event_tokens() > threshold && self.compressed_summary.is_none()
+    }
+
+    fn compress(&mut self) -> Result<()> {
+        if self.events.is_empty() {
+            return Ok(())
+        }
+
+        let original_count = self.events.len();
+        let original_tokens = self.estimate_event_tokens();
+
+        let mut key_events = Vec::new();
+        let mut tool_events = Vec::new();
+
+        for event in &self.events {
+            match event {
+                Event::Message { content: _ } => key_events.push(event.clone()),
+                Event::PlanGenerated { steps: _ } => key_events.push(event.clone()),
+                Event::ToolCallStarted { name: _, input: _ } => tool_events.push(event.clone()),
+                Event::ToolCallFinished { name: _, output: _, success } if *success => tool_events.push(event.clone()),
+                Event::Done { summary: _ } => key_events.push(event.clone()),
+                Event::Error { message: _ } => key_events.push(event.clone()),
+                _ => {}
+            }
+        }
+
+        let summary = generate_compression_summary(&key_events, &tool_events);
+        let compressed_events = key_events.into_iter().chain(tool_events.into_iter()).collect::<Vec<_>>();
+        let compressed_count = compressed_events.len();
+        let compressed_tokens = compressed_events.iter().map(|event| estimate_event_tokens(event)).sum::<u32>();
+
+        let ratio = if original_tokens > 0 {
+            compressed_tokens as f32 / original_tokens as f32
+        } else {
+            1.0
+        };
+
+        self.events = compressed_events;
+        self.compressed_summary = Some(summary);
+        self.compression_ratio = Some(ratio);
+        self.original_event_count = Some(original_count);
+        self.compressed_event_count = Some(compressed_count);
+        self.last_compressed_at = Some(chrono::Local::now().to_rfc3339());
+
+        Ok(())
     }
 }
 
@@ -269,4 +377,81 @@ fn unique_suffix() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionResult {
+    pub original_event_count: usize,
+    pub compressed_event_count: usize,
+    pub original_token_count: u32,
+    pub compressed_token_count: u32,
+    pub compression_ratio: f32,
+    pub summary: String,
+}
+
+fn estimate_event_tokens(event: &Event) -> u32 {
+    match event {
+        Event::Message { content } => (content.len() / 4) as u32,
+        Event::Thinking { content } => (content.len() / 4) as u32,
+        Event::PlanGenerated { steps } => steps.iter().map(|s| s.len() / 4).sum::<usize>() as u32,
+        Event::ToolCallStarted { name, input } => (name.len() / 4 + input.to_string().len() / 4 + 10) as u32,
+        Event::ToolCallFinished { name, output, success: _ } => {
+            let output_len = output.to_string().len();
+            (name.len() / 4 + output_len / 4 + 20) as u32
+        },
+        Event::ApprovalRequested { action } => {
+            match action {
+                ApprovalAction::WriteFile { path } => (path.len() / 4 + 10) as u32,
+                ApprovalAction::ExecuteCommand { command } => (command.len() / 4 + 10) as u32,
+                ApprovalAction::CallPlugin { name } => (name.len() / 4 + 10) as u32,
+                ApprovalAction::BatchChange { count } => 10 + *count as u32,
+            }
+        },
+        Event::ApprovalResolved { approved: _ } => 5,
+        Event::FileChanged { path, change_type: _ } => (path.len() / 4 + 10) as u32,
+        Event::CommandOutput { command, output } => (command.len() / 4 + output.len() / 4 + 10) as u32,
+        Event::Done { summary } => (summary.len() / 4) as u32,
+        Event::Error { message } => (message.len() / 4 + 10) as u32,
+    }
+}
+
+fn generate_compression_summary(key_events: &[Event], tool_events: &[Event]) -> String {
+    let mut summary_parts = Vec::new();
+
+    for event in key_events {
+        match event {
+            Event::Message { content } => {
+                summary_parts.push(format!("消息: {}", content.lines().next().unwrap_or_default()));
+            },
+            Event::Done { summary } => {
+                summary_parts.push(format!("完成: {}", summary.lines().next().unwrap_or_default()));
+            },
+            Event::Error { message } => {
+                summary_parts.push(format!("错误: {}", message.lines().next().unwrap_or_default()));
+            },
+            Event::PlanGenerated { steps } => {
+                summary_parts.push(format!("规划: {} 步", steps.len()));
+            },
+            _ => {}
+        }
+    }
+
+    let tool_names: Vec<String> = tool_events
+        .iter()
+        .filter_map(|event| match event {
+            Event::ToolCallStarted { name, input: _ } => Some(name.clone()),
+            Event::ToolCallFinished { name, output: _, success: _ } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    if !tool_names.is_empty() {
+        summary_parts.push(format!("工具调用: {}", tool_names.join(", ")));
+    }
+
+    if summary_parts.is_empty() {
+        "会话已压缩".to_string()
+    } else {
+        summary_parts.join("\n")
+    }
 }

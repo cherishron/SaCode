@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -11,10 +12,14 @@ use tower::util::ServiceExt;
 use crate::{
     create_daemon,
     config::SaCodeConfig,
+    executor::TaskExecutor,
     mcp::{McpConfig, McpConfigStore, McpServerConfig, McpSource},
+    queue::{InMemoryStore, TaskQueue, TaskStore},
+    retry::RetryHandler,
     skills::SkillRegistry,
     tools::{self, ToolRegistry, ToolOutput},
 };
+use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
 
 #[test]
 fn test_tool_registry() {
@@ -463,7 +468,7 @@ async fn test_daemon_task_lifecycle() {
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
 
     assert_eq!(payload["task_id"], task_id);
-    assert!(matches!(payload["status"].as_str(), Some("running") | Some("completed") | Some("failed")));
+    assert!(matches!(payload["queue_status"].as_str(), Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")));
 }
 
 #[tokio::test]
@@ -549,4 +554,267 @@ async fn test_daemon_task_events_endpoint_filters_by_task_id() {
         response.headers().get("content-type").and_then(|value| value.to_str().ok()),
         Some("text/event-stream")
     );
+}
+
+#[tokio::test]
+async fn test_task_queue_submit_and_status() {
+    let queue = Arc::new(TaskQueue::new(2));
+
+    let task = ScheduledTask::new("test-1".to_string(), Task::new("test prompt", ExecutionMode::Build, None));
+    let task_id = queue.submit(task).await.expect("submit task");
+
+    let status = queue.status(&task_id).await;
+    assert_eq!(status, Some(TaskQueueStatus::Ready));
+
+    let stats = queue.stats().await;
+    assert_eq!(stats.ready_count, 1);
+}
+
+#[tokio::test]
+async fn test_task_queue_priority_ordering() {
+    let queue = Arc::new(TaskQueue::new(1));
+
+    let blocker = ScheduledTask::new("blocker".to_string(), Task::new("blocker", ExecutionMode::Build, None));
+    let blocker_id = queue.submit(blocker).await.expect("submit blocker");
+
+    let low_task = ScheduledTask::new("low-1".to_string(), Task::new("low priority", ExecutionMode::Build, None))
+        .with_priority(TaskPriority::Low)
+        .with_dependencies(vec![blocker_id.clone()]);
+    let normal_task = ScheduledTask::new("normal-1".to_string(), Task::new("normal priority", ExecutionMode::Build, None))
+        .with_priority(TaskPriority::Normal)
+        .with_dependencies(vec![blocker_id.clone()]);
+    let high_task = ScheduledTask::new("high-1".to_string(), Task::new("high priority", ExecutionMode::Build, None))
+        .with_priority(TaskPriority::High)
+        .with_dependencies(vec![blocker_id.clone()]);
+    let urgent_task = ScheduledTask::new("urgent-1".to_string(), Task::new("urgent priority", ExecutionMode::Build, None))
+        .with_priority(TaskPriority::Urgent)
+        .with_dependencies(vec![blocker_id.clone()]);
+
+    queue.submit(low_task.clone()).await.expect("submit low");
+    queue.submit(normal_task.clone()).await.expect("submit normal");
+    queue.submit(high_task.clone()).await.expect("submit high");
+    queue.submit(urgent_task.clone()).await.expect("submit urgent");
+
+    let stats = queue.stats().await;
+    assert_eq!(stats.pending_count, 4);
+    assert_eq!(stats.ready_count, 1);
+
+    let next = queue.next_ready().await;
+    assert!(next.is_some());
+    assert_eq!(next.unwrap().id, "blocker");
+
+    queue.mark_completed("blocker", sacode_kernel::TaskResult::success("blocker".to_string(), "done".to_string(), 0)).await;
+
+    let stats_after = queue.stats().await;
+    assert_eq!(stats_after.pending_count, 4);
+
+    let next_ready = queue.next_ready().await;
+    assert!(next_ready.is_some());
+    assert_eq!(next_ready.unwrap().priority, TaskPriority::Urgent);
+}
+
+#[tokio::test]
+async fn test_task_queue_stats() {
+    let queue = Arc::new(TaskQueue::new(5));
+
+    let stats_before = queue.stats().await;
+    assert_eq!(stats_before.ready_count, 0);
+
+    for i in 0..3 {
+        let task = ScheduledTask::new(format!("task-{}", i), Task::new("test", ExecutionMode::Build, None));
+        queue.submit(task).await.expect("submit task");
+    }
+
+    let stats_after = queue.stats().await;
+    assert_eq!(stats_after.ready_count, 3);
+}
+
+#[tokio::test]
+async fn test_task_queue_cancel() {
+    let queue = Arc::new(TaskQueue::new(1));
+
+    let task = ScheduledTask::new("cancel-1".to_string(), Task::new("cancel test", ExecutionMode::Build, None));
+    let task_id = queue.submit(task).await.expect("submit task");
+
+    let cancelled = queue.cancel(&task_id).await;
+    assert!(cancelled);
+
+    let status = queue.status(&task_id).await;
+    assert_eq!(status, Some(TaskQueueStatus::Cancelled));
+}
+
+#[tokio::test]
+async fn test_task_queue_dependency() {
+    let queue = Arc::new(TaskQueue::new(2));
+
+    let parent_task = ScheduledTask::new("parent-1".to_string(), Task::new("parent", ExecutionMode::Build, None));
+    let parent_id = queue.submit(parent_task).await.expect("submit parent");
+
+    let child_task = ScheduledTask::new("child-1".to_string(), Task::new("child", ExecutionMode::Build, None))
+        .with_dependencies(vec![parent_id.clone()]);
+    let child_id = queue.submit(child_task).await.expect("submit child");
+
+    let child_status = queue.status(&child_id).await;
+    assert_eq!(child_status, Some(TaskQueueStatus::Pending));
+
+    let completed_ids = queue.get_completed_ids().await;
+    assert!(!completed_ids.contains(&child_id));
+}
+
+#[tokio::test]
+async fn test_retry_policy() {
+    let policy = RetryPolicy::exponential(1000, 10000, 3);
+
+    assert_eq!(policy.max_attempts, 3);
+    assert_eq!(policy.compute_delay_ms(0), 1000);
+    assert_eq!(policy.compute_delay_ms(1), 2000);
+    assert_eq!(policy.compute_delay_ms(2), 4000);
+    assert_eq!(policy.compute_delay_ms(10), 10000);
+}
+
+#[tokio::test]
+async fn test_scheduled_task_retry_logic() {
+    let mut task = ScheduledTask::new("retry-1".to_string(), Task::new("retry test", ExecutionMode::Build, None))
+        .with_retry_policy(RetryPolicy::fixed(100, 2));
+
+    assert_eq!(task.current_attempt, 0);
+    assert!(task.can_retry());
+
+    task.increment_attempt();
+    assert_eq!(task.current_attempt, 1);
+    assert!(task.can_retry());
+
+    task.increment_attempt();
+    assert_eq!(task.current_attempt, 2);
+    assert!(!task.can_retry());
+}
+
+#[tokio::test]
+async fn test_in_memory_store() {
+    let store = Arc::new(InMemoryStore::new());
+
+    let task = ScheduledTask::new("store-1".to_string(), Task::new("store test", ExecutionMode::Build, None));
+
+    store.save(&task).await.expect("save task");
+
+    let loaded = store.load("store-1").await.expect("load task");
+    assert!(loaded.is_some());
+    assert_eq!(loaded.unwrap().id, "store-1");
+
+    let pending = store.load_pending().await.expect("load pending");
+    assert_eq!(pending.len(), 1);
+}
+
+#[tokio::test]
+async fn test_daemon_queue_status_endpoint() {
+    let app = create_daemon().await;
+
+    let response = app
+        .oneshot(Request::builder().uri("/queue/status").body(Body::empty()).expect("build request"))
+        .await
+        .expect("daemon should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+
+    assert!(payload["pending_count"].is_number());
+    assert!(payload["running_count"].is_number());
+}
+
+#[tokio::test]
+async fn test_daemon_task_with_priority() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"test","mode":"build","priority":"high"}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+
+    assert_eq!(payload["status"], "queued");
+}
+
+#[tokio::test]
+async fn test_daemon_task_cancel_endpoint() {
+    let app = create_daemon().await;
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"test","mode":"build"}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+
+    let body = to_bytes(create_response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    let task_id = payload["task_id"].as_str().expect("task id");
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let cancel_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/task/{}/cancel", task_id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await;
+
+    if let Ok(resp) = cancel_response {
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn test_daemon_task_with_retry_policy() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"test","mode":"build","retry_policy":{"max_attempts":3,"backoff_type":"exponential","base_ms":1000,"max_ms":10000}}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+
+    assert_eq!(payload["status"], "queued");
 }

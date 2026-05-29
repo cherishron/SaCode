@@ -338,7 +338,7 @@ mod tests {
     fn default_base_url_matches_provider_kinds() {
         assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Mimo), "https://api.xiaomimimo.com/v1");
         assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Openai), "https://api.openai.com/v1");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Deepseek), "https://api.deepseek.com/v1");
+        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Deepseek), "https://api.deepseek.com");
         assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Longcat), "https://api.longcat.chat/openai/v1");
         assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Ollama), "http://127.0.0.1:11434/v1");
         assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Custom("other".to_string())), "");

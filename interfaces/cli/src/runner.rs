@@ -3,7 +3,7 @@ use std::{env, path::Path, time::{Duration, Instant}};
 use anyhow::Result;
 use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
-use sacode_runtime::{McpConfigStore, ProviderClient, ToolRegistry};
+use sacode_runtime::{McpConfigStore, ProviderClient, SideEffectLevel, ToolRegistry};
 use serde::Serialize;
 
 use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
@@ -114,7 +114,7 @@ pub async fn run_task_with_stdin(
         tool_names.dedup();
     }
 
-    let tool_defs = build_tool_definitions(&tools, &tool_names);
+    let tool_defs = build_tool_definitions(&tools, &tool_names, mode);
 
     let system_prompt = build_system_prompt(&workdir, mode, &tool_names);
 
@@ -157,7 +157,7 @@ pub async fn run_task_with_stdin(
         tool_names,
         workspace: workdir.to_string_lossy().to_string(),
         plan,
-        events: vec![Event::message(format!("任务通过模型 tool calling 模式执行"))],
+        events: Vec::new(),
         tool_results: vec![],
         provider_response,
         pending_question,
@@ -188,13 +188,40 @@ async fn run_tool_chat(
     let tool_executor = move |name: &str, args: &serde_json::Value| -> Result<serde_json::Value> {
         let tool_started_at = Instant::now();
         let spec = tools_clone.get(name);
+        let side_effect_level = spec
+            .map(|s| s.side_effect_level)
+            .unwrap_or(SideEffectLevel::Execute);
         let needs_approval = spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
 
         if needs_approval {
             match approval {
                 ApprovalPolicy::AutoApprove => {}
                 ApprovalPolicy::AutoDeny => return Ok(serde_json::json!({ "error": "denied by policy" })),
-                ApprovalPolicy::Prompt => return Ok(serde_json::json!({ "error": "interactive approval unavailable in tool calling mode" })),
+                ApprovalPolicy::Prompt => {
+                    return Ok(serde_json::json!({
+                        "pending": true,
+                        "kind": "tool_approval",
+                        "question": format!("工具 {} 需要修改工作区，是否允许继续执行？", name),
+                        "options": [
+                            {
+                                "label": "拒绝",
+                                "description": "取消这次修改操作"
+                            },
+                            {
+                                "label": "允许一次",
+                                "description": "仅本次执行允许该修改操作"
+                            },
+                            {
+                                "label": "本会话总是允许",
+                                "description": "本会话内后续修改操作都自动允许"
+                            }
+                        ],
+                        "multiple": false,
+                        "tool_name": name,
+                        "side_effect_level": format_side_effect_level(side_effect_level),
+                        "args": args,
+                    }))
+                }
             }
         }
 
@@ -266,19 +293,9 @@ async fn run_tool_chat(
     let api_started_at = Instant::now();
     match client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await {
         Ok(result) => {
-            let mut lines = Vec::new();
-            if let Some(reasoning) = &result.reasoning_content {
-                if !reasoning.is_empty() {
-                    lines.push(format!("[思考] {}", preview(reasoning)));
-                    lines.push(String::new());
-                }
-            }
-            lines.push(result.final_text);
-            if result.tool_calls_made > 0 {
-                lines.push(format!("\n[执行了 {} 次工具调用，共 {} 轮对话]", result.tool_calls_made, result.rounds));
-            }
+            let final_text = result.final_text.trim().to_string();
             (
-                Ok(lines.join("\n")),
+                Ok(final_text),
                 result.pending_question,
                 result.usage,
                 elapsed_ms(api_started_at.elapsed()),
@@ -358,14 +375,29 @@ fn build_system_prompt(workdir: &Path, mode: ExecutionMode, tool_names: &[String
     prompt
 }
 
-fn build_tool_definitions(registry: &ToolRegistry, tool_names: &[String]) -> Vec<ToolDefinition> {
+fn build_tool_definitions(
+    registry: &ToolRegistry,
+    tool_names: &[String],
+    mode: ExecutionMode,
+) -> Vec<ToolDefinition> {
     let mut defs = Vec::new();
     for name in tool_names {
         if let Some(spec) = registry.get(name) {
+            if mode == ExecutionMode::Plan && spec.side_effect_level != SideEffectLevel::ReadOnly {
+                continue;
+            }
             defs.push(spec.to_tool_definition());
         }
     }
     defs
+}
+
+fn format_side_effect_level(level: SideEffectLevel) -> &'static str {
+    match level {
+        SideEffectLevel::ReadOnly => "read_only",
+        SideEffectLevel::Modify => "modify",
+        SideEffectLevel::Execute => "execute",
+    }
 }
 
 pub fn format_output(output: &RunnerOutput) -> String {

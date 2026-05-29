@@ -20,6 +20,50 @@ pub struct SkillHubSkillMeta {
     pub author: String,
     pub version: String,
     pub download_url: String,
+    #[serde(default)]
+    pub rating: Option<f32>,
+    #[serde(default)]
+    pub download_count: Option<u64>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillHubUploadRequest {
+    pub name: String,
+    pub description: String,
+    pub author: String,
+    pub version: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillHubUploadResponse {
+    pub success: bool,
+    pub message: String,
+    pub skill_id: Option<String>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillHubVersionMeta {
+    pub version: String,
+    pub created_at: String,
+    pub download_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillHubSkillListResponse {
+    pub skills: Vec<SkillHubSkillMeta>,
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +179,78 @@ impl SkillHubClient {
     pub async fn install_mcp_to_source(&self, name: &str, config_path: &Path, _source: McpSource) -> Result<()> {
         self.install_mcp(name, config_path).await
     }
+
+    pub async fn upload_skill(&self, request: SkillHubUploadRequest) -> Result<SkillHubUploadResponse> {
+        let client = http_client()?;
+        let url = format!("{}/api/skills/upload", self.base_url.trim_end_matches('/'));
+        let response = client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("skill upload failed ({}): {}", status, body);
+        }
+        Ok(response.json().await?)
+    }
+
+    pub async fn publish_skill(&self, name: &str, skill_path: &Path) -> Result<SkillHubUploadResponse> {
+        let content = fs::read_to_string(skill_path)?;
+        let spec = parse_downloaded_skill(skill_path, &content, SkillSource::User);
+
+        let request = SkillHubUploadRequest {
+            name: spec.name,
+            description: spec.description,
+            author: spec.author.clone().unwrap_or_else(|| "unknown".to_string()),
+            version: spec.version.clone().unwrap_or_else(|| "1.0.0".to_string()),
+            prompt: spec.prompt,
+            tags: spec.tags,
+        };
+
+        self.upload_skill(request).await
+    }
+
+    pub async fn list_skill_versions(&self, name: &str) -> Result<Vec<SkillHubVersionMeta>> {
+        let client = http_client()?;
+        let url = format!("{}/api/skills/{}/versions", self.base_url.trim_end_matches('/'), name);
+        let response = client.get(&url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("failed to list skill versions ({}): {}", status, body);
+        }
+        Ok(response.json().await?)
+    }
+
+    pub async fn list_skills(&self, page: u64, per_page: u64) -> Result<SkillHubSkillListResponse> {
+        let client = http_client()?;
+        let url = format!("{}/api/skills/list", self.base_url.trim_end_matches('/'));
+        let response = client
+            .get(&url)
+            .query(&[("page", page), ("per_page", per_page)])
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("failed to list skills ({}): {}", status, body);
+        }
+        Ok(response.json().await?)
+    }
+
+    pub async fn get_skill_info(&self, name: &str) -> Result<SkillHubSkillMeta> {
+        let client = http_client()?;
+        let url = format!("{}/api/skills/{}/info", self.base_url.trim_end_matches('/'), name);
+        let response = client.get(&url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("failed to get skill info ({}): {}", status, body);
+        }
+        Ok(response.json().await?)
+    }
 }
 
 fn detect_skill_source(target_dir: &Path) -> SkillSource {
@@ -159,6 +275,11 @@ fn parse_downloaded_skill(path: &Path, content: &str, source: SkillSource) -> Sk
     let mut description = String::new();
     let mut prompt = String::new();
     let mut in_prompt = false;
+    let mut version = None;
+    let mut author = None;
+    let mut tags = Vec::new();
+    let mut created_at = None;
+    let mut updated_at = None;
 
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("# ") {
@@ -168,6 +289,31 @@ fn parse_downloaded_skill(path: &Path, content: &str, source: SkillSource) -> Sk
 
         if let Some(rest) = line.strip_prefix("Description: ") {
             description = rest.trim().to_string();
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Version: ") {
+            version = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Author: ") {
+            author = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Tags: ") {
+            tags = rest.split(',').map(|tag| tag.trim().to_string()).collect();
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Created: ") {
+            created_at = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Updated: ") {
+            updated_at = Some(rest.trim().to_string());
             continue;
         }
 
@@ -190,6 +336,13 @@ fn parse_downloaded_skill(path: &Path, content: &str, source: SkillSource) -> Sk
         prompt: prompt.trim().to_string(),
         path: path.to_path_buf(),
         source,
+        version,
+        author,
+        rating: None,
+        download_count: None,
+        tags,
+        created_at,
+        updated_at,
     }
 }
 

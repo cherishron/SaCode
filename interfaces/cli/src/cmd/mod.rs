@@ -1059,6 +1059,7 @@ fn parse_args(args: Vec<String>) -> CliOptions {
             "-h" | "--help" => command = CliCommand::Help,
             "-V" | "--version" => command = CliCommand::Version,
             "--json" => json = true,
+            "--prompt" => approval = ApprovalPolicy::Prompt,
             "--approve" => approval = ApprovalPolicy::AutoApprove,
             "--deny" => approval = ApprovalPolicy::AutoDeny,
             "--mode" => {
@@ -1085,11 +1086,7 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         mode,
         max_iterations,
         json,
-        approval: if json && approval == ApprovalPolicy::Prompt {
-            ApprovalPolicy::AutoDeny
-        } else {
-            approval
-        },
+        approval,
         sub_args: Vec::new(),
     }
 }
@@ -1123,7 +1120,7 @@ fn print_help() {
     println!("SaCode");
     println!();
     println!("Usage:");
-    println!("  sacode \"<task>\" [--mode plan|build|yolo] [--max-iterations N] [--json] [--approve|--deny]");
+    println!("  sacode \"<task>\" [--mode plan|build|yolo] [--max-iterations N] [--json] [--prompt|--approve|--deny]");
     println!("  sacode orchestrator \"<task>\"");
     println!("  sacode profile [ls|use <name>|show]");
     println!("  sacode plugin [list]");

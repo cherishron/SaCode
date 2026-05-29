@@ -1,6 +1,6 @@
 # SaCode
 
-SaCode 是一个终端优先的 AI 编程工具，已完成从 Node/TS 到 Rust 的完整迁移。
+SaCode 是一个终端优先的 Rust AI 编程工具。
 
 ## 安装
 
@@ -13,12 +13,15 @@ sacode --version
 
 ```text
 .
-├── Cargo.toml          # Workspace 配置
-├── kernel/             # 纯逻辑层
-├── runtime/            # 副作用层
-├── interfaces/cli/     # CLI 入口
-├── npm-package/        # npm 发布包
-└── docs/               # 文档
+├── Cargo.toml           # Workspace 配置
+├── kernel/              # 纯逻辑层
+├── runtime/             # 副作用层
+├── interfaces/cli/      # CLI / TUI / REPL 入口
+├── interfaces/acp/      # ACP 服务
+├── interfaces/lsp/      # LSP 服务
+├── npm-package/         # npm 发布包
+├── docs/                # 文档
+└── legacy/              # 历史归档，不参与当前构建
 ```
 
 ## 核心架构
@@ -39,7 +42,8 @@ sacode --version
 - `tools`: FS、Shell、Git、Web 工具
 - `provider`: ProviderClient (OpenAI、DeepSeek、Ollama)
 - `plugin`: WASM 插件加载
-- `daemon`: SSE 服务
+- `acp`: ACP 服务
+- `lsp`: LSP 服务
 - `skills`: 本地 skill 模板注册
 - `mcp`: MCP 远程服务配置
 - `sandbox`: 执行沙箱
@@ -49,7 +53,7 @@ sacode --version
 CLI 入口 `sacode` 命令：
 
 - 默认进入聊天式 TUI
-- 支持 Ghost、REPL、Daemon 模式
+- 支持任务执行、REPL、TUI，以及 `serve` 聚合服务模式
 
 ## CLI 使用
 
@@ -61,13 +65,17 @@ sacode                    # 进入聊天式终端 UI
 
 TUI 界面为聊天式交互：
 - 上方显示对话历史
-- 底部输入框接收任务
+- 底部输入框接收任务（支持多行输入，第 8 行停止增长）
 - 支持 Ctrl+Q 退出、Esc 清空输入
+- 支持 Ctrl+T 切换 thinking 模式、Ctrl+M 轮转执行模式（plan/build/yolo）
 - 支持 `/login` 配置 OpenAI 兼容接口
 - 支持 `/providers` 切换当前 provider
 - 支持 `/provider-rename <old> <new>` 重命名 provider
 - 支持 `/provider-remove <name>` 删除非当前 provider
 - 支持 `/models` 拉取并选择默认模型
+- 支持 `/loop <task>` 循环执行任务，最多 10 轮，连续失败 3 次自动停止
+- 支持 `/init` 生成项目 AGENTS.md（增量更新，保留用户修改）
+- Modal 弹窗统一使用 `render_modal_block`，避免穿透问题
 
 模型接入流程：
 
@@ -82,12 +90,11 @@ TUI 界面为聊天式交互：
 
 配置文件保存到 `.sacode/provider.json`。
 
-### Ghost 模式
+### 任务执行模式
 
 ```bash
 sacode "分析代码结构"              # Build 模式执行
 sacode /commit                     # 使用内置 skill
-sacode /review-pr                  # 使用代码审查 skill
 sacode "设计方案" --mode plan      # 仅规划
 sacode "格式化代码" --mode yolo    # 全自动执行
 cat README.md | sacode "总结"      # stdin 输入
@@ -107,38 +114,45 @@ REPL 支持同样的 provider 配置命令：
 - `/provider-remove`
 - `/models`
 
-### Daemon 模式
+### 服务模式
 
 ```bash
-sacode daemon --port 3000 # 启动 HTTP + SSE 服务
+sacode serve --acp --lsp  # 同时启动 ACP / LSP 服务
+sacode acp serve          # 单独启动 ACP 服务
+sacode lsp serve          # 单独启动 LSP 服务
 ```
 
 ## 子命令
 
 ```bash
+sacode orchestrator "<task>"
 sacode profile ls         # 列出 profile（项目级）
 sacode profile use <name> # 切换 profile
 sacode profile show       # 显示当前 profile
-sacode plugin ls          # 列出插件与 MCP 工具
-sacode skill list         # 列出 skills
-sacode skill show commit  # 查看 skill 定义
-sacode skill add <name> <desc> <prompt> # 新增项目级 skill
-sacode skill remove <name> # 删除项目级 skill
-sacode skill run <name> [args...] # 渲染 skill prompt
-sacode mcp list           # 列出 MCP 服务
-sacode mcp show <name>    # 查看 MCP 服务配置
-sacode mcp add <name> <url> # 添加远程 MCP 服务
-sacode mcp enable <name>  # 启用 MCP 服务
-sacode mcp disable <name> # 停用 MCP 服务
-sacode mcp remove <name>  # 删除 MCP 服务
-sacode mcp inspect <name> # 探测远程 MCP 服务信息
-sacode mcp tools <name>   # 查看远程 MCP 工具列表
+sacode plugin list        # 列出插件与 MCP 工具
+sacode doctor
+sacode diff [--cached]
+sacode hooks
+sacode ide [status|vscode|cursor|jetbrains|config ...]
+sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]
+sacode keybindings
+sacode outstyle [show|concise|explain|teach|clear|path|project ...]
+sacode vim [show|on|off|project show|on|off]
+sacode skill [search|install|list|show|update|remove|run]
+sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]
 sacode mcp call <server> <tool> <json>
+sacode memory [show|search <query>|append <content>|path|summary]
+sacode insight
+sacode acp [serve|status] [--host HOST] [--port PORT]
+sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]
+sacode serve [--acp] [--lsp]
 sacode mistakes list      # 列出错题本
 sacode mistakes show <index> # 查看单条错题详情
 sacode checkpoint list    # 列出 checkpoint
 sacode init               # 轻量初始化项目，生成 AGENTS.md
 sacode init-deep          # 深度初始化项目，补充工作流与 MCP 模板
+sacode status
+sacode update [--check|--force]
 ```
 
 ## 工具系统
@@ -159,7 +173,7 @@ sacode init-deep          # 深度初始化项目，补充工作流与 MCP 模�
 
 - 工作区默认目录：`skills/`
 - 项目级覆盖目录：`.sacode/skills/`（同名优先）
-- 内置默认 skill：`commit`、`review-pr`、`explain`
+- 内置默认 skill 会随运行时注册表变化，以 `sacode skill list` 为准
 - 支持 slash 调用：`sacode /commit`
 - 支持 CLI 管理：
   - `sacode skill add <name> <description> <prompt>`
@@ -172,14 +186,9 @@ sacode init-deep          # 深度初始化项目，补充工作流与 MCP 模�
 ### MCP
 
 - 配置文件：`.sacode/mcp.json`
-- 支持远程 MCP 服务注册、启停、探测和工具发现
+- 支持远程 MCP 服务安装、启停、探测和工具发现
 - 支持直接调用远程 MCP tool
-- 新增 CLI 命令：
-  - `sacode mcp show <name>`
-  - `sacode mcp remove <name>`
-- 新增 REPL/TUI 命令：
-  - `/mcps-show <name>`
-  - `/mcps-remove <name>`
+- CLI 子命令集合以 `sacode mcp --help` / 根帮助输出为准
 
 示例：
 
@@ -249,6 +258,8 @@ SaCode 在项目根目录下维护 `.sacode/` 目录：
 1. `.sacode/workflows.json`
 2. `.sacode/mcp.json`
 
+当前 init 实现已经拆成“构建草稿 -> 应用草稿”的两阶段逻辑，TUI 和 REPL 会先展示草稿再确认写入。
+
 ## 文档
 
 - `docs/PRD.md`: 产品需求文档
@@ -263,8 +274,10 @@ SaCode 在项目根目录下维护 `.sacode/` 目录：
 # 版本同步
 node scripts/sync-version.js <version>
 
-# 构建产物
+# Linux 发布构建
 cargo build --release
+
+# 本地 Windows GNU 交叉构建
 cargo build --release --target x86_64-pc-windows-gnu
 
 # 平台清单
@@ -272,14 +285,13 @@ node scripts/write-platform-manifest.js <version>
 
 # 发布检查
 node scripts/check-release.js --strict-platforms
-
-# npm 发布
-cd npm-package && npm publish --access public
 ```
+
+CI 发布 workflow 使用的 Windows 目标是 `x86_64-pc-windows-msvc`，与本地 `.cargo/config.toml` 的 GNU 目标不同。
 
 ## 归档
 
-`legacy/` 保留旧 Node/TS 代码作为历史参考，不参与编译。
+`legacy/` 目录不参与当前 Rust workspace 的构建、测试和发布。
 
 ## 许可证
 

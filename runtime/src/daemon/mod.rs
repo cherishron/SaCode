@@ -7,22 +7,58 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use sacode_kernel::{Event as KernelEvent, ExecutionMode, Supervisor, Task};
+use sacode_kernel::{
+    Event as KernelEvent, ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority,
+    TaskQueueStatus,
+};
 use crate::tools::ToolRegistry;
+use crate::queue::TaskQueue;
+use crate::executor::TaskExecutor;
+use crate::retry::RetryHandler;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRequest {
     pub prompt: String,
     pub mode: String,
+    #[serde(default)]
+    pub priority: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub retry_policy: Option<RetryPolicyRequest>,
+    #[serde(default)]
+    pub scheduled_at: Option<String>,
+    #[serde(default)]
+    pub deadline: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryPolicyRequest {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_backoff_type")]
+    pub backoff_type: String,
+    #[serde(default = "default_base_ms")]
+    pub base_ms: u64,
+    #[serde(default = "default_max_ms")]
+    pub max_ms: u64,
+    #[serde(default)]
+    pub retry_on: Vec<String>,
+}
+
+fn default_max_attempts() -> u32 { 3 }
+fn default_backoff_type() -> String { "exponential".to_string() }
+fn default_base_ms() -> u64 { 1000 }
+fn default_max_ms() -> u64 { 30000 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResponse {
     pub task_id: String,
     pub status: String,
     pub message: String,
+    pub queue_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,9 +67,16 @@ pub struct TaskStatus {
     pub prompt: String,
     pub mode: String,
     pub status: String,
+    pub queue_status: String,
+    pub priority: String,
     pub progress: usize,
     pub total_steps: usize,
     pub current_event: Option<String>,
+    pub current_attempt: u32,
+    pub max_attempts: u32,
+    pub duration_ms: Option<u64>,
+    pub error: Option<String>,
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,14 +89,28 @@ pub struct StreamEvent {
 pub struct DaemonState {
     pub event_bus: broadcast::Sender<StreamEvent>,
     pub tasks: RwLock<HashMap<String, TaskStatus>>,
+    pub queue: Arc<TaskQueue>,
+    pub executor: Mutex<TaskExecutor>,
+    pub retry_handler: RetryHandler,
 }
 
 impl DaemonState {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(100);
+        let queue = Arc::new(TaskQueue::new(10));
+        let tools = ToolRegistry::builtin();
+
+        let executor = TaskExecutor::new(queue.clone(), tools.clone());
+        let executor_event_bus = executor.event_bus();
+
+        let retry_handler = RetryHandler::new(queue.clone(), executor_event_bus);
+
         Self {
             event_bus: tx,
             tasks: RwLock::new(HashMap::new()),
+            queue,
+            executor: Mutex::new(executor),
+            retry_handler,
         }
     }
 }
@@ -65,9 +122,14 @@ pub async fn create_daemon() -> Router {
         .route("/health", get(health_check))
         .route("/task", post(create_task))
         .route("/task/:id/status", get(get_task_status))
+        .route("/task/:id/result", get(get_task_result))
+        .route("/task/:id/retry", post(retry_task))
+        .route("/task/:id/cancel", post(cancel_task))
         .route("/events", get(stream_events))
         .route("/events/:id", get(stream_task_events))
         .route("/tools", get(list_tools))
+        .route("/queue/status", get(get_queue_status))
+        .route("/queue/pending", get(get_pending_tasks))
         .with_state(state)
 }
 
@@ -84,7 +146,14 @@ async fn create_task(
 ) -> Json<TaskResponse> {
     let task_id = format!("task-{}", chrono::Utc::now().timestamp_millis());
     let mode = parse_mode(&req.mode);
+    let priority = parse_priority(&req.priority);
+    let retry_policy = parse_retry_policy(&req.retry_policy);
     let task = Task::new(req.prompt.clone(), mode, None);
+
+    let scheduled_task = ScheduledTask::new(task_id.clone(), task)
+        .with_priority(priority)
+        .with_dependencies(req.dependencies.clone())
+        .with_retry_policy(retry_policy);
 
     {
         let mut tasks = state.tasks.write().await;
@@ -95,9 +164,16 @@ async fn create_task(
                 prompt: req.prompt.clone(),
                 mode: req.mode.clone(),
                 status: "created".to_string(),
+                queue_status: "pending".to_string(),
+                priority: priority.to_string(),
                 progress: 0,
                 total_steps: 0,
                 current_event: None,
+                current_attempt: 0,
+                max_attempts: scheduled_task.retry_policy.max_attempts,
+                duration_ms: None,
+                error: None,
+                output: None,
             },
         );
     }
@@ -106,20 +182,30 @@ async fn create_task(
         &state,
         &task_id,
         "task_created",
-        serde_json::json!({ "prompt": req.prompt, "mode": req.mode }),
+        serde_json::json!({ "prompt": req.prompt, "mode": req.mode, "priority": priority.to_string() }),
     );
 
-    let state_for_task = Arc::clone(&state);
-    let task_id_for_task = task_id.clone();
-    tokio::spawn(async move {
-        run_task(state_for_task, task_id_for_task, task).await;
-    });
+    match state.queue.submit(scheduled_task).await {
+        Ok(_) => {
+            let mut executor = state.executor.lock().await;
+            let spawned = executor.run_once().await;
 
-    Json(TaskResponse {
-        task_id,
-        status: "queued".to_string(),
-        message: format!("Task created: {}", req.prompt),
-    })
+            Json(TaskResponse {
+                task_id,
+                status: "queued".to_string(),
+                message: format!("Task created and submitted to queue", ),
+                queue_status: if spawned > 0 { "running" } else { "pending" }.to_string(),
+            })
+        }
+        Err(e) => {
+            Json(TaskResponse {
+                task_id,
+                status: "error".to_string(),
+                message: format!("Failed to submit task: {}", e),
+                queue_status: "error".to_string(),
+            })
+        }
+    }
 }
 
 async fn get_task_status(
@@ -135,10 +221,150 @@ async fn get_task_status(
         })));
     }
 
+    if let Some(queue_status) = state.queue.status(&task_id).await {
+        if let Some(task) = state.queue.get_task(&task_id).await {
+            return Json(serde_json::json!({
+                "task_id": task_id,
+                "prompt": task.task.prompt,
+                "mode": task.task.mode.to_string(),
+                "status": queue_status.to_string(),
+                "queue_status": queue_status.to_string(),
+                "priority": task.priority.to_string(),
+                "current_attempt": task.current_attempt,
+                "max_attempts": task.retry_policy.max_attempts,
+            }));
+        }
+    }
+
+    if let Some(result) = state.queue.get_result(&task_id).await {
+        return Json(serde_json::json!({
+            "task_id": task_id,
+            "status": result.status.to_string(),
+            "queue_status": result.status.to_string(),
+            "duration_ms": result.duration_ms,
+            "error": result.error,
+            "output": result.output,
+        }));
+    }
+
     Json(serde_json::json!({
         "task_id": task_id,
         "status": "not_found",
-        "progress": 0,
+        "queue_status": "not_found",
+    }))
+}
+
+async fn get_task_result(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    if let Some(result) = state.queue.get_result(&task_id).await {
+        return Json(serde_json::to_value(result).unwrap_or_else(|_| serde_json::json!({
+            "task_id": task_id,
+            "status": "error"
+        })));
+    }
+
+    Json(serde_json::json!({
+        "task_id": task_id,
+        "status": "not_found",
+        "message": "Task result not available yet",
+    }))
+}
+
+async fn retry_task(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let queue_status = state.queue.status(&task_id).await;
+
+    if queue_status != Some(TaskQueueStatus::Failed) {
+        return Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "error",
+            "message": "Task is not in failed state, cannot retry",
+        }));
+    }
+
+    if let Some(mut task) = state.queue.get_task(&task_id).await {
+        if !task.can_retry() {
+            return Json(serde_json::json!({
+                "task_id": task_id,
+                "status": "error",
+                "message": "Task has exceeded max retry attempts",
+            }));
+        }
+
+        task.increment_attempt();
+
+        match state.queue.submit(task).await {
+            Ok(_) => {
+                let mut executor = state.executor.lock().await;
+                executor.run_once().await;
+
+                Json(serde_json::json!({
+                    "task_id": task_id,
+                    "status": "queued",
+                    "message": "Task retry submitted",
+                }))
+            }
+            Err(e) => {
+                Json(serde_json::json!({
+                    "task_id": task_id,
+                    "status": "error",
+                    "message": format!("Failed to submit retry: {}", e),
+                }))
+            }
+        }
+    } else {
+        Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "error",
+            "message": "Task not found in queue",
+        }))
+    }
+}
+
+async fn cancel_task(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let cancelled = state.queue.cancel(&task_id).await;
+
+    if cancelled {
+        emit_event(&state, &task_id, "task_cancelled", serde_json::json!({}));
+        Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "cancelled",
+            "message": "Task cancelled successfully",
+        }))
+    } else {
+        Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "error",
+            "message": "Task cannot be cancelled (not in pending/ready/running state)",
+        }))
+    }
+}
+
+async fn get_queue_status(
+    State(state): State<Arc<DaemonState>>,
+) -> Json<serde_json::Value> {
+    let stats = state.queue.stats().await;
+    Json(serde_json::to_value(stats).unwrap_or_else(|_| serde_json::json!({
+        "error": "Failed to get queue stats"
+    })))
+}
+
+async fn get_pending_tasks(
+    State(state): State<Arc<DaemonState>>,
+) -> Json<serde_json::Value> {
+    let stats = state.queue.stats().await;
+    Json(serde_json::json!({
+        "pending_count": stats.pending_count,
+        "ready_count": stats.ready_count,
+        "running_count": stats.running_count,
+        "total_queued": stats.pending_count + stats.ready_count + stats.running_count,
     }))
 }
 
@@ -208,73 +434,55 @@ fn parse_mode(mode: &str) -> ExecutionMode {
     }
 }
 
+fn parse_priority(priority: &str) -> TaskPriority {
+    match priority {
+        "low" => TaskPriority::Low,
+        "high" => TaskPriority::High,
+        "urgent" => TaskPriority::Urgent,
+        _ => TaskPriority::Normal,
+    }
+}
+
+fn parse_retry_policy(req: &Option<RetryPolicyRequest>) -> RetryPolicy {
+    match req {
+        Some(policy) => {
+            let backoff = match policy.backoff_type.as_str() {
+                "fixed" => sacode_kernel::BackoffStrategy::Fixed { delay_ms: policy.base_ms },
+                "linear" => sacode_kernel::BackoffStrategy::Linear { increment_ms: policy.base_ms },
+                _ => sacode_kernel::BackoffStrategy::Exponential {
+                    base_ms: policy.base_ms,
+                    max_ms: policy.max_ms,
+                },
+            };
+
+            let retry_on = policy.retry_on.iter().filter_map(|s| {
+                match s.as_str() {
+                    "timeout" => Some(sacode_kernel::RetryCondition::Timeout),
+                    "network_error" => Some(sacode_kernel::RetryCondition::NetworkError),
+                    "rate_limit" => Some(sacode_kernel::RetryCondition::RateLimit),
+                    "resource_exhausted" => Some(sacode_kernel::RetryCondition::ResourceExhausted),
+                    "internal_error" => Some(sacode_kernel::RetryCondition::InternalError),
+                    "any" => Some(sacode_kernel::RetryCondition::Any),
+                    _ => None,
+                }
+            }).collect();
+
+            RetryPolicy {
+                max_attempts: policy.max_attempts,
+                backoff,
+                retry_on,
+            }
+        }
+        None => RetryPolicy::default(),
+    }
+}
+
 fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_json::Value) {
     let _ = state.event_bus.send(StreamEvent {
         task_id: task_id.to_string(),
         event_type: event_type.to_string(),
         data,
     });
-}
-
-async fn run_task(state: Arc<DaemonState>, task_id: String, task: Task) {
-    {
-        let mut tasks = state.tasks.write().await;
-        if let Some(status) = tasks.get_mut(&task_id) {
-            status.status = "running".to_string();
-        }
-    }
-
-    emit_event(&state, &task_id, "task_started", serde_json::json!({}));
-
-    let supervisor = Supervisor::new();
-    let result = supervisor.execute(&task);
-    let total_steps = result.output.plan.steps.len();
-
-    {
-        let mut tasks = state.tasks.write().await;
-        if let Some(status) = tasks.get_mut(&task_id) {
-            status.total_steps = total_steps;
-        }
-    }
-
-    for (index, event) in result.output.events.iter().enumerate() {
-        let event_name = daemon_event_name(event);
-        emit_event(
-            &state,
-            &task_id,
-            event_name,
-            serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({})),
-        );
-
-        let mut tasks = state.tasks.write().await;
-        if let Some(status) = tasks.get_mut(&task_id) {
-            status.progress = index + 1;
-            status.total_steps = total_steps.max(result.output.events.len());
-            status.current_event = Some(event_name.to_string());
-        }
-    }
-
-    {
-        let mut tasks = state.tasks.write().await;
-        if let Some(status) = tasks.get_mut(&task_id) {
-            status.status = if result.output.events.iter().any(|evt| matches!(evt, KernelEvent::Error { .. })) {
-                "failed".to_string()
-            } else {
-                "completed".to_string()
-            };
-            status.progress = status.total_steps;
-        }
-    }
-
-    emit_event(
-        &state,
-        &task_id,
-        "task_finished",
-        serde_json::json!({
-            "tool_calls": result.tool_calls.len(),
-            "steps": result.output.plan.steps.len()
-        }),
-    );
 }
 
 fn daemon_event_name(event: &KernelEvent) -> &'static str {
