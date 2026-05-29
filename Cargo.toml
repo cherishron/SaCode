@@ -30,3 +30,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tower-lsp = "0.20"
 lsp-types = "0.97"
 unicode-width = "0.1"
+tempfile = "3"

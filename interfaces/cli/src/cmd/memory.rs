@@ -2,8 +2,98 @@ use std::{env, fs, path::{Path, PathBuf}};
 
 use anyhow::Result;
 
-const PROJECT_MEMORY_PATH: &str = ".monkeycode/MEMORY.md";
-const USER_MEMORY_PATH: &str = ".sacode/MEMORY.md";
+const PROJECT_WIKI_DIR: &str = ".sacode/wiki";
+const USER_WIKI_DIR: &str = ".sacode/wiki";
+const MEMORY_KINDS: [MemoryKind; 4] = [
+    MemoryKind::Memory,
+    MemoryKind::Preference,
+    MemoryKind::Workflow,
+    MemoryKind::Decision,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryKind {
+    Memory,
+    Preference,
+    Workflow,
+    Decision,
+}
+
+impl MemoryKind {
+    fn all() -> &'static [MemoryKind] {
+        &MEMORY_KINDS
+    }
+
+    fn from_flag(value: &str) -> Option<Self> {
+        match value {
+            "memory" => Some(Self::Memory),
+            "preference" | "preferences" => Some(Self::Preference),
+            "workflow" | "workflows" => Some(Self::Workflow),
+            "decision" | "decisions" => Some(Self::Decision),
+            _ => None,
+        }
+    }
+
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::Memory => "memory.md",
+            Self::Preference => "preferences.md",
+            Self::Workflow => "workflows.md",
+            Self::Decision => "decisions.md",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Memory => "通用记忆",
+            Self::Preference => "偏好记忆",
+            Self::Workflow => "工作流记忆",
+            Self::Decision => "决策记忆",
+        }
+    }
+
+    fn scope_label(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Preference => "preference",
+            Self::Workflow => "workflow",
+            Self::Decision => "decision",
+        }
+    }
+
+    fn title(self, user_level: bool) -> &'static str {
+        match (self, user_level) {
+            (Self::Memory, true) => "# 用户级通用记忆",
+            (Self::Memory, false) => "# 项目级通用记忆",
+            (Self::Preference, true) => "# 用户级偏好记忆",
+            (Self::Preference, false) => "# 项目级偏好记忆",
+            (Self::Workflow, true) => "# 用户级工作流记忆",
+            (Self::Workflow, false) => "# 项目级工作流记忆",
+            (Self::Decision, true) => "# 用户级决策记忆",
+            (Self::Decision, false) => "# 项目级决策记忆",
+        }
+    }
+
+    fn description(self, user_level: bool) -> &'static str {
+        match (self, user_level) {
+            (Self::Memory, true) => "本文件记录跨项目长期生效的通用经验和补充说明。",
+            (Self::Memory, false) => "本文件记录当前项目内的通用经验和上下文补充。",
+            (Self::Preference, true) => "本文件记录跨项目长期生效的用户偏好。",
+            (Self::Preference, false) => "本文件记录当前项目内需要持续遵循的偏好。",
+            (Self::Workflow, true) => "本文件记录跨项目长期生效的协作和执行流程。",
+            (Self::Workflow, false) => "本文件记录当前项目内的工作流和协作约定。",
+            (Self::Decision, true) => "本文件记录跨项目长期生效的稳定决策。",
+            (Self::Decision, false) => "本文件记录当前项目内的重要决策和约束。",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MemoryFile {
+    kind: MemoryKind,
+    path: PathBuf,
+    content: String,
+}
 
 pub fn run(args: Vec<String>) -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -13,72 +103,155 @@ pub fn run(args: Vec<String>) -> Result<()> {
 }
 
 pub fn render_memory(workdir: &Path, args: &[String]) -> Result<String> {
-    let user_path = user_memory_path();
-    let project_path = workdir.join(PROJECT_MEMORY_PATH);
+    let user_files = load_memory_files(&user_wiki_dir(), true)?;
+    let project_files = load_memory_files(&workdir.join(PROJECT_WIKI_DIR), false)?;
 
-    if args.first().map(|value| value.as_str()) == Some("path") {
-        return Ok(format!(
-            "用户级: {}\n项目级: {}",
-            user_path.display(),
-            project_path.display()
-        ));
+    match args.first().map(|value| value.as_str()) {
+        Some("path") => render_paths(&user_files, &project_files),
+        None | Some("show") => Ok(render_show(&user_files, &project_files)),
+        Some("summary") => Ok(render_summary(&user_files, &project_files)),
+        Some("search") => render_search(args, &user_files, &project_files),
+        Some("append") => render_append(args, &user_files, &project_files),
+        _ => Ok(usage_text()),
     }
-
-    ensure_memory_file(&user_path, true)?;
-    ensure_memory_file(&project_path, false)?;
-
-    let user_content = fs::read_to_string(&user_path)?;
-    let project_content = fs::read_to_string(&project_path)?;
-    let merged_content = merge_memory(&user_content, &project_content);
-
-    if args.is_empty() || args[0] == "show" {
-        return Ok(merged_content);
-    }
-
-    if args[0] == "summary" {
-        return Ok(summarize_memory(&user_content, &project_content));
-    }
-
-    if args[0] == "search" {
-        let query = args.get(1..).unwrap_or(&[]).join(" ").trim().to_string();
-        if query.is_empty() {
-            return Ok("用法: /memory search <关键词>".to_string());
-        }
-        return Ok(search_memory(&merged_content, &query));
-    }
-
-    if args[0] == "append" {
-        let global = args.iter().any(|arg| arg == "--global" || arg == "-g");
-        let entry_parts = args.iter().skip(1).filter(|arg| arg.as_str() != "--global" && arg.as_str() != "-g").cloned().collect::<Vec<_>>();
-        let entry = entry_parts.join(" ").trim().to_string();
-        if entry.is_empty() {
-            return Ok("用法: /memory append <内容> [--global|-g]".to_string());
-        }
-        let target_path = if global { &user_path } else { &project_path };
-        let target_content = if global { &user_content } else { &project_content };
-        let appended = append_memory(target_path, target_content, &entry, global)?;
-        return Ok(if appended {
-            format!(
-                "已追加{}记忆到 {}",
-                if global { "用户级" } else { "项目级" },
-                target_path.display()
-            )
-        } else {
-            "检测到重复内容，已跳过追加。".to_string()
-        });
-    }
-
-    Ok("用法: /memory [show|search <关键词>|append <内容> [--global|-g]|path|summary]".to_string())
 }
 
-fn user_memory_path() -> PathBuf {
+fn render_paths(user_files: &[MemoryFile], project_files: &[MemoryFile]) -> Result<String> {
+    let mut lines = vec!["Memory Paths".to_string(), String::new(), "用户级:".to_string()];
+    lines.extend(user_files.iter().map(|file| format!("- {}: {}", file.kind.scope_label(), file.path.display())));
+    lines.push(String::new());
+    lines.push("项目级:".to_string());
+    lines.extend(project_files.iter().map(|file| format!("- {}: {}", file.kind.scope_label(), file.path.display())));
+    Ok(lines.join("\n"))
+}
+
+fn render_show(user_files: &[MemoryFile], project_files: &[MemoryFile]) -> String {
+    let mut lines = vec!["# 生效记忆".to_string(), String::new(), "## 用户级".to_string()];
+    for file in user_files {
+        lines.push(String::new());
+        lines.push(format!("### {}", file.kind.label()));
+        lines.push(file.content.trim().to_string());
+    }
+    lines.push(String::new());
+    lines.push("## 项目级".to_string());
+    for file in project_files {
+        lines.push(String::new());
+        lines.push(format!("### {}", file.kind.label()));
+        lines.push(file.content.trim().to_string());
+    }
+    lines.join("\n")
+}
+
+fn render_summary(user_files: &[MemoryFile], project_files: &[MemoryFile]) -> String {
+    let user_count: usize = user_files.iter().map(|file| collect_sections(&file.content).len()).sum();
+    let project_count: usize = project_files.iter().map(|file| collect_sections(&file.content).len()).sum();
+    let mut lines = vec![format!(
+        "记忆摘要\n用户级条目: {}\n项目级条目: {}\n总条目: {}",
+        user_count,
+        project_count,
+        user_count + project_count
+    )];
+
+    lines.push("用户级: ".to_string());
+    for file in user_files {
+        lines.push(format!("- {}: {} 条", file.kind.scope_label(), collect_sections(&file.content).len()));
+    }
+    lines.push("项目级: ".to_string());
+    for file in project_files {
+        lines.push(format!("- {}: {} 条", file.kind.scope_label(), collect_sections(&file.content).len()));
+    }
+
+    lines.join("\n")
+}
+
+fn render_search(args: &[String], user_files: &[MemoryFile], project_files: &[MemoryFile]) -> Result<String> {
+    let query = args.get(1..).unwrap_or(&[]).join(" ").trim().to_string();
+    if query.is_empty() {
+        return Ok("用法: /memory search <关键词>".to_string());
+    }
+
+    let mut matched = Vec::new();
+    for file in user_files.iter().chain(project_files.iter()) {
+        let rendered = search_memory(&file.content, &query);
+        if !rendered.starts_with("未找到与") {
+            matched.push(format!("[{}] {}\n{}", file.kind.scope_label(), file.path.display(), rendered));
+        }
+    }
+
+    if matched.is_empty() {
+        Ok(format!("未找到与 `{}` 相关的记忆。", query))
+    } else {
+        Ok(matched.join("\n\n"))
+    }
+}
+
+fn render_append(args: &[String], user_files: &[MemoryFile], project_files: &[MemoryFile]) -> Result<String> {
+    let global = args.iter().any(|arg| arg == "--global" || arg == "-g");
+    let mut kind = MemoryKind::Memory;
+    let mut parts = Vec::new();
+
+    let mut iter = args.iter().skip(1);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--global" | "-g" => {}
+            "--type" | "-t" => {
+                let Some(value) = iter.next() else {
+                    return Ok("用法: /memory append <内容> [--type memory|preference|workflow|decision] [--global|-g]".to_string());
+                };
+                let Some(parsed) = MemoryKind::from_flag(value) else {
+                    return Ok("支持的类型: memory, preference, workflow, decision".to_string());
+                };
+                kind = parsed;
+            }
+            value => parts.push(value.to_string()),
+        }
+    }
+
+    let entry = parts.join(" ").trim().to_string();
+    if entry.is_empty() {
+        return Ok("用法: /memory append <内容> [--type memory|preference|workflow|decision] [--global|-g]".to_string());
+    }
+
+    let target = if global { user_files } else { project_files }
+        .iter()
+        .find(|file| file.kind == kind)
+        .ok_or_else(|| anyhow::anyhow!("记忆文件未初始化"))?;
+    let appended = append_memory(&target.path, &target.content, &entry, global, kind)?;
+    Ok(if appended {
+        format!(
+            "已追加{}{}到 {}",
+            if global { "用户级" } else { "项目级" },
+            kind.label(),
+            target.path.display()
+        )
+    } else {
+        "检测到重复内容，已跳过追加。".to_string()
+    })
+}
+
+fn load_memory_files(root: &Path, user_level: bool) -> Result<Vec<MemoryFile>> {
+    let mut files = Vec::new();
+    for kind in MemoryKind::all() {
+        let path = root.join(kind.file_name());
+        ensure_memory_file(&path, user_level, *kind)?;
+        let content = fs::read_to_string(&path)?;
+        files.push(MemoryFile {
+            kind: *kind,
+            path,
+            content,
+        });
+    }
+    Ok(files)
+}
+
+fn user_wiki_dir() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(USER_MEMORY_PATH)
+        .join(USER_WIKI_DIR)
 }
 
-fn ensure_memory_file(path: &Path, user_level: bool) -> Result<()> {
+fn ensure_memory_file(path: &Path, user_level: bool, kind: MemoryKind) -> Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -87,24 +260,16 @@ fn ensure_memory_file(path: &Path, user_level: bool) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let body = if user_level {
-        "# 用户级记忆\n\n本文件记录跨项目长期生效的用户偏好、协作习惯和经验。\n\n## 条目\n"
-    } else {
-        "# 项目级记忆\n\n本文件记录当前项目内的协作约束、经验和上下文。\n\n## 条目\n"
-    };
+    let body = format!(
+        "{}\n\n{}\n\n## 条目\n",
+        kind.title(user_level),
+        kind.description(user_level)
+    );
     fs::write(path, body)?;
     Ok(())
 }
 
-fn merge_memory(user_content: &str, project_content: &str) -> String {
-    format!(
-        "# 生效记忆\n\n## 用户级\n\n{}\n\n## 项目级\n\n{}",
-        user_content.trim(),
-        project_content.trim()
-    )
-}
-
-fn append_memory(path: &Path, current: &str, entry: &str, user_level: bool) -> Result<bool> {
+fn append_memory(path: &Path, current: &str, entry: &str, user_level: bool, kind: MemoryKind) -> Result<bool> {
     if current.to_lowercase().contains(&entry.to_lowercase()) {
         return Ok(false);
     }
@@ -118,35 +283,14 @@ fn append_memory(path: &Path, current: &str, entry: &str, user_level: bool) -> R
         updated.push('\n');
     }
     updated.push_str(&format!(
-        "[手动追加记忆]\n- Date: {}\n- Context: 用户通过 /memory append 手动追加到{}记忆\n- Instructions:\n  - {}\n",
+        "[记忆条目]\n- Date: {}\n- Scope: {}\n- Kind: {}\n- Context: 用户通过 /memory append 手动追加\n- Content:\n  - {}\n",
         chrono::Local::now().format("%Y-%m-%d"),
         if user_level { "用户级" } else { "项目级" },
+        kind.scope_label(),
         entry.replace('\n', "\n  - ")
     ));
     fs::write(path, updated)?;
     Ok(true)
-}
-
-fn summarize_memory(user_content: &str, project_content: &str) -> String {
-    let user_sections = collect_sections(user_content);
-    let project_sections = collect_sections(project_content);
-    let mut lines = vec![format!(
-        "记忆摘要\n用户级条目: {}\n项目级条目: {}\n总条目: {}",
-        user_sections.len(),
-        project_sections.len(),
-        user_sections.len() + project_sections.len()
-    )];
-
-    if !user_sections.is_empty() {
-        lines.push("用户级: ".to_string());
-        lines.extend(user_sections.into_iter().map(|line| format!("- {}", line)));
-    }
-    if !project_sections.is_empty() {
-        lines.push("项目级: ".to_string());
-        lines.extend(project_sections.into_iter().map(|line| format!("- {}", line)));
-    }
-
-    lines.join("\n")
 }
 
 fn collect_sections(content: &str) -> Vec<String> {
@@ -198,4 +342,8 @@ fn highlight_query(text: &str, query: &str) -> String {
 
     output.push_str(&text[start..]);
     output
+}
+
+fn usage_text() -> String {
+    "/memory [show|summary|path|search <关键词>|append <内容> [--type memory|preference|workflow|decision] [--global|-g]]".to_string()
 }

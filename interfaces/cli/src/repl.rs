@@ -5,10 +5,11 @@ use sacode_kernel::ExecutionMode;
 use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry};
 
 use crate::{
-    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, status, update, vim, ApprovalPolicy},
-    cmd::init::{apply_init_draft, build_init_draft, mode_name, DraftAction, InitMode},
-    provider_config::{fetch_models, fallback_models, ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
-    runner::{format_output, run_task},
+    agent_harness,
+    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status, update, vim, wiki, ApprovalPolicy},
+    cmd::init::{initialize_project, InitMode},
+    provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
+    runner::{format_learned_facts_summary, format_output, run_task},
     version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
 };
 
@@ -118,11 +119,13 @@ impl ReplSession {
             "/config" => self.show_config(&parts[1..])?,
             "/keybindings" => self.show_keybindings()?,
             "/outstyle" => self.show_outstyle(&parts[1..])?,
+            "/prompt" => self.show_prompt(&parts[1..])?,
             "/vim" => self.show_vim(&parts[1..])?,
             "/skills" => self.show_skills(),
             "/skill" => self.handle_skill_command(&parts[1..])?,
             "/mcps" => self.show_mcp(),
             "/memory" => self.show_memory(&parts[1..])?,
+            "/wiki" => self.show_wiki(&parts[1..])?,
             "/compress" => self.compress_context(),
             "/insight" => self.show_insight()?,
             "/mcps-show" => self.show_single_mcp(&parts[1..])?,
@@ -163,6 +166,9 @@ impl ReplSession {
         self.pending_question = output.pending_question.clone();
         println!();
         println!("{}", format_output(&output));
+        if let Some(summary) = format_learned_facts_summary(&output.learned_facts) {
+            println!("{}", summary);
+        }
         if let Some(question) = self.pending_question.as_ref() {
             println!("[等待用户回答] {}", pending_question_title(question));
             if let Some(options) = pending_question_options(question) {
@@ -208,13 +214,15 @@ impl ReplSession {
         println!("  /config          - Show or set layered runtime config");
         println!("  /keybindings     - Show TUI keybindings");
         println!("  /outstyle        - Show or set user output style, or project override");
+        println!("  /prompt          - Show current prompt chain, diagnose sources, or init project prompt file");
         println!("  /vim             - Show or set Vim-style navigation");
         println!("  /tools           - Show available tools");
         println!("  /add-dir <path>  - Add a project directory by absolute path");
         println!("  /skills          - Show available skills");
         println!("  /skill <subcommand> - Manage or run skills");
         println!("  /mcps            - Show configured MCP servers");
-        println!("  /memory          - Show, search, append, path, or summary project memory");
+        println!("  /memory          - Show, search, path, summary, or append typed memory");
+        println!("  /wiki            - Show layered sacode knowledge sources and previews");
         println!("  /compress        - Compress current REPL context");
         println!("  /insight         - 生成并打开用户级 insight 网页报告");
         println!("  /mcps-show <name> - Show one MCP server");
@@ -414,51 +422,7 @@ impl ReplSession {
 
     async fn run_init(&self, mode: InitMode) -> Result<()> {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        let draft = build_init_draft(&workdir, mode).await?;
-        println!();
-        println!("{} draft ready", mode_name(draft.mode));
-        println!("Project: {}", draft.project_name);
-        println!("Detected stack: {}", draft.stack_summary.join(", "));
-        for command in &draft.detected_commands {
-            println!("  - {}", command);
-        }
-        println!();
-        println!("Draft files:");
-        for file in &draft.agents_files {
-            let action = match file.action {
-                DraftAction::Create => "create",
-                DraftAction::Update => "update",
-            };
-            println!("  - [{}] {} :: {}", action, file.relative_path, file.summary);
-        }
-        if draft.generated_workflows {
-            println!("Will generate .sacode/workflows.json");
-        }
-        if draft.generated_mcp_template {
-            println!("Will generate .sacode/mcp.json");
-        }
-        println!("Apply draft now? [y/N]");
-        print!("> ");
-        io::stdout().flush()?;
-        let mut answer = String::new();
-        io::stdin().read_line(&mut answer)?;
-        if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-            let summary = apply_init_draft(&workdir, &draft).await?;
-            println!();
-            println!("{} applied", mode_name(summary.mode));
-            if summary.generated_agents {
-                println!("Generated AGENTS.md draft files");
-            }
-            if summary.generated_workflows {
-                println!("Generated .sacode/workflows.json");
-            }
-            if summary.generated_mcp_template {
-                println!("Generated .sacode/mcp.json");
-            }
-        } else {
-            println!("Draft kept in preview only.");
-        }
-        println!();
+        let _ = initialize_project(&workdir, mode).await?;
         Ok(())
     }
 
@@ -504,6 +468,24 @@ impl ReplSession {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", memory::render_memory(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_wiki(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", wiki::render_wiki(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_prompt(&self, parts: &[&str]) -> Result<()> {
+        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", prompt::render_prompt(&workdir, &args)?);
         println!();
         Ok(())
     }
@@ -630,47 +612,29 @@ impl ReplSession {
         )?;
         let api_key = prompt_input("API Key", None)?;
 
-        let mut config = ProviderConfig {
+        let config = ProviderConfig {
             base_url,
             api_key,
             model: existing.model,
         };
 
-        let models = fetch_models(&config)?;
-        if config.model.is_empty() {
-            if let Some(first_model) = models.first() {
-                config.model = first_model.clone();
-            }
-        }
-
-        self.provider_store.save_named(&provider_name, &config, true)?;
-        let mut spec = self
-            .sacode_store
-            .provider(&provider_name)?
-            .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                name: provider_name.clone(),
-                base_url: config.base_url.clone(),
-                api_key: String::new(),
-                models: std::collections::BTreeMap::new(),
-            });
-        spec.name = provider_name.clone();
-        spec.base_url = config.base_url.clone();
-        spec.api_key = config.api_key.clone();
-        for model in &models {
-            spec.models.entry(model.clone()).or_insert_with(|| sacode_kernel::model::ModelRule {
-                name: model.clone(),
-                ..Default::default()
-            });
-        }
-        self.sacode_store.upsert_provider(&provider_name, spec)?;
-        if !config.model.is_empty() {
-            self.sacode_store.set_model(&provider_name, &config.model)?;
-        }
+        let result = agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            &provider_name,
+            &config.base_url,
+            config.api_key,
+        )?;
+        let models = agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?
+            .into_iter()
+            .filter(|option| option.provider_name == provider_name.as_str())
+            .map(|option| option.model_name)
+            .collect::<Vec<_>>();
 
         println!("Saved provider {} to .sacode/config.json", provider_name);
         println!("Discovered {} models.", models.len());
-        if !config.model.is_empty() {
-            println!("Current model: {}", config.model);
+        if !result.current_provider.config.model.is_empty() {
+            println!("Current model: {}", result.current_provider.config.model);
         }
         println!();
         Ok(())
@@ -698,15 +662,15 @@ impl ReplSession {
             .get(index.saturating_sub(1))
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Invalid provider index"))?;
-        let config = self.sacode_store.load_or_default()?;
-        let model_name = config
-            .provider
-            .get(&selected_provider)
-            .and_then(|spec| spec.models.keys().next().cloned())
-            .unwrap_or_default();
-        self.sacode_store.set_model(&selected_provider, &model_name)?;
-        let _ = self.provider_store.set_current(&selected_provider);
+        let current = agent_harness::switch_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            &selected_provider,
+        )?;
         println!("Current provider set to {}", selected_provider);
+        if !current.config.model.is_empty() {
+            println!("Current model: {}", current.config.model);
+        }
         println!();
         Ok(())
     }
@@ -755,49 +719,42 @@ impl ReplSession {
     fn select_model(&mut self) -> Result<()> {
         println!();
         let config = self.sacode_store.load_or_default()?;
-        let Some((provider_name, current_model)) = config.resolve_model(&config.model) else {
+        let Some((current_provider_name, current_model)) = config.resolve_model(&config.model) else {
             println!("Provider is not configured. Run /connect first.");
             println!();
             return Ok(());
         };
-        let Some(provider) = config.provider.get(&provider_name) else {
-            println!("Provider is not configured. Run /connect first.");
-            println!();
-            return Ok(());
-        };
-
-        let provider_config = ProviderConfig {
-            base_url: provider.base_url.clone(),
-            api_key: provider.api_key.clone(),
-            model: current_model.clone(),
-        };
-        let models = fetch_models(&provider_config).unwrap_or_else(|_| config.model_names_for_provider(&provider_name));
-        if models.is_empty() {
+        let options = agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?;
+        if options.is_empty() {
             println!("Provider returned no models.");
             println!();
             return Ok(());
         }
 
         println!("Models:");
-        for (index, model) in models.iter().enumerate() {
-            let marker = if model == &current_model { "*" } else { " " };
-            println!("  {} {}. {}", marker, index + 1, model);
+        for (index, option) in options.iter().enumerate() {
+            let marker = if option.provider_name == current_provider_name && option.model_name == current_model {
+                "*"
+            } else {
+                " "
+            };
+            println!("  {} {}. {} / {}", marker, index + 1, option.provider_name, option.model_name);
         }
 
         let selection = prompt_input("Select model number", None)?;
         let index: usize = selection.parse()?;
-        let selected_model = models
+        let selected = options
             .get(index.saturating_sub(1))
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Invalid model index"))?;
-        self.sacode_store.set_model(&provider_name, &selected_model)?;
+        let _ = agent_harness::switch_model(
+            &self.provider_store,
+            &self.sacode_store,
+            &selected.provider_name,
+            &selected.model_name,
+        )?;
 
-        if let Some(mut legacy_provider) = self.provider_store.get(&provider_name)? {
-            legacy_provider.model = selected_model.clone();
-            self.provider_store.save_named(&provider_name, &legacy_provider, true)?;
-        }
-
-        println!("Default model set to {}", selected_model);
+        println!("Default model set to {}", selected.model_name);
         println!();
         Ok(())
     }
@@ -836,87 +793,18 @@ impl ReplSession {
 
         let api_key = prompt_input("API Key (ollama 留空即可)", None)?;
 
-        let config = ProviderConfig {
-            base_url: base_url.to_string(),
+        let result = agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            name,
+            base_url,
             api_key,
-            model: String::new(),
-        };
-
-        self.provider_store.save_named(name, &config, true)?;
-
-        println!();
-        match fetch_models(&config) {
-            Ok(models) if !models.is_empty() => {
-                println!("可用模型:");
-                for (i, m) in models.iter().enumerate() {
-                    println!("  {}. {}", i + 1, m);
-                }
-                let default = models[0].clone();
-                let mut config = config;
-                config.model = default.clone();
-                self.provider_store.save_named(name, &config, true)?;
-                let mut spec = self
-                    .sacode_store
-                    .provider(name)?
-                    .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                        name: name.to_string(),
-                        base_url: base_url.to_string(),
-                        api_key: String::new(),
-                        models: std::collections::BTreeMap::new(),
-                    });
-                spec.name = name.to_string();
-                spec.base_url = base_url.to_string();
-                spec.api_key = config.api_key.clone();
-                for model in &models {
-                    spec.models.entry(model.clone()).or_insert_with(|| sacode_kernel::model::ModelRule {
-                        name: model.clone(),
-                        ..Default::default()
-                    });
-                }
-                self.sacode_store.upsert_provider(name, spec)?;
-                self.sacode_store.set_model(name, &default)?;
-                println!();
-                println!("Provider {} 已连接，默认模型: {}", name, default);
-                println!("输入 /models 可切换模型。");
-            }
-            Ok(_) | Err(_) => {
-                let fallbacks = fallback_models(name);
-                if !fallbacks.is_empty() {
-                    println!("可用模型 (fallback):");
-                    for (i, m) in fallbacks.iter().enumerate() {
-                        println!("  {}. {}", i + 1, m);
-                    }
-                    let mut config = config;
-                    config.model = fallbacks[0].clone();
-                    self.provider_store.save_named(name, &config, true)?;
-                    let mut spec = self
-                        .sacode_store
-                        .provider(name)?
-                        .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                            name: name.to_string(),
-                            base_url: base_url.to_string(),
-                            api_key: String::new(),
-                            models: std::collections::BTreeMap::new(),
-                        });
-                    spec.name = name.to_string();
-                    spec.base_url = base_url.to_string();
-                    spec.api_key = config.api_key.clone();
-                    for model in &fallbacks {
-                        spec.models.entry(model.clone()).or_insert_with(|| sacode_kernel::model::ModelRule {
-                            name: model.clone(),
-                            ..Default::default()
-                        });
-                    }
-                    self.sacode_store.upsert_provider(name, spec)?;
-                    self.sacode_store.set_model(name, &fallbacks[0])?;
-                    println!();
-                    println!("Provider {} 已连接，默认模型: {}", name, fallbacks[0]);
-                    println!("输入 /models 可切换模型。");
-                } else {
-                    println!("Provider {} 已连接，但无法获取模型列表。请手动输入 /models 设置模型。", name);
-                }
-            }
-        }
+        )?;
+        println!(
+            "Provider {} 已连接，当前默认模型: {}",
+            result.current_provider.name,
+            result.current_provider.config.model
+        );
         println!();
         Ok(())
     }

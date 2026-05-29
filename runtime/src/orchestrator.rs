@@ -5,7 +5,6 @@ use crate::{CheckpointStorage, HookExecutor, LoggingHook, SandboxExecutor, ToolR
 pub struct RuntimeOrchestrator {
     supervisor: Supervisor,
     tools: ToolRegistry,
-    sandbox: SandboxExecutor,
     checkpoints: CheckpointStorage,
     hooks: HookExecutor,
 }
@@ -14,7 +13,7 @@ impl RuntimeOrchestrator {
     pub fn new(
         supervisor: Supervisor,
         tools: ToolRegistry,
-        sandbox: SandboxExecutor,
+        _sandbox: SandboxExecutor,
         checkpoints: CheckpointStorage,
     ) -> Self {
         let mut hooks = HookExecutor::new();
@@ -22,7 +21,6 @@ impl RuntimeOrchestrator {
         Self {
             supervisor,
             tools,
-            sandbox,
             checkpoints,
             hooks,
         }

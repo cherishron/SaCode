@@ -28,21 +28,20 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
-use sacode_kernel::model::{ChatRequest, ChatUsage, ProviderKind};
+use sacode_kernel::model::{ChatUsage, ProviderKind};
 use sacode_kernel::ExecutionMode;
 use serde::Serialize;
-use unicode_width::UnicodeWidthChar;
 
 use crate::cmd::update;
 use crate::cmd::{
     config, diff, doctor, hooks, ide,
-    init::{apply_init_draft, build_init_draft, AgentsDraftFile, DraftAction, InitDraft, InitMode},
-    insight, keybindings, memory, outstyle, status, vim, ApprovalPolicy,
+    init::{apply_init_draft, build_init_draft, InitMode},
+    insight, keybindings, memory, outstyle, prompt, status, vim, wiki, ApprovalPolicy,
 };
+use crate::agent_harness;
 use crate::plugin_config::PluginConfigStore;
 use crate::provider_config::{
-    fallback_models, fetch_models, NamedProviderConfig, ProviderConfig, ProviderConfigStore,
-    SaCodeConfigStore,
+    NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore,
 };
 use crate::provider_runtime::{resolve_named_provider, resolve_provider};
 use crate::task_store::{PersistentTask, TaskPriority, TaskStatus, TaskStore};
@@ -53,10 +52,27 @@ use sacode_runtime::{
 
 mod input;
 
-use input::{layout_input_lines, is_editable_input_mode, display_workdir};
+use input::{clamp_cursor_col, display_workdir, is_editable_input_mode, layout_input_lines};
 
 const MODELS_HINT_LIMIT: usize = 8;
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+#[derive(Debug, Clone)]
+struct ModelOptionEntry {
+    label: String,
+    provider_name: String,
+    model_name: String,
+}
+
+impl From<agent_harness::ModelOption> for ModelOptionEntry {
+    fn from(value: agent_harness::ModelOption) -> Self {
+        Self {
+            label: format!("{} / {}", value.provider_name, value.model_name),
+            provider_name: value.provider_name,
+            model_name: value.model_name,
+        }
+    }
+}
 
 struct Message {
     role: MessageRole,
@@ -95,7 +111,7 @@ struct App {
     pending_provider_name: Option<String>,
     provider_options: Vec<String>,
     selected_provider_index: usize,
-    model_options: Vec<String>,
+    model_options: Vec<ModelOptionEntry>,
     selected_model_index: usize,
     theme_options: Vec<String>,
     selected_theme_index: usize,
@@ -158,7 +174,6 @@ struct App {
     selected_pending_question_index: usize,
     selected_pending_option_index: usize,
     selected_pending_answers: Vec<HashSet<usize>>,
-    pending_init_draft: Option<InitDraft>,
     pending_approval_request: Option<PendingApprovalRequest>,
     session_auto_approve_edits: bool,
     spinner_index: usize,
@@ -407,7 +422,6 @@ enum TodoStatus {
     Pending,
     Running,
     Completed,
-    Skipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,9 +441,6 @@ enum InputMode {
     McpSelect,
     TasksSelect,
     CheckpointSelect,
-    SkillInput,
-    McpInput,
-    CheckpointInput,
     TaskInput,
     ModeSelect,
     SessionSelect,
@@ -587,6 +598,7 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/add-dir", "添加项目可访问目录"),
         CommandDef::simple("/status", "查看 MCP 与插件状态"),
         CommandDef::simple("/doctor", "诊断当前配置与可用性"),
+        CommandDef::simple("/prompt", "查看提示词链路与诊断"),
         CommandDef::simple("/diff", "查看当前 Git 差异摘要"),
         CommandDef::simple("/hooks", "查看运行时 Hook 与生命周期"),
         CommandDef::simple("/ide", "查看 IDE 接入向导或配置"),
@@ -594,7 +606,8 @@ fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/keybindings", "查看快捷键说明"),
         CommandDef::simple("/outstyle", "切换 AI 输出风格（默认用户级）"),
         CommandDef::simple("/vim", "切换 Vim 风格导航"),
-        CommandDef::simple("/memory", "查看或管理项目记忆"),
+        CommandDef::simple("/memory", "查看或管理分类项目记忆"),
+        CommandDef::simple("/wiki", "查看分层知识库加载状态"),
         CommandDef::simple("/insight", "生成并打开用户级 insight 网页报告"),
         CommandDef::simple("/tools", "显示可用工具"),
         CommandDef::simple("/stats", "查看 token 与费用统计"),
@@ -660,29 +673,13 @@ fn format_duration_ms(ms: u64) -> String {
     format!("{}m {:.2}s", minutes, remain_seconds)
 }
 
-fn render_agents_draft_preview(file: &AgentsDraftFile) -> String {
-    let action = match file.action {
-        DraftAction::Create => "新增",
-        DraftAction::Update => "更新",
-    };
-    let preview = file
-        .content
-        .lines()
-        .take(18)
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "[{}] {}\n说明: {}\n---\n{}",
-        action, file.relative_path, file.summary, preview
-    )
-}
-
 enum AsyncResult {
     ChatCompleted {
         task_id: u64,
         prompt: String,
         response: String,
         success: bool,
+        learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
         plan: Option<sacode_kernel::Plan>,
         usage: Option<ChatUsage>,
@@ -699,18 +696,17 @@ enum AsyncResult {
     LoginCompleted {
         provider_name: String,
         config: ProviderConfig,
-        models: Vec<String>,
     },
     ProvidersLoaded {
         providers: Vec<String>,
         current_provider: String,
     },
     ProviderSwitched {
-        provider_name: String,
-        config: ProviderConfig,
+        current_provider: NamedProviderConfig,
     },
     ModelsLoaded {
-        models: Vec<String>,
+        models: Vec<ModelOptionEntry>,
+        current_provider: String,
         current_model: String,
     },
     ModelSaved {
@@ -722,8 +718,8 @@ enum AsyncResult {
         remote_version: Option<String>,
         has_update: bool,
     },
-    InitDraftReady {
-        draft: InitDraft,
+    InitCompleted {
+        mode: InitMode,
     },
     UpdateCompleted {
         message: String,
@@ -874,7 +870,6 @@ impl App {
             selected_pending_question_index: 0,
             selected_pending_option_index: 0,
             selected_pending_answers: Vec::new(),
-            pending_init_draft: None,
             pending_approval_request: None,
             session_auto_approve_edits: false,
             spinner_index: 0,
@@ -945,18 +940,6 @@ impl App {
             }
             InputMode::ConfigNumberInput => {
                 self.finish_config_number_input();
-                return;
-            }
-            InputMode::SkillInput => {
-                self.finish_skill_input();
-                return;
-            }
-            InputMode::McpInput => {
-                self.finish_mcp_input();
-                return;
-            }
-            InputMode::CheckpointInput => {
-                self.finish_checkpoint_input();
                 return;
             }
             InputMode::TaskInput => {
@@ -1128,12 +1111,13 @@ impl App {
         let workdir = self.workdir.clone();
         let mode = self.execution_mode;
         let prompt = self.build_task_prompt(&user_input);
-        let Some(mut child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
+        let Some(child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
                 success: false,
+                learned_facts: Vec::new(),
                 pending_question: None,
                 plan: None,
                 usage: None,
@@ -1151,6 +1135,7 @@ impl App {
             let (
                 response,
                 success,
+                learned_facts,
                 pending_question,
                 plan,
                 usage,
@@ -1163,6 +1148,7 @@ impl App {
                 prompt: user_input,
                 response,
                 success,
+                learned_facts,
                 pending_question,
                 plan,
                 usage,
@@ -1231,6 +1217,7 @@ impl App {
     ) -> (
         String,
         bool,
+        Vec<crate::learning::LearnedFact>,
         Option<serde_json::Value>,
         Option<sacode_kernel::Plan>,
         Option<ChatUsage>,
@@ -1243,6 +1230,7 @@ impl App {
                 return (
                     "任务执行失败: 无法访问后台执行进程".to_string(),
                     false,
+                    Vec::new(),
                     None,
                     None,
                     None,
@@ -1258,6 +1246,7 @@ impl App {
             return (
                 "任务执行失败: 未获取到后台输出".to_string(),
                 false,
+                Vec::new(),
                 None,
                 None,
                 None,
@@ -1272,6 +1261,7 @@ impl App {
             return (
                 "任务执行失败: 读取后台输出失败".to_string(),
                 false,
+                Vec::new(),
                 None,
                 None,
                 None,
@@ -1291,6 +1281,7 @@ impl App {
                 return (
                     "任务执行失败: 无法等待后台执行进程退出".to_string(),
                     false,
+                    Vec::new(),
                     None,
                     None,
                     None,
@@ -1305,6 +1296,7 @@ impl App {
                     return (
                         format!("任务执行失败: 等待后台执行进程退出失败: {}", error),
                         false,
+                        Vec::new(),
                         None,
                         None,
                         None,
@@ -1335,6 +1327,7 @@ impl App {
                     )
                 },
                 false,
+                Vec::new(),
                 None,
                 None,
                 None,
@@ -1354,6 +1347,7 @@ impl App {
                 return (
                     format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
                     false,
+                    Vec::new(),
                     None,
                     None,
                     None,
@@ -1368,6 +1362,11 @@ impl App {
             .get("pending_question")
             .cloned()
             .filter(|value| !value.is_null());
+        let learned_facts = parsed
+            .get("learned_facts")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Vec<crate::learning::LearnedFact>>(value).ok())
+            .unwrap_or_default();
         if !stderr_output.trim().is_empty() {
             Self::append_raw_log("child_stderr", stderr_output.trim());
         }
@@ -1411,6 +1410,7 @@ impl App {
         (
             response,
             success,
+            learned_facts,
             pending_question,
             plan,
             usage,
@@ -2204,15 +2204,29 @@ impl App {
     }
 
     fn open_model_picker(&mut self) {
-        let Some(current_provider) = self.current_provider.clone() else {
-            self.push_system_message("当前还没有 provider 配置，请先输入 /login。");
-            self.input.clear();
-            return;
+        let catalog = match self.provider_store.load_catalog() {
+            Ok(Some(catalog)) => catalog,
+            Ok(None) => {
+                self.push_system_message("当前还没有 provider 配置，请先输入 /login 或 /connect。");
+                self.input.clear();
+                return;
+            }
+            Err(error) => {
+                self.push_error_message(&format!("读取 provider 配置失败: {}", error));
+                self.input.clear();
+                return;
+            }
         };
 
+        if catalog.providers.is_empty() {
+            self.push_system_message("当前还没有 provider 配置，请先输入 /login 或 /connect。");
+            self.input.clear();
+            return;
+        }
+
         self.processing = true;
-        self.busy_message = format!("正在拉取 {} 的模型列表...", current_provider.name);
-        self.spawn_load_models_task(current_provider.config);
+        self.busy_message = "正在加载所有 provider 的模型列表...".to_string();
+        self.spawn_load_models_task();
         self.input.clear();
     }
 
@@ -2239,32 +2253,8 @@ impl App {
             return true;
         }
 
-        if trimmed == "/init confirm" {
-            self.confirm_init_draft();
-            self.input.clear();
-            return true;
-        }
-
-        if trimmed == "/init cancel" {
-            self.cancel_init_draft();
-            self.input.clear();
-            return true;
-        }
-
         if trimmed == "/init-deep" {
             self.init_command(InitMode::Deep);
-            self.input.clear();
-            return true;
-        }
-
-        if trimmed == "/init-deep confirm" {
-            self.confirm_init_draft();
-            self.input.clear();
-            return true;
-        }
-
-        if trimmed == "/init-deep cancel" {
-            self.cancel_init_draft();
             self.input.clear();
             return true;
         }
@@ -2353,6 +2343,12 @@ impl App {
             return true;
         }
 
+        if trimmed.starts_with("/prompt") {
+            self.prompt_command(&input);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed.starts_with("/diff") {
             self.diff_command(&input);
             self.input.clear();
@@ -2397,6 +2393,12 @@ impl App {
 
         if trimmed.starts_with("/memory ") || trimmed == "/memory" {
             self.memory_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/wiki ") || trimmed == "/wiki" {
+            self.wiki_command(&input);
             self.input.clear();
             return true;
         }
@@ -2507,10 +2509,11 @@ impl App {
     }
 
     fn init_command(&mut self, mode: InitMode) {
-        self.push_system_message(match mode {
-            InitMode::Basic => "已开始轻量初始化分析，完成后会先展示草稿。",
-            InitMode::Deep => "已开始深度初始化分析，完成后会先展示分层草稿。",
-        });
+        self.processing = true;
+        self.busy_message = match mode {
+            InitMode::Basic => "正在生成项目初始化文件...".to_string(),
+            InitMode::Deep => "正在生成深度初始化文件...".to_string(),
+        };
         self.spawn_init_task(mode);
     }
 
@@ -2518,9 +2521,12 @@ impl App {
         let sender = self.task_tx.clone();
         let workdir = self.workdir.clone();
         thread::spawn(
-            move || match block_on_cli_future(build_init_draft(&workdir, mode)) {
-                Ok(draft) => {
-                    let _ = sender.send(AsyncResult::InitDraftReady { draft });
+            move || match block_on_cli_future(async {
+                let draft = build_init_draft(&workdir, mode).await?;
+                apply_init_draft(&workdir, &draft).await
+            }) {
+                Ok(_) => {
+                    let _ = sender.send(AsyncResult::InitCompleted { mode });
                 }
                 Err(error) => {
                     let _ = sender.send(AsyncResult::Failed {
@@ -2555,59 +2561,6 @@ impl App {
                 error_count: 0,
             }),
         );
-    }
-
-    fn confirm_init_draft(&mut self) {
-        let Some(draft) = self.pending_init_draft.clone() else {
-            self.push_system_message("当前没有待确认的 init 草稿。");
-            return;
-        };
-        match block_on_cli_future(apply_init_draft(&self.workdir, &draft)) {
-            Ok(summary) => {
-                self.pending_init_draft = None;
-                let mut lines = vec![format!("{} 已写入。", crate::cmd::init::mode_name(summary.mode))];
-                lines.push(format!("项目: {}", summary.project_name));
-                lines.push(format!("技术栈: {}", summary.stack_summary.join("、")));
-                lines.push("已写入草稿文件: ".to_string());
-                for file in &draft.agents_files {
-                    lines.push(format!("- {}", file.relative_path));
-                }
-                lines.push("已写入 .sacode/project.json。".to_string());
-                if summary.generated_workflows {
-                    lines.push("已生成 .sacode/workflows.json。".to_string());
-                }
-                if summary.generated_mcp_template {
-                    lines.push("已生成 .sacode/mcp.json。".to_string());
-                }
-                self.push_success_message(&lines.join("\n"));
-            }
-            Err(error) => self.push_error_message(&format!("写入 init 草稿失败: {}", error)),
-        }
-    }
-
-    fn cancel_init_draft(&mut self) {
-        if self.pending_init_draft.take().is_some() {
-            self.push_system_message("已取消本次 init 草稿写入。草稿未落盘。");
-        } else {
-            self.push_system_message("当前没有待取消的 init 草稿。");
-        }
-    }
-
-    fn render_init_draft_message(draft: &InitDraft) -> String {
-        let mut lines = vec![draft.summary_message.clone(), String::new()];
-        for file in &draft.agents_files {
-            lines.push(render_agents_draft_preview(file));
-            lines.push(String::new());
-        }
-        let (confirm_cmd, cancel_cmd) = match draft.mode {
-            InitMode::Basic => ("/init confirm", "/init cancel"),
-            InitMode::Deep => ("/init-deep confirm", "/init-deep cancel"),
-        };
-        lines.push(format!(
-            "输入 `{}` 写入草稿，输入 `{}` 放弃本次草稿。",
-            confirm_cmd, cancel_cmd
-        ));
-        lines.join("\n")
     }
 
     fn project_session_dir(&self) -> PathBuf {
@@ -3502,12 +3455,6 @@ impl App {
         }
     }
 
-    fn finish_checkpoint_input(&mut self) {
-        self.input_mode = InputMode::Chat;
-        self.pending_checkpoint_action = None;
-        self.send_message();
-    }
-
     fn mode_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let sub = parts.get(1).copied().unwrap_or("");
@@ -3724,12 +3671,6 @@ impl App {
         }
     }
 
-    fn finish_skill_input(&mut self) {
-        self.input_mode = InputMode::Chat;
-        self.pending_skill_action = None;
-        self.send_message();
-    }
-
     fn mcp_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let store = McpConfigStore::new(std::path::Path::new("."));
@@ -3835,12 +3776,6 @@ impl App {
                 }
             }
         }
-    }
-
-    fn finish_mcp_input(&mut self) {
-        self.input_mode = InputMode::Chat;
-        self.pending_mcp_action = None;
-        self.send_message();
     }
 
     fn tools_command(&mut self) {
@@ -4228,7 +4163,6 @@ impl App {
                 TodoStatus::Pending => "pending",
                 TodoStatus::Running => "running",
                 TodoStatus::Completed => "completed",
-                TodoStatus::Skipped => "skipped",
             };
             lines.push(format!("{}. [{}] {}", item.id, status, item.description));
         }
@@ -4406,7 +4340,8 @@ impl App {
             /keybindings - 查看快捷键说明\n\
             /outstyle  - 切换 AI 输出风格（默认用户级）\n\
             /vim       - 切换 Vim 风格导航\n\
-            /memory    - 查看或管理项目记忆\n\
+            /memory    - 查看或管理分类项目记忆\n\
+            /wiki      - 查看分层知识库加载状态\n\
             /insight   - 生成编程洞察\n\
             /tools     - 显示可用工具\n\
             /stats     - 查看 token 与费用统计\n\
@@ -4428,7 +4363,7 @@ impl App {
             Ctrl+Q - 等价于 /quit\n\
             Ctrl+A - 优化当前输入\n\
             Ctrl+S - 折叠或展开全部助手回复\n\
-            Ctrl+T - 切换思考模型与普通模型\n\
+            Ctrl+T - 开启或关闭思考功能\n\
             Ctrl+M - 在 plan/build/yolo 间切换执行模式\n\
             Ctrl+Z - 撤回上次输入优化\n\
             Esc    - 取消当前任务或取消选择\n\
@@ -4717,6 +4652,30 @@ impl App {
         match memory::render_memory(&self.workdir, &args) {
             Ok(output) => self.push_system_message(&output),
             Err(error) => self.push_error_message(&format!("读取记忆失败: {}", error)),
+        }
+    }
+
+    fn wiki_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match wiki::render_wiki(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取 wiki 失败: {}", error)),
+        }
+    }
+
+    fn prompt_command(&mut self, input: &str) {
+        let args = input
+            .split_whitespace()
+            .skip(1)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        match prompt::render_prompt(&self.workdir, &args) {
+            Ok(output) => self.push_system_message(&output),
+            Err(error) => self.push_error_message(&format!("读取 prompt 失败: {}", error)),
         }
     }
 
@@ -5038,85 +4997,16 @@ impl App {
 
         let api_key = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
 
-        let config = crate::provider_config::ProviderConfig {
-            base_url: base_url.to_string(),
+        match agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            name,
+            base_url,
             api_key,
-            model: String::new(),
-        };
-
-        match self.provider_store.save_named(name, &config, true) {
-            Ok(()) => {
-                let models = fetch_models(&config).ok().unwrap_or_default();
-                let (final_models, default_model) = if !models.is_empty() {
-                    (models.clone(), models[0].clone())
-                } else {
-                    let fallbacks = fallback_models(name);
-                    let default = fallbacks.first().cloned().unwrap_or_default();
-                    (fallbacks, default)
-                };
-
-                let mut final_config = config;
-                final_config.model = default_model.clone();
-                if !default_model.is_empty() {
-                    let _ = self.provider_store.save_named(name, &final_config, true);
-                    let mut spec = self
-                        .sacode_store
-                        .provider(name)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                            name: name.to_string(),
-                            base_url: base_url.to_string(),
-                            api_key: String::new(),
-                            models: std::collections::BTreeMap::new(),
-                        });
-                    spec.name = name.to_string();
-                    spec.base_url = base_url.to_string();
-                    spec.api_key = final_config.api_key.clone();
-                    for model in &final_models {
-                        spec.models.entry(model.clone()).or_insert_with(|| {
-                            sacode_kernel::model::ModelRule {
-                                name: model.clone(),
-                                ..Default::default()
-                            }
-                        });
-                    }
-                    let _ = self.sacode_store.upsert_provider(name, spec);
-                    let _ = self.sacode_store.set_model(name, &default_model);
-                }
-
-                self.current_provider = Some(crate::provider_config::NamedProviderConfig {
-                    name: name.to_string(),
-                    config: final_config,
-                });
-
-                let mut msg = format!("Provider {} 已连接。", name);
-                if !final_models.is_empty() {
-                    msg.push_str("\n可用模型:");
-                    for m in &final_models {
-                        msg.push_str(&format!("\n  - {}", m));
-                    }
-                    if !default_model.is_empty() {
-                        msg.push_str(&format!("\n默认: {}", default_model));
-                    }
-                } else {
-                    msg.push_str(
-                        "\n未能获取模型列表，请确认 API Key 正确后使用 /models 选择模型。",
-                    );
-                }
-                self.push_system_message(&msg);
-
-                if !final_models.is_empty() {
-                    self.selected_model_index = final_models
-                        .iter()
-                        .position(|model| model == &default_model)
-                        .unwrap_or(0);
-                    self.model_options = final_models;
-                    self.input_mode = InputMode::ModelSelect;
-                    self.push_system_message(
-                        "已打开模型选择，使用上下方向键选择，回车确认，Esc 取消。",
-                    );
-                }
+        ) {
+            Ok(result) => {
+                self.current_provider = Some(result.current_provider);
+                self.open_model_picker();
             }
             Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
         }
@@ -5163,85 +5053,16 @@ impl App {
     }
 
     fn save_connect_provider(&mut self, name: &str, base_url: &str, api_key: String) {
-        let config = crate::provider_config::ProviderConfig {
-            base_url: base_url.to_string(),
+        match agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            name,
+            base_url,
             api_key,
-            model: String::new(),
-        };
-
-        match self.provider_store.save_named(name, &config, true) {
-            Ok(()) => {
-                let models = fetch_models(&config).ok().unwrap_or_default();
-                let (final_models, default_model) = if !models.is_empty() {
-                    (models.clone(), models[0].clone())
-                } else {
-                    let fallbacks = fallback_models(name);
-                    let default = fallbacks.first().cloned().unwrap_or_default();
-                    (fallbacks, default)
-                };
-
-                let mut final_config = config;
-                final_config.model = default_model.clone();
-                if !default_model.is_empty() {
-                    let _ = self.provider_store.save_named(name, &final_config, true);
-                    let mut spec = self
-                        .sacode_store
-                        .provider(name)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                            name: name.to_string(),
-                            base_url: base_url.to_string(),
-                            api_key: String::new(),
-                            models: std::collections::BTreeMap::new(),
-                        });
-                    spec.name = name.to_string();
-                    spec.base_url = base_url.to_string();
-                    spec.api_key = final_config.api_key.clone();
-                    for model in &final_models {
-                        spec.models.entry(model.clone()).or_insert_with(|| {
-                            sacode_kernel::model::ModelRule {
-                                name: model.clone(),
-                                ..Default::default()
-                            }
-                        });
-                    }
-                    let _ = self.sacode_store.upsert_provider(name, spec);
-                    let _ = self.sacode_store.set_model(name, &default_model);
-                }
-
-                self.current_provider = Some(crate::provider_config::NamedProviderConfig {
-                    name: name.to_string(),
-                    config: final_config,
-                });
-
-                let mut msg = format!("Provider {} 已连接。", name);
-                if !final_models.is_empty() {
-                    msg.push_str("\n可用模型:");
-                    for m in &final_models {
-                        msg.push_str(&format!("\n  - {}", m));
-                    }
-                    if !default_model.is_empty() {
-                        msg.push_str(&format!("\n默认: {}", default_model));
-                    }
-                } else {
-                    msg.push_str(
-                        "\n未能获取模型列表，请确认 API Key 正确后使用 /models 选择模型。",
-                    );
-                }
-                self.push_system_message(&msg);
-
-                if !final_models.is_empty() {
-                    self.selected_model_index = final_models
-                        .iter()
-                        .position(|model| model == &default_model)
-                        .unwrap_or(0);
-                    self.model_options = final_models;
-                    self.input_mode = InputMode::ModelSelect;
-                    self.push_system_message(
-                        "已打开模型选择，使用上下方向键选择，回车确认，Esc 取消。",
-                    );
-                }
+        ) {
+            Ok(result) => {
+                self.current_provider = Some(result.current_provider);
+                self.open_model_picker();
             }
             Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
         }
@@ -5296,93 +5117,38 @@ impl App {
             return;
         };
 
-        let Some(current_provider) = self.current_provider.clone() else {
-            self.push_system_message("当前还没有 provider 配置，请先输入 /login。");
-            self.input_mode = InputMode::Chat;
-            return;
-        };
-
+        let provider_name = selected_model.provider_name.clone();
         self.input_mode = InputMode::Chat;
         self.processing = true;
-        self.busy_message = format!("正在切换默认模型到 {}...", selected_model);
-        self.spawn_save_model_task(
-            current_provider.name,
-            current_provider.config,
-            selected_model,
+        self.busy_message = format!(
+            "正在切换到 {} / {}...",
+            provider_name, selected_model.model_name
         );
+        self.spawn_save_model_task(provider_name, selected_model.model_name);
         self.input.clear();
     }
 
-    fn spawn_login_task(&self, provider_name: String, mut config: ProviderConfig) {
+    fn spawn_login_task(&self, provider_name: String, config: ProviderConfig) {
         let sender = self.task_tx.clone();
         let store = self.provider_store.clone();
         let sacode_store = self.sacode_store.clone();
-        thread::spawn(move || match fetch_models(&config) {
-            Ok(models) => {
-                if let Some(first_model) = models.first() {
-                    if config.model.is_empty() {
-                        config.model = first_model.clone();
-                    }
-                }
-                match store.save_named(&provider_name, &config, true) {
-                    Ok(()) => {
-                        let mut spec = sacode_store
-                            .provider(&provider_name)
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                                name: provider_name.clone(),
-                                base_url: config.base_url.clone(),
-                                api_key: String::new(),
-                                models: std::collections::BTreeMap::new(),
-                            });
-                        spec.name = provider_name.clone();
-                        spec.base_url = config.base_url.clone();
-                        spec.api_key = config.api_key.clone();
-                        for model in &models {
-                            spec.models.entry(model.clone()).or_insert_with(|| {
-                                sacode_kernel::model::ModelRule {
-                                    name: model.clone(),
-                                    ..Default::default()
-                                }
-                            });
-                        }
-                        if let Err(error) = sacode_store.upsert_provider(&provider_name, spec) {
-                            let _ = sender.send(AsyncResult::Failed {
-                                context: AsyncContext::Login,
-                                message: format!("保存 config.json provider 失败: {}", error),
-                            });
-                            return;
-                        }
-                        if !config.model.is_empty() {
-                            if let Err(error) =
-                                sacode_store.set_model(&provider_name, &config.model)
-                            {
-                                let _ = sender.send(AsyncResult::Failed {
-                                    context: AsyncContext::Login,
-                                    message: format!("保存 config.json 默认模型失败: {}", error),
-                                });
-                                return;
-                            }
-                        }
-                        let _ = sender.send(AsyncResult::LoginCompleted {
-                            provider_name,
-                            config,
-                            models,
-                        });
-                    }
-                    Err(error) => {
-                        let _ = sender.send(AsyncResult::Failed {
-                            context: AsyncContext::Login,
-                            message: format!("保存 provider 配置失败: {}", error),
-                        });
-                    }
-                }
+        thread::spawn(move || match agent_harness::connect_provider(
+            &store,
+            &sacode_store,
+            &provider_name,
+            &config.base_url,
+            config.api_key,
+        ) {
+            Ok(result) => {
+                let _ = sender.send(AsyncResult::LoginCompleted {
+                    provider_name: result.current_provider.name,
+                    config: result.current_provider.config,
+                });
             }
             Err(error) => {
                 let _ = sender.send(AsyncResult::Failed {
                     context: AsyncContext::Login,
-                    message: format!("拉取模型列表失败: {}", error),
+                    message: format!("保存 provider 配置失败: {}", error),
                 });
             }
         });
@@ -5419,98 +5185,81 @@ impl App {
         let store = self.provider_store.clone();
         let sacode_store = self.sacode_store.clone();
         thread::spawn(move || {
-            let config = match sacode_store.load_or_default() {
-                Ok(config) => config,
-                Err(error) => {
-                    let _ = sender.send(AsyncResult::Failed {
-                        context: AsyncContext::SaveProvider,
-                        message: format!("读取 config.json 失败: {}", error),
-                    });
-                    return;
-                }
-            };
-            let model_name = config
-                .resolve_model(&config.model)
-                .filter(|(name, _)| name == &provider_name)
-                .map(|(_, model_name)| model_name)
-                .or_else(|| {
-                    config
-                        .provider
-                        .get(&provider_name)
-                        .and_then(|spec| spec.models.keys().next().cloned())
-                })
-                .unwrap_or_default();
-            if let Err(error) = sacode_store.set_model(&provider_name, &model_name) {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::SaveProvider,
-                    message: format!("切换 provider 失败: {}", error),
-                });
-                return;
-            }
-            let _ = store.set_current(&provider_name);
-            match store.get(&provider_name) {
-                Ok(Some(config)) => {
-                    let _ = sender.send(AsyncResult::ProviderSwitched {
-                        provider_name,
-                        config,
-                    });
-                }
-                Ok(None) => {
-                    let _ = sender.send(AsyncResult::Failed {
-                        context: AsyncContext::SaveProvider,
-                        message: "切换 provider 后未找到 legacy 配置。".to_string(),
-                    });
+            match agent_harness::switch_provider(&store, &sacode_store, &provider_name) {
+                Ok(current_provider) => {
+                    let _ = sender.send(AsyncResult::ProviderSwitched { current_provider });
                 }
                 Err(error) => {
                     let _ = sender.send(AsyncResult::Failed {
                         context: AsyncContext::SaveProvider,
-                        message: format!("读取 provider 配置失败: {}", error),
+                        message: format!("切换 provider 失败: {}", error),
                     });
                 }
             }
         });
     }
 
-    fn spawn_load_models_task(&self, config: ProviderConfig) {
+    fn spawn_load_models_task(&self) {
         let sender = self.task_tx.clone();
-        thread::spawn(move || match fetch_models(&config) {
-            Ok(models) => {
-                let _ = sender.send(AsyncResult::ModelsLoaded {
-                    models,
-                    current_model: config.model,
-                });
+        let provider_store = self.provider_store.clone();
+        let sacode_store = self.sacode_store.clone();
+        let current_provider = self.current_provider.clone();
+        thread::spawn(move || {
+            match provider_store.load_catalog() {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    let _ = sender.send(AsyncResult::ModelsLoaded {
+                        models: Vec::new(),
+                        current_provider: String::new(),
+                        current_model: String::new(),
+                    });
+                    return;
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::LoadModels,
+                        message: format!("读取 provider 目录失败: {}", error),
+                    });
+                    return;
+                }
             }
-            Err(error) => {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::LoadModels,
-                    message: format!("拉取模型列表失败: {}", error),
-                });
-            }
+
+            let current_provider_name = current_provider
+                .as_ref()
+                .map(|provider| provider.name.clone())
+                .unwrap_or_default();
+            let current_model_name = current_provider
+                .as_ref()
+                .map(|provider| provider.config.model.clone())
+                .unwrap_or_default();
+
+            let options = agent_harness::collect_model_options(&provider_store, &sacode_store)
+                .unwrap_or_default()
+                .into_iter()
+                .map(ModelOptionEntry::from)
+                .collect::<Vec<_>>();
+            let _ = sender.send(AsyncResult::ModelsLoaded {
+                models: options,
+                current_provider: current_provider_name,
+                current_model: current_model_name,
+            });
         });
     }
 
     fn spawn_save_model_task(
         &self,
         provider_name: String,
-        mut config: ProviderConfig,
         selected_model: String,
     ) {
         let sender = self.task_tx.clone();
         let store = self.provider_store.clone();
         let sacode_store = self.sacode_store.clone();
         thread::spawn(move || {
-            config.model = selected_model.clone();
-            match store.save_named(&provider_name, &config, true) {
-                Ok(()) => {
-                    if let Err(error) = sacode_store.set_model(&provider_name, &selected_model) {
-                        let _ = sender.send(AsyncResult::Failed {
-                            context: AsyncContext::SaveModel,
-                            message: format!("保存 config.json 默认模型失败: {}", error),
-                        });
-                        return;
-                    }
+            match agent_harness::switch_model(&store, &sacode_store, &provider_name, &selected_model)
+            {
+                Ok(result) => {
                     let _ = sender.send(AsyncResult::ModelSaved {
-                        config,
+                        config: result.config,
                         selected_model,
                     });
                 }
@@ -5532,6 +5281,7 @@ impl App {
                     prompt,
                     response,
                     success,
+                    learned_facts,
                     pending_question,
                     plan,
                     usage,
@@ -5568,6 +5318,10 @@ impl App {
                         timestamp,
                         collapsed: false,
                     });
+                    if let Some(summary) = crate::runner::format_learned_facts_summary(&learned_facts)
+                    {
+                        self.push_system_message(&summary);
+                    }
                     self.log_event(
                         "assistant_response",
                         &self
@@ -5675,26 +5429,15 @@ self.enqueue_or_start_message_with_approval_and_loop(
                 AsyncResult::LoginCompleted {
                     provider_name,
                     config,
-                    models,
                 } => {
                     self.current_provider = Some(NamedProviderConfig {
-                        name: provider_name.clone(),
-                        config: config.clone(),
+                        name: provider_name,
+                        config,
                     });
-                    self.model_options = models.clone();
-                    self.selected_model_index = models
-                        .iter()
-                        .position(|model| model == &config.model)
-                        .unwrap_or(0);
                     self.processing = false;
                     self.spinner_index = 0;
                     self.busy_message.clear();
-                    self.push_system_message(&format!(
-                        "Provider {} 已保存，已发现 {} 个模型。当前默认模型: {}。输入 /providers 可切换 provider，输入 /models 可重新选择模型。",
-                        provider_name,
-                        models.len(),
-                        config.model
-                    ));
+                    self.open_model_picker();
                 }
                 AsyncResult::ProvidersLoaded {
                     providers,
@@ -5715,14 +5458,9 @@ self.enqueue_or_start_message_with_approval_and_loop(
                     self.input_mode = InputMode::ProviderSelect;
                     self.push_system_message("已打开 provider 管理，使用上下方向键选择，Enter 切换，r 重命名，d 删除，Esc 取消。");
                 }
-                AsyncResult::ProviderSwitched {
-                    provider_name,
-                    config,
-                } => {
-                    self.current_provider = Some(NamedProviderConfig {
-                        name: provider_name.clone(),
-                        config,
-                    });
+                AsyncResult::ProviderSwitched { current_provider } => {
+                    let provider_name = current_provider.name.clone();
+                    self.current_provider = Some(current_provider);
                     self.input_mode = InputMode::Chat;
                     self.processing = false;
                     self.spinner_index = 0;
@@ -5734,32 +5472,40 @@ self.enqueue_or_start_message_with_approval_and_loop(
                 }
                 AsyncResult::ModelsLoaded {
                     models,
+                    current_provider,
                     current_model,
                 } => {
                     self.processing = false;
                     self.spinner_index = 0;
                     self.busy_message.clear();
                     if models.is_empty() {
-                        self.push_system_message("Provider 返回了空模型列表。");
+                        self.push_system_message("当前没有可切换的模型，请先配置 provider 或检查模型拉取结果。");
                         continue;
                     }
                     self.selected_model_index = models
                         .iter()
-                        .position(|model| model == &current_model)
+                        .position(|model| {
+                            model.provider_name == current_provider
+                                && model.model_name == current_model
+                        })
                         .unwrap_or(0);
                     self.model_options = models;
                     self.input_mode = InputMode::ModelSelect;
-                    self.push_system_message(
-                        "已打开模型选择，使用上下方向键选择，回车确认，Esc 取消。",
-                    );
                 }
                 AsyncResult::ModelSaved {
                     config,
                     selected_model,
                 } => {
-                    if let Some(current_provider) = &mut self.current_provider {
-                        current_provider.config = config;
-                    }
+                    let provider_name = self
+                        .model_options
+                        .get(self.selected_model_index)
+                        .map(|entry| entry.provider_name.clone())
+                        .or_else(|| self.current_provider.as_ref().map(|provider| provider.name.clone()))
+                        .unwrap_or_default();
+                    self.current_provider = Some(NamedProviderConfig {
+                        name: provider_name,
+                        config,
+                    });
                     self.input_mode = InputMode::Chat;
                     self.processing = false;
                     self.busy_message.clear();
@@ -5779,12 +5525,12 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         }
                     }
                 }
-                AsyncResult::InitDraftReady { draft } => {
+                AsyncResult::InitCompleted { mode } => {
                     self.processing = false;
                     self.spinner_index = 0;
                     self.busy_message.clear();
-                    self.pending_init_draft = Some(draft.clone());
-                    self.push_system_message(&Self::render_init_draft_message(&draft));
+                    self.input_mode = InputMode::Chat;
+                    self.push_success_message(&format!("{} 已完成。", crate::cmd::init::mode_name(mode)));
                 }
                 AsyncResult::UpdateCompleted { message } => {
                     self.processing = false;
@@ -6039,7 +5785,6 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         TodoStatus::Pending => "[ ]",
                         TodoStatus::Running => "[>]",
                         TodoStatus::Completed => "[x]",
-                        TodoStatus::Skipped => "[-]",
                     };
                     let preview = item.description.chars().take(20).collect::<String>();
                     Line::from(Span::styled(
@@ -6264,20 +6009,28 @@ self.enqueue_or_start_message_with_approval_and_loop(
             .unwrap_or_else(|| "内置执行".to_string())
     }
 
-    fn thinking_status_label(&self) -> &'static str {
-        if self
-            .current_provider
-            .as_ref()
-            .map(|provider| ChatRequest::needs_thinking(&provider.config.model))
+    fn current_thinking_enabled(&self) -> bool {
+        let Some(current_provider) = self.current_provider.as_ref() else {
+            return false;
+        };
+        self.sacode_store
+            .provider(&current_provider.name)
+            .ok()
+            .flatten()
+            .and_then(|provider| provider.models.get(&current_provider.config.model).cloned())
+            .map(|rule| rule.thinking)
             .unwrap_or(false)
-        {
-            "Thinking"
+    }
+
+    fn thinking_toggle_status_label(&self) -> &'static str {
+        if self.current_thinking_enabled() {
+            "思考:开"
         } else {
-            "Chat"
+            "思考:关"
         }
     }
 
-    fn toggle_thinking_mode(&mut self) {
+    fn toggle_thinking_feature(&mut self) {
         let Some(current_provider) = self.current_provider.clone() else {
             self.push_system_message(
                 "当前没有可切换的 provider。先使用 /login 或 /connect 配置模型。",
@@ -6285,61 +6038,37 @@ self.enqueue_or_start_message_with_approval_and_loop(
             return;
         };
 
-        let target_thinking = !ChatRequest::needs_thinking(&current_provider.config.model);
-        let mut candidates = self.model_options.clone();
-        for model in fallback_models(&current_provider.name) {
-            if !candidates.iter().any(|value| value == &model) {
-                candidates.push(model);
-            }
-        }
-
-        let Some(target_model) = candidates.into_iter().find(|model| {
-            model != &current_provider.config.model
-                && ChatRequest::needs_thinking(model) == target_thinking
-        }) else {
-            let target = if target_thinking {
-                "思考模型"
-            } else {
-                "普通聊天模型"
-            };
-            self.push_system_message(&format!(
-                "当前 provider 没有可切换的{}。请用 /models 选择具体模型。",
-                target
-            ));
+        let target_thinking = !self.current_thinking_enabled();
+        let Ok(Some(mut provider_spec)) = self.sacode_store.provider(&current_provider.name) else {
+            self.push_error_message("读取当前 provider 配置失败，无法切换思考功能。");
             return;
         };
+        let model_name = current_provider.config.model.clone();
+        let rule = provider_spec.models.entry(model_name.clone()).or_insert_with(|| {
+            sacode_kernel::model::ModelRule {
+                name: model_name.clone(),
+                ..Default::default()
+            }
+        });
+        rule.thinking = target_thinking;
 
-        let mut config = current_provider.config.clone();
-        config.model = target_model.clone();
         match self
-            .provider_store
-            .save_named(&current_provider.name, &config, true)
-            .and_then(|_| {
-                self.sacode_store
-                    .set_model(&current_provider.name, &target_model)
-                    .map(|_| ())
-            }) {
-            Ok(()) => {
-                self.current_provider = Some(NamedProviderConfig {
-                    name: current_provider.name,
-                    config,
-                });
-                self.selected_model_index = self
-                    .model_options
-                    .iter()
-                    .position(|model| model == &target_model)
-                    .unwrap_or(self.selected_model_index);
+            .sacode_store
+            .upsert_provider(&current_provider.name, provider_spec)
+        {
+            Ok(_) => {
+                self.current_provider = Some(current_provider);
                 self.push_system_message(&format!(
-                    "已切换到{}模型: {}",
+                    "已{}，当前模型: {}",
                     if target_thinking {
-                        "思考"
+                        "开启思考功能"
                     } else {
-                        "普通聊天"
+                        "关闭思考功能"
                     },
-                    target_model,
+                    model_name,
                 ));
             }
-            Err(error) => self.push_error_message(&format!("切换思考模式失败: {}", error)),
+            Err(error) => self.push_error_message(&format!("切换思考功能失败: {}", error)),
         }
     }
 
@@ -6779,9 +6508,6 @@ self.enqueue_or_start_message_with_approval_and_loop(
                     InputMode::ConfigSelect => self.confirm_config_selection(),
                     InputMode::ConfigEnumSelect => self.confirm_config_enum_selection(),
                     InputMode::ConfigNumberInput => self.finish_config_number_input(),
-                    InputMode::SkillInput => self.finish_skill_input(),
-                    InputMode::McpInput => self.finish_mcp_input(),
-                    InputMode::CheckpointInput => self.finish_checkpoint_input(),
                     InputMode::TaskInput => self.finish_task_input(),
                     InputMode::InputOptimizePreview => self.apply_pending_input_optimization(),
                     InputMode::TodoConfirm => self.confirm_todo_plan(),
@@ -6996,7 +6722,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.toggle_thinking_mode();
+                self.toggle_thinking_feature();
             }
             KeyCode::Char('m')
                 if self.input_mode == InputMode::Chat
@@ -7471,9 +7197,6 @@ fn ui(frame: &mut Frame, app: &mut App) {
             InputMode::ConfigSelect => "使用方向键选择配置项...",
             InputMode::ConfigEnumSelect => "使用方向键选择配置值...",
             InputMode::ConfigNumberInput => "输入新的数字配置值...",
-            InputMode::SkillInput => "输入 Skill 参数...",
-            InputMode::McpInput => "输入 MCP 参数...",
-            InputMode::CheckpointInput => "输入检查点名称...",
             InputMode::TaskInput => "输入任务描述...",
             InputMode::SessionSelect => "使用方向键选择历史会话...",
             InputMode::InputOptimizePreview => "查看输入优化预览...",
@@ -7500,13 +7223,13 @@ fn ui(frame: &mut Frame, app: &mut App) {
     frame.render_widget(input_paragraph, chunks[3]);
 
     if input_is_editable {
-        let (lines, cursor_line, cursor_col) = layout_input_lines(
+            let (lines, cursor_line, cursor_col) = layout_input_lines(
             &app.input,
             input_inner_width,
         );
         let max_line = app.input_viewport.height.saturating_sub(1) as usize;
         let visible_line = cursor_line.min(max_line.min(lines.len().saturating_sub(1)));
-        let cursor_x = app.input_viewport.x + cursor_col as u16;
+        let cursor_x = app.input_viewport.x + clamp_cursor_col(cursor_col, input_inner_width) as u16;
         let cursor_y = app.input_viewport.y + visible_line as u16;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
@@ -7521,7 +7244,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
             Style::default().fg(theme.assistant),
         ),
         Span::styled(
-            format!("{}  ", app.thinking_status_label()),
+            format!("{}  ", app.thinking_toggle_status_label()),
             Style::default().fg(theme.accent),
         ),
         Span::styled(
@@ -7983,11 +7706,22 @@ fn render_selector(frame: &mut Frame, app: &App) {
     let (title, options, selected_index) = match app.input_mode {
         InputMode::ProviderSelect => (
             "管理 Provider",
-            &app.provider_options,
+            app.provider_options.clone(),
             app.selected_provider_index,
         ),
-        InputMode::ThemeSelect => ("选择主题", &app.theme_options, app.selected_theme_index),
-        _ => ("选择模型", &app.model_options, app.selected_model_index),
+        InputMode::ThemeSelect => (
+            "选择主题",
+            app.theme_options.clone(),
+            app.selected_theme_index,
+        ),
+        _ => (
+            "选择模型",
+            app.model_options
+                .iter()
+                .map(|option| option.label.clone())
+                .collect::<Vec<_>>(),
+            app.selected_model_index,
+        ),
     };
     let inner = render_modal_block(frame, area, title, theme);
 

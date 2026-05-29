@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use tower::util::ServiceExt;
 
 use crate::{
+    build_runtime_system_prompt,
     create_daemon,
     config::SaCodeConfig,
     executor::TaskExecutor,
@@ -18,8 +19,109 @@ use crate::{
     retry::RetryHandler,
     skills::SkillRegistry,
     tools::{self, ToolRegistry, ToolOutput},
+    load_wiki_context,
+    PromptContext,
 };
 use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
+
+#[test]
+fn test_runtime_system_prompt_loads_agents_and_project_prompt() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    fs::create_dir_all(workdir.join(".sacode")).expect("create .sacode");
+    fs::write(
+        workdir.join("AGENTS.md"),
+        "# Repo\n\n## Workspace 边界\n- kernel only logic\n\n## 开发命令\n- cargo test --workspace\n\n## 其他\n- ignored",
+    )
+    .expect("write agents");
+    fs::write(
+        workdir.join(".sacode/prompt.md"),
+        "# Project Prompt\n\n- 回答使用中文\n- 修改后同步文档",
+    )
+    .expect("write project prompt");
+
+    let tool_names = vec!["fs.read".to_string(), "apply_patch".to_string()];
+    let prompt = build_runtime_system_prompt(&PromptContext {
+        workdir,
+        mode: ExecutionMode::Build,
+        tool_names: &tool_names,
+    })
+    .expect("build prompt");
+
+    assert!(prompt.contains("[Platform Rules]"));
+    assert!(prompt.contains("[Repository Rules]"));
+    assert!(prompt.contains("kernel only logic"));
+    assert!(prompt.contains("cargo test --workspace"));
+    assert!(prompt.contains("[Project Prompt]"));
+    assert!(prompt.contains("回答使用中文"));
+}
+
+#[test]
+fn test_runtime_system_prompt_loads_layered_wiki_context() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    fs::create_dir_all(workdir.join(".sacode/wiki")).expect("create project wiki");
+    fs::write(
+        workdir.join(".sacode/wiki/project.md"),
+        "# Project Wiki\n\n- 使用 cargo test -p sacode-cli",
+    )
+    .expect("write project wiki");
+    fs::write(
+        workdir.join(".sacode/mistakes.json"),
+        r#"{"entries":[{"timestamp":"1","scope":"tui","summary":"光标错位","details":"多行输入时出现偏移"}]}"#,
+    )
+    .expect("write mistakes");
+
+    let tool_names = vec!["fs.read".to_string()];
+    let prompt = build_runtime_system_prompt(&PromptContext {
+        workdir,
+        mode: ExecutionMode::Build,
+        tool_names: &tool_names,
+    })
+    .expect("build prompt");
+
+    assert!(prompt.contains("[Project Knowledge]"));
+    assert!(prompt.contains("Project Wiki"));
+    assert!(prompt.contains("光标错位"));
+}
+
+#[test]
+fn test_load_wiki_context_reads_project_sources() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    fs::create_dir_all(workdir.join(".sacode/wiki")).expect("create project wiki");
+    fs::write(
+        workdir.join(".sacode/project.json"),
+        r#"{"name":"demo","stack":["rust"]}"#,
+    )
+    .expect("write project config");
+    fs::write(
+        workdir.join(".sacode/wiki/architecture.md"),
+        "# Architecture\n\n- interfaces -> runtime -> kernel",
+    )
+    .expect("write architecture wiki");
+
+    let wiki = load_wiki_context(workdir).expect("load wiki context");
+    let project_summary = wiki.project_summary.expect("project summary should exist");
+    assert!(project_summary.contains("demo"));
+    assert!(project_summary.contains("interfaces -> runtime -> kernel"));
+}
+
+#[test]
+fn test_runtime_skill_prompt_expansion() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let registry = SkillRegistry::new(workdir);
+    registry
+        .save_project_skill("review", "代码审查", "请审查 {{args}} in {{cwd}}")
+        .expect("save skill");
+
+    let rendered = crate::maybe_expand_skill_prompt("/review src/main.rs", workdir)
+        .expect("expand skill");
+
+    assert!(rendered.contains("src/main.rs"));
+    assert!(rendered.contains(&workdir.display().to_string()));
+}
 
 #[test]
 fn test_tool_registry() {

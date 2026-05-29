@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::Result;
@@ -94,7 +94,6 @@ struct ProjectSummary {
     format_tools: Vec<String>,
     dependency_hints: Vec<String>,
     scripts: BTreeMap<String, String>,
-    ignored_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +106,7 @@ struct AgentsContent {
 pub async fn run(mode: InitMode) -> Result<()> {
     let workdir = env::current_dir()?;
     let draft = build_init_draft(&workdir, mode).await?;
-    let summary = apply_init_draft(&workdir, &draft).await?;
-    print_summary(&summary);
+    let _summary = apply_init_draft(&workdir, &draft).await?;
     Ok(())
 }
 
@@ -224,7 +222,6 @@ fn summarize_project(workdir: &Path) -> Result<ProjectSummary> {
             .and_then(|name| name.to_str())
             .unwrap_or("workspace")
             .to_string(),
-        ignored_patterns: vec![".git".to_string(), "target".to_string(), "node_modules".to_string()],
         ..ProjectSummary::default()
     };
 
@@ -391,9 +388,6 @@ fn classify_file(relative: &str, path: &Path, summary: &mut ProjectSummary) {
         }
         ".prettierrc" | ".prettierrc.json" => {
             summary.format_tools.push("Prettier".to_string());
-        }
-        "pyproject.toml" if relative.contains("black") => {
-            summary.format_tools.push("Black".to_string());
         }
         _ => {}
     }
@@ -578,12 +572,12 @@ fn select_deep_agent_dirs(summary: &ProjectSummary) -> Vec<String> {
     
     if is_python {
         if summary.source_dirs.iter().any(|dir| dir == "src" || dir == "app") {
-            let src_dir = summary.source_dirs.iter().find(|dir| dir == "src" || dir == "app").unwrap();
+            let src_dir = summary.source_dirs.iter().find(|dir| *dir == "src" || *dir == "app").unwrap();
             dirs.insert(src_dir.clone());
         }
         if summary.route_dirs.iter().any(|dir| dir == "api" || dir == "routes" || dir == "src/api") {
             let api_dir = summary.route_dirs.iter()
-                .find(|dir| dir == "api" || dir == "routes" || dir == "src/api")
+                .find(|dir| *dir == "api" || *dir == "routes" || *dir == "src/api")
                 .unwrap();
             dirs.insert(api_dir.clone());
         }
@@ -593,14 +587,14 @@ fn select_deep_agent_dirs(summary: &ProjectSummary) -> Vec<String> {
             }
         }
         if summary.test_dirs.iter().any(|dir| dir == "tests" || dir == "test") {
-            let test_dir = summary.test_dirs.iter().find(|dir| dir == "tests" || dir == "test").unwrap();
+            let test_dir = summary.test_dirs.iter().find(|dir| *dir == "tests" || *dir == "test").unwrap();
             dirs.insert(test_dir.clone());
         }
     }
     
     if is_go {
         if summary.source_dirs.iter().any(|dir| dir == "pkg" || dir == "internal") {
-            for dir in summary.source_dirs.iter().filter(|d| d == "pkg" || d == "internal") {
+            for dir in summary.source_dirs.iter().filter(|d| *d == "pkg" || *d == "internal") {
                 dirs.insert(dir.clone());
             }
         }
@@ -755,36 +749,6 @@ fn fallback_local_agents_md(summary: &ProjectSummary, dir: &str) -> String {
 
     lines.join("\n")
 }
-        "src/api" => {
-            lines.push("## API 约定".to_string());
-            lines.push("- 路由命名保持一致，错误处理统一。".to_string());
-            lines.push("- 鉴权、校验和错误返回风格保持同层一致。".to_string());
-        }
-        "src/components" => {
-            lines.push("## 组件约定".to_string());
-            lines.push("- 优先保持组件职责单一，状态与展示分离。".to_string());
-            lines.push("- 组件 API 保持简洁，避免重复封装。".to_string());
-        }
-        "tests" => {
-            lines.push("## 测试约定".to_string());
-            lines.push("- 测试名称应表达行为，fixture 与 mock 复用已有模式。".to_string());
-            lines.push("- 新增测试尽量贴近对应模块目录结构。".to_string());
-        }
-        _ => {
-            lines.push("## 局部约定".to_string());
-            lines.push(format!("- `{}` 目录具有独立职责，修改前先确认既有模式。", dir));
-        }
-    }
-
-    if !summary.format_tools.is_empty() {
-        lines.push(String::new());
-        lines.push("## 风格工具".to_string());
-        lines.push(format!("- 当前项目检测到：{}", join_or_dash(&summary.format_tools)));
-    }
-
-    lines.join("\n")
-}
-
 fn render_draft_summary(
     mode: InitMode,
     summary: &ProjectSummary,
@@ -893,7 +857,7 @@ fn detected_commands(summary: &ProjectSummary) -> Vec<String> {
 
 fn command_map(summary: &ProjectSummary) -> BTreeMap<String, String> {
     let mut commands = BTreeMap::new();
-    for (name, value) in &summary.scripts {
+    for name in summary.scripts.keys() {
         commands.insert(name.clone(), format!("npm run {}", name));
         if matches!(name.as_str(), "dev" | "start") {
             commands.entry("run".to_string()).or_insert_with(|| format!("npm run {}", name));
@@ -994,35 +958,13 @@ fn current_timestamp() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-fn print_summary(summary: &InitSummary) {
-    println!("SaCode {} complete", mode_name(summary.mode));
-    println!("Project: {}", summary.project_name);
-    println!("Detected stack: {}", summary.stack_summary.join(", "));
-    if !summary.detected_commands.is_empty() {
-        println!("Commands:");
-        for command in &summary.detected_commands {
-            println!("  - {}", command);
-        }
-    }
-    if summary.generated_agents {
-        println!("Generated AGENTS.md drafts");
-    }
-    println!("Recorded init metadata in .sacode/project.json");
-    if summary.generated_workflows {
-        println!("Generated .sacode/workflows.json");
-    }
-    if summary.generated_mcp_template {
-        println!("Generated .sacode/mcp.json");
-    }
-}
-
 fn merge_agents_content(existing: &str, new_content: &str) -> String {
     let separator = "\n\n---\n\n## Auto-generated updates\n\n";
     
     if existing.contains("## Auto-generated updates") {
         let parts: Vec<&str> = existing.splitn(2, "## Auto-generated updates").collect();
-        let user_content = parts.get(0).unwrap_or("");
-        let old_auto_content = parts.get(1).unwrap_or("");
+        let user_content = parts.get(0).map_or("", |v| *v);
+        let old_auto_content = parts.get(1).map_or("", |v| *v);
         
         let marker_line = "\n\n---\n\n";
         let timestamp_line = format!("\n### Update at {}\n", current_timestamp());

@@ -9,10 +9,7 @@ use axum::{
 };
 use tokio::sync::{broadcast, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use sacode_kernel::{
-    Event as KernelEvent, ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority,
-    TaskQueueStatus,
-};
+use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
 use crate::tools::ToolRegistry;
 use crate::queue::TaskQueue;
 use crate::executor::TaskExecutor;
@@ -483,20 +480,4 @@ fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_
         event_type: event_type.to_string(),
         data,
     });
-}
-
-fn daemon_event_name(event: &KernelEvent) -> &'static str {
-    match event {
-        KernelEvent::Message { .. } => "message",
-        KernelEvent::Thinking { .. } => "thinking",
-        KernelEvent::PlanGenerated { .. } => "plan_generated",
-        KernelEvent::ToolCallStarted { .. } => "tool_call_started",
-        KernelEvent::ToolCallFinished { .. } => "tool_call_finished",
-        KernelEvent::ApprovalRequested { .. } => "approval_requested",
-        KernelEvent::ApprovalResolved { .. } => "approval_resolved",
-        KernelEvent::FileChanged { .. } => "file_changed",
-        KernelEvent::CommandOutput { .. } => "command_output",
-        KernelEvent::Done { .. } => "done",
-        KernelEvent::Error { .. } => "error",
-    }
 }

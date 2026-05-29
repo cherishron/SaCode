@@ -196,7 +196,7 @@ impl SkillHubClient {
         Ok(response.json().await?)
     }
 
-    pub async fn publish_skill(&self, name: &str, skill_path: &Path) -> Result<SkillHubUploadResponse> {
+    pub async fn publish_skill(&self, _name: &str, skill_path: &Path) -> Result<SkillHubUploadResponse> {
         let content = fs::read_to_string(skill_path)?;
         let spec = parse_downloaded_skill(skill_path, &content, SkillSource::User);
 

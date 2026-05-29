@@ -2589,6 +2589,7 @@ dependencies = [
  "sacode-runtime",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

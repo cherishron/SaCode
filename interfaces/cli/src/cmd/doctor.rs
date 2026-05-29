@@ -20,7 +20,13 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     let provider = provider_store.load_current()?;
     let config = sacode_store.load_effective()?;
     let project_config = sacode_store.load()?;
-    let memory_path = workdir.join(".monkeycode/MEMORY.md");
+    let memory_files = [
+        workdir.join(".sacode/wiki/memory.md"),
+        workdir.join(".sacode/wiki/preferences.md"),
+        workdir.join(".sacode/wiki/workflows.md"),
+        workdir.join(".sacode/wiki/decisions.md"),
+    ];
+    let has_memory = memory_files.iter().any(|path| path.exists());
     let plugin_status = plugin_status(workdir)?;
     let mcp_lines = status::render_status(workdir).await?;
 
@@ -46,10 +52,10 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     ));
     lines.push(format!(
         "- 项目记忆: {}",
-        if memory_path.exists() {
-            format!("存在 | {}", memory_path.display())
+        if has_memory {
+            format!("存在 | {}", workdir.join(".sacode/wiki").display())
         } else {
-            format!("缺失 | {}", memory_path.display())
+            format!("缺失 | {}", workdir.join(".sacode/wiki").display())
         }
     ));
     lines.push(format!(
@@ -72,13 +78,13 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     if config.outstyle.trim().is_empty() {
         lines.push("- 运行 /outstyle concise|explain|teach 设置默认回答风格。".to_string());
     }
-    if !memory_path.exists() {
-        lines.push("- 运行 /memory show 初始化项目记忆文件。".to_string());
+    if !has_memory {
+        lines.push("- 运行 /memory show 初始化项目级 wiki 记忆文件，或使用 /memory append --type preference|workflow|decision 追加分类记忆。".to_string());
     }
     if plugin_status.0 == 0 && plugin_status.1 == 0 {
         lines.push("- 当前没有插件配置，按需使用 /plugin 或 /skills。".to_string());
     }
-    if provider.is_some() && !config.model.trim().is_empty() && memory_path.exists() {
+    if provider.is_some() && !config.model.trim().is_empty() && has_memory {
         lines.push("- 基础配置完整，可以直接开始任务。".to_string());
     }
 

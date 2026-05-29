@@ -19,7 +19,7 @@ pub fn render_keybindings(workdir: &Path) -> Result<String> {
     };
 
     Ok(format!(
-        "Keybindings\n通用:\n- Ctrl+Q: 退出 TUI\n- Ctrl+A: 优化当前输入\n- Ctrl+S: 折叠或展开全部助手回复\n- Ctrl+T: 切换思考模型与普通模型\n- Ctrl+M: 在 plan / build / yolo 间切换执行模式\n- Ctrl+Z: 撤回输入优化\n- Esc: 取消当前任务或退出当前选择\n- /: 打开命令列表\n\n导航:\n- Up / Down: 选择列表项或浏览历史\n- Enter: 确认\n- Tab: 补全命令\n- PageUp / PageDown: 滚动消息\n\n{}",
+        "Keybindings\n通用:\n- Ctrl+Q: 退出 TUI\n- Ctrl+A: 优化当前输入\n- Ctrl+S: 折叠或展开全部助手回复\n- Ctrl+T: 开启或关闭思考功能\n- Ctrl+M: 在 plan / build / yolo 间切换执行模式\n- Ctrl+Z: 撤回输入优化\n- Esc: 取消当前任务或退出当前选择\n- /: 打开命令列表\n\n导航:\n- Up / Down: 选择列表项或浏览历史\n- Enter: 确认\n- Tab: 补全命令\n- PageUp / PageDown: 滚动消息\n\n{}",
         vim
     ))
 }

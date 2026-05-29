@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::env;
+use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 
 use crate::tui::InputMode;
@@ -36,6 +36,10 @@ pub fn layout_input_lines(text: &str, width: usize) -> (Vec<String>, usize, usiz
     (lines, cursor_line, cursor_col)
 }
 
+pub fn clamp_cursor_col(cursor_col: usize, width: usize) -> usize {
+    cursor_col.min(width.max(1).saturating_sub(1))
+}
+
 pub fn is_editable_input_mode(input_mode: InputMode) -> bool {
     matches!(
         input_mode,
@@ -44,9 +48,6 @@ pub fn is_editable_input_mode(input_mode: InputMode) -> bool {
             | InputMode::LoginBaseUrl
             | InputMode::LoginApiKey
             | InputMode::ConnectApiKey
-            | InputMode::SkillInput
-            | InputMode::McpInput
-            | InputMode::CheckpointInput
             | InputMode::TaskInput
             | InputMode::ConfigNumberInput
             | InputMode::PendingQuestion

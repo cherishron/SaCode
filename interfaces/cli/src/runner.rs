@@ -3,10 +3,13 @@ use std::{env, path::Path, time::{Duration, Instant}};
 use anyhow::Result;
 use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
-use sacode_runtime::{McpConfigStore, ProviderClient, SideEffectLevel, ToolRegistry};
+use sacode_runtime::{
+    build_runtime_system_prompt, maybe_expand_skill_prompt, McpConfigStore, PromptContext,
+    ProviderClient, SideEffectLevel, ToolRegistry,
+};
 use serde::Serialize;
 
-use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
+use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, learning, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolResult {
@@ -28,6 +31,7 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
+    pub learned_facts: Vec<learning::LearnedFact>,
     pub pending_question: Option<serde_json::Value>,
     pub usage: Option<ChatUsage>,
     pub api_duration_ms: u64,
@@ -75,6 +79,7 @@ impl RunnerOutput {
             events: report.events.clone(),
             tool_results,
             provider_response: Err("orchestrator mode does not call provider".to_string()),
+            learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
             api_duration_ms: 0,
@@ -116,7 +121,21 @@ pub async fn run_task_with_stdin(
 
     let tool_defs = build_tool_definitions(&tools, &tool_names, mode);
 
-    let system_prompt = build_system_prompt(&workdir, mode, &tool_names);
+    let mut system_prompt = build_runtime_system_prompt(&PromptContext {
+        workdir: &workdir,
+        mode,
+        tool_names: &tool_names,
+    })?;
+
+    if let Some(style_instruction) = outstyle::outstyle_instruction(&workdir) {
+        system_prompt.push_str("\n\n[User Style]\n");
+        system_prompt.push_str(&style_instruction);
+    }
+
+    if let Some(insight_instruction) = insight::insight_instruction(&workdir) {
+        system_prompt.push_str("\n\n[User Insight]\n");
+        system_prompt.push_str(&insight_instruction);
+    }
 
     let provider = resolve_provider(&workdir);
     let (provider_response, pending_question, usage, api_duration_ms, tool_duration_ms) = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
@@ -150,6 +169,16 @@ pub async fn run_task_with_stdin(
         result.output.plan
     };
 
+    let learned_facts = if pending_question.is_none() {
+        if let Ok(response) = &provider_response {
+            learning::learn_from_task(&workdir, &effective_prompt, response).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     Ok(RunnerOutput {
         prompt: expanded_prompt,
         mode,
@@ -160,6 +189,7 @@ pub async fn run_task_with_stdin(
         events: Vec::new(),
         tool_results: vec![],
         provider_response,
+        learned_facts,
         pending_question,
         usage,
         api_duration_ms,
@@ -342,39 +372,6 @@ fn elapsed_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-fn build_system_prompt(workdir: &Path, mode: ExecutionMode, tool_names: &[String]) -> String {
-    let workspace = workdir.to_string_lossy();
-    let mode_hint = match mode {
-        ExecutionMode::Plan => "只规划不执行，使用只读工具了解项目状态后给出方案",
-        ExecutionMode::Build => "正常构建模式，可以执行修改操作但需要谨慎",
-        ExecutionMode::Yolo => "全自动执行模式，大胆使用所有工具完成任务",
-    };
-    let tools_list = tool_names.join(", ");
-
-    let mut prompt = format!(
-        "你是 SaCode AI 编程助手。工作目录: {}\n执行模式: {}\n可用工具: {}\n\n\
-        你可以调用工具来完成任务。每次回复你可以选择：\n\
-        1. 直接回复文本给用户\n\
-        2. 调用一个或多个工具（通过 tool_calls）\n\n\
-        工具调用后会返回结果，你可以基于结果继续推理或调用更多工具。\n\
-        请尽量高效完成任务，避免冗余调用。\
-        如果任务超出你的能力范围，请如实告知用户。",
-        workspace, mode_hint, tools_list
-    );
-
-    if let Some(style_instruction) = outstyle::outstyle_instruction(workdir) {
-        prompt.push_str("\n\n");
-        prompt.push_str(&style_instruction);
-    }
-
-    if let Some(insight_instruction) = insight::insight_instruction(workdir) {
-        prompt.push_str("\n\n");
-        prompt.push_str(&insight_instruction);
-    }
-
-    prompt
-}
-
 fn build_tool_definitions(
     registry: &ToolRegistry,
     tool_names: &[String],
@@ -421,6 +418,13 @@ pub fn format_output(output: &RunnerOutput) -> String {
     if let Some(question) = &output.pending_question {
         lines.push("Pending Question:".to_string());
         lines.push(summarize_tool_output(question));
+    }
+
+    if !output.learned_facts.is_empty() {
+        lines.push("Learned Facts:".to_string());
+        for fact in &output.learned_facts {
+            lines.push(format!("  - {:?}: {}", fact.kind, fact.content));
+        }
     }
 
     lines.push("Plan:".to_string());
@@ -496,6 +500,38 @@ pub fn format_chat_output(output: &RunnerOutput) -> String {
     }
 }
 
+pub fn format_learned_facts_summary(facts: &[learning::LearnedFact]) -> Option<String> {
+    if facts.is_empty() {
+        return None;
+    }
+
+    let preference_count = facts
+        .iter()
+        .filter(|fact| fact.kind == learning::LearnedKind::Preference)
+        .count();
+    let workflow_count = facts
+        .iter()
+        .filter(|fact| fact.kind == learning::LearnedKind::Workflow)
+        .count();
+    let decision_count = facts
+        .iter()
+        .filter(|fact| fact.kind == learning::LearnedKind::Decision)
+        .count();
+
+    let mut parts = Vec::new();
+    if preference_count > 0 {
+        parts.push(format!("偏好 {} 条", preference_count));
+    }
+    if workflow_count > 0 {
+        parts.push(format!("流程 {} 条", workflow_count));
+    }
+    if decision_count > 0 {
+        parts.push(format!("决策 {} 条", decision_count));
+    }
+
+    Some(format!("本轮已写入项目 wiki：{}", parts.join("，")))
+}
+
 pub fn build_mcp_input(schema: &serde_json::Value, prompt: &str) -> serde_json::Value {
     let properties = schema.get("properties").and_then(|value| value.as_object());
     let mut payload = serde_json::Map::new();
@@ -531,23 +567,6 @@ pub fn summarize_tool_output(output: &serde_json::Value) -> String {
     format!("{}{}", source_prefix, preview(&text))
 }
 
-fn maybe_expand_skill_prompt(prompt: &str, workdir: &Path) -> Result<String> {
-    let trimmed = prompt.trim();
-    let Some(skill_call) = trimmed.strip_prefix('/') else {
-        return Ok(prompt.to_string());
-    };
-    let mut parts = skill_call.split_whitespace();
-    let Some(skill_name) = parts.next() else {
-        return Ok(prompt.to_string());
-    };
-    let args = parts.collect::<Vec<_>>().join(" ");
-    let registry = sacode_runtime::SkillRegistry::new(workdir);
-    match registry.render_prompt(skill_name, &args, workdir) {
-        Ok(rendered) => Ok(rendered),
-        Err(_) => Ok(prompt.to_string()),
-    }
-}
-
 fn parse_mcp_tool_name(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix("mcp.")?;
     let (server, tool) = rest.split_once('.')?;
@@ -564,6 +583,8 @@ fn preview(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::enrich_media_read_args;
+    use super::format_learned_facts_summary;
+    use crate::learning::{LearnedFact, LearnedKind};
     use sacode_kernel::model::ModelProvider;
 
     #[test]
@@ -599,5 +620,29 @@ mod tests {
         assert_eq!(enriched.get("model").and_then(|value| value.as_str()), Some("mimo-v2.5-pro"));
         assert_eq!(enriched.get("base_url").and_then(|value| value.as_str()), Some("https://custom.example/v1"));
         assert_eq!(enriched.get("api_key").and_then(|value| value.as_str()), Some("custom-key"));
+    }
+
+    #[test]
+    fn format_learned_facts_summary_groups_by_kind() {
+        let facts = vec![
+            LearnedFact {
+                kind: LearnedKind::Preference,
+                content: "以后回复保持简洁".to_string(),
+                context: "test".to_string(),
+            },
+            LearnedFact {
+                kind: LearnedKind::Workflow,
+                content: "提交前先检查".to_string(),
+                context: "test".to_string(),
+            },
+            LearnedFact {
+                kind: LearnedKind::Workflow,
+                content: "完成后再继续".to_string(),
+                context: "test".to_string(),
+            },
+        ];
+
+        let summary = format_learned_facts_summary(&facts).expect("summary");
+        assert_eq!(summary, "本轮已写入项目 wiki：偏好 1 条，流程 2 条");
     }
 }

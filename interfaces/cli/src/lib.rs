@@ -1,4 +1,6 @@
+pub mod agent_harness;
 pub mod cmd;
+pub mod learning;
 pub mod mistakes;
 pub mod plugin_config;
 pub mod provider_config;

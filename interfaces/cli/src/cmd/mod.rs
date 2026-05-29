@@ -15,15 +15,17 @@ mod mcp;
 mod plugin;
 mod profile;
 pub mod outstyle;
+pub mod prompt;
 mod serve;
 mod skill;
 pub mod update;
 pub mod status;
 pub mod vim;
+pub mod wiki;
+#[cfg(test)]
+mod wiki_tests;
 
 use std::{env, io::IsTerminal};
-#[cfg(test)]
-use std::path::PathBuf;
 
 use anyhow::Result;
 use sacode_kernel::{ExecutionMode, ExecutionContext, Task, Supervisor};
@@ -31,16 +33,10 @@ pub use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{RuntimeOrchestrator, CheckpointStorage, ToolRegistry, SandboxExecutor, SandboxPolicy};
 #[cfg(test)]
 use sacode_kernel::{Event, ToolCallIntent};
-#[cfg(test)]
-use sacode_runtime::{call_mcp_tool, ProviderClient};
 use serde::Serialize;
 use tokio::io::{self, AsyncReadExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[cfg(test)]
-use crate::mistakes::MistakeBookStore;
-#[cfg(test)]
-use crate::provider_runtime::resolve_provider;
 use crate::repl::ReplSession;
 use crate::runner::{format_output, run_task_with_stdin, RunnerOutput};
 use crate::tui;
@@ -58,6 +54,8 @@ pub enum CliCommand {
     Config,
     Keybindings,
     Outstyle,
+    Prompt,
+    Wiki,
     Vim,
     Skill,
     Mcp,
@@ -128,13 +126,6 @@ struct ExecutedTool {
 
 #[cfg(test)]
 #[derive(Debug, Clone)]
-struct LoopExecutionResult {
-    final_events: Vec<Event>,
-    tool_results: Vec<ToolResult>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone)]
 struct StepEventBatch {
     events: Vec<Event>,
 }
@@ -164,6 +155,8 @@ pub async fn run() -> Result<()> {
         CliCommand::Config => config::run(options.sub_args)?,
         CliCommand::Keybindings => keybindings::run()?,
         CliCommand::Outstyle => outstyle::run(options.sub_args)?,
+        CliCommand::Prompt => prompt::run(options.sub_args)?,
+        CliCommand::Wiki => wiki::run(options.sub_args)?,
         CliCommand::Skill => skill::run(options.sub_args).await?,
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
         CliCommand::Acp => acp::run(options.sub_args).await?,
@@ -260,317 +253,10 @@ async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
 }
 
 #[cfg(test)]
-fn maybe_expand_skill_prompt(prompt: &str, workdir: &std::path::Path) -> Result<String> {
-    let trimmed = prompt.trim();
-    let Some(skill_call) = trimmed.strip_prefix('/') else {
-        return Ok(prompt.to_string());
-    };
-
-    let mut parts = skill_call.split_whitespace();
-    let Some(skill_name) = parts.next() else {
-        return Ok(prompt.to_string());
-    };
-    let args = parts.collect::<Vec<_>>().join(" ");
-    let registry = sacode_runtime::SkillRegistry::new(workdir);
-    match registry.render_prompt(skill_name, &args, workdir) {
-        Ok(rendered) => Ok(rendered),
-        Err(_) => Ok(prompt.to_string()),
-    }
-}
-
-#[cfg(test)]
-async fn execute_tool(registry: &ToolRegistry, intent: &ToolCallIntent, approval: ApprovalPolicy) -> Result<sacode_runtime::tools::ToolOutput> {
-    if intent.requires_approval {
-        if matches!(intent.name.as_str(), "shell.exec") || intent.name.starts_with("mcp.") {
-            match approval {
-                ApprovalPolicy::AutoApprove => {}
-                ApprovalPolicy::AutoDeny => {
-                    return Ok(sacode_runtime::tools::ToolOutput::failure("denied by policy"));
-                }
-                ApprovalPolicy::Prompt => {
-                    println!("Approval required for: {}", intent.name);
-                    println!("Press 'y' to approve, 'n' to deny: ");
-                    use std::io::{stdin, BufRead};
-                    let mut lines = stdin().lock().lines();
-                    if let Some(Ok(line)) = lines.next() {
-                        if line.trim() != "y" {
-                            return Ok(sacode_runtime::tools::ToolOutput::failure("denied by user"));
-                        }
-                    } else {
-                        return Ok(sacode_runtime::tools::ToolOutput::failure("no approval input"));
-                    }
-                }
-            }
-        }
-    }
-
-    if intent.name == "web.search" {
-        let store = sacode_runtime::McpConfigStore::new(&PathBuf::from("."));
-        if let Ok(Some((server_name, tool_name))) = sacode_runtime::find_enabled_search_tool(&store).await {
-            let server = store.get(&server_name)?;
-            let result = call_mcp_tool(&server, &tool_name, intent.input.clone()).await?;
-            return Ok(sacode_runtime::tools::ToolOutput {
-                success: !result.is_error,
-                data: serde_json::json!({
-                    "content": result.content,
-                    "server": server_name,
-                    "tool": tool_name,
-                    "source": "mcp",
-                }),
-                message: Some(if result.is_error {
-                    "mcp search returned error".to_string()
-                } else {
-                    "mcp search executed".to_string()
-                }),
-            });
-        }
-    }
-
-    if let Some((server_name, tool_name)) = parse_mcp_tool_name(&intent.name) {
-        let store = sacode_runtime::McpConfigStore::new(&PathBuf::from("."));
-        let server = store.get(server_name)?;
-        let result = call_mcp_tool(&server, tool_name, intent.input.clone()).await?;
-        return Ok(sacode_runtime::tools::ToolOutput {
-            success: !result.is_error,
-            data: serde_json::json!({
-                "content": result.content,
-                "server": server_name,
-                "tool": tool_name,
-            }),
-            message: Some(if result.is_error {
-                "mcp tool returned error".to_string()
-            } else {
-                "mcp tool executed".to_string()
-            }),
-        });
-    }
-
-    let registry = registry.clone();
-    let tool_name = intent.name.clone();
-    let tool_input = intent.input.clone();
-
-    tokio::task::spawn_blocking(move || registry.execute(&tool_name, tool_input)).await?
-}
-
-#[cfg(test)]
-async fn execute_tool_loop(
-    tools: &ToolRegistry,
-    workdir: &std::path::Path,
-    checkpoint: &mut sacode_kernel::Checkpoint,
-    base_events: &[Event],
-    tool_calls: &[(usize, Vec<ToolCallIntent>)],
-    approval: ApprovalPolicy,
-    max_iterations: usize,
-) -> LoopExecutionResult {
-    let mut executed_tools = Vec::new();
-    let mut step_event_batches = Vec::new();
-
-    for (step_id, intents) in tool_calls {
-        if intents.is_empty() {
-            continue;
-        }
-
-        let mut iteration = 1;
-        let mut pending = intents.clone();
-        let mut step_events = Vec::new();
-
-        while !pending.is_empty() && iteration <= max_iterations {
-            checkpoint.set_iteration(iteration);
-            step_events.push(Event::message(format!(
-                "步骤 {} 开始第 {} 轮执行，待处理 {} 个工具调用",
-                step_id,
-                iteration,
-                pending.len()
-            )));
-
-            let current_batch = std::mem::take(&mut pending);
-            let mut retry_batch = Vec::new();
-
-            for intent in current_batch {
-                step_events.push(Event::ToolCallStarted {
-                    name: intent.name.clone(),
-                    input: intent.input.clone(),
-                });
-
-                let tool_result = execute_tool(tools, &intent, approval).await;
-                let (success, summary, output_data) = match tool_result {
-                    Ok(output) => (
-                        output.success,
-                        output.message.clone().unwrap_or_else(|| "ok".to_string()),
-                        output.data.clone(),
-                    ),
-                    Err(e) => (false, e.to_string(), serde_json::json!(null)),
-                };
-                let retry_decision = should_retry_tool_call(&intent, &summary);
-
-                step_events.push(Event::ToolCallFinished {
-                    name: intent.name.clone(),
-                    output: output_data.clone(),
-                    success,
-                });
-                checkpoint.record_tool(intent.name.clone(), intent.input.clone(), output_data, success);
-                executed_tools.push(ExecutedTool {
-                    iteration,
-                    step_id: *step_id,
-                    name: intent.name.clone(),
-                    summary,
-                });
-
-                if !success {
-                    let _ = MistakeBookStore::new(workdir).append(
-                        format!("tool:{}", intent.name),
-                        format!("步骤 {} 第 {} 轮工具执行失败", step_id, iteration),
-                        executed_tools.last().map(|tool| tool.summary.clone()).unwrap_or_default(),
-                    );
-                }
-
-                if success {
-                    checkpoint.advance_step();
-                } else if iteration < max_iterations && retry_decision == RetryDecision::Retry {
-                    retry_batch.push(intent);
-                }
-            }
-
-            if !retry_batch.is_empty() {
-                step_events.push(Event::message(format!(
-                    "步骤 {} 第 {} 轮结束，{} 个工具调用将进入下一轮重试",
-                    step_id,
-                    iteration,
-                    retry_batch.len()
-                )));
-            }
-
-            pending = retry_batch;
-            iteration += 1;
-        }
-
-        if !pending.is_empty() {
-            step_events.push(Event::error(format!(
-                "步骤 {} 达到最大迭代次数 {}，仍有 {} 个工具调用失败",
-                step_id,
-                max_iterations,
-                pending.len()
-            )));
-        }
-
-        step_event_batches.push(StepEventBatch { events: step_events });
-    }
-
-    let final_events = resolve_tool_events(base_events, &step_event_batches);
-    let tool_results = collect_tool_results(&final_events, &executed_tools);
-
-    LoopExecutionResult {
-        final_events,
-        tool_results,
-    }
-}
-
-#[cfg(test)]
 fn parse_mcp_tool_name(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix("mcp.")?;
     let (server, tool) = rest.split_once('.')?;
     Some((server, tool))
-}
-
-#[cfg(test)]
-async fn inject_matching_mcp_tools(
-    workdir: &std::path::Path,
-    prompt: &str,
-    result: &mut sacode_kernel::agent::ExecutionResult,
-) {
-    let store = sacode_runtime::McpConfigStore::new(workdir);
-    let specs = match sacode_runtime::list_enabled_mcp_tool_specs(&store).await {
-        Ok(specs) => specs,
-        Err(_) => return,
-    };
-
-    let matched = select_relevant_mcp_specs(prompt, &specs);
-    if matched.is_empty() {
-        return;
-    }
-
-    let Some(step_id) = result
-        .output
-        .plan
-        .steps
-        .iter()
-        .find(|step| step.tools.iter().any(|tool| tool == "shell.exec" || tool == "git.diff"))
-        .map(|step| step.id)
-        .or_else(|| result.output.plan.steps.last().map(|step| step.id))
-    else {
-        return;
-    };
-
-    let Some(step) = result.output.plan.steps.iter_mut().find(|step| step.id == step_id) else {
-        return;
-    };
-
-    let existing: std::collections::BTreeSet<String> = step.tools.iter().cloned().collect();
-    let mut inserted_intents = Vec::new();
-    for spec in matched {
-        if existing.contains(&spec.name) {
-            continue;
-        }
-        step.tools.push(spec.name.clone());
-        inserted_intents.push(ToolCallIntent {
-            name: spec.name.clone(),
-            input: build_mcp_input(&spec.input_schema, prompt),
-            requires_approval: true,
-        });
-    }
-
-    if inserted_intents.is_empty() {
-        return;
-    }
-
-    if let Some((_, intents)) = result.tool_calls.iter_mut().find(|(id, _)| *id == step_id) {
-        intents.extend(inserted_intents.clone());
-    } else {
-        result.tool_calls.push((step_id, inserted_intents.clone()));
-    }
-
-    let mut placeholder_events = Vec::new();
-    placeholder_events.push(Event::message(format!(
-        "为步骤 {} 自动注入 {} 个已启用 MCP 工具",
-        step_id,
-        inserted_intents.len()
-    )));
-    for intent in inserted_intents {
-        placeholder_events.push(Event::ToolCallStarted {
-            name: intent.name,
-            input: intent.input,
-        });
-    }
-    insert_events_before_done(&mut result.output.events, placeholder_events);
-}
-
-#[cfg(test)]
-fn insert_events_before_done(events: &mut Vec<Event>, extra: Vec<Event>) {
-    if let Some(index) = events.iter().rposition(|event| matches!(event, Event::Done { .. })) {
-        events.splice(index..index, extra);
-    } else {
-        events.extend(extra);
-    }
-}
-
-#[cfg(test)]
-fn select_relevant_mcp_specs(prompt: &str, specs: &[sacode_runtime::tools::ToolSpec]) -> Vec<sacode_runtime::tools::ToolSpec> {
-    let lower_prompt = prompt.to_lowercase();
-    let mut matched = Vec::new();
-
-    for spec in specs {
-        let tool_tail = spec.name.split('.').next_back().unwrap_or_default().to_lowercase();
-        let desc = spec.description.to_lowercase();
-        let looks_relevant = lower_prompt.contains(&tool_tail)
-            || tool_tail.contains("search") && ["搜索", "联网", "web", "search", "docs", "文档"].iter().any(|needle| lower_prompt.contains(&needle.to_lowercase()))
-            || desc.contains("search") && ["搜索", "联网", "web", "search", "docs", "文档"].iter().any(|needle| lower_prompt.contains(&needle.to_lowercase()));
-        if looks_relevant {
-            matched.push(spec.clone());
-        }
-    }
-
-    matched.truncate(3);
-    matched
 }
 
 #[cfg(test)]
@@ -614,21 +300,6 @@ fn should_retry_tool_call(intent: &ToolCallIntent, summary: &str) -> RetryDecisi
     }
 
     RetryDecision::Retry
-}
-
-#[cfg(test)]
-fn summarize_tool_output(output: &serde_json::Value) -> String {
-    if output.is_null() {
-        return String::new();
-    }
-
-    if let Some(content) = output.get("content") {
-        let text = serde_json::to_string(content).unwrap_or_else(|_| String::new());
-        return preview(&text);
-    }
-
-    let text = serde_json::to_string(output).unwrap_or_else(|_| String::new());
-    preview(&text)
 }
 
 #[cfg(test)]
@@ -693,20 +364,6 @@ fn collect_tool_results(
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-async fn call_provider(prompt: &str) -> Result<String> {
-    let provider = resolve_provider(&env::current_dir()?);
-
-    let client = ProviderClient::new();
-
-    match client.simple_chat(&provider, prompt).await {
-        Ok(response) => Ok(response),
-        Err(e) => {
-            Ok(format!("(Provider call failed: {})", e))
-        }
-    }
 }
 
 async fn run_repl() -> Result<()> {
@@ -833,6 +490,30 @@ fn parse_args(args: Vec<String>) -> CliOptions {
     if first == "outstyle" {
         return CliOptions {
             command: CliCommand::Outstyle,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "prompt" {
+        return CliOptions {
+            command: CliCommand::Prompt,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
+    if first == "wiki" {
+        return CliOptions {
+            command: CliCommand::Wiki,
             prompt: String::new(),
             mode: ExecutionMode::Build,
             max_iterations: 1,
@@ -1131,10 +812,12 @@ fn print_help() {
     println!("  sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]");
     println!("  sacode keybindings");
     println!("  sacode outstyle [show|concise|explain|teach|clear|path|project ...]");
+    println!("  sacode prompt [show [task...]|doctor|edit project]");
+    println!("  sacode wiki");
     println!("  sacode vim [show|on|off|project show|on|off]");
     println!("  sacode skill [search|install|list|show|update|remove|run]");
     println!("  sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]");
-    println!("  sacode memory [show|search <query>|append <content>|path|summary]");
+    println!("  sacode memory [show|search <query>|path|summary|append <content> [--type memory|preference|workflow|decision] [--global|-g]]");
     println!("  sacode insight");
     println!("  sacode acp [serve|status] [--host HOST] [--port PORT]");
     println!("  sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]");
@@ -1186,7 +869,7 @@ mod tests {
         assert_eq!(options.mode, ExecutionMode::Plan);
         assert_eq!(options.max_iterations, 1);
         assert!(options.json);
-        assert_eq!(options.approval, super::ApprovalPolicy::AutoDeny);
+        assert_eq!(options.approval, super::ApprovalPolicy::Prompt);
     }
 
     #[test]
@@ -1255,6 +938,14 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Outstyle);
         assert_eq!(options.sub_args, vec!["teach".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_prompt_subcommand() {
+        let options = parse_args(vec!["prompt".to_string(), "doctor".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Prompt);
+        assert_eq!(options.sub_args, vec!["doctor".to_string()]);
     }
 
     #[test]

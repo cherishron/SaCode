@@ -6,6 +6,7 @@ pub mod hook;
 pub mod mcp;
 pub mod orchestrator;
 pub mod plugin;
+pub mod prompt;
 pub mod provider;
 pub mod queue;
 pub mod retry;
@@ -16,6 +17,7 @@ pub mod skills;
 pub mod store;
 pub mod streaming;
 pub mod tools;
+pub mod wiki;
 pub mod workspace;
 
 #[cfg(test)]
@@ -29,6 +31,7 @@ pub use hook::{HookExecutor, LoggingHook};
 pub use mcp::{call_tool as call_mcp_tool, call_mcp_tool_sync, find_enabled_search_tool, find_enabled_search_tool_sync, inspect_server, list_enabled_tool_specs as list_enabled_mcp_tool_specs, list_enabled_mcp_tool_specs_sync, list_tools as list_mcp_tools, McpConfig, McpConfigStore, McpServerConfig, McpServerDetails, McpServerEntry, McpSource, McpToolCallResult, McpToolInfo};
 pub use orchestrator::RuntimeOrchestrator;
 pub use plugin::{PluginHost, PluginSpec, PluginResult};
+pub use prompt::{build_system_prompt as build_runtime_system_prompt, maybe_expand_skill_prompt, PromptContext};
 pub use provider::{ProviderClient, StreamChunk, ToolChatResult};
 pub use queue::{InMemoryStore, TaskQueue, TaskStore};
 pub use retry::RetryHandler;
@@ -37,4 +40,5 @@ pub use session::{CompressionResult, SessionEvent, SessionHandle, SessionPrompt,
 pub use skillhub::{SkillHubClient, SkillHubMcpMeta, SkillHubSkillMeta, SkillHubUploadRequest, SkillHubUploadResponse, SkillHubVersionMeta, SkillHubSkillListResponse};
 pub use skills::{SkillRegistry, SkillSource, SkillSpec};
 pub use tools::{ToolRegistry, ToolOutput, SideEffectLevel};
+pub use wiki::{inspect_wiki, load_wiki_context, WikiContext, WikiSourceStatus, WikiStatus};
 pub use workspace::{WorkspaceScanner, WorkspaceInfo, FileInfo};

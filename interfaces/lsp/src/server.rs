@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use sacode_kernel::{ApprovalPolicy, ExecutionMode};
 use sacode_runtime::{SessionPrompt, SessionService, ProviderClient, McpConfigStore};
-use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::{CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionProviderCapability, CodeActionResponse, Command, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, MarkedString, MessageType, Position, Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, InsertTextFormat}, Client, LanguageServer, LspService, Server};
+use tower_lsp::{jsonrpc::Result as LspResult, lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability, CodeActionResponse, Command, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, MessageType, Position, Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, InsertTextFormat}, Client, LanguageServer, LspService, Server};
 
 use crate::config::LspConfig;
 use crate::document::{DocumentManager, TextDocument};
@@ -65,34 +65,33 @@ impl LanguageServer for SaCodeLanguageServer {
     }
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        let documents = self.documents.lock().expect("document mutex poisoned").clone();
         let sessions = self.sessions.clone();
         let provider_config = self.provider_config.lock().expect("provider mutex poisoned").clone();
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let context = params.context.clone();
-        
-        let items = tokio::task::spawn_blocking(move || {
-            completion_items(&documents, &sessions, &provider_config, &uri, position, context)
-        })
-        .await
-        .unwrap_or_else(|_| {
-            vec![CompletionItem {
-                label: "sacode.ai".to_string(),
-                kind: Some(CompletionItemKind::TEXT),
-                detail: Some("AI completion is temporarily unavailable".to_string()),
-                ..CompletionItem::default()
-            }]
-        });
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(&uri)
+            .cloned();
+
+        let items = completion_items(document, &sessions, &provider_config, position, context).await;
         Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        let documents = self.documents.lock().expect("document mutex poisoned");
         let provider_config = self.provider_config.lock().expect("provider mutex poisoned").clone();
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some(document) = documents.get(uri) else {
+        let Some(document) = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned()
+        else {
             return Ok(None);
         };
 
@@ -133,10 +132,15 @@ impl LanguageServer for SaCodeLanguageServer {
     }
 
     async fn code_action(&self, params: tower_lsp::lsp_types::CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
-        let documents = self.documents.lock().expect("document mutex poisoned");
         let provider_config = self.provider_config.lock().expect("provider mutex poisoned").clone();
         let uri = &params.text_document.uri;
-        let Some(document) = documents.get(uri) else {
+        let Some(document) = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned()
+        else {
             return Ok(Some(Vec::new()));
         };
 
@@ -225,7 +229,7 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
 }
 
 fn resolve_provider_for_lsp(workdir: &std::path::Path) -> Option<sacode_kernel::model::ModelProvider> {
-    let store = McpConfigStore::new(workdir);
+    let _store = McpConfigStore::new(workdir);
     let config_path = workdir.join(".sacode/config.json");
     if !config_path.exists() {
         return None;
@@ -236,12 +240,21 @@ fn resolve_provider_for_lsp(workdir: &std::path::Path) -> Option<sacode_kernel::
     let current = config.get("current").and_then(|v| v.as_str())?;
     let providers = config.get("providers").and_then(|v| v.as_object())?;
     let provider_config = providers.get(current)?;
+    let kind = match current.to_ascii_lowercase().as_str() {
+        "openai" => sacode_kernel::model::ProviderKind::Openai,
+        "deepseek" => sacode_kernel::model::ProviderKind::Deepseek,
+        "mimo" => sacode_kernel::model::ProviderKind::Mimo,
+        "longcat" => sacode_kernel::model::ProviderKind::Longcat,
+        "ollama" => sacode_kernel::model::ProviderKind::Ollama,
+        other => sacode_kernel::model::ProviderKind::Custom(other.to_string()),
+    };
     
     Some(sacode_kernel::model::ModelProvider {
-        name: current.to_string(),
+        kind,
         model: provider_config.get("model").and_then(|v| v.as_str()).unwrap_or("gpt-4o").to_string(),
         api_key: provider_config.get("api_key").and_then(|v| v.as_str()).map(str::to_string),
         base_url: provider_config.get("base_url").and_then(|v| v.as_str()).map(str::to_string),
+        rule: None,
     })
 }
 
@@ -289,9 +302,9 @@ async fn generate_fix_edits(
     let fixed_code = client.simple_chat(provider, &prompt).await.ok().and_then(|s| {
         let trimmed = s.trim();
         if trimmed.starts_with("```") {
-            trimmed.lines().skip(1).take_while(|l| !l.starts_with("```")).collect::<Vec<_>>().join("\n")
+            Some(trimmed.lines().skip(1).take_while(|l| !l.starts_with("```")).collect::<Vec<_>>().join("\n"))
         } else {
-            trimmed.to_string()
+            Some(trimmed.to_string())
         }
     });
     
@@ -307,15 +320,14 @@ async fn generate_fix_edits(
     }
 }
 
-fn completion_items(
-    documents: &DocumentManager,
+async fn completion_items(
+    document: Option<TextDocument>,
     sessions: &SessionService,
     provider_config: &Option<sacode_kernel::model::ModelProvider>,
-    uri: &tower_lsp::lsp_types::Url,
     position: Position,
     context: Option<tower_lsp::lsp_types::CompletionContext>,
 ) -> Vec<CompletionItem> {
-    let Some(document) = documents.get(uri) else {
+    let Some(document) = document else {
         return vec![CompletionItem {
             label: "sacode.todo".to_string(),
             kind: Some(CompletionItemKind::TEXT),
@@ -338,7 +350,7 @@ fn completion_items(
     
     if let Some(provider) = provider_config {
         if trigger_kind == tower_lsp::lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER {
-            return generate_ai_completions(provider, &prefix, &document.language_id);
+            return generate_ai_completions(provider, &prefix, &document.language_id).await;
         }
     }
 
@@ -393,7 +405,7 @@ fn completion_items(
     ]
 }
 
-fn generate_ai_completions(provider: &sacode_kernel::model::ModelProvider, prefix: &str, language_id: &str) -> Vec<CompletionItem> {
+async fn generate_ai_completions(provider: &sacode_kernel::model::ModelProvider, prefix: &str, language_id: &str) -> Vec<CompletionItem> {
     let client = ProviderClient::new();
     let prompt = format!(
         "为以下 {} 代码前缀生成 3 个可能的后续补全，每个补全不超过一行：\n\n{}",
@@ -402,8 +414,16 @@ fn generate_ai_completions(provider: &sacode_kernel::model::ModelProvider, prefi
     );
     
     let completions = match client.simple_chat(provider, &prompt).await {
-        Ok(response) => response.lines().take(3).map(|line| line.trim()).collect::<Vec<_>>(),
-        Err(_) => vec!["completion 1", "completion 2", "completion 3"],
+        Ok(response) => response
+            .lines()
+            .take(3)
+            .map(|line| line.trim().to_string())
+            .collect::<Vec<_>>(),
+        Err(_) => vec![
+            "completion 1".to_string(),
+            "completion 2".to_string(),
+            "completion 3".to_string(),
+        ],
     };
     
     completions
