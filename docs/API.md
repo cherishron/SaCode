@@ -1,5 +1,14 @@
 # SaCode API 文档
 
+本文档汇总 SaCode 当前公开的 CLI、TUI、工具系统和配置文件接口。建议配合 `docs/getting-started.md`、`docs/tutorials.md` 与 `docs/architecture.md` 一起阅读。
+
+## 文档范围
+
+- CLI 子命令
+- TUI / REPL 常用交互命令
+- tools / skills / MCP
+- provider 与项目级配置
+
 ## CLI 命令
 
 ### 基本命令
@@ -21,14 +30,21 @@ sacode --help                        # 显示帮助
 - **界面布局**：上方显示对话历史，底部输入框
 - **Ctrl+Q**：退出 TUI
 - **Esc**：清空当前输入
+- **Ctrl+T**：开启或关闭思考功能
+- **Ctrl+M**：在 `plan` / `build` / `yolo` 间切换执行模式
 - **↑/↓**：滚动历史消息
 - **PageUp/PageDown**：快速滚动
 - **Enter**：发送任务
 - **/login**：配置 OpenAI 兼容 provider
+- **/connect**：快速接入预设 provider
 - **/providers**：查看并切换当前 provider
 - **/provider-rename**：重命名 provider
 - **/provider-remove**：删除非当前 provider
 - **/models**：拉取模型列表并选择默认模型
+- **/memory**：查看或管理分类项目记忆
+- **/wiki**：查看分层知识库加载状态
+- **/loop**：循环执行任务直到完成或达到熔断阈值
+- **/answer**：回答当前等待中的问题
 
 TUI provider 配置流程：
 
@@ -36,9 +52,10 @@ TUI provider 配置流程：
 1. 输入 /login
 2. 输入 Base URL
 3. 输入 API Key
-4. 输入 /providers 并切换当前 provider
-5. 输入 /models
-6. 使用上下键选择模型并回车确认
+4. 输入 `/models`
+5. 选择模型
+
+`/models` 会展示所有已配置 provider 的模型，确认后同时切换 provider 和默认模型。
 ```
 
 ### 子命令
@@ -49,6 +66,17 @@ sacode profile use <name>            # 切换 profile
 sacode profile show                  # 显示当前 profile
 
 sacode plugin ls                     # 列出插件与 MCP 工具
+
+sacode doctor                        # 检查 provider、模型、wiki、memory 等是否就绪
+sacode diff [--cached]               # 查看 Git 差异摘要
+sacode hooks                         # 查看 hooks 生命周期
+sacode ide [status|vscode|cursor|jetbrains|config ...]
+sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]
+sacode keybindings                   # 查看快捷键
+sacode outstyle [show|concise|explain|teach|clear|path|project ...]
+sacode prompt [show|path|set|clear]
+sacode wiki [show|status|path|refresh]
+sacode vim [show|on|off|project show|on|off]
 
 sacode skill list                    # 列出 skills
 sacode skill show <name>             # 查看 skill 定义
@@ -69,6 +97,14 @@ sacode mcp call <server> <tool> <json> # 调用远程 MCP 工具
 sacode mistakes list                 # 列出错题本
 sacode mistakes show <index>         # 查看单条错题详情
 
+sacode memory show                   # 查看项目级记忆
+sacode memory summary                # 查看记忆摘要
+sacode memory path                   # 查看记忆落点
+sacode memory search <query>         # 搜索记忆
+sacode memory append <content>       # 追加记忆
+
+sacode insight                       # 生成使用习惯与优化建议
+
 sacode checkpoint list               # 列出所有 checkpoint
 sacode checkpoint show <file>        # 查看 checkpoint 详情
 sacode checkpoint restore <file>     # 恢复 checkpoint
@@ -84,10 +120,15 @@ REPL/TUI 内置命令补充：
 
 ```text
 /login      配置 OpenAI 兼容 provider
+/connect    快速接入 Provider
 /providers  查看并切换当前 provider
 /provider-rename 重命名 provider
 /provider-remove 删除非当前 provider
 /models     拉取模型列表并设置默认模型
+/memory     查看或管理分类项目记忆
+/wiki       查看分层知识库加载状态
+/loop       循环执行任务直到完成
+/answer     回答当前等待中的问题
 /skills     列出可用 skills
 /skill show|run|add|remove 管理 skills
 /mcps       列出 MCP 服务
@@ -108,6 +149,8 @@ REPL/TUI 内置命令补充：
 | shell.exec | 执行 shell 命令 | 是 |
 | web.fetch | 获取网页内容 | 否 |
 | web.search | 联网搜索公开信息 | 否 |
+
+运行时还包含 `browser.*`、`interaction.*`、`media.*`、`task.*`、`code.*` 等模块，具体以运行时注册表为准。
 
 ### Skills
 
@@ -293,174 +336,93 @@ export SACODE_MODEL="gpt-4o-mini"
 export SACODE_PROFILE="default"
 ```
 
-## Daemon API
+## 服务接口
 
-### 启动 Daemon
+SaCode 当前公开的服务入口以 ACP 和 LSP 为主。
 
-```bash
-sacode daemon --port 3000
-```
-
-### HTTP API
-
-#### 健康检查
+### 启动 ACP 服务
 
 ```bash
-GET /health
-
-Response:
-{
-  "status": "healthy",
-  "version": "0.1.15"
-}
+sacode acp serve
+sacode acp serve --host 127.0.0.1 --port 8765
 ```
 
-#### 创建任务
+### 启动 LSP 服务
 
 ```bash
-POST /task
-Content-Type: application/json
-
-{
-  "prompt": "分析代码结构",
-  "mode": "build"
-}
-
-Response:
-{
-  "task_id": "task-1234567890",
-  "status": "queued",
-  "message": "Task created: 分析代码结构"
-}
+sacode lsp serve
+sacode lsp serve --tcp --host 127.0.0.1 --port 8766
 ```
 
-#### 查询任务状态
+### 组合入口
 
 ```bash
-GET /task/:id/status
-
-Response:
-{
-  "task_id": "task-1234567890",
-  "status": "running",
-  "progress": 50
-}
+sacode serve --acp --lsp
 ```
 
-#### 订阅全部事件流
+当前 `serve` 主要作为聚合入口和提示入口使用；实际协议服务能力分别由 `acp` 和 `lsp` 子命令承载。
+
+## 工具注册表
+
+当前内置工具由 `runtime/src/tools/mod.rs` 中的 `ToolRegistry::builtin()` 注册。
+
+已注册模块包括：
+
+- `browser.open`
+- `browser.navigate`
+- `browser.snapshot`
+- `browser.extract`
+- `fs.read`
+- `fs.search`
+- `fs.write`
+- `fs.edit`
+- `fs.read_multi`
+- `fs.list`
+- `git.diff`
+- `interaction.ask`
+- `media.read`
+- `shell.exec`
+- `task.spawn`
+- `web.fetch`
+- `web.search`
+
+查看当前可用工具：
 
 ```bash
-GET /events
-
-event: task_started
-data: {"task_id":"task-1234567890","event_type":"task_started","data":{}}
+sacode plugin list
 ```
 
-#### 订阅单个任务事件流
+`plugin list` 会同时展示：
+
+- built-in tools
+- 已启用 MCP tools
+- 已配置 plugins
+
+## 插件与 MCP
+
+### 插件命令
 
 ```bash
-GET /events/:id
+sacode plugin list
+sacode plugin install <name> [--global|-g]
+sacode plugin remove <name> [--global|-g]
+sacode plugin enable <name> [--global|-g]
+sacode plugin disable <name> [--global|-g]
 ```
 
-#### 列出工具
+当前 `plugin` 子命令管理的是配置层接入，不是文档中旧版的 `plugin load <wasm>` 工作流。
+
+### MCP 命令
 
 ```bash
-GET /tools
-
-Response:
-{
-  "tools": ["fs.read", "fs.search", "fs.write", "git.diff", "shell.exec"]
-}
+sacode mcp list
+sacode mcp show <name>
+sacode mcp inspect <name>
+sacode mcp tools <name>
+sacode mcp call <server> <tool> <json>
 ```
 
-## FFI 接口
-
-### C/C++ 接口
-
-```c
-#include "sacode.h"
-
-// 创建实例
-SacodeHandle* handle = sacode_new();
-
-// 执行任务
-// mode: 0=Build, 1=Plan, 2=Yolo
-char* result = sacode_execute(handle, "分析代码结构", 0);
-printf("Result: %s\n", result);
-
-// 释放资源
-sacode_free_string(result);
-sacode_free(handle);
-```
-
-### Python 接口
-
-```python
-import ctypes
-
-lib = ctypes.CDLL('./libsacode_kernel.so')
-lib.sacode_new.restype = ctypes.c_void_p
-lib.sacode_execute.restype = ctypes.c_char_p
-
-handle = lib.sacode_new()
-result = lib.sacode_execute(handle, "分析代码结构".encode(), 0)
-print(result.decode())
-
-lib.sacode_free_string(result)
-lib.sacode_free(handle)
-```
-
-### Node.js 接口
-
-```javascript
-const ffi = require('ffi-napi');
-const ref = require('ref-napi');
-
-const lib = ffi.Library('./libsacode_kernel.so', {
-  'sacode_new': ['pointer', []],
-  'sacode_execute': ['string', ['pointer', 'string', 'int32']],
-  'sacode_free': ['void', ['pointer']],
-  'sacode_free_string': ['void', ['string']]
-});
-
-const handle = lib.sacode_new();
-const result = lib.sacode_execute(handle, '分析代码结构', 0);
-console.log(result);
-
-lib.sacode_free_string(result);
-lib.sacode_free(handle);
-```
-
-## WASM 插件系统
-
-### 插件规范
-
-```json
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "My custom plugin",
-  "wasm_path": "/path/to/plugin.wasm",
-  "functions": [
-    {
-      "name": "process",
-      "description": "Process input",
-      "input_schema": { "type": "object" },
-      "output_schema": { "type": "object" }
-    }
-  ]
-}
-```
-
-### 加载插件
-
-```bash
-sacode plugin load /path/to/plugin.wasm --spec spec.json
-```
-
-### 调用插件
-
-插件可以通过 Agent 在任务执行中被调用。
+项目级配置文件位置：`.sacode/mcp.json`
 
 ## 沙箱系统
 
@@ -489,6 +451,8 @@ let policy = SandboxPolicy::new()
 - 路径访问限制
 - 执行超时控制
 - 网络访问控制
+
+当前实现重心在命令与路径约束；如需了解限制边界，优先看 `runtime/src/sandbox/` 和 `runtime/src/tools/shell/`。
 
 ## Checkpoint 系统
 
@@ -540,76 +504,60 @@ let rust_files = scanner.by_language(&PathBuf::from("."), "Rust");
 let matches = scanner.find_files(&PathBuf::from("."), "main");
 ```
 
-### 支持的语言
-
-- Rust, JavaScript, TypeScript, Python, Go
-- Java, C, C++, Ruby, PHP, Swift, Kotlin
-- Scala, Vue, Svelte, HTML, CSS
-- Config (JSON, YAML, TOML), Markdown, Shell, SQL
-
 ## 事件系统
 
 ### 事件类型
 
 | 事件 | 描述 |
 |------|------|
-| Message | 普通消息 |
-| Thinking | 思考过程 |
-| PlanGenerated | 计划生成 |
-| ToolCallStarted | 工具调用开始 |
-| ToolCallFinished | 工具调用完成 |
-| ApprovalRequested | 需要审批 |
-| ApprovalResolved | 审批完成 |
-| FileChanged | 文件变更 |
-| CommandOutput | 命令输出 |
-| Done | 任务完成 |
-| Error | 错误 |
+| `message` | 普通消息 |
+| `thinking` | 思考过程 |
+| `plan_generated` | 计划生成 |
+| `tool_call_started` | 工具调用开始 |
+| `tool_call_finished` | 工具调用完成 |
+| `approval_requested` | 需要审批 |
+| `approval_resolved` | 审批完成 |
+| `file_changed` | 文件变更 |
+| `command_output` | 命令输出 |
+| `done` | 任务完成 |
+| `error` | 错误 |
 
 ### 事件输出格式
 
 ```json
 {
-  "type": "ToolCallStarted",
-  "data": {
-    "name": "fs.read",
-    "input": { "path": "src/main.rs" }
+  "type": "tool_call_started",
+  "name": "fs.read",
+  "input": {
+    "path": "src/main.rs"
   }
 }
 ```
 
-## 多 Agent 系统
+事件类型真源在 `kernel/src/event.rs`。
 
-### Agent 角色
+## Orchestrator 输出
 
-| Agent | 职责 |
-|-------|------|
-| Planner | 任务规划 |
-| Coder | 代码执行 |
-| Reviewer | 结果审查 |
-| Supervisor | 调度协调 |
+当使用：
 
-### AgentDispatcher API
-
-```rust
-let dispatcher = AgentDispatcher::new();
-
-// 分发任务
-dispatcher.dispatch_plan(task);
-
-// 分发步骤
-dispatcher.dispatch_step(step);
-
-// 分发审查
-dispatcher.dispatch_review(step, result);
-
-// 收集消息
-let messages = dispatcher.collect_messages(5000);
-
-// 关闭
-dispatcher.shutdown();
+```bash
+sacode orchestrator "<task>"
 ```
 
-## Ghost 模式
+CLI 会额外输出结构化编排信息。JSON 模式下会包含：
+
+- `route_records`
+- `conflicts`
+- `conflict_records`
+- `summary_record`
+- `orchestration_plan`
+
+这些结构主要来自：
+
+- `kernel/src/execution/report.rs`
+- `runtime/src/agents/orchestrator.rs`
+
+## Ghost / 管道模式
 
 ### stdin 输入
 

@@ -1,6 +1,6 @@
 # SaCode 交叉编译指南
 
-本文档说明如何在 Linux 环境下交叉编译 Windows 可执行文件。
+本文档说明如何在 Linux 环境下交叉编译 Windows 可执行文件，并和当前 npm 发布包的产物要求保持一致。
 
 ---
 
@@ -123,10 +123,12 @@ cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-
 
 SaCode 采用混合策略：
 
-- **本地/Linux CI**: 使用 `x86_64-pc-windows-gnu` 交叉编译
-- **官方 GitHub Actions**: 使用 `windows-latest` 构建 `x86_64-pc-windows-msvc`
+- **本地/Linux 开发链路**: 使用 `x86_64-pc-windows-gnu` 交叉编译
+- **官方 GitHub Actions 发布链路**: 使用 `windows-latest` 构建 `x86_64-pc-windows-msvc`
 
 两者生成的二进制都可正常运行。
+
+发布时请以 `docs/release/RELEASE.md` 和 `scripts/check-release.js` 的校验要求为准。
 
 ---
 

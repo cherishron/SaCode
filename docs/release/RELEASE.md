@@ -1,8 +1,10 @@
 # SaCode 发布流程
 
+本文档说明 SaCode 的版本发布链路、发布前检查项和平台产物约束。若你是第一次接触本仓库，建议先阅读 `docs/development.md`。
+
 ## 发布方式
 
-SaCode 支持两种发布方式：
+SaCode 当前支持两种发布方式：
 
 1. **GitHub Actions 自动发布**（推荐）
 2. **本地手动发布**
@@ -31,7 +33,7 @@ git push origin v0.1.6
 
 ### 自动流程
 
-触发 `.github/workflows/release.yml`：
+触发 `.github/workflows/release.yml`，主流程包括：
 
 1. **构建阶段**（并行）
    - Linux: `ubuntu-latest` 构建 `x86_64-unknown-linux-gnu`
@@ -59,7 +61,7 @@ git push origin v0.1.6
 
 ### 2.1 交叉编译
 
-Linux 环境可以交叉编译 Windows 二进制：
+Linux 环境可以交叉编译 Windows 二进制。本地交叉编译文档使用 GNU 目标，GitHub Actions 发布链路使用 MSVC 目标。
 
 ```bash
 # 安装 mingw-w64
@@ -111,9 +113,26 @@ npm pack   # 预览包内容
 npm publish
 ```
 
+## 3. 与 CI 对齐的本地验证顺序
+
+建议按以下顺序执行：
+
+```bash
+cargo test --workspace
+cargo build --release
+node scripts/check-release.js
+./target/release/sacode --version
+```
+
+如果改动影响 npm 分发，再继续执行：
+
+```bash
+node scripts/check-release.js --strict-platforms
+```
+
 ---
 
-## 发布检查项
+## 4. 发布检查项
 
 `scripts/check-release.js` 会验证：
 
@@ -134,7 +153,7 @@ npm publish
 
 ---
 
-## 平台清单 (manifest.json)
+## 5. 平台清单 (manifest.json)
 
 ### 格式
 
@@ -158,7 +177,7 @@ npm publish
 
 ---
 
-## 版本号规则
+## 6. 版本号规则
 
 遵循 semver：
 
@@ -169,7 +188,7 @@ npm publish
 
 ---
 
-## 当前支持平台
+## 7. 当前支持平台
 
 | 平台 | 架构 | 二进制文件名 |
 |------|------|-------------|
@@ -180,7 +199,7 @@ macOS 支持计划中，暂未包含在发布包内。
 
 ---
 
-## 常见问题
+## 8. 常见问题
 
 ### Q: npm 发布失败，提示版本已存在
 

@@ -1,6 +1,16 @@
 # SaCode
 
-SaCode 是一个终端优先的 Rust AI 编程工具。
+SaCode 是一个终端优先的 Rust AI 编程工具，面向习惯在 Shell、Git、CLI 和代码库上下文里完成工作的开发者。
+
+它的目标很直接：把“问模型”升级成“理解仓库、调用工具、执行任务、保留可控性”的完整终端工作流。
+
+## 为什么用 SaCode
+
+- 终端优先：默认入口就是 TUI，也支持单次任务、REPL、管道输入和服务模式。
+- 工作区感知：围绕真实仓库结构、文件、Git diff、工具结果组织上下文。
+- 可控执行：支持 `plan`、`build`、`yolo` 三种执行模式，对副作用操作做分级控制。
+- 可扩展：内置 tools、skills、MCP、memory、wiki、checkpoint、insight 等能力。
+- Rust workspace 架构：`kernel` 负责纯逻辑，`runtime` 负责副作用，`interfaces/*` 负责入口和协议适配。
 
 ## 安装
 
@@ -9,289 +19,220 @@ npm install -g @cherishron/sacode
 sacode --version
 ```
 
-## 项目结构
+当前 npm 包支持：
 
-```text
-.
-├── Cargo.toml           # Workspace 配置
-├── kernel/              # 纯逻辑层
-├── runtime/             # 副作用层
-├── interfaces/cli/      # CLI / TUI / REPL 入口
-├── interfaces/acp/      # ACP 服务
-├── interfaces/lsp/      # LSP 服务
-├── npm-package/         # npm 发布包
-├── docs/                # 文档
-└── legacy/              # 历史归档，不参与当前构建
-```
+- Linux x64
+- Windows x64
 
-## 核心架构
+## 30 秒上手
 
-### `kernel/`
-
-纯逻辑层，无副作用：
-
-- `agent`: Planner、Coder、Reviewer、Supervisor
-- `schema`: Task、Session、Plan、Step、Checkpoint
-- `event`: 统一事件模型
-- `error`: 统一错误类型
-
-### `runtime/`
-
-副作用和能力层：
-
-- `tools`: FS、Shell、Git、Web 工具
-- `provider`: ProviderClient (OpenAI、DeepSeek、Ollama)
-- `plugin`: WASM 插件加载
-- `acp`: ACP 服务
-- `lsp`: LSP 服务
-- `skills`: 本地 skill 模板注册
-- `mcp`: MCP 远程服务配置
-- `sandbox`: 执行沙箱
-
-### `interfaces/cli/`
-
-CLI 入口 `sacode` 命令：
-
-- 默认进入聊天式 TUI
-- 支持任务执行、REPL、TUI，以及 `serve` 聚合服务模式
-
-## CLI 使用
-
-### TUI 模式（默认）
+### 1. 打开交互界面
 
 ```bash
-sacode                    # 进入聊天式终端 UI
+sacode
 ```
 
-TUI 界面为聊天式交互：
-- 上方显示对话历史
-- 底部输入框接收任务（支持多行输入，第 8 行停止增长）
-- 支持 Ctrl+Q 退出、Esc 清空输入
-- 支持 Ctrl+T 切换 thinking 模式、Ctrl+M 轮转执行模式（plan/build/yolo）
-- 支持 `/login` 配置 OpenAI 兼容接口
-- 支持 `/providers` 切换当前 provider
-- 支持 `/provider-rename <old> <new>` 重命名 provider
-- 支持 `/provider-remove <name>` 删除非当前 provider
-- 支持 `/models` 拉取并选择默认模型
-- 支持 `/loop <task>` 循环执行任务，最多 10 轮，连续失败 3 次自动停止
-- 支持 `/init` 生成项目 AGENTS.md（增量更新，保留用户修改）
-- Modal 弹窗统一使用 `render_modal_block`，避免穿透问题
+### 2. 配置模型 Provider
 
-模型接入流程：
+在 TUI 或 REPL 中输入：
 
 ```text
-1. 输入 /login
-2. 填写 Base URL，例如 https://api.openai.com/v1
-3. 填写 API Key
-4. 输入 /providers 切换当前 provider
-5. 输入 /models
-6. 选择默认模型
+/login
 ```
 
-配置文件保存到 `.sacode/provider.json`。
+依次填写：
 
-### 任务执行模式
+1. Base URL，例如 `https://api.openai.com/v1`
+2. API Key
+
+### 3. 选择模型
+
+```text
+/models
+```
+
+`/models` 会展示所有已配置 provider 的模型，选择一次即可同时切换当前 provider 和默认 model。
+
+### 4. 执行一个真实任务
 
 ```bash
-sacode "分析代码结构"              # Build 模式执行
-sacode /commit                     # 使用内置 skill
-sacode "设计方案" --mode plan      # 仅规划
-sacode "格式化代码" --mode yolo    # 全自动执行
-cat README.md | sacode "总结"      # stdin 输入
-sacode "找 bug" --json             # JSON 输出
+sacode "分析当前仓库最值得优先修复的问题"
+```
+
+### 5. 初始化项目上下文
+
+```bash
+sacode init
+```
+
+这会为当前项目补齐 `AGENTS.md` 和 `.sacode/` 运行配置。
+
+## 使用方式
+
+### TUI 模式
+
+```bash
+sacode
+```
+
+TUI 是默认入口，适合持续对话、队列任务和多步执行。
+
+常用快捷键：
+
+- `Ctrl+Q`：退出
+- `Esc`：清空输入或取消当前执行
+- `Ctrl+T`：开启或关闭 thinking
+- `Ctrl+M`：轮转执行模式 `plan` / `build` / `yolo`
+
+常用内置命令：
+
+- `/login`
+- `/connect`
+- `/providers`
+- `/models`
+- `/loop <task>`
+- `/memory`
+- `/wiki`
+- `/insight`
+
+### 单次任务模式
+
+```bash
+sacode "分析代码结构"
+sacode "设计认证模块重构方案" --mode plan
+sacode "修复当前测试失败" --mode build
+sacode "批量格式化本仓库" --mode yolo
+```
+
+### 管道模式
+
+```bash
+git diff | sacode "生成提交说明"
+cat README.md | sacode "总结当前文档缺口"
 ```
 
 ### REPL 模式
 
 ```bash
-sacode repl               # 进入 REPL 交互
+sacode repl
 ```
-
-REPL 支持同样的 provider 配置命令：
-- `/login`
-- `/providers`
-- `/provider-rename`
-- `/provider-remove`
-- `/models`
 
 ### 服务模式
 
 ```bash
-sacode serve --acp --lsp  # 同时启动 ACP / LSP 服务
-sacode acp serve          # 单独启动 ACP 服务
-sacode lsp serve          # 单独启动 LSP 服务
+sacode serve --acp --lsp
+sacode acp serve
+sacode lsp serve
 ```
 
-## 子命令
+## 执行模式
 
-```bash
-sacode orchestrator "<task>"
-sacode profile ls         # 列出 profile（项目级）
-sacode profile use <name> # 切换 profile
-sacode profile show       # 显示当前 profile
-sacode plugin list        # 列出插件与 MCP 工具
-sacode doctor
-sacode diff [--cached]
-sacode hooks
-sacode ide [status|vscode|cursor|jetbrains|config ...]
-sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]
-sacode keybindings
-sacode outstyle [show|concise|explain|teach|clear|path|project ...]
-sacode vim [show|on|off|project show|on|off]
-sacode skill [search|install|list|show|update|remove|run]
-sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]
-sacode mcp call <server> <tool> <json>
-sacode memory [show|search <query>|append <content>|path|summary]
-sacode insight
-sacode acp [serve|status] [--host HOST] [--port PORT]
-sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]
-sacode serve [--acp] [--lsp]
-sacode mistakes list      # 列出错题本
-sacode mistakes show <index> # 查看单条错题详情
-sacode checkpoint list    # 列出 checkpoint
-sacode init               # 轻量初始化项目，生成 AGENTS.md
-sacode init-deep          # 深度初始化项目，补充工作流与 MCP 模板
-sacode status
-sacode update [--check|--force]
+| 模式 | 适用场景 | 特征 |
+|------|----------|------|
+| `plan` | 方案设计、任务拆解 | 只规划，不执行修改 |
+| `build` | 日常开发任务 | 允许执行，修改类操作走审批 |
+| `yolo` | 明确低风险批处理 | 自动执行，适合高确定性任务 |
+
+## 项目结构
+
+```text
+.
+├── Cargo.toml
+├── kernel/              # 纯逻辑层
+├── runtime/             # tools/provider/memory/wiki/orchestrator 等副作用层
+├── interfaces/cli/      # sacode / sacode-tui 入口
+├── interfaces/acp/      # ACP 服务
+├── interfaces/lsp/      # LSP 服务
+├── docs/                # 用户与开发文档
+├── npm-package/         # npm 发布包
+└── legacy/              # 历史归档，不参与当前 Rust 构建
 ```
 
-## 工具系统
+## `.sacode/` 目录
 
-| 工具 | 描述 | 需审批 |
-|------|------|--------|
-| fs.read | 读取文件 | 否 |
-| fs.search | 搜索内容 | 否 |
-| fs.write | 写入文件 | 是 |
-| git.diff | Git diff | 否 |
-| shell.exec | Shell 命令 | 是 |
-| web.fetch | 抓取网页内容 | 否 |
-| web.search | 联网公开搜索 | 否 |
+SaCode 会在项目根目录维护运行数据：
 
-## Skills 与 MCP
+```text
+.sacode/
+├── provider.json
+├── mcp.json
+├── profile.json
+├── mistakes.json
+├── project.json
+├── skills/
+└── checkpoints/
+```
+
+常见用途：
+
+- `provider.json`：多 provider 和默认模型
+- `mcp.json`：远程 MCP 服务配置
+- `profile.json`：项目级偏好配置
+- `mistakes.json`：错题本
+- `checkpoints/`：任务恢复点
+
+## 核心能力
+
+### Tools
+
+内置工具覆盖文件、Shell、Git、Web、Browser、交互问答、媒体读取等能力。
+
+| 工具 | 描述 | 审批 |
+|------|------|------|
+| `fs.read` | 读取文件 | 否 |
+| `fs.search` | 搜索文件内容 | 否 |
+| `fs.write` | 写入文件 | 是 |
+| `shell.exec` | 执行命令 | 是 |
+| `git.diff` | 查看 Git 差异 | 否 |
+| `web.fetch` | 抓取网页 | 否 |
+| `web.search` | 公开联网搜索 | 否 |
+| `browser.*` | 浏览器相关操作 | 视工具而定 |
 
 ### Skills
 
-- 工作区默认目录：`skills/`
-- 项目级覆盖目录：`.sacode/skills/`（同名优先）
-- 内置默认 skill 会随运行时注册表变化，以 `sacode skill list` 为准
-- 支持 slash 调用：`sacode /commit`
-- 支持 CLI 管理：
-  - `sacode skill add <name> <description> <prompt>`
-  - `sacode skill remove <name>`
-  - `sacode skill run <name> [args...]`
-- 支持 REPL/TUI 管理：
-  - `/skills`、`/skill show|run|add|remove`
-- 支持模板变量：`{{args}}`、`{{cwd}}`、`{{skill_name}}`、`{{description}}`
+- 工作区目录：`skills/`
+- 项目级覆盖目录：`.sacode/skills/`
+- 支持 slash 调用，例如 `sacode /commit`
+- 支持 `skill list`、`skill show`、`skill run`
 
 ### MCP
 
 - 配置文件：`.sacode/mcp.json`
-- 支持远程 MCP 服务安装、启停、探测和工具发现
-- 支持直接调用远程 MCP tool
-- CLI 子命令集合以 `sacode mcp --help` / 根帮助输出为准
+- 支持安装、启停、探测、列工具、直接调用远程 MCP tools
 
-示例：
+### Memory / Wiki / Insight
 
-```json
-{
-  "mcp": {
-    "exa": {
-      "type": "remote",
-      "url": "https://mcp.exa.ai/mcp",
-      "enabled": true
-    }
-  }
-}
-```
+- `memory`：项目记忆与检索入口
+- `wiki`：项目知识库与文档上下文
+- `insight`：从历史交互总结个人使用习惯和优化建议
 
-### Provider
+## 文档导航
 
-- 配置文件：`.sacode/provider.json`
-- 当前支持 OpenAI 兼容接口
-- 支持多个 provider，并通过 `current` 指向当前默认 provider
-- 当前使用 `GET /models` 拉取模型列表
-- 当前使用 `POST /chat/completions` 发送聊天请求
+- `docs/README.md`：文档总览
+- `docs/getting-started.md`：快速上手与常见操作
+- `docs/tutorials.md`：按真实任务组织的场景教程
+- `docs/examples.md`：可直接复制的提示词与命令示例
+- `docs/command-reference.md`：CLI / TUI 命令速查
+- `docs/architecture.md`：架构与模块分层
+- `docs/API.md`：CLI / TUI / 配置 / 工具接口说明
+- `docs/development.md`：本地开发、测试、调试与贡献
+- `docs/release/RELEASE.md`：发布流程
+- `docs/build/CROSS_COMPILE.md`：交叉编译说明
+- `docs/PRD.md`：产品需求文档
 
-示例：
-
-```json
-{
-  "current": "openai",
-  "providers": {
-    "openai": {
-      "base_url": "https://api.openai.com/v1",
-      "api_key": "sk-xxx",
-      "model": "gpt-4o-mini"
-    },
-    "local": {
-      "base_url": "http://127.0.0.1:11434/v1",
-      "api_key": "ollama",
-      "model": "qwen2.5-coder"
-    }
-  }
-}
-```
-
-## 项目级配置
-
-SaCode 在项目根目录下维护 `.sacode/` 目录：
-
-```
-.sacode/
-├── provider.json    # 多 provider 配置
-├── mcp.json         # MCP 服务配置
-├── profile.json     # 项目级 profile
-├── mistakes.json    # 错题本
-├── project.json     # init 元信息
-├── skills/          # 项目级 skills 覆盖
-└── checkpoints/     # 任务检查点
-```
-
-`init` 命令会：
-
-1. 调用当前 provider 分析项目结构
-2. 生成 `AGENTS.md`（优先使用模型，失败则本地模板）
-3. 初始化 `.sacode/` 下的配置文件
-
-`init-deep` 会在上述基础上额外生成：
-
-1. `.sacode/workflows.json`
-2. `.sacode/mcp.json`
-
-当前 init 实现已经拆成“构建草稿 -> 应用草稿”的两阶段逻辑，TUI 和 REPL 会先展示草稿再确认写入。
-
-## 文档
-
-- `docs/PRD.md`: 产品需求文档
-- `docs/API.md`: API/CLI 文档
-- `docs/release/RELEASE.md`: 发布流程
-- `docs/build/CROSS_COMPILE.md`: 交叉编译
-- `CHANGELOG.md`: 版本变更
-
-## 发布
+## 开发命令
 
 ```bash
-# 版本同步
-node scripts/sync-version.js <version>
-
-# Linux 发布构建
+cargo test --workspace
 cargo build --release
-
-# 本地 Windows GNU 交叉构建
-cargo build --release --target x86_64-pc-windows-gnu
-
-# 平台清单
-node scripts/write-platform-manifest.js <version>
-
-# 发布检查
+cargo run -p sacode-cli --bin sacode
+node scripts/check-release.js
 node scripts/check-release.js --strict-platforms
 ```
 
-CI 发布 workflow 使用的 Windows 目标是 `x86_64-pc-windows-msvc`，与本地 `.cargo/config.toml` 的 GNU 目标不同。
+## 当前状态
 
-## 归档
-
-`legacy/` 目录不参与当前 Rust workspace 的构建、测试和发布。
+SaCode 已具备可用的终端 AI 编程主线能力，当前仍在持续补齐多 agent 编排、动态模型路由、知识库、Browser tools 和 TUI 体验收口。
 
 ## 许可证
 

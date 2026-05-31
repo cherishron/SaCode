@@ -1,52 +1,64 @@
 # SaCode
 
-Terminal-first AI coding assistant.
+SaCode is a terminal-first AI coding assistant built for real repository work: reading code, planning changes, running tools, and keeping execution controllable.
 
 ## Install
 
 ```bash
 npm install -g @cherishron/sacode
+sacode --version
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-sacode                     # 进入聊天式 TUI
-sacode "分析代码结构"       # Build 模式执行
-sacode /commit             # 使用 skill
-sacode "修复 bug" --mode build
-sacode --help
+sacode
 ```
 
-## TUI Interface
+Inside TUI or REPL:
 
-默认进入聊天式终端 UI：
+```text
+/login
+/models
+```
 
-- **Ctrl+Q**: 退出
-- **Esc**: 清空输入
-- **↑/↓**: 滚动历史
-- **Enter**: 发送任务
-
-## Modes
-
-- `--mode plan`: 仅生成计划，不执行
-- `--mode build`: 生成计划并执行，高风险操作需审批
-- `--mode yolo`: 全自动执行（谨慎使用）
-
-## Commands
+Then run a task:
 
 ```bash
-sacode profile ls       # 列出配置
-sacode skill list       # 列出 skills
-sacode mcp list         # 列出 MCP 服务
-sacode checkpoint list  # 列出保存点
-sacode repl             # 进入 REPL 模式
-sacode serve --acp --lsp
+sacode "analyze the current repository structure"
 ```
 
-## Configuration
+## Common Usage
 
-项目级配置和运行数据默认写入 `.sacode/`：
+```bash
+sacode                              # open the default TUI
+sacode repl                         # open REPL
+sacode "fix the failing tests"      # run a build task
+sacode "design a refactor plan" --mode plan
+sacode "format this repository" --mode yolo
+git diff | sacode "write a commit message"
+```
+
+## TUI Shortcuts
+
+- `Ctrl+Q`: quit
+- `Esc`: clear input or cancel current execution
+- `Ctrl+T`: toggle thinking
+- `Ctrl+M`: switch `plan` / `build` / `yolo`
+
+## Built-in Commands
+
+- `/login`
+- `/connect`
+- `/providers`
+- `/models`
+- `/memory`
+- `/wiki`
+- `/loop <task>`
+
+## Project Data
+
+SaCode stores project runtime data in `.sacode/`:
 
 ```text
 .sacode/
@@ -64,6 +76,13 @@ sacode serve --acp --lsp
 - Linux x64
 - Windows x64
 
+## More Docs
+
+- Main docs: `../docs/README.md`
+- Getting started: `../docs/getting-started.md`
+- Architecture: `../docs/architecture.md`
+- Release: `../docs/release/RELEASE.md`
+
 ## License
 
-MIT
+MulanPSL-2.0
