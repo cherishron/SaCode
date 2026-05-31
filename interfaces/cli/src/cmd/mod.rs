@@ -28,9 +28,13 @@ mod wiki_tests;
 use std::{env, io::IsTerminal};
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionMode, ExecutionContext, Task, Supervisor};
+use sacode_kernel::{ExecutionMode, ExecutionContext, Supervisor, Task};
 pub use sacode_kernel::ApprovalPolicy;
-use sacode_runtime::{RuntimeOrchestrator, CheckpointStorage, ToolRegistry, SandboxExecutor, SandboxPolicy};
+use sacode_runtime::{
+    CheckpointStorage, RuntimeOrchestrator, SandboxExecutor, SandboxPolicy, ToolRegistry,
+    RoleRegistry, TaskProfile, build_execution_plan, execute_role_driven_orchestration,
+    strip_orchestration_prefix,
+};
 #[cfg(test)]
 use sacode_kernel::{Event, ToolCallIntent};
 use serde::Serialize;
@@ -38,7 +42,7 @@ use tokio::io::{self, AsyncReadExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::repl::ReplSession;
-use crate::runner::{format_output, run_task_with_stdin, RunnerOutput};
+use crate::runner::{format_output, run_task_with_stdin, RunnerOutput, TaskRunState};
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +102,7 @@ struct CliResponse {
     tool_results: serde_json::Value,
     stdin_preview: Option<String>,
     provider_response: Option<String>,
+    state: TaskRunState,
     pending_question: Option<serde_json::Value>,
     usage: Option<sacode_kernel::model::ChatUsage>,
     api_duration_ms: u64,
@@ -206,6 +211,7 @@ async fn run_task(options: CliOptions) -> Result<()> {
             tool_results: serde_json::to_value(&output.tool_results)?,
             stdin_preview: stdin.map(|value| preview(&value)),
             provider_response: output.provider_response.clone().ok(),
+            state: output.state.clone(),
             pending_question: output.pending_question.clone(),
             usage: output.usage.clone(),
             api_duration_ms: output.api_duration_ms,
@@ -227,29 +233,112 @@ async fn run_task(options: CliOptions) -> Result<()> {
 
 async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     let workdir = env::current_dir()?;
+    let effective_prompt = strip_orchestration_prefix(&options.prompt);
+    let profile = TaskProfile::from_prompt_and_workspace(&effective_prompt, &workdir);
+    let roles = RoleRegistry::builtin();
+    let execution_plan = build_execution_plan(&effective_prompt, &workdir, &profile, roles.all());
     
-    let task = Task::new(options.prompt.clone(), options.mode, None);
+    let task = Task::new(effective_prompt.clone(), options.mode, None);
     let context = ExecutionContext::new(task).with_approval(options.approval);
     
     let supervisor = Supervisor::new();
     let tools = ToolRegistry::builtin();
     let sandbox = SandboxExecutor::new(SandboxPolicy::build());
     let checkpoints = CheckpointStorage::new(&workdir);
-    
-    let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
-    let report = orchestrator.execute(&context)?;
+
+    let report = if execution_plan.use_multi_agent {
+        execute_role_driven_orchestration(&context, &checkpoints).await?.0
+    } else {
+        let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
+        orchestrator.execute(&context)?
+    };
     
     let output = RunnerOutput::from_execution_report(
         &report,
-        options.prompt.clone(),
+        effective_prompt.clone(),
         options.mode,
         options.max_iterations,
         workdir.to_string_lossy().to_string(),
     );
-    
-    println!("{}", format_output(&output));
+
+    if options.json {
+        let response = serde_json::json!({
+            "prompt": output.prompt,
+            "mode": output.mode,
+            "workspace": output.workspace,
+            "state": output.state,
+            "plan": output.plan,
+            "events": output.events,
+            "tool_results": output.tool_results,
+            "route_records": report.route_records,
+            "conflicts": report.conflicts,
+            "conflict_records": report.conflict_records,
+            "summary_record": report.summary_record,
+            "orchestration_plan": execution_plan,
+        });
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!("[Orchestration Plan]\n{}\n", serde_json::to_string_pretty(&execution_plan)?);
+        println!("{}", format_output(&output));
+        if let Some(summary) = format_summary_record(report.summary_record.as_ref()) {
+            println!("\n{}", summary);
+        }
+    }
     
     Ok(())
+}
+
+fn format_summary_record(summary: Option<&sacode_kernel::SummaryRecord>) -> Option<String> {
+    let summary = summary?;
+    let mut lines = Vec::new();
+    lines.push("[Summary Record]".to_string());
+    lines.push(format!("Task: {}", summary.task));
+    if !summary.roles.is_empty() {
+        lines.push(format!("Roles: {}", summary.roles.join(", ")));
+    }
+    if let Some(reporter_summary) = summary
+        .reporter_summary
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Reporter: {}", reporter_summary));
+    }
+    if let Some(overall_conclusion) = summary
+        .overall_conclusion
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Overall: {}", overall_conclusion));
+    }
+    if !summary.key_risks.is_empty() {
+        lines.push("Key Risks:".to_string());
+        for risk in &summary.key_risks {
+            lines.push(format!("  - {}", risk));
+        }
+    }
+    if let Some(next_action) = summary
+        .recommended_next_action
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Next: {}", next_action));
+    }
+    if !summary.conflicts.is_empty() {
+        lines.push("Conflicts:".to_string());
+        for conflict in &summary.conflicts {
+            lines.push(format!("  - {}", conflict));
+        }
+    }
+    if !summary.items.is_empty() {
+        lines.push("Items:".to_string());
+        for item in &summary.items {
+            lines.push(format!("  - {} [{}]: {}", item.role_id, item.route, item.output));
+        }
+    }
+    Some(lines.join("\n"))
 }
 
 #[cfg(test)]
@@ -761,9 +850,14 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         }
     }
 
+    let prompt_text = prompt.join(" ");
+    if prompt_text.trim_start().to_uppercase().starts_with("ULW") {
+        command = CliCommand::Orchestrator;
+    }
+
     CliOptions {
         command,
-        prompt: prompt.join(" "),
+        prompt: prompt_text,
         mode,
         max_iterations,
         json,

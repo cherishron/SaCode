@@ -240,6 +240,9 @@ impl SaCodeConfigStore {
                 config.vim_mode = true;
             }
             config.provider.extend(project.provider);
+            if !project.model_routing.overrides.is_empty() {
+                config.model_routing = project.model_routing;
+            }
         }
         self.normalize(&mut config);
         Ok(config)
@@ -390,6 +393,7 @@ fn default_sacode_config() -> SaCodeConfig {
         outstyle: String::new(),
         vim_mode: false,
         provider: preset_providers(),
+        model_routing: Default::default(),
     }
 }
 

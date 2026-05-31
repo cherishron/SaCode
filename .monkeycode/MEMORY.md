@@ -199,6 +199,21 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
   - 项目级 `.sacode` 需要继承用户级配置，再叠加当前项目覆盖项。
   - 所有项目的会话归档应放在用户级目录下，项目级只保留当前项目运行态和短期数据。
 
+[分层知识库与持续学习]
+- Date: 2026-05-29
+- Context: 用户要求在 harness 之上接入 llm wiki 风格的分层知识库时
+- Instructions:
+  - 需要在 harness 之上支持用户级知识库和项目级知识库的分层加载与覆盖。
+  - 后续交互中需要持续沉淀和更新知识库，让系统逐步学习用户习惯和项目约定。
+
+[提示词装配落点]
+- Date: 2026-05-29
+- Context: Agent 在实现统一 prompt builder 时发现
+- Category: 工作流协作
+- Instructions:
+  - 平台级基础提示词、`AGENTS.md` 摘要读取、`.sacode/prompt.md` 读取、skill prompt 展开放在 `runtime/src/prompt/mod.rs`。
+  - CLI `runner.rs` 负责在 runtime 基础 prompt 之后继续拼接 `outstyle` 和 `insight` 这类接口层附加指令。
+
 [P1 功能闭环修复]
 - Date: 2026-05-28
 - Context: Agent 在执行 P1 功能闭环任务时

@@ -1,12 +1,12 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     env, fs,
     future::Future,
     hash::{Hash, Hasher},
-    io::{self, Read, Write},
-    path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{mpsc::{self, Receiver, Sender}, Arc, Mutex},
+    io::{self, Write},
+    path::PathBuf,
+    process::Command,
+    sync::{mpsc::{self, Receiver, Sender}},
     thread,
 };
 
@@ -25,7 +25,6 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
 use sacode_kernel::model::{ChatUsage, ProviderKind};
@@ -44,6 +43,7 @@ use crate::provider_config::{
     NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore,
 };
 use crate::provider_runtime::{resolve_named_provider, resolve_provider};
+use crate::runner::TaskRunState;
 use crate::task_store::{PersistentTask, TaskPriority, TaskStatus, TaskStore};
 use crate::version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus};
 use sacode_runtime::{
@@ -51,8 +51,24 @@ use sacode_runtime::{
 };
 
 mod input;
+mod interaction;
+mod render;
+mod state;
+mod task_runtime;
 
-use input::{clamp_cursor_col, display_workdir, is_editable_input_mode, layout_input_lines};
+use input::{is_editable_input_mode, layout_input_lines};
+use interaction::{InteractionSession, InteractionState};
+use render::{
+    relative_to_workdir, render_command_selector,
+    render_checkpoint_selector, render_connect_selector, render_mcp_selector,
+    render_config_enum_selector, render_config_selector,
+    render_footer, render_header, render_input_panel,
+    render_input_optimization_preview, render_message_lines, render_mode_selector,
+    render_messages_panel, render_orchestration_panel, render_pending_question_panel, render_queue_panel,
+    render_selector, render_session_selector, render_sidebar, render_skills_selector,
+    render_task_selector,
+};
+use state::{LoopState, QueueState};
 
 const MODELS_HINT_LIMIT: usize = 8;
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -86,6 +102,15 @@ struct RenderedMessageLine {
     line: Line<'static>,
 }
 
+#[derive(Debug, Clone)]
+struct CachedInputLayout {
+    text: String,
+    width: usize,
+    lines: Vec<String>,
+    cursor_line: usize,
+    cursor_col: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageRole {
     User,
@@ -96,12 +121,14 @@ enum MessageRole {
 struct App {
     workdir: PathBuf,
     messages: Vec<Message>,
+    message_lines_cache: Option<Vec<RenderedMessageLine>>,
+    input_layout_cache: Option<CachedInputLayout>,
     session_summary: Option<String>,
     input: String,
     should_quit: bool,
     scroll_offset: usize,
     follow_bottom: bool,
-    processing: bool,
+    queue: QueueState,
     input_mode: InputMode,
     provider_store: ProviderConfigStore,
     sacode_store: SaCodeConfigStore,
@@ -120,7 +147,6 @@ struct App {
     pending_connect_provider: Option<(String, String)>,
     task_tx: Sender<AsyncResult>,
     task_rx: Receiver<AsyncResult>,
-    busy_message: String,
     execution_mode: ExecutionMode,
     level1_commands: Vec<CommandDef>,
     filtered_level1: Vec<CommandDef>,
@@ -145,15 +171,12 @@ struct App {
     mode_options: Vec<String>,
     selected_mode_index: usize,
     next_task_id: u64,
-    active_task_id: Option<u64>,
     active_task_started_at: Option<chrono::DateTime<chrono::Local>>,
     canceled_task_ids: HashSet<u64>,
-    queued_messages: VecDeque<QueuedMessage>,
     todo_plan: Option<TodoPlan>,
     sent_history: Vec<String>,
     history_index: Option<usize>,
     current_history_draft: String,
-    active_child: Option<Arc<Mutex<Child>>>,
     session_id: String,
     session_options: Vec<SessionInfo>,
     selected_session_index: usize,
@@ -169,16 +192,12 @@ struct App {
     config_enum_options: Vec<(String, String)>,
     selected_config_enum_index: usize,
     pending_config_key: Option<String>,
-    pending_question: Option<serde_json::Value>,
-    pending_question_items: Vec<PendingQuestionItem>,
-    selected_pending_question_index: usize,
-    selected_pending_option_index: usize,
-    selected_pending_answers: Vec<HashSet<usize>>,
-    pending_approval_request: Option<PendingApprovalRequest>,
+    interaction: InteractionSession,
     session_auto_approve_edits: bool,
     spinner_index: usize,
     log_path: PathBuf,
     git_changes: Vec<String>,
+    orchestration_summary: Option<String>,
     message_viewport: Rect,
     input_viewport: Rect,
 }
@@ -194,19 +213,6 @@ enum SidebarSection {
     Todo,
     Task,
     Git,
-}
-
-#[derive(Debug, Clone)]
-struct PendingQuestionItem {
-    question: String,
-    options: Vec<PendingQuestionOption>,
-    allow_multiple: bool,
-}
-
-#[derive(Debug, Clone)]
-struct PendingQuestionOption {
-    label: String,
-    description: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -332,28 +338,6 @@ impl Default for PerformanceStats {
             tool_duration_ms: 0,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-struct QueuedMessage {
-    id: u64,
-    content: String,
-    approval: ApprovalPolicy,
-    loop_state: Option<LoopState>,
-}
-
-#[derive(Debug, Clone)]
-struct LoopState {
-    task: String,
-    iteration: u32,
-    max_iterations: u32,
-    error_count: u32,
-}
-
-#[derive(Debug, Clone)]
-struct PendingApprovalRequest {
-    task_prompt: String,
-    tool_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -678,7 +662,9 @@ enum AsyncResult {
         task_id: u64,
         prompt: String,
         response: String,
+        orchestration_summary: Option<String>,
         success: bool,
+        state: TaskRunState,
         learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
         plan: Option<sacode_kernel::Plan>,
@@ -778,12 +764,14 @@ impl App {
                     collapsed: false,
                 },
             ],
+            message_lines_cache: None,
+            input_layout_cache: None,
             session_summary: None,
             input: String::new(),
             should_quit: false,
             scroll_offset: 0,
             follow_bottom: true,
-            processing: false,
+            queue: QueueState::default(),
             input_mode: InputMode::Chat,
             provider_store,
             sacode_store,
@@ -808,7 +796,6 @@ impl App {
             pending_connect_provider: None,
             task_tx,
             task_rx,
-            busy_message: String::new(),
             execution_mode: default_execution_mode,
             level1_commands,
             filtered_level1: Vec::new(),
@@ -841,15 +828,12 @@ impl App {
                 ExecutionMode::Yolo => 2,
             },
             next_task_id: 1,
-            active_task_id: None,
             active_task_started_at: None,
             canceled_task_ids: HashSet::new(),
-            queued_messages: VecDeque::new(),
             todo_plan: None,
             sent_history: Vec::new(),
             history_index: None,
             current_history_draft: String::new(),
-            active_child: None,
             session_id,
             session_options: Vec::new(),
             selected_session_index: 0,
@@ -865,16 +849,12 @@ impl App {
             config_enum_options: Vec::new(),
             selected_config_enum_index: 0,
             pending_config_key: None,
-            pending_question: None,
-            pending_question_items: Vec::new(),
-            selected_pending_question_index: 0,
-            selected_pending_option_index: 0,
-            selected_pending_answers: Vec::new(),
-            pending_approval_request: None,
+            interaction: InteractionSession::default(),
             session_auto_approve_edits: false,
             spinner_index: 0,
             log_path,
             git_changes: Vec::new(),
+            orchestration_summary: None,
             message_viewport: Rect::default(),
             input_viewport: Rect::default(),
         };
@@ -884,6 +864,10 @@ impl App {
         app.ensure_default_context7();
         app.spawn_version_check();
         app
+    }
+
+    fn reset_orchestration_summary(&mut self) {
+        self.orchestration_summary = None;
     }
 
     fn send_message(&mut self) {
@@ -1006,7 +990,7 @@ impl App {
         let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
 
         let display_input = self.input.clone();
-        self.messages.push(Message {
+        self.append_message(Message {
             role: MessageRole::User,
             content: display_input,
             timestamp: timestamp.clone(),
@@ -1028,397 +1012,6 @@ impl App {
         self.scroll_to_bottom();
     }
 
-    fn enqueue_or_start_message(&mut self, user_input: String) {
-        self.enqueue_or_start_message_with_approval_and_loop(
-            user_input,
-            self.current_task_approval_policy(),
-            None,
-        );
-    }
-
-    fn enqueue_or_start_message_with_approval(
-        &mut self,
-        user_input: String,
-        approval: ApprovalPolicy,
-    ) {
-        self.enqueue_or_start_message_with_approval_and_loop(user_input, approval, None);
-    }
-
-    fn enqueue_or_start_message_with_approval_and_loop(
-        &mut self,
-        user_input: String,
-        approval: ApprovalPolicy,
-        loop_state: Option<LoopState>,
-    ) {
-        let task_id = self.next_task_id;
-        self.next_task_id += 1;
-
-        if self.processing {
-            self.queued_messages.push_back(QueuedMessage {
-                id: task_id,
-                content: user_input.clone(),
-                approval,
-                loop_state,
-            });
-            self.push_system_message(&format!(
-                "任务已加入等待队列 #{}，前方还有 {} 项。",
-                task_id,
-                self.queued_messages.len().saturating_sub(1)
-            ));
-            self.log_event("queue_push", &format!("#{} {}", task_id, user_input.trim()));
-            return;
-        }
-
-        self.start_queued_message(QueuedMessage {
-            id: task_id,
-            content: user_input,
-            approval,
-            loop_state,
-        });
-    }
-
-    fn start_queued_message(&mut self, queued: QueuedMessage) {
-        self.processing = true;
-        self.active_task_id = Some(queued.id);
-        self.active_task_started_at = Some(chrono::Local::now());
-        self.spinner_index = 0;
-        let loop_badge = queued
-            .loop_state
-            .as_ref()
-            .map(|state| format!(" [loop:{}]", state.iteration))
-            .unwrap_or_default();
-        self.busy_message = format!(
-            "正在执行 #{}{}，模型 {}，Esc 取消当前任务",
-            queued.id,
-            loop_badge,
-            self.current_model_name()
-        );
-        self.log_event(
-            "queue_start",
-            &format!("#{} {}", queued.id, queued.content.trim()),
-        );
-        self.spawn_chat_task(queued.id, queued.content, queued.approval, queued.loop_state);
-    }
-
-    fn spawn_chat_task(
-        &mut self,
-        task_id: u64,
-        user_input: String,
-        approval: ApprovalPolicy,
-        loop_state: Option<LoopState>,
-    ) {
-        let sender = self.task_tx.clone();
-        let workdir = self.workdir.clone();
-        let mode = self.execution_mode;
-        let prompt = self.build_task_prompt(&user_input);
-        let Some(child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
-            let _ = sender.send(AsyncResult::ChatCompleted {
-                task_id,
-                prompt: user_input,
-                response: "任务执行失败: 无法启动后台执行进程".to_string(),
-                success: false,
-                learned_facts: Vec::new(),
-                pending_question: None,
-                plan: None,
-                usage: None,
-                api_duration_ms: 0,
-                tool_duration_ms: 0,
-                total_duration_ms: 0,
-                loop_state,
-            });
-            return;
-        };
-
-        let child = Arc::new(Mutex::new(child));
-        self.active_child = Some(child.clone());
-        thread::spawn(move || {
-            let (
-                response,
-                success,
-                learned_facts,
-                pending_question,
-                plan,
-                usage,
-                api_duration_ms,
-                tool_duration_ms,
-                total_duration_ms,
-            ) = App::execute_user_message_in_background(child, &user_input);
-            let _ = sender.send(AsyncResult::ChatCompleted {
-                task_id,
-                prompt: user_input,
-                response,
-                success,
-                learned_facts,
-                pending_question,
-                plan,
-                usage,
-                api_duration_ms,
-                tool_duration_ms,
-                total_duration_ms,
-                loop_state,
-            });
-        });
-    }
-
-    fn spawn_chat_child(
-        workdir: &PathBuf,
-        user_input: &str,
-        mode: ExecutionMode,
-        approval: ApprovalPolicy,
-    ) -> Option<Child> {
-        let current_exe = env::current_exe().ok()?;
-        let exe = current_exe
-            .parent()
-            .map(|dir| dir.join("sacode"))
-            .filter(|path| path.exists())
-            .unwrap_or(current_exe);
-        let approval_arg = match approval {
-            ApprovalPolicy::AutoApprove => "--approve",
-            ApprovalPolicy::AutoDeny => "--deny",
-            ApprovalPolicy::Prompt => "--prompt",
-        };
-        let effective = config::effective_config(workdir).ok();
-        let max_iterations = effective
-            .as_ref()
-            .map(|value| value.max_iterations)
-            .unwrap_or(6)
-            .max(1)
-            .to_string();
-        let mut command = Command::new(exe);
-        if let Some(loop_task) = user_input
-            .strip_prefix("/loop ")
-            .map(str::trim)
-            .filter(|task| !task.is_empty())
-        {
-            command.arg(format!(
-                "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
-                loop_task
-            ));
-        } else {
-            command.arg(user_input);
-        }
-        command
-            .arg("--mode")
-            .arg(mode.to_string())
-            .arg(approval_arg)
-            .arg("--max-iterations")
-            .arg(max_iterations)
-            .arg("--json")
-            .current_dir(workdir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .ok()
-    }
-
-    fn execute_user_message_in_background(
-        child: Arc<Mutex<Child>>,
-        _source_task: &str,
-    ) -> (
-        String,
-        bool,
-        Vec<crate::learning::LearnedFact>,
-        Option<serde_json::Value>,
-        Option<sacode_kernel::Plan>,
-        Option<ChatUsage>,
-        u64,
-        u64,
-        u64,
-    ) {
-        let (stdout, stderr) = {
-            let Ok(mut child) = child.lock() else {
-                return (
-                    "任务执行失败: 无法访问后台执行进程".to_string(),
-                    false,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                );
-            };
-            (child.stdout.take(), child.stderr.take())
-        };
-
-        let Some(mut stdout) = stdout else {
-            return (
-                "任务执行失败: 未获取到后台输出".to_string(),
-                false,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
-        };
-
-        let mut output = String::new();
-        if stdout.read_to_string(&mut output).is_err() {
-            return (
-                "任务执行失败: 读取后台输出失败".to_string(),
-                false,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
-        }
-
-        let mut stderr_output = String::new();
-        if let Some(mut stderr) = stderr {
-            let _ = stderr.read_to_string(&mut stderr_output);
-        }
-
-        let exit_status = {
-            let Ok(mut child) = child.lock() else {
-                return (
-                    "任务执行失败: 无法等待后台执行进程退出".to_string(),
-                    false,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                );
-            };
-            match child.wait() {
-                Ok(status) => status,
-                Err(error) => {
-                    return (
-                        format!("任务执行失败: 等待后台执行进程退出失败: {}", error),
-                        false,
-                        Vec::new(),
-                        None,
-                        None,
-                        None,
-                        0,
-                        0,
-                        0,
-                    )
-                }
-            }
-        };
-
-        let trimmed_output = output.trim();
-        if trimmed_output.is_empty() {
-            let stderr_preview = stderr_output.trim();
-            if !stderr_preview.is_empty() {
-                Self::append_raw_log("child_stderr", stderr_preview);
-            }
-            return (
-                if stderr_preview.is_empty() {
-                    format!(
-                        "任务执行失败: 后台进程没有返回 JSON 输出，退出码: {}。请查看日志定位启动错误。",
-                        exit_status.code().map(|code| code.to_string()).unwrap_or_else(|| "signal".to_string())
-                    )
-                } else {
-                    format!(
-                        "任务执行失败: 后台进程没有返回 JSON 输出，退出码: {}。stderr 已写入日志。",
-                        exit_status.code().map(|code| code.to_string()).unwrap_or_else(|| "signal".to_string())
-                    )
-                },
-                false,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
-        }
-
-        let parsed: serde_json::Value = match Self::extract_last_json_value(trimmed_output) {
-            Ok(value) => value,
-            Err(error) => {
-                Self::append_raw_log("child_stdout_invalid_json", trimmed_output);
-                if !stderr_output.trim().is_empty() {
-                    Self::append_raw_log("child_stderr", stderr_output.trim());
-                }
-                return (
-                    format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
-                    false,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                )
-            }
-        };
-
-        let pending_question = parsed
-            .get("pending_question")
-            .cloned()
-            .filter(|value| !value.is_null());
-        let learned_facts = parsed
-            .get("learned_facts")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<Vec<crate::learning::LearnedFact>>(value).ok())
-            .unwrap_or_default();
-        if !stderr_output.trim().is_empty() {
-            Self::append_raw_log("child_stderr", stderr_output.trim());
-        }
-
-        let cli_events = Self::format_cli_events(parsed.get("events"));
-        let provider_response = Self::extract_provider_response(&parsed);
-        let success = provider_response.is_some() || pending_question.is_some();
-        let response = Self::merge_cli_response(cli_events, provider_response)
-            .or_else(|| pending_question.as_ref().map(Self::format_pending_question))
-            .unwrap_or_else(|| {
-                if exit_status.success() {
-                    "任务执行异常: 模型未返回最终内容。请查看日志确认工具调用和后台输出。".to_string()
-                } else {
-                    format!(
-                        "任务执行失败: 后台进程退出异常，退出码: {}。请查看日志确认原始输出。",
-                        exit_status.code().map(|code| code.to_string()).unwrap_or_else(|| "signal".to_string())
-                    )
-                }
-            });
-        let plan = parsed
-            .get("plan")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<sacode_kernel::Plan>(value).ok())
-            .filter(|_| Self::has_explicit_todo_signal(&parsed));
-        let usage = parsed
-            .get("usage")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<ChatUsage>(value).ok());
-        let api_duration_ms = parsed
-            .get("api_duration_ms")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        let tool_duration_ms = parsed
-            .get("tool_duration_ms")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        let total_duration_ms = parsed
-            .get("total_duration_ms")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        (
-            response,
-            success,
-            learned_facts,
-            pending_question,
-            plan,
-            usage,
-            api_duration_ms,
-            tool_duration_ms,
-            total_duration_ms,
-        )
-    }
 
     fn extract_last_json_value(raw: &str) -> Result<serde_json::Value> {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
@@ -1438,326 +1031,6 @@ impl App {
         }
 
         anyhow::bail!("未找到合法 JSON 对象")
-    }
-
-    fn format_pending_question(question: &serde_json::Value) -> String {
-        let title = question
-            .get("question")
-            .and_then(|value| value.as_str())
-            .unwrap_or("需要用户回答后继续执行。");
-        let options = question
-            .get("options")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.get("label").and_then(|value| value.as_str()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if options.is_empty() {
-            format!("[等待用户回答] {}", title)
-        } else {
-            format!("[等待用户回答] {}\n可选项: {}", title, options.join(", "))
-        }
-    }
-
-    fn pending_question_title(question: &serde_json::Value) -> String {
-        question
-            .get("question")
-            .and_then(|value| value.as_str())
-            .unwrap_or("需要用户回答后继续执行。")
-            .to_string()
-    }
-
-    fn decorate_pending_answer(&mut self, prompt: &str) -> String {
-        if self.pending_approval_request.is_some() {
-            return prompt.to_string();
-        }
-        let Some(question) = self.pending_question.take() else {
-            return prompt.to_string();
-        };
-        format!(
-            "你上一轮通过 interaction.ask 提出了这个问题：\n{}\n\n用户给出的回答是：\n{}\n\n请基于这个回答继续完成原任务。",
-            Self::pending_question_title(&question),
-            prompt.trim()
-        )
-    }
-
-    fn resume_pending_question_with_answer(&mut self, answer: &str) {
-        let resumed = self.decorate_pending_answer(answer);
-        self.pending_question_items.clear();
-        self.selected_pending_answers.clear();
-        self.selected_pending_question_index = 0;
-        self.selected_pending_option_index = 0;
-        self.pending_approval_request = None;
-        self.input_mode = InputMode::Chat;
-        self.enqueue_or_start_message(resumed);
-        self.save_current_session();
-        self.scroll_to_bottom();
-    }
-
-    fn set_pending_question_state(&mut self, question: serde_json::Value) {
-        self.pending_approval_request = Self::parse_pending_approval_request(&question);
-        self.pending_question = Some(question.clone());
-        self.pending_question_items = Self::parse_pending_question_items(&question);
-        if self.pending_question_items.is_empty() {
-            self.pending_question_items.push(PendingQuestionItem {
-                question: Self::pending_question_title(&question),
-                options: Vec::new(),
-                allow_multiple: false,
-            });
-        }
-        self.selected_pending_question_index = 0;
-        self.selected_pending_option_index = 0;
-        self.selected_pending_answers = vec![HashSet::new(); self.pending_question_items.len()];
-        self.input.clear();
-        self.input_mode = InputMode::PendingQuestion;
-    }
-
-    fn parse_pending_approval_request(question: &serde_json::Value) -> Option<PendingApprovalRequest> {
-        if question
-            .get("kind")
-            .and_then(|value| value.as_str())
-            != Some("tool_approval")
-        {
-            return None;
-        }
-
-        Some(PendingApprovalRequest {
-            task_prompt: String::new(),
-            tool_name: question
-                .get("tool_name")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string(),
-        })
-    }
-
-    fn parse_pending_question_items(question: &serde_json::Value) -> Vec<PendingQuestionItem> {
-        if let Some(questions) = question.get("questions").and_then(|value| value.as_array()) {
-            return questions
-                .iter()
-                .map(Self::parse_pending_question_item)
-                .collect();
-        }
-        vec![Self::parse_pending_question_item(question)]
-    }
-
-    fn parse_pending_question_item(value: &serde_json::Value) -> PendingQuestionItem {
-        let question = value
-            .get("question")
-            .or_else(|| value.get("title"))
-            .and_then(|value| value.as_str())
-            .unwrap_or("需要用户回答后继续执行。")
-            .to_string();
-        let options = value
-            .get("options")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .map(Self::parse_pending_question_option)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let allow_multiple = value
-            .get("allow_multiple")
-            .or_else(|| value.get("multiple"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        PendingQuestionItem {
-            question,
-            options,
-            allow_multiple,
-        }
-    }
-
-    fn parse_pending_question_option(value: &serde_json::Value) -> PendingQuestionOption {
-        if let Some(text) = value.as_str() {
-            return PendingQuestionOption {
-                label: text.to_string(),
-                description: String::new(),
-            };
-        }
-        PendingQuestionOption {
-            label: value
-                .get("label")
-                .or_else(|| value.get("value"))
-                .or_else(|| value.get("text"))
-                .and_then(|value| value.as_str())
-                .unwrap_or("选项")
-                .to_string(),
-            description: value
-                .get("description")
-                .or_else(|| value.get("desc"))
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string(),
-        }
-    }
-
-    fn current_pending_question(&self) -> Option<&PendingQuestionItem> {
-        self.pending_question_items
-            .get(self.selected_pending_question_index)
-    }
-
-    fn move_pending_question_tab(&mut self, delta: isize) {
-        if self.pending_question_items.is_empty() {
-            return;
-        }
-        let len = self.pending_question_items.len() as isize;
-        let next = (self.selected_pending_question_index as isize + delta).rem_euclid(len) as usize;
-        self.selected_pending_question_index = next;
-        self.selected_pending_option_index = self.selected_pending_option_index.min(
-            self.current_pending_question()
-                .map(|question| question.options.len().saturating_sub(1))
-                .unwrap_or(0),
-        );
-    }
-
-    fn move_pending_option(&mut self, delta: isize) {
-        let Some(question) = self.current_pending_question() else {
-            return;
-        };
-        if question.options.is_empty() {
-            return;
-        }
-        let len = question.options.len() as isize;
-        self.selected_pending_option_index =
-            (self.selected_pending_option_index as isize + delta).rem_euclid(len) as usize;
-    }
-
-    fn toggle_pending_option(&mut self) {
-        let Some(question) = self.current_pending_question() else {
-            return;
-        };
-        if question.options.is_empty() {
-            return;
-        }
-        let index = self.selected_pending_question_index;
-        let option = self.selected_pending_option_index;
-        if question.allow_multiple {
-            if !self.selected_pending_answers[index].insert(option) {
-                self.selected_pending_answers[index].remove(&option);
-            }
-        } else {
-            self.selected_pending_answers[index].clear();
-            self.selected_pending_answers[index].insert(option);
-        }
-    }
-
-    fn submit_pending_question_answer(&mut self) {
-        if self.pending_question.is_none() {
-            self.input_mode = InputMode::Chat;
-            self.push_system_message("当前没有等待回答的任务。");
-            return;
-        }
-
-        if self.pending_approval_request.is_some() {
-            self.submit_pending_approval_answer();
-            return;
-        }
-
-        let custom_answer = self.input.trim().to_string();
-        let answer = if !custom_answer.is_empty() {
-            custom_answer
-        } else {
-            self.pending_question_items
-                .iter()
-                .enumerate()
-                .map(|(question_index, question)| {
-                    let labels = self
-                        .selected_pending_answers
-                        .get(question_index)
-                        .map(|answers| {
-                            let mut selected = answers
-                                .iter()
-                                .filter_map(|index| {
-                                    question
-                                        .options
-                                        .get(*index)
-                                        .map(|option| option.label.clone())
-                                })
-                                .collect::<Vec<_>>();
-                            selected.sort();
-                            selected
-                        })
-                        .unwrap_or_default();
-
-                    if labels.is_empty() {
-                        format!("{}: 未选择", question.question)
-                    } else {
-                        format!("{}: {}", question.question, labels.join(", "))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        if answer.trim().is_empty() || answer.contains("未选择") && self.input.trim().is_empty()
-        {
-            self.push_system_message(
-                "请选择选项，或输入自定义回答后按 Enter。普通消息可按 Esc 返回聊天后发送。",
-            );
-            return;
-        }
-
-        self.input.clear();
-        self.resume_pending_question_with_answer(&answer);
-    }
-
-    fn submit_pending_approval_answer(&mut self) {
-        let selection = self
-            .selected_pending_answers
-            .first()
-            .and_then(|answers| answers.iter().next().copied());
-        let Some(selection) = selection else {
-            self.push_system_message("请选择审批结果后再继续。");
-            return;
-        };
-
-        let Some(request) = self.pending_approval_request.clone() else {
-            self.push_system_message("当前没有待处理的审批请求。");
-            return;
-        };
-
-        self.pending_question = None;
-        self.pending_question_items.clear();
-        self.selected_pending_answers.clear();
-        self.selected_pending_question_index = 0;
-        self.selected_pending_option_index = 0;
-        self.pending_approval_request = None;
-        self.input.clear();
-        self.input_mode = InputMode::Chat;
-
-        match selection {
-            0 => {
-                self.push_system_message(&format!("已拒绝工具 {} 的修改授权。", request.tool_name));
-            }
-            1 => {
-                self.push_system_message(&format!("已允许工具 {} 本次执行，正在继续任务。", request.tool_name));
-                self.enqueue_or_start_message_with_approval(
-                    request.task_prompt,
-                    ApprovalPolicy::AutoApprove,
-                );
-            }
-            2 => {
-                self.session_auto_approve_edits = true;
-                self.push_system_message(&format!(
-                    "已允许工具 {} 在本会话内自动执行修改操作，正在继续任务。",
-                    request.tool_name
-                ));
-                self.enqueue_or_start_message_with_approval(
-                    request.task_prompt,
-                    ApprovalPolicy::AutoApprove,
-                );
-            }
-            _ => {
-                self.push_system_message("未识别的审批结果。");
-            }
-        }
     }
 
     fn build_task_prompt(&self, user_input: &str) -> String {
@@ -1925,14 +1198,186 @@ impl App {
         }
     }
 
-    fn merge_cli_response(
-        events: Option<String>,
-        provider_response: Option<String>,
-    ) -> Option<String> {
-        match (events, provider_response) {
-            (_, Some(response)) => Some(response),
-            (Some(events), None) => Some(events),
-            (None, None) => None,
+    fn format_orchestration_details(parsed: &serde_json::Value) -> Option<String> {
+        let mut lines = Vec::new();
+
+        if let Some(summary) = parsed.get("summary_record") {
+            let reporter_summary = summary
+                .get("reporter_summary")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty());
+            let overall_conclusion = summary
+                .get("overall_conclusion")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty());
+            let recommended_next_action = summary
+                .get("recommended_next_action")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty());
+            let risk_lines = summary
+                .get("key_risks")
+                .and_then(|value| value.as_array())
+                .map(|risks| {
+                    risks
+                        .iter()
+                        .filter_map(|risk| risk.as_str())
+                        .map(|risk| format!("- risk: {}", risk))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let item_lines = summary
+                .get("items")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            let role_id = item.get("role_id").and_then(|value| value.as_str())?;
+                            let route = item
+                                .get("route")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("auto");
+                            let output = item
+                                .get("output")
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())?;
+                            Some(format!("- {} [{}]: {}", role_id, route, output))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if reporter_summary.is_some()
+                || overall_conclusion.is_some()
+                || recommended_next_action.is_some()
+                || !risk_lines.is_empty()
+                || !item_lines.is_empty()
+            {
+                lines.push("[主裁决摘要]".to_string());
+                if let Some(summary) = reporter_summary {
+                    lines.push(format!("- reporter: {}", summary));
+                }
+                if let Some(conclusion) = overall_conclusion {
+                    lines.push(format!("- overall: {}", conclusion));
+                }
+                lines.extend(risk_lines);
+                if let Some(next_action) = recommended_next_action {
+                    lines.push(format!("- next: {}", next_action));
+                }
+                lines.extend(item_lines);
+            }
+        }
+
+        if let Some(roles) = parsed
+            .get("orchestration_plan")
+            .and_then(|plan| plan.get("roles"))
+            .and_then(|value| value.as_array())
+        {
+            let role_lines = roles
+                .iter()
+                .filter_map(|role| {
+                    let role_id = role.get("role_id").and_then(|value| value.as_str())?;
+                    let preferred_model = role
+                        .get("preferred_model")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("auto");
+                    let needs_thinking = role
+                        .get("needs_thinking")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
+                    Some(format!(
+                        "- {}: {} thinking={}",
+                        role_id,
+                        preferred_model,
+                        needs_thinking
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if !role_lines.is_empty() {
+                lines.push("[编排角色]".to_string());
+                lines.extend(role_lines);
+            }
+        }
+
+        if let Some(routes) = parsed.get("route_records").and_then(|value| value.as_array()) {
+            let route_lines = routes
+                .iter()
+                .filter_map(|route| {
+                    let role_id = route.get("role_id").and_then(|value| value.as_str())?;
+                    let primary = route.get("primary")?;
+                    let provider_name = primary.get("provider_name").and_then(|value| value.as_str()).unwrap_or("auto");
+                    let model_name = primary.get("model_name").and_then(|value| value.as_str()).unwrap_or("auto");
+                    let score = primary.get("route_score").and_then(|value| value.as_i64()).unwrap_or(0);
+                    let needs_thinking = primary.get("needs_thinking").and_then(|value| value.as_bool()).unwrap_or(false);
+                    Some(format!(
+                        "- {}: {}/{} score={} thinking={}",
+                        role_id,
+                        provider_name,
+                        model_name,
+                        score,
+                        needs_thinking
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if !route_lines.is_empty() {
+                lines.push("[角色路由]".to_string());
+                lines.extend(route_lines);
+            }
+        }
+
+        let conflict_lines = if let Some(conflict_records) = parsed
+            .get("conflict_records")
+            .and_then(|value| value.as_array())
+        {
+            conflict_records
+                .iter()
+                .filter_map(|record| {
+                    let kind = record.get("kind").and_then(|value| value.as_str()).unwrap_or("conflict");
+                    let summary = record.get("summary").and_then(|value| value.as_str())?;
+                    Some(format!("- [{}] {}", kind, summary))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            parsed
+                .get("conflicts")
+                .and_then(|value| value.as_array())
+                .map(|conflicts| {
+                    conflicts
+                        .iter()
+                        .filter_map(|value| value.as_str())
+                        .map(|value| format!("- {}", value))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        if !conflict_lines.is_empty() {
+            lines.push("[冲突]".to_string());
+            lines.extend(conflict_lines);
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+
+    fn merge_cli_response(events: Option<String>, provider_response: Option<String>) -> Option<String> {
+        let mut sections = Vec::new();
+
+        if let Some(response) = provider_response.filter(|value| !value.trim().is_empty()) {
+            sections.push(response);
+        }
+        if sections.is_empty() {
+            if let Some(events) = events.filter(|value| !value.trim().is_empty()) {
+                sections.push(events);
+            }
+        }
+
+        if sections.is_empty() {
+            None
+        } else {
+            Some(sections.join("\n\n"))
         }
     }
 
@@ -2070,8 +1515,8 @@ impl App {
                 .unwrap_or_default(),
         };
 
-        self.processing = true;
-        self.busy_message = "正在验证 provider 并拉取模型列表...".to_string();
+        self.queue.processing = true;
+        self.queue.busy_message = "正在验证 provider 并拉取模型列表...".to_string();
         self.spawn_login_task(
             self.pending_provider_name
                 .clone()
@@ -2085,8 +1530,8 @@ impl App {
     }
 
     fn open_provider_picker(&mut self) {
-        self.processing = true;
-        self.busy_message = "正在加载 provider 列表...".to_string();
+        self.queue.processing = true;
+        self.queue.busy_message = "正在加载 provider 列表...".to_string();
         self.spawn_load_providers_task();
         self.input.clear();
     }
@@ -2103,8 +1548,8 @@ impl App {
         };
 
         self.input_mode = InputMode::Chat;
-        self.processing = true;
-        self.busy_message = format!("正在切换 provider 到 {}...", provider_name);
+        self.queue.processing = true;
+        self.queue.busy_message = format!("正在切换 provider 到 {}...", provider_name);
         self.spawn_switch_provider_task(provider_name);
         self.input.clear();
     }
@@ -2224,8 +1669,8 @@ impl App {
             return;
         }
 
-        self.processing = true;
-        self.busy_message = "正在加载所有 provider 的模型列表...".to_string();
+        self.queue.processing = true;
+        self.queue.busy_message = "正在加载所有 provider 的模型列表...".to_string();
         self.spawn_load_models_task();
         self.input.clear();
     }
@@ -2236,7 +1681,7 @@ impl App {
 
         if trimmed.starts_with("/answer") {
             let answer = trimmed.strip_prefix("/answer").unwrap_or("").trim();
-            if self.pending_question.is_none() {
+            if self.interaction.pending_question.is_none() {
                 self.push_system_message("当前没有等待回答的任务。");
             } else if answer.is_empty() {
                 self.push_system_message("用法: /answer <你的回答>");
@@ -2509,8 +1954,8 @@ impl App {
     }
 
     fn init_command(&mut self, mode: InitMode) {
-        self.processing = true;
-        self.busy_message = match mode {
+        self.queue.processing = true;
+        self.queue.busy_message = match mode {
             InitMode::Basic => "正在生成项目初始化文件...".to_string(),
             InitMode::Deep => "正在生成深度初始化文件...".to_string(),
         };
@@ -2752,34 +2197,36 @@ impl App {
             .and_then(|summary| summary.get("content"))
             .and_then(|content| content.as_str())
             .map(|content| content.to_string());
-        self.messages = messages
-            .iter()
-            .map(|message| Message {
-                role: match message
-                    .get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("system")
-                {
-                    "user" => MessageRole::User,
-                    "assistant" => MessageRole::Assistant,
-                    _ => MessageRole::System,
-                },
-                content: message
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                timestamp: message
-                    .get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                collapsed: message
-                    .get("collapsed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-            })
-            .collect();
+        self.replace_messages(
+            messages
+                .iter()
+                .map(|message| Message {
+                    role: match message
+                        .get("role")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("system")
+                    {
+                        "user" => MessageRole::User,
+                        "assistant" => MessageRole::Assistant,
+                        _ => MessageRole::System,
+                    },
+                    content: message
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    timestamp: message
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    collapsed: message
+                        .get("collapsed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                })
+                .collect(),
+        );
         self.scroll_to_bottom();
         if announce {
             self.push_success_message(&format!("已切换到会话 {}", self.session_id));
@@ -2789,39 +2236,39 @@ impl App {
     fn new_session_command(&mut self) {
         let now = chrono::Local::now();
         self.session_id = format!("session-{}", now.format("%Y%m%d%H%M%S"));
-        self.messages = vec![Message {
+        self.replace_messages(vec![Message {
             role: MessageRole::System,
             content: "SaCode - 新会话\n\n上下键可浏览输入历史，/sessions 可切换历史会话。"
                 .to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
-        }];
+        }]);
         self.session_summary = None;
-        self.queued_messages.clear();
-        self.todo_plan = None;
-        self.processing = false;
-        self.active_task_id = None;
+        self.queue.queued_messages.clear();
+        self.interaction.todo_plan = None;
+        self.queue.processing = false;
+        self.queue.active_task_id = None;
         self.active_task_started_at = None;
-        self.busy_message.clear();
+        self.queue.busy_message.clear();
         self.save_current_session();
         self.push_success_message("已创建新会话");
     }
 
     fn clear_current_context(&mut self) {
         let now = chrono::Local::now();
-        self.messages = vec![Message {
+        self.replace_messages(vec![Message {
             role: MessageRole::System,
             content: "当前会话上下文已清空。".to_string(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
-        }];
+        }]);
         self.session_summary = None;
-        self.queued_messages.clear();
-        self.todo_plan = None;
-        self.processing = false;
-        self.active_task_id = None;
+        self.queue.queued_messages.clear();
+        self.interaction.todo_plan = None;
+        self.queue.processing = false;
+        self.queue.active_task_id = None;
         self.active_task_started_at = None;
-        self.busy_message.clear();
+        self.queue.busy_message.clear();
         self.save_current_session();
         self.scroll_to_bottom();
     }
@@ -3411,31 +2858,38 @@ impl App {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(data) => {
                     if let Some(msgs) = data.get("messages").and_then(|m| m.as_array()) {
-                        self.messages = msgs
-                            .iter()
-                            .filter_map(|m| {
-                                let role =
-                                    m.get("role").and_then(|r| r.as_str()).unwrap_or("system");
-                                let content =
-                                    m.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                                let timestamp =
-                                    m.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+                        self.replace_messages(
+                            msgs.iter()
+                                .filter_map(|m| {
+                                    let role = m
+                                        .get("role")
+                                        .and_then(|r| r.as_str())
+                                        .unwrap_or("system");
+                                    let content = m
+                                        .get("content")
+                                        .and_then(|c| c.as_str())
+                                        .unwrap_or("");
+                                    let timestamp = m
+                                        .get("timestamp")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
 
-                                Some(Message {
-                                    role: match role {
-                                        "user" => MessageRole::User,
-                                        "assistant" => MessageRole::Assistant,
-                                        _ => MessageRole::System,
-                                    },
-                                    content: content.to_string(),
-                                    timestamp: timestamp.to_string(),
-                                    collapsed: m
-                                        .get("collapsed")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false),
+                                    Some(Message {
+                                        role: match role {
+                                            "user" => MessageRole::User,
+                                            "assistant" => MessageRole::Assistant,
+                                            _ => MessageRole::System,
+                                        },
+                                        content: content.to_string(),
+                                        timestamp: timestamp.to_string(),
+                                        collapsed: m
+                                            .get("collapsed")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false),
+                                    })
                                 })
-                            })
-                            .collect();
+                                .collect(),
+                        );
                         self.push_success_message(&format!("检查点 {} 已恢复", name));
                         self.scroll_to_bottom();
                     }
@@ -3833,21 +3287,6 @@ impl App {
         ));
     }
 
-    fn cancel_command(&mut self) {
-        if self.processing {
-            self.cancel_active_task();
-            return;
-        }
-
-        if self.queued_messages.is_empty() {
-            self.push_system_message("当前没有正在执行或等待中的任务。");
-        } else {
-            let count = self.queued_messages.len();
-            self.queued_messages.clear();
-            self.push_system_message(&format!("已清空等待队列，共移除 {} 项。", count));
-        }
-    }
-
     fn todo_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let sub = parts.get(1).copied().unwrap_or("show");
@@ -3856,7 +3295,7 @@ impl App {
             "show" => self.show_todo_plan(),
             "confirm" => self.confirm_todo_plan(),
             "clear" => {
-                self.todo_plan = None;
+                self.interaction.todo_plan = None;
                 self.push_system_message("已清空当前待办列表。");
             }
             _ => self.push_system_message("用法: /todo show|confirm|clear"),
@@ -4128,22 +3567,23 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        self.todo_plan = Some(TodoPlan {
+        self.interaction.todo_plan = Some(TodoPlan {
             source_task: source_task.to_string(),
             items,
             confirmed: self.execution_mode != ExecutionMode::Plan,
         });
 
         if self.execution_mode == ExecutionMode::Plan {
+            self.interaction.state = InteractionState::TodoConfirmation;
             self.input_mode = InputMode::TodoConfirm;
             self.push_system_message(&format!(
                 "已生成 todo 计划，共 {} 项。按 Enter 或输入 /todo confirm 后会自动切换到 Yolo 模式执行。",
-                self.todo_plan.as_ref().map(|plan| plan.items.len()).unwrap_or(0)
+                self.interaction.todo_plan.as_ref().map(|plan| plan.items.len()).unwrap_or(0)
             ));
         } else {
             self.push_system_message(&format!(
                 "已生成 todo 计划，共 {} 项。后续由 AI 在回复中自行推进；右侧面板可查看进度。",
-                self.todo_plan
+                self.interaction.todo_plan
                     .as_ref()
                     .map(|plan| plan.items.len())
                     .unwrap_or(0)
@@ -4152,7 +3592,7 @@ impl App {
     }
 
     fn show_todo_plan(&mut self) {
-        let Some(plan) = &self.todo_plan else {
+        let Some(plan) = &self.interaction.todo_plan else {
             self.push_system_message("当前没有待办列表。先发送一个需要规划的任务。");
             return;
         };
@@ -4178,7 +3618,7 @@ impl App {
     }
 
     fn confirm_todo_plan(&mut self) {
-        if self.todo_plan.is_none() {
+        if self.interaction.todo_plan.is_none() {
             self.input_mode = InputMode::Chat;
             self.push_system_message("当前没有待办列表可确认。");
             return;
@@ -4196,9 +3636,10 @@ impl App {
         }
 
         self.apply_execution_mode("yolo", false);
+        self.interaction.state = InteractionState::Idle;
         self.input_mode = InputMode::Chat;
 
-        let Some(plan) = &mut self.todo_plan else {
+        let Some(plan) = &mut self.interaction.todo_plan else {
             return;
         };
         plan.confirmed = true;
@@ -4227,7 +3668,7 @@ impl App {
     }
 
     fn mark_todo_completed(&mut self, prompt: &str) {
-        if let Some(plan) = &mut self.todo_plan {
+        if let Some(plan) = &mut self.interaction.todo_plan {
             for item in &mut plan.items {
                 if item.description == prompt && item.status == TodoStatus::Running {
                     item.status = TodoStatus::Completed;
@@ -4238,7 +3679,7 @@ impl App {
     }
 
     fn compress_current_context(&mut self) {
-        if self.processing {
+        if self.queue.processing {
             self.push_system_message("当前有任务正在执行，请等待完成后再压缩会话。");
             return;
         }
@@ -4251,7 +3692,7 @@ impl App {
 
         self.session_summary = Some(summary.clone());
         let now = chrono::Local::now();
-        self.messages = vec![Message {
+        self.replace_messages(vec![Message {
             role: MessageRole::System,
             content: format!(
                 "当前会话已压缩。后续任务会自动携带历史摘要。\n\n摘要预览:\n{}",
@@ -4259,13 +3700,13 @@ impl App {
             ),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
-        }];
-        self.queued_messages.clear();
-        self.todo_plan = None;
-        self.processing = false;
-        self.active_task_id = None;
+        }]);
+        self.queue.queued_messages.clear();
+        self.interaction.todo_plan = None;
+        self.queue.processing = false;
+        self.queue.active_task_id = None;
         self.active_task_started_at = None;
-        self.busy_message.clear();
+        self.queue.busy_message.clear();
         self.save_current_session();
         self.scroll_to_bottom();
     }
@@ -4783,12 +4224,12 @@ impl App {
     }
 
     fn update_command(&mut self, input: &str) {
-        if self.processing {
+        if self.queue.processing {
             self.push_system_message("当前有任务正在执行，请等待完成后再更新 sacode。");
             return;
         }
-        self.processing = true;
-        self.busy_message = "正在更新 sacode...".to_string();
+        self.queue.processing = true;
+        self.queue.busy_message = "正在更新 sacode...".to_string();
         let sender = self.task_tx.clone();
         let args = input
             .split_whitespace()
@@ -4932,8 +4373,8 @@ impl App {
 
         match catalog {
             Some(c) if c.providers.contains_key(name) => {
-                self.processing = true;
-                self.busy_message = format!("正在切换 provider 到 {}...", name);
+                self.queue.processing = true;
+                self.queue.busy_message = format!("正在切换 provider 到 {}...", name);
                 self.spawn_switch_provider_task(name.to_string());
             }
             _ => self.push_system_message(&format!("Provider {} 不存在。", name)),
@@ -5119,8 +4560,8 @@ impl App {
 
         let provider_name = selected_model.provider_name.clone();
         self.input_mode = InputMode::Chat;
-        self.processing = true;
-        self.busy_message = format!(
+        self.queue.processing = true;
+        self.queue.busy_message = format!(
             "正在切换到 {} / {}...",
             provider_name, selected_model.model_name
         );
@@ -5273,14 +4714,18 @@ impl App {
         });
     }
 
-    fn poll_async_results(&mut self) {
+    fn poll_async_results(&mut self) -> bool {
+        let mut handled = false;
         while let Ok(result) = self.task_rx.try_recv() {
+            handled = true;
             match result {
                 AsyncResult::ChatCompleted {
                     task_id,
                     prompt,
                     response,
+                    orchestration_summary,
                     success,
+                    state,
                     learned_facts,
                     pending_question,
                     plan,
@@ -5289,228 +4734,42 @@ impl App {
                     tool_duration_ms,
                     total_duration_ms,
                     loop_state,
-                } => {
-                    if self.canceled_task_ids.remove(&task_id) {
-                        if self.active_task_id == Some(task_id) {
-                            self.active_child = None;
-                            self.processing = false;
-                            self.active_task_id = None;
-                            self.active_task_started_at = None;
-                            self.spinner_index = 0;
-                            self.busy_message.clear();
-                            self.push_system_message(&format!(
-                                "已取消任务 #{}: {}",
-                                task_id, prompt
-                            ));
-                            self.log_event(
-                                "task_canceled",
-                                &format!("#{} {}", task_id, prompt.trim()),
-                            );
-                            self.start_next_queued_message();
-                        }
-                        continue;
-                    }
-
-                    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-                    self.messages.push(Message {
-                        role: if success { MessageRole::Assistant } else { MessageRole::System },
-                        content: response,
-                        timestamp,
-                        collapsed: false,
-                    });
-                    if let Some(summary) = crate::runner::format_learned_facts_summary(&learned_facts)
-                    {
-                        self.push_system_message(&summary);
-                    }
-                    self.log_event(
-                        "assistant_response",
-                        &self
-                            .messages
-                            .last()
-                            .map(|msg| msg.content.clone())
-                            .unwrap_or_default(),
-                    );
-                    if let Some(question) = pending_question.as_ref() {
-                        if let Some(request) = self.pending_approval_request.as_mut() {
-                            request.task_prompt = prompt.clone();
-                        }
-                        self.set_pending_question_state(question.clone());
-                        self.push_system_message(&format!(
-                            "当前任务等待用户回答。可在等待问题面板中选择或输入自定义回答；Esc 返回聊天后普通输入会进入等待队列：{}",
-                            Self::pending_question_title(question)
-                        ));
-                    } else {
-                        self.pending_question = None;
-                        self.pending_question_items.clear();
-                        self.selected_pending_answers.clear();
-                        self.pending_approval_request = None;
-                    }
-                    if let Some(usage) = usage {
-                        self.record_usage(usage);
-                    }
-                    self.record_performance(api_duration_ms, tool_duration_ms, total_duration_ms);
-                    self.mark_todo_completed(&prompt);
-                    if let Some(plan) = plan {
-                        self.capture_todo_plan(&prompt, plan);
-                    }
-                    self.active_child = None;
-                    self.processing = false;
-                    self.active_task_id = None;
-                    self.active_task_started_at = None;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    self.refresh_git_changes();
-                    self.scroll_to_bottom();
-                    if success && !self.should_wait_for_user_after_chat() {
-                        if let Some(state) = loop_state.clone() {
-                            let next_iteration = state.iteration.saturating_add(1);
-                            if next_iteration > state.max_iterations {
-                                self.push_system_message(&format!(
-                                    "循环任务已达到最大轮次上限 {} 次，自动停止。",
-                                    state.max_iterations
-                                ));
-                            } else {
-self.enqueue_or_start_message_with_approval_and_loop(
-                                format!(
-                                    "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
-                                    state.task
-                                ),
-                                self.current_task_approval_policy(),
-                                Some(LoopState {
-                                    task: state.task.clone(),
-                                    iteration: next_iteration,
-                                    max_iterations: state.max_iterations,
-                                    error_count: 0,
-                                }),
-                            );
-                            self.push_system_message(&format!(
-                                "循环任务已完成第 {} 轮，继续下一轮。",
-                                state.iteration
-                            ));
-                            }
-                        }
-                    } else if let Some(state) = loop_state.clone() {
-                        let next_error_count = state.error_count.saturating_add(1);
-                        if next_error_count >= 3 {
-                            self.push_system_message(&format!(
-                                "循环任务已连续失败 {} 次，自动停止。修复后可重新执行 /loop。",
-                                next_error_count
-                            ));
-                        } else {
-                            let reflection_hint = match next_error_count {
-                                1 => "上一轮执行遇到问题，请重新审视任务需求，换一种方案尝试。",
-                                2 => "已连续两轮失败，请深入分析失败原因，检查是否有根本性问题。",
-                                _ => "多次失败表明当前方案可能不可行，请彻底换一种思路。",
-                            };
-                            self.enqueue_or_start_message_with_approval_and_loop(
-                                format!(
-                                    "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态。\n\n反思提示：{}\n\n任务：{}",
-                                    reflection_hint,
-                                    state.task
-                                ),
-                                self.current_task_approval_policy(),
-                                Some(LoopState {
-                                    task: state.task.clone(),
-                                    iteration: state.iteration.saturating_add(1),
-                                    max_iterations: state.max_iterations,
-                                    error_count: next_error_count,
-                                }),
-                            );
-                            self.push_system_message(&format!(
-                                "循环任务本轮失败（累计 {} 次），注入反思信号后继续下一轮。",
-                                next_error_count
-                            ));
-                        }
-                    }
-                    if !self.should_wait_for_user_after_chat() {
-                        self.start_next_queued_message();
-                    }
-                }
+                } => self.handle_chat_completed(
+                    task_id,
+                    prompt,
+                    response,
+                    orchestration_summary,
+                    success,
+                    state,
+                    learned_facts,
+                    pending_question,
+                    plan,
+                    usage,
+                    api_duration_ms,
+                    tool_duration_ms,
+                    total_duration_ms,
+                    loop_state,
+                ),
                 AsyncResult::LoginCompleted {
                     provider_name,
                     config,
-                } => {
-                    self.current_provider = Some(NamedProviderConfig {
-                        name: provider_name,
-                        config,
-                    });
-                    self.processing = false;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    self.open_model_picker();
-                }
+                } => self.handle_login_completed(provider_name, config),
                 AsyncResult::ProvidersLoaded {
                     providers,
                     current_provider,
-                } => {
-                    self.processing = false;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    if providers.is_empty() {
-                        self.push_system_message("当前没有可用 provider，请先输入 /login。");
-                        continue;
-                    }
-                    self.selected_provider_index = providers
-                        .iter()
-                        .position(|provider| provider == &current_provider)
-                        .unwrap_or(0);
-                    self.provider_options = providers;
-                    self.input_mode = InputMode::ProviderSelect;
-                    self.push_system_message("已打开 provider 管理，使用上下方向键选择，Enter 切换，r 重命名，d 删除，Esc 取消。");
-                }
+                } => self.handle_providers_loaded(providers, current_provider),
                 AsyncResult::ProviderSwitched { current_provider } => {
-                    let provider_name = current_provider.name.clone();
-                    self.current_provider = Some(current_provider);
-                    self.input_mode = InputMode::Chat;
-                    self.processing = false;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    self.push_system_message(&format!(
-                        "当前 provider 已切换为 {}。",
-                        provider_name
-                    ));
+                    self.handle_provider_switched(current_provider)
                 }
                 AsyncResult::ModelsLoaded {
                     models,
                     current_provider,
                     current_model,
-                } => {
-                    self.processing = false;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    if models.is_empty() {
-                        self.push_system_message("当前没有可切换的模型，请先配置 provider 或检查模型拉取结果。");
-                        continue;
-                    }
-                    self.selected_model_index = models
-                        .iter()
-                        .position(|model| {
-                            model.provider_name == current_provider
-                                && model.model_name == current_model
-                        })
-                        .unwrap_or(0);
-                    self.model_options = models;
-                    self.input_mode = InputMode::ModelSelect;
-                }
+                } => self.handle_models_loaded(models, current_provider, current_model),
                 AsyncResult::ModelSaved {
                     config,
                     selected_model,
-                } => {
-                    let provider_name = self
-                        .model_options
-                        .get(self.selected_model_index)
-                        .map(|entry| entry.provider_name.clone())
-                        .or_else(|| self.current_provider.as_ref().map(|provider| provider.name.clone()))
-                        .unwrap_or_default();
-                    self.current_provider = Some(NamedProviderConfig {
-                        name: provider_name,
-                        config,
-                    });
-                    self.input_mode = InputMode::Chat;
-                    self.processing = false;
-                    self.busy_message.clear();
-                    self.push_system_message(&format!("默认模型已切换为 {}。", selected_model));
-                }
+                } => self.handle_model_saved(config, selected_model),
                 AsyncResult::VersionChecked {
                     current_version,
                     remote_version,
@@ -5525,87 +4784,299 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         }
                     }
                 }
-                AsyncResult::InitCompleted { mode } => {
-                    self.processing = false;
-                    self.spinner_index = 0;
-                    self.busy_message.clear();
-                    self.input_mode = InputMode::Chat;
-                    self.push_success_message(&format!("{} 已完成。", crate::cmd::init::mode_name(mode)));
-                }
-                AsyncResult::UpdateCompleted { message } => {
-                    self.processing = false;
-                    self.busy_message.clear();
-                    self.push_system_message(&message);
-                }
+                AsyncResult::InitCompleted { mode } => self.handle_init_completed(mode),
+                AsyncResult::UpdateCompleted { message } => self.handle_update_completed(message),
                 AsyncResult::InputOptimized {
                     original,
                     optimized,
                     model_name,
-                } => {
-                    self.busy_message.clear();
-                    let optimized = optimized.trim().to_string();
-                    if optimized.is_empty() {
-                        self.push_system_message("输入优化未返回结果，保留原始内容。");
-                        self.input = original;
-                    } else {
-                        self.pending_input_optimization = Some(PendingInputOptimizationPreview {
-                            original,
-                            optimized,
-                            model_name: model_name.clone(),
-                        });
-                        self.input_mode = InputMode::InputOptimizePreview;
-                        self.push_system_message(&format!(
-                            "{} 已返回输入优化建议，按 Enter 应用，按 Esc 取消。",
-                            model_name
-                        ));
-                    }
-                }
+                } => self.handle_input_optimized(original, optimized, model_name),
                 AsyncResult::Failed { context, message } => {
-                    self.active_child = None;
-                    if !matches!(context, AsyncContext::OptimizeInput) {
-                        self.processing = false;
-                        self.active_task_id = None;
-                        self.active_task_started_at = None;
-                        self.spinner_index = 0;
-                    }
-                    self.busy_message.clear();
-                    if matches!(
-                        context,
-                        AsyncContext::OptimizeInput
-                            | AsyncContext::LoadProviders
-                            | AsyncContext::SaveProvider
-                            | AsyncContext::LoadModels
-                            | AsyncContext::SaveModel
-                    ) {
-                        self.input_mode = InputMode::Chat;
-                    }
-                    self.push_system_message(&message);
-                    if !self.should_wait_for_user_after_chat() {
-                        self.start_next_queued_message();
-                    }
+                    self.handle_failed_async_result(context, message)
                 }
             }
         }
+        handled
     }
 
-    fn start_next_queued_message(&mut self) {
-        if self.processing {
+    fn handle_chat_completed(
+        &mut self,
+        task_id: u64,
+        prompt: String,
+        response: String,
+        orchestration_summary: Option<String>,
+        success: bool,
+        state: TaskRunState,
+        learned_facts: Vec<crate::learning::LearnedFact>,
+        pending_question: Option<serde_json::Value>,
+        plan: Option<sacode_kernel::Plan>,
+        usage: Option<ChatUsage>,
+        api_duration_ms: u64,
+        tool_duration_ms: u64,
+        total_duration_ms: u64,
+        loop_state: Option<LoopState>,
+    ) {
+        if self.canceled_task_ids.remove(&task_id) {
+            if self.queue.active_task_id == Some(task_id) {
+                self.finish_active_task();
+                self.push_system_message(&format!("已取消任务 #{}: {}", task_id, prompt));
+                self.log_event("task_canceled", &format!("#{} {}", task_id, prompt.trim()));
+                self.start_next_queued_message();
+            }
             return;
         }
 
-        if let Some(next) = self.queued_messages.pop_front() {
-            self.start_queued_message(next);
+        self.orchestration_summary = orchestration_summary;
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        self.append_message(Message {
+            role: if success {
+                MessageRole::Assistant
+            } else {
+                MessageRole::System
+            },
+            content: response,
+            timestamp,
+            collapsed: false,
+        });
+        if let Some(summary) = crate::runner::format_learned_facts_summary(&learned_facts) {
+            self.push_system_message(&summary);
+        }
+        self.log_event(
+            "assistant_response",
+            &self
+                .messages
+                .last()
+                .map(|msg| msg.content.clone())
+                .unwrap_or_default(),
+        );
+        if let Some(question) = pending_question.as_ref() {
+            if let Some(request) = self.interaction.pending_approval_request.as_mut() {
+                request.task_prompt = prompt.clone();
+            }
+            self.set_pending_question_state(question.clone());
+            self.push_system_message(&format!(
+                "当前任务等待用户回答。可在等待问题面板中选择或输入自定义回答；Esc 返回聊天后普通输入会进入等待队列：{}",
+                Self::pending_question_title(question)
+            ));
+        } else {
+            self.clear_pending_question_state();
+        }
+        if let Some(usage) = usage {
+            self.record_usage(usage);
+        }
+        self.record_performance(api_duration_ms, tool_duration_ms, total_duration_ms);
+        self.mark_todo_completed(&prompt);
+        if let Some(plan) = plan {
+            self.capture_todo_plan(&prompt, plan);
+        }
+        self.finish_active_task();
+        if matches!(state, TaskRunState::Completed) && !self.should_wait_for_user_after_chat() {
+            if let Some(state) = loop_state.clone() {
+                let next_iteration = state.iteration.saturating_add(1);
+                if next_iteration > state.max_iterations {
+                    self.push_system_message(&format!(
+                        "循环任务已达到最大轮次上限 {} 次，自动停止。",
+                        state.max_iterations
+                    ));
+                } else {
+                    self.enqueue_or_start_message_with_approval_and_loop(
+                        format!(
+                            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
+                            state.task
+                        ),
+                        self.current_task_approval_policy(),
+                        Some(LoopState {
+                            task: state.task.clone(),
+                            iteration: next_iteration,
+                            max_iterations: state.max_iterations,
+                            error_count: 0,
+                        }),
+                    );
+                    self.push_system_message(&format!(
+                        "循环任务已完成第 {} 轮，继续下一轮。",
+                        state.iteration
+                    ));
+                }
+            }
+        } else if matches!(state, TaskRunState::Failed) {
+            if let Some(state) = loop_state.clone() {
+                let next_error_count = state.error_count.saturating_add(1);
+                if next_error_count >= 3 {
+                    self.push_system_message(&format!(
+                        "循环任务已连续失败 {} 次，自动停止。修复后可重新执行 /loop。",
+                        next_error_count
+                    ));
+                } else {
+                    let reflection_hint = match next_error_count {
+                        1 => "上一轮执行遇到问题，请重新审视任务需求，换一种方案尝试。",
+                        2 => "已连续两轮失败，请深入分析失败原因，检查是否有根本性问题。",
+                        _ => "多次失败表明当前方案可能不可行，请彻底换一种思路。",
+                    };
+                    self.enqueue_or_start_message_with_approval_and_loop(
+                        format!(
+                            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态。\n\n反思提示：{}\n\n任务：{}",
+                            reflection_hint, state.task
+                        ),
+                        self.current_task_approval_policy(),
+                        Some(LoopState {
+                            task: state.task.clone(),
+                            iteration: state.iteration.saturating_add(1),
+                            max_iterations: state.max_iterations,
+                            error_count: next_error_count,
+                        }),
+                    );
+                    self.push_system_message(&format!(
+                        "循环任务本轮失败（累计 {} 次），注入反思信号后继续下一轮。",
+                        next_error_count
+                    ));
+                }
+            }
+        }
+        if !self.should_wait_for_user_after_chat() {
+            self.start_next_queued_message();
         }
     }
 
-    fn cancel_active_task(&mut self) {
-        if let Some(task_id) = self.active_task_id {
-            self.canceled_task_ids.insert(task_id);
-            self.busy_message = format!("正在取消任务 #{}...", task_id);
-            self.log_event("cancel_requested", &format!("#{}", task_id));
-            if let Some(child) = &self.active_child {
-                let _ = child.lock().unwrap().kill();
-            }
+    fn clear_busy_state(&mut self) {
+        self.queue.processing = false;
+        self.spinner_index = 0;
+        self.queue.busy_message.clear();
+    }
+
+    fn reset_active_async_state(&mut self) {
+        self.queue.processing = false;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = None;
+        self.spinner_index = 0;
+        self.queue.busy_message.clear();
+    }
+
+    fn handle_login_completed(&mut self, provider_name: String, config: ProviderConfig) {
+        self.current_provider = Some(NamedProviderConfig {
+            name: provider_name,
+            config,
+        });
+        self.clear_busy_state();
+        self.open_model_picker();
+    }
+
+    fn handle_providers_loaded(&mut self, providers: Vec<String>, current_provider: String) {
+        self.clear_busy_state();
+        if providers.is_empty() {
+            self.push_system_message("当前没有可用 provider，请先输入 /login。");
+            return;
+        }
+        self.selected_provider_index = providers
+            .iter()
+            .position(|provider| provider == &current_provider)
+            .unwrap_or(0);
+        self.provider_options = providers;
+        self.input_mode = InputMode::ProviderSelect;
+        self.push_system_message(
+            "已打开 provider 管理，使用上下方向键选择，Enter 切换，r 重命名，d 删除，Esc 取消。",
+        );
+    }
+
+    fn handle_provider_switched(&mut self, current_provider: NamedProviderConfig) {
+        let provider_name = current_provider.name.clone();
+        self.current_provider = Some(current_provider);
+        self.input_mode = InputMode::Chat;
+        self.clear_busy_state();
+        self.push_system_message(&format!("当前 provider 已切换为 {}。", provider_name));
+    }
+
+    fn handle_models_loaded(
+        &mut self,
+        models: Vec<ModelOptionEntry>,
+        current_provider: String,
+        current_model: String,
+    ) {
+        self.clear_busy_state();
+        if models.is_empty() {
+            self.push_system_message("当前没有可切换的模型，请先配置 provider 或检查模型拉取结果。");
+            return;
+        }
+        self.selected_model_index = models
+            .iter()
+            .position(|model| {
+                model.provider_name == current_provider && model.model_name == current_model
+            })
+            .unwrap_or(0);
+        self.model_options = models;
+        self.input_mode = InputMode::ModelSelect;
+    }
+
+    fn handle_model_saved(&mut self, config: ProviderConfig, selected_model: String) {
+        let provider_name = self
+            .model_options
+            .get(self.selected_model_index)
+            .map(|entry| entry.provider_name.clone())
+            .or_else(|| {
+                self.current_provider
+                    .as_ref()
+                    .map(|provider| provider.name.clone())
+            })
+            .unwrap_or_default();
+        self.current_provider = Some(NamedProviderConfig {
+            name: provider_name,
+            config,
+        });
+        self.input_mode = InputMode::Chat;
+        self.clear_busy_state();
+        self.push_system_message(&format!("默认模型已切换为 {}。", selected_model));
+    }
+
+    fn handle_init_completed(&mut self, mode: InitMode) {
+        self.clear_busy_state();
+        self.input_mode = InputMode::Chat;
+        self.push_success_message(&format!("{} 已完成。", crate::cmd::init::mode_name(mode)));
+    }
+
+    fn handle_update_completed(&mut self, message: String) {
+        self.clear_busy_state();
+        self.push_system_message(&message);
+    }
+
+    fn handle_input_optimized(&mut self, original: String, optimized: String, model_name: String) {
+        self.queue.busy_message.clear();
+        let optimized = optimized.trim().to_string();
+        if optimized.is_empty() {
+            self.push_system_message("输入优化未返回结果，保留原始内容。");
+            self.input = original;
+        } else {
+            self.pending_input_optimization = Some(PendingInputOptimizationPreview {
+                original,
+                optimized,
+                model_name: model_name.clone(),
+            });
+            self.input_mode = InputMode::InputOptimizePreview;
+            self.push_system_message(&format!(
+                "{} 已返回输入优化建议，按 Enter 应用，按 Esc 取消。",
+                model_name
+            ));
+        }
+    }
+
+    fn handle_failed_async_result(&mut self, context: AsyncContext, message: String) {
+        self.queue.active_child = None;
+        if !matches!(context, AsyncContext::OptimizeInput) {
+            self.reset_active_async_state();
+        } else {
+            self.queue.busy_message.clear();
+        }
+        if matches!(
+            context,
+            AsyncContext::OptimizeInput
+                | AsyncContext::LoadProviders
+                | AsyncContext::SaveProvider
+                | AsyncContext::LoadModels
+                | AsyncContext::SaveModel
+        ) {
+            self.input_mode = InputMode::Chat;
+        }
+        self.push_system_message(&message);
+        if !self.should_wait_for_user_after_chat() {
+            self.start_next_queued_message();
         }
     }
 
@@ -5717,9 +5188,20 @@ self.enqueue_or_start_message_with_approval_and_loop(
         true
     }
 
-    fn tick(&mut self) {
-        if self.processing {
+    fn tick(&mut self) -> bool {
+        if self.queue.processing {
             self.spinner_index = (self.spinner_index + 1) % SPINNER_FRAMES.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn redraw_poll_interval(&self) -> std::time::Duration {
+        if self.queue.processing {
+            std::time::Duration::from_millis(100)
+        } else {
+            std::time::Duration::from_millis(300)
         }
     }
 
@@ -5766,7 +5248,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
     fn sidebar_section_lines(&self, section: SidebarSection) -> Vec<Line<'static>> {
         match section {
             SidebarSection::Todo => {
-                let Some(plan) = &self.todo_plan else {
+                let Some(plan) = &self.interaction.todo_plan else {
                     return vec![Line::from(Span::styled(
                         "当前没有 todo 计划",
                         Style::default().fg(self.theme.subtle),
@@ -5894,9 +5376,9 @@ self.enqueue_or_start_message_with_approval_and_loop(
     }
 
     fn queue_panel_mode(&self) -> QueuePanelMode {
-        if self.processing && self.active_task_id.is_some() {
+        if self.queue.processing && self.queue.active_task_id.is_some() {
             QueuePanelMode::Running
-        } else if self.queued_messages.is_empty() {
+        } else if self.queue.queued_messages.is_empty() {
             QueuePanelMode::Idle
         } else {
             QueuePanelMode::PendingOnly
@@ -5907,19 +5389,19 @@ self.enqueue_or_start_message_with_approval_and_loop(
         match self.queue_panel_mode() {
             QueuePanelMode::Idle => 0,
             QueuePanelMode::Running => {
-                if self.queued_messages.len() > 2 {
+                if self.queue.queued_messages.len() > 2 {
                     4
-                } else if self.queued_messages.is_empty() {
+                } else if self.queue.queued_messages.is_empty() {
                     1
                 } else {
-                    1 + self.queued_messages.len() as u16
+                    1 + self.queue.queued_messages.len() as u16
                 }
             }
             QueuePanelMode::PendingOnly => {
-                if self.queued_messages.len() > 2 {
+                if self.queue.queued_messages.len() > 2 {
                     3
                 } else {
-                    1 + self.queued_messages.len() as u16
+                    1 + self.queue.queued_messages.len() as u16
                 }
             }
         }
@@ -5927,7 +5409,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
 
     fn queue_panel_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        if self.processing {
+        if self.queue.processing {
             let elapsed = self.active_task_elapsed_seconds();
             lines.push(Line::from(vec![
                 Span::styled(
@@ -5949,7 +5431,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
                 Span::styled(" ... ", Style::default().fg(self.theme.warning)),
                 Span::styled("(按esc取消)", Style::default().fg(self.theme.subtle)),
             ]));
-        } else if !self.queued_messages.is_empty() {
+        } else if !self.queue.queued_messages.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled(
                     "待执行",
@@ -5958,14 +5440,15 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!(" {} 项", self.queued_messages.len()),
+                    format!(" {} 项", self.queue.queued_messages.len()),
                     Style::default().fg(self.theme.subtle),
                 ),
             ]));
         }
 
-        if !self.queued_messages.is_empty() {
+        if !self.queue.queued_messages.is_empty() {
             let previews = self
+                .queue
                 .queued_messages
                 .iter()
                 .take(2)
@@ -5990,9 +5473,9 @@ self.enqueue_or_start_message_with_approval_and_loop(
                 })
                 .collect::<Vec<_>>();
             lines.extend(previews);
-            if self.queued_messages.len() > 2 {
+            if self.queue.queued_messages.len() > 2 {
                 lines.push(Line::from(Span::styled(
-                    format!("... 还有 {} 项待执行", self.queued_messages.len() - 2),
+                    format!("... 还有 {} 项待执行", self.queue.queued_messages.len() - 2),
                     Style::default().fg(self.theme.subtle),
                 )));
             }
@@ -6221,7 +5704,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
 
     fn push_system_message(&mut self, content: &str) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        self.messages.push(Message {
+        self.append_message(Message {
             role: MessageRole::System,
             content: content.to_string(),
             timestamp,
@@ -6234,7 +5717,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
 
     fn push_success_message(&mut self, content: &str) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        self.messages.push(Message {
+        self.append_message(Message {
             role: MessageRole::System,
             content: format!("[成功] {}", content),
             timestamp,
@@ -6288,16 +5771,17 @@ self.enqueue_or_start_message_with_approval_and_loop(
     }
 
     fn cancel_todo_confirmation(&mut self) {
+        self.interaction.state = InteractionState::Idle;
         self.input_mode = InputMode::Chat;
         self.push_system_message("已退出待办确认态。输入 /todo confirm 可继续执行该计划。");
     }
 
     fn should_wait_for_user_after_chat(&self) -> bool {
-        self.pending_question.is_some() || self.input_mode == InputMode::TodoConfirm
+        self.interaction.state != InteractionState::Idle
     }
 
     fn should_resume_pending_question_on_enter(&self) -> bool {
-        self.pending_question.is_some()
+        matches!(self.interaction.state, InteractionState::WaitingForQuestion | InteractionState::WaitingForApproval)
             && self.input_mode == InputMode::Chat
             && self.input.trim().is_empty()
     }
@@ -6318,7 +5802,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
 
     fn push_error_message(&mut self, content: &str) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        self.messages.push(Message {
+        self.append_message(Message {
             role: MessageRole::System,
             content: format!("[错误] {}", content),
             timestamp,
@@ -6354,9 +5838,63 @@ self.enqueue_or_start_message_with_approval_and_loop(
 
     fn message_scroll_max(&self) -> usize {
         let visible_height = self.message_viewport.height as usize;
-        render_message_lines(self)
-            .len()
+        self.message_lines_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or_else(|| render_message_lines(&self.messages, self.theme).len())
             .saturating_sub(visible_height.max(1))
+    }
+
+    fn invalidate_message_lines_cache(&mut self) {
+        self.message_lines_cache = None;
+    }
+
+    fn append_message(&mut self, message: Message) {
+        self.messages.push(message);
+        self.invalidate_message_lines_cache();
+    }
+
+    fn replace_messages(&mut self, messages: Vec<Message>) {
+        self.messages = messages;
+        self.invalidate_message_lines_cache();
+    }
+
+    pub(crate) fn rendered_message_lines(&mut self) -> &[RenderedMessageLine] {
+        if self.message_lines_cache.is_none() {
+            self.message_lines_cache = Some(render_message_lines(&self.messages, self.theme));
+        }
+        self.message_lines_cache.as_deref().unwrap_or(&[])
+    }
+
+    pub(crate) fn visible_rendered_message_lines(
+        &mut self,
+        start: usize,
+        height: usize,
+    ) -> &[RenderedMessageLine] {
+        let lines = self.rendered_message_lines();
+        let start = start.min(lines.len());
+        let end = start.saturating_add(height).min(lines.len());
+        &lines[start..end]
+    }
+
+    pub(crate) fn cached_input_layout(&mut self, width: usize) -> &CachedInputLayout {
+        let width = width.max(1);
+        let needs_refresh = self
+            .input_layout_cache
+            .as_ref()
+            .map(|cache| cache.width != width || cache.text != self.input)
+            .unwrap_or(true);
+        if needs_refresh {
+            let (lines, cursor_line, cursor_col) = layout_input_lines(&self.input, width);
+            self.input_layout_cache = Some(CachedInputLayout {
+                text: self.input.clone(),
+                width,
+                lines,
+                cursor_line,
+                cursor_col,
+            });
+        }
+        self.input_layout_cache.as_ref().expect("input layout cache exists")
     }
 
     fn filter_level1_commands(&mut self) {
@@ -6451,7 +5989,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
                 self.should_quit = true;
             }
             KeyCode::Esc => {
-                if self.processing && self.input_mode == InputMode::Chat {
+                if self.queue.processing && self.input_mode == InputMode::Chat {
                     self.cancel_active_task();
                     return;
                 }
@@ -6703,7 +6241,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 if !self.input.trim().is_empty() {
-                    self.busy_message = "正在使用当前模型优化输入...".to_string();
+                    self.queue.busy_message = "正在使用当前模型优化输入...".to_string();
                     self.spawn_optimize_input_task(self.input.trim().to_string());
                     self.push_system_message("正在优化当前输入...");
                 }
@@ -6738,7 +6276,7 @@ self.enqueue_or_start_message_with_approval_and_loop(
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                if !self.processing {
+                if !self.queue.processing {
                     self.undo_last_input_optimization();
                 }
             }
@@ -6876,22 +6414,41 @@ pub fn run_tui() -> Result<()> {
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+    let mut needs_redraw = true;
     while !app.should_quit {
-        app.poll_async_results();
-        app.tick();
-        terminal.draw(|frame| ui(frame, app))?;
+        if needs_redraw {
+            terminal.draw(|frame| ui(frame, app))?;
+            needs_redraw = false;
+        }
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        if event::poll(app.redraw_poll_interval())? {
             match event::read()? {
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
                         app.handle_key_event(key);
+                        needs_redraw = true;
                     }
                 }
-                Event::Paste(text) => app.handle_paste(text),
-                Event::Mouse(mouse) => app.handle_mouse_event(mouse),
+                Event::Paste(text) => {
+                    app.handle_paste(text);
+                    needs_redraw = true;
+                }
+                Event::Mouse(mouse) => {
+                    app.handle_mouse_event(mouse);
+                    needs_redraw = true;
+                }
+                Event::Resize(_, _) => {
+                    needs_redraw = true;
+                }
                 _ => {}
             }
+        }
+
+        if app.poll_async_results() {
+            needs_redraw = true;
+        }
+        if app.tick() {
+            needs_redraw = true;
         }
     }
     Ok(())
@@ -6952,7 +6509,6 @@ where
 }
 
 fn ui(frame: &mut Frame, app: &mut App) {
-    let theme = app.theme;
     let queue_height = app.queue_panel_height();
     let input_is_editable = is_editable_input_mode(app.input_mode);
     let first_pass = Layout::default()
@@ -6968,8 +6524,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .split(frame.area());
     let input_inner_width = first_pass[3].width.saturating_sub(2).max(1) as usize;
     let input_line_count = if input_is_editable && !app.input.is_empty() {
-        let (lines, _, _) = layout_input_lines(&app.input, input_inner_width);
-        lines.len().max(1)
+        app.cached_input_layout(input_inner_width).lines.len().max(1)
     } else {
         1
     };
@@ -6988,17 +6543,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .split(frame.area());
     let input_inner_width = chunks[3].width.saturating_sub(2).max(1) as usize;
 
-    let title = "SACODE";
-    frame.render_widget(
-        Paragraph::new(vec![Line::from(vec![Span::styled(
-            title,
-            Style::default()
-                .fg(theme.accent_strong)
-                .add_modifier(Modifier::BOLD),
-        )])])
-        .alignment(ratatui::layout::Alignment::Center),
-        chunks[0],
-    );
+    render_header(frame, chunks[0], app.theme);
 
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -7006,257 +6551,36 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Min(10), Constraint::Length(36)])
         .split(chunks[1]);
 
-    let messages_block = Block::default()
-        .title("消息")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-    let inner_area = messages_block.inner(top_chunks[0]);
-    app.message_viewport = inner_area;
-    frame.render_widget(messages_block, top_chunks[0]);
-
-    let rendered_lines = render_message_lines(app);
-    let max_y = inner_area.height as usize;
-    let total_lines = rendered_lines.len();
-    let max_scroll = total_lines.saturating_sub(max_y);
-    if app.follow_bottom {
-        app.scroll_offset = max_scroll;
+    let has_orchestration_panel = app
+        .orchestration_summary
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let message_chunks = if has_orchestration_panel {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(12), Constraint::Min(8)])
+            .split(top_chunks[0])
     } else {
-        app.scroll_offset = app.scroll_offset.min(max_scroll);
-    }
-    let start = app.scroll_offset;
-    let visible_lines = rendered_lines
-        .iter()
-        .skip(start)
-        .take(max_y)
-        .map(|line| line.line.clone())
-        .collect::<Vec<_>>();
-
-    let messages_paragraph = Paragraph::new(visible_lines);
-    frame.render_widget(messages_paragraph, inner_area);
-
-    if total_lines > max_y {
-        let scrollbar = Scrollbar::default()
-            .orientation(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_style(Style::default().fg(theme.panel_border))
-            .thumb_style(Style::default().fg(theme.border));
-
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(start);
-
-        frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
-    }
-
-    let sidebar_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(36),
-            Constraint::Percentage(34),
-            Constraint::Percentage(30),
-        ])
-        .split(top_chunks[1]);
-
-    render_sidebar_section(
-        frame,
-        sidebar_chunks[0],
-        "todo",
-        app.sidebar_section_lines(SidebarSection::Todo),
-        theme,
-    );
-    render_sidebar_section(
-        frame,
-        sidebar_chunks[1],
-        "task",
-        app.sidebar_section_lines(SidebarSection::Task),
-        theme,
-    );
-    render_sidebar_section(
-        frame,
-        sidebar_chunks[2],
-        "git",
-        app.sidebar_section_lines(SidebarSection::Git),
-        theme,
-    );
-
-    if queue_height > 0 {
-        let queue_lines = app.queue_panel_lines();
-        let queue_paragraph = Paragraph::new(queue_lines);
-        frame.render_widget(queue_paragraph, chunks[2]);
-    }
-
-    let input_lines = if app.input_mode == InputMode::ProviderSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ProviderRename {
-        layout_input_lines(&app.input, input_inner_width)
-            .0
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
-    } else if app.input_mode == InputMode::ModelSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择模型，Enter 确认，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ThemeSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择主题，Enter 确认，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ConnectSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择预设 Provider，Enter 确认，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::SkillsSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择 Skill，Enter 执行操作，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::McpSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::CheckpointSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择检查点，Enter 执行操作，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::TasksSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择任务，Enter 执行操作，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ModeSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择执行模式，Enter 切换，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ConfigSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择配置项，Enter 修改，Tab 切换用户/项目级，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ConfigEnumSelect {
-        vec![Line::from(Span::styled(
-            "使用上下方向键选择配置值，Enter 确认，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::ConfigNumberInput {
-        layout_input_lines(&app.input, input_inner_width)
-            .0
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
-    } else if app.input_mode == InputMode::InputOptimizePreview {
-        vec![Line::from(Span::styled(
-            "查看输入优化预览，Enter 应用，Esc 取消",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::TodoConfirm {
-        vec![Line::from(Span::styled(
-            "待办计划等待确认，Enter 执行，Esc 退出确认态",
-            Style::default().fg(theme.accent),
-        ))]
-    } else if app.input_mode == InputMode::PendingQuestion {
-        layout_input_lines(&app.input, input_inner_width)
-            .0
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
-    } else if matches!(
-        app.input_mode,
-        InputMode::CommandLevel1 | InputMode::CommandLevel2
-    ) {
-        layout_input_lines(&app.input, input_inner_width)
-            .0
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
-    } else if app.input.is_empty() {
-        let placeholder = match app.input_mode {
-            InputMode::Chat => "输入你的编程任务，或输入 / 显示命令列表；等待回答时用 /answer 或空输入回车继续当前任务...",
-            InputMode::LoginBaseUrl => "输入 provider 名称和 Base URL...",
-            InputMode::LoginApiKey => "输入 API Key...",
-            InputMode::ProviderSelect => "使用方向键选择 provider...",
-            InputMode::ProviderRename => "输入新的 provider 名称...",
-            InputMode::ModelSelect => "使用方向键选择模型...",
-            InputMode::ThemeSelect => "使用方向键选择主题...",
-            InputMode::ConnectSelect => "使用方向键选择预设 provider...",
-            InputMode::ConnectApiKey => "输入 API Key...",
-            InputMode::CommandLevel1 => "输入命令名称进行搜索...",
-            InputMode::CommandLevel2 => "输入子命令名称进行搜索...",
-            InputMode::SkillsSelect => "使用方向键选择 Skill...",
-            InputMode::McpSelect => "使用方向键选择 MCP 服务...",
-            InputMode::CheckpointSelect => "使用方向键选择检查点...",
-            InputMode::TasksSelect => "使用方向键选择任务...",
-            InputMode::ModeSelect => "使用方向键选择执行模式...",
-            InputMode::ConfigSelect => "使用方向键选择配置项...",
-            InputMode::ConfigEnumSelect => "使用方向键选择配置值...",
-            InputMode::ConfigNumberInput => "输入新的数字配置值...",
-            InputMode::TaskInput => "输入任务描述...",
-            InputMode::SessionSelect => "使用方向键选择历史会话...",
-            InputMode::InputOptimizePreview => "查看输入优化预览...",
-            InputMode::TodoConfirm => "待办计划等待确认...",
-            InputMode::PendingQuestion => "输入自定义回答，或用方向键选择选项...",
-        };
-        vec![Line::from(Span::styled(placeholder, Style::default().fg(theme.subtle)))]
-    } else {
-        layout_input_lines(&app.input, input_inner_width)
-            .0
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(8)])
+            .split(top_chunks[0])
     };
 
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-    app.input_viewport = input_block.inner(chunks[3]);
+    if has_orchestration_panel {
+        render_orchestration_panel(frame, app, message_chunks[0]);
+        render_messages_panel(frame, app, message_chunks[1]);
+    } else {
+        render_messages_panel(frame, app, message_chunks[0]);
+    }
+    render_sidebar(frame, app, top_chunks[1]);
 
-    let input_paragraph = Paragraph::new(input_lines)
-        .block(input_block)
-        .wrap(ratatui::widgets::Wrap { trim: false });
-    frame.render_widget(input_paragraph, chunks[3]);
-
-    if input_is_editable {
-            let (lines, cursor_line, cursor_col) = layout_input_lines(
-            &app.input,
-            input_inner_width,
-        );
-        let max_line = app.input_viewport.height.saturating_sub(1) as usize;
-        let visible_line = cursor_line.min(max_line.min(lines.len().saturating_sub(1)));
-        let cursor_x = app.input_viewport.x + clamp_cursor_col(cursor_col, input_inner_width) as u16;
-        let cursor_y = app.input_viewport.y + visible_line as u16;
-        frame.set_cursor_position((cursor_x, cursor_y));
+    if queue_height > 0 {
+        render_queue_panel(frame, app, chunks[2]);
     }
 
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!("v{}  ", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(theme.subtle),
-        ),
-        Span::styled(
-            format!("{}  ", app.current_model_name()),
-            Style::default().fg(theme.assistant),
-        ),
-        Span::styled(
-            format!("{}  ", app.thinking_toggle_status_label()),
-            Style::default().fg(theme.accent),
-        ),
-        Span::styled(
-            format!("Mode:{}  ", app.execution_mode),
-            Style::default().fg(theme.text),
-        ),
-        Span::styled(
-            format!("cwd:{}", display_workdir(&app.workdir)),
-            Style::default().fg(theme.subtle),
-        ),
-    ]));
-    frame.render_widget(footer, chunks[4]);
+    render_input_panel(frame, app, chunks[3], input_inner_width, input_is_editable);
+    render_footer(frame, app, chunks[4]);
 
     if matches!(
         app.input_mode,
@@ -7317,673 +6641,6 @@ fn ui(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn render_message_lines(app: &App) -> Vec<RenderedMessageLine> {
-    let theme = app.theme;
-    let mut lines = Vec::new();
-
-    for msg in &app.messages {
-        let role_style = match msg.role {
-            MessageRole::User => Style::default().fg(theme.user),
-            MessageRole::Assistant => Style::default().fg(theme.assistant),
-            MessageRole::System => Style::default().fg(theme.system),
-        };
-
-        let role_label = match msg.role {
-            MessageRole::User => "你",
-            MessageRole::Assistant => "SaCode",
-            MessageRole::System => "系统",
-        };
-
-        lines.push(RenderedMessageLine {
-            line: Line::from(vec![
-                Span::styled(msg.timestamp.clone(), Style::default().fg(theme.subtle)),
-                Span::raw(" "),
-                Span::styled(role_label, role_style.add_modifier(Modifier::BOLD)),
-                Span::raw(" "),
-                Span::styled(
-                    if msg.collapsed {
-                        "[折叠]"
-                    } else {
-                        "[展开]"
-                    },
-                    Style::default().fg(theme.subtle),
-                ),
-            ]),
-        });
-
-        if msg.collapsed {
-            let compact = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
-            let mut chars = compact.chars();
-            let preview: String = chars.by_ref().take(100).collect();
-            let suffix = if chars.next().is_some() { "..." } else { "" };
-            lines.push(RenderedMessageLine {
-                line: Line::from(Span::styled(
-                    format!("{}{}", preview, suffix),
-                    Style::default().fg(theme.text),
-                )),
-            });
-        } else {
-            for content_line in msg.content.lines() {
-                lines.push(RenderedMessageLine {
-                    line: Line::from(Span::styled(
-                        content_line.to_string(),
-                        Style::default().fg(theme.text),
-                    )),
-                });
-            }
-        }
-
-        lines.push(RenderedMessageLine {
-            line: Line::from(""),
-        });
-    }
-
-    lines
-}
-
-fn render_session_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 72, 55);
-    let inner = render_modal_block(frame, area, "历史会话", theme);
-
-    let start = app
-        .selected_session_index
-        .saturating_sub(MODELS_HINT_LIMIT / 2);
-    let end = (start + MODELS_HINT_LIMIT).min(app.session_options.len());
-    let lines: Vec<Line> = app.session_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, session)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_session_index;
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(
-                format!("{} [{}] {}", session.updated_at, session.id, session.title),
-                style,
-            )
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_task_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 72, 55);
-    let inner = render_modal_block(frame, area, "持久任务", theme);
-
-    let start = app
-        .selected_task_index
-        .saturating_sub(MODELS_HINT_LIMIT / 2);
-    let end = (start + MODELS_HINT_LIMIT).min(app.task_options.len());
-    let lines: Vec<Line> = app.task_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, task)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_task_index;
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(
-                format!(
-                    "#{} {:<11} {:<6} {}",
-                    task.id,
-                    task.status.label(),
-                    task.priority.label(),
-                    task.description,
-                ),
-                style,
-            )
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let Some(preview) = &app.pending_input_optimization else {
-        return;
-    };
-
-    let area = centered_rect(frame.area(), 78, 62);
-    let inner = render_modal_block(frame, area, format!("输入优化预览 [{}]", preview.model_name), theme);
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Percentage(44),
-            Constraint::Length(1),
-            Constraint::Percentage(44),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-
-    let original_lines = preview
-        .original
-        .lines()
-        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.user))))
-        .collect::<Vec<_>>();
-    let optimized_lines = preview
-        .optimized
-        .lines()
-        .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.assistant))))
-        .collect::<Vec<_>>();
-
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "原始输入",
-            Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
-        ))),
-        sections[0],
-    );
-    frame.render_widget(Paragraph::new(original_lines), sections[1]);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "优化建议",
-            Style::default()
-                .fg(theme.assistant)
-                .add_modifier(Modifier::BOLD),
-        ))),
-        sections[2],
-    );
-    frame.render_widget(Paragraph::new(optimized_lines), sections[3]);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "Enter: 应用 | Esc: 取消",
-            Style::default().fg(theme.subtle),
-        ))),
-        sections[4],
-    );
-}
-
-fn render_pending_question_panel(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    if app.pending_question_items.is_empty() {
-        return;
-    }
-
-    let area = centered_rect(frame.area(), 78, 62);
-    let inner = render_modal_block(frame, area, "等待用户回答", theme);
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(2),
-        ])
-        .split(inner);
-
-    let tab_spans = app
-        .pending_question_items
-        .iter()
-        .enumerate()
-        .flat_map(|(index, _)| {
-            let style = if index == app.selected_pending_question_index {
-                Style::default()
-                    .fg(theme.selected_fg)
-                    .bg(theme.selected_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            vec![
-                Span::styled(format!(" Q{} ", index + 1), style),
-                Span::raw(" "),
-            ]
-        })
-        .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(Line::from(tab_spans)), sections[0]);
-
-    let Some(question) = app.current_pending_question() else {
-        return;
-    };
-
-    let question_lines = vec![
-        Line::from(Span::styled(
-            &question.question,
-            Style::default()
-                .fg(theme.assistant)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            if question.allow_multiple {
-                "多选：Space 勾选，Enter 提交"
-            } else {
-                "单选：方向键选择，Space 勾选，Enter 提交"
-            },
-            Style::default().fg(theme.subtle),
-        )),
-    ];
-    frame.render_widget(Paragraph::new(question_lines), sections[1]);
-
-    let selected_answers = app
-        .selected_pending_answers
-        .get(app.selected_pending_question_index)
-        .cloned()
-        .unwrap_or_default();
-    let option_lines = if question.options.is_empty() {
-        vec![Line::from(Span::styled(
-            "没有预设选项，请在底部输入自定义回答。",
-            Style::default().fg(theme.warning),
-        ))]
-    } else {
-        question
-            .options
-            .iter()
-            .enumerate()
-            .map(|(index, option)| {
-                let selected = selected_answers.contains(&index);
-                let cursor = index == app.selected_pending_option_index;
-                let mark = if selected { "[x]" } else { "[ ]" };
-                let prefix = if cursor { ">" } else { " " };
-                let text = if option.description.is_empty() {
-                    format!("{} {} {}", prefix, mark, option.label)
-                } else {
-                    format!(
-                        "{} {} {} - {}",
-                        prefix, mark, option.label, option.description
-                    )
-                };
-                let style = if cursor {
-                    Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-                } else if selected {
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.text)
-                };
-                Line::styled(text, style)
-            })
-            .collect::<Vec<_>>()
-    };
-    frame.render_widget(Paragraph::new(option_lines), sections[2]);
-
-    let hint = if app.input.is_empty() {
-        "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天 | 直接输入可自定义回答"
-    } else {
-        "Enter: 提交自定义回答 | Esc: 返回聊天"
-    };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                format!("自定义回答: {}", app.input),
-                Style::default().fg(theme.text),
-            )),
-            Line::from(Span::styled(hint, Style::default().fg(theme.subtle))),
-        ]),
-        sections[3],
-    );
-}
-
-fn render_config_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 78, 68);
-    let title = format!(
-        "配置管理 [{}级]",
-        match app.config_scope {
-            config::ConfigScope::User => "用户",
-            config::ConfigScope::Project => "项目",
-        }
-    );
-    let inner = render_modal_block(frame, area, title, theme);
-
-    let start = app.selected_config_index.saturating_sub(5);
-    let end = (start + 10).min(app.config_items.len());
-    let lines: Vec<Line> = app.config_items[start..end]
-        .iter()
-        .enumerate()
-        .flat_map(|(offset, item)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_config_index;
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            vec![
-                Line::styled(
-                    format!(
-                        "[{}] {:<16} 生效:{:<12} 当前:{:<12} {}",
-                        item.category, item.name, item.value, item.scope_value, item.key
-                    ),
-                    style,
-                ),
-                Line::styled(
-                    format!("    {}", item.description),
-                    Style::default().fg(theme.subtle),
-                ),
-            ]
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_config_enum_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let title = app
-        .pending_config_key
-        .as_deref()
-        .and_then(config::config_item)
-        .map(|item| format!("选择: {}", item.display_name))
-        .unwrap_or_else(|| "选择配置值".to_string());
-    let area = centered_rect(frame.area(), 56, 38);
-    let inner = render_modal_block(frame, area, title, theme);
-
-    let lines: Vec<Line> = app
-        .config_enum_options
-        .iter()
-        .enumerate()
-        .map(|(index, (value, label))| {
-            let is_selected = index == app.selected_config_enum_index;
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(format!("{} ({})", label, value), style)
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 70, 50);
-    let (title, options, selected_index) = match app.input_mode {
-        InputMode::ProviderSelect => (
-            "管理 Provider",
-            app.provider_options.clone(),
-            app.selected_provider_index,
-        ),
-        InputMode::ThemeSelect => (
-            "选择主题",
-            app.theme_options.clone(),
-            app.selected_theme_index,
-        ),
-        _ => (
-            "选择模型",
-            app.model_options
-                .iter()
-                .map(|option| option.label.clone())
-                .collect::<Vec<_>>(),
-            app.selected_model_index,
-        ),
-    };
-    let inner = render_modal_block(frame, area, title, theme);
-
-    let content_areas = if app.input_mode == InputMode::ProviderSelect {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
-            .split(inner)
-    } else {
-        vec![inner].into()
-    };
-
-    let list_area = content_areas[0];
-
-    let start = selected_index.saturating_sub(MODELS_HINT_LIMIT / 2);
-    let end = (start + MODELS_HINT_LIMIT).min(options.len());
-    let lines: Vec<Line> = options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, option)| {
-            let index = start + offset;
-            let is_selected = index == selected_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let style = if is_selected {
-                Style::default()
-                    .fg(theme.selected_fg)
-                    .bg(theme.selected_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::from(Span::styled(format!("{}{}", prefix, option), style))
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), list_area);
-
-    if app.input_mode == InputMode::ProviderSelect && content_areas.len() > 1 {
-        render_provider_details(frame, app, content_areas[1]);
-    }
-
-    let hint_text = match app.input_mode {
-        InputMode::ProviderSelect => Some("Enter: 切换 | r: 重命名 | d: 删除 | Esc: 取消"),
-        InputMode::ThemeSelect => Some("Enter: 应用主题 | Esc: 取消"),
-        InputMode::ModelSelect => Some("Enter: 应用模型 | Esc: 取消"),
-        _ => None,
-    };
-
-    if let Some(text) = hint_text {
-        let hint_line = Line::styled(text, Style::default().fg(theme.subtle));
-        let hint_area = ratatui::layout::Rect {
-            x: area.x,
-            y: area.y + area.height,
-            width: area.width,
-            height: 1,
-        };
-        clear_area(frame, hint_area);
-        frame.render_widget(Paragraph::new(hint_line), hint_area);
-    }
-}
-
-fn render_connect_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 70, 50);
-    let inner = render_modal_block(frame, area, "快速接入 Provider", theme);
-
-    let start = app
-        .selected_connect_index
-        .saturating_sub(MODELS_HINT_LIMIT / 2);
-    let end = (start + MODELS_HINT_LIMIT).min(app.connect_options.len());
-    let lines: Vec<Line> = app.connect_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, (name, base_url, needs_key))| {
-            let label = if *needs_key {
-                format!("{} - {} (需要 API Key)", name, base_url)
-            } else {
-                format!("{} - {} (本地)", name, base_url)
-            };
-            let is_selected = offset + start == app.selected_connect_index;
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(label, style)
-        })
-        .collect();
-
-    let list = Paragraph::new(lines).block(Block::default());
-    frame.render_widget(list, inner);
-}
-
-fn render_provider_details(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let block = Block::default()
-        .title("当前预览")
-        .borders(Borders::LEFT)
-        .border_style(Style::default().fg(Color::Rgb(80, 90, 110)));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let details = app
-        .provider_options
-        .get(app.selected_provider_index)
-        .and_then(|provider_name| {
-            app.sacode_store
-                .provider(provider_name)
-                .ok()
-                .flatten()
-                .map(|spec| (provider_name.clone(), spec))
-        })
-        .map(|(provider_name, spec)| {
-            let current_model = app
-                .sacode_store
-                .load_or_default()
-                .ok()
-                .and_then(|config| config.resolve_model(&config.model))
-                .and_then(|(current_provider, current_model)| {
-                    if current_provider == provider_name {
-                        Some(current_model)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| spec.models.keys().next().cloned().unwrap_or_default());
-            let api_key_status = if spec.api_key.trim().is_empty() {
-                "未配置"
-            } else {
-                "已配置"
-            };
-            vec![
-                Line::from(Span::styled(
-                    "Base URL",
-                    Style::default()
-                        .fg(Color::Rgb(120, 170, 220))
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    spec.base_url,
-                    Style::default().fg(Color::Rgb(200, 200, 210)),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Model",
-                    Style::default()
-                        .fg(Color::Rgb(120, 170, 220))
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    current_model,
-                    Style::default().fg(Color::Rgb(200, 200, 210)),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "API Key",
-                    Style::default()
-                        .fg(Color::Rgb(120, 170, 220))
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    api_key_status,
-                    Style::default().fg(Color::Rgb(200, 200, 210)),
-                )),
-            ]
-        })
-        .unwrap_or_else(|| {
-            vec![Line::from(Span::styled(
-                "未找到 provider 详情",
-                Style::default().fg(Color::Rgb(160, 160, 170)),
-            ))]
-        });
-
-    frame.render_widget(Paragraph::new(details), inner);
-}
-
-fn centered_rect(
-    area: ratatui::layout::Rect,
-    width_percent: u16,
-    height_percent: u16,
-) -> ratatui::layout::Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - height_percent) / 2),
-            Constraint::Percentage(height_percent),
-            Constraint::Percentage((100 - height_percent) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - width_percent) / 2),
-            Constraint::Percentage(width_percent),
-            Constraint::Percentage((100 - width_percent) / 2),
-        ])
-        .split(vertical[1])[1]
-}
-
-fn clear_area(frame: &mut Frame, area: ratatui::layout::Rect) {
-    frame.render_widget(Clear, area);
-}
-
-fn render_modal_block(frame: &mut Frame, area: Rect, title: impl Into<String>, theme: ThemePalette) -> Rect {
-    clear_area(frame, area);
-    frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
-    );
-    let block = Block::default()
-        .title(title.into())
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    inner
-}
-
-fn render_relative_modal_block(frame: &mut Frame, area: Rect, title: impl Into<String>, theme: ThemePalette) -> Rect {
-    clear_area(frame, area);
-    frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
-    );
-    let block = Block::default()
-        .title(title.into())
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent_strong));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    inner
-}
-
-fn render_sidebar_section(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
-    title: &str,
-    lines: Vec<Line<'static>>,
-    theme: ThemePalette,
-) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(area);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                title,
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default()),
-            Span::styled("----------------", Style::default().fg(theme.panel_border)),
-        ])),
-        chunks[0],
-    );
-
-    frame.render_widget(Paragraph::new(lines), chunks[1]);
-}
-
 fn encode_ppm(rgba_bytes: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut output = format!("P6\n{} {}\n255\n", width, height).into_bytes();
     for chunk in rgba_bytes.chunks(4) {
@@ -7994,354 +6651,135 @@ fn encode_ppm(rgba_bytes: &[u8], width: usize, height: usize) -> Vec<u8> {
     output
 }
 
-fn relative_to_workdir(workdir: &Path, path: &Path) -> PathBuf {
-    path.strip_prefix(workdir)
-        .map(|value| value.to_path_buf())
-        .unwrap_or_else(|_| path.to_path_buf())
-}
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use crate::tui::render::render_orchestration_panel;
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
-fn render_command_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
-    match app.input_mode {
-        InputMode::CommandLevel1 => {
-            if app.filtered_level1.is_empty() {
-                return;
+    fn backend_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut lines = Vec::new();
+        for y in 0..buffer.area.height {
+            let mut line = String::new();
+            for x in 0..buffer.area.width {
+                line.push_str(buffer[(x, y)].symbol());
             }
-            render_level1_selector(frame, app, input_area);
+            lines.push(line);
         }
-        InputMode::CommandLevel2 => {
-            if app.filtered_sub_commands.is_empty() {
-                return;
-            }
-            render_level2_selector(frame, app, input_area);
-        }
-        _ => {}
+        lines.join("\n")
     }
-}
 
-fn render_level1_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
-    let theme = app.theme;
-    let max_height = 12u16;
-    let popup_height = max_height.min(app.filtered_level1.len() as u16 + 2);
+    #[test]
+    fn format_orchestration_details_includes_all_sections() {
+        let parsed = serde_json::json!({
+            "summary_record": {
+                "reporter_summary": "主裁决结论",
+                "items": [
+                    {
+                        "role_id": "system-architect",
+                        "route": "deepseek/deepseek-reasoner",
+                        "output": "设计评估完成"
+                    },
+                    {
+                        "role_id": "reporter",
+                        "route": "deepseek/deepseek-reasoner",
+                        "output": "汇总结论完成"
+                    }
+                ]
+            },
+            "orchestration_plan": {
+                "roles": [
+                    {
+                        "role_id": "system-architect",
+                        "preferred_model": "deepseek/deepseek-reasoner",
+                        "needs_thinking": true
+                    },
+                    {
+                        "role_id": "reporter",
+                        "preferred_model": "deepseek/deepseek-reasoner",
+                        "needs_thinking": true
+                    }
+                ]
+            },
+            "route_records": [
+                {
+                    "role_id": "system-architect",
+                    "primary": {
+                        "provider_name": "deepseek",
+                        "model_name": "deepseek-reasoner",
+                        "route_score": 65,
+                        "needs_thinking": true
+                    }
+                }
+            ],
+            "conflict_records": [
+                {
+                    "kind": "route_conflict",
+                    "summary": "multiple primary routes"
+                }
+            ]
+        });
 
-    let popup_area = ratatui::layout::Rect {
-        x: input_area.x,
-        y: input_area.y.saturating_sub(popup_height),
-        width: input_area.width,
-        height: popup_height,
-    };
-    let inner = render_relative_modal_block(frame, popup_area, "命令列表", theme);
+        let summary = App::format_orchestration_details(&parsed).expect("summary should exist");
 
-    let visible_count = inner.height as usize;
-    let start = app.selected_level1_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.filtered_level1.len());
+        assert!(summary.contains("[主裁决摘要]"));
+        assert!(summary.contains("- reporter: 主裁决结论"));
+        assert!(summary.contains("[编排角色]"));
+        assert!(summary.contains("[角色路由]"));
+        assert!(summary.contains("[冲突]"));
+        assert!(summary.contains("- system-architect [deepseek/deepseek-reasoner]: 设计评估完成"));
+        assert!(summary.contains("- reporter [deepseek/deepseek-reasoner]: 汇总结论完成"));
+    }
 
-    let lines: Vec<Line> = app.filtered_level1[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, cmd)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_level1_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let has_subs = if cmd.sub_commands.is_empty() {
-                ""
-            } else {
-                " +"
-            };
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(
-                format!("{}{}{} - {}", prefix, cmd.name, has_subs, cmd.description),
-                style,
-            )
-        })
-        .collect();
+    #[test]
+    fn merge_cli_response_prefers_provider_response_and_ignores_events_when_present() {
+        let response = App::merge_cli_response(
+            Some("event fallback".to_string()),
+            Some("final answer".to_string()),
+        );
 
-    frame.render_widget(Paragraph::new(lines), inner);
+        assert_eq!(response.as_deref(), Some("final answer"));
+    }
 
-    let hint_line = Line::styled(
-        "Enter: 选择 | Tab: 补全 | Esc: 取消",
-        Style::default().fg(theme.subtle),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: popup_area.x,
-        y: popup_area.y + popup_area.height,
-        width: popup_area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
-}
+    #[test]
+    fn merge_cli_response_falls_back_to_events() {
+        let response = App::merge_cli_response(Some("event fallback".to_string()), None);
 
-fn render_level2_selector(frame: &mut Frame, app: &App, input_area: ratatui::layout::Rect) {
-    let theme = app.theme;
-    let max_height = 8u16;
-    let popup_height = max_height.min(app.filtered_sub_commands.len() as u16 + 2);
+        assert_eq!(response.as_deref(), Some("event fallback"));
+    }
 
-    let popup_area = ratatui::layout::Rect {
-        x: input_area.x,
-        y: input_area.y.saturating_sub(popup_height),
-        width: input_area.width,
-        height: popup_height,
-    };
+    #[test]
+    fn reset_orchestration_summary_clears_previous_value() {
+        let mut app = App::new();
+        app.orchestration_summary = Some("old summary".to_string());
 
-    let title = app
-        .current_level1
-        .as_ref()
-        .map(|cmd| format!("{} 子命令", cmd.name))
-        .unwrap_or_else(|| "子命令".to_string());
+        app.reset_orchestration_summary();
 
-    let inner = render_relative_modal_block(frame, popup_area, title, theme);
+        assert!(app.orchestration_summary.is_none());
+    }
 
-    let visible_count = inner.height as usize;
-    let start = app.selected_sub_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.filtered_sub_commands.len());
+    #[test]
+    fn render_orchestration_panel_renders_titles_and_content() {
+        let mut app = App::new();
+        app.orchestration_summary = Some(
+            "[主裁决摘要]\n- reporter: reporter-summary\n- reporter [deepseek/deepseek-reasoner]: final-summary\n[编排角色]\n- system-architect: deepseek/deepseek-reasoner thinking=true\n[角色路由]\n- system-architect: deepseek/deepseek-reasoner score=65 thinking=true\n[冲突]\n- [route_conflict] multiple primary routes".to_string(),
+        );
 
-    let lines: Vec<Line> = app.filtered_sub_commands[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, sub)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_sub_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let input_hint = if sub.needs_input { " ..." } else { "" };
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(
-                format!("{}{}{} - {}", prefix, sub.name, input_hint, sub.description),
-                style,
-            )
-        })
-        .collect();
+        let backend = TestBackend::new(100, 22);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_orchestration_panel(frame, &app, Rect::new(0, 0, 100, 22));
+            })
+            .expect("draw panel");
 
-    frame.render_widget(Paragraph::new(lines), inner);
+        let rendered = backend_text(&terminal);
 
-    let hint_line = Line::styled(
-        "Enter: 执行 | Tab: 补全 | Esc: 返回",
-        Style::default().fg(theme.subtle),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: popup_area.x,
-        y: popup_area.y + popup_area.height,
-        width: popup_area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
-}
-
-fn render_skills_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 60, 40);
-    let inner = render_modal_block(frame, area, "Skills 列表", theme);
-
-    let visible_count = inner.height as usize;
-    let start = app.selected_skills_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.skills_options.len());
-
-    let action = app.pending_skill_action.as_deref().unwrap_or("show");
-    let hint = match action {
-        "show" => "查看详情",
-        "run" => "运行",
-        "remove" => "删除",
-        _ => "选择",
-    };
-
-    let lines: Vec<Line> = app.skills_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, (name, desc))| {
-            let index = start + offset;
-            let is_selected = index == app.selected_skills_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(format!("{}{} - {}", prefix, name, desc), style)
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-
-    let hint_line = Line::styled(
-        format!("Enter: {} | Esc: 取消", hint),
-        Style::default().fg(theme.subtle),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: area.x,
-        y: area.y + area.height,
-        width: area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
-}
-
-fn render_mcp_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 60, 40);
-    let inner = render_modal_block(frame, area, "MCP 服务列表", theme);
-
-    let visible_count = inner.height as usize;
-    let start = app.selected_mcp_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.mcp_options.len());
-
-    let lines: Vec<Line> = app.mcp_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, (name, url, enabled))| {
-            let index = start + offset;
-            let is_selected = index == app.selected_mcp_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let status = if *enabled { "[on]" } else { "[off]" };
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(format!("{}{} {} {}", prefix, name, status, url), style)
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-
-    let action = app.pending_mcp_action.as_deref().unwrap_or("show");
-    let hint = match action {
-        "show" => "查看详情",
-        "remove" => "删除",
-        _ => "选择",
-    };
-    let hint_line = Line::styled(
-        format!("Enter: {} | Esc: 取消", hint),
-        Style::default().fg(theme.subtle),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: area.x,
-        y: area.y + area.height,
-        width: area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
-}
-
-fn render_checkpoint_selector(frame: &mut Frame, app: &App) {
-    let theme = app.theme;
-    let area = centered_rect(frame.area(), 50, 35);
-    let inner = render_modal_block(frame, area, "检查点列表", theme);
-
-    let visible_count = inner.height as usize;
-    let start = app
-        .selected_checkpoint_index
-        .saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.checkpoint_options.len());
-
-    let action = app.pending_checkpoint_action.as_deref().unwrap_or("show");
-    let hint = match action {
-        "restore" => "恢复",
-        "delete" => "删除",
-        _ => "选择",
-    };
-
-    let lines: Vec<Line> = app.checkpoint_options[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, name)| {
-            let index = start + offset;
-            let is_selected = index == app.selected_checkpoint_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::styled(format!("{}{}", prefix, name), style)
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-
-    let hint_line = Line::styled(
-        format!("Enter: {} | Esc: 取消", hint),
-        Style::default().fg(theme.subtle),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: area.x,
-        y: area.y + area.height,
-        width: area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
-}
-
-fn render_mode_selector(frame: &mut Frame, app: &App) {
-    let area = centered_rect(frame.area(), 40, 30);
-    let inner = render_modal_block(frame, area, "执行模式", app.theme);
-
-    let mode_desc = [
-        ("plan", "Plan - 规划模式\nAI 将先规划步骤，再逐步执行"),
-        ("build", "Build - 构建模式\nAI 将直接执行任务"),
-        ("yolo", "Yolo - 自动执行模式\nAI 将自动执行，减少确认步骤"),
-    ];
-
-    let current_index = match app.execution_mode {
-        ExecutionMode::Plan => 0,
-        ExecutionMode::Build => 1,
-        ExecutionMode::Yolo => 2,
-    };
-
-    let lines: Vec<Line> = app
-        .mode_options
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            let is_selected = index == app.selected_mode_index;
-            let is_current = index == current_index;
-            let prefix = if is_selected { "> " } else { "  " };
-            let current_mark = if is_current { " [当前]" } else { "" };
-            let desc = mode_desc
-                .iter()
-                .find(|(n, _)| *n == *name)
-                .map(|(_, d)| *d)
-                .unwrap_or("");
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Rgb(255, 255, 255))
-                    .bg(Color::Rgb(60, 120, 180))
-            } else if is_current {
-                Style::default()
-                    .fg(Color::Rgb(180, 120, 200))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(200, 200, 210))
-            };
-            Line::styled(
-                format!("{}{}{}\n{}", prefix, name, current_mark, desc),
-                style,
-            )
-        })
-        .collect();
-
-    frame.render_widget(Paragraph::new(lines), inner);
-
-    let hint_line = Line::styled(
-        "Enter: 切换模式 | Esc: 取消",
-        Style::default().fg(Color::Rgb(120, 120, 140)),
-    );
-    let hint_area = ratatui::layout::Rect {
-        x: area.x,
-        y: area.y + area.height,
-        width: area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
+        assert!(rendered.contains("reporter-summary"));
+        assert!(rendered.contains("final-summary"));
+        assert!(rendered.contains("system-architect"));
+        assert!(rendered.contains("deepseek/deepseek-reasoner"));
+        assert!(rendered.contains("route_conflict"));
+    }
 }

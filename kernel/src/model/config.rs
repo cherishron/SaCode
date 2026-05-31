@@ -14,6 +14,30 @@ pub struct SaCodeConfig {
     pub vim_mode: bool,
     #[serde(default)]
     pub provider: BTreeMap<String, ProviderSpec>,
+    #[serde(default)]
+    pub model_routing: ModelRoutingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelRoutingConfig {
+    #[serde(default)]
+    pub overrides: Vec<ModelRouteOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelRouteOverride {
+    #[serde(default)]
+    pub r#match: ModelRouteMatch,
+    #[serde(default)]
+    pub prefer: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelRouteMatch {
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub surfaces: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,51 +1,10 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use chrono::Local;
+use sacode_runtime::{append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryEntrySource, MemoryKind, MemoryScope, PROJECT_WIKI_DIR};
 use serde::{Deserialize, Serialize};
 
-const PROJECT_WIKI_DIR: &str = ".sacode/wiki";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LearnedKind {
-    Preference,
-    Workflow,
-    Decision,
-}
-
-impl LearnedKind {
-    fn file_name(self) -> &'static str {
-        match self {
-            Self::Preference => "preferences.md",
-            Self::Workflow => "workflows.md",
-            Self::Decision => "decisions.md",
-        }
-    }
-
-    fn scope_label(self) -> &'static str {
-        match self {
-            Self::Preference => "preference",
-            Self::Workflow => "workflow",
-            Self::Decision => "decision",
-        }
-    }
-
-    fn title(self) -> &'static str {
-        match self {
-            Self::Preference => "# 项目级偏好记忆",
-            Self::Workflow => "# 项目级工作流记忆",
-            Self::Decision => "# 项目级决策记忆",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::Preference => "本文件记录当前项目内需要持续遵循的偏好。",
-            Self::Workflow => "本文件记录当前项目内的工作流和协作约定。",
-            Self::Decision => "本文件记录当前项目内的重要决策和约束。",
-        }
-    }
-}
+pub type LearnedKind = MemoryKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LearnedFact {
@@ -205,43 +164,20 @@ fn dedup_facts(facts: Vec<LearnedFact>) -> Vec<LearnedFact> {
 }
 
 fn append_learned_fact(workdir: &Path, fact: &LearnedFact) -> Result<bool> {
-    let path = workdir.join(PROJECT_WIKI_DIR).join(fact.kind.file_name());
-    ensure_learning_file(&path, fact.kind)?;
+    let path = memory_file_path(&workdir.join(PROJECT_WIKI_DIR), fact.kind);
+    ensure_memory_file(&path, MemoryScope::Project, fact.kind)?;
     let current = fs::read_to_string(&path)?;
-    if current.to_lowercase().contains(&fact.content.to_lowercase()) {
-        return Ok(false);
-    }
-
-    let mut updated = current;
-    if !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    if !updated.ends_with("\n\n") {
-        updated.push('\n');
-    }
-    updated.push_str(&format!(
-        "[自动学习条目]\n- Date: {}\n- Kind: {}\n- Context: {}\n- Content:\n  - {}\n",
-        Local::now().format("%Y-%m-%d"),
-        fact.kind.scope_label(),
-        fact.context,
-        fact.content.replace('\n', "\n  - ")
-    ));
-    fs::write(path, updated)?;
-    Ok(true)
-}
-
-fn ensure_learning_file(path: &Path, kind: LearnedKind) -> Result<()> {
-    if path.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(
-        path,
-        format!("{}\n\n{}\n\n## 条目\n", kind.title(), kind.description()),
-    )?;
-    Ok(())
+    append_memory_entry(
+        &path,
+        &current,
+        &MemoryEntry {
+            kind: fact.kind,
+            scope: MemoryScope::Project,
+            source: MemoryEntrySource::AutoLearned,
+            content: fact.content.clone(),
+            context: fact.context.clone(),
+        },
+    )
 }
 
 #[cfg(test)]

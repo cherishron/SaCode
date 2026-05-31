@@ -46,6 +46,10 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         if config.model.trim().is_empty() { "未设置" } else { &config.model }
     ));
     lines.push(format!(
+        "- 路由覆盖: {} 条",
+        config.model_routing.overrides.len()
+    ));
+    lines.push(format!(
         "- 输出风格: 生效 {} | 项目覆盖 {}",
         display_value(&config.outstyle),
         display_value(project_config.as_ref().map(|value| value.outstyle.as_str()).unwrap_or(""))
@@ -77,6 +81,9 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     }
     if config.outstyle.trim().is_empty() {
         lines.push("- 运行 /outstyle concise|explain|teach 设置默认回答风格。".to_string());
+    }
+    if provider.is_some() && config.model_routing.overrides.is_empty() {
+        lines.push("- 如需按技术栈或界面类型固定优先模型，可在 .sacode/config.json 中配置 model_routing.overrides。".to_string());
     }
     if !has_memory {
         lines.push("- 运行 /memory show 初始化项目级 wiki 记忆文件，或使用 /memory append --type preference|workflow|decision 追加分类记忆。".to_string());

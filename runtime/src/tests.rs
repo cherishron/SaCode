@@ -13,12 +13,14 @@ use crate::{
     build_runtime_system_prompt,
     create_daemon,
     config::SaCodeConfig,
-    executor::TaskExecutor,
+    load_memory_index,
     mcp::{McpConfig, McpConfigStore, McpServerConfig, McpSource},
     queue::{InMemoryStore, TaskQueue, TaskStore},
-    retry::RetryHandler,
+    register_enabled_mcp_tools_sync,
+    rebuild_memory_index,
     skills::SkillRegistry,
     tools::{self, ToolRegistry, ToolOutput},
+    MemoryScope,
     load_wiki_context,
     PromptContext,
 };
@@ -86,6 +88,42 @@ fn test_runtime_system_prompt_loads_layered_wiki_context() {
 }
 
 #[test]
+fn test_rebuild_memory_index_from_markdown_entries() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let root = temp_dir.path().join(".sacode/wiki");
+    fs::create_dir_all(&root).expect("create wiki root");
+    fs::write(
+        root.join("preferences.md"),
+        "# 项目级偏好记忆\n\n## 条目\n\n[记忆条目]\n- Date: 2026-05-29\n- Scope: 项目级\n- Kind: preference\n- Context: 手工录入\n- Content:\n  - 以后统一使用 cargo test\n",
+    )
+    .expect("write preferences");
+
+    let index = rebuild_memory_index(&root, MemoryScope::Project).expect("rebuild memory index");
+    assert_eq!(index.entries.len(), 1);
+    assert!(index.entries[0].content.contains("cargo test"));
+
+    let loaded = load_memory_index(&root).expect("load rebuilt index");
+    assert_eq!(loaded.entries.len(), 1);
+}
+
+#[test]
+fn test_load_wiki_context_uses_rebuilt_memory_index_summary() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    fs::create_dir_all(workdir.join(".sacode/wiki")).expect("create project wiki");
+    fs::write(
+        workdir.join(".sacode/wiki/workflows.md"),
+        "# 项目级工作流记忆\n\n## 条目\n\n[自动学习条目]\n- Date: 2026-05-29\n- Scope: 项目级\n- Kind: workflow\n- Context: 自动学习\n- Content:\n  - 提交前先检查 diff 再继续\n",
+    )
+    .expect("write workflows");
+
+    let wiki = load_wiki_context(workdir).expect("load wiki context");
+    let project_summary = wiki.project_summary.expect("project summary should exist");
+    assert!(project_summary.contains("提交前先检查 diff 再继续"));
+    assert!(workdir.join(".sacode/wiki/index.json").exists());
+}
+
+#[test]
 fn test_load_wiki_context_reads_project_sources() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
@@ -128,6 +166,10 @@ fn test_tool_registry() {
     let registry = ToolRegistry::builtin();
     let names = registry.names();
     
+    assert!(names.contains(&"browser.open"));
+    assert!(names.contains(&"browser.navigate"));
+    assert!(names.contains(&"browser.snapshot"));
+    assert!(names.contains(&"browser.extract"));
     assert!(names.contains(&"fs.read"));
     assert!(names.contains(&"fs.search"));
     assert!(names.contains(&"fs.edit"));
@@ -140,6 +182,75 @@ fn test_tool_registry() {
     assert!(names.contains(&"task.spawn"));
     assert!(names.contains(&"web.fetch"));
     assert!(names.contains(&"web.search"));
+}
+
+#[test]
+fn test_tool_registry_executes_registered_tool() {
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("interaction.ask", serde_json::json!({
+            "question": "继续吗？",
+            "options": [
+                { "label": "是" },
+                { "label": "否" }
+            ]
+        }))
+        .expect("registered tool should execute");
+
+    assert!(output.success);
+    assert_eq!(output.data["question"], "继续吗？");
+}
+
+#[test]
+fn test_tool_registry_exposes_registered_specs() {
+    let registry = ToolRegistry::builtin();
+    let spec_names: Vec<&str> = registry.specs().into_iter().map(|spec| spec.name.as_str()).collect();
+
+    assert!(spec_names.contains(&"fs.read"));
+    assert!(spec_names.contains(&"task.spawn"));
+}
+
+#[test]
+fn test_browser_tools_validate_missing_session() {
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("browser.snapshot", serde_json::json!({
+            "session_id": "missing-session"
+        }))
+        .expect_err("missing browser session should error");
+
+    assert!(output.to_string().contains("browser session not found"));
+}
+
+#[test]
+fn test_register_enabled_mcp_tools_sync_keeps_registry_stable_without_servers() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let config = SaCodeConfig::new(workdir);
+    let store = McpConfigStore::new_from_config(config.clone());
+    store
+        .save_to_source(
+            &McpConfig {
+                mcp: [(
+                    "offline".to_string(),
+                    McpServerConfig {
+                        server_type: "remote".to_string(),
+                        url: "https://127.0.0.1:9/mcp".to_string(),
+                        enabled: true,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            McpSource::Project,
+        )
+        .expect("save mcp config");
+
+    let mut registry = ToolRegistry::builtin();
+    let names = register_enabled_mcp_tools_sync(&store, &mut registry).expect("register mcp tools");
+
+    assert!(names.is_empty());
+    assert!(registry.get("fs.read").is_some());
 }
 
 #[test]
@@ -889,9 +1000,8 @@ async fn test_daemon_task_cancel_endpoint() {
         )
         .await;
 
-    if let Ok(resp) = cancel_response {
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
+    let resp = cancel_response.expect("cancel response");
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]

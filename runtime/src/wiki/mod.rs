@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde_json::Value;
 use std::{env, fs, path::{Path, PathBuf}};
 
+use crate::{load_memory_index, rebuild_memory_index, MemoryScope};
+
 const USER_SACODE_DIR: &str = ".sacode";
 const PROJECT_WIKI_DIR: &str = ".sacode/wiki";
 const USER_WIKI_DIR: &str = "wiki";
@@ -158,17 +160,39 @@ fn summarize_markdown_dir(path: &Path, label: &str) -> Result<Option<String>> {
     }
 
     let mut sections = Vec::new();
-    for (name, section_label) in MEMORY_WIKI_FILES {
-        let file = path.join(name);
-        if !file.exists() {
-            continue;
+    let scope = infer_scope(path);
+    let index = load_memory_index(path)
+        .ok()
+        .filter(|index| !index.entries.is_empty())
+        .or_else(|| rebuild_memory_index(path, scope).ok());
+
+    if let Some(index) = index.as_ref() {
+        for (name, section_label) in MEMORY_WIKI_FILES {
+            let file_matches = index
+                .entries
+                .iter()
+                .filter(|entry| entry.file_name == *name)
+                .map(|entry| format!("- [{}] {}", entry.kind.scope_label(), entry.content))
+                .take(3)
+                .collect::<Vec<_>>();
+            if file_matches.is_empty() {
+                continue;
+            }
+            sections.push(format!("### {} ({})\n{}", name, section_label, truncate_text(&file_matches.join("\n"), MAX_FILE_SNIPPET_LEN)));
         }
-        let content = fs::read_to_string(&file)?;
-        let snippet = truncate_text(content.trim(), MAX_FILE_SNIPPET_LEN);
-        if snippet.trim().is_empty() {
-            continue;
+    } else {
+        for (name, section_label) in MEMORY_WIKI_FILES {
+            let file = path.join(name);
+            if !file.exists() {
+                continue;
+            }
+            let content = fs::read_to_string(&file)?;
+            let snippet = truncate_text(content.trim(), MAX_FILE_SNIPPET_LEN);
+            if snippet.trim().is_empty() {
+                continue;
+            }
+            sections.push(format!("### {} ({})\n{}", name, section_label, snippet));
         }
-        sections.push(format!("### {} ({})\n{}", name, section_label, snippet));
     }
 
     if sections.len() < MAX_WIKI_FILES_PER_SCOPE {
@@ -201,6 +225,14 @@ fn summarize_markdown_dir(path: &Path, label: &str) -> Result<Option<String>> {
         Ok(None)
     } else {
         Ok(Some(format!("{}\n{}", label, sections.join("\n\n"))))
+    }
+}
+
+fn infer_scope(path: &Path) -> MemoryScope {
+    if path.to_string_lossy().contains("/.sacode/wiki") || path.ends_with(".sacode/wiki") {
+        MemoryScope::Project
+    } else {
+        MemoryScope::User
     }
 }
 

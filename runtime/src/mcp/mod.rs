@@ -1,10 +1,10 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{collections::BTreeMap, fs, path::{Path, PathBuf}, sync::Arc};
 
 use crate::config::SaCodeConfig;
-use crate::tools::{SideEffectLevel, ToolSpec};
+use crate::tools::{SideEffectLevel, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
@@ -301,6 +301,45 @@ pub async fn list_enabled_tool_specs(store: &McpConfigStore) -> Result<Vec<ToolS
     Ok(specs)
 }
 
+pub fn register_enabled_tools_sync(store: &McpConfigStore, registry: &mut ToolRegistry) -> Result<Vec<String>> {
+    let config = store.load()?;
+    let mut names = Vec::new();
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
+
+        let tools = match runtime.block_on(list_tools(&server)) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            let spec = tool_info_to_spec(&server_name, tool.clone());
+            let tool_name = spec.name.clone();
+            registry.register(
+                spec,
+                Arc::new(McpToolExecutor {
+                    server: server.clone(),
+                    server_name: server_name.clone(),
+                    tool_name: tool.name,
+                }),
+            );
+            names.push(tool_name);
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 pub async fn find_enabled_search_tool(store: &McpConfigStore) -> Result<Option<(String, String)>> {
     let config = store.load()?;
 
@@ -338,6 +377,26 @@ fn tool_info_to_spec(server_name: &str, tool: McpToolInfo) -> ToolSpec {
         approval_required: true,
         timeout_ms: Some(30_000),
         tags: vec!["mcp".to_string(), server_name.to_string()],
+    }
+}
+
+#[derive(Clone)]
+struct McpToolExecutor {
+    server: McpServerConfig,
+    server_name: String,
+    tool_name: String,
+}
+
+impl ToolExecutor for McpToolExecutor {
+    fn execute(&self, input: serde_json::Value) -> Result<ToolOutput> {
+        let result = call_mcp_tool_sync(&self.server, &self.tool_name, input)?;
+        Ok(ToolOutput::success(serde_json::json!({
+            "content": result.content,
+            "server": self.server_name,
+            "tool": self.tool_name,
+            "source": "mcp",
+            "is_error": result.is_error,
+        })))
     }
 }
 

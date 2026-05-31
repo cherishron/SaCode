@@ -4,12 +4,13 @@ use anyhow::Result;
 use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
 use sacode_runtime::{
-    build_runtime_system_prompt, maybe_expand_skill_prompt, McpConfigStore, PromptContext,
-    ProviderClient, SideEffectLevel, ToolRegistry,
+    build_runtime_system_prompt, maybe_expand_skill_prompt, FailoverContext, McpConfigStore,
+    ProviderClient, SideEffectLevel, TaskProfile, ToolRegistry, register_enabled_mcp_tools_sync,
+    PromptContext, NodeScore,
 };
 use serde::Serialize;
 
-use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, learning, mistakes::MistakeBookStore, provider_runtime::resolve_provider};
+use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, learning, mistakes::MistakeBookStore, provider_runtime::{build_route_plan, record_model_health, resolve_model_candidates, resolve_provider}};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolResult {
@@ -18,6 +19,14 @@ pub struct ToolResult {
     pub name: String,
     pub success: bool,
     pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum TaskRunState {
+    Completed,
+    WaitingForUser,
+    WaitingForApproval,
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +40,7 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
+    pub state: TaskRunState,
     pub learned_facts: Vec<learning::LearnedFact>,
     pub pending_question: Option<serde_json::Value>,
     pub usage: Option<ChatUsage>,
@@ -79,6 +89,7 @@ impl RunnerOutput {
             events: report.events.clone(),
             tool_results,
             provider_response: Err("orchestrator mode does not call provider".to_string()),
+            state: TaskRunState::Completed,
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
@@ -110,14 +121,16 @@ pub async fn run_task_with_stdin(
         expanded_prompt.clone()
     };
 
-    let tools = ToolRegistry::builtin();
-    let mut tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+    let profile = TaskProfile::from_prompt_and_workspace(&effective_prompt, &workdir);
+    let candidates = resolve_model_candidates(&workdir);
+    let route_plan = build_route_plan(&workdir, &candidates, &profile);
+
+    let mut tools = ToolRegistry::builtin();
     let mcp_store = McpConfigStore::new(&workdir);
-    if let Ok(specs) = sacode_runtime::list_enabled_mcp_tool_specs(&mcp_store).await {
-        tool_names.extend(specs.into_iter().map(|spec| spec.name));
-        tool_names.sort();
-        tool_names.dedup();
-    }
+    let _ = register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
+    let mut tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+    tool_names.sort();
+    tool_names.dedup();
 
     let tool_defs = build_tool_definitions(&tools, &tool_names, mode);
 
@@ -137,24 +150,101 @@ pub async fn run_task_with_stdin(
         system_prompt.push_str(&insight_instruction);
     }
 
-    let provider = resolve_provider(&workdir);
-    let (provider_response, pending_question, usage, api_duration_ms, tool_duration_ms) = if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
-        if tool_defs.is_empty() {
-            let client = ProviderClient::new();
-            let api_started_at = Instant::now();
-            match client.simple_chat_with_usage(&provider, &effective_prompt).await {
-                Ok((text, usage)) => (Ok(text), None, usage, elapsed_ms(api_started_at.elapsed()), 0),
-                Err(error) => {
-                    let _ = MistakeBookStore::new(&workdir).append("provider:chat", "主模型调用失败", error.to_string());
-                    (Err(error.to_string()), None, None, elapsed_ms(api_started_at.elapsed()), 0)
+    let primary_provider = if let Some(ref plan) = route_plan {
+        candidates
+            .iter()
+            .find(|(pn, mn, _)| pn == &plan.primary.provider_name && mn == &plan.primary.model_name)
+            .map(|(_, _, provider)| provider.clone())
+            .unwrap_or_else(|| resolve_provider(&workdir))
+    } else {
+        resolve_provider(&workdir)
+    };
+
+    let primary_provider_name = route_plan.as_ref().map(|plan| plan.primary.provider_name.clone()).unwrap_or_else(|| "default".to_string());
+    let primary_model_name = route_plan.as_ref().map(|plan| plan.primary.model_name.clone()).unwrap_or_else(|| primary_provider.model.clone());
+
+    let (mut provider_response, mut pending_question, mut usage, mut api_duration_ms, mut tool_duration_ms) = 
+        execute_with_provider(&primary_provider, &system_prompt, &effective_prompt, tool_defs.clone(), &tools, &workdir, approval, max_iterations).await;
+
+    record_model_health(
+        &workdir,
+        &primary_provider_name,
+        &primary_model_name,
+        provider_response.is_ok(),
+        provider_response.as_ref().err().map(String::as_str),
+    );
+
+    let mut attempt_count = 0;
+    let max_attempts = route_plan.as_ref().map(|p| p.fallbacks.len() + 1).unwrap_or(1);
+
+    while attempt_count < max_attempts {
+        let should_switch = if provider_response.is_err() {
+            true
+        } else if let Ok(ref response) = provider_response {
+            let score = NodeScore::evaluate(
+                None,
+                response,
+                &[],
+                &profile,
+            );
+            score.decision == sacode_runtime::NodeDecision::SwitchModel
+        } else {
+            false
+        };
+
+        if !should_switch || pending_question.is_some() {
+            break;
+        }
+
+        attempt_count += 1;
+
+        if let Some(ref plan) = route_plan {
+            let fallback_index = attempt_count.saturating_sub(1);
+            if let Some(fallback) = plan.fallbacks.get(fallback_index) {
+                if let Some((_, _, fallback_provider)) = candidates
+                    .iter()
+                    .find(|(pn, mn, _)| pn == &fallback.provider_name && mn == &fallback.model_name)
+                {
+                    let failover_context = FailoverContext {
+                        original_task: effective_prompt.clone(),
+                        completed_steps: vec![],
+                        tool_summary: vec![],
+                        last_error: provider_response.clone().err(),
+                        low_score_reasons: vec!["node scored low, switching model".to_string()],
+                        workspace_summary: profile.evidence.clone(),
+                        retained_facts: vec![],
+                    };
+                    let failover_section = failover_context.to_prompt_section();
+                    let augmented_prompt = format!("{}\n\n{}", failover_section, effective_prompt);
+
+                    let result = execute_with_provider(
+                        fallback_provider,
+                        &system_prompt,
+                        &augmented_prompt,
+                        tool_defs.clone(),
+                        &tools,
+                        &workdir,
+                        approval,
+                        max_iterations,
+                    ).await;
+
+                    provider_response = result.0;
+                    pending_question = result.1;
+                    usage = result.2;
+                    api_duration_ms = result.3;
+                    tool_duration_ms = result.4;
+
+                    record_model_health(
+                        &workdir,
+                        &fallback.provider_name,
+                        &fallback.model_name,
+                        provider_response.is_ok(),
+                        provider_response.as_ref().err().map(String::as_str),
+                    );
                 }
             }
-        } else {
-            run_tool_chat(&provider, &system_prompt, &effective_prompt, tool_defs, &tools, &workdir, approval, max_iterations).await
         }
-    } else {
-        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, None, 0, 0)
-    };
+    }
 
     let task = Task::new(expanded_prompt.clone(), mode, stdin);
     let supervisor = Supervisor::new();
@@ -167,6 +257,16 @@ pub async fn run_task_with_stdin(
         }
     } else {
         result.output.plan
+    };
+
+    let state = match pending_question.as_ref() {
+        Some(question) if question
+            .get("kind")
+            .and_then(|value| value.as_str())
+            == Some("tool_approval") => TaskRunState::WaitingForApproval,
+        Some(_) => TaskRunState::WaitingForUser,
+        None if provider_response.is_ok() => TaskRunState::Completed,
+        None => TaskRunState::Failed,
     };
 
     let learned_facts = if pending_question.is_none() {
@@ -189,6 +289,7 @@ pub async fn run_task_with_stdin(
         events: Vec::new(),
         tool_results: vec![],
         provider_response,
+        state,
         learned_facts,
         pending_question,
         usage,
@@ -196,6 +297,35 @@ pub async fn run_task_with_stdin(
         tool_duration_ms,
         total_duration_ms: elapsed_ms(total_started_at.elapsed()),
     })
+}
+
+async fn execute_with_provider(
+    provider: &sacode_kernel::model::ModelProvider,
+    system_prompt: &str,
+    user_prompt: &str,
+    tool_defs: Vec<ToolDefinition>,
+    tools: &ToolRegistry,
+    workdir: &Path,
+    approval: ApprovalPolicy,
+    max_iterations: usize,
+) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
+    if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
+        if tool_defs.is_empty() {
+            let client = ProviderClient::new();
+            let api_started_at = Instant::now();
+            match client.simple_chat_with_usage(provider, user_prompt).await {
+                Ok((text, usage)) => (Ok(text), None, usage, elapsed_ms(api_started_at.elapsed()), 0),
+                Err(error) => {
+                    let _ = MistakeBookStore::new(workdir).append("provider:chat", "主模型调用失败", error.to_string());
+                    (Err(error.to_string()), None, None, elapsed_ms(api_started_at.elapsed()), 0)
+                }
+            }
+        } else {
+            run_tool_chat(provider, system_prompt, user_prompt, tool_defs, tools, workdir, approval, max_iterations).await
+        }
+    } else {
+        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, None, 0, 0)
+    }
 }
 
 async fn run_tool_chat(
@@ -253,39 +383,6 @@ async fn run_tool_chat(
                     }))
                 }
             }
-        }
-
-        if name == "web.search" {
-            let store = McpConfigStore::new(&workdir_clone);
-            if let Ok(Some((server_name, tool_name))) = sacode_runtime::find_enabled_search_tool_sync(&store) {
-                if let Ok(server) = store.get(&server_name) {
-                    if let Ok(mcp_result) = sacode_runtime::call_mcp_tool_sync(&server, &tool_name, args.clone()) {
-                        tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
-                        return Ok(serde_json::json!({
-                            "content": mcp_result.content,
-                            "server": server_name,
-                            "tool": tool_name,
-                            "source": "mcp",
-                        }));
-                    }
-                }
-            }
-        }
-
-        if let Some((server_name, tool_name_suffix)) = parse_mcp_tool_name(name) {
-            let store = McpConfigStore::new(&workdir_clone);
-            if let Ok(server) = store.get(server_name) {
-                if let Ok(mcp_result) = sacode_runtime::call_mcp_tool_sync(&server, tool_name_suffix, args.clone()) {
-                    tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
-                    return Ok(serde_json::json!({
-                        "content": mcp_result.content,
-                        "server": server_name,
-                        "tool": tool_name_suffix,
-                    }));
-                }
-            }
-            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
-            return Ok(serde_json::json!({ "error": format!("MCP server {} not found or call failed", server_name) }));
         }
 
         if let Some(_spec) = spec {
@@ -414,6 +511,8 @@ pub fn format_output(output: &RunnerOutput) -> String {
         }
         Err(error) => lines.push(format!("Provider: {}", error)),
     }
+
+    lines.push(format!("State: {:?}", output.state));
 
     if let Some(question) = &output.pending_question {
         lines.push("Pending Question:".to_string());
@@ -567,12 +666,6 @@ pub fn summarize_tool_output(output: &serde_json::Value) -> String {
     format!("{}{}", source_prefix, preview(&text))
 }
 
-fn parse_mcp_tool_name(name: &str) -> Option<(&str, &str)> {
-    let rest = name.strip_prefix("mcp.")?;
-    let (server, tool) = rest.split_once('.')?;
-    Some((server, tool))
-}
-
 fn preview(input: &str) -> String {
     let trimmed = input.trim();
     let mut chars = trimmed.chars();
@@ -583,8 +676,12 @@ fn preview(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::enrich_media_read_args;
+    use super::format_output;
     use super::format_learned_facts_summary;
+    use super::RunnerOutput;
+    use super::TaskRunState;
     use crate::learning::{LearnedFact, LearnedKind};
+    use sacode_kernel::{Event, ExecutionMode, Plan};
     use sacode_kernel::model::ModelProvider;
 
     #[test]
@@ -644,5 +741,40 @@ mod tests {
 
         let summary = format_learned_facts_summary(&facts).expect("summary");
         assert_eq!(summary, "本轮已写入项目 wiki：偏好 1 条，流程 2 条");
+    }
+
+    #[test]
+    fn task_run_state_serializes_as_expected() {
+        let value = serde_json::to_value(TaskRunState::WaitingForApproval).expect("serialize state");
+        assert_eq!(value, serde_json::json!("WaitingForApproval"));
+    }
+
+    #[test]
+    fn format_output_includes_explicit_task_state() {
+        let output = RunnerOutput {
+            prompt: "测试任务".to_string(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            tool_names: vec!["web.search".to_string()],
+            workspace: "/workspace".to_string(),
+            plan: Plan {
+                task: "测试任务".to_string(),
+                steps: Vec::new(),
+                mode: "build".to_string(),
+            },
+            events: vec![Event::done("完成")],
+            tool_results: Vec::new(),
+            provider_response: Ok("已完成".to_string()),
+            state: TaskRunState::Completed,
+            learned_facts: Vec::new(),
+            pending_question: None,
+            usage: None,
+            api_duration_ms: 1,
+            tool_duration_ms: 2,
+            total_duration_ms: 3,
+        };
+
+        let text = format_output(&output);
+        assert!(text.contains("State: Completed"));
     }
 }
