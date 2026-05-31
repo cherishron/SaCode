@@ -86,120 +86,142 @@ impl TaskProfile {
         let lower = prompt.to_lowercase();
         let prompt_words: Vec<&str> = lower.split_whitespace().collect();
 
-        if prompt_words.iter().any(|w| ["rust", "cargo"].contains(w)) {
-            profile.languages.push("rust".to_string());
-            profile.evidence.push("prompt mentions rust/cargo".to_string());
-        }
-        if workdir.join("Cargo.toml").exists() {
-            if !profile.languages.contains(&"rust".to_string()) {
-                profile.languages.push("rust".to_string());
-            }
-            profile.evidence.push("Cargo.toml exists".to_string());
-        }
-
-        if prompt_words.iter().any(|w| ["go", "golang"].contains(w)) {
-            profile.languages.push("go".to_string());
-            profile.evidence.push("prompt mentions go/golang".to_string());
-        }
-        if workdir.join("go.mod").exists() {
-            if !profile.languages.contains(&"go".to_string()) {
-                profile.languages.push("go".to_string());
-            }
-            profile.evidence.push("go.mod exists".to_string());
-        }
-
-        if prompt_words.iter().any(|w| ["python", "django", "fastapi"].contains(w)) {
-            profile.languages.push("python".to_string());
-            profile.evidence.push("prompt mentions python/django/fastapi".to_string());
-        }
-        if workdir.join("pyproject.toml").exists() || workdir.join("requirements.txt").exists() {
-            if !profile.languages.contains(&"python".to_string()) {
-                profile.languages.push("python".to_string());
-            }
-            profile.evidence.push("pyproject.toml or requirements.txt exists".to_string());
-        }
-
-        if prompt_words.iter().any(|w| ["node", "npm", "yarn", "pnpm"].contains(w)) {
-            profile.languages.push("node".to_string());
-            profile.evidence.push("prompt mentions node/npm/yarn/pnpm".to_string());
-        }
-        if workdir.join("package.json").exists() {
-            if !profile.languages.contains(&"node".to_string()) {
-                profile.languages.push("node".to_string());
-            }
-            profile.evidence.push("package.json exists".to_string());
-        }
-
-        if prompt_words.iter().any(|w| ["react", "jsx", "tsx"].contains(w)) {
-            profile.frameworks.push("react".to_string());
-            profile.evidence.push("prompt mentions react/jsx/tsx".to_string());
-        }
-        if prompt_words.iter().any(|w| ["vue"].contains(w)) {
-            profile.frameworks.push("vue".to_string());
-            profile.evidence.push("prompt mentions vue".to_string());
-        }
-        if prompt_words.iter().any(|w| ["next", "nextjs"].contains(w)) {
-            profile.frameworks.push("next".to_string());
-            profile.evidence.push("prompt mentions next/nextjs".to_string());
-        }
-
-        if workdir.join("interfaces/cli").exists() {
-            profile.surfaces.push("cli".to_string());
-            profile.evidence.push("interfaces/cli exists".to_string());
-        }
-        if workdir.join("interfaces/tui").exists() || prompt_words.iter().any(|w| ["tui"].contains(w)) {
-            profile.surfaces.push("tui".to_string());
-            profile.evidence.push("interfaces/tui exists or prompt mentions tui".to_string());
-        }
-        if workdir.join("interfaces/lsp").exists() {
-            profile.surfaces.push("lsp".to_string());
-            profile.evidence.push("interfaces/lsp exists".to_string());
-        }
-        if workdir.join("runtime").exists() {
-            profile.surfaces.push("runtime".to_string());
-            profile.evidence.push("runtime exists".to_string());
-        }
-        if workdir.join("kernel").exists() {
-            profile.surfaces.push("kernel".to_string());
-            profile.evidence.push("kernel exists".to_string());
-        }
-
-        if prompt_words.iter().any(|w| ["implement", "实现", "添加", "增加"].contains(w)) {
-            profile.task_kinds.push("implementation".to_string());
-        }
-        if prompt_words.iter().any(|w| ["refactor", "重构"].contains(w)) {
-            profile.task_kinds.push("refactor".to_string());
-        }
-        if prompt_words.iter().any(|w| ["bug", "fix", "修复"].contains(w)) {
-            profile.task_kinds.push("bugfix".to_string());
-        }
-        if prompt_words.iter().any(|w| ["test", "测试"].contains(w)) {
-            profile.task_kinds.push("test".to_string());
-        }
-        if prompt_words.iter().any(|w| ["doc", "文档", "readme"].contains(w)) {
-            profile.task_kinds.push("docs".to_string());
-        }
-
-        let reasoning_keywords = [
-            "架构", "设计", "分析", "评估", "决策",
-            "重构", "优化", "梳理", "收敛",
-            "architect", "design", "analyze", "evaluate",
-            "refactor", "optimize",
-        ];
-        if reasoning_keywords.iter().any(|k| lower.contains(k)) {
-            profile.needs_reasoning = true;
-            profile.evidence.push("prompt indicates reasoning-heavy task".to_string());
-        }
-
-        if profile.languages.contains(&"rust".to_string()) && profile.task_kinds.contains(&"implementation".to_string()) {
-            profile.risk_level = TaskRiskLevel::Medium;
-        }
-        if profile.languages.contains(&"rust".to_string()) && profile.surfaces.contains(&"cli".to_string()) && profile.surfaces.contains(&"tui".to_string()) {
-            profile.risk_level = TaskRiskLevel::High;
-            profile.evidence.push("multi-surface rust implementation is high risk".to_string());
-        }
+        detect_languages(&mut profile, &prompt_words, workdir);
+        detect_frameworks(&mut profile, &prompt_words);
+        detect_surfaces(&mut profile, &prompt_words, workdir);
+        detect_task_kinds(&mut profile, &prompt_words);
+        detect_reasoning(&mut profile, &lower);
+        infer_risk_level(&mut profile);
 
         profile
+    }
+}
+
+fn detect_languages(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &Path) {
+    if prompt_words.iter().any(|w| ["rust", "cargo"].contains(w)) {
+        push_unique(&mut profile.languages, "rust");
+        profile.evidence.push("prompt mentions rust/cargo".to_string());
+    }
+    if workdir.join("Cargo.toml").exists() {
+        push_unique(&mut profile.languages, "rust");
+        profile.evidence.push("Cargo.toml exists".to_string());
+    }
+
+    if prompt_words.iter().any(|w| ["go", "golang"].contains(w)) {
+        push_unique(&mut profile.languages, "go");
+        profile.evidence.push("prompt mentions go/golang".to_string());
+    }
+    if workdir.join("go.mod").exists() {
+        push_unique(&mut profile.languages, "go");
+        profile.evidence.push("go.mod exists".to_string());
+    }
+
+    if prompt_words.iter().any(|w| ["python", "django", "fastapi"].contains(w)) {
+        push_unique(&mut profile.languages, "python");
+        profile.evidence.push("prompt mentions python/django/fastapi".to_string());
+    }
+    if workdir.join("pyproject.toml").exists() || workdir.join("requirements.txt").exists() {
+        push_unique(&mut profile.languages, "python");
+        profile.evidence.push("pyproject.toml or requirements.txt exists".to_string());
+    }
+
+    if prompt_words.iter().any(|w| ["node", "npm", "yarn", "pnpm"].contains(w)) {
+        push_unique(&mut profile.languages, "node");
+        profile.evidence.push("prompt mentions node/npm/yarn/pnpm".to_string());
+    }
+    if workdir.join("package.json").exists() {
+        push_unique(&mut profile.languages, "node");
+        profile.evidence.push("package.json exists".to_string());
+    }
+}
+
+fn detect_frameworks(profile: &mut TaskProfile, prompt_words: &[&str]) {
+    if prompt_words.iter().any(|w| ["react", "jsx", "tsx"].contains(w)) {
+        push_unique(&mut profile.frameworks, "react");
+        profile.evidence.push("prompt mentions react/jsx/tsx".to_string());
+    }
+    if prompt_words.iter().any(|w| ["vue"].contains(w)) {
+        push_unique(&mut profile.frameworks, "vue");
+        profile.evidence.push("prompt mentions vue".to_string());
+    }
+    if prompt_words.iter().any(|w| ["next", "nextjs"].contains(w)) {
+        push_unique(&mut profile.frameworks, "next");
+        profile.evidence.push("prompt mentions next/nextjs".to_string());
+    }
+}
+
+fn detect_surfaces(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &Path) {
+    if workdir.join("interfaces/cli").exists() {
+        push_unique(&mut profile.surfaces, "cli");
+        profile.evidence.push("interfaces/cli exists".to_string());
+    }
+    if workdir.join("interfaces/tui").exists() || prompt_words.iter().any(|w| ["tui"].contains(w)) {
+        push_unique(&mut profile.surfaces, "tui");
+        profile.evidence.push("interfaces/tui exists or prompt mentions tui".to_string());
+    }
+    if workdir.join("interfaces/lsp").exists() {
+        push_unique(&mut profile.surfaces, "lsp");
+        profile.evidence.push("interfaces/lsp exists".to_string());
+    }
+    if workdir.join("runtime").exists() {
+        push_unique(&mut profile.surfaces, "runtime");
+        profile.evidence.push("runtime exists".to_string());
+    }
+    if workdir.join("kernel").exists() {
+        push_unique(&mut profile.surfaces, "kernel");
+        profile.evidence.push("kernel exists".to_string());
+    }
+}
+
+fn detect_task_kinds(profile: &mut TaskProfile, prompt_words: &[&str]) {
+    if prompt_words.iter().any(|w| ["implement", "实现", "添加", "增加"].contains(w)) {
+        push_unique(&mut profile.task_kinds, "implementation");
+    }
+    if prompt_words.iter().any(|w| ["refactor", "重构"].contains(w)) {
+        push_unique(&mut profile.task_kinds, "refactor");
+    }
+    if prompt_words.iter().any(|w| ["bug", "fix", "修复"].contains(w)) {
+        push_unique(&mut profile.task_kinds, "bugfix");
+    }
+    if prompt_words.iter().any(|w| ["test", "测试"].contains(w)) {
+        push_unique(&mut profile.task_kinds, "test");
+    }
+    if prompt_words.iter().any(|w| ["doc", "文档", "readme"].contains(w)) {
+        push_unique(&mut profile.task_kinds, "docs");
+    }
+}
+
+fn detect_reasoning(profile: &mut TaskProfile, lower_prompt: &str) {
+    let reasoning_keywords = [
+        "架构", "设计", "分析", "评估", "决策",
+        "重构", "优化", "梳理", "收敛",
+        "architect", "design", "analyze", "evaluate",
+        "refactor", "optimize",
+    ];
+    if reasoning_keywords.iter().any(|k| lower_prompt.contains(k)) {
+        profile.needs_reasoning = true;
+        profile.evidence.push("prompt indicates reasoning-heavy task".to_string());
+    }
+}
+
+fn infer_risk_level(profile: &mut TaskProfile) {
+    if profile.languages.iter().any(|lang| lang == "rust")
+        && profile.task_kinds.iter().any(|kind| kind == "implementation")
+    {
+        profile.risk_level = TaskRiskLevel::Medium;
+    }
+    if profile.languages.iter().any(|lang| lang == "rust")
+        && profile.surfaces.iter().any(|surface| surface == "cli")
+        && profile.surfaces.iter().any(|surface| surface == "tui")
+    {
+        profile.risk_level = TaskRiskLevel::High;
+        profile.evidence.push("multi-surface rust implementation is high risk".to_string());
+    }
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
     }
 }
 

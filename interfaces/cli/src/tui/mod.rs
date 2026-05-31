@@ -52,12 +52,14 @@ use sacode_runtime::{
 
 mod input;
 mod interaction;
+mod orchestration_summary;
 mod render;
 mod state;
 mod task_runtime;
 
 use input::{is_editable_input_mode, layout_input_lines};
 use interaction::{InteractionSession, InteractionState};
+use orchestration_summary::parse_orchestration_summary;
 use render::{
     relative_to_workdir, render_command_selector,
     render_checkpoint_selector, render_connect_selector, render_mcp_selector,
@@ -1199,160 +1201,42 @@ impl App {
     }
 
     fn format_orchestration_details(parsed: &serde_json::Value) -> Option<String> {
+        let parsed_summary = parse_orchestration_summary(parsed);
         let mut lines = Vec::new();
 
-        if let Some(summary) = parsed.get("summary_record") {
-            let reporter_summary = summary
-                .get("reporter_summary")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty());
-            let overall_conclusion = summary
-                .get("overall_conclusion")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty());
-            let recommended_next_action = summary
-                .get("recommended_next_action")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty());
-            let risk_lines = summary
-                .get("key_risks")
-                .and_then(|value| value.as_array())
-                .map(|risks| {
-                    risks
-                        .iter()
-                        .filter_map(|risk| risk.as_str())
-                        .map(|risk| format!("- risk: {}", risk))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let item_lines = summary
-                .get("items")
-                .and_then(|value| value.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| {
-                            let role_id = item.get("role_id").and_then(|value| value.as_str())?;
-                            let route = item
-                                .get("route")
-                                .and_then(|value| value.as_str())
-                                .unwrap_or("auto");
-                            let output = item
-                                .get("output")
-                                .and_then(|value| value.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())?;
-                            Some(format!("- {} [{}]: {}", role_id, route, output))
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if reporter_summary.is_some()
-                || overall_conclusion.is_some()
-                || recommended_next_action.is_some()
-                || !risk_lines.is_empty()
-                || !item_lines.is_empty()
-            {
-                lines.push("[主裁决摘要]".to_string());
-                if let Some(summary) = reporter_summary {
-                    lines.push(format!("- reporter: {}", summary));
-                }
-                if let Some(conclusion) = overall_conclusion {
-                    lines.push(format!("- overall: {}", conclusion));
-                }
-                lines.extend(risk_lines);
-                if let Some(next_action) = recommended_next_action {
-                    lines.push(format!("- next: {}", next_action));
-                }
-                lines.extend(item_lines);
-            }
-        }
-
-        if let Some(roles) = parsed
-            .get("orchestration_plan")
-            .and_then(|plan| plan.get("roles"))
-            .and_then(|value| value.as_array())
+        if parsed_summary.reporter_summary.is_some()
+            || parsed_summary.overall_conclusion.is_some()
+            || parsed_summary.recommended_next_action.is_some()
+            || !parsed_summary.risk_lines.is_empty()
+            || !parsed_summary.item_lines.is_empty()
         {
-            let role_lines = roles
-                .iter()
-                .filter_map(|role| {
-                    let role_id = role.get("role_id").and_then(|value| value.as_str())?;
-                    let preferred_model = role
-                        .get("preferred_model")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("auto");
-                    let needs_thinking = role
-                        .get("needs_thinking")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(false);
-                    Some(format!(
-                        "- {}: {} thinking={}",
-                        role_id,
-                        preferred_model,
-                        needs_thinking
-                    ))
-                })
-                .collect::<Vec<_>>();
-            if !role_lines.is_empty() {
-                lines.push("[编排角色]".to_string());
-                lines.extend(role_lines);
+            lines.push("[主裁决摘要]".to_string());
+            if let Some(summary) = parsed_summary.reporter_summary.as_deref() {
+                lines.push(format!("- reporter: {}", summary));
             }
+            if let Some(conclusion) = parsed_summary.overall_conclusion.as_deref() {
+                lines.push(format!("- overall: {}", conclusion));
+            }
+            lines.extend(parsed_summary.risk_lines.iter().cloned());
+            if let Some(next_action) = parsed_summary.recommended_next_action.as_deref() {
+                lines.push(format!("- next: {}", next_action));
+            }
+            lines.extend(parsed_summary.item_lines.iter().cloned());
         }
 
-        if let Some(routes) = parsed.get("route_records").and_then(|value| value.as_array()) {
-            let route_lines = routes
-                .iter()
-                .filter_map(|route| {
-                    let role_id = route.get("role_id").and_then(|value| value.as_str())?;
-                    let primary = route.get("primary")?;
-                    let provider_name = primary.get("provider_name").and_then(|value| value.as_str()).unwrap_or("auto");
-                    let model_name = primary.get("model_name").and_then(|value| value.as_str()).unwrap_or("auto");
-                    let score = primary.get("route_score").and_then(|value| value.as_i64()).unwrap_or(0);
-                    let needs_thinking = primary.get("needs_thinking").and_then(|value| value.as_bool()).unwrap_or(false);
-                    Some(format!(
-                        "- {}: {}/{} score={} thinking={}",
-                        role_id,
-                        provider_name,
-                        model_name,
-                        score,
-                        needs_thinking
-                    ))
-                })
-                .collect::<Vec<_>>();
-            if !route_lines.is_empty() {
-                lines.push("[角色路由]".to_string());
-                lines.extend(route_lines);
-            }
+        if !parsed_summary.role_lines.is_empty() {
+            lines.push("[编排角色]".to_string());
+            lines.extend(parsed_summary.role_lines.iter().cloned());
         }
 
-        let conflict_lines = if let Some(conflict_records) = parsed
-            .get("conflict_records")
-            .and_then(|value| value.as_array())
-        {
-            conflict_records
-                .iter()
-                .filter_map(|record| {
-                    let kind = record.get("kind").and_then(|value| value.as_str()).unwrap_or("conflict");
-                    let summary = record.get("summary").and_then(|value| value.as_str())?;
-                    Some(format!("- [{}] {}", kind, summary))
-                })
-                .collect::<Vec<_>>()
-        } else {
-            parsed
-                .get("conflicts")
-                .and_then(|value| value.as_array())
-                .map(|conflicts| {
-                    conflicts
-                        .iter()
-                        .filter_map(|value| value.as_str())
-                        .map(|value| format!("- {}", value))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        };
-        if !conflict_lines.is_empty() {
+        if !parsed_summary.route_lines.is_empty() {
+            lines.push("[角色路由]".to_string());
+            lines.extend(parsed_summary.route_lines.iter().cloned());
+        }
+
+        if !parsed_summary.conflict_lines.is_empty() {
             lines.push("[冲突]".to_string());
-            lines.extend(conflict_lines);
+            lines.extend(parsed_summary.conflict_lines.iter().cloned());
         }
 
         if lines.is_empty() {
@@ -6715,8 +6599,8 @@ mod tests {
             ],
             "conflict_records": [
                 {
-                    "kind": "route_conflict",
-                    "summary": "multiple primary routes"
+                    "kind": "validation_conflict",
+                    "summary": "implementation completion conflicts with validation findings"
                 }
             ]
         });
@@ -6728,6 +6612,7 @@ mod tests {
         assert!(summary.contains("[编排角色]"));
         assert!(summary.contains("[角色路由]"));
         assert!(summary.contains("[冲突]"));
+        assert!(summary.contains("- [验证冲突] implementation completion conflicts with validation findings"));
         assert!(summary.contains("- system-architect [deepseek/deepseek-reasoner]: 设计评估完成"));
         assert!(summary.contains("- reporter [deepseek/deepseek-reasoner]: 汇总结论完成"));
     }
@@ -6763,7 +6648,7 @@ mod tests {
     fn render_orchestration_panel_renders_titles_and_content() {
         let mut app = App::new();
         app.orchestration_summary = Some(
-            "[主裁决摘要]\n- reporter: reporter-summary\n- reporter [deepseek/deepseek-reasoner]: final-summary\n[编排角色]\n- system-architect: deepseek/deepseek-reasoner thinking=true\n[角色路由]\n- system-architect: deepseek/deepseek-reasoner score=65 thinking=true\n[冲突]\n- [route_conflict] multiple primary routes".to_string(),
+            "[主裁决摘要]\n- reporter: reporter-summary\n- reporter [deepseek/deepseek-reasoner]: final-summary\n[编排角色]\n- system-architect: deepseek/deepseek-reasoner thinking=true\n[角色路由]\n- system-architect: deepseek/deepseek-reasoner score=65 thinking=true\n[冲突]\n- [验证冲突] implementation completion conflicts with validation findings".to_string(),
         );
 
         let backend = TestBackend::new(100, 22);
@@ -6780,6 +6665,6 @@ mod tests {
         assert!(rendered.contains("final-summary"));
         assert!(rendered.contains("system-architect"));
         assert!(rendered.contains("deepseek/deepseek-reasoner"));
-        assert!(rendered.contains("route_conflict"));
+        assert!(rendered.contains("implementation completion conflicts with validation findings"));
     }
 }

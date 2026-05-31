@@ -2,6 +2,7 @@ mod model_router;
 mod orchestrator;
 mod planner;
 mod role_registry;
+mod summary_compactor;
 mod worker;
 
 pub use model_router::{ResolvedRoleRoute, build_route_plan_from_candidates, resolve_config_model_candidates, resolve_role_route};

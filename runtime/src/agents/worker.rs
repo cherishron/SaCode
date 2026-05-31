@@ -101,15 +101,16 @@ fn extract_result_summary(
     execution_events
         .iter()
         .rev()
-        .find_map(done_summary)
-        .or_else(|| planner_events.iter().rev().find_map(done_summary))
+        .find_map(terminal_summary)
+        .or_else(|| planner_events.iter().rev().find_map(terminal_summary))
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "任务已完成".to_string())
 }
 
-fn done_summary(event: &sacode_kernel::Event) -> Option<String> {
+fn terminal_summary(event: &sacode_kernel::Event) -> Option<String> {
     match event {
         sacode_kernel::Event::Done { summary } => Some(summary.trim().to_string()),
+        sacode_kernel::Event::Error { message } => Some(message.trim().to_string()),
         _ => None,
     }
 }
@@ -121,59 +122,127 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
         .iter()
         .flat_map(|(_, calls)| calls.iter().map(|call| call.name.as_str()))
         .collect::<Vec<_>>();
+    let tool_focus = summarize_tool_focus(&tool_names);
     let final_summary = extract_result_summary(&[], &execution.output.events);
+    let has_failure_signal = has_failure_signal(&execution.output.events);
 
     match role.id.as_str() {
         "system-architect" => format!(
-            "架构路径已梳理，完成 {} 个步骤，重点覆盖 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，重点覆盖 {}。架构结论：{}",
+            if has_failure_signal {
+                "架构风险已识别"
+            } else {
+                "架构结论已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "repo-explorer" => format!(
-            "仓库上下文已扫描，完成 {} 个步骤，重点覆盖 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，重点覆盖 {}。探索结论：{}",
+            if has_failure_signal {
+                "仓库阻塞线索已识别"
+            } else {
+                "仓库线索已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "implementer" => format!(
-            "实现链路已推进，完成 {} 个步骤，执行涉及 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，执行涉及 {}。实现结论：{}",
+            if has_failure_signal {
+                "实现阻塞已识别"
+            } else {
+                "实现结果已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "test-engineer" => format!(
-            "验证路径已执行，完成 {} 个步骤，检查覆盖 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，检查覆盖 {}。测试结论：{}",
+            if has_failure_signal {
+                "验证风险已识别"
+            } else {
+                "验证结果已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "code-reviewer" => format!(
-            "审查链路已完成，完成 {} 个步骤，重点检查 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，重点检查 {}。审查结论：{}",
+            if has_failure_signal {
+                "审查风险已识别"
+            } else {
+                "审查结果已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "devops-operator" => format!(
-            "交付链路已检查，完成 {} 个步骤，操作涉及 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，操作涉及 {}。交付结论：{}",
+            if has_failure_signal {
+                "交付阻塞已识别"
+            } else {
+                "交付检查已整理"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "reporter" => format!(
-            "汇总结论已生成，完成 {} 个步骤，参考了 {}。{}",
-            completed_steps,
-            summarize_tool_focus(&tool_names),
-            final_summary
+            "{}，完成 {} 个步骤，参考了 {}。主结论：{}",
+            if has_failure_signal {
+                "汇总风险已生成"
+            } else {
+                "汇总结论已生成"
+            },
+            completed_steps, tool_focus, final_summary
         ),
         "requirement-analyst" => format!(
-            "需求约束已梳理，完成 {} 个步骤，分析覆盖 {}。{}",
+            "{}，完成 {} 个步骤，分析覆盖 {}。需求结论：{}",
+            if has_failure_signal {
+                "需求风险已识别"
+            } else {
+                "需求约束已整理"
+            },
+            completed_steps, tool_focus, final_summary
+        ),
+        _ => format!(
+            "{}，完成 {} 个步骤，覆盖 {}。执行结论：{}",
+            if has_failure_signal {
+                "执行风险已识别"
+            } else {
+                "执行结果已整理"
+            },
             completed_steps,
-            summarize_tool_focus(&tool_names),
+            tool_focus,
             final_summary
         ),
-        _ => format!("完成 {} 个步骤，覆盖 {}。{}", completed_steps, summarize_tool_focus(&tool_names), final_summary),
     }
+}
+
+fn has_failure_signal(events: &[sacode_kernel::Event]) -> bool {
+    events.iter().any(|event| match event {
+        sacode_kernel::Event::Error { .. } => true,
+        sacode_kernel::Event::ToolCallFinished { success, .. } => !success,
+        sacode_kernel::Event::Done { summary } => contains_failure_signal(summary),
+        sacode_kernel::Event::Message { content } | sacode_kernel::Event::Thinking { content } => {
+            contains_failure_signal(content)
+        }
+        _ => false,
+    })
+}
+
+fn contains_failure_signal(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    [
+        "失败",
+        "错误",
+        "阻塞",
+        "风险",
+        "回归",
+        "冲突",
+        "failed",
+        "error",
+        "blocked",
+        "risk",
+        "regression",
+        "conflict",
+    ]
+    .iter()
+    .any(|signal| normalized.contains(signal))
 }
 
 fn summarize_tool_focus(tool_names: &[&str]) -> &'static str {
@@ -201,5 +270,52 @@ fn summarize_tool_focus(tool_names: &[&str]) -> &'static str {
         "外部 MCP 工具"
     } else {
         "基础执行流程"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_role_summary;
+    use sacode_kernel::{AgentOutput, AgentRole, Event, ExecutionMode, ExecutionResult, Plan};
+
+    fn role(role_id: &str) -> AgentRole {
+        AgentRole {
+            id: role_id.to_string(),
+            ..AgentRole::default()
+        }
+    }
+
+    fn execution_result(events: Vec<Event>) -> ExecutionResult {
+        ExecutionResult {
+            output: AgentOutput {
+                mode: ExecutionMode::Build,
+                task: "test task".to_string(),
+                plan: Plan::new("test task".to_string(), Vec::new(), "build".to_string()),
+                events,
+            },
+            tool_calls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn build_role_summary_uses_success_tone_for_implementer() {
+        let summary = build_role_summary(
+            &role("implementer"),
+            &execution_result(vec![Event::done("任务完成，共完成 3 个步骤")]),
+        );
+
+        assert!(summary.contains("实现结果已整理"));
+        assert!(summary.contains("实现结论：任务完成，共完成 3 个步骤"));
+    }
+
+    #[test]
+    fn build_role_summary_uses_failure_tone_for_test_engineer() {
+        let summary = build_role_summary(
+            &role("test-engineer"),
+            &execution_result(vec![Event::error("验证失败，存在阻塞")]),
+        );
+
+        assert!(summary.contains("验证风险已识别"));
+        assert!(summary.contains("测试结论：验证失败，存在阻塞"));
     }
 }

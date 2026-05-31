@@ -173,7 +173,11 @@ fn orchestration_sections(app: &App) -> (Vec<Line<'static>>, Vec<Line<'static>>,
             continue;
         }
 
-        let style = if line.starts_with("- [") {
+        let style = if line.starts_with("- [验证冲突]") {
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD)
+        } else if line.starts_with("- [") {
             Style::default().fg(theme.warning)
         } else if line.starts_with("- reporter:") {
             Style::default().fg(theme.assistant)

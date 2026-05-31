@@ -2,6 +2,7 @@ use anyhow::Result;
 use sacode_kernel::{ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, SummaryItemRecord, SummaryRecord, ToolExecutionRecord};
 
 use super::{RoleRegistry, build_execution_plan};
+use super::summary_compactor::{OutputPolarity, compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity, extract_final_consensus, extract_risk_summary};
 use crate::CheckpointStorage;
 use crate::agents::worker::{WorkerRunResult, run_sub_agent};
 use crate::model_routing::TaskProfile;
@@ -58,7 +59,12 @@ pub async fn execute_role_driven_orchestration(
         .iter()
         .map(|record| record.summary.clone())
         .collect();
-    report.summary_record = Some(build_summary_record(&context.task.prompt, &results, &report.conflicts));
+    report.summary_record = Some(build_summary_record(
+        &context.task.prompt,
+        &results,
+        &report.conflicts,
+        &report.conflict_records,
+    ));
     report.final_output = Some(aggregate_worker_results(&context.task.prompt, &results, &report.conflicts));
     report.events.push(sacode_kernel::Event::thinking(format!(
         "主 Agent 汇总裁决完成，汇总角色数：{}",
@@ -229,60 +235,6 @@ fn aggregate_worker_results(task_prompt: &str, results: &[WorkerRunResult], conf
     lines.join("\n")
 }
 
-fn compact_aggregate_output(output: &str) -> String {
-    let trimmed = output.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    if let Some(risk_summary) = extract_risk_summary(trimmed) {
-        return risk_summary;
-    }
-
-    if let (Some(first_sentence), Some(consensus)) = (
-        first_summary_sentence(trimmed),
-        extract_final_consensus(trimmed),
-    ) {
-        let first_sentence = first_sentence.trim();
-        let consensus = consensus.trim();
-        if first_sentence != consensus
-            && first_sentence.chars().count() >= 12
-            && is_generic_completion_sentence(consensus)
-        {
-            return first_sentence.to_string();
-        }
-    }
-
-    if let Some(consensus) = extract_final_consensus(trimmed) {
-        let consensus = consensus.trim();
-        if !consensus.is_empty() {
-            return consensus.to_string();
-        }
-    }
-
-    trimmed
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or(trimmed)
-        .to_string()
-}
-
-fn first_summary_sentence(output: &str) -> Option<&str> {
-    output
-        .split(['\n', '。', '.', ';', '；', '!', '！', '?', '？'])
-        .map(str::trim)
-        .find(|segment| !segment.is_empty())
-}
-
-fn is_generic_completion_sentence(sentence: &str) -> bool {
-    let trimmed = sentence.trim();
-    trimmed.contains("任务完成")
-        || trimmed == "完成"
-        || trimmed == "已完成"
-        || trimmed == "规划完成，等待执行"
-}
-
 fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord> {
     let success_values = results.iter().map(|item| item.result.success).collect::<std::collections::BTreeSet<_>>();
     let mut conflicts = Vec::new();
@@ -312,6 +264,40 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
             details: route_values
                 .into_iter()
                 .map(|detail| compact_conflict_detail(&detail))
+                .collect(),
+        });
+    }
+
+    let implementer_polarity = results
+        .iter()
+        .find(|item| item.role.id == "implementer")
+        .and_then(|item| detect_output_polarity(item.result.output.trim()));
+    let validation_disagreements = results
+        .iter()
+        .filter(|item| matches!(item.role.id.as_str(), "test-engineer" | "code-reviewer"))
+        .filter_map(|item| {
+            let polarity = detect_output_polarity(item.result.output.trim())?;
+            Some((item.role.id.as_str(), polarity, item.result.output.trim()))
+        })
+        .filter(|(_, polarity, _)| {
+            implementer_polarity == Some(OutputPolarity::Positive)
+                && *polarity == OutputPolarity::Negative
+        })
+        .collect::<Vec<_>>();
+    if !validation_disagreements.is_empty() {
+        conflicts.push(ConflictRecord {
+            kind: "validation_conflict".to_string(),
+            summary: format!(
+                "implementation completion conflicts with validation findings: {}",
+                validation_disagreements
+                    .iter()
+                    .map(|(role_id, _, _)| *role_id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            details: validation_disagreements
+                .iter()
+                .map(|(role_id, _, output)| compact_conflict_detail(&format!("{}: {}", role_id, output)))
                 .collect(),
         });
     }
@@ -363,118 +349,12 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
     conflicts
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputPolarity {
-    Positive,
-    Negative,
-}
-
-impl OutputPolarity {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Positive => "positive",
-            Self::Negative => "negative",
-        }
-    }
-}
-
-fn detect_output_polarity(output: &str) -> Option<OutputPolarity> {
-    let normalized = output.to_lowercase();
-    let negative_signals = [
-        "fail",
-        "failed",
-        "failure",
-        "error",
-        "cannot",
-        "can't",
-        "unable",
-        "blocked",
-        "regression",
-        "broken",
-        "conflict",
-        "风险",
-        "失败",
-        "错误",
-        "阻塞",
-        "回归",
-        "冲突",
-    ];
-    if negative_signals.iter().any(|signal| normalized.contains(signal)) {
-        return Some(OutputPolarity::Negative);
-    }
-
-    let positive_signals = [
-        "pass",
-        "passed",
-        "success",
-        "successful",
-        "done",
-        "completed",
-        "ready",
-        "approved",
-        "looks good",
-        "完成",
-        "通过",
-        "成功",
-        "可用",
-        "已修复",
-    ];
-    if positive_signals.iter().any(|signal| normalized.contains(signal)) {
-        return Some(OutputPolarity::Positive);
-    }
-
-    None
-}
-
-fn normalized_output(output: &str) -> Option<String> {
-    let extracted = output
-        .split_once("final=")
-        .map(|(_, tail)| tail)
-        .unwrap_or(output);
-    let extracted = extracted
-        .split_once("结论：")
-        .map(|(_, tail)| tail)
-        .unwrap_or(extracted);
-    let normalized = extracted
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn consensus_output(output: &str) -> Option<String> {
-    if let Some(consensus) = extract_final_consensus(output) {
-        return normalized_output(consensus);
-    }
-    normalized_output(output)
-}
-
-fn extract_final_consensus(output: &str) -> Option<&str> {
-    output
-        .rsplit_once('。')
-        .map(|(_, tail)| tail.trim())
-        .filter(|tail| !tail.is_empty())
-        .or_else(|| {
-            output
-                .rsplit_once('.')
-                .map(|(_, tail)| tail.trim())
-                .filter(|tail| !tail.is_empty())
-        })
-        .filter(|tail| {
-            tail.contains("任务完成")
-                || tail.contains("完成")
-                || tail.contains("失败")
-                || tail.contains("阻塞")
-                || tail.contains("error")
-                || tail.contains("failed")
-        })
-}
-
-fn build_summary_record(task_prompt: &str, results: &[WorkerRunResult], conflicts: &[String]) -> SummaryRecord {
+fn build_summary_record(
+    task_prompt: &str,
+    results: &[WorkerRunResult],
+    conflicts: &[String],
+    conflict_records: &[ConflictRecord],
+) -> SummaryRecord {
     let mut ordered = results.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|item| role_rank(&item.role.id));
 
@@ -507,7 +387,7 @@ fn build_summary_record(task_prompt: &str, results: &[WorkerRunResult], conflict
 
     let overall_conclusion = infer_overall_conclusion(&items, reporter_summary.as_deref());
     let key_risks = collect_summary_risks(&items, conflicts);
-    let recommended_next_action = infer_recommended_next_action(&items, conflicts);
+    let recommended_next_action = infer_recommended_next_action(&items, conflicts, conflict_records);
 
     SummaryRecord {
         task: task_prompt.trim().to_string(),
@@ -533,137 +413,42 @@ fn collect_summary_risks(items: &[SummaryItemRecord], conflicts: &[String]) -> V
     risks
 }
 
-fn extract_risk_summary(output: &str) -> Option<String> {
-    let trimmed = output.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let lowered = trimmed.to_lowercase();
-    let risk_signals = [
-        "风险",
-        "阻塞",
-        "失败",
-        "错误",
-        "冲突",
-        "回归",
-        "risk",
-        "blocked",
-        "failed",
-        "error",
-        "conflict",
-        "regression",
-    ];
-    if !risk_signals.iter().any(|signal| lowered.contains(signal)) {
-        return None;
-    }
-
-    let sentence = trimmed
-        .split(['\n', '。', '.', ';', '；', '!', '！', '?', '？'])
-        .map(str::trim)
-        .find(|segment| {
-            let lowered = segment.to_lowercase();
-            !segment.is_empty() && risk_signals.iter().any(|signal| lowered.contains(signal))
-        })
-        .unwrap_or(trimmed);
-
-    let sentence = sentence
-        .strip_prefix("- ")
-        .or_else(|| sentence.strip_prefix("* "))
-        .unwrap_or(sentence)
-        .trim();
-
-    let sentence = ["但", "不过", "然而"]
-        .iter()
-        .find_map(|marker| sentence.find(marker).map(|index| sentence[index..].trim()))
-        .filter(|value| !value.is_empty())
-        .unwrap_or(sentence);
-
-    if sentence.is_empty() {
-        return None;
-    }
-
-    Some(sentence.to_string())
-}
-
-fn compact_conflict_detail(detail: &str) -> String {
-    let trimmed = detail.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    if (trimmed.contains('=') || trimmed.contains('/'))
-        && !trimmed.contains(' ')
-        && !trimmed.contains('\n')
-        && !trimmed.contains('。')
-        && !trimmed.contains('.')
-    {
-        return trimmed.to_string();
-    }
-
-    if let Some(risk_summary) = extract_risk_summary(trimmed) {
-        return risk_summary;
-    }
-
-    if let Some(consensus) = extract_final_consensus(trimmed) {
-        let consensus = consensus.trim();
-        if !consensus.is_empty() {
-            return consensus.to_string();
-        }
-    }
-
-    trimmed
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or(trimmed)
-        .to_string()
-}
-
 fn infer_overall_conclusion(
     items: &[SummaryItemRecord],
     reporter_summary: Option<&str>,
 ) -> Option<String> {
+    const PRIORITIZED_ROLE_CONCLUSIONS: &[&str] = &[
+        "code-reviewer",
+        "test-engineer",
+        "implementer",
+        "system-architect",
+    ];
+
     if let Some(summary) = reporter_summary.map(str::trim).filter(|value| !value.is_empty()) {
         return Some(summary.to_string());
     }
 
-    if let Some(reviewer_conclusion) = items
-        .iter()
-        .find(|item| item.role_id == "code-reviewer")
-        .and_then(|item| extract_final_consensus(&item.output))
-    {
-        return Some(reviewer_conclusion.to_string());
-    }
-
-    if let Some(test_conclusion) = items
-        .iter()
-        .find(|item| item.role_id == "test-engineer")
-        .and_then(|item| extract_final_consensus(&item.output))
-    {
-        return Some(test_conclusion.to_string());
-    }
-
-    if let Some(implementer_conclusion) = items
-        .iter()
-        .find(|item| item.role_id == "implementer")
-        .and_then(|item| extract_final_consensus(&item.output))
-    {
-        return Some(implementer_conclusion.to_string());
-    }
-
-    if let Some(architect_conclusion) = items
-        .iter()
-        .find(|item| item.role_id == "system-architect")
-        .and_then(|item| extract_final_consensus(&item.output))
-    {
-        return Some(architect_conclusion.to_string());
+    if let Some(conclusion) = PRIORITIZED_ROLE_CONCLUSIONS.iter().find_map(|role_id| {
+        items
+            .iter()
+            .find(|item| item.role_id == *role_id)
+            .and_then(|item| extract_final_consensus(&item.output))
+    }) {
+        return Some(conclusion.to_string());
     }
 
     items.first().map(|item| item.output.clone())
 }
 
-fn infer_recommended_next_action(items: &[SummaryItemRecord], conflicts: &[String]) -> Option<String> {
+fn infer_recommended_next_action(
+    items: &[SummaryItemRecord],
+    conflicts: &[String],
+    conflict_records: &[ConflictRecord],
+) -> Option<String> {
+    if conflict_records.iter().any(|record| record.kind == "validation_conflict") {
+        return Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。".to_string());
+    }
+
     if !conflicts.is_empty() {
         return Some("先消解角色间冲突，再进入下一步执行或交付。".to_string());
     }
@@ -674,30 +459,46 @@ fn infer_recommended_next_action(items: &[SummaryItemRecord], conflicts: &[Strin
         .filter_map(|item| detect_output_polarity(&item.output))
         .any(|polarity| polarity == OutputPolarity::Negative);
 
+    const NEGATIVE_SIGNAL_ACTION: &str = "先处理当前失败或阻塞项，再重新执行验证与裁决。";
+    const ROLE_PAIR_ACTIONS: &[(&[&str], &str)] = &[
+        (
+            &["implementer", "code-reviewer"],
+            "运行最终验证并整理交付结论，确认改动可以提交。",
+        ),
+        (
+            &["implementer", "test-engineer"],
+            "补齐验证结果并确认回归情况，再进入审查或交付。",
+        ),
+        (
+            &["system-architect", "reporter"],
+            "基于当前架构结论进入实现拆解，并同步给用户执行方向。",
+        ),
+    ];
+    const SINGLE_ROLE_ACTIONS: &[(&str, &str)] = &[
+        ("implementer", "进入验证与审查阶段，确认改动行为和回归风险。"),
+        ("test-engineer", "根据验证结果决定是否继续修复，或整理测试结论进入交付。"),
+        ("system-architect", "根据当前架构结论进入实现或验证阶段。"),
+        ("reporter", "当前结论可直接反馈给用户，并根据需要继续下一轮细化。"),
+    ];
+
     if has_negative_signal {
-        return Some("先处理当前失败或阻塞项，再重新执行验证与裁决。".to_string());
+        return Some(NEGATIVE_SIGNAL_ACTION.to_string());
     }
-    if has_role("implementer") && has_role("code-reviewer") {
-        return Some("运行最终验证并整理交付结论，确认改动可以提交。".to_string());
+
+    if let Some((_, action)) = ROLE_PAIR_ACTIONS
+        .iter()
+        .find(|(roles, _)| roles.iter().all(|role_id| has_role(role_id)))
+    {
+        return Some((*action).to_string());
     }
-    if has_role("implementer") && has_role("test-engineer") {
-        return Some("补齐验证结果并确认回归情况，再进入审查或交付。".to_string());
+
+    if let Some((_, action)) = SINGLE_ROLE_ACTIONS
+        .iter()
+        .find(|(role_id, _)| has_role(role_id))
+    {
+        return Some((*action).to_string());
     }
-    if has_role("system-architect") && has_role("reporter") {
-        return Some("基于当前架构结论进入实现拆解，并同步给用户执行方向。".to_string());
-    }
-    if has_role("implementer") {
-        return Some("进入验证与审查阶段，确认改动行为和回归风险。".to_string());
-    }
-    if has_role("test-engineer") {
-        return Some("根据验证结果决定是否继续修复，或整理测试结论进入交付。".to_string());
-    }
-    if has_role("system-architect") {
-        return Some("根据当前架构结论进入实现或验证阶段。".to_string());
-    }
-    if has_role("reporter") {
-        return Some("当前结论可直接反馈给用户，并根据需要继续下一轮细化。".to_string());
-    }
+
     None
 }
 
@@ -717,9 +518,10 @@ fn role_rank(role_id: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_summary_record, compact_aggregate_output, compact_conflict_detail, extract_risk_summary, infer_overall_conclusion, infer_recommended_next_action};
+    use super::{build_summary_record, collect_conflict_records, infer_overall_conclusion, infer_recommended_next_action};
     use crate::agents::worker::WorkerRunResult;
-    use sacode_kernel::{AgentRole, RoleModelPolicy, SubAgentResult, SubAgentTask};
+    use crate::agents::summary_compactor::{compact_aggregate_output, compact_conflict_detail, extract_risk_summary};
+    use sacode_kernel::{AgentRole, ConflictRecord, RoleModelPolicy, SubAgentResult, SubAgentTask};
     use sacode_kernel::SummaryItemRecord;
 
     fn item(role_id: &str, output: &str) -> SummaryItemRecord {
@@ -784,7 +586,7 @@ mod tests {
             item("system-architect", "架构分析完成。"),
             item("reporter", "已整理结论。"),
         ];
-        let next = infer_recommended_next_action(&items, &[]);
+        let next = infer_recommended_next_action(&items, &[], &[]);
         assert_eq!(next.as_deref(), Some("基于当前架构结论进入实现拆解，并同步给用户执行方向。"));
     }
 
@@ -794,7 +596,7 @@ mod tests {
             item("implementer", "改动已完成。"),
             item("test-engineer", "验证失败，存在阻塞。"),
         ];
-        let next = infer_recommended_next_action(&items, &[]);
+        let next = infer_recommended_next_action(&items, &[], &[]);
         assert_eq!(next.as_deref(), Some("先处理当前失败或阻塞项，再重新执行验证与裁决。"));
     }
 
@@ -849,11 +651,39 @@ mod tests {
             worker("reporter", "汇总结论已生成，完成 5 个步骤。任务完成，共完成 5 个步骤"),
         ];
 
-        let summary = build_summary_record("test prompt", &results, &[]);
+        let summary = build_summary_record("test prompt", &results, &[], &[]);
 
         assert_eq!(summary.reporter_summary.as_deref(), Some("汇总结论已生成，完成 5 个步骤"));
         assert_eq!(summary.overall_conclusion.as_deref(), Some("汇总结论已生成，完成 5 个步骤"));
         assert_eq!(summary.items[0].output, "任务完成，共完成 5 个步骤");
         assert_eq!(summary.items[1].output, "汇总结论已生成，完成 5 个步骤");
+    }
+
+    #[test]
+    fn collect_conflict_records_adds_validation_conflict_for_negative_validation() {
+        let implementer = worker("implementer", "实现结果已整理。任务完成，共完成 5 个步骤");
+        let tester = worker("test-engineer", "验证风险已识别。验证失败，存在阻塞。建议补齐回归验证。");
+
+        let conflicts = collect_conflict_records(&[&implementer, &tester]);
+
+        assert!(conflicts.iter().any(|record| record.kind == "validation_conflict"));
+    }
+
+    #[test]
+    fn infer_recommended_next_action_prioritizes_validation_conflict() {
+        let items = vec![
+            item("implementer", "实现结果已整理。任务完成，共完成 5 个步骤"),
+            item("test-engineer", "验证风险已识别。验证失败，存在阻塞。"),
+        ];
+        let conflict_records = vec![ConflictRecord {
+            kind: "validation_conflict".to_string(),
+            summary: "implementation completion conflicts with validation findings: test-engineer"
+                .to_string(),
+            details: vec!["test-engineer: 验证失败，存在阻塞".to_string()],
+        }];
+
+        let next = infer_recommended_next_action(&items, &["conflict".to_string()], &conflict_records);
+
+        assert_eq!(next.as_deref(), Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。"));
     }
 }
