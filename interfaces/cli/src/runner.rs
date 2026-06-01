@@ -1,12 +1,13 @@
 use std::{env, path::Path, time::{Duration, Instant}};
 
 use anyhow::Result;
-use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
+use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task, TaskRun, TaskRunState};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
 use sacode_runtime::{
     build_runtime_system_prompt, maybe_expand_skill_prompt, FailoverContext, McpConfigStore,
+    infer_task_run_state,
     ProviderClient, SandboxConfigStore, SandboxPolicy, SideEffectLevel, TaskProfile, ToolRegistry, register_enabled_mcp_tools_sync,
-    PromptContext, NodeScore,
+    PromptContext, NodeScore, task_run_from_report, task_run_snapshot,
 };
 use serde::Serialize;
 
@@ -21,14 +22,6 @@ pub struct ToolResult {
     pub summary: String,
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
-pub enum TaskRunState {
-    Completed,
-    WaitingForUser,
-    WaitingForApproval,
-    Failed,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct RunnerOutput {
     pub prompt: String,
@@ -40,16 +33,23 @@ pub struct RunnerOutput {
     pub events: Vec<Event>,
     pub tool_results: Vec<ToolResult>,
     pub provider_response: std::result::Result<String, String>,
-    pub state: TaskRunState,
     pub learned_facts: Vec<learning::LearnedFact>,
     pub pending_question: Option<serde_json::Value>,
     pub usage: Option<ChatUsage>,
     pub api_duration_ms: u64,
     pub tool_duration_ms: u64,
     pub total_duration_ms: u64,
+    pub task_run: TaskRun,
 }
 
 impl RunnerOutput {
+    pub fn effective_state(&self) -> TaskRunState {
+        self.task_run
+            .state
+            .clone()
+            .unwrap_or(TaskRunState::Failed)
+    }
+
     pub fn from_execution_report(
         report: &ExecutionReport,
         prompt: String,
@@ -57,6 +57,8 @@ impl RunnerOutput {
         max_iterations: usize,
         workspace: String,
     ) -> Self {
+        let task_prompt = prompt.clone();
+        let task_run = task_run_from_report(None, mode, task_prompt, report, infer_task_run_state(report));
         let tool_names: Vec<String> = report.tool_records.iter()
             .map(|r| r.tool_name.clone())
             .collect();
@@ -89,13 +91,13 @@ impl RunnerOutput {
             events: report.events.clone(),
             tool_results,
             provider_response: Err("orchestrator mode does not call provider".to_string()),
-            state: TaskRunState::Completed,
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
             api_duration_ms: 0,
             tool_duration_ms: 0,
             total_duration_ms: 0,
+            task_run,
         }
     }
 }
@@ -283,6 +285,14 @@ pub async fn run_task_with_stdin(
         Vec::new()
     };
 
+    let task_run = task_run_snapshot(
+        None,
+        mode,
+        expanded_prompt.clone(),
+        state.clone(),
+        provider_response.as_ref().ok().cloned().or_else(|| provider_response.as_ref().err().cloned()),
+    );
+
     Ok(RunnerOutput {
         prompt: expanded_prompt,
         mode,
@@ -293,13 +303,13 @@ pub async fn run_task_with_stdin(
         events: Vec::new(),
         tool_results: vec![],
         provider_response,
-        state,
         learned_facts,
         pending_question,
         usage,
         api_duration_ms,
         tool_duration_ms,
         total_duration_ms: elapsed_ms(total_started_at.elapsed()),
+        task_run,
     })
 }
 
@@ -516,7 +526,7 @@ pub fn format_output(output: &RunnerOutput) -> String {
         Err(error) => lines.push(format!("Provider: {}", error)),
     }
 
-    lines.push(format!("State: {:?}", output.state));
+    lines.push(format!("State: {:?}", output.effective_state()));
 
     if let Some(question) = &output.pending_question {
         lines.push("Pending Question:".to_string());
@@ -685,7 +695,7 @@ mod tests {
     use super::RunnerOutput;
     use super::TaskRunState;
     use crate::learning::{LearnedFact, LearnedKind};
-    use sacode_kernel::{Event, ExecutionMode, Plan};
+    use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
     use sacode_kernel::model::ModelProvider;
 
     #[test]
@@ -769,16 +779,75 @@ mod tests {
             events: vec![Event::done("完成")],
             tool_results: Vec::new(),
             provider_response: Ok("已完成".to_string()),
-            state: TaskRunState::Completed,
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
             api_duration_ms: 1,
             tool_duration_ms: 2,
             total_duration_ms: 3,
+            task_run: TaskRun {
+                mode: Some(ExecutionMode::Build),
+                state: Some(TaskRunState::Completed),
+                prompt: Some("测试任务".to_string()),
+                ..TaskRun::default()
+            },
         };
 
         let text = format_output(&output);
         assert!(text.contains("State: Completed"));
+    }
+
+    #[test]
+    fn format_output_prefers_task_run_state_over_legacy_state() {
+        let output = RunnerOutput {
+            prompt: "测试任务".to_string(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            tool_names: vec!["web.search".to_string()],
+            workspace: "/workspace".to_string(),
+            plan: Plan {
+                task: "测试任务".to_string(),
+                steps: Vec::new(),
+                mode: "build".to_string(),
+            },
+            events: vec![Event::done("完成")],
+            tool_results: Vec::new(),
+            provider_response: Ok("已完成".to_string()),
+            learned_facts: Vec::new(),
+            pending_question: None,
+            usage: None,
+            api_duration_ms: 1,
+            tool_duration_ms: 2,
+            total_duration_ms: 3,
+            task_run: TaskRun {
+                mode: Some(ExecutionMode::Build),
+                state: Some(TaskRunState::Completed),
+                prompt: Some("测试任务".to_string()),
+                ..TaskRun::default()
+            },
+        };
+
+        let text = format_output(&output);
+        assert!(text.contains("State: Completed"));
+    }
+
+    #[test]
+    fn from_execution_report_populates_task_run_snapshot() {
+        let report = ExecutionReport {
+            final_output: Some("编排完成".to_string()),
+            ..ExecutionReport::default()
+        };
+
+        let output = RunnerOutput::from_execution_report(
+            &report,
+            "测试任务".to_string(),
+            ExecutionMode::Build,
+            1,
+            "/workspace".to_string(),
+        );
+
+        assert_eq!(output.task_run.state, Some(TaskRunState::Completed));
+        assert_eq!(output.task_run.mode, Some(ExecutionMode::Build));
+        assert_eq!(output.task_run.report.as_ref().and_then(|r| r.final_output.clone()), Some("编排完成".to_string()));
     }
 }

@@ -1,6 +1,6 @@
-use sacode_kernel::{ApprovalPolicy, Checkpoint, ExecutionContext, ExecutionReport, HookContext, LifecyclePoint, Supervisor, ToolExecutionContext, ToolExecutionRecord};
+use sacode_kernel::{ApprovalPolicy, Checkpoint, ExecutionContext, ExecutionReport, HookContext, LifecyclePoint, Supervisor, TaskRun, ToolExecutionContext, ToolExecutionRecord};
 
-use crate::{CheckpointStorage, HookExecutor, LoggingHook, SandboxExecutor, ToolRegistry};
+use crate::{task_run_from_report, CheckpointStorage, HookExecutor, LoggingHook, SandboxExecutor, ToolRegistry};
 
 pub struct RuntimeOrchestrator {
     supervisor: Supervisor,
@@ -109,6 +109,17 @@ impl RuntimeOrchestrator {
         report.hook_records.extend(self.hooks.execute(LifecyclePoint::TaskFinished, &task_finished));
 
         Ok(report)
+    }
+
+    pub fn execute_task_run(&self, context: &ExecutionContext) -> anyhow::Result<TaskRun> {
+        let report = self.execute(context)?;
+        Ok(task_run_from_report(
+            context.task_id.clone(),
+            context.mode,
+            context.task.prompt.clone(),
+            &report,
+            crate::infer_task_run_state(&report),
+        ))
     }
 
     fn execute_tool(&self, name: &str, input: &serde_json::Value, approval: ApprovalPolicy) -> (serde_json::Value, bool) {

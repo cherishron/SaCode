@@ -9,7 +9,7 @@ use axum::{
 };
 use tokio::sync::{broadcast, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
+use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus, TaskRun};
 use crate::tools::ToolRegistry;
 use crate::queue::TaskQueue;
 use crate::executor::TaskExecutor;
@@ -74,6 +74,8 @@ pub struct TaskStatus {
     pub duration_ms: Option<u64>,
     pub error: Option<String>,
     pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_run: Option<TaskRun>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -114,6 +116,7 @@ impl DaemonState {
 
 pub async fn create_daemon() -> Router {
     let state = Arc::new(DaemonState::new());
+    spawn_executor_event_forwarder(state.clone());
 
     Router::new()
         .route("/health", get(health_check))
@@ -171,6 +174,7 @@ async fn create_task(
                 duration_ms: None,
                 error: None,
                 output: None,
+                task_run: None,
             },
         );
     }
@@ -212,14 +216,58 @@ async fn get_task_status(
     let tasks = state.tasks.read().await;
 
     if let Some(status) = tasks.get(&task_id) {
-        return Json(serde_json::to_value(status).unwrap_or_else(|_| serde_json::json!({
-            "task_id": task_id,
-            "status": "error"
-        })));
+        let task_run = status.task_run.clone().or_else(|| {
+            Some(crate::task_run_snapshot(
+                Some(status.task_id.clone()),
+                parse_mode(&status.mode),
+                status.prompt.clone(),
+                match status.queue_status.as_str() {
+                    "completed" => sacode_kernel::TaskRunState::Completed,
+                    "failed" => sacode_kernel::TaskRunState::Failed,
+                    "running" => sacode_kernel::TaskRunState::WaitingForUser,
+                    _ => sacode_kernel::TaskRunState::WaitingForUser,
+                },
+                status.output.clone().or_else(|| status.error.clone()),
+            ))
+        });
+        let derived_status = task_run
+            .as_ref()
+            .and_then(|run| run.state.as_ref())
+            .map(task_run_state_to_queue_status)
+            .unwrap_or_else(|| status.queue_status.clone());
+        return Json(serde_json::json!({
+            "task_id": status.task_id,
+            "prompt": status.prompt,
+            "mode": status.mode,
+            "status": derived_status,
+            "queue_status": derived_status,
+            "priority": status.priority,
+            "progress": status.progress,
+            "total_steps": status.total_steps,
+            "current_event": status.current_event,
+            "current_attempt": status.current_attempt,
+            "max_attempts": status.max_attempts,
+            "duration_ms": status.duration_ms,
+            "error": status.error,
+            "output": status.output,
+            "task_run": task_run,
+        }));
     }
 
     if let Some(queue_status) = state.queue.status(&task_id).await {
         if let Some(task) = state.queue.get_task(&task_id).await {
+            let task_run = crate::task_run_snapshot(
+                Some(task.id.clone()),
+                task.task.mode,
+                task.task.prompt.clone(),
+                match queue_status {
+                    TaskQueueStatus::Running => sacode_kernel::TaskRunState::WaitingForUser,
+                    TaskQueueStatus::Completed => sacode_kernel::TaskRunState::Completed,
+                    TaskQueueStatus::Failed => sacode_kernel::TaskRunState::Failed,
+                    _ => sacode_kernel::TaskRunState::WaitingForUser,
+                },
+                None,
+            );
             return Json(serde_json::json!({
                 "task_id": task_id,
                 "prompt": task.task.prompt,
@@ -229,11 +277,25 @@ async fn get_task_status(
                 "priority": task.priority.to_string(),
                 "current_attempt": task.current_attempt,
                 "max_attempts": task.retry_policy.max_attempts,
+                "task_run": task_run,
             }));
         }
     }
 
     if let Some(result) = state.queue.get_result(&task_id).await {
+        let task_run = state.queue.get_task_run(&task_id).await.unwrap_or_else(|| {
+            crate::task_run_snapshot(
+                Some(result.task_id.clone()),
+                ExecutionMode::Build,
+                String::new(),
+                if result.status == TaskQueueStatus::Failed {
+                    sacode_kernel::TaskRunState::Failed
+                } else {
+                    sacode_kernel::TaskRunState::Completed
+                },
+                result.output.clone().or_else(|| result.error.clone()),
+            )
+        });
         return Json(serde_json::json!({
             "task_id": task_id,
             "status": result.status.to_string(),
@@ -241,6 +303,7 @@ async fn get_task_status(
             "duration_ms": result.duration_ms,
             "error": result.error,
             "output": result.output,
+            "task_run": task_run,
         }));
     }
 
@@ -255,11 +318,50 @@ async fn get_task_result(
     State(state): State<Arc<DaemonState>>,
     Path(task_id): Path<String>,
 ) -> Json<serde_json::Value> {
+    {
+        let tasks = state.tasks.read().await;
+        if let Some(status) = tasks.get(&task_id) {
+            let derived_status = status
+                .task_run
+                .as_ref()
+                .and_then(|run| run.state.as_ref())
+                .map(task_run_state_to_queue_status)
+                .unwrap_or_else(|| status.queue_status.clone());
+            return Json(serde_json::json!({
+                "task_id": status.task_id.clone(),
+                "status": derived_status.clone(),
+                "queue_status": derived_status,
+                "duration_ms": status.duration_ms,
+                "error": status.error.clone(),
+                "output": status.output.clone(),
+                "task_run": status.task_run.clone(),
+            }));
+        }
+    }
+
     if let Some(result) = state.queue.get_result(&task_id).await {
-        return Json(serde_json::to_value(result).unwrap_or_else(|_| serde_json::json!({
-            "task_id": task_id,
-            "status": "error"
-        })));
+        let task_run = state.queue.get_task_run(&task_id).await.unwrap_or_else(|| {
+            crate::task_run_snapshot(
+                Some(result.task_id.clone()),
+                ExecutionMode::Build,
+                String::new(),
+                if result.status == TaskQueueStatus::Failed {
+                    sacode_kernel::TaskRunState::Failed
+                } else {
+                    sacode_kernel::TaskRunState::Completed
+                },
+                result.output.clone().or_else(|| result.error.clone()),
+            )
+        });
+        return Json(serde_json::json!({
+            "task_id": result.task_id,
+            "status": result.status,
+            "output": result.output,
+            "error": result.error,
+            "duration_ms": result.duration_ms,
+            "completed_at": result.completed_at,
+            "task_run": task_run,
+        }));
     }
 
     Json(serde_json::json!({
@@ -474,10 +576,90 @@ fn parse_retry_policy(req: &Option<RetryPolicyRequest>) -> RetryPolicy {
     }
 }
 
+fn task_run_state_to_queue_status(state: &sacode_kernel::TaskRunState) -> String {
+    match state {
+        sacode_kernel::TaskRunState::Completed => TaskQueueStatus::Completed.to_string(),
+        sacode_kernel::TaskRunState::Failed => TaskQueueStatus::Failed.to_string(),
+        sacode_kernel::TaskRunState::WaitingForApproval | sacode_kernel::TaskRunState::WaitingForUser => {
+            TaskQueueStatus::Running.to_string()
+        }
+    }
+}
+
+fn sync_task_status_from_task_run(status: &mut TaskStatus) {
+    if let Some(task_run_state) = status.task_run.as_ref().and_then(|run| run.state.as_ref()) {
+        let queue_status = task_run_state_to_queue_status(task_run_state);
+        status.queue_status = queue_status.clone();
+        status.status = queue_status;
+    }
+}
+
 fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_json::Value) {
     let _ = state.event_bus.send(StreamEvent {
         task_id: task_id.to_string(),
         event_type: event_type.to_string(),
         data,
     });
+}
+
+fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
+    tokio::spawn(async move {
+        let mut receiver = {
+            let executor = state.executor.lock().await;
+            executor.subscribe()
+        };
+
+        loop {
+            match receiver.recv().await {
+                Ok(evt) => {
+                    update_task_status_from_executor_event(&state, &evt).await;
+                    let _ = state.event_bus.send(StreamEvent {
+                        task_id: evt.task_id,
+                        event_type: evt.event_type,
+                        data: evt.data,
+                    });
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+async fn update_task_status_from_executor_event(state: &Arc<DaemonState>, evt: &crate::executor::ExecutorEvent) {
+    let mut tasks = state.tasks.write().await;
+    let Some(status) = tasks.get_mut(&evt.task_id) else {
+        return;
+    };
+
+    status.current_event = Some(evt.event_type.clone());
+
+    match evt.event_type.as_str() {
+        "task_started" => {
+            status.task_run = Some(crate::task_run_snapshot(
+                Some(status.task_id.clone()),
+                parse_mode(&status.mode),
+                status.prompt.clone(),
+                sacode_kernel::TaskRunState::WaitingForUser,
+                None,
+            ));
+            sync_task_status_from_task_run(status);
+        }
+        "task_completed" | "task_failed" => {
+            if let Some(result_value) = evt.data.get("result") {
+                if let Ok(result) = serde_json::from_value::<sacode_kernel::TaskResult>(result_value.clone()) {
+                    status.duration_ms = Some(result.duration_ms);
+                    status.output = result.output.clone();
+                    status.error = result.error.clone();
+                }
+            }
+            if let Some(task_run_value) = evt.data.get("task_run") {
+                if let Ok(task_run) = serde_json::from_value::<TaskRun>(task_run_value.clone()) {
+                    status.task_run = Some(task_run);
+                }
+            }
+            sync_task_status_from_task_run(status);
+        }
+        _ => {}
+    }
 }

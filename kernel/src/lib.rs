@@ -11,7 +11,7 @@ pub mod schema;
 mod tests;
 
 pub use agent::{AgentExecutionPlan, AgentOutput, AgentRole, CoderAgent, CoderOutput, ExecutionResult, OrchestrationHint, OrchestrationMode, PlannedRole, PlannerAgent, ReviewerAgent, RoleModelPolicy, RoleScore, RoleStage, SubAgentResult, SubAgentTask, Supervisor, TaskAnalysis, TaskScope, TaskType, ToolCallIntent};
-pub use execution::{ApprovalPolicy, ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, StepContext, SummaryItemRecord, SummaryRecord, ToolExecutionContext, ToolExecutionRecord};
+pub use execution::{ApprovalPolicy, ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, SessionRun, StepContext, SummaryItemRecord, SummaryRecord, TaskRun, TaskRunState, ToolExecutionContext, ToolExecutionRecord, WorkerRun};
 pub use event::{Event, ApprovalAction, FileChangeType};
 pub use hook::{Hook, HookContext, HookResult};
 pub use schema::{

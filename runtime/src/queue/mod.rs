@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sacode_kernel::{QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult};
+use sacode_kernel::{QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 
 pub struct TaskQueue {
@@ -11,6 +11,8 @@ pub struct TaskQueue {
     running: RwLock<HashMap<String, ScheduledTask>>,
     completed: RwLock<HashMap<String, TaskResult>>,
     failed: RwLock<HashMap<String, TaskResult>>,
+    completed_runs: RwLock<HashMap<String, TaskRun>>,
+    failed_runs: RwLock<HashMap<String, TaskRun>>,
     retrying: RwLock<HashMap<String, ScheduledTask>>,
     cancelled: RwLock<HashMap<String, ScheduledTask>>,
     concurrency_semaphore: Semaphore,
@@ -25,6 +27,8 @@ impl TaskQueue {
             running: RwLock::new(HashMap::new()),
             completed: RwLock::new(HashMap::new()),
             failed: RwLock::new(HashMap::new()),
+            completed_runs: RwLock::new(HashMap::new()),
+            failed_runs: RwLock::new(HashMap::new()),
             retrying: RwLock::new(HashMap::new()),
             cancelled: RwLock::new(HashMap::new()),
             concurrency_semaphore: Semaphore::new(max_concurrency),
@@ -100,19 +104,22 @@ impl TaskQueue {
         }
     }
 
-    pub async fn mark_completed(&self, task_id: &str, result: TaskResult) {
+    pub async fn mark_completed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
         let mut running = self.running.write().await;
         running.remove(task_id);
 
         let mut completed = self.completed.write().await;
         completed.insert(task_id.to_string(), result.clone());
 
+        let mut completed_runs = self.completed_runs.write().await;
+        completed_runs.insert(task_id.to_string(), task_run);
+
         if self.store.is_some() {
             let _ = self.store.as_ref().unwrap().save_result(&result).await;
         }
     }
 
-    pub async fn mark_failed(&self, task_id: &str, result: TaskResult) {
+    pub async fn mark_failed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {
             if task.can_retry() && self.should_retry(&task, &result) {
@@ -121,6 +128,9 @@ impl TaskQueue {
             } else {
                 let mut failed = self.failed.write().await;
                 failed.insert(task_id.to_string(), result.clone());
+
+                let mut failed_runs = self.failed_runs.write().await;
+                failed_runs.insert(task_id.to_string(), task_run);
 
                 if self.store.is_some() {
                     let _ = self.store.as_ref().unwrap().save_result(&result).await;
@@ -256,6 +266,20 @@ impl TaskQueue {
         let failed = self.failed.read().await;
         if let Some(result) = failed.get(task_id) {
             return Some(result.clone());
+        }
+
+        None
+    }
+
+    pub async fn get_task_run(&self, task_id: &str) -> Option<TaskRun> {
+        let completed_runs = self.completed_runs.read().await;
+        if let Some(run) = completed_runs.get(task_id) {
+            return Some(run.clone());
+        }
+
+        let failed_runs = self.failed_runs.read().await;
+        if let Some(run) = failed_runs.get(task_id) {
+            return Some(run.clone());
         }
 
         None

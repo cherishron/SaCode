@@ -257,11 +257,22 @@ pub enum SandboxBackendKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DockerSandboxConfig {
+    #[serde(default)]
     pub image: Option<String>,
+    #[serde(default)]
     pub workspace_mount: Option<String>,
+    #[serde(default)]
     pub network_mode: Option<String>,
+    #[serde(default)]
     pub cpus: Option<String>,
+    #[serde(default)]
     pub memory: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub read_only_rootfs: Option<bool>,
+    #[serde(default)]
+    pub tmpfs: Vec<String>,
 }
 
 impl SandboxConfig {

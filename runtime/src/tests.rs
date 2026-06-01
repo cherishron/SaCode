@@ -28,6 +28,90 @@ use crate::{
 };
 use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
 
+#[test]
+fn test_run_task_once_builds_task_run_snapshot() {
+    let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
+    let context = sacode_kernel::ExecutionContext::new(task).with_task_id("task-1");
+
+    let run = crate::run_task_once(&context);
+
+    assert_eq!(run.task_id.as_deref(), Some("task-1"));
+    assert_eq!(run.mode, Some(ExecutionMode::Plan));
+    assert_eq!(run.state, Some(sacode_kernel::TaskRunState::Completed));
+    assert_eq!(run.prompt.as_deref(), Some("生成一个简单计划"));
+    assert_eq!(run.source.as_deref(), Some("report"));
+    assert!(run.started_at.is_some());
+    assert!(run.updated_at.is_some());
+    assert!(run.report.is_some());
+}
+
+#[test]
+fn test_task_run_snapshot_preserves_waiting_state_and_output() {
+    let run = crate::task_run_snapshot(
+        Some("pending-1".to_string()),
+        ExecutionMode::Build,
+        "等待用户确认".to_string(),
+        sacode_kernel::TaskRunState::WaitingForApproval,
+        Some("工具需要授权".to_string()),
+    );
+
+    assert_eq!(run.task_id.as_deref(), Some("pending-1"));
+    assert_eq!(run.mode, Some(ExecutionMode::Build));
+    assert_eq!(run.state, Some(sacode_kernel::TaskRunState::WaitingForApproval));
+    assert_eq!(run.prompt.as_deref(), Some("等待用户确认"));
+    assert_eq!(run.source.as_deref(), Some("snapshot"));
+    assert!(run.started_at.is_some());
+    assert!(run.updated_at.is_some());
+    assert_eq!(run.output_text.as_deref(), Some("工具需要授权"));
+}
+
+#[test]
+fn test_runtime_orchestrator_execute_task_run_returns_snapshot() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+
+    let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
+    let context = sacode_kernel::ExecutionContext::new(task).with_task_id("orch-1");
+    let orchestrator = crate::RuntimeOrchestrator::new(
+        sacode_kernel::Supervisor::new(),
+        ToolRegistry::builtin(),
+        crate::SandboxExecutor::new(crate::SandboxPolicy::for_mode(ExecutionMode::Plan)),
+        crate::CheckpointStorage::new(workdir),
+    );
+
+    let run = orchestrator.execute_task_run(&context).expect("execute task run");
+
+    assert_eq!(run.task_id.as_deref(), Some("orch-1"));
+    assert_eq!(run.mode, Some(ExecutionMode::Plan));
+    assert_eq!(run.state, Some(sacode_kernel::TaskRunState::Completed));
+    assert_eq!(run.prompt.as_deref(), Some("生成一个简单计划"));
+    assert!(run.report.is_some());
+}
+
+#[tokio::test]
+async fn test_role_driven_task_run_returns_snapshot() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+
+    let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
+    let context = sacode_kernel::ExecutionContext::new(task).with_task_id("role-1");
+
+    let (run, _plan) = crate::execute_role_driven_task_run(
+        &context,
+        &crate::CheckpointStorage::new(workdir),
+    )
+    .await
+    .expect("execute role driven task run");
+
+    assert_eq!(run.task_id.as_deref(), Some("role-1"));
+    assert_eq!(run.mode, Some(ExecutionMode::Plan));
+    assert_eq!(run.state, Some(sacode_kernel::TaskRunState::Completed));
+    assert_eq!(run.prompt.as_deref(), Some("生成一个简单计划"));
+    assert!(run.report.is_some());
+}
+
 fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK
@@ -427,9 +511,50 @@ fn test_docker_backend_builds_mounts_from_fs_policy() {
     assert_eq!(command.program, "docker");
     let joined = command.args.join(" ");
     assert!(joined.contains("-v"));
+    assert!(joined.contains("--user"));
+    assert!(joined.contains("--read-only"));
+    assert!(joined.contains("--tmpfs /tmp:rw,noexec,nosuid,size=64m"));
     assert!(joined.contains("/repo/src:ro"));
     assert!(joined.contains("/repo/target"));
     assert!(!joined.contains("/repo/src/private"));
+}
+
+#[test]
+fn test_docker_backend_respects_security_overrides() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(workdir).expect("enter temp dir");
+
+    let backend = DockerSandboxBackend::new(DockerSandboxConfig {
+        image: Some("ghcr.io/example/sacode-sandbox:latest".to_string()),
+        workspace_mount: Some("/repo".to_string()),
+        user: Some("1000:1000".to_string()),
+        read_only_rootfs: Some(false),
+        tmpfs: vec!["/run:rw,size=16m".to_string()],
+        ..DockerSandboxConfig::default()
+    });
+    let policy = crate::sandbox::SandboxPolicy::new().allow_write_path(std::path::PathBuf::from("target"));
+
+    let command = backend
+        .build_docker_command(
+            &policy,
+            &SandboxCommand {
+                program: "git".to_string(),
+                args: vec!["status".to_string()],
+                cwd: None,
+                timeout_ms: 30_000,
+            },
+        )
+        .expect("build docker command");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    let joined = command.args.join(" ");
+    assert!(joined.contains("--user 1000:1000"));
+    assert!(!joined.contains("--read-only"));
+    assert!(joined.contains("--tmpfs /run:rw,size=16m"));
 }
 
 #[test]
@@ -777,6 +902,7 @@ fn test_fs_write_rejects_parent_escape() {
 
 #[test]
 fn test_fs_edit_replace_single() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -798,6 +924,7 @@ fn test_fs_edit_replace_single() {
 
 #[test]
 fn test_fs_edit_not_found() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -818,6 +945,7 @@ fn test_fs_edit_not_found() {
 
 #[test]
 fn test_fs_read_multi_reads_multiple_files() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -839,6 +967,7 @@ fn test_fs_read_multi_reads_multiple_files() {
 
 #[test]
 fn test_fs_list_lists_directory_entries() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -862,6 +991,7 @@ fn test_fs_list_lists_directory_entries() {
 
 #[test]
 fn test_media_read_base64_mode() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -883,6 +1013,7 @@ fn test_media_read_base64_mode() {
 
 #[test]
 fn test_media_read_ppm_describe_mode_includes_dimensions() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -911,6 +1042,7 @@ fn test_media_read_ppm_describe_mode_includes_dimensions() {
 
 #[test]
 fn test_media_read_png_ocr_without_visual_provider_falls_back() {
+    let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -1140,6 +1272,19 @@ async fn test_daemon_task_lifecycle() {
 
     assert_eq!(payload["task_id"], task_id);
     assert!(matches!(payload["queue_status"].as_str(), Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")));
+    if let Some(task_run_state) = payload
+        .get("task_run")
+        .and_then(|value| value.get("state"))
+        .and_then(|value| value.as_str())
+    {
+        let expected_queue_status = match task_run_state {
+            "Completed" => "completed",
+            "Failed" => "failed",
+            "WaitingForUser" | "WaitingForApproval" => "running",
+            other => panic!("unexpected task_run state: {}", other),
+        };
+        assert_eq!(payload["queue_status"].as_str(), Some(expected_queue_status));
+    }
 }
 
 #[tokio::test]
@@ -1228,6 +1373,76 @@ async fn test_daemon_task_events_endpoint_filters_by_task_id() {
 }
 
 #[tokio::test]
+async fn test_daemon_status_and_result_include_task_run() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"分析代码结构","mode":"plan"}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    let task_id = payload["task_id"].as_str().expect("task id").to_string();
+
+    let mut status_payload = serde_json::Value::Null;
+    for _ in 0..10 {
+        let status_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/task/{}/status", task_id))
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("daemon should return status");
+        let status_body = to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .expect("read status body");
+        status_payload = serde_json::from_slice(&status_body).expect("valid status json");
+        if status_payload.get("task_run").is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(status_payload.get("task_run").is_some());
+
+    let mut result_payload = serde_json::Value::Null;
+    for _ in 0..10 {
+        let result_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/task/{}/result", task_id))
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("daemon should return result");
+        let result_body = to_bytes(result_response.into_body(), usize::MAX)
+            .await
+            .expect("read result body");
+        result_payload = serde_json::from_slice(&result_body).expect("valid result json");
+        if result_payload.get("task_run").is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(result_payload.get("task_run").is_some());
+}
+
+#[tokio::test]
 async fn test_task_queue_submit_and_status() {
     let queue = Arc::new(TaskQueue::new(2));
 
@@ -1239,6 +1454,37 @@ async fn test_task_queue_submit_and_status() {
 
     let stats = queue.stats().await;
     assert_eq!(stats.ready_count, 1);
+}
+
+#[tokio::test]
+async fn test_task_executor_emits_task_run_in_completion_event() {
+    let queue = Arc::new(TaskQueue::new(1));
+    queue
+        .submit(ScheduledTask::new(
+            "exec-1".to_string(),
+            Task::new("生成一个简单计划", ExecutionMode::Plan, None),
+        ))
+        .await
+        .expect("submit task");
+
+    let mut executor = crate::executor::TaskExecutor::new(queue, ToolRegistry::builtin());
+    let mut receiver = executor.subscribe();
+
+    executor.run_once().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    executor.run_once().await;
+
+    let mut saw_completion = false;
+    while let Ok(evt) = receiver.try_recv() {
+        if evt.event_type == "task_completed" {
+            saw_completion = true;
+            let task_run = evt.data.get("task_run").expect("task_run payload");
+            assert_eq!(task_run.get("state"), Some(&serde_json::json!("Completed")));
+            assert!(task_run.get("output_text").is_some());
+        }
+    }
+
+    assert!(saw_completion);
 }
 
 #[tokio::test]
@@ -1274,7 +1520,18 @@ async fn test_task_queue_priority_ordering() {
     assert!(next.is_some());
     assert_eq!(next.unwrap().id, "blocker");
 
-    queue.mark_completed("blocker", sacode_kernel::TaskResult::success("blocker".to_string(), "done".to_string(), 0)).await;
+    queue
+        .mark_completed(
+            "blocker",
+            sacode_kernel::TaskResult::success("blocker".to_string(), "done".to_string(), 0),
+            sacode_kernel::TaskRun {
+                task_id: Some("blocker".to_string()),
+                state: Some(sacode_kernel::TaskRunState::Completed),
+                output_text: Some("done".to_string()),
+                ..sacode_kernel::TaskRun::default()
+            },
+        )
+        .await;
 
     let stats_after = queue.stats().await;
     assert_eq!(stats_after.pending_count, 4);
@@ -1298,6 +1555,38 @@ async fn test_task_queue_stats() {
 
     let stats_after = queue.stats().await;
     assert_eq!(stats_after.ready_count, 3);
+}
+
+#[tokio::test]
+async fn test_task_queue_preserves_task_run_for_completed_result() {
+    let queue = Arc::new(TaskQueue::new(1));
+    queue
+        .submit(ScheduledTask::new(
+            "queue-run-1".to_string(),
+            Task::new("queue run test", ExecutionMode::Build, None),
+        ))
+        .await
+        .expect("submit task");
+
+    let _ = queue.next_ready().await.expect("ready task");
+    queue.mark_running("queue-run-1").await;
+
+    queue
+        .mark_completed(
+            "queue-run-1",
+            sacode_kernel::TaskResult::success("queue-run-1".to_string(), "done".to_string(), 1),
+            sacode_kernel::TaskRun {
+                task_id: Some("queue-run-1".to_string()),
+                state: Some(sacode_kernel::TaskRunState::Completed),
+                output_text: Some("done".to_string()),
+                ..sacode_kernel::TaskRun::default()
+            },
+        )
+        .await;
+
+    let task_run = queue.get_task_run("queue-run-1").await.expect("task run");
+    assert_eq!(task_run.state, Some(sacode_kernel::TaskRunState::Completed));
+    assert_eq!(task_run.output_text.as_deref(), Some("done"));
 }
 
 #[tokio::test]

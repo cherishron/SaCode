@@ -7,9 +7,9 @@ use std::{
     thread,
 };
 
-use sacode_kernel::{model::ChatUsage, ExecutionMode};
+use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
 
-use crate::{cmd::config, runner::TaskRunState};
+use crate::cmd::config;
 
 use super::{App, AsyncResult};
 use super::state::{LoopState, QueuedMessage};
@@ -107,7 +107,7 @@ impl App {
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
                 orchestration_summary: None,
                 success: false,
-                state: TaskRunState::Failed,
+                task_run: None,
                 learned_facts: Vec::new(),
                 pending_question: None,
                 plan: None,
@@ -127,7 +127,7 @@ impl App {
                 response,
                 orchestration_summary,
                 success,
-                state,
+                task_run,
                 learned_facts,
                 pending_question,
                 plan,
@@ -142,7 +142,7 @@ impl App {
                 response,
                 orchestration_summary,
                 success,
-                state,
+                task_run,
                 learned_facts,
                 pending_question,
                 plan,
@@ -213,7 +213,7 @@ impl App {
         String,
         Option<String>,
         bool,
-        TaskRunState,
+        Option<TaskRun>,
         Vec<crate::learning::LearnedFact>,
         Option<serde_json::Value>,
         Option<sacode_kernel::Plan>,
@@ -228,7 +228,7 @@ impl App {
                     "任务执行失败: 无法访问后台执行进程".to_string(),
                     None,
                     false,
-                    TaskRunState::Failed,
+                    None,
                     Vec::new(),
                     None,
                     None,
@@ -246,7 +246,7 @@ impl App {
                 "任务执行失败: 未获取到后台输出".to_string(),
                 None,
                 false,
-                TaskRunState::Failed,
+                None,
                 Vec::new(),
                 None,
                 None,
@@ -261,9 +261,9 @@ impl App {
         if stdout.read_to_string(&mut output).is_err() {
             return (
                 "任务执行失败: 读取后台输出失败".to_string(),
-                    None,
+                None,
                 false,
-                TaskRunState::Failed,
+                None,
                 Vec::new(),
                 None,
                 None,
@@ -285,7 +285,7 @@ impl App {
                     "任务执行失败: 无法等待后台执行进程退出".to_string(),
                     None,
                     false,
-                    TaskRunState::Failed,
+                    None,
                     Vec::new(),
                     None,
                     None,
@@ -309,7 +309,7 @@ impl App {
         String,
         Option<String>,
         bool,
-        TaskRunState,
+        Option<TaskRun>,
         Vec<crate::learning::LearnedFact>,
         Option<serde_json::Value>,
         Option<sacode_kernel::Plan>,
@@ -325,7 +325,7 @@ impl App {
                     "任务执行失败: 无法等待后台执行进程退出".to_string(),
                     None,
                     false,
-                    TaskRunState::Failed,
+                    None,
                     Vec::new(),
                     None,
                     None,
@@ -363,7 +363,7 @@ impl App {
                 },
                 None,
                 false,
-                TaskRunState::Failed,
+                None,
                 Vec::new(),
                 None,
                 None,
@@ -385,7 +385,7 @@ impl App {
                     format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
                     None,
                     false,
-                    TaskRunState::Failed,
+                    None,
                     Vec::new(),
                     None,
                     None,
@@ -401,12 +401,20 @@ impl App {
             .get("pending_question")
             .cloned()
             .filter(|value| !value.is_null());
-        let cli_events = Self::format_cli_events(parsed.get("events"));
-        let provider_response = Self::extract_provider_response(&parsed);
-        let state = parsed
-            .get("state")
+        let task_run = parsed
+            .get("task_run")
             .cloned()
-            .and_then(|value| serde_json::from_value::<TaskRunState>(value).ok())
+            .and_then(|value| serde_json::from_value::<TaskRun>(value).ok());
+        let cli_events = Self::format_cli_events(parsed.get("events"));
+        let task_run_output = Self::extract_task_run_output_text(&parsed);
+        let provider_response = task_run_output.or_else(|| Self::extract_provider_response(&parsed));
+        let state = Self::extract_task_run_state(&parsed)
+            .or_else(|| {
+                parsed
+                    .get("state")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<TaskRunState>(value).ok())
+            })
             .unwrap_or_else(|| {
                 if pending_question.as_ref().is_some_and(|question| {
                     question.get("kind").and_then(|value| value.as_str()) == Some("tool_approval")
@@ -471,7 +479,7 @@ impl App {
             response,
             orchestration_summary,
             success,
-            state,
+            task_run,
             learned_facts,
             pending_question,
             plan,
@@ -480,6 +488,24 @@ impl App {
             tool_duration_ms,
             total_duration_ms,
         )
+    }
+
+    fn extract_task_run_state(parsed: &serde_json::Value) -> Option<TaskRunState> {
+        parsed
+            .get("task_run")
+            .and_then(|value| value.get("state"))
+            .cloned()
+            .and_then(|value| serde_json::from_value::<TaskRunState>(value).ok())
+    }
+
+    fn extract_task_run_output_text(parsed: &serde_json::Value) -> Option<String> {
+        parsed
+            .get("task_run")
+            .and_then(|value| value.get("output_text"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
     }
 
     pub(super) fn finish_active_task(&mut self) {
@@ -527,5 +553,76 @@ impl App {
             self.queue.queued_messages.clear();
             self.push_system_message(&format!("已清空等待队列，共移除 {} 项。", count));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use sacode_kernel::TaskRunState;
+    use std::process::Command;
+
+    #[test]
+    fn extract_task_run_state_prefers_nested_task_run_state() {
+        let parsed = serde_json::json!({
+            "state": "Failed",
+            "task_run": {
+                "state": "Completed"
+            }
+        });
+
+        let state = App::extract_task_run_state(&parsed);
+
+        assert_eq!(state, Some(TaskRunState::Completed));
+    }
+
+    #[test]
+    fn extract_task_run_output_text_reads_nested_output_text() {
+        let parsed = serde_json::json!({
+            "provider_response": "legacy output",
+            "task_run": {
+                "output_text": "  final answer from task run  "
+            }
+        });
+
+        let output = App::extract_task_run_output_text(&parsed);
+
+        assert_eq!(output.as_deref(), Some("final answer from task run"));
+    }
+
+    #[test]
+    fn extract_task_run_output_text_ignores_blank_nested_output() {
+        let parsed = serde_json::json!({
+            "task_run": {
+                "output_text": "   "
+            }
+        });
+
+        let output = App::extract_task_run_output_text(&parsed);
+
+        assert_eq!(output, None);
+    }
+
+    #[test]
+    fn parse_background_task_output_prefers_task_run_fields() {
+        let payload = serde_json::json!({
+            "state": "Failed",
+            "provider_response": "legacy output",
+            "task_run": {
+                "state": "Completed",
+                "output_text": "final answer"
+            }
+        })
+        .to_string();
+        let exit_status = Command::new("true")
+            .status()
+            .expect("true exit status");
+
+        let (response, _summary, success, _task_run, _facts, _question, _plan, _usage, _api_ms, _tool_ms, _total_ms) =
+            App::parse_background_task_output(&payload, "", Some(exit_status));
+
+        assert_eq!(response, "final answer");
+        assert!(success);
+        assert_eq!(App::extract_task_run_state(&serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")), Some(TaskRunState::Completed));
     }
 }

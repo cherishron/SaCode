@@ -1,9 +1,9 @@
 use anyhow::Result;
-use sacode_kernel::{ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, SummaryItemRecord, SummaryRecord, ToolExecutionRecord};
+use sacode_kernel::{ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord};
 
 use super::{RoleRegistry, build_execution_plan};
 use super::summary_compactor::{OutputPolarity, compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity, extract_final_consensus, extract_risk_summary};
-use crate::CheckpointStorage;
+use crate::{task_run_from_report, CheckpointStorage};
 use crate::agents::worker::{WorkerRunResult, run_sub_agent};
 use crate::model_routing::TaskProfile;
 
@@ -76,6 +76,21 @@ pub async fn execute_role_driven_orchestration(
     )));
 
     Ok((report, plan))
+}
+
+pub async fn execute_role_driven_task_run(
+    context: &ExecutionContext,
+    checkpoints: &CheckpointStorage,
+) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
+    let (report, plan) = execute_role_driven_orchestration(context, checkpoints).await?;
+    let task_run = task_run_from_report(
+        context.task_id.clone(),
+        context.mode,
+        context.task.prompt.clone(),
+        &report,
+        crate::infer_task_run_state(&report),
+    );
+    Ok((task_run, plan))
 }
 
 async fn execute_parallel_groups(

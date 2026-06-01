@@ -680,6 +680,33 @@ fn docker_backend_findings(config: &SandboxConfig) -> Vec<DoctorFinding> {
         });
     }
 
+    if docker.user.as_deref().unwrap_or("").trim().is_empty() {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "docker backend 未显式声明运行用户".to_string(),
+            message: "当前会自动回退到宿主机 uid:gid 推导结果".to_string(),
+            suggestion: "如镜像需要固定权限模型，请设置 backend.docker.user".to_string(),
+        });
+    }
+
+    if docker.read_only_rootfs == Some(false) {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "docker backend 已关闭只读根文件系统".to_string(),
+            message: "关闭 read-only rootfs 会扩大容器内写入面".to_string(),
+            suggestion: "将 backend.docker.read_only_rootfs 设为 true，保留最小写面".to_string(),
+        });
+    }
+
+    if docker.tmpfs.is_empty() {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "docker backend 使用默认 tmpfs 策略".to_string(),
+            message: "当前默认只挂载 /tmp:rw,noexec,nosuid,size=64m".to_string(),
+            suggestion: "如工具需要额外临时目录，可在 backend.docker.tmpfs 中显式声明".to_string(),
+        });
+    }
+
     if let Some(network_mode) = docker.network_mode.as_deref() {
         let allowed = ["none", "bridge", "host"];
         if !allowed.contains(&network_mode) {
@@ -907,6 +934,8 @@ mod tests {
         let output = render_sandbox(temp_dir.path(), &["doctor".to_string()]).expect("render docker doctor");
 
         assert!(output.contains("docker backend 缺少 image"));
+        assert!(output.contains("docker backend 未显式声明运行用户"));
+        assert!(output.contains("docker backend 使用默认 tmpfs 策略"));
         assert!(output.contains("docker") || output.contains("工作区挂载点"));
     }
 

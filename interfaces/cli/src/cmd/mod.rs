@@ -29,11 +29,11 @@ mod wiki_tests;
 use std::{env, io::IsTerminal};
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionMode, ExecutionContext, Supervisor, Task};
+use sacode_kernel::{ExecutionContext, ExecutionMode, Supervisor, Task, TaskRunState};
 pub use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{
     CheckpointStorage, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor, SandboxPolicy, ToolRegistry,
-    RoleRegistry, TaskProfile, build_execution_plan, execute_role_driven_orchestration,
+    RoleRegistry, TaskProfile, build_execution_plan, execute_role_driven_task_run,
     strip_orchestration_prefix,
 };
 #[cfg(test)]
@@ -43,7 +43,7 @@ use tokio::io::{self, AsyncReadExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::repl::ReplSession;
-use crate::runner::{format_output, run_task_with_stdin, RunnerOutput, TaskRunState};
+use crate::runner::{format_output, run_task_with_stdin, RunnerOutput};
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +214,7 @@ async fn run_task(options: CliOptions) -> Result<()> {
             tool_results: serde_json::to_value(&output.tool_results)?,
             stdin_preview: stdin.map(|value| preview(&value)),
             provider_response: output.provider_response.clone().ok(),
-            state: output.state.clone(),
+            state: output.effective_state(),
             pending_question: output.pending_question.clone(),
             usage: output.usage.clone(),
             api_duration_ms: output.api_duration_ms,
@@ -251,27 +251,34 @@ async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         .unwrap_or_else(|_| SandboxExecutor::new(SandboxPolicy::for_mode(options.mode)));
     let checkpoints = CheckpointStorage::new(&workdir);
 
-    let report = if execution_plan.use_multi_agent {
-        execute_role_driven_orchestration(&context, &checkpoints).await?.0
+    let (report, task_run) = if execution_plan.use_multi_agent {
+        let (task_run, _actual_plan) = execute_role_driven_task_run(&context, &checkpoints).await?;
+        let report = task_run.report.clone().unwrap_or_default();
+        (report, Some(task_run))
     } else {
         let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
-        orchestrator.execute(&context)?
+        let task_run = orchestrator.execute_task_run(&context)?;
+        let report = task_run.report.clone().unwrap_or_default();
+        (report, Some(task_run))
     };
     
-    let output = RunnerOutput::from_execution_report(
+    let mut output = RunnerOutput::from_execution_report(
         &report,
         effective_prompt.clone(),
         options.mode,
         options.max_iterations,
         workdir.to_string_lossy().to_string(),
     );
+    if let Some(task_run) = task_run {
+        output.task_run = task_run;
+    }
 
     if options.json {
         let response = serde_json::json!({
             "prompt": output.prompt,
             "mode": output.mode,
             "workspace": output.workspace,
-            "state": output.state,
+            "state": output.effective_state(),
             "plan": output.plan,
             "events": output.events,
             "tool_results": output.tool_results,

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sacode_kernel::{Event, Supervisor, TaskResult, TaskQueueStatus};
+use sacode_kernel::{Event, Supervisor, TaskResult, TaskQueueStatus, TaskRun};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
-use crate::queue::TaskQueue;
+use crate::{queue::TaskQueue, task_run_snapshot};
 use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct TaskExecutor {
 struct ExecutorTaskResult {
     task_id: String,
     result: TaskResult,
+    task_run: TaskRun,
 }
 
 impl TaskExecutor {
@@ -110,7 +111,19 @@ impl TaskExecutor {
                     TaskResult::success(task_id.clone(), summary.clone(), duration_ms)
                 };
 
-                ExecutorTaskResult { task_id, result }
+                let task_run = task_run_snapshot(
+                    Some(task_id.clone()),
+                    task.task.mode,
+                    task.task.prompt.clone(),
+                    if has_error {
+                        sacode_kernel::TaskRunState::Failed
+                    } else {
+                        sacode_kernel::TaskRunState::Completed
+                    },
+                    result.output.clone().or_else(|| result.error.clone()),
+                );
+
+                ExecutorTaskResult { task_id, result, task_run }
             });
 
             spawned += 1;
@@ -127,12 +140,22 @@ impl TaskExecutor {
 
                     match exec_result.result.status {
                         TaskQueueStatus::Completed => {
-                            self.queue.mark_completed(task_id, exec_result.result.clone()).await;
-                            self.emit_event(task_id, "task_completed", serde_json::to_value(&exec_result.result).unwrap_or_default());
+                            self.queue
+                                .mark_completed(task_id, exec_result.result.clone(), exec_result.task_run.clone())
+                                .await;
+                            self.emit_event(task_id, "task_completed", serde_json::json!({
+                                "result": exec_result.result,
+                                "task_run": exec_result.task_run,
+                            }));
                         }
                         TaskQueueStatus::Failed => {
-                            self.queue.mark_failed(task_id, exec_result.result.clone()).await;
-                            self.emit_event(task_id, "task_failed", serde_json::to_value(&exec_result.result).unwrap_or_default());
+                            self.queue
+                                .mark_failed(task_id, exec_result.result.clone(), exec_result.task_run.clone())
+                                .await;
+                            self.emit_event(task_id, "task_failed", serde_json::json!({
+                                "result": exec_result.result,
+                                "task_run": exec_result.task_run,
+                            }));
                         }
                         _ => {}
                     }

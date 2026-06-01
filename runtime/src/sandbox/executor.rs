@@ -63,6 +63,23 @@ impl DockerSandboxBackend {
             "--rm".to_string(),
         ];
 
+        let container_user = self
+            .config
+            .user
+            .clone()
+            .unwrap_or_else(default_container_user);
+        docker_args.push("--user".to_string());
+        docker_args.push(container_user);
+
+        if self.config.read_only_rootfs.unwrap_or(true) {
+            docker_args.push("--read-only".to_string());
+        }
+
+        for tmpfs_mount in docker_tmpfs_mounts(&self.config) {
+            docker_args.push("--tmpfs".to_string());
+            docker_args.push(tmpfs_mount);
+        }
+
         for mount in docker_mounts(policy, &workspace, &mount_target) {
             docker_args.extend(mount);
         }
@@ -266,6 +283,30 @@ fn docker_mounts(policy: &SandboxPolicy, workspace: &std::path::Path, mount_targ
     mounts.sort();
     mounts.dedup();
     mounts
+}
+
+fn docker_tmpfs_mounts(config: &DockerSandboxConfig) -> Vec<String> {
+    if config.tmpfs.is_empty() {
+        return vec!["/tmp:rw,noexec,nosuid,size=64m".to_string()];
+    }
+
+    config.tmpfs.clone()
+}
+
+fn default_container_user() -> String {
+    let uid = read_id_output("id", "-u").unwrap_or_else(|| "65534".to_string());
+    let gid = read_id_output("id", "-g").unwrap_or_else(|| "65534".to_string());
+    format!("{}:{}", uid.trim(), gid.trim())
+}
+
+fn read_id_output(program: &str, arg: &str) -> Option<String> {
+    Command::new(program)
+        .arg(arg)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn build_mount_arg(host_path: &std::path::Path, workspace: &std::path::Path, mount_target: &str, readonly: bool) -> Vec<String> {

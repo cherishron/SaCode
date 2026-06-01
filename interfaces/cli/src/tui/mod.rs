@@ -28,7 +28,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use sacode_kernel::model::{ChatUsage, ProviderKind};
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, TaskRun, TaskRunState};
 use serde::Serialize;
 
 use crate::cmd::update;
@@ -43,7 +43,6 @@ use crate::provider_config::{
     NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore,
 };
 use crate::provider_runtime::{resolve_named_provider, resolve_provider};
-use crate::runner::TaskRunState;
 use crate::task_store::{PersistentTask, TaskPriority, TaskStatus, TaskStore};
 use crate::version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus};
 use sacode_runtime::{
@@ -666,7 +665,7 @@ enum AsyncResult {
         response: String,
         orchestration_summary: Option<String>,
         success: bool,
-        state: TaskRunState,
+        task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
         plan: Option<sacode_kernel::Plan>,
@@ -4609,7 +4608,7 @@ impl App {
                     response,
                     orchestration_summary,
                     success,
-                    state,
+                    task_run,
                     learned_facts,
                     pending_question,
                     plan,
@@ -4624,7 +4623,7 @@ impl App {
                     response,
                     orchestration_summary,
                     success,
-                    state,
+                    task_run,
                     learned_facts,
                     pending_question,
                     plan,
@@ -4690,7 +4689,7 @@ impl App {
         response: String,
         orchestration_summary: Option<String>,
         success: bool,
-        state: TaskRunState,
+        task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
         plan: Option<sacode_kernel::Plan>,
@@ -4710,6 +4709,10 @@ impl App {
             return;
         }
 
+        let effective_state = task_run
+            .as_ref()
+            .and_then(|run| run.state.clone())
+            .unwrap_or(TaskRunState::Failed);
         self.orchestration_summary = orchestration_summary;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
         self.append_message(Message {
@@ -4754,7 +4757,7 @@ impl App {
             self.capture_todo_plan(&prompt, plan);
         }
         self.finish_active_task();
-        if matches!(state, TaskRunState::Completed) && !self.should_wait_for_user_after_chat() {
+        if matches!(effective_state, TaskRunState::Completed) && !self.should_wait_for_user_after_chat() {
             if let Some(state) = loop_state.clone() {
                 let next_iteration = state.iteration.saturating_add(1);
                 if next_iteration > state.max_iterations {
@@ -4782,7 +4785,7 @@ impl App {
                     ));
                 }
             }
-        } else if matches!(state, TaskRunState::Failed) {
+        } else if matches!(effective_state, TaskRunState::Failed) {
             if let Some(state) = loop_state.clone() {
                 let next_error_count = state.error_count.saturating_add(1);
                 if next_error_count >= 3 {
