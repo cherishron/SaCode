@@ -9,7 +9,7 @@ use std::{
 
 use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
 #[derive(Debug, Default)]
-struct BackgroundTaskOutput {
+pub(super) struct BackgroundTaskOutput {
     response: String,
     orchestration_summary: Option<String>,
     task_run: Option<TaskRun>,
