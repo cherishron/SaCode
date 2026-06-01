@@ -1,6 +1,6 @@
-use std::process::Command;
 use std::time::Instant;
 
+use crate::{active_backend, active_policy, SandboxCommand};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 pub fn spec() -> ToolSpec {
@@ -48,24 +48,42 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         format!("{}\n\n补充上下文:\n{}", prompt, context)
     };
 
-    let output = Command::new(std::env::current_exe()?)
-        .arg(composed_prompt)
-        .arg("--mode")
-        .arg(if subagent_type == "explore" { "plan" } else { "build" })
-        .arg("--json")
-        .output()?;
+    let current_exe = std::env::current_exe()?;
+    let output = active_backend().execute_command(
+        &active_policy(),
+        &SandboxCommand {
+            program: current_exe.to_string_lossy().to_string(),
+            args: vec![
+                composed_prompt,
+                "--mode".to_string(),
+                if subagent_type == "explore" { "plan".to_string() } else { "build".to_string() },
+                "--json".to_string(),
+            ],
+            cwd: None,
+            timeout_ms: 120_000,
+        },
+    )?;
 
     let duration_ms = started_at.elapsed().as_millis() as u64;
-    if !output.status.success() {
+    if output.timed_out {
         return Ok(ToolOutput::success(serde_json::json!({
             "task_id": task_id,
             "status": "failed",
-            "result": String::from_utf8_lossy(&output.stderr).to_string(),
+            "result": "task spawn timed out",
             "duration_ms": duration_ms
         })));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if output.exit_code != 0 {
+        return Ok(ToolOutput::success(serde_json::json!({
+            "task_id": task_id,
+            "status": "failed",
+            "result": output.stderr,
+            "duration_ms": duration_ms
+        })));
+    }
+
+    let stdout = output.stdout;
     let parsed = serde_json::from_str::<serde_json::Value>(&stdout).unwrap_or_else(|_| serde_json::json!({ "provider_response": stdout }));
     let result = parsed["provider_response"].as_str().unwrap_or(&stdout).to_string();
 

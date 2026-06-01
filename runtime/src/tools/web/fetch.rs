@@ -1,5 +1,5 @@
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
-use crate::sandbox::active_policy;
+use crate::sandbox::{active_policy, NetworkAccess};
 use anyhow::Result;
 
 #[derive(Debug, serde::Deserialize)]
@@ -34,7 +34,7 @@ pub fn spec() -> ToolSpec {
 }
 
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
-    if !active_policy().check_network() {
+    if !active_policy().check_network(NetworkAccess::Fetch) {
         return Ok(ToolOutput::failure("network access blocked by sandbox policy"));
     }
 

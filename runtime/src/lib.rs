@@ -28,7 +28,7 @@ mod tests;
 
 pub use checkpoint::CheckpointStorage;
 pub use agents::{RoleRegistry, WorkerRunResult, analyze_task, build_execution_plan, build_route_plan_from_candidates, builtin_roles, execute_role_driven_orchestration, find_role, parse_orchestration_hint, resolve_config_model_candidates, run_sub_agent, score_roles, strip_orchestration_prefix};
-pub use config::{IdeServerConfig, IdeServerConfigStore, ProjectAccessConfig, ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig, SandboxConfig, SandboxConfigStore, SandboxModeConfig};
+pub use config::{DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, ProjectAccessConfig, ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig, SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig, SandboxShellConfig, SandboxTaskConfig};
 pub use daemon::{create_daemon, run_daemon};
 pub use executor::{ExecutorEvent, TaskExecutor};
 pub use hook::{HookExecutor, LoggingHook};
@@ -41,7 +41,7 @@ pub use prompt::{build_system_prompt as build_runtime_system_prompt, maybe_expan
 pub use provider::{ProviderClient, StreamChunk, ToolChatResult};
 pub use queue::{InMemoryStore, TaskQueue, TaskStore};
 pub use retry::RetryHandler;
-pub use sandbox::{active_policy, install_global_policy, SandboxPolicy, SandboxExecutor};
+pub use sandbox::{active_backend, active_policy, install_global_backend, install_global_policy, BackendCommandOutput, FsAccess, LocalSandboxBackend, NetworkAccess, SandboxBackend, SandboxCommand, SandboxPolicy, SandboxExecutor};
 #[cfg(test)]
 pub use sandbox::reset_global_policy;
 pub use session::{CompressionResult, SessionEvent, SessionHandle, SessionPrompt, SessionService, SessionStatus};

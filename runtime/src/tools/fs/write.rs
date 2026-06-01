@@ -1,4 +1,5 @@
 use crate::tools::{ToolSpec, ToolOutput, SideEffectLevel};
+use crate::sandbox::FsAccess;
 use super::access::resolve_allowed_path;
 
 pub fn spec() -> ToolSpec {
@@ -38,7 +39,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     
     let mode = input["mode"].as_str().unwrap_or("write");
 
-    let path_buf = resolve_allowed_path(path)?;
+    let path_buf = resolve_allowed_path(path, FsAccess::Write)?;
     
     if let Some(parent) = path_buf.parent() {
         if !parent.exists() {

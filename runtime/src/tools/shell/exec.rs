@@ -1,8 +1,4 @@
-use std::process::{Command, Stdio};
-use std::time::Duration;
-use std::io::Read;
-use wait_timeout::ChildExt;
-
+use crate::{active_backend, active_policy, BackendCommandOutput, SandboxCommand};
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
 use super::sandbox::ShellSandbox;
@@ -60,54 +56,17 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("command is required"));
     };
 
-    let mut cmd = Command::new(program);
-    cmd.args(parts.iter().skip(1));
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    let output = active_backend().execute_command(
+        &active_policy(),
+        &SandboxCommand {
+            program: program.clone(),
+            args: parts.iter().skip(1).cloned().collect(),
+            cwd: cwd.map(str::to_string),
+            timeout_ms: timeout_secs * 1000,
+        },
+    )?;
 
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
-
-    let mut child = cmd.spawn()?;
-
-    let timeout = Duration::from_secs(timeout_secs);
-    let status = child.wait_timeout(timeout)?;
-
-    match status {
-        Some(exit_status) => {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-
-            if let Some(mut out) = child.stdout {
-                out.read_to_string(&mut stdout)?;
-            }
-            if let Some(mut err) = child.stderr {
-                err.read_to_string(&mut stderr)?;
-            }
-
-            stdout = truncate_output(stdout);
-            stderr = truncate_output(stderr);
-
-            let exit_code = exit_status.code().unwrap_or(-1);
-            let success = exit_status.success();
-
-            Ok(ToolOutput::success(serde_json::json!({
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": exit_code,
-                "success": success,
-                "timed_out": false
-            })))
-        }
-        None => {
-            child.kill()?;
-            child.wait()?;
-
-            Ok(ToolOutput::failure("command timed out")
-                .with_message(format!("Timeout after {} seconds", timeout_secs)))
-        }
-    }
+    Ok(tool_output_from_backend(output))
 }
 
 fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
@@ -191,4 +150,18 @@ fn truncate_output(output: String) -> String {
     } else {
         output
     }
+}
+
+fn tool_output_from_backend(output: BackendCommandOutput) -> ToolOutput {
+    if output.timed_out {
+        return ToolOutput::failure("command timed out");
+    }
+
+    ToolOutput::success(serde_json::json!({
+        "stdout": truncate_output(output.stdout),
+        "stderr": truncate_output(output.stderr),
+        "exit_code": output.exit_code,
+        "success": output.exit_code == 0,
+        "timed_out": false
+    }))
 }

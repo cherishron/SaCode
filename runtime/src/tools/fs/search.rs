@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use crate::sandbox::FsAccess;
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
 use super::access::resolve_allowed_path;
@@ -52,7 +53,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("pattern is required"));
     }
 
-    let resolved_path = resolve_allowed_path(path)?;
+    let resolved_path = resolve_allowed_path(path, FsAccess::Read)?;
 
     let mut cmd = Command::new("grep");
     cmd.arg("-n");

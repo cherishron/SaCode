@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::Result;
 use serde::Serialize;
 use sacode_kernel::ExecutionMode;
-use sacode_runtime::{SandboxConfig, SandboxConfigStore, SandboxModeConfig, SandboxPolicy};
+use sacode_runtime::{SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxPolicy, SandboxResourceConfig, SandboxShellConfig, SandboxTaskConfig};
 
 pub fn run(args: Vec<String>) -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -40,26 +41,36 @@ fn render_show(workdir: &Path, args: &[String]) -> Result<String> {
     }
 
     let mut lines = vec!["Sandbox Policies".to_string()];
+    let config = store.load()?;
+    lines.push(format!("backend.kind: {}", backend_kind_label(config.backend.kind)));
     for mode in modes {
         let policy = store.policy_for_mode(mode)?;
         lines.push(String::new());
         lines.push(format!("[{}]", mode));
-        lines.push(format!("network_allowed: {}", policy.network_allowed));
-        lines.push(format!("timeout_ms: {:?}", policy.timeout_ms));
-        lines.push(format!("max_memory_mb: {:?}", policy.max_memory_mb));
-        lines.push(format!("allowed_commands: {:?}", policy.allowed_commands));
-        lines.push(format!("allowed_paths: {:?}", display_paths(&policy.allowed_paths)));
-        lines.push(format!("denied_paths: {:?}", display_paths(&policy.denied_paths)));
+        lines.push(format!("fs.read_paths: {:?}", display_paths(&policy.fs.read_paths)));
+        lines.push(format!("fs.write_paths: {:?}", display_paths(&policy.fs.write_paths)));
+        lines.push(format!("fs.deny_paths: {:?}", display_paths(&policy.fs.denied_paths)));
+        lines.push(format!("network.search_allowed: {}", policy.network.search_allowed));
+        lines.push(format!("network.fetch_allowed: {}", policy.network.fetch_allowed));
+        lines.push(format!("network.browser_allowed: {}", policy.network.browser_allowed));
+        lines.push(format!("shell.enabled: {}", policy.shell.enabled));
+        lines.push(format!("shell.allowed_commands: {:?}", policy.shell.allowed_commands));
+        lines.push(format!("task.spawn_allowed: {}", policy.task.spawn_allowed));
+        lines.push(format!("resources.timeout_ms: {:?}", policy.timeout_ms()));
+        lines.push(format!("resources.max_memory_mb: {:?}", policy.max_memory_mb()));
     }
     Ok(lines.join("\n"))
 }
 
 fn render_show_json(store: &SandboxConfigStore, modes: &[ExecutionMode]) -> Result<String> {
+    let config = store.load()?;
+    let backend_kind = backend_kind_label(config.backend.kind).to_string();
     let policies = modes
         .iter()
         .map(|mode| {
             Ok(ModePolicyView {
                 mode: mode.to_string(),
+                backend_kind: backend_kind.clone(),
                 policy: PolicyView::from_policy(store.policy_for_mode(*mode)?),
             })
         })
@@ -117,6 +128,9 @@ fn render_doctor(workdir: &Path, args: &[String]) -> Result<String> {
     };
 
     let mut findings = Vec::new();
+    if config.backend.kind == SandboxBackendKind::Docker {
+        findings.extend(docker_backend_findings(&config));
+    }
     for mode in modes {
         findings.extend(doctor_findings_for_mode(&config, mode));
     }
@@ -150,24 +164,84 @@ fn render_init(workdir: &Path) -> Result<String> {
         return Ok(format!("沙箱配置已存在: {}", path.display()));
     }
 
-    let config = SandboxConfig {
-        plan: SandboxModeConfig {
-            network_allowed: Some(false),
-            max_memory_mb: Some(256),
-            timeout_ms: Some(15_000),
-            ..SandboxModeConfig::default()
+        let config = SandboxConfig {
+            backend: SandboxBackendConfig {
+                kind: SandboxBackendKind::Local,
+                ..SandboxBackendConfig::default()
+            },
+            plan: SandboxModeConfig {
+                fs: SandboxFsConfig {
+                    read_paths: vec![".".to_string()],
+                    ..SandboxFsConfig::default()
+                },
+                network: SandboxNetworkConfig {
+                    search_allowed: Some(true),
+                    fetch_allowed: Some(false),
+                    browser_allowed: Some(false),
+                    ..SandboxNetworkConfig::default()
+                },
+                shell: SandboxShellConfig {
+                    enabled: Some(false),
+                    ..SandboxShellConfig::default()
+                },
+                task: SandboxTaskConfig {
+                    spawn_allowed: Some(false),
+                },
+                resources: SandboxResourceConfig {
+                    max_memory_mb: Some(256),
+                    timeout_ms: Some(15_000),
+                },
+                ..SandboxModeConfig::default()
         },
         build: SandboxModeConfig {
-            network_allowed: Some(true),
-            max_memory_mb: Some(512),
-            timeout_ms: Some(30_000),
-            ..SandboxModeConfig::default()
+                fs: SandboxFsConfig {
+                    read_paths: vec![".".to_string()],
+                    write_paths: vec![".".to_string()],
+                    ..SandboxFsConfig::default()
+                },
+                network: SandboxNetworkConfig {
+                    search_allowed: Some(true),
+                    fetch_allowed: Some(true),
+                    browser_allowed: Some(false),
+                    ..SandboxNetworkConfig::default()
+                },
+                shell: SandboxShellConfig {
+                    enabled: Some(true),
+                    ..SandboxShellConfig::default()
+                },
+                task: SandboxTaskConfig {
+                    spawn_allowed: Some(true),
+                },
+                resources: SandboxResourceConfig {
+                    max_memory_mb: Some(512),
+                    timeout_ms: Some(30_000),
+                },
+                ..SandboxModeConfig::default()
         },
         yolo: SandboxModeConfig {
-            network_allowed: Some(true),
-            max_memory_mb: Some(1024),
-            timeout_ms: Some(60_000),
-            ..SandboxModeConfig::default()
+                fs: SandboxFsConfig {
+                    read_paths: vec![".".to_string()],
+                    write_paths: vec![".".to_string()],
+                    ..SandboxFsConfig::default()
+                },
+                network: SandboxNetworkConfig {
+                    search_allowed: Some(true),
+                    fetch_allowed: Some(true),
+                    browser_allowed: Some(true),
+                    ..SandboxNetworkConfig::default()
+                },
+                shell: SandboxShellConfig {
+                    enabled: Some(true),
+                    ..SandboxShellConfig::default()
+                },
+                task: SandboxTaskConfig {
+                    spawn_allowed: Some(true),
+                },
+                resources: SandboxResourceConfig {
+                    max_memory_mb: Some(1024),
+                    timeout_ms: Some(60_000),
+                },
+                ..SandboxModeConfig::default()
         },
     };
     store.save(&config)?;
@@ -233,26 +307,36 @@ fn mode_config_mut(config: &mut SandboxConfig, mode: ExecutionMode) -> &mut Sand
 
 fn apply_set(config: &mut SandboxModeConfig, key: &str, value: &str) -> Result<()> {
     match key {
-        "network_allowed" => config.network_allowed = Some(parse_bool(value)?),
-        "timeout_ms" => config.timeout_ms = Some(parse_u64(value)?),
-        "max_memory_mb" => config.max_memory_mb = Some(parse_usize(value)?),
-        "allowed_commands" => config.allowed_commands = parse_list(value),
-        "allowed_paths" => config.allowed_paths = parse_list(value),
-        "denied_paths" => config.denied_paths = parse_list(value),
-        _ => anyhow::bail!("支持的 key: network_allowed, timeout_ms, max_memory_mb, allowed_commands, allowed_paths, denied_paths"),
+        "fs.read_paths" => config.fs.read_paths = parse_list(value),
+        "fs.write_paths" => config.fs.write_paths = parse_list(value),
+        "fs.deny_paths" => config.fs.deny_paths = parse_list(value),
+        "network.search_allowed" => config.network.search_allowed = Some(parse_bool(value)?),
+        "network.fetch_allowed" => config.network.fetch_allowed = Some(parse_bool(value)?),
+        "network.browser_allowed" => config.network.browser_allowed = Some(parse_bool(value)?),
+        "shell.enabled" => config.shell.enabled = Some(parse_bool(value)?),
+        "shell.allowed_commands" => config.shell.allowed_commands = parse_list(value),
+        "task.spawn_allowed" => config.task.spawn_allowed = Some(parse_bool(value)?),
+        "resources.timeout_ms" => config.resources.timeout_ms = Some(parse_u64(value)?),
+        "resources.max_memory_mb" => config.resources.max_memory_mb = Some(parse_usize(value)?),
+        _ => anyhow::bail!("支持的 key: fs.read_paths, fs.write_paths, fs.deny_paths, network.search_allowed, network.fetch_allowed, network.browser_allowed, shell.enabled, shell.allowed_commands, task.spawn_allowed, resources.timeout_ms, resources.max_memory_mb"),
     }
     Ok(())
 }
 
 fn apply_clear(config: &mut SandboxModeConfig, key: &str) -> Result<()> {
     match key {
-        "network_allowed" => config.network_allowed = None,
-        "timeout_ms" => config.timeout_ms = None,
-        "max_memory_mb" => config.max_memory_mb = None,
-        "allowed_commands" => config.allowed_commands.clear(),
-        "allowed_paths" => config.allowed_paths.clear(),
-        "denied_paths" => config.denied_paths.clear(),
-        _ => anyhow::bail!("支持的 key: network_allowed, timeout_ms, max_memory_mb, allowed_commands, allowed_paths, denied_paths"),
+        "fs.read_paths" => config.fs.read_paths.clear(),
+        "fs.write_paths" => config.fs.write_paths.clear(),
+        "fs.deny_paths" => config.fs.deny_paths.clear(),
+        "network.search_allowed" => config.network.search_allowed = None,
+        "network.fetch_allowed" => config.network.fetch_allowed = None,
+        "network.browser_allowed" => config.network.browser_allowed = None,
+        "shell.enabled" => config.shell.enabled = None,
+        "shell.allowed_commands" => config.shell.allowed_commands.clear(),
+        "task.spawn_allowed" => config.task.spawn_allowed = None,
+        "resources.timeout_ms" => config.resources.timeout_ms = None,
+        "resources.max_memory_mb" => config.resources.max_memory_mb = None,
+        _ => anyhow::bail!("支持的 key: fs.read_paths, fs.write_paths, fs.deny_paths, network.search_allowed, network.fetch_allowed, network.browser_allowed, shell.enabled, shell.allowed_commands, task.spawn_allowed, resources.timeout_ms, resources.max_memory_mb"),
     }
     Ok(())
 }
@@ -300,17 +384,23 @@ struct SandboxDoctorResponse {
 #[derive(Debug, Serialize)]
 struct ModePolicyView {
     mode: String,
+    backend_kind: String,
     policy: PolicyView,
 }
 
 #[derive(Debug, Serialize)]
 struct PolicyView {
-    network_allowed: bool,
-    timeout_ms: Option<u64>,
-    max_memory_mb: Option<usize>,
-    allowed_commands: Vec<String>,
-    allowed_paths: Vec<String>,
-    denied_paths: Vec<String>,
+    fs_read_paths: Vec<String>,
+    fs_write_paths: Vec<String>,
+    fs_deny_paths: Vec<String>,
+    network_search_allowed: bool,
+    network_fetch_allowed: bool,
+    network_browser_allowed: bool,
+    shell_enabled: bool,
+    shell_allowed_commands: Vec<String>,
+    task_spawn_allowed: bool,
+    resources_timeout_ms: Option<u64>,
+    resources_max_memory_mb: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -338,12 +428,17 @@ struct DoctorFinding {
 impl PolicyView {
     fn from_policy(policy: sacode_runtime::SandboxPolicy) -> Self {
         Self {
-            network_allowed: policy.network_allowed,
-            timeout_ms: policy.timeout_ms,
-            max_memory_mb: policy.max_memory_mb,
-            allowed_commands: policy.allowed_commands,
-            allowed_paths: display_paths(&policy.allowed_paths),
-            denied_paths: display_paths(&policy.denied_paths),
+            fs_read_paths: display_paths(&policy.fs.read_paths),
+            fs_write_paths: display_paths(&policy.fs.write_paths),
+            fs_deny_paths: display_paths(&policy.fs.denied_paths),
+            network_search_allowed: policy.network.search_allowed,
+            network_fetch_allowed: policy.network.fetch_allowed,
+            network_browser_allowed: policy.network.browser_allowed,
+            shell_enabled: policy.shell.enabled,
+            shell_allowed_commands: policy.shell.allowed_commands.clone(),
+            task_spawn_allowed: policy.task.spawn_allowed,
+            resources_timeout_ms: policy.timeout_ms(),
+            resources_max_memory_mb: policy.max_memory_mb(),
         }
     }
 }
@@ -365,39 +460,69 @@ fn diff_policy(default_policy: &SandboxPolicy, effective_policy: &SandboxPolicy)
 
     push_diff(
         &mut diffs,
-        "network_allowed",
-        default_policy.network_allowed.to_string(),
-        effective_policy.network_allowed.to_string(),
+        "fs.read_paths",
+        format!("{:?}", display_paths(&default_policy.fs.read_paths)),
+        format!("{:?}", display_paths(&effective_policy.fs.read_paths)),
     );
     push_diff(
         &mut diffs,
-        "timeout_ms",
-        format!("{:?}", default_policy.timeout_ms),
-        format!("{:?}", effective_policy.timeout_ms),
+        "fs.write_paths",
+        format!("{:?}", display_paths(&default_policy.fs.write_paths)),
+        format!("{:?}", display_paths(&effective_policy.fs.write_paths)),
     );
     push_diff(
         &mut diffs,
-        "max_memory_mb",
-        format!("{:?}", default_policy.max_memory_mb),
-        format!("{:?}", effective_policy.max_memory_mb),
+        "fs.deny_paths",
+        format!("{:?}", display_paths(&default_policy.fs.denied_paths)),
+        format!("{:?}", display_paths(&effective_policy.fs.denied_paths)),
     );
     push_diff(
         &mut diffs,
-        "allowed_commands",
-        format!("{:?}", default_policy.allowed_commands),
-        format!("{:?}", effective_policy.allowed_commands),
+        "network.search_allowed",
+        default_policy.network.search_allowed.to_string(),
+        effective_policy.network.search_allowed.to_string(),
     );
     push_diff(
         &mut diffs,
-        "allowed_paths",
-        format!("{:?}", display_paths(&default_policy.allowed_paths)),
-        format!("{:?}", display_paths(&effective_policy.allowed_paths)),
+        "network.fetch_allowed",
+        default_policy.network.fetch_allowed.to_string(),
+        effective_policy.network.fetch_allowed.to_string(),
     );
     push_diff(
         &mut diffs,
-        "denied_paths",
-        format!("{:?}", display_paths(&default_policy.denied_paths)),
-        format!("{:?}", display_paths(&effective_policy.denied_paths)),
+        "network.browser_allowed",
+        default_policy.network.browser_allowed.to_string(),
+        effective_policy.network.browser_allowed.to_string(),
+    );
+    push_diff(
+        &mut diffs,
+        "shell.enabled",
+        default_policy.shell.enabled.to_string(),
+        effective_policy.shell.enabled.to_string(),
+    );
+    push_diff(
+        &mut diffs,
+        "shell.allowed_commands",
+        format!("{:?}", default_policy.shell.allowed_commands),
+        format!("{:?}", effective_policy.shell.allowed_commands),
+    );
+    push_diff(
+        &mut diffs,
+        "task.spawn_allowed",
+        default_policy.task.spawn_allowed.to_string(),
+        effective_policy.task.spawn_allowed.to_string(),
+    );
+    push_diff(
+        &mut diffs,
+        "resources.timeout_ms",
+        format!("{:?}", default_policy.timeout_ms()),
+        format!("{:?}", effective_policy.timeout_ms()),
+    );
+    push_diff(
+        &mut diffs,
+        "resources.max_memory_mb",
+        format!("{:?}", default_policy.max_memory_mb()),
+        format!("{:?}", effective_policy.max_memory_mb()),
     );
 
     diffs
@@ -422,45 +547,81 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
     if !overlapping_paths.is_empty() {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
-            title: "allowed_paths 与 denied_paths 重叠".to_string(),
+            title: "allow 路径与 deny 路径重叠".to_string(),
             message: format!("同一路径同时出现在 allow/deny 列表: {:?}", overlapping_paths),
             suggestion: "保留单一方向的路径规则，避免同一路径同时允许和拒绝".to_string(),
         });
     }
 
-    if mode == ExecutionMode::Plan && effective_policy.network_allowed {
+    if mode == ExecutionMode::Plan && !effective_policy.fs.write_paths.is_empty() {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
-            title: "plan 模式已开启网络".to_string(),
-            message: "plan 默认用于只读分析，启网会扩大外部依赖与数据外传面".to_string(),
-            suggestion: "执行 `sacode sandbox set plan network_allowed false` 恢复默认限制".to_string(),
+            title: "plan 模式存在可写路径".to_string(),
+            message: format!("当前可写路径为 {:?}", display_paths(&effective_policy.fs.write_paths)),
+            suggestion: "清空 plan 的 fs.write_paths，保持只读分析模式".to_string(),
         });
     }
 
-    if mode == ExecutionMode::Plan && effective_policy.timeout_ms > default_policy.timeout_ms {
+    if mode == ExecutionMode::Plan && effective_policy.network.fetch_allowed {
+        findings.push(DoctorFinding {
+            mode: mode.to_string(),
+            title: "plan 模式已开启 fetch 网络".to_string(),
+            message: "plan 默认只允许搜索类联网，fetch 会扩大外部请求面".to_string(),
+            suggestion: "执行 `sacode sandbox set plan network.fetch_allowed false` 恢复默认限制".to_string(),
+        });
+    }
+
+    if mode == ExecutionMode::Plan && effective_policy.network.browser_allowed {
+        findings.push(DoctorFinding {
+            mode: mode.to_string(),
+            title: "plan 模式已开启 browser 网络".to_string(),
+            message: "plan 默认不需要浏览器会话，开启后会放宽交互式外部访问".to_string(),
+            suggestion: "执行 `sacode sandbox set plan network.browser_allowed false` 恢复默认限制".to_string(),
+        });
+    }
+
+    if mode == ExecutionMode::Plan && effective_policy.shell.enabled {
+        findings.push(DoctorFinding {
+            mode: mode.to_string(),
+            title: "plan 模式已开启 shell".to_string(),
+            message: "plan 默认用于轻量分析，shell 执行会提升副作用风险".to_string(),
+            suggestion: "执行 `sacode sandbox set plan shell.enabled false` 恢复默认限制".to_string(),
+        });
+    }
+
+    if mode == ExecutionMode::Plan && effective_policy.task.spawn_allowed {
+        findings.push(DoctorFinding {
+            mode: mode.to_string(),
+            title: "plan 模式已开启 task.spawn".to_string(),
+            message: "plan 默认不派生子任务，开启后会扩大执行面".to_string(),
+            suggestion: "执行 `sacode sandbox set plan task.spawn_allowed false` 恢复默认限制".to_string(),
+        });
+    }
+
+    if mode == ExecutionMode::Plan && effective_policy.timeout_ms() > default_policy.timeout_ms() {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "plan 模式超时高于默认值".to_string(),
-            message: format!("当前超时为 {:?}，默认值为 {:?}", effective_policy.timeout_ms, default_policy.timeout_ms),
+            message: format!("当前超时为 {:?}，默认值为 {:?}", effective_policy.timeout_ms(), default_policy.timeout_ms()),
             suggestion: "保持 plan 为短时分析模式，建议清除自定义超时或回调到默认值".to_string(),
         });
     }
 
-    if mode == ExecutionMode::Plan && effective_policy.max_memory_mb > default_policy.max_memory_mb {
+    if mode == ExecutionMode::Plan && effective_policy.max_memory_mb() > default_policy.max_memory_mb() {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "plan 模式内存高于默认值".to_string(),
-            message: format!("当前内存为 {:?}MB，默认值为 {:?}MB", effective_policy.max_memory_mb, default_policy.max_memory_mb),
+            message: format!("当前内存为 {:?}MB，默认值为 {:?}MB", effective_policy.max_memory_mb(), default_policy.max_memory_mb()),
             suggestion: "保持 plan 为轻量分析模式，建议清除自定义内存上限或回调到默认值".to_string(),
         });
     }
 
-    if mode != ExecutionMode::Plan && effective_policy.allowed_paths.is_empty() && effective_policy.allowed_commands.is_empty() {
+    if mode != ExecutionMode::Plan && effective_policy.fs.write_paths.is_empty() && effective_policy.shell.allowed_commands.is_empty() && effective_policy.shell.enabled {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
-            title: "路径与命令边界都较宽".to_string(),
-            message: "当前配置没有显式路径限制，命令也没有白名单，执行边界较宽".to_string(),
-            suggestion: "按项目需要增加 allowed_paths 或 allowed_commands，缩小工具执行范围".to_string(),
+            title: "shell 已启用且缺少细粒度边界".to_string(),
+            message: "当前 shell 已启用，命令白名单为空，同时没有显式可写路径限制".to_string(),
+            suggestion: "按项目需要增加 fs.write_paths 或 shell.allowed_commands，缩小执行范围".to_string(),
         });
     }
 
@@ -468,8 +629,9 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
 }
 
 fn overlapping_paths(policy: &SandboxPolicy) -> Vec<String> {
-    let allowed = display_paths(&policy.allowed_paths);
-    let denied = display_paths(&policy.denied_paths);
+    let mut allowed = display_paths(&policy.fs.read_paths);
+    allowed.extend(display_paths(&policy.fs.write_paths));
+    let denied = display_paths(&policy.fs.denied_paths);
     allowed
         .into_iter()
         .filter(|path| denied.contains(path))
@@ -478,6 +640,67 @@ fn overlapping_paths(policy: &SandboxPolicy) -> Vec<String> {
 
 fn display_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
     paths.iter().map(|path| path.display().to_string()).collect()
+}
+
+fn backend_kind_label(kind: SandboxBackendKind) -> &'static str {
+    match kind {
+        SandboxBackendKind::Local => "local",
+        SandboxBackendKind::Docker => "docker",
+    }
+}
+
+fn docker_backend_findings(config: &SandboxConfig) -> Vec<DoctorFinding> {
+    let mut findings = Vec::new();
+    let docker = &config.backend.docker;
+
+    if !docker_available() {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "当前环境缺少 docker 可执行文件".to_string(),
+            message: "已选择 docker backend，但当前环境无法调用 docker".to_string(),
+            suggestion: "安装 docker 并确保 `docker --version` 可执行后再启用 docker backend".to_string(),
+        });
+    }
+
+    if docker.image.as_deref().unwrap_or("").trim().is_empty() {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "docker backend 缺少 image".to_string(),
+            message: "当前已选择 docker backend，但未配置容器镜像".to_string(),
+            suggestion: "在 .sacode/sandbox.json 的 backend.docker.image 中配置可执行镜像".to_string(),
+        });
+    }
+
+    if docker.workspace_mount.as_deref().unwrap_or("").trim().is_empty() {
+        findings.push(DoctorFinding {
+            mode: "global".to_string(),
+            title: "docker backend 未显式声明工作区挂载点".to_string(),
+            message: "当前将使用默认容器工作目录 /workspace".to_string(),
+            suggestion: "如镜像内部工作目录不同，请设置 backend.docker.workspace_mount".to_string(),
+        });
+    }
+
+    if let Some(network_mode) = docker.network_mode.as_deref() {
+        let allowed = ["none", "bridge", "host"];
+        if !allowed.contains(&network_mode) {
+            findings.push(DoctorFinding {
+                mode: "global".to_string(),
+                title: "docker backend 的 network_mode 不受支持".to_string(),
+                message: format!("当前 network_mode 为 {}", network_mode),
+                suggestion: "使用 none、bridge 或 host 之一".to_string(),
+            });
+        }
+    }
+
+    findings
+}
+
+fn docker_available() -> bool {
+    Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -490,6 +713,7 @@ mod tests {
         let output = render_sandbox(temp_dir.path(), &[]).expect("render sandbox");
 
         assert!(output.contains("Sandbox Policies"));
+        assert!(output.contains("backend.kind: local"));
         assert!(output.contains("[plan]"));
         assert!(output.contains("[build]"));
         assert!(output.contains("[yolo]"));
@@ -529,7 +753,7 @@ mod tests {
             &[
                 "set".to_string(),
                 "plan".to_string(),
-                "timeout_ms".to_string(),
+                "resources.timeout_ms".to_string(),
                 "20000".to_string(),
             ],
         )
@@ -540,7 +764,7 @@ mod tests {
 
         assert!(output.contains("Sandbox Policy Diff"));
         assert!(output.contains("[plan]"));
-        assert!(output.contains("timeout_ms: Some(15000) -> Some(20000)"));
+        assert!(output.contains("resources.timeout_ms: Some(15000) -> Some(20000)"));
     }
 
     #[test]
@@ -561,7 +785,7 @@ mod tests {
             &[
                 "set".to_string(),
                 "plan".to_string(),
-                "timeout_ms".to_string(),
+                "resources.timeout_ms".to_string(),
                 "20000".to_string(),
             ],
         )
@@ -576,7 +800,7 @@ mod tests {
         assert!(output.contains("\"diffs\""));
         assert!(output.contains("\"mode\": \"plan\""));
         assert!(output.contains("\"changed\": true"));
-        assert!(output.contains("\"key\": \"timeout_ms\""));
+        assert!(output.contains("\"key\": \"resources.timeout_ms\""));
         assert!(output.contains("\"default_value\": \"Some(15000)\""));
         assert!(output.contains("\"effective_value\": \"Some(20000)\""));
     }
@@ -603,7 +827,7 @@ mod tests {
             &[
                 "set".to_string(),
                 "plan".to_string(),
-                "network_allowed".to_string(),
+                "network.fetch_allowed".to_string(),
                 "true".to_string(),
             ],
         )
@@ -613,8 +837,8 @@ mod tests {
             .expect("render sandbox doctor");
 
         assert!(output.contains("Sandbox Doctor"));
-        assert!(output.contains("[plan] plan 模式已开启网络"));
-        assert!(output.contains("sacode sandbox set plan network_allowed false"));
+        assert!(output.contains("[plan] plan 模式已开启 fetch 网络"));
+        assert!(output.contains("sacode sandbox set plan network.fetch_allowed false"));
     }
 
     #[test]
@@ -635,7 +859,7 @@ mod tests {
             &[
                 "set".to_string(),
                 "plan".to_string(),
-                "network_allowed".to_string(),
+                "network.fetch_allowed".to_string(),
                 "true".to_string(),
             ],
         )
@@ -649,8 +873,8 @@ mod tests {
 
         assert!(output.contains("\"findings\""));
         assert!(output.contains("\"mode\": \"plan\""));
-        assert!(output.contains("\"title\": \"plan 模式已开启网络\""));
-        assert!(output.contains("\"suggestion\": \"执行 `sacode sandbox set plan network_allowed false` 恢复默认限制\""));
+        assert!(output.contains("\"title\": \"plan 模式已开启 fetch 网络\""));
+        assert!(output.contains("\"suggestion\": \"执行 `sacode sandbox set plan network.fetch_allowed false` 恢复默认限制\""));
     }
 
     #[test]
@@ -663,6 +887,27 @@ mod tests {
         .expect("render sandbox doctor empty json");
 
         assert!(output.contains("\"findings\": []"));
+    }
+
+    #[test]
+    fn render_sandbox_doctor_reports_docker_backend_config_gap() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        std::fs::create_dir_all(temp_dir.path().join(".sacode")).expect("create sandbox dir");
+        std::fs::write(
+            temp_dir.path().join(".sacode/sandbox.json"),
+            r#"{
+  "backend": {
+    "kind": "docker",
+    "docker": {}
+  }
+}"#,
+        )
+        .expect("write sandbox config");
+
+        let output = render_sandbox(temp_dir.path(), &["doctor".to_string()]).expect("render docker doctor");
+
+        assert!(output.contains("docker backend 缺少 image"));
+        assert!(output.contains("docker") || output.contains("工作区挂载点"));
     }
 
     #[test]
@@ -682,13 +927,13 @@ mod tests {
             &[
                 "set".to_string(),
                 "build".to_string(),
-                "allowed_commands".to_string(),
+                "shell.allowed_commands".to_string(),
                 "git,cargo".to_string(),
             ],
         )
         .expect("set sandbox config");
 
-        assert!(output.contains("已设置 sandbox.build.allowed_commands"));
+        assert!(output.contains("已设置 sandbox.build.shell.allowed_commands"));
         let content = std::fs::read_to_string(temp_dir.path().join(".sacode/sandbox.json")).expect("read sandbox config");
         assert!(content.contains("git"));
         assert!(content.contains("cargo"));
@@ -702,7 +947,7 @@ mod tests {
             &[
                 "set".to_string(),
                 "plan".to_string(),
-                "network_allowed".to_string(),
+                "network.fetch_allowed".to_string(),
                 "true".to_string(),
             ],
         )
@@ -713,13 +958,13 @@ mod tests {
             &[
                 "clear".to_string(),
                 "plan".to_string(),
-                "network_allowed".to_string(),
+                "network.fetch_allowed".to_string(),
             ],
         )
         .expect("clear sandbox config");
 
-        assert!(output.contains("已清除 sandbox.plan.network_allowed"));
+        assert!(output.contains("已清除 sandbox.plan.network.fetch_allowed"));
         let show = render_sandbox(temp_dir.path(), &["show".to_string(), "plan".to_string()]).expect("show sandbox config");
-        assert!(show.contains("network_allowed: false"));
+        assert!(show.contains("network.fetch_allowed: false"));
     }
 }

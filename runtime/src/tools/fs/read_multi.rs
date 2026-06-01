@@ -1,5 +1,6 @@
 use std::fs;
 
+use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
@@ -77,7 +78,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 fn read_one(path: &str, limit_per_file: usize) -> anyhow::Result<serde_json::Value> {
-    let file_path = resolve_allowed_path(path)?;
+    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
     if !file_path.exists() {
         anyhow::bail!("file not found: {}", path);
     }

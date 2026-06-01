@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
@@ -37,7 +38,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let recursive = input["recursive"].as_bool().unwrap_or(false);
     let include_hidden = input["include_hidden"].as_bool().unwrap_or(false);
 
-    let dir_path = resolve_allowed_path(path)?;
+    let dir_path = resolve_allowed_path(path, FsAccess::Read)?;
     if !dir_path.exists() {
         return Ok(ToolOutput::failure(format!("directory not found: {}", path)));
     }

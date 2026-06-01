@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::{mcp::McpConfig, skills::SkillSpec};
-use crate::sandbox::SandboxPolicy;
+use crate::sandbox::{DockerSandboxBackend, LocalSandboxBackend, SandboxBackend, SandboxExecutor, SandboxPolicy};
 use sacode_kernel::ExecutionMode;
+use std::sync::Arc;
 
 const USER_ROOT_DIR: &str = ".sacode";
 const PROJECT_ROOT_DIR: &str = ".sacode";
@@ -229,11 +230,38 @@ fn normalize_allowed_dirs(dirs: &mut Vec<String>) {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SandboxConfig {
     #[serde(default)]
+    pub backend: SandboxBackendConfig,
+    #[serde(default)]
     pub plan: SandboxModeConfig,
     #[serde(default)]
     pub build: SandboxModeConfig,
     #[serde(default)]
     pub yolo: SandboxModeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxBackendConfig {
+    #[serde(default)]
+    pub kind: SandboxBackendKind,
+    #[serde(default)]
+    pub docker: DockerSandboxConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxBackendKind {
+    #[default]
+    Local,
+    Docker,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DockerSandboxConfig {
+    pub image: Option<String>,
+    pub workspace_mount: Option<String>,
+    pub network_mode: Option<String>,
+    pub cpus: Option<String>,
+    pub memory: Option<String>,
 }
 
 impl SandboxConfig {
@@ -249,36 +277,133 @@ impl SandboxConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SandboxModeConfig {
+    #[serde(default)]
+    pub fs: SandboxFsConfig,
+    #[serde(default)]
+    pub network: SandboxNetworkConfig,
+    #[serde(default)]
+    pub shell: SandboxShellConfig,
+    #[serde(default)]
+    pub task: SandboxTaskConfig,
+    #[serde(default)]
+    pub resources: SandboxResourceConfig,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_allowed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_memory_mb: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxFsConfig {
+    #[serde(default)]
+    pub read_paths: Vec<String>,
+    #[serde(default)]
+    pub write_paths: Vec<String>,
+    #[serde(default)]
+    pub deny_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxNetworkConfig {
+    pub search_allowed: Option<bool>,
+    pub fetch_allowed: Option<bool>,
+    pub browser_allowed: Option<bool>,
+    #[serde(default)]
+    pub host_allowlist: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxShellConfig {
+    pub enabled: Option<bool>,
     #[serde(default)]
     pub allowed_commands: Vec<String>,
-    #[serde(default)]
-    pub denied_paths: Vec<String>,
-    #[serde(default)]
-    pub allowed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxTaskConfig {
+    pub spawn_allowed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxResourceConfig {
+    pub max_memory_mb: Option<usize>,
+    pub timeout_ms: Option<u64>,
 }
 
 impl SandboxModeConfig {
     fn apply(&self, mut policy: SandboxPolicy) -> SandboxPolicy {
+        if !self.fs.read_paths.is_empty() {
+            policy.fs.read_paths = self.fs.read_paths.iter().map(PathBuf::from).collect();
+        }
+        if !self.fs.write_paths.is_empty() {
+            policy.fs.write_paths = self.fs.write_paths.iter().map(PathBuf::from).collect();
+        }
+        if !self.fs.deny_paths.is_empty() {
+            policy.fs.denied_paths = self.fs.deny_paths.iter().map(PathBuf::from).collect();
+        }
+
+        if let Some(search_allowed) = self.network.search_allowed {
+            policy.network.search_allowed = search_allowed;
+        }
+        if let Some(fetch_allowed) = self.network.fetch_allowed {
+            policy.network.fetch_allowed = fetch_allowed;
+        }
+        if let Some(browser_allowed) = self.network.browser_allowed {
+            policy.network.browser_allowed = browser_allowed;
+        }
+        if !self.network.host_allowlist.is_empty() {
+            policy.network.host_allowlist = self.network.host_allowlist.clone();
+        }
+
+        if let Some(enabled) = self.shell.enabled {
+            policy.shell.enabled = enabled;
+        }
+        if !self.shell.allowed_commands.is_empty() {
+            policy.shell.allowed_commands = self.shell.allowed_commands.clone();
+        }
+
+        if let Some(spawn_allowed) = self.task.spawn_allowed {
+            policy.task.spawn_allowed = spawn_allowed;
+        }
+
+        if let Some(max_memory_mb) = self.resources.max_memory_mb {
+            policy.resources.max_memory_mb = Some(max_memory_mb);
+        }
+        if let Some(timeout_ms) = self.resources.timeout_ms {
+            policy.resources.timeout_ms = Some(timeout_ms);
+        }
+
         if let Some(network_allowed) = self.network_allowed {
-            policy.network_allowed = network_allowed;
+            policy.network.search_allowed = network_allowed;
+            policy.network.fetch_allowed = network_allowed;
+            policy.network.browser_allowed = network_allowed;
         }
         if let Some(max_memory_mb) = self.max_memory_mb {
-            policy.max_memory_mb = Some(max_memory_mb);
+            policy.resources.max_memory_mb = Some(max_memory_mb);
         }
         if let Some(timeout_ms) = self.timeout_ms {
-            policy.timeout_ms = Some(timeout_ms);
+            policy.resources.timeout_ms = Some(timeout_ms);
         }
         if !self.allowed_commands.is_empty() {
-            policy.allowed_commands = self.allowed_commands.clone();
+            policy.shell.enabled = true;
+            policy.shell.allowed_commands = self.allowed_commands.clone();
         }
         if !self.allowed_paths.is_empty() {
-            policy.allowed_paths = self.allowed_paths.iter().map(PathBuf::from).collect();
+            let paths = self.allowed_paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+            policy.fs.read_paths = paths.clone();
+            policy.fs.write_paths = paths;
         }
         if !self.denied_paths.is_empty() {
-            policy.denied_paths = self.denied_paths.iter().map(PathBuf::from).collect();
+            policy.fs.denied_paths = self.denied_paths.iter().map(PathBuf::from).collect();
         }
         policy
     }
@@ -319,7 +444,21 @@ impl SandboxConfigStore {
         Ok(config.apply(mode, SandboxPolicy::for_mode(mode)))
     }
 
+    pub fn executor_for_mode(&self, mode: ExecutionMode) -> Result<SandboxExecutor> {
+        let config = self.load()?;
+        let policy = config.apply(mode, SandboxPolicy::for_mode(mode));
+        let backend = backend_from_config(&config.backend);
+        Ok(SandboxExecutor::with_backend(policy, backend))
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+fn backend_from_config(config: &SandboxBackendConfig) -> Arc<dyn SandboxBackend> {
+    match config.kind {
+        SandboxBackendKind::Local => Arc::new(LocalSandboxBackend),
+        SandboxBackendKind::Docker => Arc::new(DockerSandboxBackend::new(config.docker.clone())),
     }
 }

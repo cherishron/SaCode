@@ -246,10 +246,9 @@ async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     
     let supervisor = Supervisor::new();
     let tools = ToolRegistry::builtin();
-    let sandbox_policy = SandboxConfigStore::new(&workdir)
-        .policy_for_mode(options.mode)
-        .unwrap_or_else(|_| SandboxPolicy::for_mode(options.mode));
-    let sandbox = SandboxExecutor::new(sandbox_policy);
+    let sandbox = SandboxConfigStore::new(&workdir)
+        .executor_for_mode(options.mode)
+        .unwrap_or_else(|_| SandboxExecutor::new(SandboxPolicy::for_mode(options.mode)));
     let checkpoints = CheckpointStorage::new(&workdir);
 
     let report = if execution_plan.use_multi_agent {

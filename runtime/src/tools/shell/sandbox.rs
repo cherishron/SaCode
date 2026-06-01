@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::sandbox::active_policy;
+use crate::sandbox::{active_policy, FsAccess};
 
 #[derive(Debug, Default, Clone)]
 pub struct ShellSandbox;
@@ -32,7 +32,7 @@ impl ShellSandbox {
                 std::env::current_dir()?.join(path)
             };
 
-            if !policy.check_path(&resolved) {
+            if !policy.check_path(&resolved, FsAccess::Read) {
                 anyhow::bail!("working directory is blocked by sandbox policy");
             }
         }

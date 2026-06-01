@@ -11,9 +11,10 @@ use http_body_util::BodyExt;
 use tower::util::ServiceExt;
 
 use crate::{
+    sandbox::{DockerSandboxBackend, SandboxCommand},
     build_runtime_system_prompt,
     create_daemon,
-    config::{SaCodeConfig, SandboxConfig, SandboxConfigStore, SandboxModeConfig},
+    config::{DockerSandboxConfig, SaCodeConfig, SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxModeConfig},
     load_memory_index,
     mcp::{McpConfig, McpConfigStore, McpServerConfig, McpSource},
     queue::{InMemoryStore, TaskQueue, TaskStore},
@@ -29,7 +30,10 @@ use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriorit
 
 fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().expect("sandbox test lock")
+    LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[test]
@@ -270,33 +274,41 @@ fn test_tool_spec_read_only() {
 fn test_sandbox_policy_for_plan_mode_is_read_only() {
     let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan);
 
-    assert!(!policy.network_allowed);
-    assert!(policy.allowed_commands.contains(&"ls".to_string()));
+    assert!(policy.network.search_allowed);
+    assert!(!policy.network.fetch_allowed);
+    assert!(!policy.network.browser_allowed);
+    assert!(!policy.shell.enabled);
+    assert!(policy.fs.read_paths.contains(&std::path::PathBuf::from(".")));
+    assert!(policy.fs.write_paths.is_empty());
     assert!(!policy.check_command("git"));
-    assert_eq!(policy.max_memory_mb, Some(256));
-    assert_eq!(policy.timeout_ms, Some(15_000));
+    assert_eq!(policy.max_memory_mb(), Some(256));
+    assert_eq!(policy.timeout_ms(), Some(15_000));
 }
 
 #[test]
 fn test_sandbox_policy_for_build_mode_allows_network_without_command_whitelist() {
     let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
 
-    assert!(policy.network_allowed);
-    assert!(policy.allowed_commands.is_empty());
+    assert!(policy.network.search_allowed);
+    assert!(policy.network.fetch_allowed);
+    assert!(policy.shell.enabled);
+    assert!(policy.shell.allowed_commands.is_empty());
     assert!(policy.check_command("git"));
-    assert_eq!(policy.max_memory_mb, Some(512));
-    assert_eq!(policy.timeout_ms, Some(30_000));
+    assert_eq!(policy.max_memory_mb(), Some(512));
+    assert_eq!(policy.timeout_ms(), Some(30_000));
 }
 
 #[test]
 fn test_sandbox_policy_for_yolo_mode_is_most_permissive() {
     let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Yolo);
 
-    assert!(policy.network_allowed);
-    assert!(policy.allowed_commands.is_empty());
+    assert!(policy.network.search_allowed);
+    assert!(policy.network.fetch_allowed);
+    assert!(policy.network.browser_allowed);
+    assert!(policy.shell.allowed_commands.is_empty());
     assert!(policy.check_command("cargo"));
-    assert_eq!(policy.max_memory_mb, Some(1024));
-    assert_eq!(policy.timeout_ms, Some(60_000));
+    assert_eq!(policy.max_memory_mb(), Some(1024));
+    assert_eq!(policy.timeout_ms(), Some(60_000));
 }
 
 #[test]
@@ -308,7 +320,10 @@ fn test_sandbox_config_store_overrides_plan_network_policy() {
     store
         .save(&SandboxConfig {
             plan: SandboxModeConfig {
-                network_allowed: Some(true),
+                network: crate::config::SandboxNetworkConfig {
+                    fetch_allowed: Some(true),
+                    ..crate::config::SandboxNetworkConfig::default()
+                },
                 ..SandboxModeConfig::default()
             },
             ..SandboxConfig::default()
@@ -316,7 +331,7 @@ fn test_sandbox_config_store_overrides_plan_network_policy() {
         .expect("save sandbox config");
 
     let policy = store.policy_for_mode(ExecutionMode::Plan).expect("load plan sandbox policy");
-    assert!(policy.network_allowed);
+    assert!(policy.network.fetch_allowed);
 }
 
 #[test]
@@ -328,7 +343,10 @@ fn test_sandbox_config_store_overrides_build_allowed_commands() {
     store
         .save(&SandboxConfig {
             build: SandboxModeConfig {
-                allowed_commands: vec!["git".to_string()],
+                shell: crate::config::SandboxShellConfig {
+                    enabled: Some(true),
+                    allowed_commands: vec!["git".to_string()],
+                },
                 ..SandboxModeConfig::default()
             },
             ..SandboxConfig::default()
@@ -336,9 +354,116 @@ fn test_sandbox_config_store_overrides_build_allowed_commands() {
         .expect("save sandbox config");
 
     let policy = store.policy_for_mode(ExecutionMode::Build).expect("load build sandbox policy");
-    assert_eq!(policy.allowed_commands, vec!["git".to_string()]);
+    assert_eq!(policy.shell.allowed_commands, vec!["git".to_string()]);
     assert!(policy.check_command("git"));
     assert!(!policy.check_command("cargo"));
+}
+
+#[test]
+fn test_sandbox_config_store_creates_docker_executor() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let store = SandboxConfigStore::new(workdir);
+
+    store
+        .save(&SandboxConfig {
+            backend: SandboxBackendConfig {
+                kind: SandboxBackendKind::Docker,
+                docker: DockerSandboxConfig {
+                    image: Some("ghcr.io/example/sacode-sandbox:latest".to_string()),
+                    ..DockerSandboxConfig::default()
+                },
+            },
+            ..SandboxConfig::default()
+        })
+        .expect("save docker sandbox config");
+
+    let executor = store
+        .executor_for_mode(ExecutionMode::Build)
+        .expect("build sandbox executor");
+    let result = executor.execute("pwd", &[]);
+    if let Err(error) = result {
+        assert!(
+            error.to_string().contains("docker")
+                || error.to_string().contains("No such file or directory")
+                || error.to_string().contains("not found")
+        );
+    }
+}
+
+#[test]
+fn test_docker_backend_builds_mounts_from_fs_policy() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(workdir).expect("enter temp dir");
+
+    let backend = DockerSandboxBackend::new(DockerSandboxConfig {
+        image: Some("ghcr.io/example/sacode-sandbox:latest".to_string()),
+        workspace_mount: Some("/repo".to_string()),
+        ..DockerSandboxConfig::default()
+    });
+    let policy = crate::sandbox::SandboxPolicy::new()
+        .allow_read_path(std::path::PathBuf::from("src"))
+        .allow_write_path(std::path::PathBuf::from("target"))
+        .deny_path(std::path::PathBuf::from("src/private"));
+
+    let command = backend
+        .build_docker_command(
+            &policy,
+            &SandboxCommand {
+                program: "git".to_string(),
+                args: vec!["status".to_string()],
+                cwd: Some("src".to_string()),
+                timeout_ms: 30_000,
+            },
+        )
+        .expect("build docker command");
+
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+
+    assert_eq!(command.program, "docker");
+    let joined = command.args.join(" ");
+    assert!(joined.contains("-v"));
+    assert!(joined.contains("/repo/src:ro"));
+    assert!(joined.contains("/repo/target"));
+    assert!(!joined.contains("/repo/src/private"));
+}
+
+#[test]
+fn test_shell_exec_uses_docker_backend_when_installed() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let store = SandboxConfigStore::new(workdir);
+
+    store
+        .save(&SandboxConfig {
+            backend: SandboxBackendConfig {
+                kind: SandboxBackendKind::Docker,
+                docker: DockerSandboxConfig {
+                    image: Some("ghcr.io/example/sacode-sandbox:latest".to_string()),
+                    ..DockerSandboxConfig::default()
+                },
+            },
+            ..SandboxConfig::default()
+        })
+        .expect("save docker sandbox config");
+
+    let _executor = store
+        .executor_for_mode(ExecutionMode::Build)
+        .expect("install docker executor");
+    let error = crate::tools::shell::exec::execute(serde_json::json!({
+        "command": "pwd"
+    }))
+    .expect_err("shell exec should attempt docker backend execution");
+
+    let message = error.to_string();
+    assert!(message.contains("No such file or directory") || message.contains("docker"));
+
+    crate::sandbox::reset_global_policy();
 }
 
 #[test]
@@ -370,7 +495,7 @@ fn test_fs_write_respects_sandbox_denied_path() {
 fn test_web_fetch_respects_sandbox_network_policy() {
     let _guard = sandbox_test_lock();
     let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
-    policy.network_allowed = false;
+    policy.network.fetch_allowed = false;
     crate::sandbox::install_global_policy(policy);
 
     let registry = ToolRegistry::builtin();
@@ -386,10 +511,23 @@ fn test_web_fetch_respects_sandbox_network_policy() {
 }
 
 #[test]
+fn test_web_search_allowed_in_plan_mode() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan));
+
+    let policy = crate::sandbox::active_policy();
+    assert!(policy.network.search_allowed);
+    assert!(!policy.network.fetch_allowed);
+    assert!(!policy.network.browser_allowed);
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
 fn test_shell_exec_respects_sandbox_allowed_commands() {
     let _guard = sandbox_test_lock();
     let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
-    policy.allowed_commands = vec!["pwd".to_string()];
+    policy.shell.allowed_commands = vec!["pwd".to_string()];
     crate::sandbox::install_global_policy(policy);
 
     let registry = ToolRegistry::builtin();
@@ -427,7 +565,7 @@ fn test_browser_open_respects_sandbox_network_policy() {
 fn test_git_diff_respects_sandbox_allowed_commands() {
     let _guard = sandbox_test_lock();
     let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
-    policy.allowed_commands = vec!["pwd".to_string()];
+    policy.shell.allowed_commands = vec!["pwd".to_string()];
     crate::sandbox::install_global_policy(policy);
 
     let registry = ToolRegistry::builtin();
@@ -468,6 +606,29 @@ fn test_fs_read_multi_respects_sandbox_paths_array() {
         .expect_err("sandbox should block denied path inside paths array");
 
     assert!(output.to_string().contains("path is blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_plan_mode_blocks_fs_write_by_default() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+
+    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan));
+
+    let blocked_path = workdir.join("file.txt");
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("fs.write", serde_json::json!({
+            "path": blocked_path.display().to_string(),
+            "content": "blocked"
+        }))
+        .expect_err("plan mode should block writes by default");
+
+    assert!(!blocked_path.exists());
+    assert!(!output.to_string().is_empty());
 
     crate::sandbox::reset_global_policy();
 }
@@ -573,6 +734,8 @@ fn test_tool_output_failure() {
 
 #[test]
 fn test_fs_write_stays_in_workspace() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -586,6 +749,7 @@ fn test_fs_write_stays_in_workspace() {
     let written = fs::read_to_string(temp_dir.path().join("nested/output.txt"))
         .expect("written file should exist");
     std::env::set_current_dir(original_dir).expect("restore current dir");
+    crate::sandbox::reset_global_policy();
 
     assert!(result.success);
     assert_eq!(written, "hello");
@@ -593,6 +757,8 @@ fn test_fs_write_stays_in_workspace() {
 
 #[test]
 fn test_fs_write_rejects_parent_escape() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let original_dir = std::env::current_dir().expect("read current dir");
     std::env::set_current_dir(temp_dir.path()).expect("enter temp dir");
@@ -604,8 +770,9 @@ fn test_fs_write_rejects_parent_escape() {
     .expect_err("parent escape should fail");
 
     std::env::set_current_dir(original_dir).expect("restore current dir");
+    crate::sandbox::reset_global_policy();
 
-    assert!(error.to_string().contains("outside workspace"));
+    assert!(error.to_string().contains("outside workspace") || error.to_string().contains("blocked"));
 }
 
 #[test]

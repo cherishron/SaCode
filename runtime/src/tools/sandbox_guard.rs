@@ -2,15 +2,21 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::sandbox::active_policy;
+use crate::sandbox::{active_policy, FsAccess, NetworkAccess};
 
 use super::ToolSpec;
 
 pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
     let policy = active_policy();
 
-    if requires_network(&spec.name, input) && !policy.check_network() {
-        anyhow::bail!("network access blocked by sandbox policy");
+    if let Some(network_access) = required_network_access(&spec.name, input) {
+        if !policy.check_network(network_access) {
+            anyhow::bail!("network access blocked by sandbox policy");
+        }
+    }
+
+    if spec.name == "task.spawn" && !policy.check_task_spawn() {
+        anyhow::bail!("task spawn blocked by sandbox policy");
     }
 
     if let Some(command) = extract_command(&spec.name, input) {
@@ -19,6 +25,7 @@ pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
         }
     }
 
+    let path_access = path_access_for_tool(&spec.name);
     for path in extract_paths(input) {
         let resolved = if path.is_absolute() {
             path
@@ -26,7 +33,7 @@ pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
             std::env::current_dir()?.join(path)
         };
 
-        if !policy.check_path(&resolved) {
+        if !policy.check_path(&resolved, path_access) {
             anyhow::bail!("path is blocked by sandbox policy");
         }
     }
@@ -34,12 +41,17 @@ pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-fn requires_network(name: &str, input: &serde_json::Value) -> bool {
-    is_network_tool(name) || has_network_fields(input)
+fn required_network_access(name: &str, input: &serde_json::Value) -> Option<NetworkAccess> {
+    network_access_for_tool(name).or_else(|| network_access_from_fields(input))
 }
 
-fn is_network_tool(name: &str) -> bool {
-    matches!(name, "web.fetch" | "web.search" | "browser.open" | "browser.navigate")
+fn network_access_for_tool(name: &str) -> Option<NetworkAccess> {
+    match name {
+        "web.search" => Some(NetworkAccess::Search),
+        "web.fetch" => Some(NetworkAccess::Fetch),
+        "browser.open" | "browser.navigate" => Some(NetworkAccess::Browser),
+        _ => None,
+    }
 }
 
 fn extract_command(tool_name: &str, input: &serde_json::Value) -> Option<String> {
@@ -54,6 +66,13 @@ fn extract_command(tool_name: &str, input: &serde_json::Value) -> Option<String>
             .ok()
             .map(|path| path.to_string_lossy().to_string()),
         _ => None,
+    }
+}
+
+fn path_access_for_tool(tool_name: &str) -> FsAccess {
+    match tool_name {
+        "fs.write" | "fs.edit" => FsAccess::Write,
+        _ => FsAccess::Read,
     }
 }
 
@@ -96,14 +115,14 @@ fn extract_paths(input: &serde_json::Value) -> Vec<PathBuf> {
     paths
 }
 
-fn has_network_fields(input: &serde_json::Value) -> bool {
+fn network_access_from_fields(input: &serde_json::Value) -> Option<NetworkAccess> {
     for key in ["url", "urls", "base_url", "baseUrl", "endpoint", "endpoints"] {
         if input
             .get(key)
             .and_then(|value| value.as_str())
             .is_some_and(|value| is_network_value(value.trim()))
         {
-            return true;
+            return Some(NetworkAccess::Fetch);
         }
 
         if input
@@ -111,11 +130,11 @@ fn has_network_fields(input: &serde_json::Value) -> bool {
             .and_then(|value| value.as_array())
             .is_some_and(|items| items.iter().filter_map(|item| item.as_str()).any(|value| is_network_value(value.trim())))
         {
-            return true;
+            return Some(NetworkAccess::Fetch);
         }
     }
 
-    false
+    None
 }
 
 fn is_network_value(value: &str) -> bool {

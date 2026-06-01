@@ -1,5 +1,6 @@
 use std::fs;
 
+use crate::sandbox::FsAccess;
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
 use super::access::resolve_allowed_path;
@@ -42,7 +43,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("path is required"));
     }
 
-    let file_path = resolve_allowed_path(path)?;
+    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
     if !file_path.exists() {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }
