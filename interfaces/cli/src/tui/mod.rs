@@ -664,7 +664,6 @@ enum AsyncResult {
         prompt: String,
         response: String,
         orchestration_summary: Option<String>,
-        success: bool,
         task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
@@ -4607,7 +4606,6 @@ impl App {
                     prompt,
                     response,
                     orchestration_summary,
-                    success,
                     task_run,
                     learned_facts,
                     pending_question,
@@ -4622,7 +4620,6 @@ impl App {
                     prompt,
                     response,
                     orchestration_summary,
-                    success,
                     task_run,
                     learned_facts,
                     pending_question,
@@ -4688,7 +4685,6 @@ impl App {
         prompt: String,
         response: String,
         orchestration_summary: Option<String>,
-        success: bool,
         task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
         pending_question: Option<serde_json::Value>,
@@ -4713,14 +4709,15 @@ impl App {
             .as_ref()
             .and_then(|run| run.state.clone())
             .unwrap_or(TaskRunState::Failed);
+        let response_role = if matches!(effective_state, TaskRunState::Failed) {
+            MessageRole::System
+        } else {
+            MessageRole::Assistant
+        };
         self.orchestration_summary = orchestration_summary;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
         self.append_message(Message {
-            role: if success {
-                MessageRole::Assistant
-            } else {
-                MessageRole::System
-            },
+            role: response_role,
             content: response,
             timestamp,
             collapsed: false,
@@ -4757,7 +4754,11 @@ impl App {
             self.capture_todo_plan(&prompt, plan);
         }
         self.finish_active_task();
-        if matches!(effective_state, TaskRunState::Completed) && !self.should_wait_for_user_after_chat() {
+        let waiting_for_user = matches!(
+            effective_state,
+            TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval
+        );
+        if matches!(effective_state, TaskRunState::Completed) && !waiting_for_user {
             if let Some(state) = loop_state.clone() {
                 let next_iteration = state.iteration.saturating_add(1);
                 if next_iteration > state.max_iterations {
@@ -4819,7 +4820,7 @@ impl App {
                 }
             }
         }
-        if !self.should_wait_for_user_after_chat() {
+        if !waiting_for_user {
             self.start_next_queued_message();
         }
     }
@@ -4962,7 +4963,7 @@ impl App {
             self.input_mode = InputMode::Chat;
         }
         self.push_system_message(&message);
-        if !self.should_wait_for_user_after_chat() {
+        if self.interaction.state == InteractionState::Idle {
             self.start_next_queued_message();
         }
     }
@@ -5661,10 +5662,6 @@ impl App {
         self.interaction.state = InteractionState::Idle;
         self.input_mode = InputMode::Chat;
         self.push_system_message("已退出待办确认态。输入 /todo confirm 可继续执行该计划。");
-    }
-
-    fn should_wait_for_user_after_chat(&self) -> bool {
-        self.interaction.state != InteractionState::Idle
     }
 
     fn should_resume_pending_question_on_enter(&self) -> bool {

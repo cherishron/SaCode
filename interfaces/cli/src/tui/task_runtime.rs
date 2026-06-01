@@ -106,7 +106,6 @@ impl App {
                 prompt: user_input,
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
                 orchestration_summary: None,
-                success: false,
                 task_run: None,
                 learned_facts: Vec::new(),
                 pending_question: None,
@@ -126,7 +125,6 @@ impl App {
             let (
                 response,
                 orchestration_summary,
-                success,
                 task_run,
                 learned_facts,
                 pending_question,
@@ -141,7 +139,6 @@ impl App {
                 prompt: user_input,
                 response,
                 orchestration_summary,
-                success,
                 task_run,
                 learned_facts,
                 pending_question,
@@ -212,7 +209,6 @@ impl App {
     ) -> (
         String,
         Option<String>,
-        bool,
         Option<TaskRun>,
         Vec<crate::learning::LearnedFact>,
         Option<serde_json::Value>,
@@ -227,7 +223,6 @@ impl App {
                 return (
                     "任务执行失败: 无法访问后台执行进程".to_string(),
                     None,
-                    false,
                     None,
                     Vec::new(),
                     None,
@@ -245,7 +240,6 @@ impl App {
             return (
                 "任务执行失败: 未获取到后台输出".to_string(),
                 None,
-                false,
                 None,
                 Vec::new(),
                 None,
@@ -262,7 +256,6 @@ impl App {
             return (
                 "任务执行失败: 读取后台输出失败".to_string(),
                 None,
-                false,
                 None,
                 Vec::new(),
                 None,
@@ -284,7 +277,6 @@ impl App {
                 return (
                     "任务执行失败: 无法等待后台执行进程退出".to_string(),
                     None,
-                    false,
                     None,
                     Vec::new(),
                     None,
@@ -308,7 +300,6 @@ impl App {
     ) -> (
         String,
         Option<String>,
-        bool,
         Option<TaskRun>,
         Vec<crate::learning::LearnedFact>,
         Option<serde_json::Value>,
@@ -324,7 +315,6 @@ impl App {
                 return (
                     "任务执行失败: 无法等待后台执行进程退出".to_string(),
                     None,
-                    false,
                     None,
                     Vec::new(),
                     None,
@@ -362,7 +352,6 @@ impl App {
                     )
                 },
                 None,
-                false,
                 None,
                 Vec::new(),
                 None,
@@ -384,7 +373,6 @@ impl App {
                 return (
                     format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
                     None,
-                    false,
                     None,
                     Vec::new(),
                     None,
@@ -408,7 +396,7 @@ impl App {
         let cli_events = Self::format_cli_events(parsed.get("events"));
         let task_run_output = Self::extract_task_run_output_text(&parsed);
         let provider_response = task_run_output.or_else(|| Self::extract_provider_response(&parsed));
-        let state = Self::extract_task_run_state(&parsed)
+        let _state = Self::extract_task_run_state(&parsed)
             .or_else(|| {
                 parsed
                     .get("state")
@@ -437,7 +425,6 @@ impl App {
             Self::append_raw_log("child_stderr", stderr_output.trim());
         }
 
-        let success = !matches!(state, TaskRunState::Failed);
         let orchestration_summary = Self::format_orchestration_details(&parsed);
         let response = Self::merge_cli_response(cli_events, provider_response)
             .or_else(|| pending_question.as_ref().map(Self::format_pending_question))
@@ -478,7 +465,6 @@ impl App {
         (
             response,
             orchestration_summary,
-            success,
             task_run,
             learned_facts,
             pending_question,
@@ -618,11 +604,10 @@ mod tests {
             .status()
             .expect("true exit status");
 
-        let (response, _summary, success, _task_run, _facts, _question, _plan, _usage, _api_ms, _tool_ms, _total_ms) =
+        let (response, _summary, _task_run, _facts, _question, _plan, _usage, _api_ms, _tool_ms, _total_ms) =
             App::parse_background_task_output(&payload, "", Some(exit_status));
 
         assert_eq!(response, "final answer");
-        assert!(success);
         assert_eq!(App::extract_task_run_state(&serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")), Some(TaskRunState::Completed));
     }
 }
