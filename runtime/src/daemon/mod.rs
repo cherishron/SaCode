@@ -108,12 +108,12 @@ impl TaskStatus {
             None,
         );
 
-        Self {
+        let mut status = Self {
             task_id,
             prompt,
             mode,
-            status: TaskQueueStatus::Pending.to_string(),
-            queue_status: TaskQueueStatus::Pending.to_string(),
+            status: String::new(),
+            queue_status: String::new(),
             priority,
             progress: 0,
             total_steps: 0,
@@ -124,7 +124,9 @@ impl TaskStatus {
             error: None,
             output: None,
             task_run: Some(task_run),
-        }
+        };
+        sync_task_status_from_task_run(&mut status);
+        status
     }
 
     fn derived_queue_status(&self) -> String {
