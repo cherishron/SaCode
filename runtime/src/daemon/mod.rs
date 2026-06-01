@@ -58,6 +58,26 @@ pub struct TaskResponse {
     pub queue_status: String,
 }
 
+impl TaskResponse {
+    fn queued(task_id: String, queue_status: TaskQueueStatus, message: String) -> Self {
+        Self {
+            task_id,
+            status: "queued".to_string(),
+            message,
+            queue_status: queue_status.to_string(),
+        }
+    }
+
+    fn error(task_id: String, message: String) -> Self {
+        Self {
+            task_id,
+            status: "error".to_string(),
+            message,
+            queue_status: "error".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskStatus {
     pub task_id: String,
@@ -105,6 +125,14 @@ impl TaskStatus {
             output: None,
             task_run: Some(task_run),
         }
+    }
+
+    fn derived_queue_status(&self) -> String {
+        self.task_run
+            .as_ref()
+            .and_then(|run| run.state.as_ref())
+            .map(task_run_state_to_queue_status)
+            .unwrap_or_else(|| self.queue_status.clone())
     }
 }
 
@@ -211,21 +239,17 @@ async fn create_task(
             let mut executor = state.executor.lock().await;
             let spawned = executor.run_once().await;
 
-            Json(TaskResponse {
+            Json(TaskResponse::queued(
                 task_id,
-                status: "queued".to_string(),
-                message: format!("Task created and submitted to queue", ),
-                queue_status: if spawned > 0 { "running" } else { "pending" }.to_string(),
-            })
+                if spawned > 0 {
+                    TaskQueueStatus::Running
+                } else {
+                    TaskQueueStatus::Pending
+                },
+                "Task created and submitted to queue".to_string(),
+            ))
         }
-        Err(e) => {
-            Json(TaskResponse {
-                task_id,
-                status: "error".to_string(),
-                message: format!("Failed to submit task: {}", e),
-                queue_status: "error".to_string(),
-            })
-        }
+        Err(e) => Json(TaskResponse::error(task_id, format!("Failed to submit task: {}", e))),
     }
 }
 
@@ -245,11 +269,7 @@ async fn get_task_status(
                 status.output.clone().or_else(|| status.error.clone()),
             ))
         });
-        let derived_status = task_run
-            .as_ref()
-            .and_then(|run| run.state.as_ref())
-            .map(task_run_state_to_queue_status)
-            .unwrap_or_else(|| status.queue_status.clone());
+        let derived_status = status.derived_queue_status();
         return Json(serde_json::json!({
             "task_id": status.task_id,
             "prompt": status.prompt,
@@ -327,12 +347,7 @@ async fn get_task_result(
     {
         let tasks = state.tasks.read().await;
         if let Some(status) = tasks.get(&task_id) {
-            let derived_status = status
-                .task_run
-                .as_ref()
-                .and_then(|run| run.state.as_ref())
-                .map(task_run_state_to_queue_status)
-                .unwrap_or_else(|| status.queue_status.clone());
+            let derived_status = status.derived_queue_status();
             return Json(serde_json::json!({
                 "task_id": status.task_id.clone(),
                 "status": derived_status.clone(),
@@ -645,11 +660,9 @@ fn task_run_for_queue_status(
 }
 
 fn sync_task_status_from_task_run(status: &mut TaskStatus) {
-    if let Some(task_run_state) = status.task_run.as_ref().and_then(|run| run.state.as_ref()) {
-        let queue_status = task_run_state_to_queue_status(task_run_state);
-        status.queue_status = queue_status.clone();
-        status.status = queue_status;
-    }
+    let queue_status = status.derived_queue_status();
+    status.queue_status = queue_status.clone();
+    status.status = queue_status;
 }
 
 fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_json::Value) {
