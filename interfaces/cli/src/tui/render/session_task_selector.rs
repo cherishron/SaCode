@@ -1,5 +1,4 @@
 use ratatui::{
-    layout::Rect,
     style::Style,
     text::Line,
     widgets::Paragraph,

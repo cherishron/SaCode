@@ -8,7 +8,7 @@ use ratatui::{
 
 
 use super::common::{
-    centered_rect, clear_area, render_modal_block, render_relative_modal_block,
+    centered_rect, clear_area, render_modal_block,
 };
 use super::super::{App, InputMode, MODELS_HINT_LIMIT};
 
