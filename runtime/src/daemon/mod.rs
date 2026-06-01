@@ -707,11 +707,11 @@ async fn update_task_status_from_executor_event(state: &Arc<DaemonState>, evt: &
 
     match evt.event_type.as_str() {
         "task_started" => {
-            status.task_run = Some(crate::task_run_snapshot(
+            status.task_run = Some(task_run_for_queue_status(
                 Some(status.task_id.clone()),
                 parse_mode(&status.mode),
                 status.prompt.clone(),
-                sacode_kernel::TaskRunState::WaitingForUser,
+                TaskQueueStatus::Running,
                 None,
             ));
             sync_task_status_from_task_run(status);
