@@ -1272,6 +1272,10 @@ async fn test_daemon_task_lifecycle() {
 
     assert_eq!(payload["task_id"], task_id);
     assert!(matches!(payload["queue_status"].as_str(), Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")));
+    assert!(payload.get("task_run").is_some());
+    if let Some(task_run) = payload.get("task_run") {
+        assert_eq!(task_run["source"].as_str(), Some("snapshot"));
+    }
     if let Some(task_run_state) = payload
         .get("task_run")
         .and_then(|value| value.get("state"))
@@ -1738,6 +1742,7 @@ async fn test_daemon_task_cancel_endpoint() {
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     let cancel_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -1749,6 +1754,33 @@ async fn test_daemon_task_cancel_endpoint() {
 
     let resp = cancel_response.expect("cancel response");
     assert_eq!(resp.status(), StatusCode::OK);
+
+    let status_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/task/{}/status", task_id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("status response");
+
+    let status_body = to_bytes(status_response.into_body(), usize::MAX)
+        .await
+        .expect("read status body");
+    let status_payload: serde_json::Value =
+        serde_json::from_slice(&status_body).expect("valid status json");
+
+    assert_eq!(status_payload["status"], "failed");
+    assert_eq!(status_payload["queue_status"], "failed");
+    assert_eq!(
+        status_payload["task_run"]["state"].as_str(),
+        Some("Failed")
+    );
+    assert_eq!(
+        status_payload["task_run"]["output_text"].as_str(),
+        Some("Task cancelled")
+    );
 }
 
 #[tokio::test]

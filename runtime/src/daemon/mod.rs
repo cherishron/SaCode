@@ -78,6 +78,36 @@ pub struct TaskStatus {
     pub task_run: Option<TaskRun>,
 }
 
+impl TaskStatus {
+    fn new(task_id: String, prompt: String, mode: String, priority: String, max_attempts: u32) -> Self {
+        let task_run = task_run_for_queue_status(
+            Some(task_id.clone()),
+            parse_mode(&mode),
+            prompt.clone(),
+            TaskQueueStatus::Pending,
+            None,
+        );
+
+        Self {
+            task_id,
+            prompt,
+            mode,
+            status: TaskQueueStatus::Pending.to_string(),
+            queue_status: TaskQueueStatus::Pending.to_string(),
+            priority,
+            progress: 0,
+            total_steps: 0,
+            current_event: None,
+            current_attempt: 0,
+            max_attempts,
+            duration_ms: None,
+            error: None,
+            output: None,
+            task_run: Some(task_run),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamEvent {
     pub task_id: String,
@@ -159,23 +189,13 @@ async fn create_task(
         let mut tasks = state.tasks.write().await;
         tasks.insert(
             task_id.clone(),
-            TaskStatus {
-                task_id: task_id.clone(),
-                prompt: req.prompt.clone(),
-                mode: req.mode.clone(),
-                status: "created".to_string(),
-                queue_status: "pending".to_string(),
-                priority: priority.to_string(),
-                progress: 0,
-                total_steps: 0,
-                current_event: None,
-                current_attempt: 0,
-                max_attempts: scheduled_task.retry_policy.max_attempts,
-                duration_ms: None,
-                error: None,
-                output: None,
-                task_run: None,
-            },
+            TaskStatus::new(
+                task_id.clone(),
+                req.prompt.clone(),
+                req.mode.clone(),
+                priority.to_string(),
+                scheduled_task.retry_policy.max_attempts,
+            ),
         );
     }
 
@@ -217,16 +237,11 @@ async fn get_task_status(
 
     if let Some(status) = tasks.get(&task_id) {
         let task_run = status.task_run.clone().or_else(|| {
-            Some(crate::task_run_snapshot(
+            Some(task_run_for_queue_status(
                 Some(status.task_id.clone()),
                 parse_mode(&status.mode),
                 status.prompt.clone(),
-                match status.queue_status.as_str() {
-                    "completed" => sacode_kernel::TaskRunState::Completed,
-                    "failed" => sacode_kernel::TaskRunState::Failed,
-                    "running" => sacode_kernel::TaskRunState::WaitingForUser,
-                    _ => sacode_kernel::TaskRunState::WaitingForUser,
-                },
+                parse_queue_status(&status.queue_status),
                 status.output.clone().or_else(|| status.error.clone()),
             ))
         });
@@ -256,16 +271,11 @@ async fn get_task_status(
 
     if let Some(queue_status) = state.queue.status(&task_id).await {
         if let Some(task) = state.queue.get_task(&task_id).await {
-            let task_run = crate::task_run_snapshot(
+            let task_run = task_run_for_queue_status(
                 Some(task.id.clone()),
                 task.task.mode,
                 task.task.prompt.clone(),
-                match queue_status {
-                    TaskQueueStatus::Running => sacode_kernel::TaskRunState::WaitingForUser,
-                    TaskQueueStatus::Completed => sacode_kernel::TaskRunState::Completed,
-                    TaskQueueStatus::Failed => sacode_kernel::TaskRunState::Failed,
-                    _ => sacode_kernel::TaskRunState::WaitingForUser,
-                },
+                queue_status.clone(),
                 None,
             );
             return Json(serde_json::json!({
@@ -284,15 +294,11 @@ async fn get_task_status(
 
     if let Some(result) = state.queue.get_result(&task_id).await {
         let task_run = state.queue.get_task_run(&task_id).await.unwrap_or_else(|| {
-            crate::task_run_snapshot(
+            task_run_for_queue_status(
                 Some(result.task_id.clone()),
                 ExecutionMode::Build,
                 String::new(),
-                if result.status == TaskQueueStatus::Failed {
-                    sacode_kernel::TaskRunState::Failed
-                } else {
-                    sacode_kernel::TaskRunState::Completed
-                },
+                result.status.clone(),
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });
@@ -341,15 +347,11 @@ async fn get_task_result(
 
     if let Some(result) = state.queue.get_result(&task_id).await {
         let task_run = state.queue.get_task_run(&task_id).await.unwrap_or_else(|| {
-            crate::task_run_snapshot(
+            task_run_for_queue_status(
                 Some(result.task_id.clone()),
                 ExecutionMode::Build,
                 String::new(),
-                if result.status == TaskQueueStatus::Failed {
-                    sacode_kernel::TaskRunState::Failed
-                } else {
-                    sacode_kernel::TaskRunState::Completed
-                },
+                result.status.clone(),
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });
@@ -431,6 +433,20 @@ async fn cancel_task(
     let cancelled = state.queue.cancel(&task_id).await;
 
     if cancelled {
+        {
+            let mut tasks = state.tasks.write().await;
+            if let Some(status) = tasks.get_mut(&task_id) {
+                status.task_run = Some(task_run_for_queue_status(
+                    Some(status.task_id.clone()),
+                    parse_mode(&status.mode),
+                    status.prompt.clone(),
+                    TaskQueueStatus::Failed,
+                    Some("Task cancelled".to_string()),
+                ));
+                status.error = Some("Task cancelled".to_string());
+                sync_task_status_from_task_run(status);
+            }
+        }
         emit_event(&state, &task_id, "task_cancelled", serde_json::json!({}));
         Json(serde_json::json!({
             "task_id": task_id,
@@ -584,6 +600,48 @@ fn task_run_state_to_queue_status(state: &sacode_kernel::TaskRunState) -> String
             TaskQueueStatus::Running.to_string()
         }
     }
+}
+
+fn parse_queue_status(status: &str) -> TaskQueueStatus {
+    match status {
+        "ready" => TaskQueueStatus::Ready,
+        "running" => TaskQueueStatus::Running,
+        "completed" => TaskQueueStatus::Completed,
+        "failed" => TaskQueueStatus::Failed,
+        "retrying" => TaskQueueStatus::Retrying,
+        "cancelled" => TaskQueueStatus::Cancelled,
+        _ => TaskQueueStatus::Pending,
+    }
+}
+
+fn task_run_state_for_queue_status(status: &TaskQueueStatus) -> sacode_kernel::TaskRunState {
+    match status {
+        TaskQueueStatus::Completed => sacode_kernel::TaskRunState::Completed,
+        TaskQueueStatus::Failed => sacode_kernel::TaskRunState::Failed,
+        TaskQueueStatus::Cancelled => sacode_kernel::TaskRunState::Failed,
+        TaskQueueStatus::Pending
+        | TaskQueueStatus::Ready
+        | TaskQueueStatus::Running
+        | TaskQueueStatus::Retrying => {
+            sacode_kernel::TaskRunState::WaitingForUser
+        }
+    }
+}
+
+fn task_run_for_queue_status(
+    task_id: Option<String>,
+    mode: ExecutionMode,
+    prompt: String,
+    queue_status: TaskQueueStatus,
+    output_text: Option<String>,
+) -> TaskRun {
+    crate::task_run_snapshot(
+        task_id,
+        mode,
+        prompt,
+        task_run_state_for_queue_status(&queue_status),
+        output_text,
+    )
 }
 
 fn sync_task_status_from_task_run(status: &mut TaskStatus) {
