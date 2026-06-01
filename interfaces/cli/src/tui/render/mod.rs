@@ -1,6 +1,7 @@
 mod common;
 mod main_layout;
 mod modals;
+mod mode_selector;
 mod selectors;
 
 pub(crate) use common::{
@@ -14,9 +15,9 @@ pub(crate) use modals::{
     render_config_enum_selector, render_config_selector, render_input_optimization_preview,
     render_pending_question_panel,
 };
+pub(crate) use mode_selector::render_mode_selector;
 pub(crate) use selectors::{
     render_checkpoint_selector, render_command_selector, render_connect_selector,
-    render_mcp_selector, render_mode_selector, render_selector, render_session_selector,
-    render_skills_selector,
+    render_mcp_selector, render_selector, render_session_selector, render_skills_selector,
     render_task_selector,
 };
