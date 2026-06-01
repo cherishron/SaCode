@@ -1,4 +1,5 @@
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+use crate::sandbox::active_policy;
 use anyhow::Result;
 
 #[derive(Debug, serde::Deserialize)]
@@ -33,6 +34,10 @@ pub fn spec() -> ToolSpec {
 }
 
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
+    if !active_policy().check_network() {
+        return Ok(ToolOutput::failure("network access blocked by sandbox policy"));
+    }
+
     let payload: FetchInput = serde_json::from_value(input)?;
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))

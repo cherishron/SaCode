@@ -1,8 +1,13 @@
 mod executor;
 
+use sacode_kernel::ExecutionMode;
+
 pub use executor::SandboxExecutor;
 
 use std::path::PathBuf;
+use std::sync::{OnceLock, RwLock};
+
+static ACTIVE_SANDBOX_POLICY: OnceLock<RwLock<SandboxPolicy>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct SandboxPolicy {
@@ -68,28 +73,82 @@ impl SandboxPolicy {
     pub fn build() -> Self {
         Self::new()
             .allow_path(PathBuf::from("."))
-            .allow_command("cargo".to_string())
-            .allow_command("npm".to_string())
-            .allow_command("git".to_string())
+            .allow_network()
             .timeout(30000)
+            .max_memory(512)
     }
 
     pub fn yolo() -> Self {
         Self::new()
             .allow_path(PathBuf::from("."))
             .allow_network()
+            .timeout(60000)
+            .max_memory(1024)
+    }
+
+    pub fn for_mode(mode: ExecutionMode) -> Self {
+        match mode {
+            ExecutionMode::Plan => Self::readonly().timeout(15000).max_memory(256),
+            ExecutionMode::Build => Self::build(),
+            ExecutionMode::Yolo => Self::yolo(),
+        }
     }
 
     pub fn check_path(&self, path: &PathBuf) -> bool {
-        if self.denied_paths.iter().any(|p| path.starts_with(p)) {
+        if self.denied_paths.iter().any(|p| path.starts_with(resolve_policy_path(p))) {
             return false;
         }
-        
-        self.allowed_paths.iter().any(|p| path.starts_with(p))
+
+        if self.allowed_paths.is_empty() {
+            return true;
+        }
+
+        self.allowed_paths
+            .iter()
+            .any(|p| path.starts_with(resolve_policy_path(p)))
     }
 
     pub fn check_command(&self, cmd: &str) -> bool {
-        self.allowed_commands.iter().any(|allowed| cmd.starts_with(allowed))
+        if self.allowed_commands.is_empty() {
+            return true;
+        }
+
+        self.allowed_commands.iter().any(|allowed| cmd == allowed)
+    }
+
+    pub fn check_network(&self) -> bool {
+        self.network_allowed
+    }
+}
+
+pub fn install_global_policy(policy: SandboxPolicy) {
+    let cell = ACTIVE_SANDBOX_POLICY.get_or_init(|| RwLock::new(SandboxPolicy::build()));
+    if let Ok(mut current) = cell.write() {
+        *current = policy;
+    }
+}
+
+pub fn active_policy() -> SandboxPolicy {
+    let cell = ACTIVE_SANDBOX_POLICY.get_or_init(|| RwLock::new(SandboxPolicy::build()));
+    match cell.read() {
+        Ok(policy) => policy.clone(),
+        Err(_) => SandboxPolicy::build(),
+    }
+}
+
+#[cfg(test)]
+pub fn reset_global_policy() {
+    install_global_policy(SandboxPolicy::build());
+}
+
+fn resolve_policy_path(path: &PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path.clone();
+    }
+
+    match std::env::current_dir() {
+        Ok(current_dir) => current_dir.join(path),
+        Err(_) => path.clone(),
     }
 }
 

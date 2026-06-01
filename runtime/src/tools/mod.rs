@@ -4,6 +4,7 @@ pub mod fs;
 pub mod git;
 pub mod interaction;
 pub mod media;
+pub mod sandbox_guard;
 pub mod shell;
 pub mod spec;
 pub mod task;
@@ -97,6 +98,8 @@ impl ToolRegistry {
             .tools
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
+
+        sandbox_guard::preflight(&tool.spec, &input)?;
         tool.executor.execute(input)
     }
 }

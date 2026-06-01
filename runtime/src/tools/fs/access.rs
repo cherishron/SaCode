@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::ProjectAccessConfigStore;
+use crate::sandbox::active_policy;
 
 pub fn resolve_allowed_path(path: &str) -> anyhow::Result<PathBuf> {
     let workspace_root = std::env::current_dir()?.canonicalize()?;
@@ -13,6 +14,10 @@ pub fn resolve_allowed_path(path: &str) -> anyhow::Result<PathBuf> {
 
     let normalized = normalize_path(&joined_path)?;
     let canonical = canonicalize_existing_prefix(&normalized)?;
+
+    if !active_policy().check_path(&canonical) {
+        anyhow::bail!("path is blocked by sandbox policy");
+    }
 
     if is_allowed(&canonical, &workspace_root)? {
         Ok(canonical)

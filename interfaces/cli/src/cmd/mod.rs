@@ -14,6 +14,7 @@ mod mistakes;
 mod mcp;
 mod plugin;
 mod profile;
+mod sandbox;
 pub mod outstyle;
 pub mod prompt;
 mod serve;
@@ -31,7 +32,7 @@ use anyhow::Result;
 use sacode_kernel::{ExecutionMode, ExecutionContext, Supervisor, Task};
 pub use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{
-    CheckpointStorage, RuntimeOrchestrator, SandboxExecutor, SandboxPolicy, ToolRegistry,
+    CheckpointStorage, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor, SandboxPolicy, ToolRegistry,
     RoleRegistry, TaskProfile, build_execution_plan, execute_role_driven_orchestration,
     strip_orchestration_prefix,
 };
@@ -62,6 +63,7 @@ pub enum CliCommand {
     Wiki,
     Vim,
     Skill,
+    Sandbox,
     Mcp,
     Acp,
     Lsp,
@@ -163,6 +165,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Prompt => prompt::run(options.sub_args)?,
         CliCommand::Wiki => wiki::run(options.sub_args)?,
         CliCommand::Skill => skill::run(options.sub_args).await?,
+        CliCommand::Sandbox => sandbox::run(options.sub_args)?,
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
         CliCommand::Acp => acp::run(options.sub_args).await?,
         CliCommand::Lsp => lsp::run(options.sub_args).await?,
@@ -243,7 +246,10 @@ async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     
     let supervisor = Supervisor::new();
     let tools = ToolRegistry::builtin();
-    let sandbox = SandboxExecutor::new(SandboxPolicy::build());
+    let sandbox_policy = SandboxConfigStore::new(&workdir)
+        .policy_for_mode(options.mode)
+        .unwrap_or_else(|_| SandboxPolicy::for_mode(options.mode));
+    let sandbox = SandboxExecutor::new(sandbox_policy);
     let checkpoints = CheckpointStorage::new(&workdir);
 
     let report = if execution_plan.use_multi_agent {
@@ -636,6 +642,18 @@ fn parse_args(args: Vec<String>) -> CliOptions {
         };
     }
 
+    if first == "sandbox" {
+        return CliOptions {
+            command: CliCommand::Sandbox,
+            prompt: String::new(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            json: false,
+            approval: ApprovalPolicy::Prompt,
+            sub_args: args[1..].to_vec(),
+        };
+    }
+
     if first == "mcp" {
         return CliOptions {
             command: CliCommand::Mcp,
@@ -910,6 +928,7 @@ fn print_help() {
     println!("  sacode wiki");
     println!("  sacode vim [show|on|off|project show|on|off]");
     println!("  sacode skill [search|install|list|show|update|remove|run]");
+    println!("  sacode sandbox [show [plan|build|yolo] [--json]|diff [plan|build|yolo] [--json]|doctor [plan|build|yolo] [--json]|init|path|set <mode> <key> <value>|clear <mode> <key>]");
     println!("  sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]");
     println!("  sacode memory [show|search <query>|path|summary|append <content> [--type memory|preference|workflow|decision] [--global|-g]]");
     println!("  sacode insight");
@@ -1048,6 +1067,14 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Skill);
         assert_eq!(options.sub_args, vec!["list".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_sandbox_subcommand() {
+        let options = parse_args(vec!["sandbox".to_string(), "show".to_string(), "plan".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Sandbox);
+        assert_eq!(options.sub_args, vec!["show".to_string(), "plan".to_string()]);
     }
 
     #[test]

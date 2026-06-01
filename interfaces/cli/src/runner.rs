@@ -5,7 +5,7 @@ use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
 use sacode_runtime::{
     build_runtime_system_prompt, maybe_expand_skill_prompt, FailoverContext, McpConfigStore,
-    ProviderClient, SideEffectLevel, TaskProfile, ToolRegistry, register_enabled_mcp_tools_sync,
+    ProviderClient, SandboxConfigStore, SandboxPolicy, SideEffectLevel, TaskProfile, ToolRegistry, register_enabled_mcp_tools_sync,
     PromptContext, NodeScore,
 };
 use serde::Serialize;
@@ -113,6 +113,10 @@ pub async fn run_task_with_stdin(
 ) -> Result<RunnerOutput> {
     let total_started_at = Instant::now();
     let workdir = env::current_dir()?;
+    let sandbox_policy = SandboxConfigStore::new(&workdir)
+        .policy_for_mode(mode)
+        .unwrap_or_else(|_| SandboxPolicy::for_mode(mode));
+    sacode_runtime::install_global_policy(sandbox_policy);
     let _ = status::ensure_default_context7(&workdir).await;
     let expanded_prompt = maybe_expand_skill_prompt(prompt, &workdir)?;
     let effective_prompt = if let Some(ref stdin) = stdin {

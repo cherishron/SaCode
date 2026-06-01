@@ -5,6 +5,8 @@ use wait_timeout::ChildExt;
 
 use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
+use super::sandbox::ShellSandbox;
+
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_OUTPUT_LEN: usize = 10000;
 
@@ -51,8 +53,15 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("dangerous command blocked"));
     }
 
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(command_str);
+    ShellSandbox::validate(command_str, cwd)?;
+
+    let parts = split_command(command_str)?;
+    let Some(program) = parts.first() else {
+        return Ok(ToolOutput::failure("command is required"));
+    };
+
+    let mut cmd = Command::new(program);
+    cmd.args(parts.iter().skip(1));
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -99,6 +108,54 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                 .with_message(format!("Timeout after {} seconds", timeout_secs)))
         }
     }
+}
+
+fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(active_quote) => {
+                if ch == active_quote {
+                    quote = None;
+                } else if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => {
+                if ch.is_whitespace() {
+                    if !current.is_empty() {
+                        parts.push(std::mem::take(&mut current));
+                    }
+                } else if ch == '\'' || ch == '"' {
+                    quote = Some(ch);
+                } else if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+
+    if quote.is_some() {
+        anyhow::bail!("unterminated quoted string in command");
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    Ok(parts)
 }
 
 fn is_dangerous_command(cmd: &str) -> bool {

@@ -1,4 +1,5 @@
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+use crate::sandbox::active_policy;
 use anyhow::Result;
 use serde::Deserialize;
 
@@ -56,6 +57,10 @@ pub fn spec() -> ToolSpec {
 }
 
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
+    if !active_policy().check_network() {
+        return Ok(ToolOutput::failure("network access blocked by sandbox policy"));
+    }
+
     let payload: SearchInput = serde_json::from_value(input)?;
     let provider = payload.provider.unwrap_or_else(|| "duckduckgo".to_string());
 

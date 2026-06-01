@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::{Mutex, OnceLock};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use tower::util::ServiceExt;
 use crate::{
     build_runtime_system_prompt,
     create_daemon,
-    config::SaCodeConfig,
+    config::{SaCodeConfig, SandboxConfig, SandboxConfigStore, SandboxModeConfig},
     load_memory_index,
     mcp::{McpConfig, McpConfigStore, McpServerConfig, McpSource},
     queue::{InMemoryStore, TaskQueue, TaskStore},
@@ -25,6 +26,11 @@ use crate::{
     PromptContext,
 };
 use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
+
+fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().expect("sandbox test lock")
+}
 
 #[test]
 fn test_runtime_system_prompt_loads_agents_and_project_prompt() {
@@ -258,6 +264,291 @@ fn test_tool_spec_read_only() {
     let spec = tools::fs::read::spec();
     assert!(spec.is_read_only());
     assert!(!spec.needs_approval());
+}
+
+#[test]
+fn test_sandbox_policy_for_plan_mode_is_read_only() {
+    let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan);
+
+    assert!(!policy.network_allowed);
+    assert!(policy.allowed_commands.contains(&"ls".to_string()));
+    assert!(!policy.check_command("git"));
+    assert_eq!(policy.max_memory_mb, Some(256));
+    assert_eq!(policy.timeout_ms, Some(15_000));
+}
+
+#[test]
+fn test_sandbox_policy_for_build_mode_allows_network_without_command_whitelist() {
+    let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
+
+    assert!(policy.network_allowed);
+    assert!(policy.allowed_commands.is_empty());
+    assert!(policy.check_command("git"));
+    assert_eq!(policy.max_memory_mb, Some(512));
+    assert_eq!(policy.timeout_ms, Some(30_000));
+}
+
+#[test]
+fn test_sandbox_policy_for_yolo_mode_is_most_permissive() {
+    let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Yolo);
+
+    assert!(policy.network_allowed);
+    assert!(policy.allowed_commands.is_empty());
+    assert!(policy.check_command("cargo"));
+    assert_eq!(policy.max_memory_mb, Some(1024));
+    assert_eq!(policy.timeout_ms, Some(60_000));
+}
+
+#[test]
+fn test_sandbox_config_store_overrides_plan_network_policy() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let store = SandboxConfigStore::new(workdir);
+    store
+        .save(&SandboxConfig {
+            plan: SandboxModeConfig {
+                network_allowed: Some(true),
+                ..SandboxModeConfig::default()
+            },
+            ..SandboxConfig::default()
+        })
+        .expect("save sandbox config");
+
+    let policy = store.policy_for_mode(ExecutionMode::Plan).expect("load plan sandbox policy");
+    assert!(policy.network_allowed);
+}
+
+#[test]
+fn test_sandbox_config_store_overrides_build_allowed_commands() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let store = SandboxConfigStore::new(workdir);
+    store
+        .save(&SandboxConfig {
+            build: SandboxModeConfig {
+                allowed_commands: vec!["git".to_string()],
+                ..SandboxModeConfig::default()
+            },
+            ..SandboxConfig::default()
+        })
+        .expect("save sandbox config");
+
+    let policy = store.policy_for_mode(ExecutionMode::Build).expect("load build sandbox policy");
+    assert_eq!(policy.allowed_commands, vec!["git".to_string()]);
+    assert!(policy.check_command("git"));
+    assert!(!policy.check_command("cargo"));
+}
+
+#[test]
+fn test_fs_write_respects_sandbox_denied_path() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+
+    let policy = crate::sandbox::SandboxPolicy::new()
+        .allow_path(workdir.to_path_buf())
+        .deny_path(workdir.join("blocked"));
+    crate::sandbox::install_global_policy(policy);
+
+    let blocked_path = workdir.join("blocked/file.txt");
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("fs.write", serde_json::json!({
+            "path": blocked_path.display().to_string(),
+            "content": "secret"
+        }))
+        .expect_err("sandbox should block denied path");
+
+    assert!(output.to_string().contains("sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_web_fetch_respects_sandbox_network_policy() {
+    let _guard = sandbox_test_lock();
+    let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
+    policy.network_allowed = false;
+    crate::sandbox::install_global_policy(policy);
+
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("web.fetch", serde_json::json!({
+            "url": "https://example.com"
+        }))
+        .expect_err("sandbox should block network access before execution");
+
+    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_shell_exec_respects_sandbox_allowed_commands() {
+    let _guard = sandbox_test_lock();
+    let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
+    policy.allowed_commands = vec!["pwd".to_string()];
+    crate::sandbox::install_global_policy(policy);
+
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("shell.exec", serde_json::json!({
+            "command": "git status"
+        }))
+        .expect_err("sandbox should block disallowed command");
+
+    assert!(output.to_string().contains("sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_browser_open_respects_sandbox_network_policy() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::install_global_policy(
+        crate::sandbox::SandboxPolicy::new().allow_path(std::path::PathBuf::from(".")),
+    );
+
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("browser.open", serde_json::json!({
+            "url": "https://example.com"
+        }))
+        .expect_err("sandbox should block browser network access");
+
+    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_diff_respects_sandbox_allowed_commands() {
+    let _guard = sandbox_test_lock();
+    let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
+    policy.allowed_commands = vec!["pwd".to_string()];
+    crate::sandbox::install_global_policy(policy);
+
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("git.diff", serde_json::json!({}))
+        .expect_err("sandbox should block git command");
+
+    assert!(output.to_string().contains("command 'git' is blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_fs_read_multi_respects_sandbox_paths_array() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let allowed_file = workdir.join("allowed.txt");
+    let blocked_file = workdir.join("blocked/secret.txt");
+    std::fs::write(&allowed_file, "ok").expect("write allowed file");
+    std::fs::create_dir_all(blocked_file.parent().expect("blocked parent")).expect("create blocked dir");
+    std::fs::write(&blocked_file, "secret").expect("write blocked file");
+
+    crate::sandbox::install_global_policy(
+        crate::sandbox::SandboxPolicy::new()
+            .allow_path(workdir.to_path_buf())
+            .deny_path(workdir.join("blocked")),
+    );
+
+    let registry = ToolRegistry::builtin();
+    let output = registry
+        .execute("fs.read_multi", serde_json::json!({
+            "paths": [
+                allowed_file.display().to_string(),
+                blocked_file.display().to_string()
+            ]
+        }))
+        .expect_err("sandbox should block denied path inside paths array");
+
+    assert!(output.to_string().contains("path is blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_tool_registry_blocks_base_url_network_fields() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::install_global_policy(
+        crate::sandbox::SandboxPolicy::new().allow_path(std::path::PathBuf::from(".")),
+    );
+
+    let mut registry = ToolRegistry::default();
+    registry.register_fn(
+        tools::ToolSpec {
+            name: "test.base_url_guard".to_string(),
+            description: "test tool".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "base_url": { "type": "string" }
+                }
+            }),
+            output_schema: serde_json::json!({ "type": "object" }),
+            side_effect_level: tools::SideEffectLevel::ReadOnly,
+            approval_required: false,
+            timeout_ms: None,
+            tags: vec!["test".to_string()],
+        },
+        |_| Ok(ToolOutput::success(serde_json::json!({ "ok": true }))),
+    );
+
+    let output = registry
+        .execute("test.base_url_guard", serde_json::json!({
+            "base_url": "https://example.com/api"
+        }))
+        .expect_err("sandbox should block base_url network access");
+
+    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_tool_registry_blocks_urls_array_network_fields() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::install_global_policy(
+        crate::sandbox::SandboxPolicy::new().allow_path(std::path::PathBuf::from(".")),
+    );
+
+    let mut registry = ToolRegistry::default();
+    registry.register_fn(
+        tools::ToolSpec {
+            name: "test.urls_guard".to_string(),
+            description: "test tool".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                }
+            }),
+            output_schema: serde_json::json!({ "type": "object" }),
+            side_effect_level: tools::SideEffectLevel::ReadOnly,
+            approval_required: false,
+            timeout_ms: None,
+            tags: vec!["test".to_string()],
+        },
+        |_| Ok(ToolOutput::success(serde_json::json!({ "ok": true }))),
+    );
+
+    let output = registry
+        .execute("test.urls_guard", serde_json::json!({
+            "urls": ["https://example.com/a", "https://example.com/b"]
+        }))
+        .expect_err("sandbox should block urls array network access");
+
+    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+
+    crate::sandbox::reset_global_policy();
 }
 
 #[test]

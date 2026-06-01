@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::{mcp::McpConfig, skills::SkillSpec};
+use crate::sandbox::SandboxPolicy;
+use sacode_kernel::ExecutionMode;
 
 const USER_ROOT_DIR: &str = ".sacode";
 const PROJECT_ROOT_DIR: &str = ".sacode";
@@ -10,6 +12,7 @@ const SKILLS_DIR: &str = "skills";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const IDE_CONFIG_FILE: &str = "server.json";
 const PROJECT_ACCESS_FILE: &str = "dirs.json";
+const SANDBOX_CONFIG_FILE: &str = "sandbox.json";
 
 #[derive(Debug, Clone)]
 pub struct SaCodeConfig {
@@ -58,6 +61,10 @@ impl SaCodeConfig {
 
     pub fn project_access_config(&self) -> PathBuf {
         self.project_dir.join(PROJECT_ACCESS_FILE)
+    }
+
+    pub fn project_sandbox_config(&self) -> PathBuf {
+        self.project_dir.join(SANDBOX_CONFIG_FILE)
     }
 
     pub fn load_merged_mcp_config(&self) -> Result<McpConfig> {
@@ -217,4 +224,102 @@ fn normalize_allowed_dirs(dirs: &mut Vec<String>) {
     dirs.retain(|dir| !dir.trim().is_empty());
     dirs.sort();
     dirs.dedup();
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxConfig {
+    #[serde(default)]
+    pub plan: SandboxModeConfig,
+    #[serde(default)]
+    pub build: SandboxModeConfig,
+    #[serde(default)]
+    pub yolo: SandboxModeConfig,
+}
+
+impl SandboxConfig {
+    pub fn apply(&self, mode: ExecutionMode, policy: SandboxPolicy) -> SandboxPolicy {
+        let mode_config = match mode {
+            ExecutionMode::Plan => &self.plan,
+            ExecutionMode::Build => &self.build,
+            ExecutionMode::Yolo => &self.yolo,
+        };
+        mode_config.apply(policy)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxModeConfig {
+    pub network_allowed: Option<bool>,
+    pub max_memory_mb: Option<usize>,
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub allowed_commands: Vec<String>,
+    #[serde(default)]
+    pub denied_paths: Vec<String>,
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
+}
+
+impl SandboxModeConfig {
+    fn apply(&self, mut policy: SandboxPolicy) -> SandboxPolicy {
+        if let Some(network_allowed) = self.network_allowed {
+            policy.network_allowed = network_allowed;
+        }
+        if let Some(max_memory_mb) = self.max_memory_mb {
+            policy.max_memory_mb = Some(max_memory_mb);
+        }
+        if let Some(timeout_ms) = self.timeout_ms {
+            policy.timeout_ms = Some(timeout_ms);
+        }
+        if !self.allowed_commands.is_empty() {
+            policy.allowed_commands = self.allowed_commands.clone();
+        }
+        if !self.allowed_paths.is_empty() {
+            policy.allowed_paths = self.allowed_paths.iter().map(PathBuf::from).collect();
+        }
+        if !self.denied_paths.is_empty() {
+            policy.denied_paths = self.denied_paths.iter().map(PathBuf::from).collect();
+        }
+        policy
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SandboxConfigStore {
+    path: PathBuf,
+}
+
+impl SandboxConfigStore {
+    pub fn new(workdir: &Path) -> Self {
+        Self {
+            path: SaCodeConfig::new(workdir).project_sandbox_config(),
+        }
+    }
+
+    pub fn load(&self) -> Result<SandboxConfig> {
+        if !self.path.exists() {
+            return Ok(SandboxConfig::default());
+        }
+
+        let content = std::fs::read_to_string(&self.path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    pub fn save(&self, config: &SandboxConfig) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(&self.path, serde_json::to_string_pretty(config)?)?;
+        Ok(())
+    }
+
+    pub fn policy_for_mode(&self, mode: ExecutionMode) -> Result<SandboxPolicy> {
+        let config = self.load()?;
+        Ok(config.apply(mode, SandboxPolicy::for_mode(mode)))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }

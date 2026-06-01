@@ -4,7 +4,7 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 use tracing::{info, warn, debug};
 
-use crate::sandbox::SandboxPolicy;
+use crate::sandbox::{install_global_policy, SandboxPolicy};
 
 pub struct SandboxExecutor {
     policy: SandboxPolicy,
@@ -12,6 +12,7 @@ pub struct SandboxExecutor {
 
 impl SandboxExecutor {
     pub fn new(policy: SandboxPolicy) -> Self {
+        install_global_policy(policy.clone());
         Self { policy }
     }
 
