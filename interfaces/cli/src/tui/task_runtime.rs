@@ -8,6 +8,21 @@ use std::{
 };
 
 use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
+#[derive(Debug, Default)]
+struct BackgroundTaskOutput {
+    response: String,
+    orchestration_summary: Option<String>,
+    task_run: Option<TaskRun>,
+    learned_facts: Vec<crate::learning::LearnedFact>,
+    pending_question: Option<serde_json::Value>,
+    plan: Option<sacode_kernel::Plan>,
+    usage: Option<ChatUsage>,
+    api_duration_ms: u64,
+    tool_duration_ms: u64,
+    total_duration_ms: u64,
+}
+
+
 
 use crate::cmd::config;
 
@@ -122,31 +137,20 @@ impl App {
         let child = Arc::new(Mutex::new(child));
         self.queue.active_child = Some(child.clone());
         thread::spawn(move || {
-            let (
-                response,
-                orchestration_summary,
-                task_run,
-                learned_facts,
-                pending_question,
-                plan,
-                usage,
-                api_duration_ms,
-                tool_duration_ms,
-                total_duration_ms,
-            ) = App::execute_user_message_in_background(child, &user_input);
+            let result = App::execute_user_message_in_background(child, &user_input);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
-                response,
-                orchestration_summary,
-                task_run,
-                learned_facts,
-                pending_question,
-                plan,
-                usage,
-                api_duration_ms,
-                tool_duration_ms,
-                total_duration_ms,
+                response: result.response,
+                orchestration_summary: result.orchestration_summary,
+                task_run: result.task_run,
+                learned_facts: result.learned_facts,
+                pending_question: result.pending_question,
+                plan: result.plan,
+                usage: result.usage,
+                api_duration_ms: result.api_duration_ms,
+                tool_duration_ms: result.tool_duration_ms,
+                total_duration_ms: result.total_duration_ms,
                 loop_state,
             });
         });
@@ -206,65 +210,33 @@ impl App {
     pub(super) fn execute_user_message_in_background(
         child: Arc<Mutex<Child>>,
         _source_task: &str,
-    ) -> (
-        String,
-        Option<String>,
-        Option<TaskRun>,
-        Vec<crate::learning::LearnedFact>,
-        Option<serde_json::Value>,
-        Option<sacode_kernel::Plan>,
-        Option<ChatUsage>,
-        u64,
-        u64,
-        u64,
-    ) {
+    ) -> BackgroundTaskOutput {
         let (stdout, stderr) = {
             let Ok(mut child) = child.lock() else {
-                return (
-                    "任务执行失败: 无法访问后台执行进程".to_string(),
-                    None,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                );
+                return BackgroundTaskOutput { response: "任务执行失败: 无法访问后台执行进程".to_string(), ..Default::default() };
+
+
+
+
+
+
+
+
+
+
+
+
             };
             (child.stdout.take(), child.stderr.take())
         };
 
         let Some(mut stdout) = stdout else {
-            return (
-                "任务执行失败: 未获取到后台输出".to_string(),
-                None,
-                None,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
+            return BackgroundTaskOutput { response: "任务执行失败: 未获取到后台输出".to_string(), ..Default::default() };
         };
 
         let mut output = String::new();
         if stdout.read_to_string(&mut output).is_err() {
-            return (
-                "任务执行失败: 读取后台输出失败".to_string(),
-                None,
-                None,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
+            return BackgroundTaskOutput { response: "任务执行失败: 读取后台输出失败".to_string(), ..Default::default() };
         }
 
         let mut stderr_output = String::new();
@@ -274,18 +246,7 @@ impl App {
 
         let exit_status = {
             let Ok(mut child) = child.lock() else {
-                return (
-                    "任务执行失败: 无法等待后台执行进程退出".to_string(),
-                    None,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                );
+                return BackgroundTaskOutput { response: "任务执行失败: 无法等待后台执行进程退出".to_string(), ..Default::default() };
             };
             child.wait().ok()
         };
@@ -297,33 +258,14 @@ impl App {
         output: &str,
         stderr_output: &str,
         exit_status: Option<std::process::ExitStatus>,
-    ) -> (
-        String,
-        Option<String>,
-        Option<TaskRun>,
-        Vec<crate::learning::LearnedFact>,
-        Option<serde_json::Value>,
-        Option<sacode_kernel::Plan>,
-        Option<ChatUsage>,
-        u64,
-        u64,
-        u64,
-    ) {
+    ) -> BackgroundTaskOutput {
         let exit_status = match exit_status {
             Some(status) => status,
             None => {
-                return (
-                    "任务执行失败: 无法等待后台执行进程退出".to_string(),
-                    None,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                )
+                return BackgroundTaskOutput {
+                    response: "任务执行失败: 无法等待后台执行进程退出".to_string(),
+                    ..Default::default()
+                }
             }
         };
 
@@ -333,8 +275,8 @@ impl App {
             if !stderr_preview.is_empty() {
                 Self::append_raw_log("child_stderr", stderr_preview);
             }
-            return (
-                if stderr_preview.is_empty() {
+            return BackgroundTaskOutput {
+                response: if stderr_preview.is_empty() {
                     format!(
                         "任务执行失败: 后台进程没有返回 JSON 输出，退出码: {}。请查看日志定位启动错误。",
                         exit_status
@@ -351,16 +293,8 @@ impl App {
                             .unwrap_or_else(|| "signal".to_string())
                     )
                 },
-                None,
-                None,
-                Vec::new(),
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-            );
+                ..Default::default()
+            };
         }
 
         let parsed: serde_json::Value = match Self::extract_last_json_value(trimmed_output) {
@@ -370,18 +304,10 @@ impl App {
                 if !stderr_output.trim().is_empty() {
                     Self::append_raw_log("child_stderr", stderr_output.trim());
                 }
-                return (
-                    format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
-                    None,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    0,
-                );
+                return BackgroundTaskOutput {
+                    response: format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
+                    ..Default::default()
+                };
             }
         };
 
@@ -462,7 +388,7 @@ impl App {
             .get("total_duration_ms")
             .and_then(|value| value.as_u64())
             .unwrap_or(0);
-        (
+        BackgroundTaskOutput {
             response,
             orchestration_summary,
             task_run,
@@ -473,7 +399,7 @@ impl App {
             api_duration_ms,
             tool_duration_ms,
             total_duration_ms,
-        )
+        }
     }
 
     fn extract_task_run_state(parsed: &serde_json::Value) -> Option<TaskRunState> {
@@ -604,10 +530,9 @@ mod tests {
             .status()
             .expect("true exit status");
 
-        let (response, _summary, _task_run, _facts, _question, _plan, _usage, _api_ms, _tool_ms, _total_ms) =
-            App::parse_background_task_output(&payload, "", Some(exit_status));
+        let result = App::parse_background_task_output(&payload, "", Some(exit_status));
 
-        assert_eq!(response, "final answer");
+        assert_eq!(result.response, "final answer");
         assert_eq!(App::extract_task_run_state(&serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")), Some(TaskRunState::Completed));
     }
 }
