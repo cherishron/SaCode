@@ -295,15 +295,20 @@ async fn get_task_status(
                 Some(task.id.clone()),
                 task.task.mode,
                 task.task.prompt.clone(),
-                queue_status.clone(),
+                queue_status,
                 None,
             );
+            let derived = task_run
+                .state
+                .as_ref()
+                .map(task_run_state_to_queue_status)
+                .unwrap_or_else(|| "pending".to_string());
             return Json(serde_json::json!({
                 "task_id": task_id,
                 "prompt": task.task.prompt,
                 "mode": task.task.mode.to_string(),
-                "status": queue_status.to_string(),
-                "queue_status": queue_status.to_string(),
+                "status": derived.clone(),
+                "queue_status": derived,
                 "priority": task.priority.to_string(),
                 "current_attempt": task.current_attempt,
                 "max_attempts": task.retry_policy.max_attempts,
@@ -322,10 +327,15 @@ async fn get_task_status(
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });
+        let derived = task_run
+            .state
+            .as_ref()
+            .map(task_run_state_to_queue_status)
+            .unwrap_or_else(|| "not_found".to_string());
         return Json(serde_json::json!({
             "task_id": task_id,
-            "status": result.status.to_string(),
-            "queue_status": result.status.to_string(),
+            "status": derived.clone(),
+            "queue_status": derived,
             "duration_ms": result.duration_ms,
             "error": result.error,
             "output": result.output,
@@ -370,9 +380,15 @@ async fn get_task_result(
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });
+        let derived = task_run
+            .state
+            .as_ref()
+            .map(task_run_state_to_queue_status)
+            .unwrap_or_else(|| "not_found".to_string());
         return Json(serde_json::json!({
             "task_id": result.task_id,
-            "status": result.status,
+            "status": derived,
+            "queue_status": derived,
             "output": result.output,
             "error": result.error,
             "duration_ms": result.duration_ms,
@@ -384,6 +400,7 @@ async fn get_task_result(
     Json(serde_json::json!({
         "task_id": task_id,
         "status": "not_found",
+        "queue_status": "not_found",
         "message": "Task result not available yet",
     }))
 }
