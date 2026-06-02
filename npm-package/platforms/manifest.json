@@ -1,6 +1,6 @@
 {
-  "version": "0.1.15",
-  "generatedAt": "2026-05-28T08:58:41.089Z",
+  "version": "0.1.18",
+  "generatedAt": "2026-06-02T02:20:31.560Z",
   "files": [
     "sacode-linux-x64",
     "sacode-win32-x64.exe"
