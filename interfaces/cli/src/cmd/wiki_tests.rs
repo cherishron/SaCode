@@ -4,6 +4,27 @@ use crate::learning::learn_from_task;
 use super::memory::render_memory;
 use super::wiki::render_wiki;
 
+struct HomeEnvGuard {
+    old_home: Option<std::ffi::OsString>,
+}
+
+impl HomeEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", path);
+        Self { old_home }
+    }
+}
+
+impl Drop for HomeEnvGuard {
+    fn drop(&mut self) {
+        match self.old_home.take() {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
 #[test]
 fn render_wiki_reports_project_sources() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -33,8 +54,7 @@ fn render_memory_initializes_typed_files() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
     let home_dir = tempfile::tempdir().expect("create temp home");
-    let old_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", home_dir.path());
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     let output = render_memory(workdir, &[]).expect("render memory");
     assert!(output.contains("用户级"));
@@ -44,10 +64,6 @@ fn render_memory_initializes_typed_files() {
     assert!(workdir.join(".sacode/wiki/workflows.md").exists());
     assert!(workdir.join(".sacode/wiki/decisions.md").exists());
 
-    match old_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]
@@ -56,8 +72,7 @@ fn render_memory_append_writes_typed_file() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
     let home_dir = tempfile::tempdir().expect("create temp home");
-    let old_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", home_dir.path());
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     let args = vec![
         "append".to_string(),
@@ -74,10 +89,6 @@ fn render_memory_append_writes_typed_file() {
     let index = fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read index");
     assert!(index.contains("每次修改后先检查交互状态"));
 
-    match old_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]
@@ -86,8 +97,7 @@ fn render_memory_search_uses_structured_index() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
     let home_dir = tempfile::tempdir().expect("create temp home");
-    let old_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", home_dir.path());
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     let append_args = vec![
         "append".to_string(),
@@ -102,10 +112,6 @@ fn render_memory_search_uses_structured_index() {
     assert!(output.contains("preferences.md"));
     assert!(output.contains("cargo test"));
 
-    match old_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]
@@ -114,8 +120,7 @@ fn render_memory_list_promote_and_archive_manage_index_entries() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
     let home_dir = tempfile::tempdir().expect("create temp home");
-    let old_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", home_dir.path());
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     let append_args = vec![
         "append".to_string(),
@@ -146,10 +151,6 @@ fn render_memory_list_promote_and_archive_manage_index_entries() {
     let search_output = render_memory(workdir, &["search".to_string(), "cargo test".to_string()]).expect("search memory");
     assert!(!search_output.contains("项目级"));
 
-    match old_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]
@@ -158,8 +159,7 @@ fn render_memory_list_supports_type_and_scope_filters() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
     let home_dir = tempfile::tempdir().expect("create temp home");
-    let old_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", home_dir.path());
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     render_memory(
         workdir,
@@ -199,10 +199,6 @@ fn render_memory_list_supports_type_and_scope_filters() {
     assert!(output.contains("每次发布前先核对版本号"));
     assert!(!output.contains("cargo test --workspace"));
 
-    match old_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]

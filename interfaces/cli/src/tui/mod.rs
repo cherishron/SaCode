@@ -6538,7 +6538,9 @@ fn encode_ppm(rgba_bytes: &[u8], width: usize, height: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::App;
-    use crate::tui::render::render_orchestration_panel;
+    use crate::tui::render::{
+        render_footer, render_input_panel, render_messages_panel, render_orchestration_panel,
+    };
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
     fn backend_text(terminal: &Terminal<TestBackend>) -> String {
@@ -6666,5 +6668,67 @@ mod tests {
         assert!(rendered.contains("system-architect"));
         assert!(rendered.contains("deepseek/deepseek-reasoner"));
         assert!(rendered.contains("implementation completion conflicts with validation findings"));
+    }
+
+    #[test]
+    fn render_input_panel_renders_typed_content_and_updates_viewport() {
+        let mut app = App::new();
+        app.input = "hello world".to_string();
+        let backend = TestBackend::new(100, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_input_panel(frame, &mut app, Rect::new(0, 0, 100, 6), 96, true);
+            })
+            .expect("draw input panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("hello world"));
+        assert!(app.input_viewport.width > 0);
+        assert!(app.input_viewport.height > 0);
+    }
+
+    #[test]
+    fn render_messages_panel_updates_viewport_and_renders_messages() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::User,
+            content: "ping".to_string(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 80, 12));
+            })
+            .expect("draw messages panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("ping"));
+        assert!(app.message_viewport.width > 0);
+        assert!(app.message_viewport.height > 0);
+        assert!(app.follow_bottom);
+        assert!(app.scroll_offset <= app.rendered_message_lines().len());
+    }
+
+    #[test]
+    fn render_footer_shows_runtime_status() {
+        let app = App::new();
+        let backend = TestBackend::new(120, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_footer(frame, &app, Rect::new(0, 0, 120, 2));
+            })
+            .expect("draw footer");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("Mode:"));
+        assert!(rendered.contains("cwd:"));
     }
 }
