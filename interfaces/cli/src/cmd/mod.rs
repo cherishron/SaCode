@@ -24,7 +24,7 @@ pub mod status;
 pub mod vim;
 pub mod wiki;
 #[cfg(test)]
-mod wiki_tests;
+mod command_tests;
 
 use std::{env, io::IsTerminal};
 
