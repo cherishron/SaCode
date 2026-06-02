@@ -3,7 +3,7 @@ use std::{
     env, fs,
     future::Future,
     hash::{Hash, Hasher},
-    io::{self, Write},
+    io,
     path::PathBuf,
     process::Command,
     sync::{mpsc::{self, Receiver, Sender}},
@@ -14,8 +14,7 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        MouseButton, MouseEvent, MouseEventKind,
+        DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyEvent,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -51,6 +50,8 @@ use sacode_runtime::{
 
 mod input;
 mod interaction;
+mod app_helpers;
+mod event_loop;
 mod orchestration_summary;
 mod render;
 mod state;
@@ -58,6 +59,7 @@ mod task_runtime;
 
 use input::{is_editable_input_mode, layout_input_lines};
 use interaction::{InteractionSession, InteractionState};
+use event_loop::run_app;
 use orchestration_summary::parse_orchestration_summary;
 use render::{
     relative_to_workdir, render_command_selector,
@@ -2164,158 +2166,6 @@ impl App {
             .unwrap_or(0);
         self.input_mode = InputMode::SessionSelect;
         self.push_system_message("已打开会话列表，使用上下方向键选择，Enter 切换，Esc 取消。");
-    }
-
-    fn confirm_session_selection(&mut self) {
-        let selected = self
-            .session_options
-            .get(self.selected_session_index)
-            .cloned();
-        self.input_mode = InputMode::Chat;
-        if let Some(session) = selected {
-            self.load_session_by_id(&session.id, true);
-        }
-    }
-
-    fn navigate_history_up(&mut self) {
-        if self.sent_history.is_empty() {
-            return;
-        }
-        match self.history_index {
-            None => {
-                self.current_history_draft = self.input.clone();
-                self.history_index = Some(self.sent_history.len().saturating_sub(1));
-            }
-            Some(index) => {
-                self.history_index = Some(index.saturating_sub(1));
-            }
-        }
-        if let Some(index) = self.history_index {
-            self.input = self.sent_history.get(index).cloned().unwrap_or_default();
-        }
-    }
-
-    fn navigate_history_down(&mut self) {
-        let Some(index) = self.history_index else {
-            return;
-        };
-        if index + 1 < self.sent_history.len() {
-            self.history_index = Some(index + 1);
-            self.input = self
-                .sent_history
-                .get(index + 1)
-                .cloned()
-                .unwrap_or_default();
-        } else {
-            self.history_index = None;
-            self.input = self.current_history_draft.clone();
-            self.current_history_draft.clear();
-        }
-    }
-
-    fn handle_paste(&mut self, content: String) {
-        if matches!(
-            self.input_mode,
-            InputMode::ProviderSelect
-                | InputMode::ModelSelect
-                | InputMode::ThemeSelect
-                | InputMode::ConnectSelect
-                | InputMode::SkillsSelect
-                | InputMode::McpSelect
-                | InputMode::CheckpointSelect
-                | InputMode::ModeSelect
-                | InputMode::SessionSelect
-                | InputMode::ConfigSelect
-                | InputMode::ConfigEnumSelect
-        ) {
-            return;
-        }
-        self.input.push_str(&content);
-        if self.input_mode == InputMode::CommandLevel1 {
-            self.filter_level1_commands();
-        }
-        if self.input_mode == InputMode::CommandLevel2 {
-            self.filter_sub_commands();
-        }
-    }
-
-    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Right) => self.paste_from_system_clipboard(),
-            MouseEventKind::ScrollUp => {
-                if self.point_in_rect(mouse.column, mouse.row, self.message_viewport) {
-                    for _ in 0..3 {
-                        self.scroll_up();
-                    }
-                }
-            }
-            MouseEventKind::ScrollDown => {
-                if self.point_in_rect(mouse.column, mouse.row, self.message_viewport) {
-                    for _ in 0..3 {
-                        self.scroll_down();
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn point_in_rect(&self, column: u16, row: u16, rect: Rect) -> bool {
-        column >= rect.x
-            && column < rect.x.saturating_add(rect.width)
-            && row >= rect.y
-            && row < rect.y.saturating_add(rect.height)
-    }
-
-    fn paste_from_system_clipboard(&mut self) {
-        let mut clipboard = match Clipboard::new() {
-            Ok(clipboard) => clipboard,
-            Err(error) => {
-                self.push_error_message(&format!("读取系统剪贴板失败: {}", error));
-                return;
-            }
-        };
-
-        if let Ok(text) = clipboard.get_text() {
-            if !text.trim().is_empty() {
-                self.handle_paste(text);
-                return;
-            }
-        }
-
-        match clipboard.get_image() {
-            Ok(image) => {
-                match self.save_pasted_image(&image.bytes.into_owned(), image.width, image.height) {
-                    Ok(path) => {
-                        let snippet = format!(
-                        "我刚粘贴了一张图片，文件路径是 `{}`。如果需要读取图片内容，请调用 `media.read` 工具处理这个文件。当前模型支持图片时会自动执行 OCR 或描述，并在结果中标注来源，例如 provider 或 fallback。",
-                        path.display()
-                    );
-                        self.handle_paste(snippet);
-                        self.push_success_message(&format!("已粘贴剪贴板图片: {}", path.display()));
-                    }
-                    Err(error) => {
-                        self.push_error_message(&format!("保存剪贴板图片失败: {}", error))
-                    }
-                }
-            }
-            Err(error) => {
-                self.push_system_message(&format!("剪贴板中没有可用文本或图片: {}", error));
-            }
-        }
-    }
-
-    fn save_pasted_image(&self, rgba_bytes: &[u8], width: usize, height: usize) -> Result<PathBuf> {
-        let dir = self.workdir.join(".sacode").join("pasted");
-        fs::create_dir_all(&dir)?;
-        let filename = format!(
-            "paste-{}.ppm",
-            chrono::Local::now().format("%Y%m%d%H%M%S%3f")
-        );
-        let path = dir.join(filename);
-        let ppm = encode_ppm(rgba_bytes, width, height);
-        fs::write(&path, ppm)?;
-        Ok(relative_to_workdir(&self.workdir, &path))
     }
 
     fn profile_command(&mut self, input: &str) {
@@ -5013,126 +4863,6 @@ impl App {
         }
     }
 
-    fn fold_all_assistant_messages(&mut self, action: FoldAction) {
-        let mut changed = 0usize;
-        for index in 0..self.messages.len() {
-            if matches!(self.messages[index].role, MessageRole::Assistant)
-                && self.apply_fold_action(index, action)
-            {
-                changed += 1;
-            }
-        }
-
-        if changed > 0 {
-            self.save_current_session();
-            self.push_success_message(&format!("已更新 {} 条助手回复的折叠状态。", changed));
-        } else {
-            self.push_system_message("当前没有需要更新折叠状态的助手回复。");
-        }
-    }
-
-    fn toggle_all_message_folds(&mut self) {
-        let should_collapse = self
-            .messages
-            .iter()
-            .filter(|message| matches!(message.role, MessageRole::Assistant))
-            .any(|message| !message.collapsed);
-        let action = if should_collapse {
-            FoldAction::Collapse
-        } else {
-            FoldAction::Expand
-        };
-        self.fold_all_assistant_messages(action);
-    }
-
-    fn cycle_execution_mode(&mut self) {
-        let next = match self.execution_mode {
-            ExecutionMode::Plan => "build",
-            ExecutionMode::Build => "yolo",
-            ExecutionMode::Yolo => "plan",
-        };
-        self.apply_execution_mode(next, true);
-    }
-
-    fn apply_fold_action(&mut self, index: usize, action: FoldAction) -> bool {
-        let Some(message) = self.messages.get_mut(index) else {
-            return false;
-        };
-
-        let target = match action {
-            FoldAction::Collapse => true,
-            FoldAction::Expand => false,
-        };
-
-        if message.collapsed == target {
-            return false;
-        }
-
-        message.collapsed = target;
-        let timestamp = message.timestamp.clone();
-        let state = if target { "collapsed" } else { "expanded" };
-        let log_content = format!("{} {}", state, timestamp);
-        self.log_event("message_fold", &log_content);
-        true
-    }
-
-    fn tick(&mut self) -> bool {
-        if self.queue.processing {
-            self.spinner_index = (self.spinner_index + 1) % SPINNER_FRAMES.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn redraw_poll_interval(&self) -> std::time::Duration {
-        if self.queue.processing {
-            std::time::Duration::from_millis(100)
-        } else {
-            std::time::Duration::from_millis(300)
-        }
-    }
-
-    fn spinner_frame(&self) -> &'static str {
-        SPINNER_FRAMES[self.spinner_index % SPINNER_FRAMES.len()]
-    }
-
-    fn log_event(&self, kind: &str, content: &str) {
-        if let Some(parent) = self.log_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Ok(mut file) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)
-        {
-            let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
-            let line = format!(
-                "{} [{}] {}\n",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                kind,
-                compact
-            );
-            let _ = file.write_all(line.as_bytes());
-        }
-    }
-
-    fn append_raw_log(kind: &str, content: &str) {
-        let path = user_sacode_dir().join("logs/tui.log");
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-            let line = format!(
-                "{} [{}]\n{}\n---\n",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                kind,
-                content.trim()
-            );
-            let _ = file.write_all(line.as_bytes());
-        }
-    }
-
     fn sidebar_section_lines(&self, section: SidebarSection) -> Vec<Line<'static>> {
         match section {
             SidebarSection::Todo => {
@@ -6295,47 +6025,6 @@ pub fn run_tui() -> Result<()> {
     println!("{}", app.shutdown_summary());
 
     res
-}
-
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
-    let mut needs_redraw = true;
-    while !app.should_quit {
-        if needs_redraw {
-            terminal.draw(|frame| ui(frame, app))?;
-            needs_redraw = false;
-        }
-
-        if event::poll(app.redraw_poll_interval())? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
-                        app.handle_key_event(key);
-                        needs_redraw = true;
-                    }
-                }
-                Event::Paste(text) => {
-                    app.handle_paste(text);
-                    needs_redraw = true;
-                }
-                Event::Mouse(mouse) => {
-                    app.handle_mouse_event(mouse);
-                    needs_redraw = true;
-                }
-                Event::Resize(_, _) => {
-                    needs_redraw = true;
-                }
-                _ => {}
-            }
-        }
-
-        if app.poll_async_results() {
-            needs_redraw = true;
-        }
-        if app.tick() {
-            needs_redraw = true;
-        }
-    }
-    Ok(())
 }
 
 fn user_sacode_dir() -> PathBuf {
