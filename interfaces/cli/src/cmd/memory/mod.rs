@@ -1,16 +1,18 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sacode_runtime::{append_memory_entry, archive_memory_entry, ensure_memory_file, list_memory_entries, load_memory_index, memory_file_path, promote_memory_entry, search_memory_index, MemoryEntry, MemoryEntrySource, MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, PROJECT_WIKI_DIR};
+use sacode_runtime::{
+    archive_memory_entry, list_memory_entries, load_memory_index, promote_memory_entry, search_memory_index, MemoryKind,
+    MemoryScope, PROJECT_WIKI_DIR,
+};
 
-const USER_WIKI_DIR: &str = ".sacode/wiki";
+mod files;
+mod filters;
+mod rendering;
 
-#[derive(Debug, Clone)]
-struct MemoryFile {
-    kind: MemoryKind,
-    path: PathBuf,
-    content: String,
-}
+use files::{append_memory, load_memory_files, user_wiki_dir, workdir_wiki_dir, MemoryFile};
+use filters::{filter_list_entries, parse_list_filters};
+use rendering::{collect_sections, render_index_match, render_list_entry, search_memory, usage_text};
 
 pub fn run(args: Vec<String>) -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -158,7 +160,7 @@ fn render_append(args: &[String], user_files: &[MemoryFile], project_files: &[Me
                 let Some(value) = iter.next() else {
                     return Ok("用法: /memory append <内容> [--type memory|preference|workflow|decision] [--global|-g]".to_string());
                 };
-                let Some(parsed) = MemoryKind::from_flag(value) else {
+                let Some(parsed) = sacode_runtime::MemoryKind::from_flag(value) else {
                     return Ok("支持的类型: memory, preference, workflow, decision".to_string());
                 };
                 kind = parsed;
@@ -179,10 +181,10 @@ fn render_append(args: &[String], user_files: &[MemoryFile], project_files: &[Me
     let appended = append_memory(
         &target.path,
         &target.content,
-        MemoryEntry {
+        sacode_runtime::MemoryEntry {
             kind,
-            scope: if global { MemoryScope::User } else { MemoryScope::Project },
-            source: MemoryEntrySource::ManualAppend,
+            scope: if global { sacode_runtime::MemoryScope::User } else { sacode_runtime::MemoryScope::Project },
+            source: sacode_runtime::MemoryEntrySource::ManualAppend,
             content: entry,
             context: "用户通过 /memory append 手动追加".to_string(),
         },
@@ -224,170 +226,4 @@ fn render_archive(args: &[String], _user_files: &[MemoryFile], project_files: &[
     } else {
         format!("未找到可归档的记忆条目: {}", entry_id)
     })
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct ListFilters {
-    kind: Option<MemoryKind>,
-    scope: Option<MemoryScope>,
-}
-
-fn parse_list_filters(args: &[String]) -> Result<ListFilters> {
-    let mut filters = ListFilters::default();
-    let mut iter = args.iter().skip(1);
-
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--type" | "-t" => {
-                let Some(value) = iter.next() else {
-                    anyhow::bail!("用法: /memory list [--type memory|preference|workflow|decision] [--scope user|project]");
-                };
-                let Some(kind) = MemoryKind::from_flag(value) else {
-                    anyhow::bail!("支持的类型: memory, preference, workflow, decision");
-                };
-                filters.kind = Some(kind);
-            }
-            "--scope" | "-s" => {
-                let Some(value) = iter.next() else {
-                    anyhow::bail!("用法: /memory list [--type memory|preference|workflow|decision] [--scope user|project]");
-                };
-                filters.scope = Some(match value.as_str() {
-                    "user" => MemoryScope::User,
-                    "project" => MemoryScope::Project,
-                    _ => anyhow::bail!("支持的范围: user, project"),
-                });
-            }
-            value => anyhow::bail!("不支持的参数: {}", value),
-        }
-    }
-
-    Ok(filters)
-}
-
-fn filter_list_entries(entries: Vec<MemoryIndexEntry>, filters: &ListFilters) -> Vec<MemoryIndexEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| filters.kind.is_none_or(|kind| entry.kind == kind))
-        .filter(|entry| filters.scope.is_none_or(|scope| entry.scope == scope))
-        .collect()
-}
-
-fn load_memory_files(root: &Path, scope: MemoryScope) -> Result<Vec<MemoryFile>> {
-    let mut files = Vec::new();
-    for kind in MemoryKind::all() {
-        let path = memory_file_path(root, *kind);
-        ensure_memory_file(&path, scope, *kind)?;
-        let content = fs::read_to_string(&path)?;
-        files.push(MemoryFile {
-            kind: *kind,
-            path,
-            content,
-        });
-    }
-    Ok(files)
-}
-
-fn user_wiki_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(USER_WIKI_DIR)
-}
-
-fn workdir_wiki_dir(project_files: &[MemoryFile]) -> PathBuf {
-    project_files
-        .first()
-        .and_then(|file| file.path.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from(PROJECT_WIKI_DIR))
-}
-
-fn append_memory(path: &Path, current: &str, entry: MemoryEntry) -> Result<bool> {
-    append_memory_entry(path, current, &entry)
-}
-
-fn collect_sections(content: &str) -> Vec<String> {
-    content
-        .lines()
-        .filter(|line| line.starts_with('[') && line.ends_with(']'))
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-}
-
-fn search_memory(content: &str, query: &str) -> String {
-    let lowered_query = query.to_lowercase();
-    let sections: Vec<&str> = content.split("\n[").collect();
-    let mut matched = Vec::new();
-
-    for (index, section) in sections.iter().enumerate() {
-        let normalized = if index == 0 {
-            (*section).to_string()
-        } else {
-            format!("[{}", section)
-        };
-        if normalized.to_lowercase().contains(&lowered_query) {
-            matched.push(highlight_query(normalized.trim(), query));
-        }
-    }
-
-    if matched.is_empty() {
-        format!("未找到与 `{}` 相关的记忆。", query)
-    } else {
-        matched.join("\n\n")
-    }
-}
-
-fn render_index_match(entry: &MemoryIndexEntry, query: &str) -> String {
-    format!(
-        "[{}] {}\nKind: {}\nStatus: {}\nConfidence: {}\nContext: {}\nContent:\n{}",
-        entry.scope.display_name(),
-        entry.file_name,
-        entry.kind.scope_label(),
-        memory_status_label(entry.status),
-        entry.confidence.map(|value| format!("{value:.2}")).unwrap_or_else(|| "n/a".to_string()),
-        highlight_query(&entry.context, query),
-        highlight_query(&entry.content, query)
-    )
-}
-
-fn render_list_entry(entry: &MemoryIndexEntry) -> String {
-    format!(
-        "- {} [{}] {} | {} | confidence={} | {}",
-        entry.id,
-        entry.kind.scope_label(),
-        memory_status_label(entry.status),
-        entry.file_name,
-        entry.confidence.map(|value| format!("{value:.2}")).unwrap_or_else(|| "n/a".to_string()),
-        entry.content
-    )
-}
-
-fn memory_status_label(status: MemoryStatus) -> &'static str {
-    match status {
-        MemoryStatus::Active => "active",
-        MemoryStatus::Archived => "archived",
-    }
-}
-
-fn highlight_query(text: &str, query: &str) -> String {
-    let lowered_text = text.to_lowercase();
-    let lowered_query = query.to_lowercase();
-    let mut start = 0;
-    let mut output = String::new();
-
-    while let Some(relative) = lowered_text[start..].find(&lowered_query) {
-        let matched_start = start + relative;
-        let matched_end = matched_start + lowered_query.len();
-        output.push_str(&text[start..matched_start]);
-        output.push_str("<<");
-        output.push_str(&text[matched_start..matched_end]);
-        output.push_str(">>");
-        start = matched_end;
-    }
-
-    output.push_str(&text[start..]);
-    output
-}
-
-fn usage_text() -> String {
-    "/memory [show|list [--type memory|preference|workflow|decision] [--scope user|project]|summary|path|search <关键词>|append <内容> [--type memory|preference|workflow|decision] [--global|-g]|promote <entry_id>|archive <entry_id>]".to_string()
 }
