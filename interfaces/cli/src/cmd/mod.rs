@@ -4,7 +4,9 @@ mod checkpoint;
 mod help_text;
 mod orchestrator_entry;
 mod orchestrator_support;
+mod repl_entry;
 mod runtime_entry;
+mod tracing_setup;
 pub mod config;
 pub mod doctor;
 pub mod diff;
@@ -38,13 +40,12 @@ use sacode_kernel::ExecutionMode;
 pub use sacode_kernel::ApprovalPolicy;
 #[cfg(test)]
 use orchestrator_support::{collect_tool_results, parse_mcp_tool_name, resolve_tool_events, should_retry_tool_call, ExecutedTool, RetryDecision, StepEventBatch, ToolResult};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
 use arg_parser::parse_args;
 use help_text::print_help;
 use orchestrator_entry::run_with_orchestrator;
+use repl_entry::run_repl;
 use runtime_entry::run_task;
-use crate::repl::ReplSession;
+use tracing_setup::init_tracing;
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,24 +140,6 @@ pub async fn run() -> Result<()> {
     }
 
     Ok(())
-}
-
-async fn run_repl() -> Result<()> {
-    println!("SaCode REPL");
-    println!("Type '/help' for commands, '/exit' to quit.");
-    println!();
-
-    let mut session = ReplSession::new();
-    session.run().await?;
-
-    Ok(())
-}
-
-fn init_tracing() {
-    let _ = tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().without_time())
-        .try_init();
 }
 
 #[cfg(test)]
