@@ -2,6 +2,7 @@ mod acp;
 mod arg_parser;
 mod checkpoint;
 mod orchestrator_support;
+mod runtime_entry;
 pub mod config;
 pub mod doctor;
 pub mod diff;
@@ -28,10 +29,10 @@ pub mod wiki;
 #[cfg(test)]
 mod command_tests;
 
-use std::{env, io::IsTerminal};
+use std::env;
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionContext, ExecutionMode, Supervisor, Task, TaskRunState};
+use sacode_kernel::{ExecutionContext, ExecutionMode, Supervisor, Task};
 pub use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{
     CheckpointStorage, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor, SandboxPolicy, ToolRegistry,
@@ -41,13 +42,12 @@ use sacode_runtime::{
 #[cfg(test)]
 use orchestrator_support::{collect_tool_results, parse_mcp_tool_name, resolve_tool_events, should_retry_tool_call, ExecutedTool, RetryDecision, StepEventBatch, ToolResult};
 use orchestrator_support::format_summary_record;
-use serde::Serialize;
-use tokio::io::{self, AsyncReadExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use arg_parser::parse_args;
+use runtime_entry::run_task;
 use crate::repl::ReplSession;
-use crate::runner::{format_output, run_task_with_stdin, RunnerOutput};
+use crate::runner::{format_output, RunnerOutput};
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,26 +96,6 @@ pub struct CliOptions {
     pub sub_args: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct CliResponse {
-    prompt: String,
-    mode: ExecutionMode,
-    max_iterations: usize,
-    tools: Vec<String>,
-    workspace: String,
-    plan: serde_json::Value,
-    events: serde_json::Value,
-    tool_results: serde_json::Value,
-    stdin_preview: Option<String>,
-    provider_response: Option<String>,
-    state: TaskRunState,
-    pending_question: Option<serde_json::Value>,
-    usage: Option<sacode_kernel::model::ChatUsage>,
-    api_duration_ms: u64,
-    tool_duration_ms: u64,
-    total_duration_ms: u64,
-}
-
 pub async fn run() -> Result<()> {
     init_tracing();
     let options = parse_args(env::args().skip(1).collect());
@@ -159,48 +139,6 @@ pub async fn run() -> Result<()> {
         CliCommand::Status => status::run().await?,
         CliCommand::Update => update::run(options.sub_args)?,
         CliCommand::Vim => vim::run(options.sub_args)?,
-    }
-
-    Ok(())
-}
-
-async fn run_task(options: CliOptions) -> Result<()> {
-    let stdin = read_stdin_if_needed().await?;
-    let output = run_task_with_stdin(
-        &options.prompt,
-        options.mode,
-        options.approval,
-        options.max_iterations,
-        stdin.clone(),
-    ).await?;
-
-    if options.json {
-        let response = CliResponse {
-            prompt: output.prompt.clone(),
-            mode: output.mode,
-            max_iterations: options.max_iterations,
-            tools: output.tool_names.clone(),
-            workspace: output.workspace.clone(),
-            plan: serde_json::to_value(&output.plan)?,
-            events: serde_json::to_value(&output.events)?,
-            tool_results: serde_json::to_value(&output.tool_results)?,
-            stdin_preview: stdin.map(|value| preview(&value)),
-            provider_response: output.provider_response.clone().ok(),
-            state: output.effective_state(),
-            pending_question: output.pending_question.clone(),
-            usage: output.usage.clone(),
-            api_duration_ms: output.api_duration_ms,
-            tool_duration_ms: output.tool_duration_ms,
-            total_duration_ms: output.total_duration_ms,
-        };
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-
-    println!("{}", format_output(&output));
-
-    if let Some(stdin) = stdin {
-        println!("Stdin: {}", preview(&stdin));
     }
 
     Ok(())
@@ -283,31 +221,6 @@ async fn run_repl() -> Result<()> {
     Ok(())
 }
 
-async fn read_stdin_if_needed() -> Result<Option<String>> {
-    if std::io::stdin().is_terminal() {
-        return Ok(None);
-    }
-
-    let mut buffer = String::new();
-    io::stdin().read_to_string(&mut buffer).await?;
-    if buffer.trim().is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(buffer))
-}
-
-fn preview(input: &str) -> String {
-    let trimmed = input.trim();
-    let mut chars = trimmed.chars();
-    let preview: String = chars.by_ref().take(80).collect();
-    if chars.next().is_some() {
-        format!("{preview}...")
-    } else {
-        preview
-    }
-}
-
 fn print_help() {
     println!("SaCode");
     println!();
@@ -354,7 +267,7 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, preview, CliCommand};
+    use super::{parse_args, CliCommand};
     use crate::runner::build_mcp_input;
     use sacode_kernel::{Event, ExecutionMode};
 
@@ -566,7 +479,7 @@ mod tests {
     #[test]
     fn preview_truncates_long_input() {
         let input = "a".repeat(100);
-        let preview_text = preview(&input);
+        let preview_text = super::runtime_entry::preview(&input);
 
         assert_eq!(preview_text.len(), 83);
         assert!(preview_text.ends_with("..."));
