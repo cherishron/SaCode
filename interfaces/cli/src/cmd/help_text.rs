@@ -1,0 +1,36 @@
+pub(super) fn print_help() {
+    println!("SaCode");
+    println!();
+    println!("Usage:");
+    println!("  sacode \"<task>\" [--mode plan|build|yolo] [--max-iterations N] [--json] [--prompt|--approve|--deny]");
+    println!("  sacode orchestrator \"<task>\"");
+    println!("  sacode profile [ls|use <name>|show]");
+    println!("  sacode plugin [list]");
+    println!("  sacode doctor");
+    println!("  sacode diff [--cached]");
+    println!("  sacode hooks");
+    println!("  sacode ide [status|vscode|cursor|jetbrains|config show|path|set acp|lsp --host HOST --port PORT]");
+    println!("  sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]");
+    println!("  sacode keybindings");
+    println!("  sacode outstyle [show|concise|explain|teach|clear|path|project ...]");
+    println!("  sacode prompt [show [task...]|doctor|edit project]");
+    println!("  sacode wiki");
+    println!("  sacode vim [show|on|off|project show|on|off]");
+    println!("  sacode skill [search|install|list|show|update|remove|run]");
+    println!("  sacode sandbox [show [plan|build|yolo] [--json]|diff [plan|build|yolo] [--json]|doctor [plan|build|yolo] [--json]|init|path|set <mode> <key> <value>|clear <mode> <key>]");
+    println!("  sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]");
+    println!("  sacode memory [show|search <query>|path|summary|append <content> [--type memory|preference|workflow|decision] [--global|-g]]");
+    println!("  sacode insight");
+    println!("  sacode acp [serve|status] [--host HOST] [--port PORT]");
+    println!("  sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]");
+    println!("  sacode serve [--acp] [--lsp]");
+    println!("  sacode init       # 轻量初始化，识别技术栈和基础项目信息");
+    println!("  sacode init-deep  # 深度初始化，生成严格协作配置和工作流");
+    println!("  sacode mistakes [list|show <index>]");
+    println!("  sacode status");
+    println!("  sacode update [--check|--force]");
+    println!("  sacode repl");
+    println!("  sacode tui");
+    println!("  sacode --help");
+    println!("  sacode --version");
+}
