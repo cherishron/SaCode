@@ -144,7 +144,7 @@ pub async fn run() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, CliCommand};
+    use super::{help_text::HELP_LINES, parse_args, CliCommand};
     use crate::runner::build_mcp_input;
     use sacode_kernel::{Event, ExecutionMode};
 
@@ -194,6 +194,50 @@ mod tests {
         ]);
 
         assert_eq!(options.approval, super::ApprovalPolicy::AutoApprove);
+    }
+
+    #[test]
+    fn parse_args_parses_help_flag() {
+        let options = parse_args(vec!["--help".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Help);
+    }
+
+    #[test]
+    fn parse_args_parses_version_flag() {
+        let options = parse_args(vec!["--version".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Version);
+    }
+
+    #[test]
+    fn parse_args_parses_init_deep_alias() {
+        let options = parse_args(vec!["init-deep".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Init);
+        assert_eq!(options.sub_args, vec!["deep".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_repl_command() {
+        let options = parse_args(vec!["repl".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Repl);
+    }
+
+    #[test]
+    fn parse_args_parses_tui_command() {
+        let options = parse_args(vec!["tui".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Tui);
+    }
+
+    #[test]
+    fn parse_args_parses_orchestrator_command() {
+        let options = parse_args(vec!["orchestrator".to_string(), "分析仓库".to_string()]);
+
+        assert_eq!(options.command, CliCommand::Orchestrator);
+        assert_eq!(options.prompt, "分析仓库");
     }
 
     #[test]
@@ -337,6 +381,17 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Update);
         assert_eq!(options.sub_args, vec!["--check".to_string()]);
+    }
+
+    #[test]
+    fn help_lines_cover_special_entrypoints() {
+        assert!(HELP_LINES.contains(&"  sacode orchestrator \"<task>\""));
+        assert!(HELP_LINES.contains(&"  sacode init       # 轻量初始化，识别技术栈和基础项目信息"));
+        assert!(HELP_LINES.contains(&"  sacode init-deep  # 深度初始化，生成严格协作配置和工作流"));
+        assert!(HELP_LINES.contains(&"  sacode repl"));
+        assert!(HELP_LINES.contains(&"  sacode tui"));
+        assert!(HELP_LINES.contains(&"  sacode --help"));
+        assert!(HELP_LINES.contains(&"  sacode --version"));
     }
 
     #[test]
