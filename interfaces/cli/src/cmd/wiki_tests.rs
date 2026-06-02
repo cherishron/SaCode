@@ -28,9 +28,13 @@ fn render_wiki_reports_project_sources() {
 }
 
 #[test]
+#[serial_test::serial]
 fn render_memory_initializes_typed_files() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let old_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", home_dir.path());
 
     let output = render_memory(workdir, &[]).expect("render memory");
     assert!(output.contains("用户级"));
@@ -39,12 +43,21 @@ fn render_memory_initializes_typed_files() {
     assert!(workdir.join(".sacode/wiki/preferences.md").exists());
     assert!(workdir.join(".sacode/wiki/workflows.md").exists());
     assert!(workdir.join(".sacode/wiki/decisions.md").exists());
+
+    match old_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
 }
 
 #[test]
+#[serial_test::serial]
 fn render_memory_append_writes_typed_file() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let old_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", home_dir.path());
 
     let args = vec![
         "append".to_string(),
@@ -60,12 +73,21 @@ fn render_memory_append_writes_typed_file() {
     assert!(stored.contains("每次修改后先检查交互状态"));
     let index = fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read index");
     assert!(index.contains("每次修改后先检查交互状态"));
+
+    match old_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
 }
 
 #[test]
+#[serial_test::serial]
 fn render_memory_search_uses_structured_index() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let old_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", home_dir.path());
 
     let append_args = vec![
         "append".to_string(),
@@ -79,6 +101,11 @@ fn render_memory_search_uses_structured_index() {
     let output = render_memory(workdir, &search_args).expect("search memory");
     assert!(output.contains("preferences.md"));
     assert!(output.contains("cargo test"));
+
+    match old_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
 }
 
 #[test]
