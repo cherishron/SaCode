@@ -57,5 +57,8 @@ jobs:
       - name: Write platform manifest
         run: node scripts/write-platform-manifest.js $(node -p "require('./npm-package/package.json').version")
 
+      - name: Check release consistency
+        run: node scripts/check-release.js
+
       - name: Test Windows binary
         run: node npm-package/bin/sacode.js --version

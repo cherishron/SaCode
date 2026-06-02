@@ -101,7 +101,10 @@ node scripts/write-platform-manifest.js 0.1.7
 ### 2.4 发布检查
 
 ```bash
-# 严格检查（验证 manifest 和平台文件）
+# 基础检查（版本、README、manifest、当前平台二进制版本）
+node scripts/check-release.js
+
+# 严格检查（额外验证平台文件集合）
 node scripts/check-release.js --strict-platforms
 ```
 
@@ -127,6 +130,7 @@ node scripts/check-release.js
 如果改动影响 npm 分发，再继续执行：
 
 ```bash
+node npm-package/bin/sacode.js --version
 node scripts/check-release.js --strict-platforms
 ```
 
@@ -150,6 +154,7 @@ node scripts/check-release.js --strict-platforms
 | manifest 存在 | `platforms/manifest.json` 必须存在 |
 | manifest 版本 | 必须与 Cargo 版本一致 |
 | manifest 文件列表 | 必须包含正确的平台二进制文件名 |
+| 当前平台二进制版本 | 当前主机可执行的 `platforms/*` 二进制 `--version` 必须与包版本一致 |
 
 ---
 

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const npmDir = path.join(rootDir, 'npm-package');
@@ -40,6 +41,43 @@ function getBinaryMap(filePath) {
     map[match[1]] = match[2];
   }
   return map;
+}
+
+function currentPlatformBinary(expectedMap) {
+  const key = `${process.platform}-${process.arch}`;
+  return expectedMap[key] || null;
+}
+
+function verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, expectedVersion) {
+  const binary = currentPlatformBinary(expectedMap);
+  if (!binary) {
+    console.log(`skipping binary version check for unsupported host platform ${process.platform}-${process.arch}`);
+    return;
+  }
+
+  const binaryPath = path.join(platformDir, binary);
+  if (!fs.existsSync(binaryPath)) {
+    fail(`current platform binary is missing: ${binaryPath}`);
+  }
+
+  let output;
+  try {
+    output = execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch (error) {
+    fail(`failed to execute ${binary} --version: ${error.message}`);
+  }
+
+  const match = output.match(/sacode\s+([^\s]+)/i);
+  if (!match) {
+    fail(`could not parse version from ${binary} --version output: ${output}`);
+  }
+
+  if (match[1] !== expectedVersion) {
+    fail(`binary version ${match[1]} does not match package version ${expectedVersion} for ${binary}`);
+  }
 }
 
 const cargoVersion = getCargoVersion();
@@ -106,6 +144,8 @@ if (manifest.version !== cargoVersion) {
 if (JSON.stringify(manifest.files) !== JSON.stringify(expectedFiles)) {
   fail(`platform manifest files do not match expected set: ${manifest.files.join(', ')}`);
 }
+
+verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, cargoVersion);
 
 if (strict) {
   const strictFiles = [...expectedFiles, 'manifest.json'].sort();
