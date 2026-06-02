@@ -2,6 +2,7 @@ mod acp;
 mod arg_parser;
 mod checkpoint;
 mod help_text;
+mod orchestrator_entry;
 mod orchestrator_support;
 mod runtime_entry;
 pub mod config;
@@ -33,23 +34,17 @@ mod command_tests;
 use std::env;
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionContext, ExecutionMode, Supervisor, Task};
+use sacode_kernel::ExecutionMode;
 pub use sacode_kernel::ApprovalPolicy;
-use sacode_runtime::{
-    CheckpointStorage, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor, SandboxPolicy, ToolRegistry,
-    RoleRegistry, TaskProfile, build_execution_plan, execute_role_driven_task_run,
-    strip_orchestration_prefix,
-};
 #[cfg(test)]
 use orchestrator_support::{collect_tool_results, parse_mcp_tool_name, resolve_tool_events, should_retry_tool_call, ExecutedTool, RetryDecision, StepEventBatch, ToolResult};
-use orchestrator_support::format_summary_record;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use arg_parser::parse_args;
 use help_text::print_help;
+use orchestrator_entry::run_with_orchestrator;
 use runtime_entry::run_task;
 use crate::repl::ReplSession;
-use crate::runner::{format_output, RunnerOutput};
 use crate::tui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,72 +138,6 @@ pub async fn run() -> Result<()> {
         CliCommand::Vim => vim::run(options.sub_args)?,
     }
 
-    Ok(())
-}
-
-async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
-    let workdir = env::current_dir()?;
-    let effective_prompt = strip_orchestration_prefix(&options.prompt);
-    let profile = TaskProfile::from_prompt_and_workspace(&effective_prompt, &workdir);
-    let roles = RoleRegistry::builtin();
-    let execution_plan = build_execution_plan(&effective_prompt, &workdir, &profile, roles.all());
-    
-    let task = Task::new(effective_prompt.clone(), options.mode, None);
-    let context = ExecutionContext::new(task).with_approval(options.approval);
-    
-    let supervisor = Supervisor::new();
-    let tools = ToolRegistry::builtin();
-    let sandbox = SandboxConfigStore::new(&workdir)
-        .executor_for_mode(options.mode)
-        .unwrap_or_else(|_| SandboxExecutor::new(SandboxPolicy::for_mode(options.mode)));
-    let checkpoints = CheckpointStorage::new(&workdir);
-
-    let (report, task_run) = if execution_plan.use_multi_agent {
-        let (task_run, _actual_plan) = execute_role_driven_task_run(&context, &checkpoints).await?;
-        let report = task_run.report.clone().unwrap_or_default();
-        (report, Some(task_run))
-    } else {
-        let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
-        let task_run = orchestrator.execute_task_run(&context)?;
-        let report = task_run.report.clone().unwrap_or_default();
-        (report, Some(task_run))
-    };
-    
-    let mut output = RunnerOutput::from_execution_report(
-        &report,
-        effective_prompt.clone(),
-        options.mode,
-        options.max_iterations,
-        workdir.to_string_lossy().to_string(),
-    );
-    if let Some(task_run) = task_run {
-        output.task_run = task_run;
-    }
-
-    if options.json {
-        let response = serde_json::json!({
-            "prompt": output.prompt,
-            "mode": output.mode,
-            "workspace": output.workspace,
-            "state": output.effective_state(),
-            "plan": output.plan,
-            "events": output.events,
-            "tool_results": output.tool_results,
-            "route_records": report.route_records,
-            "conflicts": report.conflicts,
-            "conflict_records": report.conflict_records,
-            "summary_record": report.summary_record,
-            "orchestration_plan": execution_plan,
-        });
-        println!("{}", serde_json::to_string_pretty(&response)?);
-    } else {
-        println!("[Orchestration Plan]\n{}\n", serde_json::to_string_pretty(&execution_plan)?);
-        println!("{}", format_output(&output));
-        if let Some(summary) = format_summary_record(report.summary_record.as_ref()) {
-            println!("\n{}", summary);
-        }
-    }
-    
     Ok(())
 }
 
