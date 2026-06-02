@@ -26,9 +26,12 @@ impl Drop for HomeEnvGuard {
 }
 
 #[test]
+#[serial_test::serial]
 fn render_wiki_reports_project_sources() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
     fs::create_dir_all(workdir.join(".sacode/wiki")).expect("create wiki dir");
     fs::write(
         workdir.join(".sacode/wiki/project.md"),
