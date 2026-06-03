@@ -22,7 +22,6 @@ pub(crate) fn render_message_lines(
 
         match msg.role {
             MessageRole::User => {
-                // User message: > content
                 for content_line in msg.content.lines() {
                     if content_line.trim().is_empty() {
                         continue;
@@ -36,13 +35,11 @@ pub(crate) fn render_message_lines(
                         ]),
                     });
                 }
-                // Add blank line after user message
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
                 });
             }
             MessageRole::Assistant => {
-                // Assistant message: ● content
                 let mut first = true;
                 for content_line in msg.content.lines() {
                     if content_line.trim().is_empty() {
@@ -68,13 +65,11 @@ pub(crate) fn render_message_lines(
                         });
                     }
                 }
-                // Add blank line after assistant message
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
                 });
             }
             MessageRole::System => {
-                // System messages rendered as inline blocks
                 lines.extend(render_system_block(&msg.content, theme));
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
@@ -91,6 +86,11 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
 
     for line in content.lines() {
         if line.trim().is_empty() {
+            continue;
+        }
+
+        if line.starts_with(PREFIX_TOOL) {
+            lines.extend(render_tool_block(line, theme));
             continue;
         }
 
@@ -114,11 +114,6 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
                 "● ",
                 Style::default().fg(theme.agent).add_modifier(Modifier::DIM),
             )
-        } else if line.starts_with(PREFIX_TOOL) {
-            (
-                "● ",
-                Style::default().fg(theme.info),
-            )
         } else {
             (
                 "● ",
@@ -131,7 +126,6 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
             .or_else(|| line.strip_prefix(PREFIX_SUCCESS))
             .or_else(|| line.strip_prefix(PREFIX_ERROR))
             .or_else(|| line.strip_prefix(PREFIX_THINKING))
-            .or_else(|| line.strip_prefix(PREFIX_TOOL))
             .unwrap_or(line)
             .trim_start();
 
@@ -146,6 +140,69 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
             ]),
         });
     }
+
+    lines
+}
+
+fn render_tool_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessageLine> {
+    let mut lines = Vec::new();
+    let text = content.strip_prefix(PREFIX_TOOL).unwrap_or(content).trim_start();
+
+    // Try to parse "ToolName(args)" or "ToolName rest"
+    let (tool_name, args) = if let Some(open_idx) = text.find('(') {
+        if text.ends_with(')') {
+            let name = &text[..open_idx];
+            let args = &text[open_idx + 1..text.len() - 1];
+            (name.trim(), Some(args.trim()))
+        } else {
+            (text, None)
+        }
+    } else {
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            (parts[0], Some(parts[1]))
+        } else {
+            (text, None)
+        }
+    };
+
+    // First line: ● ToolName(args)
+    let mut first_spans = vec![
+        Span::styled("● ", Style::default().fg(theme.info)),
+    ];
+    if let Some(args) = args {
+        first_spans.push(Span::styled(
+            format!("{}(", tool_name),
+            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+        ));
+        first_spans.push(Span::styled(
+            args.to_string(),
+            Style::default().fg(theme.text),
+        ));
+        first_spans.push(Span::styled(
+            ")",
+            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        first_spans.push(Span::styled(
+            tool_name.to_string(),
+            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+        ));
+    }
+    lines.push(RenderedMessageLine {
+        line: Line::from(first_spans),
+    });
+
+    // Second line: status hint
+    lines.push(RenderedMessageLine {
+        line: Line::from(vec![
+            Span::styled("   ", Style::default()),
+            Span::styled(
+                "└─ ...running (ctrl+b to background execution)",
+                Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+            ),
+        ]),
+    });
 
     lines
 }
