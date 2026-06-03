@@ -19,8 +19,8 @@ use super::{
         render_checkpoint_selector, render_command_selector, render_config_enum_selector,
         render_config_selector, render_connect_selector, render_footer, render_header,
         render_input_optimization_preview, render_input_panel, render_mcp_selector,
-        render_messages_panel, render_mode_selector, render_pending_question_panel,
-        render_selector, render_session_selector, render_skills_selector, render_task_selector,
+        render_messages_panel, render_mode_selector, render_selector,
+        render_session_selector, render_skills_selector, render_task_selector,
     },
     App, InputMode,
 };
@@ -174,9 +174,5 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
 
     if app.input_mode == InputMode::InputOptimizePreview {
         render_input_optimization_preview(frame, app);
-    }
-
-    if app.input_mode == InputMode::PendingQuestion {
-        render_pending_question_panel(frame, app);
     }
 }
