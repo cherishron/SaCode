@@ -1,7 +1,7 @@
 use ratatui::{
     layout::Rect,
     style::Style,
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
 };
 
@@ -9,15 +9,9 @@ use super::super::App;
 
 pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.theme;
-    let messages_block = Block::default()
-        .title("消息")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-    let inner_area = messages_block.inner(area);
-    app.message_viewport = inner_area;
-    frame.render_widget(messages_block, area);
+    app.message_viewport = area;
 
-    let max_y = inner_area.height as usize;
+    let max_y = area.height as usize;
     let total_lines = app.rendered_message_lines().len();
     let max_scroll = total_lines.saturating_sub(max_y);
     if app.follow_bottom {
@@ -32,7 +26,10 @@ pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect
         .map(|line| line.line.clone())
         .collect::<Vec<_>>();
 
-    frame.render_widget(Paragraph::new(visible_lines), inner_area);
+    frame.render_widget(
+        Paragraph::new(visible_lines).style(Style::default().bg(theme.bg_primary)),
+        area,
+    );
 
     if total_lines > max_y {
         let scrollbar = Scrollbar::default()
@@ -42,6 +39,6 @@ pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect
             .track_style(Style::default().fg(theme.panel_border))
             .thumb_style(Style::default().fg(theme.border));
         let mut scrollbar_state = ScrollbarState::new(total_lines).position(start);
-        frame.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }

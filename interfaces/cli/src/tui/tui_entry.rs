@@ -9,7 +9,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    Frame, Terminal,
+    Terminal,
 };
 
 use super::{
@@ -19,9 +19,8 @@ use super::{
         render_checkpoint_selector, render_command_selector, render_config_enum_selector,
         render_config_selector, render_connect_selector, render_footer, render_header,
         render_input_optimization_preview, render_input_panel, render_mcp_selector,
-        render_messages_panel, render_mode_selector, render_orchestration_panel,
-        render_pending_question_panel, render_queue_panel, render_selector,
-        render_session_selector, render_sidebar, render_skills_selector, render_task_selector,
+        render_messages_panel, render_mode_selector, render_pending_question_panel,
+        render_selector, render_session_selector, render_skills_selector, render_task_selector,
     },
     App, InputMode,
 };
@@ -82,79 +81,46 @@ impl Drop for TerminalFlowControlGuard {
     }
 }
 
-pub(super) fn ui(frame: &mut Frame, app: &mut App) {
-    let queue_height = app.queue_panel_height();
+pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     let input_is_editable = is_editable_input_mode(app.input_mode);
+
+    // First pass to calculate input height
     let first_pass = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Min(12),
-            Constraint::Length(queue_height.max(1)),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(1),  // header
+            Constraint::Min(10),    // messages
+            Constraint::Length(3),  // input
+            Constraint::Length(1),  // footer
         ])
         .split(frame.area());
-    let input_inner_width = first_pass[3].width.saturating_sub(2).max(1) as usize;
+
+    let input_inner_width = first_pass[2].width.saturating_sub(2).max(1) as usize;
     let input_line_count = if input_is_editable && !app.input.is_empty() {
         app.cached_input_layout(input_inner_width).lines.len().max(1)
     } else {
         1
     };
-    let input_height = (input_line_count as u16 + 2).clamp(3, 8);
+    let input_height = (input_line_count as u16 + 2).clamp(3, 6);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Min(12),
-            Constraint::Length(queue_height.max(1)),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
+            Constraint::Length(1),  // header
+            Constraint::Min(10),    // messages
+            Constraint::Length(input_height), // input
+            Constraint::Length(1),  // footer
         ])
         .split(frame.area());
-    let input_inner_width = chunks[3].width.saturating_sub(2).max(1) as usize;
+
+    let input_inner_width = chunks[2].width.saturating_sub(2).max(1) as usize;
 
     render_header(frame, app, chunks[0]);
-
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .spacing(2)
-        .constraints([Constraint::Min(10), Constraint::Length(36)])
-        .split(chunks[1]);
-
-    let has_orchestration_panel = app
-        .orchestration_summary
-        .as_ref()
-        .is_some_and(|value| !value.trim().is_empty());
-    let message_chunks = if has_orchestration_panel {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(12), Constraint::Min(8)])
-            .split(top_chunks[0])
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(8)])
-            .split(top_chunks[0])
-    };
-
-    if has_orchestration_panel {
-        render_orchestration_panel(frame, app, message_chunks[0]);
-        render_messages_panel(frame, app, message_chunks[1]);
-    } else {
-        render_messages_panel(frame, app, message_chunks[0]);
-    }
-    render_sidebar(frame, app, top_chunks[1]);
-
-    if queue_height > 0 {
-        render_queue_panel(frame, app, chunks[2]);
-    }
-
-    render_input_panel(frame, app, chunks[3], input_inner_width, input_is_editable);
-    render_footer(frame, app, chunks[4]);
+    render_messages_panel(frame, app, chunks[1]);
+    render_input_panel(frame, app, chunks[2], input_inner_width, input_is_editable);
+    render_footer(frame, app, chunks[3]);
 
     if matches!(
         app.input_mode,
@@ -171,7 +137,7 @@ pub(super) fn ui(frame: &mut Frame, app: &mut App) {
         app.input_mode,
         InputMode::CommandLevel1 | InputMode::CommandLevel2
     ) {
-        render_command_selector(frame, app, chunks[3]);
+        render_command_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::SkillsSelect {

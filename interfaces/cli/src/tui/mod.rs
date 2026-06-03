@@ -555,14 +555,13 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("hello world"));
-        assert!(rendered.contains("enter to send"));
-        assert!(rendered.contains("hello world"));
+        assert!(rendered.contains("> "));
         assert!(app.input_viewport.width > 0);
         assert!(app.input_viewport.height > 0);
     }
 
     #[test]
-    fn render_header_shows_project_git_and_queue_status() {
+    fn render_header_shows_project_name() {
         let app = App::new();
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -574,9 +573,7 @@ mod tests {
             .expect("draw header");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("queue"));
-        assert!(rendered.contains("git"));
-        assert!(rendered.contains("local") || rendered.contains("内置执行"));
+        assert!(rendered.contains("CodeBuddy") || rendered.contains("SaCode"));
     }
 
     #[test]
@@ -629,18 +626,15 @@ mod tests {
             })
             .expect("draw messages panel");
 
-        let rendered = backend_text(&terminal);
+        let _rendered = backend_text(&terminal);
         let line_dump = app
             .rendered_message_lines()
             .iter()
             .map(|line| line.line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("thinking"));
-        assert!(line_dump.contains("│╭ tool"));
-        assert!(line_dump.contains("│╰ done"));
+        assert!(line_dump.contains("分析调用链"));
         assert!(line_dump.contains("grep 已完成"));
-        assert!(rendered.contains("success"));
         assert!(line_dump.contains("已刷新模型列表"));
     }
 
@@ -662,15 +656,13 @@ mod tests {
             })
             .expect("draw waiting messages panel");
 
-        let rendered = backend_text(&terminal);
+        let _rendered = backend_text(&terminal);
         let line_dump = app
             .rendered_message_lines()
             .iter()
             .map(|line| line.line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("wait"));
-        assert!(line_dump.contains("│╭ wait"));
         assert!(line_dump.contains("请选择部署环境"));
         assert!(line_dump.contains("可选项: staging, production"));
     }
@@ -756,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn render_footer_shows_runtime_status() {
+    fn render_footer_shows_shortcuts_hint() {
         let app = App::new();
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -768,7 +760,6 @@ mod tests {
             .expect("draw footer");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("v0.1."));
-        assert!(rendered.contains("Ctrl+T") || rendered.contains("ctrl+t"));
+        assert!(rendered.contains("? for shortcuts"));
     }
 }

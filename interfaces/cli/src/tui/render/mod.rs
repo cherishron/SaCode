@@ -1,5 +1,5 @@
-mod common;
 mod command_selector;
+mod common;
 mod connect_selector;
 mod header_footer;
 mod input_panel;
