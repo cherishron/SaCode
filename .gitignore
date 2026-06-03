@@ -34,3 +34,6 @@ temp/
 # Backup
 *.bak
 *.backup
+
+# npm package binaries
+npm-package/platforms/sacode-*
