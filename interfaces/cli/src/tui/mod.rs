@@ -376,6 +376,10 @@ impl App {
     fn reset_orchestration_summary(&mut self) {
         self.orchestration_summary = None;
     }
+
+    pub(super) fn is_messages_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
 }
 
 #[cfg(test)]

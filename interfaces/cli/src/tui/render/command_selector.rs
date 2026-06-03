@@ -1,12 +1,11 @@
 use ratatui::{
-    layout::Rect,
-    style::Style,
-    text::Line,
-    widgets::Paragraph,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
-use super::common::{clear_area, render_relative_modal_block};
 use super::super::{App, InputMode};
 
 pub(crate) fn render_command_selector(frame: &mut Frame, app: &App, input_area: Rect) {
@@ -29,20 +28,45 @@ pub(crate) fn render_command_selector(frame: &mut Frame, app: &App, input_area: 
 
 fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
     let theme = app.theme;
-    let max_height = 12u16;
-    let popup_height = max_height.min(app.filtered_level1.len() as u16 + 2);
+    let max_visible = 8usize;
+    let total_items = app.filtered_level1.len();
+    let visible_count = max_visible.min(total_items);
+    let popup_height = visible_count as u16 + 2; // +2 for padding
 
+    // Position directly above the input area
     let popup_area = Rect {
         x: input_area.x,
         y: input_area.y.saturating_sub(popup_height),
         width: input_area.width,
         height: popup_height,
     };
-    let inner = render_relative_modal_block(frame, popup_area, "命令列表", theme);
 
-    let visible_count = inner.height as usize;
-    let start = app.selected_level1_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.filtered_level1.len());
+    // Ensure we don't go above the screen
+    let popup_area = if popup_area.y < 1 {
+        Rect {
+            y: 1,
+            height: popup_area.y + popup_area.height - 1,
+            ..popup_area
+        }
+    } else {
+        popup_area
+    };
+
+    // Calculate visible window around selected item
+    let start = if total_items <= max_visible {
+        0
+    } else {
+        app.selected_level1_index.saturating_sub(max_visible / 2)
+            .min(total_items.saturating_sub(max_visible))
+    };
+    let end = (start + visible_count).min(total_items);
+
+    let cmd_name_width = app.filtered_level1[start..end]
+        .iter()
+        .map(|cmd| cmd.name.len())
+        .max()
+        .unwrap_or(20)
+        .max(20);
 
     let lines: Vec<Line> = app.filtered_level1[start..end]
         .iter()
@@ -51,39 +75,45 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
             let index = start + offset;
             let is_selected = index == app.selected_level1_index;
             let prefix = if is_selected { "> " } else { "  " };
-            let has_subs = if cmd.sub_commands.is_empty() { "" } else { " +" };
             let style = if is_selected {
                 Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
                 Style::default().fg(theme.text)
             };
-            Line::styled(
-                format!("{}{}{} - {}", prefix, cmd.name, has_subs, cmd.description),
-                style,
-            )
+            let desc_style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(theme.subtle)
+            };
+
+            Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(&cmd.name, style.add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:>width$}", "", width = cmd_name_width.saturating_sub(cmd.name.len()) + 2),
+                    style,
+                ),
+                Span::styled(&cmd.description, desc_style),
+            ])
         })
         .collect();
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+        .border_style(Style::default().fg(theme.border));
 
-    let hint_line = Line::styled(
-        "Enter: 选择 | Tab: 补全 | Esc: 取消",
-        Style::default().fg(theme.subtle),
+    frame.render_widget(
+        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        popup_area,
     );
-    let hint_area = Rect {
-        x: popup_area.x,
-        y: popup_area.y + popup_area.height,
-        width: popup_area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
     let theme = app.theme;
-    let max_height = 8u16;
-    let popup_height = max_height.min(app.filtered_sub_commands.len() as u16 + 2);
+    let max_visible = 6usize;
+    let total_items = app.filtered_sub_commands.len();
+    let visible_count = max_visible.min(total_items);
+    let popup_height = visible_count as u16 + 2;
 
     let popup_area = Rect {
         x: input_area.x,
@@ -92,17 +122,30 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
         height: popup_height,
     };
 
-    let title = app
-        .current_level1
-        .as_ref()
-        .map(|cmd| format!("{} 子命令", cmd.name))
-        .unwrap_or_else(|| "子命令".to_string());
+    let popup_area = if popup_area.y < 1 {
+        Rect {
+            y: 1,
+            height: popup_area.y + popup_area.height - 1,
+            ..popup_area
+        }
+    } else {
+        popup_area
+    };
 
-    let inner = render_relative_modal_block(frame, popup_area, title, theme);
+    let start = if total_items <= max_visible {
+        0
+    } else {
+        app.selected_sub_index.saturating_sub(max_visible / 2)
+            .min(total_items.saturating_sub(max_visible))
+    };
+    let end = (start + visible_count).min(total_items);
 
-    let visible_count = inner.height as usize;
-    let start = app.selected_sub_index.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(app.filtered_sub_commands.len());
+    let sub_name_width = app.filtered_sub_commands[start..end]
+        .iter()
+        .map(|sub| sub.name.len())
+        .max()
+        .unwrap_or(20)
+        .max(20);
 
     let lines: Vec<Line> = app.filtered_sub_commands[start..end]
         .iter()
@@ -111,31 +154,35 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
             let index = start + offset;
             let is_selected = index == app.selected_sub_index;
             let prefix = if is_selected { "> " } else { "  " };
-            let input_hint = if sub.needs_input { " ..." } else { "" };
             let style = if is_selected {
                 Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
                 Style::default().fg(theme.text)
             };
-            Line::styled(
-                format!("{}{}{} - {}", prefix, sub.name, input_hint, sub.description),
-                style,
-            )
+            let desc_style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(theme.subtle)
+            };
+
+            Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(&sub.name, style.add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:>width$}", "", width = sub_name_width.saturating_sub(sub.name.len()) + 2),
+                    style,
+                ),
+                Span::styled(&sub.description, desc_style),
+            ])
         })
         .collect();
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+        .border_style(Style::default().fg(theme.border));
 
-    let hint_line = Line::styled(
-        "Enter: 执行 | Tab: 补全 | Esc: 返回",
-        Style::default().fg(theme.subtle),
+    frame.render_widget(
+        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        popup_area,
     );
-    let hint_area = Rect {
-        x: popup_area.x,
-        y: popup_area.y + popup_area.height,
-        width: popup_area.width,
-        height: 1,
-    };
-    clear_area(frame, hint_area);
-    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
