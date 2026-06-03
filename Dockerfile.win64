@@ -1,0 +1,31 @@
+# Cross-compile SaCode for Windows x64 using Docker
+FROM rust:1.83-bookworm
+
+# Install MinGW-w64 for Windows cross-compilation
+RUN apt-get update && apt-get install -y \
+    mingw-w64 \
+    g++-mingw-w64-x86-64 \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js for npm scripts
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+WORKDIR /workspace
+
+# Copy project files
+COPY Cargo.toml Cargo.lock ./
+COPY kernel/ ./kernel/
+COPY runtime/ ./runtime/
+COPY interfaces/ ./interfaces/
+
+# Build for Windows x64
+ARG TARGET=x86_64-pc-windows-gnu
+RUN rustup target add $TARGET
+RUN cargo build --release --target $TARGET
+
+# Prepare artifacts
+RUN mv target/$TARGET/release/sacode.exe /sacode-win32-x64.exe
+
+CMD ["/bin/bash"]
