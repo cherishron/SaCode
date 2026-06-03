@@ -2,9 +2,8 @@ use std::path::PathBuf;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    style::{Color, Style},
+    widgets::{Block, Borders, Clear},
     Frame,
 };
 
@@ -52,56 +51,6 @@ pub(crate) fn render_modal_block(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     inner
-}
-
-pub(crate) fn render_relative_modal_block(
-    frame: &mut Frame,
-    area: Rect,
-    title: impl Into<String>,
-    theme: ThemePalette,
-) -> Rect {
-    clear_area(frame, area);
-    frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
-    );
-    let block = Block::default()
-        .title(title.into())
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent_strong));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    inner
-}
-
-pub(crate) fn render_sidebar_section(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    lines: Vec<Line<'static>>,
-    theme: ThemePalette,
-) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(area);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {} ", title),
-                Style::default()
-                    .fg(theme.bg_primary)
-                    .bg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" │ ", Style::default().fg(theme.border)),
-            Span::styled("----------------", Style::default().fg(theme.panel_border)),
-        ])),
-        chunks[0],
-    );
-
-    frame.render_widget(Paragraph::new(lines), chunks[1]);
 }
 
 pub(crate) fn relative_to_workdir(workdir: &std::path::Path, path: &std::path::Path) -> PathBuf {

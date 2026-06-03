@@ -24,14 +24,6 @@ impl App {
             .unwrap_or(false)
     }
 
-    pub(super) fn thinking_toggle_status_label(&self) -> &'static str {
-        if self.current_thinking_enabled() {
-            "思考:开"
-        } else {
-            "思考:关"
-        }
-    }
-
     pub(super) fn toggle_thinking_feature(&mut self) {
         let Some(current_provider) = self.current_provider.clone() else {
             self.push_system_message(

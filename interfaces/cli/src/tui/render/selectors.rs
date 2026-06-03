@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::super::{App, InputMode, MODELS_HINT_LIMIT};
+use super::super::{App, InputMode};
 
 /// Generic dropdown list renderer positioned above the input area
 fn render_dropdown_list<'a>(

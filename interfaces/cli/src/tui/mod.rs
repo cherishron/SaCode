@@ -54,7 +54,6 @@ mod runtime_support;
 mod send_actions;
 mod session_stats;
 mod session_store;
-mod sidebar_state;
 mod skills_actions;
 mod state;
 mod task_runtime;
@@ -213,13 +212,6 @@ struct App {
 enum FoldAction {
     Collapse,
     Expand,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SidebarSection {
-    Todo,
-    Task,
-    Git,
 }
 
 #[derive(Debug, Clone, Default)]

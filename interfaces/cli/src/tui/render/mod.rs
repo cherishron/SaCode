@@ -7,7 +7,6 @@ mod messages_panel;
 mod modals;
 mod orchestration_panel;
 mod selectors;
-mod sidebar_queue;
 
 pub(crate) use common::relative_to_workdir;
 pub(crate) use command_selector::render_command_selector;
