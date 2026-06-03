@@ -126,11 +126,11 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
         app.input_mode,
         InputMode::ProviderSelect | InputMode::ModelSelect | InputMode::ThemeSelect
     ) {
-        render_selector(frame, app);
+        render_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::ConnectSelect {
-        render_connect_selector(frame, app);
+        render_connect_selector(frame, app, chunks[2]);
     }
 
     if matches!(
@@ -141,23 +141,23 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     }
 
     if app.input_mode == InputMode::SkillsSelect {
-        render_skills_selector(frame, app);
+        render_skills_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::McpSelect {
-        render_mcp_selector(frame, app);
+        render_mcp_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::TasksSelect {
-        render_task_selector(frame, app);
+        render_task_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::CheckpointSelect {
-        render_checkpoint_selector(frame, app);
+        render_checkpoint_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::ModeSelect {
-        render_mode_selector(frame, app);
+        render_mode_selector(frame, app, chunks[2]);
     }
 
     if app.input_mode == InputMode::ConfigSelect {
@@ -169,7 +169,15 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     }
 
     if app.input_mode == InputMode::SessionSelect {
-        render_session_selector(frame, app);
+        render_session_selector(frame, app, chunks[2]);
+    }
+
+    if app.input_mode == InputMode::ConfigSelect {
+        render_config_selector(frame, app);
+    }
+
+    if app.input_mode == InputMode::ConfigEnumSelect {
+        render_config_enum_selector(frame, app);
     }
 
     if app.input_mode == InputMode::InputOptimizePreview {

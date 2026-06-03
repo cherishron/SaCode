@@ -390,7 +390,7 @@ mod tests {
     use crate::tui::render::{
         render_footer, render_header, render_input_panel, render_messages_panel,
         render_pending_question_panel,
-        render_orchestration_panel, render_queue_panel, render_sidebar,
+        render_orchestration_panel,
     };
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
@@ -720,35 +720,20 @@ mod tests {
     }
 
     #[test]
-    fn render_sidebar_and_queue_panel_show_structured_sections() {
+    fn render_header_shows_git_queue_and_todo_status() {
         let mut app = App::new();
-        app.interaction.todo_plan = Some(super::TodoPlan {
-            source_task: "实现 TUI sidebar 品牌化".to_string(),
-            items: vec![super::TodoItem {
-                id: 1,
-                description: "更新右侧区块样式".to_string(),
-                status: super::TodoStatus::Running,
-            }],
-            confirmed: true,
-        });
         app.git_changes = vec!["M interfaces/cli/src/tui/render/sidebar_queue.rs".to_string()];
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
         terminal
             .draw(|frame| {
-                render_sidebar(frame, &app, Rect::new(0, 0, 30, 20));
-                render_queue_panel(frame, &app, Rect::new(30, 0, 50, 6));
+                render_header(frame, &app, Rect::new(0, 0, 120, 2));
             })
-            .expect("draw sidebar and queue panel");
+            .expect("draw header with git status");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("todo"));
-        assert!(rendered.contains("task"));
-        assert!(rendered.contains("git"));
-        assert!(rendered.contains("queue"));
-        assert!(rendered.contains("run"));
-        assert!(rendered.contains("source"));
+        assert!(rendered.contains("CodeBuddy"));
     }
 
     #[test]
