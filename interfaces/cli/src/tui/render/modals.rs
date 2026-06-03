@@ -90,8 +90,15 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         return;
     }
 
+    let is_approval = app.interaction.pending_approval_request.is_some();
+    let title = if is_approval {
+        "等待工具审批"
+    } else {
+        "等待用户回答"
+    };
+
     let area = centered_rect(frame.area(), 78, 62);
-    let inner = render_modal_block(frame, area, "等待用户回答", theme);
+    let inner = render_modal_block(frame, area, title, theme);
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -129,22 +136,45 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         return;
     };
 
-    let question_lines = vec![
-        Line::from(Span::styled(
-            &question.question,
-            Style::default()
-                .fg(theme.assistant)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            if question.allow_multiple {
-                "多选：Space 勾选，Enter 提交"
-            } else {
-                "单选：方向键选择，Space 勾选，Enter 提交"
-            },
-            Style::default().fg(theme.subtle),
-        )),
-    ];
+    let question_lines = if let Some(request) = &app.interaction.pending_approval_request {
+        vec![
+            Line::from(vec![
+                Span::styled(
+                    "审批工具",
+                    Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(&request.tool_name, Style::default().fg(theme.info)),
+            ]),
+            Line::from(Span::styled(
+                &question.question,
+                Style::default()
+                    .fg(theme.assistant)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "提交后会按当前执行模式继续任务。",
+                Style::default().fg(theme.subtle),
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(Span::styled(
+                &question.question,
+                Style::default()
+                    .fg(theme.assistant)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                if question.allow_multiple {
+                    "多选：Space 勾选，Enter 提交"
+                } else {
+                    "单选：方向键选择，Space 勾选，Enter 提交"
+                },
+                Style::default().fg(theme.subtle),
+            )),
+        ]
+    };
     frame.render_widget(Paragraph::new(question_lines), sections[1]);
 
     let selected_answers = app
@@ -192,7 +222,11 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(option_lines), sections[2]);
 
     let hint = if app.input.is_empty() {
-        "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天 | 直接输入可自定义回答"
+        if is_approval {
+            "Up/Down: 选择审批结果 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天"
+        } else {
+            "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天 | 直接输入可自定义回答"
+        }
     } else {
         "Enter: 提交自定义回答 | Esc: 返回聊天"
     };

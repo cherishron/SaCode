@@ -117,7 +117,7 @@ pub(super) fn ui(frame: &mut Frame, app: &mut App) {
         .split(frame.area());
     let input_inner_width = chunks[3].width.saturating_sub(2).max(1) as usize;
 
-    render_header(frame, chunks[0], app.theme);
+    render_header(frame, app, chunks[0]);
 
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)

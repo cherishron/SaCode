@@ -381,8 +381,12 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::App;
+    use crate::tui::interaction::{PendingApprovalRequest, PendingQuestionItem, PendingQuestionOption};
+    use crate::tui::InteractionState;
     use crate::tui::render::{
-        render_footer, render_input_panel, render_messages_panel, render_orchestration_panel,
+        render_footer, render_header, render_input_panel, render_messages_panel,
+        render_pending_question_panel,
+        render_orchestration_panel, render_queue_panel, render_sidebar,
     };
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
@@ -514,22 +518,65 @@ mod tests {
     }
 
     #[test]
+    fn render_orchestration_panel_routes_next_action_into_next_section() {
+        let mut app = App::new();
+        app.orchestration_summary = Some(
+            "[主裁决摘要]\n- reporter: reporter-summary\n- overall: continue after validation\n- next: rerun tests after patching\n[角色路由]\n- reporter: deepseek/deepseek-reasoner score=80 thinking=true"
+                .to_string(),
+        );
+
+        let backend = TestBackend::new(110, 22);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_orchestration_panel(frame, &app, Rect::new(0, 0, 110, 22));
+            })
+            .expect("draw panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("next"));
+        assert!(rendered.contains("rerun tests after patching"));
+        assert!(rendered.contains("overall"));
+        assert!(rendered.contains("continue after validation"));
+    }
+
+    #[test]
     fn render_input_panel_renders_typed_content_and_updates_viewport() {
         let mut app = App::new();
         app.input = "hello world".to_string();
-        let backend = TestBackend::new(100, 6);
+        let backend = TestBackend::new(100, 8);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
         terminal
             .draw(|frame| {
-                render_input_panel(frame, &mut app, Rect::new(0, 0, 100, 6), 96, true);
+                render_input_panel(frame, &mut app, Rect::new(0, 0, 100, 8), 96, true);
             })
             .expect("draw input panel");
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("hello world"));
+        assert!(rendered.contains("enter to send"));
+        assert!(rendered.contains("hello world"));
         assert!(app.input_viewport.width > 0);
         assert!(app.input_viewport.height > 0);
+    }
+
+    #[test]
+    fn render_header_shows_project_git_and_queue_status() {
+        let app = App::new();
+        let backend = TestBackend::new(120, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_header(frame, &app, Rect::new(0, 0, 120, 2));
+            })
+            .expect("draw header");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("queue"));
+        assert!(rendered.contains("git"));
+        assert!(rendered.contains("local") || rendered.contains("内置执行"));
     }
 
     #[test]
@@ -559,6 +606,156 @@ mod tests {
     }
 
     #[test]
+    fn render_messages_panel_groups_thinking_and_status_messages() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "[思考] 分析调用链\n[工具] grep 已完成".to_string(),
+            timestamp: "12:00:01".to_string(),
+            collapsed: false,
+        });
+        app.messages.push(super::Message {
+            role: super::MessageRole::System,
+            content: "[成功] 已刷新模型列表".to_string(),
+            timestamp: "12:00:02".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(140, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 140, 16));
+            })
+            .expect("draw messages panel");
+
+        let rendered = backend_text(&terminal);
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("thinking"));
+        assert!(line_dump.contains("│╭ tool"));
+        assert!(line_dump.contains("│╰ done"));
+        assert!(line_dump.contains("grep 已完成"));
+        assert!(rendered.contains("success"));
+        assert!(line_dump.contains("已刷新模型列表"));
+    }
+
+    #[test]
+    fn render_messages_panel_groups_waiting_system_messages() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::System,
+            content: "[等待用户回答] 请选择部署环境\n可选项: staging, production".to_string(),
+            timestamp: "12:00:03".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(140, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 140, 16));
+            })
+            .expect("draw waiting messages panel");
+
+        let rendered = backend_text(&terminal);
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("wait"));
+        assert!(line_dump.contains("│╭ wait"));
+        assert!(line_dump.contains("请选择部署环境"));
+        assert!(line_dump.contains("可选项: staging, production"));
+    }
+
+    #[test]
+    fn render_pending_question_panel_highlights_approval_state() {
+        let mut app = App::new();
+        app.interaction.state = InteractionState::WaitingForApproval;
+        app.interaction.pending_approval_request = Some(PendingApprovalRequest {
+            task_prompt: "修复模型列表加载".to_string(),
+            tool_name: "bash".to_string(),
+        });
+        app.interaction.pending_question_items.push(PendingQuestionItem {
+            question: "允许执行 bash 工具吗？".to_string(),
+            options: vec![
+                PendingQuestionOption {
+                    label: "批准".to_string(),
+                    description: "允许本次执行".to_string(),
+                },
+                PendingQuestionOption {
+                    label: "拒绝".to_string(),
+                    description: "终止本次执行".to_string(),
+                },
+            ],
+            allow_multiple: false,
+        });
+        app.interaction.selected_pending_answers = vec![std::collections::HashSet::new()];
+        let backend = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_pending_question_panel(frame, &app);
+            })
+            .expect("draw pending approval panel");
+
+        let rendered = backend_text(&terminal);
+        assert_eq!(app.interaction.state, InteractionState::WaitingForApproval);
+        assert_eq!(
+            app.interaction
+                .pending_approval_request
+                .as_ref()
+                .map(|request| request.tool_name.as_str()),
+            Some("bash")
+        );
+        assert_eq!(
+            app.current_pending_question().map(|item| item.question.as_str()),
+            Some("允许执行 bash 工具吗？")
+        );
+        assert!(rendered.contains("bash"));
+    }
+
+    #[test]
+    fn render_sidebar_and_queue_panel_show_structured_sections() {
+        let mut app = App::new();
+        app.interaction.todo_plan = Some(super::TodoPlan {
+            source_task: "实现 TUI sidebar 品牌化".to_string(),
+            items: vec![super::TodoItem {
+                id: 1,
+                description: "更新右侧区块样式".to_string(),
+                status: super::TodoStatus::Running,
+            }],
+            confirmed: true,
+        });
+        app.git_changes = vec!["M interfaces/cli/src/tui/render/sidebar_queue.rs".to_string()];
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_sidebar(frame, &app, Rect::new(0, 0, 30, 20));
+                render_queue_panel(frame, &app, Rect::new(30, 0, 50, 6));
+            })
+            .expect("draw sidebar and queue panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("todo"));
+        assert!(rendered.contains("task"));
+        assert!(rendered.contains("git"));
+        assert!(rendered.contains("queue"));
+        assert!(rendered.contains("run"));
+        assert!(rendered.contains("source"));
+    }
+
+    #[test]
     fn render_footer_shows_runtime_status() {
         let app = App::new();
         let backend = TestBackend::new(120, 2);
@@ -571,7 +768,7 @@ mod tests {
             .expect("draw footer");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("Mode:"));
-        assert!(rendered.contains("cwd:"));
+        assert!(rendered.contains("v0.1."));
+        assert!(rendered.contains("Ctrl+T") || rendered.contains("ctrl+t"));
     }
 }

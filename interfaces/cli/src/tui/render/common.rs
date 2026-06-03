@@ -89,12 +89,13 @@ pub(crate) fn render_sidebar_section(
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                title,
+                format!(" {} ", title),
                 Style::default()
-                    .fg(theme.accent)
+                    .fg(theme.bg_primary)
+                    .bg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" ", Style::default()),
+            Span::styled(" │ ", Style::default().fg(theme.border_strong)),
             Span::styled("----------------", Style::default().fg(theme.panel_border)),
         ])),
         chunks[0],

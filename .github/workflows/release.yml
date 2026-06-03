@@ -42,13 +42,15 @@ jobs:
       - name: Prepare binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: |
-          mv target/${{ matrix.target }}/release/sacode npm-package/platforms/${{ matrix.artifact }}
+          mkdir -p npm-package/platforms
+          cp target/${{ matrix.target }}/release/sacode npm-package/platforms/${{ matrix.artifact }}
           chmod +x npm-package/platforms/${{ matrix.artifact }}
 
       - name: Prepare binary (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          mv target/${{ matrix.target }}/release/sacode.exe npm-package/platforms/${{ matrix.artifact }}
+          mkdir -p npm-package/platforms
+          cp target/${{ matrix.target }}/release/sacode.exe npm-package/platforms/${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -71,6 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reset platform directory
+        run: |
+          mkdir -p npm-package/platforms
+          rm -f npm-package/platforms/*
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -81,8 +88,11 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Write platform manifest
-        run: node scripts/write-platform-manifest.js ${{ steps.get_version.outputs.VERSION }}
+      - name: Prepare npm platforms
+        run: |
+          node scripts/prepare-npm-platforms.js ${{ steps.get_version.outputs.VERSION }} --clean \
+            --source-file linux-x64 npm-package/platforms/sacode-linux-x64 \
+            --source-file win32-x64 npm-package/platforms/sacode-win32-x64.exe
 
       - name: Check release consistency
         run: node scripts/check-release.js --strict-platforms
@@ -92,6 +102,14 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify packed npm package
+        run: |
+          PACKAGE_VERSION=${{ steps.get_version.outputs.VERSION }}
+          cd npm-package
+          PACKAGE_TGZ=$(npm pack --silent)
+          npm install -g "./$PACKAGE_TGZ"
+          test "$(sacode --version)" = "sacode $PACKAGE_VERSION"
 
       - name: Publish to npm
         run: |

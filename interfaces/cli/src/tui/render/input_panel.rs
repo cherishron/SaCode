@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::Style,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
@@ -8,8 +8,24 @@ use ratatui::{
 
 use super::super::{
     input::clamp_cursor_col,
-    App, InputMode,
+    App, ExecutionMode, InputMode,
 };
+
+fn mode_color(app: &App) -> Color {
+    match app.execution_mode {
+        ExecutionMode::Plan => app.theme.plan,
+        ExecutionMode::Build => app.theme.build,
+        ExecutionMode::Yolo => app.theme.yolo,
+    }
+}
+
+fn mode_label(app: &App) -> &'static str {
+    match app.execution_mode {
+        ExecutionMode::Plan => "PLAN",
+        ExecutionMode::Build => "BUILD",
+        ExecutionMode::Yolo => "YOLO",
+    }
+}
 
 pub(crate) fn render_input_panel(
     frame: &mut Frame,
@@ -19,6 +35,7 @@ pub(crate) fn render_input_panel(
     input_is_editable: bool,
 ) {
     let theme = app.theme;
+    let accent = mode_color(app);
     let cached_input_layout = app.cached_input_layout(input_inner_width).clone();
     let input_lines = if app.input_mode == InputMode::ProviderSelect {
         vec![Line::from(Span::styled(
@@ -145,7 +162,7 @@ pub(crate) fn render_input_panel(
         };
         vec![Line::from(Span::styled(
             placeholder,
-            Style::default().fg(theme.subtle),
+            Style::default().fg(theme.info),
         ))]
     } else {
         cached_input_layout
@@ -156,14 +173,57 @@ pub(crate) fn render_input_panel(
             .collect()
     };
 
+    let mut decorated_lines = Vec::with_capacity(input_lines.len().max(2));
+    for (index, line) in input_lines.into_iter().enumerate() {
+        if index == 0 {
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {} ", mode_label(app)),
+                    Style::default()
+                        .fg(theme.bg_primary)
+                        .bg(accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ];
+            if input_is_editable {
+                spans.push(Span::styled(
+                    "▶",
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::raw(" "));
+            }
+            spans.extend(line.spans);
+            decorated_lines.push(Line::from(spans));
+        } else {
+            decorated_lines.push(Line::from(vec![Span::raw("        "), Span::styled(
+                line.spans.into_iter().map(|span| span.content).collect::<String>(),
+                Style::default().fg(theme.text),
+            )]));
+        }
+    }
+
+    let hint = match app.execution_mode {
+        ExecutionMode::Plan => "enter to send  |  ctrl+t thinking  |  / commands",
+        ExecutionMode::Build => "enter to send  |  ctrl+t thinking  |  esc cancel",
+        ExecutionMode::Yolo => "enter to send  |  ctrl+t thinking",
+    };
+    decorated_lines.push(Line::from(vec![
+        Span::raw("        "),
+        Span::styled(hint, Style::default().fg(theme.subtle)),
+        Span::styled("  |  enter", Style::default().fg(theme.code)),
+    ]));
+
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
+        .style(Style::default().bg(theme.bg_elevated))
+        .border_style(Style::default().fg(theme.border_strong));
     app.input_viewport = input_block.inner(area);
 
     frame.render_widget(
-        Paragraph::new(input_lines)
+        Paragraph::new(decorated_lines)
             .block(input_block)
+            .style(Style::default().bg(theme.bg_elevated))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -174,6 +234,7 @@ pub(crate) fn render_input_panel(
             .cursor_line
             .min(max_line.min(cached_input_layout.lines.len().saturating_sub(1)));
         let cursor_x = app.input_viewport.x
+            + 8
             + clamp_cursor_col(cached_input_layout.cursor_col, input_inner_width) as u16;
         let cursor_y = app.input_viewport.y + visible_line as u16;
         frame.set_cursor_position((cursor_x, cursor_y));

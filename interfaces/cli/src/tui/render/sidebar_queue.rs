@@ -1,6 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::Paragraph,
+    style::Style,
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -42,5 +43,11 @@ pub(crate) fn render_sidebar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 pub(crate) fn render_queue_panel(frame: &mut Frame, app: &App, area: Rect) {
-    frame.render_widget(Paragraph::new(app.queue_panel_lines()), area);
+    let block = Block::default()
+        .title(" queue ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.warning));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(app.queue_panel_lines()), inner);
 }

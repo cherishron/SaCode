@@ -80,6 +80,52 @@ function verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, expectedVe
   }
 }
 
+function verifyPackedNpmContents(npmDir, filesToVerify) {
+  let packOutput;
+  try {
+    packOutput = execFileSync('npm', ['pack', '--json'], {
+      cwd: npmDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    fail(`failed to pack npm package: ${error.message}`);
+  }
+
+  let packed;
+  try {
+    packed = JSON.parse(packOutput);
+  } catch (error) {
+    fail(`failed to parse npm pack output: ${error.message}`);
+  }
+
+  const tarballName = packed?.[0]?.filename;
+  if (!tarballName) {
+    fail('npm pack did not return a tarball filename');
+  }
+
+  const tarballPath = path.join(npmDir, tarballName);
+  let tarList;
+  try {
+    tarList = execFileSync('tar', ['-tf', tarballPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    fail(`failed to inspect packed tarball ${tarballName}: ${error.message}`);
+  }
+
+  const tarEntries = tarList.split('\n').filter(Boolean);
+  for (const file of filesToVerify) {
+    const packagedPath = `package/platforms/${file}`;
+    if (!tarEntries.includes(packagedPath)) {
+      fail(`packed npm tarball is missing ${packagedPath}`);
+    }
+  }
+
+  fs.unlinkSync(tarballPath);
+}
+
 const cargoVersion = getCargoVersion();
 const packageJsonPath = path.join(npmDir, 'package.json');
 const packageJson = JSON.parse(read(packageJsonPath));
@@ -136,18 +182,29 @@ if (!fs.existsSync(manifestPath)) {
 
 const manifest = JSON.parse(read(manifestPath));
 const expectedFiles = Object.values(expectedMap).sort();
+const manifestFiles = Array.isArray(manifest.files) ? [...manifest.files].sort() : [];
 
 if (manifest.version !== cargoVersion) {
   fail(`platform manifest version ${manifest.version} does not match Cargo version ${cargoVersion}`);
 }
 
-if (JSON.stringify(manifest.files) !== JSON.stringify(expectedFiles)) {
-  fail(`platform manifest files do not match expected set: ${manifest.files.join(', ')}`);
+if (manifestFiles.length === 0) {
+  fail('platform manifest files must not be empty');
+}
+
+for (const file of manifestFiles) {
+  if (!expectedFiles.includes(file)) {
+    fail(`platform manifest contains unsupported file: ${file}`);
+  }
 }
 
 verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, cargoVersion);
+verifyPackedNpmContents(npmDir, manifestFiles);
 
 if (strict) {
+  if (JSON.stringify(manifestFiles) !== JSON.stringify(expectedFiles)) {
+    fail(`platform manifest files do not match expected set: ${manifestFiles.join(', ')}`);
+  }
   const strictFiles = [...expectedFiles, 'manifest.json'].sort();
   if (JSON.stringify(platformFiles) !== JSON.stringify(strictFiles)) {
     fail(`platform files do not match expected set: ${platformFiles.join(', ')}`);
