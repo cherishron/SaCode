@@ -102,7 +102,7 @@ impl App {
                         } else if entry.starts_with('M') || entry.chars().nth(1) == Some('M') {
                             self.theme.info
                         } else {
-                            self.theme.git_branch
+                            self.theme.build
                         };
                         Line::from(vec![
                             Span::styled("git ", Style::default().fg(color).add_modifier(Modifier::BOLD)),

@@ -95,7 +95,7 @@ pub(crate) fn render_sidebar_section(
                     .bg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" │ ", Style::default().fg(theme.border_strong)),
+            Span::styled(" │ ", Style::default().fg(theme.border)),
             Span::styled("----------------", Style::default().fg(theme.panel_border)),
         ])),
         chunks[0],
