@@ -112,7 +112,7 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
         } else if line.starts_with(PREFIX_THINKING) {
             (
                 "● ",
-                Style::default().fg(theme.agent).add_modifier(Modifier::DIM),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             )
         } else {
             (

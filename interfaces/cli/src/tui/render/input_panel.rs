@@ -169,12 +169,26 @@ pub(crate) fn render_input_panel(
     let mut decorated_lines = Vec::with_capacity(input_lines.len().max(2));
     for (index, line) in input_lines.into_iter().enumerate() {
         if index == 0 {
-            let mut spans = vec![
-                Span::styled(
-                    "> ",
-                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                ),
-            ];
+            let mut spans = if app.current_thinking_enabled() {
+                vec![
+                    Span::styled(
+                        ">",
+                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "[T]",
+                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default()),
+                ]
+            } else {
+                vec![
+                    Span::styled(
+                        "> ",
+                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                    ),
+                ]
+            };
             if input_is_editable {
                 spans.extend(line.spans);
             } else {

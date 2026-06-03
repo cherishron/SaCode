@@ -88,6 +88,15 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
     }
 
+    // Thinking status
+    let thinking_status = if app.current_thinking_enabled() {
+        Span::styled("think:on", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled("think:off", Style::default().fg(theme.subtle))
+    };
+    spans.push(Span::styled("  ", Style::default().fg(theme.text)));
+    spans.push(thinking_status);
+
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
@@ -96,18 +105,27 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 
 pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
-    let hints = match app.input_mode {
-        _ => "? for shortcuts",
-    };
+    let mut spans = vec![
+        Span::styled("? for shortcuts  ", Style::default().fg(theme.subtle)),
+    ];
+    
+    if app.current_thinking_enabled() {
+        spans.push(Span::styled("Ctrl+T: think:on  ", Style::default().fg(theme.accent)));
+    } else {
+        spans.push(Span::styled("Ctrl+T: think:off  ", Style::default().fg(theme.subtle)));
+    }
+    
+    spans.push(Span::styled(
+        "Ctrl+M: mode  ",
+        Style::default().fg(theme.subtle),
+    ));
+    spans.push(Span::styled(
+        "Ctrl+Q: quit",
+        Style::default().fg(theme.subtle),
+    ));
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                hints,
-                Style::default().fg(theme.subtle),
-            ),
-        ]))
-        .alignment(Alignment::Left),
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
 }
