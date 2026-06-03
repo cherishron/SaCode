@@ -87,8 +87,10 @@ pub(crate) fn parse_orchestration_summary(
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false);
                     Some(format!(
-                        "- {}: {} thinking={}",
-                        role_id, preferred_model, needs_thinking
+                        "- {}: {} 思考={} ",
+                        role_id,
+                        preferred_model,
+                        thinking_label(needs_thinking)
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -121,8 +123,12 @@ pub(crate) fn parse_orchestration_summary(
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false);
                     Some(format!(
-                        "- {}: {}/{} score={} thinking={}",
-                        role_id, provider_name, model_name, score, needs_thinking
+                        "- {}: {}/{} score={} 思考={}",
+                        role_id,
+                        provider_name,
+                        model_name,
+                        score,
+                        thinking_label(needs_thinking)
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -168,5 +174,13 @@ fn conflict_kind_label(kind: &str) -> &str {
         "conclusion_conflict" => "结论冲突",
         "polarity_conflict" => "极性冲突",
         _ => kind,
+    }
+}
+
+fn thinking_label(enabled: bool) -> &'static str {
+    if enabled {
+        "开"
+    } else {
+        "关"
     }
 }

@@ -729,6 +729,49 @@ mod tests {
     }
 
     #[test]
+    fn render_header_shows_thinking_status() {
+        let mut app = App::new();
+        let provider_name = "test-provider".to_string();
+        let model_name = "test-model".to_string();
+        let mut spec = sacode_kernel::model::ProviderSpec {
+            name: provider_name.clone(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: String::new(),
+            models: std::collections::BTreeMap::new(),
+        };
+        spec.models.insert(
+            model_name.clone(),
+            sacode_kernel::model::ModelRule {
+                name: model_name.clone(),
+                thinking: true,
+                ..Default::default()
+            },
+        );
+        app.sacode_store
+            .upsert_provider(&provider_name, spec)
+            .expect("persist provider spec");
+        app.current_provider = Some(crate::provider_config::NamedProviderConfig {
+            name: provider_name,
+            config: crate::provider_config::ProviderConfig {
+                base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                model: model_name,
+            },
+        });
+
+        let backend = TestBackend::new(120, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_header(frame, &app, Rect::new(0, 0, 120, 2));
+            })
+            .expect("draw header");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("think:on"));
+    }
+
+    #[test]
     fn render_footer_shows_shortcuts_hint() {
         let app = App::new();
         let backend = TestBackend::new(120, 2);
@@ -742,5 +785,66 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("? for shortcuts"));
+    }
+
+    #[test]
+    fn render_footer_shows_thinking_shortcut_status() {
+        let app = App::new();
+        let backend = TestBackend::new(120, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_footer(frame, &app, Rect::new(0, 0, 120, 2));
+            })
+            .expect("draw footer");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("Ctrl+T: think:"));
+    }
+
+    #[test]
+    fn render_input_panel_shows_thinking_indicator_when_enabled() {
+        let mut app = App::new();
+        let provider_name = "test-provider-input".to_string();
+        let model_name = "test-model-input".to_string();
+        let mut spec = sacode_kernel::model::ProviderSpec {
+            name: provider_name.clone(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: String::new(),
+            models: std::collections::BTreeMap::new(),
+        };
+        spec.models.insert(
+            model_name.clone(),
+            sacode_kernel::model::ModelRule {
+                name: model_name.clone(),
+                thinking: true,
+                ..Default::default()
+            },
+        );
+        app.sacode_store
+            .upsert_provider(&provider_name, spec)
+            .expect("persist provider spec");
+        app.current_provider = Some(crate::provider_config::NamedProviderConfig {
+            name: provider_name,
+            config: crate::provider_config::ProviderConfig {
+                base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                model: model_name,
+            },
+        });
+        app.input = "hello world".to_string();
+
+        let backend = TestBackend::new(100, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_input_panel(frame, &mut app, Rect::new(0, 0, 100, 8), 96, true);
+            })
+            .expect("draw input panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("[T]"));
     }
 }
