@@ -629,8 +629,10 @@ mod tests {
             .map(|line| line.line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(line_dump.contains("思考"));
         assert!(line_dump.contains("分析调用链"));
-        assert!(line_dump.contains("grep 已完成"));
+        assert!(line_dump.contains("grep"));
+        assert!(line_dump.contains("...running"));
         assert!(line_dump.contains("已刷新模型列表"));
     }
 

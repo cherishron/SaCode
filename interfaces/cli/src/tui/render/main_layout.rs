@@ -45,6 +45,16 @@ pub(crate) fn render_message_lines(
                     if content_line.trim().is_empty() {
                         continue;
                     }
+                    if content_line.starts_with(PREFIX_THINKING) {
+                        lines.extend(render_thinking_block(content_line, theme, first));
+                        first = false;
+                        continue;
+                    }
+                    if content_line.starts_with(PREFIX_TOOL) {
+                        lines.extend(render_tool_block(content_line, theme, first));
+                        first = false;
+                        continue;
+                    }
                     if first {
                         lines.push(RenderedMessageLine {
                             line: Line::from(vec![
@@ -90,7 +100,12 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
         }
 
         if line.starts_with(PREFIX_TOOL) {
-            lines.extend(render_tool_block(line, theme));
+            lines.extend(render_tool_block(line, theme, false));
+            continue;
+        }
+
+        if line.starts_with(PREFIX_THINKING) {
+            lines.extend(render_thinking_block(line, theme, false));
             continue;
         }
 
@@ -108,11 +123,6 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
             (
                 "● ",
                 Style::default().fg(theme.warning),
-            )
-        } else if line.starts_with(PREFIX_THINKING) {
-            (
-                "● ",
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             )
         } else {
             (
@@ -144,7 +154,7 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
     lines
 }
 
-fn render_tool_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessageLine> {
+fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
     let text = content.strip_prefix(PREFIX_TOOL).unwrap_or(content).trim_start();
 
@@ -168,7 +178,10 @@ fn render_tool_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessageL
 
     // First line: ● ToolName(args)
     let mut first_spans = vec![
-        Span::styled("● ", Style::default().fg(theme.info)),
+        Span::styled(
+            if first_in_message { "● " } else { "  " },
+            Style::default().fg(theme.info),
+        ),
     ];
     if let Some(args) = args {
         first_spans.push(Span::styled(
@@ -203,6 +216,49 @@ fn render_tool_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessageL
             ),
         ]),
     });
+
+    lines
+}
+
+fn render_thinking_block(
+    content: &str,
+    theme: ThemePalette,
+    first_in_message: bool,
+) -> Vec<RenderedMessageLine> {
+    let mut lines = Vec::new();
+    let text = content
+        .strip_prefix(PREFIX_THINKING)
+        .unwrap_or(content)
+        .trim_start();
+
+    lines.push(RenderedMessageLine {
+        line: Line::from(vec![
+            Span::styled(
+                if first_in_message { "● " } else { "  " },
+                Style::default().fg(theme.accent),
+            ),
+            Span::styled(
+                "思考",
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    });
+
+    if !text.is_empty() {
+        lines.push(RenderedMessageLine {
+            line: Line::from(vec![
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    "│ ",
+                    Style::default().fg(theme.border).add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    text.to_string(),
+                    Style::default().fg(theme.text).add_modifier(Modifier::DIM),
+                ),
+            ]),
+        });
+    }
 
     lines
 }
