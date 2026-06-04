@@ -312,16 +312,32 @@ impl App {
                 self.toggle_pending_option()
             }
             KeyCode::Char('k') if vim_mode && self.input_mode == InputMode::Chat => {
-                self.navigate_history_up();
+                if self.input_on_first_visible_line() {
+                    self.navigate_history_up();
+                } else {
+                    self.scroll_input_up();
+                }
             }
             KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::Chat => {
-                self.navigate_history_down();
+                if self.input_on_last_visible_line() {
+                    self.navigate_history_down();
+                } else {
+                    self.scroll_input_down();
+                }
             }
             KeyCode::Up if self.input_mode == InputMode::Chat && !self.input.is_empty() => {
-                self.navigate_history_up();
+                if self.input_on_first_visible_line() {
+                    self.navigate_history_up();
+                } else {
+                    self.scroll_input_up();
+                }
             }
             KeyCode::Down if self.input_mode == InputMode::Chat && !self.input.is_empty() => {
-                self.navigate_history_down();
+                if self.input_on_last_visible_line() {
+                    self.navigate_history_down();
+                } else {
+                    self.scroll_input_down();
+                }
             }
             KeyCode::PageUp => {
                 for _ in 0..5 {
@@ -333,8 +349,8 @@ impl App {
                     self.scroll_down();
                 }
             }
-            KeyCode::Up => self.scroll_up(),
-            KeyCode::Down => self.scroll_down(),
+            KeyCode::Up => return false,
+            KeyCode::Down => return false,
             KeyCode::Char('k') if vim_mode => self.scroll_up(),
             KeyCode::Char('j') if vim_mode => self.scroll_down(),
             _ => return false,

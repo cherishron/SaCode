@@ -44,6 +44,7 @@ impl App {
             input_layout_cache: None,
             session_summary: None,
             input: String::new(),
+            input_scroll_offset: 0,
             should_quit: false,
             scroll_offset: 0,
             follow_bottom: true,
@@ -159,5 +160,6 @@ pub(super) fn encode_ppm(rgba_bytes: &[u8], width: usize, height: usize) -> Vec<
 fn user_prompt_template() -> PromptTemplate {
     PromptTemplate {
         optimize_input: "请将下面这段用户输入整理为更清晰、更可执行的编程任务描述，保留原始意图，直接输出改写后的任务文本：".to_string(),
+        compress_context: "请你作为当前会话的上下文压缩器，对下面的历史对话做智能语义分析与压缩，输出高质量、可恢复上下文的结构化摘要。\n输出要求：\n1. 只输出摘要正文，不要添加解释。\n2. 使用以下固定结构与标题：\n[会话目标]\n- ...\n[核心意图]\n- ...\n[关键操作]\n- ...\n[重要实体]\n- ...\n[当前状态]\n- ...\n[未完成事项]\n- ...\n[约束与偏好]\n- ...\n3. 提取用户真实目标、已经完成的关键操作、重要文件/模块/链接/命令、当前阻塞点与后续衔接信息。\n4. 删除闲聊、重复表述和低价值细节，保留后续继续工作所需的事实与决策。\n5. 如果历史里已有摘要，请与新对话合并，输出一份更新后的完整摘要。\n\n待压缩内容：".to_string(),
     }
 }

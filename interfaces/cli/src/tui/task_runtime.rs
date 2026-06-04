@@ -5,6 +5,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 
 use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
@@ -26,9 +27,11 @@ pub(super) struct BackgroundTaskOutput {
 
 use crate::cmd::config;
 
-use super::{App, AsyncResult};
+use super::{App, AsyncResult, Message, MessageRole};
 use super::state::{LoopState, QueuedMessage};
 use crate::cmd::ApprovalPolicy;
+
+const BACKGROUND_TASK_TIMEOUT: Duration = Duration::from_secs(180);
 
 impl App {
     pub(super) fn enqueue_or_start_message(&mut self, user_input: String) {
@@ -63,11 +66,13 @@ impl App {
                 approval,
                 loop_state,
             });
-            self.push_system_message(&format!(
-                "任务已加入等待队列 #{}，前方还有 {} 项。",
-                task_id,
-                self.queue.queued_messages.len().saturating_sub(1)
-            ));
+            let waiting_count = self.queue.queued_messages.len();
+            let queue_message = if waiting_count == 1 {
+                format!("[队列] #{} 已排队，等待执行: {}", task_id, user_input.trim())
+            } else {
+                format!("[队列] #{} 已排队，前方还有 {} 项任务", task_id, waiting_count - 1)
+            };
+            self.push_system_message(&queue_message);
             self.log_event("queue_push", &format!("#{} {}", task_id, user_input.trim()));
             return;
         }
@@ -86,6 +91,14 @@ impl App {
         self.active_task_started_at = Some(chrono::Local::now());
         self.spinner_index = 0;
         self.reset_orchestration_summary();
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        self.append_message(Message {
+            role: MessageRole::User,
+            content: queued.content.clone(),
+            timestamp,
+            collapsed: false,
+        });
+        self.log_event("user_message", queued.content.trim());
         let loop_badge = queued
             .loop_state
             .as_ref()
@@ -211,6 +224,7 @@ impl App {
         child: Arc<Mutex<Child>>,
         _source_task: &str,
     ) -> BackgroundTaskOutput {
+        let started_at = Instant::now();
         let (stdout, stderr) = {
             let Ok(mut child) = child.lock() else {
                 return BackgroundTaskOutput { response: "任务执行失败: 无法访问后台执行进程".to_string(), ..Default::default() };
@@ -245,10 +259,29 @@ impl App {
         }
 
         let exit_status = {
-            let Ok(mut child) = child.lock() else {
-                return BackgroundTaskOutput { response: "任务执行失败: 无法等待后台执行进程退出".to_string(), ..Default::default() };
-            };
-            child.wait().ok()
+            loop {
+                let Ok(mut child) = child.lock() else {
+                    return BackgroundTaskOutput { response: "任务执行失败: 无法等待后台执行进程退出".to_string(), ..Default::default() };
+                };
+                match child.try_wait() {
+                    Ok(Some(status)) => break Some(status),
+                    Ok(None) if started_at.elapsed() >= BACKGROUND_TASK_TIMEOUT => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return BackgroundTaskOutput {
+                            response: format!(
+                                "任务执行失败: 后台任务超过 {} 秒仍未完成，已自动终止。",
+                                BACKGROUND_TASK_TIMEOUT.as_secs()
+                            ),
+                            ..Default::default()
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(_) => break None,
+                }
+                drop(child);
+                thread::sleep(Duration::from_millis(100));
+            }
         };
 
         App::parse_background_task_output(&output, &stderr_output, exit_status)
@@ -321,7 +354,9 @@ impl App {
             .and_then(|value| serde_json::from_value::<TaskRun>(value).ok());
         let cli_events = Self::format_cli_events(parsed.get("events"));
         let task_run_output = Self::extract_task_run_output_text(&parsed);
-        let provider_response = task_run_output.or_else(|| Self::extract_provider_response(&parsed));
+        let provider_response = task_run_output
+            .or_else(|| Self::extract_provider_response(&parsed))
+            .or_else(|| Self::extract_summary_record_response(&parsed));
         let _state = Self::extract_task_run_state(&parsed)
             .or_else(|| {
                 parsed
@@ -471,6 +506,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::App;
+    use crate::cmd::ApprovalPolicy;
     use sacode_kernel::TaskRunState;
     use std::process::Command;
 
@@ -534,5 +570,56 @@ mod tests {
 
         assert_eq!(result.response, "final answer");
         assert_eq!(App::extract_task_run_state(&serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")), Some(TaskRunState::Completed));
+    }
+
+    #[test]
+    fn parse_background_task_output_falls_back_to_summary_record() {
+        let payload = serde_json::json!({
+            "state": "Completed",
+            "summary_record": {
+                "overview": "agents 已完成汇总",
+                "sections": [
+                    {
+                        "title": "next",
+                        "bullets": ["输出最终结果"]
+                    }
+                ]
+            }
+        })
+        .to_string();
+        let exit_status = Command::new("true")
+            .status()
+            .expect("true exit status");
+
+        let result = App::parse_background_task_output(&payload, "", Some(exit_status));
+
+        assert!(result.response.contains("agents 已完成汇总"));
+        assert!(result.response.contains("输出最终结果"));
+    }
+
+    #[test]
+    fn queue_message_shows_content_for_single_waiting_task() {
+        let mut app = App::new();
+        app.queue.processing = true;
+
+        app.enqueue_or_start_message_with_approval(
+            "修复模型列表加载".to_string(),
+            ApprovalPolicy::Prompt,
+        );
+
+        let last = app.messages.last().expect("queue status message");
+        assert!(last.content.contains("等待执行: 修复模型列表加载"));
+    }
+
+    #[test]
+    fn queue_message_shows_count_for_multiple_waiting_tasks() {
+        let mut app = App::new();
+        app.queue.processing = true;
+
+        app.enqueue_or_start_message_with_approval("任务一".to_string(), ApprovalPolicy::Prompt);
+        app.enqueue_or_start_message_with_approval("任务二".to_string(), ApprovalPolicy::Prompt);
+
+        let last = app.messages.last().expect("queue status message");
+        assert!(last.content.contains("前方还有 1 项任务"));
     }
 }

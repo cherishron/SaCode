@@ -1,5 +1,6 @@
 use crate::*;
 use crate::ffi::{sacode_execute, sacode_free, sacode_free_string, sacode_new};
+use crate::model::ModelRule;
 use crate::schema::ReviewIssue;
 use std::ffi::{CStr, CString};
 
@@ -101,4 +102,16 @@ fn test_ffi_roundtrip() {
 
     sacode_free_string(result);
     sacode_free(handle);
+}
+
+#[test]
+fn test_model_rule_pricing_is_backward_compatible() {
+    let parsed: ModelRule = serde_json::from_str(r#"{
+        "name": "gpt-4o-mini",
+        "thinking": false
+    }"#)
+    .expect("parse model rule");
+
+    assert_eq!(parsed.name, "gpt-4o-mini");
+    assert!(parsed.pricing.is_none());
 }

@@ -83,6 +83,10 @@ impl App {
                     optimized,
                     model_name,
                 } => self.handle_input_optimized(original, optimized, model_name),
+                AsyncResult::ContextCompressed {
+                    summary,
+                    model_name,
+                } => self.handle_context_compressed(summary, model_name),
                 AsyncResult::Failed { context, message } => {
                     self.handle_failed_async_result(context, message)
                 }
@@ -262,6 +266,12 @@ impl App {
         self.push_system_message(&message);
     }
 
+    pub(super) fn handle_context_compressed(&mut self, summary: String, model_name: String) {
+        self.clear_busy_state();
+        self.input_mode = InputMode::Chat;
+        self.apply_session_summary(summary, &model_name);
+    }
+
     pub(super) fn handle_input_optimized(
         &mut self,
         original: String,
@@ -297,6 +307,7 @@ impl App {
         if matches!(
             context,
             AsyncContext::OptimizeInput
+                | AsyncContext::CompressContext
                 | AsyncContext::LoadProviders
                 | AsyncContext::SaveProvider
                 | AsyncContext::LoadModels

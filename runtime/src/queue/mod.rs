@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sacode_kernel::{QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 
 pub struct TaskQueue {
     pending: RwLock<BTreeMap<TaskPriority, VecDeque<ScheduledTask>>>,
@@ -15,7 +15,8 @@ pub struct TaskQueue {
     failed_runs: RwLock<HashMap<String, TaskRun>>,
     retrying: RwLock<HashMap<String, ScheduledTask>>,
     cancelled: RwLock<HashMap<String, ScheduledTask>>,
-    concurrency_semaphore: Semaphore,
+    concurrency_semaphore: Arc<Semaphore>,
+    running_permits: RwLock<HashMap<String, OwnedSemaphorePermit>>,
     store: Option<Arc<dyn TaskStore>>,
 }
 
@@ -31,7 +32,8 @@ impl TaskQueue {
             failed_runs: RwLock::new(HashMap::new()),
             retrying: RwLock::new(HashMap::new()),
             cancelled: RwLock::new(HashMap::new()),
-            concurrency_semaphore: Semaphore::new(max_concurrency),
+            concurrency_semaphore: Arc::new(Semaphore::new(max_concurrency)),
+            running_permits: RwLock::new(HashMap::new()),
             store: None,
         }
     }
@@ -63,17 +65,21 @@ impl TaskQueue {
     }
 
     pub async fn next_ready(&self) -> Option<ScheduledTask> {
-        let permit = self.concurrency_semaphore.try_acquire();
-        if permit.is_err() {
+        let permit = self.concurrency_semaphore.clone().try_acquire_owned();
+        let Ok(permit) = permit else {
             return None;
-        }
+        };
 
         let mut ready = self.ready.write().await;
         if let Some(task) = ready.pop_front() {
             let mut running = self.running.write().await;
             running.insert(task.id.clone(), task.clone());
+            let mut running_permits = self.running_permits.write().await;
+            running_permits.insert(task.id.clone(), permit);
             return Some(task);
         }
+
+        drop(ready);
 
         let mut pending = self.pending.write().await;
         for priority in [TaskPriority::Urgent, TaskPriority::High, TaskPriority::Normal, TaskPriority::Low] {
@@ -83,6 +89,8 @@ impl TaskQueue {
                     if task.is_ready(&completed_ids) {
                         let mut running = self.running.write().await;
                         running.insert(task.id.clone(), task.clone());
+                        let mut running_permits = self.running_permits.write().await;
+                        running_permits.insert(task.id.clone(), permit);
                         return Some(task);
                     } else {
                         queue.push_back(task);
@@ -93,6 +101,11 @@ impl TaskQueue {
         }
 
         None
+    }
+
+    async fn release_running_permit(&self, task_id: &str) {
+        let mut running_permits = self.running_permits.write().await;
+        running_permits.remove(task_id);
     }
 
     pub async fn mark_running(&self, task_id: &str) {
@@ -107,6 +120,8 @@ impl TaskQueue {
     pub async fn mark_completed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
         let mut running = self.running.write().await;
         running.remove(task_id);
+        drop(running);
+        self.release_running_permit(task_id).await;
 
         let mut completed = self.completed.write().await;
         completed.insert(task_id.to_string(), result.clone());
@@ -122,6 +137,8 @@ impl TaskQueue {
     pub async fn mark_failed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {
+            drop(running);
+            self.release_running_permit(task_id).await;
             if task.can_retry() && self.should_retry(&task, &result) {
                 let mut retrying = self.retrying.write().await;
                 retrying.insert(task_id.to_string(), task);
@@ -155,6 +172,8 @@ impl TaskQueue {
     pub async fn cancel(&self, task_id: &str) -> bool {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {
+            drop(running);
+            self.release_running_permit(task_id).await;
             let mut cancelled = self.cancelled.write().await;
             cancelled.insert(task_id.to_string(), task);
 
@@ -163,6 +182,7 @@ impl TaskQueue {
             }
             return true;
         }
+        drop(running);
 
         let mut ready = self.ready.write().await;
         if let Some(pos) = ready.iter().position(|t| t.id == task_id) {

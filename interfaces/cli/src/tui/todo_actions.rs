@@ -1,7 +1,11 @@
+use std::thread;
+
 use sacode_kernel::ExecutionMode;
+use sacode_runtime::ProviderClient;
 
 use super::{
-    App, InputMode, InteractionState, Message, MessageRole, TodoItem, TodoPlan, TodoStatus,
+    block_on_cli_future, resolve_provider, App, AsyncContext, AsyncResult, InputMode,
+    InteractionState, Message, MessageRole, TodoItem, TodoPlan, TodoStatus,
 };
 
 impl App {
@@ -149,34 +153,24 @@ impl App {
             return;
         }
 
-        let summary = self.build_session_summary();
-        if summary.is_empty() {
+        let source = self.build_session_compression_source();
+        if source.is_empty() {
             self.push_system_message("当前会话内容较少，暂时无需压缩。");
             return;
         }
 
-        self.session_summary = Some(summary.clone());
-        let now = chrono::Local::now();
-        self.replace_messages(vec![Message {
-            role: MessageRole::System,
-            content: format!(
-                "当前会话已压缩。后续任务会自动携带历史摘要。\n\n摘要预览:\n{}",
-                summary
-            ),
-            timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
-            collapsed: false,
-        }]);
-        self.queue.queued_messages.clear();
-        self.interaction.todo_plan = None;
-        self.queue.processing = false;
+        self.queue.processing = true;
         self.queue.active_task_id = None;
-        self.active_task_started_at = None;
-        self.queue.busy_message.clear();
-        self.save_current_session();
-        self.scroll_to_bottom();
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
+        self.queue.busy_message = format!(
+            "正在压缩当前会话上下文，模型 {}",
+            self.current_model_name()
+        );
+        self.spawn_context_compression_task(source);
     }
 
-    pub(super) fn build_session_summary(&self) -> String {
+    pub(super) fn build_session_compression_source(&self) -> String {
         let messages = self
             .messages
             .iter()
@@ -193,22 +187,86 @@ impl App {
             .as_ref()
             .filter(|value| !value.trim().is_empty())
         {
-            lines.push("已有摘要:".to_string());
+            lines.push("[已有摘要]".to_string());
             lines.push(existing.trim().to_string());
         }
 
-        lines.push("本轮对话摘要:".to_string());
-        for message in messages.iter().take(12) {
+        lines.push("[历史对话]".to_string());
+        for message in messages.iter() {
             let role = match message.role {
                 MessageRole::User => "用户",
                 MessageRole::Assistant => "助手",
                 MessageRole::System => continue,
             };
             let compact = message.content.split_whitespace().collect::<Vec<_>>().join(" ");
-            let snippet = compact.chars().take(220).collect::<String>();
+            let snippet = compact.chars().take(600).collect::<String>();
             lines.push(format!("- {}: {}", role, snippet));
         }
 
         lines.join("\n")
+    }
+
+    pub(super) fn spawn_context_compression_task(&self, source: String) {
+        let sender = self.task_tx.clone();
+        let model_name = self.current_model_name();
+        let provider = self
+            .current_provider
+            .as_ref()
+            .map(|provider| provider.config.to_model_provider())
+            .unwrap_or_else(|| resolve_provider(&self.workdir));
+        let prompt = format!("{}\n\n{}", self.prompt_template.compress_context, source);
+        thread::spawn(move || match Self::run_context_compression_prompt(&provider, &prompt) {
+            Ok(summary) => {
+                let _ = sender.send(AsyncResult::ContextCompressed { summary, model_name });
+            }
+            Err(error) => {
+                let _ = sender.send(AsyncResult::Failed {
+                    context: AsyncContext::CompressContext,
+                    message: format!("压缩当前会话失败: {}", error),
+                });
+            }
+        });
+    }
+
+    pub(super) fn run_context_compression_prompt(
+        provider: &sacode_kernel::model::ModelProvider,
+        prompt: &str,
+    ) -> anyhow::Result<String> {
+        let text = block_on_cli_future(async move {
+            ProviderClient::new().simple_chat(provider, prompt).await
+        })?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("模型未返回可用摘要")
+        }
+        Ok(trimmed.to_string())
+    }
+
+    pub(super) fn apply_session_summary(&mut self, summary: String, model_name: &str) {
+        let trimmed = summary.trim();
+        if trimmed.is_empty() {
+            self.push_system_message("压缩结果为空，已保留原始上下文。");
+            return;
+        }
+
+        self.session_summary = Some(trimmed.to_string());
+        let now = chrono::Local::now();
+        self.replace_messages(vec![Message {
+            role: MessageRole::System,
+            content: format!(
+                "当前会话已通过 {} 完成语义压缩。后续任务会自动携带这份摘要恢复上下文。\n\n摘要预览:\n{}",
+                model_name, trimmed
+            ),
+            timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
+        }]);
+        self.queue.queued_messages.clear();
+        self.interaction.todo_plan = None;
+        self.queue.processing = false;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = None;
+        self.queue.busy_message.clear();
+        self.save_current_session();
+        self.scroll_to_bottom();
     }
 }

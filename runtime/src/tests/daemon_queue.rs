@@ -380,6 +380,52 @@ async fn test_task_queue_stats() {
 }
 
 #[tokio::test]
+async fn test_task_queue_respects_concurrency_limit_until_completion() {
+    let queue = Arc::new(TaskQueue::new(1));
+
+    queue
+        .submit(ScheduledTask::new(
+            "concurrency-1".to_string(),
+            Task::new("first", ExecutionMode::Build, None),
+        ))
+        .await
+        .expect("submit first");
+    queue
+        .submit(ScheduledTask::new(
+            "concurrency-2".to_string(),
+            Task::new("second", ExecutionMode::Build, None),
+        ))
+        .await
+        .expect("submit second");
+
+    let first = queue.next_ready().await.expect("first ready task");
+    assert_eq!(first.id, "concurrency-1");
+
+    let blocked = queue.next_ready().await;
+    assert!(blocked.is_none());
+
+    queue
+        .mark_completed(
+            "concurrency-1",
+            sacode_kernel::TaskResult::success(
+                "concurrency-1".to_string(),
+                "done".to_string(),
+                1,
+            ),
+            sacode_kernel::TaskRun {
+                task_id: Some("concurrency-1".to_string()),
+                state: Some(sacode_kernel::TaskRunState::Completed),
+                output_text: Some("done".to_string()),
+                ..sacode_kernel::TaskRun::default()
+            },
+        )
+        .await;
+
+    let second = queue.next_ready().await.expect("second ready task");
+    assert_eq!(second.id, "concurrency-2");
+}
+
+#[tokio::test]
 async fn test_task_queue_preserves_task_run_for_completed_result() {
     let queue = Arc::new(TaskQueue::new(1));
     queue

@@ -68,6 +68,55 @@ impl App {
         None
     }
 
+    pub(super) fn extract_summary_record_response(parsed: &serde_json::Value) -> Option<String> {
+        let summary_record = parsed.get("summary_record")?;
+        let overview = summary_record
+            .get("overview")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        let sections = summary_record
+            .get("sections")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        let title = item.get("title").and_then(|value| value.as_str())?.trim();
+                        let bullets = item
+                            .get("bullets")
+                            .and_then(|value| value.as_array())
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(|value| value.as_str().map(str::trim))
+                                    .filter(|value| !value.is_empty())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        if title.is_empty() && bullets.is_empty() {
+                            return None;
+                        }
+                        if bullets.is_empty() {
+                            Some(title.to_string())
+                        } else {
+                            Some(format!("{}: {}", title, bullets.join("；")))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let mut parts = Vec::new();
+        if let Some(overview) = overview {
+            parts.push(overview);
+        }
+        parts.extend(sections);
+        (!parts.is_empty()).then(|| parts.join("\n"))
+    }
+
     pub(super) fn has_explicit_todo_signal(value: &serde_json::Value) -> bool {
         value
             .get("ui")

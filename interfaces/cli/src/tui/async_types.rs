@@ -28,6 +28,10 @@ pub(super) enum AsyncResult {
         optimized: String,
         model_name: String,
     },
+    ContextCompressed {
+        summary: String,
+        model_name: String,
+    },
     LoginCompleted {
         provider_name: String,
         config: ProviderConfig,
@@ -68,6 +72,7 @@ pub(super) enum AsyncResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AsyncContext {
     OptimizeInput,
+    CompressContext,
     Login,
     LoadProviders,
     SaveProvider,

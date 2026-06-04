@@ -79,6 +79,14 @@ fn queue_summary(app: &App) -> Option<String> {
     }
 }
 
+fn context_summary(app: &App) -> String {
+    format!(
+        "上下文 {} chars ~{} tok",
+        app.current_context_char_count(),
+        app.current_context_token_estimate()
+    )
+}
+
 pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
     let project_path = app.workdir.display().to_string();
@@ -135,6 +143,12 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         bottom_spans.push(Span::styled("  ", Style::default()));
         bottom_spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
     }
+
+    bottom_spans.push(Span::styled("  ", Style::default()));
+    bottom_spans.push(Span::styled(
+        context_summary(app),
+        Style::default().fg(theme.info),
+    ));
 
     let thinking_status = if app.current_thinking_enabled() {
         Span::styled("think:on", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))

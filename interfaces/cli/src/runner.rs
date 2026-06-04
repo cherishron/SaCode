@@ -415,6 +415,10 @@ async fn run_tool_chat(
                     serde_json::json!({ "error": output.message.unwrap_or_default() })
                 }),
                 Err(error) => {
+                    if let Some(question) = build_permission_approval_question(name, args, side_effect_level, &error.to_string()) {
+                        tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
+                        return Ok(question);
+                    }
                     let _ = MistakeBookStore::new(&workdir_clone).append(
                         format!("tool:{}", name),
                         "工具执行异常",
@@ -434,7 +438,11 @@ async fn run_tool_chat(
     let api_started_at = Instant::now();
     match client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await {
         Ok(result) => {
-            let final_text = result.final_text.trim().to_string();
+            let final_text = if result.final_text.trim().is_empty() {
+                "工具调用已完成，但模型未生成总结，已返回工具结果摘要。".to_string()
+            } else {
+                result.final_text.trim().to_string()
+            };
             (
                 Ok(final_text),
                 result.pending_question,
@@ -454,6 +462,57 @@ async fn run_tool_chat(
             )
         }
     }
+}
+
+fn build_permission_approval_question(
+    name: &str,
+    args: &serde_json::Value,
+    side_effect_level: SideEffectLevel,
+    error: &str,
+) -> Option<serde_json::Value> {
+    if !is_permission_restricted_error(error) {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "pending": true,
+        "kind": "tool_approval",
+        "question": format!("工具 {} 当前因权限受限无法继续，是否请求用户授权后重试？", name),
+        "options": [
+            {
+                "label": "拒绝",
+                "description": "保持当前权限范围并结束这次操作"
+            },
+            {
+                "label": "允许一次",
+                "description": "本次请求用户授权并继续执行当前操作"
+            },
+            {
+                "label": "本会话总是允许",
+                "description": "本会话内遇到同类权限申请时都继续请求授权"
+            }
+        ],
+        "multiple": false,
+        "tool_name": name,
+        "side_effect_level": format_side_effect_level(side_effect_level),
+        "args": args,
+        "error": error,
+    }))
+}
+
+fn is_permission_restricted_error(error: &str) -> bool {
+    let lowered = error.to_lowercase();
+    [
+        "denied by policy",
+        "permission denied",
+        "blocked by sandbox policy",
+        "network access blocked by sandbox policy",
+        "path is blocked by sandbox policy",
+        "working directory is blocked by sandbox policy",
+        "outside workspace",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
 }
 
 fn enrich_media_read_args(args: &serde_json::Value, provider: &sacode_kernel::model::ModelProvider) -> serde_json::Value {
@@ -689,14 +748,41 @@ fn preview(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::build_permission_approval_question;
     use super::enrich_media_read_args;
     use super::format_output;
     use super::format_learned_facts_summary;
+    use super::is_permission_restricted_error;
     use super::RunnerOutput;
     use super::TaskRunState;
     use crate::learning::{LearnedFact, LearnedKind};
+    use sacode_runtime::SideEffectLevel;
     use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
     use sacode_kernel::model::ModelProvider;
+
+    #[test]
+    fn permission_restricted_error_detects_sandbox_failures() {
+        assert!(is_permission_restricted_error("path is blocked by sandbox policy"));
+        assert!(is_permission_restricted_error("command 'git' is blocked by sandbox policy"));
+        assert!(is_permission_restricted_error("path is outside workspace"));
+        assert!(!is_permission_restricted_error("file not found: src/main.rs"));
+    }
+
+    #[test]
+    fn build_permission_approval_question_returns_tool_approval_payload() {
+        let question = build_permission_approval_question(
+            "fs.read",
+            &serde_json::json!({ "path": "/tmp/secret.txt" }),
+            SideEffectLevel::ReadOnly,
+            "path is blocked by sandbox policy",
+        )
+        .expect("should build approval payload");
+
+        assert_eq!(question.get("kind").and_then(|value| value.as_str()), Some("tool_approval"));
+        assert_eq!(question.get("tool_name").and_then(|value| value.as_str()), Some("fs.read"));
+        assert_eq!(question.get("side_effect_level").and_then(|value| value.as_str()), Some("read_only"));
+        assert_eq!(question.get("error").and_then(|value| value.as_str()), Some("path is blocked by sandbox policy"));
+    }
 
     #[test]
     fn enrich_media_read_args_injects_current_provider() {

@@ -11,6 +11,7 @@ const PREFIX_TOOL: &str = "[工具]";
 const PREFIX_ERROR: &str = "[错误]";
 const PREFIX_SUCCESS: &str = "[成功]";
 const PREFIX_WAITING: &str = "[等待用户回答]";
+const PREFIX_QUEUE: &str = "[队列]";
 
 pub(crate) fn render_message_lines(
     messages: &[Message],
@@ -127,6 +128,11 @@ fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<
                 "● ",
                 Style::default().fg(theme.agent),
             )
+        } else if line.starts_with(PREFIX_QUEUE) {
+            (
+                "● ",
+                Style::default().fg(theme.info),
+            )
         } else if line.starts_with(PREFIX_SUCCESS) {
             (
                 "● ",
@@ -146,6 +152,7 @@ fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<
 
         let text = line
             .strip_prefix(PREFIX_WAITING)
+            .or_else(|| line.strip_prefix(PREFIX_QUEUE))
             .or_else(|| line.strip_prefix(PREFIX_SUCCESS))
             .or_else(|| line.strip_prefix(PREFIX_ERROR))
             .or_else(|| line.strip_prefix(PREFIX_THINKING))

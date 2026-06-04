@@ -39,11 +39,17 @@ pub(crate) fn render_input_panel(
     app.input_viewport = input_block.inner(area);
     let visible_input_height = app.input_viewport.height.max(1) as usize;
     let cached_input_layout = app.cached_input_layout(input_inner_width).clone();
+    let max_scroll_offset = cached_input_layout
+        .lines
+        .len()
+        .saturating_sub(visible_input_height);
+    if input_is_editable {
+        app.input_scroll_offset = app.input_scroll_offset.min(max_scroll_offset);
+    } else {
+        app.input_scroll_offset = 0;
+    }
     let editable_window_start = if input_is_editable {
-        cached_input_layout
-            .cursor_line
-            .saturating_add(1)
-            .saturating_sub(visible_input_height)
+        app.input_scroll_offset
     } else {
         0
     };

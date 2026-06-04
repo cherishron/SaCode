@@ -126,6 +126,31 @@ fn test_web_search_allowed_in_plan_mode() {
 }
 
 #[test]
+fn test_web_fetch_output_contains_final_text() {
+    let output = crate::tools::web::fetch::spec().output_schema;
+    let properties = output
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("properties");
+
+    assert!(properties.contains_key("text"));
+    assert!(properties.contains_key("final_text"));
+    assert!(properties.contains_key("content_type"));
+}
+
+#[test]
+fn test_web_search_output_contains_final_text() {
+    let output = crate::tools::web::search::spec().output_schema;
+    let properties = output
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("properties");
+
+    assert!(properties.contains_key("results"));
+    assert!(properties.contains_key("final_text"));
+}
+
+#[test]
 fn test_shell_exec_respects_sandbox_allowed_commands() {
     let _guard = sandbox_test_lock();
     let mut policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);

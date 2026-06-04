@@ -131,6 +131,7 @@ impl App {
 
     pub(super) fn invalidate_message_lines_cache(&mut self) {
         self.message_lines_cache = None;
+        self.input_layout_cache = None;
     }
 
     pub(super) fn append_message(&mut self, message: Message) {

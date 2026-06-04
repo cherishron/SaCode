@@ -68,6 +68,16 @@ pub struct ModelRule {
     pub top_p: Option<TopPRule>,
     #[serde(default)]
     pub modalities: Option<Modalities>,
+    #[serde(default)]
+    pub pricing: Option<ModelPricing>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelPricing {
+    #[serde(default)]
+    pub input_per_million: f64,
+    #[serde(default)]
+    pub output_per_million: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +229,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: None,
+                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
             });
             m.insert("deepseek-v4-flash".to_string(), ModelRule {
                 name: "deepseek-v4-flash 快速模型".to_string(),
@@ -228,6 +239,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: None,
+                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
             });
             m.insert("deepseek-chat".to_string(), ModelRule {
                 name: "deepseek-chat 通用模型".to_string(),
@@ -237,6 +249,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: None,
+                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
             });
             m.insert("deepseek-reasoner".to_string(), ModelRule {
                 name: "deepseek-reasoner 推理模型".to_string(),
@@ -246,6 +259,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: None,
+                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
             });
             m
         },
@@ -265,6 +279,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: Some(Modalities { input: vec!["text".to_string(), "image".to_string()], output: vec!["text".to_string()] }),
+                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
             });
             m.insert("mimo-v2.5".to_string(), ModelRule {
                 name: "mimo-v2.5 轻量快速模型".to_string(),
@@ -274,6 +289,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: Some(Modalities { input: vec!["text".to_string()], output: vec!["text".to_string()] }),
+                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
             });
             m.insert("mimo-v2-omni".to_string(), ModelRule {
                 name: "mimo-v2-omni 多模态".to_string(),
@@ -283,6 +299,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
                 modalities: Some(Modalities { input: vec!["text".to_string(), "image".to_string()], output: vec!["text".to_string()] }),
+                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
             });
             m
         },
@@ -302,6 +319,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 temperature: None,
                 top_p: None,
                 modalities: None,
+                pricing: None,
             });
             m.insert("LongCat-Flash-Chat".to_string(), ModelRule::default());
             m.insert("LongCat-Flash-Thinking".to_string(), ModelRule { thinking: true, ..Default::default() });
@@ -324,6 +342,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 limit: Some(ModelLimit { context: 128000, output: 16384 }),
                 temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
+                pricing: Some(ModelPricing { input_per_million: 2.50, output_per_million: 10.00 }),
                 ..Default::default()
             });
             m.insert("gpt-4o-mini".to_string(), ModelRule {
@@ -331,6 +350,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 limit: Some(ModelLimit { context: 128000, output: 16384 }),
                 temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
+                pricing: Some(ModelPricing { input_per_million: 0.15, output_per_million: 0.60 }),
                 ..Default::default()
             });
             m.insert("gpt-4-turbo".to_string(), ModelRule {
@@ -338,6 +358,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
                 limit: Some(ModelLimit { context: 128000, output: 4096 }),
                 temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
                 top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
+                pricing: Some(ModelPricing { input_per_million: 2.00, output_per_million: 8.00 }),
                 ..Default::default()
             });
             m

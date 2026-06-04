@@ -1,4 +1,4 @@
-use super::{App, InputMode, Message, MessageRole};
+use super::{App, InputMode};
 
 impl App {
     pub(super) fn send_message(&mut self) {
@@ -116,25 +116,6 @@ impl App {
         }
         self.history_index = None;
         self.current_history_draft.clear();
-
-        let now = chrono::Local::now();
-        let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
-
-        let display_input = self.input.clone();
-        self.append_message(Message {
-            role: MessageRole::User,
-            content: display_input,
-            timestamp: timestamp.clone(),
-            collapsed: false,
-        });
-        self.log_event(
-            "user_message",
-            &self
-                .messages
-                .last()
-                .map(|msg| msg.content.clone())
-                .unwrap_or_default(),
-        );
 
         let user_input = self.decorate_pending_answer(&self.input.clone());
         self.input.clear();

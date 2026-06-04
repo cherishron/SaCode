@@ -65,29 +65,50 @@ impl App {
     }
 
     pub(super) fn show_usage_stats(&mut self) {
-        let pricing = self
-            .current_pricing_rule()
-            .map(|rule| {
-                format!(
-                    "${:.2}/M in, ${:.2}/M out",
-                    rule.input_per_million, rule.output_per_million
-                )
-            })
-            .unwrap_or_else(|| "待配置".to_string());
-        self.push_system_message(&format!(
-            "Token 与费用统计\n请求数: {}\n输入 tokens: {}\n输出 tokens: {}\n总 tokens: {}\n估算费用: ${:.6}\n当前模型: {}\n计价规则: {}",
-            self.usage_stats.requests,
-            self.usage_stats.prompt_tokens,
-            self.usage_stats.completion_tokens,
-            self.usage_stats.total_tokens,
-            self.usage_stats.estimated_cost_usd,
-            if self.usage_stats.last_model.is_empty() {
-                self.current_model_name()
-            } else {
-                self.usage_stats.last_model.clone()
-            },
-            pricing,
-        ));
+        let mut lines = vec![
+            "Token 与费用统计".to_string(),
+            "".to_string(),
+            format!(
+                "{:<28} {:>6} {:>12} {:>12} {:>12} {:>12}",
+                "模型", "请求", "输入", "输出", "总 Token", "费用(USD)"
+            ),
+            format!(
+                "{:-<28} {:-<6} {:-<12} {:-<12} {:-<12} {:-<12}",
+                "", "", "", "", "", ""
+            ),
+        ];
+
+        for (model_name, stats) in &self.usage_stats.models {
+            lines.push(format!(
+                "{:<28} {:>6} {:>12} {:>12} {:>12} {:>12.6}",
+                truncate_label(model_name, 28),
+                stats.requests,
+                stats.prompt_tokens,
+                stats.completion_tokens,
+                stats.total_tokens,
+                stats.estimated_cost_usd,
+            ));
+        }
+
+        if self.usage_stats.models.is_empty() {
+            lines.push("暂无模型调用记录".to_string());
+        } else {
+            lines.push(format!(
+                "{:=<28} {:=<6} {:=<12} {:=<12} {:=<12} {:=<12}",
+                "", "", "", "", "", ""
+            ));
+            lines.push(format!(
+                "{:<28} {:>6} {:>12} {:>12} {:>12} {:>12.6}",
+                "总计",
+                self.usage_stats.requests,
+                self.usage_stats.prompt_tokens,
+                self.usage_stats.completion_tokens,
+                self.usage_stats.total_tokens,
+                self.usage_stats.estimated_cost_usd,
+            ));
+        }
+
+        self.push_system_message(&lines.join("\n"));
     }
 
     pub(super) fn ensure_default_context7(&mut self) {
@@ -310,5 +331,15 @@ impl App {
                 ));
             }
         }
+    }
+}
+
+fn truncate_label(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() && max_chars > 1 {
+        format!("{}~", preview.chars().take(max_chars - 1).collect::<String>())
+    } else {
+        preview
     }
 }

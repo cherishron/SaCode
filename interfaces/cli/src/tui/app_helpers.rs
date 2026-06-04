@@ -36,6 +36,7 @@ impl App {
         }
         if let Some(index) = self.history_index {
             self.input = self.sent_history.get(index).cloned().unwrap_or_default();
+            self.input_scroll_offset = 0;
         }
     }
 
@@ -50,11 +51,45 @@ impl App {
                 .get(index + 1)
                 .cloned()
                 .unwrap_or_default();
+            self.input_scroll_offset = 0;
         } else {
             self.history_index = None;
             self.input = self.current_history_draft.clone();
             self.current_history_draft.clear();
+            self.input_scroll_offset = 0;
         }
+    }
+
+    pub(super) fn scroll_input_up(&mut self) {
+        self.input_scroll_offset = self.input_scroll_offset.saturating_sub(1);
+    }
+
+    pub(super) fn scroll_input_down(&mut self) {
+        let visible_height = self.input_viewport.height.max(1) as usize;
+        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let max_scroll = self
+            .cached_input_layout(width)
+            .lines
+            .len()
+            .saturating_sub(visible_height);
+        self.input_scroll_offset = (self.input_scroll_offset + 1).min(max_scroll);
+    }
+
+    pub(super) fn input_on_first_visible_line(&mut self) -> bool {
+        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let cursor_line = self.cached_input_layout(width).cursor_line;
+        cursor_line == self.input_scroll_offset
+    }
+
+    pub(super) fn input_on_last_visible_line(&mut self) -> bool {
+        let visible_height = self.input_viewport.height.max(1) as usize;
+        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let scroll_offset = self.input_scroll_offset;
+        let layout = self.cached_input_layout(width);
+        let last_visible_line = scroll_offset
+            .saturating_add(visible_height.saturating_sub(1))
+            .min(layout.lines.len().saturating_sub(1));
+        layout.cursor_line == last_visible_line
     }
 
     pub(super) fn fold_all_thinking_details(&mut self, action: FoldAction) {

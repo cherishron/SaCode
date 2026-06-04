@@ -5,7 +5,7 @@ use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
-use super::{encode_ppm, relative_to_workdir, App, InputMode};
+use super::{encode_ppm, input::is_editable_input_mode, relative_to_workdir, App, InputMode};
 use super::tui_entry::ui;
 
 pub(super) fn run_app(
@@ -83,6 +83,14 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Right) => self.paste_from_system_clipboard(),
             MouseEventKind::ScrollUp => {
+                if is_editable_input_mode(self.input_mode)
+                    && self.point_in_rect(mouse.column, mouse.row, self.input_viewport)
+                {
+                    for _ in 0..3 {
+                        self.scroll_input_up();
+                    }
+                    return;
+                }
                 if self.point_in_rect(mouse.column, mouse.row, self.message_viewport) {
                     for _ in 0..3 {
                         self.scroll_up();
@@ -90,6 +98,14 @@ impl App {
                 }
             }
             MouseEventKind::ScrollDown => {
+                if is_editable_input_mode(self.input_mode)
+                    && self.point_in_rect(mouse.column, mouse.row, self.input_viewport)
+                {
+                    for _ in 0..3 {
+                        self.scroll_input_down();
+                    }
+                    return;
+                }
                 if self.point_in_rect(mouse.column, mouse.row, self.message_viewport) {
                     for _ in 0..3 {
                         self.scroll_down();

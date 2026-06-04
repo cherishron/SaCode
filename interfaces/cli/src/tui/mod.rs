@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::PathBuf,
     sync::{mpsc::{Receiver, Sender}},
 };
@@ -135,6 +135,7 @@ struct App {
     input_layout_cache: Option<CachedInputLayout>,
     session_summary: Option<String>,
     input: String,
+    input_scroll_offset: usize,
     should_quit: bool,
     scroll_offset: usize,
     follow_bottom: bool,
@@ -225,7 +226,16 @@ struct UsageStats {
     completion_tokens: u64,
     total_tokens: u64,
     estimated_cost_usd: f64,
-    last_model: String,
+    models: BTreeMap<String, ModelUsageStats>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ModelUsageStats {
+    requests: u64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -277,6 +287,7 @@ struct StoredSessionSummary {
 #[derive(Debug, Clone)]
 struct PromptTemplate {
     optimize_input: String,
+    compress_context: String,
 }
 
 #[derive(Debug, Clone)]
@@ -364,6 +375,48 @@ enum TaskAction {
 impl App {
     fn reset_orchestration_summary(&mut self) {
         self.orchestration_summary = None;
+    }
+
+    fn session_context_text(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(summary) = self
+            .session_summary
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            parts.push(format!("[历史摘要]\n{}", summary));
+        }
+
+        let conversation = self
+            .messages
+            .iter()
+            .filter_map(|message| {
+                let role = match message.role {
+                    MessageRole::User => "用户",
+                    MessageRole::Assistant => "助手",
+                    MessageRole::System => return None,
+                };
+                let content = message.content.trim();
+                if content.is_empty() {
+                    None
+                } else {
+                    Some(format!("[{}] {}", role, content))
+                }
+            })
+            .collect::<Vec<_>>();
+        if !conversation.is_empty() {
+            parts.push(conversation.join("\n\n"));
+        }
+        parts.join("\n\n")
+    }
+
+    fn current_context_char_count(&self) -> usize {
+        self.session_context_text().chars().count()
+    }
+
+    fn current_context_token_estimate(&self) -> usize {
+        self.current_context_char_count().div_ceil(4)
     }
 
     pub(super) fn is_messages_empty(&self) -> bool {
@@ -793,6 +846,36 @@ mod tests {
     }
 
     #[test]
+    fn render_messages_panel_formats_queue_status_messages() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::System,
+            content: "[队列] #4 已排队，等待执行: 修复模型列表加载".to_string(),
+            timestamp: "12:00:05".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(50, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 50, 8));
+            })
+            .expect("draw queue status panel");
+
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(line_dump.contains("#4 已排队"));
+        assert!(line_dump.contains("等待执行"));
+        assert!(line_dump.contains("修复模型列表加载"));
+    }
+
+    #[test]
     fn render_pending_question_panel_highlights_approval_state() {
         let mut app = App::new();
         app.interaction.state = InteractionState::WaitingForApproval;
@@ -890,16 +973,40 @@ mod tests {
             },
         });
 
-        let backend = TestBackend::new(120, 2);
+        let backend = TestBackend::new(220, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
-                render_header(frame, &app, Rect::new(0, 0, 120, 2));
+                render_header(frame, &app, Rect::new(0, 0, 220, 2));
             })
             .expect("draw header");
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("think:on"));
+    }
+
+    #[test]
+    fn render_header_shows_context_usage_numbers() {
+        let mut app = App::new();
+        app.session_summary = Some("[会话目标]\n- 修复 compress 命令".to_string());
+        app.messages.push(super::Message {
+            role: super::MessageRole::User,
+            content: "请继续优化 TUI header".to_string(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+
+        let backend = TestBackend::new(220, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_header(frame, &app, Rect::new(0, 0, 220, 2));
+            })
+            .expect("draw header");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("chars"));
+        assert!(rendered.contains("tok"));
     }
 
     #[test]
@@ -932,6 +1039,232 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("Ctrl+T: think:"));
+    }
+
+    #[test]
+    fn stats_output_lists_multiple_models_and_total() {
+        let mut app = App::new();
+        app.usage_stats.requests = 3;
+        app.usage_stats.prompt_tokens = 300;
+        app.usage_stats.completion_tokens = 150;
+        app.usage_stats.total_tokens = 450;
+        app.usage_stats.estimated_cost_usd = 0.123456;
+        app.usage_stats.models.insert(
+            "deepseek:deepseek-chat".to_string(),
+            super::ModelUsageStats {
+                requests: 2,
+                prompt_tokens: 200,
+                completion_tokens: 100,
+                total_tokens: 300,
+                estimated_cost_usd: 0.100000,
+            },
+        );
+        app.usage_stats.models.insert(
+            "openai:gpt-4o-mini".to_string(),
+            super::ModelUsageStats {
+                requests: 1,
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                estimated_cost_usd: 0.023456,
+            },
+        );
+
+        app.show_usage_stats();
+
+        let last = app.messages.last().expect("stats message");
+        assert!(last.content.contains("Token 与费用统计"));
+        assert!(last.content.contains("deepseek:deepseek-chat"));
+        assert!(last.content.contains("openai:gpt-4o-mini"));
+        assert!(last.content.contains("总计"));
+        assert!(last.content.contains("0.123456"));
+    }
+
+    #[test]
+    fn build_session_compression_source_includes_existing_summary_and_dialogue() {
+        let mut app = App::new();
+        app.session_summary = Some("[会话目标]\n- 修复代码问题".to_string());
+        app.messages.push(super::Message {
+            role: super::MessageRole::User,
+            content: "修复代码问题，并实现 md 文件打开功能".to_string(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "已定位到 Rust 官网链接相关逻辑".to_string(),
+            timestamp: "12:01:00".to_string(),
+            collapsed: false,
+        });
+        app.messages.push(super::Message {
+            role: super::MessageRole::User,
+            content: "继续处理 compress 命令".to_string(),
+            timestamp: "12:02:00".to_string(),
+            collapsed: false,
+        });
+
+        let source = app.build_session_compression_source();
+        assert!(source.contains("[已有摘要]"));
+        assert!(source.contains("修复代码问题"));
+        assert!(source.contains("md 文件打开功能"));
+        assert!(source.contains("Rust 官网链接"));
+        assert!(source.contains("继续处理 compress 命令"));
+    }
+
+    #[test]
+    fn apply_session_summary_replaces_messages_with_semantic_summary_notice() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::User,
+            content: "原始消息".to_string(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+
+        app.apply_session_summary("[会话目标]\n- 修复代码问题".to_string(), "test-model");
+
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.session_summary.as_deref(), Some("[会话目标]\n- 修复代码问题"));
+        assert!(app.messages[0].content.contains("test-model"));
+        assert!(app.messages[0].content.contains("语义压缩"));
+    }
+
+    #[test]
+    fn chat_up_key_navigates_history_only_on_first_visible_line() {
+        let mut app = App::new();
+        app.input_mode = super::InputMode::Chat;
+        app.sent_history = vec!["上一条消息".to_string()];
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6"].join("\n");
+        app.input_viewport = Rect::new(0, 0, 40, 3);
+        app.input_scroll_offset = 2;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.input_scroll_offset, 1);
+        assert_ne!(app.input, "上一条消息");
+
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6"].join("\n");
+        app.input_scroll_offset = 5;
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.input, "上一条消息");
+    }
+
+    #[test]
+    fn chat_down_key_navigates_history_only_on_last_visible_line() {
+        let mut app = App::new();
+        app.input_mode = super::InputMode::Chat;
+        app.sent_history = vec!["旧消息一".to_string(), "旧消息二".to_string()];
+        app.input_viewport = Rect::new(0, 0, 40, 4);
+
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6"].join("\n");
+        app.history_index = Some(0);
+        app.input_scroll_offset = 0;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.input_scroll_offset, 1);
+
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6"].join("\n");
+        app.history_index = Some(0);
+        app.input_scroll_offset = 2;
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.input, "旧消息二");
+
+        app.input = "旧消息一".to_string();
+        app.history_index = Some(0);
+        app.input_scroll_offset = 0;
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.input, "旧消息二");
+    }
+
+    #[test]
+    fn chat_arrow_keys_do_not_scroll_message_history() {
+        let mut app = App::new();
+        app.input_mode = super::InputMode::Chat;
+        app.input = "draft".to_string();
+        app.scroll_offset = 7;
+        app.input_viewport = Rect::new(0, 0, 40, 3);
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.scroll_offset, 7);
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.scroll_offset, 7);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_input_when_chat_input_is_editable() {
+        let mut app = App::new();
+        app.input_mode = super::InputMode::Chat;
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6", "line7"].join("\n");
+        app.input_viewport = Rect::new(0, 10, 40, 3);
+        app.message_viewport = Rect::new(0, 0, 40, 8);
+        app.scroll_offset = 4;
+
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        app.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 1,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.input_scroll_offset > 0);
+        assert_eq!(app.scroll_offset, 4);
+
+        app.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 1,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        let _ = MouseButton::Left;
+        assert_eq!(app.scroll_offset, 4);
+    }
+
+    #[test]
+    fn mouse_wheel_over_message_panel_still_scrolls_messages() {
+        let mut app = App::new();
+        app.input_mode = super::InputMode::Chat;
+        app.input = ["line1", "line2", "line3", "line4", "line5", "line6", "line7"].join("\n");
+        app.input_viewport = Rect::new(0, 10, 40, 3);
+        app.message_viewport = Rect::new(0, 0, 40, 8);
+        for index in 0..20 {
+            app.messages.push(super::Message {
+                role: super::MessageRole::Assistant,
+                content: format!("message {}", index),
+                timestamp: "12:00:00".to_string(),
+                collapsed: false,
+            });
+        }
+        app.scroll_offset = 4;
+
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+        app.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(app.input_scroll_offset, 0);
+        assert!(!app.follow_bottom);
+    }
+
+    #[test]
+    fn compress_failure_resets_busy_state() {
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.queue.busy_message = "正在压缩".to_string();
+        app.active_task_started_at = Some(chrono::Local::now());
+
+        app.handle_failed_async_result(
+            super::AsyncContext::CompressContext,
+            "压缩失败".to_string(),
+        );
+
+        assert!(!app.queue.processing);
+        assert!(app.queue.busy_message.is_empty());
+        assert!(app.active_task_started_at.is_none());
     }
 
     #[test]

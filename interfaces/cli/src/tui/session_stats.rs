@@ -1,6 +1,6 @@
-use sacode_kernel::model::{ChatUsage, ProviderKind};
+use sacode_kernel::model::{ChatUsage, ModelRule};
 
-use super::{format_duration_ms, App, PricingRule};
+use super::{format_duration_ms, App, ModelUsageStats, PricingRule};
 
 impl App {
     pub(super) fn execution_mode_label(&self) -> &'static str {
@@ -75,15 +75,27 @@ impl App {
     }
 
     pub(super) fn record_usage(&mut self, usage: ChatUsage) {
+        let model_key = self.current_model_name();
+        let pricing_rule = self.current_pricing_rule();
         self.usage_stats.requests += 1;
         self.usage_stats.prompt_tokens += usage.prompt_tokens as u64;
         self.usage_stats.completion_tokens += usage.completion_tokens as u64;
         self.usage_stats.total_tokens += usage.total_tokens as u64;
-        self.usage_stats.last_model = self.current_model_name();
-        if let Some(rule) = self.current_pricing_rule() {
-            self.usage_stats.estimated_cost_usd += (usage.prompt_tokens as f64 / 1_000_000.0)
+        let model_stats = self
+            .usage_stats
+            .models
+            .entry(model_key)
+            .or_insert_with(ModelUsageStats::default);
+        model_stats.requests += 1;
+        model_stats.prompt_tokens += usage.prompt_tokens as u64;
+        model_stats.completion_tokens += usage.completion_tokens as u64;
+        model_stats.total_tokens += usage.total_tokens as u64;
+        if let Some(rule) = pricing_rule {
+            let estimated_cost = (usage.prompt_tokens as f64 / 1_000_000.0)
                 * rule.input_per_million
                 + (usage.completion_tokens as f64 / 1_000_000.0) * rule.output_per_million;
+            self.usage_stats.estimated_cost_usd += estimated_cost;
+            model_stats.estimated_cost_usd += estimated_cost;
         }
     }
 
@@ -115,33 +127,103 @@ impl App {
 
     pub(super) fn current_pricing_rule(&self) -> Option<PricingRule> {
         let provider = self.current_provider.as_ref()?;
-        let model = provider.config.model.to_lowercase();
-        match provider.config.to_model_provider().kind {
-            ProviderKind::Deepseek => Some(PricingRule {
-                input_per_million: 0.27,
-                output_per_million: 1.10,
-            }),
-            ProviderKind::Mimo => Some(PricingRule {
-                input_per_million: 0.80,
-                output_per_million: 2.00,
-            }),
-            ProviderKind::Openai
-                if model.contains("gpt-4.1-mini") || model.contains("gpt-4o-mini") =>
-            {
-                Some(PricingRule {
-                    input_per_million: 0.15,
-                    output_per_million: 0.60,
-                })
-            }
-            ProviderKind::Openai if model.contains("gpt-4.1") => Some(PricingRule {
-                input_per_million: 2.00,
-                output_per_million: 8.00,
-            }),
-            ProviderKind::Openai if model.contains("gpt-4o") => Some(PricingRule {
-                input_per_million: 2.50,
-                output_per_million: 10.00,
-            }),
-            _ => None,
-        }
+        let provider_spec = self
+            .sacode_store
+            .provider(&provider.name)
+            .ok()
+            .flatten()?;
+        let rule = provider_spec.models.get(&provider.config.model)?;
+        pricing_rule_from_model_rule(rule)
+    }
+}
+
+fn pricing_rule_from_model_rule(rule: &ModelRule) -> Option<PricingRule> {
+    let pricing = rule.pricing.as_ref()?;
+    Some(PricingRule {
+        input_per_million: pricing.input_per_million,
+        output_per_million: pricing.output_per_million,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider_config::ProviderConfig;
+    use crate::provider_config::NamedProviderConfig;
+    use crate::tui::App;
+    use sacode_kernel::model::{ModelPricing, ModelRule, ProviderSpec};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn record_usage_tracks_multiple_models_and_costs() {
+        let mut app = App::new();
+        let provider_name = "stats-provider".to_string();
+        let model_a = "model-a".to_string();
+        let model_b = "model-b".to_string();
+        let mut spec = ProviderSpec {
+            name: provider_name.clone(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: String::new(),
+            models: BTreeMap::new(),
+        };
+        spec.models.insert(
+            model_a.clone(),
+            ModelRule {
+                name: model_a.clone(),
+                pricing: Some(ModelPricing {
+                    input_per_million: 1.0,
+                    output_per_million: 2.0,
+                }),
+                ..Default::default()
+            },
+        );
+        spec.models.insert(
+            model_b.clone(),
+            ModelRule {
+                name: model_b.clone(),
+                pricing: Some(ModelPricing {
+                    input_per_million: 3.0,
+                    output_per_million: 4.0,
+                }),
+                ..Default::default()
+            },
+        );
+        app.sacode_store
+            .upsert_provider(&provider_name, spec)
+            .expect("persist provider spec");
+
+        app.current_provider = Some(NamedProviderConfig {
+            name: provider_name.clone(),
+            config: ProviderConfig {
+                base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                model: model_a.clone(),
+            },
+        });
+        app.record_usage(ChatUsage {
+            prompt_tokens: 1_000,
+            completion_tokens: 2_000,
+            total_tokens: 3_000,
+        });
+
+        app.current_provider = Some(NamedProviderConfig {
+            name: provider_name,
+            config: ProviderConfig {
+                base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                model: model_b.clone(),
+            },
+        });
+        app.record_usage(ChatUsage {
+            prompt_tokens: 2_000,
+            completion_tokens: 1_000,
+            total_tokens: 3_000,
+        });
+
+        assert_eq!(app.usage_stats.requests, 2);
+        assert_eq!(app.usage_stats.models.len(), 2);
+        assert_eq!(app.usage_stats.models[&format!("stats-provider:{}", model_a)].requests, 1);
+        assert_eq!(app.usage_stats.models[&format!("stats-provider:{}", model_b)].requests, 1);
+        assert!(app.usage_stats.estimated_cost_usd > 0.0);
     }
 }

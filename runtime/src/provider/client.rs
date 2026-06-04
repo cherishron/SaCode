@@ -109,6 +109,7 @@ impl ProviderClient {
         ];
         let mut tool_calls_made = 0;
         let mut rounds = 0;
+        let mut last_tool_outputs: Vec<(String, serde_json::Value)> = Vec::new();
         let mut usage = ChatUsage {
             prompt_tokens: 0,
             completion_tokens: 0,
@@ -136,6 +137,12 @@ impl ProviderClient {
                 let final_text = assistant_msg.text().unwrap_or_default().to_string();
                 let reasoning = assistant_msg.reasoning_content.clone();
                 messages.push(assistant_msg);
+                let final_text = if final_text.trim().is_empty() {
+                    summarize_tool_outputs(&last_tool_outputs)
+                        .unwrap_or_else(|| "模型未返回最终内容，但工具调用已完成。".to_string())
+                } else {
+                    final_text
+                };
                 return Ok(ToolChatResult {
                     messages,
                     final_text,
@@ -167,7 +174,10 @@ impl ProviderClient {
                 };
 
                 let result_content = match tool_result {
-                    Ok(data) => serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string()),
+                    Ok(data) => {
+                        last_tool_outputs.push((tool_call.function.name.clone(), data.clone()));
+                        serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string())
+                    }
                     Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
                 };
 
@@ -196,11 +206,13 @@ impl ProviderClient {
             .and_then(|m| m.text().map(|text| text.to_string()))
             .unwrap_or_default();
         let reasoning = messages.iter().rev().find_map(|m| m.reasoning_content.clone());
+        let fallback_text = summarize_tool_outputs(&last_tool_outputs)
+            .unwrap_or_else(|| format!("达到最大工具调用轮数 {}，已执行 {} 次工具调用", MAX_TOOL_ROUNDS, tool_calls_made));
 
         Ok(ToolChatResult {
             messages,
             final_text: if final_text.is_empty() {
-                format!("达到最大工具调用轮数 {}，已执行 {} 次工具调用", MAX_TOOL_ROUNDS, tool_calls_made)
+                fallback_text
             } else {
                 final_text
             },
@@ -265,6 +277,59 @@ impl ProviderClient {
 
         Ok(chunks)
     }
+}
+
+fn summarize_tool_outputs(outputs: &[(String, serde_json::Value)]) -> Option<String> {
+    let mut lines = Vec::new();
+
+    for (name, value) in outputs.iter().rev() {
+        if let Some(text) = extract_tool_text(value) {
+            lines.push(format!("[{}]\n{}", name, text));
+        } else if let Some(error) = value.get("error").and_then(|item| item.as_str()) {
+            lines.push(format!("[{}]\n错误: {}", name, error));
+        }
+
+        if lines.len() >= 3 {
+            break;
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.into_iter().rev().collect::<Vec<_>>().join("\n\n"))
+    }
+}
+
+fn extract_tool_text(value: &serde_json::Value) -> Option<String> {
+    for key in ["final_text", "text", "body", "content"] {
+        if let Some(text) = value.get(key).and_then(|item| item.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    if let Some(results) = value.get("results").and_then(|item| item.as_array()) {
+        let summary = results
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(index, item)| {
+                let title = item.get("title").and_then(|value| value.as_str()).unwrap_or("Untitled");
+                let url = item.get("url").and_then(|value| value.as_str()).unwrap_or("");
+                let snippet = item.get("snippet").and_then(|value| value.as_str()).unwrap_or("");
+                format!("{}. {}\nURL: {}\n{}", index + 1, title, url, snippet)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if !summary.is_empty() {
+            return Some(summary);
+        }
+    }
+
+    None
 }
 
 fn build_request(
@@ -332,7 +397,7 @@ fn env_key(kind: &ProviderKind) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
-    use super::{default_base_url, ToolChatResult};
+    use super::{default_base_url, extract_tool_text, summarize_tool_outputs, ToolChatResult};
 
     #[test]
     fn default_base_url_matches_provider_kinds() {
@@ -450,5 +515,37 @@ mod tests {
         assert_eq!(result.reasoning_content.unwrap(), "thinking");
         assert_eq!(result.tool_calls_made, 2);
         assert_eq!(result.rounds, 3);
+    }
+
+    #[test]
+    fn extract_tool_text_prefers_final_text() {
+        let value = serde_json::json!({
+            "final_text": "page summary",
+            "text": "fallback"
+        });
+        assert_eq!(extract_tool_text(&value).as_deref(), Some("page summary"));
+    }
+
+    #[test]
+    fn summarize_tool_outputs_uses_recent_structured_results() {
+        let summary = summarize_tool_outputs(&[
+            (
+                "web.search".to_string(),
+                serde_json::json!({
+                    "final_text": "1. Example\nURL: https://example.com\nSnippet"
+                }),
+            ),
+            (
+                "web.fetch".to_string(),
+                serde_json::json!({
+                    "text": "Fetched page text"
+                }),
+            ),
+        ])
+        .expect("summary");
+
+        assert!(summary.contains("[web.search]"));
+        assert!(summary.contains("[web.fetch]"));
+        assert!(summary.contains("Fetched page text"));
     }
 }

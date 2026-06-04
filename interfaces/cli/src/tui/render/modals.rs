@@ -156,7 +156,7 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
-                "提交后会按当前执行模式继续任务。",
+                "提交后会按当前执行模式继续任务，并在文件访问、工具调用或执行权限受限时申请授权。",
                 Style::default().fg(theme.subtle),
             )),
         ]

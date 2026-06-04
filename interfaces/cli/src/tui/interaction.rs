@@ -368,11 +368,11 @@ impl App {
 
         match selection {
             0 => {
-                self.push_system_message(&format!("已拒绝工具 {} 的修改授权。", request.tool_name));
+                self.push_system_message(&format!("已拒绝工具 {} 的权限授权请求。", request.tool_name));
             }
             1 => {
                 self.push_system_message(&format!(
-                    "已允许工具 {} 本次执行，正在继续任务。",
+                    "已允许工具 {} 本次请求授权并继续执行，正在继续任务。",
                     request.tool_name
                 ));
                 self.enqueue_or_start_message_with_approval(
@@ -383,7 +383,7 @@ impl App {
             2 => {
                 self.session_auto_approve_edits = true;
                 self.push_system_message(&format!(
-                    "已允许工具 {} 在本会话内自动执行修改操作，正在继续任务。",
+                    "已允许工具 {} 在本会话内继续请求并执行授权操作，正在继续任务。",
                     request.tool_name
                 ));
                 self.enqueue_or_start_message_with_approval(

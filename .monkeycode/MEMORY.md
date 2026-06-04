@@ -37,6 +37,13 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 - Instructions:
   - 后续回复统一使用中文。
 
+[SaCode 运行时权限授权流程]
+- Date: 2026-06-04
+- Context: 用户补充 SaCode 运行中权限受限场景的统一处理方式
+- Instructions:
+  - 在 SaCode 运行过程中，遇到文件访问、工具调用或执行权限受限时，先向用户发起交互授权确认。
+  - 用户同意后，再继续申请或执行对应权限范围内的操作。
+
 [完善实现优先]
 - Date: 2026-05-24
 - Context: 用户要求继续补全 skills、MCP 等能力时
@@ -147,6 +154,7 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 - Context: Agent 在执行 `/compress` 命令实现时发现
 - Category: 工作流协作
 - Instructions:
+  - TUI `/compress`：必须调用大模型对当前会话做语义分析和结构化压缩，禁止回退为本地文本拼接或简单格式化。
   - TUI `/compress`：摘要持久化到 `.sacode/sessions/*.json` 的 `summary` 字段，后续任务自动拼接历史摘要 + 最近对话 + 当前请求
   - REPL `/compress`：内存摘要 + `recent_messages`（最近 12 条），后续任务拼接历史摘要 + 最近对话 + 当前请求
   - 执行任务中禁止压缩，避免截断运行状态
