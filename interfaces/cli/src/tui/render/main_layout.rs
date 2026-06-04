@@ -46,7 +46,12 @@ pub(crate) fn render_message_lines(
                         continue;
                     }
                     if content_line.starts_with(PREFIX_THINKING) {
-                        lines.extend(render_thinking_block(content_line, theme, first));
+                        lines.extend(render_thinking_block(
+                            content_line,
+                            theme,
+                            first,
+                            msg.collapsed,
+                        ));
                         first = false;
                         continue;
                     }
@@ -105,7 +110,7 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
         }
 
         if line.starts_with(PREFIX_THINKING) {
-            lines.extend(render_thinking_block(line, theme, false));
+            lines.extend(render_thinking_block(line, theme, false, false));
             continue;
         }
 
@@ -224,6 +229,7 @@ fn render_thinking_block(
     content: &str,
     theme: ThemePalette,
     first_in_message: bool,
+    collapsed: bool,
 ) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
     let text = content
@@ -238,13 +244,13 @@ fn render_thinking_block(
                 Style::default().fg(theme.accent),
             ),
             Span::styled(
-                "思考",
+                if collapsed { "思考 [已折叠]" } else { "思考" },
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             ),
         ]),
     });
 
-    if !text.is_empty() {
+    if !collapsed && !text.is_empty() {
         lines.push(RenderedMessageLine {
             line: Line::from(vec![
                 Span::styled("   ", Style::default()),

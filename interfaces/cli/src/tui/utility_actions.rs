@@ -54,7 +54,7 @@ impl App {
             \n快捷键:\n\
             Ctrl+Q - 等价于 /quit\n\
             Ctrl+A - 优化当前输入\n\
-            Ctrl+S - 折叠或展开全部助手回复\n\
+            Ctrl+S - 折叠或展开全部助手回复与思考详情\n\
             Ctrl+T - 开启或关闭思考功能\n\
             Ctrl+M - 在 plan/build/yolo 间切换执行模式\n\
             Ctrl+Z - 撤回上次输入优化\n\

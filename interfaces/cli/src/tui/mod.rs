@@ -637,6 +637,34 @@ mod tests {
     }
 
     #[test]
+    fn render_messages_panel_collapses_thinking_details() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "[思考] 分析调用链".to_string(),
+            timestamp: "12:00:01".to_string(),
+            collapsed: true,
+        });
+        let backend = TestBackend::new(140, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 140, 16));
+            })
+            .expect("draw collapsed thinking panel");
+
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(line_dump.contains("思考 [已折叠]"));
+        assert!(!line_dump.contains("分析调用链"));
+    }
+
+    #[test]
     fn render_messages_panel_groups_waiting_system_messages() {
         let mut app = App::new();
         app.messages.push(super::Message {
