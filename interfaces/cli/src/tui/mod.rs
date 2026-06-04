@@ -48,7 +48,6 @@ mod orchestration_summary;
 mod plugin_actions;
 mod provider_actions;
 mod prompt_response;
-mod queue_panel_state;
 mod render;
 mod runtime_support;
 mod send_actions;
@@ -76,7 +75,6 @@ pub(crate) use runtime_support::block_on_cli_future;
 use state::{LoopState, QueueState};
 pub use tui_entry::run_tui;
 
-const MODELS_HINT_LIMIT: usize = 8;
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 #[derive(Debug, Clone)]
@@ -249,13 +247,6 @@ impl Default for PerformanceStats {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum QueuePanelMode {
-    Idle,
-    Running,
-    PendingOnly,
-}
-
 #[derive(Debug, Clone)]
 struct SessionInfo {
     id: String,
@@ -381,10 +372,10 @@ mod tests {
     use crate::tui::InteractionState;
     use crate::tui::render::{
         render_footer, render_header, render_input_panel, render_messages_panel,
-        render_pending_question_panel,
-        render_orchestration_panel,
     };
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+    use super::render::modals::render_pending_question_panel;
+    use super::render::orchestration_panel::render_orchestration_panel;
 
     fn backend_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();

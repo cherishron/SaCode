@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -84,7 +84,10 @@ pub(crate) fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
+    use ratatui::style::Modifier;
+
     let theme = app.theme;
     if app.interaction.pending_question_items.is_empty() {
         return;

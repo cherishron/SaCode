@@ -3,6 +3,13 @@ use std::{fs, io::Write, time::Duration};
 use super::{user_sacode_dir, App, ExecutionMode, FoldAction, MessageRole, SPINNER_FRAMES};
 
 impl App {
+    pub(super) fn active_task_elapsed_seconds(&self) -> u64 {
+        let Some(started_at) = self.active_task_started_at else {
+            return 0;
+        };
+        (chrono::Local::now() - started_at).num_seconds().max(0) as u64
+    }
+
     pub(super) fn confirm_session_selection(&mut self) {
         let selected = self
             .session_options
@@ -128,10 +135,6 @@ impl App {
         } else {
             Duration::from_millis(300)
         }
-    }
-
-    pub(super) fn spinner_frame(&self) -> &'static str {
-        SPINNER_FRAMES[self.spinner_index % SPINNER_FRAMES.len()]
     }
 
     pub(super) fn log_event(&self, kind: &str, content: &str) {

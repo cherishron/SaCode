@@ -1,3 +1,4 @@
+#[cfg(test)]
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -6,8 +7,10 @@ use ratatui::{
     Frame,
 };
 
+#[cfg(test)]
 use super::super::{App, ThemePalette};
 
+#[cfg(test)]
 pub(crate) fn render_orchestration_panel(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
     let block = Block::default()
@@ -85,6 +88,7 @@ pub(crate) fn render_orchestration_panel(frame: &mut Frame, app: &App, area: Rec
     }
 }
 
+#[cfg(test)]
 struct OrchestrationSections {
     summary_lines: Vec<Line<'static>>,
     route_lines: Vec<Line<'static>>,
@@ -92,6 +96,7 @@ struct OrchestrationSections {
     next_lines: Vec<Line<'static>>,
 }
 
+#[cfg(test)]
 fn orchestration_sections(app: &App, theme: ThemePalette) -> OrchestrationSections {
     let mut summary_lines = Vec::new();
     let mut route_lines = Vec::new();
@@ -152,6 +157,7 @@ fn orchestration_sections(app: &App, theme: ThemePalette) -> OrchestrationSectio
     }
 }
 
+#[cfg(test)]
 fn render_block_line(label: &str, text: &str, color: ratatui::style::Color, bold: bool) -> Line<'static> {
     let mut style = Style::default().fg(color);
     if bold {
@@ -163,6 +169,7 @@ fn render_block_line(label: &str, text: &str, color: ratatui::style::Color, bold
     ])
 }
 
+#[cfg(test)]
 fn render_orchestration_section(
     frame: &mut Frame,
     area: Rect,

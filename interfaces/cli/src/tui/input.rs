@@ -1,5 +1,3 @@
-use std::env;
-use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 
 use crate::tui::InputMode;
@@ -54,19 +52,4 @@ pub fn is_editable_input_mode(input_mode: InputMode) -> bool {
             | InputMode::CommandLevel1
             | InputMode::CommandLevel2
     )
-}
-
-pub fn display_workdir(path: &Path) -> String {
-    let display = path.display().to_string();
-    let home = env::var("HOME").ok();
-    if let Some(home) = home {
-        if display == home {
-            return "~".to_string();
-        }
-        let prefix = format!("{}/", home.trim_end_matches('/'));
-        if let Some(stripped) = display.strip_prefix(&prefix) {
-            return format!("~/{}", stripped);
-        }
-    }
-    display
 }
