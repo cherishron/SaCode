@@ -84,7 +84,7 @@ impl App {
             .iter()
             .rposition(|message| matches!(message.role, MessageRole::Assistant))
         else {
-            self.push_system_message("当前没有可折叠的助手回复。");
+            self.push_system_message("当前没有可折叠的思考详情。");
             return;
         };
 

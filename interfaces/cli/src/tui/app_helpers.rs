@@ -69,9 +69,9 @@ impl App {
 
         if changed > 0 {
             self.save_current_session();
-            self.push_success_message(&format!("已更新 {} 条助手回复的折叠状态。", changed));
+            self.push_success_message(&format!("已更新 {} 条思考详情的折叠状态。", changed));
         } else {
-            self.push_system_message("当前没有需要更新折叠状态的助手回复。");
+            self.push_system_message("当前没有需要更新折叠状态的思考详情。");
         }
     }
 

@@ -38,10 +38,10 @@ impl App {
             /tools     - 显示可用工具\n\
             /stats     - 查看 token 与费用统计\n\
             /copy last - 复制最后一条助手回复\n\
-            /fold last - 折叠最后一条助手回复\n\
-            /expand last - 展开最后一条助手回复\n\
-            /fold all  - 折叠全部助手回复\n\
-            /expand all - 展开全部助手回复\n\
+            /fold last - 折叠最后一条思考详情\n\
+            /expand last - 展开最后一条思考详情\n\
+            /fold all  - 折叠全部思考详情\n\
+            /expand all - 展开全部思考详情\n\
             /theme     - 切换主题模板 (github/vscode/idea)\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /answer    - 回答当前等待中的问题\n\
@@ -54,7 +54,7 @@ impl App {
             \n快捷键:\n\
             Ctrl+Q - 等价于 /quit\n\
             Ctrl+A - 优化当前输入\n\
-            Ctrl+S - 折叠或展开全部助手回复与思考详情\n\
+            Ctrl+S - 折叠或展开全部思考详情\n\
             Ctrl+T - 开启或关闭思考功能\n\
             Ctrl+M - 在 plan/build/yolo 间切换执行模式\n\
             Ctrl+Z - 撤回上次输入优化\n\

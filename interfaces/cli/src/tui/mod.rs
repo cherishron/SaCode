@@ -376,6 +376,57 @@ mod tests {
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
     use super::render::modals::render_pending_question_panel;
     use super::render::orchestration_panel::render_orchestration_panel;
+    use tempfile::TempDir;
+
+    struct HomeEnvGuard {
+        old_home: Option<std::ffi::OsString>,
+    }
+
+    impl HomeEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let old_home = std::env::var_os("HOME");
+            unsafe { std::env::set_var("HOME", path) };
+            Self { old_home }
+        }
+    }
+
+    impl Drop for HomeEnvGuard {
+        fn drop(&mut self) {
+            match self.old_home.take() {
+                Some(value) => unsafe { std::env::set_var("HOME", value) },
+                None => unsafe { std::env::remove_var("HOME") },
+            }
+        }
+    }
+
+    struct TestAppContext {
+        _workdir: TempDir,
+        _home_dir: TempDir,
+        _home_guard: HomeEnvGuard,
+        app: App,
+    }
+
+    impl TestAppContext {
+        fn new() -> Self {
+            let workdir = tempfile::tempdir().expect("create temp workdir");
+            let home_dir = tempfile::tempdir().expect("create temp home");
+            let home_guard = HomeEnvGuard::set(home_dir.path());
+            let previous_dir = std::env::current_dir().expect("current dir");
+            std::env::set_current_dir(workdir.path()).expect("enter temp workdir");
+            let app = App::new();
+            std::env::set_current_dir(previous_dir).expect("restore current dir");
+            Self {
+                _workdir: workdir,
+                _home_dir: home_dir,
+                _home_guard: home_guard,
+                app,
+            }
+        }
+    }
+
+    fn test_app() -> TestAppContext {
+        TestAppContext::new()
+    }
 
     fn backend_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
@@ -751,7 +802,8 @@ mod tests {
 
     #[test]
     fn render_header_shows_thinking_status() {
-        let mut app = App::new();
+        let mut test_ctx = test_app();
+        let app = &mut test_ctx.app;
         let provider_name = "test-provider".to_string();
         let model_name = "test-model".to_string();
         let mut spec = sacode_kernel::model::ProviderSpec {
@@ -826,7 +878,8 @@ mod tests {
 
     #[test]
     fn render_input_panel_shows_thinking_indicator_when_enabled() {
-        let mut app = App::new();
+        let mut test_ctx = test_app();
+        let mut app = &mut test_ctx.app;
         let provider_name = "test-provider-input".to_string();
         let model_name = "test-model-input".to_string();
         let mut spec = sacode_kernel::model::ProviderSpec {
