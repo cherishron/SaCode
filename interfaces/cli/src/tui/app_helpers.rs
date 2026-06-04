@@ -57,11 +57,11 @@ impl App {
         }
     }
 
-    pub(super) fn fold_all_assistant_messages(&mut self, action: FoldAction) {
+    pub(super) fn fold_all_thinking_details(&mut self, action: FoldAction) {
         let mut changed = 0usize;
         for index in 0..self.messages.len() {
             if matches!(self.messages[index].role, MessageRole::Assistant)
-                && self.apply_fold_action(index, action)
+                && self.apply_thinking_fold_action(index, action)
             {
                 changed += 1;
             }
@@ -75,7 +75,7 @@ impl App {
         }
     }
 
-    pub(super) fn toggle_all_message_folds(&mut self) {
+    pub(super) fn toggle_all_thinking_folds(&mut self) {
         let should_collapse = self
             .messages
             .iter()
@@ -86,7 +86,7 @@ impl App {
         } else {
             FoldAction::Expand
         };
-        self.fold_all_assistant_messages(action);
+        self.fold_all_thinking_details(action);
     }
 
     pub(super) fn cycle_execution_mode(&mut self) {
@@ -98,7 +98,7 @@ impl App {
         self.apply_execution_mode(next, true);
     }
 
-    pub(super) fn apply_fold_action(&mut self, index: usize, action: FoldAction) -> bool {
+    pub(super) fn apply_thinking_fold_action(&mut self, index: usize, action: FoldAction) -> bool {
         let Some(message) = self.messages.get_mut(index) else {
             return false;
         };
@@ -116,7 +116,7 @@ impl App {
         let timestamp = message.timestamp.clone();
         let state = if target { "collapsed" } else { "expanded" };
         let log_content = format!("{} {}", state, timestamp);
-        self.log_event("message_fold", &log_content);
+        self.log_event("thinking_fold", &log_content);
         true
     }
 

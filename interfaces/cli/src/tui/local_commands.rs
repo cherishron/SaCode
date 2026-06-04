@@ -199,25 +199,25 @@ impl App {
         }
 
         if trimmed == "/fold last" {
-            self.fold_last_assistant_message(FoldAction::Collapse);
+            self.fold_last_thinking_details(FoldAction::Collapse);
             self.input.clear();
             return true;
         }
 
         if trimmed == "/expand last" {
-            self.fold_last_assistant_message(FoldAction::Expand);
+            self.fold_last_thinking_details(FoldAction::Expand);
             self.input.clear();
             return true;
         }
 
         if trimmed == "/fold all" {
-            self.fold_all_assistant_messages(FoldAction::Collapse);
+            self.fold_all_thinking_details(FoldAction::Collapse);
             self.input.clear();
             return true;
         }
 
         if trimmed == "/expand all" {
-            self.fold_all_assistant_messages(FoldAction::Expand);
+            self.fold_all_thinking_details(FoldAction::Expand);
             self.input.clear();
             return true;
         }

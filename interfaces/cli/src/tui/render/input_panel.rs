@@ -28,7 +28,36 @@ pub(crate) fn render_input_panel(
 ) {
     let theme = app.theme;
     let accent = mode_color(app);
+    let prompt_prefix = if app.current_thinking_enabled() {
+        "> [T] "
+    } else {
+        "> "
+    };
+    let input_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border));
+    app.input_viewport = input_block.inner(area);
+    let visible_input_height = app.input_viewport.height.max(1) as usize;
     let cached_input_layout = app.cached_input_layout(input_inner_width).clone();
+    let editable_window_start = if input_is_editable {
+        cached_input_layout
+            .cursor_line
+            .saturating_add(1)
+            .saturating_sub(visible_input_height)
+    } else {
+        0
+    };
+    let editable_visible_lines = if input_is_editable {
+        cached_input_layout
+            .lines
+            .iter()
+            .skip(editable_window_start)
+            .take(visible_input_height)
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     let input_lines = if app.input_mode == InputMode::ProviderSelect {
         vec![Line::from(Span::styled(
@@ -36,8 +65,7 @@ pub(crate) fn render_input_panel(
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ProviderRename {
-        cached_input_layout
-            .lines
+        editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
@@ -93,8 +121,7 @@ pub(crate) fn render_input_panel(
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ConfigNumberInput {
-        cached_input_layout
-            .lines
+        editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
@@ -110,8 +137,7 @@ pub(crate) fn render_input_panel(
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::PendingQuestion {
-        cached_input_layout
-            .lines
+        editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
@@ -120,15 +146,14 @@ pub(crate) fn render_input_panel(
         app.input_mode,
         InputMode::CommandLevel1 | InputMode::CommandLevel2
     ) {
-        cached_input_layout
-            .lines
+        editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
             .collect()
     } else if app.input.is_empty() {
         let placeholder = match app.input_mode {
-            InputMode::Chat => "输入你的编程任务，或输入 / 显示命令列表；等待回答时用 /answer 或空输入回车继续当前任务...",
+            InputMode::Chat => "输入任务，/ 打开命令",
             InputMode::LoginBaseUrl => "输入 provider 名称和 Base URL...",
             InputMode::LoginApiKey => "输入 API Key...",
             InputMode::ProviderSelect => "使用方向键选择 provider...",
@@ -155,11 +180,10 @@ pub(crate) fn render_input_panel(
         };
         vec![Line::from(Span::styled(
             placeholder,
-            Style::default().fg(theme.info),
+            Style::default().fg(theme.muted),
         ))]
     } else {
-        cached_input_layout
-            .lines
+        editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
@@ -172,7 +196,7 @@ pub(crate) fn render_input_panel(
             let mut spans = if app.current_thinking_enabled() {
                 vec![
                     Span::styled(
-                        ">",
+                        "> ",
                         Style::default().fg(accent).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
@@ -203,26 +227,22 @@ pub(crate) fn render_input_panel(
         }
     }
 
-    let input_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.border));
-    app.input_viewport = input_block.inner(area);
-
     frame.render_widget(
         Paragraph::new(decorated_lines)
             .block(input_block)
             .style(Style::default().bg(theme.bg_primary))
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: true }),
         area,
     );
 
     if input_is_editable {
-        let max_line = app.input_viewport.height.saturating_sub(1) as usize;
         let visible_line = cached_input_layout
             .cursor_line
-            .min(max_line.min(cached_input_layout.lines.len().saturating_sub(1)));
+            .saturating_sub(editable_window_start)
+            .min(app.input_viewport.height.saturating_sub(1) as usize);
+        let prompt_width = prompt_prefix.chars().count() as u16;
         let cursor_x = app.input_viewport.x
-            + 2
+            + prompt_width
             + clamp_cursor_col(cached_input_layout.cursor_col, input_inner_width) as u16;
         let cursor_y = app.input_viewport.y + visible_line as u16;
         frame.set_cursor_position((cursor_x, cursor_y));

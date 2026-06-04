@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -102,6 +102,7 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_style(Style::default().fg(theme.border));
 
+    frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
         popup_area,
@@ -181,6 +182,7 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_style(Style::default().fg(theme.border));
 
+    frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
         popup_area,

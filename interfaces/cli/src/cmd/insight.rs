@@ -64,6 +64,10 @@ pub struct InsightArtifacts {
     pub user_rules_path: String,
 }
 
+fn display_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 pub struct InsightStore {
     root: PathBuf,
 }
@@ -196,11 +200,11 @@ pub fn analyze_messages(messages: &[(&str, &str)], _workdir: &Path) -> Result<In
     let report = build_report(&insight, &store);
     let artifacts = InsightArtifacts {
         generated_at: insight.generated_at.clone(),
-        html_path: store.html_path().display().to_string(),
-        json_path: store.json_path().display().to_string(),
-        user_agents_path: store.agents_path().display().to_string(),
-        user_memory_path: store.memory_path().display().to_string(),
-        user_rules_path: store.rules_path().display().to_string(),
+        html_path: display_path(&store.html_path()),
+        json_path: display_path(&store.json_path()),
+        user_agents_path: display_path(&store.agents_path()),
+        user_memory_path: display_path(&store.memory_path()),
+        user_rules_path: display_path(&store.rules_path()),
         insight,
         report,
     };
@@ -510,13 +514,15 @@ fn ensure_file(path: &Path, default_content: &str) -> Result<()> {
 
 fn user_sacode_dir() -> PathBuf {
     env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(USER_SACODE_DIR)
 }
 
 fn open_in_browser(path: &Path) -> Result<()> {
-    let target = format!("file://{}", path.display());
+    let absolute = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let target = format!("file:///{}", absolute.display().to_string().replace('\\', "/"));
 
     #[cfg(target_os = "macos")]
     {
@@ -526,7 +532,7 @@ fn open_in_browser(path: &Path) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd").args(["/C", "start", &target]).spawn()?;
+        Command::new("cmd").args(["/C", "start", "", &target]).spawn()?;
         return Ok(());
     }
 

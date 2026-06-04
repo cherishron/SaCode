@@ -3,6 +3,14 @@ use sacode_kernel::model::{ChatUsage, ProviderKind};
 use super::{format_duration_ms, App, PricingRule};
 
 impl App {
+    pub(super) fn execution_mode_label(&self) -> &'static str {
+        match self.execution_mode {
+            sacode_kernel::ExecutionMode::Plan => "plan",
+            sacode_kernel::ExecutionMode::Build => "build",
+            sacode_kernel::ExecutionMode::Yolo => "yolo",
+        }
+    }
+
     pub(super) fn current_model_name(&self) -> String {
         self.current_provider
             .as_ref()

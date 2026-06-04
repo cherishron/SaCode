@@ -3,6 +3,24 @@ use std::{path::PathBuf, process::Command};
 use super::App;
 
 impl App {
+    pub(super) fn current_git_branch(&self) -> Option<String> {
+        let output = Command::new("git")
+            .arg("branch")
+            .arg("--show-current")
+            .current_dir(&self.workdir)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() {
+            None
+        } else {
+            Some(branch)
+        }
+    }
+
     pub(super) fn refresh_git_changes(&mut self) {
         let repo_root = Command::new("git")
             .arg("rev-parse")

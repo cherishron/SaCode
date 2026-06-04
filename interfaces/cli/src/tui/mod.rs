@@ -107,6 +107,12 @@ struct RenderedMessageLine {
 }
 
 #[derive(Debug, Clone)]
+struct CachedRenderedMessages {
+    width: usize,
+    lines: Vec<RenderedMessageLine>,
+}
+
+#[derive(Debug, Clone)]
 struct CachedInputLayout {
     text: String,
     width: usize,
@@ -125,7 +131,7 @@ enum MessageRole {
 struct App {
     workdir: PathBuf,
     messages: Vec<Message>,
-    message_lines_cache: Option<Vec<RenderedMessageLine>>,
+    message_lines_cache: Option<CachedRenderedMessages>,
     input_layout_cache: Option<CachedInputLayout>,
     session_summary: Option<String>,
     input: String,
@@ -599,6 +605,27 @@ mod tests {
     }
 
     #[test]
+    fn render_input_panel_keeps_cursor_near_latest_visible_lines() {
+        let mut app = App::new();
+        app.input = [
+            "line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+        ]
+        .join("\n");
+        let backend = TestBackend::new(60, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_input_panel(frame, &mut app, Rect::new(0, 0, 60, 6), 56, true);
+            })
+            .expect("draw scrolling input panel");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("line 6"));
+        assert!(!rendered.contains("line 1"));
+    }
+
+    #[test]
     fn render_header_shows_project_name() {
         let app = App::new();
         let backend = TestBackend::new(120, 2);
@@ -736,6 +763,36 @@ mod tests {
     }
 
     #[test]
+    fn render_messages_panel_wraps_long_error_messages_to_viewport_width() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::System,
+            content: "[错误] 任务执行失败: 后台进程没有返回结果，退出码: 1。stderr 已写入日志，日志内容较长，需要在消息区域内稳定换行显示。".to_string(),
+            timestamp: "12:00:04".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 40, 12));
+            })
+            .expect("draw wrapped error panel");
+
+        let rendered_lines = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>();
+
+        assert!(rendered_lines.len() >= 2);
+        assert!(rendered_lines.iter().any(|line| line.contains("任务执行失败")));
+        assert!(rendered_lines.iter().any(|line| line.contains("stderr 已写入日志")));
+    }
+
+    #[test]
     fn render_pending_question_panel_highlights_approval_state() {
         let mut app = App::new();
         app.interaction.state = InteractionState::WaitingForApproval;
@@ -797,7 +854,8 @@ mod tests {
             .expect("draw header with git status");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("CodeBuddy"));
+        assert!(rendered.contains("SaCode"));
+        assert!(rendered.contains("git"));
     }
 
     #[test]
@@ -857,7 +915,7 @@ mod tests {
             .expect("draw footer");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("? for shortcuts"));
+        assert!(rendered.contains("Alt+M: mode"));
     }
 
     #[test]

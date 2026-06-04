@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -66,6 +66,7 @@ fn render_dropdown_list<'a>(
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_style(Style::default().fg(theme.border));
 
+    frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
         popup_area,
@@ -156,6 +157,7 @@ pub(crate) fn render_connect_selector(frame: &mut Frame, app: &App, input_area: 
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_style(Style::default().fg(theme.border));
 
+    frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
         popup_area,
@@ -219,6 +221,7 @@ pub(crate) fn render_mode_selector(frame: &mut Frame, app: &App, input_area: Rec
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_style(Style::default().fg(theme.border));
 
+    frame.render_widget(Clear, popup_area);
     frame.render_widget(
         Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
         popup_area,

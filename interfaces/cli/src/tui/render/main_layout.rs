@@ -2,6 +2,7 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use unicode_width::UnicodeWidthChar;
 
 use super::super::{Message, MessageRole, RenderedMessageLine, ThemePalette};
 
@@ -14,8 +15,10 @@ const PREFIX_WAITING: &str = "[等待用户回答]";
 pub(crate) fn render_message_lines(
     messages: &[Message],
     theme: ThemePalette,
+    width: usize,
 ) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
+    let wrap_width = width.max(1);
 
     for msg in messages {
         let body_style = body_style_for_message(msg, theme);
@@ -26,14 +29,15 @@ pub(crate) fn render_message_lines(
                     if content_line.trim().is_empty() {
                         continue;
                     }
-                    lines.push(RenderedMessageLine {
-                        line: Line::from(vec![
-                            Span::styled("> ",
-                                Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(content_line.to_string(), body_style),
-                        ]),
-                    });
+                    push_wrapped_text_lines(
+                        &mut lines,
+                        "> ",
+                        "  ",
+                        content_line,
+                        Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
+                        body_style,
+                        wrap_width,
+                    );
                 }
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
@@ -51,33 +55,37 @@ pub(crate) fn render_message_lines(
                             theme,
                             first,
                             msg.collapsed,
+                            wrap_width,
                         ));
                         first = false;
                         continue;
                     }
                     if content_line.starts_with(PREFIX_TOOL) {
-                        lines.extend(render_tool_block(content_line, theme, first));
+                        lines.extend(render_tool_block(content_line, theme, first, wrap_width));
                         first = false;
                         continue;
                     }
                     if first {
-                        lines.push(RenderedMessageLine {
-                            line: Line::from(vec![
-                                Span::styled(
-                                    "● ",
-                                    Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(content_line.to_string(), body_style),
-                            ]),
-                        });
+                        push_wrapped_text_lines(
+                            &mut lines,
+                            "● ",
+                            "  ",
+                            content_line,
+                            Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
+                            body_style,
+                            wrap_width,
+                        );
                         first = false;
                     } else {
-                        lines.push(RenderedMessageLine {
-                            line: Line::from(vec![
-                                Span::styled("   ", Style::default()),
-                                Span::styled(content_line.to_string(), body_style),
-                            ]),
-                        });
+                        push_wrapped_text_lines(
+                            &mut lines,
+                            "   ",
+                            "   ",
+                            content_line,
+                            Style::default(),
+                            body_style,
+                            wrap_width,
+                        );
                     }
                 }
                 lines.push(RenderedMessageLine {
@@ -85,7 +93,7 @@ pub(crate) fn render_message_lines(
                 });
             }
             MessageRole::System => {
-                lines.extend(render_system_block(&msg.content, theme));
+                lines.extend(render_system_block(&msg.content, theme, wrap_width));
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
                 });
@@ -96,7 +104,7 @@ pub(crate) fn render_message_lines(
     lines
 }
 
-fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessageLine> {
+fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
 
     for line in content.lines() {
@@ -105,12 +113,12 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
         }
 
         if line.starts_with(PREFIX_TOOL) {
-            lines.extend(render_tool_block(line, theme, false));
+            lines.extend(render_tool_block(line, theme, false, width));
             continue;
         }
 
         if line.starts_with(PREFIX_THINKING) {
-            lines.extend(render_thinking_block(line, theme, false, false));
+            lines.extend(render_thinking_block(line, theme, false, false, width));
             continue;
         }
 
@@ -148,18 +156,21 @@ fn render_system_block(content: &str, theme: ThemePalette) -> Vec<RenderedMessag
             continue;
         }
 
-        lines.push(RenderedMessageLine {
-            line: Line::from(vec![
-                Span::styled(prefix.to_string(), style),
-                Span::styled(text.to_string(), style),
-            ]),
-        });
+        push_wrapped_text_lines(
+            &mut lines,
+            prefix,
+            "  ",
+            text,
+            style,
+            style,
+            width,
+        );
     }
 
     lines
 }
 
-fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool) -> Vec<RenderedMessageLine> {
+fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool, width: usize) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
     let text = content.strip_prefix(PREFIX_TOOL).unwrap_or(content).trim_start();
 
@@ -207,20 +218,18 @@ fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool)
             Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
         ));
     }
-    lines.push(RenderedMessageLine {
-        line: Line::from(first_spans),
-    });
+    push_wrapped_line_spans(&mut lines, first_spans, width);
 
     // Second line: status hint
-    lines.push(RenderedMessageLine {
-        line: Line::from(vec![
-            Span::styled("   ", Style::default()),
-            Span::styled(
-                "└─ ...running (ctrl+b to background execution)",
-                Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
-            ),
-        ]),
-    });
+    push_wrapped_text_lines(
+        &mut lines,
+        "   ",
+        "   ",
+        "└─ ...running (ctrl+b to background execution)",
+        Style::default(),
+        Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+        width,
+    );
 
     lines
 }
@@ -230,6 +239,7 @@ fn render_thinking_block(
     theme: ThemePalette,
     first_in_message: bool,
     collapsed: bool,
+    width: usize,
 ) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
     let text = content
@@ -237,8 +247,9 @@ fn render_thinking_block(
         .unwrap_or(content)
         .trim_start();
 
-    lines.push(RenderedMessageLine {
-        line: Line::from(vec![
+    push_wrapped_line_spans(
+        &mut lines,
+        vec![
             Span::styled(
                 if first_in_message { "● " } else { "  " },
                 Style::default().fg(theme.accent),
@@ -247,26 +258,115 @@ fn render_thinking_block(
                 if collapsed { "思考 [已折叠]" } else { "思考" },
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             ),
-        ]),
-    });
+        ],
+        width,
+    );
 
     if !collapsed && !text.is_empty() {
-        lines.push(RenderedMessageLine {
-            line: Line::from(vec![
-                Span::styled("   ", Style::default()),
-                Span::styled(
-                    "│ ",
-                    Style::default().fg(theme.border).add_modifier(Modifier::DIM),
-                ),
-                Span::styled(
-                    text.to_string(),
-                    Style::default().fg(theme.text).add_modifier(Modifier::DIM),
-                ),
-            ]),
-        });
+        push_wrapped_text_lines(
+            &mut lines,
+            "   │ ",
+            "   │ ",
+            text,
+            Style::default().fg(theme.border).add_modifier(Modifier::DIM),
+            Style::default().fg(theme.text).add_modifier(Modifier::DIM),
+            width,
+        );
     }
 
     lines
+}
+
+fn push_wrapped_text_lines(
+    lines: &mut Vec<RenderedMessageLine>,
+    first_prefix: &str,
+    continuation_prefix: &str,
+    text: &str,
+    prefix_style: Style,
+    text_style: Style,
+    width: usize,
+) {
+    let wrapped = wrap_text(text, width.saturating_sub(display_width(first_prefix)).max(1));
+
+    for (index, segment) in wrapped.into_iter().enumerate() {
+        let prefix = if index == 0 {
+            first_prefix
+        } else {
+            continuation_prefix
+        };
+        lines.push(RenderedMessageLine {
+            line: Line::from(vec![
+                Span::styled(prefix.to_string(), prefix_style),
+                Span::styled(segment, text_style),
+            ]),
+        });
+    }
+}
+
+fn push_wrapped_line_spans(
+    lines: &mut Vec<RenderedMessageLine>,
+    spans: Vec<Span<'static>>,
+    width: usize,
+) {
+    let mut current_spans = Vec::new();
+    let mut current_width = 0usize;
+    let max_width = width.max(1);
+
+    for span in spans {
+        let style = span.style;
+        for segment in wrap_text(span.content.as_ref(), max_width.saturating_sub(current_width).max(1)) {
+            let segment_width = display_width(&segment);
+            if current_width + segment_width > max_width && !current_spans.is_empty() {
+                lines.push(RenderedMessageLine {
+                    line: Line::from(current_spans),
+                });
+                current_spans = Vec::new();
+                current_width = 0;
+            }
+            current_width += segment_width;
+            current_spans.push(Span::styled(segment, style));
+        }
+    }
+
+    if !current_spans.is_empty() {
+        lines.push(RenderedMessageLine {
+            line: Line::from(current_spans),
+        });
+    }
+}
+
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
+        if current_width + ch_width > width && !current.is_empty() {
+            lines.push(current);
+            current = String::new();
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn display_width(text: &str) -> usize {
+    text.chars()
+        .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
+        .sum()
 }
 
 fn body_style_for_message(msg: &Message, theme: ThemePalette) -> Style {

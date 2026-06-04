@@ -1,8 +1,8 @@
 use arboard::Clipboard;
 
 use super::{
-    input::layout_input_lines, render::render_message_lines, App, CachedInputLayout, Message,
-    MessageRole, RenderedMessageLine,
+    input::layout_input_lines, render::render_message_lines, App, CachedInputLayout,
+    CachedRenderedMessages, Message, MessageRole, RenderedMessageLine,
 };
 
 impl App {
@@ -78,7 +78,7 @@ impl App {
         }
     }
 
-    pub(super) fn fold_last_assistant_message(&mut self, action: super::FoldAction) {
+    pub(super) fn fold_last_thinking_details(&mut self, action: super::FoldAction) {
         let Some(index) = self
             .messages
             .iter()
@@ -88,7 +88,7 @@ impl App {
             return;
         };
 
-        let changed = self.apply_fold_action(index, action);
+        let changed = self.apply_thinking_fold_action(index, action);
         if changed {
             self.save_current_session();
             self.scroll_to_bottom();
@@ -117,8 +117,15 @@ impl App {
         let visible_height = self.message_viewport.height as usize;
         self.message_lines_cache
             .as_ref()
-            .map(|lines| lines.len())
-            .unwrap_or_else(|| render_message_lines(&self.messages, self.theme).len())
+            .map(|cache| cache.lines.len())
+            .unwrap_or_else(|| {
+                render_message_lines(
+                    &self.messages,
+                    self.theme,
+                    self.message_viewport.width.saturating_sub(1) as usize,
+                )
+                .len()
+            })
             .saturating_sub(visible_height.max(1))
     }
 
@@ -137,10 +144,24 @@ impl App {
     }
 
     pub(crate) fn rendered_message_lines(&mut self) -> &[RenderedMessageLine] {
-        if self.message_lines_cache.is_none() {
-            self.message_lines_cache = Some(render_message_lines(&self.messages, self.theme));
+        let width = self.message_viewport.width.saturating_sub(1).max(1) as usize;
+        let needs_refresh = self
+            .message_lines_cache
+            .as_ref()
+            .map(|cache| cache.width != width)
+            .unwrap_or(true);
+
+        if needs_refresh {
+            self.message_lines_cache = Some(CachedRenderedMessages {
+                width,
+                lines: render_message_lines(&self.messages, self.theme, width),
+            });
         }
-        self.message_lines_cache.as_deref().unwrap_or(&[])
+
+        self.message_lines_cache
+            .as_ref()
+            .map(|cache| cache.lines.as_slice())
+            .unwrap_or(&[])
     }
 
     pub(crate) fn visible_rendered_message_lines(

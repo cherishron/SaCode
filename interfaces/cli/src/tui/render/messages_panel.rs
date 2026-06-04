@@ -160,27 +160,26 @@ fn render_welcome_area(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         Line::from(vec![
             Span::styled("SaCode", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled(" - AI Coding Assistant", Style::default().fg(theme.muted)),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Tips for getting started", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+            Span::styled("开始一个任务", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("输入你的编程任务，我会帮你完成。", Style::default().fg(theme.text)),
+            Span::styled("直接输入任务，回车发送。", Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("按 Ctrl+Q 或 /quit 退出，执行中按 Esc 或 /cancel 取消当前任务。", Style::default().fg(theme.text)),
+            Span::styled("输入 / 打开命令列表。", Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("输入 / 可显示命令列表。", Style::default().fg(theme.text)),
+            Span::styled("Alt+M 切换模式，Ctrl+T 切换思考。", Style::default().fg(theme.text)),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Ready to code? Just start typing!", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC)),
+            Span::styled("开始输入即可。", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC)),
         ]),
     ];
 

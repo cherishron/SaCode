@@ -56,7 +56,7 @@ impl App {
             Ctrl+A - 优化当前输入\n\
             Ctrl+S - 折叠或展开全部思考详情\n\
             Ctrl+T - 开启或关闭思考功能\n\
-            Ctrl+M - 在 plan/build/yolo 间切换执行模式\n\
+            Alt+M - 在 plan/build/yolo 间切换执行模式\n\
             Ctrl+Z - 撤回上次输入优化\n\
             Esc    - 取消当前任务或取消选择\n\
             上下键  - 浏览已发送输入历史\n\

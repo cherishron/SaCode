@@ -10,14 +10,13 @@ use crate::provider_runtime::resolve_named_provider;
 use crate::task_store::TaskStore;
 
 use super::{
-    get_level1_commands, App, InputMode, InteractionSession, Message, MessageRole,
+    get_level1_commands, App, InputMode, InteractionSession,
     PerformanceStats, PromptTemplate, QueueState, ThemePalette, UsageStats,
 };
 
 impl App {
     pub(super) fn new() -> Self {
         let now = chrono::Local::now();
-        let timestamp = now.format("%Y-%m-%d %H:%M").to_string();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         let provider_store = ProviderConfigStore::new(&workdir);
         let sacode_store = SaCodeConfigStore::new(&workdir);
@@ -40,12 +39,7 @@ impl App {
 
         let mut app = Self {
             workdir,
-            messages: vec![Message {
-                role: MessageRole::System,
-                content: "SaCode - AI Coding Assistant\n\n输入你的编程任务，我会帮你完成。\n按 Ctrl+Q 或 /quit 退出，执行中按 Esc 或 /cancel 取消当前任务。\n输入 / 可显示命令列表。".to_string(),
-                timestamp: timestamp.clone(),
-                collapsed: false,
-            }],
+            messages: Vec::new(),
             message_lines_cache: None,
             input_layout_cache: None,
             session_summary: None,

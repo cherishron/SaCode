@@ -317,10 +317,10 @@ impl App {
             KeyCode::Char('j') if vim_mode && self.input_mode == InputMode::Chat => {
                 self.navigate_history_down();
             }
-            KeyCode::Up if self.input_mode == InputMode::Chat => {
+            KeyCode::Up if self.input_mode == InputMode::Chat && !self.input.is_empty() => {
                 self.navigate_history_up();
             }
-            KeyCode::Down if self.input_mode == InputMode::Chat => {
+            KeyCode::Down if self.input_mode == InputMode::Chat && !self.input.is_empty() => {
                 self.navigate_history_down();
             }
             KeyCode::PageUp => {
@@ -358,7 +358,7 @@ impl App {
                 if self.input_mode == InputMode::Chat
                     && key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                self.toggle_all_message_folds();
+                self.toggle_all_thinking_folds();
             }
             KeyCode::Char('t')
                 if self.input_mode == InputMode::Chat
@@ -368,7 +368,7 @@ impl App {
             }
             KeyCode::Char('m')
                 if self.input_mode == InputMode::Chat
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && key.modifiers.contains(KeyModifiers::ALT) =>
             {
                 self.cycle_execution_mode();
             }

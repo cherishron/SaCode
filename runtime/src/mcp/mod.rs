@@ -1,7 +1,7 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}, sync::Arc};
+use std::{collections::BTreeMap, fs, future::Future, path::{Path, PathBuf}, sync::Arc};
 
 use crate::config::SaCodeConfig;
 use crate::tools::{SideEffectLevel, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec};
@@ -301,6 +301,21 @@ pub async fn list_enabled_tool_specs(store: &McpConfigStore) -> Result<Vec<ToolS
     Ok(specs)
 }
 
+fn block_on_mcp_future<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
+        runtime.block_on(future)
+    }
+}
+
 pub fn register_enabled_tools_sync(store: &McpConfigStore, registry: &mut ToolRegistry) -> Result<Vec<String>> {
     let config = store.load()?;
     let mut names = Vec::new();
@@ -310,12 +325,7 @@ pub fn register_enabled_tools_sync(store: &McpConfigStore, registry: &mut ToolRe
             continue;
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
-
-        let tools = match runtime.block_on(list_tools(&server)) {
+        let tools = match block_on_mcp_future(list_tools(&server)) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -418,12 +428,7 @@ pub fn call_mcp_tool_sync(server: &McpServerConfig, tool_name: &str, arguments: 
         }
     });
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
-
-    runtime.block_on(async {
+    block_on_mcp_future(async {
         let response: serde_json::Value = client
             .post(&server.url)
             .header("content-type", "application/json")
@@ -454,12 +459,7 @@ pub fn find_enabled_search_tool_sync(store: &McpConfigStore) -> Result<Option<(S
             continue;
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
-
-        let tools = match runtime.block_on(list_tools(&server)) {
+        let tools = match block_on_mcp_future(list_tools(&server)) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -485,12 +485,7 @@ pub fn list_enabled_mcp_tool_specs_sync(store: &McpConfigStore) -> Result<Vec<To
             continue;
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
-
-        let tools = match runtime.block_on(list_tools(&server)) {
+        let tools = match block_on_mcp_future(list_tools(&server)) {
             Ok(value) => value,
             Err(_) => continue,
         };

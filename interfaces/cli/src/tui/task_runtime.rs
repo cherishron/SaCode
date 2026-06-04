@@ -286,7 +286,7 @@ impl App {
                     )
                 } else {
                     format!(
-                        "任务执行失败: 后台进程没有返回 JSON 输出，退出码: {}。stderr 已写入日志。",
+                        "任务执行失败: 后台进程没有返回结果，退出码: {}。stderr 已写入日志。",
                         exit_status
                             .code()
                             .map(|code| code.to_string())

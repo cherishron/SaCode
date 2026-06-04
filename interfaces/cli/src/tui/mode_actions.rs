@@ -71,6 +71,7 @@ impl App {
 
         self.execution_mode = mode;
         self.selected_mode_index = selected_index;
+        self.input_mode = InputMode::Chat;
 
         if persist {
             if let Err(error) = config::set_value(

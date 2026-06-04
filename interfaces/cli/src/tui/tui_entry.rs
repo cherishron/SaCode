@@ -83,15 +83,16 @@ impl Drop for TerminalFlowControlGuard {
 
 pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     let input_is_editable = is_editable_input_mode(app.input_mode);
+    let available_height = frame.area().height.saturating_sub(4);
+    let input_height_guess = available_height.clamp(3, 6);
 
-    // First pass to calculate input height
     let first_pass = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(1),  // header
+            Constraint::Length(2),  // header
             Constraint::Min(10),    // messages
-            Constraint::Length(3),  // input
+            Constraint::Length(input_height_guess),
             Constraint::Length(1),  // footer
         ])
         .split(frame.area());
@@ -102,13 +103,13 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     } else {
         1
     };
-    let input_height = (input_line_count as u16 + 2).clamp(3, 6);
+    let input_height = (input_line_count as u16 + 2).clamp(3, input_height_guess.max(3));
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(1),  // header
+            Constraint::Length(2),  // header
             Constraint::Min(10),    // messages
             Constraint::Length(input_height), // input
             Constraint::Length(1),  // footer
