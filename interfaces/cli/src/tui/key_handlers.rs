@@ -412,12 +412,15 @@ impl App {
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.input_mode == InputMode::CommandLevel1 {
                     self.input.push(c);
+                    self.input_scroll_follows_cursor = true;
                     self.filter_level1_commands();
                 } else if self.input_mode == InputMode::CommandLevel2 {
                     self.input.push(c);
+                    self.input_scroll_follows_cursor = true;
                     self.filter_sub_commands();
                 } else {
                     self.input.push(c);
+                    self.input_scroll_follows_cursor = true;
                 }
             }
             _ => return false,
@@ -444,6 +447,7 @@ impl App {
 
         if self.input_mode == InputMode::CommandLevel1 {
             self.input.pop();
+            self.input_scroll_follows_cursor = true;
             if self.input.is_empty() || !self.input.starts_with('/') {
                 self.input_mode = InputMode::Chat;
                 self.filtered_level1.clear();
@@ -453,6 +457,7 @@ impl App {
             }
         } else if self.input_mode == InputMode::CommandLevel2 {
             self.input.pop();
+            self.input_scroll_follows_cursor = true;
             if let Some(level1) = &self.current_level1 {
                 if self.input == level1.name || !self.input.starts_with(&level1.name) {
                     self.input_mode = InputMode::CommandLevel1;
@@ -465,6 +470,7 @@ impl App {
             }
         } else {
             self.input.pop();
+            self.input_scroll_follows_cursor = true;
         }
         true
     }

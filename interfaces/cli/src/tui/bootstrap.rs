@@ -45,6 +45,7 @@ impl App {
             session_summary: None,
             input: String::new(),
             input_scroll_offset: 0,
+            input_scroll_follows_cursor: true,
             should_quit: false,
             scroll_offset: 0,
             follow_bottom: true,

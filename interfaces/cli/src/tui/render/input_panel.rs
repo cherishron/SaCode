@@ -44,9 +44,15 @@ pub(crate) fn render_input_panel(
         .len()
         .saturating_sub(visible_input_height);
     if input_is_editable {
+        if app.input_scroll_follows_cursor {
+            app.input_scroll_offset = cached_input_layout
+                .cursor_line
+                .saturating_sub(visible_input_height.saturating_sub(1));
+        }
         app.input_scroll_offset = app.input_scroll_offset.min(max_scroll_offset);
     } else {
         app.input_scroll_offset = 0;
+        app.input_scroll_follows_cursor = true;
     }
     let editable_window_start = if input_is_editable {
         app.input_scroll_offset

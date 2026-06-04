@@ -136,6 +136,7 @@ struct App {
     session_summary: Option<String>,
     input: String,
     input_scroll_offset: usize,
+    input_scroll_follows_cursor: bool,
     should_quit: bool,
     scroll_offset: usize,
     follow_bottom: bool,

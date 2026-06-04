@@ -37,6 +37,7 @@ impl App {
         if let Some(index) = self.history_index {
             self.input = self.sent_history.get(index).cloned().unwrap_or_default();
             self.input_scroll_offset = 0;
+            self.input_scroll_follows_cursor = true;
         }
     }
 
@@ -52,19 +53,23 @@ impl App {
                 .cloned()
                 .unwrap_or_default();
             self.input_scroll_offset = 0;
+            self.input_scroll_follows_cursor = true;
         } else {
             self.history_index = None;
             self.input = self.current_history_draft.clone();
             self.current_history_draft.clear();
             self.input_scroll_offset = 0;
+            self.input_scroll_follows_cursor = true;
         }
     }
 
     pub(super) fn scroll_input_up(&mut self) {
+        self.input_scroll_follows_cursor = false;
         self.input_scroll_offset = self.input_scroll_offset.saturating_sub(1);
     }
 
     pub(super) fn scroll_input_down(&mut self) {
+        self.input_scroll_follows_cursor = false;
         let visible_height = self.input_viewport.height.max(1) as usize;
         let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
         let max_scroll = self

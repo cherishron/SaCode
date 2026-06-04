@@ -71,6 +71,7 @@ impl App {
             return;
         }
         self.input.push_str(&content);
+        self.input_scroll_follows_cursor = true;
         if self.input_mode == InputMode::CommandLevel1 {
             self.filter_level1_commands();
         }
