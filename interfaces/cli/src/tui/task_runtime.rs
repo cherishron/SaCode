@@ -1,6 +1,8 @@
 use std::{
     env,
+    io::BufRead,
     io::Read,
+    io::BufReader,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -29,7 +31,7 @@ use crate::cmd::config;
 
 use super::{App, AsyncResult, Message, MessageRole};
 use super::state::{LoopState, QueuedMessage};
-use crate::cmd::ApprovalPolicy;
+use crate::cmd::{ApprovalPolicy, JSON_STREAM_PREFIX};
 
 const BACKGROUND_TASK_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -98,6 +100,12 @@ impl App {
             timestamp,
             collapsed: false,
         });
+        self.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
+        });
         self.log_event("user_message", queued.content.trim());
         let loop_badge = queued
             .loop_state
@@ -150,7 +158,7 @@ impl App {
         let child = Arc::new(Mutex::new(child));
         self.queue.active_child = Some(child.clone());
         thread::spawn(move || {
-            let result = App::execute_user_message_in_background(child, &user_input);
+            let result = App::execute_user_message_in_background(child, sender.clone(), task_id, &user_input);
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
@@ -212,7 +220,7 @@ impl App {
             .arg(approval_arg)
             .arg("--max-iterations")
             .arg(max_iterations)
-            .arg("--json")
+            .arg("--json-stream")
             .current_dir(workdir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -222,6 +230,8 @@ impl App {
 
     pub(super) fn execute_user_message_in_background(
         child: Arc<Mutex<Child>>,
+        sender: std::sync::mpsc::Sender<AsyncResult>,
+        task_id: u64,
         _source_task: &str,
     ) -> BackgroundTaskOutput {
         let started_at = Instant::now();
@@ -244,13 +254,36 @@ impl App {
             (child.stdout.take(), child.stderr.take())
         };
 
-        let Some(mut stdout) = stdout else {
+        let Some(stdout) = stdout else {
             return BackgroundTaskOutput { response: "任务执行失败: 未获取到后台输出".to_string(), ..Default::default() };
         };
 
         let mut output = String::new();
-        if stdout.read_to_string(&mut output).is_err() {
-            return BackgroundTaskOutput { response: "任务执行失败: 读取后台输出失败".to_string(), ..Default::default() };
+        let mut stdout = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match stdout.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    output.push_str(&line);
+                    if let Some(payload) = line.trim_end().strip_prefix(JSON_STREAM_PREFIX) {
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                            if value.get("type").and_then(|item| item.as_str()) == Some("chunk") {
+                                if let Some(content) = value.get("content").and_then(|item| item.as_str()) {
+                                    let _ = sender.send(AsyncResult::ChatStreamChunk {
+                                        task_id,
+                                        content: content.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    return BackgroundTaskOutput { response: "任务执行失败: 读取后台输出失败".to_string(), ..Default::default() };
+                }
+            }
         }
 
         let mut stderr_output = String::new();
@@ -302,7 +335,8 @@ impl App {
             }
         };
 
-        let trimmed_output = output.trim();
+        let (_, json_output) = Self::split_stream_frames(output);
+        let trimmed_output = json_output.trim();
         if trimmed_output.is_empty() {
             let stderr_preview = stderr_output.trim();
             if !stderr_preview.is_empty() {
@@ -437,6 +471,23 @@ impl App {
         }
     }
 
+    fn split_stream_frames(output: &str) -> (Vec<serde_json::Value>, String) {
+        let mut frames = Vec::new();
+        let mut remainder = Vec::new();
+
+        for line in output.lines() {
+            if let Some(payload) = line.strip_prefix(JSON_STREAM_PREFIX) {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                    frames.push(value);
+                }
+            } else {
+                remainder.push(line);
+            }
+        }
+
+        (frames, remainder.join("\n"))
+    }
+
     fn extract_task_run_state(parsed: &serde_json::Value) -> Option<TaskRunState> {
         parsed
             .get("task_run")
@@ -506,6 +557,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::App;
+    use crate::cmd::JSON_STREAM_PREFIX;
     use crate::cmd::ApprovalPolicy;
     use sacode_kernel::TaskRunState;
     use std::process::Command;
@@ -595,6 +647,36 @@ mod tests {
 
         assert!(result.response.contains("agents 已完成汇总"));
         assert!(result.response.contains("输出最终结果"));
+    }
+
+    #[test]
+    fn split_stream_frames_keeps_final_json_payload() {
+        let output = concat!(
+            "__SACODE_STREAM__{\"type\":\"chunk\",\"content\":\"hello\"}\n",
+            "{\"provider_response\":\"final answer\",\"state\":\"Completed\"}\n"
+        );
+
+        let (frames, json_output) = App::split_stream_frames(output);
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].get("type").and_then(|value| value.as_str()), Some("chunk"));
+        assert!(json_output.contains("final answer"));
+        assert!(!json_output.contains(JSON_STREAM_PREFIX));
+    }
+
+    #[test]
+    fn parse_background_task_output_ignores_stream_prefix_lines() {
+        let payload = concat!(
+            "__SACODE_STREAM__{\"type\":\"chunk\",\"content\":\"hello\"}\n",
+            "{\"provider_response\":\"final answer\",\"state\":\"Completed\"}\n"
+        );
+        let exit_status = Command::new("true")
+            .status()
+            .expect("true exit status");
+
+        let result = App::parse_background_task_output(payload, "", Some(exit_status));
+
+        assert_eq!(result.response, "final answer");
     }
 
     #[test]

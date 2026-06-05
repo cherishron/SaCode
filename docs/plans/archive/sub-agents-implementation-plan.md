@@ -1,6 +1,6 @@
 # SaCode Sub-agents 实施方案
 
-> 来源：`docs/plan/final-roadmap.md`
+> 来源：`docs/plans/archive/final-roadmap.md`
 > 优先级：P1
 > 前置依赖：runtime 统一化基础完成或至少建立统一 TaskRunner 真源
 

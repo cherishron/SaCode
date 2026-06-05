@@ -26,6 +26,7 @@ use crate::{
     skills::SkillRegistry,
     tools::{ToolOutput, ToolSpec},
     McpConfigStore, McpServerConfig, McpSource, MemoryScope, PromptContext, SideEffectLevel,
+    StoreDb,
     ToolRegistry,
 };
 use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};

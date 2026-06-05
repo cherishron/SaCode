@@ -9,7 +9,7 @@ use crate::{
     cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status, update, vim, wiki, ApprovalPolicy},
     cmd::init::{initialize_project, InitMode},
     provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
-    runner::{format_learned_facts_summary, format_output, run_task},
+    runner::{format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream},
     version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
 };
 
@@ -158,14 +158,26 @@ impl ReplSession {
             })
             .unwrap_or(ApprovalPolicy::Prompt);
         let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(1);
-        let output = run_task(&effective_prompt, self.mode, approval, max_iterations).await?;
+        println!();
+        io::stdout().flush()?;
+        let output = run_task_with_stdin_and_stream(
+            &effective_prompt,
+            self.mode,
+            approval,
+            max_iterations,
+            None,
+            Some(|chunk: &str| {
+                print!("{}", chunk);
+                let _ = io::stdout().flush();
+            }),
+        ).await?;
         self.push_recent_message("user", &effective_input);
         if let Ok(response) = &output.provider_response {
             self.push_recent_message("assistant", response);
         }
         self.pending_question = output.pending_question.clone();
         println!();
-        println!("{}", format_output(&output));
+        println!("{}", format_stream_tail(&output));
         if let Some(summary) = format_learned_facts_summary(&output.learned_facts) {
             println!("{}", summary);
         }

@@ -1,6 +1,6 @@
 # SaCode 发布流程
 
-本文档说明 SaCode 的版本发布链路、发布前检查项和平台产物约束。若你是第一次接触本仓库，建议先阅读 `docs/development.md`。
+本文档说明 SaCode 的版本发布链路、发布前检查项和平台产物约束。若你是第一次接触本仓库，建议先阅读 `docs/reference/development.md`。
 
 ## 发布方式
 

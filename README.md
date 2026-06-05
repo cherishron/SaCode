@@ -209,16 +209,16 @@ SaCode 会在项目根目录维护运行数据：
 ## 文档导航
 
 - `docs/README.md`：文档总览
-- `docs/getting-started.md`：快速上手与常见操作
-- `docs/tutorials.md`：按真实任务组织的场景教程
-- `docs/examples.md`：可直接复制的提示词与命令示例
-- `docs/command-reference.md`：CLI / TUI 命令速查
-- `docs/architecture.md`：架构与模块分层
-- `docs/API.md`：CLI / TUI / 配置 / 工具接口说明
-- `docs/development.md`：本地开发、测试、调试与贡献
+- `docs/guides/getting-started.md`：快速上手与常见操作
+- `docs/guides/tutorials.md`：按真实任务组织的场景教程
+- `docs/guides/examples.md`：可直接复制的提示词与命令示例
+- `docs/reference/command-reference.md`：CLI / TUI 命令速查
+- `docs/reference/architecture.md`：架构与模块分层
+- `docs/reference/API.md`：CLI / TUI / 配置 / 工具接口说明
+- `docs/reference/development.md`：本地开发、测试、调试与贡献
 - `docs/release/RELEASE.md`：发布流程
 - `docs/build/CROSS_COMPILE.md`：交叉编译说明
-- `docs/PRD.md`：产品需求文档
+- `docs/product/PRD.md`：产品需求文档
 
 ## 开发命令
 

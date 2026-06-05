@@ -15,7 +15,7 @@ use events::{spawn_executor_event_forwarder, stream_events, stream_task_events};
 use handlers::{cancel_task, create_task, get_pending_tasks, get_queue_status, get_task_result, get_task_status, health_check, list_tools, retry_task};
 
 pub async fn create_daemon() -> Router {
-    let state = Arc::new(DaemonState::new());
+    let state = Arc::new(DaemonState::new().await);
     spawn_executor_event_forwarder(state.clone());
 
     Router::new()

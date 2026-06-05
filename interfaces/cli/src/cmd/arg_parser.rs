@@ -70,6 +70,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
     let mut mode = ExecutionMode::Build;
     let mut max_iterations = 1;
     let mut json = false;
+    let mut json_stream = false;
     let mut approval = ApprovalPolicy::Prompt;
 
     let mut iter = args.into_iter();
@@ -78,6 +79,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             "-h" | "--help" => command = CliCommand::Help,
             "-V" | "--version" => command = CliCommand::Version,
             "--json" => json = true,
+            "--json-stream" => json_stream = true,
             "--prompt" => approval = ApprovalPolicy::Prompt,
             "--approve" => approval = ApprovalPolicy::AutoApprove,
             "--deny" => approval = ApprovalPolicy::AutoDeny,
@@ -110,6 +112,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
         mode,
         max_iterations,
         json,
+        json_stream,
         approval,
         sub_args: Vec::new(),
     }
@@ -122,6 +125,7 @@ fn default_options(command: CliCommand) -> CliOptions {
         mode: ExecutionMode::Build,
         max_iterations: 1,
         json: false,
+        json_stream: false,
         approval: ApprovalPolicy::Prompt,
         sub_args: Vec::new(),
     }

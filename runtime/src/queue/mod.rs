@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sacode_kernel::{QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
+use tracing::warn;
 
 pub struct TaskQueue {
     pending: RwLock<BTreeMap<TaskPriority, VecDeque<ScheduledTask>>>,
@@ -46,19 +47,29 @@ impl TaskQueue {
     pub async fn submit(&self, task: ScheduledTask) -> anyhow::Result<String> {
         let task_id = task.id.clone();
 
-        if self.store.is_some() {
-            self.store.as_ref().unwrap().save(&task).await?;
+        if let Some(store) = self.store.as_ref() {
+            store.save(&task).await?;
         }
 
         if task.dependencies.is_empty() {
             let mut ready = self.ready.write().await;
             ready.push_back(task);
+            if let Some(store) = self.store.as_ref() {
+                store
+                    .update_status(&task_id, TaskQueueStatus::Ready)
+                    .await?;
+            }
         } else {
             let mut pending = self.pending.write().await;
             pending
                 .entry(task.priority)
                 .or_insert_with(VecDeque::new)
                 .push_back(task);
+            if let Some(store) = self.store.as_ref() {
+                store
+                    .update_status(&task_id, TaskQueueStatus::Pending)
+                    .await?;
+            }
         }
 
         Ok(task_id)
@@ -111,8 +122,10 @@ impl TaskQueue {
     pub async fn mark_running(&self, task_id: &str) {
         let mut running = self.running.write().await;
         if let Some(_task) = running.get_mut(task_id) {
-            if self.store.is_some() {
-                let _ = self.store.as_ref().unwrap().update_status(task_id, TaskQueueStatus::Running).await;
+            if let Some(store) = self.store.as_ref() {
+                if let Err(error) = store.update_status(task_id, TaskQueueStatus::Running).await {
+                    warn!(task_id, ?error, "failed to persist running task status");
+                }
             }
         }
     }
@@ -129,8 +142,10 @@ impl TaskQueue {
         let mut completed_runs = self.completed_runs.write().await;
         completed_runs.insert(task_id.to_string(), task_run);
 
-        if self.store.is_some() {
-            let _ = self.store.as_ref().unwrap().save_result(&result).await;
+        if let Some(store) = self.store.as_ref() {
+            if let Err(error) = store.save_result(&result).await {
+                warn!(task_id, ?error, "failed to persist completed task result");
+            }
         }
     }
 
@@ -142,6 +157,11 @@ impl TaskQueue {
             if task.can_retry() && self.should_retry(&task, &result) {
                 let mut retrying = self.retrying.write().await;
                 retrying.insert(task_id.to_string(), task);
+                if let Some(store) = self.store.as_ref() {
+                    if let Err(error) = store.update_status(task_id, TaskQueueStatus::Retrying).await {
+                        warn!(task_id, ?error, "failed to persist retrying task status");
+                    }
+                }
             } else {
                 let mut failed = self.failed.write().await;
                 failed.insert(task_id.to_string(), result.clone());
@@ -149,8 +169,10 @@ impl TaskQueue {
                 let mut failed_runs = self.failed_runs.write().await;
                 failed_runs.insert(task_id.to_string(), task_run);
 
-                if self.store.is_some() {
-                    let _ = self.store.as_ref().unwrap().save_result(&result).await;
+                if let Some(store) = self.store.as_ref() {
+                    if let Err(error) = store.save_result(&result).await {
+                        warn!(task_id, ?error, "failed to persist failed task result");
+                    }
                 }
             }
         }
@@ -160,12 +182,28 @@ impl TaskQueue {
         let mut retrying = self.retrying.write().await;
         if let Some(mut task) = retrying.remove(task_id) {
             task.increment_attempt();
+            let status = if task.dependencies.is_empty() {
+                TaskQueueStatus::Ready
+            } else {
+                TaskQueueStatus::Pending
+            };
 
-            let mut pending = self.pending.write().await;
-            pending
-                .entry(task.priority)
-                .or_insert_with(VecDeque::new)
-                .push_back(task);
+            if status == TaskQueueStatus::Ready {
+                let mut ready = self.ready.write().await;
+                ready.push_back(task);
+            } else {
+                let mut pending = self.pending.write().await;
+                pending
+                    .entry(task.priority)
+                    .or_insert_with(VecDeque::new)
+                    .push_back(task);
+            }
+
+            if let Some(store) = self.store.as_ref() {
+                if let Err(error) = store.update_status(task_id, status).await {
+                    warn!(task_id, ?error, "failed to persist retried task status");
+                }
+            }
         }
     }
 
@@ -177,8 +215,10 @@ impl TaskQueue {
             let mut cancelled = self.cancelled.write().await;
             cancelled.insert(task_id.to_string(), task);
 
-            if self.store.is_some() {
-                let _ = self.store.as_ref().unwrap().update_status(task_id, TaskQueueStatus::Cancelled).await;
+            if let Some(store) = self.store.as_ref() {
+                if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
+                    warn!(task_id, ?error, "failed to persist cancelled running task status");
+                }
             }
             return true;
         }
@@ -190,8 +230,10 @@ impl TaskQueue {
                 let mut cancelled = self.cancelled.write().await;
                 cancelled.insert(task_id.to_string(), task);
 
-                if self.store.is_some() {
-                    let _ = self.store.as_ref().unwrap().update_status(task_id, TaskQueueStatus::Cancelled).await;
+                if let Some(store) = self.store.as_ref() {
+                    if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
+                        warn!(task_id, ?error, "failed to persist cancelled ready task status");
+                    }
                 }
                 return true;
             }
@@ -204,8 +246,10 @@ impl TaskQueue {
                     let mut cancelled = self.cancelled.write().await;
                     cancelled.insert(task_id.to_string(), task);
 
-                    if self.store.is_some() {
-                        let _ = self.store.as_ref().unwrap().update_status(task_id, TaskQueueStatus::Cancelled).await;
+                    if let Some(store) = self.store.as_ref() {
+                        if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
+                            warn!(task_id, ?error, "failed to persist cancelled pending task status");
+                        }
                     }
                     return true;
                 }
@@ -347,6 +391,60 @@ impl TaskQueue {
         self.ready.read().await.len()
     }
 
+    pub async fn restore_pending_tasks(&self) -> anyhow::Result<usize> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(0);
+        };
+
+        let tasks = store.load_pending().await?;
+        let mut restored = 0usize;
+
+        for task in tasks {
+            let task_id = task.id.clone();
+            let status = if task.dependencies.is_empty() {
+                TaskQueueStatus::Ready
+            } else {
+                TaskQueueStatus::Pending
+            };
+
+            if status == TaskQueueStatus::Ready {
+                let mut ready = self.ready.write().await;
+                if ready.iter().any(|existing| existing.id == task_id) {
+                    continue;
+                }
+                ready.push_back(task);
+            } else {
+                let mut pending = self.pending.write().await;
+                let queue = pending.entry(task.priority).or_insert_with(VecDeque::new);
+                if queue.iter().any(|existing| existing.id == task_id) {
+                    continue;
+                }
+                queue.push_back(task);
+            }
+
+            store.update_status(&task_id, status).await?;
+            restored += 1;
+        }
+
+        Ok(restored)
+    }
+
+    pub async fn get_restorable_tasks(&self) -> Vec<ScheduledTask> {
+        let mut tasks = Vec::new();
+
+        {
+            let ready = self.ready.read().await;
+            tasks.extend(ready.iter().cloned());
+        }
+
+        let pending = self.pending.read().await;
+        for queue in pending.values() {
+            tasks.extend(queue.iter().cloned());
+        }
+
+        tasks
+    }
+
     pub async fn get_retry_tasks(&self) -> Vec<ScheduledTask> {
         let retrying = self.retrying.read().await;
         retrying.values().cloned().collect()
@@ -388,6 +486,7 @@ pub trait TaskStore: Send + Sync {
 pub struct InMemoryStore {
     tasks: Mutex<HashMap<String, ScheduledTask>>,
     results: Mutex<HashMap<String, TaskResult>>,
+    statuses: Mutex<HashMap<String, TaskQueueStatus>>,
 }
 
 impl InMemoryStore {
@@ -395,6 +494,7 @@ impl InMemoryStore {
         Self {
             tasks: Mutex::new(HashMap::new()),
             results: Mutex::new(HashMap::new()),
+            statuses: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -410,23 +510,39 @@ impl TaskStore for InMemoryStore {
     async fn save(&self, task: &ScheduledTask) -> anyhow::Result<()> {
         let mut tasks = self.tasks.lock().await;
         tasks.insert(task.id.clone(), task.clone());
+        drop(tasks);
+
+        let mut statuses = self.statuses.lock().await;
+        statuses.insert(
+            task.id.clone(),
+            if task.dependencies.is_empty() {
+                TaskQueueStatus::Ready
+            } else {
+                TaskQueueStatus::Pending
+            },
+        );
         Ok(())
     }
 
-    async fn update_status(&self, task_id: &str, _status: TaskQueueStatus) -> anyhow::Result<()> {
-        let mut tasks = self.tasks.lock().await;
-        if let Some(_task) = tasks.get_mut(task_id) {
-            if let Some(stored_task) = tasks.get(task_id) {
-                let updated = stored_task.clone();
-                tasks.insert(task_id.to_string(), updated);
-            }
+    async fn update_status(&self, task_id: &str, status: TaskQueueStatus) -> anyhow::Result<()> {
+        let tasks = self.tasks.lock().await;
+        if !tasks.contains_key(task_id) {
+            return Ok(());
         }
+        drop(tasks);
+
+        let mut statuses = self.statuses.lock().await;
+        statuses.insert(task_id.to_string(), status);
         Ok(())
     }
 
     async fn save_result(&self, result: &TaskResult) -> anyhow::Result<()> {
         let mut results = self.results.lock().await;
         results.insert(result.task_id.clone(), result.clone());
+        drop(results);
+
+        let mut statuses = self.statuses.lock().await;
+        statuses.insert(result.task_id.clone(), result.status);
         Ok(())
     }
 
@@ -437,6 +553,21 @@ impl TaskStore for InMemoryStore {
 
     async fn load_pending(&self) -> anyhow::Result<Vec<ScheduledTask>> {
         let tasks = self.tasks.lock().await;
-        Ok(tasks.values().cloned().collect())
+        let statuses = self.statuses.lock().await;
+        Ok(tasks
+            .values()
+            .filter(|task| {
+                matches!(
+                    statuses.get(&task.id),
+                    Some(
+                        TaskQueueStatus::Pending
+                            | TaskQueueStatus::Ready
+                            | TaskQueueStatus::Running
+                            | TaskQueueStatus::Retrying
+                    )
+                )
+            })
+            .cloned()
+            .collect())
     }
 }

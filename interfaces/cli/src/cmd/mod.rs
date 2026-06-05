@@ -48,6 +48,8 @@ use runtime_entry::run_task;
 use tracing_setup::init_tracing;
 use crate::tui;
 
+pub(crate) const JSON_STREAM_PREFIX: &str = "__SACODE_STREAM__";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliCommand {
     Run,
@@ -90,6 +92,7 @@ pub struct CliOptions {
     pub mode: ExecutionMode,
     pub max_iterations: usize,
     pub json: bool,
+    pub json_stream: bool,
     pub approval: ApprovalPolicy,
     pub sub_args: Vec<String>,
 }
@@ -172,6 +175,7 @@ mod tests {
         assert_eq!(options.mode, ExecutionMode::Plan);
         assert_eq!(options.max_iterations, 1);
         assert!(options.json);
+        assert!(!options.json_stream);
         assert_eq!(options.approval, super::ApprovalPolicy::Prompt);
     }
 

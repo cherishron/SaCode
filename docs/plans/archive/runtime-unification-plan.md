@@ -1,6 +1,6 @@
 # SaCode Runtime 统一化实施方案
 
-> 来源：`docs/plan/final-roadmap.md`
+> 来源：`docs/plans/archive/final-roadmap.md`
 > 优先级：P0
 > 目标：把当前 CLI、orchestrator、daemon、queue 等分散执行路径收敛成同一套运行时内核、状态机和结构化结果真源。
 

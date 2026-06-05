@@ -139,6 +139,13 @@ impl App {
         self.invalidate_message_lines_cache();
     }
 
+    pub(super) fn update_last_message_content(&mut self, content: String) {
+        if let Some(message) = self.messages.last_mut() {
+            message.content = content;
+            self.invalidate_message_lines_cache();
+        }
+    }
+
     pub(super) fn replace_messages(&mut self, messages: Vec<Message>) {
         self.messages = messages;
         self.invalidate_message_lines_cache();

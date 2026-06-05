@@ -1,6 +1,7 @@
 use anyhow::Result;
 use reqwest::Client;
 use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig, ToolDefinition};
+use std::collections::BTreeMap;
 
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
@@ -80,6 +81,30 @@ impl ProviderClient {
             .ok_or_else(|| anyhow::anyhow!("No response from provider"))
     }
 
+    pub async fn simple_chat_streaming_with_usage<F>(
+        &self,
+        provider: &ModelProvider,
+        prompt: &str,
+        mut on_chunk: F,
+    ) -> Result<(String, Option<ChatUsage>)>
+    where
+        F: FnMut(&StreamChunk),
+    {
+        let mut chunks = Vec::new();
+        let usage = self
+            .stream_chat_with_callback(provider, prompt, |chunk| {
+                on_chunk(chunk);
+                chunks.push(chunk.clone());
+            })
+            .await?;
+        let text = chunks
+            .into_iter()
+            .filter(|chunk| !chunk.done)
+            .map(|chunk| chunk.content)
+            .collect::<String>();
+        Ok((text, usage))
+    }
+
     pub async fn simple_chat_messages_with_usage(&self, provider: &ModelProvider, messages: Vec<ChatMessage>) -> Result<(String, Option<ChatUsage>)> {
         let request = build_request(provider, messages, None, false);
         let response = self.chat(provider, request).await?;
@@ -103,6 +128,24 @@ impl ProviderClient {
     where
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
     {
+        let mut noop = |_chunk: &StreamChunk| {};
+        self.tool_chat_streaming(provider, system_prompt, user_prompt, tools, tool_executor, &mut noop)
+            .await
+    }
+
+    pub async fn tool_chat_streaming<F, G>(
+        &self,
+        provider: &ModelProvider,
+        system_prompt: &str,
+        user_prompt: &str,
+        tools: Vec<ToolDefinition>,
+        tool_executor: F,
+        on_chunk: &mut G,
+    ) -> Result<ToolChatResult>
+    where
+        F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
+        G: FnMut(&StreamChunk),
+    {
         let mut messages = vec![
             ChatMessage::system(system_prompt),
             ChatMessage::user(user_prompt),
@@ -118,20 +161,15 @@ impl ProviderClient {
         let mut has_usage = false;
         for _ in 0..MAX_TOOL_ROUNDS {
             rounds += 1;
-            let request = build_request(provider, messages.clone(), Some(tools.clone()), false);
-
-            let response = self.chat(provider, request).await?;
-            if let Some(round_usage) = response.usage.clone() {
+            let (assistant_msg, round_usage) = self
+                .stream_round_with_callback(provider, messages.clone(), Some(tools.clone()), on_chunk)
+                .await?;
+            if let Some(round_usage) = round_usage {
                 usage.prompt_tokens += round_usage.prompt_tokens;
                 usage.completion_tokens += round_usage.completion_tokens;
                 usage.total_tokens += round_usage.total_tokens;
                 has_usage = true;
             }
-
-            let assistant_msg = response.choices
-                .first()
-                .map(|c| c.message.clone())
-                .ok_or_else(|| anyhow::anyhow!("No response from provider in round {}", rounds))?;
 
             if !assistant_msg.has_tool_calls() {
                 let final_text = assistant_msg.text().unwrap_or_default().to_string();
@@ -225,6 +263,21 @@ impl ProviderClient {
     }
 
     pub async fn stream_chat(&self, provider: &ModelProvider, prompt: &str) -> Result<Vec<StreamChunk>> {
+        let mut chunks = Vec::new();
+        self.stream_chat_with_callback(provider, prompt, |chunk| chunks.push(chunk.clone()))
+            .await?;
+        Ok(chunks)
+    }
+
+    pub async fn stream_chat_with_callback<F>(
+        &self,
+        provider: &ModelProvider,
+        prompt: &str,
+        mut on_chunk: F,
+    ) -> Result<Option<ChatUsage>>
+    where
+        F: FnMut(&StreamChunk),
+    {
         let base_url = provider.base_url.clone().unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
@@ -239,7 +292,7 @@ impl ProviderClient {
             builder = builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let response = builder.send().await?;
+        let mut response = builder.send().await?;
         let status = response.status();
 
         if !status.is_success() {
@@ -247,36 +300,322 @@ impl ProviderClient {
             anyhow::bail!("Provider error ({}): {}", status, text);
         }
 
-        let body = response.text().await?;
-        let mut chunks = Vec::new();
+        let mut usage = None;
+        let mut pending = Vec::new();
 
-        for line in body.lines() {
-            if line.starts_with("data: ") {
-                let data = &line[6..];
-                if data == "[DONE]" {
-                    chunks.push(StreamChunk { content: String::new(), done: true });
-                    break;
-                }
+        while let Some(bytes) = response.chunk().await? {
+            pending.extend_from_slice(&bytes);
 
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-                        if let Some(choice) = choices.first() {
-                            if let Some(delta) = choice.get("delta") {
-                                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                    chunks.push(StreamChunk { content: content.to_string(), done: false });
-                                }
-                                if let Some(reasoning) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
-                                    chunks.push(StreamChunk { content: format!("[思考] {}", reasoning), done: false });
-                                }
-                            }
+            while let Some(frame_end) = find_sse_frame_end(&pending) {
+                let frame = String::from_utf8(pending[..frame_end].to_vec())?;
+                pending.drain(..frame_end + 2);
+                usage = handle_sse_frame(&frame, &mut on_chunk, usage)?;
+            }
+        }
+
+        if !pending.is_empty() && pending.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            let frame = String::from_utf8(pending)?;
+            usage = handle_sse_frame(&frame, &mut on_chunk, usage)?;
+        }
+
+        Ok(usage)
+    }
+
+    async fn stream_round_with_callback<F>(
+        &self,
+        provider: &ModelProvider,
+        messages: Vec<ChatMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+        on_chunk: &mut F,
+    ) -> Result<(ChatMessage, Option<ChatUsage>)>
+    where
+        F: FnMut(&StreamChunk),
+    {
+        let base_url = provider.base_url.clone().unwrap_or_else(|| default_base_url(&provider.kind));
+        let url = format!("{}/chat/completions", base_url);
+
+        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
+        let request = build_request(provider, messages, tools, true);
+
+        let mut builder = self.http.post(&url).json(&request);
+        if let Some(key) = api_key {
+            builder = builder.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let mut response = builder.send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let text = response.text().await?;
+            anyhow::bail!("Provider error ({}): {}", status, text);
+        }
+
+        let mut state = StreamRoundState::default();
+        let mut pending = Vec::new();
+
+        while let Some(bytes) = response.chunk().await? {
+            pending.extend_from_slice(&bytes);
+
+            while let Some(frame_end) = find_sse_frame_end(&pending) {
+                let frame = String::from_utf8(pending[..frame_end].to_vec())?;
+                pending.drain(..frame_end + 2);
+                handle_stream_round_frame(&frame, &mut state, on_chunk)?;
+            }
+        }
+
+        if !pending.is_empty() && pending.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            let frame = String::from_utf8(pending)?;
+            handle_stream_round_frame(&frame, &mut state, on_chunk)?;
+        }
+
+        let usage = state.usage.clone();
+        Ok((state.into_chat_message(), usage))
+    }
+}
+
+#[derive(Debug, Default)]
+struct StreamRoundState {
+    content: String,
+    reasoning_content: String,
+    tool_calls: BTreeMap<usize, PartialToolCall>,
+    usage: Option<ChatUsage>,
+}
+
+#[derive(Debug, Default)]
+struct PartialToolCall {
+    id: String,
+    call_type: String,
+    function_name: String,
+    arguments: String,
+}
+
+impl StreamRoundState {
+    fn into_chat_message(self) -> ChatMessage {
+        let content = (!self.content.is_empty()).then_some(self.content);
+        let reasoning_content = (!self.reasoning_content.is_empty()).then_some(self.reasoning_content);
+        let tool_calls = (!self.tool_calls.is_empty()).then(|| {
+            self.tool_calls
+                .into_iter()
+                .map(|(_, call)| sacode_kernel::model::ToolCall {
+                    id: call.id,
+                    call_type: if call.call_type.is_empty() { "function".to_string() } else { call.call_type },
+                    function: sacode_kernel::model::FunctionCall {
+                        name: call.function_name,
+                        arguments: call.arguments,
+                    },
+                })
+                .collect::<Vec<_>>()
+        });
+        ChatMessage::assistant_with_reasoning(content, reasoning_content, tool_calls)
+    }
+}
+
+fn find_sse_frame_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(2).position(|window| window == b"\n\n")
+}
+
+fn handle_stream_round_frame<F>(
+    frame: &str,
+    state: &mut StreamRoundState,
+    on_chunk: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&StreamChunk),
+{
+    for line in frame.lines() {
+        if !line.starts_with("data: ") {
+            continue;
+        }
+
+        let data = &line[6..];
+        if data == "[DONE]" {
+            on_chunk(&StreamChunk {
+                content: String::new(),
+                done: true,
+            });
+            continue;
+        }
+
+        let json = match serde_json::from_str::<serde_json::Value>(data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        if let Some(stream_usage) = json.get("usage") {
+            state.usage = serde_json::from_value(stream_usage.clone()).ok().or(state.usage.clone());
+        }
+
+        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(choice) = choices.first() {
+                if let Some(delta) = choice.get("delta") {
+                    append_stream_value(delta.get("content"), &mut state.content, false, on_chunk);
+                    append_stream_value(delta.get("reasoning_content"), &mut state.reasoning_content, true, on_chunk);
+
+                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
+                        for tool_call in tool_calls {
+                            append_tool_call_delta(tool_call, &mut state.tool_calls);
                         }
                     }
                 }
             }
         }
-
-        Ok(chunks)
     }
+
+    Ok(())
+}
+
+fn append_tool_call_delta(value: &serde_json::Value, tool_calls: &mut BTreeMap<usize, PartialToolCall>) {
+    let index = value
+        .get("index")
+        .and_then(|item| item.as_u64())
+        .and_then(|item| usize::try_from(item).ok())
+        .unwrap_or(tool_calls.len());
+    let entry = tool_calls.entry(index).or_default();
+
+    if let Some(id) = value.get("id").and_then(|item| item.as_str()) {
+        entry.id = id.to_string();
+    }
+    if let Some(call_type) = value.get("type").and_then(|item| item.as_str()) {
+        entry.call_type = call_type.to_string();
+    }
+    if let Some(function) = value.get("function") {
+        if let Some(name) = function.get("name").and_then(|item| item.as_str()) {
+            entry.function_name = name.to_string();
+        }
+        if let Some(arguments) = function.get("arguments").and_then(|item| item.as_str()) {
+            entry.arguments.push_str(arguments);
+        }
+    }
+}
+
+fn append_stream_value<F>(
+    value: Option<&serde_json::Value>,
+    target: &mut String,
+    prefix_reasoning: bool,
+    on_chunk: &mut F,
+) where
+    F: FnMut(&StreamChunk),
+{
+    let Some(value) = value else {
+        return;
+    };
+
+    match value {
+        serde_json::Value::String(text) => append_stream_text(text, target, prefix_reasoning, on_chunk),
+        serde_json::Value::Array(parts) => {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(|item| item.as_str()) {
+                    append_stream_text(text, target, prefix_reasoning, on_chunk);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn append_stream_text<F>(text: &str, target: &mut String, prefix_reasoning: bool, on_chunk: &mut F)
+where
+    F: FnMut(&StreamChunk),
+{
+    if text.is_empty() {
+        return;
+    }
+
+    target.push_str(text);
+    let content = if prefix_reasoning {
+        format!("[思考] {}", text)
+    } else {
+        text.to_string()
+    };
+    on_chunk(&StreamChunk {
+        content,
+        done: false,
+    });
+}
+
+fn handle_sse_frame<F>(
+    frame: &str,
+    on_chunk: &mut F,
+    mut usage: Option<ChatUsage>,
+) -> Result<Option<ChatUsage>>
+where
+    F: FnMut(&StreamChunk),
+{
+    for line in frame.lines() {
+        if !line.starts_with("data: ") {
+            continue;
+        }
+
+        let data = &line[6..];
+        if data == "[DONE]" {
+            on_chunk(&StreamChunk {
+                content: String::new(),
+                done: true,
+            });
+            continue;
+        }
+
+        let json = match serde_json::from_str::<serde_json::Value>(data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        if let Some(stream_usage) = json.get("usage") {
+            usage = serde_json::from_value(stream_usage.clone()).ok().or(usage);
+        }
+
+        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(choice) = choices.first() {
+                if let Some(delta) = choice.get("delta") {
+                    if let Some(content) = delta.get("content") {
+                        emit_stream_content(content, false, on_chunk);
+                    }
+                    if let Some(reasoning) = delta.get("reasoning_content") {
+                        emit_stream_content(reasoning, true, on_chunk);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(usage)
+}
+
+fn emit_stream_content<F>(value: &serde_json::Value, prefix_reasoning: bool, on_chunk: &mut F)
+where
+    F: FnMut(&StreamChunk),
+{
+    match value {
+        serde_json::Value::String(text) => emit_stream_text(text, prefix_reasoning, on_chunk),
+        serde_json::Value::Array(parts) => {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(|item| item.as_str()) {
+                    emit_stream_text(text, prefix_reasoning, on_chunk);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn emit_stream_text<F>(text: &str, prefix_reasoning: bool, on_chunk: &mut F)
+where
+    F: FnMut(&StreamChunk),
+{
+    if text.is_empty() {
+        return;
+    }
+
+    let content = if prefix_reasoning {
+        format!("[思考] {}", text)
+    } else {
+        text.to_string()
+    };
+
+    on_chunk(&StreamChunk {
+        content,
+        done: false,
+    });
 }
 
 fn summarize_tool_outputs(outputs: &[(String, serde_json::Value)]) -> Option<String> {
@@ -397,7 +736,7 @@ fn env_key(kind: &ProviderKind) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
-    use super::{default_base_url, extract_tool_text, summarize_tool_outputs, ToolChatResult};
+    use super::{default_base_url, extract_tool_text, handle_sse_frame, handle_stream_round_frame, summarize_tool_outputs, StreamRoundState, ToolChatResult};
 
     #[test]
     fn default_base_url_matches_provider_kinds() {
@@ -547,5 +886,64 @@ mod tests {
         assert!(summary.contains("[web.search]"));
         assert!(summary.contains("[web.fetch]"));
         assert!(summary.contains("Fetched page text"));
+    }
+
+    #[test]
+    fn handle_sse_frame_extracts_content_reasoning_and_usage() {
+        let frame = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\",\"reasoning_content\":\"think\"}}]}\n",
+            "data: {\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let mut chunks = Vec::new();
+        let usage = handle_sse_frame(frame, &mut |chunk| chunks.push(chunk.clone()), None).unwrap();
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].content, "Hello");
+        assert_eq!(chunks[1].content, "[思考] think");
+        assert!(chunks[2].done);
+
+        let usage = usage.expect("usage");
+        assert_eq!(usage.prompt_tokens, 1);
+        assert_eq!(usage.completion_tokens, 2);
+        assert_eq!(usage.total_tokens, 3);
+    }
+
+    #[test]
+    fn handle_sse_frame_supports_array_content_parts() {
+        let frame = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":[{\"text\":\"Hello\"},{\"text\":\" world\"}]}}]}\n\n"
+        );
+        let mut chunks = Vec::new();
+        let _ = handle_sse_frame(frame, &mut |chunk| chunks.push(chunk.clone()), None).unwrap();
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].content, "Hello");
+        assert_eq!(chunks[1].content, " world");
+    }
+
+    #[test]
+    fn find_sse_frame_end_detects_double_newline() {
+        let bytes = b"data: hello\n\ndata: world";
+        assert_eq!(super::find_sse_frame_end(bytes), Some(11));
+    }
+
+    #[test]
+    fn handle_stream_round_frame_reconstructs_tool_call_arguments() {
+        let frame = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fs.read\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"README.md\\\"}\"}}]}}]}\n\n"
+        );
+        let mut state = StreamRoundState::default();
+        let mut chunks = Vec::new();
+        handle_stream_round_frame(frame, &mut state, &mut |chunk| chunks.push(chunk.clone())).unwrap();
+
+        assert!(chunks.is_empty());
+        let message = state.into_chat_message();
+        let tool_calls = message.tool_calls.expect("tool calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_1");
+        assert_eq!(tool_calls[0].function.name, "fs.read");
+        assert_eq!(tool_calls[0].function.arguments, "{\"path\":\"README.md\"}");
     }
 }

@@ -49,7 +49,9 @@ pub fn spec() -> ToolSpec {
             "properties": {
                 "provider": { "type": "string" },
                 "query": { "type": "string" },
-                "results": { "type": "array" }
+                "count": { "type": "integer" },
+                "results": { "type": "array" },
+                "final_text": { "type": "string" }
             }
         }),
         side_effect_level: SideEffectLevel::ReadOnly,

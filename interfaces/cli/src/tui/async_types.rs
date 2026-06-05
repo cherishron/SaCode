@@ -8,6 +8,10 @@ use crate::tui::ModelOptionEntry;
 use super::LoopState;
 
 pub(super) enum AsyncResult {
+    ChatStreamChunk {
+        task_id: u64,
+        content: String,
+    },
     ChatCompleted {
         task_id: u64,
         prompt: String,

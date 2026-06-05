@@ -1,6 +1,6 @@
 # SaCode Agent Teams 实施方案
 
-> 来源：`docs/plan/final-roadmap.md`
+> 来源：`docs/plans/archive/final-roadmap.md`
 > 优先级：P1.5 到 P2
 > 前置依赖：runtime 统一化建立统一 TaskRun / WorkerRun 真源，Sub-agents 完成配置化专家层，daemon 提供多任务会话宿主能力
 

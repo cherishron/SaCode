@@ -139,7 +139,7 @@
 
 - 文档更新入口行为说明
   - `README.md`
-  - `docs/API.md`
+  - `docs/reference/API.md`
   - `npm-package/README.md`
 
 ### 问题

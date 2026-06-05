@@ -1,6 +1,6 @@
 # SaCode Scheduled Tasks 实施方案
 
-> 来源：`docs/plan/final-roadmap.md`
+> 来源：`docs/plans/archive/final-roadmap.md`
 > 优先级：P1.5
 > 前置依赖：runtime 统一化具备统一 TaskRunner，daemon/http api 具备后台任务宿主能力
 

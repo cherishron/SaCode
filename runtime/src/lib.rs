@@ -49,6 +49,7 @@ pub use sandbox::reset_global_policy;
 pub use session::{CompressionResult, SessionEvent, SessionHandle, SessionPrompt, SessionService, SessionStatus};
 pub use skillhub::{SkillHubClient, SkillHubMcpMeta, SkillHubSkillMeta, SkillHubUploadRequest, SkillHubUploadResponse, SkillHubVersionMeta, SkillHubSkillListResponse};
 pub use skills::{SkillRegistry, SkillSource, SkillSpec};
+pub use store::StoreDb;
 pub use tools::{ToolRegistry, ToolOutput, SideEffectLevel};
 pub use wiki::{inspect_wiki, load_wiki_context, WikiContext, WikiSourceStatus, WikiStatus};
 pub use workspace::{WorkspaceScanner, WorkspaceInfo, FileInfo};

@@ -79,8 +79,8 @@ SaCode stores project runtime data in `.sacode/`:
 ## More Docs
 
 - Main docs: `../docs/README.md`
-- Getting started: `../docs/getting-started.md`
-- Architecture: `../docs/architecture.md`
+- Getting started: `../docs/guides/getting-started.md`
+- Architecture: `../docs/reference/architecture.md`
 - Release: `../docs/release/RELEASE.md`
 
 ## License

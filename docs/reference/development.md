@@ -79,9 +79,9 @@ cargo build --release
 
 当你修改以下内容时，建议同步更新文档：
 
-- CLI 命令或参数：更新 `docs/API.md` 和 `README.md`
-- 架构层次或模块边界：更新 `docs/architecture.md`
-- 开发/构建流程：更新 `docs/development.md`
+- CLI 命令或参数：更新 `docs/reference/API.md` 和 `README.md`
+- 架构层次或模块边界：更新 `docs/reference/architecture.md`
+- 开发/构建流程：更新 `docs/reference/development.md`
 - 发布行为：更新 `docs/release/RELEASE.md`
 
 ## 7. npm 发布链路

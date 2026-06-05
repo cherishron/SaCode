@@ -113,6 +113,20 @@ pub async fn run_task_with_stdin(
     max_iterations: usize,
     stdin: Option<String>,
 ) -> Result<RunnerOutput> {
+    run_task_with_stdin_and_stream(prompt, mode, approval, max_iterations, stdin, None::<fn(&str)>).await
+}
+
+pub async fn run_task_with_stdin_and_stream<F>(
+    prompt: &str,
+    mode: ExecutionMode,
+    approval: ApprovalPolicy,
+    max_iterations: usize,
+    stdin: Option<String>,
+    stream_handler: Option<F>,
+) -> Result<RunnerOutput>
+where
+    F: FnMut(&str),
+{
     let total_started_at = Instant::now();
     let workdir = env::current_dir()?;
     let sandbox_policy = SandboxConfigStore::new(&workdir)
@@ -169,8 +183,18 @@ pub async fn run_task_with_stdin(
     let primary_provider_name = route_plan.as_ref().map(|plan| plan.primary.provider_name.clone()).unwrap_or_else(|| "default".to_string());
     let primary_model_name = route_plan.as_ref().map(|plan| plan.primary.model_name.clone()).unwrap_or_else(|| primary_provider.model.clone());
 
-    let (mut provider_response, mut pending_question, mut usage, mut api_duration_ms, mut tool_duration_ms) = 
-        execute_with_provider(&primary_provider, &system_prompt, &effective_prompt, tool_defs.clone(), &tools, &workdir, approval, max_iterations).await;
+    let (mut provider_response, mut pending_question, mut usage, mut api_duration_ms, mut tool_duration_ms) =
+        execute_with_provider(
+            &primary_provider,
+            &system_prompt,
+            &effective_prompt,
+            tool_defs.clone(),
+            &tools,
+            &workdir,
+            approval,
+            max_iterations,
+            stream_handler,
+        ).await;
 
     record_model_health(
         &workdir,
@@ -232,6 +256,7 @@ pub async fn run_task_with_stdin(
                         &workdir,
                         approval,
                         max_iterations,
+                        None::<F>,
                     ).await;
 
                     provider_response = result.0;
@@ -322,12 +347,24 @@ async fn execute_with_provider(
     workdir: &Path,
     approval: ApprovalPolicy,
     max_iterations: usize,
+    stream_handler: Option<impl FnMut(&str)>,
 ) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
     if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
         if tool_defs.is_empty() {
             let client = ProviderClient::new();
             let api_started_at = Instant::now();
-            match client.simple_chat_with_usage(provider, user_prompt).await {
+            let result = if let Some(mut handler) = stream_handler {
+                client
+                    .simple_chat_streaming_with_usage(provider, user_prompt, |chunk| {
+                        if !chunk.done {
+                            handler(&chunk.content);
+                        }
+                    })
+                    .await
+            } else {
+                client.simple_chat_with_usage(provider, user_prompt).await
+            };
+            match result {
                 Ok((text, usage)) => (Ok(text), None, usage, elapsed_ms(api_started_at.elapsed()), 0),
                 Err(error) => {
                     let _ = MistakeBookStore::new(workdir).append("provider:chat", "主模型调用失败", error.to_string());
@@ -335,7 +372,7 @@ async fn execute_with_provider(
                 }
             }
         } else {
-            run_tool_chat(provider, system_prompt, user_prompt, tool_defs, tools, workdir, approval, max_iterations).await
+            run_tool_chat(provider, system_prompt, user_prompt, tool_defs, tools, workdir, approval, max_iterations, stream_handler).await
         }
     } else {
         (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, None, 0, 0)
@@ -351,6 +388,7 @@ async fn run_tool_chat(
     workdir: &Path,
     approval: ApprovalPolicy,
     _max_iterations: usize,
+    stream_handler: Option<impl FnMut(&str)>,
 ) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
     let client = ProviderClient::new();
     let tools_clone = tools.clone();
@@ -436,7 +474,18 @@ async fn run_tool_chat(
     };
 
     let api_started_at = Instant::now();
-    match client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await {
+    let result = if let Some(mut handler) = stream_handler {
+        client
+            .tool_chat_streaming(provider, system_prompt, user_prompt, tool_defs, tool_executor, &mut |chunk| {
+                if !chunk.done {
+                    handler(&chunk.content);
+                }
+            })
+            .await
+    } else {
+        client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await
+    };
+    match result {
         Ok(result) => {
             let final_text = if result.final_text.trim().is_empty() {
                 "工具调用已完成，但模型未生成总结，已返回工具结果摘要。".to_string()
@@ -672,6 +721,50 @@ pub fn format_chat_output(output: &RunnerOutput) -> String {
     }
 }
 
+pub fn format_stream_tail(output: &RunnerOutput) -> String {
+    let mut lines = vec![format!("State: {:?}", output.effective_state())];
+
+    if let Some(question) = &output.pending_question {
+        lines.push("Pending Question:".to_string());
+        lines.push(summarize_tool_output(question));
+    }
+
+    if !output.tool_results.is_empty() {
+        lines.push("Tool Results:".to_string());
+        for tool_result in &output.tool_results {
+            lines.push(format!(
+                "  Step {} - {}: {} - {}",
+                tool_result.step_id,
+                tool_result.name,
+                if tool_result.success { "OK" } else { "FAIL" },
+                tool_result.summary
+            ));
+        }
+    }
+
+    if !output.events.is_empty() {
+        lines.push("Events:".to_string());
+        for event in &output.events {
+            match event {
+                Event::ToolCallStarted { name, .. } => lines.push(format!("  TOOL_START: {}", name)),
+                Event::ToolCallFinished { name, success, output } => {
+                    lines.push(format!(
+                        "  TOOL_END: {} ({}) {}",
+                        name,
+                        if *success { "ok" } else { "fail" },
+                        summarize_tool_output(output)
+                    ));
+                }
+                Event::Done { summary } => lines.push(format!("  DONE: {}", summary)),
+                Event::Error { message } => lines.push(format!("  ERROR: {}", message)),
+                _ => {}
+            }
+        }
+    }
+
+    lines.join("\n")
+}
+
 pub fn format_learned_facts_summary(facts: &[learning::LearnedFact]) -> Option<String> {
     if facts.is_empty() {
         return None;
@@ -751,6 +844,7 @@ mod tests {
     use super::build_permission_approval_question;
     use super::enrich_media_read_args;
     use super::format_output;
+    use super::format_stream_tail;
     use super::format_learned_facts_summary;
     use super::is_permission_restricted_error;
     use super::RunnerOutput;
@@ -915,6 +1009,42 @@ mod tests {
 
         let text = format_output(&output);
         assert!(text.contains("State: Completed"));
+    }
+
+    #[test]
+    fn format_stream_tail_omits_provider_response_body() {
+        let output = RunnerOutput {
+            prompt: "测试任务".to_string(),
+            mode: ExecutionMode::Build,
+            max_iterations: 1,
+            tool_names: vec!["web.search".to_string()],
+            workspace: "/workspace".to_string(),
+            plan: Plan {
+                task: "测试任务".to_string(),
+                steps: Vec::new(),
+                mode: "build".to_string(),
+            },
+            events: vec![Event::done("完成")],
+            tool_results: Vec::new(),
+            provider_response: Ok("这里是完整模型正文".to_string()),
+            learned_facts: Vec::new(),
+            pending_question: None,
+            usage: None,
+            api_duration_ms: 1,
+            tool_duration_ms: 2,
+            total_duration_ms: 3,
+            task_run: TaskRun {
+                mode: Some(ExecutionMode::Build),
+                state: Some(TaskRunState::Completed),
+                prompt: Some("测试任务".to_string()),
+                ..TaskRun::default()
+            },
+        };
+
+        let text = format_stream_tail(&output);
+        assert!(text.contains("State: Completed"));
+        assert!(!text.contains("Provider Response"));
+        assert!(!text.contains("这里是完整模型正文"));
     }
 
     #[test]

@@ -534,6 +534,91 @@ async fn test_in_memory_store() {
 }
 
 #[tokio::test]
+async fn test_in_memory_store_update_status_filters_pending() {
+    let store = Arc::new(InMemoryStore::new());
+
+    let task = ScheduledTask::new(
+        "store-status-1".to_string(),
+        Task::new("store status test", ExecutionMode::Build, None),
+    );
+
+    store.save(&task).await.expect("save task");
+    store
+        .update_status(&task.id, TaskQueueStatus::Completed)
+        .await
+        .expect("update status");
+
+    let pending = store.load_pending().await.expect("load pending");
+    assert!(pending.is_empty());
+}
+
+#[tokio::test]
+async fn test_store_db_persists_task_and_result() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("task-store.sqlite3");
+    let store = StoreDb::new(&db_path).expect("create store db");
+
+    let task = ScheduledTask::new(
+        "sqlite-1".to_string(),
+        Task::new("persist test", ExecutionMode::Build, None),
+    );
+
+    store.save(&task).await.expect("save task");
+    store
+        .update_status(&task.id, TaskQueueStatus::Running)
+        .await
+        .expect("update running status");
+
+    let loaded = store.load(&task.id).await.expect("load task");
+    assert!(loaded.is_some());
+    assert_eq!(loaded.expect("task").id, task.id);
+
+    let pending = store.load_pending().await.expect("load pending");
+    assert_eq!(pending.len(), 1);
+
+    let result = sacode_kernel::TaskResult::success(task.id.clone(), "done".to_string(), 42);
+    store.save_result(&result).await.expect("save result");
+
+    let pending_after_complete = store.load_pending().await.expect("load pending after complete");
+    assert!(pending_after_complete.is_empty());
+
+    let loaded_result = store.load_result(&task.id).await.expect("load result");
+    assert_eq!(loaded_result.and_then(|value| value.output), Some("done".to_string()));
+}
+
+#[tokio::test]
+async fn test_task_queue_restore_pending_tasks_from_store() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("task-store.sqlite3");
+    let store = Arc::new(StoreDb::new(&db_path).expect("create store db"));
+
+    let ready_task = ScheduledTask::new(
+        "restore-ready".to_string(),
+        Task::new("ready task", ExecutionMode::Build, None),
+    );
+    let pending_task = ScheduledTask::new(
+        "restore-pending".to_string(),
+        Task::new("pending task", ExecutionMode::Build, None),
+    )
+    .with_dependencies(vec!["dep-1".to_string()]);
+
+    store.save(&ready_task).await.expect("save ready task");
+    store.save(&pending_task).await.expect("save pending task");
+    store
+        .update_status(&ready_task.id, TaskQueueStatus::Running)
+        .await
+        .expect("mark running before restore");
+
+    let queue = TaskQueue::new(2).with_store(store);
+    let restored = queue.restore_pending_tasks().await.expect("restore pending tasks");
+
+    assert_eq!(restored, 2);
+    assert_eq!(queue.get_ready_count().await, 1);
+    assert_eq!(queue.status(&pending_task.id).await, Some(TaskQueueStatus::Pending));
+    assert_eq!(queue.status(&ready_task.id).await, Some(TaskQueueStatus::Ready));
+}
+
+#[tokio::test]
 async fn test_daemon_queue_status_endpoint() {
     let app = create_daemon().await;
 
@@ -551,6 +636,49 @@ async fn test_daemon_queue_status_endpoint() {
 
     assert!(payload["pending_count"].is_number());
     assert!(payload["running_count"].is_number());
+}
+
+#[tokio::test]
+async fn test_daemon_restores_pending_tasks_from_store() {
+    let _lock = sandbox_test_lock();
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let _dir_guard = CurrentDirGuard::enter(tempdir.path());
+    let _home_guard = HomeEnvGuard::set(tempdir.path());
+
+    let store = StoreDb::from_workspace(tempdir.path()).expect("create workspace store");
+    let task = ScheduledTask::new(
+        "restored-daemon-task".to_string(),
+        Task::new("restored prompt", ExecutionMode::Build, None),
+    );
+    store.save(&task).await.expect("save task");
+    store
+        .update_status(&task.id, TaskQueueStatus::Running)
+        .await
+        .expect("mark task running");
+
+    let app = create_daemon().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/task/{}/status", task.id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return restored task status");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+
+    assert_eq!(payload["task_id"], task.id);
+    assert_eq!(payload["status"], "ready");
+    assert_eq!(payload["queue_status"], "ready");
+    assert_eq!(payload["current_event"], "task_restored");
 }
 
 #[tokio::test]

@@ -22,4 +22,4 @@ The code has been restructured into:
 - `runtime/` - Side effects and capabilities
 - `interfaces/cli/` - CLI entry point
 
-For current implementation, refer to the workspace root and `docs/PRD.md`.
+For current implementation, refer to the workspace root and `docs/product/PRD.md`.

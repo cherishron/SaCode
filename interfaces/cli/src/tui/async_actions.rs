@@ -13,6 +13,9 @@ impl App {
         while let Ok(result) = self.task_rx.try_recv() {
             handled = true;
             match result {
+                AsyncResult::ChatStreamChunk { task_id, content } => {
+                    self.handle_chat_stream_chunk(task_id, content)
+                }
                 AsyncResult::ChatCompleted {
                     task_id,
                     prompt,
@@ -95,6 +98,21 @@ impl App {
         handled
     }
 
+    pub(super) fn handle_chat_stream_chunk(&mut self, task_id: u64, content: String) {
+        if self.queue.active_task_id != Some(task_id) || content.is_empty() {
+            return;
+        }
+
+        if let Some(message) = self.messages.last_mut() {
+            if matches!(message.role, MessageRole::Assistant) {
+                let mut updated = message.content.clone();
+                updated.push_str(&content);
+                self.update_last_message_content(updated);
+                self.scroll_to_bottom();
+            }
+        }
+    }
+
     pub(super) fn handle_chat_completed(
         &mut self,
         task_id: u64,
@@ -132,12 +150,29 @@ impl App {
         };
         self.orchestration_summary = orchestration_summary;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        self.append_message(Message {
-            role: response_role,
-            content: response,
-            timestamp,
-            collapsed: false,
-        });
+        if let Some(message) = self.messages.last_mut() {
+            if self.queue.active_task_id == Some(task_id) && matches!(message.role, MessageRole::Assistant) {
+                message.role = response_role;
+                message.content = response;
+                message.timestamp = timestamp;
+                message.collapsed = false;
+                self.invalidate_message_lines_cache();
+            } else {
+                self.append_message(Message {
+                    role: response_role,
+                    content: response,
+                    timestamp,
+                    collapsed: false,
+                });
+            }
+        } else {
+            self.append_message(Message {
+                role: response_role,
+                content: response,
+                timestamp,
+                collapsed: false,
+            });
+        }
         if let Some(summary) = crate::runner::format_learned_facts_summary(&learned_facts) {
             self.push_system_message(&summary);
         }
@@ -319,5 +354,71 @@ impl App {
         if self.interaction.state == InteractionState::Idle {
             self.start_next_queued_message();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handle_chat_stream_chunk_appends_to_last_assistant_message() {
+        let mut app = App::new();
+        app.queue.active_task_id = Some(7);
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+
+        app.handle_chat_stream_chunk(7, "hello".to_string());
+        app.handle_chat_stream_chunk(7, " world".to_string());
+
+        assert_eq!(app.messages.last().map(|msg| msg.content.as_str()), Some("hello world"));
+    }
+
+    #[test]
+    fn handle_chat_completed_reuses_streaming_placeholder_message() {
+        let mut app = App::new();
+        app.queue.active_task_id = Some(9);
+        let assistant_count_before = app
+            .messages
+            .iter()
+            .filter(|msg| matches!(msg.role, MessageRole::Assistant))
+            .count();
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: "partial".to_string(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+
+        app.handle_chat_completed(
+            9,
+            "prompt".to_string(),
+            "final answer".to_string(),
+            None,
+            Some(TaskRun {
+                state: Some(TaskRunState::Completed),
+                ..Default::default()
+            }),
+            Vec::new(),
+            None,
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+        );
+
+        let assistant_messages: Vec<_> = app
+            .messages
+            .iter()
+            .filter(|msg| matches!(msg.role, MessageRole::Assistant))
+            .collect();
+        assert_eq!(assistant_messages.len(), assistant_count_before + 1);
+        assert_eq!(assistant_messages.last().map(|msg| msg.content.as_str()), Some("final answer"));
     }
 }

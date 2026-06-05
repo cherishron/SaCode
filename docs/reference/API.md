@@ -1,6 +1,6 @@
 # SaCode API 文档
 
-本文档汇总 SaCode 当前公开的 CLI、TUI、工具系统和配置文件接口。建议配合 `docs/getting-started.md`、`docs/tutorials.md` 与 `docs/architecture.md` 一起阅读。
+本文档汇总 SaCode 当前公开的 CLI、TUI、工具系统和配置文件接口。建议配合 `docs/guides/getting-started.md`、`docs/guides/tutorials.md` 与 `docs/reference/architecture.md` 一起阅读。
 
 ## 文档范围
 

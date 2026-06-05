@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
-use crate::{executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry};
+use crate::{executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb};
 use sacode_kernel::{TaskQueueStatus, TaskRun};
 
 use super::{parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status};
@@ -129,6 +129,26 @@ impl TaskStatus {
             .map(super::status::task_run_state_to_queue_status)
             .unwrap_or_else(|| self.queue_status.clone())
     }
+
+    pub fn restored(task: &sacode_kernel::ScheduledTask, queue_status: TaskQueueStatus) -> Self {
+        Self {
+            task_id: task.id.clone(),
+            prompt: task.task.prompt.clone(),
+            mode: task.task.mode.to_string(),
+            status: queue_status.to_string(),
+            queue_status: queue_status.to_string(),
+            priority: task.priority.to_string(),
+            progress: 0,
+            total_steps: 0,
+            current_event: Some("task_restored".to_string()),
+            current_attempt: task.current_attempt,
+            max_attempts: task.retry_policy.max_attempts,
+            duration_ms: None,
+            error: None,
+            output: None,
+            task_run: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,9 +167,16 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let (tx, _) = broadcast::channel(100);
-        let queue = Arc::new(TaskQueue::new(10));
+        let mut queue_builder = TaskQueue::new(10);
+        if let Ok(current_dir) = std::env::current_dir() {
+            if let Ok(store) = StoreDb::from_workspace(&current_dir) {
+                queue_builder = queue_builder.with_store(Arc::new(store));
+            }
+        }
+        let queue = Arc::new(queue_builder);
+        let restored_tasks = queue.restore_pending_tasks().await.unwrap_or_default();
         let tools = ToolRegistry::builtin();
 
         let executor = TaskExecutor::new(queue.clone(), tools.clone());
@@ -157,9 +184,22 @@ impl DaemonState {
 
         let retry_handler = RetryHandler::new(queue.clone(), executor_event_bus);
 
+        let tasks = RwLock::new(HashMap::new());
+        if restored_tasks > 0 {
+            let mut restored_map = tasks.write().await;
+            for task in queue.get_restorable_tasks().await {
+                let queue_status = if task.dependencies.is_empty() {
+                    TaskQueueStatus::Ready
+                } else {
+                    TaskQueueStatus::Pending
+                };
+                restored_map.insert(task.id.clone(), TaskStatus::restored(&task, queue_status));
+            }
+        }
+
         Self {
             event_bus: tx,
-            tasks: RwLock::new(HashMap::new()),
+            tasks,
             queue,
             executor: Mutex::new(executor),
             retry_handler,

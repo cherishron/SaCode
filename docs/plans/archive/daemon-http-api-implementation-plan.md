@@ -1,6 +1,6 @@
 # SaCode Daemon 与 HTTP API 实施方案
 
-> 来源：`docs/plan/final-roadmap.md`
+> 来源：`docs/plans/archive/final-roadmap.md`
 > 优先级：P1
 > 前置依赖：runtime 统一化至少完成 TaskRunner、TaskRun、SessionRun 的最小真源
 
