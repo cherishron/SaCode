@@ -5,8 +5,8 @@ use sacode_kernel::{
     SubAgentTask, TaskAnalysis, TaskScope, TaskType,
 };
 
-use crate::model_routing::TaskProfile;
 use super::model_router::resolve_role_route;
+use crate::model_routing::TaskProfile;
 
 pub fn parse_orchestration_hint(prompt: &str) -> OrchestrationHint {
     let trimmed = prompt.trim();
@@ -27,7 +27,12 @@ pub fn parse_orchestration_hint(prompt: &str) -> OrchestrationHint {
 
     let intensity = trimmed
         .split_once(':')
-        .map(|(_, rest)| rest.split_whitespace().next().unwrap_or("").trim_matches(|c| c == '[' || c == ']'))
+        .map(|(_, rest)| {
+            rest.split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c| c == '[' || c == ']')
+        })
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
 
@@ -96,7 +101,10 @@ pub fn analyze_task(prompt: &str, _workdir: &Path, profile: &TaskProfile) -> Tas
         TaskType::Report
     } else if contains_any(&lower, &["查", "分析", "explore", "inspect"]) {
         TaskType::Explore
-    } else if contains_any(&lower, &["实现", "修复", "重构", "implement", "fix", "refactor"]) {
+    } else if contains_any(
+        &lower,
+        &["实现", "修复", "重构", "implement", "fix", "refactor"],
+    ) {
         TaskType::Implement
     } else {
         TaskType::Mixed
@@ -107,13 +115,25 @@ pub fn analyze_task(prompt: &str, _workdir: &Path, profile: &TaskProfile) -> Tas
         complexity,
         risk,
         estimated_scope,
-        requires_write: contains_any(&lower, &["实现", "修改", "修复", "重构", "add", "change", "fix", "refactor"]),
+        requires_write: contains_any(
+            &lower,
+            &[
+                "实现", "修改", "修复", "重构", "add", "change", "fix", "refactor",
+            ],
+        ),
         requires_validation: contains_any(&lower, &["测试", "验证", "test", "verify", "check"]),
-        requires_delivery: contains_any(&lower, &["部署", "发布", "报告", "deploy", "release", "report"]),
+        requires_delivery: contains_any(
+            &lower,
+            &["部署", "发布", "报告", "deploy", "release", "report"],
+        ),
     }
 }
 
-pub fn score_roles(analysis: &TaskAnalysis, roles: &[AgentRole], profile: &TaskProfile) -> Vec<RoleScore> {
+pub fn score_roles(
+    analysis: &TaskAnalysis,
+    roles: &[AgentRole],
+    profile: &TaskProfile,
+) -> Vec<RoleScore> {
     let mut scores = roles
         .iter()
         .map(|role| {
@@ -121,23 +141,39 @@ pub fn score_roles(analysis: &TaskAnalysis, roles: &[AgentRole], profile: &TaskP
             let mut reason = Vec::new();
 
             match role.id.as_str() {
-                "requirement-analyst" if matches!(analysis.task_type, TaskType::Requirements | TaskType::Mixed) => {
+                "requirement-analyst"
+                    if matches!(analysis.task_type, TaskType::Requirements | TaskType::Mixed) =>
+                {
                     score += 0.85;
                     reason.push("task needs requirement refinement".to_string());
                 }
-                "system-architect" if matches!(analysis.task_type, TaskType::Design | TaskType::Mixed) || profile.needs_reasoning => {
+                "system-architect"
+                    if matches!(analysis.task_type, TaskType::Design | TaskType::Mixed)
+                        || profile.needs_reasoning =>
+                {
                     score += 0.8;
                     reason.push("task is design or reasoning heavy".to_string());
                 }
-                "repo-explorer" if matches!(analysis.task_type, TaskType::Explore | TaskType::Mixed | TaskType::Implement) => {
+                "repo-explorer"
+                    if matches!(
+                        analysis.task_type,
+                        TaskType::Explore | TaskType::Mixed | TaskType::Implement
+                    ) =>
+                {
                     score += 0.75;
                     reason.push("task needs repository context".to_string());
                 }
-                "implementer" if analysis.requires_write || matches!(analysis.task_type, TaskType::Implement) => {
+                "implementer"
+                    if analysis.requires_write
+                        || matches!(analysis.task_type, TaskType::Implement) =>
+                {
                     score += 0.9;
                     reason.push("task requires code changes".to_string());
                 }
-                "test-engineer" if analysis.requires_validation || matches!(analysis.task_type, TaskType::Test) => {
+                "test-engineer"
+                    if analysis.requires_validation
+                        || matches!(analysis.task_type, TaskType::Test) =>
+                {
                     score += 0.8;
                     reason.push("task requires validation".to_string());
                 }
@@ -145,11 +181,17 @@ pub fn score_roles(analysis: &TaskAnalysis, roles: &[AgentRole], profile: &TaskP
                     score += 0.7;
                     reason.push("task has write or regression risk".to_string());
                 }
-                "devops-operator" if matches!(analysis.task_type, TaskType::Deploy) || analysis.requires_delivery => {
+                "devops-operator"
+                    if matches!(analysis.task_type, TaskType::Deploy)
+                        || analysis.requires_delivery =>
+                {
                     score += 0.8;
                     reason.push("task requires delivery or deployment".to_string());
                 }
-                "reporter" if analysis.requires_delivery || matches!(analysis.task_type, TaskType::Report | TaskType::Mixed) => {
+                "reporter"
+                    if analysis.requires_delivery
+                        || matches!(analysis.task_type, TaskType::Report | TaskType::Mixed) =>
+                {
                     score += 0.65;
                     reason.push("task benefits from summarized output".to_string());
                 }
@@ -172,7 +214,11 @@ pub fn score_roles(analysis: &TaskAnalysis, roles: &[AgentRole], profile: &TaskP
         })
         .collect::<Vec<_>>();
 
-    scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scores.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scores
 }
 
@@ -189,7 +235,9 @@ pub fn build_execution_plan(
     let mode = hint.mode.clone().unwrap_or(OrchestrationMode::DefaultFixed);
     let max_agents = match mode {
         OrchestrationMode::DefaultFixed => 2,
-        OrchestrationMode::UlwDynamic => hint.max_agents.unwrap_or_else(|| dynamic_agent_count(&analysis)),
+        OrchestrationMode::UlwDynamic => hint
+            .max_agents
+            .unwrap_or_else(|| dynamic_agent_count(&analysis)),
     }
     .clamp(1, 4);
 
@@ -220,12 +268,19 @@ pub fn build_execution_plan(
             let resolved_route = role.and_then(|value| resolve_role_route(workdir, value, profile));
             PlannedRole {
                 role_id: score.role_id.clone(),
-                role_name: role.map(|value| value.name.clone()).unwrap_or_else(|| score.role_id.clone()),
+                role_name: role
+                    .map(|value| value.name.clone())
+                    .unwrap_or_else(|| score.role_id.clone()),
                 task_id: task.id.clone(),
                 can_write: score.role_id == "implementer",
                 preferred_model: resolved_route
                     .as_ref()
-                    .map(|route| format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name))
+                    .map(|route| {
+                        format!(
+                            "{}/{}",
+                            route.plan.primary.provider_name, route.plan.primary.model_name
+                        )
+                    })
                     .or_else(|| role.and_then(|value| value.model_policy.primary_model.clone()))
                     .or_else(|| role.and_then(|value| value.model_policy.provider.clone())),
                 needs_thinking: resolved_route
@@ -290,7 +345,10 @@ fn ensure_reporter_selected<'a>(
         return selected;
     }
 
-    if let Some(index) = selected.iter().rposition(|score| score.role_id != "implementer") {
+    if let Some(index) = selected
+        .iter()
+        .rposition(|score| score.role_id != "implementer")
+    {
         selected[index] = reporter_score;
     } else if let Some(last) = selected.last_mut() {
         *last = reporter_score;
@@ -321,10 +379,22 @@ fn estimate_complexity(prompt: &str, profile: &TaskProfile) -> f32 {
     if profile.task_kinds.len() >= 2 {
         score += 0.15;
     }
-    if contains_any(&lower, &["并发", "多 agent", "multi agent", "orchestrator", "workflow"]) {
+    if contains_any(
+        &lower,
+        &[
+            "并发",
+            "多 agent",
+            "multi agent",
+            "orchestrator",
+            "workflow",
+        ],
+    ) {
         score += 0.2;
     }
-    if contains_any(&lower, &["部署", "测试", "发布", "deploy", "test", "release"]) {
+    if contains_any(
+        &lower,
+        &["部署", "测试", "发布", "deploy", "test", "release"],
+    ) {
         score += 0.1;
     }
     score.min(1.0)
@@ -336,7 +406,10 @@ fn estimate_risk(profile: &TaskProfile, lower_prompt: &str) -> f32 {
         crate::model_routing::TaskRiskLevel::Medium => 0.5,
         crate::model_routing::TaskRiskLevel::High => 0.8,
     };
-    if contains_any(lower_prompt, &["重构", "删除", "迁移", "refactor", "delete", "migrate"]) {
+    if contains_any(
+        lower_prompt,
+        &["重构", "删除", "迁移", "refactor", "delete", "migrate"],
+    ) {
         risk += 0.1;
     }
     risk.min(1.0)

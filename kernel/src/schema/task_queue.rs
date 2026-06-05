@@ -37,19 +37,31 @@ impl ScheduledTask {
     }
 
     pub fn with_dependencies(self, dependencies: Vec<String>) -> Self {
-        Self { dependencies, ..self }
+        Self {
+            dependencies,
+            ..self
+        }
     }
 
     pub fn with_retry_policy(self, retry_policy: RetryPolicy) -> Self {
-        Self { retry_policy, ..self }
+        Self {
+            retry_policy,
+            ..self
+        }
     }
 
     pub fn with_scheduled_at(self, scheduled_at: DateTime<Utc>) -> Self {
-        Self { scheduled_at: Some(scheduled_at), ..self }
+        Self {
+            scheduled_at: Some(scheduled_at),
+            ..self
+        }
     }
 
     pub fn with_deadline(self, deadline: DateTime<Utc>) -> Self {
-        Self { deadline: Some(deadline), ..self }
+        Self {
+            deadline: Some(deadline),
+            ..self
+        }
     }
 
     pub fn increment_attempt(&mut self) {
@@ -57,7 +69,9 @@ impl ScheduledTask {
     }
 
     pub fn is_ready(&self, completed_ids: &[String]) -> bool {
-        self.dependencies.iter().all(|dep| completed_ids.contains(dep))
+        self.dependencies
+            .iter()
+            .all(|dep| completed_ids.contains(dep))
     }
 
     pub fn can_retry(&self) -> bool {
@@ -142,9 +156,7 @@ impl RetryPolicy {
                 let exp = base_ms.saturating_mul(2u64.pow(attempt));
                 exp.min(*max_ms)
             }
-            BackoffStrategy::Linear { increment_ms } => {
-                increment_ms.saturating_mul(attempt as u64)
-            }
+            BackoffStrategy::Linear { increment_ms } => increment_ms.saturating_mul(attempt as u64),
         }
     }
 

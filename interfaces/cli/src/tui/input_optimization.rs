@@ -3,8 +3,8 @@ use std::thread;
 use anyhow::Result;
 
 use super::{
-    block_on_cli_future, resolve_provider, App, AsyncContext, AsyncResult,
-    InputMode, InputOptimizationSnapshot,
+    block_on_cli_future, resolve_provider, App, AsyncContext, AsyncResult, InputMode,
+    InputOptimizationSnapshot,
 };
 use sacode_runtime::ProviderClient;
 
@@ -18,21 +18,23 @@ impl App {
             .map(|provider| provider.config.to_model_provider())
             .unwrap_or_else(|| resolve_provider(&self.workdir));
         let prompt = format!("{}\n\n{}", self.prompt_template.optimize_input, input);
-        thread::spawn(move || match Self::run_simple_chat_prompt(&provider, &prompt) {
-            Ok(optimized) => {
-                let _ = sender.send(AsyncResult::InputOptimized {
-                    original: input,
-                    optimized,
-                    model_name,
-                });
-            }
-            Err(error) => {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::OptimizeInput,
-                    message: format!("优化当前输入失败: {}", error),
-                });
-            }
-        });
+        thread::spawn(
+            move || match Self::run_simple_chat_prompt(&provider, &prompt) {
+                Ok(optimized) => {
+                    let _ = sender.send(AsyncResult::InputOptimized {
+                        original: input,
+                        optimized,
+                        model_name,
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::OptimizeInput,
+                        message: format!("优化当前输入失败: {}", error),
+                    });
+                }
+            },
+        );
     }
 
     pub(super) fn run_simple_chat_prompt(

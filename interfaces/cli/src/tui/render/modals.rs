@@ -8,8 +8,8 @@ use ratatui::{
 
 use crate::cmd::config;
 
-use super::common::{centered_rect, render_modal_block};
 use super::super::App;
+use super::common::{centered_rect, render_modal_block};
 
 pub(crate) fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
     let theme = app.theme;
@@ -87,6 +87,7 @@ pub(crate) fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
 #[cfg(test)]
 pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
     use ratatui::style::Modifier;
+    use ratatui::widgets::Wrap;
 
     let theme = app.theme;
     if app.interaction.pending_question_items.is_empty() {
@@ -108,8 +109,8 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(1),
             Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(2),
+            Constraint::Min(7),
+            Constraint::Length(5),
         ])
         .split(inner);
 
@@ -139,8 +140,9 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         return;
     };
 
-    let question_lines = if let Some(request) = &app.interaction.pending_approval_request {
-        vec![
+    let question_lines =
+        if let Some(request) = &app.interaction.pending_approval_request {
+            vec![
             Line::from(vec![
                 Span::styled(
                     "审批工具",
@@ -160,24 +162,37 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
                 Style::default().fg(theme.subtle),
             )),
         ]
-    } else {
-        vec![
-            Line::from(Span::styled(
-                &question.question,
-                Style::default()
-                    .fg(theme.assistant)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                if question.allow_multiple {
-                    "多选：Space 勾选，Enter 提交"
-                } else {
-                    "单选：方向键选择，Space 勾选，Enter 提交"
-                },
-                Style::default().fg(theme.subtle),
-            )),
-        ]
-    };
+        } else if app.interaction.pending_confirm_submission {
+            vec![
+                Line::from(Span::styled(
+                    "确认提交所有回答",
+                    Style::default()
+                        .fg(theme.assistant)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    "按 Enter 提交，按 Left 返回上一个问题继续修改。",
+                    Style::default().fg(theme.subtle),
+                )),
+            ]
+        } else {
+            vec![
+                Line::from(Span::styled(
+                    &question.question,
+                    Style::default()
+                        .fg(theme.assistant)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    if question.allow_multiple {
+                        "多选：Space 勾选，Enter 提交"
+                    } else {
+                        "单选：方向键选择，Space 勾选，Enter 提交"
+                    },
+                    Style::default().fg(theme.subtle),
+                )),
+            ]
+        };
     frame.render_widget(Paragraph::new(question_lines), sections[1]);
 
     let selected_answers = app
@@ -186,7 +201,12 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         .get(app.interaction.selected_pending_question_index)
         .cloned()
         .unwrap_or_default();
-    let option_lines = if question.options.is_empty() {
+    let option_lines = if app.interaction.pending_confirm_submission {
+        app.pending_question_answer_lines()
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
+            .collect::<Vec<_>>()
+    } else if question.options.is_empty() {
         vec![Line::from(Span::styled(
             "没有预设选项，请在底部输入自定义回答。",
             Style::default().fg(theme.warning),
@@ -222,22 +242,36 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
             })
             .collect::<Vec<_>>()
     };
-    frame.render_widget(Paragraph::new(option_lines), sections[2]);
+    frame.render_widget(
+        Paragraph::new(option_lines).wrap(Wrap { trim: true }),
+        sections[2],
+    );
 
-    let hint = if app.input.is_empty() {
+    let draft_answer = app.current_pending_custom_answer().unwrap_or_default();
+    let hint = if app.interaction.pending_confirm_submission {
+        "Enter: 确认提交 | Left: 返回上一题 | Esc: 返回聊天"
+    } else if app.input.is_empty() {
         if is_approval {
             "Up/Down: 选择审批结果 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天"
         } else {
-            "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天 | 直接输入可自定义回答"
+            "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 下一题 | Esc: 返回聊天"
         }
     } else {
-        "Enter: 提交自定义回答 | Esc: 返回聊天"
+        "Enter: 下一题 | Left/Right: 切换问题 | Esc: 返回聊天"
     };
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                format!("自定义回答: {}", app.input),
+                format!("自定义回答: {}", draft_answer),
                 Style::default().fg(theme.text),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "进度: {}/{}",
+                    app.interaction.selected_pending_question_index + 1,
+                    app.interaction.pending_question_items.len()
+                ),
+                Style::default().fg(theme.warning),
             )),
             Line::from(Span::styled(hint, Style::default().fg(theme.subtle))),
         ]),

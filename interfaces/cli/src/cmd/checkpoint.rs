@@ -69,7 +69,12 @@ fn show_checkpoint(storage: &CheckpointStorage, filename: &str) -> Result<()> {
     if !checkpoint.executed_tools.is_empty() {
         println!("Executed Tools:");
         for tool in &checkpoint.executed_tools {
-            println!("  {} - {} ({})", tool.name, if tool.success { "OK" } else { "FAIL" }, tool.timestamp);
+            println!(
+                "  {} - {} ({})",
+                tool.name,
+                if tool.success { "OK" } else { "FAIL" },
+                tool.timestamp
+            );
         }
     }
 
@@ -90,7 +95,10 @@ fn restore_checkpoint(storage: &CheckpointStorage, filename: &str) -> Result<()>
 
     println!();
     println!("To continue this task, run:");
-    println!("  sacode \"{}\" --mode {:?}", checkpoint.task.prompt, checkpoint.task.mode);
+    println!(
+        "  sacode \"{}\" --mode {:?}",
+        checkpoint.task.prompt, checkpoint.task.mode
+    );
 
     Ok(())
 }

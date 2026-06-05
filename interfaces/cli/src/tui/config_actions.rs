@@ -68,7 +68,13 @@ impl App {
                 .unwrap_or_else(|| "未设置".to_string()),
             "auto_compress" => scoped
                 .auto_compress
-                .map(|value| if value { "true".to_string() } else { "false".to_string() })
+                .map(|value| {
+                    if value {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }
+                })
                 .unwrap_or_else(|| "未设置".to_string()),
             "compress_threshold" => scoped
                 .compress_threshold
@@ -92,11 +98,23 @@ impl App {
                 .unwrap_or_else(|| "未设置".to_string()),
             "vim_mode" => scoped
                 .vim_mode
-                .map(|value| if value { "true".to_string() } else { "false".to_string() })
+                .map(|value| {
+                    if value {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }
+                })
                 .unwrap_or_else(|| "未设置".to_string()),
             "update.check_on_startup" => scoped
                 .update_check_on_startup
-                .map(|value| if value { "true".to_string() } else { "false".to_string() })
+                .map(|value| {
+                    if value {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }
+                })
                 .unwrap_or_else(|| "未设置".to_string()),
             "update.cache_duration_hours" => scoped
                 .update_cache_duration_hours

@@ -1,52 +1,55 @@
 mod acp;
 mod arg_parser;
 mod checkpoint;
-mod help_text;
-mod orchestrator_entry;
-mod orchestrator_support;
-mod repl_entry;
-mod runtime_entry;
-mod tracing_setup;
+#[cfg(test)]
+mod command_tests;
 pub mod config;
-pub mod doctor;
 pub mod diff;
+pub mod doctor;
+mod help_text;
 pub mod hooks;
 pub mod ide;
 pub mod init;
 pub mod insight;
 pub mod keybindings;
 mod lsp;
+mod mcp;
 pub mod memory;
 mod mistakes;
-mod mcp;
+mod orchestrator_entry;
+mod orchestrator_support;
+pub mod outstyle;
 mod plugin;
 mod profile;
-mod sandbox;
-pub mod outstyle;
 pub mod prompt;
+mod repl_entry;
+mod runtime_entry;
+mod sandbox;
 mod serve;
 mod skill;
-pub mod update;
 pub mod status;
+mod tracing_setup;
+pub mod update;
 pub mod vim;
 pub mod wiki;
-#[cfg(test)]
-mod command_tests;
 
 use std::env;
 
+use crate::tui;
 use anyhow::Result;
-use sacode_kernel::ExecutionMode;
-pub use sacode_kernel::ApprovalPolicy;
-#[cfg(test)]
-use orchestrator_support::{collect_tool_results, parse_mcp_tool_name, resolve_tool_events, should_retry_tool_call, ExecutedTool, RetryDecision, StepEventBatch, ToolResult};
 use arg_parser::parse_args;
 use help_text::print_help;
 use orchestrator_entry::run_with_orchestrator;
+#[cfg(test)]
+use orchestrator_support::{
+    collect_tool_results, parse_mcp_tool_name, resolve_tool_events, should_retry_tool_call,
+    ExecutedTool, RetryDecision, StepEventBatch, ToolResult,
+};
 use repl_entry::run_repl;
 use runtime_entry::run_task;
+pub use sacode_kernel::ApprovalPolicy;
+use sacode_kernel::ExecutionMode;
 use tracing_setup::init_tracing;
-use crate::tui;
 
 pub(crate) const JSON_STREAM_PREFIX: &str = "__SACODE_STREAM__";
 
@@ -192,10 +195,7 @@ mod tests {
 
     #[test]
     fn parse_args_supports_auto_approve() {
-        let options = parse_args(vec![
-            "执行任务".to_string(),
-            "--approve".to_string(),
-        ]);
+        let options = parse_args(vec!["执行任务".to_string(), "--approve".to_string()]);
 
         assert_eq!(options.approval, super::ApprovalPolicy::AutoApprove);
     }
@@ -309,10 +309,17 @@ mod tests {
 
     #[test]
     fn parse_args_parses_sandbox_subcommand() {
-        let options = parse_args(vec!["sandbox".to_string(), "show".to_string(), "plan".to_string()]);
+        let options = parse_args(vec![
+            "sandbox".to_string(),
+            "show".to_string(),
+            "plan".to_string(),
+        ]);
 
         assert_eq!(options.command, CliCommand::Sandbox);
-        assert_eq!(options.sub_args, vec!["show".to_string(), "plan".to_string()]);
+        assert_eq!(
+            options.sub_args,
+            vec!["show".to_string(), "plan".to_string()]
+        );
     }
 
     #[test]
@@ -357,10 +364,17 @@ mod tests {
 
     #[test]
     fn parse_args_parses_serve_subcommand() {
-        let options = parse_args(vec!["serve".to_string(), "--acp".to_string(), "--lsp".to_string()]);
+        let options = parse_args(vec![
+            "serve".to_string(),
+            "--acp".to_string(),
+            "--lsp".to_string(),
+        ]);
 
         assert_eq!(options.command, CliCommand::Serve);
-        assert_eq!(options.sub_args, vec!["--acp".to_string(), "--lsp".to_string()]);
+        assert_eq!(
+            options.sub_args,
+            vec!["--acp".to_string(), "--lsp".to_string()]
+        );
     }
 
     #[test]
@@ -532,10 +546,14 @@ mod tests {
             }],
         );
 
-        assert!(matches!(&resolved[0], Event::Message { content } if content.starts_with("步骤 2 开始第 1 轮")));
+        assert!(
+            matches!(&resolved[0], Event::Message { content } if content.starts_with("步骤 2 开始第 1 轮"))
+        );
         assert!(matches!(resolved[1], Event::ToolCallStarted { .. }));
         assert!(matches!(resolved[2], Event::ToolCallFinished { .. }));
-        assert!(matches!(&resolved[3], Event::Message { content } if content.starts_with("步骤 2 第 1 轮结束")));
+        assert!(
+            matches!(&resolved[3], Event::Message { content } if content.starts_with("步骤 2 第 1 轮结束"))
+        );
         assert!(matches!(resolved[4], Event::Done { .. }));
     }
 
@@ -582,13 +600,25 @@ mod tests {
         );
 
         assert!(matches!(resolved[0], Event::Thinking { .. }));
-        assert!(matches!(&resolved[1], Event::Message { content } if content.starts_with("步骤 2 开始第 1 轮")));
+        assert!(
+            matches!(&resolved[1], Event::Message { content } if content.starts_with("步骤 2 开始第 1 轮"))
+        );
         assert!(matches!(resolved[2], Event::ToolCallStarted { .. }));
-        assert!(matches!(resolved[3], Event::ToolCallFinished { success: false, .. }));
-        assert!(matches!(&resolved[4], Event::Message { content } if content.starts_with("步骤 2 第 1 轮结束")));
-        assert!(matches!(&resolved[5], Event::Message { content } if content.starts_with("步骤 2 开始第 2 轮")));
+        assert!(matches!(
+            resolved[3],
+            Event::ToolCallFinished { success: false, .. }
+        ));
+        assert!(
+            matches!(&resolved[4], Event::Message { content } if content.starts_with("步骤 2 第 1 轮结束"))
+        );
+        assert!(
+            matches!(&resolved[5], Event::Message { content } if content.starts_with("步骤 2 开始第 2 轮"))
+        );
         assert!(matches!(resolved[6], Event::ToolCallStarted { .. }));
-        assert!(matches!(resolved[7], Event::ToolCallFinished { success: true, .. }));
+        assert!(matches!(
+            resolved[7],
+            Event::ToolCallFinished { success: true, .. }
+        ));
         assert!(matches!(resolved[8], Event::Message { .. }));
     }
 
@@ -616,13 +646,16 @@ mod tests {
             }],
         );
 
-        assert_eq!(tool_results, vec![super::ToolResult {
-            iteration: 2,
-            step_id: 2,
-            name: "web.search".to_string(),
-            success: false,
-            summary: "network error".to_string(),
-        }]);
+        assert_eq!(
+            tool_results,
+            vec![super::ToolResult {
+                iteration: 2,
+                step_id: 2,
+                name: "web.search".to_string(),
+                success: false,
+                summary: "network error".to_string(),
+            }]
+        );
     }
 
     #[test]

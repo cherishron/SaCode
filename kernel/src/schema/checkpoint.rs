@@ -39,7 +39,13 @@ impl Checkpoint {
         }
     }
 
-    pub fn record_tool(&mut self, name: String, input: serde_json::Value, output: serde_json::Value, success: bool) {
+    pub fn record_tool(
+        &mut self,
+        name: String,
+        input: serde_json::Value,
+        output: serde_json::Value,
+        success: bool,
+    ) {
         self.executed_tools.push(ToolRecord {
             name,
             input,

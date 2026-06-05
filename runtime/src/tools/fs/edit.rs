@@ -76,5 +76,6 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "success": true,
         "replacements": if replace_all { occurrences } else { 1 },
         "path": file_path.display().to_string()
-    })).with_message(format!("edited {}", file_path.display())))
+    }))
+    .with_message(format!("edited {}", file_path.display())))
 }

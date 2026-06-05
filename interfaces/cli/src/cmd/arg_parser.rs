@@ -94,7 +94,11 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             }
             "--max-iterations" => {
                 if let Some(value) = iter.next() {
-                    max_iterations = value.parse::<usize>().ok().filter(|value| *value > 0).unwrap_or(1);
+                    max_iterations = value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .unwrap_or(1);
                 }
             }
             value => prompt.push(value.to_string()),

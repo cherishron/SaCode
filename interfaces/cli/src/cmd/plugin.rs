@@ -57,7 +57,14 @@ async fn list_plugins() -> Result<()> {
         if let Some(spec) = registry.get(name) {
             println!("  {} - {}", name, spec.description);
             println!("    Side effect: {:?}", spec.side_effect_level);
-            println!("    Approval: {}", if spec.needs_approval() { "required" } else { "auto" });
+            println!(
+                "    Approval: {}",
+                if spec.needs_approval() {
+                    "required"
+                } else {
+                    "auto"
+                }
+            );
         }
     }
 
@@ -68,8 +75,18 @@ async fn list_plugins() -> Result<()> {
             for spec in specs {
                 println!("  {} - {}", spec.name, spec.description);
                 println!("    Side effect: {:?}", spec.side_effect_level);
-                println!("    Approval: {}", if spec.needs_approval() { "required" } else { "auto" });
-                println!("    Input schema: {}", serde_json::to_string(&spec.input_schema).unwrap_or_else(|_| "{}".to_string()));
+                println!(
+                    "    Approval: {}",
+                    if spec.needs_approval() {
+                        "required"
+                    } else {
+                        "auto"
+                    }
+                );
+                println!(
+                    "    Input schema: {}",
+                    serde_json::to_string(&spec.input_schema).unwrap_or_else(|_| "{}".to_string())
+                );
             }
         }
     }
@@ -87,7 +104,11 @@ async fn list_plugins() -> Result<()> {
                 "  {} {} | {} [{}]",
                 entry.plugin.name,
                 version,
-                if entry.plugin.enabled { "enabled" } else { "disabled" },
+                if entry.plugin.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
                 entry.source.label()
             );
         }
@@ -118,7 +139,11 @@ fn install_plugin(name: &str, global: bool) -> Result<()> {
     println!(
         "Installed plugin {} to {} [{}]",
         name,
-        if global { store.user_path().display().to_string() } else { store.project_path().display().to_string() },
+        if global {
+            store.user_path().display().to_string()
+        } else {
+            store.project_path().display().to_string()
+        },
         if global { "user" } else { "project" }
     );
     Ok(())
@@ -127,7 +152,11 @@ fn install_plugin(name: &str, global: bool) -> Result<()> {
 fn remove_plugin(name: &str, global: bool) -> Result<()> {
     let store = PluginConfigStore::new(&PathBuf::from("."));
     store.remove(name, source_from_global(global))?;
-    println!("Removed plugin {} [{}]", name, if global { "user" } else { "project" });
+    println!(
+        "Removed plugin {} [{}]",
+        name,
+        if global { "user" } else { "project" }
+    );
     Ok(())
 }
 

@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::provider_config::{ProviderConfigStore, SaCodeConfigStore};
 use crate::cmd::status;
 use crate::plugin_config::PluginConfigStore;
+use crate::provider_config::{ProviderConfigStore, SaCodeConfigStore};
 
 pub async fn run() -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -43,7 +43,11 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     ));
     lines.push(format!(
         "- 默认模型: {}",
-        if config.model.trim().is_empty() { "未设置" } else { &config.model }
+        if config.model.trim().is_empty() {
+            "未设置"
+        } else {
+            &config.model
+        }
     ));
     lines.push(format!(
         "- 路由覆盖: {} 条",
@@ -52,7 +56,12 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     lines.push(format!(
         "- 输出风格: 生效 {} | 项目覆盖 {}",
         display_value(&config.outstyle),
-        display_value(project_config.as_ref().map(|value| value.outstyle.as_str()).unwrap_or(""))
+        display_value(
+            project_config
+                .as_ref()
+                .map(|value| value.outstyle.as_str())
+                .unwrap_or("")
+        )
     ));
     lines.push(format!(
         "- 项目记忆: {}",
@@ -64,8 +73,7 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     ));
     lines.push(format!(
         "- 插件: {} 个启用，{} 个关闭",
-        plugin_status.0,
-        plugin_status.1
+        plugin_status.0, plugin_status.1
     ));
     lines.push(String::new());
     lines.push("MCP 与插件状态: ".to_string());
@@ -101,7 +109,10 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
 fn plugin_status(workdir: &Path) -> Result<(usize, usize)> {
     let store = PluginConfigStore::new(workdir);
     let entries = store.list_entries()?;
-    let enabled = entries.iter().filter(|plugin| plugin.plugin.enabled).count();
+    let enabled = entries
+        .iter()
+        .filter(|plugin| plugin.plugin.enabled)
+        .count();
     let disabled = entries.len().saturating_sub(enabled);
     Ok((enabled, disabled))
 }

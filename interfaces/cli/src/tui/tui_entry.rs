@@ -19,8 +19,8 @@ use super::{
         render_checkpoint_selector, render_command_selector, render_config_enum_selector,
         render_config_selector, render_connect_selector, render_footer, render_header,
         render_input_optimization_preview, render_input_panel, render_mcp_selector,
-        render_messages_panel, render_mode_selector, render_selector,
-        render_session_selector, render_skills_selector, render_task_selector,
+        render_messages_panel, render_mode_selector, render_selector, render_session_selector,
+        render_skills_selector, render_task_selector,
     },
     App, InputMode,
 };
@@ -90,16 +90,19 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2),  // header
-            Constraint::Min(10),    // messages
+            Constraint::Length(2), // header
+            Constraint::Min(10),   // messages
             Constraint::Length(input_height_guess),
-            Constraint::Length(1),  // footer
+            Constraint::Length(1), // footer
         ])
         .split(frame.area());
 
     let input_inner_width = first_pass[2].width.saturating_sub(2).max(1) as usize;
     let input_line_count = if input_is_editable && !app.input.is_empty() {
-        app.cached_input_layout(input_inner_width).lines.len().max(1)
+        app.cached_input_layout(input_inner_width)
+            .lines
+            .len()
+            .max(1)
     } else {
         1
     };
@@ -109,10 +112,10 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2),  // header
-            Constraint::Min(10),    // messages
+            Constraint::Length(2),            // header
+            Constraint::Min(10),              // messages
             Constraint::Length(input_height), // input
-            Constraint::Length(1),  // footer
+            Constraint::Length(1),            // footer
         ])
         .split(frame.area());
 

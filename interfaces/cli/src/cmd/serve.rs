@@ -5,7 +5,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     let enable_lsp = args.iter().any(|arg| arg == "--lsp");
 
     if enable_acp && enable_lsp {
-        println!("Combined serve mode is scaffolded. Start ACP and LSP in separate processes for now.");
+        println!(
+            "Combined serve mode is scaffolded. Start ACP and LSP in separate processes for now."
+        );
         return Ok(());
     }
 

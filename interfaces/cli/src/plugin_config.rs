@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, env, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -52,7 +56,10 @@ impl PluginConfigStore {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".sacode/plugins.json");
         let project_path = workdir.join(".sacode/plugins.json");
-        Self { user_path, project_path }
+        Self {
+            user_path,
+            project_path,
+        }
     }
 
     pub fn user_path(&self) -> &Path {
@@ -100,7 +107,11 @@ impl PluginConfigStore {
 
     pub fn upsert(&self, plugin: PluginEntry, source: PluginSource) -> Result<()> {
         let mut config = self.load_from_source(source)?;
-        if let Some(existing) = config.plugins.iter_mut().find(|entry| entry.name == plugin.name) {
+        if let Some(existing) = config
+            .plugins
+            .iter_mut()
+            .find(|entry| entry.name == plugin.name)
+        {
             *existing = plugin;
         } else {
             config.plugins.push(plugin);

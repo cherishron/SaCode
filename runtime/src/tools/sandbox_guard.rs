@@ -116,7 +116,14 @@ fn extract_paths(input: &serde_json::Value) -> Vec<PathBuf> {
 }
 
 fn network_access_from_fields(input: &serde_json::Value) -> Option<NetworkAccess> {
-    for key in ["url", "urls", "base_url", "baseUrl", "endpoint", "endpoints"] {
+    for key in [
+        "url",
+        "urls",
+        "base_url",
+        "baseUrl",
+        "endpoint",
+        "endpoints",
+    ] {
         if input
             .get(key)
             .and_then(|value| value.as_str())
@@ -128,7 +135,12 @@ fn network_access_from_fields(input: &serde_json::Value) -> Option<NetworkAccess
         if input
             .get(key)
             .and_then(|value| value.as_array())
-            .is_some_and(|items| items.iter().filter_map(|item| item.as_str()).any(|value| is_network_value(value.trim())))
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .any(|value| is_network_value(value.trim()))
+            })
         {
             return Some(NetworkAccess::Fetch);
         }
@@ -142,5 +154,8 @@ fn is_network_value(value: &str) -> bool {
 }
 
 fn first_token(command: &str) -> Option<&str> {
-    command.split_whitespace().next().filter(|token| !token.is_empty())
+    command
+        .split_whitespace()
+        .next()
+        .filter(|token| !token.is_empty())
 }

@@ -77,9 +77,15 @@ pub fn maybe_expand_skill_prompt(prompt: &str, workdir: &Path) -> Result<String>
 
 fn mode_instruction(mode: ExecutionMode) -> &'static str {
     match mode {
-        ExecutionMode::Plan => "当前是 plan 模式。只规划不执行，只使用只读工具了解项目状态并产出方案。",
-        ExecutionMode::Build => "当前是 build 模式。可以执行修改操作，但保持谨慎，优先最小改动并尊重现有实现。",
-        ExecutionMode::Yolo => "当前是 yolo 模式。可以全自动推进任务，但依然要保持结果正确、步骤清晰和变更克制。",
+        ExecutionMode::Plan => {
+            "当前是 plan 模式。只规划不执行，只使用只读工具了解项目状态并产出方案。"
+        }
+        ExecutionMode::Build => {
+            "当前是 build 模式。可以执行修改操作，但保持谨慎，优先最小改动并尊重现有实现。"
+        }
+        ExecutionMode::Yolo => {
+            "当前是 yolo 模式。可以全自动推进任务，但依然要保持结果正确、步骤清晰和变更克制。"
+        }
     }
 }
 

@@ -6,16 +6,22 @@ pub fn parse_retry_policy(req: &Option<RetryPolicyRequest>) -> RetryPolicy {
     match req {
         Some(policy) => {
             let backoff = match policy.backoff_type.as_str() {
-                "fixed" => sacode_kernel::BackoffStrategy::Fixed { delay_ms: policy.base_ms },
-                "linear" => sacode_kernel::BackoffStrategy::Linear { increment_ms: policy.base_ms },
+                "fixed" => sacode_kernel::BackoffStrategy::Fixed {
+                    delay_ms: policy.base_ms,
+                },
+                "linear" => sacode_kernel::BackoffStrategy::Linear {
+                    increment_ms: policy.base_ms,
+                },
                 _ => sacode_kernel::BackoffStrategy::Exponential {
                     base_ms: policy.base_ms,
                     max_ms: policy.max_ms,
                 },
             };
 
-            let retry_on = policy.retry_on.iter().filter_map(|s| {
-                match s.as_str() {
+            let retry_on = policy
+                .retry_on
+                .iter()
+                .filter_map(|s| match s.as_str() {
                     "timeout" => Some(sacode_kernel::RetryCondition::Timeout),
                     "network_error" => Some(sacode_kernel::RetryCondition::NetworkError),
                     "rate_limit" => Some(sacode_kernel::RetryCondition::RateLimit),
@@ -23,8 +29,8 @@ pub fn parse_retry_policy(req: &Option<RetryPolicyRequest>) -> RetryPolicy {
                     "internal_error" => Some(sacode_kernel::RetryCondition::InternalError),
                     "any" => Some(sacode_kernel::RetryCondition::Any),
                     _ => None,
-                }
-            }).collect();
+                })
+                .collect();
 
             RetryPolicy {
                 max_attempts: policy.max_attempts,
@@ -40,9 +46,8 @@ pub fn task_run_state_to_queue_status(state: &sacode_kernel::TaskRunState) -> St
     match state {
         sacode_kernel::TaskRunState::Completed => TaskQueueStatus::Completed.to_string(),
         sacode_kernel::TaskRunState::Failed => TaskQueueStatus::Failed.to_string(),
-        sacode_kernel::TaskRunState::WaitingForApproval | sacode_kernel::TaskRunState::WaitingForUser => {
-            TaskQueueStatus::Running.to_string()
-        }
+        sacode_kernel::TaskRunState::WaitingForApproval
+        | sacode_kernel::TaskRunState::WaitingForUser => TaskQueueStatus::Running.to_string(),
     }
 }
 
@@ -66,9 +71,7 @@ pub fn task_run_state_for_queue_status(status: &TaskQueueStatus) -> sacode_kerne
         TaskQueueStatus::Pending
         | TaskQueueStatus::Ready
         | TaskQueueStatus::Running
-        | TaskQueueStatus::Retrying => {
-            sacode_kernel::TaskRunState::WaitingForUser
-        }
+        | TaskQueueStatus::Retrying => sacode_kernel::TaskRunState::WaitingForUser,
     }
 }
 

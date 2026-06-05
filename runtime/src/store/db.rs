@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -17,7 +20,10 @@ impl StoreDb {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create task store directory: {}", parent.display())
+                format!(
+                    "failed to create task store directory: {}",
+                    parent.display()
+                )
             })?;
         }
 
@@ -33,7 +39,10 @@ impl StoreDb {
     }
 
     pub fn from_workspace(workspace_root: impl AsRef<Path>) -> Result<Self> {
-        let path = workspace_root.as_ref().join(".sacode").join("task-store.sqlite3");
+        let path = workspace_root
+            .as_ref()
+            .join(".sacode")
+            .join("task-store.sqlite3");
         Self::new(path)
     }
 
@@ -42,7 +51,10 @@ impl StoreDb {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS tasks (
@@ -85,7 +97,10 @@ impl TaskStore for StoreDb {
         } else {
             TaskQueueStatus::Pending
         };
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         connection.execute(
             "
             INSERT INTO tasks(task_id, status, task_json, result_json, updated_at)
@@ -101,7 +116,10 @@ impl TaskStore for StoreDb {
     }
 
     async fn update_status(&self, task_id: &str, status: TaskQueueStatus) -> Result<()> {
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         connection.execute(
             "UPDATE tasks SET status = ?2, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?1",
             params![task_id, status.to_string()],
@@ -111,7 +129,10 @@ impl TaskStore for StoreDb {
 
     async fn save_result(&self, result: &TaskResult) -> Result<()> {
         let result_json = Self::serialize_result(result)?;
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         connection.execute(
             "
             UPDATE tasks
@@ -124,7 +145,10 @@ impl TaskStore for StoreDb {
     }
 
     async fn load(&self, task_id: &str) -> Result<Option<ScheduledTask>> {
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let raw = connection
             .query_row(
                 "SELECT task_json FROM tasks WHERE task_id = ?1",
@@ -137,7 +161,10 @@ impl TaskStore for StoreDb {
     }
 
     async fn load_pending(&self) -> Result<Vec<ScheduledTask>> {
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut statement = connection.prepare(
             "
             SELECT task_json
@@ -158,7 +185,10 @@ impl TaskStore for StoreDb {
 
 impl StoreDb {
     pub async fn load_result(&self, task_id: &str) -> Result<Option<TaskResult>> {
-        let connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let raw = connection
             .query_row(
                 "SELECT result_json FROM tasks WHERE task_id = ?1",

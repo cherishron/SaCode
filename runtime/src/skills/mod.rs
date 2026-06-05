@@ -1,6 +1,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::config::SaCodeConfig;
 
@@ -67,9 +71,8 @@ impl SkillRegistry {
         for (name, description, prompt) in default_skills() {
             let path = workspace_root.join(format!("{}.md", name));
             if !path.exists() {
-                let body = format!(
-                    "# {name}\n\nDescription: {description}\n\n## Prompt\n\n{prompt}\n"
-                );
+                let body =
+                    format!("# {name}\n\nDescription: {description}\n\n## Prompt\n\n{prompt}\n");
                 fs::write(path, body)?;
             }
         }
@@ -118,7 +121,13 @@ impl SkillRegistry {
             .replace("{{description}}", &skill.description))
     }
 
-    pub fn save_skill(&self, name: &str, description: &str, prompt: &str, source: SkillSource) -> Result<PathBuf> {
+    pub fn save_skill(
+        &self,
+        name: &str,
+        description: &str,
+        prompt: &str,
+        source: SkillSource,
+    ) -> Result<PathBuf> {
         let dir = match source {
             SkillSource::User => self.config.user_skills_dir(),
             SkillSource::Project => self.config.project_skills_dir(),
@@ -159,7 +168,11 @@ impl SkillRegistry {
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.md", name.trim()));
         let now = chrono::Local::now().to_rfc3339();
-        let tags_str = if tags.is_empty() { String::new() } else { tags.join(", ") };
+        let tags_str = if tags.is_empty() {
+            String::new()
+        } else {
+            tags.join(", ")
+        };
         let body = format!(
             "# {}\n\nDescription: {}\n\nVersion: {}\n\nAuthor: {}\n\nTags: {}\n\nCreated: {}\n\nUpdated: {}\n\n## Prompt\n\n{}\n",
             name.trim(),
@@ -175,15 +188,29 @@ impl SkillRegistry {
         Ok(path)
     }
 
-    pub fn save_project_skill(&self, name: &str, description: &str, prompt: &str) -> Result<PathBuf> {
+    pub fn save_project_skill(
+        &self,
+        name: &str,
+        description: &str,
+        prompt: &str,
+    ) -> Result<PathBuf> {
         self.save_skill(name, description, prompt, SkillSource::Project)
     }
 
     pub fn remove_skill(&self, name: &str, source: SkillSource) -> Result<()> {
         let path = match source {
-            SkillSource::User => self.config.user_skills_dir().join(format!("{}.md", name.trim())),
-            SkillSource::Project => self.config.project_skills_dir().join(format!("{}.md", name.trim())),
-            SkillSource::Workspace => self.config.workspace_skills_dir().join(format!("{}.md", name.trim())),
+            SkillSource::User => self
+                .config
+                .user_skills_dir()
+                .join(format!("{}.md", name.trim())),
+            SkillSource::Project => self
+                .config
+                .project_skills_dir()
+                .join(format!("{}.md", name.trim())),
+            SkillSource::Workspace => self
+                .config
+                .workspace_skills_dir()
+                .join(format!("{}.md", name.trim())),
             SkillSource::Builtin => anyhow::bail!("cannot remove builtin skill"),
         };
         if !path.exists() {

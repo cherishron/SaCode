@@ -29,7 +29,10 @@ fn test_task_run_snapshot_preserves_waiting_state_and_output() {
 
     assert_eq!(run.task_id.as_deref(), Some("pending-1"));
     assert_eq!(run.mode, Some(ExecutionMode::Build));
-    assert_eq!(run.state, Some(sacode_kernel::TaskRunState::WaitingForApproval));
+    assert_eq!(
+        run.state,
+        Some(sacode_kernel::TaskRunState::WaitingForApproval)
+    );
     assert_eq!(run.prompt.as_deref(), Some("等待用户确认"));
     assert_eq!(run.source.as_deref(), Some("snapshot"));
     assert!(run.started_at.is_some());
@@ -52,7 +55,9 @@ fn test_runtime_orchestrator_execute_task_run_returns_snapshot() {
         crate::CheckpointStorage::new(workdir),
     );
 
-    let run = orchestrator.execute_task_run(&context).expect("execute task run");
+    let run = orchestrator
+        .execute_task_run(&context)
+        .expect("execute task run");
 
     assert_eq!(run.task_id.as_deref(), Some("orch-1"));
     assert_eq!(run.mode, Some(ExecutionMode::Plan));
@@ -70,12 +75,10 @@ async fn test_role_driven_task_run_returns_snapshot() {
     let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
     let context = sacode_kernel::ExecutionContext::new(task).with_task_id("role-1");
 
-    let (run, _plan) = crate::execute_role_driven_task_run(
-        &context,
-        &crate::CheckpointStorage::new(workdir),
-    )
-    .await
-    .expect("execute role driven task run");
+    let (run, _plan) =
+        crate::execute_role_driven_task_run(&context, &crate::CheckpointStorage::new(workdir))
+            .await
+            .expect("execute role driven task run");
 
     assert_eq!(run.task_id.as_deref(), Some("role-1"));
     assert_eq!(run.mode, Some(ExecutionMode::Plan));

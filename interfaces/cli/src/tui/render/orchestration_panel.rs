@@ -140,13 +140,28 @@ fn orchestration_sections(app: &App, theme: ThemePalette) -> OrchestrationSectio
     }
 
     if summary_lines.is_empty() {
-        summary_lines.push(render_block_line("summary", "暂无主裁决摘要", theme.subtle, false));
+        summary_lines.push(render_block_line(
+            "summary",
+            "暂无主裁决摘要",
+            theme.subtle,
+            false,
+        ));
     }
     if route_lines.is_empty() {
-        route_lines.push(render_block_line("route", "暂无角色与路由信息", theme.subtle, false));
+        route_lines.push(render_block_line(
+            "route",
+            "暂无角色与路由信息",
+            theme.subtle,
+            false,
+        ));
     }
     if next_lines.is_empty() {
-        next_lines.push(render_block_line("next", "暂无后续动作建议", theme.subtle, false));
+        next_lines.push(render_block_line(
+            "next",
+            "暂无后续动作建议",
+            theme.subtle,
+            false,
+        ));
     }
 
     OrchestrationSections {
@@ -158,7 +173,12 @@ fn orchestration_sections(app: &App, theme: ThemePalette) -> OrchestrationSectio
 }
 
 #[cfg(test)]
-fn render_block_line(label: &str, text: &str, color: ratatui::style::Color, bold: bool) -> Line<'static> {
+fn render_block_line(
+    label: &str,
+    text: &str,
+    color: ratatui::style::Color,
+    bold: bool,
+) -> Line<'static> {
     let mut style = Style::default().fg(color);
     if bold {
         style = style.add_modifier(Modifier::BOLD);

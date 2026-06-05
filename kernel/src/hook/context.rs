@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{execution::{ExecutionContext, LifecyclePoint, ToolExecutionContext}, event::ApprovalAction};
+use crate::{
+    event::ApprovalAction,
+    execution::{ExecutionContext, LifecyclePoint, ToolExecutionContext},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookContext {

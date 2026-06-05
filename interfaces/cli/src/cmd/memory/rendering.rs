@@ -38,7 +38,10 @@ pub(super) fn render_index_match(entry: &MemoryIndexEntry, query: &str) -> Strin
         entry.file_name,
         entry.kind.scope_label(),
         memory_status_label(entry.status),
-        entry.confidence.map(|value| format!("{value:.2}")).unwrap_or_else(|| "n/a".to_string()),
+        entry
+            .confidence
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "n/a".to_string()),
         highlight_query(&entry.context, query),
         highlight_query(&entry.content, query)
     )
@@ -51,7 +54,10 @@ pub(super) fn render_list_entry(entry: &MemoryIndexEntry) -> String {
         entry.kind.scope_label(),
         memory_status_label(entry.status),
         entry.file_name,
-        entry.confidence.map(|value| format!("{value:.2}")).unwrap_or_else(|| "n/a".to_string()),
+        entry
+            .confidence
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "n/a".to_string()),
         entry.content
     )
 }

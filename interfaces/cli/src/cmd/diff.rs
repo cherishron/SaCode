@@ -17,7 +17,9 @@ pub fn render_diff(args: Vec<String>) -> Result<String> {
     if !output.success {
         return Ok(format!(
             "Diff\n状态: failed\n信息: {}",
-            output.message.unwrap_or_else(|| "unknown error".to_string())
+            output
+                .message
+                .unwrap_or_else(|| "unknown error".to_string())
         ));
     }
 
@@ -29,7 +31,8 @@ pub fn render_diff(args: Vec<String>) -> Result<String> {
             if items.is_empty() {
                 "- 无文件变化".to_string()
             } else {
-                items.iter()
+                items
+                    .iter()
                     .filter_map(|item| item.as_str())
                     .map(|item| format!("- {}", item))
                     .collect::<Vec<_>>()
@@ -54,7 +57,11 @@ pub fn render_diff(args: Vec<String>) -> Result<String> {
 
     Ok(format!(
         "Diff\n模式: {}\n插入: {}\n删除: {}\n文件:\n{}\n\n预览:\n{}",
-        if data.get("cached").and_then(|value| value.as_bool()).unwrap_or(false) {
+        if data
+            .get("cached")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
             "cached"
         } else {
             "working tree"
@@ -62,6 +69,10 @@ pub fn render_diff(args: Vec<String>) -> Result<String> {
         insertions,
         deletions,
         files,
-        if preview.trim().is_empty() { "无差异" } else { preview }
+        if preview.trim().is_empty() {
+            "无差异"
+        } else {
+            preview
+        }
     ))
 }

@@ -100,7 +100,9 @@ impl TaskProfile {
 fn detect_languages(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &Path) {
     if prompt_words.iter().any(|w| ["rust", "cargo"].contains(w)) {
         push_unique(&mut profile.languages, "rust");
-        profile.evidence.push("prompt mentions rust/cargo".to_string());
+        profile
+            .evidence
+            .push("prompt mentions rust/cargo".to_string());
     }
     if workdir.join("Cargo.toml").exists() {
         push_unique(&mut profile.languages, "rust");
@@ -109,25 +111,39 @@ fn detect_languages(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &
 
     if prompt_words.iter().any(|w| ["go", "golang"].contains(w)) {
         push_unique(&mut profile.languages, "go");
-        profile.evidence.push("prompt mentions go/golang".to_string());
+        profile
+            .evidence
+            .push("prompt mentions go/golang".to_string());
     }
     if workdir.join("go.mod").exists() {
         push_unique(&mut profile.languages, "go");
         profile.evidence.push("go.mod exists".to_string());
     }
 
-    if prompt_words.iter().any(|w| ["python", "django", "fastapi"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["python", "django", "fastapi"].contains(w))
+    {
         push_unique(&mut profile.languages, "python");
-        profile.evidence.push("prompt mentions python/django/fastapi".to_string());
+        profile
+            .evidence
+            .push("prompt mentions python/django/fastapi".to_string());
     }
     if workdir.join("pyproject.toml").exists() || workdir.join("requirements.txt").exists() {
         push_unique(&mut profile.languages, "python");
-        profile.evidence.push("pyproject.toml or requirements.txt exists".to_string());
+        profile
+            .evidence
+            .push("pyproject.toml or requirements.txt exists".to_string());
     }
 
-    if prompt_words.iter().any(|w| ["node", "npm", "yarn", "pnpm"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["node", "npm", "yarn", "pnpm"].contains(w))
+    {
         push_unique(&mut profile.languages, "node");
-        profile.evidence.push("prompt mentions node/npm/yarn/pnpm".to_string());
+        profile
+            .evidence
+            .push("prompt mentions node/npm/yarn/pnpm".to_string());
     }
     if workdir.join("package.json").exists() {
         push_unique(&mut profile.languages, "node");
@@ -136,9 +152,14 @@ fn detect_languages(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &
 }
 
 fn detect_frameworks(profile: &mut TaskProfile, prompt_words: &[&str]) {
-    if prompt_words.iter().any(|w| ["react", "jsx", "tsx"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["react", "jsx", "tsx"].contains(w))
+    {
         push_unique(&mut profile.frameworks, "react");
-        profile.evidence.push("prompt mentions react/jsx/tsx".to_string());
+        profile
+            .evidence
+            .push("prompt mentions react/jsx/tsx".to_string());
     }
     if prompt_words.iter().any(|w| ["vue"].contains(w)) {
         push_unique(&mut profile.frameworks, "vue");
@@ -146,7 +167,9 @@ fn detect_frameworks(profile: &mut TaskProfile, prompt_words: &[&str]) {
     }
     if prompt_words.iter().any(|w| ["next", "nextjs"].contains(w)) {
         push_unique(&mut profile.frameworks, "next");
-        profile.evidence.push("prompt mentions next/nextjs".to_string());
+        profile
+            .evidence
+            .push("prompt mentions next/nextjs".to_string());
     }
 }
 
@@ -157,7 +180,9 @@ fn detect_surfaces(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &P
     }
     if workdir.join("interfaces/tui").exists() || prompt_words.iter().any(|w| ["tui"].contains(w)) {
         push_unique(&mut profile.surfaces, "tui");
-        profile.evidence.push("interfaces/tui exists or prompt mentions tui".to_string());
+        profile
+            .evidence
+            .push("interfaces/tui exists or prompt mentions tui".to_string());
     }
     if workdir.join("interfaces/lsp").exists() {
         push_unique(&mut profile.surfaces, "lsp");
@@ -174,39 +199,67 @@ fn detect_surfaces(profile: &mut TaskProfile, prompt_words: &[&str], workdir: &P
 }
 
 fn detect_task_kinds(profile: &mut TaskProfile, prompt_words: &[&str]) {
-    if prompt_words.iter().any(|w| ["implement", "实现", "添加", "增加"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["implement", "实现", "添加", "增加"].contains(w))
+    {
         push_unique(&mut profile.task_kinds, "implementation");
     }
-    if prompt_words.iter().any(|w| ["refactor", "重构"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["refactor", "重构"].contains(w))
+    {
         push_unique(&mut profile.task_kinds, "refactor");
     }
-    if prompt_words.iter().any(|w| ["bug", "fix", "修复"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["bug", "fix", "修复"].contains(w))
+    {
         push_unique(&mut profile.task_kinds, "bugfix");
     }
     if prompt_words.iter().any(|w| ["test", "测试"].contains(w)) {
         push_unique(&mut profile.task_kinds, "test");
     }
-    if prompt_words.iter().any(|w| ["doc", "文档", "readme"].contains(w)) {
+    if prompt_words
+        .iter()
+        .any(|w| ["doc", "文档", "readme"].contains(w))
+    {
         push_unique(&mut profile.task_kinds, "docs");
     }
 }
 
 fn detect_reasoning(profile: &mut TaskProfile, lower_prompt: &str) {
     let reasoning_keywords = [
-        "架构", "设计", "分析", "评估", "决策",
-        "重构", "优化", "梳理", "收敛",
-        "architect", "design", "analyze", "evaluate",
-        "refactor", "optimize",
+        "架构",
+        "设计",
+        "分析",
+        "评估",
+        "决策",
+        "重构",
+        "优化",
+        "梳理",
+        "收敛",
+        "architect",
+        "design",
+        "analyze",
+        "evaluate",
+        "refactor",
+        "optimize",
     ];
     if reasoning_keywords.iter().any(|k| lower_prompt.contains(k)) {
         profile.needs_reasoning = true;
-        profile.evidence.push("prompt indicates reasoning-heavy task".to_string());
+        profile
+            .evidence
+            .push("prompt indicates reasoning-heavy task".to_string());
     }
 }
 
 fn infer_risk_level(profile: &mut TaskProfile) {
     if profile.languages.iter().any(|lang| lang == "rust")
-        && profile.task_kinds.iter().any(|kind| kind == "implementation")
+        && profile
+            .task_kinds
+            .iter()
+            .any(|kind| kind == "implementation")
     {
         profile.risk_level = TaskRiskLevel::Medium;
     }
@@ -215,7 +268,9 @@ fn infer_risk_level(profile: &mut TaskProfile) {
         && profile.surfaces.iter().any(|surface| surface == "tui")
     {
         profile.risk_level = TaskRiskLevel::High;
-        profile.evidence.push("multi-surface rust implementation is high risk".to_string());
+        profile
+            .evidence
+            .push("multi-surface rust implementation is high risk".to_string());
     }
 }
 
@@ -240,9 +295,15 @@ impl NodeScore {
                 reasons.push("provider timeout, switching model".to_string());
             } else if lower.contains("rate limit") || lower.contains("429") {
                 reasons.push("rate limited, switching model".to_string());
-            } else if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
+            } else if lower.contains("401")
+                || lower.contains("403")
+                || lower.contains("unauthorized")
+            {
                 reasons.push("authentication error, switching model".to_string());
-            } else if lower.contains("503") || lower.contains("502") || lower.contains("unavailable") {
+            } else if lower.contains("503")
+                || lower.contains("502")
+                || lower.contains("unavailable")
+            {
                 reasons.push("service unavailable, switching model".to_string());
             } else {
                 reasons.push(format!("provider error: {}", error));
@@ -276,8 +337,14 @@ impl NodeScore {
 
         let lower_text = final_text.to_lowercase();
         let refusal_patterns = [
-            "i cannot", "i'm unable", "i am unable", "i can't",
-            "无法", "不能", "不支持", "我不能",
+            "i cannot",
+            "i'm unable",
+            "i am unable",
+            "i can't",
+            "无法",
+            "不能",
+            "不支持",
+            "我不能",
         ];
         for pattern in refusal_patterns {
             if lower_text.contains(pattern) && lower_text.len() < 300 {
@@ -297,22 +364,29 @@ impl NodeScore {
         ];
         for pattern in vague_patterns {
             if lower_text.contains(pattern) && lower_text.len() < 400 {
-                reasons.push(format!("model asks for clarification without progress: {}", pattern));
+                reasons.push(format!(
+                    "model asks for clarification without progress: {}",
+                    pattern
+                ));
             }
         }
 
         if !profile.languages.is_empty() {
-            let text_mentions_language = profile.languages.iter().any(|lang| {
-                lower_text.contains(&lang.to_lowercase())
-            });
+            let text_mentions_language = profile
+                .languages
+                .iter()
+                .any(|lang| lower_text.contains(&lang.to_lowercase()));
             if !text_mentions_language && tool_calls.is_empty() && lower_text.len() > 500 {
                 reasons.push("response does not reflect expected language context".to_string());
             }
         }
 
         let repetition_patterns = [
-            "as i mentioned", "as mentioned earlier", "如前所述",
-            "as discussed", "to reiterate",
+            "as i mentioned",
+            "as mentioned earlier",
+            "如前所述",
+            "as discussed",
+            "to reiterate",
         ];
         let mut repetition_count = 0;
         for pattern in repetition_patterns {
@@ -326,7 +400,10 @@ impl NodeScore {
 
         let code_indicators = ["```", "fn ", "impl ", "struct ", "class ", "def ", "func "];
         let has_code = code_indicators.iter().any(|ind| final_text.contains(ind));
-        if profile.task_kinds.contains(&"implementation".to_string()) && !has_code && tool_calls.is_empty() {
+        if profile.task_kinds.contains(&"implementation".to_string())
+            && !has_code
+            && tool_calls.is_empty()
+        {
             reasons.push("implementation task but no code or tool usage".to_string());
         }
 
@@ -408,7 +485,8 @@ mod tests {
     fn task_profile_detects_rust_from_cargo_toml() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let workdir = temp_dir.path();
-        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"").expect("write cargo");
+        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"")
+            .expect("write cargo");
 
         let profile = TaskProfile::from_prompt_and_workspace("帮我实现一个函数", workdir);
 
@@ -441,12 +519,7 @@ mod tests {
     #[test]
     fn node_score_switches_on_provider_error() {
         let profile = TaskProfile::default();
-        let score = NodeScore::evaluate(
-            Some("timeout after 30s"),
-            "some response",
-            &[],
-            &profile,
-        );
+        let score = NodeScore::evaluate(Some("timeout after 30s"), "some response", &[], &profile);
 
         assert_eq!(score.decision, NodeDecision::SwitchModel);
         assert!(score.reasons.iter().any(|r| r.contains("timeout")));
@@ -477,12 +550,7 @@ mod tests {
     #[test]
     fn node_score_switches_on_refusal_pattern() {
         let profile = TaskProfile::default();
-        let score = NodeScore::evaluate(
-            None,
-            "I cannot help with this request.",
-            &[],
-            &profile,
-        );
+        let score = NodeScore::evaluate(None, "I cannot help with this request.", &[], &profile);
 
         assert_eq!(score.decision, NodeDecision::SwitchModel);
         assert!(score.reasons.iter().any(|r| r.contains("inability")));

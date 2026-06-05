@@ -3,14 +3,18 @@ use std::ffi::OsStr;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::{debug, info, warn};
 use wait_timeout::ChildExt;
-use tracing::{info, warn, debug};
 
 use crate::config::DockerSandboxConfig;
 use crate::sandbox::{install_global_backend, install_global_policy, SandboxPolicy};
 
 pub trait SandboxBackend: Send + Sync {
-    fn execute_command(&self, policy: &SandboxPolicy, command: &SandboxCommand) -> Result<BackendCommandOutput>;
+    fn execute_command(
+        &self,
+        policy: &SandboxPolicy,
+        command: &SandboxCommand,
+    ) -> Result<BackendCommandOutput>;
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +49,11 @@ impl DockerSandboxBackend {
         &self.config
     }
 
-    pub(crate) fn build_docker_command(&self, policy: &SandboxPolicy, command: &SandboxCommand) -> Result<SandboxCommand> {
+    pub(crate) fn build_docker_command(
+        &self,
+        policy: &SandboxPolicy,
+        command: &SandboxCommand,
+    ) -> Result<SandboxCommand> {
         let image = self
             .config
             .image
@@ -58,10 +66,7 @@ impl DockerSandboxBackend {
             .clone()
             .unwrap_or_else(|| "/workspace".to_string());
 
-        let mut docker_args = vec![
-            "run".to_string(),
-            "--rm".to_string(),
-        ];
+        let mut docker_args = vec!["run".to_string(), "--rm".to_string()];
 
         let container_user = self
             .config
@@ -85,7 +90,11 @@ impl DockerSandboxBackend {
         }
 
         docker_args.push("-w".to_string());
-        docker_args.push(container_cwd(command.cwd.as_deref(), &workspace, &mount_target));
+        docker_args.push(container_cwd(
+            command.cwd.as_deref(),
+            &workspace,
+            &mount_target,
+        ));
 
         let network_mode = self
             .config
@@ -95,7 +104,12 @@ impl DockerSandboxBackend {
         docker_args.push("--network".to_string());
         docker_args.push(network_mode);
 
-        if let Some(memory) = self.config.memory.clone().or_else(|| policy.max_memory_mb().map(|mb| format!("{}m", mb))) {
+        if let Some(memory) = self
+            .config
+            .memory
+            .clone()
+            .or_else(|| policy.max_memory_mb().map(|mb| format!("{}m", mb)))
+        {
             docker_args.push("--memory".to_string());
             docker_args.push(memory);
         }
@@ -119,23 +133,28 @@ impl DockerSandboxBackend {
 }
 
 impl SandboxBackend for LocalSandboxBackend {
-    fn execute_command(&self, policy: &SandboxPolicy, command: &SandboxCommand) -> Result<BackendCommandOutput> {
-        let cmd_name = command.program.split_whitespace().next().unwrap_or(&command.program);
+    fn execute_command(
+        &self,
+        policy: &SandboxPolicy,
+        command: &SandboxCommand,
+    ) -> Result<BackendCommandOutput> {
+        let cmd_name = command
+            .program
+            .split_whitespace()
+            .next()
+            .unwrap_or(&command.program);
 
         if !policy.check_command(cmd_name) {
             warn!(
                 "Sandbox blocked command: '{}' (policy: allowed_commands={:?})",
-                cmd_name,
-                policy.shell.allowed_commands
+                cmd_name, policy.shell.allowed_commands
             );
             anyhow::bail!("Command '{}' is not allowed by sandbox policy", cmd_name);
         }
 
         debug!(
             "Sandbox executing: command='{}', args={:?}, timeout_ms={}",
-            cmd_name,
-            command.args,
-            command.timeout_ms
+            cmd_name, command.args, command.timeout_ms
         );
 
         let timeout_ms = command.timeout_ms;
@@ -157,9 +176,7 @@ impl SandboxBackend for LocalSandboxBackend {
         let pid = child.id();
         info!(
             "Process spawned: command='{}', pid={}, timeout={}ms",
-            cmd_name,
-            pid,
-            timeout_ms
+            cmd_name, pid, timeout_ms
         );
 
         let timeout = Duration::from_millis(timeout_ms);
@@ -174,8 +191,7 @@ impl SandboxBackend for LocalSandboxBackend {
                 if exit_status.success() {
                     info!(
                         "Process completed successfully: command='{}', pid={}, exit_code=0",
-                        cmd_name,
-                        pid
+                        cmd_name, pid
                     );
                     Ok(BackendCommandOutput {
                         stdout,
@@ -202,9 +218,7 @@ impl SandboxBackend for LocalSandboxBackend {
             None => {
                 warn!(
                     "Process timed out: command='{}', pid={}, timeout={}ms - killing process",
-                    cmd_name,
-                    pid,
-                    timeout_ms
+                    cmd_name, pid, timeout_ms
                 );
                 child.kill()?;
                 Ok(BackendCommandOutput {
@@ -219,7 +233,11 @@ impl SandboxBackend for LocalSandboxBackend {
 }
 
 impl SandboxBackend for DockerSandboxBackend {
-    fn execute_command(&self, policy: &SandboxPolicy, command: &SandboxCommand) -> Result<BackendCommandOutput> {
+    fn execute_command(
+        &self,
+        policy: &SandboxPolicy,
+        command: &SandboxCommand,
+    ) -> Result<BackendCommandOutput> {
         let docker_command = self.build_docker_command(policy, command)?;
         let backend = LocalSandboxBackend;
         backend.execute_command(policy, &docker_command)
@@ -228,7 +246,10 @@ impl SandboxBackend for DockerSandboxBackend {
 
 fn container_program(program: &str) -> Result<String> {
     if let Ok(current_exe) = std::env::current_exe() {
-        let current_exe_name = current_exe.file_name().and_then(OsStr::to_str).unwrap_or_default();
+        let current_exe_name = current_exe
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default();
         if program == current_exe.to_string_lossy() || program.ends_with(current_exe_name) {
             return Ok("sacode".to_string());
         }
@@ -247,12 +268,20 @@ fn container_cwd(cwd: Option<&str>, workspace: &std::path::Path, mount_target: &
         workspace.join(cwd_path)
     };
     match absolute.strip_prefix(workspace) {
-        Ok(relative) if !relative.as_os_str().is_empty() => format!("{}/{}", mount_target.trim_end_matches('/'), relative.display()),
+        Ok(relative) if !relative.as_os_str().is_empty() => format!(
+            "{}/{}",
+            mount_target.trim_end_matches('/'),
+            relative.display()
+        ),
         _ => mount_target.to_string(),
     }
 }
 
-fn docker_mounts(policy: &SandboxPolicy, workspace: &std::path::Path, mount_target: &str) -> Vec<Vec<String>> {
+fn docker_mounts(
+    policy: &SandboxPolicy,
+    workspace: &std::path::Path,
+    mount_target: &str,
+) -> Vec<Vec<String>> {
     let denied = policy
         .fs
         .denied_paths
@@ -266,7 +295,13 @@ fn docker_mounts(policy: &SandboxPolicy, workspace: &std::path::Path, mount_targ
         if denied.iter().any(|deny| resolved.starts_with(deny)) {
             continue;
         }
-        if policy.fs.write_paths.iter().map(resolve_policy_mount_path).any(|write| write == resolved) {
+        if policy
+            .fs
+            .write_paths
+            .iter()
+            .map(resolve_policy_mount_path)
+            .any(|write| write == resolved)
+        {
             continue;
         }
         mounts.push(build_mount_arg(&resolved, workspace, mount_target, true));
@@ -309,10 +344,17 @@ fn read_id_output(program: &str, arg: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn build_mount_arg(host_path: &std::path::Path, workspace: &std::path::Path, mount_target: &str, readonly: bool) -> Vec<String> {
+fn build_mount_arg(
+    host_path: &std::path::Path,
+    workspace: &std::path::Path,
+    mount_target: &str,
+    readonly: bool,
+) -> Vec<String> {
     let relative = host_path.strip_prefix(workspace).ok();
     let container_path = match relative {
-        Some(path) if !path.as_os_str().is_empty() => format!("{}/{}", mount_target.trim_end_matches('/'), path.display()),
+        Some(path) if !path.as_os_str().is_empty() => {
+            format!("{}/{}", mount_target.trim_end_matches('/'), path.display())
+        }
         _ => mount_target.to_string(),
     };
     let suffix = if readonly { ":ro" } else { "" };
@@ -326,11 +368,16 @@ fn resolve_policy_mount_path(path: &std::path::PathBuf) -> std::path::PathBuf {
     if path.is_absolute() {
         return path.clone();
     }
-    std::env::current_dir().map(|cwd| cwd.join(path)).unwrap_or_else(|_| path.clone())
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.clone())
 }
 
 fn docker_network_mode(policy: &SandboxPolicy) -> &'static str {
-    if policy.network.fetch_allowed || policy.network.browser_allowed || policy.network.search_allowed {
+    if policy.network.fetch_allowed
+        || policy.network.browser_allowed
+        || policy.network.search_allowed
+    {
         "bridge"
     } else {
         "none"
@@ -364,7 +411,10 @@ impl SandboxExecutor {
             },
         )?;
         if output.timed_out {
-            anyhow::bail!("Command timed out after {}ms", self.policy.timeout_ms().unwrap_or(30000));
+            anyhow::bail!(
+                "Command timed out after {}ms",
+                self.policy.timeout_ms().unwrap_or(30000)
+            );
         }
         if output.exit_code != 0 {
             anyhow::bail!("Command failed: {}", output.stderr);

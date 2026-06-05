@@ -278,16 +278,40 @@ fn build_habits_summary(insight: &CodingInsight) -> Vec<String> {
     let mut items = Vec::new();
 
     if !insight.task_types.is_empty() {
-        items.push(format!("高频任务集中在：{}", insight.task_types.iter().take(4).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "高频任务集中在：{}",
+            insight
+                .task_types
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
     if !insight.tech_stack.is_empty() {
-        items.push(format!("常接触技术栈：{}", insight.tech_stack.iter().take(5).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "常接触技术栈：{}",
+            insight
+                .tech_stack
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
     if !insight.code_styles.is_empty() {
-        items.push(format!("偏好的实现风格：{}", insight.code_styles.join("、")));
+        items.push(format!(
+            "偏好的实现风格：{}",
+            insight.code_styles.join("、")
+        ));
     }
     if !insight.error_handling.is_empty() {
-        items.push(format!("常讨论的稳定性模式：{}", insight.error_handling.join("、")));
+        items.push(format!(
+            "常讨论的稳定性模式：{}",
+            insight.error_handling.join("、")
+        ));
     }
 
     if items.is_empty() {
@@ -301,16 +325,34 @@ fn build_insights(insight: &CodingInsight) -> Vec<String> {
     let mut items = Vec::new();
 
     if !insight.common_issues.is_empty() {
-        items.push(format!("近期问题聚焦在：{}", insight.common_issues.join("、")));
+        items.push(format!(
+            "近期问题聚焦在：{}",
+            insight.common_issues.join("、")
+        ));
     }
     if !insight.help_patterns.is_empty() {
-        items.push(format!("你更容易从这些帮助形式中获得收益：{}", insight.help_patterns.join("、")));
+        items.push(format!(
+            "你更容易从这些帮助形式中获得收益：{}",
+            insight.help_patterns.join("、")
+        ));
     }
     if !insight.keywords.is_empty() {
-        items.push(format!("高频话题词包括：{}", insight.keywords.iter().take(10).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "高频话题词包括：{}",
+            insight
+                .keywords
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
     if insight.update_count > 1 {
-        items.push(format!("这份洞察已经累计更新 {} 次，适合作为长期用户级偏好来源。", insight.update_count));
+        items.push(format!(
+            "这份洞察已经累计更新 {} 次，适合作为长期用户级偏好来源。",
+            insight.update_count
+        ));
     }
 
     if items.is_empty() {
@@ -323,16 +365,34 @@ fn build_insights(insight: &CodingInsight) -> Vec<String> {
 fn build_optimizations(insight: &CodingInsight) -> Vec<String> {
     let mut items = Vec::new();
 
-    if insight.help_patterns.iter().any(|item| item == "提供代码示例") {
+    if insight
+        .help_patterns
+        .iter()
+        .any(|item| item == "提供代码示例")
+    {
         items.push("在后续协作里优先给出可运行示例，减少纯概念解释占比。".to_string());
     }
-    if insight.code_styles.iter().any(|item| item == "简洁代码") || insight.code_styles.iter().any(|item| item == "模块化") {
+    if insight.code_styles.iter().any(|item| item == "简洁代码")
+        || insight.code_styles.iter().any(|item| item == "模块化")
+    {
         items.push("把规则写入用户级 AGENTS，持续推动最小改动和清晰职责边界。".to_string());
     }
-    if insight.common_issues.iter().any(|item| item.contains("编译")) || insight.common_issues.iter().any(|item| item.contains("依赖")) {
+    if insight
+        .common_issues
+        .iter()
+        .any(|item| item.contains("编译"))
+        || insight
+            .common_issues
+            .iter()
+            .any(|item| item.contains("依赖"))
+    {
         items.push("为常见编译和依赖问题补充用户级排查清单，降低后续项目重复试错。".to_string());
     }
-    if insight.error_handling.iter().any(|item| item.contains("日志")) {
+    if insight
+        .error_handling
+        .iter()
+        .any(|item| item.contains("日志"))
+    {
         items.push("把日志、校验、重试等稳定性要求写入用户级规则，提升默认实现质量。".to_string());
     }
 
@@ -343,7 +403,10 @@ fn build_optimizations(insight: &CodingInsight) -> Vec<String> {
     items
 }
 
-fn build_repair_instructions(insight: &CodingInsight, store: &InsightStore) -> Vec<RepairInstruction> {
+fn build_repair_instructions(
+    insight: &CodingInsight,
+    store: &InsightStore,
+) -> Vec<RepairInstruction> {
     let mut items = Vec::new();
 
     let agents_rules = build_agents_rules(insight);
@@ -407,10 +470,18 @@ fn build_agents_rules(insight: &CodingInsight) -> Vec<String> {
     if insight.code_styles.iter().any(|item| item == "简洁代码") {
         rules.push("优先使用最小正确改动，保持实现集中，减少额外抽象。".to_string());
     }
-    if insight.help_patterns.iter().any(|item| item == "给出操作步骤") {
+    if insight
+        .help_patterns
+        .iter()
+        .any(|item| item == "给出操作步骤")
+    {
         rules.push("复杂任务先给出紧凑步骤，再落地代码和验证。".to_string());
     }
-    if insight.help_patterns.iter().any(|item| item == "提供代码示例") {
+    if insight
+        .help_patterns
+        .iter()
+        .any(|item| item == "提供代码示例")
+    {
         rules.push("涉及实现建议时优先提供直接可用的代码和命令。".to_string());
     }
     if insight.error_handling.iter().any(|item| item == "数据校验") {
@@ -424,13 +495,40 @@ fn build_memory_items(insight: &CodingInsight) -> Vec<String> {
     let mut items = Vec::new();
 
     if !insight.tech_stack.is_empty() {
-        items.push(format!("长期关注的技术栈包括：{}", insight.tech_stack.iter().take(5).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "长期关注的技术栈包括：{}",
+            insight
+                .tech_stack
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
     if !insight.task_types.is_empty() {
-        items.push(format!("常见任务类型包括：{}", insight.task_types.iter().take(4).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "常见任务类型包括：{}",
+            insight
+                .task_types
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
     if !insight.common_issues.is_empty() {
-        items.push(format!("常见问题包括：{}", insight.common_issues.iter().take(4).cloned().collect::<Vec<_>>().join("、")));
+        items.push(format!(
+            "常见问题包括：{}",
+            insight
+                .common_issues
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ));
     }
 
     items
@@ -439,13 +537,27 @@ fn build_memory_items(insight: &CodingInsight) -> Vec<String> {
 fn build_rule_items(insight: &CodingInsight) -> Vec<String> {
     let mut items = Vec::new();
 
-    if insight.common_issues.iter().any(|item| item.contains("性能")) {
-        items.push("遇到性能相关任务时，先定位热点，再进行最小范围优化，并保留验证结果。".to_string());
+    if insight
+        .common_issues
+        .iter()
+        .any(|item| item.contains("性能"))
+    {
+        items.push(
+            "遇到性能相关任务时，先定位热点，再进行最小范围优化，并保留验证结果。".to_string(),
+        );
     }
-    if insight.common_issues.iter().any(|item| item.contains("编译")) {
+    if insight
+        .common_issues
+        .iter()
+        .any(|item| item.contains("编译"))
+    {
         items.push("涉及代码修改后优先运行编译验证，尽早暴露类型和依赖问题。".to_string());
     }
-    if insight.common_issues.iter().any(|item| item.contains("安全")) {
+    if insight
+        .common_issues
+        .iter()
+        .any(|item| item.contains("安全"))
+    {
         items.push("处理输入、认证和外部依赖时优先检查校验、权限和敏感信息暴露。".to_string());
     }
     if insight.error_handling.iter().any(|item| item == "日志记录") {
@@ -485,8 +597,14 @@ fn collect_messages_from_workspace(workdir: &Path) -> Result<Vec<(&'static str, 
         };
 
         for item in items {
-            let role = item.get("role").and_then(|value| value.as_str()).unwrap_or_default();
-            let content = item.get("content").and_then(|value| value.as_str()).unwrap_or_default();
+            let role = item
+                .get("role")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let content = item
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
             let normalized = match role {
                 "User" | "user" => Some("user"),
                 "Assistant" | "assistant" => Some("assistant"),
@@ -522,7 +640,10 @@ fn user_sacode_dir() -> PathBuf {
 
 fn open_in_browser(path: &Path) -> Result<()> {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let target = format!("file:///{}", absolute.display().to_string().replace('\\', "/"));
+    let target = format!(
+        "file:///{}",
+        absolute.display().to_string().replace('\\', "/")
+    );
 
     #[cfg(target_os = "macos")]
     {
@@ -532,7 +653,9 @@ fn open_in_browser(path: &Path) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd").args(["/C", "start", "", &target]).spawn()?;
+        Command::new("cmd")
+            .args(["/C", "start", "", &target])
+            .spawn()?;
         return Ok(());
     }
 
@@ -833,7 +956,8 @@ fn detect_help_patterns(role: &str, content: &str, patterns: &mut Vec<String>) {
         if content.contains("解释") || content.contains("explain") || content.contains("原理") {
             patterns.push("解释概念原理".to_string());
         }
-        if content.contains("建议") || content.contains("recommend") || content.contains("最佳") {
+        if content.contains("建议") || content.contains("recommend") || content.contains("最佳")
+        {
             patterns.push("提供最佳实践建议".to_string());
         }
         if content.contains("步骤") || content.contains("step") {
@@ -842,7 +966,8 @@ fn detect_help_patterns(role: &str, content: &str, patterns: &mut Vec<String>) {
         if content.contains("修复") || content.contains("fix") || content.contains("解决") {
             patterns.push("提供修复方案".to_string());
         }
-        if content.contains("优化") || content.contains("optimize") || content.contains("改进") {
+        if content.contains("优化") || content.contains("optimize") || content.contains("改进")
+        {
             patterns.push("提供优化建议".to_string());
         }
     }
@@ -850,16 +975,16 @@ fn detect_help_patterns(role: &str, content: &str, patterns: &mut Vec<String>) {
 
 fn extract_keywords(content: &str, keywords: &mut Vec<String>) {
     let stop_words = [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have",
-        "has", "had", "do", "does", "did", "will", "would", "shall", "should", "can",
-        "could", "may", "might", "must", "need", "to", "of", "in", "for", "on", "with",
-        "at", "by", "from", "up", "about", "into", "over", "after", "before", "between",
-        "under", "again", "then", "once", "here", "there", "when", "where", "why", "how",
-        "all", "each", "few", "more", "most", "other", "some", "such", "only", "own",
-        "same", "so", "than", "too", "very", "just", "and", "but", "if", "or", "because",
-        "as", "until", "while", "的", "是", "在", "有", "和", "与", "或", "但", "如果",
-        "因为", "所以", "这", "那", "它", "我", "你", "他", "她", "我们", "他们", "什么",
-        "怎么", "如何", "一个", "这个", "那个", "可以", "需要", "应该", "可能", "请", "谢谢",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "shall", "should", "can", "could", "may", "might",
+        "must", "need", "to", "of", "in", "for", "on", "with", "at", "by", "from", "up", "about",
+        "into", "over", "after", "before", "between", "under", "again", "then", "once", "here",
+        "there", "when", "where", "why", "how", "all", "each", "few", "more", "most", "other",
+        "some", "such", "only", "own", "same", "so", "than", "too", "very", "just", "and", "but",
+        "if", "or", "because", "as", "until", "while", "的", "是", "在", "有", "和", "与", "或",
+        "但", "如果", "因为", "所以", "这", "那", "它", "我", "你", "他", "她", "我们", "他们",
+        "什么", "怎么", "如何", "一个", "这个", "那个", "可以", "需要", "应该", "可能", "请",
+        "谢谢",
     ];
 
     for word in content.split_whitespace().take(50) {
@@ -937,25 +1062,53 @@ pub fn insight_instruction(_workdir: &Path) -> Option<String> {
     if !artifacts.insight.tech_stack.is_empty() {
         parts.push(format!(
             "常见技术栈: {}",
-            artifacts.insight.tech_stack.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+            artifacts
+                .insight
+                .tech_stack
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     if !artifacts.insight.task_types.is_empty() {
         parts.push(format!(
             "常见任务: {}",
-            artifacts.insight.task_types.iter().take(4).cloned().collect::<Vec<_>>().join(", ")
+            artifacts
+                .insight
+                .task_types
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     if !artifacts.insight.code_styles.is_empty() {
         parts.push(format!(
             "代码风格偏好: {}",
-            artifacts.insight.code_styles.iter().take(4).cloned().collect::<Vec<_>>().join(", ")
+            artifacts
+                .insight
+                .code_styles
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     if !artifacts.report.optimizations.is_empty() {
         parts.push(format!(
             "长期优化项: {}",
-            artifacts.report.optimizations.iter().take(3).cloned().collect::<Vec<_>>().join("；")
+            artifacts
+                .report
+                .optimizations
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("；")
         ));
     }
 

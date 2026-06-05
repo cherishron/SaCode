@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::sandbox::FsAccess;
-use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
+use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
 

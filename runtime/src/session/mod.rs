@@ -1,8 +1,15 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
-use sacode_kernel::{ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionContext, ExecutionMode, Supervisor, Task, ToolExecutionRecord};
+use sacode_kernel::{
+    ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionContext, ExecutionMode, Supervisor,
+    Task, ToolExecutionRecord,
+};
 
 use crate::CheckpointStorage;
 use crate::ToolRegistry;
@@ -23,7 +30,10 @@ impl SessionService {
         let id = format!("session-{}", unique_suffix());
         let state = SessionState::new(id.clone(), cwd);
         let handle = state.handle();
-        self.sessions.lock().expect("session mutex poisoned").insert(id, state);
+        self.sessions
+            .lock()
+            .expect("session mutex poisoned")
+            .insert(id, state);
         Ok(handle)
     }
 
@@ -83,7 +93,11 @@ impl SessionService {
         })
     }
 
-    pub fn auto_compress_session(&self, session_id: &str, threshold: u32) -> Result<Option<CompressionResult>> {
+    pub fn auto_compress_session(
+        &self,
+        session_id: &str,
+        threshold: u32,
+    ) -> Result<Option<CompressionResult>> {
         let mut sessions = self.sessions.lock().expect("session mutex poisoned");
         let session = sessions
             .get_mut(session_id)
@@ -129,7 +143,10 @@ impl SessionService {
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
-        if matches!(session.status, SessionStatus::Cancelled | SessionStatus::Closed) {
+        if matches!(
+            session.status,
+            SessionStatus::Cancelled | SessionStatus::Closed
+        ) {
             return Ok(vec![SessionEvent::Error {
                 message: format!("session {} is not runnable", session_id),
             }]);
@@ -159,8 +176,14 @@ impl SessionService {
                     input: tool_call.input.clone(),
                 });
 
-                let (output, success) = execute_tool_call(&tools, &tool_call.name, &tool_call.input, context.approval);
-                checkpoint.record_tool(tool_call.name.clone(), tool_call.input.clone(), output.clone(), success);
+                let (output, success) =
+                    execute_tool_call(&tools, &tool_call.name, &tool_call.input, context.approval);
+                checkpoint.record_tool(
+                    tool_call.name.clone(),
+                    tool_call.input.clone(),
+                    output.clone(),
+                    success,
+                );
                 tool_records.push(ToolExecutionRecord {
                     step_id: Some(step_id),
                     tool_name: tool_call.name.clone(),
@@ -185,7 +208,10 @@ impl SessionService {
         let checkpoint_path = checkpoints.save(&checkpoint)?;
         session.status = SessionStatus::Idle;
         session.events.extend(checkpoint.recent_events.clone());
-        session.last_checkpoint = checkpoint_path.file_name().and_then(|value| value.to_str()).map(str::to_string);
+        session.last_checkpoint = checkpoint_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string);
         session.last_tool_records = tool_records;
 
         let summary = execution
@@ -226,7 +252,11 @@ impl SessionState {
             id: id.clone(),
             cwd,
             status: SessionStatus::Idle,
-            tools: ToolRegistry::builtin().names().into_iter().map(str::to_string).collect(),
+            tools: ToolRegistry::builtin()
+                .names()
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             events: Vec::new(),
             last_checkpoint: None,
             last_tool_records: Vec::new(),
@@ -249,7 +279,10 @@ impl SessionState {
     }
 
     fn estimate_event_tokens(&self) -> u32 {
-        self.events.iter().map(|event| estimate_event_tokens(event)).sum()
+        self.events
+            .iter()
+            .map(|event| estimate_event_tokens(event))
+            .sum()
     }
 
     fn should_compress(&self, threshold: u32) -> bool {
@@ -258,7 +291,7 @@ impl SessionState {
 
     fn compress(&mut self) -> Result<()> {
         if self.events.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         let original_count = self.events.len();
@@ -272,7 +305,11 @@ impl SessionState {
                 Event::Message { content: _ } => key_events.push(event.clone()),
                 Event::PlanGenerated { steps: _ } => key_events.push(event.clone()),
                 Event::ToolCallStarted { name: _, input: _ } => tool_events.push(event.clone()),
-                Event::ToolCallFinished { name: _, output: _, success } if *success => tool_events.push(event.clone()),
+                Event::ToolCallFinished {
+                    name: _,
+                    output: _,
+                    success,
+                } if *success => tool_events.push(event.clone()),
                 Event::Done { summary: _ } => key_events.push(event.clone()),
                 Event::Error { message: _ } => key_events.push(event.clone()),
                 _ => {}
@@ -280,9 +317,15 @@ impl SessionState {
         }
 
         let summary = generate_compression_summary(&key_events, &tool_events);
-        let compressed_events = key_events.into_iter().chain(tool_events.into_iter()).collect::<Vec<_>>();
+        let compressed_events = key_events
+            .into_iter()
+            .chain(tool_events.into_iter())
+            .collect::<Vec<_>>();
         let compressed_count = compressed_events.len();
-        let compressed_tokens = compressed_events.iter().map(|event| estimate_event_tokens(event)).sum::<u32>();
+        let compressed_tokens = compressed_events
+            .iter()
+            .map(|event| estimate_event_tokens(event))
+            .sum::<u32>();
 
         let ratio = if original_tokens > 0 {
             compressed_tokens as f32 / original_tokens as f32
@@ -335,12 +378,27 @@ pub struct SessionPrompt {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
-    Started { task: Task },
+    Started {
+        task: Task,
+    },
     KernelEvent(Event),
-    ToolCallStarted { step_id: usize, name: String, input: serde_json::Value },
-    ToolCallFinished { step_id: usize, name: String, output: serde_json::Value, success: bool },
-    Done { summary: String },
-    Error { message: String },
+    ToolCallStarted {
+        step_id: usize,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolCallFinished {
+        step_id: usize,
+        name: String,
+        output: serde_json::Value,
+        success: bool,
+    },
+    Done {
+        summary: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 fn execute_tool_call(
@@ -355,8 +413,15 @@ fn execute_tool_call(
     if needs_approval {
         match approval {
             ApprovalPolicy::AutoApprove => {}
-            ApprovalPolicy::AutoDeny => return (serde_json::json!({ "error": "denied by policy" }), false),
-            ApprovalPolicy::Prompt => return (serde_json::json!({ "error": "interactive approval unavailable" }), false),
+            ApprovalPolicy::AutoDeny => {
+                return (serde_json::json!({ "error": "denied by policy" }), false)
+            }
+            ApprovalPolicy::Prompt => {
+                return (
+                    serde_json::json!({ "error": "interactive approval unavailable" }),
+                    false,
+                )
+            }
         }
     }
 
@@ -394,22 +459,31 @@ fn estimate_event_tokens(event: &Event) -> u32 {
         Event::Message { content } => (content.len() / 4) as u32,
         Event::Thinking { content } => (content.len() / 4) as u32,
         Event::PlanGenerated { steps } => steps.iter().map(|s| s.len() / 4).sum::<usize>() as u32,
-        Event::ToolCallStarted { name, input } => (name.len() / 4 + input.to_string().len() / 4 + 10) as u32,
-        Event::ToolCallFinished { name, output, success: _ } => {
+        Event::ToolCallStarted { name, input } => {
+            (name.len() / 4 + input.to_string().len() / 4 + 10) as u32
+        }
+        Event::ToolCallFinished {
+            name,
+            output,
+            success: _,
+        } => {
             let output_len = output.to_string().len();
             (name.len() / 4 + output_len / 4 + 20) as u32
-        },
-        Event::ApprovalRequested { action } => {
-            match action {
-                ApprovalAction::WriteFile { path } => (path.len() / 4 + 10) as u32,
-                ApprovalAction::ExecuteCommand { command } => (command.len() / 4 + 10) as u32,
-                ApprovalAction::CallPlugin { name } => (name.len() / 4 + 10) as u32,
-                ApprovalAction::BatchChange { count } => 10 + *count as u32,
-            }
+        }
+        Event::ApprovalRequested { action } => match action {
+            ApprovalAction::WriteFile { path } => (path.len() / 4 + 10) as u32,
+            ApprovalAction::ExecuteCommand { command } => (command.len() / 4 + 10) as u32,
+            ApprovalAction::CallPlugin { name } => (name.len() / 4 + 10) as u32,
+            ApprovalAction::BatchChange { count } => 10 + *count as u32,
         },
         Event::ApprovalResolved { approved: _ } => 5,
-        Event::FileChanged { path, change_type: _ } => (path.len() / 4 + 10) as u32,
-        Event::CommandOutput { command, output } => (command.len() / 4 + output.len() / 4 + 10) as u32,
+        Event::FileChanged {
+            path,
+            change_type: _,
+        } => (path.len() / 4 + 10) as u32,
+        Event::CommandOutput { command, output } => {
+            (command.len() / 4 + output.len() / 4 + 10) as u32
+        }
         Event::Done { summary } => (summary.len() / 4) as u32,
         Event::Error { message } => (message.len() / 4 + 10) as u32,
     }
@@ -421,17 +495,26 @@ fn generate_compression_summary(key_events: &[Event], tool_events: &[Event]) -> 
     for event in key_events {
         match event {
             Event::Message { content } => {
-                summary_parts.push(format!("消息: {}", content.lines().next().unwrap_or_default()));
-            },
+                summary_parts.push(format!(
+                    "消息: {}",
+                    content.lines().next().unwrap_or_default()
+                ));
+            }
             Event::Done { summary } => {
-                summary_parts.push(format!("完成: {}", summary.lines().next().unwrap_or_default()));
-            },
+                summary_parts.push(format!(
+                    "完成: {}",
+                    summary.lines().next().unwrap_or_default()
+                ));
+            }
             Event::Error { message } => {
-                summary_parts.push(format!("错误: {}", message.lines().next().unwrap_or_default()));
-            },
+                summary_parts.push(format!(
+                    "错误: {}",
+                    message.lines().next().unwrap_or_default()
+                ));
+            }
             Event::PlanGenerated { steps } => {
                 summary_parts.push(format!("规划: {} 步", steps.len()));
-            },
+            }
             _ => {}
         }
     }
@@ -440,7 +523,11 @@ fn generate_compression_summary(key_events: &[Event], tool_events: &[Event]) -> 
         .iter()
         .filter_map(|event| match event {
             Event::ToolCallStarted { name, input: _ } => Some(name.clone()),
-            Event::ToolCallFinished { name, output: _, success: _ } => Some(name.clone()),
+            Event::ToolCallFinished {
+                name,
+                output: _,
+                success: _,
+            } => Some(name.clone()),
             _ => None,
         })
         .collect();

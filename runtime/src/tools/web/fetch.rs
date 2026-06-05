@@ -1,6 +1,6 @@
-use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
-use crate::sandbox::{active_policy, NetworkAccess};
 use super::{extract_tag_text, html_to_text, normalize_url, send_with_retries, truncate_chars};
+use crate::sandbox::{active_policy, NetworkAccess};
+use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 use anyhow::Result;
 
 #[derive(Debug, serde::Deserialize)]
@@ -40,15 +40,18 @@ pub fn spec() -> ToolSpec {
 
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     if !active_policy().check_network(NetworkAccess::Fetch) {
-        return Ok(ToolOutput::failure("network access blocked by sandbox policy"));
+        return Ok(ToolOutput::failure(
+            "network access blocked by sandbox policy",
+        ));
     }
 
     let payload: FetchInput = serde_json::from_value(input)?;
     let url = normalize_url(&payload.url);
     let response = send_with_retries(15, |client| {
-        client
-            .get(&url)
-            .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8")
+        client.get(&url).header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+        )
     })?;
 
     let status = response.status().as_u16();

@@ -152,13 +152,14 @@ impl ChatRequest {
     }
 
     pub fn simple(model: impl Into<String>, prompt: impl Into<String>) -> Self {
-        Self::new(
-            model,
-            vec![ChatMessage::user(prompt)],
-        )
+        Self::new(model, vec![ChatMessage::user(prompt)])
     }
 
-    pub fn with_tools(model: impl Into<String>, messages: Vec<ChatMessage>, tools: Vec<ToolDefinition>) -> Self {
+    pub fn with_tools(
+        model: impl Into<String>,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolDefinition>,
+    ) -> Self {
         Self {
             model: model.into(),
             messages,
@@ -172,7 +173,12 @@ impl ChatRequest {
         }
     }
 
-    pub fn with_thinking(model: impl Into<String>, messages: Vec<ChatMessage>, tools: Vec<ToolDefinition>, effort: Option<String>) -> Self {
+    pub fn with_thinking(
+        model: impl Into<String>,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolDefinition>,
+        effort: Option<String>,
+    ) -> Self {
         Self {
             model: model.into(),
             messages,
@@ -251,7 +257,11 @@ impl ChatMessage {
         }
     }
 
-    pub fn assistant_with_reasoning(content: Option<String>, reasoning_content: Option<String>, tool_calls: Option<Vec<ToolCall>>) -> Self {
+    pub fn assistant_with_reasoning(
+        content: Option<String>,
+        reasoning_content: Option<String>,
+        tool_calls: Option<Vec<ToolCall>>,
+    ) -> Self {
         Self {
             role: "assistant".to_string(),
             content: content.map(MessageContent::Text),
@@ -273,7 +283,11 @@ impl ChatMessage {
         }
     }
 
-    pub fn tool_result_named(tool_call_id: impl Into<String>, name: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn tool_result_named(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             role: "tool".to_string(),
             content: Some(MessageContent::Text(content.into())),
@@ -306,16 +320,26 @@ impl ChatMessage {
 
 impl ThinkingConfig {
     pub fn enabled() -> Self {
-        Self { thinking_type: "enabled".to_string(), reasoning_effort: None }
+        Self {
+            thinking_type: "enabled".to_string(),
+            reasoning_effort: None,
+        }
     }
 
     pub fn with_effort(effort: impl Into<String>) -> Self {
-        Self { thinking_type: "enabled".to_string(), reasoning_effort: Some(effort.into()) }
+        Self {
+            thinking_type: "enabled".to_string(),
+            reasoning_effort: Some(effort.into()),
+        }
     }
 }
 
 impl ToolDefinition {
-    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         Self {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -389,7 +413,10 @@ impl ModelProvider {
     }
 
     pub fn needs_thinking(&self) -> bool {
-        self.rule.as_ref().map(|rule| rule.should_think()).unwrap_or_else(|| ChatRequest::needs_thinking(&self.model))
+        self.rule
+            .as_ref()
+            .map(|rule| rule.should_think())
+            .unwrap_or_else(|| ChatRequest::needs_thinking(&self.model))
     }
 }
 
@@ -452,7 +479,10 @@ mod tests {
             None,
         );
         assert!(msg.has_reasoning());
-        assert_eq!(msg.reasoning_content.as_deref().unwrap(), "thinking process");
+        assert_eq!(
+            msg.reasoning_content.as_deref().unwrap(),
+            "thinking process"
+        );
         assert_eq!(msg.text().unwrap(), "result");
     }
 

@@ -57,6 +57,7 @@ impl App {
             return true;
         }
         if self.input_mode == InputMode::PendingQuestion {
+            self.persist_pending_question_input();
             self.input_mode = InputMode::Chat;
             self.input.clear();
             self.push_system_message("已返回聊天输入。使用 /answer <内容> 可继续当前等待问题。");
@@ -419,6 +420,9 @@ impl App {
                     self.input_scroll_follows_cursor = true;
                     self.filter_sub_commands();
                 } else {
+                    if self.input_mode == InputMode::PendingQuestion {
+                        self.interaction.pending_confirm_submission = false;
+                    }
                     self.input.push(c);
                     self.input_scroll_follows_cursor = true;
                 }
@@ -469,6 +473,9 @@ impl App {
                 }
             }
         } else {
+            if self.input_mode == InputMode::PendingQuestion {
+                self.interaction.pending_confirm_submission = false;
+            }
             self.input.pop();
             self.input_scroll_follows_cursor = true;
         }

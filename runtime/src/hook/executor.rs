@@ -32,7 +32,10 @@ impl HookExecutor {
     }
 
     pub fn names(&self) -> Vec<String> {
-        self.hooks.iter().map(|hook| hook.name().to_string()).collect()
+        self.hooks
+            .iter()
+            .map(|hook| hook.name().to_string())
+            .collect()
     }
 
     pub fn execute(&self, point: LifecyclePoint, context: &HookContext) -> Vec<HookRecord> {

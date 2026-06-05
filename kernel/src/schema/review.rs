@@ -45,7 +45,9 @@ impl Review {
     }
 
     pub fn has_critical(&self) -> bool {
-        self.issues.iter().any(|issue| issue.severity == IssueSeverity::Critical)
+        self.issues
+            .iter()
+            .any(|issue| issue.severity == IssueSeverity::Critical)
     }
 }
 

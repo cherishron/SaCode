@@ -128,8 +128,8 @@ fn test_runtime_skill_prompt_expansion() {
         .save_project_skill("review", "代码审查", "请审查 {{args}} in {{cwd}}")
         .expect("save skill");
 
-    let rendered = crate::maybe_expand_skill_prompt("/review src/main.rs", workdir)
-        .expect("expand skill");
+    let rendered =
+        crate::maybe_expand_skill_prompt("/review src/main.rs", workdir).expect("expand skill");
 
     assert!(rendered.contains("src/main.rs"));
     assert!(rendered.contains(&workdir.display().to_string()));

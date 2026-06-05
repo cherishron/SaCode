@@ -1,4 +1,5 @@
 use arboard::Clipboard;
+use ratatui::text::Line;
 
 use super::{
     input::layout_input_lines, render::render_message_lines, App, CachedInputLayout,
@@ -6,6 +7,34 @@ use super::{
 };
 
 impl App {
+    pub(super) fn thinking_indicator_line(&self) -> Option<RenderedMessageLine> {
+        if !self.queue.processing || !self.assistant_pending_thinking {
+            return None;
+        }
+
+        Some(RenderedMessageLine {
+            line: Line::from(vec![
+                ratatui::text::Span::styled(
+                    "● ",
+                    ratatui::style::Style::default().fg(self.theme.accent),
+                ),
+                ratatui::text::Span::styled(
+                    format!(
+                        "{} Thinking",
+                        super::SPINNER_FRAMES[self.spinner_index % super::SPINNER_FRAMES.len()]
+                    ),
+                    ratatui::style::Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
+            ]),
+        })
+    }
+
+    pub(super) fn total_rendered_message_line_count(&mut self) -> usize {
+        self.rendered_message_lines().len() + usize::from(self.thinking_indicator_line().is_some())
+    }
+
     pub(super) fn push_system_message(&mut self, content: &str) {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
         self.append_message(Message {
@@ -48,6 +77,12 @@ impl App {
     pub(super) fn scroll_to_bottom(&mut self) {
         self.follow_bottom = true;
         self.scroll_offset = self.message_scroll_max();
+    }
+
+    pub(super) fn pin_scroll_to_bottom_if_following(&mut self) {
+        if self.follow_bottom {
+            self.scroll_offset = self.message_scroll_max();
+        }
     }
 
     pub(super) fn copy_last_assistant_message(&mut self) {
@@ -115,7 +150,8 @@ impl App {
 
     pub(super) fn message_scroll_max(&self) -> usize {
         let visible_height = self.message_viewport.height as usize;
-        self.message_lines_cache
+        (self
+            .message_lines_cache
             .as_ref()
             .map(|cache| cache.lines.len())
             .unwrap_or_else(|| {
@@ -126,7 +162,8 @@ impl App {
                 )
                 .len()
             })
-            .saturating_sub(visible_height.max(1))
+            + usize::from(self.queue.processing && self.assistant_pending_thinking))
+        .saturating_sub(visible_height.max(1))
     }
 
     pub(super) fn invalidate_message_lines_cache(&mut self) {

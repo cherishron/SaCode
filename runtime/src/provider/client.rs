@@ -1,6 +1,9 @@
 use anyhow::Result;
 use reqwest::Client;
-use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig, ToolDefinition};
+use sacode_kernel::model::{
+    ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig,
+    ToolDefinition,
+};
 use std::collections::BTreeMap;
 
 const DEFAULT_TIMEOUT: u64 = 30;
@@ -38,12 +41,18 @@ impl ProviderClient {
         }
     }
 
-    pub async fn chat(&self, provider: &ModelProvider, request: ChatRequest) -> Result<ChatResponse> {
-        let base_url = provider.base_url.clone().unwrap_or_else(|| default_base_url(&provider.kind));
+    pub async fn chat(
+        &self,
+        provider: &ModelProvider,
+        request: ChatRequest,
+    ) -> Result<ChatResponse> {
+        let base_url = provider
+            .base_url
+            .clone()
+            .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
-        let api_key = provider.api_key.clone()
-            .or_else(|| env_key(&provider.kind));
+        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
 
         let mut builder = self.http.post(&url).json(&request);
 
@@ -69,12 +78,17 @@ impl ProviderClient {
             .map(|result| result.0)
     }
 
-    pub async fn simple_chat_with_usage(&self, provider: &ModelProvider, prompt: &str) -> Result<(String, Option<ChatUsage>)> {
+    pub async fn simple_chat_with_usage(
+        &self,
+        provider: &ModelProvider,
+        prompt: &str,
+    ) -> Result<(String, Option<ChatUsage>)> {
         let request = build_request(provider, vec![ChatMessage::user(prompt)], None, false);
         let response = self.chat(provider, request).await?;
         let usage = response.usage.clone();
 
-        response.choices
+        response
+            .choices
             .first()
             .map(|c| c.message.text().unwrap_or_default().to_string())
             .map(|content| (content, usage))
@@ -105,12 +119,17 @@ impl ProviderClient {
         Ok((text, usage))
     }
 
-    pub async fn simple_chat_messages_with_usage(&self, provider: &ModelProvider, messages: Vec<ChatMessage>) -> Result<(String, Option<ChatUsage>)> {
+    pub async fn simple_chat_messages_with_usage(
+        &self,
+        provider: &ModelProvider,
+        messages: Vec<ChatMessage>,
+    ) -> Result<(String, Option<ChatUsage>)> {
         let request = build_request(provider, messages, None, false);
         let response = self.chat(provider, request).await?;
         let usage = response.usage.clone();
 
-        response.choices
+        response
+            .choices
             .first()
             .map(|c| c.message.text().unwrap_or_default().to_string())
             .map(|content| (content, usage))
@@ -129,8 +148,15 @@ impl ProviderClient {
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
     {
         let mut noop = |_chunk: &StreamChunk| {};
-        self.tool_chat_streaming(provider, system_prompt, user_prompt, tools, tool_executor, &mut noop)
-            .await
+        self.tool_chat_streaming(
+            provider,
+            system_prompt,
+            user_prompt,
+            tools,
+            tool_executor,
+            &mut noop,
+        )
+        .await
     }
 
     pub async fn tool_chat_streaming<F, G>(
@@ -162,7 +188,12 @@ impl ProviderClient {
         for _ in 0..MAX_TOOL_ROUNDS {
             rounds += 1;
             let (assistant_msg, round_usage) = self
-                .stream_round_with_callback(provider, messages.clone(), Some(tools.clone()), on_chunk)
+                .stream_round_with_callback(
+                    provider,
+                    messages.clone(),
+                    Some(tools.clone()),
+                    on_chunk,
+                )
                 .await?;
             if let Some(round_usage) = round_usage {
                 usage.prompt_tokens += round_usage.prompt_tokens;
@@ -205,7 +236,9 @@ impl ProviderClient {
                     tool_result
                         .as_ref()
                         .ok()
-                        .filter(|data| data.get("pending").and_then(|value| value.as_bool()) == Some(true))
+                        .filter(|data| {
+                            data.get("pending").and_then(|value| value.as_bool()) == Some(true)
+                        })
                         .cloned()
                 } else {
                     None
@@ -226,7 +259,10 @@ impl ProviderClient {
                 ));
 
                 if let Some(pending_question) = pending_question {
-                    let reasoning = messages.iter().rev().find_map(|m| m.reasoning_content.clone());
+                    let reasoning = messages
+                        .iter()
+                        .rev()
+                        .find_map(|m| m.reasoning_content.clone());
                     return Ok(ToolChatResult {
                         messages,
                         final_text: "需要用户回答后继续执行。".to_string(),
@@ -240,12 +276,20 @@ impl ProviderClient {
             }
         }
 
-        let final_text = messages.last()
+        let final_text = messages
+            .last()
             .and_then(|m| m.text().map(|text| text.to_string()))
             .unwrap_or_default();
-        let reasoning = messages.iter().rev().find_map(|m| m.reasoning_content.clone());
-        let fallback_text = summarize_tool_outputs(&last_tool_outputs)
-            .unwrap_or_else(|| format!("达到最大工具调用轮数 {}，已执行 {} 次工具调用", MAX_TOOL_ROUNDS, tool_calls_made));
+        let reasoning = messages
+            .iter()
+            .rev()
+            .find_map(|m| m.reasoning_content.clone());
+        let fallback_text = summarize_tool_outputs(&last_tool_outputs).unwrap_or_else(|| {
+            format!(
+                "达到最大工具调用轮数 {}，已执行 {} 次工具调用",
+                MAX_TOOL_ROUNDS, tool_calls_made
+            )
+        });
 
         Ok(ToolChatResult {
             messages,
@@ -262,7 +306,11 @@ impl ProviderClient {
         })
     }
 
-    pub async fn stream_chat(&self, provider: &ModelProvider, prompt: &str) -> Result<Vec<StreamChunk>> {
+    pub async fn stream_chat(
+        &self,
+        provider: &ModelProvider,
+        prompt: &str,
+    ) -> Result<Vec<StreamChunk>> {
         let mut chunks = Vec::new();
         self.stream_chat_with_callback(provider, prompt, |chunk| chunks.push(chunk.clone()))
             .await?;
@@ -278,11 +326,13 @@ impl ProviderClient {
     where
         F: FnMut(&StreamChunk),
     {
-        let base_url = provider.base_url.clone().unwrap_or_else(|| default_base_url(&provider.kind));
+        let base_url = provider
+            .base_url
+            .clone()
+            .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
-        let api_key = provider.api_key.clone()
-            .or_else(|| env_key(&provider.kind));
+        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
 
         let request = build_request(provider, vec![ChatMessage::user(prompt)], None, true);
 
@@ -331,7 +381,10 @@ impl ProviderClient {
     where
         F: FnMut(&StreamChunk),
     {
-        let base_url = provider.base_url.clone().unwrap_or_else(|| default_base_url(&provider.kind));
+        let base_url = provider
+            .base_url
+            .clone()
+            .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
         let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
@@ -392,13 +445,18 @@ struct PartialToolCall {
 impl StreamRoundState {
     fn into_chat_message(self) -> ChatMessage {
         let content = (!self.content.is_empty()).then_some(self.content);
-        let reasoning_content = (!self.reasoning_content.is_empty()).then_some(self.reasoning_content);
+        let reasoning_content =
+            (!self.reasoning_content.is_empty()).then_some(self.reasoning_content);
         let tool_calls = (!self.tool_calls.is_empty()).then(|| {
             self.tool_calls
                 .into_iter()
                 .map(|(_, call)| sacode_kernel::model::ToolCall {
                     id: call.id,
-                    call_type: if call.call_type.is_empty() { "function".to_string() } else { call.call_type },
+                    call_type: if call.call_type.is_empty() {
+                        "function".to_string()
+                    } else {
+                        call.call_type
+                    },
                     function: sacode_kernel::model::FunctionCall {
                         name: call.function_name,
                         arguments: call.arguments,
@@ -442,16 +500,25 @@ where
         };
 
         if let Some(stream_usage) = json.get("usage") {
-            state.usage = serde_json::from_value(stream_usage.clone()).ok().or(state.usage.clone());
+            state.usage = serde_json::from_value(stream_usage.clone())
+                .ok()
+                .or(state.usage.clone());
         }
 
         if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
                 if let Some(delta) = choice.get("delta") {
                     append_stream_value(delta.get("content"), &mut state.content, false, on_chunk);
-                    append_stream_value(delta.get("reasoning_content"), &mut state.reasoning_content, true, on_chunk);
+                    append_stream_value(
+                        delta.get("reasoning_content"),
+                        &mut state.reasoning_content,
+                        true,
+                        on_chunk,
+                    );
 
-                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
+                    if let Some(tool_calls) =
+                        delta.get("tool_calls").and_then(|value| value.as_array())
+                    {
                         for tool_call in tool_calls {
                             append_tool_call_delta(tool_call, &mut state.tool_calls);
                         }
@@ -464,7 +531,10 @@ where
     Ok(())
 }
 
-fn append_tool_call_delta(value: &serde_json::Value, tool_calls: &mut BTreeMap<usize, PartialToolCall>) {
+fn append_tool_call_delta(
+    value: &serde_json::Value,
+    tool_calls: &mut BTreeMap<usize, PartialToolCall>,
+) {
     let index = value
         .get("index")
         .and_then(|item| item.as_u64())
@@ -501,7 +571,9 @@ fn append_stream_value<F>(
     };
 
     match value {
-        serde_json::Value::String(text) => append_stream_text(text, target, prefix_reasoning, on_chunk),
+        serde_json::Value::String(text) => {
+            append_stream_text(text, target, prefix_reasoning, on_chunk)
+        }
         serde_json::Value::Array(parts) => {
             for part in parts {
                 if let Some(text) = part.get("text").and_then(|item| item.as_str()) {
@@ -656,9 +728,18 @@ fn extract_tool_text(value: &serde_json::Value) -> Option<String> {
             .take(3)
             .enumerate()
             .map(|(index, item)| {
-                let title = item.get("title").and_then(|value| value.as_str()).unwrap_or("Untitled");
-                let url = item.get("url").and_then(|value| value.as_str()).unwrap_or("");
-                let snippet = item.get("snippet").and_then(|value| value.as_str()).unwrap_or("");
+                let title = item
+                    .get("title")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Untitled");
+                let url = item
+                    .get("url")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let snippet = item
+                    .get("snippet")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
                 format!("{}. {}\nURL: {}\n{}", index + 1, title, url, snippet)
             })
             .collect::<Vec<_>>()
@@ -687,7 +768,13 @@ fn build_request(
         None
     };
     let reasoning_effort = rule.and_then(|r| r.reasoning_effort.clone());
-    let temperature = rule.and_then(|r| r.effective_temperature()).or_else(|| if thinking.is_none() { Some(0.7) } else { None });
+    let temperature = rule.and_then(|r| r.effective_temperature()).or_else(|| {
+        if thinking.is_none() {
+            Some(0.7)
+        } else {
+            None
+        }
+    });
     let top_p = rule.and_then(|r| r.effective_top_p());
     let max_tokens = rule.and_then(|r| r.limit.as_ref().map(|limit| limit.output));
 
@@ -718,7 +805,8 @@ fn default_base_url(kind: &ProviderKind) -> String {
         ProviderKind::Longcat => "https://api.longcat.chat/openai/v1",
         ProviderKind::Ollama => "http://127.0.0.1:11434/v1",
         ProviderKind::Custom(_) => "",
-    }.to_string()
+    }
+    .to_string()
 }
 
 fn env_key(kind: &ProviderKind) -> Option<String> {
@@ -735,17 +823,40 @@ fn env_key(kind: &ProviderKind) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        default_base_url, extract_tool_text, handle_sse_frame, handle_stream_round_frame,
+        summarize_tool_outputs, StreamRoundState, ToolChatResult,
+    };
     use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
-    use super::{default_base_url, extract_tool_text, handle_sse_frame, handle_stream_round_frame, summarize_tool_outputs, StreamRoundState, ToolChatResult};
 
     #[test]
     fn default_base_url_matches_provider_kinds() {
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Mimo), "https://api.xiaomimimo.com/v1");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Openai), "https://api.openai.com/v1");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Deepseek), "https://api.deepseek.com");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Longcat), "https://api.longcat.chat/openai/v1");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Ollama), "http://127.0.0.1:11434/v1");
-        assert_eq!(default_base_url(&sacode_kernel::model::ProviderKind::Custom("other".to_string())), "");
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Mimo),
+            "https://api.xiaomimimo.com/v1"
+        );
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Openai),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Deepseek),
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Longcat),
+            "https://api.longcat.chat/openai/v1"
+        );
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Ollama),
+            "http://127.0.0.1:11434/v1"
+        );
+        assert_eq!(
+            default_base_url(&sacode_kernel::model::ProviderKind::Custom(
+                "other".to_string()
+            )),
+            ""
+        );
     }
 
     #[test]
@@ -827,7 +938,10 @@ mod tests {
         assert!(!msg.has_tool_calls());
         assert!(msg.has_reasoning());
         assert_eq!(msg.text().unwrap(), "The file contains project info.");
-        assert_eq!(msg.reasoning_content.clone().unwrap(), "I analyzed the content");
+        assert_eq!(
+            msg.reasoning_content.clone().unwrap(),
+            "I analyzed the content"
+        );
     }
 
     #[test]
@@ -936,7 +1050,8 @@ mod tests {
         );
         let mut state = StreamRoundState::default();
         let mut chunks = Vec::new();
-        handle_stream_round_frame(frame, &mut state, &mut |chunk| chunks.push(chunk.clone())).unwrap();
+        handle_stream_round_frame(frame, &mut state, &mut |chunk| chunks.push(chunk.clone()))
+            .unwrap();
 
         assert!(chunks.is_empty());
         let message = state.into_chat_message();

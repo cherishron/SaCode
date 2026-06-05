@@ -1,53 +1,47 @@
 use std::{
     collections::{BTreeMap, HashSet},
     path::PathBuf,
-    sync::{mpsc::{Receiver, Sender}},
+    sync::mpsc::{Receiver, Sender},
 };
 
 use ratatui::{layout::Rect, text::Line};
 use sacode_kernel::ExecutionMode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::cmd::{
-    config,
-    init::InitMode,
-    ApprovalPolicy,
-};
 use crate::agent_harness;
-use crate::provider_config::{
-    NamedProviderConfig, ProviderConfigStore, SaCodeConfigStore,
-};
+use crate::cmd::{config, init::InitMode, ApprovalPolicy};
+use crate::provider_config::{NamedProviderConfig, ProviderConfigStore, SaCodeConfigStore};
 use crate::provider_runtime::resolve_provider;
 use crate::task_store::{PersistentTask, TaskStore};
 use crate::version_check::update_prompt;
 use sacode_runtime::ProjectAccessConfigStore;
 
-mod input;
-mod interaction;
+mod app_helpers;
 mod async_actions;
 mod async_types;
-mod app_helpers;
 mod bootstrap;
 mod checkpoint_actions;
-mod commands;
 mod command_palette;
+mod commands;
 mod config_actions;
 mod event_loop;
 mod formatting;
 mod git_state;
+mod input;
 mod input_optimization;
+mod interaction;
 mod interaction_state;
 mod key_handlers;
 mod lifecycle_actions;
 mod local_commands;
 mod mcp_actions;
 mod message_ops;
-mod mode_cancel;
 mod mode_actions;
+mod mode_cancel;
 mod orchestration_summary;
 mod plugin_actions;
-mod provider_actions;
 mod prompt_response;
+mod provider_actions;
 mod render;
 mod runtime_support;
 mod send_actions;
@@ -55,24 +49,24 @@ mod session_stats;
 mod session_store;
 mod skills_actions;
 mod state;
-mod task_runtime;
 mod task_actions;
+mod task_runtime;
 mod theme;
 mod todo_actions;
 mod tool_actions;
 mod tui_entry;
 mod utility_actions;
 
-use interaction::{InteractionSession, InteractionState};
 use async_types::{AsyncContext, AsyncResult};
-use orchestration_summary::parse_orchestration_summary;
 use bootstrap::{encode_ppm, user_sacode_dir};
 use commands::{get_level1_commands, CommandDef, SubCommandDef};
 use formatting::{format_duration_ms, fuzzy_match};
+use interaction::{InteractionSession, InteractionState};
+use orchestration_summary::parse_orchestration_summary;
 use render::relative_to_workdir;
-use theme::ThemePalette;
 pub(crate) use runtime_support::block_on_cli_future;
 use state::{LoopState, QueueState};
+use theme::ThemePalette;
 pub use tui_entry::run_tui;
 
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -207,6 +201,7 @@ struct App {
     interaction: InteractionSession,
     session_auto_approve_edits: bool,
     spinner_index: usize,
+    assistant_pending_thinking: bool,
     log_path: PathBuf,
     git_changes: Vec<String>,
     orchestration_summary: Option<String>,
@@ -271,7 +266,7 @@ struct SessionInfo {
     title: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredMessage {
     role: String,
     content: String,
@@ -279,7 +274,7 @@ struct StoredMessage {
     collapsed: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSessionSummary {
     content: String,
     compressed_at: String,
@@ -427,15 +422,19 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use super::render::modals::render_pending_question_panel;
+    use super::render::orchestration_panel::render_orchestration_panel;
     use super::App;
-    use crate::tui::interaction::{PendingApprovalRequest, PendingQuestionItem, PendingQuestionOption};
-    use crate::tui::InteractionState;
+    use crate::cmd::ApprovalPolicy;
+    use crate::tui::interaction::{
+        PendingApprovalRequest, PendingQuestionItem, PendingQuestionOption,
+    };
     use crate::tui::render::{
         render_footer, render_header, render_input_panel, render_messages_panel,
     };
+    use crate::tui::InteractionState;
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
-    use super::render::modals::render_pending_question_panel;
-    use super::render::orchestration_panel::render_orchestration_panel;
+    use sacode_kernel::ExecutionMode;
     use tempfile::TempDir;
 
     struct HomeEnvGuard {
@@ -559,7 +558,8 @@ mod tests {
         assert!(summary.contains("[编排角色]"));
         assert!(summary.contains("[角色路由]"));
         assert!(summary.contains("[冲突]"));
-        assert!(summary.contains("- [验证冲突] implementation completion conflicts with validation findings"));
+        assert!(summary
+            .contains("- [验证冲突] implementation completion conflicts with validation findings"));
         assert!(summary.contains("- system-architect [deepseek/deepseek-reasoner]: 设计评估完成"));
         assert!(summary.contains("- reporter [deepseek/deepseek-reasoner]: 汇总结论完成"));
     }
@@ -661,10 +661,7 @@ mod tests {
     #[test]
     fn render_input_panel_keeps_cursor_near_latest_visible_lines() {
         let mut app = App::new();
-        app.input = [
-            "line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
-        ]
-        .join("\n");
+        app.input = ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6"].join("\n");
         let backend = TestBackend::new(60, 6);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -842,8 +839,12 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(rendered_lines.len() >= 2);
-        assert!(rendered_lines.iter().any(|line| line.contains("任务执行失败")));
-        assert!(rendered_lines.iter().any(|line| line.contains("stderr 已写入日志")));
+        assert!(rendered_lines
+            .iter()
+            .any(|line| line.contains("任务执行失败")));
+        assert!(rendered_lines
+            .iter()
+            .any(|line| line.contains("stderr 已写入日志")));
     }
 
     #[test]
@@ -883,21 +884,24 @@ mod tests {
         app.interaction.pending_approval_request = Some(PendingApprovalRequest {
             task_prompt: "修复模型列表加载".to_string(),
             tool_name: "bash".to_string(),
+            allowed_dir: None,
         });
-        app.interaction.pending_question_items.push(PendingQuestionItem {
-            question: "允许执行 bash 工具吗？".to_string(),
-            options: vec![
-                PendingQuestionOption {
-                    label: "批准".to_string(),
-                    description: "允许本次执行".to_string(),
-                },
-                PendingQuestionOption {
-                    label: "拒绝".to_string(),
-                    description: "终止本次执行".to_string(),
-                },
-            ],
-            allow_multiple: false,
-        });
+        app.interaction
+            .pending_question_items
+            .push(PendingQuestionItem {
+                question: "允许执行 bash 工具吗？".to_string(),
+                options: vec![
+                    PendingQuestionOption {
+                        label: "批准".to_string(),
+                        description: "允许本次执行".to_string(),
+                    },
+                    PendingQuestionOption {
+                        label: "拒绝".to_string(),
+                        description: "终止本次执行".to_string(),
+                    },
+                ],
+                allow_multiple: false,
+            });
         app.interaction.selected_pending_answers = vec![std::collections::HashSet::new()];
         let backend = TestBackend::new(140, 30);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -918,10 +922,35 @@ mod tests {
             Some("bash")
         );
         assert_eq!(
-            app.current_pending_question().map(|item| item.question.as_str()),
+            app.current_pending_question()
+                .map(|item| item.question.as_str()),
             Some("允许执行 bash 工具吗？")
         );
         assert!(rendered.contains("bash"));
+    }
+
+    #[test]
+    fn session_store_restores_auto_approve_flag() {
+        let mut ctx = test_app();
+        ctx.app.session_auto_approve_edits = true;
+        ctx.app.save_current_session();
+        ctx.app.session_auto_approve_edits = false;
+
+        let path = ctx.app.project_current_session_path();
+        ctx.app.load_session_from_path(path, false);
+
+        assert!(ctx.app.session_auto_approve_edits);
+    }
+
+    #[test]
+    fn plan_mode_uses_builtin_approval_policy() {
+        let mut ctx = test_app();
+        ctx.app.execution_mode = ExecutionMode::Plan;
+
+        assert_eq!(
+            ctx.app.current_task_approval_policy(),
+            ApprovalPolicy::AutoApprove
+        );
     }
 
     #[test]
@@ -984,6 +1013,8 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("think:on"));
+        assert!(rendered.contains("主模型"));
+        assert!(rendered.contains("Ctrl+Q: quit"));
     }
 
     #[test]
@@ -1006,13 +1037,18 @@ mod tests {
             .expect("draw header");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("chars"));
+        assert!(rendered.contains("~/"));
+        assert!(rendered.contains("SaCode v"));
+        assert!(rendered.contains("模式"));
         assert!(rendered.contains("tok"));
     }
 
     #[test]
     fn render_footer_shows_shortcuts_hint() {
-        let app = App::new();
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.spinner_index = 2;
+        app.active_task_started_at = Some(chrono::Local::now());
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -1023,6 +1059,8 @@ mod tests {
             .expect("draw footer");
 
         let rendered = backend_text(&terminal);
+        assert!(rendered.contains("Running"));
+        assert!(rendered.contains("ctx"));
         assert!(rendered.contains("Alt+M: mode"));
     }
 
@@ -1125,7 +1163,10 @@ mod tests {
         app.apply_session_summary("[会话目标]\n- 修复代码问题".to_string(), "test-model");
 
         assert_eq!(app.messages.len(), 1);
-        assert_eq!(app.session_summary.as_deref(), Some("[会话目标]\n- 修复代码问题"));
+        assert_eq!(
+            app.session_summary.as_deref(),
+            Some("[会话目标]\n- 修复代码问题")
+        );
         assert!(app.messages[0].content.contains("test-model"));
         assert!(app.messages[0].content.contains("语义压缩"));
     }
@@ -1197,7 +1238,10 @@ mod tests {
     fn mouse_wheel_scrolls_input_when_chat_input_is_editable() {
         let mut app = App::new();
         app.input_mode = super::InputMode::Chat;
-        app.input = ["line1", "line2", "line3", "line4", "line5", "line6", "line7"].join("\n");
+        app.input = [
+            "line1", "line2", "line3", "line4", "line5", "line6", "line7",
+        ]
+        .join("\n");
         app.input_viewport = Rect::new(0, 10, 40, 3);
         app.message_viewport = Rect::new(0, 0, 40, 8);
         app.scroll_offset = 4;
@@ -1226,7 +1270,10 @@ mod tests {
     fn mouse_wheel_over_message_panel_still_scrolls_messages() {
         let mut app = App::new();
         app.input_mode = super::InputMode::Chat;
-        app.input = ["line1", "line2", "line3", "line4", "line5", "line6", "line7"].join("\n");
+        app.input = [
+            "line1", "line2", "line3", "line4", "line5", "line6", "line7",
+        ]
+        .join("\n");
         app.input_viewport = Rect::new(0, 10, 40, 3);
         app.message_viewport = Rect::new(0, 0, 40, 8);
         for index in 0..20 {
@@ -1249,6 +1296,51 @@ mod tests {
 
         assert_eq!(app.input_scroll_offset, 0);
         assert!(!app.follow_bottom);
+    }
+
+    #[test]
+    fn streaming_chunk_keeps_user_scroll_position_when_not_following_bottom() {
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.queue.active_task_id = Some(1);
+        app.follow_bottom = false;
+        app.scroll_offset = 3;
+        app.append_message(super::Message {
+            role: super::MessageRole::Assistant,
+            content: String::new(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+
+        app.handle_chat_stream_chunk(1, "hello".to_string());
+
+        assert_eq!(app.scroll_offset, 3);
+        assert!(!app.follow_bottom);
+    }
+
+    #[test]
+    fn thinking_indicator_visible_before_first_chunk_and_hidden_after_chunk() {
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.queue.active_task_id = Some(2);
+        app.assistant_pending_thinking = true;
+        app.append_message(super::Message {
+            role: super::MessageRole::Assistant,
+            content: String::new(),
+            timestamp: "12:00:00".to_string(),
+            collapsed: false,
+        });
+
+        let line = app.thinking_indicator_line();
+        assert!(line.is_some());
+        assert!(line
+            .as_ref()
+            .map(|item| item.line.to_string())
+            .unwrap_or_default()
+            .contains("Thinking"));
+
+        app.handle_chat_stream_chunk(2, "answer".to_string());
+        assert!(app.thinking_indicator_line().is_none());
     }
 
     #[test]

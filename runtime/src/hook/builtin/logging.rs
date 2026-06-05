@@ -27,16 +27,9 @@ impl Hook for LoggingHook {
         let message = match &context.execution.current_step {
             Some(step) => format!(
                 "hook=logging point={:?} task={} step={} desc={}",
-                context.point,
-                task_label,
-                step.step_id,
-                step.description
+                context.point, task_label, step.step_id, step.description
             ),
-            None => format!(
-                "hook=logging point={:?} task={}",
-                context.point,
-                task_label,
-            ),
+            None => format!("hook=logging point={:?} task={}", context.point, task_label,),
         };
         HookResult::success_with_message(message)
     }

@@ -1,10 +1,13 @@
 use anyhow::{Context, Result};
-use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
-use crate::{mcp::{McpConfig, McpServerConfig, McpSource}, skills::{SkillSource, SkillSpec}};
+use crate::{
+    mcp::{McpConfig, McpServerConfig, McpSource},
+    skills::{SkillSource, SkillSpec},
+};
 
 const DEFAULT_SKILLHUB_BASE_URL: &str = "https://skillhub.monkeycode-ai.com";
 
@@ -84,28 +87,24 @@ impl SkillHubClient {
     pub async fn search_skills(&self, keyword: &str) -> Result<Vec<SkillHubSkillMeta>> {
         let client = http_client()?;
         let url = format!("{}/api/skills/search", self.base_url.trim_end_matches('/'));
-        let response = client
-            .get(url)
-            .query(&[("q", keyword)])
-            .send()
-            .await?;
+        let response = client.get(url).query(&[("q", keyword)]).send().await?;
         Ok(response.json().await?)
     }
 
     pub async fn search_mcp(&self, keyword: &str) -> Result<Vec<SkillHubMcpMeta>> {
         let client = http_client()?;
         let url = format!("{}/api/mcp/search", self.base_url.trim_end_matches('/'));
-        let response = client
-            .get(url)
-            .query(&[("q", keyword)])
-            .send()
-            .await?;
+        let response = client.get(url).query(&[("q", keyword)]).send().await?;
         Ok(response.json().await?)
     }
 
     pub async fn install_skill(&self, name: &str, target_dir: &Path) -> Result<SkillSpec> {
         let client = http_client()?;
-        let url = format!("{}/api/skills/{}/download", self.base_url.trim_end_matches('/'), name);
+        let url = format!(
+            "{}/api/skills/{}/download",
+            self.base_url.trim_end_matches('/'),
+            name
+        );
         let response = client.get(url).send().await?;
         let status = response.status();
         if !status.is_success() {
@@ -130,12 +129,20 @@ impl SkillHubClient {
         let path = target_dir.join(format!("{}.md", name));
         fs::write(&path, &content)?;
 
-        Ok(parse_downloaded_skill(&path, &content, detect_skill_source(target_dir)))
+        Ok(parse_downloaded_skill(
+            &path,
+            &content,
+            detect_skill_source(target_dir),
+        ))
     }
 
     pub async fn install_mcp(&self, name: &str, config_path: &Path) -> Result<()> {
         let client = http_client()?;
-        let url = format!("{}/api/mcp/{}/install", self.base_url.trim_end_matches('/'), name);
+        let url = format!(
+            "{}/api/mcp/{}/install",
+            self.base_url.trim_end_matches('/'),
+            name
+        );
         let response = client.get(url).send().await?;
         let status = response.status();
         if !status.is_success() {
@@ -151,7 +158,10 @@ impl SkillHubClient {
         if !content_type.starts_with("application/json") {
             anyhow::bail!("unexpected mcp content-type: {}", content_type);
         }
-        let meta: SkillHubMcpMeta = response.json().await.context("failed to parse mcp install response as json")?;
+        let meta: SkillHubMcpMeta = response
+            .json()
+            .await
+            .context("failed to parse mcp install response as json")?;
 
         let mut config = if config_path.exists() {
             let content = fs::read_to_string(config_path)?;
@@ -176,18 +186,22 @@ impl SkillHubClient {
         Ok(())
     }
 
-    pub async fn install_mcp_to_source(&self, name: &str, config_path: &Path, _source: McpSource) -> Result<()> {
+    pub async fn install_mcp_to_source(
+        &self,
+        name: &str,
+        config_path: &Path,
+        _source: McpSource,
+    ) -> Result<()> {
         self.install_mcp(name, config_path).await
     }
 
-    pub async fn upload_skill(&self, request: SkillHubUploadRequest) -> Result<SkillHubUploadResponse> {
+    pub async fn upload_skill(
+        &self,
+        request: SkillHubUploadRequest,
+    ) -> Result<SkillHubUploadResponse> {
         let client = http_client()?;
         let url = format!("{}/api/skills/upload", self.base_url.trim_end_matches('/'));
-        let response = client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = client.post(&url).json(&request).send().await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -196,7 +210,11 @@ impl SkillHubClient {
         Ok(response.json().await?)
     }
 
-    pub async fn publish_skill(&self, _name: &str, skill_path: &Path) -> Result<SkillHubUploadResponse> {
+    pub async fn publish_skill(
+        &self,
+        _name: &str,
+        skill_path: &Path,
+    ) -> Result<SkillHubUploadResponse> {
         let content = fs::read_to_string(skill_path)?;
         let spec = parse_downloaded_skill(skill_path, &content, SkillSource::User);
 
@@ -214,7 +232,11 @@ impl SkillHubClient {
 
     pub async fn list_skill_versions(&self, name: &str) -> Result<Vec<SkillHubVersionMeta>> {
         let client = http_client()?;
-        let url = format!("{}/api/skills/{}/versions", self.base_url.trim_end_matches('/'), name);
+        let url = format!(
+            "{}/api/skills/{}/versions",
+            self.base_url.trim_end_matches('/'),
+            name
+        );
         let response = client.get(&url).send().await?;
         let status = response.status();
         if !status.is_success() {
@@ -242,7 +264,11 @@ impl SkillHubClient {
 
     pub async fn get_skill_info(&self, name: &str) -> Result<SkillHubSkillMeta> {
         let client = http_client()?;
-        let url = format!("{}/api/skills/{}/info", self.base_url.trim_end_matches('/'), name);
+        let url = format!(
+            "{}/api/skills/{}/info",
+            self.base_url.trim_end_matches('/'),
+            name
+        );
         let response = client.get(&url).send().await?;
         let status = response.status();
         if !status.is_success() {

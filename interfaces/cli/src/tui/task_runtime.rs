@@ -1,8 +1,8 @@
 use std::{
     env,
     io::BufRead,
-    io::Read,
     io::BufReader,
+    io::Read,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -25,12 +25,10 @@ pub(super) struct BackgroundTaskOutput {
     total_duration_ms: u64,
 }
 
-
-
 use crate::cmd::config;
 
-use super::{App, AsyncResult, Message, MessageRole};
 use super::state::{LoopState, QueuedMessage};
+use super::{App, AsyncResult, Message, MessageRole};
 use crate::cmd::{ApprovalPolicy, JSON_STREAM_PREFIX};
 
 const BACKGROUND_TASK_TIMEOUT: Duration = Duration::from_secs(180);
@@ -70,9 +68,17 @@ impl App {
             });
             let waiting_count = self.queue.queued_messages.len();
             let queue_message = if waiting_count == 1 {
-                format!("[队列] #{} 已排队，等待执行: {}", task_id, user_input.trim())
+                format!(
+                    "[队列] #{} 已排队，等待执行: {}",
+                    task_id,
+                    user_input.trim()
+                )
             } else {
-                format!("[队列] #{} 已排队，前方还有 {} 项任务", task_id, waiting_count - 1)
+                format!(
+                    "[队列] #{} 已排队，前方还有 {} 项任务",
+                    task_id,
+                    waiting_count - 1
+                )
             };
             self.push_system_message(&queue_message);
             self.log_event("queue_push", &format!("#{} {}", task_id, user_input.trim()));
@@ -106,6 +112,7 @@ impl App {
             timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
         });
+        self.assistant_pending_thinking = true;
         self.log_event("user_message", queued.content.trim());
         let loop_badge = queued
             .loop_state
@@ -122,7 +129,12 @@ impl App {
             "queue_start",
             &format!("#{} {}", queued.id, queued.content.trim()),
         );
-        self.spawn_chat_task(queued.id, queued.content, queued.approval, queued.loop_state);
+        self.spawn_chat_task(
+            queued.id,
+            queued.content,
+            queued.approval,
+            queued.loop_state,
+        );
     }
 
     pub(super) fn spawn_chat_task(
@@ -158,7 +170,12 @@ impl App {
         let child = Arc::new(Mutex::new(child));
         self.queue.active_child = Some(child.clone());
         thread::spawn(move || {
-            let result = App::execute_user_message_in_background(child, sender.clone(), task_id, &user_input);
+            let result = App::execute_user_message_in_background(
+                child,
+                sender.clone(),
+                task_id,
+                &user_input,
+            );
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
@@ -237,25 +254,19 @@ impl App {
         let started_at = Instant::now();
         let (stdout, stderr) = {
             let Ok(mut child) = child.lock() else {
-                return BackgroundTaskOutput { response: "任务执行失败: 无法访问后台执行进程".to_string(), ..Default::default() };
-
-
-
-
-
-
-
-
-
-
-
-
+                return BackgroundTaskOutput {
+                    response: "任务执行失败: 无法访问后台执行进程".to_string(),
+                    ..Default::default()
+                };
             };
             (child.stdout.take(), child.stderr.take())
         };
 
         let Some(stdout) = stdout else {
-            return BackgroundTaskOutput { response: "任务执行失败: 未获取到后台输出".to_string(), ..Default::default() };
+            return BackgroundTaskOutput {
+                response: "任务执行失败: 未获取到后台输出".to_string(),
+                ..Default::default()
+            };
         };
 
         let mut output = String::new();
@@ -270,7 +281,9 @@ impl App {
                     if let Some(payload) = line.trim_end().strip_prefix(JSON_STREAM_PREFIX) {
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
                             if value.get("type").and_then(|item| item.as_str()) == Some("chunk") {
-                                if let Some(content) = value.get("content").and_then(|item| item.as_str()) {
+                                if let Some(content) =
+                                    value.get("content").and_then(|item| item.as_str())
+                                {
                                     let _ = sender.send(AsyncResult::ChatStreamChunk {
                                         task_id,
                                         content: content.to_string(),
@@ -281,7 +294,10 @@ impl App {
                     }
                 }
                 Err(_) => {
-                    return BackgroundTaskOutput { response: "任务执行失败: 读取后台输出失败".to_string(), ..Default::default() };
+                    return BackgroundTaskOutput {
+                        response: "任务执行失败: 读取后台输出失败".to_string(),
+                        ..Default::default()
+                    };
                 }
             }
         }
@@ -294,7 +310,10 @@ impl App {
         let exit_status = {
             loop {
                 let Ok(mut child) = child.lock() else {
-                    return BackgroundTaskOutput { response: "任务执行失败: 无法等待后台执行进程退出".to_string(), ..Default::default() };
+                    return BackgroundTaskOutput {
+                        response: "任务执行失败: 无法等待后台执行进程退出".to_string(),
+                        ..Default::default()
+                    };
                 };
                 match child.try_wait() {
                     Ok(Some(status)) => break Some(status),
@@ -372,7 +391,10 @@ impl App {
                     Self::append_raw_log("child_stderr", stderr_output.trim());
                 }
                 return BackgroundTaskOutput {
-                    response: format!("任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。", error),
+                    response: format!(
+                        "任务执行失败: 解析后台输出失败: {}。原始输出已写入日志。",
+                        error
+                    ),
                     ..Default::default()
                 };
             }
@@ -414,7 +436,9 @@ impl App {
         let learned_facts = parsed
             .get("learned_facts")
             .cloned()
-            .and_then(|value| serde_json::from_value::<Vec<crate::learning::LearnedFact>>(value).ok())
+            .and_then(|value| {
+                serde_json::from_value::<Vec<crate::learning::LearnedFact>>(value).ok()
+            })
             .unwrap_or_default();
         if !stderr_output.trim().is_empty() {
             Self::append_raw_log("child_stderr", stderr_output.trim());
@@ -425,7 +449,8 @@ impl App {
             .or_else(|| pending_question.as_ref().map(Self::format_pending_question))
             .unwrap_or_else(|| {
                 if exit_status.success() {
-                    "任务执行异常: 模型未返回最终内容。请查看日志确认工具调用和后台输出。".to_string()
+                    "任务执行异常: 模型未返回最终内容。请查看日志确认工具调用和后台输出。"
+                        .to_string()
                 } else {
                     format!(
                         "任务执行失败: 后台进程退出异常，退出码: {}。请查看日志确认原始输出。",
@@ -512,6 +537,7 @@ impl App {
         self.queue.active_task_id = None;
         self.active_task_started_at = None;
         self.spinner_index = 0;
+        self.assistant_pending_thinking = false;
         self.queue.busy_message.clear();
         self.refresh_git_changes();
         self.scroll_to_bottom();
@@ -557,8 +583,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::App;
-    use crate::cmd::JSON_STREAM_PREFIX;
     use crate::cmd::ApprovalPolicy;
+    use crate::cmd::JSON_STREAM_PREFIX;
     use sacode_kernel::TaskRunState;
     use std::process::Command;
 
@@ -614,14 +640,17 @@ mod tests {
             }
         })
         .to_string();
-        let exit_status = Command::new("true")
-            .status()
-            .expect("true exit status");
+        let exit_status = Command::new("true").status().expect("true exit status");
 
         let result = App::parse_background_task_output(&payload, "", Some(exit_status));
 
         assert_eq!(result.response, "final answer");
-        assert_eq!(App::extract_task_run_state(&serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")), Some(TaskRunState::Completed));
+        assert_eq!(
+            App::extract_task_run_state(
+                &serde_json::from_str::<serde_json::Value>(&payload).expect("payload json")
+            ),
+            Some(TaskRunState::Completed)
+        );
     }
 
     #[test]
@@ -639,9 +668,7 @@ mod tests {
             }
         })
         .to_string();
-        let exit_status = Command::new("true")
-            .status()
-            .expect("true exit status");
+        let exit_status = Command::new("true").status().expect("true exit status");
 
         let result = App::parse_background_task_output(&payload, "", Some(exit_status));
 
@@ -659,7 +686,10 @@ mod tests {
         let (frames, json_output) = App::split_stream_frames(output);
 
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].get("type").and_then(|value| value.as_str()), Some("chunk"));
+        assert_eq!(
+            frames[0].get("type").and_then(|value| value.as_str()),
+            Some("chunk")
+        );
         assert!(json_output.contains("final answer"));
         assert!(!json_output.contains(JSON_STREAM_PREFIX));
     }
@@ -670,9 +700,7 @@ mod tests {
             "__SACODE_STREAM__{\"type\":\"chunk\",\"content\":\"hello\"}\n",
             "{\"provider_response\":\"final answer\",\"state\":\"Completed\"}\n"
         );
-        let exit_status = Command::new("true")
-            .status()
-            .expect("true exit status");
+        let exit_status = Command::new("true").status().expect("true exit status");
 
         let result = App::parse_background_task_output(payload, "", Some(exit_status));
 

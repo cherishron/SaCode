@@ -17,13 +17,13 @@ impl CheckpointStorage {
 
     pub fn save(&self, checkpoint: &Checkpoint) -> Result<PathBuf> {
         std::fs::create_dir_all(&self.base_path)?;
-        
+
         let filename = format!("checkpoint-{}.json", checkpoint.created_at);
         let path = self.base_path.join(filename);
-        
+
         let json = serde_json::to_string_pretty(checkpoint)?;
         std::fs::write(&path, json)?;
-        
+
         Ok(path)
     }
 

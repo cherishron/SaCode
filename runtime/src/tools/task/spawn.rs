@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use crate::{active_backend, active_policy, SandboxCommand};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+use crate::{active_backend, active_policy, SandboxCommand};
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -56,7 +56,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             args: vec![
                 composed_prompt,
                 "--mode".to_string(),
-                if subagent_type == "explore" { "plan".to_string() } else { "build".to_string() },
+                if subagent_type == "explore" {
+                    "plan".to_string()
+                } else {
+                    "build".to_string()
+                },
                 "--json".to_string(),
             ],
             cwd: None,
@@ -84,8 +88,12 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     let stdout = output.stdout;
-    let parsed = serde_json::from_str::<serde_json::Value>(&stdout).unwrap_or_else(|_| serde_json::json!({ "provider_response": stdout }));
-    let result = parsed["provider_response"].as_str().unwrap_or(&stdout).to_string();
+    let parsed = serde_json::from_str::<serde_json::Value>(&stdout)
+        .unwrap_or_else(|_| serde_json::json!({ "provider_response": stdout }));
+    let result = parsed["provider_response"]
+        .as_str()
+        .unwrap_or(&stdout)
+        .to_string();
 
     Ok(ToolOutput::success(serde_json::json!({
         "task_id": task_id,

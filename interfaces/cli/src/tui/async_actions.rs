@@ -2,8 +2,8 @@ use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{TaskRun, TaskRunState};
 
 use super::{
-    update_prompt, App, AsyncContext, AsyncResult, InputMode, InteractionState, LoopState,
-    Message, MessageRole, PendingInputOptimizationPreview,
+    update_prompt, App, AsyncContext, AsyncResult, InputMode, InteractionState, LoopState, Message,
+    MessageRole, PendingInputOptimizationPreview,
 };
 use crate::cmd::init::InitMode;
 
@@ -103,12 +103,14 @@ impl App {
             return;
         }
 
+        self.assistant_pending_thinking = false;
+
         if let Some(message) = self.messages.last_mut() {
             if matches!(message.role, MessageRole::Assistant) {
                 let mut updated = message.content.clone();
                 updated.push_str(&content);
                 self.update_last_message_content(updated);
-                self.scroll_to_bottom();
+                self.pin_scroll_to_bottom_if_following();
             }
         }
     }
@@ -148,10 +150,13 @@ impl App {
         } else {
             MessageRole::Assistant
         };
+        self.assistant_pending_thinking = false;
         self.orchestration_summary = orchestration_summary;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
         if let Some(message) = self.messages.last_mut() {
-            if self.queue.active_task_id == Some(task_id) && matches!(message.role, MessageRole::Assistant) {
+            if self.queue.active_task_id == Some(task_id)
+                && matches!(message.role, MessageRole::Assistant)
+            {
                 message.role = response_role;
                 message.content = response;
                 message.timestamp = timestamp;
@@ -185,10 +190,16 @@ impl App {
                 .unwrap_or_default(),
         );
         if let Some(question) = pending_question.as_ref() {
-            if let Some(request) = self.interaction.pending_approval_request.as_mut() {
-                request.task_prompt = prompt.clone();
+            let mut pending = question.clone();
+            if pending.get("kind").and_then(|value| value.as_str()) == Some("tool_approval") {
+                pending["task_prompt"] = serde_json::Value::String(prompt.clone());
             }
-            self.set_pending_question_state(question.clone());
+            self.set_pending_question_state(pending);
+            if let Some(request) = self.interaction.pending_approval_request.as_mut() {
+                if request.task_prompt.trim().is_empty() {
+                    request.task_prompt = prompt.clone();
+                }
+            }
             self.push_system_message(&format!(
                 "当前任务等待用户回答。可在等待问题面板中选择或输入自定义回答；Esc 返回聊天后普通输入会进入等待队列：{}",
                 Self::pending_question_title(question)
@@ -375,7 +386,10 @@ mod tests {
         app.handle_chat_stream_chunk(7, "hello".to_string());
         app.handle_chat_stream_chunk(7, " world".to_string());
 
-        assert_eq!(app.messages.last().map(|msg| msg.content.as_str()), Some("hello world"));
+        assert_eq!(
+            app.messages.last().map(|msg| msg.content.as_str()),
+            Some("hello world")
+        );
     }
 
     #[test]
@@ -419,6 +433,9 @@ mod tests {
             .filter(|msg| matches!(msg.role, MessageRole::Assistant))
             .collect();
         assert_eq!(assistant_messages.len(), assistant_count_before + 1);
-        assert_eq!(assistant_messages.last().map(|msg| msg.content.as_str()), Some("final answer"));
+        assert_eq!(
+            assistant_messages.last().map(|msg| msg.content.as_str()),
+            Some("final answer")
+        );
     }
 }

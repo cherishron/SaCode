@@ -41,7 +41,9 @@ pub fn execute(args: Vec<String>) -> Result<UpdateResult> {
             previous_version,
             target_version: None,
             restart_required: false,
-            message: "当前环境缺少 npm，无法自动更新。请先安装 npm，或手动安装 @cherishron/sacode。".to_string(),
+            message:
+                "当前环境缺少 npm，无法自动更新。请先安装 npm，或手动安装 @cherishron/sacode。"
+                    .to_string(),
         });
     }
 

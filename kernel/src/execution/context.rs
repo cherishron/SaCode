@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{ExecutionMode, Task};
 use super::ApprovalPolicy;
+use crate::schema::{ExecutionMode, Task};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
@@ -132,11 +132,13 @@ impl ExecutionContext {
     }
 
     pub fn estimate_compressed_tokens(&self) -> u32 {
-        let key_tokens = self.key_decisions()
+        let key_tokens = self
+            .key_decisions()
             .iter()
             .filter_map(|entry| entry.token_count)
             .sum::<u32>();
-        let tool_tokens = self.tool_calls()
+        let tool_tokens = self
+            .tool_calls()
             .iter()
             .filter_map(|entry| entry.token_count)
             .sum::<u32>();

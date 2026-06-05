@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use chrono::Local;
@@ -197,7 +200,10 @@ pub fn append_memory_entry(path: &Path, current: &str, entry: &MemoryEntry) -> R
     }) {
         return Ok(false);
     }
-    if current.to_lowercase().contains(&entry.content.to_lowercase()) {
+    if current
+        .to_lowercase()
+        .contains(&entry.content.to_lowercase())
+    {
         return Ok(false);
     }
 
@@ -312,9 +318,9 @@ pub fn search_memory_index(index: &MemoryIndex, query: &str) -> Vec<MemoryIndexE
         .filter(|entry| {
             entry.status == MemoryStatus::Active
                 && (entry.content.to_lowercase().contains(&lowered)
-                || entry.context.to_lowercase().contains(&lowered)
-                || entry.kind.scope_label().contains(&lowered)
-                || entry.file_name.to_lowercase().contains(&lowered))
+                    || entry.context.to_lowercase().contains(&lowered)
+                    || entry.kind.scope_label().contains(&lowered)
+                    || entry.file_name.to_lowercase().contains(&lowered))
         })
         .cloned()
         .collect()
@@ -322,7 +328,11 @@ pub fn search_memory_index(index: &MemoryIndex, query: &str) -> Vec<MemoryIndexE
 
 pub fn list_memory_entries(index: &MemoryIndex) -> Vec<MemoryIndexEntry> {
     let mut entries = index.entries.clone();
-    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.cmp(&b.id)));
+    entries.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     entries
 }
 
@@ -341,7 +351,12 @@ pub fn archive_memory_entry(root: &Path, entry_id: &str) -> Result<bool> {
 
 pub fn promote_memory_entry(project_root: &Path, user_root: &Path, entry_id: &str) -> Result<bool> {
     let mut project_index = load_memory_index(project_root)?;
-    let Some(entry) = project_index.entries.iter().find(|entry| entry.id == entry_id).cloned() else {
+    let Some(entry) = project_index
+        .entries
+        .iter()
+        .find(|entry| entry.id == entry_id)
+        .cloned()
+    else {
         return Ok(false);
     };
     let mut user_index = load_memory_index(user_root)?;
@@ -360,7 +375,11 @@ pub fn promote_memory_entry(project_root: &Path, user_root: &Path, entry_id: &st
     user_index.entries.push(promoted);
     save_memory_index(user_root, &user_index)?;
 
-    if let Some(existing) = project_index.entries.iter_mut().find(|existing| existing.id == entry_id) {
+    if let Some(existing) = project_index
+        .entries
+        .iter_mut()
+        .find(|existing| existing.id == entry_id)
+    {
         existing.confidence = Some(existing.confidence.unwrap_or(0.7).max(0.95));
     }
     save_memory_index(project_root, &project_index)?;
@@ -371,7 +390,13 @@ fn build_entry_id(entry: &MemoryEntry, created_at: &str) -> String {
     let normalized = entry
         .content
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
     let slug = normalized
         .split('-')
@@ -379,7 +404,12 @@ fn build_entry_id(entry: &MemoryEntry, created_at: &str) -> String {
         .take(8)
         .collect::<Vec<_>>()
         .join("-");
-    format!("{}-{}-{}", entry.kind.scope_label(), created_at, if slug.is_empty() { "entry" } else { &slug })
+    format!(
+        "{}-{}-{}",
+        entry.kind.scope_label(),
+        created_at,
+        if slug.is_empty() { "entry" } else { &slug }
+    )
 }
 
 fn build_promoted_entry_id(entry: &MemoryIndexEntry) -> String {
@@ -429,7 +459,11 @@ fn parse_memory_sections(content: &str) -> Vec<ParsedMemorySection> {
         }
         sections.push(ParsedMemorySection {
             source: *source,
-            date: if date.trim().is_empty() { "unknown".to_string() } else { date.trim().to_string() },
+            date: if date.trim().is_empty() {
+                "unknown".to_string()
+            } else {
+                date.trim().to_string()
+            },
             context: context.trim().to_string(),
             content: text,
         });
@@ -444,7 +478,13 @@ fn parse_memory_sections(content: &str) -> Vec<ParsedMemorySection> {
         };
 
         if let Some(source) = new_source {
-            push_section(&mut sections, &current_source, &current_date, &current_context, &current_content);
+            push_section(
+                &mut sections,
+                &current_source,
+                &current_date,
+                &current_context,
+                &current_content,
+            );
             current_source = Some(source);
             current_date.clear();
             current_context.clear();
@@ -468,6 +508,12 @@ fn parse_memory_sections(content: &str) -> Vec<ParsedMemorySection> {
         }
     }
 
-    push_section(&mut sections, &current_source, &current_date, &current_context, &current_content);
+    push_section(
+        &mut sections,
+        &current_source,
+        &current_date,
+        &current_context,
+        &current_content,
+    );
     sections
 }

@@ -99,7 +99,10 @@ pub fn detect_output_polarity(output: &str) -> Option<OutputPolarity> {
         "回归",
         "冲突",
     ];
-    if negative_signals.iter().any(|signal| normalized.contains(signal)) {
+    if negative_signals
+        .iter()
+        .any(|signal| normalized.contains(signal))
+    {
         return Some(OutputPolarity::Negative);
     }
 
@@ -119,7 +122,10 @@ pub fn detect_output_polarity(output: &str) -> Option<OutputPolarity> {
         "可用",
         "已修复",
     ];
-    if positive_signals.iter().any(|signal| normalized.contains(signal)) {
+    if positive_signals
+        .iter()
+        .any(|signal| normalized.contains(signal))
+    {
         return Some(OutputPolarity::Positive);
     }
 
@@ -239,10 +245,7 @@ fn normalized_output(output: &str) -> Option<String> {
         .split_once("结论：")
         .map(|(_, tail)| tail)
         .unwrap_or(extracted);
-    let normalized = extracted
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized = extracted.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
         None
     } else {
@@ -256,7 +259,8 @@ mod tests {
 
     #[test]
     fn extract_risk_summary_returns_compact_sentence() {
-        let risk = extract_risk_summary("任务完成，但存在回归风险。建议补充验证步骤。后续可继续推进。");
+        let risk =
+            extract_risk_summary("任务完成，但存在回归风险。建议补充验证步骤。后续可继续推进。");
         assert_eq!(risk.as_deref(), Some("但存在回归风险"));
     }
 
@@ -287,7 +291,8 @@ mod tests {
 
     #[test]
     fn compact_conflict_detail_prefers_risk_sentence() {
-        let detail = compact_conflict_detail("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
+        let detail =
+            compact_conflict_detail("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
         assert_eq!(detail, "但存在回归风险");
     }
 
@@ -299,7 +304,8 @@ mod tests {
 
     #[test]
     fn compact_aggregate_output_prefers_risk_summary() {
-        let output = compact_aggregate_output("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
+        let output =
+            compact_aggregate_output("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
         assert_eq!(output, "但存在回归风险");
     }
 
@@ -314,7 +320,10 @@ mod tests {
         let output = compact_aggregate_output(
             "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查。任务完成，共完成 5 个步骤",
         );
-        assert_eq!(output, "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查");
+        assert_eq!(
+            output,
+            "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查"
+        );
     }
 
     #[test]

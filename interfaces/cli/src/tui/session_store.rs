@@ -6,9 +6,18 @@ use std::{
     path::PathBuf,
 };
 
-use super::{
-    App, Message, MessageRole, SessionInfo, StoredMessage, StoredSessionSummary,
-};
+use super::{App, Message, MessageRole, SessionInfo, StoredMessage, StoredSessionSummary};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredSession {
+    id: String,
+    updated_at: String,
+    messages: Vec<StoredMessage>,
+    summary: Option<StoredSessionSummary>,
+    title: String,
+    #[serde(default)]
+    session_auto_approve_edits: bool,
+}
 
 impl App {
     pub(super) fn project_session_dir(&self) -> PathBuf {
@@ -96,18 +105,19 @@ impl App {
         if self.ensure_session_dirs().is_err() {
             return;
         }
-        let session = serde_json::json!({
-            "id": self.session_id,
-            "updated_at": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            "messages": self.serialize_messages(),
-            "summary": self.serialized_session_summary(),
-            "title": self.session_title(),
-        });
-        let _ = fs::write(self.project_current_session_path(), session.to_string());
-        let _ = fs::write(
-            self.user_session_path(&self.session_id),
-            session.to_string(),
-        );
+        let session = StoredSession {
+            id: self.session_id.clone(),
+            updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            messages: self.serialize_messages(),
+            summary: self.serialized_session_summary(),
+            title: self.session_title(),
+            session_auto_approve_edits: self.session_auto_approve_edits,
+        };
+        let Ok(serialized) = serde_json::to_string(&session) else {
+            return;
+        };
+        let _ = fs::write(self.project_current_session_path(), &serialized);
+        let _ = fs::write(self.user_session_path(&self.session_id), serialized);
     }
 
     pub(super) fn load_latest_session(&mut self) {
@@ -183,50 +193,25 @@ impl App {
         let Ok(content) = fs::read_to_string(path) else {
             return;
         };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        let Ok(value) = serde_json::from_str::<StoredSession>(&content) else {
             return;
         };
-        let Some(messages) = value.get("messages").and_then(|v| v.as_array()) else {
-            return;
-        };
-
-        self.session_id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&self.session_id)
-            .to_string();
-        self.session_summary = value
-            .get("summary")
-            .and_then(|summary| summary.get("content"))
-            .and_then(|content| content.as_str())
-            .map(|content| content.to_string());
+        self.session_id = value.id;
+        self.session_summary = value.summary.map(|summary| summary.content);
+        self.session_auto_approve_edits = value.session_auto_approve_edits;
         self.replace_messages(
-            messages
+            value
+                .messages
                 .iter()
                 .map(|message| Message {
-                    role: match message
-                        .get("role")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("system")
-                    {
+                    role: match message.role.as_str() {
                         "user" => MessageRole::User,
                         "assistant" => MessageRole::Assistant,
                         _ => MessageRole::System,
                     },
-                    content: message
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    timestamp: message
-                        .get("timestamp")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    collapsed: message
-                        .get("collapsed")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
+                    content: message.content.clone(),
+                    timestamp: message.timestamp.clone(),
+                    collapsed: message.collapsed,
                 })
                 .collect(),
         );
@@ -247,6 +232,7 @@ impl App {
             collapsed: false,
         }]);
         self.session_summary = None;
+        self.session_auto_approve_edits = false;
         self.queue.queued_messages.clear();
         self.interaction.todo_plan = None;
         self.queue.processing = false;
@@ -266,6 +252,7 @@ impl App {
             collapsed: false,
         }]);
         self.session_summary = None;
+        self.session_auto_approve_edits = false;
         self.queue.queued_messages.clear();
         self.interaction.todo_plan = None;
         self.queue.processing = false;

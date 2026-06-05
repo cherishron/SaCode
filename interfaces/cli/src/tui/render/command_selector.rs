@@ -56,7 +56,8 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
     let start = if total_items <= max_visible {
         0
     } else {
-        app.selected_level1_index.saturating_sub(max_visible / 2)
+        app.selected_level1_index
+            .saturating_sub(max_visible / 2)
             .min(total_items.saturating_sub(max_visible))
     };
     let end = (start + visible_count).min(total_items);
@@ -81,7 +82,10 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
                 Style::default().fg(theme.text)
             };
             let desc_style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::DIM)
+                Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
+                    .add_modifier(Modifier::DIM)
             } else {
                 Style::default().fg(theme.subtle)
             };
@@ -90,7 +94,11 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
                 Span::styled(prefix, style),
                 Span::styled(&cmd.name, style.add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    format!("{:>width$}", "", width = cmd_name_width.saturating_sub(cmd.name.len()) + 2),
+                    format!(
+                        "{:>width$}",
+                        "",
+                        width = cmd_name_width.saturating_sub(cmd.name.len()) + 2
+                    ),
                     style,
                 ),
                 Span::styled(&cmd.description, desc_style),
@@ -104,7 +112,9 @@ fn render_level1_selector(frame: &mut Frame, app: &App, input_area: Rect) {
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
-        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().bg(theme.bg_primary)),
         popup_area,
     );
 }
@@ -136,7 +146,8 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
     let start = if total_items <= max_visible {
         0
     } else {
-        app.selected_sub_index.saturating_sub(max_visible / 2)
+        app.selected_sub_index
+            .saturating_sub(max_visible / 2)
             .min(total_items.saturating_sub(max_visible))
     };
     let end = (start + visible_count).min(total_items);
@@ -161,7 +172,10 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
                 Style::default().fg(theme.text)
             };
             let desc_style = if is_selected {
-                Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::DIM)
+                Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
+                    .add_modifier(Modifier::DIM)
             } else {
                 Style::default().fg(theme.subtle)
             };
@@ -170,7 +184,11 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
                 Span::styled(prefix, style),
                 Span::styled(&sub.name, style.add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    format!("{:>width$}", "", width = sub_name_width.saturating_sub(sub.name.len()) + 2),
+                    format!(
+                        "{:>width$}",
+                        "",
+                        width = sub_name_width.saturating_sub(sub.name.len()) + 2
+                    ),
                     style,
                 ),
                 Span::styled(&sub.description, desc_style),
@@ -184,7 +202,9 @@ fn render_level2_selector(frame: &mut Frame, app: &App, input_area: Rect) {
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
-        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().bg(theme.bg_primary)),
         popup_area,
     );
 }

@@ -1,7 +1,10 @@
 use anyhow::Result;
 use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{SessionPrompt, SessionService};
-use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, net::TcpListener};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpListener,
+};
 
 use crate::config::AcpConfig;
 

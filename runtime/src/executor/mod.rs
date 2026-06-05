@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sacode_kernel::{Event, Supervisor, TaskResult, TaskQueueStatus, TaskRun};
+use sacode_kernel::{Event, Supervisor, TaskQueueStatus, TaskResult, TaskRun};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
-use crate::{queue::TaskQueue, task_run_snapshot};
 use crate::tools::ToolRegistry;
+use crate::{queue::TaskQueue, task_run_snapshot};
 
 #[derive(Debug, Clone)]
 pub struct ExecutorEvent {
@@ -87,7 +87,11 @@ impl TaskExecutor {
 
                 let duration_ms = started_at.elapsed().as_millis() as u64;
 
-                let has_error = execution.output.events.iter().any(|e| matches!(e, Event::Error { .. }));
+                let has_error = execution
+                    .output
+                    .events
+                    .iter()
+                    .any(|e| matches!(e, Event::Error { .. }));
                 let summary = execution
                     .output
                     .events
@@ -102,7 +106,12 @@ impl TaskExecutor {
 
                 for event in &execution.output.events {
                     let event_name = executor_event_name(event);
-                    emit_executor_event(&event_bus, &task_id, event_name, serde_json::to_value(event).unwrap_or_default());
+                    emit_executor_event(
+                        &event_bus,
+                        &task_id,
+                        event_name,
+                        serde_json::to_value(event).unwrap_or_default(),
+                    );
                 }
 
                 let result = if has_error {
@@ -123,7 +132,11 @@ impl TaskExecutor {
                     result.output.clone().or_else(|| result.error.clone()),
                 );
 
-                ExecutorTaskResult { task_id, result, task_run }
+                ExecutorTaskResult {
+                    task_id,
+                    result,
+                    task_run,
+                }
             });
 
             spawned += 1;
@@ -141,21 +154,37 @@ impl TaskExecutor {
                     match exec_result.result.status {
                         TaskQueueStatus::Completed => {
                             self.queue
-                                .mark_completed(task_id, exec_result.result.clone(), exec_result.task_run.clone())
+                                .mark_completed(
+                                    task_id,
+                                    exec_result.result.clone(),
+                                    exec_result.task_run.clone(),
+                                )
                                 .await;
-                            self.emit_event(task_id, "task_completed", serde_json::json!({
-                                "result": exec_result.result,
-                                "task_run": exec_result.task_run,
-                            }));
+                            self.emit_event(
+                                task_id,
+                                "task_completed",
+                                serde_json::json!({
+                                    "result": exec_result.result,
+                                    "task_run": exec_result.task_run,
+                                }),
+                            );
                         }
                         TaskQueueStatus::Failed => {
                             self.queue
-                                .mark_failed(task_id, exec_result.result.clone(), exec_result.task_run.clone())
+                                .mark_failed(
+                                    task_id,
+                                    exec_result.result.clone(),
+                                    exec_result.task_run.clone(),
+                                )
                                 .await;
-                            self.emit_event(task_id, "task_failed", serde_json::json!({
-                                "result": exec_result.result,
-                                "task_run": exec_result.task_run,
-                            }));
+                            self.emit_event(
+                                task_id,
+                                "task_failed",
+                                serde_json::json!({
+                                    "result": exec_result.result,
+                                    "task_run": exec_result.task_run,
+                                }),
+                            );
                         }
                         _ => {}
                     }
@@ -176,7 +205,12 @@ impl TaskExecutor {
     }
 }
 
-fn emit_executor_event(event_bus: &broadcast::Sender<ExecutorEvent>, task_id: &str, event_type: &str, data: serde_json::Value) {
+fn emit_executor_event(
+    event_bus: &broadcast::Sender<ExecutorEvent>,
+    task_id: &str,
+    event_type: &str,
+    data: serde_json::Value,
+) {
     let _ = event_bus.send(ExecutorEvent {
         task_id: task_id.to_string(),
         event_type: event_type.to_string(),

@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sacode_kernel::{QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun};
+use sacode_kernel::{
+    QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun,
+};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::warn;
 
@@ -93,7 +95,12 @@ impl TaskQueue {
         drop(ready);
 
         let mut pending = self.pending.write().await;
-        for priority in [TaskPriority::Urgent, TaskPriority::High, TaskPriority::Normal, TaskPriority::Low] {
+        for priority in [
+            TaskPriority::Urgent,
+            TaskPriority::High,
+            TaskPriority::Normal,
+            TaskPriority::Low,
+        ] {
             if let Some(queue) = pending.get_mut(&priority) {
                 let completed_ids = self.get_completed_ids().await;
                 while let Some(task) = queue.pop_front() {
@@ -158,7 +165,10 @@ impl TaskQueue {
                 let mut retrying = self.retrying.write().await;
                 retrying.insert(task_id.to_string(), task);
                 if let Some(store) = self.store.as_ref() {
-                    if let Err(error) = store.update_status(task_id, TaskQueueStatus::Retrying).await {
+                    if let Err(error) = store
+                        .update_status(task_id, TaskQueueStatus::Retrying)
+                        .await
+                    {
                         warn!(task_id, ?error, "failed to persist retrying task status");
                     }
                 }
@@ -216,8 +226,15 @@ impl TaskQueue {
             cancelled.insert(task_id.to_string(), task);
 
             if let Some(store) = self.store.as_ref() {
-                if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
-                    warn!(task_id, ?error, "failed to persist cancelled running task status");
+                if let Err(error) = store
+                    .update_status(task_id, TaskQueueStatus::Cancelled)
+                    .await
+                {
+                    warn!(
+                        task_id,
+                        ?error,
+                        "failed to persist cancelled running task status"
+                    );
                 }
             }
             return true;
@@ -231,8 +248,15 @@ impl TaskQueue {
                 cancelled.insert(task_id.to_string(), task);
 
                 if let Some(store) = self.store.as_ref() {
-                    if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
-                        warn!(task_id, ?error, "failed to persist cancelled ready task status");
+                    if let Err(error) = store
+                        .update_status(task_id, TaskQueueStatus::Cancelled)
+                        .await
+                    {
+                        warn!(
+                            task_id,
+                            ?error,
+                            "failed to persist cancelled ready task status"
+                        );
                     }
                 }
                 return true;
@@ -247,8 +271,15 @@ impl TaskQueue {
                     cancelled.insert(task_id.to_string(), task);
 
                     if let Some(store) = self.store.as_ref() {
-                        if let Err(error) = store.update_status(task_id, TaskQueueStatus::Cancelled).await {
-                            warn!(task_id, ?error, "failed to persist cancelled pending task status");
+                        if let Err(error) = store
+                            .update_status(task_id, TaskQueueStatus::Cancelled)
+                            .await
+                        {
+                            warn!(
+                                task_id,
+                                ?error,
+                                "failed to persist cancelled pending task status"
+                            );
                         }
                     }
                     return true;
@@ -457,14 +488,19 @@ impl TaskQueue {
 
         if let Some(error) = &result.error {
             if error.contains("timeout") || error.contains("Timeout") {
-                return task.retry_policy.should_retry_on(&sacode_kernel::RetryCondition::Timeout);
+                return task
+                    .retry_policy
+                    .should_retry_on(&sacode_kernel::RetryCondition::Timeout);
             }
             if error.contains("network") || error.contains("Network") {
-                return task.retry_policy.should_retry_on(&sacode_kernel::RetryCondition::NetworkError);
+                return task
+                    .retry_policy
+                    .should_retry_on(&sacode_kernel::RetryCondition::NetworkError);
             }
         }
 
-        task.retry_policy.should_retry_on(&sacode_kernel::RetryCondition::InternalError)
+        task.retry_policy
+            .should_retry_on(&sacode_kernel::RetryCondition::InternalError)
     }
 }
 

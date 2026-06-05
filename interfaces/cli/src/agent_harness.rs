@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use crate::provider_config::{fallback_models, fetch_models, NamedProviderConfig, ProviderConfig, ProviderConfigStore, SaCodeConfigStore};
+use crate::provider_config::{
+    fallback_models, fetch_models, NamedProviderConfig, ProviderConfig, ProviderConfigStore,
+    SaCodeConfigStore,
+};
 
 #[derive(Debug, Clone)]
 pub struct ModelOption {
@@ -40,22 +43,25 @@ pub fn connect_provider(
     final_config.model = default_model.clone();
     if !default_model.is_empty() {
         provider_store.save_named(name, &final_config, true)?;
-        let mut spec = sacode_store
-            .provider(name)?
-            .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                name: name.to_string(),
-                base_url: base_url.to_string(),
-                api_key: String::new(),
-                models: std::collections::BTreeMap::new(),
-            });
+        let mut spec =
+            sacode_store
+                .provider(name)?
+                .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
+                    name: name.to_string(),
+                    base_url: base_url.to_string(),
+                    api_key: String::new(),
+                    models: std::collections::BTreeMap::new(),
+                });
         spec.name = name.to_string();
         spec.base_url = base_url.to_string();
         spec.api_key = final_config.api_key.clone();
         for model in &final_models {
-            spec.models.entry(model.clone()).or_insert_with(|| sacode_kernel::model::ModelRule {
-                name: model.clone(),
-                ..Default::default()
-            });
+            spec.models
+                .entry(model.clone())
+                .or_insert_with(|| sacode_kernel::model::ModelRule {
+                    name: model.clone(),
+                    ..Default::default()
+                });
         }
         sacode_store.upsert_provider(name, spec)?;
         sacode_store.set_model(name, &default_model)?;

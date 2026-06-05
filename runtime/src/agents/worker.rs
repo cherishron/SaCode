@@ -1,6 +1,8 @@
-use sacode_kernel::{AgentRole, ExecutionMode, PlannerAgent, SubAgentResult, SubAgentTask, Supervisor, Task};
+use sacode_kernel::{
+    AgentRole, ExecutionMode, PlannerAgent, SubAgentResult, SubAgentTask, Supervisor, Task,
+};
 
-use super::model_router::{ResolvedRoleRoute, resolve_role_route};
+use super::model_router::{resolve_role_route, ResolvedRoleRoute};
 use crate::model_routing::TaskProfile;
 
 #[derive(Debug, Clone)]
@@ -86,11 +88,7 @@ fn resolve_role_model_summary(role: &AgentRole) -> String {
 
     format!(
         "provider={}, model={}, thinking={}, reasoning_effort={}, auto_route={}",
-        provider,
-        primary_model,
-        thinking,
-        reasoning_effort,
-        role.model_policy.auto_route
+        provider, primary_model, thinking, reasoning_effort, role.model_policy.auto_route
     )
 }
 
@@ -115,7 +113,10 @@ fn terminal_summary(event: &sacode_kernel::Event) -> Option<String> {
     }
 }
 
-fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::ExecutionResult) -> String {
+fn build_role_summary(
+    role: &AgentRole,
+    execution: &sacode_kernel::agent::ExecutionResult,
+) -> String {
     let completed_steps = execution.output.plan.completed_count();
     let tool_names = execution
         .tool_calls
@@ -134,7 +135,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "架构结论已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "repo-explorer" => format!(
             "{}，完成 {} 个步骤，重点覆盖 {}。探索结论：{}",
@@ -143,7 +146,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "仓库线索已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "implementer" => format!(
             "{}，完成 {} 个步骤，执行涉及 {}。实现结论：{}",
@@ -152,7 +157,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "实现结果已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "test-engineer" => format!(
             "{}，完成 {} 个步骤，检查覆盖 {}。测试结论：{}",
@@ -161,7 +168,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "验证结果已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "code-reviewer" => format!(
             "{}，完成 {} 个步骤，重点检查 {}。审查结论：{}",
@@ -170,7 +179,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "审查结果已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "devops-operator" => format!(
             "{}，完成 {} 个步骤，操作涉及 {}。交付结论：{}",
@@ -179,7 +190,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "交付检查已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "reporter" => format!(
             "{}，完成 {} 个步骤，参考了 {}。主结论：{}",
@@ -188,7 +201,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "汇总结论已生成"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         "requirement-analyst" => format!(
             "{}，完成 {} 个步骤，分析覆盖 {}。需求结论：{}",
@@ -197,7 +212,9 @@ fn build_role_summary(role: &AgentRole, execution: &sacode_kernel::agent::Execut
             } else {
                 "需求约束已整理"
             },
-            completed_steps, tool_focus, final_summary
+            completed_steps,
+            tool_focus,
+            final_summary
         ),
         _ => format!(
             "{}，完成 {} 个步骤，覆盖 {}。执行结论：{}",

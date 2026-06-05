@@ -40,18 +40,35 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let dir_path = resolve_allowed_path(path, FsAccess::Read)?;
     if !dir_path.exists() {
-        return Ok(ToolOutput::failure(format!("directory not found: {}", path)));
+        return Ok(ToolOutput::failure(format!(
+            "directory not found: {}",
+            path
+        )));
     }
     if !dir_path.is_dir() {
-        return Ok(ToolOutput::failure(format!("path is not a directory: {}", path)));
+        return Ok(ToolOutput::failure(format!(
+            "path is not a directory: {}",
+            path
+        )));
     }
 
     let mut entries = Vec::new();
-    collect_entries(&dir_path, &dir_path, recursive, include_hidden, &mut entries)?;
+    collect_entries(
+        &dir_path,
+        &dir_path,
+        recursive,
+        include_hidden,
+        &mut entries,
+    )?;
     entries.sort_by(|a, b| {
         let a_type = a["type"].as_str().unwrap_or("");
         let b_type = b["type"].as_str().unwrap_or("");
-        a_type.cmp(b_type).then_with(|| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")))
+        a_type.cmp(b_type).then_with(|| {
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["name"].as_str().unwrap_or(""))
+        })
     });
 
     Ok(ToolOutput::success(serde_json::json!({
@@ -79,7 +96,11 @@ fn collect_entries(
         let path = entry.path();
         let metadata = entry.metadata()?;
         let relative = relative_name(root, &path);
-        let kind = if metadata.is_dir() { "directory" } else { "file" };
+        let kind = if metadata.is_dir() {
+            "directory"
+        } else {
+            "file"
+        };
 
         entries.push(serde_json::json!({
             "name": relative,

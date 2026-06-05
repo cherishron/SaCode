@@ -2,8 +2,8 @@ pub mod fetch;
 pub mod search;
 
 use anyhow::{anyhow, Result};
-use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
+use reqwest::StatusCode;
 use std::thread;
 use std::time::Duration;
 
@@ -28,16 +28,26 @@ where
 
     for attempt in 0..MAX_RETRY_ATTEMPTS {
         match build_request(&client).send() {
-            Ok(response) if should_retry_status(response.status()) && attempt + 1 < MAX_RETRY_ATTEMPTS => {
-                thread::sleep(Duration::from_millis(RETRY_BASE_DELAY_MS * (attempt as u64 + 1)));
+            Ok(response)
+                if should_retry_status(response.status()) && attempt + 1 < MAX_RETRY_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(
+                    RETRY_BASE_DELAY_MS * (attempt as u64 + 1),
+                ));
             }
             Ok(response) => return Ok(response),
             Err(error) if is_retryable_error(&error) && attempt + 1 < MAX_RETRY_ATTEMPTS => {
                 last_error = Some(error.to_string());
-                thread::sleep(Duration::from_millis(RETRY_BASE_DELAY_MS * (attempt as u64 + 1)));
+                thread::sleep(Duration::from_millis(
+                    RETRY_BASE_DELAY_MS * (attempt as u64 + 1),
+                ));
             }
             Err(error) => {
-                return Err(anyhow!("web request failed after {} attempts: {}", attempt + 1, error));
+                return Err(anyhow!(
+                    "web request failed after {} attempts: {}",
+                    attempt + 1,
+                    error
+                ));
             }
         }
     }
@@ -62,7 +72,11 @@ fn should_retry_status(status: StatusCode) -> bool {
 }
 
 fn is_retryable_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_request() || error.is_body() || error.is_decode()
+    error.is_timeout()
+        || error.is_connect()
+        || error.is_request()
+        || error.is_body()
+        || error.is_decode()
 }
 
 fn normalize_url(url: &str) -> String {
@@ -162,7 +176,10 @@ fn html_to_text(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_whitespace, decode_html_entities, extract_tag_text, html_to_text, normalize_url, truncate_chars};
+    use super::{
+        collapse_whitespace, decode_html_entities, extract_tag_text, html_to_text, normalize_url,
+        truncate_chars,
+    };
 
     #[test]
     fn normalize_url_adds_https_scheme() {
@@ -173,7 +190,10 @@ mod tests {
     #[test]
     fn html_helpers_extract_text() {
         let html = "<html><head><title>Test &amp; Demo</title><style>.x{}</style></head><body><script>1</script><h1>Hello</h1><p>World</p></body></html>";
-        assert_eq!(extract_tag_text(html, "title").as_deref(), Some("Test & Demo"));
+        assert_eq!(
+            extract_tag_text(html, "title").as_deref(),
+            Some("Test & Demo")
+        );
         assert_eq!(html_to_text(html), "Test & Demo Hello World");
         assert_eq!(decode_html_entities("Tom &amp; Jerry"), "Tom & Jerry");
         assert_eq!(collapse_whitespace("a\n\n b\t c"), "a b c");

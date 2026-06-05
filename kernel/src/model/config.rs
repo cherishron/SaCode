@@ -115,7 +115,10 @@ pub struct Modalities {
 }
 
 impl SaCodeConfig {
-    pub fn resolve_provider_and_model(&self, model_spec: &str) -> Option<(&ProviderSpec, &ModelRule, String)> {
+    pub fn resolve_provider_and_model(
+        &self,
+        model_spec: &str,
+    ) -> Option<(&ProviderSpec, &ModelRule, String)> {
         let (provider_name, model_name) = if let Some((p, m)) = model_spec.split_once('/') {
             (p, m)
         } else {
@@ -208,162 +211,364 @@ impl ModelRule {
 pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
     let mut providers = BTreeMap::new();
 
-    providers.insert("ollama".to_string(), ProviderSpec {
-        name: "Ollama".to_string(),
-        base_url: "http://127.0.0.1:11434/v1".to_string(),
-        api_key: String::new(),
-        models: BTreeMap::new(),
-    });
-
-    providers.insert("deepseek".to_string(), ProviderSpec {
-        name: "DeepSeek".to_string(),
-        base_url: "https://api.deepseek.com".to_string(),
-        api_key: String::new(),
-        models: {
-            let mut m = BTreeMap::new();
-            m.insert("deepseek-v4-pro".to_string(), ModelRule {
-                name: "deepseek-v4-pro 推理模型".to_string(),
-                thinking: true,
-                reasoning_effort: Some("max".to_string()),
-                limit: Some(ModelLimit { context: 128000, output: 8192 }),
-                temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: None,
-                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
-            });
-            m.insert("deepseek-v4-flash".to_string(), ModelRule {
-                name: "deepseek-v4-flash 快速模型".to_string(),
-                thinking: true,
-                reasoning_effort: Some("high".to_string()),
-                limit: Some(ModelLimit { context: 128000, output: 8192 }),
-                temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: None,
-                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
-            });
-            m.insert("deepseek-chat".to_string(), ModelRule {
-                name: "deepseek-chat 通用模型".to_string(),
-                thinking: false,
-                reasoning_effort: None,
-                limit: Some(ModelLimit { context: 128000, output: 8192 }),
-                temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: None,
-                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
-            });
-            m.insert("deepseek-reasoner".to_string(), ModelRule {
-                name: "deepseek-reasoner 推理模型".to_string(),
-                thinking: true,
-                reasoning_effort: Some("high".to_string()),
-                limit: Some(ModelLimit { context: 128000, output: 8192 }),
-                temperature: Some(TemperatureRule { default: 0.6, range: Some((0.0, 1.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: None,
-                pricing: Some(ModelPricing { input_per_million: 0.27, output_per_million: 1.10 }),
-            });
-            m
+    providers.insert(
+        "ollama".to_string(),
+        ProviderSpec {
+            name: "Ollama".to_string(),
+            base_url: "http://127.0.0.1:11434/v1".to_string(),
+            api_key: String::new(),
+            models: BTreeMap::new(),
         },
-    });
+    );
 
-    providers.insert("mimo".to_string(), ProviderSpec {
-        name: "MiMo".to_string(),
-        base_url: "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
-        api_key: String::new(),
-        models: {
-            let mut m = BTreeMap::new();
-            m.insert("mimo-v2.5-pro".to_string(), ModelRule {
-                name: "mimo-v2.5-pro 最强推理模型，适合复杂任务".to_string(),
-                thinking: true,
-                reasoning_effort: None,
-                limit: Some(ModelLimit { context: 1048576, output: 131072 }),
-                temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: Some(Modalities { input: vec!["text".to_string(), "image".to_string()], output: vec!["text".to_string()] }),
-                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
-            });
-            m.insert("mimo-v2.5".to_string(), ModelRule {
-                name: "mimo-v2.5 轻量快速模型".to_string(),
-                thinking: true,
-                reasoning_effort: None,
-                limit: Some(ModelLimit { context: 1048576, output: 131072 }),
-                temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: Some(Modalities { input: vec!["text".to_string()], output: vec!["text".to_string()] }),
-                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
-            });
-            m.insert("mimo-v2-omni".to_string(), ModelRule {
-                name: "mimo-v2-omni 多模态".to_string(),
-                thinking: true,
-                reasoning_effort: None,
-                limit: Some(ModelLimit { context: 1048576, output: 131072 }),
-                temperature: Some(TemperatureRule { default: 1.0, range: Some((0.0, 1.5)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                modalities: Some(Modalities { input: vec!["text".to_string(), "image".to_string()], output: vec!["text".to_string()] }),
-                pricing: Some(ModelPricing { input_per_million: 0.80, output_per_million: 2.00 }),
-            });
-            m
+    providers.insert(
+        "deepseek".to_string(),
+        ProviderSpec {
+            name: "DeepSeek".to_string(),
+            base_url: "https://api.deepseek.com".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "deepseek-v4-pro".to_string(),
+                    ModelRule {
+                        name: "deepseek-v4-pro 推理模型".to_string(),
+                        thinking: true,
+                        reasoning_effort: Some("max".to_string()),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 8192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.6,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.27,
+                            output_per_million: 1.10,
+                        }),
+                    },
+                );
+                m.insert(
+                    "deepseek-v4-flash".to_string(),
+                    ModelRule {
+                        name: "deepseek-v4-flash 快速模型".to_string(),
+                        thinking: true,
+                        reasoning_effort: Some("high".to_string()),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 8192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.6,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.27,
+                            output_per_million: 1.10,
+                        }),
+                    },
+                );
+                m.insert(
+                    "deepseek-chat".to_string(),
+                    ModelRule {
+                        name: "deepseek-chat 通用模型".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 8192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.6,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.27,
+                            output_per_million: 1.10,
+                        }),
+                    },
+                );
+                m.insert(
+                    "deepseek-reasoner".to_string(),
+                    ModelRule {
+                        name: "deepseek-reasoner 推理模型".to_string(),
+                        thinking: true,
+                        reasoning_effort: Some("high".to_string()),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 8192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.6,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.27,
+                            output_per_million: 1.10,
+                        }),
+                    },
+                );
+                m
+            },
         },
-    });
+    );
 
-    providers.insert("longcat".to_string(), ProviderSpec {
-        name: "LongCat".to_string(),
-        base_url: "https://api.longcat.chat/openai/v1".to_string(),
-        api_key: String::new(),
-        models: {
-            let mut m = BTreeMap::new();
-            m.insert("LongCat-2.0-Preview".to_string(), ModelRule {
-                name: "LongCat-2.0-Preview".to_string(),
-                thinking: false,
-                reasoning_effort: None,
-                limit: None,
-                temperature: None,
-                top_p: None,
-                modalities: None,
-                pricing: None,
-            });
-            m.insert("LongCat-Flash-Chat".to_string(), ModelRule::default());
-            m.insert("LongCat-Flash-Thinking".to_string(), ModelRule { thinking: true, ..Default::default() });
-            m.insert("LongCat-Flash-Thinking-2601".to_string(), ModelRule { thinking: true, ..Default::default() });
-            m.insert("LongCat-Flash-Lite".to_string(), ModelRule::default());
-            m.insert("LongCat-Flash-Omni-2603".to_string(), ModelRule::default());
-            m.insert("LongCat-Flash-Chat-2602-Exp".to_string(), ModelRule::default());
-            m
+    providers.insert(
+        "mimo".to_string(),
+        ProviderSpec {
+            name: "MiMo".to_string(),
+            base_url: "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "mimo-v2.5-pro".to_string(),
+                    ModelRule {
+                        name: "mimo-v2.5-pro 最强推理模型，适合复杂任务".to_string(),
+                        thinking: true,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 1048576,
+                            output: 131072,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 1.0,
+                            range: Some((0.0, 1.5)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: Some(Modalities {
+                            input: vec!["text".to_string(), "image".to_string()],
+                            output: vec!["text".to_string()],
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.80,
+                            output_per_million: 2.00,
+                        }),
+                    },
+                );
+                m.insert(
+                    "mimo-v2.5".to_string(),
+                    ModelRule {
+                        name: "mimo-v2.5 轻量快速模型".to_string(),
+                        thinking: true,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 1048576,
+                            output: 131072,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 1.0,
+                            range: Some((0.0, 1.5)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: Some(Modalities {
+                            input: vec!["text".to_string()],
+                            output: vec!["text".to_string()],
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.80,
+                            output_per_million: 2.00,
+                        }),
+                    },
+                );
+                m.insert(
+                    "mimo-v2-omni".to_string(),
+                    ModelRule {
+                        name: "mimo-v2-omni 多模态".to_string(),
+                        thinking: true,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 1048576,
+                            output: 131072,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 1.0,
+                            range: Some((0.0, 1.5)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: Some(Modalities {
+                            input: vec!["text".to_string(), "image".to_string()],
+                            output: vec!["text".to_string()],
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.80,
+                            output_per_million: 2.00,
+                        }),
+                    },
+                );
+                m
+            },
         },
-    });
+    );
 
-    providers.insert("openai".to_string(), ProviderSpec {
-        name: "OpenAI".to_string(),
-        base_url: "https://api.openai.com/v1".to_string(),
-        api_key: String::new(),
-        models: {
-            let mut m = BTreeMap::new();
-            m.insert("gpt-4o".to_string(), ModelRule {
-                name: "gpt-4o".to_string(),
-                limit: Some(ModelLimit { context: 128000, output: 16384 }),
-                temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                pricing: Some(ModelPricing { input_per_million: 2.50, output_per_million: 10.00 }),
-                ..Default::default()
-            });
-            m.insert("gpt-4o-mini".to_string(), ModelRule {
-                name: "gpt-4o-mini".to_string(),
-                limit: Some(ModelLimit { context: 128000, output: 16384 }),
-                temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                pricing: Some(ModelPricing { input_per_million: 0.15, output_per_million: 0.60 }),
-                ..Default::default()
-            });
-            m.insert("gpt-4-turbo".to_string(), ModelRule {
-                name: "gpt-4-turbo".to_string(),
-                limit: Some(ModelLimit { context: 128000, output: 4096 }),
-                temperature: Some(TemperatureRule { default: 0.7, range: Some((0.0, 2.0)), thinking_override: None }),
-                top_p: Some(TopPRule { default: 0.95, range: Some((0.01, 1.0)) }),
-                pricing: Some(ModelPricing { input_per_million: 2.00, output_per_million: 8.00 }),
-                ..Default::default()
-            });
-            m
+    providers.insert(
+        "longcat".to_string(),
+        ProviderSpec {
+            name: "LongCat".to_string(),
+            base_url: "https://api.longcat.chat/openai/v1".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "LongCat-2.0-Preview".to_string(),
+                    ModelRule {
+                        name: "LongCat-2.0-Preview".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: None,
+                        temperature: None,
+                        top_p: None,
+                        modalities: None,
+                        pricing: None,
+                    },
+                );
+                m.insert("LongCat-Flash-Chat".to_string(), ModelRule::default());
+                m.insert(
+                    "LongCat-Flash-Thinking".to_string(),
+                    ModelRule {
+                        thinking: true,
+                        ..Default::default()
+                    },
+                );
+                m.insert(
+                    "LongCat-Flash-Thinking-2601".to_string(),
+                    ModelRule {
+                        thinking: true,
+                        ..Default::default()
+                    },
+                );
+                m.insert("LongCat-Flash-Lite".to_string(), ModelRule::default());
+                m.insert("LongCat-Flash-Omni-2603".to_string(), ModelRule::default());
+                m.insert(
+                    "LongCat-Flash-Chat-2602-Exp".to_string(),
+                    ModelRule::default(),
+                );
+                m
+            },
         },
-    });
+    );
+
+    providers.insert(
+        "openai".to_string(),
+        ProviderSpec {
+            name: "OpenAI".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "gpt-4o".to_string(),
+                    ModelRule {
+                        name: "gpt-4o".to_string(),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 16384,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 2.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 2.50,
+                            output_per_million: 10.00,
+                        }),
+                        ..Default::default()
+                    },
+                );
+                m.insert(
+                    "gpt-4o-mini".to_string(),
+                    ModelRule {
+                        name: "gpt-4o-mini".to_string(),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 16384,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 2.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.15,
+                            output_per_million: 0.60,
+                        }),
+                        ..Default::default()
+                    },
+                );
+                m.insert(
+                    "gpt-4-turbo".to_string(),
+                    ModelRule {
+                        name: "gpt-4-turbo".to_string(),
+                        limit: Some(ModelLimit {
+                            context: 128000,
+                            output: 4096,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 2.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        pricing: Some(ModelPricing {
+                            input_per_million: 2.00,
+                            output_per_million: 8.00,
+                        }),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+        },
+    );
 
     providers
 }

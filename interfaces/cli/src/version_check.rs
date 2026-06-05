@@ -34,8 +34,13 @@ pub struct VersionCache {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionStatus {
-    UpToDate { current_version: String },
-    UpdateAvailable { current_version: String, remote_version: String },
+    UpToDate {
+        current_version: String,
+    },
+    UpdateAvailable {
+        current_version: String,
+        remote_version: String,
+    },
     Unknown,
 }
 
@@ -237,7 +242,9 @@ pub fn update_prompt(current_version: &str, remote_version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compare_versions, update_prompt, VersionCache, VersionCheckConfig, VersionChecker};
+    use super::{
+        compare_versions, update_prompt, VersionCache, VersionCheckConfig, VersionChecker,
+    };
     use std::cmp::Ordering;
 
     #[test]

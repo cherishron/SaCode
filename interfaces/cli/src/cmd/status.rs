@@ -116,7 +116,11 @@ fn render_plugin_status(workdir: &Path) -> Result<Vec<String>> {
                 "- {} {} | {} [{}]",
                 plugin.plugin.name,
                 version,
-                if plugin.plugin.enabled { "linked" } else { "disabled" },
+                if plugin.plugin.enabled {
+                    "linked"
+                } else {
+                    "disabled"
+                },
                 plugin.source.label()
             )
         })

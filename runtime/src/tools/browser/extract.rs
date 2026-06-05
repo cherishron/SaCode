@@ -45,7 +45,12 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let session = get_session(session_id)?;
     let fragment = match extract_fragment(&session.html, selector) {
         Some(value) => value,
-        None => return Ok(ToolOutput::failure(format!("selector not found: {}", selector))),
+        None => {
+            return Ok(ToolOutput::failure(format!(
+                "selector not found: {}",
+                selector
+            )))
+        }
     };
     let content = if format == "html" {
         truncate_chars(&fragment, 20_000)

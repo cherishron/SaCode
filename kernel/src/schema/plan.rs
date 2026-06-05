@@ -32,20 +32,32 @@ impl Plan {
     }
 
     pub fn current_step(&self) -> Option<&Step> {
-        self.steps.iter().find(|s| s.status == StepStatus::Running || s.status == StepStatus::Pending)
+        self.steps
+            .iter()
+            .find(|s| s.status == StepStatus::Running || s.status == StepStatus::Pending)
     }
 
     pub fn completed_count(&self) -> usize {
-        self.steps.iter().filter(|s| s.status == StepStatus::Completed).count()
+        self.steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count()
     }
 
     pub fn is_done(&self) -> bool {
-        self.steps.iter().all(|s| s.status == StepStatus::Completed || s.status == StepStatus::Skipped)
+        self.steps
+            .iter()
+            .all(|s| s.status == StepStatus::Completed || s.status == StepStatus::Skipped)
     }
 }
 
 impl Step {
-    pub fn new(id: usize, description: String, tools: Vec<String>, expected_output: String) -> Self {
+    pub fn new(
+        id: usize,
+        description: String,
+        tools: Vec<String>,
+        expected_output: String,
+    ) -> Self {
         Self {
             id,
             description,

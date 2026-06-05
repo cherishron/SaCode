@@ -1,7 +1,12 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
-use sacode_runtime::{append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryKind, MemoryScope};
+use sacode_runtime::{
+    append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryKind, MemoryScope,
+};
 
 const USER_WIKI_DIR: &str = ".sacode/wiki";
 

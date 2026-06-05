@@ -51,11 +51,18 @@ fn render_status(store: &SaCodeConfigStore) -> Result<String> {
     ))
 }
 
-fn render_project_scope(workdir: &Path, store: &SaCodeConfigStore, args: &[String]) -> Result<String> {
+fn render_project_scope(
+    workdir: &Path,
+    store: &SaCodeConfigStore,
+    args: &[String],
+) -> Result<String> {
     match args.first().map(|value| value.as_str()) {
         None | Some("show") | Some("status") => {
             let project = store.load()?.unwrap_or_default();
-            Ok(format!("项目级输出风格: {}", display_style(&project.outstyle)))
+            Ok(format!(
+                "项目级输出风格: {}",
+                display_style(&project.outstyle)
+            ))
         }
         Some("path") => Ok(workdir.join(".sacode/config.json").display().to_string()),
         Some(value) => apply_project_style(store, value),

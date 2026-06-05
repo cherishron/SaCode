@@ -46,12 +46,13 @@ impl App {
             return;
         };
         let model_name = current_provider.config.model.clone();
-        let rule = provider_spec.models.entry(model_name.clone()).or_insert_with(|| {
-            sacode_kernel::model::ModelRule {
+        let rule = provider_spec
+            .models
+            .entry(model_name.clone())
+            .or_insert_with(|| sacode_kernel::model::ModelRule {
                 name: model_name.clone(),
                 ..Default::default()
-            }
-        });
+            });
         rule.thinking = target_thinking;
 
         match self
@@ -117,7 +118,7 @@ impl App {
 
     pub(super) fn shutdown_summary(&self) -> String {
         format!(
-            "sacode 已经关闭。再见！\n性能：\n总耗时：{}\nsacode 活动时间：{}\napi时间：{}\n工具时间：{}",
+            "sacode 已经关闭。再见！\n性能：\n    总耗时：{}\n    sacode 活动时间：{}\n    api时间：{}\n    工具时间：{}",
             format_duration_ms(self.perf_stats.total_task_duration_ms),
             format_duration_ms(self.session_active_duration_ms()),
             format_duration_ms(self.perf_stats.api_duration_ms),
@@ -127,11 +128,7 @@ impl App {
 
     pub(super) fn current_pricing_rule(&self) -> Option<PricingRule> {
         let provider = self.current_provider.as_ref()?;
-        let provider_spec = self
-            .sacode_store
-            .provider(&provider.name)
-            .ok()
-            .flatten()?;
+        let provider_spec = self.sacode_store.provider(&provider.name).ok().flatten()?;
         let rule = provider_spec.models.get(&provider.config.model)?;
         pricing_rule_from_model_rule(rule)
     }
@@ -148,8 +145,8 @@ fn pricing_rule_from_model_rule(rule: &ModelRule) -> Option<PricingRule> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider_config::ProviderConfig;
     use crate::provider_config::NamedProviderConfig;
+    use crate::provider_config::ProviderConfig;
     use crate::tui::App;
     use sacode_kernel::model::{ModelPricing, ModelRule, ProviderSpec};
     use std::collections::BTreeMap;
@@ -222,8 +219,29 @@ mod tests {
 
         assert_eq!(app.usage_stats.requests, 2);
         assert_eq!(app.usage_stats.models.len(), 2);
-        assert_eq!(app.usage_stats.models[&format!("stats-provider:{}", model_a)].requests, 1);
-        assert_eq!(app.usage_stats.models[&format!("stats-provider:{}", model_b)].requests, 1);
+        assert_eq!(
+            app.usage_stats.models[&format!("stats-provider:{}", model_a)].requests,
+            1
+        );
+        assert_eq!(
+            app.usage_stats.models[&format!("stats-provider:{}", model_b)].requests,
+            1
+        );
         assert!(app.usage_stats.estimated_cost_usd > 0.0);
+    }
+
+    #[test]
+    fn shutdown_summary_uses_indented_performance_layout() {
+        let mut app = App::new();
+        app.perf_stats.total_task_duration_ms = 358_000;
+        app.perf_stats.api_duration_ms = 234_000;
+        app.perf_stats.tool_duration_ms = 4_300;
+
+        let summary = app.shutdown_summary();
+
+        assert!(summary.contains("sacode 已经关闭。再见！"));
+        assert!(summary.contains("性能：\n    总耗时：5m 58s"));
+        assert!(summary.contains("\n    api时间：3m 54s"));
+        assert!(summary.contains("\n    工具时间：4.3s"));
     }
 }

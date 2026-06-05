@@ -59,7 +59,14 @@ impl App {
                             .map(|ext| ext == "json")
                             .unwrap_or(false)
                     })
-                    .map(|entry| entry.path().file_stem().unwrap().to_string_lossy().to_string())
+                    .map(|entry| {
+                        entry
+                            .path()
+                            .file_stem()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string()
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -128,7 +135,10 @@ impl App {
         match std::fs::read_to_string(&checkpoint_file) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(data) => {
-                    if let Some(messages) = data.get("messages").and_then(|messages| messages.as_array()) {
+                    if let Some(messages) = data
+                        .get("messages")
+                        .and_then(|messages| messages.as_array())
+                    {
                         self.replace_messages(
                             messages
                                 .iter()

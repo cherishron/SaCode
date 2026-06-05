@@ -11,7 +11,11 @@ pub fn run(args: Vec<String>) -> Result<()> {
 
 pub fn render_wiki(workdir: &Path, _args: &[String]) -> Result<String> {
     let status = inspect_wiki(workdir)?;
-    let mut lines = vec!["Wiki Status".to_string(), format!("工作目录: {}", workdir.display()), String::new()];
+    let mut lines = vec![
+        "Wiki Status".to_string(),
+        format!("工作目录: {}", workdir.display()),
+        String::new(),
+    ];
 
     lines.push("用户级知识源:".to_string());
     lines.extend(status.user_sources.iter().map(render_source_status));
@@ -38,7 +42,10 @@ pub fn render_wiki(workdir: &Path, _args: &[String]) -> Result<String> {
         "- 会话级知识: {}",
         summarize_loaded(status.context.session_summary.as_deref())
     ));
-    lines.push("- 自动学习回写: 任务完成后会把高置信度偏好、流程和决策写入项目级 wiki 分类文件。".to_string());
+    lines.push(
+        "- 自动学习回写: 任务完成后会把高置信度偏好、流程和决策写入项目级 wiki 分类文件。"
+            .to_string(),
+    );
 
     if let Some(user_summary) = status.context.user_summary.as_deref() {
         lines.push(String::new());

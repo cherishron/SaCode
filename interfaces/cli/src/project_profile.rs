@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -112,13 +116,21 @@ fn normalize_profile_config(config: &mut ProjectProfileConfig) {
 
     config.current = config.current.trim().to_string();
     if config.current.is_empty() || !config.profiles.contains_key(&config.current) {
-        config.current = config.profiles.keys().next().cloned().unwrap_or_else(|| "default".to_string());
+        config.current = config
+            .profiles
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::ProjectProfileStore;
 

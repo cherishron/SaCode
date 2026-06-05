@@ -1,6 +1,5 @@
 use super::{
-    agent_harness, App, AsyncContext, AsyncResult, InputMode, ModelOptionEntry,
-    NamedProviderConfig,
+    agent_harness, App, AsyncContext, AsyncResult, InputMode, ModelOptionEntry, NamedProviderConfig,
 };
 use crate::provider_config::ProviderConfig;
 use std::thread;
@@ -430,7 +429,8 @@ impl App {
     }
 
     pub(super) fn confirm_model_selection(&mut self) {
-        let Some(selected_model) = self.model_options.get(self.selected_model_index).cloned() else {
+        let Some(selected_model) = self.model_options.get(self.selected_model_index).cloned()
+        else {
             self.push_system_message("当前没有可选模型。");
             self.input_mode = InputMode::Chat;
             return;
@@ -451,24 +451,26 @@ impl App {
         let sender = self.task_tx.clone();
         let store = self.provider_store.clone();
         let sacode_store = self.sacode_store.clone();
-        thread::spawn(move || match agent_harness::connect_provider(
-            &store,
-            &sacode_store,
-            &provider_name,
-            &config.base_url,
-            config.api_key,
-        ) {
-            Ok(result) => {
-                let _ = sender.send(AsyncResult::LoginCompleted {
-                    provider_name: result.current_provider.name,
-                    config: result.current_provider.config,
-                });
-            }
-            Err(error) => {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::Login,
-                    message: format!("保存 provider 配置失败: {}", error),
-                });
+        thread::spawn(move || {
+            match agent_harness::connect_provider(
+                &store,
+                &sacode_store,
+                &provider_name,
+                &config.base_url,
+                config.api_key,
+            ) {
+                Ok(result) => {
+                    let _ = sender.send(AsyncResult::LoginCompleted {
+                        provider_name: result.current_provider.name,
+                        config: result.current_provider.config,
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Login,
+                        message: format!("保存 provider 配置失败: {}", error),
+                    });
+                }
             }
         });
     }
@@ -570,8 +572,12 @@ impl App {
         let store = self.provider_store.clone();
         let sacode_store = self.sacode_store.clone();
         thread::spawn(move || {
-            match agent_harness::switch_model(&store, &sacode_store, &provider_name, &selected_model)
-            {
+            match agent_harness::switch_model(
+                &store,
+                &sacode_store,
+                &provider_name,
+                &selected_model,
+            ) {
                 Ok(result) => {
                     let _ = sender.send(AsyncResult::ModelSaved {
                         config: result.config,
@@ -634,7 +640,9 @@ impl App {
     ) {
         self.clear_busy_state();
         if models.is_empty() {
-            self.push_system_message("当前没有可切换的模型，请先配置 provider 或检查模型拉取结果。");
+            self.push_system_message(
+                "当前没有可切换的模型，请先配置 provider 或检查模型拉取结果。",
+            );
             return;
         }
         self.selected_model_index = models

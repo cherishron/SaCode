@@ -1,7 +1,13 @@
-use std::{collections::BTreeMap, env, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
+use sacode_kernel::model::{
+    preset_providers, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
+};
 use sacode_kernel::{AgentRole, RoleModelPolicy};
-use sacode_kernel::model::{ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig, preset_providers};
 use serde::Deserialize;
 
 use crate::model_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
@@ -63,7 +69,13 @@ pub fn resolve_config_model_candidates(workdir: &Path) -> Vec<(String, String, M
     let config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
     resolve_model_candidates_from_config(&config)
         .into_iter()
-        .map(|candidate| (candidate.provider_name, candidate.model_name, candidate.provider))
+        .map(|candidate| {
+            (
+                candidate.provider_name,
+                candidate.model_name,
+                candidate.provider,
+            )
+        })
         .collect()
 }
 
@@ -92,21 +104,25 @@ struct ModelHealthEntry {
     last_error: Option<String>,
 }
 
-pub fn resolve_role_route(workdir: &Path, role: &AgentRole, profile: &TaskProfile) -> Option<ResolvedRoleRoute> {
+pub fn resolve_role_route(
+    workdir: &Path,
+    role: &AgentRole,
+    profile: &TaskProfile,
+) -> Option<ResolvedRoleRoute> {
     let candidates = resolve_config_model_candidates(workdir);
     let plan = build_route_plan_from_candidates(
         workdir,
         &candidates,
         Some(&role.model_policy),
         profile,
-        format!("role={} auto_route={}", role.id, role.model_policy.auto_route),
+        format!(
+            "role={} auto_route={}",
+            role.id, role.model_policy.auto_route
+        ),
     )?;
     let summary = format_route_summary(role, &plan.primary, plan.fallbacks.len());
 
-    Some(ResolvedRoleRoute {
-        plan,
-        summary,
-    })
+    Some(ResolvedRoleRoute { plan, summary })
 }
 
 fn resolve_model_candidates_from_config(config: &SaCodeConfig) -> Vec<RouteCandidate> {
@@ -154,20 +170,31 @@ fn score_candidate(
     let model_lower = candidate.model_name.to_lowercase();
 
     if profile.languages.iter().any(|lang| lang == "rust")
-        && (model_lower.contains("deepseek") || model_lower.contains("mimo") || model_lower.contains("claude"))
+        && (model_lower.contains("deepseek")
+            || model_lower.contains("mimo")
+            || model_lower.contains("claude"))
     {
         score += 20;
         reasons.push("good for rust tasks".to_string());
     }
 
     if profile.needs_reasoning
-        && (model_lower.contains("deepseek-v4") || model_lower.contains("mimo") || model_lower.contains("reasoner"))
+        && (model_lower.contains("deepseek-v4")
+            || model_lower.contains("mimo")
+            || model_lower.contains("reasoner"))
     {
         score += 30;
         reasons.push("supports extended reasoning".to_string());
     }
 
-    if candidate.provider.rule.as_ref().map(|rule| rule.thinking).unwrap_or(false) && profile.needs_reasoning {
+    if candidate
+        .provider
+        .rule
+        .as_ref()
+        .map(|rule| rule.thinking)
+        .unwrap_or(false)
+        && profile.needs_reasoning
+    {
         score += 15;
         reasons.push("model has thinking enabled".to_string());
     }
@@ -186,20 +213,26 @@ fn score_candidate(
         }
     }
 
-    if policy
-        .fallback_models
-        .iter()
-        .any(|model| model == &candidate.model_name || model == &format!("{}/{}", candidate.provider_name, candidate.model_name))
-    {
+    if policy.fallback_models.iter().any(|model| {
+        model == &candidate.model_name
+            || model == &format!("{}/{}", candidate.provider_name, candidate.model_name)
+    }) {
         score += 20;
         reasons.push("listed in role fallback models".to_string());
     }
 
-    if let Some(health) = health_store.entries.get(&health_key(&candidate.provider_name, &candidate.model_name)) {
+    if let Some(health) = health_store
+        .entries
+        .get(&health_key(&candidate.provider_name, &candidate.model_name))
+    {
         let delta = model_health_score_delta(health);
         score += delta;
         reasons.push(format!("health cache adjusted score by {}", delta));
-        if let Some(last_error) = health.last_error.as_ref().filter(|_| health.last_status != "healthy") {
+        if let Some(last_error) = health
+            .last_error
+            .as_ref()
+            .filter(|_| health.last_status != "healthy")
+        {
             reasons.push(format!("last error: {}", last_error));
         }
     }
@@ -208,9 +241,14 @@ fn score_candidate(
         reasons.push("fallback candidate".to_string());
     }
 
-    let needs_thinking = policy
-        .thinking
-        .unwrap_or_else(|| candidate.provider.rule.as_ref().map(|rule| rule.thinking).unwrap_or(false));
+    let needs_thinking = policy.thinking.unwrap_or_else(|| {
+        candidate
+            .provider
+            .rule
+            .as_ref()
+            .map(|rule| rule.thinking)
+            .unwrap_or(false)
+    });
 
     RoutedModel {
         provider_name: candidate.provider_name,
@@ -231,9 +269,15 @@ fn apply_role_preferences(policy: &RoleModelPolicy, routed: &mut Vec<RoutedModel
     }
 }
 
-fn bump_preferred_model(routed: &mut Vec<RoutedModel>, preferred: &str, target_index: usize, reason: &str) {
+fn bump_preferred_model(
+    routed: &mut Vec<RoutedModel>,
+    preferred: &str,
+    target_index: usize,
+    reason: &str,
+) {
     let Some(position) = routed.iter().position(|entry| {
-        format!("{}/{}", entry.provider_name, entry.model_name) == preferred || entry.model_name == preferred
+        format!("{}/{}", entry.provider_name, entry.model_name) == preferred
+            || entry.model_name == preferred
     }) else {
         return;
     };
@@ -245,7 +289,11 @@ fn bump_preferred_model(routed: &mut Vec<RoutedModel>, preferred: &str, target_i
     routed.insert(insert_at, entry);
 }
 
-fn apply_route_overrides(config: &SaCodeConfig, profile: &TaskProfile, routed: &mut Vec<RoutedModel>) {
+fn apply_route_overrides(
+    config: &SaCodeConfig,
+    profile: &TaskProfile,
+    routed: &mut Vec<RoutedModel>,
+) {
     for rule in &config.model_routing.overrides {
         if !override_matches_profile(&rule.r#match, profile) {
             continue;
@@ -256,11 +304,20 @@ fn apply_route_overrides(config: &SaCodeConfig, profile: &TaskProfile, routed: &
     }
 }
 
-fn override_matches_profile(rule: &sacode_kernel::model::ModelRouteMatch, profile: &TaskProfile) -> bool {
+fn override_matches_profile(
+    rule: &sacode_kernel::model::ModelRouteMatch,
+    profile: &TaskProfile,
+) -> bool {
     let languages_match = rule.languages.is_empty()
-        || rule.languages.iter().any(|lang| profile.languages.iter().any(|value| value == lang));
+        || rule
+            .languages
+            .iter()
+            .any(|lang| profile.languages.iter().any(|value| value == lang));
     let surfaces_match = rule.surfaces.is_empty()
-        || rule.surfaces.iter().any(|surface| profile.surfaces.iter().any(|value| value == surface));
+        || rule
+            .surfaces
+            .iter()
+            .any(|surface| profile.surfaces.iter().any(|value| value == surface));
     languages_match && surfaces_match
 }
 
@@ -352,7 +409,11 @@ fn load_model_health_store(workdir: &Path) -> Option<ModelHealthStore> {
 fn model_health_score_delta(entry: &ModelHealthEntry) -> i32 {
     let success = entry.success_count.min(10) as i32 * 2;
     let failure = entry.failure_count.min(10) as i32 * 4;
-    let status_bonus = if entry.last_status == "healthy" { 8 } else { -12 };
+    let status_bonus = if entry.last_status == "healthy" {
+        8
+    } else {
+        -12
+    };
     success - failure + status_bonus
 }
 
@@ -385,7 +446,10 @@ fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> Mod
 fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
     let lower_url = base_url.to_lowercase();
     let lower_model = model.to_lowercase();
-    if lower_url.contains("xiaomimimo") || lower_url.contains("token-plan") || lower_model.starts_with("mimo") {
+    if lower_url.contains("xiaomimimo")
+        || lower_url.contains("token-plan")
+        || lower_model.starts_with("mimo")
+    {
         ProviderKind::Mimo
     } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
         ProviderKind::Longcat

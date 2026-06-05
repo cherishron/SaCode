@@ -5,8 +5,8 @@ use sacode_kernel::{RetryCondition, ScheduledTask, TaskResult};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 
-use crate::queue::TaskQueue;
 use crate::executor::ExecutorEvent;
+use crate::queue::TaskQueue;
 
 pub struct RetryHandler {
     queue: Arc<TaskQueue>,
@@ -45,18 +45,26 @@ impl RetryHandler {
 
         for task in retry_tasks.iter().take(self.max_concurrent_retries) {
             let delay_ms = task.next_backoff_delay_ms();
-            self.emit_event(&task.id, "retry_scheduled", serde_json::json!({
-                "attempt": task.current_attempt + 1,
-                "delay_ms": delay_ms,
-                "max_attempts": task.retry_policy.max_attempts,
-            }));
+            self.emit_event(
+                &task.id,
+                "retry_scheduled",
+                serde_json::json!({
+                    "attempt": task.current_attempt + 1,
+                    "delay_ms": delay_ms,
+                    "max_attempts": task.retry_policy.max_attempts,
+                }),
+            );
 
             sleep(Duration::from_millis(delay_ms)).await;
 
             self.queue.mark_retrying(&task.id).await;
-            self.emit_event(&task.id, "retry_started", serde_json::json!({
-                "attempt": task.current_attempt + 1,
-            }));
+            self.emit_event(
+                &task.id,
+                "retry_started",
+                serde_json::json!({
+                    "attempt": task.current_attempt + 1,
+                }),
+            );
 
             processed += 1;
         }
@@ -74,7 +82,8 @@ impl RetryHandler {
             return task.retry_policy.should_retry_on(&condition);
         }
 
-        task.retry_policy.should_retry_on(&RetryCondition::InternalError)
+        task.retry_policy
+            .should_retry_on(&RetryCondition::InternalError)
     }
 
     pub fn compute_backoff_delay(&self, task: &ScheduledTask) -> Duration {
@@ -97,15 +106,24 @@ fn classify_error(error: &str) -> RetryCondition {
         return RetryCondition::Timeout;
     }
 
-    if error_lower.contains("network") || error_lower.contains("connection") || error_lower.contains("socket") {
+    if error_lower.contains("network")
+        || error_lower.contains("connection")
+        || error_lower.contains("socket")
+    {
         return RetryCondition::NetworkError;
     }
 
-    if error_lower.contains("rate limit") || error_lower.contains("too many requests") || error_lower.contains("429") {
+    if error_lower.contains("rate limit")
+        || error_lower.contains("too many requests")
+        || error_lower.contains("429")
+    {
         return RetryCondition::RateLimit;
     }
 
-    if error_lower.contains("resource") || error_lower.contains("exhausted") || error_lower.contains("memory") {
+    if error_lower.contains("resource")
+        || error_lower.contains("exhausted")
+        || error_lower.contains("memory")
+    {
         return RetryCondition::ResourceExhausted;
     }
 

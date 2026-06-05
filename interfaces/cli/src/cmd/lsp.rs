@@ -9,7 +9,10 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     match args.first().map(|value| value.as_str()) {
         Some("status") => {
             if tcp {
-                println!("LSP TCP server configured on {}:{}", config.server.host, config.server.port);
+                println!(
+                    "LSP TCP server configured on {}:{}",
+                    config.server.host, config.server.port
+                );
             } else {
                 println!("LSP stdio server ready");
             }

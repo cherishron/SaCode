@@ -90,7 +90,10 @@ impl App {
     pub(super) fn create_task(&mut self, description: &str) {
         match self.task_store.add(description, TaskPriority::Medium) {
             Ok(task) => {
-                self.push_success_message(&format!("已创建任务 #{}: {}", task.id, task.description));
+                self.push_success_message(&format!(
+                    "已创建任务 #{}: {}",
+                    task.id, task.description
+                ));
                 self.refresh_task_options();
             }
             Err(error) => self.push_error_message(&format!("创建任务失败: {}", error)),
@@ -100,7 +103,10 @@ impl App {
     pub(super) fn edit_task(&mut self, id: u64, description: &str) {
         match self.task_store.update_description(id, description) {
             Ok(task) => {
-                self.push_success_message(&format!("已更新任务 #{}: {}", task.id, task.description));
+                self.push_success_message(&format!(
+                    "已更新任务 #{}: {}",
+                    task.id, task.description
+                ));
                 self.refresh_task_options();
             }
             Err(error) => self.push_error_message(&format!("更新任务失败: {}", error)),

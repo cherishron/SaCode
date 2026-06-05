@@ -1,8 +1,14 @@
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
-use sacode_kernel::model::{ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig, preset_providers};
+use sacode_kernel::model::{
+    preset_providers, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
+};
 use serde::{Deserialize, Serialize};
 
 const PROVIDER_CONFIG_FILE: &str = ".sacode/provider.json";
@@ -72,16 +78,21 @@ impl ProviderConfigStore {
             return Ok(None);
         }
 
-        let current_name = if !catalog.current.is_empty() && catalog.providers.contains_key(&catalog.current) {
-            catalog.current.clone()
-        } else {
-            catalog.providers.keys().next().cloned().unwrap_or_default()
-        };
+        let current_name =
+            if !catalog.current.is_empty() && catalog.providers.contains_key(&catalog.current) {
+                catalog.current.clone()
+            } else {
+                catalog.providers.keys().next().cloned().unwrap_or_default()
+            };
 
-        Ok(catalog.providers.get(&current_name).cloned().map(|config| NamedProviderConfig {
-            name: current_name,
-            config,
-        }))
+        Ok(catalog
+            .providers
+            .get(&current_name)
+            .cloned()
+            .map(|config| NamedProviderConfig {
+                name: current_name,
+                config,
+            }))
     }
 
     pub fn load_catalog(&self) -> Result<Option<ProviderCatalog>> {
@@ -124,7 +135,9 @@ impl ProviderConfigStore {
         };
 
         let mut catalog = self.load_catalog()?.unwrap_or_default();
-        catalog.providers.insert(name.trim().to_string(), normalized);
+        catalog
+            .providers
+            .insert(name.trim().to_string(), normalized);
         if set_current || catalog.current.is_empty() {
             catalog.current = name.trim().to_string();
         }
@@ -294,7 +307,9 @@ impl SaCodeConfigStore {
 
     pub fn current_provider_name(&self) -> Result<Option<String>> {
         let config = self.load_or_default()?;
-        Ok(config.resolve_model(&config.model).map(|(provider_name, _)| provider_name))
+        Ok(config
+            .resolve_model(&config.model)
+            .map(|(provider_name, _)| provider_name))
     }
 
     pub fn rename_provider(&self, from: &str, to: &str) -> Result<SaCodeConfig> {
@@ -424,7 +439,10 @@ pub fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) ->
 fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
     let lower_url = base_url.to_lowercase();
     let lower_model = model.to_lowercase();
-    if lower_url.contains("xiaomimimo") || lower_url.contains("token-plan") || lower_model.starts_with("mimo") {
+    if lower_url.contains("xiaomimimo")
+        || lower_url.contains("token-plan")
+        || lower_model.starts_with("mimo")
+    {
         ProviderKind::Mimo
     } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
         ProviderKind::Longcat
@@ -521,7 +539,8 @@ fn normalize_catalog(catalog: &mut ProviderCatalog) {
     }
     catalog.providers = normalized;
 
-    if catalog.current.trim().is_empty() || !catalog.providers.contains_key(catalog.current.trim()) {
+    if catalog.current.trim().is_empty() || !catalog.providers.contains_key(catalog.current.trim())
+    {
         catalog.current = catalog.providers.keys().next().cloned().unwrap_or_default();
     } else {
         catalog.current = catalog.current.trim().to_string();
@@ -530,9 +549,12 @@ fn normalize_catalog(catalog: &mut ProviderCatalog) {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::{ProviderConfig, ProviderConfigStore, normalize_base_url, detect_provider_kind};
+    use super::{detect_provider_kind, normalize_base_url, ProviderConfig, ProviderConfigStore};
     use sacode_kernel::model::ProviderKind;
 
     #[test]
@@ -597,7 +619,10 @@ mod tests {
 
     #[test]
     fn normalize_base_url_trims_slashes_and_spaces() {
-        assert_eq!(normalize_base_url(" https://example.com/v1/ "), "https://example.com/v1");
+        assert_eq!(
+            normalize_base_url(" https://example.com/v1/ "),
+            "https://example.com/v1"
+        );
     }
 
     #[test]
@@ -617,7 +642,10 @@ mod tests {
         };
         store.save(&config).expect("save provider config");
 
-        let loaded = store.load_current().expect("load provider config").expect("provider config should exist");
+        let loaded = store
+            .load_current()
+            .expect("load provider config")
+            .expect("provider config should exist");
         assert_eq!(loaded.name, "default");
         assert_eq!(loaded.config.base_url, "https://example.com/v1");
         assert_eq!(loaded.config.api_key, "test-key");
@@ -661,7 +689,10 @@ mod tests {
         assert_eq!(names, vec!["local".to_string(), "openai".to_string()]);
 
         store.set_current("local").expect("switch current provider");
-        let loaded = store.load_current().expect("load current provider").expect("current provider should exist");
+        let loaded = store
+            .load_current()
+            .expect("load current provider")
+            .expect("current provider should exist");
         assert_eq!(loaded.name, "local");
         assert_eq!(loaded.config.model, "qwen2.5-coder");
     }
@@ -700,11 +731,15 @@ mod tests {
             .expect("save local provider");
 
         store.rename("local", "ollama").expect("rename provider");
-        let names = store.list_names().expect("list provider names after rename");
+        let names = store
+            .list_names()
+            .expect("list provider names after rename");
         assert_eq!(names, vec!["ollama".to_string(), "openai".to_string()]);
 
         store.remove("ollama").expect("remove renamed provider");
-        let names = store.list_names().expect("list provider names after remove");
+        let names = store
+            .list_names()
+            .expect("list provider names after remove");
         assert_eq!(names, vec!["openai".to_string()]);
     }
 
@@ -728,7 +763,10 @@ mod tests {
         .expect("write legacy provider config");
 
         let store = ProviderConfigStore::new(&workdir);
-        let loaded = store.load_current().expect("load legacy provider config").expect("legacy provider should exist");
+        let loaded = store
+            .load_current()
+            .expect("load legacy provider config")
+            .expect("legacy provider should exist");
         assert_eq!(loaded.name, "default");
         assert_eq!(loaded.config.base_url, "https://example.com/v1");
         assert_eq!(loaded.config.api_key, "legacy-key");

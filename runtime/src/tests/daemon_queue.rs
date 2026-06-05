@@ -5,7 +5,12 @@ async fn test_daemon_health_endpoint() {
     let app = create_daemon().await;
 
     let response = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).expect("build request"))
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("build request"),
+        )
         .await
         .expect("daemon should respond");
 
@@ -25,7 +30,12 @@ async fn test_daemon_tools_endpoint_lists_builtin_tools() {
     let app = create_daemon().await;
 
     let response = app
-        .oneshot(Request::builder().uri("/tools").body(Body::empty()).expect("build request"))
+        .oneshot(
+            Request::builder()
+                .uri("/tools")
+                .body(Body::empty())
+                .expect("build request"),
+        )
         .await
         .expect("daemon should respond");
 
@@ -89,7 +99,10 @@ async fn test_daemon_task_lifecycle() {
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
 
     assert_eq!(payload["task_id"], task_id);
-    assert!(matches!(payload["queue_status"].as_str(), Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")));
+    assert!(matches!(
+        payload["queue_status"].as_str(),
+        Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")
+    ));
     assert!(payload.get("task_run").is_some());
     if let Some(task_run) = payload.get("task_run") {
         assert_eq!(task_run["source"].as_str(), Some("snapshot"));
@@ -105,7 +118,10 @@ async fn test_daemon_task_lifecycle() {
             "WaitingForUser" | "WaitingForApproval" => "running",
             other => panic!("unexpected task_run state: {}", other),
         };
-        assert_eq!(payload["queue_status"].as_str(), Some(expected_queue_status));
+        assert_eq!(
+            payload["queue_status"].as_str(),
+            Some(expected_queue_status)
+        );
     }
 }
 
@@ -126,7 +142,10 @@ async fn test_daemon_events_endpoint_streams_sse() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.headers().get("content-type").and_then(|value| value.to_str().ok()),
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
         Some("text/event-stream")
     );
 
@@ -189,7 +208,10 @@ async fn test_daemon_task_events_endpoint_filters_by_task_id() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.headers().get("content-type").and_then(|value| value.to_str().ok()),
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
         Some("text/event-stream")
     );
 }
@@ -268,7 +290,10 @@ async fn test_daemon_status_and_result_include_task_run() {
 async fn test_task_queue_submit_and_status() {
     let queue = Arc::new(TaskQueue::new(2));
 
-    let task = ScheduledTask::new("test-1".to_string(), Task::new("test prompt", ExecutionMode::Build, None));
+    let task = ScheduledTask::new(
+        "test-1".to_string(),
+        Task::new("test prompt", ExecutionMode::Build, None),
+    );
     let task_id = queue.submit(task).await.expect("submit task");
 
     let status = queue.status(&task_id).await;
@@ -313,26 +338,47 @@ async fn test_task_executor_emits_task_run_in_completion_event() {
 async fn test_task_queue_priority_ordering() {
     let queue = Arc::new(TaskQueue::new(1));
 
-    let blocker = ScheduledTask::new("blocker".to_string(), Task::new("blocker", ExecutionMode::Build, None));
+    let blocker = ScheduledTask::new(
+        "blocker".to_string(),
+        Task::new("blocker", ExecutionMode::Build, None),
+    );
     let blocker_id = queue.submit(blocker).await.expect("submit blocker");
 
-    let low_task = ScheduledTask::new("low-1".to_string(), Task::new("low priority", ExecutionMode::Build, None))
-        .with_priority(TaskPriority::Low)
-        .with_dependencies(vec![blocker_id.clone()]);
-    let normal_task = ScheduledTask::new("normal-1".to_string(), Task::new("normal priority", ExecutionMode::Build, None))
-        .with_priority(TaskPriority::Normal)
-        .with_dependencies(vec![blocker_id.clone()]);
-    let high_task = ScheduledTask::new("high-1".to_string(), Task::new("high priority", ExecutionMode::Build, None))
-        .with_priority(TaskPriority::High)
-        .with_dependencies(vec![blocker_id.clone()]);
-    let urgent_task = ScheduledTask::new("urgent-1".to_string(), Task::new("urgent priority", ExecutionMode::Build, None))
-        .with_priority(TaskPriority::Urgent)
-        .with_dependencies(vec![blocker_id.clone()]);
+    let low_task = ScheduledTask::new(
+        "low-1".to_string(),
+        Task::new("low priority", ExecutionMode::Build, None),
+    )
+    .with_priority(TaskPriority::Low)
+    .with_dependencies(vec![blocker_id.clone()]);
+    let normal_task = ScheduledTask::new(
+        "normal-1".to_string(),
+        Task::new("normal priority", ExecutionMode::Build, None),
+    )
+    .with_priority(TaskPriority::Normal)
+    .with_dependencies(vec![blocker_id.clone()]);
+    let high_task = ScheduledTask::new(
+        "high-1".to_string(),
+        Task::new("high priority", ExecutionMode::Build, None),
+    )
+    .with_priority(TaskPriority::High)
+    .with_dependencies(vec![blocker_id.clone()]);
+    let urgent_task = ScheduledTask::new(
+        "urgent-1".to_string(),
+        Task::new("urgent priority", ExecutionMode::Build, None),
+    )
+    .with_priority(TaskPriority::Urgent)
+    .with_dependencies(vec![blocker_id.clone()]);
 
     queue.submit(low_task.clone()).await.expect("submit low");
-    queue.submit(normal_task.clone()).await.expect("submit normal");
+    queue
+        .submit(normal_task.clone())
+        .await
+        .expect("submit normal");
     queue.submit(high_task.clone()).await.expect("submit high");
-    queue.submit(urgent_task.clone()).await.expect("submit urgent");
+    queue
+        .submit(urgent_task.clone())
+        .await
+        .expect("submit urgent");
 
     let stats = queue.stats().await;
     assert_eq!(stats.pending_count, 4);
@@ -371,7 +417,10 @@ async fn test_task_queue_stats() {
     assert_eq!(stats_before.ready_count, 0);
 
     for i in 0..3 {
-        let task = ScheduledTask::new(format!("task-{}", i), Task::new("test", ExecutionMode::Build, None));
+        let task = ScheduledTask::new(
+            format!("task-{}", i),
+            Task::new("test", ExecutionMode::Build, None),
+        );
         queue.submit(task).await.expect("submit task");
     }
 
@@ -407,11 +456,7 @@ async fn test_task_queue_respects_concurrency_limit_until_completion() {
     queue
         .mark_completed(
             "concurrency-1",
-            sacode_kernel::TaskResult::success(
-                "concurrency-1".to_string(),
-                "done".to_string(),
-                1,
-            ),
+            sacode_kernel::TaskResult::success("concurrency-1".to_string(), "done".to_string(), 1),
             sacode_kernel::TaskRun {
                 task_id: Some("concurrency-1".to_string()),
                 state: Some(sacode_kernel::TaskRunState::Completed),
@@ -461,7 +506,10 @@ async fn test_task_queue_preserves_task_run_for_completed_result() {
 async fn test_task_queue_cancel() {
     let queue = Arc::new(TaskQueue::new(1));
 
-    let task = ScheduledTask::new("cancel-1".to_string(), Task::new("cancel test", ExecutionMode::Build, None));
+    let task = ScheduledTask::new(
+        "cancel-1".to_string(),
+        Task::new("cancel test", ExecutionMode::Build, None),
+    );
     let task_id = queue.submit(task).await.expect("submit task");
 
     let cancelled = queue.cancel(&task_id).await;
@@ -475,11 +523,17 @@ async fn test_task_queue_cancel() {
 async fn test_task_queue_dependency() {
     let queue = Arc::new(TaskQueue::new(2));
 
-    let parent_task = ScheduledTask::new("parent-1".to_string(), Task::new("parent", ExecutionMode::Build, None));
+    let parent_task = ScheduledTask::new(
+        "parent-1".to_string(),
+        Task::new("parent", ExecutionMode::Build, None),
+    );
     let parent_id = queue.submit(parent_task).await.expect("submit parent");
 
-    let child_task = ScheduledTask::new("child-1".to_string(), Task::new("child", ExecutionMode::Build, None))
-        .with_dependencies(vec![parent_id.clone()]);
+    let child_task = ScheduledTask::new(
+        "child-1".to_string(),
+        Task::new("child", ExecutionMode::Build, None),
+    )
+    .with_dependencies(vec![parent_id.clone()]);
     let child_id = queue.submit(child_task).await.expect("submit child");
 
     let child_status = queue.status(&child_id).await;
@@ -502,8 +556,11 @@ async fn test_retry_policy() {
 
 #[tokio::test]
 async fn test_scheduled_task_retry_logic() {
-    let mut task = ScheduledTask::new("retry-1".to_string(), Task::new("retry test", ExecutionMode::Build, None))
-        .with_retry_policy(RetryPolicy::fixed(100, 2));
+    let mut task = ScheduledTask::new(
+        "retry-1".to_string(),
+        Task::new("retry test", ExecutionMode::Build, None),
+    )
+    .with_retry_policy(RetryPolicy::fixed(100, 2));
 
     assert_eq!(task.current_attempt, 0);
     assert!(task.can_retry());
@@ -521,7 +578,10 @@ async fn test_scheduled_task_retry_logic() {
 async fn test_in_memory_store() {
     let store = Arc::new(InMemoryStore::new());
 
-    let task = ScheduledTask::new("store-1".to_string(), Task::new("store test", ExecutionMode::Build, None));
+    let task = ScheduledTask::new(
+        "store-1".to_string(),
+        Task::new("store test", ExecutionMode::Build, None),
+    );
 
     store.save(&task).await.expect("save task");
 
@@ -579,11 +639,17 @@ async fn test_store_db_persists_task_and_result() {
     let result = sacode_kernel::TaskResult::success(task.id.clone(), "done".to_string(), 42);
     store.save_result(&result).await.expect("save result");
 
-    let pending_after_complete = store.load_pending().await.expect("load pending after complete");
+    let pending_after_complete = store
+        .load_pending()
+        .await
+        .expect("load pending after complete");
     assert!(pending_after_complete.is_empty());
 
     let loaded_result = store.load_result(&task.id).await.expect("load result");
-    assert_eq!(loaded_result.and_then(|value| value.output), Some("done".to_string()));
+    assert_eq!(
+        loaded_result.and_then(|value| value.output),
+        Some("done".to_string())
+    );
 }
 
 #[tokio::test]
@@ -610,12 +676,21 @@ async fn test_task_queue_restore_pending_tasks_from_store() {
         .expect("mark running before restore");
 
     let queue = TaskQueue::new(2).with_store(store);
-    let restored = queue.restore_pending_tasks().await.expect("restore pending tasks");
+    let restored = queue
+        .restore_pending_tasks()
+        .await
+        .expect("restore pending tasks");
 
     assert_eq!(restored, 2);
     assert_eq!(queue.get_ready_count().await, 1);
-    assert_eq!(queue.status(&pending_task.id).await, Some(TaskQueueStatus::Pending));
-    assert_eq!(queue.status(&ready_task.id).await, Some(TaskQueueStatus::Ready));
+    assert_eq!(
+        queue.status(&pending_task.id).await,
+        Some(TaskQueueStatus::Pending)
+    );
+    assert_eq!(
+        queue.status(&ready_task.id).await,
+        Some(TaskQueueStatus::Ready)
+    );
 }
 
 #[tokio::test]
@@ -623,7 +698,12 @@ async fn test_daemon_queue_status_endpoint() {
     let app = create_daemon().await;
 
     let response = app
-        .oneshot(Request::builder().uri("/queue/status").body(Body::empty()).expect("build request"))
+        .oneshot(
+            Request::builder()
+                .uri("/queue/status")
+                .body(Body::empty())
+                .expect("build request"),
+        )
         .await
         .expect("daemon should respond");
 
@@ -692,7 +772,9 @@ async fn test_daemon_task_with_priority() {
                 .method("POST")
                 .uri("/task")
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"prompt":"test","mode":"build","priority":"high"}"#))
+                .body(Body::from(
+                    r#"{"prompt":"test","mode":"build","priority":"high"}"#,
+                ))
                 .expect("build request"),
         )
         .await
@@ -765,10 +847,7 @@ async fn test_daemon_task_cancel_endpoint() {
 
     assert_eq!(status_payload["status"], "failed");
     assert_eq!(status_payload["queue_status"], "failed");
-    assert_eq!(
-        status_payload["task_run"]["state"].as_str(),
-        Some("Failed")
-    );
+    assert_eq!(status_payload["task_run"]["state"].as_str(), Some("Failed"));
     assert_eq!(
         status_payload["task_run"]["output_text"].as_str(),
         Some("Task cancelled")

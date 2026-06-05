@@ -1,4 +1,8 @@
-use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -54,7 +58,12 @@ impl MistakeBookStore {
         self.save(&book)
     }
 
-    pub fn append(&self, scope: impl Into<String>, summary: impl Into<String>, details: impl Into<String>) -> Result<()> {
+    pub fn append(
+        &self,
+        scope: impl Into<String>,
+        summary: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Result<()> {
         let mut book = self.load()?;
         book.entries.push(MistakeEntry {
             timestamp: unix_timestamp_string(),
@@ -75,7 +84,10 @@ fn unix_timestamp_string() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::MistakeBookStore;
 
@@ -89,7 +101,9 @@ mod tests {
         fs::create_dir_all(&workdir).expect("create temp workdir");
 
         let store = MistakeBookStore::new(&workdir);
-        store.append("tool:web.search", "failed", "network timeout").expect("append entry");
+        store
+            .append("tool:web.search", "failed", "network timeout")
+            .expect("append entry");
 
         let book = store.load().expect("load book");
         assert_eq!(book.entries.len(), 1);

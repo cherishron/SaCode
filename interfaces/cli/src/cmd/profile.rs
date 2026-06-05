@@ -39,14 +39,14 @@ fn list_profiles() {
 
     println!("Profiles:");
     for (name, profile) in config.profiles {
-        let current = if name == config.current { " (current)" } else { "" };
+        let current = if name == config.current {
+            " (current)"
+        } else {
+            ""
+        };
         println!(
             "  {}{} - planner:{}, coder:{}, reviewer:{}",
-            name,
-            current,
-            profile.planner,
-            profile.coder,
-            profile.reviewer
+            name, current, profile.planner, profile.coder, profile.reviewer
         );
     }
 }

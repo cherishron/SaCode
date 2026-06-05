@@ -5,8 +5,8 @@ use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
-use super::{encode_ppm, input::is_editable_input_mode, relative_to_workdir, App, InputMode};
 use super::tui_entry::ui;
+use super::{encode_ppm, input::is_editable_input_mode, relative_to_workdir, App, InputMode};
 
 pub(super) fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,

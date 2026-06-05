@@ -3,17 +3,44 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Message { content: String },
-    Thinking { content: String },
-    PlanGenerated { steps: Vec<String> },
-    ToolCallStarted { name: String, input: serde_json::Value },
-    ToolCallFinished { name: String, output: serde_json::Value, success: bool },
-    ApprovalRequested { action: ApprovalAction },
-    ApprovalResolved { approved: bool },
-    FileChanged { path: String, change_type: FileChangeType },
-    CommandOutput { command: String, output: String },
-    Done { summary: String },
-    Error { message: String },
+    Message {
+        content: String,
+    },
+    Thinking {
+        content: String,
+    },
+    PlanGenerated {
+        steps: Vec<String>,
+    },
+    ToolCallStarted {
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolCallFinished {
+        name: String,
+        output: serde_json::Value,
+        success: bool,
+    },
+    ApprovalRequested {
+        action: ApprovalAction,
+    },
+    ApprovalResolved {
+        approved: bool,
+    },
+    FileChanged {
+        path: String,
+        change_type: FileChangeType,
+    },
+    CommandOutput {
+        command: String,
+        output: String,
+    },
+    Done {
+        summary: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,18 +70,26 @@ impl Event {
     }
 
     pub fn message(content: impl Into<String>) -> Self {
-        Event::Message { content: content.into() }
+        Event::Message {
+            content: content.into(),
+        }
     }
 
     pub fn thinking(content: impl Into<String>) -> Self {
-        Event::Thinking { content: content.into() }
+        Event::Thinking {
+            content: content.into(),
+        }
     }
 
     pub fn done(summary: impl Into<String>) -> Self {
-        Event::Done { summary: summary.into() }
+        Event::Done {
+            summary: summary.into(),
+        }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
-        Event::Error { message: message.into() }
+        Event::Error {
+            message: message.into(),
+        }
     }
 }

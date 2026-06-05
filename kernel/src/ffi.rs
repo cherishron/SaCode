@@ -1,7 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use crate::{ExecutionMode, Task, Supervisor};
+use crate::{ExecutionMode, Supervisor, Task};
 
 pub struct SacodeHandle {
     supervisor: Supervisor,
@@ -17,9 +17,8 @@ impl SacodeHandle {
     pub fn execute(&self, prompt: &str, mode: ExecutionMode) -> String {
         let task = Task::new(prompt, mode, None);
         let result = self.supervisor.execute(&task);
-        
-        serde_json::to_string(&result.output.plan)
-            .unwrap_or_else(|_| "{}".to_string())
+
+        serde_json::to_string(&result.output.plan).unwrap_or_else(|_| "{}".to_string())
     }
 }
 

@@ -19,7 +19,7 @@ pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect
     }
 
     let max_y = area.height as usize;
-    let total_lines = app.rendered_message_lines().len();
+    let total_lines = app.total_rendered_message_line_count();
     let max_scroll = total_lines.saturating_sub(max_y);
     if app.follow_bottom {
         app.scroll_offset = max_scroll;
@@ -27,11 +27,24 @@ pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect
         app.scroll_offset = app.scroll_offset.min(max_scroll);
     }
     let start = app.scroll_offset;
-    let mut visible_lines = app
+    let base_lines = app
         .visible_rendered_message_lines(start, max_y)
         .iter()
         .map(|line| line.line.clone())
         .collect::<Vec<_>>();
+    let thinking_line = app.thinking_indicator_line().map(|line| line.line);
+    let mut visible_lines = base_lines;
+
+    if let Some(thinking_line) = thinking_line {
+        let thinking_index = total_lines.saturating_sub(1);
+        let end = start.saturating_add(max_y);
+        if thinking_index >= start && thinking_index < end {
+            if visible_lines.len() >= max_y && max_y > 0 {
+                visible_lines.pop();
+            }
+            visible_lines.push(thinking_line);
+        }
+    }
 
     // Append inline pending question at the bottom
     if !app.interaction.pending_question_items.is_empty() {
@@ -62,12 +75,21 @@ fn render_inline_pending_question(app: &App) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     let is_approval = app.interaction.pending_approval_request.is_some();
-    let label = if is_approval { "等待工具审批" } else { "等待用户回答" };
+    let label = if is_approval {
+        "等待工具审批"
+    } else {
+        "等待用户回答"
+    };
 
     // Header line
     lines.push(Line::from(vec![
         Span::styled("● ", Style::default().fg(theme.warning)),
-        Span::styled(label, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            label,
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
 
     let Some(question) = app.current_pending_question() else {
@@ -88,10 +110,7 @@ fn render_inline_pending_question(app: &App) -> Vec<Line<'static>> {
     // Question text
     lines.push(Line::from(vec![
         Span::styled("   ", Style::default()),
-        Span::styled(
-            question.question.clone(),
-            Style::default().fg(theme.text),
-        ),
+        Span::styled(question.question.clone(), Style::default().fg(theme.text)),
     ]));
 
     // Options
@@ -119,14 +138,19 @@ fn render_inline_pending_question(app: &App) -> Vec<Line<'static>> {
             let style = if cursor {
                 Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else if selected {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.text)
             };
             let text = if option.description.is_empty() {
                 format!("{} {} {}", prefix, mark, option.label)
             } else {
-                format!("{} {} {} - {}", prefix, mark, option.label, option.description)
+                format!(
+                    "{} {} {} - {}",
+                    prefix, mark, option.label, option.description
+                )
             };
             lines.push(Line::from(vec![
                 Span::styled("   ", Style::default()),
@@ -136,18 +160,38 @@ fn render_inline_pending_question(app: &App) -> Vec<Line<'static>> {
     }
 
     // Hint line
-    let hint = if app.input.is_empty() {
+    let draft_answer = app.current_pending_custom_answer().unwrap_or_default();
+    let hint = if app.interaction.pending_confirm_submission {
+        "Enter: 确认提交 | Left: 返回上一题 | Esc: 返回"
+    } else if app.input.is_empty() {
         if is_approval {
             "Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回"
         } else {
-            "Up/Down: 选择 | Space: 勾选 | Enter: 提交 | Esc: 返回"
+            "Left/Right: 切题 | Up/Down: 选择 | Space: 勾选 | Enter: 下一题 | Esc: 返回"
         }
     } else {
-        "Enter: 提交自定义回答 | Esc: 返回"
+        "Enter: 下一题 | Esc: 返回"
+    };
+    let answer_label = if app.interaction.pending_confirm_submission {
+        "待提交回答"
+    } else {
+        "自定义回答"
     };
     lines.push(Line::from(vec![
         Span::styled("   ", Style::default()),
-        Span::styled(hint, Style::default().fg(theme.subtle).add_modifier(Modifier::DIM)),
+        Span::styled(
+            format!("{}: {}", answer_label, draft_answer),
+            Style::default().fg(theme.text),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("   ", Style::default()),
+        Span::styled(
+            hint,
+            Style::default()
+                .fg(theme.subtle)
+                .add_modifier(Modifier::DIM),
+        ),
     ]));
 
     lines
@@ -158,13 +202,17 @@ fn render_welcome_area(frame: &mut Frame, app: &App, area: Rect) {
 
     let welcome_lines = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled("SaCode", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "SaCode",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("开始一个任务", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "开始一个任务",
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("• ", Style::default().fg(theme.subtle)),
             Span::styled("直接输入任务，回车发送。", Style::default().fg(theme.text)),
@@ -175,12 +223,18 @@ fn render_welcome_area(frame: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("Alt+M 切换模式，Ctrl+T 切换思考。", Style::default().fg(theme.text)),
+            Span::styled(
+                "Alt+M 切换模式，Ctrl+T 切换思考。",
+                Style::default().fg(theme.text),
+            ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("开始输入即可。", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC)),
-        ]),
+        Line::from(vec![Span::styled(
+            "开始输入即可。",
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        )]),
     ];
 
     frame.render_widget(

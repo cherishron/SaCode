@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
+use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
 const MAX_DIFF_CHARS: usize = 4000;
 const MAX_DIFF_FILES: usize = 50;
@@ -73,9 +73,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                 let files: Vec<String> = diff_output
                     .lines()
                     .filter(|line| line.contains("|"))
-                    .map(|line| {
-                        line.split('|').next().unwrap_or("").trim().to_string()
-                    })
+                    .map(|line| line.split('|').next().unwrap_or("").trim().to_string())
                     .collect();
                 let file_count = files.len();
                 let truncated = diff_output.len() > MAX_DIFF_CHARS || file_count > MAX_DIFF_FILES;
@@ -98,10 +96,14 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                     "diff": "",
                     "files": [],
                     "stats": { "insertions": 0, "deletions": 0 }
-                })).with_message("no changes"))
+                }))
+                .with_message("no changes"))
             }
         }
-        Err(e) => Ok(ToolOutput::failure(format!("git diff execution failed: {}", e))),
+        Err(e) => Ok(ToolOutput::failure(format!(
+            "git diff execution failed: {}",
+            e
+        ))),
     }
 }
 

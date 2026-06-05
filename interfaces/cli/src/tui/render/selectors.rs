@@ -41,7 +41,8 @@ fn render_dropdown_list<'a>(
     let start = if items.len() <= max_visible {
         0
     } else {
-        selected_index.saturating_sub(max_visible / 2)
+        selected_index
+            .saturating_sub(max_visible / 2)
             .min(items.len().saturating_sub(max_visible))
     };
     let end = (start + max_visible).min(items.len());
@@ -68,7 +69,9 @@ fn render_dropdown_list<'a>(
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
-        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().bg(theme.bg_primary)),
         popup_area,
     );
 
@@ -80,7 +83,10 @@ fn render_dropdown_list<'a>(
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(hint_text, Style::default().fg(theme.subtle)))),
+            Paragraph::new(Line::from(Span::styled(
+                hint_text,
+                Style::default().fg(theme.subtle),
+            ))),
             hint_area,
         );
     }
@@ -99,7 +105,10 @@ pub(crate) fn render_selector(frame: &mut Frame, app: &App, input_area: Rect) {
             "Enter: 应用主题 | Esc: 取消",
         ),
         InputMode::ModelSelect => (
-            app.model_options.iter().map(|o| o.label.clone()).collect::<Vec<_>>(),
+            app.model_options
+                .iter()
+                .map(|o| o.label.clone())
+                .collect::<Vec<_>>(),
             app.selected_model_index,
             "Enter: 应用模型 | Esc: 取消",
         ),
@@ -110,13 +119,17 @@ pub(crate) fn render_selector(frame: &mut Frame, app: &App, input_area: Rect) {
 }
 
 pub(crate) fn render_connect_selector(frame: &mut Frame, app: &App, input_area: Rect) {
-    let items: Vec<String> = app.connect_options.iter().map(|(name, base_url, needs_key)| {
-        if *needs_key {
-            format!("{} - {} (需要 API Key)", name, base_url)
-        } else {
-            format!("{} - {} (本地)", name, base_url)
-        }
-    }).collect();
+    let items: Vec<String> = app
+        .connect_options
+        .iter()
+        .map(|(name, base_url, needs_key)| {
+            if *needs_key {
+                format!("{} - {} (需要 API Key)", name, base_url)
+            } else {
+                format!("{} - {} (本地)", name, base_url)
+            }
+        })
+        .collect();
 
     let theme = app.theme;
     let max_visible = 8usize.min(items.len());
@@ -132,7 +145,8 @@ pub(crate) fn render_connect_selector(frame: &mut Frame, app: &App, input_area: 
     let start = if items.len() <= max_visible {
         0
     } else {
-        app.selected_connect_index.saturating_sub(max_visible / 2)
+        app.selected_connect_index
+            .saturating_sub(max_visible / 2)
             .min(items.len().saturating_sub(max_visible))
     };
     let end = (start + max_visible).min(items.len());
@@ -159,7 +173,9 @@ pub(crate) fn render_connect_selector(frame: &mut Frame, app: &App, input_area: 
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
-        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().bg(theme.bg_primary)),
         popup_area,
     );
 
@@ -170,7 +186,10 @@ pub(crate) fn render_connect_selector(frame: &mut Frame, app: &App, input_area: 
         height: 1,
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled("Enter: 确认连接 | Esc: 取消", Style::default().fg(theme.subtle)))),
+        Paragraph::new(Line::from(Span::styled(
+            "Enter: 确认连接 | Esc: 取消",
+            Style::default().fg(theme.subtle),
+        ))),
         hint_area,
     );
 }
@@ -201,21 +220,35 @@ pub(crate) fn render_mode_selector(frame: &mut Frame, app: &App, input_area: Rec
         height: popup_height,
     };
 
-    let lines: Vec<Line> = app.mode_options.iter().enumerate().map(|(index, name)| {
-        let is_selected = index == app.selected_mode_index;
-        let is_current = index == current_index;
-        let prefix = if is_selected { "> " } else { "  " };
-        let current_mark = if is_current { " [当前]" } else { "" };
-        let desc = mode_desc.iter().find(|(n, _)| *n == *name).map(|(_, d)| *d).unwrap_or("");
-        let style = if is_selected {
-            Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
-        } else if is_current {
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.text)
-        };
-        Line::styled(format!("{}{}{} - {}", prefix, name, current_mark, desc), style)
-    }).collect();
+    let lines: Vec<Line> = app
+        .mode_options
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let is_selected = index == app.selected_mode_index;
+            let is_current = index == current_index;
+            let prefix = if is_selected { "> " } else { "  " };
+            let current_mark = if is_current { " [当前]" } else { "" };
+            let desc = mode_desc
+                .iter()
+                .find(|(n, _)| *n == *name)
+                .map(|(_, d)| *d)
+                .unwrap_or("");
+            let style = if is_selected {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
+            } else if is_current {
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            Line::styled(
+                format!("{}{}{} - {}", prefix, name, current_mark, desc),
+                style,
+            )
+        })
+        .collect();
 
     let block = Block::default()
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
@@ -223,29 +256,59 @@ pub(crate) fn render_mode_selector(frame: &mut Frame, app: &App, input_area: Rec
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(
-        Paragraph::new(lines).block(block).style(Style::default().bg(theme.bg_primary)),
+        Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().bg(theme.bg_primary)),
         popup_area,
     );
 }
 
 pub(crate) fn render_session_selector(frame: &mut Frame, app: &App, input_area: Rect) {
-    let items: Vec<String> = app.session_options.iter().map(|s| {
-        format!("{} [{}] {}", s.updated_at, s.id, s.title)
-    }).collect();
-    render_dropdown_list(frame, app, input_area, &items, app.selected_session_index, Some("Enter: 切换会话 | Esc: 取消"));
+    let items: Vec<String> = app
+        .session_options
+        .iter()
+        .map(|s| format!("{} [{}] {}", s.updated_at, s.id, s.title))
+        .collect();
+    render_dropdown_list(
+        frame,
+        app,
+        input_area,
+        &items,
+        app.selected_session_index,
+        Some("Enter: 切换会话 | Esc: 取消"),
+    );
 }
 
 pub(crate) fn render_task_selector(frame: &mut Frame, app: &App, input_area: Rect) {
-    let items: Vec<String> = app.task_options.iter().map(|task| {
-        format!("#{} {:<11} {:<6} {}", task.id, task.status.label(), task.priority.label(), task.description)
-    }).collect();
-    render_dropdown_list(frame, app, input_area, &items, app.selected_task_index, Some("Enter: 执行操作 | Esc: 取消"));
+    let items: Vec<String> = app
+        .task_options
+        .iter()
+        .map(|task| {
+            format!(
+                "#{} {:<11} {:<6} {}",
+                task.id,
+                task.status.label(),
+                task.priority.label(),
+                task.description
+            )
+        })
+        .collect();
+    render_dropdown_list(
+        frame,
+        app,
+        input_area,
+        &items,
+        app.selected_task_index,
+        Some("Enter: 执行操作 | Esc: 取消"),
+    );
 }
 
 pub(crate) fn render_skills_selector(frame: &mut Frame, app: &App, input_area: Rect) {
-    let items: Vec<String> = app.skills_options.iter().map(|(name, desc)| {
-        format!("{} - {}", name, desc)
-    }).collect();
+    let items: Vec<String> = app
+        .skills_options
+        .iter()
+        .map(|(name, desc)| format!("{} - {}", name, desc))
+        .collect();
     let action = app.pending_skill_action.as_deref().unwrap_or("show");
     let hint = match action {
         "show" => "Enter: 查看详情 | Esc: 取消",
@@ -253,21 +316,39 @@ pub(crate) fn render_skills_selector(frame: &mut Frame, app: &App, input_area: R
         "remove" => "Enter: 删除 | Esc: 取消",
         _ => "Enter: 选择 | Esc: 取消",
     };
-    render_dropdown_list(frame, app, input_area, &items, app.selected_skills_index, Some(hint));
+    render_dropdown_list(
+        frame,
+        app,
+        input_area,
+        &items,
+        app.selected_skills_index,
+        Some(hint),
+    );
 }
 
 pub(crate) fn render_mcp_selector(frame: &mut Frame, app: &App, input_area: Rect) {
-    let items: Vec<String> = app.mcp_options.iter().map(|(name, url, enabled)| {
-        let status = if *enabled { "[on]" } else { "[off]" };
-        format!("{} {} {}", name, status, url)
-    }).collect();
+    let items: Vec<String> = app
+        .mcp_options
+        .iter()
+        .map(|(name, url, enabled)| {
+            let status = if *enabled { "[on]" } else { "[off]" };
+            format!("{} {} {}", name, status, url)
+        })
+        .collect();
     let action = app.pending_mcp_action.as_deref().unwrap_or("show");
     let hint = match action {
         "show" => "Enter: 查看详情 | Esc: 取消",
         "remove" => "Enter: 删除 | Esc: 取消",
         _ => "Enter: 选择 | Esc: 取消",
     };
-    render_dropdown_list(frame, app, input_area, &items, app.selected_mcp_index, Some(hint));
+    render_dropdown_list(
+        frame,
+        app,
+        input_area,
+        &items,
+        app.selected_mcp_index,
+        Some(hint),
+    );
 }
 
 pub(crate) fn render_checkpoint_selector(frame: &mut Frame, app: &App, input_area: Rect) {
@@ -277,5 +358,12 @@ pub(crate) fn render_checkpoint_selector(frame: &mut Frame, app: &App, input_are
         "delete" => "Enter: 删除 | Esc: 取消",
         _ => "Enter: 选择 | Esc: 取消",
     };
-    render_dropdown_list(frame, app, input_area, &app.checkpoint_options, app.selected_checkpoint_index, Some(hint));
+    render_dropdown_list(
+        frame,
+        app,
+        input_area,
+        &app.checkpoint_options,
+        app.selected_checkpoint_index,
+        Some(hint),
+    );
 }

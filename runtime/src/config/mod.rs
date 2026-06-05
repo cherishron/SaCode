@@ -1,9 +1,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
+use crate::sandbox::{
+    DockerSandboxBackend, LocalSandboxBackend, SandboxBackend, SandboxExecutor, SandboxPolicy,
+};
 use crate::{mcp::McpConfig, skills::SkillSpec};
-use crate::sandbox::{DockerSandboxBackend, LocalSandboxBackend, SandboxBackend, SandboxExecutor, SandboxPolicy};
 use sacode_kernel::ExecutionMode;
 use std::sync::Arc;
 
@@ -204,7 +206,11 @@ impl ProjectAccessConfigStore {
         let canonical_str = canonical.to_string_lossy().to_string();
 
         let mut config = self.load()?;
-        if !config.allowed_dirs.iter().any(|entry| entry == &canonical_str) {
+        if !config
+            .allowed_dirs
+            .iter()
+            .any(|entry| entry == &canonical_str)
+        {
             config.allowed_dirs.push(canonical_str);
         }
         self.save(&config)?;
@@ -219,12 +225,68 @@ impl ProjectAccessConfigStore {
             .map(PathBuf::from)
             .collect())
     }
+
+    pub fn is_allowed_path(&self, workspace_root: &Path, path: &Path) -> Result<bool> {
+        let workspace_root = canonicalize_existing_prefix(workspace_root)?;
+        let candidate = canonicalize_existing_prefix(path)?;
+
+        if candidate.starts_with(&workspace_root) {
+            return Ok(true);
+        }
+
+        for allowed in self.allowed_dirs()? {
+            if candidate.starts_with(canonicalize_existing_prefix(&allowed)?) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 fn normalize_allowed_dirs(dirs: &mut Vec<String>) {
     dirs.retain(|dir| !dir.trim().is_empty());
     dirs.sort();
     dirs.dedup();
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
+    let normalized = normalize_path(path)?;
+    let mut existing = normalized.as_path();
+    let mut missing = Vec::new();
+
+    while !existing.exists() {
+        let Some(name) = existing.file_name() else {
+            anyhow::bail!("path is outside workspace");
+        };
+        missing.push(name.to_os_string());
+        let Some(parent) = existing.parent() else {
+            anyhow::bail!("path is outside workspace");
+        };
+        existing = parent;
+    }
+
+    let mut canonical = existing.canonicalize()?;
+    for segment in missing.iter().rev() {
+        canonical.push(segment);
+    }
+    Ok(canonical)
+}
+
+fn normalize_path(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    anyhow::bail!("path is outside workspace");
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    Ok(normalized)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -409,7 +471,11 @@ impl SandboxModeConfig {
             policy.shell.allowed_commands = self.allowed_commands.clone();
         }
         if !self.allowed_paths.is_empty() {
-            let paths = self.allowed_paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+            let paths = self
+                .allowed_paths
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
             policy.fs.read_paths = paths.clone();
             policy.fs.write_paths = paths;
         }

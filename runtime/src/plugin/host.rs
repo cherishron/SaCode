@@ -1,5 +1,5 @@
 use anyhow::Result;
-use extism::{Plugin, Manifest, Wasm};
+use extism::{Manifest, Plugin, Wasm};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -46,14 +46,14 @@ impl PluginHost {
 
     pub fn load(&mut self, spec: PluginSpec) -> Result<()> {
         let wasm_path = Path::new(&spec.wasm_path);
-        
+
         if !wasm_path.exists() {
             anyhow::bail!("WASM file not found: {}", spec.wasm_path);
         }
 
         let wasm = Wasm::file(wasm_path);
         let manifest = Manifest::new([wasm]);
-        
+
         let plugin = Plugin::new(manifest, [], true)?;
         self.plugins.push((spec, plugin));
 
@@ -61,7 +61,9 @@ impl PluginHost {
     }
 
     pub fn call(&mut self, plugin_name: &str, call: PluginCall) -> Result<PluginResult> {
-        let entry = self.plugins.iter_mut()
+        let entry = self
+            .plugins
+            .iter_mut()
             .find(|(spec, _)| spec.name == plugin_name);
 
         if entry.is_none() {
@@ -74,14 +76,16 @@ impl PluginHost {
 
         let (spec, plugin) = entry.unwrap();
 
-        let func = spec.functions.iter()
-            .find(|f| f.name == call.function);
+        let func = spec.functions.iter().find(|f| f.name == call.function);
 
         if func.is_none() {
             return Ok(PluginResult {
                 output: serde_json::json!(null),
                 success: false,
-                error: Some(format!("Function not found: {} in {}", call.function, plugin_name)),
+                error: Some(format!(
+                    "Function not found: {} in {}",
+                    call.function, plugin_name
+                )),
             });
         }
 
@@ -92,7 +96,7 @@ impl PluginHost {
             Ok(output_str) => {
                 let output: serde_json::Value = serde_json::from_str(&output_str)
                     .unwrap_or_else(|_| serde_json::json!(output_str));
-                
+
                 Ok(PluginResult {
                     output,
                     success: true,
@@ -112,7 +116,9 @@ impl PluginHost {
     }
 
     pub fn unload(&mut self, plugin_name: &str) -> Result<()> {
-        let idx = self.plugins.iter()
+        let idx = self
+            .plugins
+            .iter()
             .position(|(spec, _)| spec.name == plugin_name);
 
         if let Some(i) = idx {

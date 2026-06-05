@@ -265,7 +265,14 @@ fn summarize_project(workdir: &Path) -> Result<ProjectSummary> {
     }
 
     let mut discovered_dirs = Vec::new();
-    scan_project_tree(workdir, workdir, &gitignore, 0, &mut discovered_dirs, &mut summary)?;
+    scan_project_tree(
+        workdir,
+        workdir,
+        &gitignore,
+        0,
+        &mut discovered_dirs,
+        &mut summary,
+    )?;
     apply_type_inference(&mut summary);
     summary.project_types.sort();
     summary.project_types.dedup();
@@ -349,7 +356,10 @@ fn classify_directory(relative: &str, summary: &mut ProjectSummary) {
 }
 
 fn classify_file(relative: &str, path: &Path, summary: &mut ProjectSummary) {
-    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
     match file_name {
         "package.json" => {
             if let Ok(content) = fs::read_to_string(path) {
@@ -361,12 +371,16 @@ fn classify_file(relative: &str, path: &Path, summary: &mut ProjectSummary) {
                             }
                         }
                     }
-                    if let Some(deps) = json.get("dependencies").and_then(|value| value.as_object()) {
+                    if let Some(deps) = json.get("dependencies").and_then(|value| value.as_object())
+                    {
                         for name in deps.keys().take(12) {
                             summary.dependency_hints.push(name.clone());
                         }
                     }
-                    if let Some(dev_deps) = json.get("devDependencies").and_then(|value| value.as_object()) {
+                    if let Some(dev_deps) = json
+                        .get("devDependencies")
+                        .and_then(|value| value.as_object())
+                    {
                         for name in dev_deps.keys().take(12) {
                             summary.dependency_hints.push(name.clone());
                         }
@@ -409,7 +423,11 @@ fn classify_file(relative: &str, path: &Path, summary: &mut ProjectSummary) {
     ) {
         summary.entry_files.push(relative.to_string());
     }
-    if lower.contains("route") || lower.contains("router") || lower.contains("pages/") || lower.contains("app/") {
+    if lower.contains("route")
+        || lower.contains("router")
+        || lower.contains("pages/")
+        || lower.contains("app/")
+    {
         summary.route_dirs.push(parent_relative(relative));
     }
 }
@@ -432,19 +450,24 @@ fn apply_type_inference(summary: &mut ProjectSummary) {
     {
         summary.project_types.push("Next.js".to_string());
     }
-    if summary
-        .dependency_hints
-        .iter()
-        .any(|dep| dep == "express")
-    {
+    if summary.dependency_hints.iter().any(|dep| dep == "express") {
         summary.project_types.push("Express".to_string());
     }
-    if summary.source_dirs.len() > 1 && summary.root_entries.iter().any(|entry| entry == "packages" || entry == "apps") {
+    if summary.source_dirs.len() > 1
+        && summary
+            .root_entries
+            .iter()
+            .any(|entry| entry == "packages" || entry == "apps")
+    {
         summary.project_types.push("Monorepo".to_string());
     }
 }
 
-async fn generate_agents_md(workdir: &Path, summary: &ProjectSummary, mode: InitMode) -> AgentsContent {
+async fn generate_agents_md(
+    workdir: &Path,
+    summary: &ProjectSummary,
+    mode: InitMode,
+) -> AgentsContent {
     let provider = resolve_provider(workdir);
     let provider_name = resolve_named_provider(workdir).map(|named| named.name);
     let prompt = build_agents_prompt(summary, mode);
@@ -493,14 +516,19 @@ async fn generate_agents_md(workdir: &Path, summary: &ProjectSummary, mode: Init
     AgentsContent {
         root_content,
         local_files,
-        source: format!("provider:{}", provider_name.unwrap_or_else(|| provider.model.clone())),
+        source: format!(
+            "provider:{}",
+            provider_name.unwrap_or_else(|| provider.model.clone())
+        ),
     }
 }
 
 fn build_agents_prompt(summary: &ProjectSummary, mode: InitMode) -> String {
     let focus = match mode {
         InitMode::Basic => "请根据项目扫描结果生成单个 AGENTS.md 草稿。",
-        InitMode::Deep => "请根据项目扫描结果生成根级极简 AGENTS.md 草稿，并为目录级 AGENTS 保留空间。",
+        InitMode::Deep => {
+            "请根据项目扫描结果生成根级极简 AGENTS.md 草稿，并为目录级 AGENTS 保留空间。"
+        }
     };
 
     format!(
@@ -543,18 +571,25 @@ fn build_deep_agents_files(summary: &ProjectSummary) -> Vec<(String, String, Str
             "tests" => "测试目录结构与命名约定",
             _ => "目录级局部约定",
         };
-        files.push((format!("{}/AGENTS.md", dir), summary_line.to_string(), content));
+        files.push((
+            format!("{}/AGENTS.md", dir),
+            summary_line.to_string(),
+            content,
+        ));
     }
     files
 }
 
 fn select_deep_agent_dirs(summary: &ProjectSummary) -> Vec<String> {
     let mut dirs = BTreeSet::new();
-    
+
     let is_python = summary.project_types.iter().any(|t| t == "Python");
     let is_go = summary.project_types.iter().any(|t| t == "Go");
-    let is_nodejs = summary.project_types.iter().any(|t| t == "Node.js" || t == "TypeScript");
-    
+    let is_nodejs = summary
+        .project_types
+        .iter()
+        .any(|t| t == "Node.js" || t == "TypeScript");
+
     if is_nodejs || (!is_python && !is_go) {
         if summary.source_dirs.iter().any(|dir| dir == "src") {
             dirs.insert("src".to_string());
@@ -562,39 +597,81 @@ fn select_deep_agent_dirs(summary: &ProjectSummary) -> Vec<String> {
         if summary.route_dirs.iter().any(|dir| dir == "src/api") {
             dirs.insert("src/api".to_string());
         }
-        if summary.component_dirs.iter().any(|dir| dir == "src/components") {
+        if summary
+            .component_dirs
+            .iter()
+            .any(|dir| dir == "src/components")
+        {
             dirs.insert("src/components".to_string());
         }
         if summary.test_dirs.iter().any(|dir| dir == "tests") {
             dirs.insert("tests".to_string());
         }
     }
-    
+
     if is_python {
-        if summary.source_dirs.iter().any(|dir| dir == "src" || dir == "app") {
-            let src_dir = summary.source_dirs.iter().find(|dir| *dir == "src" || *dir == "app").unwrap();
+        if summary
+            .source_dirs
+            .iter()
+            .any(|dir| dir == "src" || dir == "app")
+        {
+            let src_dir = summary
+                .source_dirs
+                .iter()
+                .find(|dir| *dir == "src" || *dir == "app")
+                .unwrap();
             dirs.insert(src_dir.clone());
         }
-        if summary.route_dirs.iter().any(|dir| dir == "api" || dir == "routes" || dir == "src/api") {
-            let api_dir = summary.route_dirs.iter()
+        if summary
+            .route_dirs
+            .iter()
+            .any(|dir| dir == "api" || dir == "routes" || dir == "src/api")
+        {
+            let api_dir = summary
+                .route_dirs
+                .iter()
                 .find(|dir| *dir == "api" || *dir == "routes" || *dir == "src/api")
                 .unwrap();
             dirs.insert(api_dir.clone());
         }
-        if summary.source_dirs.iter().any(|dir| dir.contains("models") || dir.contains("services")) {
-            for dir in summary.source_dirs.iter().filter(|d| d.contains("models") || d.contains("services")) {
+        if summary
+            .source_dirs
+            .iter()
+            .any(|dir| dir.contains("models") || dir.contains("services"))
+        {
+            for dir in summary
+                .source_dirs
+                .iter()
+                .filter(|d| d.contains("models") || d.contains("services"))
+            {
                 dirs.insert(dir.clone());
             }
         }
-        if summary.test_dirs.iter().any(|dir| dir == "tests" || dir == "test") {
-            let test_dir = summary.test_dirs.iter().find(|dir| *dir == "tests" || *dir == "test").unwrap();
+        if summary
+            .test_dirs
+            .iter()
+            .any(|dir| dir == "tests" || dir == "test")
+        {
+            let test_dir = summary
+                .test_dirs
+                .iter()
+                .find(|dir| *dir == "tests" || *dir == "test")
+                .unwrap();
             dirs.insert(test_dir.clone());
         }
     }
-    
+
     if is_go {
-        if summary.source_dirs.iter().any(|dir| dir == "pkg" || dir == "internal") {
-            for dir in summary.source_dirs.iter().filter(|d| *d == "pkg" || *d == "internal") {
+        if summary
+            .source_dirs
+            .iter()
+            .any(|dir| dir == "pkg" || dir == "internal")
+        {
+            for dir in summary
+                .source_dirs
+                .iter()
+                .filter(|d| *d == "pkg" || *d == "internal")
+            {
                 dirs.insert(dir.clone());
             }
         }
@@ -608,7 +685,7 @@ fn select_deep_agent_dirs(summary: &ProjectSummary) -> Vec<String> {
             dirs.insert("test".to_string());
         }
     }
-    
+
     dirs.into_iter().collect()
 }
 
@@ -650,10 +727,10 @@ fn fallback_root_agents_md(summary: &ProjectSummary, mode: InitMode) -> String {
 
 fn fallback_local_agents_md(summary: &ProjectSummary, dir: &str) -> String {
     let mut lines = vec![format!("# {} AGENTS", dir), String::new()];
-    
+
     let is_python = summary.project_types.iter().any(|t| t == "Python");
     let is_go = summary.project_types.iter().any(|t| t == "Go");
-    
+
     match dir {
         "src" | "app" if is_python => {
             lines.push("## Python 源码约定".to_string());
@@ -737,14 +814,20 @@ fn fallback_local_agents_md(summary: &ProjectSummary, dir: &str) -> String {
         }
         _ => {
             lines.push("## 局部约定".to_string());
-            lines.push(format!("- `{}` 目录具有独立职责，修改前先确认既有模式。", dir));
+            lines.push(format!(
+                "- `{}` 目录具有独立职责，修改前先确认既有模式。",
+                dir
+            ));
         }
     }
 
     if !summary.format_tools.is_empty() {
         lines.push(String::new());
         lines.push("## 风格工具".to_string());
-        lines.push(format!("- 当前项目检测到：{}", join_or_dash(&summary.format_tools)));
+        lines.push(format!(
+            "- 当前项目检测到：{}",
+            join_or_dash(&summary.format_tools)
+        ));
     }
 
     lines.join("\n")
@@ -757,7 +840,10 @@ fn render_draft_summary(
 ) -> String {
     let mut lines = vec![format!("{} 草稿已生成。", mode_name(mode))];
     lines.push(format!("项目: {}", summary.workspace_name));
-    lines.push(format!("项目类型: {}", join_or_dash(&summary.project_types)));
+    lines.push(format!(
+        "项目类型: {}",
+        join_or_dash(&summary.project_types)
+    ));
     lines.push(format!("技术栈: {}", stack_summary(summary).join("、")));
     if !commands.is_empty() {
         lines.push("识别命令:".to_string());
@@ -771,7 +857,10 @@ fn render_draft_summary(
             DraftAction::Create => "新增",
             DraftAction::Update => "更新",
         };
-        lines.push(format!("- [{}] {}: {}", action, file.relative_path, file.summary));
+        lines.push(format!(
+            "- [{}] {}: {}",
+            action, file.relative_path, file.summary
+        ));
     }
     lines.push("请先预览草稿，确认后再写入。".to_string());
     lines.join("\n")
@@ -860,22 +949,36 @@ fn command_map(summary: &ProjectSummary) -> BTreeMap<String, String> {
     for name in summary.scripts.keys() {
         commands.insert(name.clone(), format!("npm run {}", name));
         if matches!(name.as_str(), "dev" | "start") {
-            commands.entry("run".to_string()).or_insert_with(|| format!("npm run {}", name));
+            commands
+                .entry("run".to_string())
+                .or_insert_with(|| format!("npm run {}", name));
         }
     }
     if summary.important_files.contains_key("Cargo.toml") {
-        commands.entry("build".to_string()).or_insert_with(|| "cargo build".to_string());
-        commands.entry("test".to_string()).or_insert_with(|| "cargo test".to_string());
-        commands.entry("check".to_string()).or_insert_with(|| "cargo check".to_string());
+        commands
+            .entry("build".to_string())
+            .or_insert_with(|| "cargo build".to_string());
+        commands
+            .entry("test".to_string())
+            .or_insert_with(|| "cargo test".to_string());
+        commands
+            .entry("check".to_string())
+            .or_insert_with(|| "cargo check".to_string());
     }
     if summary.important_files.contains_key("go.mod") {
-        commands.entry("build".to_string()).or_insert_with(|| "go build ./...".to_string());
-        commands.entry("test".to_string()).or_insert_with(|| "go test ./...".to_string());
+        commands
+            .entry("build".to_string())
+            .or_insert_with(|| "go build ./...".to_string());
+        commands
+            .entry("test".to_string())
+            .or_insert_with(|| "go test ./...".to_string());
     }
     if summary.important_files.contains_key("pyproject.toml")
         || summary.important_files.contains_key("requirements.txt")
     {
-        commands.entry("test".to_string()).or_insert_with(|| "pytest".to_string());
+        commands
+            .entry("test".to_string())
+            .or_insert_with(|| "pytest".to_string());
     }
     if commands.is_empty() {
         commands.insert("inspect".to_string(), "补充项目构建与测试命令".to_string());
@@ -883,7 +986,7 @@ fn command_map(summary: &ProjectSummary) -> BTreeMap<String, String> {
     commands
 }
 
-use ignore::gitignore::{GitignoreBuilder, Gitignore};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 fn build_gitignore_matcher(workdir: &Path) -> Gitignore {
     let mut builder = GitignoreBuilder::new(workdir);
@@ -919,7 +1022,9 @@ fn parent_relative(relative: &str) -> String {
 }
 
 fn is_named_segment(path: &str, segment: &str) -> bool {
-    path == segment || path.starts_with(&format!("{}/", segment)) || path.ends_with(&format!("/{}", segment))
+    path == segment
+        || path.starts_with(&format!("{}/", segment))
+        || path.ends_with(&format!("/{}", segment))
 }
 
 fn join_or_dash(values: &[String]) -> String {
@@ -960,21 +1065,26 @@ fn current_timestamp() -> String {
 
 fn merge_agents_content(existing: &str, new_content: &str) -> String {
     let separator = "\n\n---\n\n## Auto-generated updates\n\n";
-    
+
     if existing.contains("## Auto-generated updates") {
         let parts: Vec<&str> = existing.splitn(2, "## Auto-generated updates").collect();
         let user_content = parts.get(0).map_or("", |v| *v);
         let old_auto_content = parts.get(1).map_or("", |v| *v);
-        
+
         let marker_line = "\n\n---\n\n";
         let timestamp_line = format!("\n### Update at {}\n", current_timestamp());
-        
+
         let merged_auto = if old_auto_content.trim().is_empty() {
             format!("{}{}", marker_line, new_content)
         } else {
-            format!("{}{}{}", old_auto_content.trim_end(), timestamp_line, new_content)
+            format!(
+                "{}{}{}",
+                old_auto_content.trim_end(),
+                timestamp_line,
+                new_content
+            )
         };
-        
+
         format!("{}{}{}", user_content.trim_end(), separator, merged_auto)
     } else {
         format!("{}{}{}", existing.trim_end(), separator, new_content)

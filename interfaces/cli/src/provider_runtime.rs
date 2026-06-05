@@ -1,10 +1,19 @@
-use std::{collections::BTreeMap, env, fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use sacode_kernel::model::ModelProvider;
-use sacode_runtime::{ModelRoutePlan, TaskProfile, build_route_plan_from_candidates, resolve_config_model_candidates};
+use sacode_runtime::{
+    build_route_plan_from_candidates, resolve_config_model_candidates, ModelRoutePlan, TaskProfile,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::provider_config::{NamedProviderConfig, ProviderConfigStore, SaCodeConfigStore, provider_spec_to_model_provider};
+use crate::provider_config::{
+    provider_spec_to_model_provider, NamedProviderConfig, ProviderConfigStore, SaCodeConfigStore,
+};
 
 const MODEL_HEALTH_FILE: &str = ".sacode/model-health.json";
 
@@ -99,7 +108,8 @@ pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelPro
     if candidates.is_empty() {
         if let Some(named) = resolve_named_provider(workdir) {
             let config = named.config;
-            if !config.base_url.is_empty() && !config.api_key.is_empty() && !config.model.is_empty() {
+            if !config.base_url.is_empty() && !config.api_key.is_empty() && !config.model.is_empty()
+            {
                 candidates.push((
                     named.name.clone(),
                     config.model.clone(),
@@ -112,7 +122,11 @@ pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelPro
     candidates
 }
 
-pub fn build_route_plan(workdir: &Path, candidates: &[(String, String, ModelProvider)], profile: &TaskProfile) -> Option<ModelRoutePlan> {
+pub fn build_route_plan(
+    workdir: &Path,
+    candidates: &[(String, String, ModelProvider)],
+    profile: &TaskProfile,
+) -> Option<ModelRoutePlan> {
     build_route_plan_from_candidates(
         workdir,
         candidates,
@@ -197,7 +211,11 @@ mod tests {
         let plan = build_route_plan(workdir, &candidates, &profile).expect("build route plan");
 
         assert_eq!(plan.primary.model_name, "model-b");
-        assert!(plan.primary.reasons.iter().any(|reason| reason.contains("health cache adjusted")));
+        assert!(plan
+            .primary
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("health cache adjusted")));
     }
 
     #[test]
@@ -209,14 +227,17 @@ mod tests {
             (
                 "provider".to_string(),
                 "deepseek-v4-pro".to_string(),
-                provider_spec_to_model_provider(&ProviderSpec {
-                    models: {
-                        let mut models = BTreeMap::new();
-                        models.insert("deepseek-v4-pro".to_string(), ModelRule::default());
-                        models
+                provider_spec_to_model_provider(
+                    &ProviderSpec {
+                        models: {
+                            let mut models = BTreeMap::new();
+                            models.insert("deepseek-v4-pro".to_string(), ModelRule::default());
+                            models
+                        },
+                        ..spec.clone()
                     },
-                    ..spec.clone()
-                }, "deepseek-v4-pro"),
+                    "deepseek-v4-pro",
+                ),
             ),
             (
                 "provider".to_string(),
@@ -296,7 +317,10 @@ mod tests {
         let plan = build_route_plan(workdir, &candidates, &profile).expect("build route plan");
 
         assert_eq!(plan.primary.model_name, "model-b");
-        assert!(plan.primary.reasons.iter().any(|reason| reason.contains("override")));
+        assert!(plan
+            .primary
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("override")));
     }
-
 }

@@ -1,10 +1,10 @@
-use std::sync::mpsc::{Sender, Receiver, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use crate::schema::{Task, Step, Review};
+use crate::agent::{CoderAgent, PlannerAgent, ReviewerAgent, ToolCallIntent};
 use crate::event::Event;
-use crate::agent::{PlannerAgent, CoderAgent, ReviewerAgent, ToolCallIntent};
+use crate::schema::{Review, Step, Task};
 
 #[derive(Debug, Clone)]
 pub enum AgentTask {
@@ -77,7 +77,8 @@ impl AgentDispatcher {
                             output.step,
                             output.tool_calls,
                             output.result,
-                        )).ok();
+                        ))
+                        .ok();
                         for event in output.events {
                             tx.send(AgentMessage::Event(event)).ok();
                         }
@@ -98,7 +99,8 @@ impl AgentDispatcher {
                 match task {
                     AgentTask::Review(step, result) => {
                         let output = reviewer.review_step(&step, &result);
-                        tx.send(AgentMessage::ReviewCompleted(step.id, output.review)).ok();
+                        tx.send(AgentMessage::ReviewCompleted(step.id, output.review))
+                            .ok();
                         for event in output.events {
                             tx.send(AgentMessage::Event(event)).ok();
                         }
@@ -129,16 +131,16 @@ impl AgentDispatcher {
     }
 
     pub fn dispatch_review(&self, step: Step, result: String) {
-        self.reviewer_sender.send(AgentTask::Review(step, result)).ok();
+        self.reviewer_sender
+            .send(AgentTask::Review(step, result))
+            .ok();
     }
 
     pub fn collect_messages(&self, timeout_ms: u64) -> Vec<AgentMessage> {
         let mut messages = Vec::new();
         let deadline = Duration::from_millis(timeout_ms);
 
-        let try_recv = |rx: &Receiver<AgentMessage>| {
-            rx.recv_timeout(deadline).ok()
-        };
+        let try_recv = |rx: &Receiver<AgentMessage>| rx.recv_timeout(deadline).ok();
 
         if let Some(msg) = try_recv(&self.planner_receiver) {
             messages.push(msg);

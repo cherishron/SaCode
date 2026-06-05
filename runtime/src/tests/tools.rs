@@ -27,13 +27,16 @@ fn test_tool_registry() {
 fn test_tool_registry_executes_registered_tool() {
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("interaction.ask", serde_json::json!({
-            "question": "继续吗？",
-            "options": [
-                { "label": "是" },
-                { "label": "否" }
-            ]
-        }))
+        .execute(
+            "interaction.ask",
+            serde_json::json!({
+                "question": "继续吗？",
+                "options": [
+                    { "label": "是" },
+                    { "label": "否" }
+                ]
+            }),
+        )
         .expect("registered tool should execute");
 
     assert!(output.success);
@@ -43,7 +46,11 @@ fn test_tool_registry_executes_registered_tool() {
 #[test]
 fn test_tool_registry_exposes_registered_specs() {
     let registry = ToolRegistry::builtin();
-    let spec_names: Vec<&str> = registry.specs().into_iter().map(|spec| spec.name.as_str()).collect();
+    let spec_names: Vec<&str> = registry
+        .specs()
+        .into_iter()
+        .map(|spec| spec.name.as_str())
+        .collect();
 
     assert!(spec_names.contains(&"fs.read"));
     assert!(spec_names.contains(&"task.spawn"));
@@ -53,9 +60,12 @@ fn test_tool_registry_exposes_registered_specs() {
 fn test_browser_tools_validate_missing_session() {
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("browser.snapshot", serde_json::json!({
-            "session_id": "missing-session"
-        }))
+        .execute(
+            "browser.snapshot",
+            serde_json::json!({
+                "session_id": "missing-session"
+            }),
+        )
         .expect_err("missing browser session should error");
 
     assert!(output.to_string().contains("browser session not found"));
@@ -82,10 +92,13 @@ fn test_fs_write_respects_sandbox_denied_path() {
     let blocked_path = workdir.join("blocked/file.txt");
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("fs.write", serde_json::json!({
-            "path": blocked_path.display().to_string(),
-            "content": "secret"
-        }))
+        .execute(
+            "fs.write",
+            serde_json::json!({
+                "path": blocked_path.display().to_string(),
+                "content": "secret"
+            }),
+        )
         .expect_err("sandbox should block denied path");
 
     assert!(output.to_string().contains("sandbox policy"));
@@ -102,12 +115,17 @@ fn test_web_fetch_respects_sandbox_network_policy() {
 
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("web.fetch", serde_json::json!({
-            "url": "https://example.com"
-        }))
+        .execute(
+            "web.fetch",
+            serde_json::json!({
+                "url": "https://example.com"
+            }),
+        )
         .expect_err("sandbox should block network access before execution");
 
-    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("network access blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -115,7 +133,9 @@ fn test_web_fetch_respects_sandbox_network_policy() {
 #[test]
 fn test_web_search_allowed_in_plan_mode() {
     let _guard = sandbox_test_lock();
-    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan));
+    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(
+        ExecutionMode::Plan,
+    ));
 
     let policy = crate::sandbox::active_policy();
     assert!(policy.network.search_allowed);
@@ -159,9 +179,12 @@ fn test_shell_exec_respects_sandbox_allowed_commands() {
 
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("shell.exec", serde_json::json!({
-            "command": "git status"
-        }))
+        .execute(
+            "shell.exec",
+            serde_json::json!({
+                "command": "git status"
+            }),
+        )
         .expect_err("sandbox should block disallowed command");
 
     assert!(output.to_string().contains("sandbox policy"));
@@ -178,12 +201,17 @@ fn test_browser_open_respects_sandbox_network_policy() {
 
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("browser.open", serde_json::json!({
-            "url": "https://example.com"
-        }))
+        .execute(
+            "browser.open",
+            serde_json::json!({
+                "url": "https://example.com"
+            }),
+        )
         .expect_err("sandbox should block browser network access");
 
-    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("network access blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -200,7 +228,9 @@ fn test_git_diff_respects_sandbox_allowed_commands() {
         .execute("git.diff", serde_json::json!({}))
         .expect_err("sandbox should block git command");
 
-    assert!(output.to_string().contains("command 'git' is blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("command 'git' is blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -213,7 +243,8 @@ fn test_fs_read_multi_respects_sandbox_paths_array() {
     let allowed_file = workdir.join("allowed.txt");
     let blocked_file = workdir.join("blocked/secret.txt");
     std::fs::write(&allowed_file, "ok").expect("write allowed file");
-    std::fs::create_dir_all(blocked_file.parent().expect("blocked parent")).expect("create blocked dir");
+    std::fs::create_dir_all(blocked_file.parent().expect("blocked parent"))
+        .expect("create blocked dir");
     std::fs::write(&blocked_file, "secret").expect("write blocked file");
 
     crate::sandbox::install_global_policy(
@@ -224,15 +255,20 @@ fn test_fs_read_multi_respects_sandbox_paths_array() {
 
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("fs.read_multi", serde_json::json!({
-            "paths": [
-                allowed_file.display().to_string(),
-                blocked_file.display().to_string()
-            ]
-        }))
+        .execute(
+            "fs.read_multi",
+            serde_json::json!({
+                "paths": [
+                    allowed_file.display().to_string(),
+                    blocked_file.display().to_string()
+                ]
+            }),
+        )
         .expect_err("sandbox should block denied path inside paths array");
 
-    assert!(output.to_string().contains("path is blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("path is blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -243,15 +279,20 @@ fn test_plan_mode_blocks_fs_write_by_default() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
 
-    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan));
+    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(
+        ExecutionMode::Plan,
+    ));
 
     let blocked_path = workdir.join("file.txt");
     let registry = ToolRegistry::builtin();
     let output = registry
-        .execute("fs.write", serde_json::json!({
-            "path": blocked_path.display().to_string(),
-            "content": "blocked"
-        }))
+        .execute(
+            "fs.write",
+            serde_json::json!({
+                "path": blocked_path.display().to_string(),
+                "content": "blocked"
+            }),
+        )
         .expect_err("plan mode should block writes by default");
 
     assert!(!blocked_path.exists());
@@ -288,12 +329,17 @@ fn test_tool_registry_blocks_base_url_network_fields() {
     );
 
     let output = registry
-        .execute("test.base_url_guard", serde_json::json!({
-            "base_url": "https://example.com/api"
-        }))
+        .execute(
+            "test.base_url_guard",
+            serde_json::json!({
+                "base_url": "https://example.com/api"
+            }),
+        )
         .expect_err("sandbox should block base_url network access");
 
-    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("network access blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -329,12 +375,17 @@ fn test_tool_registry_blocks_urls_array_network_fields() {
     );
 
     let output = registry
-        .execute("test.urls_guard", serde_json::json!({
-            "urls": ["https://example.com/a", "https://example.com/b"]
-        }))
+        .execute(
+            "test.urls_guard",
+            serde_json::json!({
+                "urls": ["https://example.com/a", "https://example.com/b"]
+            }),
+        )
         .expect_err("sandbox should block urls array network access");
 
-    assert!(output.to_string().contains("network access blocked by sandbox policy"));
+    assert!(output
+        .to_string()
+        .contains("network access blocked by sandbox policy"));
 
     crate::sandbox::reset_global_policy();
 }
@@ -395,7 +446,9 @@ fn test_fs_write_rejects_parent_escape() {
 
     crate::sandbox::reset_global_policy();
 
-    assert!(error.to_string().contains("outside workspace") || error.to_string().contains("blocked"));
+    assert!(
+        error.to_string().contains("outside workspace") || error.to_string().contains("blocked")
+    );
 }
 
 #[test]
@@ -517,8 +570,14 @@ fn test_media_read_ppm_describe_mode_includes_dimensions() {
     assert_eq!(result.data["source"], "fallback");
     assert_eq!(result.data["width"], 2);
     assert_eq!(result.data["height"], 1);
-    assert!(result.data["summary"].as_str().unwrap_or("").contains("2x1"));
-    assert!(result.data["data"].as_str().unwrap_or("").contains("图片描述能力暂未接入"));
+    assert!(result.data["summary"]
+        .as_str()
+        .unwrap_or("")
+        .contains("2x1"));
+    assert!(result.data["data"]
+        .as_str()
+        .unwrap_or("")
+        .contains("图片描述能力暂未接入"));
 }
 
 #[test]
@@ -528,7 +587,10 @@ fn test_media_read_png_ocr_without_visual_provider_falls_back() {
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
     fs::write(
         temp_dir.path().join("image.png"),
-        vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1],
+        vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R',
+            0, 0, 0, 1, 0, 0, 0, 1,
+        ],
     )
     .expect("write png header");
 
@@ -540,7 +602,10 @@ fn test_media_read_png_ocr_without_visual_provider_falls_back() {
 
     assert!(result.success);
     assert_eq!(result.data["source"], "fallback");
-    assert!(result.data["data"].as_str().unwrap_or("").contains("OCR 能力暂未接入"));
+    assert!(result.data["data"]
+        .as_str()
+        .unwrap_or("")
+        .contains("OCR 能力暂未接入"));
 }
 
 #[test]
@@ -554,4 +619,28 @@ fn test_interaction_ask_returns_pending_state() {
     assert!(result.success);
     assert_eq!(result.data["pending"], true);
     assert_eq!(result.data["question"], "继续吗？");
+}
+
+#[test]
+fn test_yolo_mode_allows_reading_outside_workspace() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let outside_dir = tempfile::tempdir().expect("create outside dir");
+    let outside_file = outside_dir.path().join("secret.txt");
+    fs::write(&outside_file, "ok").expect("write outside file");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    crate::sandbox::install_current_mode(ExecutionMode::Yolo);
+    crate::sandbox::install_global_policy(crate::sandbox::SandboxPolicy::for_mode(
+        ExecutionMode::Yolo,
+    ));
+
+    let result = crate::tools::fs::read::execute(serde_json::json!({
+        "path": outside_file.display().to_string()
+    }))
+    .expect("yolo mode should allow outside workspace read");
+
+    assert!(result.success);
+    crate::sandbox::reset_global_policy();
 }

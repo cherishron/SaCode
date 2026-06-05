@@ -3,12 +3,13 @@ use std::env;
 use anyhow::Result;
 use sacode_kernel::{ExecutionContext, ExecutionReport, Supervisor, Task, TaskRun};
 use sacode_runtime::{
-    CheckpointStorage, RoleRegistry, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor, SandboxPolicy,
-    TaskProfile, ToolRegistry, build_execution_plan, execute_role_driven_task_run, strip_orchestration_prefix,
+    build_execution_plan, execute_role_driven_task_run, strip_orchestration_prefix,
+    CheckpointStorage, RoleRegistry, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor,
+    SandboxPolicy, TaskProfile, ToolRegistry,
 };
 
-use super::{CliOptions, orchestrator_support::format_summary_record};
-use crate::runner::{RunnerOutput, format_output};
+use super::{orchestrator_support::format_summary_record, CliOptions};
+use crate::runner::{format_output, RunnerOutput};
 
 pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     let workdir = env::current_dir()?;
@@ -75,7 +76,10 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
-        println!("[Orchestration Plan]\n{}\n", serde_json::to_string_pretty(&execution_plan)?);
+        println!(
+            "[Orchestration Plan]\n{}\n",
+            serde_json::to_string_pretty(&execution_plan)?
+        );
         println!("{}", format_output(&output));
         if let Some(summary) = format_summary_record(report.summary_record.as_ref()) {
             println!("\n{}", summary);
@@ -105,7 +109,9 @@ fn orchestrator_final_text(task_run: Option<&TaskRun>, report: &ExecutionReport)
 #[cfg(test)]
 mod tests {
     use super::orchestrator_final_text;
-    use sacode_kernel::{ExecutionReport, ExecutionMode, SummaryItemRecord, SummaryRecord, TaskRun, TaskRunState};
+    use sacode_kernel::{
+        ExecutionMode, ExecutionReport, SummaryItemRecord, SummaryRecord, TaskRun, TaskRunState,
+    };
 
     #[test]
     fn orchestrator_final_text_prefers_task_run_output() {
@@ -156,7 +162,9 @@ mod tests {
 
         let result = orchestrator_final_text(None, &report);
 
-        assert!(result.as_deref().is_some_and(|value| value.contains("summary overview")));
+        assert!(result
+            .as_deref()
+            .is_some_and(|value| value.contains("summary overview")));
     }
 
     #[test]

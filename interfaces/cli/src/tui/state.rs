@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, process::Child, sync::{Arc, Mutex}};
+use std::{
+    collections::VecDeque,
+    process::Child,
+    sync::{Arc, Mutex},
+};
 
 use sacode_kernel::ApprovalPolicy;
 

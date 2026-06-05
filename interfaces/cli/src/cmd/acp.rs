@@ -7,7 +7,10 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 
     match args.first().map(|value| value.as_str()) {
         Some("status") => {
-            println!("ACP server configured on {}:{}", config.server.host, config.server.port);
+            println!(
+                "ACP server configured on {}:{}",
+                config.server.host, config.server.port
+            );
             Ok(())
         }
         Some("serve") | None => run_server(&config).await,

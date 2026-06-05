@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use sacode_kernel::{ExecutionMode, TaskPriority};
 
 mod events;
@@ -9,10 +12,15 @@ mod status;
 mod types;
 
 pub use handlers::run_daemon;
-pub use types::{DaemonState, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse, TaskStatus};
+pub use types::{
+    DaemonState, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse, TaskStatus,
+};
 
 use events::{spawn_executor_event_forwarder, stream_events, stream_task_events};
-use handlers::{cancel_task, create_task, get_pending_tasks, get_queue_status, get_task_result, get_task_status, health_check, list_tools, retry_task};
+use handlers::{
+    cancel_task, create_task, get_pending_tasks, get_queue_status, get_task_result,
+    get_task_status, health_check, list_tools, retry_task,
+};
 
 pub async fn create_daemon() -> Router {
     let state = Arc::new(DaemonState::new().await);

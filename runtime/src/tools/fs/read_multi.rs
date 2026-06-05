@@ -84,7 +84,12 @@ fn read_one(path: &str, limit_per_file: usize) -> anyhow::Result<serde_json::Val
     }
     let content = fs::read_to_string(&file_path)?;
     let all_lines: Vec<&str> = content.lines().collect();
-    let selected = all_lines.iter().take(limit_per_file).copied().collect::<Vec<_>>().join("\n");
+    let selected = all_lines
+        .iter()
+        .take(limit_per_file)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
     Ok(serde_json::json!({
         "path": file_path.display().to_string(),
         "content": selected,

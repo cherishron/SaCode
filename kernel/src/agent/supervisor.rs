@@ -1,7 +1,7 @@
 use crate::{
-    agent::{CoderAgent, PlannerAgent, ReviewerAgent, AgentOutput, ToolCallIntent},
-    schema::{ExecutionMode, Plan, Task},
+    agent::{AgentOutput, CoderAgent, PlannerAgent, ReviewerAgent, ToolCallIntent},
     event::Event,
+    schema::{ExecutionMode, Plan, Task},
 };
 
 #[derive(Debug, Clone)]
@@ -54,7 +54,12 @@ impl Supervisor {
         }
     }
 
-    fn execute_plan(&self, plan: &mut Plan, events: &mut Vec<Event>, tool_calls: &mut Vec<(usize, Vec<ToolCallIntent>)>) {
+    fn execute_plan(
+        &self,
+        plan: &mut Plan,
+        events: &mut Vec<Event>,
+        tool_calls: &mut Vec<(usize, Vec<ToolCallIntent>)>,
+    ) {
         for step in &mut plan.steps {
             let coder_output = self.coder.execute_step(step);
             events.extend(coder_output.events.clone());
@@ -83,7 +88,10 @@ impl Supervisor {
         }
 
         if plan.is_done() {
-            events.push(Event::done(format!("任务完成，共完成 {} 个步骤", plan.completed_count())));
+            events.push(Event::done(format!(
+                "任务完成，共完成 {} 个步骤",
+                plan.completed_count()
+            )));
         }
     }
 }

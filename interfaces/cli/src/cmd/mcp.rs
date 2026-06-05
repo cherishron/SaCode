@@ -114,7 +114,11 @@ fn list_servers(store: &McpConfigStore) -> Result<()> {
             "  {} - {} {} [{}]",
             entry.name,
             entry.server.url,
-            if entry.server.enabled { "enabled" } else { "disabled" },
+            if entry.server.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
             entry.source.label()
         );
     }
@@ -130,12 +134,20 @@ async fn search_mcp(client: &SkillHubClient, keyword: &str) -> Result<()> {
 
     println!("SkillHub MCP results:");
     for server in servers {
-        println!("  {} - {} - {}", server.name, server.url, server.description);
+        println!(
+            "  {} - {} - {}",
+            server.name, server.url, server.description
+        );
     }
     Ok(())
 }
 
-async fn install_mcp(client: &SkillHubClient, config: &SaCodeConfig, name: &str, global: bool) -> Result<()> {
+async fn install_mcp(
+    client: &SkillHubClient,
+    config: &SaCodeConfig,
+    name: &str,
+    global: bool,
+) -> Result<()> {
     let path = if global {
         config.user_mcp_config()
     } else {
@@ -190,7 +202,12 @@ async fn tools(store: &McpConfigStore, name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn call(store: &McpConfigStore, server_name: &str, tool_name: &str, json_args: &str) -> Result<()> {
+async fn call(
+    store: &McpConfigStore,
+    server_name: &str,
+    tool_name: &str,
+    json_args: &str,
+) -> Result<()> {
     let server = store.get(server_name)?;
     let arguments: serde_json::Value = serde_json::from_str(json_args)?;
     let result = call_mcp_tool(&server, tool_name, arguments).await?;

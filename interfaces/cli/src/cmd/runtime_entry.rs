@@ -39,7 +39,8 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             options.approval,
             options.max_iterations,
             stdin.clone(),
-        ).await?;
+        )
+        .await?;
         let response = CliResponse {
             prompt: output.prompt.clone(),
             mode: output.mode,
@@ -83,7 +84,8 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
                 let _ = std::io::stdout().flush();
             }
         }),
-    ).await?;
+    )
+    .await?;
 
     if options.json_stream {
         let response = CliResponse {

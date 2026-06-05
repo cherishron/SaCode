@@ -1,7 +1,10 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use sacode_runtime::{append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryEntrySource, MemoryKind, MemoryScope, PROJECT_WIKI_DIR};
+use sacode_runtime::{
+    append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryEntrySource,
+    MemoryKind, MemoryScope, PROJECT_WIKI_DIR,
+};
 use serde::{Deserialize, Serialize};
 
 pub type LearnedKind = MemoryKind;
@@ -13,7 +16,11 @@ pub struct LearnedFact {
     pub context: String,
 }
 
-pub fn learn_from_task(workdir: &Path, user_prompt: &str, provider_response: &str) -> Result<Vec<LearnedFact>> {
+pub fn learn_from_task(
+    workdir: &Path,
+    user_prompt: &str,
+    provider_response: &str,
+) -> Result<Vec<LearnedFact>> {
     let facts = extract_learnings(user_prompt, provider_response);
     let mut appended = Vec::new();
     for fact in &facts {
@@ -27,7 +34,11 @@ pub fn learn_from_task(workdir: &Path, user_prompt: &str, provider_response: &st
 pub fn extract_learnings(user_prompt: &str, provider_response: &str) -> Vec<LearnedFact> {
     let mut facts = Vec::new();
 
-    for line in user_prompt.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in user_prompt
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         if let Some(content) = extract_preference(line) {
             facts.push(LearnedFact {
                 kind: LearnedKind::Preference,
@@ -44,7 +55,11 @@ pub fn extract_learnings(user_prompt: &str, provider_response: &str) -> Vec<Lear
         }
     }
 
-    for line in provider_response.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in provider_response
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         if should_skip_provider_decision_line(line) {
             continue;
         }
@@ -76,7 +91,12 @@ fn extract_workflow(line: &str) -> Option<String> {
     if should_skip_user_learning_line(line) {
         return None;
     }
-    if markers.iter().filter(|marker| line.contains(**marker)).count() >= 2 {
+    if markers
+        .iter()
+        .filter(|marker| line.contains(**marker))
+        .count()
+        >= 2
+    {
         return Some(normalize_line(line));
     }
     None
@@ -87,7 +107,13 @@ fn extract_decision(line: &str) -> Option<String> {
     if line.contains("为准") || line.contains("采用") || line.contains("落到") {
         return Some(normalize_line(line));
     }
-    if markers.iter().filter(|marker| line.contains(**marker)).count() >= 2 && line.contains("项目") {
+    if markers
+        .iter()
+        .filter(|marker| line.contains(**marker))
+        .count()
+        >= 2
+        && line.contains("项目")
+    {
         return Some(normalize_line(line));
     }
     None
@@ -103,8 +129,23 @@ fn should_skip_user_learning_line(line: &str) -> bool {
         return true;
     }
 
-    let durable_markers = ["以后", "每次", "默认", "统一", "优先", "请用", "请保持", "流程", "步骤", "提交前", "完成后"];
-    if durable_markers.iter().any(|marker| trimmed.contains(marker)) {
+    let durable_markers = [
+        "以后",
+        "每次",
+        "默认",
+        "统一",
+        "优先",
+        "请用",
+        "请保持",
+        "流程",
+        "步骤",
+        "提交前",
+        "完成后",
+    ];
+    if durable_markers
+        .iter()
+        .any(|marker| trimmed.contains(marker))
+    {
         return false;
     }
 
@@ -118,44 +159,51 @@ fn should_skip_user_learning_line(line: &str) -> bool {
         "处理一下",
         "解决一下",
     ];
-    if request_markers.iter().any(|marker| trimmed.contains(marker)) {
+    if request_markers
+        .iter()
+        .any(|marker| trimmed.contains(marker))
+    {
         return true;
     }
 
     let task_markers = [
-        "修复",
-        "实现",
-        "增加",
-        "添加",
-        "删除",
-        "修改",
-        "重构",
-        "解释",
-        "分析",
-        "看看",
-        "排查",
-        "运行",
-        "测试",
-        "提交",
-        "commit",
+        "修复", "实现", "增加", "添加", "删除", "修改", "重构", "解释", "分析", "看看", "排查",
+        "运行", "测试", "提交", "commit",
     ];
-    if task_markers.iter().any(|marker| trimmed.contains(marker)) && !trimmed.contains("提交前") {
+    if task_markers.iter().any(|marker| trimmed.contains(marker)) && !trimmed.contains("提交前")
+    {
         return true;
     }
 
-    let transient_markers = ["这次", "这一轮", "当前任务", "本次", "现在先", "先把", "先做"];
-    transient_markers.iter().any(|marker| trimmed.contains(marker))
+    let transient_markers = [
+        "这次",
+        "这一轮",
+        "当前任务",
+        "本次",
+        "现在先",
+        "先把",
+        "先做",
+    ];
+    transient_markers
+        .iter()
+        .any(|marker| trimmed.contains(marker))
 }
 
 fn should_skip_provider_decision_line(line: &str) -> bool {
     let trimmed = line.trim();
-    trimmed.is_empty() || trimmed.starts_with('/') || trimmed.contains("这次") || trimmed.contains("这一轮") || trimmed.contains("本次")
+    trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.contains("这次")
+        || trimmed.contains("这一轮")
+        || trimmed.contains("本次")
 }
 
 fn dedup_facts(facts: Vec<LearnedFact>) -> Vec<LearnedFact> {
     let mut unique = Vec::new();
     for fact in facts {
-        if unique.iter().any(|existing: &LearnedFact| existing.kind == fact.kind && existing.content.eq_ignore_ascii_case(&fact.content)) {
+        if unique.iter().any(|existing: &LearnedFact| {
+            existing.kind == fact.kind && existing.content.eq_ignore_ascii_case(&fact.content)
+        }) {
             continue;
         }
         unique.push(fact);
@@ -190,7 +238,9 @@ mod tests {
             "以后回复保持简洁。\n提交前先运行检查再继续。",
             "当前项目以 Cargo.toml 和 workflow 为准。",
         );
-        assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Preference));
+        assert!(facts
+            .iter()
+            .any(|fact| fact.kind == LearnedKind::Preference));
         assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Workflow));
         assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Decision));
     }
@@ -206,7 +256,8 @@ mod tests {
         )
         .expect("learn from task");
         assert!(!facts.is_empty());
-        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/workflows.md")).expect("read workflows");
+        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/workflows.md"))
+            .expect("read workflows");
         assert!(workflows.contains("自动学习条目"));
     }
 
@@ -248,11 +299,31 @@ mod tests {
             "当前项目以 Cargo.toml 为准。以后回复保持简洁。提交前先检查 diff 再继续。",
         );
 
-        assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Preference));
+        assert!(facts
+            .iter()
+            .any(|fact| fact.kind == LearnedKind::Preference));
         assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Workflow));
         assert!(facts.iter().any(|fact| fact.kind == LearnedKind::Decision));
-        assert_eq!(facts.iter().filter(|fact| fact.kind == LearnedKind::Preference).count(), 1);
-        assert_eq!(facts.iter().filter(|fact| fact.kind == LearnedKind::Workflow).count(), 1);
-        assert_eq!(facts.iter().filter(|fact| fact.kind == LearnedKind::Decision).count(), 1);
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|fact| fact.kind == LearnedKind::Preference)
+                .count(),
+            1
+        );
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|fact| fact.kind == LearnedKind::Workflow)
+                .count(),
+            1
+        );
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|fact| fact.kind == LearnedKind::Decision)
+                .count(),
+            1
+        );
     }
 }

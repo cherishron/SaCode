@@ -1,4 +1,5 @@
 use super::*;
+use crate::ProjectAccessConfigStore;
 
 #[test]
 fn test_sandbox_policy_for_plan_mode_is_read_only() {
@@ -8,7 +9,10 @@ fn test_sandbox_policy_for_plan_mode_is_read_only() {
     assert!(!policy.network.fetch_allowed);
     assert!(!policy.network.browser_allowed);
     assert!(!policy.shell.enabled);
-    assert!(policy.fs.read_paths.contains(&std::path::PathBuf::from(".")));
+    assert!(policy
+        .fs
+        .read_paths
+        .contains(&std::path::PathBuf::from(".")));
     assert!(policy.fs.write_paths.is_empty());
     assert!(!policy.check_command("git"));
     assert_eq!(policy.max_memory_mb(), Some(256));
@@ -42,6 +46,26 @@ fn test_sandbox_policy_for_yolo_mode_is_most_permissive() {
 }
 
 #[test]
+fn test_sandbox_policy_respects_project_access_store_dirs() {
+    let _guard = sandbox_test_lock();
+    let workdir = tempfile::tempdir().expect("create workdir");
+    let outside = tempfile::tempdir().expect("create outside dir");
+    let outside_file = outside.path().join("cache").join("pkg.txt");
+    std::fs::create_dir_all(outside_file.parent().expect("parent dir")).expect("create nested");
+    std::fs::write(&outside_file, "ok").expect("write file");
+
+    let store = ProjectAccessConfigStore::new(workdir.path());
+    store.add_dir(outside.path()).expect("add allowed dir");
+
+    let _cwd = CurrentDirGuard::enter(workdir.path());
+    crate::sandbox::install_current_mode(ExecutionMode::Build);
+    let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);
+
+    assert!(policy.check_path(&outside_file, crate::sandbox::FsAccess::Read));
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
 fn test_sandbox_config_store_overrides_plan_network_policy() {
     let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -60,7 +84,9 @@ fn test_sandbox_config_store_overrides_plan_network_policy() {
         })
         .expect("save sandbox config");
 
-    let policy = store.policy_for_mode(ExecutionMode::Plan).expect("load plan sandbox policy");
+    let policy = store
+        .policy_for_mode(ExecutionMode::Plan)
+        .expect("load plan sandbox policy");
     assert!(policy.network.fetch_allowed);
 }
 
@@ -83,7 +109,9 @@ fn test_sandbox_config_store_overrides_build_allowed_commands() {
         })
         .expect("save sandbox config");
 
-    let policy = store.policy_for_mode(ExecutionMode::Build).expect("load build sandbox policy");
+    let policy = store
+        .policy_for_mode(ExecutionMode::Build)
+        .expect("load build sandbox policy");
     assert_eq!(policy.shell.allowed_commands, vec!["git".to_string()]);
     assert!(policy.check_command("git"));
     assert!(!policy.check_command("cargo"));
@@ -175,7 +203,8 @@ fn test_docker_backend_respects_security_overrides() {
         tmpfs: vec!["/run:rw,size=16m".to_string()],
         ..DockerSandboxConfig::default()
     });
-    let policy = crate::sandbox::SandboxPolicy::new().allow_write_path(std::path::PathBuf::from("target"));
+    let policy =
+        crate::sandbox::SandboxPolicy::new().allow_write_path(std::path::PathBuf::from("target"));
 
     let command = backend
         .build_docker_command(

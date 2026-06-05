@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use chrono::Local;
@@ -130,7 +133,11 @@ impl TaskStore {
         let now = now_string();
 
         if status == TaskStatus::InProgress {
-            for task in data.tasks.iter_mut().filter(|task| task.status == TaskStatus::InProgress && task.id != id) {
+            for task in data
+                .tasks
+                .iter_mut()
+                .filter(|task| task.status == TaskStatus::InProgress && task.id != id)
+            {
                 task.status = TaskStatus::Pending;
                 task.updated_at = now.clone();
                 task.completed_at = None;
@@ -153,7 +160,8 @@ impl TaskStore {
     pub fn clear_completed(&self) -> Result<usize> {
         let mut data = self.load()?;
         let before = data.tasks.len();
-        data.tasks.retain(|task| task.status != TaskStatus::Completed);
+        data.tasks
+            .retain(|task| task.status != TaskStatus::Completed);
         let removed = before.saturating_sub(data.tasks.len());
         self.save(&data)?;
         Ok(removed)
@@ -169,7 +177,8 @@ impl TaskStore {
         }
 
         for task in tasks {
-            lines.push(format!("- [{}] #{} {} ({}, {})",
+            lines.push(format!(
+                "- [{}] #{} {} ({}, {})",
                 task.status.label(),
                 task.id,
                 task.description,
@@ -248,7 +257,8 @@ fn find_task_mut(data: &mut TaskStoreData, id: u64) -> Result<&mut PersistentTas
 
 fn normalize_tasks(data: &mut TaskStoreData) {
     data.tasks.sort_by(|a, b| {
-        a.status.rank()
+        a.status
+            .rank()
             .cmp(&b.status.rank())
             .then(a.priority.rank().cmp(&b.priority.rank()))
             .then(b.updated_at.cmp(&a.updated_at))

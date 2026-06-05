@@ -1,5 +1,5 @@
+use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 use crate::{active_backend, active_policy, BackendCommandOutput, SandboxCommand};
-use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
 
 use super::sandbox::ShellSandbox;
 
@@ -145,8 +145,11 @@ fn is_dangerous_command(cmd: &str) -> bool {
 
 fn truncate_output(output: String) -> String {
     if output.len() > MAX_OUTPUT_LEN {
-        format!("{}... (truncated, {} bytes total)", 
-            &output[..MAX_OUTPUT_LEN], output.len())
+        format!(
+            "{}... (truncated, {} bytes total)",
+            &output[..MAX_OUTPUT_LEN],
+            output.len()
+        )
     } else {
         output
     }

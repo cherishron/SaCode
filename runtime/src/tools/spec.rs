@@ -60,6 +60,10 @@ impl ToolSpec {
     }
 
     pub fn to_tool_definition(&self) -> sacode_kernel::model::ToolDefinition {
-        sacode_kernel::model::ToolDefinition::function(&self.name, &self.description, self.input_schema.clone())
+        sacode_kernel::model::ToolDefinition::function(
+            &self.name,
+            &self.description,
+            self.input_schema.clone(),
+        )
     }
 }

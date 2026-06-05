@@ -3,7 +3,10 @@ pub mod navigate;
 pub mod open;
 pub mod snapshot;
 
-use std::{collections::HashMap, sync::{Mutex, OnceLock}};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;

@@ -18,7 +18,11 @@ fn render_wiki_reports_project_sources() {
         "# Project\n\n- 当前项目使用 Rust workspace",
     )
     .expect("write wiki");
-    fs::write(workdir.join(".sacode/project.json"), r#"{"name":"demo-project"}"#).expect("write project json");
+    fs::write(
+        workdir.join(".sacode/project.json"),
+        r#"{"name":"demo-project"}"#,
+    )
+    .expect("write project json");
 
     let output = render_wiki(workdir, &[]).expect("render wiki");
     assert!(output.contains("Wiki Status"));
@@ -41,5 +45,9 @@ fn render_wiki_shows_auto_learned_entries() {
 
     let output = render_wiki(workdir, &[]).expect("render wiki");
     assert!(output.contains("自动学习回写"));
-    assert!(output.contains("preferences.md") || output.contains("workflows.md") || output.contains("decisions.md"));
+    assert!(
+        output.contains("preferences.md")
+            || output.contains("workflows.md")
+            || output.contains("decisions.md")
+    );
 }

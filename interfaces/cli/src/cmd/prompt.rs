@@ -1,9 +1,13 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::{
-    build_runtime_system_prompt, inspect_wiki, maybe_expand_skill_prompt, PromptContext, ToolRegistry,
+    build_runtime_system_prompt, inspect_wiki, maybe_expand_skill_prompt, PromptContext,
+    ToolRegistry,
 };
 
 use crate::cmd::{insight, outstyle};
@@ -86,32 +90,60 @@ fn render_prompt_doctor(workdir: &Path) -> Result<String> {
     ));
     lines.push(format!(
         "- 输出风格指令: {}",
-        if style.is_some() { "已加载" } else { "未设置" }
+        if style.is_some() {
+            "已加载"
+        } else {
+            "未设置"
+        }
     ));
     lines.push(format!(
         "- 洞察指令: {}",
-        if insight_data.is_some() { "已加载" } else { "未生成" }
+        if insight_data.is_some() {
+            "已加载"
+        } else {
+            "未生成"
+        }
     ));
     let wiki = inspect_wiki(workdir)?;
     lines.push(format!(
         "- 用户级知识库: {}",
-        if wiki.context.user_summary.is_some() { "已加载" } else { "未加载" }
+        if wiki.context.user_summary.is_some() {
+            "已加载"
+        } else {
+            "未加载"
+        }
     ));
     lines.push(format!(
         "- 项目级知识库: {}",
-        if wiki.context.project_summary.is_some() { "已加载" } else { "未加载" }
+        if wiki.context.project_summary.is_some() {
+            "已加载"
+        } else {
+            "未加载"
+        }
     ));
     lines.push(format!(
         "- 会话级知识库: {}",
-        if wiki.context.session_summary.is_some() { "已加载" } else { "未加载" }
+        if wiki.context.session_summary.is_some() {
+            "已加载"
+        } else {
+            "未加载"
+        }
     ));
     lines.push(format!(
         "- Skill 展开: {}",
-        if sample_expanded != sample_task { "可用" } else { "未命中示例 skill" }
+        if sample_expanded != sample_task {
+            "可用"
+        } else {
+            "未命中示例 skill"
+        }
     ));
     lines.push(format!(
         "- 基础 Prompt 组装: {}",
-        if system_prompt.trim().is_empty() { "失败" } else { "正常" }
+        if system_prompt.trim().is_empty() {
+            "失败"
+        } else {
+            "正常"
+        }
     ));
     lines.push(String::new());
     lines.push("建议:".to_string());
@@ -128,13 +160,20 @@ fn render_prompt_doctor(workdir: &Path) -> Result<String> {
         lines.push("- 运行 /insight 生成用户级洞察指令。".to_string());
     }
     if wiki.context.user_summary.is_none() && wiki.context.project_summary.is_none() {
-        lines.push("- 运行 /wiki 查看知识源状态，并在 ~/.sacode/wiki 或 .sacode/wiki 中补充长期知识。".to_string());
+        lines.push(
+            "- 运行 /wiki 查看知识源状态，并在 ~/.sacode/wiki 或 .sacode/wiki 中补充长期知识。"
+                .to_string(),
+        );
     }
     if sample_expanded == sample_task {
-        lines.push("- 当前示例 skill 未命中，按需在 .sacode/skills 或用户级 skills 中补充模板。".to_string());
+        lines.push(
+            "- 当前示例 skill 未命中，按需在 .sacode/skills 或用户级 skills 中补充模板。"
+                .to_string(),
+        );
     }
     if agents_path.exists() && project_prompt_path.exists() && style.is_some() {
-        lines.push("- 提示词基础链路完整，可以直接查看 /prompt show 验证最终拼装结果。".to_string());
+        lines
+            .push("- 提示词基础链路完整，可以直接查看 /prompt show 验证最终拼装结果。".to_string());
     }
 
     Ok(lines.join("\n"))

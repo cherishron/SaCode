@@ -1,5 +1,5 @@
-pub mod document;
 pub mod config;
+pub mod document;
 pub mod server;
 
 pub use config::{LspBehaviorConfig, LspCapabilitiesConfig, LspConfig, LspServerConfig};

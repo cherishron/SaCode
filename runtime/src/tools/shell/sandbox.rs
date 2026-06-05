@@ -10,11 +10,7 @@ pub struct ShellSandbox;
 impl ShellSandbox {
     pub fn validate(command: &str, cwd: Option<&str>) -> Result<()> {
         let policy = active_policy();
-        let command_name = command
-            .split_whitespace()
-            .next()
-            .unwrap_or(command)
-            .trim();
+        let command_name = command.split_whitespace().next().unwrap_or(command).trim();
 
         if command_name.is_empty() {
             anyhow::bail!("command is required");

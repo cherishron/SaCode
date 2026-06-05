@@ -6,10 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::super::{
-    input::clamp_cursor_col,
-    App, ExecutionMode, InputMode,
-};
+use super::super::{input::clamp_cursor_col, App, ExecutionMode, InputMode};
 
 fn mode_color(app: &App) -> Color {
     match app.execution_mode {
@@ -149,11 +146,23 @@ pub(crate) fn render_input_panel(
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::PendingQuestion {
-        editable_visible_lines
+        let mut lines = editable_visible_lines
             .clone()
             .into_iter()
             .map(|line| Line::from(Span::styled(line, Style::default().fg(theme.text))))
-            .collect()
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            let hint = if app.interaction.pending_confirm_submission {
+                "当前处于最终确认态，按 Enter 提交全部回答。"
+            } else {
+                "输入当前问题的自定义回答，或使用方向键选择选项。"
+            };
+            lines.push(Line::from(Span::styled(
+                hint,
+                Style::default().fg(theme.muted),
+            )));
+        }
+        lines
     } else if matches!(
         app.input_mode,
         InputMode::CommandLevel1 | InputMode::CommandLevel2
@@ -188,7 +197,7 @@ pub(crate) fn render_input_panel(
             InputMode::SessionSelect => "使用方向键选择历史会话...",
             InputMode::InputOptimizePreview => "查看输入优化预览...",
             InputMode::TodoConfirm => "待办计划等待确认...",
-            InputMode::PendingQuestion => "输入自定义回答，或用方向键选择选项...",
+            InputMode::PendingQuestion => "输入当前问题的自定义回答，或用方向键选择选项...",
         };
         vec![Line::from(Span::styled(
             placeholder,
@@ -213,17 +222,17 @@ pub(crate) fn render_input_panel(
                     ),
                     Span::styled(
                         "[T]",
-                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(" ", Style::default()),
                 ]
             } else {
-                vec![
-                    Span::styled(
-                        "> ",
-                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                    ),
-                ]
+                vec![Span::styled(
+                    "> ",
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                )]
             };
             if input_is_editable {
                 spans.extend(line.spans);
@@ -232,10 +241,16 @@ pub(crate) fn render_input_panel(
             }
             decorated_lines.push(Line::from(spans));
         } else {
-            decorated_lines.push(Line::from(vec![Span::raw("  "), Span::styled(
-                line.spans.into_iter().map(|span| span.content).collect::<String>(),
-                Style::default().fg(theme.text),
-            )]));
+            decorated_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    line.spans
+                        .into_iter()
+                        .map(|span| span.content)
+                        .collect::<String>(),
+                    Style::default().fg(theme.text),
+                ),
+            ]));
         }
     }
 

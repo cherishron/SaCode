@@ -13,12 +13,10 @@ use tower::util::ServiceExt;
 use crate::{
     build_runtime_system_prompt,
     config::{
-        DockerSandboxConfig, SaCodeConfig, SandboxBackendConfig, SandboxBackendKind,
-        SandboxConfig, SandboxConfigStore, SandboxModeConfig,
+        DockerSandboxConfig, SaCodeConfig, SandboxBackendConfig, SandboxBackendKind, SandboxConfig,
+        SandboxConfigStore, SandboxModeConfig,
     },
-    create_daemon,
-    load_memory_index,
-    load_wiki_context,
+    create_daemon, load_memory_index, load_wiki_context,
     mcp::{register_enabled_tools_sync as register_enabled_mcp_tools_sync, McpConfig},
     queue::{InMemoryStore, TaskQueue, TaskStore},
     rebuild_memory_index,
@@ -26,10 +24,11 @@ use crate::{
     skills::SkillRegistry,
     tools::{ToolOutput, ToolSpec},
     McpConfigStore, McpServerConfig, McpSource, MemoryScope, PromptContext, SideEffectLevel,
-    StoreDb,
-    ToolRegistry,
+    StoreDb, ToolRegistry,
 };
-use sacode_kernel::{ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus};
+use sacode_kernel::{
+    ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus,
+};
 
 mod daemon_queue;
 mod sandbox;
@@ -39,8 +38,7 @@ mod wiki;
 
 fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK
-        .get_or_init(|| Mutex::new(()))
+    LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

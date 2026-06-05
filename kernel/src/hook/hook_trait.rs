@@ -1,4 +1,7 @@
-use crate::{execution::LifecyclePoint, hook::{HookContext, HookResult}};
+use crate::{
+    execution::LifecyclePoint,
+    hook::{HookContext, HookResult},
+};
 
 pub trait Hook: Send + Sync {
     fn name(&self) -> &str;

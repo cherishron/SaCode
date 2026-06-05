@@ -10,7 +10,7 @@ pub mod spec;
 pub mod task;
 pub mod web;
 
-pub use spec::{ToolSpec, ToolOutput, SideEffectLevel};
+pub use spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -64,13 +64,8 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, spec: ToolSpec, executor: Arc<dyn ToolExecutor>) {
-        self.tools.insert(
-            spec.name.clone(),
-            RegisteredTool {
-                spec,
-                executor,
-            },
-        );
+        self.tools
+            .insert(spec.name.clone(), RegisteredTool { spec, executor });
     }
 
     pub fn register_fn(

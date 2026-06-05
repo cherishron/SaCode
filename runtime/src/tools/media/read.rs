@@ -3,10 +3,12 @@ use std::{fs, path::PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use crate::tools::fs::access::resolve_allowed_path;
 use crate::provider::client::ProviderClient;
+use crate::tools::fs::access::resolve_allowed_path;
 
-use sacode_kernel::model::{ChatMessage, ImageUrlPart, MessagePart, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig};
+use sacode_kernel::model::{
+    ChatMessage, ImageUrlPart, MessagePart, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
+};
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -63,11 +65,22 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "ocr" | "describe" => try_visual_read(&input, &file_path, &bytes, mime_type, mode)
             .unwrap_or_else(|_| {
                 (
-                    fallback_visual_text(mode, &file_path.display().to_string(), mime_type, width, height, bytes.len()),
+                    fallback_visual_text(
+                        mode,
+                        &file_path.display().to_string(),
+                        mime_type,
+                        width,
+                        height,
+                        bytes.len(),
+                    ),
                     "fallback".to_string(),
                 )
             }),
-        _ => return Ok(ToolOutput::failure("mode must be one of: base64, ocr, describe")),
+        _ => {
+            return Ok(ToolOutput::failure(
+                "mode must be one of: base64, ocr, describe",
+            ))
+        }
     };
     let summary = format_summary(mime_type, bytes.len(), width, height);
 
@@ -84,7 +97,13 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 fn detect_mime_type(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    match path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
@@ -96,7 +115,13 @@ fn detect_mime_type(path: &str) -> &'static str {
 }
 
 fn detect_dimensions(path: &str, bytes: &[u8]) -> (Option<u32>, Option<u32>) {
-    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    match path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "png" => parse_png_dimensions(bytes),
         "ppm" => parse_ppm_dimensions(bytes),
         _ => (None, None),
@@ -125,9 +150,16 @@ fn parse_ppm_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
     }
 }
 
-fn format_summary(mime_type: &str, size_bytes: usize, width: Option<u32>, height: Option<u32>) -> String {
+fn format_summary(
+    mime_type: &str,
+    size_bytes: usize,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> String {
     match (width, height) {
-        (Some(width), Some(height)) => format!("{}，{} bytes，{}x{}", mime_type, size_bytes, width, height),
+        (Some(width), Some(height)) => {
+            format!("{}，{} bytes，{}x{}", mime_type, size_bytes, width, height)
+        }
         _ => format!("{}，{} bytes", mime_type, size_bytes),
     }
 }
@@ -150,19 +182,28 @@ fn try_visual_read(
             image_url: ImageUrlPart { url: data_url },
         },
     ])];
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let (text, _) = runtime.block_on(client.simple_chat_messages_with_usage(&provider, messages))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let (text, _) =
+        runtime.block_on(client.simple_chat_messages_with_usage(&provider, messages))?;
     Ok((text, "provider".to_string()))
 }
 
 fn resolve_visual_provider(input: &serde_json::Value) -> anyhow::Result<ModelProvider> {
-    if let (Some(model), Some(base_url)) = (input.get("model").and_then(|v| v.as_str()), input.get("base_url").and_then(|v| v.as_str())) {
+    if let (Some(model), Some(base_url)) = (
+        input.get("model").and_then(|v| v.as_str()),
+        input.get("base_url").and_then(|v| v.as_str()),
+    ) {
         let kind = detect_provider_kind(base_url, model);
         return Ok(ModelProvider {
             kind,
             model: model.to_string(),
             base_url: Some(normalize_base_url(base_url)),
-            api_key: input.get("api_key").and_then(|v| v.as_str()).map(|v| v.to_string()),
+            api_key: input
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string()),
             rule: None,
         });
     }
@@ -171,7 +212,11 @@ fn resolve_visual_provider(input: &serde_json::Value) -> anyhow::Result<ModelPro
     let config_path = workdir.join(".sacode/config.json");
     let content = fs::read_to_string(&config_path)?;
     let config: SaCodeConfig = serde_json::from_str(&content)?;
-    let model_spec = input.get("model").and_then(|v| v.as_str()).filter(|value| !value.trim().is_empty()).unwrap_or(&config.model);
+    let model_spec = input
+        .get("model")
+        .and_then(|v| v.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&config.model);
     let (provider_spec, rule, model_name) = config
         .resolve_provider_and_model(model_spec)
         .ok_or_else(|| anyhow::anyhow!("未找到可用于视觉分析的模型配置"))?;
@@ -200,8 +245,14 @@ fn ensure_image_input_supported(provider: &ModelProvider) -> anyhow::Result<()> 
 
 fn build_visual_prompt(mode: &str, path: &str) -> String {
     match mode {
-        "ocr" => format!("请对图片执行 OCR，提取可见文字。保留自然阅读顺序，按段落输出。文件路径: {}", path),
-        _ => format!("请描述这张图片的主要内容、布局和关键信息。文件路径: {}", path),
+        "ocr" => format!(
+            "请对图片执行 OCR，提取可见文字。保留自然阅读顺序，按段落输出。文件路径: {}",
+            path
+        ),
+        _ => format!(
+            "请描述这张图片的主要内容、布局和关键信息。文件路径: {}",
+            path
+        ),
     }
 }
 
@@ -235,7 +286,10 @@ fn normalize_base_url(base_url: &str) -> String {
 fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
     let lower_url = base_url.to_lowercase();
     let lower_model = model.to_lowercase();
-    if lower_url.contains("xiaomimimo") || lower_url.contains("token-plan") || lower_model.starts_with("mimo") {
+    if lower_url.contains("xiaomimimo")
+        || lower_url.contains("token-plan")
+        || lower_model.starts_with("mimo")
+    {
         ProviderKind::Mimo
     } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
         ProviderKind::Longcat
@@ -250,7 +304,13 @@ fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
     }
 }
 
-fn format_describe_placeholder(path: &str, mime_type: &str, width: Option<u32>, height: Option<u32>, size_bytes: usize) -> String {
+fn format_describe_placeholder(
+    path: &str,
+    mime_type: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+    size_bytes: usize,
+) -> String {
     match (width, height) {
         (Some(width), Some(height)) => format!(
             "图片描述能力暂未接入。文件: {}，类型: {}，尺寸: {}x{}，大小: {} bytes。可先读取 base64，或接入视觉模型后在此返回结构化描述。",
@@ -263,7 +323,12 @@ fn format_describe_placeholder(path: &str, mime_type: &str, width: Option<u32>, 
     }
 }
 
-fn format_ocr_placeholder(path: &str, mime_type: &str, width: Option<u32>, height: Option<u32>) -> String {
+fn format_ocr_placeholder(
+    path: &str,
+    mime_type: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> String {
     match (width, height) {
         (Some(width), Some(height)) => format!(
             "OCR 能力暂未接入。文件: {}，类型: {}，尺寸: {}x{}。后续可在这里返回识别文本和位置信息。",
@@ -291,7 +356,9 @@ fn encode_base64(bytes: &[u8]) -> String {
 
         match b1 {
             Some(value) => {
-                output.push(TABLE[(((value & 0b0000_1111) << 2) | (b2.unwrap_or(0) >> 6)) as usize] as char);
+                output.push(
+                    TABLE[(((value & 0b0000_1111) << 2) | (b2.unwrap_or(0) >> 6)) as usize] as char,
+                );
             }
             None => output.push('='),
         }

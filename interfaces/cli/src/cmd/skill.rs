@@ -1,5 +1,7 @@
 use anyhow::Result;
-use sacode_runtime::{SaCodeConfig, SkillHubClient, SkillHubUploadRequest, SkillRegistry, SkillSource};
+use sacode_runtime::{
+    SaCodeConfig, SkillHubClient, SkillHubUploadRequest, SkillRegistry, SkillSource,
+};
 use std::{env, path::PathBuf};
 
 pub async fn run(args: Vec<String>) -> Result<()> {
@@ -21,63 +23,63 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             } else {
                 search_skills(&client, &args[1]).await?;
             }
-        },
+        }
         "install" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill install <name> [--global|-g]");
             } else {
                 install_skill(&client, &config, &args[1], is_global(&args[2..])).await?;
             }
-        },
+        }
         "show" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill show <name>");
             } else {
                 show_skill(&registry, &args[1])?;
             }
-        },
+        }
         "remove" | "rm" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill remove <name> [--global|-g]");
             } else {
                 remove_skill(&registry, &args[1], is_global(&args[2..]))?;
             }
-        },
+        }
         "update" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill update <name> [--global|-g]");
             } else {
                 install_skill(&client, &config, &args[1], is_global(&args[2..])).await?;
             }
-        },
+        }
         "run" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill run <name> [args...]");
             } else {
                 run_skill(&registry, &args[1], &args[2..])?;
             }
-        },
+        }
         "upload" | "publish" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill upload <name> [--author <author>] [--version <version>] [--tags <tags>]");
             } else {
                 upload_skill(&client, &registry, &args[1], &args[2..]).await?;
             }
-        },
+        }
         "versions" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill versions <name>");
             } else {
                 list_versions(&client, &args[1]).await?;
             }
-        },
+        }
         "info" => {
             if args.len() < 2 {
                 println!("Usage: sacode skill info <name>");
             } else {
                 get_skill_info(&client, &args[1]).await?;
             }
-        },
+        }
         _ => {
             println!("Unknown skill command: {}", args[0]);
             println!("Available: search, install, list, show, update, remove, run, upload, versions, info");
@@ -90,7 +92,12 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 fn list_skills(registry: &SkillRegistry) -> Result<()> {
     println!("Skills:");
     for skill in registry.list()? {
-        println!("  {} - {} [{}]", skill.name, skill.description, skill.source.label());
+        println!(
+            "  {} - {} [{}]",
+            skill.name,
+            skill.description,
+            skill.source.label()
+        );
     }
     Ok(())
 }
@@ -133,12 +140,19 @@ fn show_default() {
     println!("  sacode skill update <name> [--global|-g]");
     println!("  sacode skill remove <name> [--global|-g]");
     println!("  sacode skill run <name> [args...]");
-    println!("  sacode skill upload <name> [--author <author>] [--version <version>] [--tags <tags>]");
+    println!(
+        "  sacode skill upload <name> [--author <author>] [--version <version>] [--tags <tags>]"
+    );
     println!("  sacode skill versions <name>");
     println!("  sacode skill info <name>");
 }
 
-async fn upload_skill(client: &SkillHubClient, registry: &SkillRegistry, name: &str, args: &[String]) -> Result<()> {
+async fn upload_skill(
+    client: &SkillHubClient,
+    registry: &SkillRegistry,
+    name: &str,
+    args: &[String],
+) -> Result<()> {
     let skill = registry.get(name)?;
     let mut author = skill.author.clone().unwrap_or_else(|| "local".to_string());
     let mut version = skill.version.clone().unwrap_or_else(|| "1.0.0".to_string());
@@ -154,7 +168,7 @@ async fn upload_skill(client: &SkillHubClient, registry: &SkillRegistry, name: &
                 } else {
                     anyhow::bail!("--author requires a value");
                 }
-            },
+            }
             "--version" | "-v" => {
                 if i + 1 < args.len() {
                     version = args[i + 1].clone();
@@ -162,15 +176,18 @@ async fn upload_skill(client: &SkillHubClient, registry: &SkillRegistry, name: &
                 } else {
                     anyhow::bail!("--version requires a value");
                 }
-            },
+            }
             "--tags" | "-t" => {
                 if i + 1 < args.len() {
-                    tags = args[i + 1].split(',').map(|tag| tag.trim().to_string()).collect();
+                    tags = args[i + 1]
+                        .split(',')
+                        .map(|tag| tag.trim().to_string())
+                        .collect();
                     i += 2;
                 } else {
                     anyhow::bail!("--tags requires a value");
                 }
-            },
+            }
             _ => i += 1,
         }
     }
@@ -235,7 +252,12 @@ async fn get_skill_info(client: &SkillHubClient, name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn install_skill(client: &SkillHubClient, config: &SaCodeConfig, name: &str, global: bool) -> Result<()> {
+async fn install_skill(
+    client: &SkillHubClient,
+    config: &SaCodeConfig,
+    name: &str,
+    global: bool,
+) -> Result<()> {
     let dir = if global {
         config.user_skills_dir()
     } else {
@@ -252,12 +274,20 @@ async fn install_skill(client: &SkillHubClient, config: &SaCodeConfig, name: &st
 }
 
 fn remove_skill(registry: &SkillRegistry, name: &str, global: bool) -> Result<()> {
-    let source = if global { SkillSource::User } else { SkillSource::Project };
+    let source = if global {
+        SkillSource::User
+    } else {
+        SkillSource::Project
+    };
     registry.remove_skill(name, source)?;
     println!(
         "Removed skill {} from {}",
         name,
-        if global { "~/.sacode/skills" } else { "./.sacode/skills" }
+        if global {
+            "~/.sacode/skills"
+        } else {
+            "./.sacode/skills"
+        }
     );
     Ok(())
 }

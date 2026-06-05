@@ -17,7 +17,7 @@ impl App {
 
     pub(super) fn current_task_approval_policy(&self) -> ApprovalPolicy {
         match self.execution_mode {
-            ExecutionMode::Plan => ApprovalPolicy::AutoDeny,
+            ExecutionMode::Plan => ApprovalPolicy::AutoApprove,
             ExecutionMode::Build => {
                 if self.session_auto_approve_edits {
                     ApprovalPolicy::AutoApprove

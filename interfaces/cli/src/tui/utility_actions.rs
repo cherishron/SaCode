@@ -1,5 +1,7 @@
 use super::{block_on_cli_future, App, MessageRole, ThemePalette};
-use crate::cmd::{diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status, vim, wiki};
+use crate::cmd::{
+    diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status, vim, wiki,
+};
 
 impl App {
     pub(super) fn help_command(&mut self) {
@@ -338,7 +340,10 @@ fn truncate_label(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let preview: String = chars.by_ref().take(max_chars).collect();
     if chars.next().is_some() && max_chars > 1 {
-        format!("{}~", preview.chars().take(max_chars - 1).collect::<String>())
+        format!(
+            "{}~",
+            preview.chars().take(max_chars - 1).collect::<String>()
+        )
     } else {
         preview
     }

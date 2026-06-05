@@ -1,6 +1,6 @@
-use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
-use crate::sandbox::{active_policy, NetworkAccess};
 use super::{decode_html_entities, normalize_url, send_with_retries, truncate_chars};
+use crate::sandbox::{active_policy, NetworkAccess};
+use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 use anyhow::Result;
 use serde::Deserialize;
 
@@ -63,7 +63,9 @@ pub fn spec() -> ToolSpec {
 
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     if !active_policy().check_network(NetworkAccess::Search) {
-        return Ok(ToolOutput::failure("network access blocked by sandbox policy"));
+        return Ok(ToolOutput::failure(
+            "network access blocked by sandbox policy",
+        ));
     }
 
     let payload: SearchInput = serde_json::from_value(input)?;
@@ -77,9 +79,12 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     }
 
     let response = send_with_retries(15, |client| {
-        client
-            .get("https://api.duckduckgo.com/")
-            .query(&[("q", payload.query.as_str()), ("format", "json"), ("no_html", "1"), ("skip_disambig", "1")])
+        client.get("https://api.duckduckgo.com/").query(&[
+            ("q", payload.query.as_str()),
+            ("format", "json"),
+            ("no_html", "1"),
+            ("skip_disambig", "1"),
+        ])
     })?;
 
     let body: DuckDuckGoResponse = response.json()?;
@@ -103,9 +108,18 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            let title = item.get("title").and_then(|value| value.as_str()).unwrap_or("Untitled");
-            let url = item.get("url").and_then(|value| value.as_str()).unwrap_or("");
-            let snippet = item.get("snippet").and_then(|value| value.as_str()).unwrap_or("");
+            let title = item
+                .get("title")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Untitled");
+            let url = item
+                .get("url")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let snippet = item
+                .get("snippet")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
             format!("{}. {}\nURL: {}\n{}", index + 1, title, url, snippet)
         })
         .collect::<Vec<_>>()

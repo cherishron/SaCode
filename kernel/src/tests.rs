@@ -1,7 +1,7 @@
-use crate::*;
 use crate::ffi::{sacode_execute, sacode_free, sacode_free_string, sacode_new};
 use crate::model::ModelRule;
 use crate::schema::ReviewIssue;
+use crate::*;
 use std::ffi::{CStr, CString};
 
 #[test]
@@ -23,7 +23,7 @@ fn test_planner_agent() {
     let planner = PlannerAgent::default();
     let task = Task::new("分析代码", ExecutionMode::Plan, None);
     let output = planner.run(&task);
-    
+
     assert_eq!(output.task, "分析代码");
     assert_eq!(output.mode, ExecutionMode::Plan);
     assert!(output.plan.steps.len() >= 3);
@@ -34,9 +34,14 @@ fn test_supervisor_plan_mode() {
     let supervisor = Supervisor::new();
     let task = Task::new("测试", ExecutionMode::Plan, None);
     let result = supervisor.execute(&task);
-    
+
     assert!(result.tool_calls.is_empty());
-    assert!(result.output.plan.steps.iter().any(|s| s.status == StepStatus::Pending || s.status == StepStatus::Completed));
+    assert!(result
+        .output
+        .plan
+        .steps
+        .iter()
+        .any(|s| s.status == StepStatus::Pending || s.status == StepStatus::Completed));
 }
 
 #[test]
@@ -58,7 +63,7 @@ fn test_review_failed() {
 fn test_checkpoint_creation() {
     let task = Task::new("测试", ExecutionMode::Build, None);
     let checkpoint = Checkpoint::new(task);
-    
+
     assert_eq!(checkpoint.current_step, 0);
     assert!(checkpoint.executed_tools.is_empty());
     assert!(checkpoint.pending_approval.is_none());
@@ -68,20 +73,27 @@ fn test_checkpoint_creation() {
 fn test_event_creation() {
     let event = Event::message("测试消息");
     assert!(matches!(event, Event::Message { .. }));
-    
+
     let done = Event::done("完成");
     assert!(done.is_terminal());
 }
 
 #[test]
 fn test_plan_status() {
-    let mut plan = Plan::new("测试".to_string(), vec![
-        Step::new(1, "步骤1".to_string(), vec![], "结果1".to_string()),
-    ], "build".to_string());
-    
+    let mut plan = Plan::new(
+        "测试".to_string(),
+        vec![Step::new(
+            1,
+            "步骤1".to_string(),
+            vec![],
+            "结果1".to_string(),
+        )],
+        "build".to_string(),
+    );
+
     assert!(plan.current_step().is_some());
     assert!(!plan.is_done());
-    
+
     plan.steps[0].mark_completed();
     assert!(plan.is_done());
 }
@@ -106,10 +118,12 @@ fn test_ffi_roundtrip() {
 
 #[test]
 fn test_model_rule_pricing_is_backward_compatible() {
-    let parsed: ModelRule = serde_json::from_str(r#"{
+    let parsed: ModelRule = serde_json::from_str(
+        r#"{
         "name": "gpt-4o-mini",
         "thinking": false
-    }"#)
+    }"#,
+    )
     .expect("parse model rule");
 
     assert_eq!(parsed.name, "gpt-4o-mini");

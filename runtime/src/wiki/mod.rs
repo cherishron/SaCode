@@ -1,6 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use crate::{load_memory_index, rebuild_memory_index, MemoryScope};
 
@@ -74,7 +77,10 @@ pub fn inspect_wiki(workdir: &Path) -> Result<WikiStatus> {
             file_status("项目级 mistakes", &workdir.join(PROJECT_MISTAKES_FILE))?,
             dir_status("项目级 wiki", &project_wiki_dir)?,
             file_status("项目级 memory", &project_wiki_dir.join("memory.md"))?,
-            file_status("项目级 preferences", &project_wiki_dir.join("preferences.md"))?,
+            file_status(
+                "项目级 preferences",
+                &project_wiki_dir.join("preferences.md"),
+            )?,
             file_status("项目级 workflows", &project_wiki_dir.join("workflows.md"))?,
             file_status("项目级 decisions", &project_wiki_dir.join("decisions.md"))?,
         ],
@@ -87,10 +93,14 @@ fn build_user_summary(_workdir: &Path) -> Result<Option<String>> {
     let user_root = user_sacode_dir();
     let mut sections = Vec::new();
 
-    if let Some(profile_summary) = summarize_json_file(&user_root.join("profile.json"), "用户级 profile")? {
+    if let Some(profile_summary) =
+        summarize_json_file(&user_root.join("profile.json"), "用户级 profile")?
+    {
         sections.push(profile_summary);
     }
-    if let Some(wiki_summary) = summarize_markdown_dir(&user_root.join(USER_WIKI_DIR), "用户级 wiki")? {
+    if let Some(wiki_summary) =
+        summarize_markdown_dir(&user_root.join(USER_WIKI_DIR), "用户级 wiki")?
+    {
         sections.push(wiki_summary);
     }
 
@@ -100,16 +110,22 @@ fn build_user_summary(_workdir: &Path) -> Result<Option<String>> {
 fn build_project_summary(workdir: &Path) -> Result<Option<String>> {
     let mut sections = Vec::new();
 
-    if let Some(profile_summary) = summarize_json_file(&workdir.join(PROJECT_PROFILE_FILE), "项目级 profile")? {
+    if let Some(profile_summary) =
+        summarize_json_file(&workdir.join(PROJECT_PROFILE_FILE), "项目级 profile")?
+    {
         sections.push(profile_summary);
     }
-    if let Some(project_summary) = summarize_json_file(&workdir.join(PROJECT_CONFIG_FILE), "项目级 project")? {
+    if let Some(project_summary) =
+        summarize_json_file(&workdir.join(PROJECT_CONFIG_FILE), "项目级 project")?
+    {
         sections.push(project_summary);
     }
     if let Some(mistakes_summary) = summarize_mistakes_file(&workdir.join(PROJECT_MISTAKES_FILE))? {
         sections.push(mistakes_summary);
     }
-    if let Some(wiki_summary) = summarize_markdown_dir(&workdir.join(PROJECT_WIKI_DIR), "项目级 wiki")? {
+    if let Some(wiki_summary) =
+        summarize_markdown_dir(&workdir.join(PROJECT_WIKI_DIR), "项目级 wiki")?
+    {
         sections.push(wiki_summary);
     }
 
@@ -178,7 +194,12 @@ fn summarize_markdown_dir(path: &Path, label: &str) -> Result<Option<String>> {
             if file_matches.is_empty() {
                 continue;
             }
-            sections.push(format!("### {} ({})\n{}", name, section_label, truncate_text(&file_matches.join("\n"), MAX_FILE_SNIPPET_LEN)));
+            sections.push(format!(
+                "### {} ({})\n{}",
+                name,
+                section_label,
+                truncate_text(&file_matches.join("\n"), MAX_FILE_SNIPPET_LEN)
+            ));
         }
     } else {
         for (name, section_label) in MEMORY_WIKI_FILES {
@@ -199,24 +220,36 @@ fn summarize_markdown_dir(path: &Path, label: &str) -> Result<Option<String>> {
         let mut files = fs::read_dir(path)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .filter(|entry_path| entry_path.extension().and_then(|value| value.to_str()) == Some("md"))
+            .filter(|entry_path| {
+                entry_path.extension().and_then(|value| value.to_str()) == Some("md")
+            })
             .filter(|entry_path| {
                 entry_path
                     .file_name()
                     .and_then(|value| value.to_str())
-                    .map(|name| !MEMORY_WIKI_FILES.iter().any(|(expected, _)| expected == &name))
+                    .map(|name| {
+                        !MEMORY_WIKI_FILES
+                            .iter()
+                            .any(|(expected, _)| expected == &name)
+                    })
                     .unwrap_or(true)
             })
             .collect::<Vec<_>>();
         files.sort();
 
-        for file in files.into_iter().take(MAX_WIKI_FILES_PER_SCOPE.saturating_sub(sections.len())) {
+        for file in files
+            .into_iter()
+            .take(MAX_WIKI_FILES_PER_SCOPE.saturating_sub(sections.len()))
+        {
             let content = fs::read_to_string(&file)?;
             let snippet = truncate_text(content.trim(), MAX_FILE_SNIPPET_LEN);
             if snippet.trim().is_empty() {
                 continue;
             }
-            let name = file.file_name().and_then(|value| value.to_str()).unwrap_or("unknown.md");
+            let name = file
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("unknown.md");
             sections.push(format!("### {}\n{}", name, snippet));
         }
     }
@@ -266,8 +299,14 @@ fn summarize_mistakes_file(path: &Path) -> Result<Option<String>> {
 
     let mut lines = vec![format!("项目级 mistakes\n共 {} 条", entries.len())];
     for entry in entries.iter().rev().take(3) {
-        let summary = entry.get("summary").and_then(Value::as_str).unwrap_or("未命名错误");
-        let scope = entry.get("scope").and_then(Value::as_str).unwrap_or("unknown");
+        let summary = entry
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("未命名错误");
+        let scope = entry
+            .get("scope")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
         lines.push(format!("- [{}] {}", scope, summary));
     }
     Ok(Some(lines.join("\n")))

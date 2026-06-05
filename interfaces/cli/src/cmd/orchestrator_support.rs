@@ -47,7 +47,10 @@ pub(super) fn format_summary_record(summary: Option<&SummaryRecord>) -> Option<S
     if !summary.items.is_empty() {
         lines.push("Items:".to_string());
         for item in &summary.items {
-            lines.push(format!("  - {} [{}]: {}", item.role_id, item.route, item.output));
+            lines.push(format!(
+                "  - {} [{}]: {}",
+                item.role_id, item.route, item.output
+            ));
         }
     }
     Some(lines.join("\n"))
@@ -121,7 +124,10 @@ pub(super) fn should_retry_tool_call(intent: &ToolCallIntent, summary: &str) -> 
 }
 
 #[cfg(test)]
-pub(super) fn resolve_tool_events(events: &[Event], step_event_batches: &[StepEventBatch]) -> Vec<Event> {
+pub(super) fn resolve_tool_events(
+    events: &[Event],
+    step_event_batches: &[StepEventBatch],
+) -> Vec<Event> {
     let mut step_batches = step_event_batches.iter();
     let mut final_events = Vec::new();
     let mut index = 0;
@@ -149,7 +155,10 @@ pub(super) fn resolve_tool_events(events: &[Event], step_event_batches: &[StepEv
 }
 
 #[cfg(test)]
-pub(super) fn collect_tool_results(final_events: &[Event], executed_tools: &[ExecutedTool]) -> Vec<ToolResult> {
+pub(super) fn collect_tool_results(
+    final_events: &[Event],
+    executed_tools: &[ExecutedTool],
+) -> Vec<ToolResult> {
     let completed_tools: Vec<(String, bool)> = final_events
         .iter()
         .filter_map(|event| match event {

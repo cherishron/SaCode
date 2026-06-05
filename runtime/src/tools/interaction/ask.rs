@@ -44,5 +44,6 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "question": question,
         "options": input["options"].clone(),
         "allow_multiple": input["allow_multiple"].as_bool().unwrap_or(false)
-    })).with_message("interactive answer required"))
+    }))
+    .with_message("interactive answer required"))
 }

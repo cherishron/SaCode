@@ -1,7 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::sandbox::{active_policy, current_mode, FsAccess};
 use crate::ProjectAccessConfigStore;
-use crate::sandbox::{active_policy, FsAccess};
+use sacode_kernel::ExecutionMode;
 
 pub fn resolve_allowed_path(path: &str, access: FsAccess) -> anyhow::Result<PathBuf> {
     let workspace_root = std::env::current_dir()?.canonicalize()?;
@@ -26,23 +27,13 @@ pub fn resolve_allowed_path(path: &str, access: FsAccess) -> anyhow::Result<Path
     }
 }
 
-fn is_allowed_with_store(path: &Path, workspace_root: &Path, store: &ProjectAccessConfigStore) -> anyhow::Result<bool> {
-    if path.starts_with(workspace_root) {
+fn is_allowed(path: &Path, workspace_root: &Path) -> anyhow::Result<bool> {
+    if current_mode() == ExecutionMode::Yolo {
         return Ok(true);
     }
 
-    for allowed in store.allowed_dirs()? {
-        if path.starts_with(&allowed) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-fn is_allowed(path: &Path, workspace_root: &Path) -> anyhow::Result<bool> {
     let store = ProjectAccessConfigStore::new(&workspace_root);
-    is_allowed_with_store(path, workspace_root, &store)
+    store.is_allowed_path(workspace_root, path)
 }
 
 fn normalize_path(path: &Path) -> anyhow::Result<PathBuf> {

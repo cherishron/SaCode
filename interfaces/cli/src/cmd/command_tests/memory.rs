@@ -37,7 +37,8 @@ fn render_memory_append_writes_typed_file() {
     let output = render_memory(workdir, &args).expect("append memory");
     assert!(output.contains("工作流记忆"));
 
-    let stored = fs::read_to_string(workdir.join(".sacode/wiki/workflows.md")).expect("read workflows");
+    let stored =
+        fs::read_to_string(workdir.join(".sacode/wiki/workflows.md")).expect("read workflows");
     assert!(stored.contains("Kind: workflow"));
     assert!(stored.contains("每次修改后先检查交互状态"));
     let index = fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read index");
@@ -86,21 +87,29 @@ fn render_memory_list_promote_and_archive_manage_index_entries() {
     assert!(list_output.contains("confidence=1.00"));
     assert!(list_output.contains("active"));
 
-    let project_index = fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read project index");
-    let value: serde_json::Value = serde_json::from_str(&project_index).expect("parse project index");
-    let entry_id = value["entries"][0]["id"].as_str().expect("entry id").to_string();
+    let project_index =
+        fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read project index");
+    let value: serde_json::Value =
+        serde_json::from_str(&project_index).expect("parse project index");
+    let entry_id = value["entries"][0]["id"]
+        .as_str()
+        .expect("entry id")
+        .to_string();
 
-    let promote_output = render_memory(workdir, &["promote".to_string(), entry_id.clone()]).expect("promote memory");
+    let promote_output =
+        render_memory(workdir, &["promote".to_string(), entry_id.clone()]).expect("promote memory");
     assert!(promote_output.contains("已提升记忆条目到用户级"));
 
     let user_index_path = home_dir.path().join(".sacode/wiki/index.json");
     let user_index = fs::read_to_string(&user_index_path).expect("read user index");
     assert!(user_index.contains("cargo test --workspace"));
 
-    let archive_output = render_memory(workdir, &["archive".to_string(), entry_id.clone()]).expect("archive memory");
+    let archive_output =
+        render_memory(workdir, &["archive".to_string(), entry_id.clone()]).expect("archive memory");
     assert!(archive_output.contains("已归档记忆条目"));
 
-    let search_output = render_memory(workdir, &["search".to_string(), "cargo test".to_string()]).expect("search memory");
+    let search_output = render_memory(workdir, &["search".to_string(), "cargo test".to_string()])
+        .expect("search memory");
     assert!(!search_output.contains("项目级"));
 }
 

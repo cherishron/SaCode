@@ -1,13 +1,22 @@
-use std::{collections::VecDeque, env, io::{self, BufRead, Write}};
+use std::{
+    collections::VecDeque,
+    env,
+    io::{self, BufRead, Write},
+};
 
 use anyhow::Result;
 use sacode_kernel::ExecutionMode;
-use sacode_runtime::{McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry};
+use sacode_runtime::{
+    McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry,
+};
 
 use crate::{
     agent_harness,
-    cmd::{config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status, update, vim, wiki, ApprovalPolicy},
     cmd::init::{initialize_project, InitMode},
+    cmd::{
+        config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status,
+        update, vim, wiki, ApprovalPolicy,
+    },
     provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
     runner::{format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream},
     version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
@@ -34,9 +43,15 @@ impl ReplSession {
     pub fn new() -> Self {
         Self {
             mode: ExecutionMode::Build,
-            provider_store: ProviderConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
-            sacode_store: SaCodeConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
-            access_store: ProjectAccessConfigStore::new(&env::current_dir().unwrap_or_else(|_| ".".into())),
+            provider_store: ProviderConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            sacode_store: SaCodeConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            access_store: ProjectAccessConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
             session_summary: None,
             recent_messages: VecDeque::new(),
             pending_question: None,
@@ -55,7 +70,11 @@ impl ReplSession {
                 channel: cfg.update_channel.clone(),
             })
             .unwrap_or_default();
-        if let Ok(VersionStatus::UpdateAvailable { current_version, remote_version }) = VersionChecker::with_config(version_config).check_for_update() {
+        if let Ok(VersionStatus::UpdateAvailable {
+            current_version,
+            remote_version,
+        }) = VersionChecker::with_config(version_config).check_for_update()
+        {
             println!();
             println!("{}", update_prompt(&current_version, &remote_version));
             println!();
@@ -148,7 +167,8 @@ impl ReplSession {
     async fn handle_task(&mut self, prompt: &str) -> Result<()> {
         let effective_input = self.decorate_pending_answer(prompt);
         let effective_prompt = self.build_task_prompt(&effective_input);
-        let runtime_config = config::effective_config(&env::current_dir().unwrap_or_else(|_| ".".into())).ok();
+        let runtime_config =
+            config::effective_config(&env::current_dir().unwrap_or_else(|_| ".".into())).ok();
         let approval = runtime_config
             .as_ref()
             .map(|cfg| match cfg.approval_policy.as_str() {
@@ -170,7 +190,8 @@ impl ReplSession {
                 print!("{}", chunk);
                 let _ = io::stdout().flush();
             }),
-        ).await?;
+        )
+        .await?;
         self.push_recent_message("user", &effective_input);
         if let Ok(response) = &output.provider_response {
             self.push_recent_message("assistant", response);
@@ -270,7 +291,10 @@ impl ReplSession {
     }
 
     fn handle_update_command(&mut self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         update::run(args)
     }
 
@@ -281,18 +305,32 @@ impl ReplSession {
     fn build_task_prompt(&self, prompt: &str) -> String {
         let mut sections = Vec::new();
 
-        if let Some(summary) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Some(summary) = self
+            .session_summary
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
             sections.push(format!(
                 "以下是当前 REPL 会话的历史摘要，请在后续任务中延续这些上下文与约束：\n{}",
                 summary.trim()
             ));
         }
 
-        let recent = self.recent_messages.iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().map(|message| {
-            format!("[{}] {}", message.role, message.content.trim())
-        }).collect::<Vec<_>>();
+        let recent = self
+            .recent_messages
+            .iter()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|message| format!("[{}] {}", message.role, message.content.trim()))
+            .collect::<Vec<_>>();
         if !recent.is_empty() {
-            sections.push(format!("以下是最近对话，请结合这些内容继续处理：\n{}", recent.join("\n\n")));
+            sections.push(format!(
+                "以下是最近对话，请结合这些内容继续处理：\n{}",
+                recent.join("\n\n")
+            ));
         }
 
         sections.push(format!("当前用户请求：\n{}", prompt.trim()));
@@ -332,14 +370,22 @@ impl ReplSession {
         }
 
         let mut lines = Vec::new();
-        if let Some(existing) = self.session_summary.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Some(existing) = self
+            .session_summary
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
             lines.push("Existing summary:".to_string());
             lines.push(existing.trim().to_string());
         }
 
         lines.push("Recent REPL summary:".to_string());
         for message in self.recent_messages.iter().take(12) {
-            let compact = message.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let compact = message
+                .content
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let snippet = compact.chars().take(220).collect::<String>();
             lines.push(format!("- {}: {}", message.role, snippet));
         }
@@ -348,8 +394,9 @@ impl ReplSession {
 
     fn show_insight(&self) -> Result<()> {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        
-        let messages: Vec<(&str, &str)> = self.recent_messages
+
+        let messages: Vec<(&str, &str)> = self
+            .recent_messages
             .iter()
             .map(|m| (m.role, m.content.as_str()))
             .collect();
@@ -360,19 +407,25 @@ impl ReplSession {
             return Ok(());
         }
 
-        println!("正在分析 {} 条消息并生成用户级 insight 网页报告...", messages.len());
+        println!(
+            "正在分析 {} 条消息并生成用户级 insight 网页报告...",
+            messages.len()
+        );
         println!();
 
         let report = insight::analyze_messages(&messages, &workdir)?;
         println!("{}", insight::render_success_message(&report));
         println!();
-        
+
         Ok(())
     }
 
     fn show_config(&self, parts: &[&str]) -> Result<()> {
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         println!("{}", config::render_config(&workdir, &args)?);
         Ok(())
     }
@@ -394,7 +447,10 @@ impl ReplSession {
     }
 
     fn show_diff(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         println!("{}", diff::render_diff(args)?);
         Ok(())
     }
@@ -411,7 +467,10 @@ impl ReplSession {
     }
 
     fn show_vim(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!("{}", vim::render_vim(&workdir, &args)?);
         Ok(())
@@ -445,7 +504,12 @@ impl ReplSession {
         match registry.list() {
             Ok(skills) => {
                 for skill in skills {
-                    println!("  {} - {} [{}]", skill.name, skill.description, skill.source.label());
+                    println!(
+                        "  {} - {} [{}]",
+                        skill.name,
+                        skill.description,
+                        skill.source.label()
+                    );
                 }
             }
             Err(error) => println!("  failed to load skills: {}", error),
@@ -464,7 +528,11 @@ impl ReplSession {
                     println!(
                         "  {} - {} - {} [{}]",
                         entry.name,
-                        if entry.server.enabled { "enabled" } else { "disabled" },
+                        if entry.server.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
                         entry.server.url,
                         entry.source.label()
                     );
@@ -476,7 +544,10 @@ impl ReplSession {
     }
 
     fn show_memory(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", memory::render_memory(&workdir, &args)?);
@@ -485,7 +556,10 @@ impl ReplSession {
     }
 
     fn show_wiki(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", wiki::render_wiki(&workdir, &args)?);
@@ -494,7 +568,10 @@ impl ReplSession {
     }
 
     fn show_prompt(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", prompt::render_prompt(&workdir, &args)?);
@@ -503,7 +580,10 @@ impl ReplSession {
     }
 
     fn show_ide(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", ide::render_ide(&workdir, &args)?);
@@ -512,7 +592,10 @@ impl ReplSession {
     }
 
     fn show_outstyle(&self, parts: &[&str]) -> Result<()> {
-        let args = parts.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
         let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
         println!();
         println!("{}", outstyle::render_outstyle(&workdir, &args)?);
@@ -545,7 +628,11 @@ impl ReplSession {
                     println!("Usage: /skill run <name> [args...]");
                     return Ok(());
                 };
-                let rendered = registry.render_prompt(name, &parts[2..].join(" "), std::path::Path::new("."))?;
+                let rendered = registry.render_prompt(
+                    name,
+                    &parts[2..].join(" "),
+                    std::path::Path::new("."),
+                )?;
                 println!();
                 println!("{}", rendered);
                 println!();
@@ -555,7 +642,8 @@ impl ReplSession {
                     println!("Usage: /skill add <name> <description> <prompt>");
                     return Ok(());
                 }
-                let path = registry.save_project_skill(parts[1], parts[2], &parts[3..].join(" "))?;
+                let path =
+                    registry.save_project_skill(parts[1], parts[2], &parts[3..].join(" "))?;
                 println!("Saved project skill to {}", path.display());
                 println!();
             }
@@ -605,22 +693,32 @@ impl ReplSession {
 
     fn login_provider(&mut self) -> Result<()> {
         println!();
-        let current_name = self.sacode_store.current_provider_name()?.unwrap_or_else(|| "default".to_string());
+        let current_name = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_else(|| "default".to_string());
         let existing_spec = self.sacode_store.provider(&current_name)?;
-        let existing = existing_spec.as_ref().map(|spec| ProviderConfig {
-            base_url: spec.base_url.clone(),
-            api_key: spec.api_key.clone(),
-            model: self
-                .sacode_store
-                .load_or_default()
-                .ok()
-                .and_then(|config| config.resolve_model(&config.model).map(|(_, model)| model))
-                .unwrap_or_default(),
-        }).unwrap_or_default();
+        let existing = existing_spec
+            .as_ref()
+            .map(|spec| ProviderConfig {
+                base_url: spec.base_url.clone(),
+                api_key: spec.api_key.clone(),
+                model: self
+                    .sacode_store
+                    .load_or_default()
+                    .ok()
+                    .and_then(|config| config.resolve_model(&config.model).map(|(_, model)| model))
+                    .unwrap_or_default(),
+            })
+            .unwrap_or_default();
         let provider_name = prompt_input("Provider name", Some(current_name.as_str()))?;
         let base_url = prompt_input(
             "Base URL",
-            if existing.base_url.is_empty() { None } else { Some(existing.base_url.as_str()) },
+            if existing.base_url.is_empty() {
+                None
+            } else {
+                Some(existing.base_url.as_str())
+            },
         )?;
         let api_key = prompt_input("API Key", None)?;
 
@@ -637,11 +735,12 @@ impl ReplSession {
             &config.base_url,
             config.api_key,
         )?;
-        let models = agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?
-            .into_iter()
-            .filter(|option| option.provider_name == provider_name.as_str())
-            .map(|option| option.model_name)
-            .collect::<Vec<_>>();
+        let models =
+            agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?
+                .into_iter()
+                .filter(|option| option.provider_name == provider_name.as_str())
+                .map(|option| option.model_name)
+                .collect::<Vec<_>>();
 
         println!("Saved provider {} to .sacode/config.json", provider_name);
         println!("Discovered {} models.", models.len());
@@ -654,7 +753,10 @@ impl ReplSession {
 
     fn select_provider(&mut self) -> Result<()> {
         println!();
-        let current = self.sacode_store.current_provider_name()?.unwrap_or_default();
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_default();
         let providers = self.sacode_store.list_names()?;
         if providers.is_empty() {
             println!("No providers configured. Run /login first.");
@@ -689,7 +791,10 @@ impl ReplSession {
 
     fn rename_provider(&mut self) -> Result<()> {
         println!();
-        let current = self.sacode_store.current_provider_name()?.unwrap_or_else(|| "default".to_string());
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_else(|| "default".to_string());
         let from = prompt_input("Current provider name", Some(current.as_str()))?;
         let to = prompt_input("New provider name", None)?;
         self.sacode_store.rename_provider(&from, &to)?;
@@ -701,9 +806,15 @@ impl ReplSession {
 
     fn remove_provider(&mut self) -> Result<()> {
         println!();
-        let current = self.sacode_store.current_provider_name()?.unwrap_or_default();
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_default();
         let providers = self.sacode_store.list_names()?;
-        let removable: Vec<String> = providers.into_iter().filter(|name| name != &current).collect();
+        let removable: Vec<String> = providers
+            .into_iter()
+            .filter(|name| name != &current)
+            .collect();
         if removable.is_empty() {
             println!("No removable providers. Keep one current provider configured.");
             println!();
@@ -731,12 +842,14 @@ impl ReplSession {
     fn select_model(&mut self) -> Result<()> {
         println!();
         let config = self.sacode_store.load_or_default()?;
-        let Some((current_provider_name, current_model)) = config.resolve_model(&config.model) else {
+        let Some((current_provider_name, current_model)) = config.resolve_model(&config.model)
+        else {
             println!("Provider is not configured. Run /connect first.");
             println!();
             return Ok(());
         };
-        let options = agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?;
+        let options =
+            agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?;
         if options.is_empty() {
             println!("Provider returned no models.");
             println!();
@@ -745,12 +858,20 @@ impl ReplSession {
 
         println!("Models:");
         for (index, option) in options.iter().enumerate() {
-            let marker = if option.provider_name == current_provider_name && option.model_name == current_model {
+            let marker = if option.provider_name == current_provider_name
+                && option.model_name == current_model
+            {
                 "*"
             } else {
                 " "
             };
-            println!("  {} {}. {} / {}", marker, index + 1, option.provider_name, option.model_name);
+            println!(
+                "  {} {}. {} / {}",
+                marker,
+                index + 1,
+                option.provider_name,
+                option.model_name
+            );
         }
 
         let selection = prompt_input("Select model number", None)?;
@@ -792,7 +913,9 @@ impl ReplSession {
         println!();
 
         let selection = prompt_input("Select provider number", None)?;
-        let index: usize = selection.parse().map_err(|_| anyhow::anyhow!("Invalid number"))?;
+        let index: usize = selection
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid number"))?;
 
         let (name, base_url) = match index {
             1 => ("ollama", "http://127.0.0.1:11434/v1"),
@@ -814,8 +937,7 @@ impl ReplSession {
         )?;
         println!(
             "Provider {} 已连接，当前默认模型: {}",
-            result.current_provider.name,
-            result.current_provider.config.model
+            result.current_provider.name, result.current_provider.config.model
         );
         println!();
         Ok(())
@@ -835,7 +957,11 @@ fn pending_question_options(question: &serde_json::Value) -> Option<Vec<String>>
         .get("options")
         .and_then(|value| value.as_array())?
         .iter()
-        .filter_map(|item| item.get("label").and_then(|value| value.as_str()).map(|value| value.to_string()))
+        .filter_map(|item| {
+            item.get("label")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        })
         .collect::<Vec<_>>();
     if options.is_empty() {
         None

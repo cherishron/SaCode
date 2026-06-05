@@ -9,7 +9,10 @@ use tokio::sync::broadcast;
 
 use sacode_kernel::{TaskQueueStatus, TaskRun};
 
-use super::{parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status, DaemonState, StreamEvent};
+use super::{
+    parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status,
+    DaemonState, StreamEvent,
+};
 
 pub fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_json::Value) {
     let _ = state.event_bus.send(StreamEvent {
@@ -87,7 +90,10 @@ pub async fn stream_task_events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-async fn update_task_status_from_executor_event(state: &Arc<DaemonState>, evt: &crate::executor::ExecutorEvent) {
+async fn update_task_status_from_executor_event(
+    state: &Arc<DaemonState>,
+    evt: &crate::executor::ExecutorEvent,
+) {
     let mut tasks = state.tasks.write().await;
     let Some(status) = tasks.get_mut(&evt.task_id) else {
         return;
@@ -108,7 +114,9 @@ async fn update_task_status_from_executor_event(state: &Arc<DaemonState>, evt: &
         }
         "task_completed" | "task_failed" => {
             if let Some(result_value) = evt.data.get("result") {
-                if let Ok(result) = serde_json::from_value::<sacode_kernel::TaskResult>(result_value.clone()) {
+                if let Ok(result) =
+                    serde_json::from_value::<sacode_kernel::TaskResult>(result_value.clone())
+                {
                     status.duration_ms = Some(result.duration_ms);
                     status.output = result.output.clone();
                     status.error = result.error.clone();

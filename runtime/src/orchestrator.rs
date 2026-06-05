@@ -1,6 +1,12 @@
-use sacode_kernel::{ApprovalPolicy, Checkpoint, ExecutionContext, ExecutionReport, HookContext, LifecyclePoint, Supervisor, TaskRun, ToolExecutionContext, ToolExecutionRecord};
+use sacode_kernel::{
+    ApprovalPolicy, Checkpoint, ExecutionContext, ExecutionReport, HookContext, LifecyclePoint,
+    Supervisor, TaskRun, ToolExecutionContext, ToolExecutionRecord,
+};
 
-use crate::{task_run_from_report, CheckpointStorage, HookExecutor, LoggingHook, SandboxExecutor, ToolRegistry};
+use crate::{
+    task_run_from_report, CheckpointStorage, HookExecutor, LoggingHook, SandboxExecutor,
+    ToolRegistry,
+};
 
 pub struct RuntimeOrchestrator {
     supervisor: Supervisor,
@@ -32,7 +38,10 @@ impl RuntimeOrchestrator {
         checkpoint.set_iteration(context.iteration);
 
         let task_started = HookContext::new(LifecyclePoint::TaskStarted, context.clone());
-        report.hook_records.extend(self.hooks.execute(LifecyclePoint::TaskStarted, &task_started));
+        report.hook_records.extend(
+            self.hooks
+                .execute(LifecyclePoint::TaskStarted, &task_started),
+        );
 
         let supervisor_result = self.supervisor.execute(&context.task);
         report.plan = Some(supervisor_result.output.plan.clone());
@@ -61,12 +70,16 @@ impl RuntimeOrchestrator {
                     .clone()
                     .with_step(*step_id, step_description.clone());
 
-                let started = HookContext::new(LifecyclePoint::ToolStarted, execution_context.clone())
-                    .with_tool(tool_context.clone());
-                report.hook_records.extend(self.hooks.execute(LifecyclePoint::ToolStarted, &started));
+                let started =
+                    HookContext::new(LifecyclePoint::ToolStarted, execution_context.clone())
+                        .with_tool(tool_context.clone());
+                report
+                    .hook_records
+                    .extend(self.hooks.execute(LifecyclePoint::ToolStarted, &started));
 
-                let (output, success) = self.execute_tool(&tool_call.name, &tool_call.input, context.approval);
-                
+                let (output, success) =
+                    self.execute_tool(&tool_call.name, &tool_call.input, context.approval);
+
                 checkpoint.record_tool(
                     tool_call.name.clone(),
                     tool_call.input.clone(),
@@ -82,7 +95,9 @@ impl RuntimeOrchestrator {
 
                 let finished = HookContext::new(LifecyclePoint::ToolFinished, execution_context)
                     .with_tool(tool_context);
-                report.hook_records.extend(self.hooks.execute(LifecyclePoint::ToolFinished, &finished));
+                report
+                    .hook_records
+                    .extend(self.hooks.execute(LifecyclePoint::ToolFinished, &finished));
             }
         }
 
@@ -90,10 +105,14 @@ impl RuntimeOrchestrator {
             for step in &plan.steps {
                 let step_context = context.clone().with_step(step.id, step.description.clone());
                 let started = HookContext::new(LifecyclePoint::StepStarted, step_context.clone());
-                report.hook_records.extend(self.hooks.execute(LifecyclePoint::StepStarted, &started));
+                report
+                    .hook_records
+                    .extend(self.hooks.execute(LifecyclePoint::StepStarted, &started));
 
                 let finished = HookContext::new(LifecyclePoint::StepFinished, step_context);
-                report.hook_records.extend(self.hooks.execute(LifecyclePoint::StepFinished, &finished));
+                report
+                    .hook_records
+                    .extend(self.hooks.execute(LifecyclePoint::StepFinished, &finished));
             }
         }
 
@@ -103,10 +122,16 @@ impl RuntimeOrchestrator {
 
         let checkpoint_saved = HookContext::new(LifecyclePoint::CheckpointSaved, context.clone())
             .with_checkpoint_ref(checkpoint_ref);
-        report.hook_records.extend(self.hooks.execute(LifecyclePoint::CheckpointSaved, &checkpoint_saved));
+        report.hook_records.extend(
+            self.hooks
+                .execute(LifecyclePoint::CheckpointSaved, &checkpoint_saved),
+        );
 
         let task_finished = HookContext::new(LifecyclePoint::TaskFinished, context.clone());
-        report.hook_records.extend(self.hooks.execute(LifecyclePoint::TaskFinished, &task_finished));
+        report.hook_records.extend(
+            self.hooks
+                .execute(LifecyclePoint::TaskFinished, &task_finished),
+        );
 
         Ok(report)
     }
@@ -122,15 +147,27 @@ impl RuntimeOrchestrator {
         ))
     }
 
-    fn execute_tool(&self, name: &str, input: &serde_json::Value, approval: ApprovalPolicy) -> (serde_json::Value, bool) {
+    fn execute_tool(
+        &self,
+        name: &str,
+        input: &serde_json::Value,
+        approval: ApprovalPolicy,
+    ) -> (serde_json::Value, bool) {
         let spec = self.tools.get(name);
         let needs_approval = spec.map(|s| s.needs_approval()).unwrap_or(false);
 
         if needs_approval {
             match approval {
                 ApprovalPolicy::AutoApprove => {}
-                ApprovalPolicy::AutoDeny => return (serde_json::json!({ "error": "denied by policy" }), false),
-                ApprovalPolicy::Prompt => return (serde_json::json!({ "error": "interactive approval unavailable" }), false),
+                ApprovalPolicy::AutoDeny => {
+                    return (serde_json::json!({ "error": "denied by policy" }), false)
+                }
+                ApprovalPolicy::Prompt => {
+                    return (
+                        serde_json::json!({ "error": "interactive approval unavailable" }),
+                        false,
+                    )
+                }
             }
         }
 
@@ -140,15 +177,19 @@ impl RuntimeOrchestrator {
                     if output.success {
                         (output.data, true)
                     } else {
-                        (serde_json::json!({ "error": output.message.unwrap_or_default() }), false)
+                        (
+                            serde_json::json!({ "error": output.message.unwrap_or_default() }),
+                            false,
+                        )
                     }
                 }
-                Err(error) => {
-                    (serde_json::json!({ "error": error.to_string() }), false)
-                }
+                Err(error) => (serde_json::json!({ "error": error.to_string() }), false),
             }
         } else {
-            (serde_json::json!({ "error": format!("unknown tool: {}", name) }), false)
+            (
+                serde_json::json!({ "error": format!("unknown tool: {}", name) }),
+                false,
+            )
         }
     }
 }

@@ -22,18 +22,20 @@ impl App {
     pub(super) fn spawn_init_task(&self, mode: InitMode) {
         let sender = self.task_tx.clone();
         let workdir = self.workdir.clone();
-        thread::spawn(move || match block_on_cli_future(async {
-            let draft = build_init_draft(&workdir, mode).await?;
-            apply_init_draft(&workdir, &draft).await
-        }) {
-            Ok(_) => {
-                let _ = sender.send(AsyncResult::InitCompleted { mode });
-            }
-            Err(error) => {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::Init,
-                    message: format!("初始化失败: {}", error),
-                });
+        thread::spawn(move || {
+            match block_on_cli_future(async {
+                let draft = build_init_draft(&workdir, mode).await?;
+                apply_init_draft(&workdir, &draft).await
+            }) {
+                Ok(_) => {
+                    let _ = sender.send(AsyncResult::InitCompleted { mode });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Init,
+                        message: format!("初始化失败: {}", error),
+                    });
+                }
             }
         });
     }

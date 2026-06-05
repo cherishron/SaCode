@@ -72,7 +72,9 @@ pub(crate) fn render_message_lines(
                             "● ",
                             "  ",
                             content_line,
-                            Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(theme.assistant)
+                                .add_modifier(Modifier::BOLD),
                             body_style,
                             wrap_width,
                         );
@@ -105,7 +107,11 @@ pub(crate) fn render_message_lines(
     lines
 }
 
-fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<RenderedMessageLine> {
+fn render_system_block(
+    content: &str,
+    theme: ThemePalette,
+    width: usize,
+) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
 
     for line in content.lines() {
@@ -124,30 +130,15 @@ fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<
         }
 
         let (prefix, style) = if line.starts_with(PREFIX_WAITING) {
-            (
-                "● ",
-                Style::default().fg(theme.agent),
-            )
+            ("● ", Style::default().fg(theme.agent))
         } else if line.starts_with(PREFIX_QUEUE) {
-            (
-                "● ",
-                Style::default().fg(theme.info),
-            )
+            ("● ", Style::default().fg(theme.info))
         } else if line.starts_with(PREFIX_SUCCESS) {
-            (
-                "● ",
-                Style::default().fg(theme.build),
-            )
+            ("● ", Style::default().fg(theme.build))
         } else if line.starts_with(PREFIX_ERROR) {
-            (
-                "● ",
-                Style::default().fg(theme.warning),
-            )
+            ("● ", Style::default().fg(theme.warning))
         } else {
-            (
-                "● ",
-                Style::default().fg(theme.muted),
-            )
+            ("● ", Style::default().fg(theme.muted))
         };
 
         let text = line
@@ -163,23 +154,23 @@ fn render_system_block(content: &str, theme: ThemePalette, width: usize) -> Vec<
             continue;
         }
 
-        push_wrapped_text_lines(
-            &mut lines,
-            prefix,
-            "  ",
-            text,
-            style,
-            style,
-            width,
-        );
+        push_wrapped_text_lines(&mut lines, prefix, "  ", text, style, style, width);
     }
 
     lines
 }
 
-fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool, width: usize) -> Vec<RenderedMessageLine> {
+fn render_tool_block(
+    content: &str,
+    theme: ThemePalette,
+    first_in_message: bool,
+    width: usize,
+) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
-    let text = content.strip_prefix(PREFIX_TOOL).unwrap_or(content).trim_start();
+    let text = content
+        .strip_prefix(PREFIX_TOOL)
+        .unwrap_or(content)
+        .trim_start();
 
     // Try to parse "ToolName(args)" or "ToolName rest"
     let (tool_name, args) = if let Some(open_idx) = text.find('(') {
@@ -200,12 +191,10 @@ fn render_tool_block(content: &str, theme: ThemePalette, first_in_message: bool,
     };
 
     // First line: ● ToolName(args)
-    let mut first_spans = vec![
-        Span::styled(
-            if first_in_message { "● " } else { "  " },
-            Style::default().fg(theme.info),
-        ),
-    ];
+    let mut first_spans = vec![Span::styled(
+        if first_in_message { "● " } else { "  " },
+        Style::default().fg(theme.info),
+    )];
     if let Some(args) = args {
         first_spans.push(Span::styled(
             format!("{}(", tool_name),
@@ -262,8 +251,14 @@ fn render_thinking_block(
                 Style::default().fg(theme.accent),
             ),
             Span::styled(
-                if collapsed { "思考 [已折叠]" } else { "思考" },
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                if collapsed {
+                    "思考 [已折叠]"
+                } else {
+                    "思考"
+                },
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
         ],
         width,
@@ -275,7 +270,9 @@ fn render_thinking_block(
             "   │ ",
             "   │ ",
             text,
-            Style::default().fg(theme.border).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(theme.border)
+                .add_modifier(Modifier::DIM),
             Style::default().fg(theme.text).add_modifier(Modifier::DIM),
             width,
         );
@@ -293,7 +290,10 @@ fn push_wrapped_text_lines(
     text_style: Style,
     width: usize,
 ) {
-    let wrapped = wrap_text(text, width.saturating_sub(display_width(first_prefix)).max(1));
+    let wrapped = wrap_text(
+        text,
+        width.saturating_sub(display_width(first_prefix)).max(1),
+    );
 
     for (index, segment) in wrapped.into_iter().enumerate() {
         let prefix = if index == 0 {
@@ -321,7 +321,10 @@ fn push_wrapped_line_spans(
 
     for span in spans {
         let style = span.style;
-        for segment in wrap_text(span.content.as_ref(), max_width.saturating_sub(current_width).max(1)) {
+        for segment in wrap_text(
+            span.content.as_ref(),
+            max_width.saturating_sub(current_width).max(1),
+        ) {
             let segment_width = display_width(&segment);
             if current_width + segment_width > max_width && !current_spans.is_empty() {
                 lines.push(RenderedMessageLine {
@@ -380,9 +383,17 @@ fn body_style_for_message(msg: &Message, theme: ThemePalette) -> Style {
     match msg.role {
         MessageRole::User => Style::default().fg(theme.text),
         MessageRole::Assistant => {
-            if msg.content.lines().any(|line| line.starts_with(PREFIX_THINKING)) {
+            if msg
+                .content
+                .lines()
+                .any(|line| line.starts_with(PREFIX_THINKING))
+            {
                 Style::default().fg(theme.text)
-            } else if msg.content.lines().any(|line| line.starts_with(PREFIX_TOOL)) {
+            } else if msg
+                .content
+                .lines()
+                .any(|line| line.starts_with(PREFIX_TOOL))
+            {
                 Style::default().fg(theme.text)
             } else {
                 Style::default().fg(theme.text)

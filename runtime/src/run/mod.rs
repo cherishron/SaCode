@@ -11,7 +11,13 @@ pub fn run_task_once(context: &ExecutionContext) -> TaskRun {
         ..ExecutionReport::default()
     };
 
-    task_run_from_report(context.task_id.clone(), context.mode, context.task.prompt.clone(), &report, infer_task_run_state(&report))
+    task_run_from_report(
+        context.task_id.clone(),
+        context.mode,
+        context.task.prompt.clone(),
+        &report,
+        infer_task_run_state(&report),
+    )
 }
 
 pub fn task_run_from_report(
@@ -31,7 +37,10 @@ pub fn task_run_from_report(
         started_at: Some(now.clone()),
         updated_at: Some(now),
         report: Some(report.clone()),
-        output_text: report.final_output.clone().or_else(|| report.events.iter().rev().find_map(event_summary)),
+        output_text: report
+            .final_output
+            .clone()
+            .or_else(|| report.events.iter().rev().find_map(event_summary)),
         ..TaskRun::default()
     }
 }
@@ -58,7 +67,11 @@ pub fn task_run_snapshot(
 }
 
 pub fn infer_task_run_state(report: &ExecutionReport) -> TaskRunState {
-    if report.events.iter().any(|event| matches!(event, Event::Error { .. })) {
+    if report
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::Error { .. }))
+    {
         TaskRunState::Failed
     } else {
         TaskRunState::Completed

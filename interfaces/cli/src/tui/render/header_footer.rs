@@ -6,7 +6,10 @@ use ratatui::{
     Frame,
 };
 
-use super::super::{App, TodoStatus};
+use super::super::{App, TodoStatus, SPINNER_FRAMES};
+
+const DEFAULT_CONTEXT_LIMIT_TOKENS: usize = 128_000;
+const CONTEXT_RING_STEPS: [&str; 9] = ["○", "◔", "◑", "◕", "◉", "◕", "◑", "◔", "○"];
 
 fn truncate_middle(text: &str, max_chars: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -25,141 +28,151 @@ fn truncate_middle(text: &str, max_chars: usize) -> String {
     result
 }
 
-fn git_summary(app: &App) -> String {
-    if app
-        .git_changes
-        .iter()
-        .any(|change| change.starts_with("未检测到") || change.starts_with("当前目录不是") || change.starts_with("读取 Git") || change.starts_with("git status"))
-    {
-        return String::new();
+fn compact_path(path: &str, max_chars: usize) -> String {
+    let normalized = path.replace('\\', "/");
+    let parts = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        return truncate_middle(path, max_chars);
     }
 
-    let mut staged = 0usize;
-    let mut modified = 0usize;
-    let mut untracked = 0usize;
-
-    for change in &app.git_changes {
-        if change.starts_with("??") {
-            untracked += 1;
-            continue;
+    let mut visible = Vec::new();
+    let mut current_len = 1usize;
+    for part in parts.iter().rev() {
+        let extra = if visible.is_empty() {
+            part.len()
+        } else {
+            part.len() + 1
+        };
+        if current_len + extra > max_chars.saturating_sub(2) && !visible.is_empty() {
+            break;
         }
-        let chars: Vec<char> = change.chars().collect();
-        if chars.first().copied().unwrap_or(' ') != ' ' {
-            staged += 1;
-        }
-        if chars.get(1).copied().unwrap_or(' ') != ' ' {
-            modified += 1;
-        }
+        visible.push(*part);
+        current_len += extra;
     }
+    visible.reverse();
 
-    if staged == 0 && modified == 0 && untracked == 0 {
-        String::new()
-    } else {
-        format!("git +{} ~{} ?{}", staged, modified, untracked)
-    }
+    let compact = format!("~/{}", visible.join("/"));
+    truncate_middle(&compact, max_chars)
 }
 
 fn todo_summary(app: &App) -> Option<String> {
     app.interaction.todo_plan.as_ref().map(|plan| {
-        let running = plan.items.iter().filter(|i| matches!(i.status, TodoStatus::Running)).count();
-        let pending = plan.items.iter().filter(|i| matches!(i.status, TodoStatus::Pending)).count();
-        let completed = plan.items.iter().filter(|i| matches!(i.status, TodoStatus::Completed)).count();
+        let running = plan
+            .items
+            .iter()
+            .filter(|i| matches!(i.status, TodoStatus::Running))
+            .count();
+        let pending = plan
+            .items
+            .iter()
+            .filter(|i| matches!(i.status, TodoStatus::Pending))
+            .count();
+        let completed = plan
+            .items
+            .iter()
+            .filter(|i| matches!(i.status, TodoStatus::Completed))
+            .count();
         format!("todo {}/{}/{}", running, pending, completed)
     })
 }
 
 fn queue_summary(app: &App) -> Option<String> {
-    if app.queue.processing {
-        let elapsed = app.active_task_elapsed_seconds();
-        Some(format!("运行中 {}s", elapsed))
-    } else if !app.queue.queued_messages.is_empty() {
-        Some(format!("排队 {}", app.queue.queued_messages.len()))
+    if !app.queue.processing && !app.queue.queued_messages.is_empty() {
+        Some(format!("queue {}", app.queue.queued_messages.len()))
     } else {
         None
     }
 }
 
-fn context_summary(app: &App) -> String {
-    format!(
-        "上下文 {} chars ~{} tok",
-        app.current_context_char_count(),
-        app.current_context_token_estimate()
-    )
+fn context_limit_tokens(app: &App) -> usize {
+    app.current_provider
+        .as_ref()
+        .and_then(|current| {
+            app.sacode_store
+                .provider(&current.name)
+                .ok()
+                .flatten()
+                .and_then(|provider| provider.models.get(&current.config.model).cloned())
+        })
+        .and_then(|rule| rule.limit.map(|limit| limit.context as usize))
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_CONTEXT_LIMIT_TOKENS)
+}
+
+fn context_ratio(app: &App) -> f32 {
+    let used = app.current_context_token_estimate() as f32;
+    let limit = context_limit_tokens(app) as f32;
+    if limit <= 0.0 {
+        0.0
+    } else {
+        (used / limit).clamp(0.0, 1.0)
+    }
+}
+
+fn context_ring(app: &App) -> &'static str {
+    let ratio = context_ratio(app);
+    let index = (ratio * (CONTEXT_RING_STEPS.len().saturating_sub(1) as f32)).round() as usize;
+    CONTEXT_RING_STEPS[index.min(CONTEXT_RING_STEPS.len().saturating_sub(1))]
+}
+
+fn status_separator(theme: super::super::ThemePalette) -> Span<'static> {
+    Span::styled(" | ", Style::default().fg(theme.subtle))
 }
 
 pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
-    let project_path = app.workdir.display().to_string();
-    let path_limit = area.width.saturating_sub(18) as usize;
-    let visible_path = truncate_middle(&project_path, path_limit.max(12));
-
-    let mut top_spans = vec![
-        Span::styled(
-            format!("SaCode v{} ", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(visible_path, Style::default().fg(theme.muted)),
-    ];
-
-    let model_name = app.current_model_name();
-    if !model_name.is_empty() {
-        top_spans.push(Span::styled("  ", Style::default()));
-        top_spans.push(Span::styled(
-            format!("模型 {}", truncate_middle(&model_name, 28)),
-            Style::default().fg(theme.info),
-        ));
-    }
-
-    let mut bottom_spans = vec![Span::styled(
-        format!("模式 {}", app.execution_mode_label()),
-        Style::default().fg(match app.execution_mode {
-            sacode_kernel::ExecutionMode::Plan => theme.plan,
-            sacode_kernel::ExecutionMode::Build => theme.build,
-            sacode_kernel::ExecutionMode::Yolo => theme.yolo,
-        })
-        .add_modifier(Modifier::BOLD),
-    )];
-
-    if let Some(branch) = app.current_git_branch() {
-        bottom_spans.push(Span::styled("  ", Style::default()));
-        bottom_spans.push(Span::styled(
-            format!("git:{}", truncate_middle(&branch, 20)),
-            Style::default().fg(theme.muted),
-        ));
-    }
-
-    let git = git_summary(app);
-    if !git.is_empty() {
-        bottom_spans.push(Span::styled("  ", Style::default()));
-        bottom_spans.push(Span::styled(git, Style::default().fg(theme.warning)));
-    }
-
-    if let Some(queue) = queue_summary(app) {
-        bottom_spans.push(Span::styled("  ", Style::default()));
-        bottom_spans.push(Span::styled(queue, Style::default().fg(theme.subtle)));
-    }
-
-    if let Some(todo) = todo_summary(app) {
-        bottom_spans.push(Span::styled("  ", Style::default()));
-        bottom_spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
-    }
-
-    bottom_spans.push(Span::styled("  ", Style::default()));
-    bottom_spans.push(Span::styled(
-        context_summary(app),
-        Style::default().fg(theme.info),
-    ));
-
+    let visible_path = compact_path(&app.workdir.display().to_string(), 24);
+    let model_name = truncate_middle(&app.current_model_name(), 32);
     let thinking_status = if app.current_thinking_enabled() {
-        Span::styled("think:on", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "think:on",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled("think:off", Style::default().fg(theme.subtle))
     };
-    bottom_spans.push(Span::styled("  ", Style::default()));
-    bottom_spans.push(thinking_status);
+
+    let mut spans = vec![
+        Span::styled(
+            format!("SaCode v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        ),
+        status_separator(theme),
+        Span::styled(
+            format!("主模型 {}", model_name),
+            Style::default().fg(theme.info),
+        ),
+        status_separator(theme),
+        Span::styled("Ctrl+Q: quit", Style::default().fg(theme.subtle)),
+        status_separator(theme),
+        Span::styled(
+            format!("模式 {}", app.execution_mode_label()),
+            Style::default()
+                .fg(match app.execution_mode {
+                    sacode_kernel::ExecutionMode::Plan => theme.plan,
+                    sacode_kernel::ExecutionMode::Build => theme.build,
+                    sacode_kernel::ExecutionMode::Yolo => theme.yolo,
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        status_separator(theme),
+        thinking_status,
+        status_separator(theme),
+        Span::styled(visible_path, Style::default().fg(theme.muted)),
+    ];
+
+    if area.width < 80 {
+        spans.truncate(7);
+    }
 
     frame.render_widget(
-        Paragraph::new(vec![Line::from(top_spans), Line::from(bottom_spans)]).alignment(Alignment::Left),
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
 }
@@ -167,17 +180,62 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
     let mut spans = Vec::new();
-    
-    if app.current_thinking_enabled() {
-        spans.push(Span::styled("Ctrl+T: think:on  ", Style::default().fg(theme.accent)));
-    } else {
-        spans.push(Span::styled("Ctrl+T: think:off  ", Style::default().fg(theme.subtle)));
+
+    if app.queue.processing {
+        let frame_text = SPINNER_FRAMES[app.spinner_index % SPINNER_FRAMES.len()];
+        spans.push(Span::styled(
+            format!(
+                "{} Running {}s",
+                frame_text,
+                app.active_task_elapsed_seconds()
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(status_separator(theme));
     }
-    
+
+    let context_ratio = context_ratio(app);
     spans.push(Span::styled(
-        "Alt+M: mode  ",
+        format!(
+            "{} ctx {:>3}% ~{} tok",
+            context_ring(app),
+            (context_ratio * 100.0).round() as usize,
+            app.current_context_token_estimate()
+        ),
+        Style::default().fg(theme.info),
+    ));
+
+    if let Some(queue) = queue_summary(app) {
+        spans.push(status_separator(theme));
+        spans.push(Span::styled(queue, Style::default().fg(theme.warning)));
+    }
+
+    if let Some(todo) = todo_summary(app) {
+        spans.push(status_separator(theme));
+        spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
+    }
+
+    spans.push(status_separator(theme));
+    if app.current_thinking_enabled() {
+        spans.push(Span::styled(
+            "Ctrl+T: think:on",
+            Style::default().fg(theme.accent),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "Ctrl+T: think:off",
+            Style::default().fg(theme.subtle),
+        ));
+    }
+
+    spans.push(status_separator(theme));
+    spans.push(Span::styled(
+        "Alt+M: mode",
         Style::default().fg(theme.subtle),
     ));
+    spans.push(status_separator(theme));
     spans.push(Span::styled(
         "Ctrl+Q: quit",
         Style::default().fg(theme.subtle),

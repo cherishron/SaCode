@@ -31,13 +31,17 @@ pub fn builtin_roles() -> Vec<AgentRole> {
             id: "requirement-analyst".to_string(),
             name: "Requirement Analyst".to_string(),
             stage: Some(RoleStage::Requirements),
-            system_prompt: "Clarify goals, scope, constraints, and acceptance criteria.".to_string(),
+            system_prompt: "Clarify goals, scope, constraints, and acceptance criteria."
+                .to_string(),
             responsibilities: vec![
                 "Refine ambiguous user requests".to_string(),
                 "Extract acceptance criteria".to_string(),
             ],
             preferred_context: vec!["task".to_string(), "recent_messages".to_string()],
-            deliverables: vec!["requirements".to_string(), "acceptance_criteria".to_string()],
+            deliverables: vec![
+                "requirements".to_string(),
+                "acceptance_criteria".to_string(),
+            ],
             handoff_to: vec!["system-architect".to_string(), "implementer".to_string()],
             model_policy: RoleModelPolicy {
                 thinking: Some(true),
@@ -50,7 +54,8 @@ pub fn builtin_roles() -> Vec<AgentRole> {
             id: "system-architect".to_string(),
             name: "System Architect".to_string(),
             stage: Some(RoleStage::Design),
-            system_prompt: "Design module boundaries, execution flow, and technical tradeoffs.".to_string(),
+            system_prompt: "Design module boundaries, execution flow, and technical tradeoffs."
+                .to_string(),
             responsibilities: vec![
                 "Define architecture changes".to_string(),
                 "Identify dependency and state boundaries".to_string(),
@@ -68,7 +73,9 @@ pub fn builtin_roles() -> Vec<AgentRole> {
             id: "repo-explorer".to_string(),
             name: "Repo Explorer".to_string(),
             stage: Some(RoleStage::Implementation),
-            system_prompt: "Explore the repository, identify relevant files, and map execution paths.".to_string(),
+            system_prompt:
+                "Explore the repository, identify relevant files, and map execution paths."
+                    .to_string(),
             responsibilities: vec![
                 "Locate relevant files and entry points".to_string(),
                 "Summarize code paths and dependencies".to_string(),
@@ -138,7 +145,8 @@ pub fn builtin_roles() -> Vec<AgentRole> {
             id: "devops-operator".to_string(),
             name: "DevOps Operator".to_string(),
             stage: Some(RoleStage::Delivery),
-            system_prompt: "Handle deployment, runtime configuration, and health validation.".to_string(),
+            system_prompt: "Handle deployment, runtime configuration, and health validation."
+                .to_string(),
             responsibilities: vec![
                 "Prepare deploy or runtime checks".to_string(),
                 "Summarize operational risks".to_string(),
@@ -155,7 +163,8 @@ pub fn builtin_roles() -> Vec<AgentRole> {
             id: "reporter".to_string(),
             name: "Reporter".to_string(),
             stage: Some(RoleStage::Delivery),
-            system_prompt: "Summarize execution results, user impact, and next actions.".to_string(),
+            system_prompt: "Summarize execution results, user impact, and next actions."
+                .to_string(),
             responsibilities: vec![
                 "Prepare user-facing summary".to_string(),
                 "Highlight outcome and residual risks".to_string(),

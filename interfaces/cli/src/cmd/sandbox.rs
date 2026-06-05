@@ -2,9 +2,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Result;
-use serde::Serialize;
 use sacode_kernel::ExecutionMode;
-use sacode_runtime::{SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxPolicy, SandboxResourceConfig, SandboxShellConfig, SandboxTaskConfig};
+use sacode_runtime::{
+    SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig,
+    SandboxModeConfig, SandboxNetworkConfig, SandboxPolicy, SandboxResourceConfig,
+    SandboxShellConfig, SandboxTaskConfig,
+};
+use serde::Serialize;
 
 pub fn run(args: Vec<String>) -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -33,7 +37,11 @@ fn render_show(workdir: &Path, args: &[String]) -> Result<String> {
     let mode = args.iter().find_map(|arg| parse_mode(arg));
     let modes = match mode {
         Some(mode) => vec![mode],
-        None => vec![ExecutionMode::Plan, ExecutionMode::Build, ExecutionMode::Yolo],
+        None => vec![
+            ExecutionMode::Plan,
+            ExecutionMode::Build,
+            ExecutionMode::Yolo,
+        ],
     };
 
     if json {
@@ -42,22 +50,49 @@ fn render_show(workdir: &Path, args: &[String]) -> Result<String> {
 
     let mut lines = vec!["Sandbox Policies".to_string()];
     let config = store.load()?;
-    lines.push(format!("backend.kind: {}", backend_kind_label(config.backend.kind)));
+    lines.push(format!(
+        "backend.kind: {}",
+        backend_kind_label(config.backend.kind)
+    ));
     for mode in modes {
         let policy = store.policy_for_mode(mode)?;
         lines.push(String::new());
         lines.push(format!("[{}]", mode));
-        lines.push(format!("fs.read_paths: {:?}", display_paths(&policy.fs.read_paths)));
-        lines.push(format!("fs.write_paths: {:?}", display_paths(&policy.fs.write_paths)));
-        lines.push(format!("fs.deny_paths: {:?}", display_paths(&policy.fs.denied_paths)));
-        lines.push(format!("network.search_allowed: {}", policy.network.search_allowed));
-        lines.push(format!("network.fetch_allowed: {}", policy.network.fetch_allowed));
-        lines.push(format!("network.browser_allowed: {}", policy.network.browser_allowed));
+        lines.push(format!(
+            "fs.read_paths: {:?}",
+            display_paths(&policy.fs.read_paths)
+        ));
+        lines.push(format!(
+            "fs.write_paths: {:?}",
+            display_paths(&policy.fs.write_paths)
+        ));
+        lines.push(format!(
+            "fs.deny_paths: {:?}",
+            display_paths(&policy.fs.denied_paths)
+        ));
+        lines.push(format!(
+            "network.search_allowed: {}",
+            policy.network.search_allowed
+        ));
+        lines.push(format!(
+            "network.fetch_allowed: {}",
+            policy.network.fetch_allowed
+        ));
+        lines.push(format!(
+            "network.browser_allowed: {}",
+            policy.network.browser_allowed
+        ));
         lines.push(format!("shell.enabled: {}", policy.shell.enabled));
-        lines.push(format!("shell.allowed_commands: {:?}", policy.shell.allowed_commands));
+        lines.push(format!(
+            "shell.allowed_commands: {:?}",
+            policy.shell.allowed_commands
+        ));
         lines.push(format!("task.spawn_allowed: {}", policy.task.spawn_allowed));
         lines.push(format!("resources.timeout_ms: {:?}", policy.timeout_ms()));
-        lines.push(format!("resources.max_memory_mb: {:?}", policy.max_memory_mb()));
+        lines.push(format!(
+            "resources.max_memory_mb: {:?}",
+            policy.max_memory_mb()
+        ));
     }
     Ok(lines.join("\n"))
 }
@@ -76,7 +111,9 @@ fn render_show_json(store: &SandboxConfigStore, modes: &[ExecutionMode]) -> Resu
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(serde_json::to_string_pretty(&SandboxShowResponse { policies })?)
+    Ok(serde_json::to_string_pretty(&SandboxShowResponse {
+        policies,
+    })?)
 }
 
 fn render_diff(workdir: &Path, args: &[String]) -> Result<String> {
@@ -86,7 +123,11 @@ fn render_diff(workdir: &Path, args: &[String]) -> Result<String> {
     let mode = args.iter().find_map(|arg| parse_mode(arg));
     let modes = match mode {
         Some(mode) => vec![mode],
-        None => vec![ExecutionMode::Plan, ExecutionMode::Build, ExecutionMode::Yolo],
+        None => vec![
+            ExecutionMode::Plan,
+            ExecutionMode::Build,
+            ExecutionMode::Yolo,
+        ],
     };
 
     let diffs = modes
@@ -95,7 +136,9 @@ fn render_diff(workdir: &Path, args: &[String]) -> Result<String> {
         .collect::<Vec<_>>();
 
     if json {
-        return Ok(serde_json::to_string_pretty(&SandboxDiffResponse { diffs })?);
+        return Ok(serde_json::to_string_pretty(&SandboxDiffResponse {
+            diffs,
+        })?);
     }
 
     let mut lines = vec!["Sandbox Policy Diff".to_string()];
@@ -110,7 +153,10 @@ fn render_diff(workdir: &Path, args: &[String]) -> Result<String> {
         }
 
         for field in diff.fields {
-            lines.push(format!("{}: {} -> {}", field.key, field.default_value, field.effective_value));
+            lines.push(format!(
+                "{}: {} -> {}",
+                field.key, field.default_value, field.effective_value
+            ));
         }
     }
 
@@ -124,7 +170,11 @@ fn render_doctor(workdir: &Path, args: &[String]) -> Result<String> {
     let mode = args.iter().find_map(|arg| parse_mode(arg));
     let modes = match mode {
         Some(mode) => vec![mode],
-        None => vec![ExecutionMode::Plan, ExecutionMode::Build, ExecutionMode::Yolo],
+        None => vec![
+            ExecutionMode::Plan,
+            ExecutionMode::Build,
+            ExecutionMode::Yolo,
+        ],
     };
 
     let mut findings = Vec::new();
@@ -136,7 +186,9 @@ fn render_doctor(workdir: &Path, args: &[String]) -> Result<String> {
     }
 
     if json {
-        return Ok(serde_json::to_string_pretty(&SandboxDoctorResponse { findings })?);
+        return Ok(serde_json::to_string_pretty(&SandboxDoctorResponse {
+            findings,
+        })?);
     }
 
     let mut lines = vec!["Sandbox Doctor".to_string()];
@@ -164,84 +216,84 @@ fn render_init(workdir: &Path) -> Result<String> {
         return Ok(format!("沙箱配置已存在: {}", path.display()));
     }
 
-        let config = SandboxConfig {
-            backend: SandboxBackendConfig {
-                kind: SandboxBackendKind::Local,
-                ..SandboxBackendConfig::default()
+    let config = SandboxConfig {
+        backend: SandboxBackendConfig {
+            kind: SandboxBackendKind::Local,
+            ..SandboxBackendConfig::default()
+        },
+        plan: SandboxModeConfig {
+            fs: SandboxFsConfig {
+                read_paths: vec![".".to_string()],
+                ..SandboxFsConfig::default()
             },
-            plan: SandboxModeConfig {
-                fs: SandboxFsConfig {
-                    read_paths: vec![".".to_string()],
-                    ..SandboxFsConfig::default()
-                },
-                network: SandboxNetworkConfig {
-                    search_allowed: Some(true),
-                    fetch_allowed: Some(false),
-                    browser_allowed: Some(false),
-                    ..SandboxNetworkConfig::default()
-                },
-                shell: SandboxShellConfig {
-                    enabled: Some(false),
-                    ..SandboxShellConfig::default()
-                },
-                task: SandboxTaskConfig {
-                    spawn_allowed: Some(false),
-                },
-                resources: SandboxResourceConfig {
-                    max_memory_mb: Some(256),
-                    timeout_ms: Some(15_000),
-                },
-                ..SandboxModeConfig::default()
+            network: SandboxNetworkConfig {
+                search_allowed: Some(true),
+                fetch_allowed: Some(false),
+                browser_allowed: Some(false),
+                ..SandboxNetworkConfig::default()
+            },
+            shell: SandboxShellConfig {
+                enabled: Some(false),
+                ..SandboxShellConfig::default()
+            },
+            task: SandboxTaskConfig {
+                spawn_allowed: Some(false),
+            },
+            resources: SandboxResourceConfig {
+                max_memory_mb: Some(256),
+                timeout_ms: Some(15_000),
+            },
+            ..SandboxModeConfig::default()
         },
         build: SandboxModeConfig {
-                fs: SandboxFsConfig {
-                    read_paths: vec![".".to_string()],
-                    write_paths: vec![".".to_string()],
-                    ..SandboxFsConfig::default()
-                },
-                network: SandboxNetworkConfig {
-                    search_allowed: Some(true),
-                    fetch_allowed: Some(true),
-                    browser_allowed: Some(false),
-                    ..SandboxNetworkConfig::default()
-                },
-                shell: SandboxShellConfig {
-                    enabled: Some(true),
-                    ..SandboxShellConfig::default()
-                },
-                task: SandboxTaskConfig {
-                    spawn_allowed: Some(true),
-                },
-                resources: SandboxResourceConfig {
-                    max_memory_mb: Some(512),
-                    timeout_ms: Some(30_000),
-                },
-                ..SandboxModeConfig::default()
+            fs: SandboxFsConfig {
+                read_paths: vec![".".to_string()],
+                write_paths: vec![".".to_string()],
+                ..SandboxFsConfig::default()
+            },
+            network: SandboxNetworkConfig {
+                search_allowed: Some(true),
+                fetch_allowed: Some(true),
+                browser_allowed: Some(false),
+                ..SandboxNetworkConfig::default()
+            },
+            shell: SandboxShellConfig {
+                enabled: Some(true),
+                ..SandboxShellConfig::default()
+            },
+            task: SandboxTaskConfig {
+                spawn_allowed: Some(true),
+            },
+            resources: SandboxResourceConfig {
+                max_memory_mb: Some(512),
+                timeout_ms: Some(30_000),
+            },
+            ..SandboxModeConfig::default()
         },
         yolo: SandboxModeConfig {
-                fs: SandboxFsConfig {
-                    read_paths: vec![".".to_string()],
-                    write_paths: vec![".".to_string()],
-                    ..SandboxFsConfig::default()
-                },
-                network: SandboxNetworkConfig {
-                    search_allowed: Some(true),
-                    fetch_allowed: Some(true),
-                    browser_allowed: Some(true),
-                    ..SandboxNetworkConfig::default()
-                },
-                shell: SandboxShellConfig {
-                    enabled: Some(true),
-                    ..SandboxShellConfig::default()
-                },
-                task: SandboxTaskConfig {
-                    spawn_allowed: Some(true),
-                },
-                resources: SandboxResourceConfig {
-                    max_memory_mb: Some(1024),
-                    timeout_ms: Some(60_000),
-                },
-                ..SandboxModeConfig::default()
+            fs: SandboxFsConfig {
+                read_paths: vec![".".to_string()],
+                write_paths: vec![".".to_string()],
+                ..SandboxFsConfig::default()
+            },
+            network: SandboxNetworkConfig {
+                search_allowed: Some(true),
+                fetch_allowed: Some(true),
+                browser_allowed: Some(true),
+                ..SandboxNetworkConfig::default()
+            },
+            shell: SandboxShellConfig {
+                enabled: Some(true),
+                ..SandboxShellConfig::default()
+            },
+            task: SandboxTaskConfig {
+                spawn_allowed: Some(true),
+            },
+            resources: SandboxResourceConfig {
+                max_memory_mb: Some(1024),
+                timeout_ms: Some(60_000),
+            },
+            ..SandboxModeConfig::default()
         },
     };
     store.save(&config)?;
@@ -455,7 +507,10 @@ fn diff_mode_view(config: &SandboxConfig, mode: ExecutionMode) -> ModeDiffView {
     }
 }
 
-fn diff_policy(default_policy: &SandboxPolicy, effective_policy: &SandboxPolicy) -> Vec<FieldDiffView> {
+fn diff_policy(
+    default_policy: &SandboxPolicy,
+    effective_policy: &SandboxPolicy,
+) -> Vec<FieldDiffView> {
     let mut diffs = Vec::new();
 
     push_diff(
@@ -528,7 +583,12 @@ fn diff_policy(default_policy: &SandboxPolicy, effective_policy: &SandboxPolicy)
     diffs
 }
 
-fn push_diff(diffs: &mut Vec<FieldDiffView>, key: &str, default_value: String, effective_value: String) {
+fn push_diff(
+    diffs: &mut Vec<FieldDiffView>,
+    key: &str,
+    default_value: String,
+    effective_value: String,
+) {
     if default_value != effective_value {
         diffs.push(FieldDiffView {
             key: key.to_string(),
@@ -548,7 +608,10 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "allow 路径与 deny 路径重叠".to_string(),
-            message: format!("同一路径同时出现在 allow/deny 列表: {:?}", overlapping_paths),
+            message: format!(
+                "同一路径同时出现在 allow/deny 列表: {:?}",
+                overlapping_paths
+            ),
             suggestion: "保留单一方向的路径规则，避免同一路径同时允许和拒绝".to_string(),
         });
     }
@@ -557,7 +620,10 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "plan 模式存在可写路径".to_string(),
-            message: format!("当前可写路径为 {:?}", display_paths(&effective_policy.fs.write_paths)),
+            message: format!(
+                "当前可写路径为 {:?}",
+                display_paths(&effective_policy.fs.write_paths)
+            ),
             suggestion: "清空 plan 的 fs.write_paths，保持只读分析模式".to_string(),
         });
     }
@@ -567,7 +633,8 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
             mode: mode.to_string(),
             title: "plan 模式已开启 fetch 网络".to_string(),
             message: "plan 默认只允许搜索类联网，fetch 会扩大外部请求面".to_string(),
-            suggestion: "执行 `sacode sandbox set plan network.fetch_allowed false` 恢复默认限制".to_string(),
+            suggestion: "执行 `sacode sandbox set plan network.fetch_allowed false` 恢复默认限制"
+                .to_string(),
         });
     }
 
@@ -576,7 +643,8 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
             mode: mode.to_string(),
             title: "plan 模式已开启 browser 网络".to_string(),
             message: "plan 默认不需要浏览器会话，开启后会放宽交互式外部访问".to_string(),
-            suggestion: "执行 `sacode sandbox set plan network.browser_allowed false` 恢复默认限制".to_string(),
+            suggestion: "执行 `sacode sandbox set plan network.browser_allowed false` 恢复默认限制"
+                .to_string(),
         });
     }
 
@@ -585,7 +653,8 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
             mode: mode.to_string(),
             title: "plan 模式已开启 shell".to_string(),
             message: "plan 默认用于轻量分析，shell 执行会提升副作用风险".to_string(),
-            suggestion: "执行 `sacode sandbox set plan shell.enabled false` 恢复默认限制".to_string(),
+            suggestion: "执行 `sacode sandbox set plan shell.enabled false` 恢复默认限制"
+                .to_string(),
         });
     }
 
@@ -594,7 +663,8 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
             mode: mode.to_string(),
             title: "plan 模式已开启 task.spawn".to_string(),
             message: "plan 默认不派生子任务，开启后会扩大执行面".to_string(),
-            suggestion: "执行 `sacode sandbox set plan task.spawn_allowed false` 恢复默认限制".to_string(),
+            suggestion: "执行 `sacode sandbox set plan task.spawn_allowed false` 恢复默认限制"
+                .to_string(),
         });
     }
 
@@ -602,26 +672,42 @@ fn doctor_findings_for_mode(config: &SandboxConfig, mode: ExecutionMode) -> Vec<
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "plan 模式超时高于默认值".to_string(),
-            message: format!("当前超时为 {:?}，默认值为 {:?}", effective_policy.timeout_ms(), default_policy.timeout_ms()),
+            message: format!(
+                "当前超时为 {:?}，默认值为 {:?}",
+                effective_policy.timeout_ms(),
+                default_policy.timeout_ms()
+            ),
             suggestion: "保持 plan 为短时分析模式，建议清除自定义超时或回调到默认值".to_string(),
         });
     }
 
-    if mode == ExecutionMode::Plan && effective_policy.max_memory_mb() > default_policy.max_memory_mb() {
+    if mode == ExecutionMode::Plan
+        && effective_policy.max_memory_mb() > default_policy.max_memory_mb()
+    {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "plan 模式内存高于默认值".to_string(),
-            message: format!("当前内存为 {:?}MB，默认值为 {:?}MB", effective_policy.max_memory_mb(), default_policy.max_memory_mb()),
-            suggestion: "保持 plan 为轻量分析模式，建议清除自定义内存上限或回调到默认值".to_string(),
+            message: format!(
+                "当前内存为 {:?}MB，默认值为 {:?}MB",
+                effective_policy.max_memory_mb(),
+                default_policy.max_memory_mb()
+            ),
+            suggestion: "保持 plan 为轻量分析模式，建议清除自定义内存上限或回调到默认值"
+                .to_string(),
         });
     }
 
-    if mode != ExecutionMode::Plan && effective_policy.fs.write_paths.is_empty() && effective_policy.shell.allowed_commands.is_empty() && effective_policy.shell.enabled {
+    if mode != ExecutionMode::Plan
+        && effective_policy.fs.write_paths.is_empty()
+        && effective_policy.shell.allowed_commands.is_empty()
+        && effective_policy.shell.enabled
+    {
         findings.push(DoctorFinding {
             mode: mode.to_string(),
             title: "shell 已启用且缺少细粒度边界".to_string(),
             message: "当前 shell 已启用，命令白名单为空，同时没有显式可写路径限制".to_string(),
-            suggestion: "按项目需要增加 fs.write_paths 或 shell.allowed_commands，缩小执行范围".to_string(),
+            suggestion: "按项目需要增加 fs.write_paths 或 shell.allowed_commands，缩小执行范围"
+                .to_string(),
         });
     }
 
@@ -639,7 +725,10 @@ fn overlapping_paths(policy: &SandboxPolicy) -> Vec<String> {
 }
 
 fn display_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
-    paths.iter().map(|path| path.display().to_string()).collect()
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect()
 }
 
 fn backend_kind_label(kind: SandboxBackendKind) -> &'static str {
@@ -658,7 +747,8 @@ fn docker_backend_findings(config: &SandboxConfig) -> Vec<DoctorFinding> {
             mode: "global".to_string(),
             title: "当前环境缺少 docker 可执行文件".to_string(),
             message: "已选择 docker backend，但当前环境无法调用 docker".to_string(),
-            suggestion: "安装 docker 并确保 `docker --version` 可执行后再启用 docker backend".to_string(),
+            suggestion: "安装 docker 并确保 `docker --version` 可执行后再启用 docker backend"
+                .to_string(),
         });
     }
 
@@ -667,11 +757,18 @@ fn docker_backend_findings(config: &SandboxConfig) -> Vec<DoctorFinding> {
             mode: "global".to_string(),
             title: "docker backend 缺少 image".to_string(),
             message: "当前已选择 docker backend，但未配置容器镜像".to_string(),
-            suggestion: "在 .sacode/sandbox.json 的 backend.docker.image 中配置可执行镜像".to_string(),
+            suggestion: "在 .sacode/sandbox.json 的 backend.docker.image 中配置可执行镜像"
+                .to_string(),
         });
     }
 
-    if docker.workspace_mount.as_deref().unwrap_or("").trim().is_empty() {
+    if docker
+        .workspace_mount
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
         findings.push(DoctorFinding {
             mode: "global".to_string(),
             title: "docker backend 未显式声明工作区挂载点".to_string(),
@@ -837,7 +934,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let output = render_sandbox(
             temp_dir.path(),
-            &["diff".to_string(), "build".to_string(), "--json".to_string()],
+            &[
+                "diff".to_string(),
+                "build".to_string(),
+                "--json".to_string(),
+            ],
         )
         .expect("render sandbox unchanged diff json");
 
@@ -894,7 +995,11 @@ mod tests {
 
         let output = render_sandbox(
             temp_dir.path(),
-            &["doctor".to_string(), "plan".to_string(), "--json".to_string()],
+            &[
+                "doctor".to_string(),
+                "plan".to_string(),
+                "--json".to_string(),
+            ],
         )
         .expect("render sandbox doctor json");
 
@@ -909,7 +1014,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let output = render_sandbox(
             temp_dir.path(),
-            &["doctor".to_string(), "plan".to_string(), "--json".to_string()],
+            &[
+                "doctor".to_string(),
+                "plan".to_string(),
+                "--json".to_string(),
+            ],
         )
         .expect("render sandbox doctor empty json");
 
@@ -931,7 +1040,8 @@ mod tests {
         )
         .expect("write sandbox config");
 
-        let output = render_sandbox(temp_dir.path(), &["doctor".to_string()]).expect("render docker doctor");
+        let output =
+            render_sandbox(temp_dir.path(), &["doctor".to_string()]).expect("render docker doctor");
 
         assert!(output.contains("docker backend 缺少 image"));
         assert!(output.contains("docker backend 未显式声明运行用户"));
@@ -942,7 +1052,8 @@ mod tests {
     #[test]
     fn render_sandbox_init_creates_config_file() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
-        let output = render_sandbox(temp_dir.path(), &["init".to_string()]).expect("init sandbox config");
+        let output =
+            render_sandbox(temp_dir.path(), &["init".to_string()]).expect("init sandbox config");
 
         assert!(output.contains("已生成沙箱配置"));
         assert!(temp_dir.path().join(".sacode/sandbox.json").exists());
@@ -963,7 +1074,8 @@ mod tests {
         .expect("set sandbox config");
 
         assert!(output.contains("已设置 sandbox.build.shell.allowed_commands"));
-        let content = std::fs::read_to_string(temp_dir.path().join(".sacode/sandbox.json")).expect("read sandbox config");
+        let content = std::fs::read_to_string(temp_dir.path().join(".sacode/sandbox.json"))
+            .expect("read sandbox config");
         assert!(content.contains("git"));
         assert!(content.contains("cargo"));
     }
@@ -993,7 +1105,8 @@ mod tests {
         .expect("clear sandbox config");
 
         assert!(output.contains("已清除 sandbox.plan.network.fetch_allowed"));
-        let show = render_sandbox(temp_dir.path(), &["show".to_string(), "plan".to_string()]).expect("show sandbox config");
+        let show = render_sandbox(temp_dir.path(), &["show".to_string(), "plan".to_string()])
+            .expect("show sandbox config");
         assert!(show.contains("network.fetch_allowed: false"));
     }
 }

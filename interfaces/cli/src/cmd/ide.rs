@@ -74,17 +74,25 @@ fn render_config(
 ) -> Result<String> {
     match args.first().map(|value| value.as_str()) {
         None | Some("show") | Some("status") => render_config_status(workdir, config),
-        Some("path") => Ok(SaCodeConfig::new(workdir).project_server_config().display().to_string()),
+        Some("path") => Ok(SaCodeConfig::new(workdir)
+            .project_server_config()
+            .display()
+            .to_string()),
         Some("set") => {
             apply_set(config, args)?;
             store.save(&config)?;
             render_config_status(workdir, config)
         }
-        Some(_) => Ok("用法: /ide config [show|path|set acp|lsp --host HOST --port PORT]".to_string()),
+        Some(_) => {
+            Ok("用法: /ide config [show|path|set acp|lsp --host HOST --port PORT]".to_string())
+        }
     }
 }
 
-fn render_config_status(workdir: &Path, config: &sacode_runtime::IdeServerConfig) -> Result<String> {
+fn render_config_status(
+    workdir: &Path,
+    config: &sacode_runtime::IdeServerConfig,
+) -> Result<String> {
     let path = SaCodeConfig::new(workdir).project_server_config();
     Ok(format!(
         "IDE 集成配置\n配置文件: {}\nACP: {}:{}\nLSP: {}:{}\n命令:\n- sacode acp serve --host {} --port {}\n- sacode lsp serve --tcp --host {} --port {}",

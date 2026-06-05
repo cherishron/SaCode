@@ -81,7 +81,11 @@ impl App {
         }
         lines.push(format!(
             "确认状态: {}",
-            if plan.confirmed { "已确认" } else { "待确认" }
+            if plan.confirmed {
+                "已确认"
+            } else {
+                "待确认"
+            }
         ));
         self.push_system_message(&lines.join("\n"));
     }
@@ -163,10 +167,8 @@ impl App {
         self.queue.active_task_id = None;
         self.active_task_started_at = Some(chrono::Local::now());
         self.spinner_index = 0;
-        self.queue.busy_message = format!(
-            "正在压缩当前会话上下文，模型 {}",
-            self.current_model_name()
-        );
+        self.queue.busy_message =
+            format!("正在压缩当前会话上下文，模型 {}", self.current_model_name());
         self.spawn_context_compression_task(source);
     }
 
@@ -198,7 +200,11 @@ impl App {
                 MessageRole::Assistant => "助手",
                 MessageRole::System => continue,
             };
-            let compact = message.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let compact = message
+                .content
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let snippet = compact.chars().take(600).collect::<String>();
             lines.push(format!("- {}: {}", role, snippet));
         }
@@ -215,17 +221,22 @@ impl App {
             .map(|provider| provider.config.to_model_provider())
             .unwrap_or_else(|| resolve_provider(&self.workdir));
         let prompt = format!("{}\n\n{}", self.prompt_template.compress_context, source);
-        thread::spawn(move || match Self::run_context_compression_prompt(&provider, &prompt) {
-            Ok(summary) => {
-                let _ = sender.send(AsyncResult::ContextCompressed { summary, model_name });
-            }
-            Err(error) => {
-                let _ = sender.send(AsyncResult::Failed {
-                    context: AsyncContext::CompressContext,
-                    message: format!("压缩当前会话失败: {}", error),
-                });
-            }
-        });
+        thread::spawn(
+            move || match Self::run_context_compression_prompt(&provider, &prompt) {
+                Ok(summary) => {
+                    let _ = sender.send(AsyncResult::ContextCompressed {
+                        summary,
+                        model_name,
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::CompressContext,
+                        message: format!("压缩当前会话失败: {}", error),
+                    });
+                }
+            },
+        );
     }
 
     pub(super) fn run_context_compression_prompt(

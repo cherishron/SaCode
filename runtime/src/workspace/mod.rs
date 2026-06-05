@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -33,14 +33,22 @@ impl WorkspaceScanner {
             max_files: 1000,
             max_depth: 5,
             ignore_dirs: vec![
-                "node_modules".to_string(), "target".to_string(), "build".to_string(), 
-                "dist".to_string(), ".git".to_string(),
-                "__pycache__".to_string(), "vendor".to_string(), ".cargo".to_string(), 
+                "node_modules".to_string(),
+                "target".to_string(),
+                "build".to_string(),
+                "dist".to_string(),
+                ".git".to_string(),
+                "__pycache__".to_string(),
+                "vendor".to_string(),
+                ".cargo".to_string(),
                 "coverage".to_string(),
             ],
             ignore_extensions: vec![
-                ".lock".to_string(), ".log".to_string(), ".tmp".to_string(), 
-                ".cache".to_string(), ".bak".to_string(),
+                ".lock".to_string(),
+                ".log".to_string(),
+                ".tmp".to_string(),
+                ".cache".to_string(),
+                ".bak".to_string(),
             ],
         }
     }
@@ -80,7 +88,7 @@ impl WorkspaceScanner {
             }
         }
 
-if let Ok(entries) = std::fs::read_dir(dir) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
 
@@ -150,7 +158,8 @@ if let Ok(entries) = std::fs::read_dir(dir) {
             "sql" => "SQL",
             "dockerfile" => "Docker",
             _ => "Other",
-        }.to_string()
+        }
+        .to_string()
     }
 
     pub fn summary(&self) -> String {

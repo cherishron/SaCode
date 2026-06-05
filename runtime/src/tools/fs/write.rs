@@ -1,6 +1,6 @@
-use crate::tools::{ToolSpec, ToolOutput, SideEffectLevel};
-use crate::sandbox::FsAccess;
 use super::access::resolve_allowed_path;
+use crate::sandbox::FsAccess;
+use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -31,16 +31,18 @@ pub fn spec() -> ToolSpec {
 }
 
 pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
-    let path = input["path"].as_str()
+    let path = input["path"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing path"))?;
-    
-    let content = input["content"].as_str()
+
+    let content = input["content"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing content"))?;
-    
+
     let mode = input["mode"].as_str().unwrap_or("write");
 
     let path_buf = resolve_allowed_path(path, FsAccess::Write)?;
-    
+
     if let Some(parent) = path_buf.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)?;
@@ -66,5 +68,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     Ok(ToolOutput::success(serde_json::json!({
         "bytes_written": bytes_written,
         "path": path_buf.display().to_string()
-    })).with_message(format!("Written {} bytes to {}", bytes_written, path_buf.display())))
+    }))
+    .with_message(format!(
+        "Written {} bytes to {}",
+        bytes_written,
+        path_buf.display()
+    )))
 }

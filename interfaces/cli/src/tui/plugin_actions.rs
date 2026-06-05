@@ -7,9 +7,13 @@ use super::App;
 impl App {
     pub(super) fn plugin_command(&mut self, input: &str) {
         let parts: Vec<&str> = input.split_whitespace().collect();
-        let global = parts.iter().any(|part| *part == "--global" || *part == "-g");
+        let global = parts
+            .iter()
+            .any(|part| *part == "--global" || *part == "-g");
         let plugin_file = if global {
-            PluginConfigStore::new(&self.workdir).user_path().to_path_buf()
+            PluginConfigStore::new(&self.workdir)
+                .user_path()
+                .to_path_buf()
         } else {
             PluginConfigStore::new(&self.workdir)
                 .project_path()
@@ -79,7 +83,11 @@ impl App {
                 } else {
                     entry.plugin.version.as_str()
                 };
-                let status = if entry.plugin.enabled { "[on]" } else { "[off]" };
+                let status = if entry.plugin.enabled {
+                    "[on]"
+                } else {
+                    "[off]"
+                };
                 format!(
                     "- {} {} {} [{}]",
                     entry.plugin.name,
@@ -106,7 +114,11 @@ impl App {
             std::fs::read_to_string(plugin_file)
                 .ok()
                 .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-                .and_then(|data| data.get("plugins").and_then(|plugins| plugins.as_array()).cloned())
+                .and_then(|data| {
+                    data.get("plugins")
+                        .and_then(|plugins| plugins.as_array())
+                        .cloned()
+                })
                 .unwrap_or_default()
         } else {
             Vec::new()
@@ -145,11 +157,15 @@ impl App {
         match std::fs::read_to_string(plugin_file) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(data) => {
-                    if let Some(plugins) = data.get("plugins").and_then(|plugins| plugins.as_array()) {
+                    if let Some(plugins) =
+                        data.get("plugins").and_then(|plugins| plugins.as_array())
+                    {
                         let filtered: Vec<_> = plugins
                             .iter()
                             .filter(|plugin| {
-                                plugin.get("name").and_then(|plugin_name| plugin_name.as_str())
+                                plugin
+                                    .get("name")
+                                    .and_then(|plugin_name| plugin_name.as_str())
                                     != Some(name)
                             })
                             .collect();
@@ -192,7 +208,9 @@ impl App {
                         let updated: Vec<_> = plugins
                             .iter()
                             .map(|plugin| {
-                                if plugin.get("name").and_then(|plugin_name| plugin_name.as_str())
+                                if plugin
+                                    .get("name")
+                                    .and_then(|plugin_name| plugin_name.as_str())
                                     == Some(name)
                                 {
                                     found = true;

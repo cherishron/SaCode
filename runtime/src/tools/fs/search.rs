@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use crate::sandbox::FsAccess;
-use crate::tools::spec::{ToolSpec, ToolOutput, SideEffectLevel};
+use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
 
@@ -59,7 +59,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     cmd.arg("-n");
     cmd.arg("-r");
     cmd.arg("--line-buffered");
-    
+
     if let Some(fp) = file_pattern {
         cmd.arg("--include").arg(fp);
     }
@@ -102,7 +102,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                     .collect();
                 let count = all_matches.len();
                 let truncated = count > MAX_SEARCH_MATCHES;
-                let matches: Vec<serde_json::Value> = all_matches.into_iter().take(MAX_SEARCH_MATCHES).collect();
+                let matches: Vec<serde_json::Value> =
+                    all_matches.into_iter().take(MAX_SEARCH_MATCHES).collect();
 
                 Ok(ToolOutput::success(serde_json::json!({
                     "matches": matches,
@@ -114,7 +115,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                 Ok(ToolOutput::success(serde_json::json!({
                     "matches": [],
                     "count": 0
-                })).with_message("no matches found"))
+                }))
+                .with_message("no matches found"))
             }
         }
         Err(e) => Ok(ToolOutput::failure(format!("grep execution failed: {}", e))),

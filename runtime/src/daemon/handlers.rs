@@ -1,6 +1,9 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use axum::{extract::{Path, State}, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 
 use crate::tools::ToolRegistry;
 use sacode_kernel::{ExecutionMode, ScheduledTask, Task, TaskQueueStatus};
@@ -8,7 +11,10 @@ use sacode_kernel::{ExecutionMode, ScheduledTask, Task, TaskQueueStatus};
 use super::{
     events::emit_event,
     parse_mode, parse_priority,
-    status::{parse_queue_status, parse_retry_policy, task_run_for_queue_status, task_run_state_to_queue_status, sync_task_status_from_task_run},
+    status::{
+        parse_queue_status, parse_retry_policy, sync_task_status_from_task_run,
+        task_run_for_queue_status, task_run_state_to_queue_status,
+    },
     DaemonState, TaskRequest, TaskResponse, TaskStatus,
 };
 
@@ -70,7 +76,10 @@ pub async fn create_task(
                 "Task created and submitted to queue".to_string(),
             ))
         }
-        Err(e) => Json(TaskResponse::error(task_id, format!("Failed to submit task: {}", e))),
+        Err(e) => Json(TaskResponse::error(
+            task_id,
+            format!("Failed to submit task: {}", e),
+        )),
     }
 }
 
@@ -262,13 +271,11 @@ pub async fn retry_task(
                     "message": "Task retry submitted",
                 }))
             }
-            Err(e) => {
-                Json(serde_json::json!({
-                    "task_id": task_id,
-                    "status": "error",
-                    "message": format!("Failed to submit retry: {}", e),
-                }))
-            }
+            Err(e) => Json(serde_json::json!({
+                "task_id": task_id,
+                "status": "error",
+                "message": format!("Failed to submit retry: {}", e),
+            })),
         }
     } else {
         Json(serde_json::json!({
@@ -315,18 +322,16 @@ pub async fn cancel_task(
     }
 }
 
-pub async fn get_queue_status(
-    State(state): State<Arc<DaemonState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_queue_status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
     let stats = state.queue.stats().await;
-    Json(serde_json::to_value(stats).unwrap_or_else(|_| serde_json::json!({
-        "error": "Failed to get queue stats"
-    })))
+    Json(serde_json::to_value(stats).unwrap_or_else(|_| {
+        serde_json::json!({
+            "error": "Failed to get queue stats"
+        })
+    }))
 }
 
-pub async fn get_pending_tasks(
-    State(state): State<Arc<DaemonState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_pending_tasks(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
     let stats = state.queue.stats().await;
     Json(serde_json::json!({
         "pending_count": stats.pending_count,

@@ -135,8 +135,9 @@ pub(crate) fn parse_orchestration_summary(
         })
         .unwrap_or_default();
 
-    summary.conflict_lines = if let Some(conflict_records) =
-        parsed.get("conflict_records").and_then(|value| value.as_array())
+    summary.conflict_lines = if let Some(conflict_records) = parsed
+        .get("conflict_records")
+        .and_then(|value| value.as_array())
     {
         conflict_records
             .iter()
@@ -146,7 +147,11 @@ pub(crate) fn parse_orchestration_summary(
                     .and_then(|value| value.as_str())
                     .unwrap_or("conflict");
                 let conflict_summary = record.get("summary").and_then(|value| value.as_str())?;
-                Some(format!("- [{}] {}", conflict_kind_label(kind), conflict_summary))
+                Some(format!(
+                    "- [{}] {}",
+                    conflict_kind_label(kind),
+                    conflict_summary
+                ))
             })
             .collect::<Vec<_>>()
     } else {

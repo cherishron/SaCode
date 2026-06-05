@@ -1,11 +1,17 @@
 use anyhow::Result;
-use sacode_kernel::{ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord, RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord};
+use sacode_kernel::{
+    ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord,
+    RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord,
+};
 
-use super::{RoleRegistry, build_execution_plan};
-use super::summary_compactor::{OutputPolarity, compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity, extract_final_consensus, extract_risk_summary};
-use crate::{task_run_from_report, CheckpointStorage};
-use crate::agents::worker::{WorkerRunResult, run_sub_agent};
+use super::summary_compactor::{
+    compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity,
+    extract_final_consensus, extract_risk_summary, OutputPolarity,
+};
+use super::{build_execution_plan, RoleRegistry};
+use crate::agents::worker::{run_sub_agent, WorkerRunResult};
 use crate::model_routing::TaskProfile;
+use crate::{task_run_from_report, CheckpointStorage};
 
 pub async fn execute_role_driven_orchestration(
     context: &ExecutionContext,
@@ -46,7 +52,9 @@ pub async fn execute_role_driven_orchestration(
 
     let checkpoint = sacode_kernel::Checkpoint::new(context.task.clone());
     let checkpoint_path = checkpoints.save(&checkpoint)?;
-    report.checkpoint_refs.push(checkpoint_path.display().to_string());
+    report
+        .checkpoint_refs
+        .push(checkpoint_path.display().to_string());
     report.hook_records.push(HookRecord {
         hook_name: "role-driven-orchestrator".to_string(),
         point: LifecyclePoint::TaskFinished,
@@ -65,7 +73,11 @@ pub async fn execute_role_driven_orchestration(
         &report.conflicts,
         &report.conflict_records,
     ));
-    report.final_output = Some(aggregate_worker_results(&context.task.prompt, &results, &report.conflicts));
+    report.final_output = Some(aggregate_worker_results(
+        &context.task.prompt,
+        &results,
+        &report.conflicts,
+    ));
     report.events.push(sacode_kernel::Event::thinking(format!(
         "主 Agent 汇总裁决完成，汇总角色数：{}",
         results.len()
@@ -163,7 +175,12 @@ fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult]
                     .plan
                     .fallbacks
                     .iter()
-                    .map(|entry| format!("{}/{}({})", entry.provider_name, entry.model_name, entry.route_score))
+                    .map(|entry| {
+                        format!(
+                            "{}/{}({})",
+                            entry.provider_name, entry.model_name, entry.route_score
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 report.events.push(sacode_kernel::Event::thinking(format!(
@@ -207,13 +224,24 @@ fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult]
     }
 }
 
-fn aggregate_worker_results(task_prompt: &str, results: &[WorkerRunResult], conflicts: &[String]) -> String {
+fn aggregate_worker_results(
+    task_prompt: &str,
+    results: &[WorkerRunResult],
+    conflicts: &[String],
+) -> String {
     let mut ordered = results.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|item| role_rank(&item.role.id));
 
     let mut lines = Vec::new();
     lines.push(format!("task={}", task_prompt.trim()));
-    lines.push(format!("roles={}", ordered.iter().map(|item| item.role.id.as_str()).collect::<Vec<_>>().join(",")));
+    lines.push(format!(
+        "roles={}",
+        ordered
+            .iter()
+            .map(|item| item.role.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
 
     let reporter_summary = ordered
         .iter()
@@ -237,13 +265,16 @@ fn aggregate_worker_results(task_prompt: &str, results: &[WorkerRunResult], conf
         let route_summary = item
             .resolved_route
             .as_ref()
-            .map(|route| format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name))
+            .map(|route| {
+                format!(
+                    "{}/{}",
+                    route.plan.primary.provider_name, route.plan.primary.model_name
+                )
+            })
             .unwrap_or_else(|| "auto".to_string());
         lines.push(format!(
             "- {} [{}]: {}",
-            item.role.id,
-            route_summary,
-            output
+            item.role.id, route_summary, output
         ));
     }
 
@@ -251,7 +282,10 @@ fn aggregate_worker_results(task_prompt: &str, results: &[WorkerRunResult], conf
 }
 
 fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord> {
-    let success_values = results.iter().map(|item| item.result.success).collect::<std::collections::BTreeSet<_>>();
+    let success_values = results
+        .iter()
+        .map(|item| item.result.success)
+        .collect::<std::collections::BTreeSet<_>>();
     let mut conflicts = Vec::new();
     if success_values.len() > 1 {
         conflicts.push(ConflictRecord {
@@ -259,7 +293,9 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
             summary: "mixed success status across roles".to_string(),
             details: results
                 .iter()
-                .map(|item| compact_conflict_detail(&format!("{}={}", item.role.id, item.result.success)))
+                .map(|item| {
+                    compact_conflict_detail(&format!("{}={}", item.role.id, item.result.success))
+                })
                 .collect(),
         });
     }
@@ -267,15 +303,21 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
     let route_values = results
         .iter()
         .filter_map(|item| {
-            item.resolved_route
-                .as_ref()
-                .map(|route| format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name))
+            item.resolved_route.as_ref().map(|route| {
+                format!(
+                    "{}/{}",
+                    route.plan.primary.provider_name, route.plan.primary.model_name
+                )
+            })
         })
         .collect::<std::collections::BTreeSet<_>>();
     if route_values.len() > 1 {
         conflicts.push(ConflictRecord {
             kind: "route_conflict".to_string(),
-            summary: format!("multiple primary routes: {}", route_values.iter().cloned().collect::<Vec<_>>().join(", ")),
+            summary: format!(
+                "multiple primary routes: {}",
+                route_values.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
             details: route_values
                 .into_iter()
                 .map(|detail| compact_conflict_detail(&detail))
@@ -312,7 +354,9 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
             ),
             details: validation_disagreements
                 .iter()
-                .map(|(role_id, _, output)| compact_conflict_detail(&format!("{}: {}", role_id, output)))
+                .map(|(role_id, _, output)| {
+                    compact_conflict_detail(&format!("{}: {}", role_id, output))
+                })
                 .collect(),
         });
     }
@@ -326,7 +370,11 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
             kind: "conclusion_conflict".to_string(),
             summary: format!(
                 "multiple distinct role conclusions: {}",
-                conclusion_values.iter().cloned().collect::<Vec<_>>().join(" | ")
+                conclusion_values
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" | ")
             ),
             details: conclusion_values
                 .into_iter()
@@ -339,10 +387,17 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
 
     let polarities = results
         .iter()
-        .filter_map(|item| detect_output_polarity(item.result.output.trim()).map(|polarity| (item.role.id.as_str(), polarity)))
+        .filter_map(|item| {
+            detect_output_polarity(item.result.output.trim())
+                .map(|polarity| (item.role.id.as_str(), polarity))
+        })
         .collect::<Vec<_>>();
-    let has_positive = polarities.iter().any(|(_, polarity)| *polarity == OutputPolarity::Positive);
-    let has_negative = polarities.iter().any(|(_, polarity)| *polarity == OutputPolarity::Negative);
+    let has_positive = polarities
+        .iter()
+        .any(|(_, polarity)| *polarity == OutputPolarity::Positive);
+    let has_negative = polarities
+        .iter()
+        .any(|(_, polarity)| *polarity == OutputPolarity::Negative);
     if has_positive && has_negative {
         conflicts.push(ConflictRecord {
             kind: "polarity_conflict".to_string(),
@@ -356,7 +411,9 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
             ),
             details: polarities
                 .iter()
-                .map(|(role_id, polarity)| compact_conflict_detail(&format!("{}={}", role_id, polarity.as_str())))
+                .map(|(role_id, polarity)| {
+                    compact_conflict_detail(&format!("{}={}", role_id, polarity.as_str()))
+                })
                 .collect(),
         });
     }
@@ -386,7 +443,12 @@ fn build_summary_record(
             let route = item
                 .resolved_route
                 .as_ref()
-                .map(|route| format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name))
+                .map(|route| {
+                    format!(
+                        "{}/{}",
+                        route.plan.primary.provider_name, route.plan.primary.model_name
+                    )
+                })
                 .unwrap_or_else(|| "auto".to_string());
             SummaryItemRecord {
                 role_id: item.role.id.clone(),
@@ -402,7 +464,8 @@ fn build_summary_record(
 
     let overall_conclusion = infer_overall_conclusion(&items, reporter_summary.as_deref());
     let key_risks = collect_summary_risks(&items, conflicts);
-    let recommended_next_action = infer_recommended_next_action(&items, conflicts, conflict_records);
+    let recommended_next_action =
+        infer_recommended_next_action(&items, conflicts, conflict_records);
 
     SummaryRecord {
         task: task_prompt.trim().to_string(),
@@ -439,7 +502,10 @@ fn infer_overall_conclusion(
         "system-architect",
     ];
 
-    if let Some(summary) = reporter_summary.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(summary) = reporter_summary
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return Some(summary.to_string());
     }
 
@@ -460,7 +526,10 @@ fn infer_recommended_next_action(
     conflicts: &[String],
     conflict_records: &[ConflictRecord],
 ) -> Option<String> {
-    if conflict_records.iter().any(|record| record.kind == "validation_conflict") {
+    if conflict_records
+        .iter()
+        .any(|record| record.kind == "validation_conflict")
+    {
         return Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。".to_string());
     }
 
@@ -490,10 +559,19 @@ fn infer_recommended_next_action(
         ),
     ];
     const SINGLE_ROLE_ACTIONS: &[(&str, &str)] = &[
-        ("implementer", "进入验证与审查阶段，确认改动行为和回归风险。"),
-        ("test-engineer", "根据验证结果决定是否继续修复，或整理测试结论进入交付。"),
+        (
+            "implementer",
+            "进入验证与审查阶段，确认改动行为和回归风险。",
+        ),
+        (
+            "test-engineer",
+            "根据验证结果决定是否继续修复，或整理测试结论进入交付。",
+        ),
         ("system-architect", "根据当前架构结论进入实现或验证阶段。"),
-        ("reporter", "当前结论可直接反馈给用户，并根据需要继续下一轮细化。"),
+        (
+            "reporter",
+            "当前结论可直接反馈给用户，并根据需要继续下一轮细化。",
+        ),
     ];
 
     if has_negative_signal {
@@ -533,11 +611,16 @@ fn role_rank(role_id: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_summary_record, collect_conflict_records, infer_overall_conclusion, infer_recommended_next_action};
+    use super::{
+        build_summary_record, collect_conflict_records, infer_overall_conclusion,
+        infer_recommended_next_action,
+    };
+    use crate::agents::summary_compactor::{
+        compact_aggregate_output, compact_conflict_detail, extract_risk_summary,
+    };
     use crate::agents::worker::WorkerRunResult;
-    use crate::agents::summary_compactor::{compact_aggregate_output, compact_conflict_detail, extract_risk_summary};
-    use sacode_kernel::{AgentRole, ConflictRecord, RoleModelPolicy, SubAgentResult, SubAgentTask};
     use sacode_kernel::SummaryItemRecord;
+    use sacode_kernel::{AgentRole, ConflictRecord, RoleModelPolicy, SubAgentResult, SubAgentTask};
 
     fn item(role_id: &str, output: &str) -> SummaryItemRecord {
         SummaryItemRecord {
@@ -602,7 +685,10 @@ mod tests {
             item("reporter", "已整理结论。"),
         ];
         let next = infer_recommended_next_action(&items, &[], &[]);
-        assert_eq!(next.as_deref(), Some("基于当前架构结论进入实现拆解，并同步给用户执行方向。"));
+        assert_eq!(
+            next.as_deref(),
+            Some("基于当前架构结论进入实现拆解，并同步给用户执行方向。")
+        );
     }
 
     #[test]
@@ -612,12 +698,16 @@ mod tests {
             item("test-engineer", "验证失败，存在阻塞。"),
         ];
         let next = infer_recommended_next_action(&items, &[], &[]);
-        assert_eq!(next.as_deref(), Some("先处理当前失败或阻塞项，再重新执行验证与裁决。"));
+        assert_eq!(
+            next.as_deref(),
+            Some("先处理当前失败或阻塞项，再重新执行验证与裁决。")
+        );
     }
 
     #[test]
     fn extract_risk_summary_returns_compact_sentence() {
-        let risk = extract_risk_summary("任务完成，但存在回归风险。建议补充验证步骤。后续可继续推进。");
+        let risk =
+            extract_risk_summary("任务完成，但存在回归风险。建议补充验证步骤。后续可继续推进。");
         assert_eq!(risk.as_deref(), Some("但存在回归风险"));
     }
 
@@ -629,7 +719,8 @@ mod tests {
 
     #[test]
     fn compact_conflict_detail_prefers_risk_sentence() {
-        let detail = compact_conflict_detail("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
+        let detail =
+            compact_conflict_detail("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
         assert_eq!(detail, "但存在回归风险");
     }
 
@@ -641,7 +732,8 @@ mod tests {
 
     #[test]
     fn compact_aggregate_output_prefers_risk_summary() {
-        let output = compact_aggregate_output("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
+        let output =
+            compact_aggregate_output("任务完成，但存在回归风险。建议补充验证。后续继续推进。");
         assert_eq!(output, "但存在回归风险");
     }
 
@@ -656,20 +748,35 @@ mod tests {
         let output = compact_aggregate_output(
             "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查。任务完成，共完成 5 个步骤",
         );
-        assert_eq!(output, "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查");
+        assert_eq!(
+            output,
+            "汇总结论已生成，完成 5 个步骤，参考了 代码读取、命令执行与差异检查"
+        );
     }
 
     #[test]
     fn build_summary_record_compacts_reporter_and_item_outputs() {
         let results = vec![
-            worker("system-architect", "架构路径已梳理。任务完成，共完成 5 个步骤"),
-            worker("reporter", "汇总结论已生成，完成 5 个步骤。任务完成，共完成 5 个步骤"),
+            worker(
+                "system-architect",
+                "架构路径已梳理。任务完成，共完成 5 个步骤",
+            ),
+            worker(
+                "reporter",
+                "汇总结论已生成，完成 5 个步骤。任务完成，共完成 5 个步骤",
+            ),
         ];
 
         let summary = build_summary_record("test prompt", &results, &[], &[]);
 
-        assert_eq!(summary.reporter_summary.as_deref(), Some("汇总结论已生成，完成 5 个步骤"));
-        assert_eq!(summary.overall_conclusion.as_deref(), Some("汇总结论已生成，完成 5 个步骤"));
+        assert_eq!(
+            summary.reporter_summary.as_deref(),
+            Some("汇总结论已生成，完成 5 个步骤")
+        );
+        assert_eq!(
+            summary.overall_conclusion.as_deref(),
+            Some("汇总结论已生成，完成 5 个步骤")
+        );
         assert_eq!(summary.items[0].output, "任务完成，共完成 5 个步骤");
         assert_eq!(summary.items[1].output, "汇总结论已生成，完成 5 个步骤");
     }
@@ -677,11 +784,16 @@ mod tests {
     #[test]
     fn collect_conflict_records_adds_validation_conflict_for_negative_validation() {
         let implementer = worker("implementer", "实现结果已整理。任务完成，共完成 5 个步骤");
-        let tester = worker("test-engineer", "验证风险已识别。验证失败，存在阻塞。建议补齐回归验证。");
+        let tester = worker(
+            "test-engineer",
+            "验证风险已识别。验证失败，存在阻塞。建议补齐回归验证。",
+        );
 
         let conflicts = collect_conflict_records(&[&implementer, &tester]);
 
-        assert!(conflicts.iter().any(|record| record.kind == "validation_conflict"));
+        assert!(conflicts
+            .iter()
+            .any(|record| record.kind == "validation_conflict"));
     }
 
     #[test]
@@ -697,8 +809,12 @@ mod tests {
             details: vec!["test-engineer: 验证失败，存在阻塞".to_string()],
         }];
 
-        let next = infer_recommended_next_action(&items, &["conflict".to_string()], &conflict_records);
+        let next =
+            infer_recommended_next_action(&items, &["conflict".to_string()], &conflict_records);
 
-        assert_eq!(next.as_deref(), Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。"));
+        assert_eq!(
+            next.as_deref(),
+            Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。")
+        );
     }
 }

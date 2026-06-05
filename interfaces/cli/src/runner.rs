@@ -1,17 +1,30 @@
-use std::{env, path::Path, time::{Duration, Instant}};
+use std::{
+    env,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
-use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Supervisor, Task, TaskRun, TaskRunState};
 use sacode_kernel::model::{ChatUsage, ToolDefinition};
+use sacode_kernel::{
+    Event, ExecutionMode, ExecutionReport, Supervisor, Task, TaskRun, TaskRunState,
+};
 use sacode_runtime::{
-    build_runtime_system_prompt, maybe_expand_skill_prompt, FailoverContext, McpConfigStore,
-    infer_task_run_state,
-    ProviderClient, SandboxConfigStore, SandboxPolicy, SideEffectLevel, TaskProfile, ToolRegistry, register_enabled_mcp_tools_sync,
-    PromptContext, NodeScore, task_run_from_report, task_run_snapshot,
+    build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
+    register_enabled_mcp_tools_sync, task_run_from_report, task_run_snapshot, FailoverContext,
+    McpConfigStore, NodeScore, PromptContext, ProviderClient, SandboxConfigStore, SandboxPolicy,
+    SideEffectLevel, TaskProfile, ToolRegistry,
 };
 use serde::Serialize;
 
-use crate::{cmd::{insight, outstyle, status, ApprovalPolicy}, learning, mistakes::MistakeBookStore, provider_runtime::{build_route_plan, record_model_health, resolve_model_candidates, resolve_provider}};
+use crate::{
+    cmd::{insight, outstyle, status, ApprovalPolicy},
+    learning,
+    mistakes::MistakeBookStore,
+    provider_runtime::{
+        build_route_plan, record_model_health, resolve_model_candidates, resolve_provider,
+    },
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolResult {
@@ -44,10 +57,7 @@ pub struct RunnerOutput {
 
 impl RunnerOutput {
     pub fn effective_state(&self) -> TaskRunState {
-        self.task_run
-            .state
-            .clone()
-            .unwrap_or(TaskRunState::Failed)
+        self.task_run.state.clone().unwrap_or(TaskRunState::Failed)
     }
 
     pub fn from_execution_report(
@@ -58,12 +68,22 @@ impl RunnerOutput {
         workspace: String,
     ) -> Self {
         let task_prompt = prompt.clone();
-        let task_run = task_run_from_report(None, mode, task_prompt, report, infer_task_run_state(report));
-        let tool_names: Vec<String> = report.tool_records.iter()
+        let task_run = task_run_from_report(
+            None,
+            mode,
+            task_prompt,
+            report,
+            infer_task_run_state(report),
+        );
+        let tool_names: Vec<String> = report
+            .tool_records
+            .iter()
             .map(|r| r.tool_name.clone())
             .collect();
-        
-        let tool_results: Vec<ToolResult> = report.tool_records.iter()
+
+        let tool_results: Vec<ToolResult> = report
+            .tool_records
+            .iter()
             .map(|r| ToolResult {
                 iteration: 0,
                 step_id: r.step_id.unwrap_or(0),
@@ -72,15 +92,13 @@ impl RunnerOutput {
                 summary: if r.success { "success" } else { "failed" }.to_string(),
             })
             .collect();
-        
-        let plan = report.plan.clone().unwrap_or_else(|| {
-            sacode_kernel::Plan {
-                task: prompt.clone(),
-                steps: Vec::new(),
-                mode: mode.to_string(),
-            }
+
+        let plan = report.plan.clone().unwrap_or_else(|| sacode_kernel::Plan {
+            task: prompt.clone(),
+            steps: Vec::new(),
+            mode: mode.to_string(),
         });
-        
+
         Self {
             prompt,
             mode,
@@ -102,7 +120,12 @@ impl RunnerOutput {
     }
 }
 
-pub async fn run_task(prompt: &str, mode: ExecutionMode, approval: ApprovalPolicy, max_iterations: usize) -> Result<RunnerOutput> {
+pub async fn run_task(
+    prompt: &str,
+    mode: ExecutionMode,
+    approval: ApprovalPolicy,
+    max_iterations: usize,
+) -> Result<RunnerOutput> {
     run_task_with_stdin(prompt, mode, approval, max_iterations, None).await
 }
 
@@ -113,7 +136,15 @@ pub async fn run_task_with_stdin(
     max_iterations: usize,
     stdin: Option<String>,
 ) -> Result<RunnerOutput> {
-    run_task_with_stdin_and_stream(prompt, mode, approval, max_iterations, stdin, None::<fn(&str)>).await
+    run_task_with_stdin_and_stream(
+        prompt,
+        mode,
+        approval,
+        max_iterations,
+        stdin,
+        None::<fn(&str)>,
+    )
+    .await
 }
 
 pub async fn run_task_with_stdin_and_stream<F>(
@@ -132,6 +163,7 @@ where
     let sandbox_policy = SandboxConfigStore::new(&workdir)
         .policy_for_mode(mode)
         .unwrap_or_else(|_| SandboxPolicy::for_mode(mode));
+    sacode_runtime::install_current_mode(mode);
     sacode_runtime::install_global_policy(sandbox_policy);
     let _ = status::ensure_default_context7(&workdir).await;
     let expanded_prompt = maybe_expand_skill_prompt(prompt, &workdir)?;
@@ -180,21 +212,34 @@ where
         resolve_provider(&workdir)
     };
 
-    let primary_provider_name = route_plan.as_ref().map(|plan| plan.primary.provider_name.clone()).unwrap_or_else(|| "default".to_string());
-    let primary_model_name = route_plan.as_ref().map(|plan| plan.primary.model_name.clone()).unwrap_or_else(|| primary_provider.model.clone());
+    let primary_provider_name = route_plan
+        .as_ref()
+        .map(|plan| plan.primary.provider_name.clone())
+        .unwrap_or_else(|| "default".to_string());
+    let primary_model_name = route_plan
+        .as_ref()
+        .map(|plan| plan.primary.model_name.clone())
+        .unwrap_or_else(|| primary_provider.model.clone());
 
-    let (mut provider_response, mut pending_question, mut usage, mut api_duration_ms, mut tool_duration_ms) =
-        execute_with_provider(
-            &primary_provider,
-            &system_prompt,
-            &effective_prompt,
-            tool_defs.clone(),
-            &tools,
-            &workdir,
-            approval,
-            max_iterations,
-            stream_handler,
-        ).await;
+    let (
+        mut provider_response,
+        mut pending_question,
+        mut usage,
+        mut api_duration_ms,
+        mut tool_duration_ms,
+    ) = execute_with_provider(
+        &primary_provider,
+        &system_prompt,
+        &effective_prompt,
+        tool_defs.clone(),
+        &tools,
+        &workdir,
+        mode,
+        approval,
+        max_iterations,
+        stream_handler,
+    )
+    .await;
 
     record_model_health(
         &workdir,
@@ -205,18 +250,16 @@ where
     );
 
     let mut attempt_count = 0;
-    let max_attempts = route_plan.as_ref().map(|p| p.fallbacks.len() + 1).unwrap_or(1);
+    let max_attempts = route_plan
+        .as_ref()
+        .map(|p| p.fallbacks.len() + 1)
+        .unwrap_or(1);
 
     while attempt_count < max_attempts {
         let should_switch = if provider_response.is_err() {
             true
         } else if let Ok(ref response) = provider_response {
-            let score = NodeScore::evaluate(
-                None,
-                response,
-                &[],
-                &profile,
-            );
+            let score = NodeScore::evaluate(None, response, &[], &profile);
             score.decision == sacode_runtime::NodeDecision::SwitchModel
         } else {
             false
@@ -254,10 +297,12 @@ where
                         tool_defs.clone(),
                         &tools,
                         &workdir,
+                        mode,
                         approval,
                         max_iterations,
                         None::<F>,
-                    ).await;
+                    )
+                    .await;
 
                     provider_response = result.0;
                     pending_question = result.1;
@@ -291,10 +336,11 @@ where
     };
 
     let state = match pending_question.as_ref() {
-        Some(question) if question
-            .get("kind")
-            .and_then(|value| value.as_str())
-            == Some("tool_approval") => TaskRunState::WaitingForApproval,
+        Some(question)
+            if question.get("kind").and_then(|value| value.as_str()) == Some("tool_approval") =>
+        {
+            TaskRunState::WaitingForApproval
+        }
         Some(_) => TaskRunState::WaitingForUser,
         None if provider_response.is_ok() => TaskRunState::Completed,
         None => TaskRunState::Failed,
@@ -315,7 +361,11 @@ where
         mode,
         expanded_prompt.clone(),
         state.clone(),
-        provider_response.as_ref().ok().cloned().or_else(|| provider_response.as_ref().err().cloned()),
+        provider_response
+            .as_ref()
+            .ok()
+            .cloned()
+            .or_else(|| provider_response.as_ref().err().cloned()),
     );
 
     Ok(RunnerOutput {
@@ -345,11 +395,23 @@ async fn execute_with_provider(
     tool_defs: Vec<ToolDefinition>,
     tools: &ToolRegistry,
     workdir: &Path,
+    mode: ExecutionMode,
     approval: ApprovalPolicy,
     max_iterations: usize,
     stream_handler: Option<impl FnMut(&str)>,
-) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
-    if provider.api_key.is_some() && provider.base_url.as_ref().is_some_and(|value| !value.is_empty()) {
+) -> (
+    std::result::Result<String, String>,
+    Option<serde_json::Value>,
+    Option<ChatUsage>,
+    u64,
+    u64,
+) {
+    if provider.api_key.is_some()
+        && provider
+            .base_url
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+    {
         if tool_defs.is_empty() {
             let client = ProviderClient::new();
             let api_started_at = Instant::now();
@@ -365,17 +427,51 @@ async fn execute_with_provider(
                 client.simple_chat_with_usage(provider, user_prompt).await
             };
             match result {
-                Ok((text, usage)) => (Ok(text), None, usage, elapsed_ms(api_started_at.elapsed()), 0),
+                Ok((text, usage)) => (
+                    Ok(text),
+                    None,
+                    usage,
+                    elapsed_ms(api_started_at.elapsed()),
+                    0,
+                ),
                 Err(error) => {
-                    let _ = MistakeBookStore::new(workdir).append("provider:chat", "主模型调用失败", error.to_string());
-                    (Err(error.to_string()), None, None, elapsed_ms(api_started_at.elapsed()), 0)
+                    let _ = MistakeBookStore::new(workdir).append(
+                        "provider:chat",
+                        "主模型调用失败",
+                        error.to_string(),
+                    );
+                    (
+                        Err(error.to_string()),
+                        None,
+                        None,
+                        elapsed_ms(api_started_at.elapsed()),
+                        0,
+                    )
                 }
             }
         } else {
-            run_tool_chat(provider, system_prompt, user_prompt, tool_defs, tools, workdir, approval, max_iterations, stream_handler).await
+            run_tool_chat(
+                provider,
+                system_prompt,
+                user_prompt,
+                tool_defs,
+                tools,
+                workdir,
+                mode,
+                approval,
+                max_iterations,
+                stream_handler,
+            )
+            .await
         }
     } else {
-        (Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()), None, None, 0, 0)
+        (
+            Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()),
+            None,
+            None,
+            0,
+            0,
+        )
     }
 }
 
@@ -386,10 +482,17 @@ async fn run_tool_chat(
     tool_defs: Vec<ToolDefinition>,
     tools: &ToolRegistry,
     workdir: &Path,
+    mode: ExecutionMode,
     approval: ApprovalPolicy,
     _max_iterations: usize,
     stream_handler: Option<impl FnMut(&str)>,
-) -> (std::result::Result<String, String>, Option<serde_json::Value>, Option<ChatUsage>, u64, u64) {
+) -> (
+    std::result::Result<String, String>,
+    Option<serde_json::Value>,
+    Option<ChatUsage>,
+    u64,
+    u64,
+) {
     let client = ProviderClient::new();
     let tools_clone = tools.clone();
     let workdir_clone = workdir.to_path_buf();
@@ -403,12 +506,16 @@ async fn run_tool_chat(
         let side_effect_level = spec
             .map(|s| s.side_effect_level)
             .unwrap_or(SideEffectLevel::Execute);
-        let needs_approval = spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
+        let needs_approval =
+            spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
+        let requires_prompt_approval = needs_approval && mode == ExecutionMode::Build;
 
-        if needs_approval {
+        if requires_prompt_approval {
             match approval {
                 ApprovalPolicy::AutoApprove => {}
-                ApprovalPolicy::AutoDeny => return Ok(serde_json::json!({ "error": "denied by policy" })),
+                ApprovalPolicy::AutoDeny => {
+                    return Ok(serde_json::json!({ "error": "denied by policy" }))
+                }
                 ApprovalPolicy::Prompt => {
                     return Ok(serde_json::json!({
                         "pending": true,
@@ -444,7 +551,9 @@ async fn run_tool_chat(
                 args.clone()
             };
             let result = match tools_clone.execute(name, tool_input) {
-                Ok(output) => Ok(if output.success { output.data } else {
+                Ok(output) => Ok(if output.success {
+                    output.data
+                } else {
                     let _ = MistakeBookStore::new(&workdir_clone).append(
                         format!("tool:{}", name),
                         "工具执行失败",
@@ -453,8 +562,17 @@ async fn run_tool_chat(
                     serde_json::json!({ "error": output.message.unwrap_or_default() })
                 }),
                 Err(error) => {
-                    if let Some(question) = build_permission_approval_question(name, args, side_effect_level, &error.to_string()) {
-                        tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
+                    if let Some(question) = build_permission_approval_question(
+                        mode,
+                        name,
+                        args,
+                        side_effect_level,
+                        &error.to_string(),
+                    ) {
+                        tool_duration_for_executor.fetch_add(
+                            elapsed_ms(tool_started_at.elapsed()),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
                         return Ok(question);
                     }
                     let _ = MistakeBookStore::new(&workdir_clone).append(
@@ -465,10 +583,16 @@ async fn run_tool_chat(
                     Ok(serde_json::json!({ "error": error.to_string() }))
                 }
             };
-            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
+            tool_duration_for_executor.fetch_add(
+                elapsed_ms(tool_started_at.elapsed()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             result
         } else {
-            tool_duration_for_executor.fetch_add(elapsed_ms(tool_started_at.elapsed()), std::sync::atomic::Ordering::Relaxed);
+            tool_duration_for_executor.fetch_add(
+                elapsed_ms(tool_started_at.elapsed()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
         }
     };
@@ -476,14 +600,29 @@ async fn run_tool_chat(
     let api_started_at = Instant::now();
     let result = if let Some(mut handler) = stream_handler {
         client
-            .tool_chat_streaming(provider, system_prompt, user_prompt, tool_defs, tool_executor, &mut |chunk| {
-                if !chunk.done {
-                    handler(&chunk.content);
-                }
-            })
+            .tool_chat_streaming(
+                provider,
+                system_prompt,
+                user_prompt,
+                tool_defs,
+                tool_executor,
+                &mut |chunk| {
+                    if !chunk.done {
+                        handler(&chunk.content);
+                    }
+                },
+            )
             .await
     } else {
-        client.tool_chat(provider, system_prompt, user_prompt, tool_defs, tool_executor).await
+        client
+            .tool_chat(
+                provider,
+                system_prompt,
+                user_prompt,
+                tool_defs,
+                tool_executor,
+            )
+            .await
     };
     match result {
         Ok(result) => {
@@ -501,7 +640,11 @@ async fn run_tool_chat(
             )
         }
         Err(error) => {
-            let _ = MistakeBookStore::new(workdir).append("provider:tool_chat", "模型 tool calling 循环失败", error.to_string());
+            let _ = MistakeBookStore::new(workdir).append(
+                "provider:tool_chat",
+                "模型 tool calling 循环失败",
+                error.to_string(),
+            );
             (
                 Err(error.to_string()),
                 None,
@@ -514,11 +657,16 @@ async fn run_tool_chat(
 }
 
 fn build_permission_approval_question(
+    mode: ExecutionMode,
     name: &str,
     args: &serde_json::Value,
     side_effect_level: SideEffectLevel,
     error: &str,
 ) -> Option<serde_json::Value> {
+    if mode != ExecutionMode::Build {
+        return None;
+    }
+
     if !is_permission_restricted_error(error) {
         return None;
     }
@@ -564,23 +712,35 @@ fn is_permission_restricted_error(error: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
-fn enrich_media_read_args(args: &serde_json::Value, provider: &sacode_kernel::model::ModelProvider) -> serde_json::Value {
+fn enrich_media_read_args(
+    args: &serde_json::Value,
+    provider: &sacode_kernel::model::ModelProvider,
+) -> serde_json::Value {
     let mut enriched = args.clone();
     let Some(object) = enriched.as_object_mut() else {
         return enriched;
     };
 
     if !object.contains_key("model") {
-        object.insert("model".to_string(), serde_json::Value::String(provider.model.clone()));
+        object.insert(
+            "model".to_string(),
+            serde_json::Value::String(provider.model.clone()),
+        );
     }
     if !object.contains_key("base_url") {
         if let Some(base_url) = provider.base_url.as_ref().filter(|value| !value.is_empty()) {
-            object.insert("base_url".to_string(), serde_json::Value::String(base_url.clone()));
+            object.insert(
+                "base_url".to_string(),
+                serde_json::Value::String(base_url.clone()),
+            );
         }
     }
     if !object.contains_key("api_key") {
         if let Some(api_key) = provider.api_key.as_ref().filter(|value| !value.is_empty()) {
-            object.insert("api_key".to_string(), serde_json::Value::String(api_key.clone()));
+            object.insert(
+                "api_key".to_string(),
+                serde_json::Value::String(api_key.clone()),
+            );
         }
     }
 
@@ -599,8 +759,12 @@ fn build_tool_definitions(
     let mut defs = Vec::new();
     for name in tool_names {
         if let Some(spec) = registry.get(name) {
-            if mode == ExecutionMode::Plan && spec.side_effect_level != SideEffectLevel::ReadOnly {
-                continue;
+            if mode == ExecutionMode::Plan {
+                let plan_allowed = spec.side_effect_level == SideEffectLevel::ReadOnly
+                    || matches!(name.as_str(), "fs.search" | "web.search");
+                if !plan_allowed {
+                    continue;
+                }
             }
             defs.push(spec.to_tool_definition());
         }
@@ -650,7 +814,10 @@ pub fn format_output(output: &RunnerOutput) -> String {
 
     lines.push("Plan:".to_string());
     for step in &output.plan.steps {
-        lines.push(format!("  {}. {} [{:?}]", step.id, step.description, step.status));
+        lines.push(format!(
+            "  {}. {} [{:?}]",
+            step.id, step.description, step.status
+        ));
     }
 
     if !output.tool_results.is_empty() {
@@ -672,7 +839,11 @@ pub fn format_output(output: &RunnerOutput) -> String {
             Event::Message { content } => lines.push(format!("  MSG: {}", content)),
             Event::Thinking { content } => lines.push(format!("  THINK: {}", content)),
             Event::ToolCallStarted { name, .. } => lines.push(format!("  TOOL_START: {}", name)),
-            Event::ToolCallFinished { name, success, output } => {
+            Event::ToolCallFinished {
+                name,
+                success,
+                output,
+            } => {
                 lines.push(format!(
                     "  TOOL_END: {} ({}) {}",
                     name,
@@ -699,7 +870,11 @@ pub fn format_chat_output(output: &RunnerOutput) -> String {
         match event {
             Event::Message { content } => lines.push(content.clone()),
             Event::Thinking { content } => lines.push(format!("[思考] {}", content)),
-            Event::ToolCallFinished { name, success, output } => {
+            Event::ToolCallFinished {
+                name,
+                success,
+                output,
+            } => {
                 let summary = summarize_tool_output(output);
                 let status = if *success { "完成" } else { "失败" };
                 if summary.is_empty() {
@@ -746,8 +921,14 @@ pub fn format_stream_tail(output: &RunnerOutput) -> String {
         lines.push("Events:".to_string());
         for event in &output.events {
             match event {
-                Event::ToolCallStarted { name, .. } => lines.push(format!("  TOOL_START: {}", name)),
-                Event::ToolCallFinished { name, success, output } => {
+                Event::ToolCallStarted { name, .. } => {
+                    lines.push(format!("  TOOL_START: {}", name))
+                }
+                Event::ToolCallFinished {
+                    name,
+                    success,
+                    output,
+                } => {
                     lines.push(format!(
                         "  TOOL_END: {} ({}) {}",
                         name,
@@ -803,7 +984,10 @@ pub fn build_mcp_input(schema: &serde_json::Value, prompt: &str) -> serde_json::
     if let Some(properties) = properties {
         for key in ["query", "prompt", "input", "text", "task", "keyword"] {
             if properties.contains_key(key) {
-                payload.insert(key.to_string(), serde_json::Value::String(prompt.to_string()));
+                payload.insert(
+                    key.to_string(),
+                    serde_json::Value::String(prompt.to_string()),
+                );
             }
         }
     }
@@ -836,35 +1020,48 @@ fn preview(input: &str) -> String {
     let trimmed = input.trim();
     let mut chars = trimmed.chars();
     let preview: String = chars.by_ref().take(80).collect();
-    if chars.next().is_some() { format!("{preview}...") } else { preview }
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::build_permission_approval_question;
+    use super::build_tool_definitions;
     use super::enrich_media_read_args;
+    use super::format_learned_facts_summary;
     use super::format_output;
     use super::format_stream_tail;
-    use super::format_learned_facts_summary;
     use super::is_permission_restricted_error;
     use super::RunnerOutput;
     use super::TaskRunState;
     use crate::learning::{LearnedFact, LearnedKind};
-    use sacode_runtime::SideEffectLevel;
-    use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
     use sacode_kernel::model::ModelProvider;
+    use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
+    use sacode_runtime::SideEffectLevel;
+    use sacode_runtime::ToolRegistry;
 
     #[test]
     fn permission_restricted_error_detects_sandbox_failures() {
-        assert!(is_permission_restricted_error("path is blocked by sandbox policy"));
-        assert!(is_permission_restricted_error("command 'git' is blocked by sandbox policy"));
+        assert!(is_permission_restricted_error(
+            "path is blocked by sandbox policy"
+        ));
+        assert!(is_permission_restricted_error(
+            "command 'git' is blocked by sandbox policy"
+        ));
         assert!(is_permission_restricted_error("path is outside workspace"));
-        assert!(!is_permission_restricted_error("file not found: src/main.rs"));
+        assert!(!is_permission_restricted_error(
+            "file not found: src/main.rs"
+        ));
     }
 
     #[test]
     fn build_permission_approval_question_returns_tool_approval_payload() {
         let question = build_permission_approval_question(
+            ExecutionMode::Build,
             "fs.read",
             &serde_json::json!({ "path": "/tmp/secret.txt" }),
             SideEffectLevel::ReadOnly,
@@ -872,10 +1069,61 @@ mod tests {
         )
         .expect("should build approval payload");
 
-        assert_eq!(question.get("kind").and_then(|value| value.as_str()), Some("tool_approval"));
-        assert_eq!(question.get("tool_name").and_then(|value| value.as_str()), Some("fs.read"));
-        assert_eq!(question.get("side_effect_level").and_then(|value| value.as_str()), Some("read_only"));
-        assert_eq!(question.get("error").and_then(|value| value.as_str()), Some("path is blocked by sandbox policy"));
+        assert_eq!(
+            question.get("kind").and_then(|value| value.as_str()),
+            Some("tool_approval")
+        );
+        assert_eq!(
+            question.get("tool_name").and_then(|value| value.as_str()),
+            Some("fs.read")
+        );
+        assert_eq!(
+            question
+                .get("side_effect_level")
+                .and_then(|value| value.as_str()),
+            Some("read_only")
+        );
+        assert_eq!(
+            question.get("error").and_then(|value| value.as_str()),
+            Some("path is blocked by sandbox policy")
+        );
+    }
+
+    #[test]
+    fn build_permission_approval_question_skips_plan_mode() {
+        let question = build_permission_approval_question(
+            ExecutionMode::Plan,
+            "fs.write",
+            &serde_json::json!({ "path": "/tmp/out.txt" }),
+            SideEffectLevel::Modify,
+            "path is blocked by sandbox policy",
+        );
+
+        assert!(question.is_none());
+    }
+
+    #[test]
+    fn build_tool_definitions_limits_plan_mode_to_read_and_search() {
+        let registry = ToolRegistry::builtin();
+        let tool_names = vec![
+            "fs.read".to_string(),
+            "fs.search".to_string(),
+            "web.search".to_string(),
+            "fs.write".to_string(),
+            "shell.exec".to_string(),
+        ];
+
+        let defs = build_tool_definitions(&registry, &tool_names, ExecutionMode::Plan);
+        let names = defs
+            .iter()
+            .map(|def| def.function.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"fs.read"));
+        assert!(names.contains(&"fs.search"));
+        assert!(names.contains(&"web.search"));
+        assert!(!names.contains(&"fs.write"));
+        assert!(!names.contains(&"shell.exec"));
     }
 
     #[test]
@@ -889,9 +1137,18 @@ mod tests {
         });
 
         let enriched = enrich_media_read_args(&input, &provider);
-        assert_eq!(enriched.get("model").and_then(|value| value.as_str()), Some("gpt-4o"));
-        assert_eq!(enriched.get("base_url").and_then(|value| value.as_str()), Some("https://api.openai.com/v1"));
-        assert_eq!(enriched.get("api_key").and_then(|value| value.as_str()), Some("secret"));
+        assert_eq!(
+            enriched.get("model").and_then(|value| value.as_str()),
+            Some("gpt-4o")
+        );
+        assert_eq!(
+            enriched.get("base_url").and_then(|value| value.as_str()),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(
+            enriched.get("api_key").and_then(|value| value.as_str()),
+            Some("secret")
+        );
     }
 
     #[test]
@@ -908,9 +1165,18 @@ mod tests {
         });
 
         let enriched = enrich_media_read_args(&input, &provider);
-        assert_eq!(enriched.get("model").and_then(|value| value.as_str()), Some("mimo-v2.5-pro"));
-        assert_eq!(enriched.get("base_url").and_then(|value| value.as_str()), Some("https://custom.example/v1"));
-        assert_eq!(enriched.get("api_key").and_then(|value| value.as_str()), Some("custom-key"));
+        assert_eq!(
+            enriched.get("model").and_then(|value| value.as_str()),
+            Some("mimo-v2.5-pro")
+        );
+        assert_eq!(
+            enriched.get("base_url").and_then(|value| value.as_str()),
+            Some("https://custom.example/v1")
+        );
+        assert_eq!(
+            enriched.get("api_key").and_then(|value| value.as_str()),
+            Some("custom-key")
+        );
     }
 
     #[test]
@@ -939,7 +1205,8 @@ mod tests {
 
     #[test]
     fn task_run_state_serializes_as_expected() {
-        let value = serde_json::to_value(TaskRunState::WaitingForApproval).expect("serialize state");
+        let value =
+            serde_json::to_value(TaskRunState::WaitingForApproval).expect("serialize state");
         assert_eq!(value, serde_json::json!("WaitingForApproval"));
     }
 
@@ -1064,6 +1331,13 @@ mod tests {
 
         assert_eq!(output.task_run.state, Some(TaskRunState::Completed));
         assert_eq!(output.task_run.mode, Some(ExecutionMode::Build));
-        assert_eq!(output.task_run.report.as_ref().and_then(|r| r.final_output.clone()), Some("编排完成".to_string()));
+        assert_eq!(
+            output
+                .task_run
+                .report
+                .as_ref()
+                .and_then(|r| r.final_output.clone()),
+            Some("编排完成".to_string())
+        );
     }
 }

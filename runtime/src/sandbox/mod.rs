@@ -1,14 +1,19 @@
 mod executor;
 
+use crate::ProjectAccessConfigStore;
 use sacode_kernel::ExecutionMode;
 
-pub use executor::{BackendCommandOutput, DockerSandboxBackend, LocalSandboxBackend, SandboxBackend, SandboxCommand, SandboxExecutor};
+pub use executor::{
+    BackendCommandOutput, DockerSandboxBackend, LocalSandboxBackend, SandboxBackend,
+    SandboxCommand, SandboxExecutor,
+};
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 
 static ACTIVE_SANDBOX_POLICY: OnceLock<RwLock<SandboxPolicy>> = OnceLock::new();
 static ACTIVE_SANDBOX_BACKEND: OnceLock<RwLock<Arc<dyn SandboxBackend>>> = OnceLock::new();
+static ACTIVE_EXECUTION_MODE: OnceLock<RwLock<ExecutionMode>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsAccess {
@@ -138,8 +143,7 @@ impl SandboxPolicy {
     }
 
     pub fn readonly() -> Self {
-        Self::new()
-            .allow_read_path(PathBuf::from("."))
+        Self::new().allow_read_path(PathBuf::from("."))
     }
 
     pub fn build() -> Self {
@@ -167,14 +171,26 @@ impl SandboxPolicy {
 
     pub fn for_mode(mode: ExecutionMode) -> Self {
         match mode {
-            ExecutionMode::Plan => Self::readonly().allow_search().timeout(15000).max_memory(256),
+            ExecutionMode::Plan => Self::readonly()
+                .allow_search()
+                .timeout(15000)
+                .max_memory(256),
             ExecutionMode::Build => Self::build(),
             ExecutionMode::Yolo => Self::yolo(),
         }
     }
 
     pub fn check_path(&self, path: &PathBuf, access: FsAccess) -> bool {
-        if self.fs.denied_paths.iter().any(|p| path.starts_with(resolve_policy_path(p))) {
+        if current_mode() == ExecutionMode::Yolo {
+            return true;
+        }
+
+        if self
+            .fs
+            .denied_paths
+            .iter()
+            .any(|p| path.starts_with(resolve_policy_path(p)))
+        {
             return false;
         }
 
@@ -187,9 +203,22 @@ impl SandboxPolicy {
             return true;
         }
 
-        allowed_paths
+        if allowed_paths
             .iter()
             .any(|p| path.starts_with(resolve_policy_path(p)))
+        {
+            return true;
+        }
+
+        match std::env::current_dir()
+            .ok()
+            .and_then(|cwd| cwd.canonicalize().ok())
+        {
+            Some(workspace_root) => ProjectAccessConfigStore::new(&workspace_root)
+                .is_allowed_path(&workspace_root, path)
+                .unwrap_or(false),
+            None => false,
+        }
     }
 
     pub fn check_command(&self, cmd: &str) -> bool {
@@ -201,7 +230,10 @@ impl SandboxPolicy {
             return true;
         }
 
-        self.shell.allowed_commands.iter().any(|allowed| cmd == allowed)
+        self.shell
+            .allowed_commands
+            .iter()
+            .any(|allowed| cmd == allowed)
     }
 
     pub fn check_network(&self, access: NetworkAccess) -> bool {
@@ -232,6 +264,13 @@ pub fn install_global_policy(policy: SandboxPolicy) {
     }
 }
 
+pub fn install_current_mode(mode: ExecutionMode) {
+    let cell = ACTIVE_EXECUTION_MODE.get_or_init(|| RwLock::new(ExecutionMode::Build));
+    if let Ok(mut current) = cell.write() {
+        *current = mode;
+    }
+}
+
 pub fn install_global_backend(backend: Arc<dyn SandboxBackend>) {
     let cell = ACTIVE_SANDBOX_BACKEND.get_or_init(|| RwLock::new(Arc::new(LocalSandboxBackend)));
     if let Ok(mut current) = cell.write() {
@@ -255,9 +294,18 @@ pub fn active_backend() -> Arc<dyn SandboxBackend> {
     }
 }
 
+pub fn current_mode() -> ExecutionMode {
+    let cell = ACTIVE_EXECUTION_MODE.get_or_init(|| RwLock::new(ExecutionMode::Build));
+    match cell.read() {
+        Ok(mode) => *mode,
+        Err(_) => ExecutionMode::Build,
+    }
+}
+
 #[cfg(test)]
 pub fn reset_global_policy() {
     install_global_policy(SandboxPolicy::build());
+    install_current_mode(ExecutionMode::Build);
     install_global_backend(Arc::new(LocalSandboxBackend));
 }
 

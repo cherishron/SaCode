@@ -10,8 +10,8 @@ use crate::provider_runtime::resolve_named_provider;
 use crate::task_store::TaskStore;
 
 use super::{
-    get_level1_commands, App, InputMode, InteractionSession,
-    PerformanceStats, PromptTemplate, QueueState, ThemePalette, UsageStats,
+    get_level1_commands, App, InputMode, InteractionSession, PerformanceStats, PromptTemplate,
+    QueueState, ThemePalette, UsageStats,
 };
 
 impl App {
@@ -61,14 +61,38 @@ impl App {
             selected_provider_index: 0,
             model_options: Vec::new(),
             selected_model_index: 0,
-            theme_options: vec!["github".to_string(), "vscode".to_string(), "idea".to_string()],
+            theme_options: vec![
+                "github".to_string(),
+                "vscode".to_string(),
+                "idea".to_string(),
+            ],
             selected_theme_index: 0,
             connect_options: vec![
-                ("ollama".to_string(), "http://127.0.0.1:11434/v1".to_string(), false),
-                ("deepseek".to_string(), "https://api.deepseek.com/v1".to_string(), true),
-                ("mimo".to_string(), "https://token-plan-cn.xiaomimimo.com/v1".to_string(), true),
-                ("longcat".to_string(), "https://api.longcat.chat/openai/v1".to_string(), true),
-                ("openai".to_string(), "https://api.openai.com/v1".to_string(), true),
+                (
+                    "ollama".to_string(),
+                    "http://127.0.0.1:11434/v1".to_string(),
+                    false,
+                ),
+                (
+                    "deepseek".to_string(),
+                    "https://api.deepseek.com/v1".to_string(),
+                    true,
+                ),
+                (
+                    "mimo".to_string(),
+                    "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+                    true,
+                ),
+                (
+                    "longcat".to_string(),
+                    "https://api.longcat.chat/openai/v1".to_string(),
+                    true,
+                ),
+                (
+                    "openai".to_string(),
+                    "https://api.openai.com/v1".to_string(),
+                    true,
+                ),
             ],
             selected_connect_index: 0,
             pending_connect_provider: None,
@@ -126,6 +150,7 @@ impl App {
             interaction: InteractionSession::default(),
             session_auto_approve_edits: false,
             spinner_index: 0,
+            assistant_pending_thinking: false,
             log_path,
             git_changes: Vec::new(),
             orchestration_summary: None,

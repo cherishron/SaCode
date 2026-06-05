@@ -3,10 +3,14 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
-use crate::{executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb};
+use crate::{
+    executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb,
+};
 use sacode_kernel::{TaskQueueStatus, TaskRun};
 
-use super::{parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status};
+use super::{
+    parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRequest {
@@ -38,10 +42,18 @@ pub struct RetryPolicyRequest {
     pub retry_on: Vec<String>,
 }
 
-fn default_max_attempts() -> u32 { 3 }
-fn default_backoff_type() -> String { "exponential".to_string() }
-fn default_base_ms() -> u64 { 1000 }
-fn default_max_ms() -> u64 { 30000 }
+fn default_max_attempts() -> u32 {
+    3
+}
+fn default_backoff_type() -> String {
+    "exponential".to_string()
+}
+fn default_base_ms() -> u64 {
+    1000
+}
+fn default_max_ms() -> u64 {
+    30000
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResponse {
@@ -92,7 +104,13 @@ pub struct TaskStatus {
 }
 
 impl TaskStatus {
-    pub fn new(task_id: String, prompt: String, mode: String, priority: String, max_attempts: u32) -> Self {
+    pub fn new(
+        task_id: String,
+        prompt: String,
+        mode: String,
+        priority: String,
+        max_attempts: u32,
+    ) -> Self {
         let task_run = task_run_for_queue_status(
             Some(task_id.clone()),
             parse_mode(&mode),

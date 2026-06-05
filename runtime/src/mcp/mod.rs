@@ -1,7 +1,13 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, future::Future, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fs,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::config::SaCodeConfig;
 use crate::tools::{SideEffectLevel, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec};
@@ -202,10 +208,24 @@ pub async fn inspect_server(server: &McpServerConfig) -> Result<McpServerDetails
         .unwrap_or_else(|| serde_json::json!({}));
 
     Ok(McpServerDetails {
-        protocol_version: result.get("protocolVersion").and_then(|v| v.as_str()).map(str::to_string),
-        server_name: result.get("serverInfo").and_then(|v| v.get("name")).and_then(|v| v.as_str()).map(str::to_string),
-        server_version: result.get("serverInfo").and_then(|v| v.get("version")).and_then(|v| v.as_str()).map(str::to_string),
-        instructions: result.get("instructions").and_then(|v| v.as_str()).map(str::to_string),
+        protocol_version: result
+            .get("protocolVersion")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        server_name: result
+            .get("serverInfo")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        server_version: result
+            .get("serverInfo")
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        instructions: result
+            .get("instructions")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
     })
 }
 
@@ -237,15 +257,32 @@ pub async fn list_tools(server: &McpServerConfig) -> Result<Vec<McpToolInfo>> {
     Ok(tools
         .into_iter()
         .map(|tool| McpToolInfo {
-            name: tool.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            title: tool.get("title").and_then(|v| v.as_str()).map(str::to_string),
-            description: tool.get("description").and_then(|v| v.as_str()).map(str::to_string),
-            input_schema: tool.get("inputSchema").cloned().unwrap_or_else(|| serde_json::json!({})),
+            name: tool
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            title: tool
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            description: tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            input_schema: tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
         })
         .collect())
 }
 
-pub async fn call_tool(server: &McpServerConfig, tool_name: &str, arguments: serde_json::Value) -> Result<McpToolCallResult> {
+pub async fn call_tool(
+    server: &McpServerConfig,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<McpToolCallResult> {
     let client = http_client()?;
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
@@ -273,8 +310,14 @@ pub async fn call_tool(server: &McpServerConfig, tool_name: &str, arguments: ser
         .unwrap_or_else(|| serde_json::json!({}));
 
     Ok(McpToolCallResult {
-        content: result.get("content").cloned().unwrap_or_else(|| result.clone()),
-        is_error: result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
+        content: result
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| result.clone()),
+        is_error: result
+            .get("isError")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     })
 }
 
@@ -316,7 +359,10 @@ where
     }
 }
 
-pub fn register_enabled_tools_sync(store: &McpConfigStore, registry: &mut ToolRegistry) -> Result<Vec<String>> {
+pub fn register_enabled_tools_sync(
+    store: &McpConfigStore,
+    registry: &mut ToolRegistry,
+) -> Result<Vec<String>> {
     let config = store.load()?;
     let mut names = Vec::new();
 
@@ -378,7 +424,9 @@ pub async fn find_enabled_search_tool(store: &McpConfigStore) -> Result<Option<(
 fn tool_info_to_spec(server_name: &str, tool: McpToolInfo) -> ToolSpec {
     ToolSpec {
         name: format!("mcp.{}.{}", server_name, tool.name),
-        description: tool.description.unwrap_or_else(|| "Remote MCP tool".to_string()),
+        description: tool
+            .description
+            .unwrap_or_else(|| "Remote MCP tool".to_string()),
         input_schema: tool.input_schema,
         output_schema: serde_json::json!({
             "type": "object"
@@ -416,7 +464,11 @@ fn http_client() -> Result<Client> {
         .build()?)
 }
 
-pub fn call_mcp_tool_sync(server: &McpServerConfig, tool_name: &str, arguments: serde_json::Value) -> Result<McpToolCallResult> {
+pub fn call_mcp_tool_sync(
+    server: &McpServerConfig,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<McpToolCallResult> {
     let client = http_client()?;
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
@@ -445,8 +497,14 @@ pub fn call_mcp_tool_sync(server: &McpServerConfig, tool_name: &str, arguments: 
             .unwrap_or_else(|| serde_json::json!({}));
 
         Ok(McpToolCallResult {
-            content: result.get("content").cloned().unwrap_or_else(|| result.clone()),
-            is_error: result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
+            content: result
+                .get("content")
+                .cloned()
+                .unwrap_or_else(|| result.clone()),
+            is_error: result
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })
     })
 }

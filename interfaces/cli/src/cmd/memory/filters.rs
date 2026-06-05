@@ -39,7 +39,10 @@ pub(super) fn parse_list_filters(args: &[String]) -> Result<ListFilters> {
     Ok(filters)
 }
 
-pub(super) fn filter_list_entries(entries: Vec<MemoryIndexEntry>, filters: &ListFilters) -> Vec<MemoryIndexEntry> {
+pub(super) fn filter_list_entries(
+    entries: Vec<MemoryIndexEntry>,
+    filters: &ListFilters,
+) -> Vec<MemoryIndexEntry> {
     entries
         .into_iter()
         .filter(|entry| filters.kind.is_none_or(|kind| entry.kind == kind))
