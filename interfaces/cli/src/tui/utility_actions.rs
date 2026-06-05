@@ -48,7 +48,7 @@ impl App {
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /answer    - 回答当前等待中的问题\n\
             /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\
-            /update    - 检查或更新当前 sacode 版本\n\
+            /update    - 检查、更新或回滚当前 sacode 版本\n\
             /cancel    - 取消当前任务或清空等待队列\n\
             /help      - 显示帮助\n\
             /quit      - 退出\n\

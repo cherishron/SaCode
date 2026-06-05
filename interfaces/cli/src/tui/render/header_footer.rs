@@ -8,6 +8,9 @@ use ratatui::{
 
 use super::super::{App, TodoStatus, SPINNER_FRAMES};
 
+const DEFAULT_CONTEXT_LIMIT_TOKENS: usize = 128_000;
+const CONTEXT_RING_STEPS: [&str; 9] = ["○", "◔", "◑", "◕", "◉", "◕", "◑", "◔", "○"];
+
 fn truncate_middle(text: &str, max_chars: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max_chars {
@@ -93,6 +96,30 @@ fn queue_summary(app: &App) -> Option<String> {
     } else {
         None
     }
+}
+
+fn context_limit_tokens(_app: &App) -> usize {
+    DEFAULT_CONTEXT_LIMIT_TOKENS
+}
+
+fn context_ratio(app: &App) -> f32 {
+    let used = app
+        .build_session_compression_source()
+        .chars()
+        .count()
+        .div_ceil(4) as f32;
+    let limit = context_limit_tokens(app) as f32;
+    if limit <= 0.0 {
+        0.0
+    } else {
+        (used / limit).clamp(0.0, 1.0)
+    }
+}
+
+fn context_ring(app: &App) -> &'static str {
+    let ratio = context_ratio(app);
+    let index = (ratio * (CONTEXT_RING_STEPS.len().saturating_sub(1) as f32)).round() as usize;
+    CONTEXT_RING_STEPS[index.min(CONTEXT_RING_STEPS.len().saturating_sub(1))]
 }
 
 fn status_separator(theme: super::super::ThemePalette) -> Span<'static> {
@@ -181,6 +208,13 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
         spans.push(status_separator(theme));
     }
+
+    let context_percent = (context_ratio(app) * 100.0).round() as usize;
+    spans.push(Span::styled(
+        format!("{} {:>3}%", context_ring(app), context_percent),
+        Style::default().fg(theme.info),
+    ));
+    spans.push(status_separator(theme));
 
     if app.current_thinking_enabled() {
         spans.push(Span::styled(

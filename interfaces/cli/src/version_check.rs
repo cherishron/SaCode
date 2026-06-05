@@ -57,9 +57,7 @@ impl VersionChecker {
     }
 
     pub fn with_config(config: VersionCheckConfig) -> Self {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
+        let home = user_home_dir();
         Self {
             cache_path: home.join(".sacode").join("version-cache.json"),
             current_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -168,7 +166,7 @@ impl VersionChecker {
         now.signed_duration_since(last_check).num_hours() < self.config.cache_duration_hours
     }
 
-    fn package_spec(&self) -> String {
+    pub fn package_spec(&self) -> String {
         match self.config.channel.as_str() {
             "beta" => format!("{}@beta", NPM_PACKAGE),
             _ => NPM_PACKAGE.to_string(),
@@ -207,6 +205,21 @@ impl Default for VersionChecker {
     }
 }
 
+pub fn user_home_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+    }
+}
+
 pub fn compare_versions(remote: &str, current: &str) -> Ordering {
     let remote_parts = parse_version(remote);
     let current_parts = parse_version(current);
@@ -227,7 +240,7 @@ pub fn compare_versions(remote: &str, current: &str) -> Ordering {
 fn parse_version(value: &str) -> Vec<u32> {
     value
         .split('.')
-        .map(|segment| segment.trim())
+        .map(|segment| segment.trim().trim_start_matches('v'))
         .take_while(|segment| !segment.is_empty())
         .filter_map(|segment| segment.parse::<u32>().ok())
         .collect()
@@ -243,7 +256,8 @@ pub fn update_prompt(current_version: &str, remote_version: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_versions, update_prompt, VersionCache, VersionCheckConfig, VersionChecker,
+        compare_versions, update_prompt, user_home_dir, VersionCache, VersionCheckConfig,
+        VersionChecker,
     };
     use std::cmp::Ordering;
 
@@ -272,6 +286,11 @@ mod tests {
     #[test]
     fn compare_versions_invalid_text() {
         assert_eq!(compare_versions("latest", "0.1.9"), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_versions_handles_v_prefix() {
+        assert_eq!(compare_versions("v0.2.0", "0.1.9"), Ordering::Greater);
     }
 
     #[test]
@@ -333,5 +352,10 @@ mod tests {
         let text = update_prompt("0.1.9", "0.2.0");
         assert!(text.contains("/update"));
         assert!(text.contains("sacode update"));
+    }
+
+    #[test]
+    fn user_home_dir_returns_non_empty_path() {
+        assert!(!user_home_dir().as_os_str().is_empty());
     }
 }

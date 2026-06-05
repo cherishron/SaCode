@@ -244,7 +244,7 @@ impl ReplSession {
         println!("  /provider-remove - Remove a non-current provider");
         println!("  /models          - Fetch and select default model");
         println!("  /status          - Show MCP and plugin link status");
-        println!("  /update [--check|--force] - 检查或更新 sacode");
+        println!("  /update [--check|--force|--rollback] - 检查、更新或回滚 sacode");
         println!("  /doctor          - Diagnose current setup and readiness");
         println!("  /diff            - Show current git diff summary");
         println!("  /hooks           - Show runtime hooks and lifecycle points");

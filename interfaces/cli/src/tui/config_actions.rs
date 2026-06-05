@@ -88,6 +88,10 @@ impl App {
                 .max_iterations
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "未设置".to_string()),
+            "loop_max_iterations" => scoped
+                .loop_max_iterations
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "未设置".to_string()),
             "approval_policy" => scoped
                 .approval_policy
                 .clone()

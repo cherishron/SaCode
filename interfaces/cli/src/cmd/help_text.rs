@@ -28,7 +28,7 @@ pub(super) const HELP_LINES: &[&str] = &[
     "  sacode init-deep  # 深度初始化，生成严格协作配置和工作流",
     "  sacode mistakes [list|show <index>]",
     "  sacode status",
-    "  sacode update [--check|--force]",
+    "  sacode update [--check|--force|--rollback]",
     "  sacode repl",
     "  sacode tui",
     "  sacode --help",

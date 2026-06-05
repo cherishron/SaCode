@@ -14,6 +14,9 @@ impl App {
             "已开始循环执行任务。每轮完成后会自动继续，直到你取消、任务失败，或任务进入等待用户状态：{}",
             task
         ));
+        let loop_max_iterations = config::effective_config(&self.workdir)
+            .map(|cfg| cfg.loop_max_iterations)
+            .unwrap_or(10) as u32;
         self.enqueue_or_start_message_with_approval_and_loop(
             format!(
                 "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
@@ -23,7 +26,7 @@ impl App {
             Some(LoopState {
                 task: task.to_string(),
                 iteration: 1,
-                max_iterations: 10,
+                max_iterations: loop_max_iterations.max(1),
                 error_count: 0,
                 last_summary: String::new(),
             }),

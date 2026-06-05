@@ -1138,6 +1138,7 @@ mod tests {
         app.queue.processing = true;
         app.spinner_index = 2;
         app.active_task_started_at = Some(chrono::Local::now());
+        app.session_summary = Some("[摘要]\n- 修复 footer".to_string());
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -1151,6 +1152,7 @@ mod tests {
         assert!(rendered.contains("Running"));
         assert!(!rendered.contains("ctx"));
         assert!(!rendered.contains("tok"));
+        assert!(rendered.contains("%"));
         assert!(rendered.contains("Alt+M: mode"));
     }
 

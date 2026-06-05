@@ -494,6 +494,7 @@ async fn execute_with_provider(
             Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()),
             None,
             None,
+            false,
             0,
             0,
         )
@@ -515,6 +516,7 @@ async fn run_tool_chat(
     std::result::Result<String, String>,
     Option<serde_json::Value>,
     Option<ChatUsage>,
+    bool,
     u64,
     u64,
 ) {

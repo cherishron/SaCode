@@ -57,6 +57,7 @@ pub struct EffectiveConfig {
     pub compress_tail_turns: usize,
     pub execution_mode: String,
     pub max_iterations: usize,
+    pub loop_max_iterations: usize,
     pub approval_policy: String,
     pub output_style: String,
     pub vim_mode: bool,
@@ -79,6 +80,8 @@ pub struct ConfigOverrides {
     pub execution_mode: Option<String>,
     #[serde(default)]
     pub max_iterations: Option<usize>,
+    #[serde(default)]
+    pub loop_max_iterations: Option<usize>,
     #[serde(default)]
     pub approval_policy: Option<String>,
     #[serde(default)]
@@ -189,6 +192,17 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
             category: ConfigCategory::Execution,
         },
         ConfigItemMeta {
+            key: "loop_max_iterations",
+            display_name: "/loop 轮数",
+            description: "/loop 自动续跑的最大轮数",
+            value_type: ConfigValueType::Number {
+                min: 1,
+                max: 20,
+                step: 1,
+            },
+            category: ConfigCategory::Execution,
+        },
+        ConfigItemMeta {
             key: "approval_policy",
             display_name: "审批策略",
             description: "工具执行的审批策略",
@@ -279,6 +293,7 @@ pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String>
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
         "execution_mode" => config.execution_mode.clone(),
         "max_iterations" => config.max_iterations.to_string(),
+        "loop_max_iterations" => config.loop_max_iterations.to_string(),
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
         "vim_mode" => bool_text(config.vim_mode),
@@ -297,6 +312,7 @@ pub fn current_raw_value(config: &EffectiveConfig, key: &str) -> Option<String> 
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
         "execution_mode" => config.execution_mode.clone(),
         "max_iterations" => config.max_iterations.to_string(),
+        "loop_max_iterations" => config.loop_max_iterations.to_string(),
         "approval_policy" => config.approval_policy.clone(),
         "output_style" => config.output_style.clone(),
         "vim_mode" => config.vim_mode.to_string(),
@@ -438,6 +454,10 @@ fn scope_value_text(config: &ConfigOverrides, key: &str) -> String {
             .max_iterations
             .map(|value| value.to_string())
             .unwrap_or_else(|| "未设置".to_string()),
+        "loop_max_iterations" => config
+            .loop_max_iterations
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "未设置".to_string()),
         "approval_policy" => config
             .approval_policy
             .clone()
@@ -477,6 +497,7 @@ fn set_override_value(config: &mut ConfigOverrides, key: &str, value: &str) -> R
         "compress_tail_turns" => config.compress_tail_turns = Some(parse_number(value, 5, 30)?),
         "execution_mode" => config.execution_mode = Some(normalize_execution_mode(value)?),
         "max_iterations" => config.max_iterations = Some(parse_number(value, 1, 10)?),
+        "loop_max_iterations" => config.loop_max_iterations = Some(parse_number(value, 1, 20)?),
         "approval_policy" => config.approval_policy = Some(normalize_approval_policy(value)?),
         "output_style" => config.output_style = Some(normalize_output_style(value)?),
         "vim_mode" => config.vim_mode = Some(parse_bool(value)?),
@@ -498,6 +519,7 @@ fn clear_override_value(config: &mut ConfigOverrides, key: &str) -> Result<()> {
         "compress_tail_turns" => config.compress_tail_turns = None,
         "execution_mode" => config.execution_mode = None,
         "max_iterations" => config.max_iterations = None,
+        "loop_max_iterations" => config.loop_max_iterations = None,
         "approval_policy" => config.approval_policy = None,
         "output_style" => config.output_style = None,
         "vim_mode" => config.vim_mode = None,
@@ -678,6 +700,7 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         compress_tail_turns: 15,
         execution_mode: "yolo".to_string(),
         max_iterations: 1,
+        loop_max_iterations: 10,
         approval_policy: "prompt".to_string(),
         output_style: "concise".to_string(),
         vim_mode: false,
@@ -709,6 +732,9 @@ fn apply_overrides(target: &mut EffectiveConfig, overrides: &ConfigOverrides) {
     }
     if let Some(value) = overrides.max_iterations {
         target.max_iterations = value;
+    }
+    if let Some(value) = overrides.loop_max_iterations {
+        target.loop_max_iterations = value;
     }
     if let Some(value) = &overrides.approval_policy {
         target.approval_policy = value.clone();
@@ -753,6 +779,10 @@ fn extract_overrides(raw: &serde_json::Value) -> ConfigOverrides {
             .get("max_iterations")
             .and_then(|value| value.as_u64())
             .map(|value| value as usize),
+        loop_max_iterations: raw
+            .get("loop_max_iterations")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize),
         approval_policy: raw
             .get("approval_policy")
             .and_then(|value| value.as_str())
@@ -791,6 +821,7 @@ fn write_overrides(raw: &mut serde_json::Value, overrides: &ConfigOverrides) -> 
     set_optional_usize(object, "compress_tail_turns", overrides.compress_tail_turns);
     set_optional_string(object, "execution_mode", overrides.execution_mode.clone());
     set_optional_usize(object, "max_iterations", overrides.max_iterations);
+    set_optional_usize(object, "loop_max_iterations", overrides.loop_max_iterations);
     set_optional_string(object, "approval_policy", overrides.approval_policy.clone());
     set_optional_string(object, "outstyle", overrides.output_style.clone());
     object.remove("output_style");

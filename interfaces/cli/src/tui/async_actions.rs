@@ -1,5 +1,5 @@
 use sacode_kernel::model::ChatUsage;
-use sacode_kernel::{TaskRun, TaskRunState};
+use sacode_kernel::{ExecutionMode, TaskRun, TaskRunState};
 
 use super::async_types::StreamChunkKind;
 use super::{
@@ -9,6 +9,10 @@ use super::{
 use crate::cmd::init::InitMode;
 
 impl App {
+    fn plan_mode_execution_hint() -> &'static str {
+        "\n\n[执行确认]\nPlan 模式规划已完成。按 Enter 或输入 /todo confirm 可切换到 Yolo 模式开始执行；按 Esc 保持在规划态继续调整方案。"
+    }
+
     pub(super) fn poll_async_results(&mut self) -> bool {
         let mut handled = false;
         while let Ok(result) = self.task_rx.try_recv() {
@@ -169,6 +173,12 @@ impl App {
             .as_ref()
             .and_then(|run| run.state.clone())
             .unwrap_or(TaskRunState::Failed);
+        let should_swallow_plan_approval = self.execution_mode == ExecutionMode::Plan
+            && pending_question
+                .as_ref()
+                .and_then(|question| question.get("kind"))
+                .and_then(|value| value.as_str())
+                == Some("tool_approval");
         let loop_summary = loop_state
             .as_ref()
             .map(|state| Self::merge_loop_summary(&state.last_summary, &response, hit_round_limit))
@@ -220,7 +230,10 @@ impl App {
                 .map(|msg| msg.content.clone())
                 .unwrap_or_default(),
         );
-        if let Some(question) = pending_question.as_ref() {
+        if should_swallow_plan_approval {
+            self.clear_pending_question_state();
+            self.push_system_message("Plan 模式已跳过需要额外权限的执行操作，本轮继续保留规划结果。确认方案后切换到执行模式即可真正运行相关步骤。");
+        } else if let Some(question) = pending_question.as_ref() {
             let mut pending = question.clone();
             if pending.get("kind").and_then(|value| value.as_str()) == Some("tool_approval") {
                 pending["task_prompt"] = serde_json::Value::String(prompt.clone());
@@ -245,13 +258,30 @@ impl App {
         self.mark_todo_completed(&prompt);
         if let Some(plan) = plan {
             self.capture_todo_plan(&prompt, plan);
+            if self.execution_mode == ExecutionMode::Plan {
+                if let Some(message) =
+                    task_message_index.and_then(|index| self.messages.get_mut(index))
+                {
+                    if !message.content.contains("[执行确认]") {
+                        message.content.push_str(Self::plan_mode_execution_hint());
+                        self.invalidate_message_lines_cache();
+                    }
+                }
+            }
         }
         self.finish_active_task();
-        let waiting_for_user = matches!(
-            effective_state,
-            TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval
-        );
-        if matches!(effective_state, TaskRunState::Completed) && !waiting_for_user && !hit_round_limit {
+        let waiting_for_user = if should_swallow_plan_approval {
+            false
+        } else {
+            matches!(
+                effective_state,
+                TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval
+            )
+        };
+        if matches!(effective_state, TaskRunState::Completed)
+            && !waiting_for_user
+            && !hit_round_limit
+        {
             if let Some(state) = loop_state.clone() {
                 let next_iteration = state.iteration.saturating_add(1);
                 if next_iteration > state.max_iterations {
@@ -563,8 +593,16 @@ mod tests {
             .front()
             .expect("next loop task should be queued");
         assert!(queued.content.contains("上一轮摘要"));
-        assert!(queued.content.contains("已完成第一轮检查，修复了配置问题。"));
-        assert_eq!(queued.loop_state.as_ref().map(|state| state.last_summary.as_str()), Some("已完成第一轮检查，修复了配置问题。"));
+        assert!(queued
+            .content
+            .contains("已完成第一轮检查，修复了配置问题。"));
+        assert_eq!(
+            queued
+                .loop_state
+                .as_ref()
+                .map(|state| state.last_summary.as_str()),
+            Some("已完成第一轮检查，修复了配置问题。")
+        );
     }
 
     #[test]
@@ -599,6 +637,116 @@ mod tests {
         );
 
         assert!(app.queue.queued_messages.is_empty());
+    }
+
+    #[test]
+    fn plan_mode_swallow_tool_approval_without_entering_wait_state() {
+        let mut app = App::new();
+        app.execution_mode = ExecutionMode::Plan;
+        app.queue.active_task_id = Some(14);
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            thinking: String::new(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+        app.task_message_indices.insert(14, 0);
+
+        app.handle_chat_completed(
+            14,
+            "生成发布计划".to_string(),
+            "建议先检查配置，再执行发布。".to_string(),
+            false,
+            None,
+            Some(TaskRun {
+                state: Some(TaskRunState::WaitingForApproval),
+                ..Default::default()
+            }),
+            Vec::new(),
+            Some(serde_json::json!({
+                "kind": "tool_approval",
+                "question": "是否允许执行 bash 工具？",
+                "tool_name": "bash"
+            })),
+            None,
+            None,
+            0,
+            0,
+            0,
+            None,
+        );
+
+        assert_eq!(app.interaction.state, InteractionState::Idle);
+        assert!(app.interaction.pending_approval_request.is_none());
+        assert!(app.messages.iter().any(|msg| msg
+            .content
+            .contains("Plan 模式已跳过需要额外权限的执行操作")));
+    }
+
+    #[test]
+    fn plan_mode_plan_completion_appends_execution_hint_and_enters_todo_confirm() {
+        let mut app = App::new();
+        app.execution_mode = ExecutionMode::Plan;
+        app.queue.active_task_id = Some(15);
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            thinking: String::new(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+        app.task_message_indices.insert(15, 0);
+
+        app.handle_chat_completed(
+            15,
+            "规划发布流程".to_string(),
+            "1. 检查配置\n2. 执行发布\n3. 验证结果".to_string(),
+            false,
+            None,
+            Some(TaskRun {
+                state: Some(TaskRunState::Completed),
+                ..Default::default()
+            }),
+            Vec::new(),
+            None,
+            Some(sacode_kernel::Plan {
+                task: "规划发布流程".to_string(),
+                steps: vec![
+                    sacode_kernel::Step {
+                        id: 1,
+                        description: "检查配置".to_string(),
+                        tools: Vec::new(),
+                        expected_output: String::new(),
+                        status: sacode_kernel::StepStatus::Pending,
+                    },
+                    sacode_kernel::Step {
+                        id: 2,
+                        description: "执行发布".to_string(),
+                        tools: Vec::new(),
+                        expected_output: String::new(),
+                        status: sacode_kernel::StepStatus::Pending,
+                    },
+                ],
+                mode: "plan".to_string(),
+            }),
+            None,
+            0,
+            0,
+            0,
+            None,
+        );
+
+        assert_eq!(app.interaction.state, InteractionState::TodoConfirmation);
+        assert_eq!(app.input_mode, InputMode::TodoConfirm);
+        assert!(app
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("[执行确认]")));
+        assert!(app
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("/todo confirm")));
     }
 
     #[test]
