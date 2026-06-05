@@ -5,6 +5,20 @@ use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
 
+fn build_file_summary(path: &str, lines: usize, total_lines: usize) -> String {
+    format!(
+        "read {} lines from {} ({} lines total)",
+        lines, path, total_lines
+    )
+}
+
+fn build_batch_summary(success_count: usize, failed_count: usize, total_files: usize) -> String {
+    format!(
+        "read {} of {} files successfully ({} failed)",
+        success_count, total_files, failed_count
+    )
+}
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "fs.read_multi".to_string(),
@@ -20,6 +34,7 @@ pub fn spec() -> ToolSpec {
         output_schema: serde_json::json!({
             "type": "object",
             "properties": {
+                "summary": { "type": "string" },
                 "files": { "type": "array" },
                 "total_files": { "type": "integer" },
                 "success_count": { "type": "integer" },
@@ -70,6 +85,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     Ok(ToolOutput::success(serde_json::json!({
+        "summary": build_batch_summary(success_count, failed_count, paths.len()),
         "files": files,
         "total_files": paths.len(),
         "success_count": success_count,
@@ -92,6 +108,7 @@ fn read_one(path: &str, limit_per_file: usize) -> anyhow::Result<serde_json::Val
         .join("\n");
     Ok(serde_json::json!({
         "path": file_path.display().to_string(),
+        "summary": build_file_summary(&file_path.display().to_string(), all_lines.len().min(limit_per_file), all_lines.len()),
         "content": selected,
         "lines": all_lines.len().min(limit_per_file),
         "total_lines": all_lines.len()

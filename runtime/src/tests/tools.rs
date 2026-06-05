@@ -506,6 +506,37 @@ fn test_fs_read_multi_reads_multiple_files() {
     assert!(result.success);
     assert_eq!(result.data["success_count"], 2);
     assert_eq!(result.data["failed_count"], 0);
+    assert!(result.data["summary"]
+        .as_str()
+        .unwrap_or("")
+        .contains("read 2 of 2 files successfully"));
+    assert!(result.data["files"][0]["summary"]
+        .as_str()
+        .unwrap_or("")
+        .contains("read 2 lines from"));
+}
+
+#[test]
+fn test_fs_read_includes_summary() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("viewer.vue"), "a\nb\nc").expect("write file");
+
+    let result = crate::tools::fs::read::execute(serde_json::json!({
+        "path": "viewer.vue",
+        "offset": 1,
+        "limit": 2
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["lines"], 2);
+    assert_eq!(result.data["total_lines"], 3);
+    assert_eq!(
+        result.data["summary"].as_str(),
+        Some("read 2 lines from viewer.vue (3 lines total)")
+    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{TaskRun, TaskRunState};
 
+use super::async_types::StreamChunkKind;
 use super::{
     update_prompt, App, AsyncContext, AsyncResult, InputMode, InteractionState, LoopState, Message,
     MessageRole, PendingInputOptimizationPreview,
@@ -13,13 +14,16 @@ impl App {
         while let Ok(result) = self.task_rx.try_recv() {
             handled = true;
             match result {
-                AsyncResult::ChatStreamChunk { task_id, content } => {
-                    self.handle_chat_stream_chunk(task_id, content)
-                }
+                AsyncResult::ChatStreamChunk {
+                    task_id,
+                    kind,
+                    content,
+                } => self.handle_chat_stream_chunk(task_id, kind, content),
                 AsyncResult::ChatCompleted {
                     task_id,
                     prompt,
                     response,
+                    hit_round_limit,
                     orchestration_summary,
                     task_run,
                     learned_facts,
@@ -34,6 +38,7 @@ impl App {
                     task_id,
                     prompt,
                     response,
+                    hit_round_limit,
                     orchestration_summary,
                     task_run,
                     learned_facts,
@@ -98,18 +103,36 @@ impl App {
         handled
     }
 
-    pub(super) fn handle_chat_stream_chunk(&mut self, task_id: u64, content: String) {
-        if self.queue.active_task_id != Some(task_id) || content.is_empty() {
+    pub(super) fn handle_chat_stream_chunk(
+        &mut self,
+        task_id: u64,
+        kind: StreamChunkKind,
+        content: String,
+    ) {
+        let Some(message_index) = self.task_message_indices.get(&task_id).copied() else {
+            return;
+        };
+
+        if content.is_empty() {
             return;
         }
 
-        self.assistant_pending_thinking = false;
-
-        if let Some(message) = self.messages.last_mut() {
-            if matches!(message.role, MessageRole::Assistant) {
-                let mut updated = message.content.clone();
+        match kind {
+            StreamChunkKind::Message => {
+                if self.queue.active_task_id == Some(task_id) {
+                    self.assistant_pending_thinking = false;
+                }
+                let mut updated = self
+                    .messages
+                    .get(message_index)
+                    .map(|message| message.content.clone())
+                    .unwrap_or_default();
                 updated.push_str(&content);
-                self.update_last_message_content(updated);
+                self.update_message_content_at(message_index, updated);
+                self.pin_scroll_to_bottom_if_following();
+            }
+            StreamChunkKind::Thinking => {
+                self.append_message_thinking_at(message_index, &content);
                 self.pin_scroll_to_bottom_if_following();
             }
         }
@@ -120,6 +143,7 @@ impl App {
         task_id: u64,
         prompt: String,
         response: String,
+        hit_round_limit: bool,
         orchestration_summary: Option<String>,
         task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
@@ -145,6 +169,10 @@ impl App {
             .as_ref()
             .and_then(|run| run.state.clone())
             .unwrap_or(TaskRunState::Failed);
+        let loop_summary = loop_state
+            .as_ref()
+            .map(|state| Self::merge_loop_summary(&state.last_summary, &response, hit_round_limit))
+            .unwrap_or_else(|| Self::build_loop_summary(&response, hit_round_limit));
         let response_role = if matches!(effective_state, TaskRunState::Failed) {
             MessageRole::System
         } else {
@@ -153,19 +181,21 @@ impl App {
         self.assistant_pending_thinking = false;
         self.orchestration_summary = orchestration_summary;
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        if let Some(message) = self.messages.last_mut() {
-            if self.queue.active_task_id == Some(task_id)
-                && matches!(message.role, MessageRole::Assistant)
-            {
+        let task_message_index = self.task_message_indices.get(&task_id).copied();
+        if let Some(index) = task_message_index {
+            if let Some(message) = self.messages.get_mut(index) {
                 message.role = response_role;
                 message.content = response;
+                if message.thinking.is_empty() {
+                    message.collapsed = false;
+                }
                 message.timestamp = timestamp;
-                message.collapsed = false;
                 self.invalidate_message_lines_cache();
             } else {
                 self.append_message(Message {
                     role: response_role,
                     content: response,
+                    thinking: String::new(),
                     timestamp,
                     collapsed: false,
                 });
@@ -174,6 +204,7 @@ impl App {
             self.append_message(Message {
                 role: response_role,
                 content: response,
+                thinking: String::new(),
                 timestamp,
                 collapsed: false,
             });
@@ -220,7 +251,7 @@ impl App {
             effective_state,
             TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval
         );
-        if matches!(effective_state, TaskRunState::Completed) && !waiting_for_user {
+        if matches!(effective_state, TaskRunState::Completed) && !waiting_for_user && !hit_round_limit {
             if let Some(state) = loop_state.clone() {
                 let next_iteration = state.iteration.saturating_add(1);
                 if next_iteration > state.max_iterations {
@@ -230,16 +261,14 @@ impl App {
                     ));
                 } else {
                     self.enqueue_or_start_message_with_approval_and_loop(
-                        format!(
-                            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
-                            state.task
-                        ),
+                        Self::build_loop_prompt(&state.task, &loop_summary, None),
                         self.current_task_approval_policy(),
                         Some(LoopState {
                             task: state.task.clone(),
                             iteration: next_iteration,
                             max_iterations: state.max_iterations,
                             error_count: 0,
+                            last_summary: loop_summary.clone(),
                         }),
                     );
                     self.push_system_message(&format!(
@@ -250,6 +279,16 @@ impl App {
             }
         } else if matches!(effective_state, TaskRunState::Failed) {
             if let Some(state) = loop_state.clone() {
+                if hit_round_limit {
+                    self.push_system_message(&format!(
+                        "循环任务在第 {} 轮达到最大迭代上限后停止。",
+                        state.iteration
+                    ));
+                    if !waiting_for_user {
+                        self.start_next_queued_message();
+                    }
+                    return;
+                }
                 let next_error_count = state.error_count.saturating_add(1);
                 if next_error_count >= 3 {
                     self.push_system_message(&format!(
@@ -263,16 +302,14 @@ impl App {
                         _ => "多次失败表明当前方案可能不可行，请彻底换一种思路。",
                     };
                     self.enqueue_or_start_message_with_approval_and_loop(
-                        format!(
-                            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态。\n\n反思提示：{}\n\n任务：{}",
-                            reflection_hint, state.task
-                        ),
+                        Self::build_loop_prompt(&state.task, &loop_summary, Some(reflection_hint)),
                         self.current_task_approval_policy(),
                         Some(LoopState {
                             task: state.task.clone(),
                             iteration: state.iteration.saturating_add(1),
                             max_iterations: state.max_iterations,
                             error_count: next_error_count,
+                            last_summary: loop_summary.clone(),
                         }),
                     );
                     self.push_system_message(&format!(
@@ -284,6 +321,50 @@ impl App {
         }
         if !waiting_for_user {
             self.start_next_queued_message();
+        }
+    }
+
+    fn build_loop_prompt(task: &str, last_summary: &str, reflection_hint: Option<&str>) -> String {
+        let mut prompt = format!(
+            "循环执行下面的任务，持续检查结果并修复问题，直到任务达到可用完成态：{}",
+            task
+        );
+        if !last_summary.trim().is_empty() {
+            prompt.push_str("\n\n上一轮摘要：\n");
+            prompt.push_str(last_summary.trim());
+        }
+        if let Some(reflection_hint) = reflection_hint.filter(|value| !value.trim().is_empty()) {
+            prompt.push_str("\n\n反思提示：\n");
+            prompt.push_str(reflection_hint.trim());
+        }
+        prompt
+    }
+
+    fn build_loop_summary(response: &str, hit_round_limit: bool) -> String {
+        let summary = response.trim();
+        if summary.is_empty() {
+            return String::new();
+        }
+        let mut compact = String::new();
+        for ch in summary.chars().take(1200) {
+            compact.push(ch);
+        }
+        if summary.chars().count() > 1200 {
+            compact.push_str("\n...(已截断)");
+        }
+        if hit_round_limit {
+            format!("本轮在达到最大迭代上限后停止。\n{}", compact)
+        } else {
+            compact
+        }
+    }
+
+    fn merge_loop_summary(previous_summary: &str, response: &str, hit_round_limit: bool) -> String {
+        let current_summary = Self::build_loop_summary(response, hit_round_limit);
+        if current_summary.is_empty() {
+            previous_summary.trim().to_string()
+        } else {
+            current_summary
         }
     }
 
@@ -371,6 +452,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::ApprovalPolicy;
 
     #[test]
     fn handle_chat_stream_chunk_appends_to_last_assistant_message() {
@@ -379,12 +461,14 @@ mod tests {
         app.append_message(Message {
             role: MessageRole::Assistant,
             content: String::new(),
+            thinking: String::new(),
             timestamp: "2026-06-05 00:00".to_string(),
             collapsed: false,
         });
+        app.task_message_indices.insert(7, 0);
 
-        app.handle_chat_stream_chunk(7, "hello".to_string());
-        app.handle_chat_stream_chunk(7, " world".to_string());
+        app.handle_chat_stream_chunk(7, StreamChunkKind::Message, "hello".to_string());
+        app.handle_chat_stream_chunk(7, StreamChunkKind::Message, " world".to_string());
 
         assert_eq!(
             app.messages.last().map(|msg| msg.content.as_str()),
@@ -404,14 +488,17 @@ mod tests {
         app.append_message(Message {
             role: MessageRole::Assistant,
             content: "partial".to_string(),
+            thinking: String::new(),
             timestamp: "2026-06-05 00:00".to_string(),
             collapsed: false,
         });
+        app.task_message_indices.insert(9, 0);
 
         app.handle_chat_completed(
             9,
             "prompt".to_string(),
             "final answer".to_string(),
+            false,
             None,
             Some(TaskRun {
                 state: Some(TaskRunState::Completed),
@@ -437,5 +524,133 @@ mod tests {
             assistant_messages.last().map(|msg| msg.content.as_str()),
             Some("final answer")
         );
+    }
+
+    #[test]
+    fn loop_completion_enqueues_next_round_with_summary() {
+        let mut app = App::new();
+        app.queue.active_task_id = Some(12);
+
+        app.handle_chat_completed(
+            12,
+            "prompt".to_string(),
+            "已完成第一轮检查，修复了配置问题。".to_string(),
+            false,
+            None,
+            Some(TaskRun {
+                state: Some(TaskRunState::Completed),
+                ..Default::default()
+            }),
+            Vec::new(),
+            None,
+            None,
+            None,
+            0,
+            0,
+            0,
+            Some(LoopState {
+                task: "检查项目".to_string(),
+                iteration: 1,
+                max_iterations: 3,
+                error_count: 0,
+                last_summary: String::new(),
+            }),
+        );
+
+        let queued = app
+            .queue
+            .queued_messages
+            .front()
+            .expect("next loop task should be queued");
+        assert!(queued.content.contains("上一轮摘要"));
+        assert!(queued.content.contains("已完成第一轮检查，修复了配置问题。"));
+        assert_eq!(queued.loop_state.as_ref().map(|state| state.last_summary.as_str()), Some("已完成第一轮检查，修复了配置问题。"));
+    }
+
+    #[test]
+    fn loop_round_limit_does_not_enqueue_next_round() {
+        let mut app = App::new();
+        app.queue.active_task_id = Some(13);
+
+        app.handle_chat_completed(
+            13,
+            "prompt".to_string(),
+            "本轮达到最大迭代次数。".to_string(),
+            true,
+            None,
+            Some(TaskRun {
+                state: Some(TaskRunState::Failed),
+                ..Default::default()
+            }),
+            Vec::new(),
+            None,
+            None,
+            None,
+            0,
+            0,
+            0,
+            Some(LoopState {
+                task: "检查项目".to_string(),
+                iteration: 1,
+                max_iterations: 3,
+                error_count: 0,
+                last_summary: String::new(),
+            }),
+        );
+
+        assert!(app.queue.queued_messages.is_empty());
+    }
+
+    #[test]
+    fn queue_message_does_not_interrupt_existing_stream_output() {
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.queue.active_task_id = Some(1);
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            thinking: String::new(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+        app.task_message_indices.insert(1, 0);
+
+        app.handle_chat_stream_chunk(1, StreamChunkKind::Message, "hello".to_string());
+        app.enqueue_or_start_message_with_approval(
+            "第二个任务".to_string(),
+            ApprovalPolicy::Prompt,
+        );
+        app.handle_chat_stream_chunk(1, StreamChunkKind::Message, " world".to_string());
+
+        assert_eq!(app.messages[0].content, "hello world");
+        assert!(app
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("第二个任务")));
+    }
+
+    #[test]
+    fn queue_message_does_not_interrupt_existing_thinking_output() {
+        let mut app = App::new();
+        app.queue.processing = true;
+        app.queue.active_task_id = Some(1);
+        app.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            thinking: String::new(),
+            timestamp: "2026-06-05 00:00".to_string(),
+            collapsed: false,
+        });
+        app.task_message_indices.insert(1, 0);
+
+        app.handle_chat_stream_chunk(1, StreamChunkKind::Thinking, "分析".to_string());
+        app.enqueue_or_start_message_with_approval(
+            "第二个任务".to_string(),
+            ApprovalPolicy::Prompt,
+        );
+        app.handle_chat_stream_chunk(1, StreamChunkKind::Thinking, "调用链".to_string());
+
+        assert_eq!(app.messages[0].thinking, "分析调用链");
+        assert!(app.messages[0].collapsed);
     }
 }

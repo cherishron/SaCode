@@ -29,4 +29,5 @@ pub struct LoopState {
     pub iteration: u32,
     pub max_iterations: u32,
     pub error_count: u32,
+    pub last_summary: String,
 }

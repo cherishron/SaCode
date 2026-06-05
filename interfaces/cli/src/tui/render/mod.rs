@@ -3,6 +3,7 @@ mod common;
 mod header_footer;
 mod input_panel;
 mod main_layout;
+mod markdown;
 mod messages_panel;
 pub(crate) mod modals;
 pub(crate) mod orchestration_panel;

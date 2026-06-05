@@ -10,12 +10,14 @@ use super::LoopState;
 pub(super) enum AsyncResult {
     ChatStreamChunk {
         task_id: u64,
+        kind: StreamChunkKind,
         content: String,
     },
     ChatCompleted {
         task_id: u64,
         prompt: String,
         response: String,
+        hit_round_limit: bool,
         orchestration_summary: Option<String>,
         task_run: Option<TaskRun>,
         learned_facts: Vec<crate::learning::LearnedFact>,
@@ -88,3 +90,9 @@ pub(super) enum AsyncContext {
 
 #[allow(dead_code)]
 fn _keep_imports_used(_: Option<TaskRunState>) {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StreamChunkKind {
+    Message,
+    Thinking,
+}

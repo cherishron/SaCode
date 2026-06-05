@@ -7,6 +7,7 @@ use crate::wiki::load_wiki_context;
 const PROJECT_PROMPT_FILE: &str = ".sacode/prompt.md";
 const AGENTS_FILE: &str = "AGENTS.md";
 const MAX_EXTERNAL_SECTION_LEN: usize = 4000;
+const USER_SKILLS_DIR_HINT: &str = "~/.sacode/skills/";
 const AGENTS_HEADINGS: &[&str] = &[
     "## Workspace 边界",
     "## 真实入口",
@@ -33,6 +34,10 @@ pub fn build_system_prompt(ctx: &PromptContext<'_>) -> Result<String> {
         format!(
             "[Available Tools]\n当前可用工具: {}\n工具使用原则: 搜索文件优先用 Glob，搜索内容优先用 Grep，读文件优先用 Read，修改文件优先用 apply_patch，并在可并行时并行查询。",
             join_or_fallback(ctx.tool_names, "无")
+        ),
+        format!(
+            "[Skill Usage]\nSaCode 用户级 skill 目录: {}\n当任务适合复用 skill 时，优先查看该目录下已有 skill。skill 调用格式使用 `/skill-name 参数`。安装或生成新 skill 时，默认写入这个目录，避免写入 SkillHub 下载缓存或临时目录。",
+            USER_SKILLS_DIR_HINT
         ),
     ];
 

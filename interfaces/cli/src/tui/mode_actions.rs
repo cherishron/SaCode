@@ -25,6 +25,7 @@ impl App {
                 iteration: 1,
                 max_iterations: 10,
                 error_count: 0,
+                last_summary: String::new(),
             }),
         );
     }

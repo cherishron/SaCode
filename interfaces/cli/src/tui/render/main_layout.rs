@@ -5,8 +5,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 use super::super::{Message, MessageRole, RenderedMessageLine, ThemePalette};
+use super::markdown::render_assistant_markdown;
 
-const PREFIX_THINKING: &str = "[思考]";
 const PREFIX_TOOL: &str = "[工具]";
 const PREFIX_ERROR: &str = "[错误]";
 const PREFIX_SUCCESS: &str = "[成功]";
@@ -46,50 +46,42 @@ pub(crate) fn render_message_lines(
             }
             MessageRole::Assistant => {
                 let mut first = true;
+                if !msg.thinking.trim().is_empty() {
+                    lines.extend(render_thinking_block(
+                        &msg.thinking,
+                        theme,
+                        first,
+                        msg.collapsed,
+                        wrap_width,
+                    ));
+                    first = false;
+                }
+                let mut markdown_buffer = Vec::new();
                 for content_line in msg.content.lines() {
-                    if content_line.trim().is_empty() {
-                        continue;
-                    }
-                    if content_line.starts_with(PREFIX_THINKING) {
-                        lines.extend(render_thinking_block(
-                            content_line,
-                            theme,
-                            first,
-                            msg.collapsed,
-                            wrap_width,
-                        ));
-                        first = false;
-                        continue;
-                    }
                     if content_line.starts_with(PREFIX_TOOL) {
+                        if !markdown_buffer.is_empty() {
+                            lines.extend(render_assistant_markdown(
+                                &markdown_buffer.join("\n"),
+                                theme,
+                                first,
+                                wrap_width,
+                            ));
+                            markdown_buffer.clear();
+                            first = false;
+                        }
                         lines.extend(render_tool_block(content_line, theme, first, wrap_width));
                         first = false;
                         continue;
                     }
-                    if first {
-                        push_wrapped_text_lines(
-                            &mut lines,
-                            "● ",
-                            "  ",
-                            content_line,
-                            Style::default()
-                                .fg(theme.assistant)
-                                .add_modifier(Modifier::BOLD),
-                            body_style,
-                            wrap_width,
-                        );
-                        first = false;
-                    } else {
-                        push_wrapped_text_lines(
-                            &mut lines,
-                            "   ",
-                            "   ",
-                            content_line,
-                            Style::default(),
-                            body_style,
-                            wrap_width,
-                        );
-                    }
+                    markdown_buffer.push(content_line.to_string());
+                }
+                if !markdown_buffer.is_empty() {
+                    lines.extend(render_assistant_markdown(
+                        &markdown_buffer.join("\n"),
+                        theme,
+                        first,
+                        wrap_width,
+                    ));
                 }
                 lines.push(RenderedMessageLine {
                     line: Line::from(Span::styled("", Style::default())),
@@ -124,11 +116,6 @@ fn render_system_block(
             continue;
         }
 
-        if line.starts_with(PREFIX_THINKING) {
-            lines.extend(render_thinking_block(line, theme, false, false, width));
-            continue;
-        }
-
         let (prefix, style) = if line.starts_with(PREFIX_WAITING) {
             ("● ", Style::default().fg(theme.agent))
         } else if line.starts_with(PREFIX_QUEUE) {
@@ -146,7 +133,6 @@ fn render_system_block(
             .or_else(|| line.strip_prefix(PREFIX_QUEUE))
             .or_else(|| line.strip_prefix(PREFIX_SUCCESS))
             .or_else(|| line.strip_prefix(PREFIX_ERROR))
-            .or_else(|| line.strip_prefix(PREFIX_THINKING))
             .unwrap_or(line)
             .trim_start();
 
@@ -238,10 +224,7 @@ fn render_thinking_block(
     width: usize,
 ) -> Vec<RenderedMessageLine> {
     let mut lines = Vec::new();
-    let text = content
-        .strip_prefix(PREFIX_THINKING)
-        .unwrap_or(content)
-        .trim_start();
+    let text = content.trim();
 
     push_wrapped_line_spans(
         &mut lines,
@@ -281,7 +264,7 @@ fn render_thinking_block(
     lines
 }
 
-fn push_wrapped_text_lines(
+pub(super) fn push_wrapped_text_lines(
     lines: &mut Vec<RenderedMessageLine>,
     first_prefix: &str,
     continuation_prefix: &str,
@@ -310,7 +293,7 @@ fn push_wrapped_text_lines(
     }
 }
 
-fn push_wrapped_line_spans(
+pub(super) fn push_wrapped_line_spans(
     lines: &mut Vec<RenderedMessageLine>,
     spans: Vec<Span<'static>>,
     width: usize,
@@ -373,7 +356,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-fn display_width(text: &str) -> usize {
+pub(super) fn display_width(text: &str) -> usize {
     text.chars()
         .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
         .sum()
@@ -384,12 +367,6 @@ fn body_style_for_message(msg: &Message, theme: ThemePalette) -> Style {
         MessageRole::User => Style::default().fg(theme.text),
         MessageRole::Assistant => {
             if msg
-                .content
-                .lines()
-                .any(|line| line.starts_with(PREFIX_THINKING))
-            {
-                Style::default().fg(theme.text)
-            } else if msg
                 .content
                 .lines()
                 .any(|line| line.starts_with(PREFIX_TOOL))

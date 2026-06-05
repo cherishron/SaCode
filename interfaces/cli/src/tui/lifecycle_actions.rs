@@ -12,6 +12,9 @@ use super::{block_on_cli_future, App, AsyncContext, AsyncResult};
 impl App {
     pub(super) fn init_command(&mut self, mode: InitMode) {
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = match mode {
             InitMode::Basic => "正在生成项目初始化文件...".to_string(),
             InitMode::Deep => "正在生成深度初始化文件...".to_string(),
@@ -81,6 +84,9 @@ impl App {
             return;
         }
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = "正在更新 sacode...".to_string();
         let sender = self.task_tx.clone();
         let args = input

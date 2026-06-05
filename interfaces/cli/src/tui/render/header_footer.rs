@@ -8,9 +8,6 @@ use ratatui::{
 
 use super::super::{App, TodoStatus, SPINNER_FRAMES};
 
-const DEFAULT_CONTEXT_LIMIT_TOKENS: usize = 128_000;
-const CONTEXT_RING_STEPS: [&str; 9] = ["○", "◔", "◑", "◕", "◉", "◕", "◑", "◔", "○"];
-
 fn truncate_middle(text: &str, max_chars: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max_chars {
@@ -30,13 +27,19 @@ fn truncate_middle(text: &str, max_chars: usize) -> String {
 
 fn compact_path(path: &str, max_chars: usize) -> String {
     let normalized = path.replace('\\', "/");
+    let normalized = normalized.trim_end_matches('/');
+    let windows_drive_prefix = normalized
+        .chars()
+        .nth(1)
+        .map(|ch| ch == ':')
+        .unwrap_or(false);
     let parts = normalized
         .split('/')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
 
     if parts.is_empty() {
-        return truncate_middle(path, max_chars);
+        return truncate_middle(normalized, max_chars);
     }
 
     let mut visible = Vec::new();
@@ -55,7 +58,11 @@ fn compact_path(path: &str, max_chars: usize) -> String {
     }
     visible.reverse();
 
-    let compact = format!("~/{}", visible.join("/"));
+    let compact = if windows_drive_prefix {
+        format!("~{}", visible.join("/"))
+    } else {
+        format!("~/{}", visible.join("/"))
+    };
     truncate_middle(&compact, max_chars)
 }
 
@@ -86,37 +93,6 @@ fn queue_summary(app: &App) -> Option<String> {
     } else {
         None
     }
-}
-
-fn context_limit_tokens(app: &App) -> usize {
-    app.current_provider
-        .as_ref()
-        .and_then(|current| {
-            app.sacode_store
-                .provider(&current.name)
-                .ok()
-                .flatten()
-                .and_then(|provider| provider.models.get(&current.config.model).cloned())
-        })
-        .and_then(|rule| rule.limit.map(|limit| limit.context as usize))
-        .filter(|limit| *limit > 0)
-        .unwrap_or(DEFAULT_CONTEXT_LIMIT_TOKENS)
-}
-
-fn context_ratio(app: &App) -> f32 {
-    let used = app.current_context_token_estimate() as f32;
-    let limit = context_limit_tokens(app) as f32;
-    if limit <= 0.0 {
-        0.0
-    } else {
-        (used / limit).clamp(0.0, 1.0)
-    }
-}
-
-fn context_ring(app: &App) -> &'static str {
-    let ratio = context_ratio(app);
-    let index = (ratio * (CONTEXT_RING_STEPS.len().saturating_sub(1) as f32)).round() as usize;
-    CONTEXT_RING_STEPS[index.min(CONTEXT_RING_STEPS.len().saturating_sub(1))]
 }
 
 fn status_separator(theme: super::super::ThemePalette) -> Span<'static> {
@@ -196,28 +172,16 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(status_separator(theme));
     }
 
-    let context_ratio = context_ratio(app);
-    spans.push(Span::styled(
-        format!(
-            "{} ctx {:>3}% ~{} tok",
-            context_ring(app),
-            (context_ratio * 100.0).round() as usize,
-            app.current_context_token_estimate()
-        ),
-        Style::default().fg(theme.info),
-    ));
-
     if let Some(queue) = queue_summary(app) {
-        spans.push(status_separator(theme));
         spans.push(Span::styled(queue, Style::default().fg(theme.warning)));
+        spans.push(status_separator(theme));
     }
 
     if let Some(todo) = todo_summary(app) {
-        spans.push(status_separator(theme));
         spans.push(Span::styled(todo, Style::default().fg(theme.accent)));
+        spans.push(status_separator(theme));
     }
 
-    spans.push(status_separator(theme));
     if app.current_thinking_enabled() {
         spans.push(Span::styled(
             "Ctrl+T: think:on",

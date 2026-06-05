@@ -14,6 +14,7 @@ use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
 #[derive(Debug, Default)]
 pub(super) struct BackgroundTaskOutput {
     response: String,
+    hit_round_limit: bool,
     orchestration_summary: Option<String>,
     task_run: Option<TaskRun>,
     learned_facts: Vec<crate::learning::LearnedFact>,
@@ -27,6 +28,7 @@ pub(super) struct BackgroundTaskOutput {
 
 use crate::cmd::config;
 
+use super::async_types::StreamChunkKind;
 use super::state::{LoopState, QueuedMessage};
 use super::{App, AsyncResult, Message, MessageRole};
 use crate::cmd::{ApprovalPolicy, JSON_STREAM_PREFIX};
@@ -103,15 +105,19 @@ impl App {
         self.append_message(Message {
             role: MessageRole::User,
             content: queued.content.clone(),
+            thinking: String::new(),
             timestamp,
             collapsed: false,
         });
         self.append_message(Message {
             role: MessageRole::Assistant,
             content: String::new(),
+            thinking: String::new(),
             timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
         });
+        self.task_message_indices
+            .insert(queued.id, self.messages.len().saturating_sub(1));
         self.assistant_pending_thinking = true;
         self.log_event("user_message", queued.content.trim());
         let loop_badge = queued
@@ -153,6 +159,7 @@ impl App {
                 task_id,
                 prompt: user_input,
                 response: "任务执行失败: 无法启动后台执行进程".to_string(),
+                hit_round_limit: false,
                 orchestration_summary: None,
                 task_run: None,
                 learned_facts: Vec::new(),
@@ -180,6 +187,7 @@ impl App {
                 task_id,
                 prompt: user_input,
                 response: result.response,
+                hit_round_limit: result.hit_round_limit,
                 orchestration_summary: result.orchestration_summary,
                 task_run: result.task_run,
                 learned_facts: result.learned_facts,
@@ -286,6 +294,11 @@ impl App {
                                 {
                                     let _ = sender.send(AsyncResult::ChatStreamChunk {
                                         task_id,
+                                        kind: match value.get("kind").and_then(|item| item.as_str())
+                                        {
+                                            Some("thinking") => StreamChunkKind::Thinking,
+                                            _ => StreamChunkKind::Message,
+                                        },
                                         content: content.to_string(),
                                     });
                                 }
@@ -482,8 +495,13 @@ impl App {
             .get("total_duration_ms")
             .and_then(|value| value.as_u64())
             .unwrap_or(0);
+        let hit_round_limit = parsed
+            .get("hit_round_limit")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         BackgroundTaskOutput {
             response,
+            hit_round_limit,
             orchestration_summary,
             task_run,
             learned_facts,
@@ -532,6 +550,9 @@ impl App {
     }
 
     pub(super) fn finish_active_task(&mut self) {
+        if let Some(task_id) = self.queue.active_task_id {
+            self.task_message_indices.remove(&task_id);
+        }
         self.queue.active_child = None;
         self.queue.processing = false;
         self.queue.active_task_id = None;

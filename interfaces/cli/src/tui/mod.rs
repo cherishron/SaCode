@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
     sync::mpsc::{Receiver, Sender},
 };
@@ -91,6 +91,7 @@ impl From<agent_harness::ModelOption> for ModelOptionEntry {
 struct Message {
     role: MessageRole,
     content: String,
+    thinking: String,
     timestamp: String,
     collapsed: bool,
 }
@@ -179,6 +180,7 @@ struct App {
     next_task_id: u64,
     active_task_started_at: Option<chrono::DateTime<chrono::Local>>,
     canceled_task_ids: HashSet<u64>,
+    task_message_indices: HashMap<u64, usize>,
     todo_plan: Option<TodoPlan>,
     sent_history: Vec<String>,
     history_index: Option<usize>,
@@ -270,6 +272,8 @@ struct SessionInfo {
 struct StoredMessage {
     role: String,
     content: String,
+    #[serde(default)]
+    thinking: String,
     timestamp: String,
     collapsed: bool,
 }
@@ -373,48 +377,6 @@ impl App {
         self.orchestration_summary = None;
     }
 
-    fn session_context_text(&self) -> String {
-        let mut parts = Vec::new();
-        if let Some(summary) = self
-            .session_summary
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            parts.push(format!("[历史摘要]\n{}", summary));
-        }
-
-        let conversation = self
-            .messages
-            .iter()
-            .filter_map(|message| {
-                let role = match message.role {
-                    MessageRole::User => "用户",
-                    MessageRole::Assistant => "助手",
-                    MessageRole::System => return None,
-                };
-                let content = message.content.trim();
-                if content.is_empty() {
-                    None
-                } else {
-                    Some(format!("[{}] {}", role, content))
-                }
-            })
-            .collect::<Vec<_>>();
-        if !conversation.is_empty() {
-            parts.push(conversation.join("\n\n"));
-        }
-        parts.join("\n\n")
-    }
-
-    fn current_context_char_count(&self) -> usize {
-        self.session_context_text().chars().count()
-    }
-
-    fn current_context_token_estimate(&self) -> usize {
-        self.current_context_char_count().div_ceil(4)
-    }
-
     pub(super) fn is_messages_empty(&self) -> bool {
         self.messages.is_empty()
     }
@@ -426,6 +388,7 @@ mod tests {
     use super::render::orchestration_panel::render_orchestration_panel;
     use super::App;
     use crate::cmd::ApprovalPolicy;
+    use crate::tui::async_types::StreamChunkKind;
     use crate::tui::interaction::{
         PendingApprovalRequest, PendingQuestionItem, PendingQuestionOption,
     };
@@ -435,6 +398,7 @@ mod tests {
     use crate::tui::InteractionState;
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
     use sacode_kernel::ExecutionMode;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     struct HomeEnvGuard {
@@ -698,6 +662,7 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::User,
             content: "ping".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
@@ -723,13 +688,15 @@ mod tests {
         let mut app = App::new();
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
-            content: "[思考] 分析调用链\n[工具] grep 已完成".to_string(),
+            content: "[工具] grep 已完成".to_string(),
+            thinking: "分析调用链".to_string(),
             timestamp: "12:00:01".to_string(),
             collapsed: false,
         });
         app.messages.push(super::Message {
             role: super::MessageRole::System,
             content: "[成功] 已刷新模型列表".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:02".to_string(),
             collapsed: false,
         });
@@ -754,6 +721,7 @@ mod tests {
         assert!(line_dump.contains("grep"));
         assert!(line_dump.contains("...running"));
         assert!(line_dump.contains("已刷新模型列表"));
+        assert!(!line_dump.contains("[思考]"));
     }
 
     #[test]
@@ -761,7 +729,8 @@ mod tests {
         let mut app = App::new();
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
-            content: "[思考] 分析调用链".to_string(),
+            content: String::new(),
+            thinking: "分析调用链".to_string(),
             timestamp: "12:00:01".to_string(),
             collapsed: true,
         });
@@ -790,6 +759,7 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::System,
             content: "[等待用户回答] 请选择部署环境\n可选项: staging, production".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:03".to_string(),
             collapsed: false,
         });
@@ -819,6 +789,7 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::System,
             content: "[错误] 任务执行失败: 后台进程没有返回结果，退出码: 1。stderr 已写入日志，日志内容较长，需要在消息区域内稳定换行显示。".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:04".to_string(),
             collapsed: false,
         });
@@ -853,6 +824,7 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::System,
             content: "[队列] #4 已排队，等待执行: 修复模型列表加载".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:05".to_string(),
             collapsed: false,
         });
@@ -875,6 +847,104 @@ mod tests {
         assert!(line_dump.contains("#4 已排队"));
         assert!(line_dump.contains("等待执行"));
         assert!(line_dump.contains("修复模型列表加载"));
+    }
+
+    #[test]
+    fn render_messages_panel_formats_markdown_headings_and_lists() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "# 发布说明\n\n- 修复路径显示\n- 优化 Thinking 展示\n\n> 需要复测".to_string(),
+            thinking: String::new(),
+            timestamp: "12:00:06".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 80, 16));
+            })
+            .expect("draw markdown heading panel");
+
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(line_dump.contains("# 发布说明"));
+        assert!(line_dump.contains("• 修复路径显示"));
+        assert!(line_dump.contains("• 优化 Thinking 展示"));
+        assert!(line_dump.contains("│ 需要复测"));
+    }
+
+    #[test]
+    fn render_messages_panel_formats_markdown_code_blocks() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "```rust\nfn main() {\n    println!(\"hi\");║\n}\n```".to_string(),
+            thinking: String::new(),
+            timestamp: "12:00:07".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 80, 16));
+            })
+            .expect("draw markdown code block panel");
+
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(line_dump.contains("┌─ rust"));
+        assert!(line_dump.contains("│ fn main() {"));
+        assert!(line_dump.contains("println!(\"hi\")"));
+        assert!(!line_dump.contains("║"));
+        assert!(line_dump.contains("└─"));
+    }
+
+    #[test]
+    fn render_messages_panel_formats_markdown_tables() {
+        let mut app = App::new();
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "| Model | Input | Output |\n| :-- | --: | :-: |\n| gpt-4o-mini | 100 | 50 |\n| deepseek-chat | 200 | 80 |".to_string(),
+            thinking: String::new(),
+            timestamp: "12:00:08".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(100, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 100, 16));
+            })
+            .expect("draw markdown table panel");
+
+        let line_dump = app
+            .rendered_message_lines()
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(line_dump.contains("Model"));
+        assert!(line_dump.contains("gpt-4o-mini"));
+        assert!(line_dump.contains("deepseek-chat"));
+        assert!(line_dump.contains("│"));
+        assert!(line_dump.contains("┼") || line_dump.contains("┤"));
     }
 
     #[test]
@@ -1018,12 +1088,13 @@ mod tests {
     }
 
     #[test]
-    fn render_header_shows_context_usage_numbers() {
+    fn render_header_shows_core_status_fields() {
         let mut app = App::new();
         app.session_summary = Some("[会话目标]\n- 修复 compress 命令".to_string());
         app.messages.push(super::Message {
             role: super::MessageRole::User,
             content: "请继续优化 TUI header".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
@@ -1040,7 +1111,25 @@ mod tests {
         assert!(rendered.contains("~/"));
         assert!(rendered.contains("SaCode v"));
         assert!(rendered.contains("模式"));
-        assert!(rendered.contains("tok"));
+        assert!(rendered.contains("主模型"));
+    }
+
+    #[test]
+    fn render_header_trims_trailing_slash_from_windows_style_path() {
+        let mut app = App::new();
+        app.workdir = PathBuf::from("E:/test/");
+
+        let backend = TestBackend::new(220, 2);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_header(frame, &app, Rect::new(0, 0, 220, 2));
+            })
+            .expect("draw header");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("~E:/test"));
+        assert!(!rendered.contains("~E:/test/"));
     }
 
     #[test]
@@ -1060,7 +1149,8 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("Running"));
-        assert!(rendered.contains("ctx"));
+        assert!(!rendered.contains("ctx"));
+        assert!(!rendered.contains("tok"));
         assert!(rendered.contains("Alt+M: mode"));
     }
 
@@ -1126,18 +1216,21 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::User,
             content: "修复代码问题，并实现 md 文件打开功能".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
             content: "已定位到 Rust 官网链接相关逻辑".to_string(),
+            thinking: String::new(),
             timestamp: "12:01:00".to_string(),
             collapsed: false,
         });
         app.messages.push(super::Message {
             role: super::MessageRole::User,
             content: "继续处理 compress 命令".to_string(),
+            thinking: String::new(),
             timestamp: "12:02:00".to_string(),
             collapsed: false,
         });
@@ -1156,6 +1249,7 @@ mod tests {
         app.messages.push(super::Message {
             role: super::MessageRole::User,
             content: "原始消息".to_string(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
@@ -1280,6 +1374,7 @@ mod tests {
             app.messages.push(super::Message {
                 role: super::MessageRole::Assistant,
                 content: format!("message {}", index),
+                thinking: String::new(),
                 timestamp: "12:00:00".to_string(),
                 collapsed: false,
             });
@@ -1299,6 +1394,28 @@ mod tests {
     }
 
     #[test]
+    fn message_scroll_up_moves_offset_when_following_bottom() {
+        let mut app = App::new();
+        app.message_viewport = Rect::new(0, 0, 40, 5);
+        for index in 0..20 {
+            app.messages.push(super::Message {
+                role: super::MessageRole::Assistant,
+                content: format!("message {}", index),
+                thinking: String::new(),
+                timestamp: "12:00:00".to_string(),
+                collapsed: false,
+            });
+        }
+
+        app.scroll_to_bottom();
+        let bottom = app.scroll_offset;
+        app.scroll_up();
+
+        assert!(!app.follow_bottom);
+        assert_eq!(app.scroll_offset, bottom.saturating_sub(1));
+    }
+
+    #[test]
     fn streaming_chunk_keeps_user_scroll_position_when_not_following_bottom() {
         let mut app = App::new();
         app.queue.processing = true;
@@ -1308,11 +1425,12 @@ mod tests {
         app.append_message(super::Message {
             role: super::MessageRole::Assistant,
             content: String::new(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
 
-        app.handle_chat_stream_chunk(1, "hello".to_string());
+        app.handle_chat_stream_chunk(1, StreamChunkKind::Message, "hello".to_string());
 
         assert_eq!(app.scroll_offset, 3);
         assert!(!app.follow_bottom);
@@ -1327,6 +1445,7 @@ mod tests {
         app.append_message(super::Message {
             role: super::MessageRole::Assistant,
             content: String::new(),
+            thinking: String::new(),
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
@@ -1339,7 +1458,7 @@ mod tests {
             .unwrap_or_default()
             .contains("Thinking"));
 
-        app.handle_chat_stream_chunk(2, "answer".to_string());
+        app.handle_chat_stream_chunk(2, StreamChunkKind::Message, "answer".to_string());
         assert!(app.thinking_indicator_line().is_none());
     }
 

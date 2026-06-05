@@ -7,7 +7,9 @@ use std::io::Write;
 use tokio::io::{self, AsyncReadExt};
 
 use super::{CliOptions, JSON_STREAM_PREFIX};
-use crate::runner::{format_stream_tail, run_task_with_stdin, run_task_with_stdin_and_stream};
+use crate::runner::{
+    format_stream_tail, run_task_with_stdin, run_task_with_stdin_and_stream, StreamEventKind,
+};
 
 #[derive(Debug, Serialize)]
 struct CliResponse {
@@ -25,6 +27,7 @@ struct CliResponse {
     task_run: sacode_kernel::TaskRun,
     pending_question: Option<serde_json::Value>,
     usage: Option<sacode_kernel::model::ChatUsage>,
+    hit_round_limit: bool,
     api_duration_ms: u64,
     tool_duration_ms: u64,
     total_duration_ms: u64,
@@ -56,6 +59,7 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             task_run: output.task_run.clone(),
             pending_question: output.pending_question.clone(),
             usage: output.usage.clone(),
+            hit_round_limit: output.hit_round_limit,
             api_duration_ms: output.api_duration_ms,
             tool_duration_ms: output.tool_duration_ms,
             total_duration_ms: output.total_duration_ms,
@@ -71,10 +75,14 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
         options.approval,
         options.max_iterations,
         stdin.clone(),
-        Some(move |chunk: &str| {
+        Some(move |kind: StreamEventKind, chunk: &str| {
             if json_stream {
                 let payload = serde_json::json!({
                     "type": "chunk",
+                    "kind": match kind {
+                        StreamEventKind::Message => "message",
+                        StreamEventKind::Thinking => "thinking",
+                    },
                     "content": chunk,
                 });
                 println!("{}{}", JSON_STREAM_PREFIX, payload);
@@ -103,6 +111,7 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             task_run: output.task_run.clone(),
             pending_question: output.pending_question.clone(),
             usage: output.usage.clone(),
+            hit_round_limit: output.hit_round_limit,
             api_duration_ms: output.api_duration_ms,
             tool_duration_ms: output.tool_duration_ms,
             total_duration_ms: output.total_duration_ms,

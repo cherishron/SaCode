@@ -40,6 +40,7 @@ impl App {
         self.append_message(Message {
             role: MessageRole::System,
             content: content.to_string(),
+            thinking: String::new(),
             timestamp,
             collapsed: false,
         });
@@ -53,6 +54,7 @@ impl App {
         self.append_message(Message {
             role: MessageRole::System,
             content: format!("[成功] {}", content),
+            thinking: String::new(),
             timestamp,
             collapsed: false,
         });
@@ -66,6 +68,7 @@ impl App {
         self.append_message(Message {
             role: MessageRole::System,
             content: format!("[错误] {}", content),
+            thinking: String::new(),
             timestamp,
             collapsed: false,
         });
@@ -176,9 +179,25 @@ impl App {
         self.invalidate_message_lines_cache();
     }
 
-    pub(super) fn update_last_message_content(&mut self, content: String) {
-        if let Some(message) = self.messages.last_mut() {
+    pub(super) fn update_message_content_at(&mut self, index: usize, content: String) {
+        if let Some(message) = self.messages.get_mut(index) {
             message.content = content;
+            self.invalidate_message_lines_cache();
+        }
+    }
+
+    pub(super) fn append_message_thinking_at(&mut self, index: usize, thinking: &str) {
+        if thinking.is_empty() {
+            return;
+        }
+
+        if let Some(message) = self.messages.get_mut(index) {
+            if !message.thinking.is_empty() {
+                message.thinking.push_str(thinking);
+            } else {
+                message.thinking = thinking.to_string();
+                message.collapsed = true;
+            }
             self.invalidate_message_lines_cache();
         }
     }

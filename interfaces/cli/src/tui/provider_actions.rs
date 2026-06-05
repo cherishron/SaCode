@@ -66,6 +66,9 @@ impl App {
         };
 
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = "正在验证 provider 并拉取模型列表...".to_string();
         self.spawn_login_task(
             self.pending_provider_name
@@ -81,6 +84,9 @@ impl App {
 
     pub(super) fn open_provider_picker(&mut self) {
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = "正在加载 provider 列表...".to_string();
         self.spawn_load_providers_task();
         self.input.clear();
@@ -99,6 +105,9 @@ impl App {
 
         self.input_mode = InputMode::Chat;
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = format!("正在切换 provider 到 {}...", provider_name);
         self.spawn_switch_provider_task(provider_name);
         self.input.clear();
@@ -220,6 +229,9 @@ impl App {
         }
 
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = "正在加载所有 provider 的模型列表...".to_string();
         self.spawn_load_models_task();
         self.input.clear();
@@ -252,6 +264,9 @@ impl App {
         match catalog {
             Some(c) if c.providers.contains_key(name) => {
                 self.queue.processing = true;
+                self.queue.active_task_id = None;
+                self.active_task_started_at = Some(chrono::Local::now());
+                self.spinner_index = 0;
                 self.queue.busy_message = format!("正在切换 provider 到 {}...", name);
                 self.spawn_switch_provider_task(name.to_string());
             }
@@ -439,6 +454,9 @@ impl App {
         let provider_name = selected_model.provider_name.clone();
         self.input_mode = InputMode::Chat;
         self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
         self.queue.busy_message = format!(
             "正在切换到 {} / {}...",
             provider_name, selected_model.model_name

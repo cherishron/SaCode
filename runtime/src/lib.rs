@@ -66,7 +66,7 @@ pub use plugin::{PluginHost, PluginResult, PluginSpec};
 pub use prompt::{
     build_system_prompt as build_runtime_system_prompt, maybe_expand_skill_prompt, PromptContext,
 };
-pub use provider::{ProviderClient, StreamChunk, ToolChatResult};
+pub use provider::{ProviderClient, StreamChunk, StreamChunkKind, ToolChatResult};
 pub use queue::{InMemoryStore, TaskQueue, TaskStore};
 pub use retry::RetryHandler;
 pub use run::{infer_task_run_state, run_task_once, task_run_from_report, task_run_snapshot};

@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
+const TOOL_SUMMARY_MAX_CHARS: usize = 500;
 
 #[derive(Debug)]
 pub struct ProviderClient {
@@ -16,8 +17,15 @@ pub struct ProviderClient {
 
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
+    pub kind: StreamChunkKind,
     pub content: String,
     pub done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamChunkKind {
+    Message,
+    Thinking,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +37,7 @@ pub struct ToolChatResult {
     pub rounds: usize,
     pub usage: Option<ChatUsage>,
     pub pending_question: Option<serde_json::Value>,
+    pub hit_round_limit: bool,
 }
 
 impl ProviderClient {
@@ -143,6 +152,7 @@ impl ProviderClient {
         user_prompt: &str,
         tools: Vec<ToolDefinition>,
         tool_executor: F,
+        max_tool_rounds: usize,
     ) -> Result<ToolChatResult>
     where
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
@@ -155,6 +165,7 @@ impl ProviderClient {
             tools,
             tool_executor,
             &mut noop,
+            max_tool_rounds,
         )
         .await
     }
@@ -167,6 +178,7 @@ impl ProviderClient {
         tools: Vec<ToolDefinition>,
         tool_executor: F,
         on_chunk: &mut G,
+        max_tool_rounds: usize,
     ) -> Result<ToolChatResult>
     where
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
@@ -185,7 +197,8 @@ impl ProviderClient {
             total_tokens: 0,
         };
         let mut has_usage = false;
-        for _ in 0..MAX_TOOL_ROUNDS {
+        let max_tool_rounds = max_tool_rounds.max(1).min(MAX_TOOL_ROUNDS);
+        for _ in 0..max_tool_rounds {
             rounds += 1;
             let (assistant_msg, round_usage) = self
                 .stream_round_with_callback(
@@ -220,6 +233,7 @@ impl ProviderClient {
                     rounds,
                     usage: has_usage.then_some(usage),
                     pending_question: None,
+                    hit_round_limit: false,
                 });
             }
 
@@ -271,6 +285,7 @@ impl ProviderClient {
                         rounds,
                         usage: has_usage.then_some(usage),
                         pending_question: Some(pending_question),
+                        hit_round_limit: false,
                     });
                 }
             }
@@ -284,12 +299,19 @@ impl ProviderClient {
             .iter()
             .rev()
             .find_map(|m| m.reasoning_content.clone());
-        let fallback_text = summarize_tool_outputs(&last_tool_outputs).unwrap_or_else(|| {
-            format!(
-                "达到最大工具调用轮数 {}，已执行 {} 次工具调用",
-                MAX_TOOL_ROUNDS, tool_calls_made
-            )
-        });
+        let fallback_text = summarize_tool_outputs(&last_tool_outputs)
+            .map(|summary| {
+                format!(
+                    "我已经完成当前可执行的 {} 轮工具调用，并整理出以下结果摘要。为了避免任务继续在循环中消耗上下文，我先在这里停止。\n\n{}",
+                    max_tool_rounds, summary
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "我已经达到最大工具调用轮数 {}，本次共执行 {} 次工具调用。当前循环已安全停止，请根据最近结果继续细化任务后重试。",
+                    max_tool_rounds, tool_calls_made
+                )
+            });
 
         Ok(ToolChatResult {
             messages,
@@ -303,6 +325,7 @@ impl ProviderClient {
             rounds,
             usage: has_usage.then_some(usage),
             pending_question: None,
+            hit_round_limit: true,
         })
     }
 
@@ -488,6 +511,7 @@ where
         let data = &line[6..];
         if data == "[DONE]" {
             on_chunk(&StreamChunk {
+                kind: StreamChunkKind::Message,
                 content: String::new(),
                 done: true,
             });
@@ -594,13 +618,13 @@ where
     }
 
     target.push_str(text);
-    let content = if prefix_reasoning {
-        format!("[思考] {}", text)
-    } else {
-        text.to_string()
-    };
     on_chunk(&StreamChunk {
-        content,
+        kind: if prefix_reasoning {
+            StreamChunkKind::Thinking
+        } else {
+            StreamChunkKind::Message
+        },
+        content: text.to_string(),
         done: false,
     });
 }
@@ -621,6 +645,7 @@ where
         let data = &line[6..];
         if data == "[DONE]" {
             on_chunk(&StreamChunk {
+                kind: StreamChunkKind::Message,
                 content: String::new(),
                 done: true,
             });
@@ -678,14 +703,13 @@ where
         return;
     }
 
-    let content = if prefix_reasoning {
-        format!("[思考] {}", text)
-    } else {
-        text.to_string()
-    };
-
     on_chunk(&StreamChunk {
-        content,
+        kind: if prefix_reasoning {
+            StreamChunkKind::Thinking
+        } else {
+            StreamChunkKind::Message
+        },
+        content: text.to_string(),
         done: false,
     });
 }
@@ -695,7 +719,7 @@ fn summarize_tool_outputs(outputs: &[(String, serde_json::Value)]) -> Option<Str
 
     for (name, value) in outputs.iter().rev() {
         if let Some(text) = extract_tool_text(value) {
-            lines.push(format!("[{}]\n{}", name, text));
+            lines.push(format!("[{}]\n{}", name, truncate_tool_summary(&text)));
         } else if let Some(error) = value.get("error").and_then(|item| item.as_str()) {
             lines.push(format!("[{}]\n错误: {}", name, error));
         }
@@ -713,7 +737,7 @@ fn summarize_tool_outputs(outputs: &[(String, serde_json::Value)]) -> Option<Str
 }
 
 fn extract_tool_text(value: &serde_json::Value) -> Option<String> {
-    for key in ["final_text", "text", "body", "content"] {
+    for key in ["summary", "final_text", "text", "body"] {
         if let Some(text) = value.get(key).and_then(|item| item.as_str()) {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
@@ -750,6 +774,15 @@ fn extract_tool_text(value: &serde_json::Value) -> Option<String> {
     }
 
     None
+}
+
+fn truncate_tool_summary(text: &str) -> String {
+    let truncated: String = text.chars().take(TOOL_SUMMARY_MAX_CHARS).collect();
+    if truncated.chars().count() < text.chars().count() {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
 }
 
 fn build_request(
@@ -825,7 +858,7 @@ fn env_key(kind: &ProviderKind) -> Option<String> {
 mod tests {
     use super::{
         default_base_url, extract_tool_text, handle_sse_frame, handle_stream_round_frame,
-        summarize_tool_outputs, StreamRoundState, ToolChatResult,
+        summarize_tool_outputs, StreamChunkKind, StreamRoundState, ToolChatResult,
     };
     use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
 
@@ -963,6 +996,7 @@ mod tests {
             rounds: 3,
             usage: None,
             pending_question: None,
+            hit_round_limit: false,
         };
         assert_eq!(result.final_text, "done");
         assert_eq!(result.reasoning_content.unwrap(), "thinking");
@@ -977,6 +1011,27 @@ mod tests {
             "text": "fallback"
         });
         assert_eq!(extract_tool_text(&value).as_deref(), Some("page summary"));
+    }
+
+    #[test]
+    fn extract_tool_text_prefers_summary_over_other_fields() {
+        let value = serde_json::json!({
+            "summary": "read 20 lines from src/views/TextViewer.vue (446 lines total)",
+            "final_text": "fallback summary",
+            "content": "raw file content"
+        });
+        assert_eq!(
+            extract_tool_text(&value).as_deref(),
+            Some("read 20 lines from src/views/TextViewer.vue (446 lines total)")
+        );
+    }
+
+    #[test]
+    fn extract_tool_text_does_not_use_content_field() {
+        let value = serde_json::json!({
+            "content": "sensitive raw content"
+        });
+        assert_eq!(extract_tool_text(&value), None);
     }
 
     #[test]
@@ -1003,6 +1058,21 @@ mod tests {
     }
 
     #[test]
+    fn summarize_tool_outputs_truncates_long_text() {
+        let summary = summarize_tool_outputs(&[(
+            "fs.read".to_string(),
+            serde_json::json!({
+                "summary": "x".repeat(600)
+            }),
+        )])
+        .expect("summary");
+
+        assert!(summary.contains("[fs.read]"));
+        assert!(summary.contains("..."));
+        assert!(summary.len() < 540);
+    }
+
+    #[test]
     fn handle_sse_frame_extracts_content_reasoning_and_usage() {
         let frame = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\",\"reasoning_content\":\"think\"}}]}\n",
@@ -1013,8 +1083,10 @@ mod tests {
         let usage = handle_sse_frame(frame, &mut |chunk| chunks.push(chunk.clone()), None).unwrap();
 
         assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].kind, StreamChunkKind::Message);
         assert_eq!(chunks[0].content, "Hello");
-        assert_eq!(chunks[1].content, "[思考] think");
+        assert_eq!(chunks[1].kind, StreamChunkKind::Thinking);
+        assert_eq!(chunks[1].content, "think");
         assert!(chunks[2].done);
 
         let usage = usage.expect("usage");

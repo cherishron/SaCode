@@ -5,6 +5,13 @@ use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
 
+fn build_summary(path: &str, lines: usize, total_lines: usize) -> String {
+    format!(
+        "read {} lines from {} ({} lines total)",
+        lines, path, total_lines
+    )
+}
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "fs.read".to_string(),
@@ -22,6 +29,7 @@ pub fn spec() -> ToolSpec {
             "type": "object",
             "properties": {
                 "path": { "type": "string" },
+                "summary": { "type": "string" },
                 "content": { "type": "string" },
                 "lines": { "type": "integer" },
                 "total_lines": { "type": "integer" }
@@ -57,9 +65,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let selected_lines: Vec<&str> = all_lines[start..end].to_vec();
     let output_content = selected_lines.join("\n");
+    let summary = build_summary(path, selected_lines.len(), total_lines);
 
     Ok(ToolOutput::success(serde_json::json!({
         "path": path,
+        "summary": summary,
         "content": output_content,
         "lines": selected_lines.len(),
         "total_lines": total_lines,

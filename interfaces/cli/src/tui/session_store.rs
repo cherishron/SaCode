@@ -86,6 +86,7 @@ impl App {
                     MessageRole::System => "system".to_string(),
                 },
                 content: message.content.clone(),
+                thinking: message.thinking.clone(),
                 timestamp: message.timestamp.clone(),
                 collapsed: message.collapsed,
             })
@@ -210,6 +211,7 @@ impl App {
                         _ => MessageRole::System,
                     },
                     content: message.content.clone(),
+                    thinking: message.thinking.clone(),
                     timestamp: message.timestamp.clone(),
                     collapsed: message.collapsed,
                 })
@@ -228,12 +230,14 @@ impl App {
             role: MessageRole::System,
             content: "SaCode - 新会话\n\n上下键可浏览输入历史，/sessions 可切换历史会话。"
                 .to_string(),
+            thinking: String::new(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
         }]);
         self.session_summary = None;
         self.session_auto_approve_edits = false;
         self.queue.queued_messages.clear();
+        self.task_message_indices.clear();
         self.interaction.todo_plan = None;
         self.queue.processing = false;
         self.queue.active_task_id = None;
@@ -248,12 +252,14 @@ impl App {
         self.replace_messages(vec![Message {
             role: MessageRole::System,
             content: "当前会话上下文已清空。".to_string(),
+            thinking: String::new(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
         }]);
         self.session_summary = None;
         self.session_auto_approve_edits = false;
         self.queue.queued_messages.clear();
+        self.task_message_indices.clear();
         self.interaction.todo_plan = None;
         self.queue.processing = false;
         self.queue.active_task_id = None;

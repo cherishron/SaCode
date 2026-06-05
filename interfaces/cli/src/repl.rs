@@ -18,7 +18,10 @@ use crate::{
         update, vim, wiki, ApprovalPolicy,
     },
     provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
-    runner::{format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream},
+    runner::{
+        format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream,
+        StreamEventKind,
+    },
     version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
 };
 
@@ -186,9 +189,11 @@ impl ReplSession {
             approval,
             max_iterations,
             None,
-            Some(|chunk: &str| {
-                print!("{}", chunk);
-                let _ = io::stdout().flush();
+            Some(|kind: StreamEventKind, chunk: &str| {
+                if matches!(kind, StreamEventKind::Message) {
+                    print!("{}", chunk);
+                    let _ = io::stdout().flush();
+                }
             }),
         )
         .await?;

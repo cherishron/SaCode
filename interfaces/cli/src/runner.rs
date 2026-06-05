@@ -17,6 +17,12 @@ use sacode_runtime::{
 };
 use serde::Serialize;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamEventKind {
+    Message,
+    Thinking,
+}
+
 use crate::{
     cmd::{insight, outstyle, status, ApprovalPolicy},
     learning,
@@ -49,6 +55,7 @@ pub struct RunnerOutput {
     pub learned_facts: Vec<learning::LearnedFact>,
     pub pending_question: Option<serde_json::Value>,
     pub usage: Option<ChatUsage>,
+    pub hit_round_limit: bool,
     pub api_duration_ms: u64,
     pub tool_duration_ms: u64,
     pub total_duration_ms: u64,
@@ -112,6 +119,7 @@ impl RunnerOutput {
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
+            hit_round_limit: false,
             api_duration_ms: 0,
             tool_duration_ms: 0,
             total_duration_ms: 0,
@@ -142,7 +150,7 @@ pub async fn run_task_with_stdin(
         approval,
         max_iterations,
         stdin,
-        None::<fn(&str)>,
+        None::<fn(StreamEventKind, &str)>,
     )
     .await
 }
@@ -156,7 +164,7 @@ pub async fn run_task_with_stdin_and_stream<F>(
     stream_handler: Option<F>,
 ) -> Result<RunnerOutput>
 where
-    F: FnMut(&str),
+    F: FnMut(StreamEventKind, &str),
 {
     let total_started_at = Instant::now();
     let workdir = env::current_dir()?;
@@ -225,6 +233,7 @@ where
         mut provider_response,
         mut pending_question,
         mut usage,
+        mut hit_round_limit,
         mut api_duration_ms,
         mut tool_duration_ms,
     ) = execute_with_provider(
@@ -307,8 +316,9 @@ where
                     provider_response = result.0;
                     pending_question = result.1;
                     usage = result.2;
-                    api_duration_ms = result.3;
-                    tool_duration_ms = result.4;
+                    hit_round_limit = result.3;
+                    api_duration_ms = result.4;
+                    tool_duration_ms = result.5;
 
                     record_model_health(
                         &workdir,
@@ -342,6 +352,7 @@ where
             TaskRunState::WaitingForApproval
         }
         Some(_) => TaskRunState::WaitingForUser,
+        None if hit_round_limit => TaskRunState::Failed,
         None if provider_response.is_ok() => TaskRunState::Completed,
         None => TaskRunState::Failed,
     };
@@ -381,6 +392,7 @@ where
         learned_facts,
         pending_question,
         usage,
+        hit_round_limit,
         api_duration_ms,
         tool_duration_ms,
         total_duration_ms: elapsed_ms(total_started_at.elapsed()),
@@ -398,11 +410,12 @@ async fn execute_with_provider(
     mode: ExecutionMode,
     approval: ApprovalPolicy,
     max_iterations: usize,
-    stream_handler: Option<impl FnMut(&str)>,
+    stream_handler: Option<impl FnMut(StreamEventKind, &str)>,
 ) -> (
     std::result::Result<String, String>,
     Option<serde_json::Value>,
     Option<ChatUsage>,
+    bool,
     u64,
     u64,
 ) {
@@ -419,7 +432,17 @@ async fn execute_with_provider(
                 client
                     .simple_chat_streaming_with_usage(provider, user_prompt, |chunk| {
                         if !chunk.done {
-                            handler(&chunk.content);
+                            handler(
+                                match chunk.kind {
+                                    sacode_runtime::StreamChunkKind::Message => {
+                                        StreamEventKind::Message
+                                    }
+                                    sacode_runtime::StreamChunkKind::Thinking => {
+                                        StreamEventKind::Thinking
+                                    }
+                                },
+                                &chunk.content,
+                            );
                         }
                     })
                     .await
@@ -431,6 +454,7 @@ async fn execute_with_provider(
                     Ok(text),
                     None,
                     usage,
+                    false,
                     elapsed_ms(api_started_at.elapsed()),
                     0,
                 ),
@@ -444,6 +468,7 @@ async fn execute_with_provider(
                         Err(error.to_string()),
                         None,
                         None,
+                        false,
                         elapsed_ms(api_started_at.elapsed()),
                         0,
                     )
@@ -484,8 +509,8 @@ async fn run_tool_chat(
     workdir: &Path,
     mode: ExecutionMode,
     approval: ApprovalPolicy,
-    _max_iterations: usize,
-    stream_handler: Option<impl FnMut(&str)>,
+    max_iterations: usize,
+    stream_handler: Option<impl FnMut(StreamEventKind, &str)>,
 ) -> (
     std::result::Result<String, String>,
     Option<serde_json::Value>,
@@ -598,6 +623,7 @@ async fn run_tool_chat(
     };
 
     let api_started_at = Instant::now();
+    let effective_max_iterations = max_iterations.max(1);
     let result = if let Some(mut handler) = stream_handler {
         client
             .tool_chat_streaming(
@@ -608,9 +634,20 @@ async fn run_tool_chat(
                 tool_executor,
                 &mut |chunk| {
                     if !chunk.done {
-                        handler(&chunk.content);
+                        handler(
+                            match chunk.kind {
+                                sacode_runtime::StreamChunkKind::Message => {
+                                    StreamEventKind::Message
+                                }
+                                sacode_runtime::StreamChunkKind::Thinking => {
+                                    StreamEventKind::Thinking
+                                }
+                            },
+                            &chunk.content,
+                        );
                     }
                 },
+                effective_max_iterations,
             )
             .await
     } else {
@@ -621,12 +658,23 @@ async fn run_tool_chat(
                 user_prompt,
                 tool_defs,
                 tool_executor,
+                effective_max_iterations,
             )
             .await
     };
     match result {
         Ok(result) => {
-            let final_text = if result.final_text.trim().is_empty() {
+            let final_text = if result.hit_round_limit {
+                let summary = if result.final_text.trim().is_empty() {
+                    "我已经安全停止当前循环，但模型没有返回可展示的最终文本。请基于最近一次工具结果继续缩小任务范围后重试。".to_string()
+                } else {
+                    result.final_text.trim().to_string()
+                };
+                format!(
+                    "本次任务达到最大迭代次数 {}，我已停止继续自动调用工具。\n\n{}",
+                    effective_max_iterations, summary
+                )
+            } else if result.final_text.trim().is_empty() {
                 "工具调用已完成，但模型未生成总结，已返回工具结果摘要。".to_string()
             } else {
                 result.final_text.trim().to_string()
@@ -635,6 +683,7 @@ async fn run_tool_chat(
                 Ok(final_text),
                 result.pending_question,
                 result.usage,
+                result.hit_round_limit,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(std::sync::atomic::Ordering::Relaxed),
             )
@@ -649,6 +698,7 @@ async fn run_tool_chat(
                 Err(error.to_string()),
                 None,
                 None,
+                false,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(std::sync::atomic::Ordering::Relaxed),
             )
@@ -1229,6 +1279,7 @@ mod tests {
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
+            hit_round_limit: false,
             api_duration_ms: 1,
             tool_duration_ms: 2,
             total_duration_ms: 3,
@@ -1263,6 +1314,7 @@ mod tests {
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
+            hit_round_limit: false,
             api_duration_ms: 1,
             tool_duration_ms: 2,
             total_duration_ms: 3,
@@ -1297,6 +1349,7 @@ mod tests {
             learned_facts: Vec::new(),
             pending_question: None,
             usage: None,
+            hit_round_limit: false,
             api_duration_ms: 1,
             tool_duration_ms: 2,
             total_duration_ms: 3,

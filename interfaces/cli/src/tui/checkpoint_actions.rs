@@ -163,6 +163,11 @@ impl App {
                                             _ => MessageRole::System,
                                         },
                                         content: content.to_string(),
+                                        thinking: message
+                                            .get("thinking")
+                                            .and_then(|value| value.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
                                         timestamp: timestamp.to_string(),
                                         collapsed: message
                                             .get("collapsed")

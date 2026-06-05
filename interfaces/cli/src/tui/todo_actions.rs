@@ -268,6 +268,7 @@ impl App {
                 "当前会话已通过 {} 完成语义压缩。后续任务会自动携带这份摘要恢复上下文。\n\n摘要预览:\n{}",
                 model_name, trimmed
             ),
+            thinking: String::new(),
             timestamp: now.format("%Y-%m-%d %H:%M").to_string(),
             collapsed: false,
         }]);

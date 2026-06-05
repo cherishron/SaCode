@@ -30,6 +30,8 @@ fn test_runtime_system_prompt_loads_agents_and_project_prompt() {
     assert!(prompt.contains("cargo test --workspace"));
     assert!(prompt.contains("[Project Prompt]"));
     assert!(prompt.contains("回答使用中文"));
+    assert!(prompt.contains("[Skill Usage]"));
+    assert!(prompt.contains("~/.sacode/skills/"));
 }
 
 #[test]

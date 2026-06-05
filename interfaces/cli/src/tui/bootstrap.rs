@@ -1,4 +1,9 @@
-use std::{collections::HashSet, env, path::PathBuf, sync::mpsc};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    path::PathBuf,
+    sync::mpsc,
+};
 
 use ratatui::layout::Rect;
 use sacode_kernel::ExecutionMode;
@@ -128,6 +133,7 @@ impl App {
             next_task_id: 1,
             active_task_started_at: None,
             canceled_task_ids: HashSet::new(),
+            task_message_indices: HashMap::new(),
             todo_plan: None,
             sent_history: Vec::new(),
             history_index: None,

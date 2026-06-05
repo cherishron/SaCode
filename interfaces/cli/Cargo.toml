@@ -30,6 +30,7 @@ tracing-subscriber.workspace = true
 unicode-width.workspace = true
 tempfile.workspace = true
 serial_test = "3"
+pulldown-cmark = "0.12"
 sacode-kernel = { path = "../../kernel" }
 sacode-runtime = { path = "../../runtime" }
 sacode-acp = { path = "../acp" }

@@ -280,13 +280,18 @@ impl SkillHubClient {
 }
 
 fn detect_skill_source(target_dir: &Path) -> SkillSource {
-    if target_dir
-        .components()
-        .any(|component| component.as_os_str() == ".sacode")
-    {
+    if let Some(home) = std::env::var_os("HOME") {
+        let user_dir = Path::new(&home).join(".sacode").join("skills");
+        if target_dir.starts_with(&user_dir) {
+            return SkillSource::User;
+        }
+    }
+
+    let normalized = target_dir.to_string_lossy();
+    if normalized.contains("/.sacode/") || normalized.ends_with("/.sacode") {
         SkillSource::Project
     } else {
-        SkillSource::User
+        SkillSource::Workspace
     }
 }
 
@@ -376,4 +381,32 @@ fn http_client() -> Result<Client> {
     Ok(Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_skill_source_distinguishes_user_and_project_dirs() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let home_dir = temp_dir.path().join("home");
+        let project_dir = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(home_dir.join(".sacode/skills")).expect("create user dir");
+        std::fs::create_dir_all(project_dir.join(".sacode/skills")).expect("create project dir");
+
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home_dir);
+
+        let user_source = detect_skill_source(&home_dir.join(".sacode/skills"));
+        let project_source = detect_skill_source(&project_dir.join(".sacode/skills"));
+
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        assert_eq!(user_source, SkillSource::User);
+        assert_eq!(project_source, SkillSource::Project);
+    }
 }

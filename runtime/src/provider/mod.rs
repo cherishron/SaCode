@@ -1,3 +1,3 @@
 pub mod client;
 
-pub use client::{ProviderClient, StreamChunk, ToolChatResult};
+pub use client::{ProviderClient, StreamChunk, StreamChunkKind, ToolChatResult};
