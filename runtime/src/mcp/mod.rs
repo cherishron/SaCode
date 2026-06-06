@@ -12,6 +12,8 @@ use std::{
 use crate::config::SaCodeConfig;
 use crate::tools::{SideEffectLevel, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec};
 
+pub mod servers;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
     #[serde(default)]

@@ -76,6 +76,20 @@ pub struct SkillHubMcpMeta {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillHubPluginMeta {
+    pub name: String,
+    pub description: String,
+    pub author: String,
+    pub version: String,
+    #[serde(default)]
+    pub download_url: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub source_ref: Option<String>,
+}
+
 impl SkillHubClient {
     pub fn new() -> Self {
         Self {
@@ -95,6 +109,34 @@ impl SkillHubClient {
         let client = http_client()?;
         let url = format!("{}/api/mcp/search", self.base_url.trim_end_matches('/'));
         let response = client.get(url).query(&[("q", keyword)]).send().await?;
+        Ok(response.json().await?)
+    }
+
+    pub async fn search_plugins(&self, keyword: &str) -> Result<Vec<SkillHubPluginMeta>> {
+        let client = http_client()?;
+        let url = format!("{}/api/plugins/search", self.base_url.trim_end_matches('/'));
+        let response = client.get(url).query(&[("q", keyword)]).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("plugin search failed ({}): {}", status, body);
+        }
+        Ok(response.json().await?)
+    }
+
+    pub async fn get_plugin_info(&self, name: &str) -> Result<SkillHubPluginMeta> {
+        let client = http_client()?;
+        let url = format!(
+            "{}/api/plugins/{}/info",
+            self.base_url.trim_end_matches('/'),
+            name
+        );
+        let response = client.get(&url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("failed to get plugin info ({}): {}", status, body);
+        }
         Ok(response.json().await?)
     }
 

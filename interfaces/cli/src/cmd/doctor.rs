@@ -75,6 +75,7 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         "- 插件: {} 个启用，{} 个关闭",
         plugin_status.0, plugin_status.1
     ));
+    lines.push("- 内置 MCP: sacode-built-in-mcp | stdio | tools fs.read, fs.list, git.diff".to_string());
     lines.push(String::new());
     lines.push("MCP 与插件状态: ".to_string());
     lines.push(mcp_lines);
@@ -99,6 +100,7 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     if plugin_status.0 == 0 && plugin_status.1 == 0 {
         lines.push("- 当前没有插件配置，按需使用 /plugin 或 /skills。".to_string());
     }
+    lines.push("- 如需把内置文件与 Git 能力暴露给外部 MCP Client，可运行 `sacode mcp serve`。".to_string());
     if provider.is_some() && !config.model.trim().is_empty() && has_memory {
         lines.push("- 基础配置完整，可以直接开始任务。".to_string());
     }
@@ -122,5 +124,19 @@ fn display_value(value: &str) -> &str {
         "default"
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_doctor;
+
+    #[tokio::test]
+    async fn render_doctor_mentions_builtin_mcp_serve() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let output = render_doctor(temp_dir.path()).await.expect("render doctor");
+
+        assert!(output.contains("sacode-built-in-mcp"));
+        assert!(output.contains("sacode mcp serve"));
     }
 }

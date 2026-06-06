@@ -20,6 +20,12 @@ pub struct PluginEntry {
     pub version: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub source_ref: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

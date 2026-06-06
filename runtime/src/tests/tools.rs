@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 
 #[test]
 fn test_tool_registry() {
@@ -9,16 +10,22 @@ fn test_tool_registry() {
     assert!(names.contains(&"browser.navigate"));
     assert!(names.contains(&"browser.snapshot"));
     assert!(names.contains(&"browser.extract"));
+    assert!(names.contains(&"code.deps"));
+    assert!(names.contains(&"code.symbols"));
     assert!(names.contains(&"fs.read"));
     assert!(names.contains(&"fs.search"));
     assert!(names.contains(&"fs.edit"));
+    assert!(names.contains(&"fs.patch"));
     assert!(names.contains(&"fs.read_multi"));
     assert!(names.contains(&"fs.list"));
+    assert!(names.contains(&"git.commit"));
     assert!(names.contains(&"git.diff"));
     assert!(names.contains(&"interaction.ask"));
     assert!(names.contains(&"media.read"));
+    assert!(names.contains(&"media.vision"));
     assert!(names.contains(&"shell.exec"));
     assert!(names.contains(&"task.spawn"));
+    assert!(names.contains(&"test.run"));
     assert!(names.contains(&"web.fetch"));
     assert!(names.contains(&"web.search"));
 }
@@ -53,7 +60,348 @@ fn test_tool_registry_exposes_registered_specs() {
         .collect();
 
     assert!(spec_names.contains(&"fs.read"));
+    assert!(spec_names.contains(&"fs.patch"));
+    assert!(spec_names.contains(&"code.deps"));
+    assert!(spec_names.contains(&"code.symbols"));
+    assert!(spec_names.contains(&"git.commit"));
+    assert!(spec_names.contains(&"media.vision"));
     assert!(spec_names.contains(&"task.spawn"));
+    assert!(spec_names.contains(&"test.run"));
+}
+
+#[test]
+fn test_git_commit_spec_needs_approval() {
+    let spec = crate::tools::git::commit::spec();
+    assert!(!spec.is_read_only());
+    assert!(spec.needs_approval());
+}
+
+#[test]
+fn test_code_symbols_spec_is_read_only() {
+    let spec = crate::tools::code::symbol::spec();
+    assert!(spec.is_read_only());
+    assert!(!spec.needs_approval());
+}
+
+#[test]
+fn test_code_symbols_extracts_rust_symbols_from_file() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "pub struct Demo;\nasync fn run_task() {}\nimpl Demo {}\nmod inner {}\n",
+    )
+    .expect("write Rust file");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "lib.rs"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["language"], "rust");
+    assert_eq!(output.data["count"], 4);
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert_eq!(symbols[0]["name"], "Demo");
+    assert_eq!(symbols[0]["kind"], "struct");
+    assert_eq!(symbols[1]["name"], "run_task");
+    assert_eq!(symbols[1]["kind"], "fn");
+}
+
+#[test]
+fn test_code_symbols_extracts_rust_symbols_from_directory() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::create_dir_all(temp_dir.path().join("src/nested")).expect("create nested dir");
+    fs::write(temp_dir.path().join("src/lib.rs"), "pub enum Mode { A }\n")
+        .expect("write lib");
+    fs::write(temp_dir.path().join("src/nested/mod.rs"), "trait Worker {}\n")
+        .expect("write mod");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "src"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["count"], 2);
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert!(symbols.iter().any(|entry| entry["name"] == "Mode"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "Worker"));
+}
+
+#[test]
+fn test_code_symbols_extracts_python_symbols() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("app.py"),
+        "class Worker:\n    pass\n\nasync def run_job():\n    pass\n",
+    )
+    .expect("write Python file");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "app.py",
+        "language": "python"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["language"], "python");
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert!(symbols.iter().any(|entry| entry["name"] == "Worker"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "run_job"));
+}
+
+#[test]
+fn test_code_symbols_extracts_typescript_symbols() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("index.ts"),
+        "export interface User {}\nexport function start() {}\nconst runTask = () => {}\n",
+    )
+    .expect("write TS file");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "index.ts",
+        "language": "typescript"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["language"], "typescript");
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert!(symbols.iter().any(|entry| entry["name"] == "User"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "start"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "runTask"));
+}
+
+#[test]
+fn test_code_symbols_extracts_go_symbols() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("main.go"),
+        "type Worker struct {}\nfunc Run() {}\nvar globalValue = 1\n",
+    )
+    .expect("write Go file");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "main.go",
+        "language": "go"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["language"], "go");
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert!(symbols.iter().any(|entry| entry["name"] == "Worker"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "Run"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "globalValue"));
+}
+
+#[test]
+fn test_code_deps_spec_is_read_only() {
+    let spec = crate::tools::code::deps::spec();
+    assert!(spec.is_read_only());
+    assert!(!spec.needs_approval());
+}
+
+#[test]
+fn test_code_deps_extracts_dependencies_from_multiple_languages() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::create_dir_all(temp_dir.path().join("src")).expect("create src");
+    fs::write(
+        temp_dir.path().join("src/lib.rs"),
+        "use std::collections::HashMap;\npub use crate::inner::Thing;\n",
+    )
+    .expect("write rust file");
+    fs::write(
+        temp_dir.path().join("src/app.py"),
+        "import os, sys\nfrom pkg.worker import run\n",
+    )
+    .expect("write python file");
+    fs::write(
+        temp_dir.path().join("src/index.ts"),
+        "import foo from './foo'\nconst bar = require(\"./bar\")\n",
+    )
+    .expect("write ts file");
+
+    let output = crate::tools::code::deps::execute(serde_json::json!({
+        "path": "src"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["count"], 3);
+    let files = output.data["files"].as_array().expect("files array");
+
+    let rust_file = files
+        .iter()
+        .find(|entry| entry["path"] == "lib.rs")
+        .expect("find rust file");
+    assert!(rust_file["imports"]
+        .as_array()
+        .expect("imports array")
+        .iter()
+        .any(|item| item == "std::collections::HashMap"));
+
+    let python_file = files
+        .iter()
+        .find(|entry| entry["path"] == "app.py")
+        .expect("find python file");
+    assert!(python_file["imports"]
+        .as_array()
+        .expect("imports array")
+        .iter()
+        .any(|item| item == "pkg.worker"));
+
+    let ts_file = files
+        .iter()
+        .find(|entry| entry["path"] == "index.ts")
+        .expect("find ts file");
+    assert!(ts_file["imports"]
+        .as_array()
+        .expect("imports array")
+        .iter()
+        .any(|item| item == "./foo"));
+    assert!(ts_file["imports"]
+        .as_array()
+        .expect("imports array")
+        .iter()
+        .any(|item| item == "./bar"));
+}
+
+#[test]
+fn test_code_deps_populates_imported_by_for_workspace_paths() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::create_dir_all(temp_dir.path().join("src")).expect("create src");
+    fs::write(temp_dir.path().join("src/a.ts"), "import helper from './b'\n")
+        .expect("write a.ts");
+    fs::write(temp_dir.path().join("src/b.ts"), "export const helper = 1\n")
+        .expect("write b.ts");
+
+    let output = crate::tools::code::deps::execute(serde_json::json!({
+        "path": "src"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    let files = output.data["files"].as_array().expect("files array");
+    let b_file = files
+        .iter()
+        .find(|entry| entry["path"] == "b.ts")
+        .expect("find b.ts");
+    assert!(b_file["imported_by"]
+        .as_array()
+        .expect("imported_by array")
+        .iter()
+        .any(|item| item == "a.ts"));
+}
+
+#[test]
+fn test_git_commit_requires_staged_changes_without_add_all() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
+    fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: test commit"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(!result.success);
+    assert!(result.message.unwrap_or_default().contains("no staged changes"));
+}
+
+#[test]
+fn test_git_commit_add_all_creates_commit() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .args(["config", "user.name", "SaCode Test"])
+        .output()
+        .expect("set git user.name");
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("set git user.email");
+    fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: test commit",
+        "add_all": true
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["message"], "feat: test commit");
+    assert!(result.data["commit_hash"].as_str().is_some());
+    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
+        .expect("read audit log");
+    assert!(audit_log.contains("\"tool\":\"git.commit\""));
+    assert!(audit_log.contains("\"status\":\"success\""));
+}
+
+#[test]
+fn test_test_run_spec_is_read_only() {
+    let spec = crate::tools::test::runner::spec();
+    assert!(spec.is_read_only());
+    assert!(!spec.needs_approval());
+}
+
+#[test]
+fn test_test_run_detects_rust_workspace_and_returns_summary() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    std::fs::write(
+        temp_dir.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write Cargo.toml");
+
+    let output = crate::tools::test::runner::execute(serde_json::json!({
+        "framework": "cargo",
+        "filter": "--version"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    assert_eq!(output.data["framework"], "cargo");
+    assert!(output.data["summary"].as_str().is_some());
 }
 
 #[test]
@@ -168,6 +516,18 @@ fn test_web_search_output_contains_final_text() {
 
     assert!(properties.contains_key("results"));
     assert!(properties.contains_key("final_text"));
+    assert!(properties.contains_key("providers_used"));
+}
+
+#[test]
+fn test_web_search_spec_exposes_provider_input() {
+    let input = crate::tools::web::search::spec().input_schema;
+    let properties = input
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("properties");
+
+    assert!(properties.contains_key("provider"));
 }
 
 #[test]
@@ -490,6 +850,228 @@ fn test_fs_edit_not_found() {
 }
 
 #[test]
+fn test_fs_patch_applies_single_patch() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("note.txt"), "alpha\nbeta\n").expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "beta\n",
+            "new_string": "gamma\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["applied"], 1);
+    assert_eq!(fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"), "alpha\ngamma\n");
+}
+
+#[test]
+fn test_fs_patch_applies_multiple_files() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("a.txt"), "one\n").expect("seed a");
+    fs::write(temp_dir.path().join("b.txt"), "two\n").expect("seed b");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [
+            {
+                "path": "a.txt",
+                "old_string": "one\n",
+                "new_string": "uno\n"
+            },
+            {
+                "path": "b.txt",
+                "old_string": "two\n",
+                "new_string": "dos\n"
+            }
+        ]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["applied"], 2);
+    assert_eq!(fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"), "uno\n");
+    assert_eq!(fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"), "dos\n");
+}
+
+#[test]
+fn test_fs_patch_matches_lf_patch_against_crlf_file() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("note.txt"), "alpha\r\nbeta\r\n").expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "beta\n",
+            "new_string": "gamma\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "alpha\r\ngamma\r\n"
+    );
+}
+
+#[test]
+fn test_fs_patch_matches_crlf_patch_against_lf_file() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("note.txt"), "alpha\nbeta\n").expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "beta\r\n",
+            "new_string": "gamma\r\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "alpha\ngamma\n"
+    );
+}
+
+#[test]
+fn test_fs_patch_reports_conflict_without_writing_files() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("a.txt"), "one\n").expect("seed a");
+    fs::write(temp_dir.path().join("b.txt"), "two\n").expect("seed b");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [
+            {
+                "path": "a.txt",
+                "old_string": "one\n",
+                "new_string": "uno\n"
+            },
+            {
+                "path": "b.txt",
+                "old_string": "missing\n",
+                "new_string": "dos\n"
+            }
+        ]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(!result.success);
+    let message = result.message.expect("conflict payload");
+    assert!(message.contains("old_string_not_found"));
+    assert_eq!(fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"), "one\n");
+    assert_eq!(fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"), "two\n");
+}
+
+#[test]
+fn test_fs_patch_writes_audit_log_on_success() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(temp_dir.path().join("note.txt"), "hello world").expect("seed file");
+
+    let registry = ToolRegistry::builtin();
+    let result = registry
+        .execute(
+            "fs.patch",
+            serde_json::json!({
+                "patches": [{
+                    "path": "note.txt",
+                    "old_string": "world",
+                    "new_string": "sacode"
+                }]
+            }),
+        )
+        .expect("fs.patch should succeed");
+
+    assert!(result.success);
+    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
+        .expect("read audit log");
+    assert!(audit_log.contains("\"tool\":\"fs.patch\""));
+    assert!(audit_log.contains("\"status\":\"success\""));
+}
+
+#[test]
+fn test_modify_tool_writes_audit_log_on_success() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    let registry = ToolRegistry::builtin();
+    let result = registry
+        .execute(
+            "fs.write",
+            serde_json::json!({
+                "path": "note.txt",
+                "content": "hello"
+            }),
+        )
+        .expect("fs.write should succeed");
+
+    assert!(result.success);
+    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
+        .expect("read audit log");
+    assert!(audit_log.contains("\"tool\":\"fs.write\""));
+    assert!(audit_log.contains("\"phase\":\"preflight_allowed\""));
+    assert!(audit_log.contains("\"phase\":\"execution\""));
+    assert!(audit_log.contains("\"status\":\"success\""));
+}
+
+#[test]
+fn test_modify_tool_writes_audit_log_on_blocked_preflight() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let _cwd = CurrentDirGuard::enter(workdir);
+
+    crate::sandbox::install_global_policy(
+        crate::sandbox::SandboxPolicy::new()
+            .allow_path(workdir.to_path_buf())
+            .deny_path(workdir.join("blocked")),
+    );
+
+    let registry = ToolRegistry::builtin();
+    let error = registry
+        .execute(
+            "fs.write",
+            serde_json::json!({
+                "path": "blocked/file.txt",
+                "content": "secret"
+            }),
+        )
+        .expect_err("fs.write should be blocked");
+
+    assert!(error.to_string().contains("sandbox policy"));
+    let audit_log = fs::read_to_string(workdir.join(".sacode/audit.log")).expect("read audit log");
+    assert!(audit_log.contains("\"tool\":\"fs.write\""));
+    assert!(audit_log.contains("\"phase\":\"preflight_blocked\""));
+    assert!(audit_log.contains("\"status\":\"path_blocked\""));
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
 fn test_fs_read_multi_reads_multiple_files() {
     let _guard = sandbox_test_lock();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -634,6 +1216,63 @@ fn test_media_read_png_ocr_without_visual_provider_falls_back() {
     assert!(result.success);
     assert_eq!(result.data["source"], "fallback");
     assert!(result.data["data"]
+        .as_str()
+        .unwrap_or("")
+        .contains("OCR 能力暂未接入"));
+}
+
+#[test]
+fn test_media_vision_png_describe_without_visual_provider_falls_back() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("image.png"),
+        vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R',
+            0, 0, 0, 1, 0, 0, 0, 1,
+        ],
+    )
+    .expect("write png header");
+
+    let result = crate::tools::media::vision::execute(serde_json::json!({
+        "path": "image.png",
+        "mode": "describe"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["source"], "fallback");
+    assert!(result.data["text"]
+        .as_str()
+        .unwrap_or("")
+        .contains("图片描述能力暂未接入"));
+}
+
+#[test]
+fn test_media_vision_png_ocr_without_visual_provider_falls_back() {
+    let _guard = sandbox_test_lock();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("image.png"),
+        vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R',
+            0, 0, 0, 1, 0, 0, 0, 1,
+        ],
+    )
+    .expect("write png header");
+
+    let result = crate::tools::media::vision::execute(serde_json::json!({
+        "path": "image.png",
+        "mode": "ocr",
+        "prompt": "请只提取按钮文本"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(result.data["source"], "fallback");
+    assert!(result.data["text"]
         .as_str()
         .unwrap_or("")
         .contains("OCR 能力暂未接入"));

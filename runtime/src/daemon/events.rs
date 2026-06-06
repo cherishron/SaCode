@@ -1,24 +1,30 @@
 use std::{convert::Infallible, sync::Arc};
 
-use async_stream::stream;
 use axum::{
-    extract::{Path, State},
-    response::sse::{Event, KeepAlive, Sse},
+    extract::{Path, Query, State},
+    response::sse::{Event, Sse},
 };
 use tokio::sync::broadcast;
 
 use sacode_kernel::{TaskQueueStatus, TaskRun};
+
+use crate::streaming::sse::stream_from_broadcast;
 
 use super::{
     parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status,
     DaemonState, StreamEvent,
 };
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct StreamQuery {
+    pub task_id: Option<String>,
+}
+
 pub fn emit_event(state: &DaemonState, task_id: &str, event_type: &str, data: serde_json::Value) {
     let _ = state.event_bus.send(StreamEvent {
         task_id: task_id.to_string(),
         event_type: event_type.to_string(),
-        data,
+        data: normalize_stream_event(task_id, event_type, data),
     });
 }
 
@@ -34,9 +40,9 @@ pub fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
                 Ok(evt) => {
                     update_task_status_from_executor_event(&state, &evt).await;
                     let _ = state.event_bus.send(StreamEvent {
-                        task_id: evt.task_id,
-                        event_type: evt.event_type,
-                        data: evt.data,
+                        task_id: evt.task_id.clone(),
+                        event_type: evt.event_type.clone(),
+                        data: normalize_stream_event(&evt.task_id, &evt.event_type, evt.data),
                     });
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -46,48 +52,70 @@ pub fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
     });
 }
 
+pub fn spawn_daemon_workers(state: Arc<DaemonState>) {
+    tokio::spawn(async move {
+        loop {
+            {
+                let mut executor = state.executor.lock().await;
+                executor.run_once().await;
+            }
+            state.retry_handler.run_once().await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+}
+
+fn normalize_stream_event(
+    task_id: &str,
+    event_type: &str,
+    data: serde_json::Value,
+) -> serde_json::Value {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let payload = match data {
+        serde_json::Value::Object(map) => serde_json::Value::Object(map),
+        other => serde_json::json!({ "value": other }),
+    };
+
+    let mut normalized = serde_json::Map::new();
+    normalized.insert(
+        "task_id".to_string(),
+        serde_json::Value::String(task_id.to_string()),
+    );
+    normalized.insert(
+        "event_type".to_string(),
+        serde_json::Value::String(event_type.to_string()),
+    );
+    normalized.insert(
+        "timestamp".to_string(),
+        serde_json::Value::String(timestamp),
+    );
+    normalized.insert("payload".to_string(), payload.clone());
+
+    if let serde_json::Value::Object(map) = payload {
+        normalized.extend(map);
+    }
+
+    serde_json::Value::Object(normalized)
+}
+
 pub async fn stream_events(
     State(state): State<Arc<DaemonState>>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
-    let mut receiver = state.event_bus.subscribe();
-
-    let stream = stream! {
-        loop {
-            match receiver.recv().await {
-                Ok(evt) => {
-                    let payload = serde_json::to_string(&evt).unwrap_or_else(|_| "{}".to_string());
-                    yield Ok(Event::default().event(evt.event_type.clone()).data(payload));
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    stream_from_broadcast(state.event_bus.subscribe(), None)
 }
 
 pub async fn stream_task_events(
     State(state): State<Arc<DaemonState>>,
     Path(task_id): Path<String>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
-    let mut receiver = state.event_bus.subscribe();
+    stream_from_broadcast(state.event_bus.subscribe(), Some(task_id))
+}
 
-    let stream = stream! {
-        loop {
-            match receiver.recv().await {
-                Ok(evt) if evt.task_id == task_id => {
-                    let payload = serde_json::to_string(&evt).unwrap_or_else(|_| "{}".to_string());
-                    yield Ok(Event::default().event(evt.event_type.clone()).data(payload));
-                }
-                Ok(_) => continue,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+pub async fn stream_api_events(
+    State(state): State<Arc<DaemonState>>,
+    Query(query): Query<StreamQuery>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    stream_from_broadcast(state.event_bus.subscribe(), query.task_id)
 }
 
 async fn update_task_status_from_executor_event(

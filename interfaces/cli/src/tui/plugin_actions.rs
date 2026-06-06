@@ -1,8 +1,10 @@
 use std::path::Path;
 
-use crate::plugin_config::PluginConfigStore;
+use sacode_runtime::{PluginLoader, PluginRegistry, SkillHubClient};
 
-use super::App;
+use crate::plugin_config::{PluginConfigStore, PluginEntry, PluginSource};
+
+use super::{block_on_cli_future, App};
 
 impl App {
     pub(super) fn plugin_command(&mut self, input: &str) {
@@ -30,7 +32,21 @@ impl App {
                 if parts.len() > 2 {
                     self.install_plugin(&plugin_file, parts[2]);
                 } else {
-                    self.push_system_message("用法: /plugin install <name|url> [--global|-g]");
+                    self.push_system_message("用法: /plugin install <name> [--global|-g]");
+                }
+            }
+            Some("search") => {
+                if parts.len() > 2 {
+                    self.search_plugins(parts[2]);
+                } else {
+                    self.push_system_message("用法: /plugin search <keyword>");
+                }
+            }
+            Some("show") => {
+                if parts.len() > 2 {
+                    self.show_plugin(parts[2]);
+                } else {
+                    self.push_system_message("用法: /plugin show <name>");
                 }
             }
             Some("remove") => {
@@ -55,7 +71,7 @@ impl App {
                 }
             }
             _ => self.push_system_message(
-                "用法: /plugin list|install|remove|enable|disable [--global|-g]",
+                "用法: /plugin list|search|show|install|remove|enable|disable [--global|-g]",
             ),
         }
     }
@@ -89,10 +105,15 @@ impl App {
                     "[off]"
                 };
                 format!(
-                    "- {} {} {} [{}]",
+                    "- {} {} {} [{}:{}]",
                     entry.plugin.name,
                     status,
                     version,
+                    if entry.plugin.kind.trim().is_empty() {
+                        "configured"
+                    } else {
+                        entry.plugin.kind.as_str()
+                    },
                     entry.source.label()
                 )
             })
@@ -105,145 +126,213 @@ impl App {
     }
 
     pub(super) fn install_plugin(&mut self, plugin_file: &Path, plugin_ref: &str) {
-        if let Err(error) = std::fs::create_dir_all(plugin_file.parent().unwrap()) {
-            self.push_error_message(&format!("创建配置目录失败: {}", error));
-            return;
-        }
-
-        let existing = if plugin_file.exists() {
-            std::fs::read_to_string(plugin_file)
-                .ok()
-                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-                .and_then(|data| {
-                    data.get("plugins")
-                        .and_then(|plugins| plugins.as_array())
-                        .cloned()
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
-        let new_plugin = serde_json::json!({
-            "name": plugin_ref,
-            "version": "latest",
-            "enabled": true,
-            "installed_at": chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
-        });
-
-        let mut plugins = existing;
-        if plugins
-            .iter()
-            .any(|plugin| plugin.get("name").and_then(|name| name.as_str()) == Some(plugin_ref))
-        {
-            self.push_system_message(&format!("插件 {} 已存在。", plugin_ref));
-            return;
-        }
-        plugins.push(new_plugin);
-
-        let config = serde_json::json!({ "plugins": plugins });
-        match std::fs::write(plugin_file, config.to_string()) {
+        let store = PluginConfigStore::new(&self.workdir);
+        let source = source_from_plugin_path(&store, plugin_file);
+        match store.upsert(
+            PluginEntry {
+                name: plugin_ref.to_string(),
+                version: "latest".to_string(),
+                enabled: true,
+                description: "Configured plugin entry".to_string(),
+                kind: "configured".to_string(),
+                source_ref: source.label().to_string(),
+            },
+            source,
+        ) {
             Ok(()) => self.push_success_message(&format!("插件 {} 已安装", plugin_ref)),
             Err(error) => self.push_error_message(&format!("保存插件配置失败: {}", error)),
         }
     }
 
     pub(super) fn remove_plugin(&mut self, plugin_file: &Path, name: &str) {
-        if !plugin_file.exists() {
-            self.push_system_message("插件配置不存在。");
-            return;
-        }
-
-        match std::fs::read_to_string(plugin_file) {
-            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(data) => {
-                    if let Some(plugins) =
-                        data.get("plugins").and_then(|plugins| plugins.as_array())
-                    {
-                        let filtered: Vec<_> = plugins
-                            .iter()
-                            .filter(|plugin| {
-                                plugin
-                                    .get("name")
-                                    .and_then(|plugin_name| plugin_name.as_str())
-                                    != Some(name)
-                            })
-                            .collect();
-
-                        if filtered.len() == plugins.len() {
-                            self.push_system_message(&format!("插件 {} 不存在。", name));
-                            return;
-                        }
-
-                        let config = serde_json::json!({ "plugins": filtered });
-                        match std::fs::write(plugin_file, config.to_string()) {
-                            Ok(()) => self.push_success_message(&format!("插件 {} 已卸载", name)),
-                            Err(error) => {
-                                self.push_error_message(&format!("保存配置失败: {}", error))
-                            }
-                        }
-                    }
-                }
-                Err(error) => self.push_error_message(&format!("解析配置失败: {}", error)),
-            },
-            Err(error) => self.push_error_message(&format!("读取配置失败: {}", error)),
+        let store = PluginConfigStore::new(&self.workdir);
+        match store.remove(name, source_from_plugin_path(&store, plugin_file)) {
+            Ok(()) => self.push_success_message(&format!("插件 {} 已卸载", name)),
+            Err(error) => self.push_error_message(&format!("保存配置失败: {}", error)),
         }
     }
 
     pub(super) fn enable_plugin(&mut self, plugin_file: &Path, name: &str, enable: bool) {
-        if !plugin_file.exists() {
-            self.push_system_message("插件配置不存在。");
+        let store = PluginConfigStore::new(&self.workdir);
+        match store.set_enabled(name, enable, source_from_plugin_path(&store, plugin_file)) {
+            Ok(()) => self.push_success_message(&format!(
+                "插件 {} 已{}",
+                name,
+                if enable { "启用" } else { "禁用" }
+            )),
+            Err(error) => self.push_error_message(&format!("保存配置失败: {}", error)),
+        }
+    }
+
+    fn search_plugins(&mut self, query: &str) {
+        let store = PluginConfigStore::new(&self.workdir);
+        let local_entries = match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.push_error_message(&format!("读取插件列表失败: {}", error));
+                return;
+            }
+        };
+        let local_matches: Vec<_> = local_entries
+            .iter()
+            .filter(|entry| plugin_matches(entry, query))
+            .cloned()
+            .collect();
+
+        let remote_matches = match block_on_cli_future(SkillHubClient::new().search_plugins(query)) {
+            Ok(entries) => entries,
+            Err(_) => Vec::new(),
+        };
+
+        if local_matches.is_empty() && remote_matches.is_empty() {
+            self.push_system_message("未找到匹配的插件。");
             return;
         }
 
-        match std::fs::read_to_string(plugin_file) {
-            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(data) => {
-                    if let Some(plugins) = data
-                        .get("plugins")
-                        .and_then(|plugins| plugins.as_array())
-                        .cloned()
-                    {
-                        let mut found = false;
-                        let updated: Vec<_> = plugins
-                            .iter()
-                            .map(|plugin| {
-                                if plugin
-                                    .get("name")
-                                    .and_then(|plugin_name| plugin_name.as_str())
-                                    == Some(name)
-                                {
-                                    found = true;
-                                    let mut updated = plugin.clone();
-                                    updated["enabled"] = serde_json::json!(enable);
-                                    updated
-                                } else {
-                                    plugin.clone()
-                                }
-                            })
-                            .collect();
-
-                        if !found {
-                            self.push_system_message(&format!("插件 {} 不存在。", name));
-                            return;
-                        }
-
-                        let config = serde_json::json!({ "plugins": updated });
-                        match std::fs::write(plugin_file, config.to_string()) {
-                            Ok(()) => self.push_success_message(&format!(
-                                "插件 {} 已{}",
-                                name,
-                                if enable { "启用" } else { "禁用" }
-                            )),
-                            Err(error) => {
-                                self.push_error_message(&format!("保存配置失败: {}", error))
-                            }
-                        }
-                    }
-                }
-                Err(error) => self.push_error_message(&format!("解析配置失败: {}", error)),
-            },
-            Err(error) => self.push_error_message(&format!("读取配置失败: {}", error)),
+        let mut lines = Vec::new();
+        lines.push("插件搜索结果:".to_string());
+        for entry in local_matches {
+            lines.push(format!(
+                "- {} [{}:{}]\n  {}",
+                entry.name, entry.kind, entry.source, entry.description
+            ));
         }
+        for entry in remote_matches {
+            lines.push(format!(
+                "- {} [remote:skillhub]\n  {}\n  {} / v{}",
+                entry.name, entry.description, entry.author, entry.version
+            ));
+        }
+        self.push_system_message(&lines.join("\n"));
+    }
+
+    fn show_plugin(&mut self, name: &str) {
+        let store = PluginConfigStore::new(&self.workdir);
+        let local_entries = match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.push_error_message(&format!("读取插件详情失败: {}", error));
+                return;
+            }
+        };
+
+        if let Some(entry) = local_entries.iter().find(|entry| entry.name == name) {
+            let mut lines = Vec::new();
+            lines.push(format!("Name: {}", entry.name));
+            lines.push(format!("Description: {}", entry.description));
+            lines.push(format!("Kind: {}", entry.kind));
+            lines.push(format!("Source: {}", entry.source));
+            lines.push(format!("Enabled: {}", if entry.enabled { "yes" } else { "no" }));
+            if let Some(version) = &entry.version {
+                lines.push(format!("Version: {}", version));
+            }
+            if let Some(tags) = &entry.tags {
+                if !tags.is_empty() {
+                    lines.push(format!("Tags: {}", tags.join(", ")));
+                }
+            }
+            self.push_system_message(&lines.join("\n"));
+            return;
+        }
+
+        match block_on_cli_future(SkillHubClient::new().get_plugin_info(name)) {
+            Ok(entry) => {
+                let mut lines = Vec::new();
+                lines.push(format!("Name: {}", entry.name));
+                lines.push(format!("Description: {}", entry.description));
+                lines.push("Kind: remote".to_string());
+                lines.push("Source: skillhub".to_string());
+                lines.push(format!("Author: {}", entry.author));
+                lines.push(format!("Version: {}", entry.version));
+                if !entry.tags.is_empty() {
+                    lines.push(format!("Tags: {}", entry.tags.join(", ")));
+                }
+                if !entry.download_url.trim().is_empty() {
+                    lines.push(format!("Download URL: {}", entry.download_url));
+                }
+                self.push_system_message(&lines.join("\n"));
+            }
+            Err(error) => self.push_error_message(&format!("读取插件详情失败: {}", error)),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TuiPluginEntry {
+    name: String,
+    description: String,
+    kind: String,
+    source: String,
+    enabled: bool,
+    version: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+async fn discover_plugin_entries(
+    workdir: &Path,
+    store: &PluginConfigStore,
+) -> anyhow::Result<Vec<TuiPluginEntry>> {
+    let mut entries = Vec::new();
+    let registry = PluginRegistry::discover(workdir).await;
+
+    for entry in registry.list() {
+        entries.push(TuiPluginEntry {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            kind: entry.kind.label().to_string(),
+            source: entry.source_label.clone(),
+            enabled: entry.enabled,
+            version: entry.version.clone(),
+            tags: Some(entry.tags.clone()),
+        });
+    }
+
+    for entry in store.list_entries()? {
+        entries.push(TuiPluginEntry {
+            name: entry.plugin.name.clone(),
+            description: if entry.plugin.description.trim().is_empty() {
+                "Configured plugin entry".to_string()
+            } else {
+                entry.plugin.description.clone()
+            },
+            kind: if entry.plugin.kind.trim().is_empty() {
+                "configured".to_string()
+            } else {
+                entry.plugin.kind.clone()
+            },
+            source: entry.source.label().to_string(),
+            enabled: entry.plugin.enabled,
+            version: if entry.plugin.version.trim().is_empty() {
+                None
+            } else {
+                Some(entry.plugin.version.clone())
+            },
+            tags: None,
+        });
+    }
+
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.dedup_by(|a, b| a.name == b.name && a.kind == b.kind && a.source == b.source);
+    Ok(entries)
+}
+
+fn plugin_matches(entry: &TuiPluginEntry, query: &str) -> bool {
+    let needle = query.to_lowercase();
+    entry.name.to_lowercase().contains(&needle)
+        || entry.description.to_lowercase().contains(&needle)
+        || entry.kind.to_lowercase().contains(&needle)
+        || entry.source.to_lowercase().contains(&needle)
+        || entry
+            .tags
+            .as_ref()
+            .map(|tags| tags.iter().any(|tag| tag.to_lowercase().contains(&needle)))
+            .unwrap_or(false)
+}
+
+fn source_from_plugin_path(store: &PluginConfigStore, plugin_file: &Path) -> PluginSource {
+    if plugin_file == store.user_path() {
+        PluginSource::User
+    } else {
+        PluginSource::Project
     }
 }

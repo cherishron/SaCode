@@ -572,8 +572,8 @@ async fn run_tool_chat(
         }
 
         if let Some(_spec) = spec {
-            let tool_input = if name == "media.read" {
-                enrich_media_read_args(args, &provider_for_tools)
+            let tool_input = if matches!(name, "media.read" | "media.vision") {
+                enrich_media_provider_args(args, &provider_for_tools)
             } else {
                 args.clone()
             };
@@ -764,7 +764,7 @@ fn is_permission_restricted_error(error: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
-fn enrich_media_read_args(
+fn enrich_media_provider_args(
     args: &serde_json::Value,
     provider: &sacode_kernel::model::ModelProvider,
 ) -> serde_json::Value {
@@ -1083,7 +1083,7 @@ fn preview(input: &str) -> String {
 mod tests {
     use super::build_permission_approval_question;
     use super::build_tool_definitions;
-    use super::enrich_media_read_args;
+    use super::enrich_media_provider_args;
     use super::format_learned_facts_summary;
     use super::format_output;
     use super::format_stream_tail;
@@ -1179,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn enrich_media_read_args_injects_current_provider() {
+    fn enrich_media_provider_args_injects_current_provider() {
         let provider = ModelProvider::openai("gpt-4o")
             .with_api_key("secret")
             .with_base_url("https://api.openai.com/v1");
@@ -1188,7 +1188,7 @@ mod tests {
             "mode": "describe"
         });
 
-        let enriched = enrich_media_read_args(&input, &provider);
+        let enriched = enrich_media_provider_args(&input, &provider);
         assert_eq!(
             enriched.get("model").and_then(|value| value.as_str()),
             Some("gpt-4o")
@@ -1204,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn enrich_media_read_args_preserves_explicit_values() {
+    fn enrich_media_provider_args_preserves_explicit_values() {
         let provider = ModelProvider::openai("gpt-4o")
             .with_api_key("secret")
             .with_base_url("https://api.openai.com/v1");
@@ -1216,7 +1216,7 @@ mod tests {
             "api_key": "custom-key"
         });
 
-        let enriched = enrich_media_read_args(&input, &provider);
+        let enriched = enrich_media_provider_args(&input, &provider);
         assert_eq!(
             enriched.get("model").and_then(|value| value.as_str()),
             Some("mimo-v2.5-pro")
@@ -1228,6 +1228,28 @@ mod tests {
         assert_eq!(
             enriched.get("api_key").and_then(|value| value.as_str()),
             Some("custom-key")
+        );
+    }
+
+    #[test]
+    fn enrich_media_provider_args_works_for_media_vision() {
+        let provider = ModelProvider::openai("gpt-4o")
+            .with_api_key("secret")
+            .with_base_url("https://api.openai.com/v1");
+        let input = serde_json::json!({
+            "path": ".sacode/pasted/test.png",
+            "mode": "describe",
+            "prompt": "请描述图中报错"
+        });
+
+        let enriched = enrich_media_provider_args(&input, &provider);
+        assert_eq!(
+            enriched.get("model").and_then(|value| value.as_str()),
+            Some("gpt-4o")
+        );
+        assert_eq!(
+            enriched.get("prompt").and_then(|value| value.as_str()),
+            Some("请描述图中报错")
         );
     }
 

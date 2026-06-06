@@ -36,6 +36,12 @@ impl App {
             return true;
         }
 
+        if trimmed.starts_with("/agents ") || trimmed == "/agents" {
+            self.agents_command(&input);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed == "/new" {
             self.new_session_command();
             self.input.clear();

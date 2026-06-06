@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sacode_runtime::{
-    call_mcp_tool, inspect_server, list_mcp_tools, McpConfigStore, McpSource, SaCodeConfig,
+    call_mcp_tool, inspect_server, list_mcp_tools, run_stdio_server, McpConfigStore, McpSource, SaCodeConfig,
     SkillHubClient,
 };
 use std::path::PathBuf;
@@ -76,6 +76,10 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                 call(&store, &args[1], &args[2], &args[3]).await?;
             }
         }
+        "serve" => {
+            println!("SaCode MCP stdio server ready");
+            run_stdio_server()?;
+        }
         "disable" => {
             if args.len() < 2 {
                 println!("Usage: sacode mcp disable <name> [--global|-g]");
@@ -94,7 +98,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         }
         _ => {
             println!("Unknown mcp command: {}", args[0]);
-            println!("Available: search, install, list, show, add, enable, disable, remove, inspect, tools, call");
+            println!("Available: search, install, list, show, add, enable, disable, remove, inspect, tools, call, serve");
         }
     }
 
@@ -230,6 +234,7 @@ fn show_default() {
     println!("  sacode mcp inspect <name>");
     println!("  sacode mcp tools <name>");
     println!("  sacode mcp call <server> <tool> <json>");
+    println!("  sacode mcp serve");
 }
 
 fn show_server(store: &McpConfigStore, name: &str) -> Result<()> {

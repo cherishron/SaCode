@@ -93,6 +93,7 @@ sacode mcp remove <name>             # 删除 MCP 服务
 sacode mcp inspect <name>            # 探测远程 MCP 服务信息
 sacode mcp tools <name>              # 列出远程 MCP 工具
 sacode mcp call <server> <tool> <json> # 调用远程 MCP 工具
+sacode mcp serve                     # 启动内置 MCP stdio server
 
 sacode mistakes list                 # 列出错题本
 sacode mistakes show <index>         # 查看单条错题详情
@@ -145,6 +146,7 @@ REPL/TUI 内置命令补充：
 | fs.read | 读取文件内容 | 否 |
 | fs.search | 搜索文件内容 | 否 |
 | fs.write | 写入工作区内文件内容 | 是 |
+| fs.patch | 按严格上下文批量应用文件补丁 | 是 |
 | git.diff | 获取 git diff | 否 |
 | shell.exec | 执行 shell 命令 | 是 |
 | web.fetch | 获取网页内容 | 否 |
@@ -196,6 +198,19 @@ REPL/TUI 内置命令补充：
 - `mcp inspect`
 - `mcp tools`
 - `mcp call`
+- `mcp serve`
+
+内置 MCP `stdio` server 当前能力：
+
+- 支持方法：`initialize`、`tools/list`、`tools/call`
+- 首批工具：`fs.read`、`fs.list`、`git.diff`
+- 传输方式：标准输入输出，每行一条 JSON-RPC 请求/响应
+
+示例：
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | sacode mcp serve
+```
 
 REPL/TUI 新增：
 
@@ -362,6 +377,110 @@ sacode serve --acp --lsp
 
 当前 `serve` 主要作为聚合入口和提示入口使用；实际协议服务能力分别由 `acp` 和 `lsp` 子命令承载。
 
+### Daemon HTTP 接口
+
+SaCode runtime 当前提供以下最小可用 Daemon 路由：
+
+- `GET /health`
+- `POST /task`
+- `GET /task/:id/status`
+- `GET /task/:id/result`
+- `POST /task/:id/retry`
+- `POST /task/:id/cancel`
+- `GET /events`
+- `GET /events/:id`
+- `GET /api/stream`
+- `GET /tools`
+- `GET /queue/status`
+- `GET /queue/pending`
+
+创建任务示例：
+
+```bash
+curl -X POST http://127.0.0.1:8765/task \
+  -H "content-type: application/json" \
+  -d '{"prompt":"分析代码结构","mode":"build"}'
+```
+
+返回示例：
+
+```json
+{
+  "task_id": "task-1717670400000",
+  "status": "queued",
+  "message": "Task created and submitted to queue",
+  "queue_status": "pending"
+}
+```
+
+### SSE 事件流
+
+Daemon 当前支持三种 SSE 入口：
+
+- `GET /events`
+  - 订阅全部任务事件
+- `GET /events/:id`
+  - 订阅指定任务事件
+- `GET /api/stream`
+  - 统一 SSE 入口
+- `GET /api/stream?task_id=<TASK_ID>`
+  - 统一 SSE 入口的任务过滤模式
+
+事件名示例：
+
+- `task_created`
+- `task_started`
+- `task_completed`
+- `task_failed`
+- `retry_scheduled`
+- `retry_started`
+- `message`
+- `thinking`
+- `tool_call_started`
+- `tool_call_finished`
+
+统一 SSE `data` 结构：
+
+```json
+{
+  "task_id": "task-1717670400000",
+  "event_type": "task_completed",
+  "timestamp": "2026-06-06T12:34:56Z",
+  "payload": {
+    "result": {
+      "task_id": "task-1717670400000",
+      "status": "completed",
+      "output": "任务完成",
+      "error": null,
+      "duration_ms": 123
+    },
+    "task_run": {
+      "task_id": "task-1717670400000",
+      "state": "Completed",
+      "output_text": "任务完成"
+    }
+  },
+  "result": {
+    "task_id": "task-1717670400000",
+    "status": "completed",
+    "output": "任务完成",
+    "error": null,
+    "duration_ms": 123
+  },
+  "task_run": {
+    "task_id": "task-1717670400000",
+    "state": "Completed",
+    "output_text": "任务完成"
+  }
+}
+```
+
+说明：
+
+- `task_id`、`event_type`、`timestamp`、`payload` 是统一后的稳定字段
+- `result`、`task_run` 等顶层字段当前继续保留，用于兼容旧消费方
+- 新接入方建议优先消费 `payload.*`
+
 ## 工具注册表
 
 当前内置工具由 `runtime/src/tools/mod.rs` 中的 `ToolRegistry::builtin()` 注册。
@@ -381,10 +500,21 @@ sacode serve --acp --lsp
 - `git.diff`
 - `interaction.ask`
 - `media.read`
+- `media.vision`
 - `shell.exec`
 - `task.spawn`
 - `web.fetch`
 - `web.search`
+
+多媒体工具说明：
+
+- `media.read`
+  - 适合读取原始图片/PDF 数据
+  - 支持 `base64`、`ocr`、`describe`
+- `media.vision`
+  - 适合理解图片内容
+  - 支持 `ocr`、`describe`
+  - 支持可选 `prompt` 自定义视觉任务
 
 查看当前可用工具：
 
@@ -404,6 +534,8 @@ sacode plugin list
 
 ```bash
 sacode plugin list
+sacode plugin search <keyword>
+sacode plugin show <name>
 sacode plugin install <name> [--global|-g]
 sacode plugin remove <name> [--global|-g]
 sacode plugin enable <name> [--global|-g]
@@ -411,6 +543,10 @@ sacode plugin disable <name> [--global|-g]
 ```
 
 当前 `plugin` 子命令管理的是配置层接入，不是文档中旧版的 `plugin load <wasm>` 工作流。
+
+`plugin install` 现在会优先尝试从当前可发现能力中解析目标，并在 `.sacode/plugins.json` 中保留 `kind`、`description`、`source_ref` 等元信息。
+
+`plugin search` 和 `plugin show` 会优先展示本地可发现能力，并在 SkillHub 可用时补充远端插件结果。
 
 ### MCP 命令
 
@@ -420,9 +556,16 @@ sacode mcp show <name>
 sacode mcp inspect <name>
 sacode mcp tools <name>
 sacode mcp call <server> <tool> <json>
+sacode mcp serve
 ```
 
 项目级配置文件位置：`.sacode/mcp.json`
+
+内置 `stdio` server 返回 MCP 兼容 JSON-RPC 响应。当前 `tools/list` 会暴露：
+
+- `fs.read`
+- `fs.list`
+- `git.diff`
 
 ## 沙箱系统
 

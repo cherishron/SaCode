@@ -45,6 +45,7 @@ impl App {
             /fold all  - 折叠全部思考详情\n\
             /expand all - 展开全部思考详情\n\
             /theme     - 切换主题模板 (github/vscode/idea)\n\
+            /agents    - 查看内置角色或启动多角色编排\n\
             /todo      - 任务列表管理 (show/confirm/clear)\n\
             /answer    - 回答当前等待中的问题\n\
             /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\

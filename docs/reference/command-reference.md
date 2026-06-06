@@ -48,8 +48,8 @@ sacode profile [ls|use <name>|show]
 
 ```bash
 sacode skill [search|install|list|show|update|remove|run]
-sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call]
-sacode plugin [list]
+sacode mcp [search|install|list|show|enable|disable|remove|inspect|tools|call|serve]
+sacode plugin [list|search|show|install|remove|enable|disable]
 ```
 
 说明：
@@ -57,6 +57,8 @@ sacode plugin [list]
 - skills 目录默认在 `skills/`，项目级覆盖在 `.sacode/skills/`
 - MCP 配置文件在 `.sacode/mcp.json`
 - `status` 会自动确保默认 `context7` MCP 存在并启用
+- `mcp serve` 会启动本地内置 MCP `stdio` server，当前暴露 `fs.read`、`fs.list`、`git.diff`
+- `plugin search` / `plugin show` 会在本地发现结果之外补充 SkillHub 远端插件信息
 
 ## 5. 记忆 / 知识 / 洞察
 

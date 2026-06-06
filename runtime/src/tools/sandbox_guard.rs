@@ -1,26 +1,64 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
 
 use crate::sandbox::{active_policy, FsAccess, NetworkAccess};
 
-use super::ToolSpec;
+use super::{SideEffectLevel, ToolSpec};
 
 pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
+    if should_audit(spec) {
+        write_audit_log(
+            &spec.name,
+            "preflight_start",
+            "pending",
+            Some(input),
+            None,
+        );
+    }
+
     let policy = active_policy();
 
     if let Some(network_access) = required_network_access(&spec.name, input) {
         if !policy.check_network(network_access) {
+            if should_audit(spec) {
+                write_audit_log(
+                    &spec.name,
+                    "preflight_blocked",
+                    "network_blocked",
+                    Some(input),
+                    None,
+                );
+            }
             anyhow::bail!("network access blocked by sandbox policy");
         }
     }
 
     if spec.name == "task.spawn" && !policy.check_task_spawn() {
+        if should_audit(spec) {
+            write_audit_log(
+                &spec.name,
+                "preflight_blocked",
+                "task_spawn_blocked",
+                Some(input),
+                None,
+            );
+        }
         anyhow::bail!("task spawn blocked by sandbox policy");
     }
 
     if let Some(command) = extract_command(&spec.name, input) {
         if !policy.check_command(&command) {
+            if should_audit(spec) {
+                write_audit_log(
+                    &spec.name,
+                    "preflight_blocked",
+                    "command_blocked",
+                    Some(input),
+                    Some(serde_json::json!({ "command": command })),
+                );
+            }
             anyhow::bail!("command '{}' is blocked by sandbox policy", command);
         }
     }
@@ -34,11 +72,115 @@ pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
         };
 
         if !policy.check_path(&resolved, path_access) {
+            if should_audit(spec) {
+                write_audit_log(
+                    &spec.name,
+                    "preflight_blocked",
+                    "path_blocked",
+                    Some(input),
+                    Some(serde_json::json!({ "path": resolved.display().to_string() })),
+                );
+            }
             anyhow::bail!("path is blocked by sandbox policy");
         }
     }
 
+    if should_audit(spec) {
+        write_audit_log(
+            &spec.name,
+            "preflight_allowed",
+            "allowed",
+            Some(input),
+            None,
+        );
+    }
+
     Ok(())
+}
+
+pub fn audit_execution_result(
+    spec: &ToolSpec,
+    input: &serde_json::Value,
+    output: Option<&super::ToolOutput>,
+    error: Option<&str>,
+) {
+    if !should_audit(spec) {
+        return;
+    }
+
+    let status = if error.is_some() {
+        "error"
+    } else if output.is_some_and(|result| result.success) {
+        "success"
+    } else {
+        "failure"
+    };
+
+    let result_payload = output.map(|result| {
+        serde_json::json!({
+            "success": result.success,
+            "message": result.message,
+            "data": result.data,
+        })
+    });
+
+    let extra = match (result_payload, error) {
+        (Some(payload), Some(message)) => Some(serde_json::json!({
+            "result": payload,
+            "error": message,
+        })),
+        (Some(payload), None) => Some(serde_json::json!({ "result": payload })),
+        (None, Some(message)) => Some(serde_json::json!({ "error": message })),
+        (None, None) => None,
+    };
+
+    write_audit_log(&spec.name, "execution", status, Some(input), extra);
+}
+
+fn should_audit(spec: &ToolSpec) -> bool {
+    matches!(spec.side_effect_level, SideEffectLevel::Modify)
+}
+
+fn write_audit_log(
+    tool_name: &str,
+    phase: &str,
+    status: &str,
+    input: Option<&serde_json::Value>,
+    extra: Option<serde_json::Value>,
+) {
+    let Ok(workdir) = std::env::current_dir() else {
+        return;
+    };
+
+    let sacode_dir = workdir.join(".sacode");
+    if std::fs::create_dir_all(&sacode_dir).is_err() {
+        return;
+    }
+
+    let log_path = sacode_dir.join("audit.log");
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    else {
+        return;
+    };
+
+    let mut payload = serde_json::json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "tool": tool_name,
+        "phase": phase,
+        "status": status,
+    });
+
+    if let Some(input) = input {
+        payload["input"] = input.clone();
+    }
+    if let Some(extra) = extra {
+        payload["extra"] = extra;
+    }
+
+    let _ = writeln!(file, "{}", payload);
 }
 
 fn required_network_access(name: &str, input: &serde_json::Value) -> Option<NetworkAccess> {
@@ -61,7 +203,7 @@ fn extract_command(tool_name: &str, input: &serde_json::Value) -> Option<String>
             .and_then(|value| value.as_str())
             .and_then(first_token)
             .map(str::to_string),
-        "git.diff" => Some("git".to_string()),
+        "git.diff" | "git.commit" => Some("git".to_string()),
         "task.spawn" => std::env::current_exe()
             .ok()
             .map(|path| path.to_string_lossy().to_string()),
@@ -71,7 +213,7 @@ fn extract_command(tool_name: &str, input: &serde_json::Value) -> Option<String>
 
 fn path_access_for_tool(tool_name: &str) -> FsAccess {
     match tool_name {
-        "fs.write" | "fs.edit" => FsAccess::Write,
+        "fs.write" | "fs.edit" | "git.commit" => FsAccess::Write,
         _ => FsAccess::Read,
     }
 }

@@ -8,6 +8,7 @@ use crate::plugin_config::PluginConfigStore;
 const CONTEXT7_NAME: &str = "context7";
 const CONTEXT7_URL: &str = "https://mcp.context7.com/mcp";
 const CONTEXT7_REMOTE_LABEL: &str = "official remote";
+const BUILTIN_STDIO_LABEL: &str = "builtin stdio";
 
 pub async fn run() -> Result<()> {
     let workdir = PathBuf::from(".");
@@ -45,6 +46,10 @@ pub async fn render_status(workdir: &Path) -> Result<String> {
     let mut lines = vec!["当前状态".to_string()];
     lines.push(String::new());
     lines.push("MCP:".to_string());
+    lines.push(format!(
+        "- sacode-built-in-mcp [local] {} | methods initialize, tools/list, tools/call | tools fs.read, fs.list, git.diff",
+        BUILTIN_STDIO_LABEL
+    ));
     lines.extend(render_mcp_status(workdir).await?);
     lines.push(String::new());
     lines.push("插件:".to_string());
@@ -125,4 +130,19 @@ fn render_plugin_status(workdir: &Path) -> Result<Vec<String>> {
             )
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_status;
+
+    #[tokio::test]
+    async fn render_status_includes_builtin_stdio_server() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let output = render_status(temp_dir.path()).await.expect("render status");
+
+        assert!(output.contains("sacode-built-in-mcp"));
+        assert!(output.contains("builtin stdio"));
+        assert!(output.contains("fs.read, fs.list, git.diff"));
+    }
 }

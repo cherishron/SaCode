@@ -699,7 +699,7 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         compress_threshold: 15,
         compress_tail_turns: 15,
         execution_mode: "yolo".to_string(),
-        max_iterations: 1,
+        max_iterations: 3,
         loop_max_iterations: 10,
         approval_policy: "prompt".to_string(),
         output_style: "concise".to_string(),

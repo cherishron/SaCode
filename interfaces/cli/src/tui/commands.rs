@@ -139,6 +139,7 @@ pub(super) fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/tools", "显示可用工具"),
         CommandDef::simple("/stats", "查看 token 与费用统计"),
         CommandDef::simple("/theme", "切换主题模板"),
+        CommandDef::simple("/agents", "查看内置角色或启动多角色编排"),
         CommandDef::simple("/loop", "循环执行任务直到完成"),
         CommandDef::with_subs(
             "/todo",

@@ -309,16 +309,6 @@ impl App {
             }
         } else if matches!(effective_state, TaskRunState::Failed) {
             if let Some(state) = loop_state.clone() {
-                if hit_round_limit {
-                    self.push_system_message(&format!(
-                        "循环任务在第 {} 轮达到最大迭代上限后停止。",
-                        state.iteration
-                    ));
-                    if !waiting_for_user {
-                        self.start_next_queued_message();
-                    }
-                    return;
-                }
                 let next_error_count = state.error_count.saturating_add(1);
                 if next_error_count >= 3 {
                     self.push_system_message(&format!(
@@ -326,10 +316,18 @@ impl App {
                         next_error_count
                     ));
                 } else {
-                    let reflection_hint = match next_error_count {
-                        1 => "上一轮执行遇到问题，请重新审视任务需求，换一种方案尝试。",
-                        2 => "已连续两轮失败，请深入分析失败原因，检查是否有根本性问题。",
-                        _ => "多次失败表明当前方案可能不可行，请彻底换一种思路。",
+                    let reflection_hint = if hit_round_limit {
+                        match next_error_count {
+                            1 => "上一轮在单轮最大迭代次数内未完成，请缩小处理范围，优先解决最关键的剩余问题。",
+                            2 => "已连续两轮在单轮最大迭代次数内未完成，请聚焦单一阻塞点，先验证局部修复是否生效。",
+                            _ => "多轮都在单轮最大迭代次数内未完成，请进一步收缩目标，只处理一个最小可验证问题。",
+                        }
+                    } else {
+                        match next_error_count {
+                            1 => "上一轮执行遇到问题，请重新审视任务需求，换一种方案尝试。",
+                            2 => "已连续两轮失败，请深入分析失败原因，检查是否有根本性问题。",
+                            _ => "多次失败表明当前方案可能不可行，请彻底换一种思路。",
+                        }
                     };
                     self.enqueue_or_start_message_with_approval_and_loop(
                         Self::build_loop_prompt(&state.task, &loop_summary, Some(reflection_hint)),
@@ -342,10 +340,17 @@ impl App {
                             last_summary: loop_summary.clone(),
                         }),
                     );
-                    self.push_system_message(&format!(
-                        "循环任务本轮失败（累计 {} 次），注入反思信号后继续下一轮。",
-                        next_error_count
-                    ));
+                    if hit_round_limit {
+                        self.push_system_message(&format!(
+                            "循环任务第 {} 轮触达单轮最大迭代上限，已缩小范围并继续下一轮（累计 {} 次）。",
+                            state.iteration, next_error_count
+                        ));
+                    } else {
+                        self.push_system_message(&format!(
+                            "循环任务本轮失败（累计 {} 次），注入反思信号后继续下一轮。",
+                            next_error_count
+                        ));
+                    }
                 }
             }
         }
@@ -606,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_round_limit_does_not_enqueue_next_round() {
+    fn loop_round_limit_enqueues_next_round_with_scope_hint() {
         let mut app = App::new();
         app.queue.active_task_id = Some(13);
 
@@ -636,7 +641,22 @@ mod tests {
             }),
         );
 
-        assert!(app.queue.queued_messages.is_empty());
+        let queued = app
+            .queue
+            .queued_messages
+            .front()
+            .expect("next loop task should be queued after round limit");
+        assert!(queued.content.contains("上一轮摘要"));
+        assert!(queued.content.contains("本轮在达到最大迭代上限后停止。"));
+        assert!(queued.content.contains("反思提示"));
+        assert!(queued.content.contains("缩小处理范围"));
+        assert_eq!(
+            queued
+                .loop_state
+                .as_ref()
+                .map(|state| (state.iteration, state.error_count)),
+            Some((2, 1))
+        );
     }
 
     #[test]

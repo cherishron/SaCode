@@ -74,7 +74,14 @@ impl TaskExecutor {
 
         while let Some(task) = self.queue.next_ready().await {
             self.queue.mark_running(&task.id).await;
-            self.emit_event(&task.id, "task_started", serde_json::json!({}));
+            self.emit_event(
+                &task.id,
+                "task_started",
+                serde_json::json!({
+                    "prompt": task.task.prompt,
+                    "mode": task.task.mode.to_string(),
+                }),
+            );
 
             let task_id = task.id.clone();
             let event_bus = self.event_bus.clone();

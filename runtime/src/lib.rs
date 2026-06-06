@@ -47,7 +47,8 @@ pub use mcp::{
     call_mcp_tool_sync, call_tool as call_mcp_tool, find_enabled_search_tool,
     find_enabled_search_tool_sync, inspect_server, list_enabled_mcp_tool_specs_sync,
     list_enabled_tool_specs as list_enabled_mcp_tool_specs, list_tools as list_mcp_tools,
-    register_enabled_tools_sync as register_enabled_mcp_tools_sync, McpConfig, McpConfigStore,
+    register_enabled_tools_sync as register_enabled_mcp_tools_sync, servers::stdio::run_stdio_server,
+    McpConfig, McpConfigStore,
     McpServerConfig, McpServerDetails, McpServerEntry, McpSource, McpToolCallResult, McpToolInfo,
 };
 pub use memory::{
@@ -62,7 +63,10 @@ pub use model_routing::{
     RoutedModel, TaskProfile, TaskRiskLevel,
 };
 pub use orchestrator::RuntimeOrchestrator;
-pub use plugin::{PluginHost, PluginResult, PluginSpec};
+pub use plugin::{
+    PluginDescriptor, PluginHost, PluginKind, PluginLoader, PluginRegistry, PluginResult,
+    PluginSpec,
+};
 pub use prompt::{
     build_system_prompt as build_runtime_system_prompt, maybe_expand_skill_prompt, PromptContext,
 };
@@ -81,7 +85,8 @@ pub use session::{
     CompressionResult, SessionEvent, SessionHandle, SessionPrompt, SessionService, SessionStatus,
 };
 pub use skillhub::{
-    SkillHubClient, SkillHubMcpMeta, SkillHubSkillListResponse, SkillHubSkillMeta,
+    SkillHubClient, SkillHubMcpMeta, SkillHubPluginMeta, SkillHubSkillListResponse,
+    SkillHubSkillMeta,
     SkillHubUploadRequest, SkillHubUploadResponse, SkillHubVersionMeta,
 };
 pub use skills::{SkillRegistry, SkillSource, SkillSpec};

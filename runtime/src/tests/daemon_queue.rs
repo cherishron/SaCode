@@ -217,6 +217,147 @@ async fn test_daemon_task_events_endpoint_filters_by_task_id() {
 }
 
 #[tokio::test]
+async fn test_daemon_api_stream_endpoint_streams_sse() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stream")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should open api stream");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+}
+
+#[tokio::test]
+async fn test_daemon_api_stream_endpoint_supports_task_filter() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"分析代码结构","mode":"build"}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    let task_id = payload["task_id"].as_str().expect("task id").to_string();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stream?task_id={}", task_id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should open filtered api stream");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+}
+
+#[tokio::test]
+async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stream")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should open api stream");
+
+    let mut body = response.into_body();
+    let mut saw_matching_event = false;
+
+    let mut create_task = Some(app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/task")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"prompt":"生成一个简单计划","mode":"plan"}"#))
+            .expect("build request"),
+    ));
+
+    let mut target_task_id: Option<String> = None;
+
+    for _ in 0..20 {
+        if target_task_id.is_none() {
+            let response = create_task
+                .take()
+                .expect("create_task future should exist")
+                .await
+                .expect("daemon should create task");
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+            target_task_id = payload["task_id"].as_str().map(str::to_string);
+        }
+
+        let frame = match tokio::time::timeout(Duration::from_secs(1), body.frame()).await {
+            Ok(Some(Ok(frame))) => frame,
+            Ok(Some(Err(error))) => panic!("frame should be readable: {}", error),
+            Ok(None) => break,
+            Err(_) => continue,
+        };
+        let bytes = frame.into_data().expect("sse frame should contain data");
+        let text = String::from_utf8_lossy(&bytes);
+
+        let data_line = match text.lines().find(|line| line.starts_with("data: ")) {
+            Some(line) => line,
+            None => continue,
+        };
+        let event_payload: serde_json::Value =
+            serde_json::from_str(data_line.trim_start_matches("data: "))
+                .expect("valid event payload");
+
+        if target_task_id.as_deref() != event_payload.get("task_id").and_then(|value| value.as_str()) {
+            continue;
+        }
+
+        assert!(event_payload.get("payload").is_some());
+        assert!(event_payload.get("event_type").is_some());
+        saw_matching_event = true;
+        break;
+    }
+
+    assert!(saw_matching_event);
+}
+
+#[tokio::test]
 async fn test_daemon_status_and_result_include_task_run() {
     let app = create_daemon().await;
 
@@ -325,6 +466,7 @@ async fn test_task_executor_emits_task_run_in_completion_event() {
     while let Ok(evt) = receiver.try_recv() {
         if evt.event_type == "task_completed" {
             saw_completion = true;
+            assert!(evt.data.get("result").is_some());
             let task_run = evt.data.get("task_run").expect("task_run payload");
             assert_eq!(task_run.get("state"), Some(&serde_json::json!("Completed")));
             assert!(task_run.get("output_text").is_some());
@@ -332,6 +474,77 @@ async fn test_task_executor_emits_task_run_in_completion_event() {
     }
 
     assert!(saw_completion);
+}
+
+#[tokio::test]
+async fn test_daemon_emit_event_normalizes_payload_shape() {
+    let app = create_daemon().await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stream")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should open api stream");
+
+    let mut body = response.into_body();
+
+    let create_task = app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/task")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"prompt":"分析代码结构","mode":"build"}"#))
+            .expect("build request"),
+    );
+
+    let next_frame = tokio::time::timeout(Duration::from_secs(1), body.frame());
+    let (_, frame_result) = tokio::join!(create_task, next_frame);
+
+    let frame = frame_result
+        .expect("sse frame should arrive")
+        .expect("body should yield a frame")
+        .expect("frame should be readable");
+    let bytes = frame.into_data().expect("sse frame should contain data");
+    let text = String::from_utf8_lossy(&bytes);
+
+    assert!(text.contains("event: task_created") || text.contains("event: task_started"));
+    assert!(text.contains("\"task_id\":"));
+    assert!(text.contains("\"event_type\":"));
+    assert!(text.contains("\"timestamp\":"));
+    assert!(text.contains("\"payload\":{"));
+}
+
+#[tokio::test]
+async fn test_task_executor_task_started_event_contains_payload_fields() {
+    let queue = Arc::new(TaskQueue::new(1));
+    queue
+        .submit(ScheduledTask::new(
+            "exec-started-1".to_string(),
+            Task::new("分析代码结构", ExecutionMode::Build, None),
+        ))
+        .await
+        .expect("submit task");
+
+    let mut executor = crate::executor::TaskExecutor::new(queue, ToolRegistry::builtin());
+    let mut receiver = executor.subscribe();
+
+    executor.run_once().await;
+
+    let mut saw_started = false;
+    while let Ok(evt) = receiver.try_recv() {
+        if evt.event_type == "task_started" {
+            saw_started = true;
+            assert_eq!(evt.data.get("prompt"), Some(&serde_json::json!("分析代码结构")));
+            assert_eq!(evt.data.get("mode"), Some(&serde_json::json!("build")));
+        }
+    }
+
+    assert!(saw_started);
 }
 
 #[tokio::test]

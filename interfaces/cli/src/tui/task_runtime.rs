@@ -52,6 +52,35 @@ impl App {
         self.enqueue_or_start_message_with_approval_and_loop(user_input, approval, None);
     }
 
+    pub(super) fn enqueue_or_start_orchestrator_message(
+        &mut self,
+        user_input: String,
+        approval: ApprovalPolicy,
+    ) {
+        let task_id = self.next_task_id;
+        self.next_task_id += 1;
+
+        if self.queue.processing {
+            self.queue.queued_messages.push_back(QueuedMessage {
+                id: task_id,
+                content: format!("[orchestrator] {}", user_input),
+                approval,
+                loop_state: None,
+            });
+            let waiting_count = self.queue.queued_messages.len();
+            let queue_message = if waiting_count == 1 {
+                format!("[队列] #{} 已排队，等待执行: /agents run", task_id)
+            } else {
+                format!("[队列] #{} 已排队，前方还有 {} 项任务", task_id, waiting_count - 1)
+            };
+            self.push_system_message(&queue_message);
+            self.log_event("queue_push", &format!("#{} orchestrator", task_id));
+            return;
+        }
+
+        self.start_orchestrator_message(task_id, user_input, approval);
+    }
+
     pub(super) fn enqueue_or_start_message_with_approval_and_loop(
         &mut self,
         user_input: String,
@@ -96,6 +125,11 @@ impl App {
     }
 
     pub(super) fn start_queued_message(&mut self, queued: QueuedMessage) {
+        if let Some(stripped) = queued.content.strip_prefix("[orchestrator] ") {
+            self.start_orchestrator_message(queued.id, stripped.to_string(), queued.approval);
+            return;
+        }
+
         self.queue.processing = true;
         self.queue.active_task_id = Some(queued.id);
         self.active_task_started_at = Some(chrono::Local::now());
@@ -141,6 +175,40 @@ impl App {
             queued.approval,
             queued.loop_state,
         );
+    }
+
+    fn start_orchestrator_message(&mut self, task_id: u64, user_input: String, approval: ApprovalPolicy) {
+        self.queue.processing = true;
+        self.queue.active_task_id = Some(task_id);
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
+        self.reset_orchestration_summary();
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        self.append_message(Message {
+            role: MessageRole::User,
+            content: format!("/agents run {}", user_input.trim()),
+            thinking: String::new(),
+            timestamp,
+            collapsed: false,
+        });
+        self.append_message(Message {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            thinking: String::new(),
+            timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+            collapsed: false,
+        });
+        self.task_message_indices
+            .insert(task_id, self.messages.len().saturating_sub(1));
+        self.assistant_pending_thinking = true;
+        self.log_event("user_message", user_input.trim());
+        self.queue.busy_message = format!(
+            "正在执行 #{} [agents]，模型 {}，Esc 取消当前任务",
+            task_id,
+            self.current_model_name()
+        );
+        self.log_event("queue_start", &format!("#{} orchestrator {}", task_id, user_input.trim()));
+        self.spawn_orchestrator_task(task_id, user_input, approval);
     }
 
     pub(super) fn spawn_chat_task(
@@ -202,6 +270,63 @@ impl App {
         });
     }
 
+    pub(super) fn spawn_orchestrator_task(
+        &mut self,
+        task_id: u64,
+        user_input: String,
+        approval: ApprovalPolicy,
+    ) {
+        let sender = self.task_tx.clone();
+        let workdir = self.workdir.clone();
+        let mode = self.execution_mode;
+        let Some(child) = Self::spawn_orchestrator_child(&workdir, &user_input, mode, approval) else {
+            let _ = sender.send(AsyncResult::ChatCompleted {
+                task_id,
+                prompt: user_input,
+                response: "任务执行失败: 无法启动多角色编排进程".to_string(),
+                hit_round_limit: false,
+                orchestration_summary: None,
+                task_run: None,
+                learned_facts: Vec::new(),
+                pending_question: None,
+                plan: None,
+                usage: None,
+                api_duration_ms: 0,
+                tool_duration_ms: 0,
+                total_duration_ms: 0,
+                loop_state: None,
+            });
+            return;
+        };
+
+        let child = Arc::new(Mutex::new(child));
+        self.queue.active_child = Some(child.clone());
+        thread::spawn(move || {
+            let result = App::execute_user_message_in_background(
+                child,
+                sender.clone(),
+                task_id,
+                &user_input,
+            );
+            let _ = sender.send(AsyncResult::ChatCompleted {
+                task_id,
+                prompt: user_input,
+                response: result.response,
+                hit_round_limit: result.hit_round_limit,
+                orchestration_summary: result.orchestration_summary,
+                task_run: result.task_run,
+                learned_facts: result.learned_facts,
+                pending_question: result.pending_question,
+                plan: result.plan,
+                usage: result.usage,
+                api_duration_ms: result.api_duration_ms,
+                tool_duration_ms: result.tool_duration_ms,
+                total_duration_ms: result.total_duration_ms,
+                loop_state: None,
+            });
+        });
+    }
+
     pub(super) fn spawn_chat_child(
         workdir: &PathBuf,
         user_input: &str,
@@ -246,6 +371,46 @@ impl App {
             .arg("--max-iterations")
             .arg(max_iterations)
             .arg("--json-stream")
+            .current_dir(workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()
+    }
+
+    pub(super) fn spawn_orchestrator_child(
+        workdir: &PathBuf,
+        user_input: &str,
+        mode: ExecutionMode,
+        approval: ApprovalPolicy,
+    ) -> Option<Child> {
+        let current_exe = env::current_exe().ok()?;
+        let exe = current_exe
+            .parent()
+            .map(|dir| dir.join("sacode"))
+            .filter(|path| path.exists())
+            .unwrap_or(current_exe);
+        let approval_arg = match approval {
+            ApprovalPolicy::AutoApprove => "--approve",
+            ApprovalPolicy::AutoDeny => "--deny",
+            ApprovalPolicy::Prompt => "--prompt",
+        };
+        let effective = config::effective_config(workdir).ok();
+        let max_iterations = effective
+            .as_ref()
+            .map(|value| value.max_iterations)
+            .unwrap_or(6)
+            .max(1)
+            .to_string();
+        Command::new(exe)
+            .arg("orchestrator")
+            .arg(user_input)
+            .arg("--mode")
+            .arg(mode.to_string())
+            .arg(approval_arg)
+            .arg("--max-iterations")
+            .arg(max_iterations)
+            .arg("--json")
             .current_dir(workdir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -417,8 +582,7 @@ impl App {
             .get("pending_question")
             .cloned()
             .filter(|value| !value.is_null());
-        let task_run = parsed
-            .get("task_run")
+        let task_run = Self::extract_task_run_value(&parsed)
             .cloned()
             .and_then(|value| serde_json::from_value::<TaskRun>(value).ok());
         let cli_events = Self::format_cli_events(parsed.get("events"));
@@ -532,21 +696,25 @@ impl App {
     }
 
     fn extract_task_run_state(parsed: &serde_json::Value) -> Option<TaskRunState> {
-        parsed
-            .get("task_run")
+        Self::extract_task_run_value(parsed)
             .and_then(|value| value.get("state"))
             .cloned()
             .and_then(|value| serde_json::from_value::<TaskRunState>(value).ok())
     }
 
     fn extract_task_run_output_text(parsed: &serde_json::Value) -> Option<String> {
-        parsed
-            .get("task_run")
+        Self::extract_task_run_value(parsed)
             .and_then(|value| value.get("output_text"))
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
+    }
+
+    fn extract_task_run_value(parsed: &serde_json::Value) -> Option<&serde_json::Value> {
+        parsed
+            .get("task_run")
+            .or_else(|| parsed.get("payload").and_then(|value| value.get("task_run")))
     }
 
     pub(super) fn finish_active_task(&mut self) {
@@ -606,6 +774,7 @@ mod tests {
     use super::App;
     use crate::cmd::ApprovalPolicy;
     use crate::cmd::JSON_STREAM_PREFIX;
+    use sacode_kernel::ExecutionMode;
     use sacode_kernel::TaskRunState;
     use std::process::Command;
 
@@ -648,6 +817,53 @@ mod tests {
         let output = App::extract_task_run_output_text(&parsed);
 
         assert_eq!(output, None);
+    }
+
+    #[test]
+    fn extract_task_run_state_reads_payload_nested_task_run_state() {
+        let parsed = serde_json::json!({
+            "payload": {
+                "task_run": {
+                    "state": "Completed"
+                }
+            }
+        });
+
+        let state = App::extract_task_run_state(&parsed);
+
+        assert_eq!(state, Some(TaskRunState::Completed));
+    }
+
+    #[test]
+    fn extract_task_run_output_text_reads_payload_nested_output_text() {
+        let parsed = serde_json::json!({
+            "payload": {
+                "task_run": {
+                    "output_text": "  payload final answer  "
+                }
+            }
+        });
+
+        let output = App::extract_task_run_output_text(&parsed);
+
+        assert_eq!(output.as_deref(), Some("payload final answer"));
+    }
+
+    #[test]
+    fn spawn_orchestrator_child_builds_process() {
+        let workdir = std::env::current_dir().expect("current dir");
+        let child = App::spawn_orchestrator_child(
+            &workdir,
+            "ULW[agents=tui] 分析仓库",
+            ExecutionMode::Build,
+            ApprovalPolicy::Prompt,
+        );
+
+        assert!(child.is_some());
+        if let Some(mut child) = child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     #[test]

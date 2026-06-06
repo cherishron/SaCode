@@ -8,6 +8,7 @@ pub mod sandbox_guard;
 pub mod shell;
 pub mod spec;
 pub mod task;
+pub mod test;
 pub mod web;
 
 pub use spec::{SideEffectLevel, ToolOutput, ToolSpec};
@@ -47,17 +48,23 @@ impl ToolRegistry {
         registry.register_fn(browser::navigate::spec(), browser::navigate::execute);
         registry.register_fn(browser::snapshot::spec(), browser::snapshot::execute);
         registry.register_fn(browser::extract::spec(), browser::extract::execute);
+        registry.register_fn(code::deps::spec(), code::deps::execute);
+        registry.register_fn(code::symbol::spec(), code::symbol::execute);
         registry.register_fn(fs::read::spec(), fs::read::execute);
         registry.register_fn(fs::search::spec(), fs::search::execute);
         registry.register_fn(fs::write::spec(), fs::write::execute);
         registry.register_fn(fs::edit::spec(), fs::edit::execute);
+        registry.register_fn(fs::patch::spec(), fs::patch::execute);
         registry.register_fn(fs::read_multi::spec(), fs::read_multi::execute);
         registry.register_fn(fs::list::spec(), fs::list::execute);
+        registry.register_fn(git::commit::spec(), git::commit::execute);
         registry.register_fn(git::diff::spec(), git::diff::execute);
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
+        registry.register_fn(media::vision::spec(), media::vision::execute);
         registry.register_fn(shell::exec::spec(), shell::exec::execute);
         registry.register_fn(task::spawn::spec(), task::spawn::execute);
+        registry.register_fn(test::runner::spec(), test::runner::execute);
         registry.register_fn(web::fetch::spec(), web::fetch::execute);
         registry.register_fn(web::search::spec(), web::search::execute);
         registry
@@ -94,7 +101,20 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
 
-        sandbox_guard::preflight(&tool.spec, &input)?;
-        tool.executor.execute(input)
+        if let Err(error) = sandbox_guard::preflight(&tool.spec, &input) {
+            sandbox_guard::audit_execution_result(&tool.spec, &input, None, Some(&error.to_string()));
+            return Err(error);
+        }
+
+        match tool.executor.execute(input.clone()) {
+            Ok(output) => {
+                sandbox_guard::audit_execution_result(&tool.spec, &input, Some(&output), None);
+                Ok(output)
+            }
+            Err(error) => {
+                sandbox_guard::audit_execution_result(&tool.spec, &input, None, Some(&error.to_string()));
+                Err(error)
+            }
+        }
     }
 }

@@ -180,7 +180,7 @@ impl ReplSession {
                 _ => ApprovalPolicy::Prompt,
             })
             .unwrap_or(ApprovalPolicy::Prompt);
-        let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(1);
+        let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(3);
         println!();
         io::stdout().flush()?;
         let output = run_task_with_stdin_and_stream(

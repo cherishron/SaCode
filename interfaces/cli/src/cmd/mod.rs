@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(options.command, CliCommand::Run);
         assert_eq!(options.prompt, "分析代码结构");
         assert_eq!(options.mode, ExecutionMode::Plan);
-        assert_eq!(options.max_iterations, 1);
+        assert_eq!(options.max_iterations, 3);
         assert!(options.json);
         assert!(!options.json_stream);
         assert_eq!(options.approval, super::ApprovalPolicy::Prompt);

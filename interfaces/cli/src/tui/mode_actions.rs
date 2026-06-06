@@ -1,9 +1,57 @@
 use crate::cmd::config;
 use sacode_kernel::ExecutionMode;
+use sacode_runtime::RoleRegistry;
 
 use super::{App, InputMode, LoopState};
 
 impl App {
+    pub(super) fn agents_command(&mut self, input: &str) {
+        let trimmed = input.trim();
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let sub = parts.get(1).copied().unwrap_or("");
+
+        match sub {
+            "" | "list" => {
+                let registry = RoleRegistry::builtin();
+                let mut lines = vec!["内置 Agents 角色:".to_string(), "".to_string()];
+                for role in registry.all() {
+                    lines.push(format!(
+                        "- {} ({})",
+                        role.id,
+                        role.stage
+                            .as_ref()
+                            .map(|stage| format!("{:?}", stage))
+                            .unwrap_or_else(|| "Unknown".to_string())
+                    ));
+                    lines.push(format!("  {}", role.system_prompt));
+                }
+                lines.push(String::new());
+                lines.push("用法: /agents list | /agents run <任务描述>".to_string());
+                self.push_system_message(&lines.join("\n"));
+            }
+            "run" => {
+                let task = trimmed
+                    .strip_prefix("/agents run")
+                    .unwrap_or("")
+                    .trim();
+                if task.is_empty() {
+                    self.push_system_message("用法: /agents run <任务描述>");
+                    return;
+                }
+
+                self.push_system_message(&format!(
+                    "已启动多角色编排执行。系统将按内置角色自动规划并协作完成任务：{}",
+                    task
+                ));
+                self.enqueue_or_start_orchestrator_message(
+                    format!("ULW[agents=tui] {}", task),
+                    self.current_task_approval_policy(),
+                );
+            }
+            _ => self.push_system_message("用法: /agents list|run <任务描述>"),
+        }
+    }
+
     pub(super) fn loop_command(&mut self, input: &str) {
         let task = input.trim_start_matches("/loop").trim();
         if task.is_empty() {
@@ -100,5 +148,21 @@ impl App {
         self.selected_mode_index = current_mode;
         self.input_mode = InputMode::ModeSelect;
         self.push_system_message("已打开模式选择器，使用上下键选择，Enter 切换，Esc 取消。");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agents_command_lists_builtin_roles() {
+        let mut app = App::new();
+        app.agents_command("/agents");
+
+        let last = app.messages.last().expect("agents list message");
+        assert!(last.content.contains("内置 Agents 角色"));
+        assert!(last.content.contains("implementer"));
+        assert!(last.content.contains("code-reviewer"));
     }
 }

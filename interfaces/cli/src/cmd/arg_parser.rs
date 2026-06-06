@@ -68,7 +68,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
     let mut command = CliCommand::Run;
     let mut prompt = Vec::new();
     let mut mode = ExecutionMode::Build;
-    let mut max_iterations = 1;
+    let mut max_iterations = 3;
     let mut json = false;
     let mut json_stream = false;
     let mut approval = ApprovalPolicy::Prompt;
@@ -98,7 +98,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
                         .parse::<usize>()
                         .ok()
                         .filter(|value| *value > 0)
-                        .unwrap_or(1);
+                        .unwrap_or(3);
                 }
             }
             value => prompt.push(value.to_string()),
@@ -127,7 +127,7 @@ fn default_options(command: CliCommand) -> CliOptions {
         command,
         prompt: String::new(),
         mode: ExecutionMode::Build,
-        max_iterations: 1,
+        max_iterations: 3,
         json: false,
         json_stream: false,
         approval: ApprovalPolicy::Prompt,

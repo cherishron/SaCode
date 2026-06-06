@@ -1,10 +1,14 @@
 use anyhow::Result;
-use sacode_runtime::{list_enabled_mcp_tool_specs, McpConfigStore, ToolRegistry};
+use sacode_runtime::{
+    PluginDescriptor, PluginKind, PluginLoader, PluginRegistry, SkillHubClient,
+    SkillHubPluginMeta,
+};
 use std::path::PathBuf;
 
 use crate::plugin_config::{PluginConfigStore, PluginEntry, PluginSource};
 
 pub async fn run(args: Vec<String>) -> Result<()> {
+    let client = SkillHubClient::new();
     if args.is_empty() {
         show_default();
         return Ok(());
@@ -12,11 +16,25 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 
     match args[0].as_str() {
         "list" | "ls" => list_plugins().await?,
+        "search" => {
+            if args.len() < 2 {
+                println!("Usage: sacode plugin search <keyword>");
+            } else {
+                search_plugins(&client, &args[1]).await?;
+            }
+        }
+        "show" => {
+            if args.len() < 2 {
+                println!("Usage: sacode plugin show <name>");
+            } else {
+                show_plugin(&client, &args[1]).await?;
+            }
+        }
         "install" => {
             if args.len() < 2 {
                 println!("Usage: sacode plugin install <name> [--global|-g]");
             } else {
-                install_plugin(&args[1], is_global(&args[2..]))?;
+                install_plugin(&client, &args[1], is_global(&args[2..]))?;
             }
         }
         "remove" | "rm" => {
@@ -42,7 +60,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         }
         _ => {
             println!("Unknown plugin command: {}", args[0]);
-            println!("Available: list, install, remove, enable, disable");
+            println!("Available: list, search, show, install, remove, enable, disable");
         }
     }
 
@@ -51,43 +69,47 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 
 async fn list_plugins() -> Result<()> {
     let plugin_store = PluginConfigStore::new(&PathBuf::from("."));
-    let registry = ToolRegistry::builtin();
+    let registry = PluginRegistry::discover(&PathBuf::from(".")).await;
     println!("Built-in tools:");
-    for name in registry.names() {
-        if let Some(spec) = registry.get(name) {
-            println!("  {} - {}", name, spec.description);
-            println!("    Side effect: {:?}", spec.side_effect_level);
+    for entry in registry.list().iter().filter(|entry| entry.kind.label() == "builtin") {
+        println!("  {} - {}", entry.name, entry.description);
+        if let Some(side_effect) = entry.side_effect_level {
+            println!("    Side effect: {:?}", side_effect);
+        }
+        if let Some(approval_required) = entry.approval_required {
             println!(
                 "    Approval: {}",
-                if spec.needs_approval() {
-                    "required"
-                } else {
-                    "auto"
-                }
+                if approval_required { "required" } else { "auto" }
             );
         }
     }
 
-    let store = McpConfigStore::new(&PathBuf::from("."));
-    if let Ok(specs) = list_enabled_mcp_tool_specs(&store).await {
-        if !specs.is_empty() {
-            println!("MCP tools:");
-            for spec in specs {
-                println!("  {} - {}", spec.name, spec.description);
-                println!("    Side effect: {:?}", spec.side_effect_level);
+    let mcp_entries: Vec<_> = registry
+        .list()
+        .iter()
+        .filter(|entry| entry.kind.label() == "mcp")
+        .collect();
+    if !mcp_entries.is_empty() {
+        println!("MCP tools:");
+        for entry in mcp_entries {
+            println!("  {} - {}", entry.name, entry.description);
+            if let Some(side_effect) = entry.side_effect_level {
+                println!("    Side effect: {:?}", side_effect);
+            }
+            if let Some(approval_required) = entry.approval_required {
                 println!(
                     "    Approval: {}",
-                    if spec.needs_approval() {
-                        "required"
-                    } else {
-                        "auto"
-                    }
-                );
-                println!(
-                    "    Input schema: {}",
-                    serde_json::to_string(&spec.input_schema).unwrap_or_else(|_| "{}".to_string())
+                    if approval_required { "required" } else { "auto" }
                 );
             }
+            println!(
+                "    Input schema: {}",
+                entry
+                    .input_schema
+                    .as_ref()
+                    .and_then(|schema| serde_json::to_string(schema).ok())
+                    .unwrap_or_else(|| "{}".to_string())
+            );
         }
     }
 
@@ -120,25 +142,226 @@ async fn list_plugins() -> Result<()> {
 fn show_default() {
     println!("Plugin commands:");
     println!("  sacode plugin list - List available tools");
+    println!("  sacode plugin search <keyword>");
+    println!("  sacode plugin show <name>");
     println!("  sacode plugin install <name> [--global|-g]");
     println!("  sacode plugin remove <name> [--global|-g]");
     println!("  sacode plugin enable <name> [--global|-g]");
     println!("  sacode plugin disable <name> [--global|-g]");
 }
 
-fn install_plugin(name: &str, global: bool) -> Result<()> {
+async fn search_plugins(client: &SkillHubClient, query: &str) -> Result<()> {
+    let plugin_store = PluginConfigStore::new(&PathBuf::from("."));
+    let registry = merged_registry(&plugin_store).await?;
+    let local_matches = registry.search(query);
+    let remote_matches = client.search_plugins(query).await.unwrap_or_default();
+    if local_matches.is_empty() && remote_matches.is_empty() {
+        println!("No plugins found.");
+        return Ok(());
+    }
+
+    println!("Plugin results:");
+    for entry in local_matches {
+        println!(
+            "  {} - {} [{}:{}]",
+            entry.name,
+            entry.description,
+            entry.kind.label(),
+            entry.source_label
+        );
+    }
+    for entry in remote_matches {
+        println!(
+            "  {} - {} [remote:skillhub] ({}, v{})",
+            entry.name, entry.description, entry.author, entry.version
+        );
+    }
+    Ok(())
+}
+
+async fn show_plugin(client: &SkillHubClient, name: &str) -> Result<()> {
+    let plugin_store = PluginConfigStore::new(&PathBuf::from("."));
+    let registry = merged_registry(&plugin_store).await?;
+    if let Ok(entry) = registry.get(name) {
+        print_plugin_descriptor(entry);
+        return Ok(());
+    }
+
+    let entry = client.get_plugin_info(name).await?;
+    print_remote_plugin(&entry);
+    Ok(())
+}
+
+fn print_plugin_descriptor(entry: &PluginDescriptor) {
+    println!("Name: {}", entry.name);
+    println!("Description: {}", entry.description);
+    println!("Kind: {}", entry.kind.label());
+    println!("Source: {}", entry.source_label);
+    println!("Enabled: {}", if entry.enabled { "yes" } else { "no" });
+    if let Some(version) = entry.version.as_deref() {
+        println!("Version: {}", version);
+    }
+    if let Some(side_effect) = entry.side_effect_level {
+        println!("Side effect: {:?}", side_effect);
+    }
+    if let Some(approval_required) = entry.approval_required {
+        println!(
+            "Approval: {}",
+            if approval_required { "required" } else { "auto" }
+        );
+    }
+    if let Some(schema) = &entry.input_schema {
+        println!(
+            "Input schema: {}",
+            serde_json::to_string_pretty(schema).unwrap_or_else(|_| "{}".to_string())
+        );
+    }
+    if !entry.tags.is_empty() {
+        println!("Tags: {}", entry.tags.join(", "));
+    }
+}
+
+fn print_remote_plugin(entry: &SkillHubPluginMeta) {
+    println!("Name: {}", entry.name);
+    println!("Description: {}", entry.description);
+    println!("Kind: remote");
+    println!("Source: skillhub");
+    println!("Author: {}", entry.author);
+    println!("Version: {}", entry.version);
+    if !entry.tags.is_empty() {
+        println!("Tags: {}", entry.tags.join(", "));
+    }
+    if !entry.download_url.trim().is_empty() {
+        println!("Download URL: {}", entry.download_url);
+    }
+    if let Some(source_ref) = &entry.source_ref {
+        println!("Source ref: {}", source_ref);
+    }
+}
+
+async fn resolve_install_candidate(name: &str) -> Result<Option<PluginDescriptor>> {
+    let plugin_store = PluginConfigStore::new(&PathBuf::from("."));
+    let registry = merged_registry(&plugin_store).await?;
+
+    if let Ok(entry) = registry.get(name) {
+        return Ok(Some(entry.clone()));
+    }
+
+    let matches = registry.search(name);
+    if matches.len() == 1 {
+        return Ok(Some(matches[0].clone()));
+    }
+
+    Ok(None)
+}
+
+async fn resolve_remote_install_candidate(
+    client: &SkillHubClient,
+    name: &str,
+) -> Result<Option<SkillHubPluginMeta>> {
+    if let Ok(entry) = client.get_plugin_info(name).await {
+        return Ok(Some(entry));
+    }
+
+    let matches = client.search_plugins(name).await.unwrap_or_default();
+    if matches.len() == 1 {
+        return Ok(matches.into_iter().next());
+    }
+
+    Ok(None)
+}
+
+async fn merged_registry(plugin_store: &PluginConfigStore) -> Result<PluginRegistry> {
+    let mut registry = PluginRegistry::discover(&PathBuf::from(".")).await;
+    for entry in plugin_store.list_entries()? {
+        registry.push(PluginLoader::configured_plugin(
+            entry.plugin.name,
+            normalized_version(&entry.plugin.version),
+            entry.plugin.enabled,
+            entry.source.label(),
+        ));
+    }
+    Ok(registry)
+}
+
+fn normalized_version(version: &str) -> Option<String> {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<()> {
     let store = PluginConfigStore::new(&PathBuf::from("."));
+    let local_candidate = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(resolve_install_candidate(name)))?
+    } else {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(resolve_install_candidate(name))?
+    };
+
+    let remote_candidate = if local_candidate.is_none() {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| {
+                handle.block_on(resolve_remote_install_candidate(client, name))
+            })?
+        } else {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(resolve_remote_install_candidate(client, name))?
+        }
+    } else {
+        None
+    };
+
+    let (resolved_name, description, kind, source_ref) = if let Some(entry) = local_candidate {
+        (
+            entry.name,
+            entry.description,
+            entry.kind.label().to_string(),
+            entry.source_label,
+        )
+    } else if let Some(entry) = remote_candidate {
+        (
+            entry.name,
+            entry.description,
+            PluginKind::Configured.label().to_string(),
+            entry
+                .source_ref
+                .unwrap_or_else(|| format!("skillhub:{}", entry.author)),
+        )
+    } else {
+        (
+            name.to_string(),
+            "Configured plugin entry".to_string(),
+            "configured".to_string(),
+            if global {
+                "user".to_string()
+            } else {
+                "project".to_string()
+            },
+        )
+    };
+
     store.upsert(
         PluginEntry {
-            name: name.to_string(),
+            name: resolved_name.clone(),
             version: "latest".to_string(),
             enabled: true,
+            description,
+            kind,
+            source_ref,
         },
         source_from_global(global),
     )?;
     println!(
         "Installed plugin {} to {} [{}]",
-        name,
+        resolved_name,
         if global {
             store.user_path().display().to_string()
         } else {
