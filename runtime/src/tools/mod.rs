@@ -102,7 +102,12 @@ impl ToolRegistry {
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
 
         if let Err(error) = sandbox_guard::preflight(&tool.spec, &input) {
-            sandbox_guard::audit_execution_result(&tool.spec, &input, None, Some(&error.to_string()));
+            sandbox_guard::audit_execution_result(
+                &tool.spec,
+                &input,
+                None,
+                Some(&error.to_string()),
+            );
             return Err(error);
         }
 
@@ -112,7 +117,12 @@ impl ToolRegistry {
                 Ok(output)
             }
             Err(error) => {
-                sandbox_guard::audit_execution_result(&tool.spec, &input, None, Some(&error.to_string()));
+                sandbox_guard::audit_execution_result(
+                    &tool.spec,
+                    &input,
+                    None,
+                    Some(&error.to_string()),
+                );
                 Err(error)
             }
         }

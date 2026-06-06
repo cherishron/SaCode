@@ -15,6 +15,7 @@ chrono = "0.4"
 extism = "1.0"
 futures = "0.3"
 reqwest.workspace = true
+regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true

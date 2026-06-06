@@ -302,14 +302,16 @@ async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
     let mut body = response.into_body();
     let mut saw_matching_event = false;
 
-    let mut create_task = Some(app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/task")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"prompt":"生成一个简单计划","mode":"plan"}"#))
-            .expect("build request"),
-    ));
+    let mut create_task = Some(
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"生成一个简单计划","mode":"plan"}"#))
+                .expect("build request"),
+        ),
+    );
 
     let mut target_task_id: Option<String> = None;
 
@@ -344,7 +346,11 @@ async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
             serde_json::from_str(data_line.trim_start_matches("data: "))
                 .expect("valid event payload");
 
-        if target_task_id.as_deref() != event_payload.get("task_id").and_then(|value| value.as_str()) {
+        if target_task_id.as_deref()
+            != event_payload
+                .get("task_id")
+                .and_then(|value| value.as_str())
+        {
             continue;
         }
 
@@ -539,7 +545,10 @@ async fn test_task_executor_task_started_event_contains_payload_fields() {
     while let Ok(evt) = receiver.try_recv() {
         if evt.event_type == "task_started" {
             saw_started = true;
-            assert_eq!(evt.data.get("prompt"), Some(&serde_json::json!("分析代码结构")));
+            assert_eq!(
+                evt.data.get("prompt"),
+                Some(&serde_json::json!("分析代码结构"))
+            );
             assert_eq!(evt.data.get("mode"), Some(&serde_json::json!("build")));
         }
     }

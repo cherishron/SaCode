@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use sacode_runtime::{PluginLoader, PluginRegistry, SkillHubClient};
+use sacode_runtime::{PluginDescriptor, PluginKind, PluginLoader, PluginRegistry, SkillHubClient};
 
 use crate::plugin_config::{PluginConfigStore, PluginEntry, PluginSource};
 
@@ -128,18 +128,44 @@ impl App {
     pub(super) fn install_plugin(&mut self, plugin_file: &Path, plugin_ref: &str) {
         let store = PluginConfigStore::new(&self.workdir);
         let source = source_from_plugin_path(&store, plugin_file);
+        let candidate =
+            match block_on_cli_future(resolve_install_candidate(&self.workdir, &store, plugin_ref))
+            {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    self.push_error_message(&format!("解析插件候选失败: {}", error));
+                    return;
+                }
+            };
+
+        let (name, description, kind, source_ref) = if let Some(entry) = candidate {
+            (
+                entry.name,
+                entry.description,
+                entry.kind.label().to_string(),
+                entry.source_label,
+            )
+        } else {
+            (
+                plugin_ref.to_string(),
+                "Configured plugin entry".to_string(),
+                "configured".to_string(),
+                source.label().to_string(),
+            )
+        };
+
         match store.upsert(
             PluginEntry {
-                name: plugin_ref.to_string(),
+                name: name.clone(),
                 version: "latest".to_string(),
                 enabled: true,
-                description: "Configured plugin entry".to_string(),
-                kind: "configured".to_string(),
-                source_ref: source.label().to_string(),
+                description,
+                kind,
+                source_ref,
             },
             source,
         ) {
-            Ok(()) => self.push_success_message(&format!("插件 {} 已安装", plugin_ref)),
+            Ok(()) => self.push_success_message(&format!("插件 {} 已安装", name)),
             Err(error) => self.push_error_message(&format!("保存插件配置失败: {}", error)),
         }
     }
@@ -166,20 +192,22 @@ impl App {
 
     fn search_plugins(&mut self, query: &str) {
         let store = PluginConfigStore::new(&self.workdir);
-        let local_entries = match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
-            Ok(entries) => entries,
-            Err(error) => {
-                self.push_error_message(&format!("读取插件列表失败: {}", error));
-                return;
-            }
-        };
+        let local_entries =
+            match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    self.push_error_message(&format!("读取插件列表失败: {}", error));
+                    return;
+                }
+            };
         let local_matches: Vec<_> = local_entries
             .iter()
             .filter(|entry| plugin_matches(entry, query))
             .cloned()
             .collect();
 
-        let remote_matches = match block_on_cli_future(SkillHubClient::new().search_plugins(query)) {
+        let remote_matches = match block_on_cli_future(SkillHubClient::new().search_plugins(query))
+        {
             Ok(entries) => entries,
             Err(_) => Vec::new(),
         };
@@ -208,13 +236,14 @@ impl App {
 
     fn show_plugin(&mut self, name: &str) {
         let store = PluginConfigStore::new(&self.workdir);
-        let local_entries = match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
-            Ok(entries) => entries,
-            Err(error) => {
-                self.push_error_message(&format!("读取插件详情失败: {}", error));
-                return;
-            }
-        };
+        let local_entries =
+            match block_on_cli_future(discover_plugin_entries(&self.workdir, &store)) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    self.push_error_message(&format!("读取插件详情失败: {}", error));
+                    return;
+                }
+            };
 
         if let Some(entry) = local_entries.iter().find(|entry| entry.name == name) {
             let mut lines = Vec::new();
@@ -222,7 +251,10 @@ impl App {
             lines.push(format!("Description: {}", entry.description));
             lines.push(format!("Kind: {}", entry.kind));
             lines.push(format!("Source: {}", entry.source));
-            lines.push(format!("Enabled: {}", if entry.enabled { "yes" } else { "no" }));
+            lines.push(format!(
+                "Enabled: {}",
+                if entry.enabled { "yes" } else { "no" }
+            ));
             if let Some(version) = &entry.version {
                 lines.push(format!("Version: {}", version));
             }
@@ -290,17 +322,9 @@ async fn discover_plugin_entries(
     for entry in store.list_entries()? {
         entries.push(TuiPluginEntry {
             name: entry.plugin.name.clone(),
-            description: if entry.plugin.description.trim().is_empty() {
-                "Configured plugin entry".to_string()
-            } else {
-                entry.plugin.description.clone()
-            },
-            kind: if entry.plugin.kind.trim().is_empty() {
-                "configured".to_string()
-            } else {
-                entry.plugin.kind.clone()
-            },
-            source: entry.source.label().to_string(),
+            description: configured_description(&entry.plugin.description),
+            kind: configured_kind(&entry.plugin.kind).label().to_string(),
+            source: configured_source_label(&entry),
             enabled: entry.plugin.enabled,
             version: if entry.plugin.version.trim().is_empty() {
                 None
@@ -314,6 +338,84 @@ async fn discover_plugin_entries(
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     entries.dedup_by(|a, b| a.name == b.name && a.kind == b.kind && a.source == b.source);
     Ok(entries)
+}
+
+async fn resolve_install_candidate(
+    workdir: &Path,
+    store: &PluginConfigStore,
+    name: &str,
+) -> anyhow::Result<Option<PluginDescriptor>> {
+    let registry = merged_registry(workdir, store).await?;
+
+    if let Ok(entry) = registry.get(name) {
+        return Ok(Some(entry.clone()));
+    }
+
+    let matches = registry.search(name);
+    if matches.len() == 1 {
+        return Ok(Some(matches[0].clone()));
+    }
+
+    Ok(None)
+}
+
+async fn merged_registry(
+    workdir: &Path,
+    store: &PluginConfigStore,
+) -> anyhow::Result<PluginRegistry> {
+    let mut registry = PluginRegistry::discover(workdir).await;
+    for entry in store.list_entries()? {
+        let name = entry.plugin.name.clone();
+        let description = configured_description(&entry.plugin.description);
+        let kind = configured_kind(&entry.plugin.kind);
+        let version = normalized_version(&entry.plugin.version);
+        let enabled = entry.plugin.enabled;
+        let source_label = configured_source_label(&entry);
+        registry.push(PluginLoader::configured_plugin(
+            name,
+            description,
+            kind,
+            version,
+            enabled,
+            source_label,
+        ));
+    }
+    Ok(registry)
+}
+
+fn normalized_version(version: &str) -> Option<String> {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn configured_description(description: &str) -> String {
+    let trimmed = description.trim();
+    if trimmed.is_empty() {
+        "Configured plugin entry".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn configured_kind(kind: &str) -> PluginKind {
+    match kind.trim().to_lowercase().as_str() {
+        "builtin" => PluginKind::Builtin,
+        "mcp" => PluginKind::Mcp,
+        _ => PluginKind::Configured,
+    }
+}
+
+fn configured_source_label(entry: &crate::plugin_config::PluginResolvedEntry) -> String {
+    let trimmed = entry.plugin.source_ref.trim();
+    if trimmed.is_empty() {
+        entry.source.label().to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn plugin_matches(entry: &TuiPluginEntry, query: &str) -> bool {

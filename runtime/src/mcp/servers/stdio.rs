@@ -23,8 +23,14 @@ pub fn run_stdio_server() -> Result<()> {
     Ok(())
 }
 
-pub fn handle_request(registry: &ToolRegistry, request: &serde_json::Value) -> Result<serde_json::Value> {
-    let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
+pub fn handle_request(
+    registry: &ToolRegistry,
+    request: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let id = request
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let method = request
         .get("method")
         .and_then(|value| value.as_str())
@@ -48,7 +54,10 @@ pub fn handle_request(registry: &ToolRegistry, request: &serde_json::Value) -> R
                 .get("name")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             handle_tool_call(registry, name, arguments)
         }
         _ => {

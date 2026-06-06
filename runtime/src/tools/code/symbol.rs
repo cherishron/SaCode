@@ -107,7 +107,13 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let mut symbols = Vec::new();
     let mut truncated = false;
     for file in files {
-        extract_symbols(&resolved_path, &file, &selected_language, &mut symbols, limit)?;
+        extract_symbols(
+            &resolved_path,
+            &file,
+            &selected_language,
+            &mut symbols,
+            limit,
+        )?;
         if symbols.len() >= limit {
             truncated = true;
             break;
@@ -352,7 +358,8 @@ fn detect_language(path: &Path) -> Option<&'static str> {
 }
 
 fn detect_primary_language(files: &[PathBuf]) -> String {
-    files.first()
+    files
+        .first()
         .and_then(|path| detect_language(path))
         .unwrap_or("unknown")
         .to_string()

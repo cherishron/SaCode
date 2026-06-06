@@ -71,7 +71,11 @@ impl App {
             let queue_message = if waiting_count == 1 {
                 format!("[队列] #{} 已排队，等待执行: /agents run", task_id)
             } else {
-                format!("[队列] #{} 已排队，前方还有 {} 项任务", task_id, waiting_count - 1)
+                format!(
+                    "[队列] #{} 已排队，前方还有 {} 项任务",
+                    task_id,
+                    waiting_count - 1
+                )
             };
             self.push_system_message(&queue_message);
             self.log_event("queue_push", &format!("#{} orchestrator", task_id));
@@ -177,7 +181,12 @@ impl App {
         );
     }
 
-    fn start_orchestrator_message(&mut self, task_id: u64, user_input: String, approval: ApprovalPolicy) {
+    fn start_orchestrator_message(
+        &mut self,
+        task_id: u64,
+        user_input: String,
+        approval: ApprovalPolicy,
+    ) {
         self.queue.processing = true;
         self.queue.active_task_id = Some(task_id);
         self.active_task_started_at = Some(chrono::Local::now());
@@ -207,7 +216,10 @@ impl App {
             task_id,
             self.current_model_name()
         );
-        self.log_event("queue_start", &format!("#{} orchestrator {}", task_id, user_input.trim()));
+        self.log_event(
+            "queue_start",
+            &format!("#{} orchestrator {}", task_id, user_input.trim()),
+        );
         self.spawn_orchestrator_task(task_id, user_input, approval);
     }
 
@@ -279,7 +291,8 @@ impl App {
         let sender = self.task_tx.clone();
         let workdir = self.workdir.clone();
         let mode = self.execution_mode;
-        let Some(child) = Self::spawn_orchestrator_child(&workdir, &user_input, mode, approval) else {
+        let Some(child) = Self::spawn_orchestrator_child(&workdir, &user_input, mode, approval)
+        else {
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
@@ -712,9 +725,11 @@ impl App {
     }
 
     fn extract_task_run_value(parsed: &serde_json::Value) -> Option<&serde_json::Value> {
-        parsed
-            .get("task_run")
-            .or_else(|| parsed.get("payload").and_then(|value| value.get("task_run")))
+        parsed.get("task_run").or_else(|| {
+            parsed
+                .get("payload")
+                .and_then(|value| value.get("task_run"))
+        })
     }
 
     pub(super) fn finish_active_task(&mut self) {

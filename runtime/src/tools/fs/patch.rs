@@ -64,15 +64,17 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     if !conflicts.is_empty() {
-        return Ok(ToolOutput::failure("patch application failed due to conflicts").with_message(
-            serde_json::to_string(&serde_json::json!({
-                "success": false,
-                "applied": 0,
-                "files": [],
-                "conflicts": conflicts,
-            }))
-            .unwrap_or_else(|_| "patch application failed due to conflicts".to_string()),
-        ));
+        return Ok(
+            ToolOutput::failure("patch application failed due to conflicts").with_message(
+                serde_json::to_string(&serde_json::json!({
+                    "success": false,
+                    "applied": 0,
+                    "files": [],
+                    "conflicts": conflicts,
+                }))
+                .unwrap_or_else(|_| "patch application failed due to conflicts".to_string()),
+            ),
+        );
     }
 
     for plan in &plans {
@@ -109,7 +111,10 @@ enum NewlineStyle {
 }
 
 fn build_patch_plan(index: usize, patch: &serde_json::Value) -> anyhow::Result<PatchPlanOutcome> {
-    let path = patch.get("path").and_then(|value| value.as_str()).unwrap_or("");
+    let path = patch
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     let old_string = patch
         .get("old_string")
         .and_then(|value| value.as_str())
@@ -124,31 +129,44 @@ fn build_patch_plan(index: usize, patch: &serde_json::Value) -> anyhow::Result<P
         .unwrap_or(false);
 
     if path.is_empty() {
-        return Ok(PatchPlanOutcome::Conflict(conflict(index, path, "missing_path")));
+        return Ok(PatchPlanOutcome::Conflict(conflict(
+            index,
+            path,
+            "missing_path",
+        )));
     }
     if old_string.is_empty() {
-        return Ok(PatchPlanOutcome::Conflict(conflict(index, path, "missing_old_string")));
+        return Ok(PatchPlanOutcome::Conflict(conflict(
+            index,
+            path,
+            "missing_old_string",
+        )));
     }
 
     let absolute_path = resolve_allowed_path(path, FsAccess::Write)?;
     if !absolute_path.exists() {
-        return Ok(PatchPlanOutcome::Conflict(conflict(index, path, "file_not_found")));
+        return Ok(PatchPlanOutcome::Conflict(conflict(
+            index,
+            path,
+            "file_not_found",
+        )));
     }
 
     let content = fs::read_to_string(&absolute_path)?;
-    let (updated_content, replacements) = match apply_exact_patch(&content, old_string, new_string, replace_all) {
-        Some(result) => result,
-        None => match apply_normalized_patch(&content, old_string, new_string, replace_all) {
+    let (updated_content, replacements) =
+        match apply_exact_patch(&content, old_string, new_string, replace_all) {
             Some(result) => result,
-            None => {
-                return Ok(PatchPlanOutcome::Conflict(conflict(
-                    index,
-                    path,
-                    classify_match_failure(&content, old_string),
-                )))
-            }
-        },
-    };
+            None => match apply_normalized_patch(&content, old_string, new_string, replace_all) {
+                Some(result) => result,
+                None => {
+                    return Ok(PatchPlanOutcome::Conflict(conflict(
+                        index,
+                        path,
+                        classify_match_failure(&content, old_string),
+                    )))
+                }
+            },
+        };
 
     Ok(PatchPlanOutcome::Ready(PatchPlan {
         absolute_path,
@@ -205,7 +223,10 @@ fn apply_normalized_patch(
         normalized_content.replacen(&normalized_old, &normalized_new, 1)
     };
 
-    Some((restore_newlines(&normalized_updated, style), if replace_all { occurrences } else { 1 }))
+    Some((
+        restore_newlines(&normalized_updated, style),
+        if replace_all { occurrences } else { 1 },
+    ))
 }
 
 fn classify_match_failure(content: &str, old_string: &str) -> &'static str {

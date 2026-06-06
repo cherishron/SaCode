@@ -70,7 +70,10 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     let payload: SearchInput = serde_json::from_value(input)?;
     let provider = payload.provider.unwrap_or_else(|| "baidu".to_string());
 
-    if !matches!(provider.as_str(), "auto" | "baidu" | "sogou" | "so360" | "bing") {
+    if !matches!(
+        provider.as_str(),
+        "auto" | "baidu" | "sogou" | "so360" | "bing"
+    ) {
         return Ok(ToolOutput::failure(format!(
             "unsupported search provider: {}",
             provider
@@ -117,7 +120,10 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     })))
 }
 
-fn try_search(query: &str, provider: &str) -> Result<(String, Vec<String>, Vec<serde_json::Value>)> {
+fn try_search(
+    query: &str,
+    provider: &str,
+) -> Result<(String, Vec<String>, Vec<serde_json::Value>)> {
     if provider != "auto" {
         let results = try_html_search_page(query, provider)?;
         if results.is_empty() {
@@ -248,7 +254,11 @@ fn is_public_result_url(url: &str) -> bool {
         && !url.contains("javascript:")
 }
 
-fn extract_anchor_title_and_snippet(html: &str, href_start: usize, href_end: usize) -> (String, String) {
+fn extract_anchor_title_and_snippet(
+    html: &str,
+    href_start: usize,
+    href_end: usize,
+) -> (String, String) {
     let title = extract_anchor_text_around(html, href_start).unwrap_or_default();
     let snippet = extract_context_snippet(html, href_end);
     (title, snippet)
@@ -269,18 +279,22 @@ fn extract_context_snippet(html: &str, from_index: usize) -> String {
     truncate_chars(&text, MAX_SNIPPET_CHARS)
 }
 
-fn merge_cross_verified_results(provider_results: Vec<(String, Vec<SearchResult>)>) -> Vec<SearchResult> {
+fn merge_cross_verified_results(
+    provider_results: Vec<(String, Vec<SearchResult>)>,
+) -> Vec<SearchResult> {
     let mut by_url: BTreeMap<String, SearchResult> = BTreeMap::new();
 
     for (provider, results) in provider_results {
         for result in results {
-            let entry = by_url.entry(result.url.clone()).or_insert_with(|| SearchResult {
-                title: result.title.clone(),
-                url: result.url.clone(),
-                snippet: result.snippet.clone(),
-                providers: Vec::new(),
-                confirmed_by: 0,
-            });
+            let entry = by_url
+                .entry(result.url.clone())
+                .or_insert_with(|| SearchResult {
+                    title: result.title.clone(),
+                    url: result.url.clone(),
+                    snippet: result.snippet.clone(),
+                    providers: Vec::new(),
+                    confirmed_by: 0,
+                });
             if !entry.providers.iter().any(|item| item == &provider) {
                 entry.providers.push(provider.clone());
                 entry.confirmed_by += 1;
@@ -329,7 +343,9 @@ mod tests {
 
         let links = extract_link_candidates(html);
         assert_eq!(links.len(), 2);
-        assert!(links.iter().any(|item| item.url == "https://www.rust-lang.org/"));
+        assert!(links
+            .iter()
+            .any(|item| item.url == "https://www.rust-lang.org/"));
         assert!(links.iter().any(|item| item.url == "https://docs.rs/serde"));
     }
 
@@ -367,7 +383,9 @@ mod tests {
     fn public_result_url_filters_search_engine_links() {
         assert!(is_public_result_url("https://example.com/article"));
         assert!(!is_public_result_url("https://www.bing.com/search?q=rust"));
-        assert!(!is_public_result_url("https://www.sogou.com/web?query=rust"));
+        assert!(!is_public_result_url(
+            "https://www.sogou.com/web?query=rust"
+        ));
         assert!(!is_public_result_url("javascript:void(0)"));
     }
 

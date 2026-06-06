@@ -14,7 +14,10 @@ fn test_mcp_stdio_initialize() {
 
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], 1);
-    assert_eq!(response["result"]["serverInfo"]["name"], "sacode-built-in-mcp");
+    assert_eq!(
+        response["result"]["serverInfo"]["name"],
+        "sacode-built-in-mcp"
+    );
 }
 
 #[test]

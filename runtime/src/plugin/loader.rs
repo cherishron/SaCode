@@ -45,24 +45,24 @@ impl PluginLoader {
 
     pub fn configured_plugin(
         name: impl Into<String>,
+        description: impl Into<String>,
+        kind: PluginKind,
         version: Option<String>,
         enabled: bool,
         source_label: impl Into<String>,
     ) -> PluginDescriptor {
+        let enabled_tag = if enabled { "enabled" } else { "disabled" }.to_string();
         PluginDescriptor {
             name: name.into(),
-            description: "Configured plugin entry".to_string(),
-            kind: PluginKind::Configured,
+            description: description.into(),
+            kind,
             version,
             enabled,
             source_label: source_label.into(),
             side_effect_level: None,
             approval_required: None,
             input_schema: None,
-            tags: vec![match enabled {
-                true => "enabled".to_string(),
-                false => "disabled".to_string(),
-            }],
+            tags: vec![enabled_tag],
         }
     }
 }

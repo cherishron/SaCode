@@ -30,10 +30,7 @@ impl App {
                 self.push_system_message(&lines.join("\n"));
             }
             "run" => {
-                let task = trimmed
-                    .strip_prefix("/agents run")
-                    .unwrap_or("")
-                    .trim();
+                let task = trimmed.strip_prefix("/agents run").unwrap_or("").trim();
                 if task.is_empty() {
                     self.push_system_message("用法: /agents run <任务描述>");
                     return;

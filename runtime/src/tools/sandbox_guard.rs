@@ -9,13 +9,7 @@ use super::{SideEffectLevel, ToolSpec};
 
 pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
     if should_audit(spec) {
-        write_audit_log(
-            &spec.name,
-            "preflight_start",
-            "pending",
-            Some(input),
-            None,
-        );
+        write_audit_log(&spec.name, "preflight_start", "pending", Some(input), None);
     }
 
     let policy = active_policy();

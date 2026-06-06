@@ -82,7 +82,10 @@ impl PluginRegistry {
             .filter(|entry| {
                 entry.name.to_lowercase().contains(&needle)
                     || entry.description.to_lowercase().contains(&needle)
-                    || entry.tags.iter().any(|tag| tag.to_lowercase().contains(&needle))
+                    || entry
+                        .tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&needle))
                     || entry.source_label.to_lowercase().contains(&needle)
             })
             .collect()

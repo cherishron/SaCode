@@ -1,7 +1,6 @@
 use anyhow::Result;
 use sacode_runtime::{
-    PluginDescriptor, PluginKind, PluginLoader, PluginRegistry, SkillHubClient,
-    SkillHubPluginMeta,
+    PluginDescriptor, PluginKind, PluginLoader, PluginRegistry, SkillHubClient, SkillHubPluginMeta,
 };
 use std::path::PathBuf;
 
@@ -71,7 +70,11 @@ async fn list_plugins() -> Result<()> {
     let plugin_store = PluginConfigStore::new(&PathBuf::from("."));
     let registry = PluginRegistry::discover(&PathBuf::from(".")).await;
     println!("Built-in tools:");
-    for entry in registry.list().iter().filter(|entry| entry.kind.label() == "builtin") {
+    for entry in registry
+        .list()
+        .iter()
+        .filter(|entry| entry.kind.label() == "builtin")
+    {
         println!("  {} - {}", entry.name, entry.description);
         if let Some(side_effect) = entry.side_effect_level {
             println!("    Side effect: {:?}", side_effect);
@@ -79,7 +82,11 @@ async fn list_plugins() -> Result<()> {
         if let Some(approval_required) = entry.approval_required {
             println!(
                 "    Approval: {}",
-                if approval_required { "required" } else { "auto" }
+                if approval_required {
+                    "required"
+                } else {
+                    "auto"
+                }
             );
         }
     }
@@ -99,7 +106,11 @@ async fn list_plugins() -> Result<()> {
             if let Some(approval_required) = entry.approval_required {
                 println!(
                     "    Approval: {}",
-                    if approval_required { "required" } else { "auto" }
+                    if approval_required {
+                        "required"
+                    } else {
+                        "auto"
+                    }
                 );
             }
             println!(
@@ -207,7 +218,11 @@ fn print_plugin_descriptor(entry: &PluginDescriptor) {
     if let Some(approval_required) = entry.approval_required {
         println!(
             "Approval: {}",
-            if approval_required { "required" } else { "auto" }
+            if approval_required {
+                "required"
+            } else {
+                "auto"
+            }
         );
     }
     if let Some(schema) = &entry.input_schema {
@@ -274,11 +289,19 @@ async fn resolve_remote_install_candidate(
 async fn merged_registry(plugin_store: &PluginConfigStore) -> Result<PluginRegistry> {
     let mut registry = PluginRegistry::discover(&PathBuf::from(".")).await;
     for entry in plugin_store.list_entries()? {
+        let name = entry.plugin.name.clone();
+        let description = configured_description(&entry.plugin.description);
+        let kind = configured_kind(&entry.plugin.kind);
+        let version = normalized_version(&entry.plugin.version);
+        let enabled = entry.plugin.enabled;
+        let source_label = configured_source_label(&entry);
         registry.push(PluginLoader::configured_plugin(
-            entry.plugin.name,
-            normalized_version(&entry.plugin.version),
-            entry.plugin.enabled,
-            entry.source.label(),
+            name,
+            description,
+            kind,
+            version,
+            enabled,
+            source_label,
         ));
     }
     Ok(registry)
@@ -290,6 +313,32 @@ fn normalized_version(version: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn configured_description(description: &str) -> String {
+    let trimmed = description.trim();
+    if trimmed.is_empty() {
+        "Configured plugin entry".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn configured_kind(kind: &str) -> PluginKind {
+    match kind.trim().to_lowercase().as_str() {
+        "builtin" => PluginKind::Builtin,
+        "mcp" => PluginKind::Mcp,
+        _ => PluginKind::Configured,
+    }
+}
+
+fn configured_source_label(entry: &crate::plugin_config::PluginResolvedEntry) -> String {
+    let trimmed = entry.plugin.source_ref.trim();
+    if trimmed.is_empty() {
+        entry.source.label().to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 

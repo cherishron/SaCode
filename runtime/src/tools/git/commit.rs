@@ -55,7 +55,9 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     if payload.add_all.unwrap_or(false) {
         let add_output = Command::new("git").args(["add", "-A"]).output()?;
         if !add_output.status.success() {
-            let stderr = String::from_utf8_lossy(&add_output.stderr).trim().to_string();
+            let stderr = String::from_utf8_lossy(&add_output.stderr)
+                .trim()
+                .to_string();
             return Ok(ToolOutput::failure(if stderr.is_empty() {
                 "git add -A failed".to_string()
             } else {
@@ -70,7 +72,9 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         }
         let add_output = cmd.output()?;
         if !add_output.status.success() {
-            let stderr = String::from_utf8_lossy(&add_output.stderr).trim().to_string();
+            let stderr = String::from_utf8_lossy(&add_output.stderr)
+                .trim()
+                .to_string();
             return Ok(ToolOutput::failure(if stderr.is_empty() {
                 "git add for selected paths failed".to_string()
             } else {
@@ -81,14 +85,18 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let status_output = Command::new("git").args(["status", "--short"]).output()?;
     if !status_output.status.success() {
-        let stderr = String::from_utf8_lossy(&status_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&status_output.stderr)
+            .trim()
+            .to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
             "git status failed".to_string()
         } else {
             stderr
         }));
     }
-    let short_status = String::from_utf8_lossy(&status_output.stdout).trim().to_string();
+    let short_status = String::from_utf8_lossy(&status_output.stdout)
+        .trim()
+        .to_string();
     if short_status.is_empty() {
         return Ok(ToolOutput::failure("no changes to commit"));
     }
@@ -97,14 +105,18 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         .args(["diff", "--cached", "--name-only"])
         .output()?;
     if !staged_output.status.success() {
-        let stderr = String::from_utf8_lossy(&staged_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&staged_output.stderr)
+            .trim()
+            .to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
             "git diff --cached failed".to_string()
         } else {
             stderr
         }));
     }
-    let staged_files = String::from_utf8_lossy(&staged_output.stdout).trim().to_string();
+    let staged_files = String::from_utf8_lossy(&staged_output.stdout)
+        .trim()
+        .to_string();
     if staged_files.is_empty() {
         return Ok(ToolOutput::failure(
             "no staged changes to commit; provide paths or set add_all=true",
@@ -115,7 +127,9 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         .args(["commit", "-m", message])
         .output()?;
     if !commit_output.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&commit_output.stderr)
+            .trim()
+            .to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
             "git commit failed".to_string()
         } else {
@@ -127,14 +141,18 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         .args(["rev-parse", "--short=8", "HEAD"])
         .output()?;
     if !hash_output.status.success() {
-        let stderr = String::from_utf8_lossy(&hash_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&hash_output.stderr)
+            .trim()
+            .to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
             "git rev-parse failed".to_string()
         } else {
             stderr
         }));
     }
-    let commit_hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
+    let commit_hash = String::from_utf8_lossy(&hash_output.stdout)
+        .trim()
+        .to_string();
 
     Ok(ToolOutput::success(serde_json::json!({
         "success": true,

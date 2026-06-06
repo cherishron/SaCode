@@ -13,8 +13,11 @@ fn mcp_serve_initialize_smoke_test() {
         .expect("spawn sacode mcp serve");
 
     let mut stdin = child.stdin.take().expect("child stdin");
-    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}}")
-        .expect("write initialize request");
+    writeln!(
+        stdin,
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}}"
+    )
+    .expect("write initialize request");
     drop(stdin);
 
     let stdout = child.stdout.take().expect("child stdout");
@@ -34,7 +37,10 @@ fn mcp_serve_initialize_smoke_test() {
 
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], 1);
-    assert_eq!(response["result"]["serverInfo"]["name"], "sacode-built-in-mcp");
+    assert_eq!(
+        response["result"]["serverInfo"]["name"],
+        "sacode-built-in-mcp"
+    );
 
     let status = child.wait().expect("wait child exit");
     assert!(status.success());

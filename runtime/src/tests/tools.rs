@@ -117,10 +117,12 @@ fn test_code_symbols_extracts_rust_symbols_from_directory() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
     fs::create_dir_all(temp_dir.path().join("src/nested")).expect("create nested dir");
-    fs::write(temp_dir.path().join("src/lib.rs"), "pub enum Mode { A }\n")
-        .expect("write lib");
-    fs::write(temp_dir.path().join("src/nested/mod.rs"), "trait Worker {}\n")
-        .expect("write mod");
+    fs::write(temp_dir.path().join("src/lib.rs"), "pub enum Mode { A }\n").expect("write lib");
+    fs::write(
+        temp_dir.path().join("src/nested/mod.rs"),
+        "trait Worker {}\n",
+    )
+    .expect("write mod");
 
     let output = crate::tools::code::symbol::execute(serde_json::json!({
         "path": "src"
@@ -293,10 +295,16 @@ fn test_code_deps_populates_imported_by_for_workspace_paths() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
     fs::create_dir_all(temp_dir.path().join("src")).expect("create src");
-    fs::write(temp_dir.path().join("src/a.ts"), "import helper from './b'\n")
-        .expect("write a.ts");
-    fs::write(temp_dir.path().join("src/b.ts"), "export const helper = 1\n")
-        .expect("write b.ts");
+    fs::write(
+        temp_dir.path().join("src/a.ts"),
+        "import helper from './b'\n",
+    )
+    .expect("write a.ts");
+    fs::write(
+        temp_dir.path().join("src/b.ts"),
+        "export const helper = 1\n",
+    )
+    .expect("write b.ts");
 
     let output = crate::tools::code::deps::execute(serde_json::json!({
         "path": "src"
@@ -335,7 +343,10 @@ fn test_git_commit_requires_staged_changes_without_add_all() {
     .expect("tool execution should succeed");
 
     assert!(!result.success);
-    assert!(result.message.unwrap_or_default().contains("no staged changes"));
+    assert!(result
+        .message
+        .unwrap_or_default()
+        .contains("no staged changes"));
 }
 
 #[test]
@@ -368,8 +379,8 @@ fn test_git_commit_add_all_creates_commit() {
     assert!(result.success);
     assert_eq!(result.data["message"], "feat: test commit");
     assert!(result.data["commit_hash"].as_str().is_some());
-    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
-        .expect("read audit log");
+    let audit_log =
+        fs::read_to_string(temp_dir.path().join(".sacode/audit.log")).expect("read audit log");
     assert!(audit_log.contains("\"tool\":\"git.commit\""));
     assert!(audit_log.contains("\"status\":\"success\""));
 }
@@ -868,7 +879,10 @@ fn test_fs_patch_applies_single_patch() {
 
     assert!(result.success);
     assert_eq!(result.data["applied"], 1);
-    assert_eq!(fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"), "alpha\ngamma\n");
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "alpha\ngamma\n"
+    );
 }
 
 #[test]
@@ -898,8 +912,14 @@ fn test_fs_patch_applies_multiple_files() {
 
     assert!(result.success);
     assert_eq!(result.data["applied"], 2);
-    assert_eq!(fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"), "uno\n");
-    assert_eq!(fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"), "dos\n");
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"),
+        "uno\n"
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"),
+        "dos\n"
+    );
 }
 
 #[test]
@@ -978,8 +998,14 @@ fn test_fs_patch_reports_conflict_without_writing_files() {
     assert!(!result.success);
     let message = result.message.expect("conflict payload");
     assert!(message.contains("old_string_not_found"));
-    assert_eq!(fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"), "one\n");
-    assert_eq!(fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"), "two\n");
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("a.txt")).expect("read a"),
+        "one\n"
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"),
+        "two\n"
+    );
 }
 
 #[test]
@@ -1005,8 +1031,8 @@ fn test_fs_patch_writes_audit_log_on_success() {
         .expect("fs.patch should succeed");
 
     assert!(result.success);
-    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
-        .expect("read audit log");
+    let audit_log =
+        fs::read_to_string(temp_dir.path().join(".sacode/audit.log")).expect("read audit log");
     assert!(audit_log.contains("\"tool\":\"fs.patch\""));
     assert!(audit_log.contains("\"status\":\"success\""));
 }
@@ -1030,8 +1056,8 @@ fn test_modify_tool_writes_audit_log_on_success() {
         .expect("fs.write should succeed");
 
     assert!(result.success);
-    let audit_log = fs::read_to_string(temp_dir.path().join(".sacode/audit.log"))
-        .expect("read audit log");
+    let audit_log =
+        fs::read_to_string(temp_dir.path().join(".sacode/audit.log")).expect("read audit log");
     assert!(audit_log.contains("\"tool\":\"fs.write\""));
     assert!(audit_log.contains("\"phase\":\"preflight_allowed\""));
     assert!(audit_log.contains("\"phase\":\"execution\""));

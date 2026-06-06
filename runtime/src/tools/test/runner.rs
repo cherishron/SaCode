@@ -65,7 +65,11 @@ pub fn spec() -> ToolSpec {
 pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     let payload: TestRunInput = serde_json::from_value(input)?;
     let framework = resolve_framework(payload.framework.as_deref())?;
-    let command = build_command(framework, payload.target.as_deref(), payload.filter.as_deref());
+    let command = build_command(
+        framework,
+        payload.target.as_deref(),
+        payload.filter.as_deref(),
+    );
     let Some((program, args)) = command.split_first() else {
         return Ok(ToolOutput::failure("empty test command"));
     };
@@ -78,7 +82,11 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     let summary = if success {
         format!("{} tests finished successfully", framework.as_str())
     } else {
-        format!("{} tests failed with exit code {}", framework.as_str(), exit_code)
+        format!(
+            "{} tests failed with exit code {}",
+            framework.as_str(),
+            exit_code
+        )
     };
 
     Ok(ToolOutput::success(serde_json::json!({
@@ -130,7 +138,7 @@ fn build_command(
         TestFramework::Rust => {
             let mut command = vec!["cargo".to_string(), "test".to_string()];
             if let Some(target) = target.filter(|value| !value.trim().is_empty()) {
-                command.push(target.trim().to_string());
+                command.extend(split_shell_like_args(target));
             }
             if let Some(filter) = filter.filter(|value| !value.trim().is_empty()) {
                 command.push(filter.trim().to_string());
@@ -186,6 +194,14 @@ fn truncate_output(text: &str) -> String {
     output
 }
 
+fn split_shell_like_args(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,10 +209,7 @@ mod tests {
     #[test]
     fn build_rust_command_with_target_and_filter() {
         let command = build_command(TestFramework::Rust, Some("-p sacode-cli"), Some("footer"));
-        assert_eq!(
-            command,
-            vec!["cargo", "test", "-p sacode-cli", "footer"]
-        );
+        assert_eq!(command, vec!["cargo", "test", "-p", "sacode-cli", "footer"]);
     }
 
     #[test]

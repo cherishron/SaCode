@@ -189,7 +189,8 @@ pub(super) fn try_visual_read(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let (text, _) = runtime.block_on(client.simple_chat_messages_with_usage(&provider, messages))?;
+    let (text, _) =
+        runtime.block_on(client.simple_chat_messages_with_usage(&provider, messages))?;
     let _ = file_path;
     Ok((text, "provider".to_string()))
 }
