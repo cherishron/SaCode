@@ -370,11 +370,16 @@ fn test_git_commit_add_all_creates_commit() {
         .expect("set git user.email");
     fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
 
-    let result = crate::tools::git::commit::execute(serde_json::json!({
-        "message": "feat: test commit",
-        "add_all": true
-    }))
-    .expect("tool execution should succeed");
+    let registry = ToolRegistry::builtin();
+    let result = registry
+        .execute(
+            "git.commit",
+            serde_json::json!({
+                "message": "feat: test commit",
+                "add_all": true
+            }),
+        )
+        .expect("tool execution should succeed");
 
     assert!(result.success);
     assert_eq!(result.data["message"], "feat: test commit");

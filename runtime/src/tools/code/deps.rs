@@ -259,12 +259,16 @@ fn collect_python_import(line: &str, imports: &mut BTreeSet<String>) {
 
 fn collect_js_import(line: &str, imports: &mut BTreeSet<String>) {
     if line.starts_with("import ") {
-        if let Some(specifier) = extract_quoted_value(line) {
+        if let Some((_, rest)) = line.rsplit_once(" from ") {
+            if let Some(specifier) = extract_quoted_value(rest) {
+                imports.insert(specifier);
+            }
+        } else if let Some(specifier) = extract_quoted_value(line) {
             imports.insert(specifier);
         }
     }
-    if line.contains("require(") || line.contains("from ") {
-        if let Some(specifier) = extract_quoted_value(line) {
+    if let Some((_, rest)) = line.split_once("require(") {
+        if let Some(specifier) = extract_quoted_value(rest) {
             imports.insert(specifier);
         }
     }
@@ -288,9 +292,13 @@ fn collect_go_import(line: &str, imports: &mut BTreeSet<String>) {
 
 fn extract_quoted_value(line: &str) -> Option<String> {
     for quote in ['"', '\''] {
-        let start = line.find(quote)?;
+        let Some(start) = line.find(quote) else {
+            continue;
+        };
         let rest = &line[start + 1..];
-        let end = rest.find(quote)?;
+        let Some(end) = rest.find(quote) else {
+            continue;
+        };
         let value = rest[..end].trim();
         if !value.is_empty() {
             return Some(value.to_string());

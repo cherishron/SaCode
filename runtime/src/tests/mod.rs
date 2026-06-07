@@ -44,15 +44,27 @@ fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn cwd_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 struct CurrentDirGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
     original_dir: PathBuf,
 }
 
 impl CurrentDirGuard {
     fn enter(path: &Path) -> Self {
+        let lock = cwd_test_lock();
         let original_dir = std::env::current_dir().expect("read current dir");
         std::env::set_current_dir(path).expect("enter temp dir");
-        Self { original_dir }
+        Self {
+            _lock: lock,
+            original_dir,
+        }
     }
 }
 
