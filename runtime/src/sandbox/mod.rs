@@ -226,6 +226,10 @@ impl SandboxPolicy {
             return false;
         }
 
+        if is_blocked_shell_command(cmd) {
+            return false;
+        }
+
         if self.shell.allowed_commands.is_empty() {
             return true;
         }
@@ -324,4 +328,8 @@ impl Default for SandboxPolicy {
     fn default() -> Self {
         Self::readonly()
     }
+}
+
+fn is_blocked_shell_command(cmd: &str) -> bool {
+    matches!(cmd, "kill" | "pkill" | "killall" | "taskkill")
 }

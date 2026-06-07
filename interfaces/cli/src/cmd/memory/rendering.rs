@@ -63,13 +63,15 @@ pub(super) fn render_list_entry(entry: &MemoryIndexEntry) -> String {
 }
 
 pub(super) fn usage_text() -> String {
-    "/memory [show|list [--type memory|preference|workflow|decision] [--scope user|project]|summary|path|search <关键词>|append <内容> [--type memory|preference|workflow|decision] [--global|-g]|promote <entry_id>|archive <entry_id>]".to_string()
+    "/memory [show|list [--type memory|preference|workflow|decision] [--scope user|project]|summary|path|search <关键词>|append <内容> [--type memory|preference|workflow|decision] [--global|-g]|promote <entry_id>|approve <entry_id>|reject <entry_id>|archive <entry_id>]".to_string()
 }
 
 fn memory_status_label(status: MemoryStatus) -> &'static str {
     match status {
+        MemoryStatus::Candidate => "candidate",
         MemoryStatus::Active => "active",
         MemoryStatus::Archived => "archived",
+        MemoryStatus::Rejected => "rejected",
     }
 }
 

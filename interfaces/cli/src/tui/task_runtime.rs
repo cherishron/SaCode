@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sacode_kernel::{model::ChatUsage, ExecutionMode, TaskRun, TaskRunState};
+use sacode_kernel::{model::ChatUsage, ExecutionMode, LoopState, TaskRun, TaskRunState};
 #[derive(Debug, Default)]
 pub(super) struct BackgroundTaskOutput {
     response: String,
@@ -29,7 +29,7 @@ pub(super) struct BackgroundTaskOutput {
 use crate::cmd::config;
 
 use super::async_types::StreamChunkKind;
-use super::state::{LoopState, QueuedMessage};
+use super::state::QueuedMessage;
 use super::{App, AsyncResult, Message, MessageRole};
 use crate::cmd::{ApprovalPolicy, JSON_STREAM_PREFIX};
 
@@ -94,7 +94,12 @@ impl App {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
 
-        if self.queue.processing {
+        #[cfg(test)]
+        let should_force_queue = loop_state.is_some();
+        #[cfg(not(test))]
+        let should_force_queue = false;
+
+        if self.queue.processing || should_force_queue {
             self.queue.queued_messages.push_back(QueuedMessage {
                 id: task_id,
                 content: user_input.clone(),
@@ -231,14 +236,13 @@ impl App {
         loop_state: Option<LoopState>,
     ) {
         let sender = self.task_tx.clone();
-        let workdir = self.workdir.clone();
-        let mode = self.execution_mode;
-        let prompt = self.build_task_prompt(&user_input);
-        let Some(child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
+        #[cfg(test)]
+        {
+            let _ = approval;
             let _ = sender.send(AsyncResult::ChatCompleted {
                 task_id,
                 prompt: user_input,
-                response: "任务执行失败: 无法启动后台执行进程".to_string(),
+                response: "测试环境已跳过后台执行进程".to_string(),
                 hit_round_limit: false,
                 orchestration_summary: None,
                 task_run: None,
@@ -252,34 +256,59 @@ impl App {
                 loop_state,
             });
             return;
-        };
+        }
+        #[cfg(not(test))]
+        {
+            let workdir = self.workdir.clone();
+            let mode = self.execution_mode;
+            let prompt = self.build_task_prompt(&user_input);
+            let Some(child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
+                let _ = sender.send(AsyncResult::ChatCompleted {
+                    task_id,
+                    prompt: user_input,
+                    response: "任务执行失败: 无法启动后台执行进程".to_string(),
+                    hit_round_limit: false,
+                    orchestration_summary: None,
+                    task_run: None,
+                    learned_facts: Vec::new(),
+                    pending_question: None,
+                    plan: None,
+                    usage: None,
+                    api_duration_ms: 0,
+                    tool_duration_ms: 0,
+                    total_duration_ms: 0,
+                    loop_state,
+                });
+                return;
+            };
 
-        let child = Arc::new(Mutex::new(child));
-        self.queue.active_child = Some(child.clone());
-        thread::spawn(move || {
-            let result = App::execute_user_message_in_background(
-                child,
-                sender.clone(),
-                task_id,
-                &user_input,
-            );
-            let _ = sender.send(AsyncResult::ChatCompleted {
-                task_id,
-                prompt: user_input,
-                response: result.response,
-                hit_round_limit: result.hit_round_limit,
-                orchestration_summary: result.orchestration_summary,
-                task_run: result.task_run,
-                learned_facts: result.learned_facts,
-                pending_question: result.pending_question,
-                plan: result.plan,
-                usage: result.usage,
-                api_duration_ms: result.api_duration_ms,
-                tool_duration_ms: result.tool_duration_ms,
-                total_duration_ms: result.total_duration_ms,
-                loop_state,
+            let child = Arc::new(Mutex::new(child));
+            self.queue.active_child = Some(child.clone());
+            thread::spawn(move || {
+                let result = App::execute_user_message_in_background(
+                    child,
+                    sender.clone(),
+                    task_id,
+                    &user_input,
+                );
+                let _ = sender.send(AsyncResult::ChatCompleted {
+                    task_id,
+                    prompt: user_input,
+                    response: result.response,
+                    hit_round_limit: result.hit_round_limit,
+                    orchestration_summary: result.orchestration_summary,
+                    task_run: result.task_run,
+                    learned_facts: result.learned_facts,
+                    pending_question: result.pending_question,
+                    plan: result.plan,
+                    usage: result.usage,
+                    api_duration_ms: result.api_duration_ms,
+                    tool_duration_ms: result.tool_duration_ms,
+                    total_duration_ms: result.total_duration_ms,
+                    loop_state,
+                });
             });
-        });
+        }
     }
 
     pub(super) fn spawn_orchestrator_task(
@@ -340,6 +369,7 @@ impl App {
         });
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     pub(super) fn spawn_chat_child(
         workdir: &PathBuf,
         user_input: &str,
@@ -743,6 +773,11 @@ impl App {
         self.spinner_index = 0;
         self.assistant_pending_thinking = false;
         self.queue.busy_message.clear();
+        #[cfg(test)]
+        if self.suppress_side_effects {
+            self.scroll_to_bottom();
+            return;
+        }
         self.refresh_git_changes();
         self.scroll_to_bottom();
     }
@@ -753,6 +788,11 @@ impl App {
         }
 
         if let Some(next) = self.queue.queued_messages.pop_front() {
+            #[cfg(test)]
+            if next.loop_state.is_some() {
+                self.queue.queued_messages.push_front(next);
+                return;
+            }
             self.start_queued_message(next);
         }
     }

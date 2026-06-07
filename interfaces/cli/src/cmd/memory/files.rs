@@ -5,7 +5,8 @@ use std::{
 
 use anyhow::Result;
 use sacode_runtime::{
-    append_memory_entry, ensure_memory_file, memory_file_path, MemoryEntry, MemoryKind, MemoryScope,
+    append_candidate_memory_entry, append_memory_entry, ensure_memory_file, memory_file_path,
+    MemoryEntry, MemoryKind, MemoryScope,
 };
 
 const USER_WIKI_DIR: &str = ".sacode/wiki";
@@ -48,4 +49,12 @@ pub(super) fn workdir_wiki_dir(project_files: &[MemoryFile]) -> PathBuf {
 
 pub(super) fn append_memory(path: &Path, current: &str, entry: MemoryEntry) -> Result<bool> {
     append_memory_entry(path, current, &entry)
+}
+
+pub(super) fn append_candidate_memory(
+    path: &Path,
+    current: &str,
+    entry: MemoryEntry,
+) -> Result<bool> {
+    append_candidate_memory_entry(path, current, &entry)
 }

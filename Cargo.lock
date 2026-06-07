@@ -2730,6 +2730,7 @@ dependencies = [
  "extism",
  "futures",
  "http-body-util",
+ "libc",
  "regex",
  "reqwest",
  "rusqlite",

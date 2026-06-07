@@ -728,6 +728,17 @@ fn wrap_text_by_width(text: &str, width: usize) -> (String, String) {
         }
         used += ch_width;
     }
+    if split_index == 0 {
+        let next_index = text
+            .char_indices()
+            .nth(1)
+            .map(|(index, _)| index)
+            .unwrap_or(text.len());
+        return (
+            text[..next_index].to_string(),
+            text[next_index..].to_string(),
+        );
+    }
     if split_index == text.len() {
         (text.to_string(), String::new())
     } else {

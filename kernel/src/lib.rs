@@ -19,6 +19,7 @@ pub use agent::{
 pub use event::{ApprovalAction, Event, FileChangeType};
 pub use execution::{
     ApprovalPolicy, ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint,
+    LoopNextAction, LoopPhase, LoopPhaseResult, LoopPhaseStatus, LoopProjectPlan, LoopState,
     RouteRecord, RoutedModelRecord, SessionRun, StepContext, SummaryItemRecord, SummaryRecord,
     TaskRun, TaskRunState, ToolExecutionContext, ToolExecutionRecord, WorkerRun,
 };

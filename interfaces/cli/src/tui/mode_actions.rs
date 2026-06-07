@@ -1,8 +1,8 @@
 use crate::cmd::config;
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, LoopState};
 use sacode_runtime::RoleRegistry;
 
-use super::{App, InputMode, LoopState};
+use super::{App, InputMode};
 
 impl App {
     pub(super) fn agents_command(&mut self, input: &str) {
@@ -74,6 +74,9 @@ impl App {
                 max_iterations: loop_max_iterations.max(1),
                 error_count: 0,
                 last_summary: String::new(),
+                plan: None,
+                current_phase_index: 0,
+                last_phase_result: None,
             }),
         );
     }

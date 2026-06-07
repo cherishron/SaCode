@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use sacode_kernel::ApprovalPolicy;
+use sacode_kernel::{ApprovalPolicy, LoopState};
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueState {
@@ -21,13 +21,4 @@ pub struct QueuedMessage {
     pub content: String,
     pub approval: ApprovalPolicy,
     pub loop_state: Option<LoopState>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LoopState {
-    pub task: String,
-    pub iteration: u32,
-    pub max_iterations: u32,
-    pub error_count: u32,
-    pub last_summary: String,
 }

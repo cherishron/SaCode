@@ -2,6 +2,8 @@ use std::fs;
 
 use super::super::memory::render_memory;
 use super::support::HomeEnvGuard;
+use crate::cmd::mistakes;
+use crate::mistakes::MistakeBookStore;
 
 #[test]
 #[serial_test::serial]
@@ -158,4 +160,104 @@ fn render_memory_list_supports_type_and_scope_filters() {
 
     assert!(output.contains("每次发布前先核对版本号"));
     assert!(!output.contains("cargo test --workspace"));
+}
+
+#[test]
+#[serial_test::serial]
+fn render_memory_candidate_entries_require_approval_to_be_searchable() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
+
+    super::super::memory::append_project_candidate(
+        workdir,
+        sacode_runtime::MemoryKind::Workflow,
+        "修复失败后优先检查日志与超时配置".to_string(),
+        "测试生成 candidate".to_string(),
+    )
+    .expect("append candidate");
+
+    let list_output = render_memory(workdir, &["list".to_string()]).expect("list memory");
+    assert!(list_output.contains("candidate"));
+
+    let search_output = render_memory(workdir, &["search".to_string(), "超时配置".to_string()])
+        .expect("search memory");
+    assert!(!search_output.contains("修复失败后优先检查日志与超时配置"));
+
+    let project_index =
+        fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read project index");
+    let value: serde_json::Value =
+        serde_json::from_str(&project_index).expect("parse project index");
+    let entry_id = value["entries"][0]["id"]
+        .as_str()
+        .expect("entry id")
+        .to_string();
+
+    let approve_output =
+        render_memory(workdir, &["approve".to_string(), entry_id.clone()]).expect("approve memory");
+    assert!(approve_output.contains("已批准候选记忆条目"));
+
+    let search_output = render_memory(workdir, &["search".to_string(), "超时配置".to_string()])
+        .expect("search approved memory");
+    assert!(search_output.contains("Status: active"));
+    assert!(search_output.contains("修复失败后优先检查日志与"));
+    assert!(search_output.contains("<<超时配置>>"));
+}
+
+#[test]
+#[serial_test::serial]
+fn render_memory_reject_marks_candidate_as_rejected() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
+
+    super::super::memory::append_project_candidate(
+        workdir,
+        sacode_runtime::MemoryKind::Workflow,
+        "发布失败后先检查版本号一致性".to_string(),
+        "测试 reject".to_string(),
+    )
+    .expect("append candidate");
+
+    let project_index =
+        fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read project index");
+    let value: serde_json::Value =
+        serde_json::from_str(&project_index).expect("parse project index");
+    let entry_id = value["entries"][0]["id"]
+        .as_str()
+        .expect("entry id")
+        .to_string();
+
+    let reject_output =
+        render_memory(workdir, &["reject".to_string(), entry_id.clone()]).expect("reject memory");
+    assert!(reject_output.contains("已拒绝候选记忆条目"));
+
+    let list_output = render_memory(workdir, &["list".to_string()]).expect("list memory");
+    assert!(list_output.contains("rejected"));
+}
+
+#[test]
+#[serial_test::serial]
+fn mistakes_learn_generates_candidate_memory_entry() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let workdir = temp_dir.path();
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
+
+    MistakeBookStore::new(workdir)
+        .append("tool:test.run", "测试失败", "检查超时配置和工作目录")
+        .expect("append mistake");
+
+    let original_dir = std::env::current_dir().expect("read current dir");
+    std::env::set_current_dir(workdir).expect("enter workdir");
+    let run_result = mistakes::run(vec!["learn".to_string(), "1".to_string()]);
+    std::env::set_current_dir(original_dir).expect("restore current dir");
+    run_result.expect("learn mistake");
+
+    let list_output = render_memory(workdir, &["list".to_string()]).expect("list memory");
+    assert!(list_output.contains("candidate"));
+    assert!(list_output.contains("测试失败"));
+    assert!(list_output.contains("检查超时配置和工作目录"));
 }

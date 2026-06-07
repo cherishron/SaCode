@@ -121,8 +121,10 @@ pub enum MemoryEntrySource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryStatus {
+    Candidate,
     Active,
     Archived,
+    Rejected,
 }
 
 impl MemoryEntrySource {
@@ -189,6 +191,23 @@ pub fn ensure_memory_file(path: &Path, scope: MemoryScope, kind: MemoryKind) -> 
 }
 
 pub fn append_memory_entry(path: &Path, current: &str, entry: &MemoryEntry) -> Result<bool> {
+    append_memory_entry_with_status(path, current, entry, MemoryStatus::Active)
+}
+
+pub fn append_candidate_memory_entry(
+    path: &Path,
+    current: &str,
+    entry: &MemoryEntry,
+) -> Result<bool> {
+    append_memory_entry_with_status(path, current, entry, MemoryStatus::Candidate)
+}
+
+fn append_memory_entry_with_status(
+    path: &Path,
+    current: &str,
+    entry: &MemoryEntry,
+    status: MemoryStatus,
+) -> Result<bool> {
     let Some(root) = path.parent() else {
         anyhow::bail!("memory file missing parent directory");
     };
@@ -231,7 +250,7 @@ pub fn append_memory_entry(path: &Path, current: &str, entry: &MemoryEntry) -> R
         kind: entry.kind,
         scope: entry.scope,
         source: entry.source,
-        status: MemoryStatus::Active,
+        status,
         confidence: default_confidence(entry.source),
         content: entry.content.clone(),
         context: entry.context.clone(),
@@ -336,6 +355,15 @@ pub fn list_memory_entries(index: &MemoryIndex) -> Vec<MemoryIndexEntry> {
     entries
 }
 
+pub fn approve_memory_entry(root: &Path, entry_id: &str) -> Result<bool> {
+    update_memory_entry_status(
+        root,
+        entry_id,
+        MemoryStatus::Candidate,
+        MemoryStatus::Active,
+    )
+}
+
 pub fn archive_memory_entry(root: &Path, entry_id: &str) -> Result<bool> {
     let mut index = load_memory_index(root)?;
     let Some(entry) = index.entries.iter_mut().find(|entry| entry.id == entry_id) else {
@@ -347,6 +375,15 @@ pub fn archive_memory_entry(root: &Path, entry_id: &str) -> Result<bool> {
     entry.status = MemoryStatus::Archived;
     save_memory_index(root, &index)?;
     Ok(true)
+}
+
+pub fn reject_memory_entry(root: &Path, entry_id: &str) -> Result<bool> {
+    update_memory_entry_status(
+        root,
+        entry_id,
+        MemoryStatus::Candidate,
+        MemoryStatus::Rejected,
+    )
 }
 
 pub fn promote_memory_entry(project_root: &Path, user_root: &Path, entry_id: &str) -> Result<bool> {
@@ -410,6 +447,24 @@ fn build_entry_id(entry: &MemoryEntry, created_at: &str) -> String {
         created_at,
         if slug.is_empty() { "entry" } else { &slug }
     )
+}
+
+fn update_memory_entry_status(
+    root: &Path,
+    entry_id: &str,
+    expected: MemoryStatus,
+    target: MemoryStatus,
+) -> Result<bool> {
+    let mut index = load_memory_index(root)?;
+    let Some(entry) = index.entries.iter_mut().find(|entry| entry.id == entry_id) else {
+        return Ok(false);
+    };
+    if entry.status != expected {
+        return Ok(false);
+    }
+    entry.status = target;
+    save_memory_index(root, &index)?;
+    Ok(true)
 }
 
 fn build_promoted_entry_id(entry: &MemoryIndexEntry) -> String {

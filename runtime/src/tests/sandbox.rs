@@ -28,6 +28,10 @@ fn test_sandbox_policy_for_build_mode_allows_network_without_command_whitelist()
     assert!(policy.shell.enabled);
     assert!(policy.shell.allowed_commands.is_empty());
     assert!(policy.check_command("git"));
+    assert!(!policy.check_command("kill"));
+    assert!(!policy.check_command("pkill"));
+    assert!(!policy.check_command("killall"));
+    assert!(!policy.check_command("taskkill"));
     assert_eq!(policy.max_memory_mb(), Some(512));
     assert_eq!(policy.timeout_ms(), Some(30_000));
 }
@@ -41,6 +45,7 @@ fn test_sandbox_policy_for_yolo_mode_is_most_permissive() {
     assert!(policy.network.browser_allowed);
     assert!(policy.shell.allowed_commands.is_empty());
     assert!(policy.check_command("cargo"));
+    assert!(!policy.check_command("kill"));
     assert_eq!(policy.max_memory_mb(), Some(1024));
     assert_eq!(policy.timeout_ms(), Some(60_000));
 }
@@ -256,4 +261,13 @@ fn test_shell_exec_uses_docker_backend_when_installed() {
     assert!(message.contains("No such file or directory") || message.contains("docker"));
 
     crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_explicit_allowlist_cannot_enable_blocked_process_commands() {
+    let policy = crate::sandbox::SandboxPolicy::new()
+        .enable_shell()
+        .allow_command("kill".to_string());
+
+    assert!(!policy.check_command("kill"));
 }

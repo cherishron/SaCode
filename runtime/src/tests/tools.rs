@@ -769,6 +769,21 @@ fn test_tool_spec_exec_needs_approval() {
 }
 
 #[test]
+fn test_shell_exec_blocks_kill_commands_via_sandbox_policy() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+
+    let error = crate::tools::shell::exec::execute(serde_json::json!({
+        "command": "kill 123"
+    }))
+    .expect_err("kill command should be blocked");
+
+    assert!(error
+        .to_string()
+        .contains("command 'kill' is blocked by sandbox policy"));
+}
+
+#[test]
 fn test_tool_output_success() {
     let output = ToolOutput::success(serde_json::json!({ "data": "test" }));
     assert!(output.success);

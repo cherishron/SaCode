@@ -65,7 +65,7 @@ use interaction::{InteractionSession, InteractionState};
 use orchestration_summary::parse_orchestration_summary;
 use render::relative_to_workdir;
 pub(crate) use runtime_support::block_on_cli_future;
-use state::{LoopState, QueueState};
+use state::QueueState;
 use theme::ThemePalette;
 pub use tui_entry::run_tui;
 
@@ -209,6 +209,8 @@ struct App {
     orchestration_summary: Option<String>,
     message_viewport: Rect,
     input_viewport: Rect,
+    #[cfg(test)]
+    suppress_side_effects: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

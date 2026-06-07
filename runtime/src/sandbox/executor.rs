@@ -1,5 +1,7 @@
 use anyhow::Result;
 use std::ffi::OsStr;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -171,6 +173,8 @@ impl SandboxBackend for LocalSandboxBackend {
             child.current_dir(std::env::current_dir()?);
         }
 
+        configure_process_isolation(&mut child);
+
         let mut child = child.spawn()?;
 
         let pid = child.id();
@@ -217,10 +221,10 @@ impl SandboxBackend for LocalSandboxBackend {
             }
             None => {
                 warn!(
-                    "Process timed out: command='{}', pid={}, timeout={}ms - killing process",
+                    "Process timed out: command='{}', pid={}, timeout={}ms - killing process group",
                     cmd_name, pid, timeout_ms
                 );
-                child.kill()?;
+                terminate_process_tree(&mut child)?;
                 Ok(BackendCommandOutput {
                     stdout: String::new(),
                     stderr: String::new(),
@@ -382,6 +386,42 @@ fn docker_network_mode(policy: &SandboxPolicy) -> &'static str {
     } else {
         "none"
     }
+}
+
+fn configure_process_isolation(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            });
+        }
+    }
+}
+
+fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let process_group = -(child.id() as i32);
+        if unsafe { libc::kill(process_group, libc::SIGKILL) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error.into());
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        child.kill()?;
+    }
+
+    let _ = child.wait();
+    Ok(())
 }
 
 pub struct SandboxExecutor {

@@ -1,6 +1,7 @@
 use super::{parse_orchestration_summary, App, MessageRole};
 use anyhow::Result;
 
+#[cfg_attr(test, allow(dead_code))]
 impl App {
     pub(super) fn extract_last_json_value(raw: &str) -> Result<serde_json::Value> {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {

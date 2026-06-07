@@ -52,11 +52,11 @@ pub use mcp::{
     McpServerEntry, McpSource, McpToolCallResult, McpToolInfo,
 };
 pub use memory::{
-    append_memory_entry, archive_memory_entry, ensure_memory_file, list_memory_entries,
-    load_memory_index, memory_file_path, memory_index_path, promote_memory_entry,
-    rebuild_memory_index, save_memory_index, search_memory_index, MemoryEntry, MemoryEntrySource,
-    MemoryIndex, MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE,
-    PROJECT_WIKI_DIR,
+    append_candidate_memory_entry, append_memory_entry, approve_memory_entry, archive_memory_entry,
+    ensure_memory_file, list_memory_entries, load_memory_index, memory_file_path,
+    memory_index_path, promote_memory_entry, rebuild_memory_index, reject_memory_entry,
+    save_memory_index, search_memory_index, MemoryEntry, MemoryEntrySource, MemoryIndex,
+    MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE, PROJECT_WIKI_DIR,
 };
 pub use model_routing::{
     ExecutionNode, FailoverContext, ModelRoutePlan, NodeDecision, NodeScore, NodeToolCall,

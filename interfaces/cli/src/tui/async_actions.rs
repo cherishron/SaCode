@@ -1,9 +1,9 @@
 use sacode_kernel::model::ChatUsage;
-use sacode_kernel::{ExecutionMode, TaskRun, TaskRunState};
+use sacode_kernel::{ExecutionMode, LoopState, TaskRun, TaskRunState};
 
 use super::async_types::StreamChunkKind;
 use super::{
-    update_prompt, App, AsyncContext, AsyncResult, InputMode, InteractionState, LoopState, Message,
+    update_prompt, App, AsyncContext, AsyncResult, InputMode, InteractionState, Message,
     MessageRole, PendingInputOptimizationPreview,
 };
 use crate::cmd::init::InitMode;
@@ -299,6 +299,9 @@ impl App {
                             max_iterations: state.max_iterations,
                             error_count: 0,
                             last_summary: loop_summary.clone(),
+                            plan: state.plan.clone(),
+                            current_phase_index: state.current_phase_index,
+                            last_phase_result: state.last_phase_result.clone(),
                         }),
                     );
                     self.push_system_message(&format!(
@@ -338,6 +341,9 @@ impl App {
                             max_iterations: state.max_iterations,
                             error_count: next_error_count,
                             last_summary: loop_summary.clone(),
+                            plan: state.plan.clone(),
+                            current_phase_index: state.current_phase_index,
+                            last_phase_result: state.last_phase_result.clone(),
                         }),
                     );
                     if hit_round_limit {
@@ -563,7 +569,7 @@ mod tests {
 
     #[test]
     fn loop_completion_enqueues_next_round_with_summary() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.active_task_id = Some(12);
 
         app.handle_chat_completed(
@@ -589,6 +595,9 @@ mod tests {
                 max_iterations: 3,
                 error_count: 0,
                 last_summary: String::new(),
+                plan: None,
+                current_phase_index: 0,
+                last_phase_result: None,
             }),
         );
 
@@ -612,7 +621,7 @@ mod tests {
 
     #[test]
     fn loop_round_limit_enqueues_next_round_with_scope_hint() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.active_task_id = Some(13);
 
         app.handle_chat_completed(
@@ -638,6 +647,9 @@ mod tests {
                 max_iterations: 3,
                 error_count: 0,
                 last_summary: String::new(),
+                plan: None,
+                current_phase_index: 0,
+                last_phase_result: None,
             }),
         );
 

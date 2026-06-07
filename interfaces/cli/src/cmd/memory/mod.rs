@@ -2,15 +2,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use sacode_runtime::{
-    archive_memory_entry, list_memory_entries, load_memory_index, promote_memory_entry,
-    search_memory_index, MemoryKind, MemoryScope, PROJECT_WIKI_DIR,
+    approve_memory_entry, archive_memory_entry, list_memory_entries, load_memory_index,
+    promote_memory_entry, reject_memory_entry, search_memory_index, MemoryKind, MemoryScope,
+    PROJECT_WIKI_DIR,
 };
 
 mod files;
 mod filters;
 mod rendering;
 
-use files::{append_memory, load_memory_files, user_wiki_dir, workdir_wiki_dir, MemoryFile};
+use files::{
+    append_candidate_memory, append_memory, load_memory_files, user_wiki_dir, workdir_wiki_dir,
+    MemoryFile,
+};
 use filters::{filter_list_entries, parse_list_filters};
 use rendering::{
     collect_sections, render_index_match, render_list_entry, search_memory, usage_text,
@@ -35,6 +39,8 @@ pub fn render_memory(workdir: &Path, args: &[String]) -> Result<String> {
         Some("search") => render_search(args, &user_files, &project_files),
         Some("append") => render_append(args, &user_files, &project_files),
         Some("promote") => render_promote(args, &project_files),
+        Some("approve") => render_approve(args, &project_files),
+        Some("reject") => render_reject(args, &project_files),
         Some("archive") => render_archive(args, &user_files, &project_files),
         _ => Ok(usage_text()),
     }
@@ -166,11 +172,12 @@ fn render_search(
     let mut matched = Vec::new();
     let user_index = load_memory_index(&user_wiki_dir()).unwrap_or_default();
     let project_index = load_memory_index(&workdir_wiki_dir(project_files)).unwrap_or_default();
+    let has_index_entries = !user_index.entries.is_empty() || !project_index.entries.is_empty();
 
     let user_matches = search_memory_index(&user_index, &query);
     let project_matches = search_memory_index(&project_index, &query);
 
-    if !user_matches.is_empty() || !project_matches.is_empty() {
+    if has_index_entries {
         matched.extend(
             user_matches
                 .into_iter()
@@ -306,4 +313,62 @@ fn render_archive(
     } else {
         format!("未找到可归档的记忆条目: {}", entry_id)
     })
+}
+
+fn render_approve(args: &[String], project_files: &[MemoryFile]) -> Result<String> {
+    let Some(entry_id) = args
+        .get(1)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok("用法: /memory approve <entry_id>".to_string());
+    };
+
+    let approved = approve_memory_entry(&workdir_wiki_dir(project_files), entry_id)?;
+    Ok(if approved {
+        format!("已批准候选记忆条目: {}", entry_id)
+    } else {
+        format!("未找到可批准的候选记忆条目: {}", entry_id)
+    })
+}
+
+fn render_reject(args: &[String], project_files: &[MemoryFile]) -> Result<String> {
+    let Some(entry_id) = args
+        .get(1)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok("用法: /memory reject <entry_id>".to_string());
+    };
+
+    let rejected = reject_memory_entry(&workdir_wiki_dir(project_files), entry_id)?;
+    Ok(if rejected {
+        format!("已拒绝候选记忆条目: {}", entry_id)
+    } else {
+        format!("未找到可拒绝的候选记忆条目: {}", entry_id)
+    })
+}
+
+pub(crate) fn append_project_candidate(
+    workdir: &Path,
+    kind: MemoryKind,
+    content: String,
+    context: String,
+) -> Result<bool> {
+    let project_files = load_memory_files(&workdir.join(PROJECT_WIKI_DIR), MemoryScope::Project)?;
+    let target = project_files
+        .iter()
+        .find(|file| file.kind == kind)
+        .ok_or_else(|| anyhow::anyhow!("记忆文件未初始化"))?;
+    append_candidate_memory(
+        &target.path,
+        &target.content,
+        sacode_runtime::MemoryEntry {
+            kind,
+            scope: sacode_runtime::MemoryScope::Project,
+            source: sacode_runtime::MemoryEntrySource::AutoLearned,
+            content,
+            context,
+        },
+    )
 }

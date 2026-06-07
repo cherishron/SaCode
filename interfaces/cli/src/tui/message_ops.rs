@@ -44,6 +44,11 @@ impl App {
             timestamp,
             collapsed: false,
         });
+        #[cfg(test)]
+        if self.suppress_side_effects {
+            self.scroll_to_bottom();
+            return;
+        }
         self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
@@ -58,6 +63,11 @@ impl App {
             timestamp,
             collapsed: false,
         });
+        #[cfg(test)]
+        if self.suppress_side_effects {
+            self.scroll_to_bottom();
+            return;
+        }
         self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
@@ -72,6 +82,11 @@ impl App {
             timestamp,
             collapsed: false,
         });
+        #[cfg(test)]
+        if self.suppress_side_effects {
+            self.scroll_to_bottom();
+            return;
+        }
         self.refresh_git_changes();
         self.save_current_session();
         self.scroll_to_bottom();
