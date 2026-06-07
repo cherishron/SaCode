@@ -20,6 +20,7 @@ struct TableState {
     current_row: Vec<String>,
     current_cell: String,
     in_head: bool,
+    row_open: bool,
 }
 
 pub(crate) fn render_assistant_markdown(
@@ -53,12 +54,20 @@ pub(crate) fn render_assistant_markdown(
                 }
                 Event::Start(Tag::TableHead) => {
                     table.in_head = true;
+                    table.current_row.clear();
+                    table.row_open = true;
                 }
                 Event::End(TagEnd::TableHead) => {
+                    if table.row_open && !table.current_row.is_empty() {
+                        table.rows.push(table.current_row.clone());
+                        table.current_row.clear();
+                        table.row_open = false;
+                    }
                     table.in_head = false;
                 }
                 Event::Start(Tag::TableRow) => {
                     table.current_row.clear();
+                    table.row_open = true;
                 }
                 Event::End(TagEnd::TableRow) => {
                     if !table.current_cell.is_empty() {
@@ -70,9 +79,8 @@ pub(crate) fn render_assistant_markdown(
                     if !table.current_row.is_empty() {
                         table.rows.push(table.current_row.clone());
                     }
-                    if !table.in_head {
-                        table.current_row.clear();
-                    }
+                    table.current_row.clear();
+                    table.row_open = false;
                 }
                 Event::Start(Tag::TableCell) => {
                     table.current_cell.clear();

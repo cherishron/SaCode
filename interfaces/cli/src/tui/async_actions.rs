@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn handle_chat_stream_chunk_appends_to_last_assistant_message() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.active_task_id = Some(7);
         app.append_message(Message {
             role: MessageRole::Assistant,
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn handle_chat_completed_reuses_streaming_placeholder_message() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.active_task_id = Some(9);
         let assistant_count_before = app
             .messages
@@ -783,7 +783,7 @@ mod tests {
 
     #[test]
     fn queue_message_does_not_interrupt_existing_stream_output() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.processing = true;
         app.queue.active_task_id = Some(1);
         app.append_message(Message {
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn queue_message_does_not_interrupt_existing_thinking_output() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.processing = true;
         app.queue.active_task_id = Some(1);
         app.append_message(Message {

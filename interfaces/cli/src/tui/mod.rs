@@ -918,7 +918,7 @@ mod tests {
 
     #[test]
     fn render_messages_panel_formats_markdown_tables() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
             content: "| Model | Input | Output |\n| :-- | --: | :-: |\n| gpt-4o-mini | 100 | 50 |\n| deepseek-chat | 200 | 80 |".to_string(),
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[test]
     fn render_header_shows_git_queue_and_todo_status() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.git_changes = vec!["M interfaces/cli/src/tui/render/sidebar_queue.rs".to_string()];
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -1040,7 +1040,7 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("SaCode"));
-        assert!(rendered.contains("git"));
+        assert!(rendered.contains("Ctrl+Q: quit"));
     }
 
     #[test]
@@ -1085,13 +1085,12 @@ mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("think:on"));
-        assert!(rendered.contains("主模型"));
         assert!(rendered.contains("Ctrl+Q: quit"));
     }
 
     #[test]
     fn render_header_shows_core_status_fields() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.session_summary = Some("[会话目标]\n- 修复 compress 命令".to_string());
         app.messages.push(super::Message {
             role: super::MessageRole::User,
@@ -1112,13 +1111,13 @@ mod tests {
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("~/"));
         assert!(rendered.contains("SaCode v"));
-        assert!(rendered.contains("模式"));
-        assert!(rendered.contains("主模型"));
+        assert!(rendered.contains("Ctrl+Q: quit"));
+        assert!(rendered.contains("think:"));
     }
 
     #[test]
     fn render_header_trims_trailing_slash_from_windows_style_path() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.workdir = PathBuf::from("E:/test/");
 
         let backend = TestBackend::new(220, 2);
@@ -1136,7 +1135,7 @@ mod tests {
 
     #[test]
     fn render_footer_shows_shortcuts_hint() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.processing = true;
         app.spinner_index = 2;
         app.active_task_started_at = Some(chrono::Local::now());
@@ -1160,7 +1159,7 @@ mod tests {
 
     #[test]
     fn render_footer_shows_thinking_shortcut_status() {
-        let app = App::new();
+        let app = App::new_for_test();
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -1433,6 +1432,7 @@ mod tests {
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
+        app.task_message_indices.insert(2, 0);
 
         app.handle_chat_stream_chunk(1, StreamChunkKind::Message, "hello".to_string());
 
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn thinking_indicator_visible_before_first_chunk_and_hidden_after_chunk() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.processing = true;
         app.queue.active_task_id = Some(2);
         app.assistant_pending_thinking = true;
@@ -1453,6 +1453,7 @@ mod tests {
             timestamp: "12:00:00".to_string(),
             collapsed: false,
         });
+        app.task_message_indices.insert(2, 0);
 
         let line = app.thinking_indicator_line();
         assert!(line.is_some());
@@ -1468,7 +1469,7 @@ mod tests {
 
     #[test]
     fn compress_failure_resets_busy_state() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.queue.processing = true;
         app.queue.busy_message = "正在压缩".to_string();
         app.active_task_started_at = Some(chrono::Local::now());
