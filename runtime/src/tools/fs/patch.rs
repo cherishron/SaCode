@@ -225,13 +225,22 @@ fn apply_normalized_patch(
             normalized_content.replacen(&normalized_old, &normalized_new, 1)
         }
     } else {
-        apply_fuzzy_patch(&normalized_content, &normalized_old, &normalized_new, replace_all)?
+        apply_fuzzy_patch(
+            &normalized_content,
+            &normalized_old,
+            &normalized_new,
+            replace_all,
+        )?
     };
 
     Some((
         restore_newlines(&normalized_updated, style),
         if occurrences > 0 {
-            if replace_all { occurrences } else { 1 }
+            if replace_all {
+                occurrences
+            } else {
+                1
+            }
         } else {
             1
         },

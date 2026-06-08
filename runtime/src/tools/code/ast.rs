@@ -157,11 +157,13 @@ fn extract_symbol(parsed: &ParsedSource<'_>, node: Node<'_>) -> Option<AstSymbol
                     .or_else(|| named_descendant_by_kind(spec, &["identifier"]))
                     .map(|n| ("var", n))
             }),
-            "const_declaration" => named_descendant_by_kind(node, &["const_spec"]).and_then(|spec| {
-                spec.child_by_field_name("name")
-                    .or_else(|| named_descendant_by_kind(spec, &["identifier"]))
-                    .map(|n| ("const", n))
-            }),
+            "const_declaration" => {
+                named_descendant_by_kind(node, &["const_spec"]).and_then(|spec| {
+                    spec.child_by_field_name("name")
+                        .or_else(|| named_descendant_by_kind(spec, &["identifier"]))
+                        .map(|n| ("const", n))
+                })
+            }
             _ => None,
         },
         _ => None,
@@ -184,11 +186,10 @@ fn extract_js_symbol(node: Node<'_>) -> Option<(&'static str, Node<'_>)> {
         "interface_declaration" => node.child_by_field_name("name").map(|n| ("interface", n)),
         "type_alias_declaration" => node.child_by_field_name("name").map(|n| ("type", n)),
         "enum_declaration" => node.child_by_field_name("name").map(|n| ("enum", n)),
-        "lexical_declaration" | "variable_declaration" => named_descendant_by_kind(
-            node,
-            &["variable_declarator"],
-        )
-        .and_then(|decl| decl.child_by_field_name("name").map(|n| ("function", n))),
+        "lexical_declaration" | "variable_declaration" => {
+            named_descendant_by_kind(node, &["variable_declarator"])
+                .and_then(|decl| decl.child_by_field_name("name").map(|n| ("function", n)))
+        }
         _ => None,
     }
 }
@@ -204,7 +205,10 @@ fn extract_imports(parsed: &ParsedSource<'_>, node: Node<'_>) -> Vec<AstImport> 
 }
 
 fn extract_rust_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
-    if !matches!(node.kind(), "use_declaration" | "use_as_clause" | "scoped_use_list") {
+    if !matches!(
+        node.kind(),
+        "use_declaration" | "use_as_clause" | "scoped_use_list"
+    ) {
         return Vec::new();
     }
     if node.kind() != "use_declaration" {
@@ -214,7 +218,10 @@ fn extract_rust_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
         return Vec::new();
     };
     vec![AstImport {
-        specifier: node_text(source, argument).unwrap_or_default().trim().to_string(),
+        specifier: node_text(source, argument)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
         line: node.start_position().row + 1,
     }]
 }
@@ -277,10 +284,7 @@ fn extract_js_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
             if function_name != "require" {
                 return Vec::new();
             }
-            named_descendant_by_kind(
-                node,
-                &["string", "string_fragment", "string_literal"],
-            )
+            named_descendant_by_kind(node, &["string", "string_fragment", "string_literal"])
                 .and_then(|literal| to_import_from_string_literal(source, literal))
                 .into_iter()
                 .collect()
@@ -297,11 +301,14 @@ fn extract_go_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
         .filter(|child| matches!(child.kind(), "import_spec" | "interpreted_string_literal"))
         .flat_map(|child| {
             if child.kind() == "import_spec" {
-                child.named_children(&mut child.walk())
+                child
+                    .named_children(&mut child.walk())
                     .filter_map(|inner| to_import_from_string_literal(source, inner))
                     .collect::<Vec<_>>()
             } else {
-                to_import_from_string_literal(source, child).into_iter().collect()
+                to_import_from_string_literal(source, child)
+                    .into_iter()
+                    .collect()
             }
         })
         .collect()
@@ -309,7 +316,10 @@ fn extract_go_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
 
 fn to_import_from_string_literal(source: &str, node: Node<'_>) -> Option<AstImport> {
     let kind = node.kind();
-    if !matches!(kind, "string" | "string_fragment" | "string_literal" | "interpreted_string_literal") {
+    if !matches!(
+        kind,
+        "string" | "string_fragment" | "string_literal" | "interpreted_string_literal"
+    ) {
         return None;
     }
     let raw = node_text(source, node).ok()?;

@@ -36,9 +36,7 @@ impl AstCache {
             "{}:{}:{}",
             path.display(),
             language,
-            modified
-                .map(|t| format!("{:?}", t))
-                .unwrap_or_default()
+            modified.map(|t| format!("{:?}", t)).unwrap_or_default()
         );
 
         let entries = self.entries.read().unwrap();
@@ -103,11 +101,13 @@ impl FileListCache {
         collect_fn: F,
     ) -> anyhow::Result<Vec<std::path::PathBuf>>
     where
-        F: FnOnce(&std::path::Path, Option<&str>, &mut Vec<std::path::PathBuf>) -> anyhow::Result<()>,
+        F: FnOnce(
+            &std::path::Path,
+            Option<&str>,
+            &mut Vec<std::path::PathBuf>,
+        ) -> anyhow::Result<()>,
     {
-        let dir_modified = std::fs::metadata(dir)
-            .ok()
-            .and_then(|m| m.modified().ok());
+        let dir_modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
 
         {
             let entries = self.entries.read().unwrap();

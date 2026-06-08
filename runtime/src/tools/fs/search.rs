@@ -127,7 +127,7 @@ fn should_skip_dir(path: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    
+
     let skip_dirs = [
         "$RECYCLE.BIN",
         "System Volume Information",
@@ -138,7 +138,7 @@ fn should_skip_dir(path: &Path) -> bool {
         "System32",
         "Recovery",
     ];
-    
+
     skip_dirs.contains(&name)
 }
 
