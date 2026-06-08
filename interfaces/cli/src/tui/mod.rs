@@ -921,7 +921,7 @@ mod tests {
         let mut app = App::new_for_test();
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
-            content: "| Model | Input | Output |\n| :-- | --: | :-: |\n| gpt-4o-mini | 100 | 50 |\n| deepseek-chat | 200 | 80 |".to_string(),
+            content: "| Model | Input | Output |\n| :-- | --: | :-: |\n| gpt-5.4 | 100 | 50 |\n| deepseek-v4-flash | 200 | 80 |".to_string(),
             thinking: String::new(),
             timestamp: "12:00:08".to_string(),
             collapsed: false,
