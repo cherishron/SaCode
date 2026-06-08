@@ -80,7 +80,7 @@ fn render_config(
             .to_string()),
         Some("set") => {
             apply_set(config, args)?;
-            store.save(&config)?;
+            store.save(config)?;
             render_config_status(workdir, config)
         }
         Some(_) => {

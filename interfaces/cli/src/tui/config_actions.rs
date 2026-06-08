@@ -168,7 +168,7 @@ impl App {
             config::ConfigValueType::Enum { options, labels } => {
                 self.config_enum_options = options
                     .into_iter()
-                    .zip(labels.into_iter())
+                    .zip(labels)
                     .map(|(value, label)| (value.to_string(), label.to_string()))
                     .collect();
                 let current = config::effective_config(&self.workdir)

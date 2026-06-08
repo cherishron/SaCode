@@ -1068,7 +1068,7 @@ fn merge_agents_content(existing: &str, new_content: &str) -> String {
 
     if existing.contains("## Auto-generated updates") {
         let parts: Vec<&str> = existing.splitn(2, "## Auto-generated updates").collect();
-        let user_content = parts.get(0).map_or("", |v| *v);
+        let user_content = parts.first().map_or("", |v| *v);
         let old_auto_content = parts.get(1).map_or("", |v| *v);
 
         let marker_line = "\n\n---\n\n";

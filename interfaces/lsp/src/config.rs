@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LspConfig {
     #[serde(default)]
     pub server: LspServerConfig,
@@ -8,16 +8,6 @@ pub struct LspConfig {
     pub capabilities: LspCapabilitiesConfig,
     #[serde(default)]
     pub behavior: LspBehaviorConfig,
-}
-
-impl Default for LspConfig {
-    fn default() -> Self {
-        Self {
-            server: LspServerConfig::default(),
-            capabilities: LspCapabilitiesConfig::default(),
-            behavior: LspBehaviorConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

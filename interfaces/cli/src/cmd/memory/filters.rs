@@ -45,7 +45,7 @@ pub(super) fn filter_list_entries(
 ) -> Vec<MemoryIndexEntry> {
     entries
         .into_iter()
-        .filter(|entry| filters.kind.is_none_or(|kind| entry.kind == kind))
-        .filter(|entry| filters.scope.is_none_or(|scope| entry.scope == scope))
+        .filter(|entry| filters.kind.map_or(true, |kind| entry.kind == kind))
+        .filter(|entry| filters.scope.map_or(true, |scope| entry.scope == scope))
         .collect()
 }

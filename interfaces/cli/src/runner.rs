@@ -400,6 +400,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_with_provider(
     provider: &sacode_kernel::model::ModelProvider,
     system_prompt: &str,
@@ -501,6 +502,7 @@ async fn execute_with_provider(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_tool_chat(
     provider: &sacode_kernel::model::ModelProvider,
     system_prompt: &str,

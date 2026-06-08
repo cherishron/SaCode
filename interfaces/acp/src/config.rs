@@ -1,20 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AcpConfig {
     #[serde(default)]
     pub server: AcpServerConfig,
     #[serde(default)]
     pub capabilities: AcpCapabilitiesConfig,
-}
-
-impl Default for AcpConfig {
-    fn default() -> Self {
-        Self {
-            server: AcpServerConfig::default(),
-            capabilities: AcpCapabilitiesConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

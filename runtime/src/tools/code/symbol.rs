@@ -5,7 +5,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::super::fs::access::resolve_allowed_path;
-use super::cache::{AST_CACHE, FILE_LIST_CACHE};
+use super::cache::{ast_cache, file_list_cache};
 
 const DEFAULT_LIMIT: usize = 200;
 
@@ -78,7 +78,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
 
-    let files = FILE_LIST_CACHE.get_or_collect(&resolved_path, language, collect_source_files)?;
+    let files = file_list_cache().get_or_collect(&resolved_path, language, collect_source_files)?;
     let selected_language = language
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_else(|| detect_primary_language(&files));
@@ -168,7 +168,7 @@ fn extract_symbols(
         _ => file_path.display().to_string(),
     };
 
-    let summary = AST_CACHE.get_or_compute(file_path, language, &content)?;
+    let summary = ast_cache().get_or_compute(file_path, language, &content)?;
     for symbol in summary.symbols {
         if symbols.len() >= limit {
             break;

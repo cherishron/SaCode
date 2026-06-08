@@ -28,7 +28,7 @@ pub async fn run_sub_agent(
         .map(|route| route.summary.clone())
         .unwrap_or_else(|| resolve_role_model_summary(&role));
 
-    let planner = PlannerAgent::default();
+    let planner = PlannerAgent;
     let output = planner.run(&task_input);
     let supervisor = Supervisor::default();
     let execution = supervisor.execute(&task_input);
@@ -264,9 +264,9 @@ fn contains_failure_signal(text: &str) -> bool {
 
 fn summarize_tool_focus(tool_names: &[&str]) -> &'static str {
     let has_fs = tool_names.iter().any(|name| name.starts_with("fs."));
-    let has_shell = tool_names.iter().any(|name| *name == "shell.exec");
-    let has_git = tool_names.iter().any(|name| *name == "git.diff");
-    let has_web = tool_names.iter().any(|name| *name == "web.search");
+    let has_shell = tool_names.contains(&"shell.exec");
+    let has_git = tool_names.contains(&"git.diff");
+    let has_web = tool_names.contains(&"web.search");
     let has_mcp = tool_names.iter().any(|name| name.starts_with("mcp."));
 
     if has_fs && has_shell && has_git {

@@ -142,7 +142,7 @@ impl App {
 
         match clipboard.get_image() {
             Ok(image) => {
-                match self.save_pasted_image(&image.bytes.into_owned(), image.width, image.height) {
+                match self.save_pasted_image(&image.bytes, image.width, image.height) {
                     Ok(path) => {
                         let snippet = format!(
                             "我刚粘贴了一张图片，文件路径是 `{}`。如果需要理解图片内容，请优先调用 `media.vision` 工具处理这个文件；如果只需要原始编码数据，可调用 `media.read`。当前模型支持图片时会自动执行 OCR 或描述，并在结果中标注来源，例如 provider 或 fallback。",

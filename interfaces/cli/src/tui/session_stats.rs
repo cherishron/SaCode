@@ -1,6 +1,6 @@
 use sacode_kernel::model::{ChatUsage, ModelRule};
 
-use super::{format_duration_ms, App, ModelUsageStats, PricingRule};
+use super::{format_duration_ms, App, PricingRule};
 
 impl App {
     pub(super) fn execution_mode_label(&self) -> &'static str {
@@ -86,7 +86,7 @@ impl App {
             .usage_stats
             .models
             .entry(model_key)
-            .or_insert_with(ModelUsageStats::default);
+            .or_default();
         model_stats.requests += 1;
         model_stats.prompt_tokens += usage.prompt_tokens as u64;
         model_stats.completion_tokens += usage.completion_tokens as u64;

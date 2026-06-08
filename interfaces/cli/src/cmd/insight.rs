@@ -72,6 +72,12 @@ pub struct InsightStore {
     root: PathBuf,
 }
 
+impl Default for InsightStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InsightStore {
     pub fn new() -> Self {
         Self {

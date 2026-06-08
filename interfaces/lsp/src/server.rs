@@ -382,19 +382,17 @@ async fn generate_fix_edits(
         .simple_chat(provider, &prompt)
         .await
         .ok()
-        .and_then(|s| {
+        .map(|s| {
             let trimmed = s.trim();
             if trimmed.starts_with("```") {
-                Some(
-                    trimmed
-                        .lines()
-                        .skip(1)
-                        .take_while(|l| !l.starts_with("```"))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
+                trimmed
+                    .lines()
+                    .skip(1)
+                    .take_while(|l| !l.starts_with("```"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
-                Some(trimmed.to_string())
+                trimmed.to_string()
             }
         });
 

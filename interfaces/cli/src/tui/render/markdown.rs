@@ -382,7 +382,7 @@ pub(crate) fn render_assistant_markdown(
                         Box::leak(format!("   {}", item_prefix).into_boxed_str())
                     };
                     prefix_rest = Box::leak(
-                        format!("{}", " ".repeat(prefix_first.chars().count())).into_boxed_str(),
+                        " ".repeat(prefix_first.chars().count()).to_string().into_boxed_str(),
                     );
                     prefix_style = Style::default()
                         .fg(theme.assistant)
@@ -398,7 +398,7 @@ pub(crate) fn render_assistant_markdown(
                         Box::leak(format!("   {}", item_prefix).into_boxed_str())
                     };
                     prefix_rest = Box::leak(
-                        format!("{}", " ".repeat(prefix_first.chars().count())).into_boxed_str(),
+                        " ".repeat(prefix_first.chars().count()).to_string().into_boxed_str(),
                     );
                     prefix_style = Style::default()
                         .fg(theme.assistant)
@@ -510,7 +510,7 @@ fn flush_spans(
         return;
     }
     let mut line_spans = vec![Span::styled(first_prefix.to_string(), prefix_style)];
-    line_spans.extend(spans.drain(..));
+    line_spans.append(spans);
     let first_width = display_width(first_prefix);
     let continuation_width = display_width(continuation_prefix);
     let max_width = width.max(1);

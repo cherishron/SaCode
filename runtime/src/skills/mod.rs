@@ -149,6 +149,7 @@ impl SkillRegistry {
         Ok(path)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_skill_with_meta(
         &self,
         name: &str,

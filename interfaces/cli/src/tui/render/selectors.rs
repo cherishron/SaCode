@@ -9,7 +9,7 @@ use ratatui::{
 use super::super::{App, InputMode};
 
 /// Generic dropdown list renderer positioned above the input area
-fn render_dropdown_list<'a>(
+fn render_dropdown_list(
     frame: &mut Frame,
     app: &App,
     area: Rect,

@@ -38,9 +38,7 @@ impl App {
             return;
         }
 
-        if self.handle_text_input_key(key) {
-            return;
-        }
+        self.handle_text_input_key(key);
     }
 
     pub(super) fn handle_escape_key(&mut self) -> bool {

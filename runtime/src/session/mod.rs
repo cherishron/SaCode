@@ -281,7 +281,7 @@ impl SessionState {
     fn estimate_event_tokens(&self) -> u32 {
         self.events
             .iter()
-            .map(|event| estimate_event_tokens(event))
+            .map(estimate_event_tokens)
             .sum()
     }
 
@@ -319,12 +319,12 @@ impl SessionState {
         let summary = generate_compression_summary(&key_events, &tool_events);
         let compressed_events = key_events
             .into_iter()
-            .chain(tool_events.into_iter())
+            .chain(tool_events)
             .collect::<Vec<_>>();
         let compressed_count = compressed_events.len();
         let compressed_tokens = compressed_events
             .iter()
-            .map(|event| estimate_event_tokens(event))
+            .map(estimate_event_tokens)
             .sum::<u32>();
 
         let ratio = if original_tokens > 0 {

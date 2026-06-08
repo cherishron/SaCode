@@ -47,10 +47,9 @@ pub(crate) fn render_messages_panel(frame: &mut Frame, app: &mut App, area: Rect
     }
 
     // Append inline pending question at the bottom
-    if !app.interaction.pending_question_items.is_empty() {
-        if visible_lines.len() < max_y {
-            visible_lines.extend(render_inline_pending_question(app));
-        }
+    if !app.interaction.pending_question_items.is_empty()
+        && visible_lines.len() < max_y {
+        visible_lines.extend(render_inline_pending_question(app));
     }
 
     frame.render_widget(
