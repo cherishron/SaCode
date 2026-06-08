@@ -1,12 +1,12 @@
 # SaCode 交叉编译指南
 
-本文档说明如何在 Linux 环境下交叉编译 Windows 可执行文件，并和当前 npm 发布包的产物要求保持一致。
+本文档说明如何在 Linux 环境下交叉编译 Windows 和 macOS 可执行文件，并和当前 npm 发布包的产物要求保持一致。
 
 ---
 
 ## 背景
 
-SaCode 的 npm 包需要同时包含 Linux 和 Windows 二进制。在 Linux CI 环境中，我们可以通过 mingw-w64 工具链交叉编译 Windows 目标，无需真实的 Windows 机器。
+SaCode 的 npm 包需要同时包含 Linux、Windows 和 macOS 二进制。在 Linux CI 环境中，我们可以通过 mingw-w64 工具链交叉编译 Windows 目标，通过 osxcross 工具链交叉编译 macOS 目标，无需真实的 Windows 或 macOS 机器。
 
 ---
 
@@ -65,6 +65,58 @@ cargo build --release --target x86_64-pc-windows-gnu
 
 ---
 
+## macOS 交叉编译
+
+### 前置条件
+
+#### 1. Rust macOS 目标
+
+```bash
+# Intel Mac 目标
+rustup target add x86_64-apple-darwin
+
+# Apple Silicon 目标
+rustup target add aarch64-apple-darwin
+```
+
+#### 2. osxcross 工具链（可选）
+
+```bash
+# 克隆 osxcross 仓库
+git clone --depth=1 --branch v1.2 https://github.com/tpoechtrager/osxcross.git
+cd osxcross
+
+# 下载 macOS SDK（需要 macOS SDK 许可）
+# 这里使用系统自带的 Xcode Command Line Tools
+# 或使用预编译的 SDK
+
+# 构建工具链
+sudo ./tools/gen_sdk_package.sh
+sudo ./build.sh
+```
+
+#### 3. 简化方案：使用 GitHub Actions
+
+由于 macOS 交叉编译涉及复杂的 SDK 配置，推荐直接使用 GitHub Actions 的 macOS runner：
+
+```yaml
+# .github/workflows/build-macos.yml
+jobs:
+  build-macos:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+```
+
+---
+
 ## 使用 cross 工具（可选）
 
 如果有 Docker 环境，可以使用 `cross` 工具：
@@ -87,6 +139,8 @@ cross build --release --target x86_64-pc-windows-gnu
 |----------|----------|
 | Linux x64 | `target/release/sacode` 或 `target/x86_64-unknown-linux-gnu/release/sacode` |
 | Windows x64 | `target/x86_64-pc-windows-gnu/release/sacode.exe` |
+| macOS x64 | `target/x86_64-apple-darwin/release/sacode` |
+| macOS arm64 | `target/aarch64-apple-darwin/release/sacode` |
 
 ---
 
@@ -99,6 +153,14 @@ chmod +x npm-package/platforms/sacode-linux-x64
 
 # Windows
 cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
+
+# macOS x64 (Intel)
+cp target/x86_64-apple-darwin/release/sacode npm-package/platforms/sacode-darwin-x64
+chmod +x npm-package/platforms/sacode-darwin-x64
+
+# macOS arm64 (Apple Silicon)
+cp target/aarch64-apple-darwin/release/sacode npm-package/platforms/sacode-darwin-arm64
+chmod +x npm-package/platforms/sacode-darwin-arm64
 ```
 
 ---

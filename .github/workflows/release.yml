@@ -17,6 +17,12 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             artifact: sacode-win32-x64.exe
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: sacode-darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-14
+            artifact: sacode-darwin-arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -66,6 +72,10 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: node npm-package/bin/sacode.js --version
 
+      - name: Test binary (macOS)
+        if: startsWith(matrix.os, 'macos-')
+        run: npm-package/platforms/${{ matrix.artifact }} --version
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -92,7 +102,9 @@ jobs:
         run: |
           node scripts/prepare-npm-platforms.js ${{ steps.get_version.outputs.VERSION }} --clean \
             --source-file linux-x64 npm-package/platforms/sacode-linux-x64 \
-            --source-file win32-x64 npm-package/platforms/sacode-win32-x64.exe
+            --source-file win32-x64 npm-package/platforms/sacode-win32-x64.exe \
+            --source-file darwin-x64 npm-package/platforms/sacode-darwin-x64 \
+            --source-file darwin-arm64 npm-package/platforms/sacode-darwin-arm64
 
       - name: Check release consistency
         run: node scripts/check-release.js --strict-platforms

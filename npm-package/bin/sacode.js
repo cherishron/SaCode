@@ -9,7 +9,9 @@ const arch = os.arch();
 
 const binaryMap = {
   'linux-x64': 'sacode-linux-x64',
-  'win32-x64': 'sacode-win32-x64.exe'
+  'win32-x64': 'sacode-win32-x64.exe',
+  'darwin-x64': 'sacode-darwin-x64',
+  'darwin-arm64': 'sacode-darwin-arm64'
 };
 
 const key = `${platform}-${arch}`;

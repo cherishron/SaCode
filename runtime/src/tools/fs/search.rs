@@ -108,6 +108,10 @@ fn collect_matches(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
+            #[cfg(target_os = "windows")]
+            if should_skip_dir(&path) {
+                continue;
+            }
             collect_matches(root, &path, matcher, file_pattern, matches)?;
         } else if path.is_file() && matches_file_pattern(root, &path, file_pattern) {
             collect_file_matches(root, &path, matcher, matches)?;
@@ -115,6 +119,27 @@ fn collect_matches(
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn should_skip_dir(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    
+    let skip_dirs = [
+        "$RECYCLE.BIN",
+        "System Volume Information",
+        "Windows",
+        "Program Files",
+        "Program Files (x86)",
+        "ProgramData",
+        "System32",
+        "Recovery",
+    ];
+    
+    skip_dirs.contains(&name)
 }
 
 fn collect_file_matches(

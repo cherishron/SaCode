@@ -53,3 +53,27 @@ jobs:
 
       - name: Test Windows binary
         run: node npm-package/bin/sacode.js --version
+
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Prepare binary
+        run: |
+          node scripts/prepare-npm-platforms.js $(node -p "require('./npm-package/package.json').version") --clean --platform darwin-arm64 --source-file darwin-arm64 target/release/sacode
+
+      - name: Check release consistency
+        run: node scripts/check-release.js
+
+      - name: Test macOS binary
+        run: |
+          cd npm-package
+          node bin/sacode.js --version

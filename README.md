@@ -23,6 +23,8 @@ sacode --version
 
 - Linux x64
 - Windows x64
+- macOS x64 (Intel)
+- macOS arm64 (Apple Silicon)
 
 ## 30 秒上手
 

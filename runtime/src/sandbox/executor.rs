@@ -401,6 +401,15 @@ fn configure_process_isolation(command: &mut Command) {
             });
         }
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NEW_PROCESS_GROUP = 0x00000200
+        // CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
 }
 
 fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
@@ -415,9 +424,18 @@ fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(target_os = "windows")]
     {
-        child.kill()?;
+        // 使用 taskkill /T /PID 杀掉整个进程树
+        let pid = child.id();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        
+        // Fallback: 直接 kill 子进程
+        let _ = child.kill();
     }
 
     let _ = child.wait();

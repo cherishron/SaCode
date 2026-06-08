@@ -138,6 +138,8 @@ const manifestPath = path.join(platformDir, 'manifest.json');
 const expectedMap = {
   'linux-x64': 'sacode-linux-x64',
   'win32-x64': 'sacode-win32-x64.exe',
+  'darwin-x64': 'sacode-darwin-x64',
+  'darwin-arm64': 'sacode-darwin-arm64',
 };
 
 if (packageJson.name !== '@cherishron/sacode') {
@@ -160,12 +162,8 @@ if (!readme.includes('npm install -g @cherishron/sacode')) {
   fail('npm README install command is out of date');
 }
 
-if (!readme.includes('- Linux x64') || !readme.includes('- Windows x64')) {
+if (!readme.includes('- Linux x64') || !readme.includes('- Windows x64') || !readme.includes('- macOS x64') || !readme.includes('- macOS arm64')) {
   fail('npm README supported platform list is incomplete');
-}
-
-if (readme.includes('- macOS x64') || readme.includes('- macOS arm64')) {
-  fail('npm README still advertises macOS binaries');
 }
 
 if (JSON.stringify(launcherMap) !== JSON.stringify(expectedMap)) {

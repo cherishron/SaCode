@@ -75,6 +75,8 @@ SaCode stores project runtime data in `.sacode/`:
 
 - Linux x64
 - Windows x64
+- macOS x64 (Intel)
+- macOS arm64 (Apple Silicon)
 
 ## More Docs
 

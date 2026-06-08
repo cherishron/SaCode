@@ -7,6 +7,18 @@
 
 ---
 
+## [0.1.28] - 2026-06-08
+
+### 新增
+
+- macOS 平台支持
+  - GitHub Actions CI 支持 macOS 测试和构建
+  - npm 安装链路支持 macOS x64（Intel）和 arm64（Apple Silicon）
+  - 发布检查脚本支持 macOS 平台验证
+  - 交叉编译文档添加 macOS 构建指南
+
+---
+
 ## [0.1.27] - 2026-06-08
 
 ### 新增

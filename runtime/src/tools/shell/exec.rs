@@ -6,6 +6,21 @@ use super::sandbox::ShellSandbox;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_OUTPUT_LEN: usize = 10000;
 
+#[cfg(target_os = "windows")]
+const WINDOWS_SHELL_BUILTINS: &[&str] = &[
+    "dir", "type", "echo", "copy", "del", "ren", "mkdir", "rmdir",
+    "set", "cd", "chdir", "md", "move", "pushd", "popd", "path",
+    "assoc", "ftype", "cls", "color", "date", "time", "title",
+    "mklink", "robocopy", "xcopy", "find", "findstr", "where",
+    "sort", "more", "fc", "comp", "tree", "ver", "vol",
+];
+
+#[cfg(target_os = "windows")]
+const WINDOWS_DANGEROUS_PATTERNS: &[&str] = &[
+    "format", "diskpart", "bcdedit", "reg delete", "del /F /S", "rmdir /S",
+    "takeown", "icacls", "shutdown", "reboot", "net user", "wmic",
+];
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "shell.exec".to_string(),
@@ -51,7 +66,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     ShellSandbox::validate(command_str, cwd)?;
 
-    let parts = split_command(command_str)?;
+    #[cfg(target_os = "windows")]
+    let command_str = wrap_windows_shell_command(command_str)?;
+
+    let parts = split_command(&command_str)?;
     let Some(program) = parts.first() else {
         return Ok(ToolOutput::failure("command is required"));
     };
@@ -140,7 +158,41 @@ fn is_dangerous_command(cmd: &str) -> bool {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        for pattern in WINDOWS_DANGEROUS_PATTERNS {
+            if cmd_lower.contains(pattern) {
+                return true;
+            }
+        }
+    }
+
     false
+}
+
+#[cfg(target_os = "windows")]
+fn needs_shell_wrapper(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    WINDOWS_SHELL_BUILTINS.contains(&lower.as_str())
+}
+
+#[cfg(target_os = "windows")]
+fn wrap_windows_shell_command(command: &str) -> anyhow::Result<String> {
+    let parts = split_command(command)?;
+    let Some(program) = parts.first() else {
+        anyhow::bail!("command is required");
+    };
+
+    if needs_shell_wrapper(program) {
+        Ok(format!("cmd.exe /C {}", command))
+    } else {
+        Ok(command.to_string())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wrap_windows_shell_command(command: &str) -> anyhow::Result<String> {
+    Ok(command.to_string())
 }
 
 fn truncate_output(output: String) -> String {
