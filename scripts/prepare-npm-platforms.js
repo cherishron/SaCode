@@ -43,6 +43,18 @@ const artifacts = [
     output: 'sacode-win32-x64.exe',
     chmod: false,
   },
+  {
+    key: 'darwin-x64',
+    source: path.join(cargoTargetDir, 'x86_64-apple-darwin', 'release', 'sacode'),
+    output: 'sacode-darwin-x64',
+    chmod: true,
+  },
+  {
+    key: 'darwin-arm64',
+    source: path.join(cargoTargetDir, 'aarch64-apple-darwin', 'release', 'sacode'),
+    output: 'sacode-darwin-arm64',
+    chmod: true,
+  },
 ];
 
 const selectedArtifacts = requestedPlatforms.length === 0
