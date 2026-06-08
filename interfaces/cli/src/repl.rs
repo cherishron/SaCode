@@ -1,0 +1,1006 @@
+use std::{
+    collections::VecDeque,
+    env,
+    io::{self, BufRead, Write},
+};
+
+use anyhow::Result;
+use sacode_kernel::ExecutionMode;
+use sacode_runtime::{
+    McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry,
+};
+
+use crate::{
+    agent_harness,
+    cmd::init::{initialize_project, InitMode},
+    cmd::{
+        config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status,
+        update, vim, wiki, ApprovalPolicy,
+    },
+    provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
+    runner::{
+        format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream,
+        StreamEventKind,
+    },
+    version_check::{update_prompt, VersionCheckConfig, VersionChecker, VersionStatus},
+};
+
+#[derive(Debug)]
+pub struct ReplSession {
+    mode: ExecutionMode,
+    provider_store: ProviderConfigStore,
+    sacode_store: SaCodeConfigStore,
+    access_store: ProjectAccessConfigStore,
+    session_summary: Option<String>,
+    recent_messages: VecDeque<ReplMessage>,
+    pending_question: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+struct ReplMessage {
+    role: &'static str,
+    content: String,
+}
+
+impl ReplSession {
+    pub fn new() -> Self {
+        Self {
+            mode: ExecutionMode::Build,
+            provider_store: ProviderConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            sacode_store: SaCodeConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            access_store: ProjectAccessConfigStore::new(
+                &env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            session_summary: None,
+            recent_messages: VecDeque::new(),
+            pending_question: None,
+        }
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let _ = status::ensure_default_context7(&workdir).await;
+        let runtime_config = config::effective_config(&workdir).ok();
+        let version_config = runtime_config
+            .as_ref()
+            .map(|cfg| VersionCheckConfig {
+                check_on_startup: cfg.update_check_on_startup,
+                cache_duration_hours: cfg.update_cache_duration_hours as i64,
+                channel: cfg.update_channel.clone(),
+            })
+            .unwrap_or_default();
+        if let Ok(VersionStatus::UpdateAvailable {
+            current_version,
+            remote_version,
+        }) = VersionChecker::with_config(version_config).check_for_update()
+        {
+            println!();
+            println!("{}", update_prompt(&current_version, &remote_version));
+            println!();
+        }
+        let stdin = io::stdin();
+        let mut lines = stdin.lock().lines();
+
+        loop {
+            print!(">>> ");
+            io::stdout().flush()?;
+
+            let line = match lines.next() {
+                Some(Ok(l)) => l,
+                Some(Err(_)) | None => break,
+            };
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if trimmed.starts_with('/') {
+                if self.handle_command(trimmed).await? {
+                    break;
+                }
+                continue;
+            }
+
+            self.handle_task(trimmed).await?;
+        }
+
+        println!("Bye!");
+        Ok(())
+    }
+
+    async fn handle_command(&mut self, cmd: &str) -> Result<bool> {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            return Ok(false);
+        }
+
+        match parts[0] {
+            "/exit" | "/quit" | "/q" => return Ok(true),
+            "/help" | "/h" => self.show_help(),
+            "/init" => self.run_init(InitMode::Basic).await?,
+            "/init-deep" => self.run_init(InitMode::Deep).await?,
+            "/connect" => self.connect_provider()?,
+            "/mode" => {
+                if parts.len() > 1 {
+                    self.set_mode(parts[1]);
+                } else {
+                    println!("Current mode: {:?}", self.mode);
+                    println!("Available: plan, build, yolo");
+                }
+            }
+            "/tools" => self.show_tools(),
+            "/doctor" => self.show_doctor().await?,
+            "/diff" => self.show_diff(&parts[1..])?,
+            "/hooks" => self.show_hooks()?,
+            "/ide" => self.show_ide(&parts[1..])?,
+            "/config" => self.show_config(&parts[1..])?,
+            "/keybindings" => self.show_keybindings()?,
+            "/outstyle" => self.show_outstyle(&parts[1..])?,
+            "/prompt" => self.show_prompt(&parts[1..])?,
+            "/vim" => self.show_vim(&parts[1..])?,
+            "/skills" => self.show_skills(),
+            "/skill" => self.handle_skill_command(&parts[1..])?,
+            "/mcps" => self.show_mcp(),
+            "/memory" => self.show_memory(&parts[1..])?,
+            "/wiki" => self.show_wiki(&parts[1..])?,
+            "/compress" => self.compress_context(),
+            "/insight" => self.show_insight()?,
+            "/mcps-show" => self.show_single_mcp(&parts[1..])?,
+            "/mcps-remove" => self.remove_mcp(&parts[1..])?,
+            "/login" => self.login_provider()?,
+            "/providers" => self.select_provider()?,
+            "/provider-rename" => self.rename_provider()?,
+            "/provider-remove" => self.remove_provider()?,
+            "/models" => self.select_model()?,
+            "/status" => self.show_status().await?,
+            "/update" => self.handle_update_command(&parts[1..])?,
+            "/clear" => self.clear_screen(),
+            "/add-dir" => self.add_dir_command(&parts[1..])?,
+            cmd => println!("Unknown command: {}", cmd),
+        }
+
+        Ok(false)
+    }
+
+    async fn handle_task(&mut self, prompt: &str) -> Result<()> {
+        let effective_input = self.decorate_pending_answer(prompt);
+        let effective_prompt = self.build_task_prompt(&effective_input);
+        let runtime_config =
+            config::effective_config(&env::current_dir().unwrap_or_else(|_| ".".into())).ok();
+        let approval = runtime_config
+            .as_ref()
+            .map(|cfg| match cfg.approval_policy.as_str() {
+                "auto" => ApprovalPolicy::AutoApprove,
+                "deny" => ApprovalPolicy::AutoDeny,
+                _ => ApprovalPolicy::Prompt,
+            })
+            .unwrap_or(ApprovalPolicy::Prompt);
+        let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(3);
+        println!();
+        io::stdout().flush()?;
+        let output = run_task_with_stdin_and_stream(
+            &effective_prompt,
+            self.mode,
+            approval,
+            max_iterations,
+            None,
+            Some(|kind: StreamEventKind, chunk: &str| {
+                if matches!(kind, StreamEventKind::Message) {
+                    print!("{}", chunk);
+                    let _ = io::stdout().flush();
+                }
+            }),
+        )
+        .await?;
+        self.push_recent_message("user", &effective_input);
+        if let Ok(response) = &output.provider_response {
+            self.push_recent_message("assistant", response);
+        }
+        self.pending_question = output.pending_question.clone();
+        println!();
+        println!("{}", format_stream_tail(&output));
+        if let Some(summary) = format_learned_facts_summary(&output.learned_facts) {
+            println!("{}", summary);
+        }
+        if let Some(question) = self.pending_question.as_ref() {
+            println!("[等待用户回答] {}", pending_question_title(question));
+            if let Some(options) = pending_question_options(question) {
+                println!("可选项: {}", options.join(", "));
+            }
+            println!();
+        }
+        println!();
+
+        Ok(())
+    }
+
+    fn decorate_pending_answer(&mut self, prompt: &str) -> String {
+        let Some(question) = self.pending_question.take() else {
+            return prompt.to_string();
+        };
+        format!(
+            "你上一轮通过 interaction.ask 提出了这个问题：\n{}\n\n用户给出的回答是：\n{}\n\n请基于这个回答继续完成原任务。",
+            pending_question_title(&question),
+            prompt.trim()
+        )
+    }
+
+    fn show_help(&self) {
+        println!();
+        println!("Commands:");
+        println!("  /help, /h        - Show this help");
+        println!("  /init            - Lightweight project initialization");
+        println!("  /init-deep       - Deep project initialization");
+        println!("  /mode [plan|build|yolo] - Set or show mode");
+        println!("  /login           - Configure OpenAI-compatible provider");
+        println!("  /connect         - Quick connect to a preset provider");
+        println!("  /providers       - List and switch provider");
+        println!("  /provider-rename - Rename a provider");
+        println!("  /provider-remove - Remove a non-current provider");
+        println!("  /models          - Fetch and select default model");
+        println!("  /status          - Show MCP and plugin link status");
+        println!("  /update [--check|--force|--rollback] - 检查、更新或回滚 sacode");
+        println!("  /doctor          - Diagnose current setup and readiness");
+        println!("  /diff            - Show current git diff summary");
+        println!("  /hooks           - Show runtime hooks and lifecycle points");
+        println!("  /ide             - Show IDE integration guide or config");
+        println!("  /config          - Show or set layered runtime config");
+        println!("  /keybindings     - Show TUI keybindings");
+        println!("  /outstyle        - Show or set user output style, or project override");
+        println!("  /prompt          - Show current prompt chain, diagnose sources, or init project prompt file");
+        println!("  /vim             - Show or set Vim-style navigation");
+        println!("  /tools           - Show available tools");
+        println!("  /add-dir <path>  - Add a project directory by absolute path");
+        println!("  /skills          - Show available skills");
+        println!("  /skill <subcommand> - Manage or run skills");
+        println!("  /mcps            - Show configured MCP servers");
+        println!("  /memory          - Show, search, path, summary, or append typed memory");
+        println!("  /wiki            - Show layered sacode knowledge sources and previews");
+        println!("  /compress        - Compress current REPL context");
+        println!("  /insight         - 生成并打开用户级 insight 网页报告");
+        println!("  /mcps-show <name> - Show one MCP server");
+        println!("  /mcps-remove <name> - Remove one MCP server");
+        println!("  /clear           - Clear screen");
+        println!("  /exit, /quit, /q - Exit REPL");
+        println!();
+        println!("Type a task description to run it.");
+        println!();
+    }
+
+    fn set_mode(&mut self, mode: &str) {
+        match mode {
+            "plan" => self.mode = ExecutionMode::Plan,
+            "build" => self.mode = ExecutionMode::Build,
+            "yolo" => self.mode = ExecutionMode::Yolo,
+            _ => {
+                println!("Unknown mode: {}", mode);
+                return;
+            }
+        }
+        println!("Mode set to: {:?}", self.mode);
+    }
+
+    fn show_tools(&self) {
+        let registry = ToolRegistry::builtin();
+        println!();
+        println!("Available tools:");
+        for name in registry.names() {
+            println!("  {}", name);
+        }
+        println!();
+    }
+
+    fn handle_update_command(&mut self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        update::run(args)
+    }
+
+    fn clear_screen(&self) {
+        println!();
+    }
+
+    fn build_task_prompt(&self, prompt: &str) -> String {
+        let mut sections = Vec::new();
+
+        if let Some(summary) = self
+            .session_summary
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            sections.push(format!(
+                "以下是当前 REPL 会话的历史摘要，请在后续任务中延续这些上下文与约束：\n{}",
+                summary.trim()
+            ));
+        }
+
+        let recent = self
+            .recent_messages
+            .iter()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|message| format!("[{}] {}", message.role, message.content.trim()))
+            .collect::<Vec<_>>();
+        if !recent.is_empty() {
+            sections.push(format!(
+                "以下是最近对话，请结合这些内容继续处理：\n{}",
+                recent.join("\n\n")
+            ));
+        }
+
+        sections.push(format!("当前用户请求：\n{}", prompt.trim()));
+        sections.join("\n\n---\n\n")
+    }
+
+    fn push_recent_message(&mut self, role: &'static str, content: &str) {
+        self.recent_messages.push_back(ReplMessage {
+            role,
+            content: content.to_string(),
+        });
+        while self.recent_messages.len() > 12 {
+            self.recent_messages.pop_front();
+        }
+    }
+
+    fn compress_context(&mut self) {
+        let summary = self.build_context_summary();
+        if summary.is_empty() {
+            println!("Current REPL context is too short to compress.");
+            println!();
+            return;
+        }
+
+        self.session_summary = Some(summary.clone());
+        self.recent_messages.clear();
+        println!("Compressed current REPL context.");
+        println!();
+        println!("Summary preview:");
+        println!("{}", summary);
+        println!();
+    }
+
+    fn build_context_summary(&self) -> String {
+        if self.recent_messages.len() <= 2 {
+            return String::new();
+        }
+
+        let mut lines = Vec::new();
+        if let Some(existing) = self
+            .session_summary
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            lines.push("Existing summary:".to_string());
+            lines.push(existing.trim().to_string());
+        }
+
+        lines.push("Recent REPL summary:".to_string());
+        for message in self.recent_messages.iter().take(12) {
+            let compact = message
+                .content
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let snippet = compact.chars().take(220).collect::<String>();
+            lines.push(format!("- {}: {}", message.role, snippet));
+        }
+        lines.join("\n")
+    }
+
+    fn show_insight(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+
+        let messages: Vec<(&str, &str)> = self
+            .recent_messages
+            .iter()
+            .map(|m| (m.role, m.content.as_str()))
+            .collect();
+
+        if messages.is_empty() {
+            println!("No chat history to analyze. Send some messages first.");
+            println!();
+            return Ok(());
+        }
+
+        println!(
+            "正在分析 {} 条消息并生成用户级 insight 网页报告...",
+            messages.len()
+        );
+        println!();
+
+        let report = insight::analyze_messages(&messages, &workdir)?;
+        println!("{}", insight::render_success_message(&report));
+        println!();
+
+        Ok(())
+    }
+
+    fn show_config(&self, parts: &[&str]) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        println!("{}", config::render_config(&workdir, &args)?);
+        Ok(())
+    }
+
+    async fn show_status(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let installed = status::ensure_default_context7(&workdir).await?;
+        if installed {
+            println!("Installed default MCP: context7 [official remote]");
+        }
+        println!("{}", status::render_status(&workdir).await?);
+        Ok(())
+    }
+
+    async fn show_doctor(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", doctor::render_doctor(&workdir).await?);
+        Ok(())
+    }
+
+    fn show_diff(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        println!("{}", diff::render_diff(args)?);
+        Ok(())
+    }
+
+    fn show_hooks(&self) -> Result<()> {
+        println!("{}", hooks::render_hooks());
+        Ok(())
+    }
+
+    fn show_keybindings(&self) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", keybindings::render_keybindings(&workdir)?);
+        Ok(())
+    }
+
+    fn show_vim(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!("{}", vim::render_vim(&workdir, &args)?);
+        Ok(())
+    }
+
+    fn add_dir_command(&self, parts: &[&str]) -> Result<()> {
+        let Some(raw_path) = parts.first() else {
+            println!("Usage: /add-dir <absolute-path>");
+            return Ok(());
+        };
+
+        let path = std::path::Path::new(raw_path);
+        let added = self.access_store.add_dir(path)?;
+        println!(
+            "Added directory access: {}\nStored in .sacode/dirs.json",
+            added.display()
+        );
+        Ok(())
+    }
+
+    async fn run_init(&self, mode: InitMode) -> Result<()> {
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        let _ = initialize_project(&workdir, mode).await?;
+        Ok(())
+    }
+
+    fn show_skills(&self) {
+        let registry = SkillRegistry::new(std::path::Path::new("."));
+        println!();
+        println!("Available skills:");
+        match registry.list() {
+            Ok(skills) => {
+                for skill in skills {
+                    println!(
+                        "  {} - {} [{}]",
+                        skill.name,
+                        skill.description,
+                        skill.source.label()
+                    );
+                }
+            }
+            Err(error) => println!("  failed to load skills: {}", error),
+        }
+        println!();
+    }
+
+    fn show_mcp(&self) {
+        let store = McpConfigStore::new(std::path::Path::new("."));
+        println!();
+        println!("Configured MCP servers:");
+        match store.list_entries() {
+            Ok(entries) if entries.is_empty() => println!("  none"),
+            Ok(entries) => {
+                for entry in entries {
+                    println!(
+                        "  {} - {} - {} [{}]",
+                        entry.name,
+                        if entry.server.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        entry.server.url,
+                        entry.source.label()
+                    );
+                }
+            }
+            Err(error) => println!("  failed to load MCP config: {}", error),
+        }
+        println!();
+    }
+
+    fn show_memory(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", memory::render_memory(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_wiki(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", wiki::render_wiki(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_prompt(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", prompt::render_prompt(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_ide(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", ide::render_ide(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn show_outstyle(&self, parts: &[&str]) -> Result<()> {
+        let args = parts
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let workdir = env::current_dir().unwrap_or_else(|_| ".".into());
+        println!();
+        println!("{}", outstyle::render_outstyle(&workdir, &args)?);
+        println!();
+        Ok(())
+    }
+
+    fn handle_skill_command(&self, parts: &[&str]) -> Result<()> {
+        let registry = SkillRegistry::new(std::path::Path::new("."));
+        match parts.first().copied() {
+            None | Some("list") => self.show_skills(),
+            Some("show") => {
+                let Some(name) = parts.get(1) else {
+                    println!("Usage: /skill show <name>");
+                    return Ok(());
+                };
+                let skill = registry.get(name)?;
+                println!();
+                println!("Name: {}", skill.name);
+                println!("Description: {}", skill.description);
+                println!("Source: {}", skill.source.label());
+                println!("Path: {}", skill.path.display());
+                println!();
+                println!("Prompt:");
+                println!("{}", skill.prompt);
+                println!();
+            }
+            Some("run") => {
+                let Some(name) = parts.get(1) else {
+                    println!("Usage: /skill run <name> [args...]");
+                    return Ok(());
+                };
+                let rendered = registry.render_prompt(
+                    name,
+                    &parts[2..].join(" "),
+                    std::path::Path::new("."),
+                )?;
+                println!();
+                println!("{}", rendered);
+                println!();
+            }
+            Some("add") => {
+                if parts.len() < 4 {
+                    println!("Usage: /skill add <name> <description> <prompt>");
+                    return Ok(());
+                }
+                let path =
+                    registry.save_project_skill(parts[1], parts[2], &parts[3..].join(" "))?;
+                println!("Saved project skill to {}", path.display());
+                println!();
+            }
+            Some("remove") => {
+                let Some(name) = parts.get(1) else {
+                    println!("Usage: /skill remove <name>");
+                    return Ok(());
+                };
+                registry.remove_project_skill(name)?;
+                println!("Removed project skill {}", name);
+                println!();
+            }
+            Some(cmd) => println!("Unknown /skill command: {}", cmd),
+        }
+        Ok(())
+    }
+
+    fn show_single_mcp(&self, parts: &[&str]) -> Result<()> {
+        let Some(name) = parts.first() else {
+            println!("Usage: /mcps-show <name>");
+            println!();
+            return Ok(());
+        };
+        let store = McpConfigStore::new(std::path::Path::new("."));
+        let server = store.get(name)?;
+        println!();
+        println!("Name: {}", name);
+        println!("Type: {}", server.server_type);
+        println!("Enabled: {}", server.enabled);
+        println!("URL: {}", server.url);
+        println!();
+        Ok(())
+    }
+
+    fn remove_mcp(&self, parts: &[&str]) -> Result<()> {
+        let Some(name) = parts.first() else {
+            println!("Usage: /mcps-remove <name>");
+            println!();
+            return Ok(());
+        };
+        let store = McpConfigStore::new(std::path::Path::new("."));
+        store.remove(name, McpSource::Project)?;
+        println!("Removed MCP server {}", name);
+        println!();
+        Ok(())
+    }
+
+    fn login_provider(&mut self) -> Result<()> {
+        println!();
+        let current_name = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_else(|| "default".to_string());
+        let existing_spec = self.sacode_store.provider(&current_name)?;
+        let existing = existing_spec
+            .as_ref()
+            .map(|spec| ProviderConfig {
+                base_url: spec.base_url.clone(),
+                api_key: spec.api_key.clone(),
+                model: self
+                    .sacode_store
+                    .load_or_default()
+                    .ok()
+                    .and_then(|config| config.resolve_model(&config.model).map(|(_, model)| model))
+                    .unwrap_or_default(),
+            })
+            .unwrap_or_default();
+        let provider_name = prompt_input("Provider name", Some(current_name.as_str()))?;
+        let base_url = prompt_input(
+            "Base URL",
+            if existing.base_url.is_empty() {
+                None
+            } else {
+                Some(existing.base_url.as_str())
+            },
+        )?;
+        let api_key = prompt_input("API Key", None)?;
+
+        let config = ProviderConfig {
+            base_url,
+            api_key,
+            model: existing.model,
+        };
+
+        let result = agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            &provider_name,
+            &config.base_url,
+            config.api_key,
+        )?;
+        let models =
+            agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?
+                .into_iter()
+                .filter(|option| option.provider_name == provider_name.as_str())
+                .map(|option| option.model_name)
+                .collect::<Vec<_>>();
+
+        println!("Saved provider {} to .sacode/config.json", provider_name);
+        println!("Discovered {} models.", models.len());
+        if !result.current_provider.config.model.is_empty() {
+            println!("Current model: {}", result.current_provider.config.model);
+        }
+        println!();
+        Ok(())
+    }
+
+    fn select_provider(&mut self) -> Result<()> {
+        println!();
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_default();
+        let providers = self.sacode_store.list_names()?;
+        if providers.is_empty() {
+            println!("No providers configured. Run /login first.");
+            println!();
+            return Ok(());
+        }
+
+        println!("Providers:");
+        for (index, provider) in providers.iter().enumerate() {
+            let marker = if provider == &current { "*" } else { " " };
+            println!("  {} {}. {}", marker, index + 1, provider);
+        }
+
+        let selection = prompt_input("Select provider number", None)?;
+        let index: usize = selection.parse()?;
+        let selected_provider = providers
+            .get(index.saturating_sub(1))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Invalid provider index"))?;
+        let current = agent_harness::switch_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            &selected_provider,
+        )?;
+        println!("Current provider set to {}", selected_provider);
+        if !current.config.model.is_empty() {
+            println!("Current model: {}", current.config.model);
+        }
+        println!();
+        Ok(())
+    }
+
+    fn rename_provider(&mut self) -> Result<()> {
+        println!();
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_else(|| "default".to_string());
+        let from = prompt_input("Current provider name", Some(current.as_str()))?;
+        let to = prompt_input("New provider name", None)?;
+        self.sacode_store.rename_provider(&from, &to)?;
+        let _ = self.provider_store.rename(&from, &to);
+        println!("Provider {} renamed to {}", from, to);
+        println!();
+        Ok(())
+    }
+
+    fn remove_provider(&mut self) -> Result<()> {
+        println!();
+        let current = self
+            .sacode_store
+            .current_provider_name()?
+            .unwrap_or_default();
+        let providers = self.sacode_store.list_names()?;
+        let removable: Vec<String> = providers
+            .into_iter()
+            .filter(|name| name != &current)
+            .collect();
+        if removable.is_empty() {
+            println!("No removable providers. Keep one current provider configured.");
+            println!();
+            return Ok(());
+        }
+
+        println!("Removable providers:");
+        for (index, provider) in removable.iter().enumerate() {
+            println!("  {}. {}", index + 1, provider);
+        }
+
+        let selection = prompt_input("Select provider number to remove", None)?;
+        let index: usize = selection.parse()?;
+        let provider_name = removable
+            .get(index.saturating_sub(1))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Invalid provider index"))?;
+        self.sacode_store.remove_provider(&provider_name)?;
+        let _ = self.provider_store.remove(&provider_name);
+        println!("Removed provider {}", provider_name);
+        println!();
+        Ok(())
+    }
+
+    fn select_model(&mut self) -> Result<()> {
+        println!();
+        let config = self.sacode_store.load_or_default()?;
+        let Some((current_provider_name, current_model)) = config.resolve_model(&config.model)
+        else {
+            println!("Provider is not configured. Run /connect first.");
+            println!();
+            return Ok(());
+        };
+        let options =
+            agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?;
+        if options.is_empty() {
+            println!("Provider returned no models.");
+            println!();
+            return Ok(());
+        }
+
+        println!("Models:");
+        for (index, option) in options.iter().enumerate() {
+            let marker = if option.provider_name == current_provider_name
+                && option.model_name == current_model
+            {
+                "*"
+            } else {
+                " "
+            };
+            println!(
+                "  {} {}. {} / {}",
+                marker,
+                index + 1,
+                option.provider_name,
+                option.model_name
+            );
+        }
+
+        let selection = prompt_input("Select model number", None)?;
+        let index: usize = selection.parse()?;
+        let selected = options
+            .get(index.saturating_sub(1))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Invalid model index"))?;
+        let _ = agent_harness::switch_model(
+            &self.provider_store,
+            &self.sacode_store,
+            &selected.provider_name,
+            &selected.model_name,
+        )?;
+
+        println!("Default model set to {}", selected.model_name);
+        println!();
+        Ok(())
+    }
+
+    fn connect_provider(&mut self) -> Result<()> {
+        println!();
+        println!("Quick Connect - Preset Providers:");
+        println!();
+        println!("  1. Ollama (Local)");
+        println!("     URL: http://127.0.0.1:11434/v1");
+        println!();
+        println!("  2. DeepSeek");
+        println!("     URL: https://api.deepseek.com/v1");
+        println!();
+        println!("  3. Xiaomi MiMo (Token Plan)");
+        println!("     URL: https://token-plan-cn.xiaomimimo.com/v1");
+        println!();
+        println!("  4. LongCat");
+        println!("     URL: https://api.longcat.chat/openai");
+        println!();
+        println!("  5. OpenAI");
+        println!("     URL: https://api.openai.com/v1");
+        println!();
+
+        let selection = prompt_input("Select provider number", None)?;
+        let index: usize = selection
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid number"))?;
+
+        let (name, base_url) = match index {
+            1 => ("ollama", "http://127.0.0.1:11434/v1"),
+            2 => ("deepseek", "https://api.deepseek.com"),
+            3 => ("mimo", "https://token-plan-cn.xiaomimimo.com/v1"),
+            4 => ("longcat", "https://api.longcat.chat/openai/v1"),
+            5 => ("openai", "https://api.openai.com/v1"),
+            _ => anyhow::bail!("Invalid selection: {}", index),
+        };
+
+        let api_key = prompt_input("API Key (ollama 留空即可)", None)?;
+
+        let result = agent_harness::connect_provider(
+            &self.provider_store,
+            &self.sacode_store,
+            name,
+            base_url,
+            api_key,
+        )?;
+        println!(
+            "Provider {} 已连接，当前默认模型: {}",
+            result.current_provider.name, result.current_provider.config.model
+        );
+        println!();
+        Ok(())
+    }
+}
+
+fn pending_question_title(question: &serde_json::Value) -> String {
+    question
+        .get("question")
+        .and_then(|value| value.as_str())
+        .unwrap_or("需要用户补充回答后继续执行。")
+        .to_string()
+}
+
+fn pending_question_options(question: &serde_json::Value) -> Option<Vec<String>> {
+    let options = question
+        .get("options")
+        .and_then(|value| value.as_array())?
+        .iter()
+        .filter_map(|item| {
+            item.get("label")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        })
+        .collect::<Vec<_>>();
+    if options.is_empty() {
+        None
+    } else {
+        Some(options)
+    }
+}
+
+impl Default for ReplSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn prompt_input(label: &str, default: Option<&str>) -> Result<String> {
+    let mut stdout = io::stdout();
+    match default {
+        Some(value) => write!(stdout, "{} [{}]: ", label, value)?,
+        None => write!(stdout, "{}: ", label)?,
+    }
+    stdout.flush()?;
+
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        if let Some(value) = default {
+            return Ok(value.to_string());
+        }
+    }
+
+    if trimmed.is_empty() {
+        anyhow::bail!("{} is required", label);
+    }
+
+    Ok(trimmed.to_string())
+}

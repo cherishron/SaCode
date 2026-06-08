@@ -1,17 +1,19 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build
-dist/
-*.tsbuildinfo
-.next/
-out/
+# Rust build output
+/target/
 
 # Environment
 .env
 .env.local
 .env.*.local
+
+# SQLite and local data
+*.db
+*.db-journal
+data/
+
+# Logs
+logs/
+*.log
 
 # IDE
 .idea/
@@ -23,27 +25,20 @@ out/
 .DS_Store
 Thumbs.db
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-pnpm-debug.log*
-
-# Testing
-coverage/
-.nyc_output/
-test-results/
-
-# Database
-*.db
-*.db-journal
-data/
-
 # Temp
 tmp/
 temp/
 .cache/
+.sacode/
 
-# Misc
+# Backup
 *.bak
 *.backup
+
+# npm package binaries
+npm-package/platforms/sacode-*
+
+# Build / distribution output
+dist/
+build/
+.monkeycode/

@@ -1,0 +1,560 @@
+use anyhow::Result;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeMap,
+    fs,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use crate::config::SaCodeConfig;
+use crate::tools::{SideEffectLevel, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec};
+
+pub mod servers;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub mcp: BTreeMap<String, McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    #[serde(rename = "type")]
+    pub server_type: String,
+    pub url: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerDetails {
+    pub protocol_version: Option<String>,
+    pub server_name: Option<String>,
+    pub server_version: Option<String>,
+    pub instructions: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolCallResult {
+    pub content: serde_json::Value,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum McpSource {
+    User,
+    Project,
+}
+
+impl McpSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    pub server: McpServerConfig,
+    pub source: McpSource,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpConfigStore {
+    config: SaCodeConfig,
+}
+
+impl McpConfigStore {
+    pub fn new(workdir: &Path) -> Self {
+        Self::new_from_config(SaCodeConfig::new(workdir))
+    }
+
+    pub fn new_from_config(config: SaCodeConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn load(&self) -> Result<McpConfig> {
+        self.config.load_merged_mcp_config()
+    }
+
+    pub fn load_from_source(&self, source: McpSource) -> Result<McpConfig> {
+        let path = self.path_for_source(source);
+        if !path.exists() {
+            return Ok(McpConfig::default());
+        }
+
+        let content = fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    pub fn save_to_source(&self, config: &McpConfig, source: McpSource) -> Result<()> {
+        let path = self.path_for_source(source);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(&path, serde_json::to_string_pretty(config)?)?;
+        Ok(())
+    }
+
+    pub fn add_remote(&self, name: &str, url: &str, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
+        config.mcp.insert(
+            name.to_string(),
+            McpServerConfig {
+                server_type: "remote".to_string(),
+                url: url.to_string(),
+                enabled: true,
+            },
+        );
+        self.save_to_source(&config, source)
+    }
+
+    pub fn set_enabled(&self, name: &str, enabled: bool, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
+        let server = config
+            .mcp
+            .get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("mcp server not found: {}", name))?;
+        server.enabled = enabled;
+        self.save_to_source(&config, source)
+    }
+
+    pub fn get(&self, name: &str) -> Result<McpServerConfig> {
+        let config = self.load()?;
+        config
+            .mcp
+            .get(name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("mcp server not found: {}", name))
+    }
+
+    pub fn remove(&self, name: &str, source: McpSource) -> Result<()> {
+        let mut config = self.load_from_source(source)?;
+        if config.mcp.remove(name).is_none() {
+            anyhow::bail!("mcp server not found: {}", name);
+        }
+        self.save_to_source(&config, source)
+    }
+
+    pub fn list_entries(&self) -> Result<Vec<McpServerEntry>> {
+        let mut merged: BTreeMap<String, McpServerEntry> = BTreeMap::new();
+
+        for source in [McpSource::User, McpSource::Project] {
+            let config = self.load_from_source(source)?;
+            for (name, server) in config.mcp {
+                merged.insert(
+                    name.clone(),
+                    McpServerEntry {
+                        name,
+                        server,
+                        source,
+                    },
+                );
+            }
+        }
+
+        Ok(merged.into_values().collect())
+    }
+
+    fn path_for_source(&self, source: McpSource) -> PathBuf {
+        match source {
+            McpSource::User => self.config.user_mcp_config(),
+            McpSource::Project => self.config.project_mcp_config(),
+        }
+    }
+}
+
+pub async fn inspect_server(server: &McpServerConfig) -> Result<McpServerDetails> {
+    let client = http_client()?;
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "sacode",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        }
+    });
+
+    let response: serde_json::Value = client
+        .post(&server.url)
+        .header("content-type", "application/json")
+        .header("Mcp-Method", "initialize")
+        .json(&payload)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let result = response
+        .get("result")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    Ok(McpServerDetails {
+        protocol_version: result
+            .get("protocolVersion")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        server_name: result
+            .get("serverInfo")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        server_version: result
+            .get("serverInfo")
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        instructions: result
+            .get("instructions")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+pub async fn list_tools(server: &McpServerConfig) -> Result<Vec<McpToolInfo>> {
+    let client = http_client()?;
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    });
+
+    let response: serde_json::Value = client
+        .post(&server.url)
+        .header("content-type", "application/json")
+        .header("Mcp-Method", "tools/list")
+        .json(&payload)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let tools = response
+        .get("result")
+        .and_then(|value| value.get("tools"))
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(tools
+        .into_iter()
+        .map(|tool| McpToolInfo {
+            name: tool
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            title: tool
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            description: tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            input_schema: tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        })
+        .collect())
+}
+
+pub async fn call_tool(
+    server: &McpServerConfig,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<McpToolCallResult> {
+    let client = http_client()?;
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        }
+    });
+
+    let response: serde_json::Value = client
+        .post(&server.url)
+        .header("content-type", "application/json")
+        .header("Mcp-Method", "tools/call")
+        .json(&payload)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let result = response
+        .get("result")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    Ok(McpToolCallResult {
+        content: result
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| result.clone()),
+        is_error: result
+            .get("isError")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    })
+}
+
+pub async fn list_enabled_tool_specs(store: &McpConfigStore) -> Result<Vec<ToolSpec>> {
+    let config = store.load()?;
+    let mut specs = Vec::new();
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let tools = match list_tools(&server).await {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            specs.push(tool_info_to_spec(&server_name, tool));
+        }
+    }
+
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(specs)
+}
+
+fn block_on_mcp_future<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow::anyhow!("runtime init failed: {}", e))?;
+        runtime.block_on(future)
+    }
+}
+
+pub fn register_enabled_tools_sync(
+    store: &McpConfigStore,
+    registry: &mut ToolRegistry,
+) -> Result<Vec<String>> {
+    let config = store.load()?;
+    let mut names = Vec::new();
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let tools = match block_on_mcp_future(list_tools(&server)) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            let spec = tool_info_to_spec(&server_name, tool.clone());
+            let tool_name = spec.name.clone();
+            registry.register(
+                spec,
+                Arc::new(McpToolExecutor {
+                    server: server.clone(),
+                    server_name: server_name.clone(),
+                    tool_name: tool.name,
+                }),
+            );
+            names.push(tool_name);
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+pub async fn find_enabled_search_tool(store: &McpConfigStore) -> Result<Option<(String, String)>> {
+    let config = store.load()?;
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let tools = match list_tools(&server).await {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            let lowered_name = tool.name.to_lowercase();
+            let lowered_desc = tool.description.clone().unwrap_or_default().to_lowercase();
+            if lowered_name.contains("search") || lowered_desc.contains("search") {
+                return Ok(Some((server_name, tool.name)));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn tool_info_to_spec(server_name: &str, tool: McpToolInfo) -> ToolSpec {
+    ToolSpec {
+        name: format!("mcp.{}.{}", server_name, tool.name),
+        description: tool
+            .description
+            .unwrap_or_else(|| "Remote MCP tool".to_string()),
+        input_schema: tool.input_schema,
+        output_schema: serde_json::json!({
+            "type": "object"
+        }),
+        side_effect_level: SideEffectLevel::Execute,
+        approval_required: true,
+        timeout_ms: Some(30_000),
+        tags: vec!["mcp".to_string(), server_name.to_string()],
+    }
+}
+
+#[derive(Clone)]
+struct McpToolExecutor {
+    server: McpServerConfig,
+    server_name: String,
+    tool_name: String,
+}
+
+impl ToolExecutor for McpToolExecutor {
+    fn execute(&self, input: serde_json::Value) -> Result<ToolOutput> {
+        let result = call_mcp_tool_sync(&self.server, &self.tool_name, input)?;
+        Ok(ToolOutput::success(serde_json::json!({
+            "content": result.content,
+            "server": self.server_name,
+            "tool": self.tool_name,
+            "source": "mcp",
+            "is_error": result.is_error,
+        })))
+    }
+}
+
+fn http_client() -> Result<Client> {
+    Ok(Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?)
+}
+
+pub fn call_mcp_tool_sync(
+    server: &McpServerConfig,
+    tool_name: &str,
+    arguments: serde_json::Value,
+) -> Result<McpToolCallResult> {
+    let client = http_client()?;
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        }
+    });
+
+    block_on_mcp_future(async {
+        let response: serde_json::Value = client
+            .post(&server.url)
+            .header("content-type", "application/json")
+            .header("Mcp-Method", "tools/call")
+            .json(&payload)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let result = response
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        Ok(McpToolCallResult {
+            content: result
+                .get("content")
+                .cloned()
+                .unwrap_or_else(|| result.clone()),
+            is_error: result
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        })
+    })
+}
+
+pub fn find_enabled_search_tool_sync(store: &McpConfigStore) -> Result<Option<(String, String)>> {
+    let config = store.load()?;
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let tools = match block_on_mcp_future(list_tools(&server)) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            let lowered_name = tool.name.to_lowercase();
+            let lowered_desc = tool.description.clone().unwrap_or_default().to_lowercase();
+            if lowered_name.contains("search") || lowered_desc.contains("search") {
+                return Ok(Some((server_name, tool.name)));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn list_enabled_mcp_tool_specs_sync(store: &McpConfigStore) -> Result<Vec<ToolSpec>> {
+    let config = store.load()?;
+    let mut specs = Vec::new();
+
+    for (server_name, server) in config.mcp {
+        if !server.enabled {
+            continue;
+        }
+
+        let tools = match block_on_mcp_future(list_tools(&server)) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for tool in tools {
+            specs.push(tool_info_to_spec(&server_name, tool));
+        }
+    }
+
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(specs)
+}

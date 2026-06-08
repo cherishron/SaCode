@@ -1,569 +1,282 @@
-# SACODE - 多端 AI 助手框架
+# SaCode
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
-[![Test Coverage](https://img.shields.io.io/badge/tests-174%20passed-brightgreen)](./vitest.config.ts)
+SaCode 是一个终端优先的 Rust AI 编程工具，面向习惯在 Shell、Git、CLI 和代码库上下文里完成工作的开发者。
 
-基于 Provider 抽象层的多平台 AI 助手框架，支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱等 AI 服务，以及微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email 等 10 个 IM 平台。
+它的目标很直接：把“问模型”升级成“理解仓库、调用工具、执行任务、保留可控性”的完整终端工作流。
 
-## 文档
+## 为什么用 SaCode
 
-- [AGENTS.md](./AGENTS.md) - 项目上下文与技术文档
-- [PRD.md](./docs/PRD.md) - 产品需求文档
-- [CONTRIBUTING.md](./docs/CONTRIBUTING.md) - 贡献指南
-- [CHANGELOG.md](./docs/CHANGELOG.md) - 变更日志
-- [部署指南](./docs/guides/deployment.md) - 生产环境部署
-- [前端架构](./docs/architecture/frontend.md) - Web UI 架构文档
-- [安全设计](./docs/architecture/security.md) - 安全架构文档
+- 终端优先：默认入口就是 TUI，也支持单次任务、REPL、管道输入和服务模式。
+- 工作区感知：围绕真实仓库结构、文件、Git diff、工具结果组织上下文。
+- 可控执行：支持 `plan`、`build`、`yolo` 三种执行模式，对副作用操作做分级控制。
+- 可扩展：内置 tools、skills、MCP、memory、wiki、checkpoint、insight 等能力。
+- Rust workspace 架构：`kernel` 负责纯逻辑，`runtime` 负责副作用，`interfaces/*` 负责入口和协议适配。
 
-## 特性
+## 安装
 
-- 🤖 **Provider 抽象层** - 支持 OpenAI、Anthropic、DeepSeek、Moonshot、智谱 5 个 AI 服务
-- 🔄 **Function Calling Loop** - 完整的 Agentic 工具执行循环
-- 🛠️ **工具桥接层** - 统一管理内置工具、Capabilities 工具、MCP 工具
-- 🧠 **Agent 基础设施** - Registry + Planner + Orchestrator 实现 Agentic 规划
-- 💬 **多端 IM 支持** - 微信、QQ、Telegram、Discord、钉钉、飞书、小艺、WhatsApp、Slack、Email
-- 🔗 **跨渠道会话管理** - SessionMapper 实现多平台会话统一映射
-- 🧭 **智能路由** - SmartRouter 支持规则引擎、条件匹配、多渠道路由
-- ⏱️ **长任务管理** - LongTaskManager 支持后台任务、进度跟踪、中断恢复
-- 🔌 **MCP 协议** - 完整的 Model Context Protocol 服务端/客户端实现
-- 🗄️ **缓存系统** - CacheManager 支持 Memory/Redis 双后端、LRU 淘汰
-- 🎛️ **模型管理** - ModelManager 支持多模型切换、能力匹配、负载均衡
-- ⏰ **定时任务系统** - 支持 interval/once/cron 三种定时任务类型
-- 🔌 **插件系统** - 可扩展的插件架构，支持生命周期钩子
-- 🌐 **现代化 Web UI** - Vue 3 + TinyVue + Tailwind CSS
-- 🔐 **混合认证** - 本地认证 + OAuth (GitHub/Google/微信/QQ/企业微信)
-- 🛠️ **自动化能力** - 文件操作、浏览器控制、Shell 命令
-- 🐳 **容器隔离** - Docker 容器运行 Agent，支持沙箱模式
-- 🚪 **统一网关** - Gateway 提供 WebSocket 控制平面
+```bash
+npm install -g @cherishron/sacode
+sacode --version
+```
+
+当前 npm 包支持：
+
+- Linux x64
+- Windows x64
+- macOS x64 (Intel)
+- macOS arm64 (Apple Silicon)
+
+## 30 秒上手
+
+### 1. 打开交互界面
+
+```bash
+sacode
+```
+
+### 2. 配置模型 Provider
+
+在 TUI 或 REPL 中输入：
+
+```text
+/login
+```
+
+依次填写：
+
+1. Base URL，例如 `https://api.openai.com/v1`
+2. API Key
+
+### 3. 选择模型
+
+```text
+/models
+```
+
+`/models` 会展示所有已配置 provider 的模型，选择一次即可同时切换当前 provider 和默认 model。
+
+### 4. 执行一个真实任务
+
+```bash
+sacode "分析当前仓库最值得优先修复的问题"
+```
+
+### 5. 初始化项目上下文
+
+```bash
+sacode init
+```
+
+这会为当前项目补齐 `AGENTS.md` 和 `.sacode/` 运行配置。
+
+## 使用方式
+
+### TUI 模式
+
+```bash
+sacode
+```
+
+TUI 是默认入口，适合持续对话、队列任务和多步执行。
+
+常用快捷键：
+
+- `Ctrl+Q`：退出
+- `Esc`：清空输入或取消当前执行
+- `Ctrl+T`：开启或关闭 thinking
+- `Ctrl+M`：轮转执行模式 `plan` / `build` / `yolo`
+
+常用内置命令：
+
+- `/login`
+- `/connect`
+- `/providers`
+- `/models`
+- `/loop <task>`
+- `/agents`
+- `/memory`
+- `/wiki`
+- `/insight`
+- `/update rollback`
+
+### 单次任务模式
+
+```bash
+sacode "分析代码结构"
+sacode "设计认证模块重构方案" --mode plan
+sacode "修复当前测试失败" --mode build
+sacode "批量格式化本仓库" --mode yolo
+```
+
+### 管道模式
+
+```bash
+git diff | sacode "生成提交说明"
+cat README.md | sacode "总结当前文档缺口"
+```
+
+### REPL 模式
+
+```bash
+sacode repl
+```
+
+### 服务模式
+
+```bash
+sacode serve --acp --lsp
+sacode acp serve
+sacode lsp serve
+```
+
+### 诊断与状态
+
+```bash
+sacode status       # 查看 MCP、插件状态
+sacode doctor       # 诊断 Provider、Memory、MCP 配置
+```
+
+### MCP 服务模式
+
+```bash
+sacode mcp serve    # 启动内置 MCP stdio server，暴露 fs.read/fs.list/git.diff
+```
+
+## 执行模式
+
+| 模式 | 适用场景 | 特征 |
+|------|----------|------|
+| `plan` | 方案设计、任务拆解 | 只规划，不执行修改 |
+| `build` | 日常开发任务 | 允许执行，修改类操作走审批 |
+| `yolo` | 明确低风险批处理 | 自动执行，适合高确定性任务 |
 
 ## 项目结构
 
-```
-SACODE/
-├── packages/
-│   ├── core/           # 核心引擎
-│   │   ├── provider/   # AI Provider 抽象层 (OpenAI/Anthropic/DeepSeek/Moonshot/智谱)
-│   │   ├── client/     # SACODEClient (工具执行循环 + Agent 集成)
-│   │   ├── tools/      # 工具桥接层 (内置 + Capabilities + MCP)
-│   │   ├── agent/      # Agent 基础设施 (Registry + Planner + Orchestrator)
-│   │   ├── session/    # 会话管理 + 跨渠道映射
-│   │   ├── router/     # 消息路由 + SmartRouter
-│   │   ├── model/      # 模型管理器
-│   │   ├── cache/      # 缓存层 (Memory + Redis)
-│   │   ├── scheduler/  # 定时任务调度器
-│   │   ├── task/       # 长任务管理器
-│   │   ├── mcp/        # MCP 协议实现
-│   │   ├── streaming/  # 流式输出管理
-│   │   └── plugin/     # 插件系统
-│   │
-│   ├── gateway/        # 统一控制平面
-│   ├── container/      # 容器隔离
-│   ├── adapters/       # IM 适配器 (10 个平台)
-│   ├── database/       # 数据库层 (Prisma)
-│   ├── auth/           # 认证模块
-│   ├── cli/            # 命令行工具
-│   ├── capabilities/   # 自动化能力
-│   ├── api/            # REST API + WebSocket
-│   └── web/            # Web UI (Vue 3 + TinyVue)
-│
-├── .SACODE/            # 配置目录
-│   ├── commands/       # Slash 命令
-│   ├── plugins/        # 插件目录
-│   └── skills/         # Skills 目录
-│
-├── docs/               # 文档
-└── javisk/             # PCIV 工作流模板
+```text
+.
+├── Cargo.toml
+├── kernel/              # 纯逻辑层
+├── runtime/             # tools/provider/memory/wiki/orchestrator 等副作用层
+├── interfaces/cli/      # sacode / sacode-tui 入口
+├── interfaces/acp/      # ACP 服务
+├── interfaces/lsp/      # LSP 服务
+├── docs/                # 用户与开发文档
+├── npm-package/         # npm 发布包
+└── legacy/              # 历史归档，不参与当前 Rust 构建
 ```
 
-## 快速开始
+## `.sacode/` 目录
 
-### 环境要求
+SaCode 会在项目根目录维护运行数据：
 
-- Node.js 22+
-- pnpm 9+
-- 数据库 (SQLite/MySQL/PostgreSQL)
-
-### 安装
-
-```bash
-# 克隆项目
-git clone https://github.com/your-repo/SACODE.git
-cd SACODE
-
-# 安装依赖
-pnpm install
-
-# 初始化数据库
-pnpm -C packages/database prisma generate
-pnpm -C packages/database prisma db push
-
-# 复制环境变量
-cp .env.example .env
+```text
+.sacode/
+├── provider.json
+├── mcp.json
+├── profile.json
+├── mistakes.json
+├── project.json
+├── audit.log          # 沙箱审计日志
+├── skills/
+└── checkpoints/
 ```
 
-### 配置
+常见用途：
 
-编辑 `.env` 文件：
+- `provider.json`：多 provider 和默认模型
+- `mcp.json`：远程 MCP 服务配置
+- `profile.json`：项目级偏好配置
+- `mistakes.json`：错题本
+- `audit.log`：所有 Modify 级工具操作审计记录
+- `checkpoints/`：任务恢复点
 
-```env
-# ============================================
-# AI Provider 配置
-# ============================================
-# 选择 AI Provider: openai | anthropic | deepseek | moonshot | zhipu
-AI_PROVIDER=openai
+## 核心能力
 
-# OpenAI 配置
-OPENAI_API_KEY=sk-your-api-key-here
-# OPENAI_BASE_URL=  # 可选，用于代理或自定义端点
+### Tools
 
-# Anthropic 配置 (如果使用 Claude)
-# ANTHROPIC_API_KEY=sk-ant-your-api-key-here
+内置工具覆盖文件、Shell、Git、Web、Browser、交互问答、媒体读取等能力。
 
-# 通用 AI 配置
-AI_MODEL=gpt-4o
-AI_TIMEOUT=60000
-
-# 工具循环配置
-MAX_TOOL_LOOP_ITERATIONS=10
-
-# Agentic 规划配置
-ENABLE_AGENTIC_PLANNING=true
-
-# ============================================
-# 数据库配置
-# ============================================
-DATABASE_TYPE=sqlite
-DATABASE_PATH=./data/SACODE.db
-
-# ============================================
-# 缓存配置 (可选)
-# ============================================
-CACHE_BACKEND=memory  # memory | redis
-# REDIS_URL=redis://localhost:6379
-
-# ============================================
-# IM 平台配置
-# ============================================
-# Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-
-# 小艺 (华为)
-XIAOYI_AK=your_access_key
-XIAOYI_SK=your_secret_key
-XIAOYI_AGENT_ID=your_agent_id
-
-# Discord
-DISCORD_BOT_TOKEN=your_bot_token
-
-# ============================================
-# OAuth 配置 (可选)
-# ============================================
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-```
-
-### 启动
-
-```bash
-# 开发模式
-pnpm dev
-
-# 或分别启动各服务
-pnpm api              # API 服务
-pnpm web              # Web UI
-pnpm cli              # 命令行工具
-```
-
-## 使用
-
-### CLI
-
-```bash
-# 交互式聊天
-SACODE chat
-
-# 发送单条消息
-SACODE chat -m "你好"
-
-# 查看配置
-SACODE config list
-
-# 管理 IM 连接
-SACODE im list
-SACODE im connect telegram
-```
-
-### AI Provider
-
-```typescript
-import { SACODEClient, createProvider } from "@SACODE/core";
-
-// 创建客户端
-const client = new SACODEClient({
-  provider: {
-    type: "openai",
-    apiKey: process.env.OPENAI_API_KEY,
-    model: "gpt-4o",
-  },
-});
-
-await client.connect();
-
-// 流式聊天
-for await (const msg of client.chat("你好")) {
-  console.log(msg);
-}
-```
-
-### Agentic 聊天
-
-```typescript
-// Agentic 聊天（带自动规划）
-for await (const msg of client.agenticChat("帮我分析这个项目的代码质量")) {
-  if ("type" in msg) {
-    console.log(`[${msg.type}]`, msg);
-  } else {
-    console.log(msg.content || msg.chunk?.text);
-  }
-}
-```
-
-### 工具注册
-
-```typescript
-// 注册自定义工具
-client.registerTool(
-  "get_weather",
-  "获取指定城市的天气信息",
-  {
-    type: "object",
-    properties: {
-      city: { type: "string", description: "城市名称" },
-    },
-    required: ["city"],
-  },
-  async (args) => {
-    const weather = await fetchWeather(args.city as string);
-    return JSON.stringify(weather);
-  }
-);
-```
-
-### 智能路由
-
-```typescript
-import { SmartRouter } from "@SACODE/core";
-
-const router = new SmartRouter();
-
-// 添加路由规则
-router.addRule({
-  id: "vip-priority",
-  name: "VIP 优先",
-  priority: 100,
-  enabled: true,
-  conditions: [{ field: "user.tier", operator: "eq", value: "vip" }],
-  actions: [{ type: "route", channel: "premium-support" }],
-});
-
-// 评估路由
-const result = router.evaluate({ user: { tier: "vip" } });
-```
-
-### 长任务管理
-
-```typescript
-import { LongTaskManager } from "@SACODE/core";
-
-const taskManager = new LongTaskManager();
-
-// 注册任务类型
-taskManager.registerTaskType("analysis", {
-  name: "Data Analysis",
-  priority: "high",
-  totalSteps: 3,
-}, async (task, context) => {
-  await context.reportProgress(33, "Step 1/3");
-  // ... 执行任务
-  return { result: "completed" };
-});
-
-// 创建任务
-const task = await taskManager.createTask("analysis", { data: "..." });
-```
-
-### 缓存管理
-
-```typescript
-import { CacheManager } from "@SACODE/core";
-
-const cache = new CacheManager({
-  backend: "memory",
-  defaultTTL: 60000, // 1 分钟
-});
-
-// 获取或设置缓存
-const value = await cache.getOrSet("user:123", async () => {
-  return await fetchUser(123);
-});
-```
-
-### 定时任务
-
-```typescript
-import { TaskScheduler } from "@SACODE/core";
-
-const scheduler = new TaskScheduler();
-
-// Cron 任务 - 每天早上 8 点
-scheduler.addTask({
-  name: "早间提醒",
-  type: "cron",
-  config: { cronExpression: "0 8 * * *" },
-  message: "早上好！",
-  channel: "xiaoyi",
-  chatId: "user_123",
-});
-
-// Interval 任务 - 每 5 分钟
-scheduler.addTask({
-  name: "定时检查",
-  type: "interval",
-  config: { interval: 5 * 60 * 1000 },
-  message: "检查完成",
-  channel: "telegram",
-  chatId: "chat_456",
-});
-```
-
-### MCP 协议
-
-```typescript
-import { MCPServer } from "@SACODE/core";
-
-const mcpServer = new MCPServer({
-  name: "SACODE-mcp",
-  version: "1.0.0",
-});
-
-// 注册工具
-mcpServer.registerTool({
-  name: "read_file",
-  description: "Read a file",
-  inputSchema: { type: "object", properties: { path: { type: "string" } } },
-}, async (args) => ({
-  content: [{ type: "text", text: "file content" }],
-}));
-```
-
-### 插件系统
-
-```typescript
-import { PluginManager } from "@SACODE/core";
-
-const manager = new PluginManager({ pluginsDir: "./.SACODE/plugins" });
-await manager.initialize();
-await manager.install("my-plugin", "./plugins/my-plugin");
-await manager.enable("my-plugin");
-```
-
-### Web UI
-
-访问 http://localhost:5173 打开 Web 界面。
-
-### API
-
-| 路由 | 方法 | 功能 |
+| 工具 | 描述 | 审批 |
 |------|------|------|
-| `/api/auth/login` | POST | 登录 |
-| `/api/auth/register` | POST | 注册 |
-| `/api/chat/sessions` | GET | 获取会话列表 |
-| `/api/chat` | POST | 发送消息 |
-| `/api/chat/agentic` | POST | Agentic 模式聊天 |
-| `/api/tasks` | GET/POST | 任务列表/创建 |
-| `/api/tasks/:id/start` | POST | 启动任务 |
-| `/api/routing/rules` | GET/POST | 路由规则管理 |
-| `/api/models` | GET | 模型列表 |
-| `/api/im` | GET | 获取 IM 连接 |
-| `/api/capabilities` | GET | 获取能力列表 |
-| `/api/plugins` | GET | 获取插件列表 |
+| `fs.read` | 读取文件 | 否 |
+| `fs.search` | 搜索文件内容 | 否 |
+| `fs.write` | 写入文件 | 是 |
+| `fs.edit` | 编辑文件（精确替换） | 是 |
+| `fs.patch` | 批量应用 patch | 是 |
+| `fs.read_multi` | 批量读取文件 | 否 |
+| `fs.list` | 列出目录 | 否 |
+| `shell.exec` | 执行命令 | 是 |
+| `git.diff` | 查看 Git 差异 | 否 |
+| `git.commit` | 创建 Git 提交 | 是 |
+| `web.fetch` | 抓取网页 | 否 |
+| `web.search` | 联网搜索（百度/搜狗/360/必应） | 否 |
+| `test.run` | 运行测试（cargo/npm/go/pytest） | 否 |
+| `code.symbols` | 提取代码符号（5 语言） | 否 |
+| `code.deps` | 分析文件依赖关系 | 否 |
+| `media.read` | 读取媒体文件 | 否 |
+| `media.vision` | 图片视觉识别（OCR/描述） | 否 |
+| `interaction.ask` | 向用户提问 | 否 |
+| `browser.*` | 浏览器相关操作 | 视工具而定 |
+| `task.spawn` | 派生子任务 | 否 |
 
-## 支持的 AI Provider
+### Skills
 
-| Provider | 类型 | 模型示例 |
-|----------|------|----------|
-| OpenAI | `openai` | gpt-4o, gpt-4-turbo, gpt-3.5-turbo |
-| Anthropic | `anthropic` | claude-3-5-sonnet, claude-3-opus |
-| DeepSeek | `deepseek` | deepseek-chat, deepseek-coder |
-| Moonshot | `moonshot` | moonshot-v1-8k, moonshot-v1-32k |
-| 智谱 | `zhipu` | glm-4, glm-4-flash |
+- 工作区目录：`skills/`
+- 项目级覆盖目录：`.sacode/skills/`
+- 支持 slash 调用，例如 `sacode /commit`
+- 支持 `skill list`、`skill show`、`skill run`
 
-## 支持的 IM 平台
+### MCP
 
-| 平台 | 适配器 | 技术方案 | getChannels |
-|------|--------|----------|-------------|
-| 微信 | `WechatAdapter` | WebSocket | ✓ 联系人列表 |
-| QQ | `QQAdapter` | OneBot 协议 | ✓ 群列表 |
-| Telegram | `TelegramAdapter` | Bot API | ✓ 聊天列表 |
-| Discord | `DiscordAdapter` | Gateway + REST | ✓ Guilds + Channels |
-| 钉钉 | `DingTalkAdapter` | REST API + AI Card | ✓ 群列表 + 部门 |
-| 飞书 | `FeishuAdapter` | Open API | ✓ |
-| 小艺 | `XiaoyiAdapter` | AK/SK + WebSocket | ✓ |
-| WhatsApp | `WhatsAppAdapter` | baileys 桥接 | ✓ |
-| Slack | `SlackAdapter` | Web API + Socket Mode | ✓ |
-| Email | `EmailAdapter` | IMAP + SMTP | ✓ 邮箱文件夹 |
+- 配置文件：`.sacode/mcp.json`
+- 支持安装、启停、探测、列工具、直接调用远程 MCP tools
+- 内置 MCP stdio server：`sacode mcp serve`，暴露 `fs.read`、`fs.list`、`git.diff`
 
-## 开发
+### Memory / Wiki / Insight
 
-```bash
-pnpm build      # 构建所有包
-pnpm test       # 运行测试
-pnpm lint       # 代码检查
-pnpm typecheck  # 类型检查
-pnpm format     # 格式化代码
-```
+- `memory`：项目记忆与检索入口
+- `wiki`：项目知识库与文档上下文
+- `insight`：从历史交互总结个人使用习惯和优化建议
 
-## Docker
+## 文档导航
 
-```bash
-# 构建镜像
-pnpm docker:build
+- `docs/README.md`：文档总览
+- `docs/guides/getting-started.md`：快速上手与常见操作
+- `docs/guides/tutorials.md`：按真实任务组织的场景教程
+- `docs/guides/examples.md`：可直接复制的提示词与命令示例
+- `docs/reference/command-reference.md`：CLI / TUI 命令速查
+- `docs/reference/architecture.md`：架构与模块分层
+- `docs/reference/API.md`：CLI / TUI / 配置 / 工具接口说明
+- `docs/reference/development.md`：本地开发、测试、调试与贡献
+- `docs/release/RELEASE.md`：发布流程
+- `docs/build/CROSS_COMPILE.md`：交叉编译说明
+- `docs/product/PRD.md`：产品需求文档
 
-# 启动服务
-pnpm docker:up
-
-# 开发模式
-pnpm docker:dev
-
-# 停止服务
-pnpm docker:down
-```
-
-## 架构
-
-### 核心模块
-
-| 模块 | 描述 |
-|------|------|
-| @SACODE/core | Provider 抽象层，工具桥接，Agent 基础设施，会话管理，智能路由，长任务，MCP 协议，缓存，模型管理 |
-| @SACODE/gateway | WebSocket 控制平面 |
-| @SACODE/container | Docker 容器隔离 |
-| @SACODE/adapters | IM 平台适配器 (10 个平台) |
-| @SACODE/database | Prisma ORM，多数据库适配 |
-| @SACODE/auth | Passport.js 认证，JWT，OAuth |
-| @SACODE/cli | Commander.js 命令行工具 |
-| @SACODE/capabilities | 文件/浏览器/Shell 自动化 |
-| @SACODE/api | Express REST API + WebSocket |
-| @SACODE/web | Vue 3 + TinyVue + Tailwind CSS |
-
-### 消息流
-
-```
-用户输入 (CLI/Web/IM)
-       ↓
-   SACODEClient
-       ↓
-   AI Provider (OpenAI/Anthropic/...)
-       ↓
-    AI 模型响应
-       ↓
-  ┌────┴────┐
-  ↓         ↓
-工具调用   直接响应
-  ↓
-ToolBridge
-  ↓
-┌────────┴────────┐
-↓                 ↓
-内置工具      外部工具
-(think/plan)  (MCP/Capabilities)
-  ↓
-继续对话循环
-  ↓
-   输出到用户
-```
-
-### Agentic 流程
-
-```
-用户请求
-    ↓
-复杂度评估
-    ↓
-┌────┴────┐
-↓         ↓
-简单     复杂
-↓         ↓
-直接执行  生成计划
-          ↓
-      Orchestrator
-          ↓
-    ┌────┴────┐
-    ↓         ↓
-  Agent    执行步骤
-  分配     (带重试)
-    ↓         ↓
-    └────┬────┘
-         ↓
-      结果汇总
-         ↓
-      输出响应
-```
-
-### Gateway 架构
-
-```
-客户端 WebSocket
-       ↓
-  Gateway Server
-       ↓
-  ┌────┴────┐
-  ↓         ↓
-Handler   Session
-  ↓
-Router/Task/MCP/Cache/Model
-```
-
-## 测试
-
-项目包含 174 个测试用例：
-
-| 模块 | 测试数量 |
-|------|----------|
-| SmartRouter | 18 |
-| MCP Protocol | 22 |
-| Scheduler | 19 |
-| ToolBridge | 23 |
-| LongTaskManager | 17 |
-| GroupQueue | 10 |
-| Adapters | 25 |
-| Auth | 14 |
-| Integration | 14 |
-| Core | 8 |
-| Capabilities | 4 |
+## 开发命令
 
 ```bash
-pnpm test             # 运行所有测试
-pnpm test:watch       # 监视模式
-pnpm test:coverage    # 测试覆盖率
+cargo test --workspace
+cargo build --release
+cargo run -p sacode-cli --bin sacode
+node scripts/check-release.js
+node scripts/check-release.js --strict-platforms
 ```
 
-## 贡献
+## 当前状态
 
-欢迎贡献代码！请阅读 [贡献指南](./CONTRIBUTING.md) 了解详情。
+SaCode 已具备可用的终端 AI 编程主线能力，包括：
 
-- 提交 Issue 报告 Bug 或建议新功能
-- 提交 Pull Request 贡献代码
-- 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
+- **23 个内置工具**：覆盖文件、Git、测试、代码智能、Web 搜索、媒体视觉、浏览器等
+- **3 种执行模式**：`plan` / `build` / `yolo`，分级控制副作用操作
+- **多 Agent 编排**：`/agents` 入口，支持 planner/coder/reviewer/tester 角色协作
+- **MCP 生态**：支持远程 MCP 接入 + 内置 stdio server
+- **沙箱审计**：所有 Modify 级工具操作记录到 `.sacode/audit.log`
+- **Daemon + SSE**：11 个 REST 端点 + 实时事件流，支持外部集成
+- **搜索引擎**：百度/搜狗/360/必应多引擎交叉验证
+- **视觉识别**：`media.vision` 支持 OCR 和图片内容描述
+
+当前仍在持续补齐多 agent 协作深度、tree-sitter 精确代码解析和 Windows 原生命令适配。
 
 ## 许可证
 
-[MIT](./LICENSE) © STAND-ALONE
-
-## 作者
-
-**STAND-ALONE**
-- Email: 1635936133@qq.com
-- GitHub: [@STAND-ALONE](https://github.com/STAND-ALONE)
+[MulanPSL-2.0](./LICENSE)

@@ -1,0 +1,16 @@
+[package]
+name = "sacode-acp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SaCode ACP server"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "time", "rt-multi-thread", "macros"] }
+tracing.workspace = true
+sacode-kernel = { path = "../../kernel" }
+sacode-runtime = { path = "../../runtime" }
