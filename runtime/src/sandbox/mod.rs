@@ -314,14 +314,30 @@ pub fn reset_global_policy() {
 }
 
 fn resolve_policy_path(path: &PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        return path.clone();
-    }
+    let resolved = if path.is_absolute() {
+        path.clone()
+    } else {
+        match std::env::current_dir() {
+            Ok(current_dir) => current_dir.join(path),
+            Err(_) => path.clone(),
+        }
+    };
 
-    match std::env::current_dir() {
-        Ok(current_dir) => current_dir.join(path),
-        Err(_) => path.clone(),
+    // Canonicalize the existing portion to handle symlinks
+    // (e.g. macOS /var → /private/var).
+    canonicalize_existing_ancestor(&resolved).unwrap_or(resolved)
+}
+
+/// Canonicalize the longest existing ancestor of a path,
+/// then re-append the non-existent suffix.
+fn canonicalize_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    if path.exists() {
+        return path.canonicalize().ok();
     }
+    let parent = path.parent()?;
+    let name = path.file_name()?;
+    let canonical_parent = canonicalize_existing_ancestor(parent)?;
+    Some(canonical_parent.join(name))
 }
 
 impl Default for SandboxPolicy {
