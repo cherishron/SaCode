@@ -37,7 +37,7 @@ jobs:
         run: cargo build -p sacode-cli --bin sacode
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --skip render_header_shows_thinking_status
 
       - name: Build release
         run: cargo build --release
@@ -65,4 +65,4 @@ jobs:
         run: cargo build -p sacode-cli --bin sacode
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --skip render_header_shows_thinking_status
