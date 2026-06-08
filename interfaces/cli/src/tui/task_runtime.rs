@@ -255,7 +255,6 @@ impl App {
                 total_duration_ms: 0,
                 loop_state,
             });
-            return;
         }
         #[cfg(not(test))]
         {

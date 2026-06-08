@@ -662,7 +662,7 @@ fn open_in_browser(path: &Path) -> Result<()> {
         Command::new("cmd")
             .args(["/C", "start", "", &target])
             .spawn()?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

@@ -1079,7 +1079,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
-                render_header(frame, &app, Rect::new(0, 0, 220, 2));
+                render_header(frame, app, Rect::new(0, 0, 220, 2));
             })
             .expect("draw header");
 
@@ -1487,7 +1487,7 @@ mod tests {
     #[test]
     fn render_input_panel_shows_thinking_indicator_when_enabled() {
         let mut test_ctx = test_app();
-        let mut app = &mut test_ctx.app;
+        let app = &mut test_ctx.app;
         let provider_name = "test-provider-input".to_string();
         let model_name = "test-model-input".to_string();
         let mut spec = sacode_kernel::model::ProviderSpec {
@@ -1522,7 +1522,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_input_panel(frame, &mut app, Rect::new(0, 0, 100, 8), 96, true);
+                render_input_panel(frame, app, Rect::new(0, 0, 100, 8), 96, true);
             })
             .expect("draw input panel");
 
