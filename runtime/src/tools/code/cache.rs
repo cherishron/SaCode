@@ -82,7 +82,6 @@ impl AstCache {
 #[derive(Debug, Clone)]
 struct DirFileListCache {
     files: Vec<std::path::PathBuf>,
-    cached_at: SystemTime,
     dir_modified: Option<SystemTime>,
 }
 
@@ -128,7 +127,6 @@ impl FileListCache {
                 dir.to_path_buf(),
                 DirFileListCache {
                     files: files.clone(),
-                    cached_at: SystemTime::now(),
                     dir_modified,
                 },
             );

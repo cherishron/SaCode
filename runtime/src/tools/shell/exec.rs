@@ -17,7 +17,7 @@ const WINDOWS_SHELL_BUILTINS: &[&str] = &[
 
 #[cfg(target_os = "windows")]
 const WINDOWS_DANGEROUS_PATTERNS: &[&str] = &[
-    "format", "diskpart", "bcdedit", "reg delete", "del /F /S", "rmdir /S",
+    "format", "diskpart", "bcdedit", "reg delete", "del /f /s", "rmdir /s",
     "takeown", "icacls", "shutdown", "reboot", "net user", "wmic",
 ];
 
@@ -66,10 +66,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     ShellSandbox::validate(command_str, cwd)?;
 
-    #[cfg(target_os = "windows")]
-    let command_str = wrap_windows_shell_command(command_str)?;
-
-    let parts = split_command(&command_str)?;
+    let parts = build_command_parts(command_str)?;
     let Some(program) = parts.first() else {
         return Ok(ToolOutput::failure("command is required"));
     };
@@ -135,6 +132,25 @@ fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
     Ok(parts)
 }
 
+fn build_command_parts(command: &str) -> anyhow::Result<Vec<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let parsed = split_command(command)?;
+        let Some(program) = parsed.first() else {
+            anyhow::bail!("command is required");
+        };
+        if needs_shell_wrapper(program) {
+            return Ok(vec!["cmd.exe".to_string(), "/C".to_string(), command.to_string()]);
+        }
+        return Ok(parsed);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        split_command(command)
+    }
+}
+
 fn is_dangerous_command(cmd: &str) -> bool {
     let dangerous_patterns = [
         "rm -rf /",
@@ -174,25 +190,6 @@ fn is_dangerous_command(cmd: &str) -> bool {
 fn needs_shell_wrapper(program: &str) -> bool {
     let lower = program.to_ascii_lowercase();
     WINDOWS_SHELL_BUILTINS.contains(&lower.as_str())
-}
-
-#[cfg(target_os = "windows")]
-fn wrap_windows_shell_command(command: &str) -> anyhow::Result<String> {
-    let parts = split_command(command)?;
-    let Some(program) = parts.first() else {
-        anyhow::bail!("command is required");
-    };
-
-    if needs_shell_wrapper(program) {
-        Ok(format!("cmd.exe /C {}", command))
-    } else {
-        Ok(command.to_string())
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn wrap_windows_shell_command(command: &str) -> anyhow::Result<String> {
-    Ok(command.to_string())
 }
 
 fn truncate_output(output: String) -> String {

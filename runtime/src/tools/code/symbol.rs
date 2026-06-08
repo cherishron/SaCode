@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::ast::AstEditor;
 use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 use super::super::fs::access::resolve_allowed_path;
 

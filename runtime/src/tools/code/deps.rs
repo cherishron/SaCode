@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::ast::AstEditor;
 use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 use super::super::fs::access::resolve_allowed_path;
 
@@ -64,7 +63,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
 
-    let source_files = FILE_LIST_CACHE.get_or_collect(&resolved_path, None, collect_source_files)?;
+    let source_files = FILE_LIST_CACHE.get_or_collect(
+        &resolved_path,
+        None,
+        collect_source_files_with_language,
+    )?;
     if source_files.is_empty() {
         return Ok(ToolOutput::success(serde_json::json!({
             "path": path,
@@ -148,6 +151,14 @@ fn collect_source_files(path: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result
     }
 
     Ok(())
+}
+
+fn collect_source_files_with_language(
+    path: &Path,
+    _language: Option<&str>,
+    files: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    collect_source_files(path, files)
 }
 
 fn display_path(root: &Path, file_path: &Path) -> String {
