@@ -155,7 +155,7 @@ fn build_command_parts(command: &str) -> anyhow::Result<Vec<String>> {
                 command.to_string(),
             ]);
         }
-        return Ok(parsed);
+        Ok(parsed)
     }
 
     #[cfg(not(target_os = "windows"))]

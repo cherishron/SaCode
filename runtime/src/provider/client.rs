@@ -1098,9 +1098,7 @@ mod tests {
 
     #[test]
     fn handle_sse_frame_supports_array_content_parts() {
-        let frame = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":[{\"text\":\"Hello\"},{\"text\":\" world\"}]}}]}\n\n"
-        );
+        let frame = "data: {\"choices\":[{\"delta\":{\"content\":[{\"text\":\"Hello\"},{\"text\":\" world\"}]}}]}\n\n";
         let mut chunks = Vec::new();
         let _ = handle_sse_frame(frame, &mut |chunk| chunks.push(chunk.clone()), None).unwrap();
 

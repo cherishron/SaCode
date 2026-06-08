@@ -20,7 +20,7 @@ fn test_execution_mode_default() {
 
 #[test]
 fn test_planner_agent() {
-    let planner = PlannerAgent::default();
+    let planner = PlannerAgent;
     let task = Task::new("分析代码", ExecutionMode::Plan, None);
     let output = planner.run(&task);
 

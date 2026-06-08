@@ -68,7 +68,8 @@ fn test_runtime_orchestrator_execute_task_run_returns_snapshot() {
 
 #[tokio::test]
 async fn test_role_driven_task_run_returns_snapshot() {
-    let _guard = sandbox_test_lock();
+    let guard = sandbox_test_lock();
+    drop(guard);
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
 

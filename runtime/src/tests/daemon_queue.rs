@@ -942,7 +942,8 @@ async fn test_daemon_queue_status_endpoint() {
 
 #[tokio::test]
 async fn test_daemon_restores_pending_tasks_from_store() {
-    let _lock = sandbox_test_lock();
+    let lock = sandbox_test_lock();
+    drop(lock);
     let tempdir = tempfile::tempdir().expect("tempdir");
     let _dir_guard = CurrentDirGuard::enter(tempdir.path());
     let _home_guard = HomeEnvGuard::set(tempdir.path());
