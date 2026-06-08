@@ -39,6 +39,10 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Prepare npm platforms
+        run: |
+          node scripts/prepare-npm-platforms.js $(node -p "require('./npm-package/package.json').version") --clean --platform linux-x64 --source-file linux-x64 target/release/sacode
+
       - name: Check release consistency
         run: node scripts/check-release.js
 
