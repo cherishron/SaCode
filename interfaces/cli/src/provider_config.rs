@@ -488,36 +488,13 @@ pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<String>> {
 
 pub fn fallback_models(provider_name: &str) -> Vec<String> {
     match provider_name {
-        "ollama" => vec![
-            "glm-4-flash".to_string(),
-            "deepseek-v3".to_string(),
-            "qwen2.5:7b".to_string(),
-        ],
-        "mimo" => vec![
-            "mimo-v2.5-pro".to_string(),
-            "mimo-v2.5".to_string(),
-            "mimo-v2-pro".to_string(),
-            "mimo-v2-omni".to_string(),
-        ],
-        "longcat" => vec![
-            "LongCat-2.0-Preview".to_string(),
-            "LongCat-Flash-Chat".to_string(),
-            "LongCat-Flash-Thinking".to_string(),
-            "LongCat-Flash-Thinking-2601".to_string(),
-            "LongCat-Flash-Lite".to_string(),
-            "LongCat-Flash-Omni-2603".to_string(),
-            "LongCat-Flash-Chat-2602-Exp".to_string(),
-        ],
-        "openai" => vec![
-            "gpt-4o".to_string(),
-            "gpt-4o-mini".to_string(),
-            "gpt-4-turbo".to_string(),
-        ],
+        "ollama" => vec!["glm-4.7-flash".to_string()],
+        "mimo" => vec!["mimo-v2.5-pro".to_string(), "mimo-v2.5".to_string()],
+        "longcat" => vec!["LongCat-2.0-Preview".to_string()],
+        "openai" => vec!["gpt-5.4".to_string(), "gpt-5.5".to_string()],
         "deepseek" => vec![
-            "deepseek-v4-pro".to_string(),
             "deepseek-v4-flash".to_string(),
-            "deepseek-chat".to_string(),
-            "deepseek-reasoner".to_string(),
+            "deepseek-v4-pro".to_string(),
         ],
         _ => vec![],
     }

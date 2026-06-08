@@ -134,3 +134,11 @@ ls ~/.sacode/logs
 3. Linux / Windows 平台文件名是否符合约定
 4. README 安装说明和平台说明是否与当前产物一致
 5. `sacode --version` 是否能正常输出
+
+## 10. 相关文档
+
+- [架构说明](architecture.md) — 分层与执行链路
+- [API 文档](API.md) — 工具系统与接口
+- [命令参考](command-reference.md) — CLI / TUI 命令速查
+- [发布流程](../release/RELEASE.md) — 版本发布链路
+- [交叉编译指南](../build/CROSS_COMPILE.md) — 跨平台构建

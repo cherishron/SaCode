@@ -109,6 +109,7 @@ SaCode 当前已经具备可用的终端 AI 编程主线能力，核心优势集
 
 ## 参考关系
 
-1. `docs/product/PRD.md`：产品定位、能力范围、当前现状、优先级总表
-2. `docs/plans/plan-optimization.md`：当前问题修复与优化计划
-3. `docs/plans/archive/final-roadmap.md`：统一运行时与平台演进的历史完整方案
+1. [产品 PRD](PRD.md) — 产品定位、能力范围、当前现状、优先级总表
+2. [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
+3. [项目优化计划](../plans/plan-optimization.md) — 当前问题修复与优化计划
+4. [历史方案归档](../plans/archive/README.md) — 统一运行时与平台演进的历史完整方案

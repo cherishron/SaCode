@@ -35,35 +35,39 @@ pub fn connect_provider(
         (models.clone(), models[0].clone())
     } else {
         let fallbacks = fallback_models(name);
-        let default = fallbacks.first().cloned().unwrap_or_default();
+        let default = fallbacks
+            .first()
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
         (fallbacks, default)
     };
 
     let mut final_config = config;
     final_config.model = default_model.clone();
+    // 始终保存 provider 配置和模型，即使 default_model 为空也更新 provider
+    provider_store.save_named(name, &final_config, true)?;
+    let mut spec =
+        sacode_store
+            .provider(name)?
+            .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
+                name: name.to_string(),
+                base_url: base_url.to_string(),
+                api_key: String::new(),
+                models: std::collections::BTreeMap::new(),
+            });
+    spec.name = name.to_string();
+    spec.base_url = base_url.to_string();
+    spec.api_key = final_config.api_key.clone();
+    for model in &final_models {
+        spec.models
+            .entry(model.clone())
+            .or_insert_with(|| sacode_kernel::model::ModelRule {
+                name: model.clone(),
+                ..Default::default()
+            });
+    }
+    sacode_store.upsert_provider(name, spec)?;
     if !default_model.is_empty() {
-        provider_store.save_named(name, &final_config, true)?;
-        let mut spec =
-            sacode_store
-                .provider(name)?
-                .unwrap_or_else(|| sacode_kernel::model::ProviderSpec {
-                    name: name.to_string(),
-                    base_url: base_url.to_string(),
-                    api_key: String::new(),
-                    models: std::collections::BTreeMap::new(),
-                });
-        spec.name = name.to_string();
-        spec.base_url = base_url.to_string();
-        spec.api_key = final_config.api_key.clone();
-        for model in &final_models {
-            spec.models
-                .entry(model.clone())
-                .or_insert_with(|| sacode_kernel::model::ModelRule {
-                    name: model.clone(),
-                    ..Default::default()
-                });
-        }
-        sacode_store.upsert_provider(name, spec)?;
         sacode_store.set_model(name, &default_model)?;
     }
 

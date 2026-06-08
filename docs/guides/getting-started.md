@@ -164,6 +164,9 @@ sacode init-deep
 
 ## 9. 下一步阅读
 
-1. `architecture.md`
-2. `API.md`
-3. `development.md`
+- [命令速查](../reference/command-reference.md) — CLI / TUI 所有命令
+- [场景教程](tutorials.md) — 按真实任务使用 SaCode
+- [示例集](examples.md) — 可直接复制的命令组合
+- [架构说明](../reference/architecture.md) — 分层与执行链路
+- [API 文档](../reference/API.md) — 工具系统、Daemon、MCP 接口
+- [开发指南](../reference/development.md) — 本地开发与贡献

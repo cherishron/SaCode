@@ -192,3 +192,11 @@ SaCode 当前的工程重点主要集中在：
 3. 收敛动态模型路由
 4. 把 memory / wiki / insight 接入稳定知识链路
 5. 持续提升 TUI 可观察性和可维护性
+
+## 9. 相关文档
+
+- [API 文档](API.md) — 工具系统、Daemon、MCP 接口说明
+- [开发指南](development.md) — 本地开发与贡献
+- [命令参考](command-reference.md) — CLI / TUI 命令速查
+- [产品 PRD](../product/PRD.md) — 产品定位与能力全景
+- [功能升级方案](../plans/capability-upgrade-plan.md) — 当前工具与架构补齐计划

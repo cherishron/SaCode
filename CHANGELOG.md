@@ -7,6 +7,63 @@
 
 ---
 
+## [0.1.27] - 2026-06-08
+
+### 新增
+
+- 核心工具补齐（6 个新工具，总数从 17 升至 23）
+  - `test.run`：自动检测框架（cargo/npm/go/pytest），运行测试并返回结果
+  - `git.commit`：安全 Git 提交，支持 `add_all`、`paths` 参数，强制显式授权
+  - `fs.patch`：批量应用 unified diff patch，两阶段执行（先校验后落盘），CRLF/LF 兼容
+  - `code.symbols`：提取代码符号（Rust/Python/JS/TS/Go），支持名称和类型过滤
+  - `code.deps`：分析文件级依赖关系，构建 `imported_by` 反向映射
+  - `media.vision`：图片视觉识别，支持 OCR 和内容描述两种模式
+
+- 搜索引擎升级
+  - 移除 DuckDuckGo，替换为百度/搜狗/360/必应多引擎
+  - `auto` 模式按优先级尝试，交叉验证结果排序
+
+- 默认值校准
+  - `max_iterations` 默认值从 1 升至 3，反思循环激活
+  - `/loop` 外层 `loop_max_iterations` 默认 10，与内层迭代解耦
+  - CLI/REPL/TUI 配置缺失回退值统一
+
+- 沙箱审计日志
+  - 所有 Modify 级工具（`fs.write`、`fs.edit`、`fs.patch`、`git.commit`）写入 `.sacode/audit.log`
+  - JSON 行格式，记录时间戳、工具名、阶段、状态、输入参数
+
+- Daemon + SSE 统一输出
+  - 11 个 REST 端点：任务 CRUD、重试、取消、状态追踪
+  - `GET /api/stream` 和 `GET /events` SSE 事件流，支持 `task_id` 过滤
+  - 统一 SSE `data` 协议
+
+- MCP 生态
+  - 内置 MCP stdio server（`sacode mcp serve`）
+  - 暴露 `fs.read`、`fs.list`、`git.diff` 三个只读工具
+  - 支持 `initialize`、`tools/list`、`tools/call` MCP 方法
+
+- CLI 命令
+  - `sacode status`：查看 MCP、插件状态
+  - `sacode doctor`：诊断 Provider、Memory、MCP 配置
+
+- TUI `/agents` 入口
+  - `/agents list`：列出内置角色（planner/coder/reviewer/tester）
+  - `/agents run <任务>`：启动多角色编排执行
+
+- `/loop` 轮次策略优化
+  - `hit_round_limit` 从"立即停止"改为"继续下一轮"
+  - 续跑附带缩小范围提示，连续失败 3 次自动停止
+
+- `/update rollback` 版本回滚支持
+
+### 变更
+
+- provider SSE 增量解析已在 `runtime/src/provider/client.rs` 中实现
+- Plan 模式支持跳过 `tool_approval` 并追加执行确认提示
+- footer 上下文显示恢复为圆环加百分比
+
+---
+
 ## [0.1.9] - 2026-05-25
 
 ### 新增
@@ -170,10 +227,12 @@
 
 ### 近期
 
-- 真实 LLM provider streaming
-- 完善审批流 UI
+- 真实 LLM provider streaming ✅ (0.1.27)
+- 完善审批流 UI ✅ (Plan 模式跳过 tool_approval)
 - Checkpoint 持久化
 - 测试覆盖提升
+- tree-sitter 精确代码解析（替代正则）
+- similar diff 算法引入（增强 fs.patch 容错）
 
 ### 中期
 
@@ -183,7 +242,7 @@
 
 ### 远期
 
-- 多 agent 协作
+- 多 agent 协作深度增强
 - IDE 插件
 - 云端部署
 

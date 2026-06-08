@@ -289,3 +289,11 @@ sacode update --force
 ```bash
 npm install -g @cherishron/sacode@latest
 ```
+
+## 10. 相关文档
+
+- [快速上手](getting-started.md) — 安装与基本配置
+- [示例集](examples.md) — 可复制的命令组合
+- [命令参考](../reference/command-reference.md) — 完整 CLI / TUI 命令速查
+- [架构说明](../reference/architecture.md) — 分层与执行链路
+- [产品路线图](../product/roadmap.md) — 当前能力与演进方向

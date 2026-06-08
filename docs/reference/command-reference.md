@@ -149,7 +149,7 @@ TUI 还支持这些分组命令：
 
 ## 10. 推荐阅读顺序
 
-1. `getting-started.md`
-2. `tutorials.md`
-3. `architecture.md`
-4. `API.md`
+1. [快速上手](../guides/getting-started.md) — 安装与基本配置
+2. [场景教程](../guides/tutorials.md) — 按真实任务组织
+3. [API 文档](API.md) — 工具系统、Daemon、MCP 接口
+4. [架构说明](architecture.md) — 分层与执行链路

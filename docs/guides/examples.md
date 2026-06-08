@@ -241,3 +241,10 @@ sacode update
 ```text
 只保留当前实现可验证的内容，删掉旧设计稿和无法确认的描述。
 ```
+
+## 12. 相关文档
+
+- [快速上手](getting-started.md) — 安装与基本配置
+- [场景教程](tutorials.md) — 按真实任务组织
+- [命令参考](../reference/command-reference.md) — 完整 CLI / TUI 命令
+- [API 文档](../reference/API.md) — 工具系统与接口说明

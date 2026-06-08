@@ -376,7 +376,7 @@ impl ModelProvider {
         Self {
             kind: ProviderKind::Mimo,
             model: model.into(),
-            base_url: Some("https://api.xiaomimimo.com/v1".to_string()),
+            base_url: Some("https://token-plan-cn.xiaomimimo.com/v1".to_string()),
             api_key: None,
             rule: None,
         }

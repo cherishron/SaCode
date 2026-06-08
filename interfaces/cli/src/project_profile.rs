@@ -80,25 +80,25 @@ pub fn default_profile_config() -> ProjectProfileConfig {
     profiles.insert(
         "default".to_string(),
         ProfileDefinition {
-            planner: "gpt-4o".to_string(),
-            coder: "deepseek-coder".to_string(),
-            reviewer: "gpt-4o-mini".to_string(),
+            planner: "gpt-5.4".to_string(),
+            coder: "deepseek-v4-flash".to_string(),
+            reviewer: "deepseek-v4-flash".to_string(),
         },
     );
     profiles.insert(
         "economy".to_string(),
         ProfileDefinition {
-            planner: "deepseek-chat".to_string(),
-            coder: "deepseek-coder".to_string(),
-            reviewer: "gpt-4o-mini".to_string(),
+            planner: "deepseek-v4-flash".to_string(),
+            coder: "deepseek-v4-flash".to_string(),
+            reviewer: "deepseek-v4-flash".to_string(),
         },
     );
     profiles.insert(
         "local".to_string(),
         ProfileDefinition {
-            planner: "ollama/qwen2.5-coder:7b".to_string(),
-            coder: "ollama/qwen2.5-coder:7b".to_string(),
-            reviewer: "gpt-4o-mini".to_string(),
+            planner: "ollama/glm-4.7-flash".to_string(),
+            coder: "ollama/glm-4.7-flash".to_string(),
+            reviewer: "ollama/glm-4.7-flash".to_string(),
         },
     );
 

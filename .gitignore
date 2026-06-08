@@ -37,3 +37,8 @@ temp/
 
 # npm package binaries
 npm-package/platforms/sacode-*
+
+# Build / distribution output
+dist/
+build/
+.monkeycode/

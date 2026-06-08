@@ -91,9 +91,11 @@ TUI 是默认入口，适合持续对话、队列任务和多步执行。
 - `/providers`
 - `/models`
 - `/loop <task>`
+- `/agents`
 - `/memory`
 - `/wiki`
 - `/insight`
+- `/update rollback`
 
 ### 单次任务模式
 
@@ -123,6 +125,19 @@ sacode repl
 sacode serve --acp --lsp
 sacode acp serve
 sacode lsp serve
+```
+
+### 诊断与状态
+
+```bash
+sacode status       # 查看 MCP、插件状态
+sacode doctor       # 诊断 Provider、Memory、MCP 配置
+```
+
+### MCP 服务模式
+
+```bash
+sacode mcp serve    # 启动内置 MCP stdio server，暴露 fs.read/fs.list/git.diff
 ```
 
 ## 执行模式
@@ -159,6 +174,7 @@ SaCode 会在项目根目录维护运行数据：
 ├── profile.json
 ├── mistakes.json
 ├── project.json
+├── audit.log          # 沙箱审计日志
 ├── skills/
 └── checkpoints/
 ```
@@ -169,6 +185,7 @@ SaCode 会在项目根目录维护运行数据：
 - `mcp.json`：远程 MCP 服务配置
 - `profile.json`：项目级偏好配置
 - `mistakes.json`：错题本
+- `audit.log`：所有 Modify 级工具操作审计记录
 - `checkpoints/`：任务恢复点
 
 ## 核心能力
@@ -182,11 +199,23 @@ SaCode 会在项目根目录维护运行数据：
 | `fs.read` | 读取文件 | 否 |
 | `fs.search` | 搜索文件内容 | 否 |
 | `fs.write` | 写入文件 | 是 |
+| `fs.edit` | 编辑文件（精确替换） | 是 |
+| `fs.patch` | 批量应用 patch | 是 |
+| `fs.read_multi` | 批量读取文件 | 否 |
+| `fs.list` | 列出目录 | 否 |
 | `shell.exec` | 执行命令 | 是 |
 | `git.diff` | 查看 Git 差异 | 否 |
+| `git.commit` | 创建 Git 提交 | 是 |
 | `web.fetch` | 抓取网页 | 否 |
-| `web.search` | 公开联网搜索 | 否 |
+| `web.search` | 联网搜索（百度/搜狗/360/必应） | 否 |
+| `test.run` | 运行测试（cargo/npm/go/pytest） | 否 |
+| `code.symbols` | 提取代码符号（5 语言） | 否 |
+| `code.deps` | 分析文件依赖关系 | 否 |
+| `media.read` | 读取媒体文件 | 否 |
+| `media.vision` | 图片视觉识别（OCR/描述） | 否 |
+| `interaction.ask` | 向用户提问 | 否 |
 | `browser.*` | 浏览器相关操作 | 视工具而定 |
+| `task.spawn` | 派生子任务 | 否 |
 
 ### Skills
 
@@ -199,6 +228,7 @@ SaCode 会在项目根目录维护运行数据：
 
 - 配置文件：`.sacode/mcp.json`
 - 支持安装、启停、探测、列工具、直接调用远程 MCP tools
+- 内置 MCP stdio server：`sacode mcp serve`，暴露 `fs.read`、`fs.list`、`git.diff`
 
 ### Memory / Wiki / Insight
 
@@ -232,7 +262,18 @@ node scripts/check-release.js --strict-platforms
 
 ## 当前状态
 
-SaCode 已具备可用的终端 AI 编程主线能力，当前仍在持续补齐多 agent 编排、动态模型路由、知识库、Browser tools 和 TUI 体验收口。
+SaCode 已具备可用的终端 AI 编程主线能力，包括：
+
+- **23 个内置工具**：覆盖文件、Git、测试、代码智能、Web 搜索、媒体视觉、浏览器等
+- **3 种执行模式**：`plan` / `build` / `yolo`，分级控制副作用操作
+- **多 Agent 编排**：`/agents` 入口，支持 planner/coder/reviewer/tester 角色协作
+- **MCP 生态**：支持远程 MCP 接入 + 内置 stdio server
+- **沙箱审计**：所有 Modify 级工具操作记录到 `.sacode/audit.log`
+- **Daemon + SSE**：11 个 REST 端点 + 实时事件流，支持外部集成
+- **搜索引擎**：百度/搜狗/360/必应多引擎交叉验证
+- **视觉识别**：`media.vision` 支持 OCR 和图片内容描述
+
+当前仍在持续补齐多 agent 协作深度、tree-sitter 精确代码解析和 Windows 原生命令适配。
 
 ## 许可证
 

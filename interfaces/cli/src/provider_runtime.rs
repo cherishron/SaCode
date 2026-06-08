@@ -72,6 +72,12 @@ pub fn resolve_provider(workdir: &Path) -> ModelProvider {
         if !config.model.trim().is_empty() {
             if let Some((provider_name, model_name)) = config.resolve_model(&config.model) {
                 if let Some(provider) = config.provider.get(&provider_name) {
+                    tracing::debug!(
+                        "resolve_provider: using config.json → provider={}, model={}, base_url={}",
+                        provider_name,
+                        model_name,
+                        provider.base_url
+                    );
                     return provider_spec_to_model_provider(provider, &model_name);
                 }
             }
@@ -80,14 +86,48 @@ pub fn resolve_provider(workdir: &Path) -> ModelProvider {
 
     if let Some(named) = resolve_named_provider(workdir) {
         let config = named.config;
-        if !config.base_url.is_empty() && !config.api_key.is_empty() && !config.model.is_empty() {
-            return config.to_model_provider();
+        if !config.base_url.is_empty() && !config.api_key.is_empty() {
+            if !config.model.is_empty() {
+                tracing::debug!(
+                    "resolve_provider: using provider.json → name={}, model={}, base_url={}",
+                    named.name,
+                    config.model,
+                    config.base_url
+                );
+                return config.to_model_provider();
+            }
+            // 即使 model 为空，也尝试使用 provider.json 的配置
+            // model 为空时从 SaCodeConfig 中查找该 provider 的模型
+            if let Ok(Some(sacode_config)) = config_store.load() {
+                if let Some(provider_spec) = sacode_config.provider.get(&named.name) {
+                    if let Some(first_model) = provider_spec.models.keys().next() {
+                        let mut provider = config.to_model_provider();
+                        provider.model = first_model.clone();
+                        tracing::debug!(
+                            "resolve_provider: provider.json model empty, using first model from config → provider={}, model={}, base_url={}",
+                            named.name,
+                            first_model,
+                            config.base_url
+                        );
+                        return provider;
+                    }
+                }
+            }
+            tracing::warn!(
+                "resolve_provider: provider.json has base_url+api_key but model is empty and no models found in config → provider={}",
+                named.name
+            );
         }
     }
 
     let model = env::var("SACODE_MODEL")
         .or_else(|_| env::var("DEFAULT_MODEL"))
-        .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        .unwrap_or_else(|_| "gpt-5.4".to_string());
+
+    tracing::warn!(
+        "resolve_provider: falling back to environment/default → model={}, kind will be inferred from model name",
+        model
+    );
 
     if model.starts_with("deepseek") {
         ModelProvider::deepseek(&model)

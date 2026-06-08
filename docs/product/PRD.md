@@ -324,3 +324,10 @@ SaCode 当前的产品策略应聚焦两条主线：
 2. 再以统一运行时为底座，向 Sub-agents、Daemon、HTTP API、Agent Teams 和生态集成逐层扩展。
 
 这条路线能同时保证短期体验提升和长期平台演进空间。
+
+## 19. 相关文档
+
+- [产品路线图](roadmap.md) — 版本阶段与交付计划
+- [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
+- [架构说明](../reference/architecture.md) — 分层与执行链路
+- [开发指南](../reference/development.md) — 本地开发与贡献
