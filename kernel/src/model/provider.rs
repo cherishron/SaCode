@@ -434,7 +434,7 @@ mod tests {
         assert!(ChatRequest::needs_thinking("DeepSeek-V4-Pro"));
         assert!(ChatRequest::needs_thinking("deepseek-reasoner"));
         assert!(!ChatRequest::needs_thinking("gpt-5.4"));
-        assert!(!ChatRequest::needs_thinking("deepseek-v4-flash"));
+        assert!(!ChatRequest::needs_thinking("LongCat-Flash-Chat"));
         assert!(!ChatRequest::needs_thinking("qwen2.5-coder"));
         assert!(!ChatRequest::needs_thinking("LongCat-2.0-Preview"));
     }
