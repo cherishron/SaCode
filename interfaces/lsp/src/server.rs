@@ -316,7 +316,7 @@ fn resolve_provider_for_lsp(
         model: provider_config
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("gpt-4o")
+            .unwrap_or("gpt-5.4")
             .to_string(),
         api_key: provider_config
             .get("api_key")

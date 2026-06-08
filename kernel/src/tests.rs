@@ -120,12 +120,12 @@ fn test_ffi_roundtrip() {
 fn test_model_rule_pricing_is_backward_compatible() {
     let parsed: ModelRule = serde_json::from_str(
         r#"{
-        "name": "gpt-4o-mini",
+        "name": "gpt-5.4",
         "thinking": false
     }"#,
     )
     .expect("parse model rule");
 
-    assert_eq!(parsed.name, "gpt-4o-mini");
+    assert_eq!(parsed.name, "gpt-5.4");
     assert!(parsed.pricing.is_none());
 }

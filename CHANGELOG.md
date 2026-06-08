@@ -7,6 +7,35 @@
 
 ---
 
+## [0.1.32] - 2026-06-08
+
+### 新增
+
+- Phase2 平台化补全
+  - Windows 命令适配：内置命令自动 `cmd.exe /C` 包裹、危险命令检测、进程组隔离（`CREATE_NEW_PROCESS_GROUP` + `taskkill /T`）
+  - macOS 支持：CI release 双架构（`x86_64` + `aarch64`）、npm darwin 二进制映射
+  - 增量索引缓存：`code/cache.rs`（155 行），AstCache + FileListCache，基于 mtime 驱动失效
+  - CI 自动修复：`cargo fmt --check` + `cargo clippy` + `auto-fix.yml` PR 自动格式化
+- 模型库全面升级
+  - DeepSeek：`deepseek-v4-pro`/`v4-flash` 升级至 1M 上下文 / 384K 输出
+  - OpenAI：`gpt-5.4` (128K/16K) / `gpt-5.5` (1M, 输出待定)
+  - LongCat：精简为 `LongCat-2.0-Preview` (1M/128K, 免费)
+  - MiMo：移除 `v2-omni`，保留 `v2.5-pro`(图文) / `v2.5`(文本)
+  - Ollama：`glm-4.7-flash`
+
+### 修复
+
+- Provider 配置降级链：`resolve_provider` 在 model 为空时不再跌入 `ModelProvider::openai`
+- `connect_provider`：始终保存 provider 配置，确保 `default_model` 不为空
+- MiMo `base_url` 对齐：构造函数与 preset 统一为 `token-plan-cn.xiaomimimo.com`
+
+### 变更
+
+- 测试文件中 12 处旧模型名全部更新为当前模型库
+- `.gitignore` 新增 `dist/`、`build/`、`.monkeycode/` 忽略
+
+---
+
 ## [0.1.28] - 2026-06-08
 
 ### 新增

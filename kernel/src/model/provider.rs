@@ -433,8 +433,8 @@ mod tests {
         assert!(ChatRequest::needs_thinking("deepseek-v4-flash"));
         assert!(ChatRequest::needs_thinking("DeepSeek-V4-Pro"));
         assert!(ChatRequest::needs_thinking("deepseek-reasoner"));
-        assert!(!ChatRequest::needs_thinking("gpt-4o-mini"));
-        assert!(!ChatRequest::needs_thinking("deepseek-chat"));
+        assert!(!ChatRequest::needs_thinking("gpt-5.4"));
+        assert!(!ChatRequest::needs_thinking("deepseek-v4-flash"));
         assert!(!ChatRequest::needs_thinking("qwen2.5-coder"));
         assert!(!ChatRequest::needs_thinking("LongCat-2.0-Preview"));
     }
@@ -529,7 +529,7 @@ mod tests {
         assert!(mimo.needs_thinking());
         let deepseek_v4 = ModelProvider::deepseek("deepseek-v4-pro");
         assert!(deepseek_v4.needs_thinking());
-        let openai = ModelProvider::openai("gpt-4o-mini");
+        let openai = ModelProvider::openai("gpt-5.4");
         assert!(!openai.needs_thinking());
     }
 }

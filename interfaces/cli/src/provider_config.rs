@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn detect_provider_kind_deepseek() {
         assert_eq!(
-            detect_provider_kind("https://api.deepseek.com/v1", "deepseek-chat"),
+            detect_provider_kind("https://api.deepseek.com/v1", "deepseek-v4-flash"),
             ProviderKind::Deepseek
         );
     }
@@ -645,7 +645,7 @@ mod tests {
                 &ProviderConfig {
                     base_url: "https://api.openai.com/v1".to_string(),
                     api_key: "openai-key".to_string(),
-                    model: "gpt-4o-mini".to_string(),
+                    model: "gpt-5.4".to_string(),
                 },
                 true,
             )
@@ -656,7 +656,7 @@ mod tests {
                 &ProviderConfig {
                     base_url: "http://127.0.0.1:11434/v1".to_string(),
                     api_key: "local-key".to_string(),
-                    model: "qwen2.5-coder".to_string(),
+                    model: "glm-4.7-flash".to_string(),
                 },
                 false,
             )
@@ -671,7 +671,7 @@ mod tests {
             .expect("load current provider")
             .expect("current provider should exist");
         assert_eq!(loaded.name, "local");
-        assert_eq!(loaded.config.model, "qwen2.5-coder");
+        assert_eq!(loaded.config.model, "glm-4.7-flash");
     }
 
     #[test]
@@ -690,7 +690,7 @@ mod tests {
                 &ProviderConfig {
                     base_url: "https://api.openai.com/v1".to_string(),
                     api_key: "openai-key".to_string(),
-                    model: "gpt-4o-mini".to_string(),
+                    model: "gpt-5.4".to_string(),
                 },
                 true,
             )

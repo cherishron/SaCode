@@ -943,8 +943,8 @@ mod tests {
             .join("\n");
 
         assert!(line_dump.contains("Model"));
-        assert!(line_dump.contains("gpt-4o-mini"));
-        assert!(line_dump.contains("deepseek-chat"));
+        assert!(line_dump.contains("gpt-5.4"));
+        assert!(line_dump.contains("deepseek-v4-flash"));
         assert!(line_dump.contains("│"));
         assert!(line_dump.contains("┼") || line_dump.contains("┤"));
     }

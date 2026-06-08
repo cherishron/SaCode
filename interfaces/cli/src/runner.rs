@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn enrich_media_provider_args_injects_current_provider() {
-        let provider = ModelProvider::openai("gpt-4o")
+        let provider = ModelProvider::openai("gpt-5.4")
             .with_api_key("secret")
             .with_base_url("https://api.openai.com/v1");
         let input = serde_json::json!({
@@ -1191,7 +1191,7 @@ mod tests {
         let enriched = enrich_media_provider_args(&input, &provider);
         assert_eq!(
             enriched.get("model").and_then(|value| value.as_str()),
-            Some("gpt-4o")
+            Some("gpt-5.4")
         );
         assert_eq!(
             enriched.get("base_url").and_then(|value| value.as_str()),
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[test]
     fn enrich_media_provider_args_preserves_explicit_values() {
-        let provider = ModelProvider::openai("gpt-4o")
+        let provider = ModelProvider::openai("gpt-5.4")
             .with_api_key("secret")
             .with_base_url("https://api.openai.com/v1");
         let input = serde_json::json!({
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[test]
     fn enrich_media_provider_args_works_for_media_vision() {
-        let provider = ModelProvider::openai("gpt-4o")
+        let provider = ModelProvider::openai("gpt-5.4")
             .with_api_key("secret")
             .with_base_url("https://api.openai.com/v1");
         let input = serde_json::json!({
@@ -1245,7 +1245,7 @@ mod tests {
         let enriched = enrich_media_provider_args(&input, &provider);
         assert_eq!(
             enriched.get("model").and_then(|value| value.as_str()),
-            Some("gpt-4o")
+            Some("gpt-5.4")
         );
         assert_eq!(
             enriched.get("prompt").and_then(|value| value.as_str()),

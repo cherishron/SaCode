@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn chat_request_simple_skips_optional_fields() {
-        let req = ChatRequest::simple("gpt-4o-mini", "hello");
+        let req = ChatRequest::simple("gpt-5.4", "hello");
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("\"thinking\""));
         assert!(!json.contains("\"tools\""));
