@@ -433,7 +433,7 @@ fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        
+
         // Fallback: 直接 kill 子进程
         let _ = child.kill();
     }

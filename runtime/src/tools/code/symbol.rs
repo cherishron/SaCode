@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 use super::super::fs::access::resolve_allowed_path;
+use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 
 const DEFAULT_LIMIT: usize = 200;
 

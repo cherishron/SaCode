@@ -8,17 +8,26 @@ const MAX_OUTPUT_LEN: usize = 10000;
 
 #[cfg(target_os = "windows")]
 const WINDOWS_SHELL_BUILTINS: &[&str] = &[
-    "dir", "type", "echo", "copy", "del", "ren", "mkdir", "rmdir",
-    "set", "cd", "chdir", "md", "move", "pushd", "popd", "path",
-    "assoc", "ftype", "cls", "color", "date", "time", "title",
-    "mklink", "robocopy", "xcopy", "find", "findstr", "where",
-    "sort", "more", "fc", "comp", "tree", "ver", "vol",
+    "dir", "type", "echo", "copy", "del", "ren", "mkdir", "rmdir", "set", "cd", "chdir", "md",
+    "move", "pushd", "popd", "path", "assoc", "ftype", "cls", "color", "date", "time", "title",
+    "mklink", "robocopy", "xcopy", "find", "findstr", "where", "sort", "more", "fc", "comp",
+    "tree", "ver", "vol",
 ];
 
 #[cfg(target_os = "windows")]
 const WINDOWS_DANGEROUS_PATTERNS: &[&str] = &[
-    "format", "diskpart", "bcdedit", "reg delete", "del /f /s", "rmdir /s",
-    "takeown", "icacls", "shutdown", "reboot", "net user", "wmic",
+    "format",
+    "diskpart",
+    "bcdedit",
+    "reg delete",
+    "del /f /s",
+    "rmdir /s",
+    "takeown",
+    "icacls",
+    "shutdown",
+    "reboot",
+    "net user",
+    "wmic",
 ];
 
 pub fn spec() -> ToolSpec {
@@ -140,7 +149,11 @@ fn build_command_parts(command: &str) -> anyhow::Result<Vec<String>> {
             anyhow::bail!("command is required");
         };
         if needs_shell_wrapper(program) {
-            return Ok(vec!["cmd.exe".to_string(), "/C".to_string(), command.to_string()]);
+            return Ok(vec![
+                "cmd.exe".to_string(),
+                "/C".to_string(),
+                command.to_string(),
+            ]);
         }
         return Ok(parsed);
     }

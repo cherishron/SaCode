@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 use super::super::fs::access::resolve_allowed_path;
+use super::cache::{AST_CACHE, FILE_LIST_CACHE};
 
 const DEFAULT_LIMIT: usize = 200;
 
@@ -63,11 +63,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
 
-    let source_files = FILE_LIST_CACHE.get_or_collect(
-        &resolved_path,
-        None,
-        collect_source_files_with_language,
-    )?;
+    let source_files =
+        FILE_LIST_CACHE.get_or_collect(&resolved_path, None, collect_source_files_with_language)?;
     if source_files.is_empty() {
         return Ok(ToolOutput::success(serde_json::json!({
             "path": path,
