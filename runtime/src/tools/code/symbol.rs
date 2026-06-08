@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
+use super::ast::AstEditor;
 use super::super::fs::access::resolve_allowed_path;
 
 const DEFAULT_LIMIT: usize = 200;
@@ -168,175 +169,21 @@ fn extract_symbols(
         _ => file_path.display().to_string(),
     };
 
-    for (index, line) in content.lines().enumerate() {
+    let summary = AstEditor::summarize(language, &content)?;
+    for symbol in summary.symbols {
         if symbols.len() >= limit {
             break;
         }
-
-        let Some((kind, name)) = parse_symbol(line, language) else {
-            continue;
-        };
-
         symbols.push(SymbolEntry {
-            name,
-            kind,
+            name: symbol.name,
+            kind: symbol.kind,
             path: display_path.clone(),
-            line: index + 1,
-            preview: line.trim().to_string(),
+            line: symbol.line,
+            preview: symbol.preview,
         });
     }
 
     Ok(())
-}
-
-fn parse_symbol(line: &str, language: &str) -> Option<(String, String)> {
-    match language {
-        "rust" => parse_rust_symbol(line),
-        "python" => parse_python_symbol(line),
-        "javascript" | "typescript" => parse_js_symbol(line),
-        "go" => parse_go_symbol(line),
-        _ => None,
-    }
-}
-
-fn parse_rust_symbol(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("#") {
-        return None;
-    }
-
-    for keyword in ["fn", "struct", "enum", "trait", "mod", "type"] {
-        if let Some(name) = extract_name_after_keyword(trimmed, keyword) {
-            return Some((keyword.to_string(), name));
-        }
-    }
-
-    if let Some(name) = extract_impl_name(trimmed) {
-        return Some(("impl".to_string(), name));
-    }
-
-    None
-}
-
-fn parse_python_symbol(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return None;
-    }
-
-    if let Some(name) = extract_name_after_prefix(trimmed, "def ") {
-        return Some(("function".to_string(), name));
-    }
-    if let Some(name) = extract_name_after_prefix(trimmed, "async def ") {
-        return Some(("function".to_string(), name));
-    }
-    if let Some(name) = extract_name_after_prefix(trimmed, "class ") {
-        return Some(("class".to_string(), name));
-    }
-    None
-}
-
-fn parse_js_symbol(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("//") {
-        return None;
-    }
-
-    for prefix in [
-        "export function ",
-        "function ",
-        "export class ",
-        "class ",
-        "export interface ",
-        "interface ",
-        "export type ",
-        "type ",
-        "export enum ",
-        "enum ",
-        "const ",
-        "let ",
-        "var ",
-    ] {
-        if let Some(name) = extract_name_after_prefix(trimmed, prefix) {
-            let kind = if prefix.contains("class") {
-                "class"
-            } else if prefix.contains("interface") {
-                "interface"
-            } else if prefix.contains("type") {
-                "type"
-            } else if prefix.contains("enum") {
-                "enum"
-            } else {
-                "function"
-            };
-            return Some((kind.to_string(), trim_js_assignment_name(&name)));
-        }
-    }
-    None
-}
-
-fn parse_go_symbol(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("//") {
-        return None;
-    }
-
-    if let Some(name) = extract_name_after_prefix(trimmed, "func ") {
-        return Some(("function".to_string(), trim_go_receiver(&name)));
-    }
-    if let Some(name) = extract_name_after_prefix(trimmed, "type ") {
-        return Some(("type".to_string(), name));
-    }
-    if let Some(name) = extract_name_after_prefix(trimmed, "var ") {
-        return Some(("var".to_string(), name));
-    }
-    if let Some(name) = extract_name_after_prefix(trimmed, "const ") {
-        return Some(("const".to_string(), name));
-    }
-    None
-}
-
-fn extract_name_after_keyword(line: &str, keyword: &str) -> Option<String> {
-    let marker = format!("{} ", keyword);
-    let position = line.find(&marker)?;
-    let prefix = &line[..position];
-    if !prefix.is_empty()
-        && !prefix.ends_with("pub ")
-        && !prefix.ends_with("async ")
-        && !prefix.ends_with("unsafe ")
-        && !prefix.ends_with("const ")
-        && !prefix.ends_with("default ")
-    {
-        return None;
-    }
-
-    let rest = &line[position + marker.len()..];
-    take_identifier(rest)
-}
-
-fn extract_impl_name(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("impl ")?;
-    let target = rest.split(" for ").next().unwrap_or(rest).trim();
-    take_identifier(target)
-}
-
-fn extract_name_after_prefix(line: &str, prefix: &str) -> Option<String> {
-    let rest = line.strip_prefix(prefix)?;
-    take_identifier(rest)
-}
-
-fn trim_js_assignment_name(name: &str) -> String {
-    name.trim_end_matches(['=', ':']).to_string()
-}
-
-fn trim_go_receiver(name: &str) -> String {
-    if let Some(receiver_end) = name.find(')') {
-        let after_receiver = name[receiver_end + 1..].trim();
-        if let Some(identifier) = take_identifier(after_receiver) {
-            return identifier;
-        }
-    }
-    name.to_string()
 }
 
 fn matches_language(path: &Path, language: Option<&str>) -> bool {
@@ -363,16 +210,4 @@ fn detect_primary_language(files: &[PathBuf]) -> String {
         .and_then(|path| detect_language(path))
         .unwrap_or("unknown")
         .to_string()
-}
-
-fn take_identifier(value: &str) -> Option<String> {
-    let ident: String = value
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-        .collect();
-    if ident.is_empty() {
-        None
-    } else {
-        Some(ident)
-    }
 }

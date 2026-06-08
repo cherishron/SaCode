@@ -1,5 +1,7 @@
 use std::fs;
 
+use similar::{Algorithm, ChangeTag, TextDiff};
+
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
@@ -213,19 +215,26 @@ fn apply_normalized_patch(
     let normalized_old = normalize_newlines(old_string);
     let normalized_new = normalize_newlines(new_string);
     let occurrences = normalized_content.matches(&normalized_old).count();
-    if occurrences == 0 || (occurrences > 1 && !replace_all) {
-        return None;
-    }
-
-    let normalized_updated = if replace_all {
-        normalized_content.replace(&normalized_old, &normalized_new)
+    let normalized_updated = if occurrences > 0 {
+        if occurrences > 1 && !replace_all {
+            return None;
+        }
+        if replace_all {
+            normalized_content.replace(&normalized_old, &normalized_new)
+        } else {
+            normalized_content.replacen(&normalized_old, &normalized_new, 1)
+        }
     } else {
-        normalized_content.replacen(&normalized_old, &normalized_new, 1)
+        apply_fuzzy_patch(&normalized_content, &normalized_old, &normalized_new, replace_all)?
     };
 
     Some((
         restore_newlines(&normalized_updated, style),
-        if replace_all { occurrences } else { 1 },
+        if occurrences > 0 {
+            if replace_all { occurrences } else { 1 }
+        } else {
+            1
+        },
     ))
 }
 
@@ -262,4 +271,62 @@ fn restore_newlines(input: &str, style: NewlineStyle) -> String {
         NewlineStyle::Lf => input.to_string(),
         NewlineStyle::Crlf => input.replace('\n', "\r\n"),
     }
+}
+
+fn apply_fuzzy_patch(
+    content: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+) -> Option<String> {
+    if replace_all {
+        return None;
+    }
+
+    let content_lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let old_lines: Vec<&str> = old_string.split_inclusive('\n').collect();
+    if old_lines.is_empty() || content_lines.len() < old_lines.len() {
+        return None;
+    }
+
+    let needle = old_lines.join("");
+    let mut best_match: Option<(usize, usize)> = None;
+
+    for start in 0..=content_lines.len().saturating_sub(old_lines.len()) {
+        let end = start + old_lines.len();
+        let candidate = content_lines[start..end].join("");
+        let score = diff_distance(&needle, &candidate);
+        let max_len = needle.len().max(candidate.len());
+        if max_len == 0 {
+            continue;
+        }
+        if score * 5 > max_len {
+            continue;
+        }
+        match best_match {
+            Some((_, best_score)) if score >= best_score => {}
+            _ => best_match = Some((start, score)),
+        }
+    }
+
+    let (start, _) = best_match?;
+    let end = start + old_lines.len();
+    let mut updated = String::new();
+    updated.push_str(&content_lines[..start].join(""));
+    updated.push_str(new_string);
+    updated.push_str(&content_lines[end..].join(""));
+    Some(updated)
+}
+
+fn diff_distance(old: &str, new: &str) -> usize {
+    let diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .diff_lines(old, new);
+
+    diff.iter_all_changes()
+        .map(|change| match change.tag() {
+            ChangeTag::Equal => 0,
+            ChangeTag::Delete | ChangeTag::Insert => change.value().len(),
+        })
+        .sum()
 }

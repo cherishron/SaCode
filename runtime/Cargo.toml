@@ -20,10 +20,17 @@ regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
+similar = "2"
 sacode-kernel = { path = "../kernel" }
 tokio = { workspace = true, features = ["sync", "net", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing.workspace = true
+tree-sitter = "0.25"
+tree-sitter-go = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
 wait-timeout = "0.2"
 
 [dev-dependencies]

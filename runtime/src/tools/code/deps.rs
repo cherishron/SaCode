@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
+use super::ast::AstEditor;
 use super::super::fs::access::resolve_allowed_path;
 
 const DEFAULT_LIMIT: usize = 200;
@@ -84,7 +85,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     for file_path in source_files.iter().take(limit) {
         let relative_path = display_path(&resolved_path, file_path);
         let language = detect_language(file_path).unwrap_or("unknown").to_string();
-        let imports = extract_imports(file_path)?;
+        let imports = extract_imports(file_path, &language)?;
 
         for import in &imports {
             for candidate in import_path_candidates(&relative_path, import) {
@@ -167,26 +168,15 @@ fn detect_language(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn extract_imports(path: &Path) -> anyhow::Result<Vec<String>> {
+fn extract_imports(path: &Path, language: &str) -> anyhow::Result<Vec<String>> {
     let content = fs::read_to_string(path)?;
-    let language = detect_language(path).unwrap_or("unknown");
+    let summary = AstEditor::summarize(language, &content)?;
     let mut imports = BTreeSet::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
-            continue;
-        }
-
-        match language {
-            "rust" => collect_rust_import(trimmed, &mut imports),
-            "python" => collect_python_import(trimmed, &mut imports),
-            "javascript" | "typescript" => collect_js_import(trimmed, &mut imports),
-            "go" => collect_go_import(trimmed, &mut imports),
-            _ => {}
+    for import in summary.imports {
+        if !import.specifier.is_empty() {
+            imports.insert(import.specifier);
         }
     }
-
     Ok(imports.into_iter().collect())
 }
 
@@ -227,82 +217,4 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
         }
     }
     normalized
-}
-
-fn collect_rust_import(line: &str, imports: &mut BTreeSet<String>) {
-    if let Some(rest) = line.strip_prefix("use ") {
-        imports.insert(rest.trim_end_matches(';').trim().to_string());
-    }
-    if let Some(rest) = line.strip_prefix("pub use ") {
-        imports.insert(rest.trim_end_matches(';').trim().to_string());
-    }
-}
-
-fn collect_python_import(line: &str, imports: &mut BTreeSet<String>) {
-    if let Some(rest) = line.strip_prefix("import ") {
-        for part in rest.split(',') {
-            let module = part.split_whitespace().next().unwrap_or("").trim();
-            if !module.is_empty() {
-                imports.insert(module.to_string());
-            }
-        }
-    }
-    if let Some(rest) = line.strip_prefix("from ") {
-        if let Some((module, _)) = rest.split_once(" import ") {
-            let module = module.trim();
-            if !module.is_empty() {
-                imports.insert(module.to_string());
-            }
-        }
-    }
-}
-
-fn collect_js_import(line: &str, imports: &mut BTreeSet<String>) {
-    if line.starts_with("import ") {
-        if let Some((_, rest)) = line.rsplit_once(" from ") {
-            if let Some(specifier) = extract_quoted_value(rest) {
-                imports.insert(specifier);
-            }
-        } else if let Some(specifier) = extract_quoted_value(line) {
-            imports.insert(specifier);
-        }
-    }
-    if let Some((_, rest)) = line.split_once("require(") {
-        if let Some(specifier) = extract_quoted_value(rest) {
-            imports.insert(specifier);
-        }
-    }
-}
-
-fn collect_go_import(line: &str, imports: &mut BTreeSet<String>) {
-    if line == "import (" || line == "import" {
-        return;
-    }
-    if let Some(rest) = line.strip_prefix("import ") {
-        let trimmed = rest.trim();
-        if let Some(specifier) = extract_quoted_value(trimmed) {
-            imports.insert(specifier);
-        }
-    } else if line.starts_with('"') {
-        if let Some(specifier) = extract_quoted_value(line) {
-            imports.insert(specifier);
-        }
-    }
-}
-
-fn extract_quoted_value(line: &str) -> Option<String> {
-    for quote in ['"', '\''] {
-        let Some(start) = line.find(quote) else {
-            continue;
-        };
-        let rest = &line[start + 1..];
-        let Some(end) = rest.find(quote) else {
-            continue;
-        };
-        let value = rest[..end].trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    None
 }

@@ -162,6 +162,30 @@ fn test_code_symbols_extracts_python_symbols() {
 }
 
 #[test]
+fn test_code_symbols_extracts_multiline_typescript_symbols() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("index.ts"),
+        "export\nfunction startServer() {}\nconst runTask =\n  () => {}\n",
+    )
+    .expect("write TS file");
+
+    let output = crate::tools::code::symbol::execute(serde_json::json!({
+        "path": "index.ts",
+        "language": "typescript"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    let symbols = output.data["symbols"].as_array().expect("symbols array");
+    assert!(symbols.iter().any(|entry| entry["name"] == "startServer"));
+    assert!(symbols.iter().any(|entry| entry["name"] == "runTask"));
+}
+
+#[test]
 fn test_code_symbols_extracts_typescript_symbols() {
     let _guard = sandbox_test_lock();
     crate::sandbox::reset_global_policy();
@@ -322,6 +346,31 @@ fn test_code_deps_populates_imported_by_for_workspace_paths() {
         .expect("imported_by array")
         .iter()
         .any(|item| item == "a.ts"));
+}
+
+#[test]
+fn test_code_deps_extracts_multiline_go_import_block() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("main.go"),
+        "package main\nimport (\n    \"fmt\"\n    \"net/http\"\n)\nfunc main() {}\n",
+    )
+    .expect("write Go file");
+
+    let output = crate::tools::code::deps::execute(serde_json::json!({
+        "path": "main.go"
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(output.success);
+    let files = output.data["files"].as_array().expect("files array");
+    let go_file = files.first().expect("go file entry");
+    let imports = go_file["imports"].as_array().expect("imports array");
+    assert!(imports.iter().any(|item| item == "fmt"));
+    assert!(imports.iter().any(|item| item == "net/http"));
 }
 
 #[test]
@@ -1025,6 +1074,34 @@ fn test_fs_patch_reports_conflict_without_writing_files() {
     assert_eq!(
         fs::read_to_string(temp_dir.path().join("b.txt")).expect("read b"),
         "two\n"
+    );
+}
+
+#[test]
+fn test_fs_patch_applies_fuzzy_context_match() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta updated\ngamma\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "alpha\nbeta\ngamma\n",
+            "new_string": "alpha\ndelta\ngamma\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "alpha\ndelta\ngamma\n"
     );
 }
 
