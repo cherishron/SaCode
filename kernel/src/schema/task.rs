@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
     Plan,
+    #[default]
     Build,
     Yolo,
-}
-
-impl Default for ExecutionMode {
-    fn default() -> Self {
-        Self::Build
-    }
 }
 
 impl fmt::Display for ExecutionMode {

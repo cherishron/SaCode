@@ -44,7 +44,7 @@ impl AgentDispatcher {
         let (reviewer_tx_msg, reviewer_rx_msg) = channel();
 
         thread::spawn(|| {
-            let planner = PlannerAgent::default();
+            let planner = PlannerAgent;
             let rx: Receiver<AgentTask> = planner_rx_task;
             let tx: Sender<AgentMessage> = planner_tx_msg;
 
@@ -65,7 +65,7 @@ impl AgentDispatcher {
         });
 
         thread::spawn(|| {
-            let coder = CoderAgent::default();
+            let coder = CoderAgent;
             let rx: Receiver<AgentTask> = coder_rx_task;
             let tx: Sender<AgentMessage> = coder_tx_msg;
 
@@ -91,7 +91,7 @@ impl AgentDispatcher {
         });
 
         thread::spawn(|| {
-            let reviewer = ReviewerAgent::default();
+            let reviewer = ReviewerAgent;
             let rx: Receiver<AgentTask> = reviewer_rx_task;
             let tx: Sender<AgentMessage> = reviewer_tx_msg;
 

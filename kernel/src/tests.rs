@@ -104,7 +104,7 @@ fn test_ffi_roundtrip() {
     assert!(!handle.is_null());
 
     let prompt = CString::new("分析代码结构").expect("create c string");
-    let result = sacode_execute(handle, prompt.as_ptr(), 0);
+    let result = unsafe { sacode_execute(handle, prompt.as_ptr(), 0) };
     assert!(!result.is_null());
 
     let output = unsafe { CStr::from_ptr(result) }
@@ -112,8 +112,10 @@ fn test_ffi_roundtrip() {
         .into_owned();
     assert!(output.contains("steps"));
 
-    sacode_free_string(result);
-    sacode_free(handle);
+    unsafe {
+        sacode_free_string(result);
+        sacode_free(handle);
+    }
 }
 
 #[test]
