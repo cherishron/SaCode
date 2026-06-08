@@ -832,6 +832,20 @@ mod tests {
     use sacode_kernel::TaskRunState;
     use std::process::Command;
 
+    /// Get a successful exit status in a cross-platform way.
+    #[cfg(unix)]
+    fn success_exit_status() -> std::process::ExitStatus {
+        Command::new("true").status().expect("true exit status")
+    }
+
+    #[cfg(windows)]
+    fn success_exit_status() -> std::process::ExitStatus {
+        Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .status()
+            .expect("cmd exit status")
+    }
+
     #[test]
     fn extract_task_run_state_prefers_nested_task_run_state() {
         let parsed = serde_json::json!({
@@ -931,7 +945,7 @@ mod tests {
             }
         })
         .to_string();
-        let exit_status = Command::new("true").status().expect("true exit status");
+        let exit_status = success_exit_status();
 
         let result = App::parse_background_task_output(&payload, "", Some(exit_status));
 
@@ -959,7 +973,7 @@ mod tests {
             }
         })
         .to_string();
-        let exit_status = Command::new("true").status().expect("true exit status");
+        let exit_status = success_exit_status();
 
         let result = App::parse_background_task_output(&payload, "", Some(exit_status));
 
@@ -991,7 +1005,7 @@ mod tests {
             "__SACODE_STREAM__{\"type\":\"chunk\",\"content\":\"hello\"}\n",
             "{\"provider_response\":\"final answer\",\"state\":\"Completed\"}\n"
         );
-        let exit_status = Command::new("true").status().expect("true exit status");
+        let exit_status = success_exit_status();
 
         let result = App::parse_background_task_output(payload, "", Some(exit_status));
 

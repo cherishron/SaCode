@@ -335,7 +335,7 @@ fn detect_skill_source(target_dir: &Path) -> SkillSource {
         }
     }
 
-    let normalized = target_dir.to_string_lossy();
+    let normalized = target_dir.to_string_lossy().replace('\\', "/");
     if normalized.contains("/.sacode/") || normalized.ends_with("/.sacode") {
         SkillSource::Project
     } else {
