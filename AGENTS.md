@@ -5,7 +5,7 @@
 - This is a Rust workspace. Real members come from root `Cargo.toml`: `kernel/`, `runtime/`, `interfaces/cli/`, `interfaces/acp/`, `interfaces/lsp/`.
 - Dependency direction is strict: `interfaces/* -> runtime -> kernel`.
 - `kernel` holds pure execution logic and shared data structures. `runtime` holds side effects and wiring. User-facing CLI/TUI/REPL code lives in `interfaces/cli/`.
-- `npm-package/` is the publishable wrapper. `legacy/` is archive material and does not participate in current builds.
+- `npm-package/` is the publishable wrapper.
 
 ## Real Entrypoints
 

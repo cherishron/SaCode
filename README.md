@@ -161,8 +161,7 @@ sacode mcp serve    # 启动内置 MCP stdio server，暴露 fs.read/fs.list/git
 ├── interfaces/acp/      # ACP 服务
 ├── interfaces/lsp/      # LSP 服务
 ├── docs/                # 用户与开发文档
-├── npm-package/         # npm 发布包
-└── legacy/              # 历史归档，不参与当前 Rust 构建
+└── npm-package/         # npm 发布包
 ```
 
 ## `.sacode/` 目录
