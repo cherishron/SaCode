@@ -206,8 +206,8 @@ impl App {
             .cloned()
             .collect();
 
-        let remote_matches: Vec<sacode_runtime::SkillHubPluginMeta> = block_on_cli_future(SkillHubClient::new().search_plugins(query))
-            .unwrap_or_default();
+        let remote_matches: Vec<sacode_runtime::SkillHubPluginMeta> =
+            block_on_cli_future(SkillHubClient::new().search_plugins(query)).unwrap_or_default();
 
         if local_matches.is_empty() && remote_matches.is_empty() {
             self.push_system_message("未找到匹配的插件。");

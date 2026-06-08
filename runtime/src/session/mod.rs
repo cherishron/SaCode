@@ -279,10 +279,7 @@ impl SessionState {
     }
 
     fn estimate_event_tokens(&self) -> u32 {
-        self.events
-            .iter()
-            .map(estimate_event_tokens)
-            .sum()
+        self.events.iter().map(estimate_event_tokens).sum()
     }
 
     fn should_compress(&self, threshold: u32) -> bool {

@@ -63,8 +63,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
 
-    let mut source_files =
-        file_list_cache().get_or_collect(&resolved_path, None, collect_source_files_with_language)?;
+    let mut source_files = file_list_cache().get_or_collect(
+        &resolved_path,
+        None,
+        collect_source_files_with_language,
+    )?;
     if source_files.is_empty() {
         return Ok(ToolOutput::success(serde_json::json!({
             "path": path,

@@ -382,7 +382,9 @@ pub(crate) fn render_assistant_markdown(
                         Box::leak(format!("   {}", item_prefix).into_boxed_str())
                     };
                     prefix_rest = Box::leak(
-                        " ".repeat(prefix_first.chars().count()).to_string().into_boxed_str(),
+                        " ".repeat(prefix_first.chars().count())
+                            .to_string()
+                            .into_boxed_str(),
                     );
                     prefix_style = Style::default()
                         .fg(theme.assistant)
@@ -398,7 +400,9 @@ pub(crate) fn render_assistant_markdown(
                         Box::leak(format!("   {}", item_prefix).into_boxed_str())
                     };
                     prefix_rest = Box::leak(
-                        " ".repeat(prefix_first.chars().count()).to_string().into_boxed_str(),
+                        " ".repeat(prefix_first.chars().count())
+                            .to_string()
+                            .into_boxed_str(),
                     );
                     prefix_style = Style::default()
                         .fg(theme.assistant)

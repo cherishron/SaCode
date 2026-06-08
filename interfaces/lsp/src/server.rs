@@ -378,23 +378,19 @@ async fn generate_fix_edits(
         document.language_id, document.language_id, code_snippet
     );
 
-    let fixed_code = client
-        .simple_chat(provider, &prompt)
-        .await
-        .ok()
-        .map(|s| {
-            let trimmed = s.trim();
-            if trimmed.starts_with("```") {
-                trimmed
-                    .lines()
-                    .skip(1)
-                    .take_while(|l| !l.starts_with("```"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                trimmed.to_string()
-            }
-        });
+    let fixed_code = client.simple_chat(provider, &prompt).await.ok().map(|s| {
+        let trimmed = s.trim();
+        if trimmed.starts_with("```") {
+            trimmed
+                .lines()
+                .skip(1)
+                .take_while(|l| !l.starts_with("```"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            trimmed.to_string()
+        }
+    });
 
     tower_lsp::lsp_types::WorkspaceEdit {
         changes: Some(std::collections::HashMap::from([(
