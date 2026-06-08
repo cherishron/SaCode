@@ -33,10 +33,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build binary (needed by child-process tests)
+        run: cargo build -p sacode-cli --bin sacode
+
       - name: Run tests
         run: cargo test --workspace
 
-      - name: Build
+      - name: Build release
         run: cargo build --release
 
       - name: Prepare npm platforms
@@ -57,6 +60,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binary (needed by child-process tests)
+        run: cargo build -p sacode-cli --bin sacode
 
       - name: Run tests
         run: cargo test --workspace
