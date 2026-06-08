@@ -39,9 +39,10 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaskPriority {
     Low,
+    #[default]
     Medium,
     High,
 }
@@ -192,12 +193,6 @@ impl TaskStore {
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-}
-
-impl Default for TaskPriority {
-    fn default() -> Self {
-        Self::Medium
     }
 }
 

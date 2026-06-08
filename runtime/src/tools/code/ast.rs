@@ -169,13 +169,16 @@ fn extract_symbol(parsed: &ParsedSource<'_>, node: Node<'_>) -> Option<AstSymbol
         _ => None,
     }?;
 
-    let name = node_text(parsed.source, name_node.1)?;
+    let name = node_text(parsed.source, name_node.1).ok()?;
     let start = name_node.1.start_position();
     Some(AstSymbol {
         name,
         kind: name_node.0.to_string(),
         line: start.row + 1,
-        preview: node_text(parsed.source, node)?.trim().replace('\n', " "),
+        preview: node_text(parsed.source, node)
+            .ok()?
+            .trim()
+            .replace('\n', " "),
     })
 }
 

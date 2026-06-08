@@ -321,6 +321,12 @@ impl SkillHubClient {
     }
 }
 
+impl Default for SkillHubClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn detect_skill_source(target_dir: &Path) -> SkillSource {
     if let Some(home) = std::env::var_os("HOME") {
         let user_dir = Path::new(&home).join(".sacode").join("skills");

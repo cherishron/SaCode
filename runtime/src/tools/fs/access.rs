@@ -32,7 +32,7 @@ fn is_allowed(path: &Path, workspace_root: &Path) -> anyhow::Result<bool> {
         return Ok(true);
     }
 
-    let store = ProjectAccessConfigStore::new(&workspace_root);
+    let store = ProjectAccessConfigStore::new(workspace_root);
     store.is_allowed_path(workspace_root, path)
 }
 

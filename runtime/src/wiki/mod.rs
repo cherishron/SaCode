@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::{
+    cmp::Reverse,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -144,7 +145,7 @@ fn build_session_summary(workdir: &Path) -> Result<Option<String>> {
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
         .collect::<Vec<_>>();
 
-    session_files.sort_by(|a, b| file_modified_key(b).cmp(&file_modified_key(a)));
+    session_files.sort_by_key(|path| Reverse(file_modified_key(path)));
 
     let mut sections = Vec::new();
     for path in session_files.into_iter().take(MAX_SESSION_SUMMARIES) {

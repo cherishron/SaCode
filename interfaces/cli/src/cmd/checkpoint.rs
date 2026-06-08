@@ -78,8 +78,8 @@ fn show_checkpoint(storage: &CheckpointStorage, filename: &str) -> Result<()> {
         }
     }
 
-    if checkpoint.pending_approval.is_some() {
-        println!("Pending Approval: {}", checkpoint.pending_approval.unwrap());
+    if let Some(pending) = &checkpoint.pending_approval {
+        println!("Pending Approval: {}", pending);
     }
 
     Ok(())

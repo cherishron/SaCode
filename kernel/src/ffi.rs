@@ -7,6 +7,12 @@ pub struct SacodeHandle {
     supervisor: Supervisor,
 }
 
+impl Default for SacodeHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SacodeHandle {
     pub fn new() -> Self {
         Self {
@@ -28,35 +34,36 @@ pub extern "C" fn sacode_new() -> *mut SacodeHandle {
     Box::into_raw(handle)
 }
 
+/// # Safety
+///
+/// The handle must be a valid pointer previously returned by `sacode_new()`.
+/// Passing a null pointer or a pointer that has already been freed is undefined behavior.
 #[no_mangle]
-pub extern "C" fn sacode_free(handle: *mut SacodeHandle) {
-    if handle.is_null() {
-        return;
-    }
-    unsafe {
+pub unsafe extern "C" fn sacode_free(handle: *mut SacodeHandle) {
+    if !handle.is_null() {
         drop(Box::from_raw(handle));
     }
 }
 
+/// # Safety
+///
+/// - `handle` must be a valid pointer previously returned by `sacode_new()`.
+/// - `prompt` must be a valid null-terminated C string.
+/// - The returned string must be freed with `sacode_free_string()`.
 #[no_mangle]
-pub extern "C" fn sacode_execute(
+pub unsafe extern "C" fn sacode_execute(
     handle: *mut SacodeHandle,
     prompt: *const c_char,
     mode: i32,
 ) -> *mut c_char {
-    let handle = unsafe {
-        if handle.is_null() {
-            return CString::new("error: null handle").unwrap().into_raw();
-        }
-        &*handle
-    };
-
-    let prompt = unsafe {
-        if prompt.is_null() {
-            return CString::new("error: null prompt").unwrap().into_raw();
-        }
-        CStr::from_ptr(prompt).to_string_lossy().into_owned()
-    };
+    if handle.is_null() {
+        return CString::new("error: null handle").unwrap().into_raw();
+    }
+    if prompt.is_null() {
+        return CString::new("error: null prompt").unwrap().into_raw();
+    }
+    let handle = &*handle;
+    let prompt = CStr::from_ptr(prompt).to_string_lossy().into_owned();
 
     let execution_mode = match mode {
         1 => ExecutionMode::Plan,
@@ -68,12 +75,13 @@ pub extern "C" fn sacode_execute(
     CString::new(result).unwrap().into_raw()
 }
 
+/// # Safety
+///
+/// `s` must be a valid pointer previously returned by `sacode_execute()`.
+/// Passing a null pointer is safe (no-op).
 #[no_mangle]
-pub extern "C" fn sacode_free_string(s: *mut c_char) {
-    if s.is_null() {
-        return;
-    }
-    unsafe {
+pub unsafe extern "C" fn sacode_free_string(s: *mut c_char) {
+    if !s.is_null() {
         drop(CString::from_raw(s));
     }
 }

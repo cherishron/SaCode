@@ -6,7 +6,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::super::fs::access::resolve_allowed_path;
-use super::cache::{AST_CACHE, FILE_LIST_CACHE};
+use super::cache::{ast_cache, file_list_cache};
 
 const DEFAULT_LIMIT: usize = 200;
 
@@ -63,8 +63,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
 
-    let source_files =
-        FILE_LIST_CACHE.get_or_collect(&resolved_path, None, collect_source_files_with_language)?;
+    let mut source_files = file_list_cache().get_or_collect(
+        &resolved_path,
+        None,
+        collect_source_files_with_language,
+    )?;
     if source_files.is_empty() {
         return Ok(ToolOutput::success(serde_json::json!({
             "path": path,
@@ -178,7 +181,7 @@ fn detect_language(path: &Path) -> Option<&'static str> {
 
 fn extract_imports(path: &Path, language: &str) -> anyhow::Result<Vec<String>> {
     let content = fs::read_to_string(path)?;
-    let summary = AST_CACHE.get_or_compute(path, language, &content)?;
+    let summary = ast_cache().get_or_compute(path, language, &content)?;
     let mut imports = BTreeSet::new();
     for import in summary.imports {
         if !import.specifier.is_empty() {

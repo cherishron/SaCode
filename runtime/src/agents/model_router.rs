@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
@@ -52,7 +53,7 @@ pub fn build_route_plan_from_candidates(
         })
         .collect::<Vec<_>>();
 
-    routed.sort_by(|a, b| b.route_score.cmp(&a.route_score));
+    routed.sort_by_key(|route| Reverse(route.route_score));
     apply_route_overrides(&config, profile, &mut routed);
     apply_role_preferences(&effective_policy, &mut routed);
 

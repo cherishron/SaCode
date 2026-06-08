@@ -103,6 +103,7 @@ impl TaskQueue {
         ] {
             if let Some(queue) = pending.get_mut(&priority) {
                 let completed_ids = self.get_completed_ids().await;
+                #[allow(clippy::never_loop)]
                 while let Some(task) = queue.pop_front() {
                     if task.is_ready(&completed_ids) {
                         let mut running = self.running.write().await;

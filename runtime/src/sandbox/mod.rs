@@ -8,7 +8,7 @@ pub use executor::{
     SandboxCommand, SandboxExecutor,
 };
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 static ACTIVE_SANDBOX_POLICY: OnceLock<RwLock<SandboxPolicy>> = OnceLock::new();
@@ -180,7 +180,7 @@ impl SandboxPolicy {
         }
     }
 
-    pub fn check_path(&self, path: &PathBuf, access: FsAccess) -> bool {
+    pub fn check_path(&self, path: &Path, access: FsAccess) -> bool {
         if current_mode() == ExecutionMode::Yolo {
             return true;
         }
@@ -214,7 +214,7 @@ impl SandboxPolicy {
             .ok()
             .and_then(|cwd| cwd.canonicalize().ok())
         {
-            Some(workspace_root) => ProjectAccessConfigStore::new(&workspace_root)
+            Some(workspace_root) => ProjectAccessConfigStore::new(workspace_root.as_path())
                 .is_allowed_path(&workspace_root, path)
                 .unwrap_or(false),
             None => false,

@@ -365,17 +365,7 @@ pub(super) fn display_width(text: &str) -> usize {
 fn body_style_for_message(msg: &Message, theme: ThemePalette) -> Style {
     match msg.role {
         MessageRole::User => Style::default().fg(theme.text),
-        MessageRole::Assistant => {
-            if msg
-                .content
-                .lines()
-                .any(|line| line.starts_with(PREFIX_TOOL))
-            {
-                Style::default().fg(theme.text)
-            } else {
-                Style::default().fg(theme.text)
-            }
-        }
+        MessageRole::Assistant => Style::default().fg(theme.text),
         MessageRole::System => {
             if msg.content.starts_with(PREFIX_WAITING) {
                 Style::default().fg(theme.agent)

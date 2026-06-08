@@ -142,7 +142,7 @@ impl App {
                         self.replace_messages(
                             messages
                                 .iter()
-                                .filter_map(|message| {
+                                .map(|message| {
                                     let role = message
                                         .get("role")
                                         .and_then(|role| role.as_str())
@@ -156,7 +156,7 @@ impl App {
                                         .and_then(|timestamp| timestamp.as_str())
                                         .unwrap_or("");
 
-                                    Some(Message {
+                                    Message {
                                         role: match role {
                                             "user" => MessageRole::User,
                                             "assistant" => MessageRole::Assistant,
@@ -173,7 +173,7 @@ impl App {
                                             .get("collapsed")
                                             .and_then(|value| value.as_bool())
                                             .unwrap_or(false),
-                                    })
+                                    }
                                 })
                                 .collect(),
                         );

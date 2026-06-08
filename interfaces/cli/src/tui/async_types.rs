@@ -5,6 +5,7 @@ use crate::cmd::init::InitMode;
 use crate::provider_config::{NamedProviderConfig, ProviderConfig};
 use crate::tui::ModelOptionEntry;
 
+#[allow(clippy::large_enum_variant)]
 pub(super) enum AsyncResult {
     ChatStreamChunk {
         task_id: u64,

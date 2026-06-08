@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::SystemTime;
 
 use super::ast::AstSummary;
@@ -147,8 +147,19 @@ impl FileListCache {
     }
 }
 
-pub static AST_CACHE: std::sync::LazyLock<AstCache> =
-    std::sync::LazyLock::new(|| AstCache::new(512));
+impl Default for FileListCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-pub static FILE_LIST_CACHE: std::sync::LazyLock<FileListCache> =
-    std::sync::LazyLock::new(FileListCache::new);
+static AST_CACHE: OnceLock<AstCache> = OnceLock::new();
+static FILE_LIST_CACHE: OnceLock<FileListCache> = OnceLock::new();
+
+pub fn ast_cache() -> &'static AstCache {
+    AST_CACHE.get_or_init(|| AstCache::new(512))
+}
+
+pub fn file_list_cache() -> &'static FileListCache {
+    FILE_LIST_CACHE.get_or_init(FileListCache::new)
+}

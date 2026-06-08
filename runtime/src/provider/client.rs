@@ -170,6 +170,7 @@ impl ProviderClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn tool_chat_streaming<F, G>(
         &self,
         provider: &ModelProvider,
@@ -197,7 +198,7 @@ impl ProviderClient {
             total_tokens: 0,
         };
         let mut has_usage = false;
-        let max_tool_rounds = max_tool_rounds.max(1).min(MAX_TOOL_ROUNDS);
+        let max_tool_rounds = max_tool_rounds.clamp(1, MAX_TOOL_ROUNDS);
         for _ in 0..max_tool_rounds {
             rounds += 1;
             let (assistant_msg, round_usage) = self
@@ -472,8 +473,8 @@ impl StreamRoundState {
             (!self.reasoning_content.is_empty()).then_some(self.reasoning_content);
         let tool_calls = (!self.tool_calls.is_empty()).then(|| {
             self.tool_calls
-                .into_iter()
-                .map(|(_, call)| sacode_kernel::model::ToolCall {
+                .into_values()
+                .map(|call| sacode_kernel::model::ToolCall {
                     id: call.id,
                     call_type: if call.call_type.is_empty() {
                         "function".to_string()
@@ -1097,9 +1098,7 @@ mod tests {
 
     #[test]
     fn handle_sse_frame_supports_array_content_parts() {
-        let frame = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":[{\"text\":\"Hello\"},{\"text\":\" world\"}]}}]}\n\n"
-        );
+        let frame = "data: {\"choices\":[{\"delta\":{\"content\":[{\"text\":\"Hello\"},{\"text\":\" world\"}]}}]}\n\n";
         let mut chunks = Vec::new();
         let _ = handle_sse_frame(frame, &mut |chunk| chunks.push(chunk.clone()), None).unwrap();
 

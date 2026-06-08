@@ -142,6 +142,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_chat_completed(
         &mut self,
         task_id: u64,

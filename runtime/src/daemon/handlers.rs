@@ -153,7 +153,7 @@ pub async fn get_task_status(
                 Some(result.task_id.clone()),
                 ExecutionMode::Build,
                 String::new(),
-                result.status.clone(),
+                result.status,
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });
@@ -206,7 +206,7 @@ pub async fn get_task_result(
                 Some(result.task_id.clone()),
                 ExecutionMode::Build,
                 String::new(),
-                result.status.clone(),
+                result.status,
                 result.output.clone().or_else(|| result.error.clone()),
             )
         });

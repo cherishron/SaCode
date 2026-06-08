@@ -234,11 +234,7 @@ pub(crate) fn render_input_panel(
                     Style::default().fg(accent).add_modifier(Modifier::BOLD),
                 )]
             };
-            if input_is_editable {
-                spans.extend(line.spans);
-            } else {
-                spans.extend(line.spans);
-            }
+            spans.extend(line.spans);
             decorated_lines.push(Line::from(spans));
         } else {
             decorated_lines.push(Line::from(vec![
