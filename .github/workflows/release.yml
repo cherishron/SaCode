@@ -79,6 +79,8 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +115,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Verify packed npm package
         run: |
@@ -123,12 +124,39 @@ jobs:
           npm install -g "./$PACKAGE_TGZ"
           test "$(sacode --version)" = "sacode $PACKAGE_VERSION"
 
-      - name: Publish to npm
+      # ── Always publish to GitHub Packages (uses GITHUB_TOKEN) ──
+
+      - name: Setup GitHub Packages registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: |
+          cd npm-package
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Optionally publish to npmjs.org (if NPM_TOKEN secret is set) ──
+
+      - name: Setup npmjs.org registry
+        if: env.NPM_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npmjs.org
+        if: env.NPM_TOKEN != ''
         run: |
           cd npm-package
           npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── GitHub Release ──
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -137,8 +165,14 @@ jobs:
           body: |
             ## Installation
             
+            ### npmjs.org
             ```bash
             npm install -g @cherishron/sacode@${{ steps.get_version.outputs.VERSION }}
+            ```
+            
+            ### GitHub Packages
+            ```bash
+            npm install -g @cherishron/sacode@${{ steps.get_version.outputs.VERSION }} --registry=https://npm.pkg.github.com
             ```
             
             Or download binary directly from assets below.

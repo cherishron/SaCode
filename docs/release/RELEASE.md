@@ -15,7 +15,6 @@ SaCode 当前支持两种发布方式：
 
 ### 前置条件
 
-- 仓库已配置 `NPM_TOKEN` secret
 - 有 push tag 权限
 
 ### 步骤

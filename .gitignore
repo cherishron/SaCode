@@ -35,8 +35,14 @@ temp/
 *.bak
 *.backup
 
-# npm package binaries
-npm-package/platforms/sacode-*
+# npm auth
+.npmrc
+
+# npm package generated platforms (CI builds)
+npm-package/platforms/
+
+# Node modules
+node_modules/
 
 # Build / distribution output
 dist/
