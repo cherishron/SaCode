@@ -41,6 +41,9 @@ temp/
 # npm package generated platforms (CI builds)
 npm-package/platforms/
 
+# Node modules
+node_modules/
+
 # Build / distribution output
 dist/
 build/

@@ -198,7 +198,7 @@ sacode "分析当前仓库的架构边界"
     {
       "name": "openai",
       "base_url": "https://api.openai.com/v1",
-      "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
+      "api_key": "YOUR_API_KEY",
       "models": ["gpt-4", "gpt-3.5-turbo"],
       "is_default": true
     }
@@ -582,7 +582,7 @@ plan → build → yolo → plan → ...
 ```text
 /login
 Base URL: https://api.openai.com/v1
-API Key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
+API Key: YOUR_API_KEY
 Provider name (optional): my-openai
 ```
 
@@ -882,7 +882,7 @@ sacode
 ```text
 /login
 Base URL: https://api.openai.com/v1
-API Key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
+API Key: YOUR_API_KEY
 /models
 # 选择 gpt-4 或其他适合代码分析的模型
 ```
@@ -1245,7 +1245,7 @@ sacode
     {
       "name": "openai",
       "base_url": "https://api.openai.com/v1",
-      "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
+      "api_key": "YOUR_API_KEY",
       "models": ["gpt-4", "gpt-3.5-turbo"],
       "is_default": true
     }
@@ -1261,7 +1261,7 @@ sacode
     {
       "name": "deepseek",
       "base_url": "https://api.deepseek.com/v1",
-      "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
+      "api_key": "YOUR_API_KEY",
       "models": ["deepseek-chat", "deepseek-coder"],
       "is_default": false
     }

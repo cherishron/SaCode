@@ -261,7 +261,7 @@ REPL/TUI 新增：
   "providers": {
     "openai": {
       "base_url": "https://api.openai.com/v1",
-      "api_key": "sk-xxx",
+      "api_key": "YOUR_API_KEY",
       "model": "gpt-4o-mini"
     },
     "local": {
@@ -345,8 +345,8 @@ REPL/TUI 新增：
 ### 环境变量
 
 ```bash
-export OPENAI_API_KEY="sk-xxx"
-export DEEPSEEK_API_KEY="sk-xxx"
+export OPENAI_API_KEY="YOUR_API_KEY"
+export DEEPSEEK_API_KEY="YOUR_API_KEY"
 export SACODE_MODEL="gpt-4o-mini"
 export SACODE_PROFILE="default"
 ```

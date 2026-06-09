@@ -26,7 +26,7 @@ sacode
 ```text
 /login
 Base URL: https://api.openai.com/v1
-API Key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
+API Key: YOUR_API_KEY
 Provider name (optional): my-openai
 ```
 
