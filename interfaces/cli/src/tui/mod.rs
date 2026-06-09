@@ -1109,7 +1109,8 @@ mod tests {
             .expect("draw header");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("~/"));
+        // compact_path uses "~/" on Unix and "~" on Windows (drive prefix)
+        assert!(rendered.contains("~"));
         assert!(rendered.contains("SaCode v"));
         assert!(rendered.contains("Ctrl+Q: quit"));
         assert!(rendered.contains("think:"));
