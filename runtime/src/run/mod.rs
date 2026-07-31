@@ -1,7 +1,10 @@
 use sacode_kernel::{Event, ExecutionContext, ExecutionReport, TaskRun, TaskRunState};
 
 pub fn run_task_once(context: &ExecutionContext) -> TaskRun {
+    // TODO: 迁移到 task_runner::execute_task_with_provider
+    #[allow(deprecated)]
     let supervisor = sacode_kernel::Supervisor::new();
+    #[allow(deprecated)]
     let result = supervisor.execute(&context.task);
     let final_output = result.output.events.iter().rev().find_map(event_summary);
     let report = ExecutionReport {

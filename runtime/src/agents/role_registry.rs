@@ -1,3 +1,17 @@
+//! 灵枢 · 自组织 — 角色注册表
+//!
+//! 核心模块：内置角色定义与管理
+//! 对应 AGENTS.md 中「自组织 — 角色驱动编排」
+//!
+//! 角色定义包括：
+//! - requirement-analyst：需求分析
+//! - system-architect：系统架构
+//! - repo-explorer：代码探索
+//! - implementer：代码实现
+//! - code-reviewer：代码审查
+//! - test-engineer：测试工程
+//! - security-analyst：安全分析
+
 use sacode_kernel::{AgentRole, RoleModelPolicy, RoleStage};
 
 #[derive(Debug, Clone, Default)]
@@ -10,6 +24,23 @@ impl RoleRegistry {
         Self {
             roles: builtin_roles(),
         }
+    }
+
+    /// 创建包含内置角色和项目级自定义角色的注册表
+    pub fn with_custom_agents(workdir: &std::path::Path) -> Self {
+        let mut roles = builtin_roles();
+        let custom_agents = super::agent_loader::load_custom_agents(workdir);
+        for custom in custom_agents {
+            // 如果自定义角色 ID 与内置角色冲突，覆盖内置角色
+            if let Some(pos) = roles.iter().position(|r| r.id == custom.id) {
+                tracing::info!("自定义 Agent [{}] 覆盖内置角色", custom.id);
+                roles[pos] = custom;
+            } else {
+                tracing::info!("添加自定义 Agent [{}]", custom.id);
+                roles.push(custom);
+            }
+        }
+        Self { roles }
     }
 
     pub fn all(&self) -> &[AgentRole] {

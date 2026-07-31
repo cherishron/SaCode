@@ -8,11 +8,56 @@ const MAX_OUTPUT_LEN: usize = 10000;
 
 #[cfg(target_os = "windows")]
 const WINDOWS_SHELL_BUILTINS: &[&str] = &[
-    "dir", "type", "echo", "copy", "del", "ren", "mkdir", "rmdir", "set", "cd", "chdir", "md",
-    "move", "pushd", "popd", "path", "assoc", "ftype", "cls", "color", "date", "time", "title",
-    "mklink", "robocopy", "xcopy", "find", "findstr", "where", "sort", "more", "fc", "comp",
-    "tree", "ver", "vol",
+    "dir",
+    "type",
+    "echo",
+    "copy",
+    "del",
+    "ren",
+    "mkdir",
+    "rmdir",
+    "set",
+    "cd",
+    "chdir",
+    "md",
+    "move",
+    "pushd",
+    "popd",
+    "path",
+    "assoc",
+    "ftype",
+    "cls",
+    "color",
+    "date",
+    "time",
+    "title",
+    "mklink",
+    "robocopy",
+    "xcopy",
+    "find",
+    "findstr",
+    "where",
+    "sort",
+    "more",
+    "fc",
+    "comp",
+    "tree",
+    "ver",
+    "vol",
+    "call",
+    "start",
+    "exit",
+    "if",
+    "for",
+    "goto",
+    "pause",
+    "rem",
+    "shift",
 ];
+
+/// Windows 上需要通过 cmd.exe 解释的 shell 操作符
+#[cfg(target_os = "windows")]
+const WINDOWS_SHELL_OPERATORS: &[&str] = &["|", ">", ">>", "<", "&&", "||", "&", ";"];
 
 #[cfg(target_os = "windows")]
 const WINDOWS_DANGEROUS_PATTERNS: &[&str] = &[
@@ -22,12 +67,19 @@ const WINDOWS_DANGEROUS_PATTERNS: &[&str] = &[
     "reg delete",
     "del /f /s",
     "rmdir /s",
+    "rd /s",
     "takeown",
     "icacls",
     "shutdown",
     "reboot",
     "net user",
     "wmic",
+    "powershell -enc",
+    "cmd /c del",
+    "cipher /w",
+    "netsh",
+    "sc delete",
+    "reg add",
 ];
 
 pub fn spec() -> ToolSpec {
@@ -120,8 +172,26 @@ fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
                 } else if ch == '\'' || ch == '"' {
                     quote = Some(ch);
                 } else if ch == '\\' {
-                    if let Some(next) = chars.next() {
-                        current.push(next);
+                    // Windows 路径中的反斜杠：如果后面跟的是路径分隔符或非特殊字符，
+                    // 保留反斜杠作为路径的一部分
+                    #[cfg(target_os = "windows")]
+                    {
+                        current.push('\\');
+                        // 检查是否为转义引号的情况
+                        if let Some(&next) = chars.peek() {
+                            if next == '"' || next == '\'' {
+                                // 转义引号：消费反斜杠，保留引号字符
+                                current.pop();
+                                current.push(chars.next().unwrap());
+                            }
+                            // 其他情况（路径分隔符等）：反斜杠已保留，继续
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        if let Some(next) = chars.next() {
+                            current.push(next);
+                        }
                     }
                 } else {
                     current.push(ch);
@@ -144,24 +214,47 @@ fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
 fn build_command_parts(command: &str) -> anyhow::Result<Vec<String>> {
     #[cfg(target_os = "windows")]
     {
-        let parsed = split_command(command)?;
-        let Some(program) = parsed.first() else {
-            anyhow::bail!("command is required");
-        };
-        if needs_shell_wrapper(program) {
+        // Windows 上：包含 shell 操作符或内建命令时，必须通过 cmd.exe /C 执行
+        if needs_cmd_wrapper(command) {
             return Ok(vec![
                 "cmd.exe".to_string(),
                 "/C".to_string(),
                 command.to_string(),
             ]);
         }
-        Ok(parsed)
+        // 普通外部命令：直接解析参数
+        split_command(command)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         split_command(command)
     }
+}
+
+/// 判断 Windows 上命令是否需要通过 cmd.exe 包装执行
+#[cfg(target_os = "windows")]
+fn needs_cmd_wrapper(command: &str) -> bool {
+    // 检查 shell 操作符（管道、重定向、链式执行等）
+    for op in WINDOWS_SHELL_OPERATORS {
+        if command.contains(op) {
+            return true;
+        }
+    }
+
+    // 检查首词是否为 cmd.exe 内建命令
+    let first_word = command.split_whitespace().next().unwrap_or("");
+    let lower = first_word.to_ascii_lowercase();
+    if WINDOWS_SHELL_BUILTINS.contains(&lower.as_str()) {
+        return true;
+    }
+
+    // .bat / .cmd 脚本需要 cmd.exe 执行
+    if lower.ends_with(".bat") || lower.ends_with(".cmd") {
+        return true;
+    }
+
+    false
 }
 
 fn is_dangerous_command(cmd: &str) -> bool {
@@ -199,12 +292,6 @@ fn is_dangerous_command(cmd: &str) -> bool {
     false
 }
 
-#[cfg(target_os = "windows")]
-fn needs_shell_wrapper(program: &str) -> bool {
-    let lower = program.to_ascii_lowercase();
-    WINDOWS_SHELL_BUILTINS.contains(&lower.as_str())
-}
-
 fn truncate_output(output: String) -> String {
     if output.len() > MAX_OUTPUT_LEN {
         format!(
@@ -229,4 +316,120 @@ fn tool_output_from_backend(output: BackendCommandOutput) -> ToolOutput {
         "success": output.exit_code == 0,
         "timed_out": false
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_command_handles_simple_commands() {
+        let parts = split_command("echo hello world").unwrap();
+        assert_eq!(parts, vec!["echo", "hello", "world"]);
+    }
+
+    #[test]
+    fn split_command_handles_quoted_strings() {
+        let parts = split_command("echo \"hello world\"").unwrap();
+        assert_eq!(parts, vec!["echo", "hello world"]);
+    }
+
+    #[test]
+    fn split_command_handles_single_quotes() {
+        let parts = split_command("echo 'hello world'").unwrap();
+        assert_eq!(parts, vec!["echo", "hello world"]);
+    }
+
+    #[test]
+    fn split_command_rejects_unterminated_quotes() {
+        assert!(split_command("echo \"hello").is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn split_command_preserves_backslash_in_paths() {
+        // Windows 路径中的反斜杠应被保留
+        let parts = split_command("cmd C:\\Users\\test\\file.txt").unwrap();
+        assert_eq!(parts[1], "C:\\Users\\test\\file.txt");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn split_command_handles_unix_escape() {
+        // Unix 上反斜杠是转义字符
+        let parts = split_command("echo hello\\ world").unwrap();
+        assert_eq!(parts, vec!["echo", "hello world"]);
+    }
+
+    #[test]
+    fn detects_dangerous_commands() {
+        assert!(is_dangerous_command("rm -rf /"));
+        assert!(is_dangerous_command("rm -rf ~"));
+        assert!(is_dangerous_command("mkfs /dev/sda1"));
+        assert!(!is_dangerous_command("ls -la"));
+        assert!(!is_dangerous_command("echo hello"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn detects_windows_dangerous_commands() {
+        assert!(is_dangerous_command("format C:"));
+        assert!(is_dangerous_command("diskpart"));
+        assert!(is_dangerous_command("reg delete HKLM\\Software"));
+        assert!(!is_dangerous_command("dir"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cmd_wrapper_for_shell_builtins() {
+        assert!(needs_cmd_wrapper("dir"));
+        assert!(needs_cmd_wrapper("echo hello"));
+        assert!(needs_cmd_wrapper("type file.txt"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cmd_wrapper_for_pipe_operators() {
+        assert!(needs_cmd_wrapper("echo hello | findstr hello"));
+        assert!(needs_cmd_wrapper("dir > output.txt"));
+        assert!(needs_cmd_wrapper("echo a && echo b"));
+        assert!(needs_cmd_wrapper("echo a || echo b"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn no_cmd_wrapper_for_simple_external_commands() {
+        assert!(!needs_cmd_wrapper("cargo build"));
+        assert!(!needs_cmd_wrapper("git status"));
+        assert!(!needs_cmd_wrapper("node app.js"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cmd_wrapper_for_batch_scripts() {
+        assert!(needs_cmd_wrapper("build.bat"));
+        assert!(needs_cmd_wrapper("setup.cmd"));
+    }
+
+    #[test]
+    fn build_command_parts_basic() {
+        let parts = build_command_parts("echo hello").unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            // echo 是 Windows 内建命令，需要 cmd.exe 包装
+            assert_eq!(parts, vec!["cmd.exe", "/C", "echo hello"]);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(parts, vec!["echo", "hello"]);
+        }
+    }
+
+    #[test]
+    fn truncate_output_limits_length() {
+        let long = "a".repeat(20000);
+        let truncated = truncate_output(long);
+        assert!(truncated.len() < 20000);
+        assert!(truncated.contains("truncated"));
+    }
 }

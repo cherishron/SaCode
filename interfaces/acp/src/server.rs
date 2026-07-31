@@ -40,7 +40,7 @@ async fn serve_connection(stream: tokio::net::TcpStream, service: SessionService
         }
 
         let request: JsonRpcRequest = serde_json::from_str(&line)?;
-        let response = handle_request(&service, request)?;
+        let response = handle_request(&service, request).await?;
         writer
             .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
             .await?;
@@ -49,7 +49,7 @@ async fn serve_connection(stream: tokio::net::TcpStream, service: SessionService
     Ok(())
 }
 
-fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
+async fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
     let result = match request.method.as_str() {
         "initialize" => serde_json::json!({
             "capabilities": {
@@ -101,7 +101,7 @@ fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Result<J
                     mode,
                     approval: ApprovalPolicy::AutoDeny,
                 },
-            )?;
+            ).await?;
             serde_json::to_value(events)?
         }
         "session/cancel" => {

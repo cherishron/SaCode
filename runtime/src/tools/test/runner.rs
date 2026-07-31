@@ -31,10 +31,19 @@ impl TestFramework {
     }
 }
 
+/// 结构化测试失败条目
+#[derive(Debug, Clone, serde::Serialize)]
+struct FailedTest {
+    name: String,
+    module: String,
+    error_message: String,
+    location: String,
+}
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "test.run".to_string(),
-        description: "运行项目测试并返回结果摘要".to_string(),
+        description: "运行项目测试并返回结果摘要，含结构化失败信息".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -50,6 +59,21 @@ pub fn spec() -> ToolSpec {
                 "framework": { "type": "string" },
                 "command": { "type": "array", "items": { "type": "string" } },
                 "summary": { "type": "string" },
+                "total": { "type": "integer" },
+                "passed": { "type": "integer" },
+                "failed": { "type": "integer" },
+                "failed_tests": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "module": { "type": "string" },
+                            "error_message": { "type": "string" },
+                            "location": { "type": "string" }
+                        }
+                    }
+                },
                 "stdout": { "type": "string" },
                 "stderr": { "type": "string" },
                 "exit_code": { "type": "integer" }
@@ -79,13 +103,21 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let success = output.status.success();
     let exit_code = output.status.code().unwrap_or(-1);
+
+    // 解析结构化测试结果
+    let combined_output = format!("{stdout}\n{stderr}");
+    let (total, passed, failed_count, failed_tests) =
+        parse_test_results(framework, &combined_output);
+
     let summary = if success {
-        format!("{} tests finished successfully", framework.as_str())
+        format!("{} tests passed ({} total)", framework.as_str(), total)
     } else {
         format!(
-            "{} tests failed with exit code {}",
+            "{} tests failed: {} passed, {} failed out of {} total",
             framework.as_str(),
-            exit_code
+            passed,
+            failed_count,
+            total
         )
     };
 
@@ -94,10 +126,395 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         "framework": framework.as_str(),
         "command": command,
         "summary": summary,
+        "total": total,
+        "passed": passed,
+        "failed": failed_count,
+        "failed_tests": failed_tests,
         "stdout": truncate_output(&stdout),
         "stderr": truncate_output(&stderr),
         "exit_code": exit_code,
     })))
+}
+
+/// 解析各框架的测试输出，提取结构化失败信息
+fn parse_test_results(
+    framework: TestFramework,
+    output: &str,
+) -> (usize, usize, usize, Vec<FailedTest>) {
+    match framework {
+        TestFramework::Rust => parse_rust_results(output),
+        TestFramework::Go => parse_go_results(output),
+        TestFramework::Pytest => parse_pytest_results(output),
+        TestFramework::Node => parse_node_results(output),
+    }
+}
+
+/// 解析 cargo test 输出
+/// 格式示例：
+///   test foo::bar::test_something ... FAILED
+///   test foo::bar::test_another ... ok
+///   test result: FAILED. 3 passed; 2 failed; 0 ignored; ...
+fn parse_rust_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
+    let mut failed_names: Vec<(String, String)> = Vec::new(); // (module, name)
+    let mut total: usize = 0;
+    let mut passed: usize = 0;
+    let mut failed_count: usize = 0;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // 匹配 "test module::name ... FAILED" 或 "test name ... FAILED"
+        if trimmed.starts_with("test ") && trimmed.ends_with(" FAILED") {
+            let name_part = trimmed
+                .strip_prefix("test ")
+                .and_then(|s| s.strip_suffix(" FAILED"))
+                .unwrap_or("")
+                .trim();
+            let (module, name) = split_rust_test_name(name_part);
+            failed_names.push((module, name));
+        }
+
+        // 匹配汇总行 "test result: FAILED. 3 passed; 2 failed; 0 ignored; ..."
+        if trimmed.starts_with("test result:") {
+            if let Some(value) = extract_number(trimmed, "passed") {
+                passed += value;
+            }
+            if let Some(value) = extract_number(trimmed, "failed") {
+                failed_count += value;
+            }
+            // 也提取 ignored/Measured 等，但只关注核心指标
+        }
+    }
+
+    total = passed + failed_count;
+
+    // 为每个失败测试提取错误消息
+    let failed_tests = build_rust_failed_tests(output, &failed_names);
+
+    (total, passed, failed_count, failed_tests)
+}
+
+/// 拆分 Rust 测试名为模块和函数名
+fn split_rust_test_name(full_name: &str) -> (String, String) {
+    if let Some(pos) = full_name.rfind("::") {
+        (
+            full_name[..pos].to_string(),
+            full_name[pos + 2..].to_string(),
+        )
+    } else {
+        (String::new(), full_name.to_string())
+    }
+}
+
+/// 从 cargo test 输出中提取失败测试的错误消息
+fn build_rust_failed_tests(
+    output: &str,
+    failed_names: &[(String, String)],
+) -> Vec<FailedTest> {
+    if failed_names.is_empty() {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    let lines: Vec<&str> = output.lines().collect();
+
+    for (module, name) in failed_names {
+        let full_name = if module.is_empty() {
+            name.clone()
+        } else {
+            format!("{}::{}", module, name)
+        };
+
+        // 在输出中查找 "failures:" 段落后的错误详情
+        let error_message = extract_rust_failure_detail(&lines, &full_name);
+
+        results.push(FailedTest {
+            name: name.clone(),
+            module: module.clone(),
+            error_message,
+            location: String::new(),
+        });
+    }
+
+    results
+}
+
+/// 从 cargo test 的 "failures:" 段落提取具体失败信息
+fn extract_rust_failure_detail(lines: &[&str], test_name: &str) -> String {
+    // 查找 "failures:" 标记行
+    let failures_start = lines.iter().position(|line| line.trim() == "failures:");
+    let Some(start) = failures_start else {
+        return String::new();
+    };
+
+    // 在 failures 段落中查找以 "---- test_name ----" 开头的块
+    let header = format!("---- {} ----", test_name);
+    for i in start..lines.len() {
+        if lines[i].trim() == header {
+            // 收集后续行直到下一个 "----" 或空行分隔
+            let mut detail_lines = Vec::new();
+            for j in (i + 1)..lines.len() {
+                let line = lines[j].trim();
+                if line.starts_with("----") || line.is_empty() && detail_lines.len() > 3 {
+                    break;
+                }
+                if !line.is_empty() {
+                    detail_lines.push(line.to_string());
+                }
+            }
+            // 限制错误消息长度
+            let detail = detail_lines.join("\n");
+            return truncate_string(&detail, 500);
+        }
+    }
+
+    String::new()
+}
+
+/// 解析 go test 输出
+/// 格式示例：
+///   --- FAIL: TestSomething (0.00s)
+///       test_file_test.go:12: error message
+///   FAIL
+///   FAIL    package/path    0.123s
+fn parse_go_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
+    let mut failed_tests = Vec::new();
+    let mut passed: usize = 0;
+    let mut failed_count: usize = 0;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // 匹配 "--- FAIL: TestName"
+        if let Some(rest) = trimmed.strip_prefix("--- FAIL: ") {
+            let name = rest.split_whitespace().next().unwrap_or("").to_string();
+            // 尝试提取位置信息
+            let location = extract_go_location(output, &name);
+            let error_message = extract_go_error_message(output, &name);
+            failed_tests.push(FailedTest {
+                name,
+                module: String::new(),
+                error_message,
+                location,
+            });
+            failed_count += 1;
+        }
+
+        // 匹配 "--- PASS: TestName"
+        if trimmed.starts_with("--- PASS: ") {
+            passed += 1;
+        }
+    }
+
+    let total = passed + failed_count;
+    (total, passed, failed_count, failed_tests)
+}
+
+/// 从 go test 输出提取失败测试的位置信息
+fn extract_go_location(output: &str, test_name: &str) -> String {
+    let header = format!("--- FAIL: {}", test_name);
+    let mut found_header = false;
+    for line in output.lines() {
+        if line.trim().starts_with(&header) {
+            found_header = true;
+            continue;
+        }
+        if found_header {
+            let trimmed = line.trim();
+            // 匹配 "    file_test.go:12: error message"
+            if let Some(colon_pos) = trimmed.find(".go:") {
+                let location_end = trimmed[colon_pos..]
+                    .find(':')
+                    .map(|pos| colon_pos + pos)
+                    .unwrap_or(trimmed.len().min(colon_pos + 20));
+                return trimmed[..location_end].trim().to_string();
+            }
+            // 遇到下一个测试标记则停止
+            if trimmed.starts_with("--- ") {
+                break;
+            }
+        }
+    }
+    String::new()
+}
+
+/// 从 go test 输出提取失败测试的错误消息
+fn extract_go_error_message(output: &str, test_name: &str) -> String {
+    let header = format!("--- FAIL: {}", test_name);
+    let mut found_header = false;
+    let mut messages = Vec::new();
+
+    for line in output.lines() {
+        if line.trim().starts_with(&header) {
+            found_header = true;
+            continue;
+        }
+        if found_header {
+            let trimmed = line.trim();
+            if trimmed.starts_with("--- ") || trimmed == "FAIL" {
+                break;
+            }
+            if !trimmed.is_empty() {
+                // 去掉 "file.go:line: " 前缀，只保留错误消息
+                if let Some(colon_pos) = trimmed.find(".go:") {
+                    if let Some(msg_start) = trimmed[colon_pos..].find(": ") {
+                        let msg = trimmed[colon_pos + msg_start + 2..].trim();
+                        if !msg.is_empty() {
+                            messages.push(msg.to_string());
+                        }
+                    }
+                } else {
+                    messages.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    truncate_string(&messages.join("\n"), 500)
+}
+
+/// 解析 pytest 输出
+/// 格式示例：
+///   FAILED tests/test_foo.py::test_bar - AssertionError: ...
+///   2 passed, 1 failed in 0.5s
+fn parse_pytest_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
+    let mut failed_tests = Vec::new();
+    let mut passed: usize = 0;
+    let mut failed_count: usize = 0;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // 匹配 "FAILED path/to/test.py::TestClass::test_method - ErrorType: message"
+        if trimmed.starts_with("FAILED ") {
+            let rest = trimmed.strip_prefix("FAILED ").unwrap_or("");
+            let parts: Vec<&str> = rest.splitn(2, " - ").collect();
+            let location_part = parts.first().unwrap_or(&"").to_string();
+            let error_part = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
+
+            // 拆分路径::类::方法
+            let segments: Vec<&str> = location_part.split("::").collect();
+            let (module, name) = if segments.len() >= 2 {
+                (segments[0].to_string(), segments.last().unwrap().to_string())
+            } else {
+                (String::new(), location_part.clone())
+            };
+
+            failed_tests.push(FailedTest {
+                name,
+                module,
+                error_message: truncate_string(&error_part, 500),
+                location: location_part,
+            });
+            failed_count += 1;
+        }
+
+        // 匹配 "PASSED" 行
+        if trimmed.starts_with("PASSED ") {
+            passed += 1;
+        }
+    }
+
+    // 尝试从汇总行提取更准确的数字
+    if let Some(summary_line) = output.lines().rev().find(|line| {
+        let l = line.trim();
+        l.contains("passed") || l.contains("failed")
+    }) {
+        if let Some(value) = extract_number(summary_line, "passed") {
+            passed = value;
+        }
+        if let Some(value) = extract_number(summary_line, "failed") {
+            failed_count = value;
+        }
+    }
+
+    let total = passed + failed_count;
+    (total, passed, failed_count, failed_tests)
+}
+
+/// 解析 npm test (Jest) 输出
+/// 格式示例：
+///   FAIL  src/foo.test.js
+///     ● Test Suite › test name
+///       expect(received).toBe(expected)
+///   Tests:       2 failed, 3 passed, 5 total
+fn parse_node_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
+    let mut failed_tests = Vec::new();
+    let mut passed: usize = 0;
+    let mut failed_count: usize = 0;
+
+    let lines: Vec<&str> = output.lines().collect();
+    let mut current_file = String::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        // 匹配 "FAIL  path/to/test.js"
+        if trimmed.starts_with("FAIL ") {
+            current_file = trimmed
+                .strip_prefix("FAIL ")
+                .unwrap_or("")
+                .trim()
+                .to_string();
+        }
+
+        // 匹配 "● Test Suite › test name" (Jest 失败标记)
+        if trimmed.starts_with("● ") {
+            let name = trimmed.strip_prefix("● ").unwrap_or("").to_string();
+            // 收集后续行作为错误消息
+            let mut error_lines = Vec::new();
+            for j in (i + 1)..lines.len().min(i + 10) {
+                let next = lines[j].trim();
+                if next.starts_with("● ") || next.starts_with("FAIL") || next.starts_with("PASS") {
+                    break;
+                }
+                if !next.is_empty() {
+                    error_lines.push(next.to_string());
+                }
+            }
+            failed_tests.push(FailedTest {
+                name,
+                module: current_file.clone(),
+                error_message: truncate_string(&error_lines.join("\n"), 500),
+                location: current_file.clone(),
+            });
+        }
+
+        // 匹配汇总行 "Tests:       2 failed, 3 passed, 5 total"
+        if trimmed.contains("failed") && trimmed.contains("passed") {
+            if let Some(value) = extract_number(trimmed, "passed") {
+                passed = value;
+            }
+            if let Some(value) = extract_number(trimmed, "failed") {
+                failed_count = value;
+            }
+        }
+    }
+
+    let total = passed + failed_count;
+    (total, passed, failed_count, failed_tests)
+}
+
+/// 从文本中提取 "N keyword" 格式的数字
+fn extract_number(text: &str, keyword: &str) -> Option<usize> {
+    // 匹配 "3 passed" 或 "2 failed" 等模式
+    let pattern = format!(r"(\d+)\s+{}", keyword);
+    if let Ok(re) = regex::Regex::new(&pattern) {
+        if let Some(caps) = re.captures(text) {
+            return caps[1].parse::<usize>().ok();
+        }
+    }
+    None
+}
+
+/// 截断字符串到指定字符数
+fn truncate_string(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(max_chars).collect();
+        format!("{}...", truncated)
+    }
 }
 
 fn resolve_framework(explicit: Option<&str>) -> Result<TestFramework> {
@@ -216,5 +633,139 @@ mod tests {
     fn build_go_command_defaults_to_all_packages() {
         let command = build_command(TestFramework::Go, None, None);
         assert_eq!(command, vec!["go", "test", "./..."]);
+    }
+
+    #[test]
+    fn parse_rust_test_output() {
+        let output = "\
+running 5 tests
+test foo::bar::test_something ... FAILED
+test foo::bar::test_another ... ok
+test foo::test_basic ... ok
+test baz::test_fail ... FAILED
+test test_standalone ... ok
+
+failures:
+
+---- foo::bar::test_something ----
+thread 'main' panicked at 'assertion failed: 1 == 2', src/foo.rs:42:5
+
+---- baz::test_fail ----
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 5 total";
+
+        let (total, passed, failed, tests) = parse_rust_results(output);
+        assert_eq!(total, 5);
+        assert_eq!(passed, 3);
+        assert_eq!(failed, 2);
+        assert_eq!(tests.len(), 2);
+        assert_eq!(tests[0].name, "test_something");
+        assert_eq!(tests[0].module, "foo::bar");
+        assert!(tests[0].error_message.contains("panicked"));
+        assert_eq!(tests[1].name, "test_fail");
+        assert_eq!(tests[1].module, "baz");
+    }
+
+    #[test]
+    fn parse_go_test_output() {
+        let output = "\
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+=== RUN   TestSubtract
+--- FAIL: TestSubtract (0.00s)
+    math_test.go:15: expected 5, got 3
+    math_test.go:16: another assertion failed
+FAIL
+FAIL    pkg/math    0.123s";
+
+        let (total, passed, failed, tests) = parse_go_results(output);
+        assert_eq!(total, 2);
+        assert_eq!(passed, 1);
+        assert_eq!(failed, 1);
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].name, "TestSubtract");
+        assert!(tests[0].error_message.contains("expected 5"));
+    }
+
+    #[test]
+    fn parse_pytest_output() {
+        let output = "\
+test_main.py ....F                                                    [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_divide_by_zero _________________________
+
+    def test_divide_by_zero():
+>       1 / 0
+E       ZeroDivisionError: division by zero
+
+test_main.py:5: ZeroDivisionError
+=========================== short test summary info ============================
+FAILED test_main.py::test_divide_by_zero - ZeroDivisionError: division by zero
+3 passed, 1 failed in 0.05s";
+
+        let (total, passed, failed, tests) = parse_pytest_results(output);
+        assert_eq!(total, 4);
+        assert_eq!(passed, 3);
+        assert_eq!(failed, 1);
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].name, "test_divide_by_zero");
+        assert_eq!(tests[0].module, "test_main.py");
+        assert!(tests[0].error_message.contains("ZeroDivisionError"));
+    }
+
+    #[test]
+    fn parse_jest_output() {
+        let output = "\
+FAIL  src/calculator.test.js
+  ● Calculator › should add two numbers
+
+    expect(received).toBe(expected)
+
+    Expected: 5
+    Received: 4
+
+      12 | test('should add two numbers', () => {
+      13 |   expect(add(2, 2)).toBe(5);
+
+  ● Calculator › should handle errors
+
+    TypeError: something is not a function
+
+PASS  src/utils.test.js
+Tests:       2 failed, 5 passed, 7 total";
+
+        let (total, passed, failed, tests) = parse_node_results(output);
+        assert_eq!(total, 7);
+        assert_eq!(passed, 5);
+        assert_eq!(failed, 2);
+        assert_eq!(tests.len(), 2);
+        assert_eq!(tests[0].name, "Calculator › should add two numbers");
+        assert!(tests[0].error_message.contains("Expected: 5"));
+    }
+
+    #[test]
+    fn extract_number_from_summary() {
+        assert_eq!(extract_number("3 passed; 2 failed", "passed"), Some(3));
+        assert_eq!(extract_number("3 passed; 2 failed", "failed"), Some(2));
+        assert_eq!(extract_number("1 passed, 5 failed in 0.5s", "passed"), Some(1));
+        assert_eq!(extract_number("no match here", "passed"), None);
+    }
+
+    #[test]
+    fn split_rust_test_name_simple() {
+        let (module, name) = split_rust_test_name("test_standalone");
+        assert_eq!(module, "");
+        assert_eq!(name, "test_standalone");
+    }
+
+    #[test]
+    fn split_rust_test_name_qualified() {
+        let (module, name) = split_rust_test_name("foo::bar::test_something");
+        assert_eq!(module, "foo::bar");
+        assert_eq!(name, "test_something");
     }
 }

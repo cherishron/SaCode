@@ -48,6 +48,7 @@ fn test_runtime_orchestrator_execute_task_run_returns_snapshot() {
 
     let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
     let context = sacode_kernel::ExecutionContext::new(task).with_task_id("orch-1");
+    #[allow(deprecated)]
     let orchestrator = crate::RuntimeOrchestrator::new(
         sacode_kernel::Supervisor::new(),
         ToolRegistry::builtin(),

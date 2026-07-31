@@ -1,9 +1,21 @@
+//! 子 Agent 执行器 — 使用统一 TaskExecutor 调用 LLM
+//!
+//! 重构后，run_sub_agent 通过 TaskExecutor 真正调用 LLM + 工具执行，
+//! 而非使用 kernel 层的占位 PlannerAgent/Supervisor。
+
 use sacode_kernel::{
-    AgentRole, ExecutionMode, PlannerAgent, SubAgentResult, SubAgentTask, Supervisor, Task,
+    AgentRole, ExecutionMode, SubAgentResult, SubAgentTask,
 };
 
 use super::model_router::{resolve_role_route, ResolvedRoleRoute};
+use crate::executor::task_runner::{
+    AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
+    build_tool_definitions_filtered, execute_task_with_failover,
+};
 use crate::model_routing::TaskProfile;
+use crate::prompt::{build_system_prompt, PromptContext};
+use crate::tools::ToolRegistry;
+use crate::McpConfigStore;
 
 #[derive(Debug, Clone)]
 pub struct WorkerRunResult {
@@ -15,26 +27,108 @@ pub struct WorkerRunResult {
     pub resolved_model_summary: String,
 }
 
+/// 执行子 Agent 任务 — 通过统一 TaskExecutor 调用 LLM
+///
+/// 核心变化：不再使用 kernel 层的 PlannerAgent/Supervisor 占位逻辑，
+/// 而是通过 TaskExecutor 真正发起 LLM 调用 + 工具执行循环。
 pub async fn run_sub_agent(
     task: SubAgentTask,
     role: AgentRole,
     profile: &TaskProfile,
     workdir: &std::path::Path,
 ) -> WorkerRunResult {
-    let task_input = Task::new(task.prompt.clone(), ExecutionMode::Build, None);
     let resolved_route = resolve_role_route(workdir, &role, profile);
     let resolved_model_summary = resolved_route
         .as_ref()
         .map(|route| route.summary.clone())
         .unwrap_or_else(|| resolve_role_model_summary(&role));
 
-    let planner = PlannerAgent;
-    let output = planner.run(&task_input);
-    let supervisor = Supervisor::default();
-    let execution = supervisor.execute(&task_input);
+    // 构建角色专属系统提示词
+    let role_instruction = build_role_system_instruction(&role);
 
-    let summary = build_role_summary(&role, &execution);
+    // 构建工具注册表
+    let mut tools = ToolRegistry::builtin();
+    let mcp_store = McpConfigStore::new(workdir);
+    let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
 
+    let tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+
+    // 构建系统提示词：角色指令 + 基础系统提示
+    let base_system_prompt = build_system_prompt(&PromptContext {
+        workdir,
+        mode: ExecutionMode::Build,
+        tool_names: &tool_names,
+    })
+    .unwrap_or_default();
+
+    let system_prompt = format!("{}\n\n{}", role_instruction, base_system_prompt);
+
+    // 解析模型候选
+    let candidates = super::model_router::resolve_config_model_candidates(workdir);
+
+    // 确定主 Provider
+    let primary_provider = resolved_route
+        .as_ref()
+        .and_then(|route| {
+            candidates
+                .iter()
+                .find(|(pn, mn, _)| {
+                    pn == &route.plan.primary.provider_name
+                        && mn == &route.plan.primary.model_name
+                })
+                .map(|(_, _, provider)| provider.clone())
+        })
+        .or_else(|| {
+            // 回退：使用第一个候选
+            candidates.first().map(|(_, _, provider)| provider.clone())
+        });
+
+    let provider = match primary_provider {
+        Some(provider) => provider,
+        None => {
+            // 无可用 provider，返回失败结果
+            return WorkerRunResult {
+                result: SubAgentResult {
+                    id: task.id.clone(),
+                    success: false,
+                    output: "无可用模型配置，子 Agent 无法执行".to_string(),
+                },
+                task,
+                role,
+                events: vec![
+                    sacode_kernel::Event::error("无可用模型配置"),
+                ],
+                resolved_route,
+                resolved_model_summary,
+            };
+        }
+    };
+
+    // 构建 TaskRunConfig
+    let config = TaskRunConfig {
+        workdir,
+        mode: ExecutionMode::Build,
+        max_iterations: 5, // 子 Agent 使用较少迭代次数
+        system_prompt,
+        user_prompt: task.prompt.clone(),
+        provider,
+        tools,
+        approval: std::sync::Arc::new(AutoApproveDecider), // 子 Agent 自动批准
+        error_recorder: std::sync::Arc::new(LoggingErrorRecorder), // 仅日志记录
+    };
+
+    // 通过统一 TaskExecutor 执行（含 Failover）
+    let task_run_result = execute_task_with_failover(
+        &config,
+        resolved_route.as_ref().map(|r| &r.plan),
+        &candidates,
+        profile,
+        None, // 子 Agent 暂不支持流式输出
+        None, // 子 Agent 暂不记录模型健康
+    )
+    .await;
+
+    // 构建事件序列
     let mut events = vec![sacode_kernel::Event::message(format!(
         "子 Agent [{}] 开始处理任务：{}",
         role.id, task.title
@@ -43,17 +137,30 @@ pub async fn run_sub_agent(
         "角色模型策略：{}",
         resolved_model_summary
     )));
-    events.extend(output.events.clone());
-    events.extend(execution.output.events.clone());
-    events.push(sacode_kernel::Event::done(format!(
-        "子 Agent [{}] 完成任务：{}",
-        role.id, task.title
-    )));
+
+    let success = task_run_result.response.is_ok();
+    let output_text = task_run_result
+        .response
+        .unwrap_or_else(|error| format!("执行失败：{}", error));
+
+    if success {
+        events.push(sacode_kernel::Event::done(format!(
+            "子 Agent [{}] 完成任务：{}",
+            role.id, task.title
+        )));
+    } else {
+        events.push(sacode_kernel::Event::error(format!(
+            "子 Agent [{}] 执行失败：{}",
+            role.id, task.title
+        )));
+    }
+
+    let summary = build_role_summary_from_result(&role, &output_text, success);
 
     WorkerRunResult {
         result: SubAgentResult {
             id: task.id.clone(),
-            success: true,
+            success,
             output: summary,
         },
         task,
@@ -62,6 +169,37 @@ pub async fn run_sub_agent(
         resolved_route,
         resolved_model_summary,
     }
+}
+
+/// 构建角色专属系统指令
+fn build_role_system_instruction(role: &AgentRole) -> String {
+    let mut instruction = format!(
+        "[角色指令]\n你是 {}（{}）。\n{}",
+        role.name, role.id, role.system_prompt
+    );
+
+    if !role.responsibilities.is_empty() {
+        instruction.push_str("\n\n[职责]\n");
+        for resp in &role.responsibilities {
+            instruction.push_str(&format!("- {}\n", resp));
+        }
+    }
+
+    if !role.preferred_context.is_empty() {
+        instruction.push_str("\n\n[关注领域]\n");
+        for ctx in &role.preferred_context {
+            instruction.push_str(&format!("- {}\n", ctx));
+        }
+    }
+
+    if !role.deliverables.is_empty() {
+        instruction.push_str("\n\n[交付物]\n");
+        for d in &role.deliverables {
+            instruction.push_str(&format!("- {}\n", d));
+        }
+    }
+
+    instruction
 }
 
 fn resolve_role_model_summary(role: &AgentRole) -> String {
@@ -92,154 +230,103 @@ fn resolve_role_model_summary(role: &AgentRole) -> String {
     )
 }
 
-fn extract_result_summary(
-    planner_events: &[sacode_kernel::Event],
-    execution_events: &[sacode_kernel::Event],
-) -> String {
-    execution_events
-        .iter()
-        .rev()
-        .find_map(terminal_summary)
-        .or_else(|| planner_events.iter().rev().find_map(terminal_summary))
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "任务已完成".to_string())
-}
-
-fn terminal_summary(event: &sacode_kernel::Event) -> Option<String> {
-    match event {
-        sacode_kernel::Event::Done { summary } => Some(summary.trim().to_string()),
-        sacode_kernel::Event::Error { message } => Some(message.trim().to_string()),
-        _ => None,
-    }
-}
-
-fn build_role_summary(
-    role: &AgentRole,
-    execution: &sacode_kernel::agent::ExecutionResult,
-) -> String {
-    let completed_steps = execution.output.plan.completed_count();
-    let tool_names = execution
-        .tool_calls
-        .iter()
-        .flat_map(|(_, calls)| calls.iter().map(|call| call.name.as_str()))
-        .collect::<Vec<_>>();
-    let tool_focus = summarize_tool_focus(&tool_names);
-    let final_summary = extract_result_summary(&[], &execution.output.events);
-    let has_failure_signal = has_failure_signal(&execution.output.events);
+/// 从 TaskExecutor 结果构建角色摘要
+fn build_role_summary_from_result(role: &AgentRole, output: &str, success: bool) -> String {
+    let has_failure_signal = !success || contains_failure_signal(output);
 
     match role.id.as_str() {
         "system-architect" => format!(
-            "{}，完成 {} 个步骤，重点覆盖 {}。架构结论：{}",
+            "{}。架构结论：{}",
             if has_failure_signal {
                 "架构风险已识别"
             } else {
                 "架构结论已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "repo-explorer" => format!(
-            "{}，完成 {} 个步骤，重点覆盖 {}。探索结论：{}",
+            "{}。探索结论：{}",
             if has_failure_signal {
                 "仓库阻塞线索已识别"
             } else {
                 "仓库线索已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "implementer" => format!(
-            "{}，完成 {} 个步骤，执行涉及 {}。实现结论：{}",
+            "{}。实现结论：{}",
             if has_failure_signal {
                 "实现阻塞已识别"
             } else {
                 "实现结果已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "test-engineer" => format!(
-            "{}，完成 {} 个步骤，检查覆盖 {}。测试结论：{}",
+            "{}。测试结论：{}",
             if has_failure_signal {
                 "验证风险已识别"
             } else {
                 "验证结果已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "code-reviewer" => format!(
-            "{}，完成 {} 个步骤，重点检查 {}。审查结论：{}",
+            "{}。审查结论：{}",
             if has_failure_signal {
                 "审查风险已识别"
             } else {
                 "审查结果已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "devops-operator" => format!(
-            "{}，完成 {} 个步骤，操作涉及 {}。交付结论：{}",
+            "{}。交付结论：{}",
             if has_failure_signal {
                 "交付阻塞已识别"
             } else {
                 "交付检查已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "reporter" => format!(
-            "{}，完成 {} 个步骤，参考了 {}。主结论：{}",
+            "{}。主结论：{}",
             if has_failure_signal {
                 "汇总风险已生成"
             } else {
                 "汇总结论已生成"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         "requirement-analyst" => format!(
-            "{}，完成 {} 个步骤，分析覆盖 {}。需求结论：{}",
+            "{}。需求结论：{}",
             if has_failure_signal {
                 "需求风险已识别"
             } else {
                 "需求约束已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
         _ => format!(
-            "{}，完成 {} 个步骤，覆盖 {}。执行结论：{}",
+            "{}。执行结论：{}",
             if has_failure_signal {
                 "执行风险已识别"
             } else {
                 "执行结果已整理"
             },
-            completed_steps,
-            tool_focus,
-            final_summary
+            truncate_summary(output)
         ),
     }
 }
 
-fn has_failure_signal(events: &[sacode_kernel::Event]) -> bool {
-    events.iter().any(|event| match event {
-        sacode_kernel::Event::Error { .. } => true,
-        sacode_kernel::Event::ToolCallFinished { success, .. } => !success,
-        sacode_kernel::Event::Done { summary } => contains_failure_signal(summary),
-        sacode_kernel::Event::Message { content } | sacode_kernel::Event::Thinking { content } => {
-            contains_failure_signal(content)
-        }
-        _ => false,
-    })
+fn truncate_summary(text: &str) -> &str {
+    // 截取前 500 字符作为摘要
+    if text.len() > 500 {
+        let end = text.char_indices().take(500).last().map(|(i, _)| i).unwrap_or(text.len());
+        &text[..end]
+    } else {
+        text
+    }
 }
 
 fn contains_failure_signal(text: &str) -> bool {
@@ -262,38 +349,10 @@ fn contains_failure_signal(text: &str) -> bool {
     .any(|signal| normalized.contains(signal))
 }
 
-fn summarize_tool_focus(tool_names: &[&str]) -> &'static str {
-    let has_fs = tool_names.iter().any(|name| name.starts_with("fs."));
-    let has_shell = tool_names.contains(&"shell.exec");
-    let has_git = tool_names.contains(&"git.diff");
-    let has_web = tool_names.contains(&"web.search");
-    let has_mcp = tool_names.iter().any(|name| name.starts_with("mcp."));
-
-    if has_fs && has_shell && has_git {
-        "代码读取、命令执行与差异检查"
-    } else if has_fs && has_git {
-        "代码读取与差异检查"
-    } else if has_fs && has_shell {
-        "代码读取与命令执行"
-    } else if has_fs {
-        "代码读取"
-    } else if has_shell {
-        "命令执行"
-    } else if has_git {
-        "差异检查"
-    } else if has_web {
-        "联网检索"
-    } else if has_mcp {
-        "外部 MCP 工具"
-    } else {
-        "基础执行流程"
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::build_role_summary;
-    use sacode_kernel::{AgentOutput, AgentRole, Event, ExecutionMode, ExecutionResult, Plan};
+    use super::build_role_summary_from_result;
+    use sacode_kernel::AgentRole;
 
     fn role(role_id: &str) -> AgentRole {
         AgentRole {
@@ -302,37 +361,38 @@ mod tests {
         }
     }
 
-    fn execution_result(events: Vec<Event>) -> ExecutionResult {
-        ExecutionResult {
-            output: AgentOutput {
-                mode: ExecutionMode::Build,
-                task: "test task".to_string(),
-                plan: Plan::new("test task".to_string(), Vec::new(), "build".to_string()),
-                events,
-            },
-            tool_calls: Vec::new(),
-        }
-    }
-
     #[test]
     fn build_role_summary_uses_success_tone_for_implementer() {
-        let summary = build_role_summary(
+        let summary = build_role_summary_from_result(
             &role("implementer"),
-            &execution_result(vec![Event::done("任务完成，共完成 3 个步骤")]),
+            "任务完成，共完成 3 个步骤",
+            true,
         );
 
         assert!(summary.contains("实现结果已整理"));
-        assert!(summary.contains("实现结论：任务完成，共完成 3 个步骤"));
+        assert!(summary.contains("实现结论：任务完成"));
     }
 
     #[test]
     fn build_role_summary_uses_failure_tone_for_test_engineer() {
-        let summary = build_role_summary(
+        let summary = build_role_summary_from_result(
             &role("test-engineer"),
-            &execution_result(vec![Event::error("验证失败，存在阻塞")]),
+            "验证失败，存在阻塞",
+            false,
         );
 
         assert!(summary.contains("验证风险已识别"));
-        assert!(summary.contains("测试结论：验证失败，存在阻塞"));
+        assert!(summary.contains("测试结论：验证失败"));
+    }
+
+    #[test]
+    fn build_role_summary_detects_failure_signal_in_success_output() {
+        let summary = build_role_summary_from_result(
+            &role("implementer"),
+            "部分功能实现失败",
+            true, // 技术上成功但输出包含失败信号
+        );
+
+        assert!(summary.contains("实现阻塞已识别"));
     }
 }

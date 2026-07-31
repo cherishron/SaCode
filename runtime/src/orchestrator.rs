@@ -1,6 +1,6 @@
 use sacode_kernel::{
     ApprovalPolicy, Checkpoint, ExecutionContext, ExecutionReport, HookContext, LifecyclePoint,
-    Supervisor, TaskRun, ToolExecutionContext, ToolExecutionRecord,
+    TaskRun, ToolExecutionContext, ToolExecutionRecord,
 };
 
 use crate::{
@@ -8,16 +8,22 @@ use crate::{
     ToolRegistry,
 };
 
+/// 运行时编排器 — 编排占位 Supervisor + 工具执行 + Hook + 检查点
+///
+/// **注意**：此类仍使用占位 Supervisor，仅用于兼容旧路径。
+/// 新代码应使用 `task_runner::execute_task_with_provider` 替代。
+#[allow(deprecated)]
 pub struct RuntimeOrchestrator {
-    supervisor: Supervisor,
+    supervisor: sacode_kernel::Supervisor,
     tools: ToolRegistry,
     checkpoints: CheckpointStorage,
     hooks: HookExecutor,
 }
 
+#[allow(deprecated)]
 impl RuntimeOrchestrator {
     pub fn new(
-        supervisor: Supervisor,
+        supervisor: sacode_kernel::Supervisor,
         tools: ToolRegistry,
         _sandbox: SandboxExecutor,
         checkpoints: CheckpointStorage,

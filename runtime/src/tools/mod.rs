@@ -49,6 +49,7 @@ impl ToolRegistry {
         registry.register_fn(browser::snapshot::spec(), browser::snapshot::execute);
         registry.register_fn(browser::extract::spec(), browser::extract::execute);
         registry.register_fn(code::deps::spec(), code::deps::execute);
+        registry.register_fn(code::search::spec(), code::search::execute);
         registry.register_fn(code::symbol::spec(), code::symbol::execute);
         registry.register_fn(fs::read::spec(), fs::read::execute);
         registry.register_fn(fs::search::spec(), fs::search::execute);
@@ -59,11 +60,13 @@ impl ToolRegistry {
         registry.register_fn(fs::list::spec(), fs::list::execute);
         registry.register_fn(git::commit::spec(), git::commit::execute);
         registry.register_fn(git::diff::spec(), git::diff::execute);
+        registry.register_fn(git::pr::spec(), git::pr::execute);
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
         registry.register_fn(media::vision::spec(), media::vision::execute);
         registry.register_fn(shell::exec::spec(), shell::exec::execute);
         registry.register_fn(task::spawn::spec(), task::spawn::execute);
+        registry.register_fn(test::autofix::spec(), test::autofix::execute);
         registry.register_fn(test::runner::spec(), test::runner::execute);
         registry.register_fn(web::fetch::spec(), web::fetch::execute);
         registry.register_fn(web::search::spec(), web::search::execute);

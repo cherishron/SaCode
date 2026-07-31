@@ -42,6 +42,13 @@ pub use config::{
 };
 pub use daemon::{create_daemon, run_daemon};
 pub use executor::{ExecutorEvent, TaskExecutor};
+pub use executor::task_runner::{
+    ApprovalDecision, ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
+    LoggingErrorRecorder, NoopErrorRecorder, PromptUserDecider, StreamEventKind, StreamHandler,
+    TaskRunConfig, TaskRunResult, build_tool_definitions, build_tool_definitions_filtered,
+    enrich_media_provider_args, execute_task_with_failover, execute_task_with_provider,
+    format_side_effect_level, is_permission_restricted_error,
+};
 pub use hook::{HookExecutor, LoggingHook};
 pub use mcp::{
     call_mcp_tool_sync, call_tool as call_mcp_tool, find_enabled_search_tool,

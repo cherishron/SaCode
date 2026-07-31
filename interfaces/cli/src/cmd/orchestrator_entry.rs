@@ -1,14 +1,26 @@
+//! 统一编排入口 — 合并 runtime_entry 和 orchestrator_entry
+//!
+//! 核心变化：
+//! - 单 Agent 路径：使用 TaskExecutor 真正调用 LLM，替代占位 Supervisor
+//! - 多 Agent 路径：execute_role_driven_task_run 内部已使用 TaskExecutor
+//! - 两条路径共享统一的 TaskExecutor 执行逻辑
+
 use std::env;
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionContext, ExecutionReport, Supervisor, Task, TaskRun};
+use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun};
 use sacode_runtime::{
-    build_execution_plan, execute_role_driven_task_run, strip_orchestration_prefix,
-    CheckpointStorage, RoleRegistry, RuntimeOrchestrator, SandboxConfigStore, SandboxExecutor,
-    SandboxPolicy, TaskProfile, ToolRegistry,
+    AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder, PromptUserDecider,
+    TaskRunConfig,
+    build_execution_plan, execute_role_driven_task_run, execute_task_with_provider,
+    strip_orchestration_prefix,
+    build_runtime_system_prompt, PromptContext,
+    CheckpointStorage, McpConfigStore, RoleRegistry,
+    TaskProfile, ToolRegistry,
 };
 
 use super::{orchestrator_support::format_summary_record, CliOptions};
+use crate::cmd::ApprovalPolicy;
 use crate::runner::{format_output, RunnerOutput};
 
 pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
@@ -18,25 +30,18 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     let roles = RoleRegistry::builtin();
     let execution_plan = build_execution_plan(&effective_prompt, &workdir, &profile, roles.all());
 
-    let task = Task::new(effective_prompt.clone(), options.mode, None);
-    let context = ExecutionContext::new(task).with_approval(options.approval);
-
-    let supervisor = Supervisor::new();
-    let tools = ToolRegistry::builtin();
-    let sandbox = SandboxConfigStore::new(&workdir)
-        .executor_for_mode(options.mode)
-        .unwrap_or_else(|_| SandboxExecutor::new(SandboxPolicy::for_mode(options.mode)));
-    let checkpoints = CheckpointStorage::new(&workdir);
-
     let (report, task_run) = if execution_plan.use_multi_agent {
+        // 多 Agent 路径：角色驱动编排（内部已使用 TaskExecutor）
+        let task = Task::new(effective_prompt.clone(), options.mode, None);
+        let context = ExecutionContext::new(task).with_approval(options.approval);
+        let checkpoints = CheckpointStorage::new(&workdir);
         let (task_run, _actual_plan) = execute_role_driven_task_run(&context, &checkpoints).await?;
         let report = task_run.report.clone().unwrap_or_default();
         (report, Some(task_run))
     } else {
-        let orchestrator = RuntimeOrchestrator::new(supervisor, tools, sandbox, checkpoints);
-        let task_run = orchestrator.execute_task_run(&context)?;
-        let report = task_run.report.clone().unwrap_or_default();
-        (report, Some(task_run))
+        // 单 Agent 路径：使用统一 TaskExecutor（替代占位 Supervisor + RuntimeOrchestrator）
+        let result = execute_single_agent_task(&options, &effective_prompt, &workdir, &profile).await?;
+        result
     };
 
     let mut output = RunnerOutput::from_execution_report(
@@ -87,6 +92,72 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 单 Agent 路径：通过统一 TaskExecutor 执行
+///
+/// 替代原来的 RuntimeOrchestrator + Supervisor 占位路径，
+/// 现在真正调用 LLM + 工具执行循环。
+async fn execute_single_agent_task(
+    options: &CliOptions,
+    effective_prompt: &str,
+    workdir: &std::path::Path,
+    profile: &TaskProfile,
+) -> Result<(ExecutionReport, Option<TaskRun>)> {
+    use std::sync::Arc;
+    use sacode_runtime::ApprovalDecider;
+
+    // 构建工具注册表
+    let mut tools = ToolRegistry::builtin();
+    let mcp_store = McpConfigStore::new(workdir);
+    let _ = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
+
+    let tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+
+    // 构建系统提示词
+    let system_prompt = build_runtime_system_prompt(&PromptContext {
+        workdir,
+        mode: options.mode,
+        tool_names: &tool_names,
+    })?;
+
+    // 解析 provider
+    let candidates = crate::provider_runtime::resolve_model_candidates(workdir);
+    let provider = candidates
+        .first()
+        .map(|(_, _, provider)| provider.clone())
+        .ok_or_else(|| anyhow::anyhow!("无可用模型配置，请先运行 /login 或 sacode init"))?;
+
+    // 将 ApprovalPolicy 映射为 ApprovalDecider
+    let approval_decider: Arc<dyn ApprovalDecider> = match options.approval {
+        ApprovalPolicy::AutoApprove => Arc::new(AutoApproveDecider),
+        ApprovalPolicy::AutoDeny => Arc::new(AutoDenyDecider),
+        ApprovalPolicy::Prompt => Arc::new(PromptUserDecider),
+    };
+
+    let config = TaskRunConfig {
+        workdir,
+        mode: options.mode,
+        max_iterations: options.max_iterations,
+        system_prompt,
+        user_prompt: effective_prompt.to_string(),
+        provider,
+        tools,
+        approval: approval_decider,
+        error_recorder: Arc::new(LoggingErrorRecorder),
+    };
+
+    // 执行任务
+    let task_run_result = execute_task_with_provider(&config, None).await;
+
+    // 构建 ExecutionReport
+    let mut report = ExecutionReport::default();
+    report.final_output = task_run_result.response.clone().ok();
+
+    // 构建 TaskRun
+    let task_run = task_run_result.task_run;
+
+    Ok((report, Some(task_run)))
 }
 
 fn orchestrator_final_text(task_run: Option<&TaskRun>, report: &ExecutionReport) -> Option<String> {

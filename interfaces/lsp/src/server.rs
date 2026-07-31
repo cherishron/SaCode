@@ -445,26 +445,28 @@ async fn completion_items(
         .create_session(std::env::current_dir().unwrap_or_else(|_| ".".into()))
         .ok();
 
-    let ai_hint = session
-        .and_then(|handle| {
-            sessions
-                .prompt(
-                    &handle.id,
-                    SessionPrompt {
-                        content: format!("为以下代码前缀生成 3 个简短补全建议：{}", prefix.trim()),
-                        mode: ExecutionMode::Build,
-                        approval: ApprovalPolicy::AutoDeny,
-                    },
-                )
-                .ok()
-        })
-        .and_then(|events| {
-            events.into_iter().find_map(|event| match event {
-                sacode_runtime::SessionEvent::Done { summary } => Some(summary),
-                _ => None,
+    let ai_hint = if let Some(handle) = session {
+        sessions
+            .prompt(
+                &handle.id,
+                SessionPrompt {
+                    content: format!("为以下代码前缀生成 3 个简短补全建议：{}", prefix.trim()),
+                    mode: ExecutionMode::Build,
+                    approval: ApprovalPolicy::AutoDeny,
+                },
+            )
+            .await
+            .ok()
+            .and_then(|events| {
+                events.into_iter().find_map(|event| match event {
+                    sacode_runtime::SessionEvent::Done { summary } => Some(summary),
+                    _ => None,
+                })
             })
-        })
-        .unwrap_or_else(|| "AI assistance available".to_string());
+            .unwrap_or_else(|| "AI assistance available".to_string())
+    } else {
+        "AI assistance available".to_string()
+    };
 
     vec![
         CompletionItem {

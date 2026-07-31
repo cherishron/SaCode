@@ -225,9 +225,25 @@ impl SandboxBackend for LocalSandboxBackend {
                     cmd_name, pid, timeout_ms
                 );
                 terminate_process_tree(&mut child)?;
+
+                // 尝试收集已产生的输出（超时前进程可能已有部分输出）
+                let output = match child.try_wait() {
+                    Ok(Some(_)) => {
+                        match child.wait_with_output() {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                                (stdout, stderr)
+                            }
+                            Err(_) => (String::new(), String::new()),
+                        }
+                    }
+                    _ => (String::new(), String::new()),
+                };
+
                 Ok(BackendCommandOutput {
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout: output.0,
+                    stderr: output.1,
                     exit_code: -1,
                     timed_out: true,
                 })
@@ -406,9 +422,11 @@ fn configure_process_isolation(command: &mut Command) {
     {
         use std::os::windows::process::CommandExt;
         // CREATE_NEW_PROCESS_GROUP = 0x00000200
+        // CREATE_NO_WINDOW = 0x08000000 — 防止子进程弹出控制台窗口
         // CREATE_BREAKAWAY_FROM_JOB = 0x01000000
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
 }
 

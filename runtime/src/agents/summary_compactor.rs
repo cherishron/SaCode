@@ -1,3 +1,12 @@
+//! 灵枢 · 自防护 — 摘要压缩与冲突检测
+//!
+//! 核心模块：多角色输出聚合、冲突检测与识别
+//! 对应 AGENTS.md 中「自防护 — 五维冲突检测」
+//!
+//! 设计理念源自《黄帝内经》诊察经脉病候的隐喻：
+//! - 识别冲突如同诊脉，发现异常信号
+//! - 五维检测：语义一致性、风险信号、上下文完整性、执行状态、建议有效性
+
 pub fn compact_aggregate_output(output: &str) -> String {
     let trimmed = output.trim();
     if trimmed.is_empty() {

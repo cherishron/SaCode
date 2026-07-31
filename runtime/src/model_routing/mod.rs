@@ -1,3 +1,13 @@
+//! 灵枢 · 自愈合 — 任务画像与模型路由
+//!
+//! 核心模块：任务特征分析、模型评分、故障转移上下文
+//! 对应 AGENTS.md 中「自愈合 — 故障转移路由」
+//!
+//! 主要数据结构：
+//! - TaskProfile：任务画像（语言、框架、表面、风险级别）
+//! - ModelRoutePlan：路由计划（主模型 + 备选列表）
+//! - FailoverContext：故障切换上下文
+
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};

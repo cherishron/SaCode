@@ -3,6 +3,9 @@ use std::os::raw::c_char;
 
 use crate::{ExecutionMode, Supervisor, Task};
 
+/// FFI 句柄 — 封装占位 Supervisor
+/// TODO: 迁移到 runtime 层 TaskExecutor
+#[allow(deprecated)]
 pub struct SacodeHandle {
     supervisor: Supervisor,
 }
@@ -13,6 +16,7 @@ impl Default for SacodeHandle {
     }
 }
 
+#[allow(deprecated)]
 impl SacodeHandle {
     pub fn new() -> Self {
         Self {
@@ -20,6 +24,7 @@ impl SacodeHandle {
         }
     }
 
+    #[allow(deprecated)]
     pub fn execute(&self, prompt: &str, mode: ExecutionMode) -> String {
         let task = Task::new(prompt, mode, None);
         let result = self.supervisor.execute(&task);

@@ -1,10 +1,17 @@
-mod model_router;
+pub mod agent_loader;
+pub mod message_bus;
+pub mod model_router;
 mod orchestrator;
 mod planner;
 mod role_registry;
 mod summary_compactor;
 mod worker;
 
+pub use agent_loader::load_custom_agents;
+pub use message_bus::{
+    AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
+    build_communication_summary,
+};
 pub use model_router::{
     build_route_plan_from_candidates, resolve_config_model_candidates, resolve_role_route,
     ResolvedRoleRoute,

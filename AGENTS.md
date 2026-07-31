@@ -15,7 +15,7 @@
 - Current top-level commands include `repl`, `tui`, `serve`, `acp`, `lsp`, `init`, `init-deep`, `status`, `doctor`, `mcp serve`, and direct task execution via `sacode "<task>"`.
 - `run_with_orchestrator(...)` in `interfaces/cli/src/cmd/mod.rs` is the current multi-agent / structured summary path.
 
-## Built-in Tools (23 total)
+## Built-in Tools (25 total)
 
 | 工具名 | 类别 | SideEffect | 文件 |
 |--------|------|------------|------|
@@ -24,6 +24,7 @@
 | `browser.snapshot` | 浏览器 | ReadOnly | `runtime/src/tools/browser/snapshot.rs` |
 | `browser.extract` | 浏览器 | ReadOnly | `runtime/src/tools/browser/extract.rs` |
 | `code.deps` | 代码智能 | ReadOnly | `runtime/src/tools/code/deps.rs` |
+| `code.search` | 代码智能 | ReadOnly | `runtime/src/tools/code/search.rs` |
 | `code.symbols` | 代码智能 | ReadOnly | `runtime/src/tools/code/symbol.rs` |
 | `fs.read` | 文件 | ReadOnly | `runtime/src/tools/fs/read.rs` |
 | `fs.search` | 文件 | ReadOnly | `runtime/src/tools/fs/search.rs` |
@@ -39,6 +40,7 @@
 | `media.vision` | 媒体 | ReadOnly | `runtime/src/tools/media/vision.rs` |
 | `shell.exec` | Shell | Modify | `runtime/src/tools/shell/exec.rs` |
 | `task.spawn` | 任务 | ReadOnly | `runtime/src/tools/task/spawn.rs` |
+| `test.fix` | 测试 | Modify | `runtime/src/tools/test/autofix.rs` |
 | `test.run` | 测试 | ReadOnly | `runtime/src/tools/test/runner.rs` |
 | `web.fetch` | Web | ReadOnly | `runtime/src/tools/web/fetch.rs` |
 | `web.search` | Web | ReadOnly | `runtime/src/tools/web/search.rs` |
@@ -108,6 +110,18 @@
   - `skills/`
   - `checkpoints/`
 - TUI log file: `~/.sacode/logs/tui.log`
+
+## 灵枢架构
+
+SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内经》经络体系，隐喻智能系统的自组织、自防护、自愈合能力。
+
+灵枢架构由三个核心子系统构成：
+
+| 子系统 | 代码位置 | 职责 | 灵枢隐喻 |
+|--------|----------|------|----------|
+| **自组织 — 角色驱动编排** | `runtime/src/agents/` | 多角色协同、动态任务分配 | 经络协调脏腑 |
+| **自防护 — 五维冲突检测** | `runtime/src/agents/summary_compactor.rs` | 多维度冲突识别与拦截 | 诊察经脉病候 |
+| **自愈合 — 故障转移路由** | `runtime/src/model_routing/` | 智能路由 + 模型故障自动切换 | 表里经备用通路 |
 
 ## Current Architecture Hotspots
 

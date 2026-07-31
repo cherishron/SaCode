@@ -19,6 +19,7 @@ fn test_execution_mode_default() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_planner_agent() {
     let planner = PlannerAgent;
     let task = Task::new("分析代码", ExecutionMode::Plan, None);
@@ -30,6 +31,7 @@ fn test_planner_agent() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_supervisor_plan_mode() {
     let supervisor = Supervisor::new();
     let task = Task::new("测试", ExecutionMode::Plan, None);

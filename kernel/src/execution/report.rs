@@ -1,3 +1,13 @@
+//! 灵枢 · 自防护 — 执行报告数据结构
+//!
+//! 核心数据结构：ExecutionReport、ConflictRecord、SummaryRecord
+//! 对应 AGENTS.md 中「自防护 — 五维冲突检测」
+//!
+//! 关键数据结构说明：
+//! - ConflictRecord：冲突记录（kind、summary、details）
+//! - SummaryRecord：结构化摘要，包含角色输出、冲突列表、风险评估
+//! - RouteRecord：模型路由记录（task_id、role_id、主备模型）
+
 use serde::{Deserialize, Serialize};
 
 use crate::{event::Event, schema::Plan};

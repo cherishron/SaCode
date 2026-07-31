@@ -8,6 +8,10 @@ use regex::Regex;
 use super::access::resolve_allowed_path;
 
 const MAX_SEARCH_MATCHES: usize = 50;
+/// 单文件最大读取字节数，防止读取超大文件导致内存溢出
+const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+/// 最大递归深度，防止符号链接导致的无限递归
+const MAX_DEPTH: usize = 20;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -97,6 +101,21 @@ fn collect_matches(
     file_pattern: Option<&str>,
     matches: &mut Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
+    collect_matches_recursive(root, current, matcher, file_pattern, matches, 0)
+}
+
+fn collect_matches_recursive(
+    root: &Path,
+    current: &Path,
+    matcher: &Regex,
+    file_pattern: Option<&str>,
+    matches: &mut Vec<serde_json::Value>,
+    depth: usize,
+) -> anyhow::Result<()> {
+    if depth > MAX_DEPTH {
+        return Ok(());
+    }
+
     if current.is_file() {
         if matches_file_pattern(root, current, file_pattern) {
             collect_file_matches(root, current, matcher, matches)?;
@@ -107,12 +126,17 @@ fn collect_matches(
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
+
+        // 跳过符号链接和联结点，防止无限递归
+        if path.is_symlink() {
+            continue;
+        }
+
         if path.is_dir() {
-            #[cfg(target_os = "windows")]
             if should_skip_dir(&path) {
                 continue;
             }
-            collect_matches(root, &path, matcher, file_pattern, matches)?;
+            collect_matches_recursive(root, &path, matcher, file_pattern, matches, depth + 1)?;
         } else if path.is_file() && matches_file_pattern(root, &path, file_pattern) {
             collect_file_matches(root, &path, matcher, matches)?;
         }
@@ -121,25 +145,56 @@ fn collect_matches(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
 fn should_skip_dir(path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
 
-    let skip_dirs = [
-        "$RECYCLE.BIN",
-        "System Volume Information",
-        "Windows",
-        "Program Files",
-        "Program Files (x86)",
-        "ProgramData",
-        "System32",
-        "Recovery",
+    // 跨平台通用跳过目录
+    let common_skip_dirs = [
+        ".git",
+        ".svn",
+        ".hg",
+        "node_modules",
+        ".DS_Store",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "target",
+        ".gradle",
+        ".idea",
+        ".vscode",
+        ".vs",
     ];
 
-    skip_dirs.contains(&name)
+    if common_skip_dirs.contains(&name) {
+        return true;
+    }
+
+    // Windows 特有跳过目录
+    #[cfg(target_os = "windows")]
+    {
+        let windows_skip_dirs = [
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            "Windows",
+            "Program Files",
+            "Program Files (x86)",
+            "ProgramData",
+            "System32",
+            "Recovery",
+            "AppData",
+            "Microsoft",
+        ];
+
+        if windows_skip_dirs.contains(&name) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn collect_file_matches(
@@ -148,6 +203,15 @@ fn collect_file_matches(
     matcher: &Regex,
     matches: &mut Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
+    // 跳过超大文件，避免内存溢出
+    let metadata = match fs::metadata(file_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    if metadata.len() > MAX_FILE_SIZE_BYTES {
+        return Ok(());
+    }
+
     let content = match fs::read_to_string(file_path) {
         Ok(content) => content,
         Err(_) => return Ok(()),
@@ -308,5 +372,80 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["file"], "nested/deeper/file.txt");
         assert_eq!(matches[0]["content"], "prefix:key:value");
+    }
+
+    #[test]
+    fn skips_common_ignored_directories() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = CurrentDirGuard::enter(temp.path());
+
+        // 创建正常目录和应跳过的目录
+        std::fs::create_dir_all(temp.path().join("src")).expect("create src dir");
+        std::fs::create_dir_all(temp.path().join("node_modules/pkg")).expect("create node_modules");
+        std::fs::create_dir_all(temp.path().join(".git/objects")).expect("create .git dir");
+
+        write_file(&temp.path().join("src/main.rs"), "let target = 1;\n");
+        write_file(
+            &temp.path().join("node_modules/pkg/index.js"),
+            "let target = 2;\n",
+        );
+        write_file(
+            &temp.path().join(".git/objects/pack"),
+            "let target = 3;\n",
+        );
+
+        let regex = Regex::new("target").expect("regex");
+        let mut matches = Vec::new();
+        collect_matches(temp.path(), temp.path(), &regex, None, &mut matches)
+            .expect("collect matches");
+
+        // 只应匹配 src/main.rs，跳过 node_modules 和 .git
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["file"], "src/main.rs");
+    }
+
+    #[test]
+    fn skips_oversized_files() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = CurrentDirGuard::enter(temp.path());
+
+        // 创建一个超大文件（超过 MAX_FILE_SIZE_BYTES）
+        let big_content = "x".repeat(11 * 1024 * 1024); // 11MB
+        write_file(&temp.path().join("big.txt"), &big_content);
+        write_file(&temp.path().join("small.txt"), "findme\n");
+
+        let regex = Regex::new("findme|x").expect("regex");
+        let mut matches = Vec::new();
+        collect_matches(temp.path(), temp.path(), &regex, None, &mut matches)
+            .expect("collect matches");
+
+        // 只应匹配 small.txt，跳过超大文件
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["file"], "small.txt");
+    }
+
+    #[test]
+    fn respects_max_depth() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = CurrentDirGuard::enter(temp.path());
+
+        // 创建深度嵌套目录（超过 MAX_DEPTH=20）
+        let mut deep_path = temp.path().to_path_buf();
+        for i in 0..25 {
+            deep_path = deep_path.join(format!("level{}", i));
+        }
+        std::fs::create_dir_all(&deep_path).expect("create deep dir");
+        write_file(&deep_path.join("deep.txt"), "deep_target\n");
+
+        // 浅层文件
+        write_file(&temp.path().join("shallow.txt"), "shallow_target\n");
+
+        let regex = Regex::new("target").expect("regex");
+        let mut matches = Vec::new();
+        collect_matches(temp.path(), temp.path(), &regex, None, &mut matches)
+            .expect("collect matches");
+
+        // 应至少匹配到浅层文件
+        assert!(matches.iter().any(|m| m["file"] == "shallow.txt"));
     }
 }

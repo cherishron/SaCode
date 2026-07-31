@@ -1,9 +1,21 @@
+//! 灵枢 · 自组织 — 角色驱动编排
+//!
+//! 核心模块：多角色协同、动态任务分配、子 agent 结果汇总与裁决
+//! 对应 AGENTS.md 中「自组织 — 角色驱动编排」
+//!
+//! 设计理念源自《黄帝内经》经络协调脏腑的隐喻：
+//! - 角色如同经络，各司其职
+//! - 任务如同脏腑需求，动态分配给最适合的角色
+
+use std::collections::HashMap;
+
 use anyhow::Result;
 use sacode_kernel::{
     ConflictRecord, ExecutionContext, ExecutionReport, HookRecord, LifecyclePoint, RouteRecord,
     RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord,
 };
 
+use super::message_bus::{AgentMessageKind, CommunicationSummary, MessageBus, build_communication_summary};
 use super::summary_compactor::{
     compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity,
     extract_final_consensus, extract_risk_summary, OutputPolarity,
@@ -47,8 +59,14 @@ pub async fn execute_role_driven_orchestration(
         final_output: None,
     };
 
-    let results = execute_parallel_groups(&plan, &roles, &profile, &workdir, &mut report).await;
-    fold_worker_results(&mut report, &results);
+    // 创建消息总线，支持子 Agent 间通信
+    let message_bus = MessageBus::new();
+
+    let results = execute_parallel_groups(&plan, &roles, &profile, &workdir, &mut report, &message_bus).await;
+
+    // 收集通信摘要
+    let comm_summaries = collect_communication_summaries(&results, &message_bus).await;
+    fold_worker_results(&mut report, &results, &comm_summaries);
 
     let checkpoint = sacode_kernel::Checkpoint::new(context.task.clone());
     let checkpoint_path = checkpoints.save(&checkpoint)?;
@@ -111,8 +129,19 @@ async fn execute_parallel_groups(
     profile: &TaskProfile,
     workdir: &std::path::Path,
     report: &mut ExecutionReport,
+    message_bus: &MessageBus,
 ) -> Vec<WorkerRunResult> {
     let mut all_results = Vec::new();
+
+    // 注册所有子 Agent 到消息总线
+    for task in &plan.tasks {
+        let _ = message_bus.register(task.id.clone()).await;
+    }
+
+    report.events.push(sacode_kernel::Event::message(format!(
+        "消息总线已初始化，注册 Agent 数：{}",
+        plan.tasks.len()
+    )));
 
     for (group_index, group) in plan.parallel_groups.iter().enumerate() {
         report.events.push(sacode_kernel::Event::message(format!(
@@ -141,6 +170,19 @@ async fn execute_parallel_groups(
         }
 
         let mut group_results = futures::future::join_all(worker_runs).await;
+
+        // 并发组执行完毕后，通过消息总线同步进度
+        for result in &group_results {
+            let status = if result.result.success { "完成" } else { "失败" };
+            message_bus
+                .broadcast(
+                    &result.task.id,
+                    AgentMessageKind::ProgressSync,
+                    format!("角色 [{}] 任务 [{}] {}", result.role.id, result.task.title, status),
+                )
+                .await;
+        }
+
         report.events.push(sacode_kernel::Event::message(format!(
             "并发组 #{} 执行完成",
             group_index + 1
@@ -151,7 +193,7 @@ async fn execute_parallel_groups(
     all_results
 }
 
-fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult]) {
+fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult], comm_summaries: &HashMap<String, CommunicationSummary>) {
     for item in results {
         report.events.push(sacode_kernel::Event::message(format!(
             "子 Agent [{}] 绑定角色 [{}]",
@@ -161,6 +203,16 @@ fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult]
             "子 Agent [{}] 模型决策：{}",
             item.task.id, item.resolved_model_summary
         )));
+
+        // 记录通信摘要
+        if let Some(comm) = comm_summaries.get(&item.task.id) {
+            if comm.sent_count > 0 || comm.received_count > 0 {
+                report.events.push(sacode_kernel::Event::thinking(format!(
+                    "子 Agent [{}] 通信：发送 {} 条，接收 {} 条",
+                    item.task.id, comm.sent_count, comm.received_count
+                )));
+            }
+        }
         if let Some(route) = &item.resolved_route {
             report.events.push(sacode_kernel::Event::thinking(format!(
                 "子 Agent [{}] 主路由：{}/{} score={} thinking={}",
@@ -817,4 +869,20 @@ mod tests {
             Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。")
         );
     }
+}
+
+/// 从消息总线收集各 Agent 的通信摘要
+async fn collect_communication_summaries(
+    results: &[WorkerRunResult],
+    message_bus: &MessageBus,
+) -> HashMap<String, CommunicationSummary> {
+    let history = message_bus.message_history().await;
+    let mut summaries = HashMap::new();
+
+    for result in results {
+        let summary = build_communication_summary(&history, &result.task.id);
+        summaries.insert(result.task.id.clone(), summary);
+    }
+
+    summaries
 }

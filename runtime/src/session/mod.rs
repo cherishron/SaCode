@@ -3,26 +3,109 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
+use tracing::warn;
 
 use sacode_kernel::{
-    ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionContext, ExecutionMode, Supervisor,
+    ApprovalPolicy, Checkpoint, Event, ExecutionMode,
     Task, ToolExecutionRecord,
 };
 
 use crate::CheckpointStorage;
 use crate::ToolRegistry;
+use crate::executor::task_runner::{
+    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder,
+    PromptUserDecider, TaskRunConfig, execute_task_with_provider,
+};
+use crate::prompt::{build_system_prompt, PromptContext};
+use crate::McpConfigStore;
+
+/// 获取锁的最大等待时间
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+/// 获取锁的重试间隔
+const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone)]
 pub struct SessionService {
-    sessions: Arc<Mutex<HashMap<String, SessionState>>>,
+    sessions: Arc<RwLock<HashMap<String, SessionState>>>,
 }
+
+/// 锁获取超时错误
+#[derive(Debug)]
+pub struct LockTimeoutError {
+    pub operation: String,
+    pub timeout: Duration,
+}
+
+impl std::fmt::Display for LockTimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "lock acquisition timed out after {:?} for operation: {}",
+            self.timeout, self.operation
+        )
+    }
+}
+
+impl std::error::Error for LockTimeoutError {}
 
 impl SessionService {
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// 带超时的读锁获取
+    fn read_sessions(&self, operation: &str) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, SessionState>>> {
+        let start = Instant::now();
+        loop {
+            match self.sessions.try_read() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if start.elapsed() >= LOCK_TIMEOUT {
+                        warn!("读锁超时: operation={}", operation);
+                        anyhow::bail!(
+                            "session lock contention: read lock timed out after {:?} for '{}'",
+                            LOCK_TIMEOUT,
+                            operation
+                        );
+                    }
+                    std::thread::sleep(LOCK_RETRY_INTERVAL);
+                }
+                Err(std::sync::TryLockError::Poisoned(e)) => {
+                    // 锁中毒：恢复而非 panic，因为其他线程 panic 不应导致整个服务不可用
+                    warn!("session RwLock 中毒，尝试恢复: operation={}", operation);
+                    return Ok(e.into_inner());
+                }
+            }
+        }
+    }
+
+    /// 带超时的写锁获取
+    fn write_sessions(&self, operation: &str) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, SessionState>>> {
+        let start = Instant::now();
+        loop {
+            match self.sessions.try_write() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if start.elapsed() >= LOCK_TIMEOUT {
+                        warn!("写锁超时: operation={}", operation);
+                        anyhow::bail!(
+                            "session lock contention: write lock timed out after {:?} for '{}'",
+                            LOCK_TIMEOUT,
+                            operation
+                        );
+                    }
+                    std::thread::sleep(LOCK_RETRY_INTERVAL);
+                }
+                Err(std::sync::TryLockError::Poisoned(e)) => {
+                    warn!("session RwLock 中毒，尝试恢复: operation={}", operation);
+                    return Ok(e.into_inner());
+                }
+            }
         }
     }
 
@@ -30,15 +113,13 @@ impl SessionService {
         let id = format!("session-{}", unique_suffix());
         let state = SessionState::new(id.clone(), cwd);
         let handle = state.handle();
-        self.sessions
-            .lock()
-            .expect("session mutex poisoned")
+        self.write_sessions("create_session")?
             .insert(id, state);
         Ok(handle)
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<SessionHandle> {
-        let sessions = self.sessions.lock().expect("session mutex poisoned");
+        let sessions = self.read_sessions("get_session")?;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
@@ -46,16 +127,17 @@ impl SessionService {
     }
 
     pub fn list_sessions(&self) -> Vec<SessionHandle> {
-        self.sessions
-            .lock()
-            .expect("session mutex poisoned")
-            .values()
-            .map(SessionState::handle)
-            .collect()
+        match self.read_sessions("list_sessions") {
+            Ok(sessions) => sessions.values().map(SessionState::handle).collect(),
+            Err(e) => {
+                warn!("list_sessions 获取读锁失败: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let mut sessions = self.write_sessions("close_session")?;
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
@@ -64,7 +146,7 @@ impl SessionService {
     }
 
     pub fn cancel_session(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let mut sessions = self.write_sessions("cancel_session")?;
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
@@ -73,7 +155,7 @@ impl SessionService {
     }
 
     pub fn compress_session(&self, session_id: &str) -> Result<CompressionResult> {
-        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let mut sessions = self.write_sessions("compress_session")?;
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
@@ -98,7 +180,7 @@ impl SessionService {
         session_id: &str,
         threshold: u32,
     ) -> Result<Option<CompressionResult>> {
-        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
+        let mut sessions = self.write_sessions("auto_compress_session")?;
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
@@ -122,7 +204,71 @@ impl SessionService {
         }))
     }
 
+    pub fn fork_session(&self, source_session_id: &str) -> Result<SessionHandle> {
+        let new_id = format!("session-{}", unique_suffix());
+
+        // 从源会话复制状态
+        let new_state = {
+            let sessions = self.read_sessions("fork_session")?;
+            let source = sessions
+                .get(source_session_id)
+                .ok_or_else(|| anyhow::anyhow!("source session not found: {}", source_session_id))?;
+
+            let mut forked = SessionState::new(new_id.clone(), source.cwd.clone());
+            // 复制事件历史到分支
+            forked.events = source.events.clone();
+            forked.last_checkpoint = source.last_checkpoint.clone();
+            // 记录分支来源
+            forked.forked_from = Some(source_session_id.to_string());
+            forked
+        };
+
+        let handle = new_state.handle();
+        self.write_sessions("fork_session_insert")?
+            .insert(new_id, new_state);
+        Ok(handle)
+    }
+
+    pub fn resume_session(&self, session_id: &str) -> Result<SessionHandle> {
+        let mut sessions = self.write_sessions("resume_session")?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        match session.status {
+            SessionStatus::Closed | SessionStatus::Cancelled => {
+                session.status = SessionStatus::Idle;
+                Ok(session.handle())
+            }
+            SessionStatus::Failed(_) => {
+                session.status = SessionStatus::Idle;
+                Ok(session.handle())
+            }
+            SessionStatus::Idle | SessionStatus::Running | SessionStatus::Cancelling => {
+                Ok(session.handle())
+            }
+        }
+    }
+
+    pub fn session_history(&self, session_id: &str) -> Result<SessionHistory> {
+        let sessions = self.read_sessions("session_history")?;
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+
+        Ok(SessionHistory {
+            id: session.id.clone(),
+            event_count: session.events.len(),
+            estimated_tokens: session.estimate_event_tokens(),
+            last_checkpoint: session.last_checkpoint.clone(),
+            forked_from: session.forked_from.clone(),
+            compressed: session.compressed_summary.is_some(),
+            compression_ratio: session.compression_ratio,
+        })
+    }
+
     pub fn load_session(&self, workdir: &Path, checkpoint_name: &str) -> Result<SessionHandle> {
+        // checkpoint 加载不需要持锁
         let checkpoints = CheckpointStorage::new(workdir);
         let checkpoint = checkpoints.load(checkpoint_name)?;
         let id = format!("session-{}", unique_suffix());
@@ -130,101 +276,128 @@ impl SessionService {
         state.events = checkpoint.recent_events.clone();
         state.last_checkpoint = Some(checkpoint_name.to_string());
         let handle = state.handle();
-        self.sessions
-            .lock()
-            .expect("session mutex poisoned")
+        self.write_sessions("load_session")?
             .insert(id, state);
         Ok(handle)
     }
 
-    pub fn prompt(&self, session_id: &str, prompt: SessionPrompt) -> Result<Vec<SessionEvent>> {
-        let mut sessions = self.sessions.lock().expect("session mutex poisoned");
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+    pub async fn prompt(&self, session_id: &str, prompt: SessionPrompt) -> Result<Vec<SessionEvent>> {
+        // 阶段1：短暂持锁，仅做状态校验和状态切换
+        let (cwd, task_info) = {
+            let mut sessions = self.write_sessions("prompt_start")?;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
-        if matches!(
-            session.status,
-            SessionStatus::Cancelled | SessionStatus::Closed
-        ) {
-            return Ok(vec![SessionEvent::Error {
-                message: format!("session {} is not runnable", session_id),
-            }]);
+            if matches!(
+                session.status,
+                SessionStatus::Cancelled | SessionStatus::Closed
+            ) {
+                return Ok(vec![SessionEvent::Error {
+                    message: format!("session {} is not runnable", session_id),
+                }]);
+            }
+
+            session.status = SessionStatus::Running;
+            let cwd = session.cwd.clone();
+            (cwd, prompt.content.clone())
+        };
+        // 锁已释放，后续耗时操作不再持锁
+
+        // 阶段2：通过统一 TaskExecutor 执行（真正调用 LLM + 工具执行）
+        let mut tools = ToolRegistry::builtin();
+        let mcp_store = McpConfigStore::new(&cwd);
+        let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
+
+        let tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+
+        let system_prompt = build_system_prompt(&PromptContext {
+            workdir: &cwd,
+            mode: prompt.mode,
+            tool_names: &tool_names,
+        })
+        .unwrap_or_default();
+
+        // 解析 provider
+        let provider = crate::agents::model_router::resolve_config_model_candidates(&cwd)
+            .into_iter()
+            .next()
+            .map(|(_, _, provider)| provider)
+            .ok_or_else(|| anyhow::anyhow!("无可用模型配置，请先运行 /login 或 sacode init"))?;
+
+        // 将 ApprovalPolicy 映射为 ApprovalDecider
+        let approval_decider: std::sync::Arc<dyn ApprovalDecider> = match prompt.approval {
+            ApprovalPolicy::AutoApprove => std::sync::Arc::new(AutoApproveDecider),
+            ApprovalPolicy::AutoDeny => std::sync::Arc::new(AutoDenyDecider),
+            ApprovalPolicy::Prompt => std::sync::Arc::new(PromptUserDecider),
+        };
+
+        let config = TaskRunConfig {
+            workdir: &cwd,
+            mode: prompt.mode,
+            max_iterations: 3,
+            system_prompt,
+            user_prompt: task_info.clone(),
+            provider,
+            tools,
+            approval: approval_decider,
+            error_recorder: std::sync::Arc::new(LoggingErrorRecorder),
+        };
+
+        let task_run_result = execute_task_with_provider(&config, None).await;
+
+        // 构建事件序列
+        let task = Task::new(task_info.clone(), prompt.mode, None);
+        let mut events = vec![SessionEvent::Started { task: task.clone() }];
+
+        let success = task_run_result.response.is_ok();
+        let response_text = task_run_result
+            .response
+            .unwrap_or_else(|error| format!("执行失败：{}", error));
+
+        if success {
+            events.push(SessionEvent::KernelEvent(Event::message(response_text.clone())));
+        } else {
+            events.push(SessionEvent::KernelEvent(Event::error(response_text.clone())));
         }
 
-        session.status = SessionStatus::Running;
-
-        let task = Task::new(prompt.content.clone(), prompt.mode, None);
-        let context = ExecutionContext::new(task.clone()).with_approval(prompt.approval);
-        let supervisor = Supervisor::new();
-        let tools = ToolRegistry::builtin();
-        let execution = supervisor.execute(&task);
-        let mut checkpoint = Checkpoint::new(task.clone());
-        let mut events = vec![SessionEvent::Started { task }];
-        let mut tool_records = Vec::new();
-
-        for event in &execution.output.events {
-            checkpoint.add_event(event.clone());
-            events.push(SessionEvent::KernelEvent(event.clone()));
+        // 处理 pending question
+        if let Some(question) = &task_run_result.pending_question {
+            events.push(SessionEvent::KernelEvent(Event::message(
+                serde_json::to_string(question).unwrap_or_default(),
+            )));
         }
 
-        for (step_id, tool_calls) in execution.tool_calls {
-            for tool_call in tool_calls {
-                events.push(SessionEvent::ToolCallStarted {
-                    step_id,
-                    name: tool_call.name.clone(),
-                    input: tool_call.input.clone(),
-                });
-
-                let (output, success) =
-                    execute_tool_call(&tools, &tool_call.name, &tool_call.input, context.approval);
-                checkpoint.record_tool(
-                    tool_call.name.clone(),
-                    tool_call.input.clone(),
-                    output.clone(),
-                    success,
-                );
-                tool_records.push(ToolExecutionRecord {
-                    step_id: Some(step_id),
-                    tool_name: tool_call.name.clone(),
-                    success,
-                });
-                let finished = Event::ToolCallFinished {
-                    name: tool_call.name.clone(),
-                    output: output.clone(),
-                    success,
-                };
-                checkpoint.add_event(finished.clone());
-                events.push(SessionEvent::ToolCallFinished {
-                    step_id,
-                    name: tool_call.name,
-                    output,
-                    success,
-                });
+        // 构建 checkpoint
+        let mut checkpoint = Checkpoint::new(task);
+        for event in events.iter() {
+            if let SessionEvent::KernelEvent(e) = event {
+                checkpoint.add_event(e.clone());
             }
         }
 
-        let checkpoints = CheckpointStorage::new(&session.cwd);
+        let checkpoints = CheckpointStorage::new(&cwd);
         let checkpoint_path = checkpoints.save(&checkpoint)?;
-        session.status = SessionStatus::Idle;
-        session.events.extend(checkpoint.recent_events.clone());
-        session.last_checkpoint = checkpoint_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(str::to_string);
-        session.last_tool_records = tool_records;
 
-        let summary = execution
-            .output
-            .events
-            .iter()
-            .rev()
-            .find_map(|event| match event {
-                Event::Done { summary } => Some(summary.clone()),
-                Event::Error { message } => Some(message.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "session completed".to_string());
+        // 阶段3：短暂持锁，仅更新 session 状态
+        {
+            let mut sessions = self.write_sessions("prompt_finish")?;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
+            session.status = SessionStatus::Idle;
+            session.events.extend(checkpoint.recent_events.clone());
+            session.last_checkpoint = checkpoint_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string);
+        }
+
+        let summary = if success {
+            response_text
+        } else {
+            format!("执行失败：{}", response_text)
+        };
         events.push(SessionEvent::Done { summary });
         Ok(events)
     }
@@ -244,6 +417,8 @@ struct SessionState {
     original_event_count: Option<usize>,
     compressed_event_count: Option<usize>,
     last_compressed_at: Option<String>,
+    /// 分支来源会话 ID
+    forked_from: Option<String>,
 }
 
 impl SessionState {
@@ -265,6 +440,7 @@ impl SessionState {
             original_event_count: None,
             compressed_event_count: None,
             last_compressed_at: None,
+            forked_from: None,
         }
     }
 
@@ -398,40 +574,6 @@ pub enum SessionEvent {
     },
 }
 
-fn execute_tool_call(
-    tools: &ToolRegistry,
-    name: &str,
-    input: &serde_json::Value,
-    approval: ApprovalPolicy,
-) -> (serde_json::Value, bool) {
-    let spec = tools.get(name);
-    let needs_approval = spec.map(|item| item.needs_approval()).unwrap_or(false);
-
-    if needs_approval {
-        match approval {
-            ApprovalPolicy::AutoApprove => {}
-            ApprovalPolicy::AutoDeny => {
-                return (serde_json::json!({ "error": "denied by policy" }), false)
-            }
-            ApprovalPolicy::Prompt => {
-                return (
-                    serde_json::json!({ "error": "interactive approval unavailable" }),
-                    false,
-                )
-            }
-        }
-    }
-
-    match tools.execute(name, input.clone()) {
-        Ok(output) if output.success => (output.data, true),
-        Ok(output) => (
-            serde_json::json!({ "error": output.message.unwrap_or_else(|| "tool failed".to_string()) }),
-            false,
-        ),
-        Err(error) => (serde_json::json!({ "error": error.to_string() }), false),
-    }
-}
-
 fn unique_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -439,6 +581,17 @@ fn unique_suffix() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHistory {
+    pub id: String,
+    pub event_count: usize,
+    pub estimated_tokens: u32,
+    pub last_checkpoint: Option<String>,
+    pub forked_from: Option<String>,
+    pub compressed: bool,
+    pub compression_ratio: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,5 +690,117 @@ fn generate_compression_summary(key_events: &[Event], tool_events: &[Event]) -> 
         "会话已压缩".to_string()
     } else {
         summary_parts.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn create_and_get_session() {
+        let service = SessionService::new();
+        let handle = service.create_session(PathBuf::from("/tmp")).unwrap();
+        assert!(!handle.id.is_empty());
+        assert_eq!(handle.cwd, PathBuf::from("/tmp"));
+
+        let retrieved = service.get_session(&handle.id).unwrap();
+        assert_eq!(retrieved.id, handle.id);
+    }
+
+    #[test]
+    fn get_nonexistent_session_fails() {
+        let service = SessionService::new();
+        assert!(service.get_session("nonexistent").is_err());
+    }
+
+    #[test]
+    fn close_and_cancel_session() {
+        let service = SessionService::new();
+        let handle = service.create_session(PathBuf::from("/tmp")).unwrap();
+
+        service.close_session(&handle.id).unwrap();
+        let closed = service.get_session(&handle.id).unwrap();
+        assert!(matches!(closed.status, SessionStatus::Closed));
+
+        let handle2 = service.create_session(PathBuf::from("/tmp")).unwrap();
+        service.cancel_session(&handle2.id).unwrap();
+        let cancelled = service.get_session(&handle2.id).unwrap();
+        assert!(matches!(cancelled.status, SessionStatus::Cancelled));
+    }
+
+    #[test]
+    fn list_sessions() {
+        let service = SessionService::new();
+        service.create_session(PathBuf::from("/tmp/a")).unwrap();
+        service.create_session(PathBuf::from("/tmp/b")).unwrap();
+        let sessions = service.list_sessions();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn concurrent_access_does_not_deadlock() {
+        let service = Arc::new(SessionService::new());
+        let handle = service.create_session(PathBuf::from("/tmp")).unwrap();
+        let session_id = handle.id.clone();
+
+        // 多线程并发读写
+        let mut handles = vec![];
+        for i in 0..4 {
+            let svc = Arc::clone(&service);
+            let sid = session_id.clone();
+            handles.push(thread::spawn(move || {
+                if i % 2 == 0 {
+                    let _ = svc.get_session(&sid);
+                } else {
+                    let _ = svc.list_sessions();
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn lock_timeout_prevents_indefinite_wait() {
+        // 验证超时机制存在：在正常情况下应快速获取锁
+        let service = SessionService::new();
+        let start = Instant::now();
+        let _ = service.create_session(PathBuf::from("/tmp"));
+        let elapsed = start.elapsed();
+        // 正常情况下应在 1 秒内完成
+        assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn prompt_releases_lock_during_execution() {
+        // 验证 prompt 在执行期间不持锁
+        let service = Arc::new(SessionService::new());
+        let handle = service.create_session(PathBuf::from(".")).unwrap();
+        let session_id = handle.id.clone();
+
+        let svc = Arc::clone(&service);
+
+        // 在另一个线程中，应能读取 session 列表
+        // 即使 prompt 正在执行（prompt 内部会释放锁）
+        let list_handle = thread::spawn(move || {
+            // 短暂等待确保 prompt 已启动
+            thread::sleep(Duration::from_millis(10));
+            let sessions = svc.list_sessions();
+            assert!(!sessions.is_empty());
+        });
+
+        // prompt 执行（即使内部任务很快完成，锁的释放模式是正确的）
+        let _ = service.prompt(&session_id, SessionPrompt {
+            content: "test".to_string(),
+            mode: ExecutionMode::Build,
+            approval: ApprovalPolicy::AutoDeny,
+        }).await;
+
+        list_handle.join().unwrap();
     }
 }

@@ -10,7 +10,16 @@ pub struct ExecutionResult {
     pub tool_calls: Vec<(usize, Vec<ToolCallIntent>)>,
 }
 
+/// 占位 Supervisor — 编排占位 Agent 的静态执行流程，不调用 LLM
+///
+/// **已废弃**：runtime 层的 `TaskExecutor` 已替代此占位实现，
+/// 真正的 LLM 调用和工具执行在 `runtime::executor::task_runner` 中完成。
+/// 此结构仅作为 kernel 层的兼容占位保留。
 #[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.12.0",
+    note = "使用 runtime::executor::task_runner::execute_task_with_provider 替代"
+)]
 pub struct Supervisor {
     planner: PlannerAgent,
     coder: CoderAgent,

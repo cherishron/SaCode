@@ -1,22 +1,27 @@
 use std::{
     env,
-    path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
-use sacode_kernel::model::{ChatUsage, ToolDefinition};
+use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{
-    Event, ExecutionMode, ExecutionReport, Supervisor, Task, TaskRun, TaskRunState,
+    Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState,
 };
 use sacode_runtime::{
     build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
-    register_enabled_mcp_tools_sync, task_run_from_report, task_run_snapshot, FailoverContext,
-    McpConfigStore, NodeScore, PromptContext, ProviderClient, SandboxConfigStore, SandboxPolicy,
-    SideEffectLevel, TaskProfile, ToolRegistry,
+    register_enabled_mcp_tools_sync, task_run_from_report, task_run_snapshot,
+    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
+    McpConfigStore, PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
+    SideEffectLevel, StreamEventKind as RuntimeStreamEventKind, StreamHandler,
+    TaskProfile, TaskRunConfig, ToolRegistry,
+    build_tool_definitions_filtered, enrich_media_provider_args, execute_task_with_failover,
+    format_side_effect_level, is_permission_restricted_error,
 };
 use serde::Serialize;
 
+/// CLI 层的流式事件类型，保持与原有接口兼容
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamEventKind {
     Message,
@@ -192,8 +197,6 @@ where
     tool_names.sort();
     tool_names.dedup();
 
-    let tool_defs = build_tool_definitions(&tools, &tool_names, mode);
-
     let mut system_prompt = build_runtime_system_prompt(&PromptContext {
         workdir: &workdir,
         mode,
@@ -220,145 +223,68 @@ where
         resolve_provider(&workdir)
     };
 
-    let primary_provider_name = route_plan
-        .as_ref()
-        .map(|plan| plan.primary.provider_name.clone())
-        .unwrap_or_else(|| "default".to_string());
-    let primary_model_name = route_plan
-        .as_ref()
-        .map(|plan| plan.primary.model_name.clone())
-        .unwrap_or_else(|| primary_provider.model.clone());
+    // 将 CLI 层 ApprovalPolicy 映射为 runtime 层 ApprovalDecider
+    let approval_decider: Arc<dyn ApprovalDecider> = match approval {
+        ApprovalPolicy::AutoApprove => Arc::new(AutoApproveDecider),
+        ApprovalPolicy::AutoDeny => Arc::new(AutoDenyDecider),
+        ApprovalPolicy::Prompt => Arc::new(PromptUserDecider),
+    };
 
-    let (
-        mut provider_response,
-        mut pending_question,
-        mut usage,
-        mut hit_round_limit,
-        mut api_duration_ms,
-        mut tool_duration_ms,
-    ) = execute_with_provider(
-        &primary_provider,
-        &system_prompt,
-        &effective_prompt,
-        tool_defs.clone(),
-        &tools,
-        &workdir,
+    // 将 MistakeBookStore 包装为 ErrorRecorder
+    let error_recorder: Arc<dyn ErrorRecorder> = Arc::new(MistakeRecorder {
+        workdir: workdir.clone(),
+    });
+
+    let config = TaskRunConfig {
+        workdir: &workdir,
         mode,
-        approval,
         max_iterations,
-        stream_handler,
+        system_prompt,
+        user_prompt: effective_prompt.clone(),
+        provider: primary_provider,
+        tools,
+        approval: approval_decider,
+        error_recorder,
+    };
+
+    // 构建流式输出适配器：将 CLI 层 StreamEventKind 转换为 runtime 层
+    let runtime_stream_handler: Option<Box<dyn StreamHandler>> = stream_handler.map(|mut h| {
+        Box::new(move |kind: RuntimeStreamEventKind, content: &str| {
+            h(
+                match kind {
+                    RuntimeStreamEventKind::Message => StreamEventKind::Message,
+                    RuntimeStreamEventKind::Thinking => StreamEventKind::Thinking,
+                },
+                content,
+            );
+        }) as Box<dyn StreamHandler>
+    });
+
+    // 模型健康记录回调
+    let model_health_recorder = |workdir: &std::path::Path, provider_name: &str, model_name: &str, success: bool, error: Option<&str>| {
+        record_model_health(workdir, provider_name, model_name, success, error);
+    };
+
+    // 使用统一的 TaskExecutor 执行（含 Failover）
+    let task_run_result = execute_task_with_failover(
+        &config,
+        route_plan.as_ref(),
+        &candidates,
+        &profile,
+        runtime_stream_handler,
+        Some(&model_health_recorder),
     )
     .await;
 
-    record_model_health(
-        &workdir,
-        &primary_provider_name,
-        &primary_model_name,
-        provider_response.is_ok(),
-        provider_response.as_ref().err().map(String::as_str),
-    );
-
-    let mut attempt_count = 0;
-    let max_attempts = route_plan
-        .as_ref()
-        .map(|p| p.fallbacks.len() + 1)
-        .unwrap_or(1);
-
-    while attempt_count < max_attempts {
-        let should_switch = if provider_response.is_err() {
-            true
-        } else if let Ok(ref response) = provider_response {
-            let score = NodeScore::evaluate(None, response, &[], &profile);
-            score.decision == sacode_runtime::NodeDecision::SwitchModel
-        } else {
-            false
-        };
-
-        if !should_switch || pending_question.is_some() {
-            break;
-        }
-
-        attempt_count += 1;
-
-        if let Some(ref plan) = route_plan {
-            let fallback_index = attempt_count.saturating_sub(1);
-            if let Some(fallback) = plan.fallbacks.get(fallback_index) {
-                if let Some((_, _, fallback_provider)) = candidates
-                    .iter()
-                    .find(|(pn, mn, _)| pn == &fallback.provider_name && mn == &fallback.model_name)
-                {
-                    let failover_context = FailoverContext {
-                        original_task: effective_prompt.clone(),
-                        completed_steps: vec![],
-                        tool_summary: vec![],
-                        last_error: provider_response.clone().err(),
-                        low_score_reasons: vec!["node scored low, switching model".to_string()],
-                        workspace_summary: profile.evidence.clone(),
-                        retained_facts: vec![],
-                    };
-                    let failover_section = failover_context.to_prompt_section();
-                    let augmented_prompt = format!("{}\n\n{}", failover_section, effective_prompt);
-
-                    let result = execute_with_provider(
-                        fallback_provider,
-                        &system_prompt,
-                        &augmented_prompt,
-                        tool_defs.clone(),
-                        &tools,
-                        &workdir,
-                        mode,
-                        approval,
-                        max_iterations,
-                        None::<F>,
-                    )
-                    .await;
-
-                    provider_response = result.0;
-                    pending_question = result.1;
-                    usage = result.2;
-                    hit_round_limit = result.3;
-                    api_duration_ms = result.4;
-                    tool_duration_ms = result.5;
-
-                    record_model_health(
-                        &workdir,
-                        &fallback.provider_name,
-                        &fallback.model_name,
-                        provider_response.is_ok(),
-                        provider_response.as_ref().err().map(String::as_str),
-                    );
-                }
-            }
-        }
-    }
-
-    let task = Task::new(expanded_prompt.clone(), mode, stdin);
-    let supervisor = Supervisor::new();
-    let result = supervisor.execute(&task);
-    let plan = if pending_question.is_some() {
-        sacode_kernel::Plan {
-            task: expanded_prompt.clone(),
-            steps: Vec::new(),
-            mode: mode.to_string(),
-        }
-    } else {
-        result.output.plan
+    // 从 TaskRunResult 构建 RunnerOutput
+    let plan = sacode_kernel::Plan {
+        task: expanded_prompt.clone(),
+        steps: Vec::new(),
+        mode: mode.to_string(),
     };
 
-    let state = match pending_question.as_ref() {
-        Some(question)
-            if question.get("kind").and_then(|value| value.as_str()) == Some("tool_approval") =>
-        {
-            TaskRunState::WaitingForApproval
-        }
-        Some(_) => TaskRunState::WaitingForUser,
-        None if hit_round_limit => TaskRunState::Failed,
-        None if provider_response.is_ok() => TaskRunState::Completed,
-        None => TaskRunState::Failed,
-    };
-
-    let learned_facts = if pending_question.is_none() {
-        if let Ok(response) = &provider_response {
+    let learned_facts = if task_run_result.pending_question.is_none() {
+        if let Ok(response) = &task_run_result.response {
             learning::learn_from_task(&workdir, &effective_prompt, response).unwrap_or_default()
         } else {
             Vec::new()
@@ -366,18 +292,6 @@ where
     } else {
         Vec::new()
     };
-
-    let task_run = task_run_snapshot(
-        None,
-        mode,
-        expanded_prompt.clone(),
-        state.clone(),
-        provider_response
-            .as_ref()
-            .ok()
-            .cloned()
-            .or_else(|| provider_response.as_ref().err().cloned()),
-    );
 
     Ok(RunnerOutput {
         prompt: expanded_prompt,
@@ -388,451 +302,40 @@ where
         plan,
         events: Vec::new(),
         tool_results: vec![],
-        provider_response,
+        provider_response: task_run_result.response,
         learned_facts,
-        pending_question,
-        usage,
-        hit_round_limit,
-        api_duration_ms,
-        tool_duration_ms,
+        pending_question: task_run_result.pending_question,
+        usage: task_run_result.usage,
+        hit_round_limit: task_run_result.hit_round_limit,
+        api_duration_ms: task_run_result.api_duration_ms,
+        tool_duration_ms: task_run_result.tool_duration_ms,
         total_duration_ms: elapsed_ms(total_started_at.elapsed()),
-        task_run,
+        task_run: task_run_result.task_run,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn execute_with_provider(
-    provider: &sacode_kernel::model::ModelProvider,
-    system_prompt: &str,
-    user_prompt: &str,
-    tool_defs: Vec<ToolDefinition>,
-    tools: &ToolRegistry,
-    workdir: &Path,
-    mode: ExecutionMode,
-    approval: ApprovalPolicy,
-    max_iterations: usize,
-    stream_handler: Option<impl FnMut(StreamEventKind, &str)>,
-) -> (
-    std::result::Result<String, String>,
-    Option<serde_json::Value>,
-    Option<ChatUsage>,
-    bool,
-    u64,
-    u64,
-) {
-    if provider.api_key.is_some()
-        && provider
-            .base_url
-            .as_ref()
-            .is_some_and(|value| !value.is_empty())
-    {
-        if tool_defs.is_empty() {
-            let client = ProviderClient::new();
-            let api_started_at = Instant::now();
-            let result = if let Some(mut handler) = stream_handler {
-                client
-                    .simple_chat_streaming_with_usage(provider, user_prompt, |chunk| {
-                        if !chunk.done {
-                            handler(
-                                match chunk.kind {
-                                    sacode_runtime::StreamChunkKind::Message => {
-                                        StreamEventKind::Message
-                                    }
-                                    sacode_runtime::StreamChunkKind::Thinking => {
-                                        StreamEventKind::Thinking
-                                    }
-                                },
-                                &chunk.content,
-                            );
-                        }
-                    })
-                    .await
-            } else {
-                client.simple_chat_with_usage(provider, user_prompt).await
-            };
-            match result {
-                Ok((text, usage)) => (
-                    Ok(text),
-                    None,
-                    usage,
-                    false,
-                    elapsed_ms(api_started_at.elapsed()),
-                    0,
-                ),
-                Err(error) => {
-                    let _ = MistakeBookStore::new(workdir).append(
-                        "provider:chat",
-                        "主模型调用失败",
-                        error.to_string(),
-                    );
-                    (
-                        Err(error.to_string()),
-                        None,
-                        None,
-                        false,
-                        elapsed_ms(api_started_at.elapsed()),
-                        0,
-                    )
-                }
-            }
-        } else {
-            run_tool_chat(
-                provider,
-                system_prompt,
-                user_prompt,
-                tool_defs,
-                tools,
-                workdir,
-                mode,
-                approval,
-                max_iterations,
-                stream_handler,
-            )
-            .await
-        }
-    } else {
-        (
-            Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()),
-            None,
-            None,
-            false,
-            0,
-            0,
-        )
-    }
+// ── MistakeRecorder：将 MistakeBookStore 适配为 ErrorRecorder ──
+
+/// CLI 层的 ErrorRecorder 实现，将错误记录到 MistakeBookStore
+struct MistakeRecorder {
+    workdir: std::path::PathBuf,
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_tool_chat(
-    provider: &sacode_kernel::model::ModelProvider,
-    system_prompt: &str,
-    user_prompt: &str,
-    tool_defs: Vec<ToolDefinition>,
-    tools: &ToolRegistry,
-    workdir: &Path,
-    mode: ExecutionMode,
-    approval: ApprovalPolicy,
-    max_iterations: usize,
-    stream_handler: Option<impl FnMut(StreamEventKind, &str)>,
-) -> (
-    std::result::Result<String, String>,
-    Option<serde_json::Value>,
-    Option<ChatUsage>,
-    bool,
-    u64,
-    u64,
-) {
-    let client = ProviderClient::new();
-    let tools_clone = tools.clone();
-    let workdir_clone = workdir.to_path_buf();
-    let provider_for_tools = provider.clone();
-    let tool_duration = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-
-    let tool_duration_for_executor = tool_duration.clone();
-    let tool_executor = move |name: &str, args: &serde_json::Value| -> Result<serde_json::Value> {
-        let tool_started_at = Instant::now();
-        let spec = tools_clone.get(name);
-        let side_effect_level = spec
-            .map(|s| s.side_effect_level)
-            .unwrap_or(SideEffectLevel::Execute);
-        let needs_approval =
-            spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
-        let requires_prompt_approval = needs_approval && mode == ExecutionMode::Build;
-
-        if requires_prompt_approval {
-            match approval {
-                ApprovalPolicy::AutoApprove => {}
-                ApprovalPolicy::AutoDeny => {
-                    return Ok(serde_json::json!({ "error": "denied by policy" }))
-                }
-                ApprovalPolicy::Prompt => {
-                    return Ok(serde_json::json!({
-                        "pending": true,
-                        "kind": "tool_approval",
-                        "question": format!("工具 {} 需要修改工作区，是否允许继续执行？", name),
-                        "options": [
-                            {
-                                "label": "拒绝",
-                                "description": "取消这次修改操作"
-                            },
-                            {
-                                "label": "允许一次",
-                                "description": "仅本次执行允许该修改操作"
-                            },
-                            {
-                                "label": "本会话总是允许",
-                                "description": "本会话内后续修改操作都自动允许"
-                            }
-                        ],
-                        "multiple": false,
-                        "tool_name": name,
-                        "side_effect_level": format_side_effect_level(side_effect_level),
-                        "args": args,
-                    }))
-                }
-            }
-        }
-
-        if let Some(_spec) = spec {
-            let tool_input = if matches!(name, "media.read" | "media.vision") {
-                enrich_media_provider_args(args, &provider_for_tools)
-            } else {
-                args.clone()
-            };
-            let result = match tools_clone.execute(name, tool_input) {
-                Ok(output) => Ok(if output.success {
-                    output.data
-                } else {
-                    let _ = MistakeBookStore::new(&workdir_clone).append(
-                        format!("tool:{}", name),
-                        "工具执行失败",
-                        output.message.clone().unwrap_or_default(),
-                    );
-                    serde_json::json!({ "error": output.message.unwrap_or_default() })
-                }),
-                Err(error) => {
-                    if let Some(question) = build_permission_approval_question(
-                        mode,
-                        name,
-                        args,
-                        side_effect_level,
-                        &error.to_string(),
-                    ) {
-                        tool_duration_for_executor.fetch_add(
-                            elapsed_ms(tool_started_at.elapsed()),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        return Ok(question);
-                    }
-                    let _ = MistakeBookStore::new(&workdir_clone).append(
-                        format!("tool:{}", name),
-                        "工具执行异常",
-                        error.to_string(),
-                    );
-                    Ok(serde_json::json!({ "error": error.to_string() }))
-                }
-            };
-            tool_duration_for_executor.fetch_add(
-                elapsed_ms(tool_started_at.elapsed()),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            result
-        } else {
-            tool_duration_for_executor.fetch_add(
-                elapsed_ms(tool_started_at.elapsed()),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
-        }
-    };
-
-    let api_started_at = Instant::now();
-    let effective_max_iterations = max_iterations.max(1);
-    let result = if let Some(mut handler) = stream_handler {
-        client
-            .tool_chat_streaming(
-                provider,
-                system_prompt,
-                user_prompt,
-                tool_defs,
-                tool_executor,
-                &mut |chunk| {
-                    if !chunk.done {
-                        handler(
-                            match chunk.kind {
-                                sacode_runtime::StreamChunkKind::Message => {
-                                    StreamEventKind::Message
-                                }
-                                sacode_runtime::StreamChunkKind::Thinking => {
-                                    StreamEventKind::Thinking
-                                }
-                            },
-                            &chunk.content,
-                        );
-                    }
-                },
-                effective_max_iterations,
-            )
-            .await
-    } else {
-        client
-            .tool_chat(
-                provider,
-                system_prompt,
-                user_prompt,
-                tool_defs,
-                tool_executor,
-                effective_max_iterations,
-            )
-            .await
-    };
-    match result {
-        Ok(result) => {
-            let final_text = if result.hit_round_limit {
-                let summary = if result.final_text.trim().is_empty() {
-                    "我已经安全停止当前循环，但模型没有返回可展示的最终文本。请基于最近一次工具结果继续缩小任务范围后重试。".to_string()
-                } else {
-                    result.final_text.trim().to_string()
-                };
-                format!(
-                    "本次任务达到最大迭代次数 {}，我已停止继续自动调用工具。\n\n{}",
-                    effective_max_iterations, summary
-                )
-            } else if result.final_text.trim().is_empty() {
-                "工具调用已完成，但模型未生成总结，已返回工具结果摘要。".to_string()
-            } else {
-                result.final_text.trim().to_string()
-            };
-            (
-                Ok(final_text),
-                result.pending_question,
-                result.usage,
-                result.hit_round_limit,
-                elapsed_ms(api_started_at.elapsed()),
-                tool_duration.load(std::sync::atomic::Ordering::Relaxed),
-            )
-        }
-        Err(error) => {
-            let _ = MistakeBookStore::new(workdir).append(
-                "provider:tool_chat",
-                "模型 tool calling 循环失败",
-                error.to_string(),
-            );
-            (
-                Err(error.to_string()),
-                None,
-                None,
-                false,
-                elapsed_ms(api_started_at.elapsed()),
-                tool_duration.load(std::sync::atomic::Ordering::Relaxed),
-            )
-        }
-    }
-}
-
-fn build_permission_approval_question(
-    mode: ExecutionMode,
-    name: &str,
-    args: &serde_json::Value,
-    side_effect_level: SideEffectLevel,
-    error: &str,
-) -> Option<serde_json::Value> {
-    if mode != ExecutionMode::Build {
-        return None;
+impl ErrorRecorder for MistakeRecorder {
+    fn record_tool_error(&self, tool_name: &str, category: &str, detail: String) {
+        let _ = MistakeBookStore::new(&self.workdir).append(tool_name, category, detail);
     }
 
-    if !is_permission_restricted_error(error) {
-        return None;
+    fn record_provider_error(&self, category: &str, detail: String) {
+        let _ = MistakeBookStore::new(&self.workdir).append(category, "模型调用失败", detail);
     }
-
-    Some(serde_json::json!({
-        "pending": true,
-        "kind": "tool_approval",
-        "question": format!("工具 {} 当前因权限受限无法继续，是否请求用户授权后重试？", name),
-        "options": [
-            {
-                "label": "拒绝",
-                "description": "保持当前权限范围并结束这次操作"
-            },
-            {
-                "label": "允许一次",
-                "description": "本次请求用户授权并继续执行当前操作"
-            },
-            {
-                "label": "本会话总是允许",
-                "description": "本会话内遇到同类权限申请时都继续请求授权"
-            }
-        ],
-        "multiple": false,
-        "tool_name": name,
-        "side_effect_level": format_side_effect_level(side_effect_level),
-        "args": args,
-        "error": error,
-    }))
-}
-
-fn is_permission_restricted_error(error: &str) -> bool {
-    let lowered = error.to_lowercase();
-    [
-        "denied by policy",
-        "permission denied",
-        "blocked by sandbox policy",
-        "network access blocked by sandbox policy",
-        "path is blocked by sandbox policy",
-        "working directory is blocked by sandbox policy",
-        "outside workspace",
-    ]
-    .iter()
-    .any(|needle| lowered.contains(needle))
-}
-
-fn enrich_media_provider_args(
-    args: &serde_json::Value,
-    provider: &sacode_kernel::model::ModelProvider,
-) -> serde_json::Value {
-    let mut enriched = args.clone();
-    let Some(object) = enriched.as_object_mut() else {
-        return enriched;
-    };
-
-    if !object.contains_key("model") {
-        object.insert(
-            "model".to_string(),
-            serde_json::Value::String(provider.model.clone()),
-        );
-    }
-    if !object.contains_key("base_url") {
-        if let Some(base_url) = provider.base_url.as_ref().filter(|value| !value.is_empty()) {
-            object.insert(
-                "base_url".to_string(),
-                serde_json::Value::String(base_url.clone()),
-            );
-        }
-    }
-    if !object.contains_key("api_key") {
-        if let Some(api_key) = provider.api_key.as_ref().filter(|value| !value.is_empty()) {
-            object.insert(
-                "api_key".to_string(),
-                serde_json::Value::String(api_key.clone()),
-            );
-        }
-    }
-
-    enriched
 }
 
 fn elapsed_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-fn build_tool_definitions(
-    registry: &ToolRegistry,
-    tool_names: &[String],
-    mode: ExecutionMode,
-) -> Vec<ToolDefinition> {
-    let mut defs = Vec::new();
-    for name in tool_names {
-        if let Some(spec) = registry.get(name) {
-            if mode == ExecutionMode::Plan {
-                let plan_allowed = spec.side_effect_level == SideEffectLevel::ReadOnly
-                    || matches!(name.as_str(), "fs.search" | "web.search");
-                if !plan_allowed {
-                    continue;
-                }
-            }
-            defs.push(spec.to_tool_definition());
-        }
-    }
-    defs
-}
-
-fn format_side_effect_level(level: SideEffectLevel) -> &'static str {
-    match level {
-        SideEffectLevel::ReadOnly => "read_only",
-        SideEffectLevel::Modify => "modify",
-        SideEffectLevel::Execute => "execute",
-    }
-}
+// ── 输出格式化 ──────────────────────────────────────────────────
 
 pub fn format_output(output: &RunnerOutput) -> String {
     let mut lines = vec![
@@ -1083,13 +586,9 @@ fn preview(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_permission_approval_question;
-    use super::build_tool_definitions;
-    use super::enrich_media_provider_args;
     use super::format_learned_facts_summary;
     use super::format_output;
     use super::format_stream_tail;
-    use super::is_permission_restricted_error;
     use super::RunnerOutput;
     use super::TaskRunState;
     use crate::learning::{LearnedFact, LearnedKind};
@@ -1097,6 +596,9 @@ mod tests {
     use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
     use sacode_runtime::SideEffectLevel;
     use sacode_runtime::ToolRegistry;
+    use sacode_runtime::enrich_media_provider_args;
+    use sacode_runtime::is_permission_restricted_error;
+    use sacode_runtime::build_tool_definitions_filtered;
 
     #[test]
     fn permission_restricted_error_detects_sandbox_failures() {
@@ -1113,50 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn build_permission_approval_question_returns_tool_approval_payload() {
-        let question = build_permission_approval_question(
-            ExecutionMode::Build,
-            "fs.read",
-            &serde_json::json!({ "path": "/tmp/secret.txt" }),
-            SideEffectLevel::ReadOnly,
-            "path is blocked by sandbox policy",
-        )
-        .expect("should build approval payload");
-
-        assert_eq!(
-            question.get("kind").and_then(|value| value.as_str()),
-            Some("tool_approval")
-        );
-        assert_eq!(
-            question.get("tool_name").and_then(|value| value.as_str()),
-            Some("fs.read")
-        );
-        assert_eq!(
-            question
-                .get("side_effect_level")
-                .and_then(|value| value.as_str()),
-            Some("read_only")
-        );
-        assert_eq!(
-            question.get("error").and_then(|value| value.as_str()),
-            Some("path is blocked by sandbox policy")
-        );
-    }
-
-    #[test]
-    fn build_permission_approval_question_skips_plan_mode() {
-        let question = build_permission_approval_question(
-            ExecutionMode::Plan,
-            "fs.write",
-            &serde_json::json!({ "path": "/tmp/out.txt" }),
-            SideEffectLevel::Modify,
-            "path is blocked by sandbox policy",
-        );
-
-        assert!(question.is_none());
-    }
-
-    #[test]
     fn build_tool_definitions_limits_plan_mode_to_read_and_search() {
         let registry = ToolRegistry::builtin();
         let tool_names = vec![
@@ -1167,7 +625,7 @@ mod tests {
             "shell.exec".to_string(),
         ];
 
-        let defs = build_tool_definitions(&registry, &tool_names, ExecutionMode::Plan);
+        let defs = build_tool_definitions_filtered(&registry, Some(&tool_names), ExecutionMode::Plan);
         let names = defs
             .iter()
             .map(|def| def.function.name.as_str())

@@ -1,3 +1,5 @@
+pub mod task_runner;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -89,7 +91,10 @@ impl TaskExecutor {
 
             self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
+                // TODO: 迁移到 task_runner::execute_task_with_provider
+                #[allow(deprecated)]
                 let supervisor = Supervisor::new();
+                #[allow(deprecated)]
                 let execution = supervisor.execute(&task.task);
 
                 let duration_ms = started_at.elapsed().as_millis() as u64;

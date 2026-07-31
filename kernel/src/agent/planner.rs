@@ -11,7 +11,16 @@ pub struct AgentOutput {
     pub events: Vec<Event>,
 }
 
+/// 占位规划 Agent — 仅生成静态步骤模板，不调用 LLM
+///
+/// **已废弃**：runtime 层的 `TaskExecutor` 已替代此占位实现，
+/// 真正的 LLM 调用和工具执行在 `runtime::executor::task_runner` 中完成。
+/// 此结构仅作为 kernel 层的兼容占位保留。
 #[derive(Debug, Default, Clone)]
+#[deprecated(
+    since = "0.12.0",
+    note = "使用 runtime::executor::task_runner::execute_task_with_provider 替代"
+)]
 pub struct PlannerAgent;
 
 impl PlannerAgent {
