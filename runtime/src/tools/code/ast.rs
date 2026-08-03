@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use anyhow::{anyhow, Context};
 use tree_sitter::{Language, Node, Parser, Tree};
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AstNodeRecord {
     pub kind: String,
     pub start_line: usize,
@@ -13,7 +13,7 @@ pub struct AstNodeRecord {
     pub text: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AstSymbol {
     pub name: String,
     pub kind: String,
@@ -21,13 +21,13 @@ pub struct AstSymbol {
     pub preview: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AstImport {
     pub specifier: String,
     pub line: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AstSummary {
     pub language: String,
     pub root_kind: String,
@@ -300,19 +300,33 @@ fn extract_go_imports(source: &str, node: Node<'_>) -> Vec<AstImport> {
     if node.kind() != "import_declaration" {
         return Vec::new();
     }
+    // tree-sitter-go 的 import 结构有两种形态：
+    //   单行：import_declaration -> import_spec -> interpreted_string_literal
+    //   多行：import_declaration -> import_spec_list -> import_spec* -> interpreted_string_literal
     node.named_children(&mut node.walk())
-        .filter(|child| matches!(child.kind(), "import_spec" | "interpreted_string_literal"))
-        .flat_map(|child| {
-            if child.kind() == "import_spec" {
-                child
-                    .named_children(&mut child.walk())
-                    .filter_map(|inner| to_import_from_string_literal(source, inner))
-                    .collect::<Vec<_>>()
-            } else {
-                to_import_from_string_literal(source, child)
-                    .into_iter()
-                    .collect()
-            }
+        .filter(|child| {
+            matches!(
+                child.kind(),
+                "import_spec" | "import_spec_list" | "interpreted_string_literal"
+            )
+        })
+        .flat_map(|child| match child.kind() {
+            "import_spec" => child
+                .named_children(&mut child.walk())
+                .filter_map(|inner| to_import_from_string_literal(source, inner))
+                .collect::<Vec<_>>(),
+            "import_spec_list" => child
+                .named_children(&mut child.walk())
+                .filter(|spec| spec.kind() == "import_spec")
+                .flat_map(|spec| {
+                    spec.named_children(&mut spec.walk())
+                        .filter_map(|inner| to_import_from_string_literal(source, inner))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+            _ => to_import_from_string_literal(source, child)
+                .into_iter()
+                .collect(),
         })
         .collect()
 }

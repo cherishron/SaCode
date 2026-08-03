@@ -985,6 +985,135 @@ async fn test_daemon_restores_pending_tasks_from_store() {
 }
 
 #[tokio::test]
+async fn test_task_queue_restore_results_from_store() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("task-store.sqlite3");
+    let store = Arc::new(StoreDb::new(&db_path).expect("create store db"));
+
+    let success_task = ScheduledTask::new(
+        "restore-result-success".to_string(),
+        Task::new("success restore test", ExecutionMode::Build, None),
+    );
+    store.save(&success_task).await.expect("save success task");
+    let success_result = sacode_kernel::TaskResult::success(
+        success_task.id.clone(),
+        "done output".to_string(),
+        123,
+    );
+    store
+        .save_result(&success_result)
+        .await
+        .expect("save success result");
+
+    let failed_task = ScheduledTask::new(
+        "restore-result-failed".to_string(),
+        Task::new("failed restore test", ExecutionMode::Plan, None),
+    );
+    store.save(&failed_task).await.expect("save failed task");
+    let failure_result = sacode_kernel::TaskResult::failure(
+        failed_task.id.clone(),
+        "boom error".to_string(),
+        45,
+    );
+    store
+        .save_result(&failure_result)
+        .await
+        .expect("save failure result");
+
+    // 新 TaskQueue 实例模拟 daemon 重启：内存 HashMap 为空
+    let queue = TaskQueue::new(2).with_store(store);
+    let restored = queue.restore_results().await.expect("restore results");
+    assert_eq!(restored.len(), 2);
+
+    // completed/failed HashMap 应被恢复填充
+    let loaded_success = queue
+        .get_result(&success_task.id)
+        .await
+        .expect("success result should be restored");
+    assert_eq!(loaded_success.status, TaskQueueStatus::Completed);
+    assert_eq!(loaded_success.output, Some("done output".to_string()));
+    assert_eq!(loaded_success.duration_ms, 123);
+
+    let loaded_failure = queue
+        .get_result(&failed_task.id)
+        .await
+        .expect("failure result should be restored");
+    assert_eq!(loaded_failure.status, TaskQueueStatus::Failed);
+    assert_eq!(loaded_failure.error, Some("boom error".to_string()));
+}
+
+#[tokio::test]
+async fn test_daemon_restores_completed_results_from_store() {
+    let lock = sandbox_test_lock();
+    drop(lock);
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let _dir_guard = CurrentDirGuard::enter(tempdir.path());
+    let _home_guard = HomeEnvGuard::set(tempdir.path());
+
+    let store = StoreDb::from_workspace(tempdir.path()).expect("create workspace store");
+    let task = ScheduledTask::new(
+        "restored-daemon-result".to_string(),
+        Task::new("historical prompt", ExecutionMode::Build, None),
+    );
+    store.save(&task).await.expect("save task");
+    let result = sacode_kernel::TaskResult::success(
+        task.id.clone(),
+        "historical output".to_string(),
+        999,
+    );
+    store.save_result(&result).await.expect("save result");
+
+    let app = create_daemon().await;
+
+    // /task/:id/result 应返回历史结果而非 not_found
+    let result_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/task/{}/result", task.id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return result");
+    assert_eq!(result_response.status(), StatusCode::OK);
+
+    let result_body = to_bytes(result_response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let result_payload: serde_json::Value =
+        serde_json::from_slice(&result_body).expect("valid json");
+    assert_eq!(result_payload["task_id"], task.id);
+    assert_eq!(result_payload["status"], "completed");
+    assert_eq!(result_payload["output"], "historical output");
+    assert_eq!(result_payload["duration_ms"], 999);
+
+    // /task/:id/status 应返回完整信息（含 prompt/mode/priority）
+    let status_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/task/{}/status", task.id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return status");
+    assert_eq!(status_response.status(), StatusCode::OK);
+
+    let status_body = to_bytes(status_response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let status_payload: serde_json::Value =
+        serde_json::from_slice(&status_body).expect("valid json");
+    assert_eq!(status_payload["task_id"], task.id);
+    assert_eq!(status_payload["prompt"], "historical prompt");
+    assert_eq!(status_payload["status"], "completed");
+    assert_eq!(status_payload["queue_status"], "completed");
+    assert_eq!(status_payload["current_event"], "task_restored");
+    assert_eq!(status_payload["output"], "historical output");
+}
+
+#[tokio::test]
 async fn test_daemon_task_with_priority() {
     let app = create_daemon().await;
 

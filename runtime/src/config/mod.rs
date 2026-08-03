@@ -26,7 +26,10 @@ pub struct SaCodeConfig {
 
 impl SaCodeConfig {
     pub fn new(workdir: &Path) -> Self {
-        let user_dir = std::env::var_os("HOME")
+        // Windows 上 HOME 通常不存在，USERPROFILE 才是用户主目录；
+        // Unix 上 HOME 是标准。二者均无时退化为当前目录。
+        let user_dir = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
             .join(USER_ROOT_DIR);

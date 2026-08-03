@@ -534,12 +534,9 @@ where
             if let Some(choice) = choices.first() {
                 if let Some(delta) = choice.get("delta") {
                     append_stream_value(delta.get("content"), &mut state.content, false, on_chunk);
-                    append_stream_value(
-                        delta.get("reasoning_content"),
-                        &mut state.reasoning_content,
-                        true,
-                        on_chunk,
-                    );
+                    // 兼容 reasoning_content（OpenAI 系）与 reasoning（sensenova 系）两种字段名
+                    let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning"));
+                    append_stream_value(reasoning, &mut state.reasoning_content, true, on_chunk);
 
                     if let Some(tool_calls) =
                         delta.get("tool_calls").and_then(|value| value.as_array())
@@ -567,15 +564,24 @@ fn append_tool_call_delta(
         .unwrap_or(tool_calls.len());
     let entry = tool_calls.entry(index).or_default();
 
+    // 流式 tool_call 增量合并：sensenova 等部分 provider 在首个 chunk 携带
+    // 完整 id/type/name，后续 chunk 仅含 arguments 片段，其余字段为空字符串。
+    // 此处只在非空时覆盖，避免把首 chunk 已写入的有效值用空串覆盖。
     if let Some(id) = value.get("id").and_then(|item| item.as_str()) {
-        entry.id = id.to_string();
+        if !id.is_empty() {
+            entry.id = id.to_string();
+        }
     }
     if let Some(call_type) = value.get("type").and_then(|item| item.as_str()) {
-        entry.call_type = call_type.to_string();
+        if !call_type.is_empty() {
+            entry.call_type = call_type.to_string();
+        }
     }
     if let Some(function) = value.get("function") {
         if let Some(name) = function.get("name").and_then(|item| item.as_str()) {
-            entry.function_name = name.to_string();
+            if !name.is_empty() {
+                entry.function_name = name.to_string();
+            }
         }
         if let Some(arguments) = function.get("arguments").and_then(|item| item.as_str()) {
             entry.arguments.push_str(arguments);
@@ -811,6 +817,36 @@ fn build_request(
     });
     let top_p = rule.and_then(|r| r.effective_top_p());
     let max_tokens = rule.and_then(|r| r.limit.as_ref().map(|limit| limit.output));
+
+    // 灵枢·自防护：发送请求前对 tool_calls 做规范化
+    // 部分 provider（如 sensenova）拒绝 function.name 或 arguments 为空的 tool_call
+    // 规范化规则：
+    //   1. 过滤掉 function.name 为空的 tool_call（无法路由到具体工具）
+    //   2. 对保留的 tool_call，function.arguments 为空时填充 "{}"（表示无参数）
+    //   3. 若过滤后该消息 tool_calls 全部失效，则置空 tool_calls 字段
+    let messages = messages
+        .into_iter()
+        .map(|mut msg| {
+            if let Some(tool_calls) = msg.tool_calls.take() {
+                let normalized: Vec<_> = tool_calls
+                    .into_iter()
+                    .filter(|call| !call.function.name.is_empty())
+                    .map(|mut call| {
+                        if call.function.arguments.is_empty() {
+                            call.function.arguments = "{}".to_string();
+                        }
+                        call
+                    })
+                    .collect();
+                msg.tool_calls = if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized)
+                };
+            }
+            msg
+        })
+        .collect();
 
     ChatRequest {
         model: provider.model.clone(),

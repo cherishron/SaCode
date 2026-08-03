@@ -294,14 +294,31 @@ fn is_dangerous_command(cmd: &str) -> bool {
 
 fn truncate_output(output: String) -> String {
     if output.len() > MAX_OUTPUT_LEN {
+        // 找到不超过 MAX_OUTPUT_LEN 的最大 UTF-8 字符边界，
+        // 避免字节切片落在多字节字符中间导致 panic（中文/emoji 等）
+        let end = floor_char_boundary(&output, MAX_OUTPUT_LEN);
         format!(
             "{}... (truncated, {} bytes total)",
-            &output[..MAX_OUTPUT_LEN],
+            &output[..end],
             output.len()
         )
     } else {
         output
     }
+}
+
+/// 返回不超过 `idx` 的最大 UTF-8 字符边界索引。
+///
+/// Rust 1.75 缺少稳定的 `str::floor_char_boundary`，本地实现等价语义：
+/// 当 `idx` 落在多字节字符中间时向前回退到字符起点。
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 fn tool_output_from_backend(output: BackendCommandOutput) -> ToolOutput {
@@ -430,6 +447,25 @@ mod tests {
         let long = "a".repeat(20000);
         let truncated = truncate_output(long);
         assert!(truncated.len() < 20000);
+        assert!(truncated.contains("truncated"));
+    }
+
+    /// 验证含中文等多字节字符的输出截断不 panic（原按字节切片会 panic）
+    #[test]
+    fn truncate_output_multi_byte_no_panic() {
+        // 中文字符 3 字节，MAX_OUTPUT_LEN=10000 落在第 3334 个字符的中间字节
+        let long = "中".repeat(5000);
+        let truncated = truncate_output(long);
+        assert!(truncated.contains("truncated"));
+        // 截断后的可见部分必须是合法 UTF-8（String 保证）
+        assert!(truncated.chars().count() <= 5000);
+    }
+
+    /// 验证 4 字节 emoji 截断也安全
+    #[test]
+    fn truncate_output_emoji_no_panic() {
+        let long = "😀".repeat(3000);
+        let truncated = truncate_output(long);
         assert!(truncated.contains("truncated"));
     }
 }

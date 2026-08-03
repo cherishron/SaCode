@@ -1,27 +1,4 @@
-use sacode_kernel::{Event, ExecutionContext, ExecutionReport, TaskRun, TaskRunState};
-
-pub fn run_task_once(context: &ExecutionContext) -> TaskRun {
-    // TODO: 迁移到 task_runner::execute_task_with_provider
-    #[allow(deprecated)]
-    let supervisor = sacode_kernel::Supervisor::new();
-    #[allow(deprecated)]
-    let result = supervisor.execute(&context.task);
-    let final_output = result.output.events.iter().rev().find_map(event_summary);
-    let report = ExecutionReport {
-        plan: Some(result.output.plan.clone()),
-        events: result.output.events.clone(),
-        final_output: final_output.clone(),
-        ..ExecutionReport::default()
-    };
-
-    task_run_from_report(
-        context.task_id.clone(),
-        context.mode,
-        context.task.prompt.clone(),
-        &report,
-        infer_task_run_state(&report),
-    )
-}
+use sacode_kernel::{Event, ExecutionReport, TaskRun, TaskRunState};
 
 pub fn task_run_from_report(
     task_id: Option<String>,

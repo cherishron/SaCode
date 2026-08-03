@@ -181,6 +181,40 @@ impl TaskStore for StoreDb {
         }
         Ok(tasks)
     }
+
+    /// 加载已记录结果的任务（completed/failed），返回 (任务, 结果) 列表
+    ///
+    /// 用于 daemon 重启后恢复历史结果到内存，使 `/task/:id/result`、
+    /// `/task/:id/status` 等查询对历史任务可用，而非返回 not_found
+    async fn load_results(&self) -> Result<Vec<(ScheduledTask, TaskResult)>> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut statement = connection.prepare(
+            "
+            SELECT task_json, result_json
+            FROM tasks
+            WHERE result_json IS NOT NULL
+            ORDER BY updated_at ASC, task_id ASC
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+            ))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (task_json, result_json) = row?;
+            let task = Self::deserialize_task(&task_json)?;
+            let result = Self::deserialize_result(&result_json)?;
+            out.push((task, result));
+        }
+        Ok(out)
+    }
 }
 
 impl StoreDb {

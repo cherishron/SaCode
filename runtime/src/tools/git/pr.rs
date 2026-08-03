@@ -302,7 +302,7 @@ fn execute_list(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
-            "failed to list PRs"
+            "failed to list PRs".to_string()
         } else {
             stderr
         }));

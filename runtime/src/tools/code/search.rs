@@ -147,7 +147,8 @@ impl Bm25Index {
 
             let relative_path = match file_path.strip_prefix(root) {
                 Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
-                Err(_) => file_path.display().to_string(),
+                // rel 为空或 strip 失败时退回完整路径展示
+                _ => file_path.display().to_string(),
             };
 
             // 提取 AST 符号信息
@@ -267,7 +268,7 @@ impl Bm25Index {
                     } else {
                         "semantic"
                     };
-                    (Some(sym.name.clone()), Some(sym.kind.clone()), Some(sym.line), sym.preview.clone(), mt)
+                    (Some(sym.name.clone()), Some(sym.kind.clone()), Some(sym.line), sym.preview.clone(), mt.to_string())
                 }
                 None => {
                     // 无符号匹配，使用文件级内容匹配
@@ -348,32 +349,64 @@ fn tokenize_query(query: &str) -> Vec<String> {
 /// 对标识符分词（驼峰/下划线拆分）
 /// 例如："calculateTotalPrice" → ["calculate", "total", "price"]
 ///       "http_request_handler" → ["http", "request", "handler"]
+///       "HTTPRequestHandler" → ["http", "request", "handler"]
 fn tokenize_identifier(ident: &str) -> Vec<String> {
+    let chars: Vec<char> = ident.chars().collect();
     let mut tokens = Vec::new();
-    let mut current = String::new();
+    let mut start = 0;
 
-    for ch in ident.chars() {
-        if ch == '_' {
-            if !current.is_empty() {
-                tokens.push(current.to_lowercase());
-                current.clear();
+    for i in 1..chars.len() {
+        let prev = chars[i - 1];
+        let curr = chars[i];
+
+        // 下划线分隔
+        if curr == '_' {
+            if i > start {
+                let token: String = chars[start..i].iter().collect();
+                let lower = token.to_lowercase();
+                if lower.len() >= 2 {
+                    tokens.push(lower);
+                }
             }
-        } else if ch.is_uppercase() {
-            if !current.is_empty() {
-                tokens.push(current.to_lowercase());
-                current.clear();
-            }
-            current.push(ch.to_lowercase().next().unwrap_or(ch));
+            start = i + 1;
+            continue;
+        }
+        if prev == '_' {
+            continue;
+        }
+
+        // 驼峰边界检测
+        let should_split = if curr.is_uppercase() && prev.is_lowercase() {
+            // camelCase 边界：小写 -> 大写
+            true
+        } else if curr.is_uppercase() && prev.is_uppercase() {
+            // 连续大写：如果下一个字符是小写，当前大写是新词开始
+            // 如 "HTTPRequest" 的 'R' 后跟 'e'，说明 'R' 是 "Request" 的开始
+            i + 1 < chars.len() && chars[i + 1].is_lowercase()
         } else {
-            current.push(ch);
+            false
+        };
+
+        if should_split {
+            let token: String = chars[start..i].iter().collect();
+            let lower = token.to_lowercase();
+            if lower.len() >= 2 {
+                tokens.push(lower);
+            }
+            start = i;
         }
     }
 
-    if !current.is_empty() {
-        tokens.push(current.to_lowercase());
+    // 最后一个 token
+    if start < chars.len() {
+        let token: String = chars[start..].iter().collect();
+        let lower = token.to_lowercase();
+        if lower.len() >= 2 {
+            tokens.push(lower);
+        }
     }
 
-    tokens.into_iter().filter(|t| t.len() >= 2).collect()
+    tokens
 }
 
 /// 对源代码分词，提取标识符和关键词
@@ -428,13 +461,19 @@ fn find_best_matching_symbol(
     symbols
         .iter()
         .map(|sym| {
-            // 计算符号名与查询词项的重叠度
+            // 完整符号名匹配（最高权重）
+            let full_match = if term_set.contains(&sym.name.to_lowercase()) {
+                1
+            } else {
+                0
+            };
+            // token 级别重叠度
             let sym_tokens = tokenize_identifier(&sym.name);
-            let overlap = sym_tokens
+            let token_overlap = sym_tokens
                 .iter()
                 .filter(|t| term_set.contains(&t.to_lowercase()))
                 .count();
-            (sym.clone(), overlap)
+            (sym.clone(), full_match + token_overlap)
         })
         .max_by_key(|(_, overlap)| *overlap)
         .filter(|(_, overlap)| *overlap > 0)

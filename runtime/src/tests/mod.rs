@@ -76,13 +76,21 @@ impl Drop for CurrentDirGuard {
 
 struct HomeEnvGuard {
     previous_home: Option<std::ffi::OsString>,
+    previous_userprofile: Option<std::ffi::OsString>,
 }
 
 impl HomeEnvGuard {
     fn set(path: &Path) -> Self {
+        // 被测代码（config/wiki/skills::hub/model_router）优先读 USERPROFILE 再读 HOME，
+        // 测试需同时设置两者，避免 Windows 真实 USERPROFILE 干扰用户级路径判定。
         let previous_home = std::env::var_os("HOME");
+        let previous_userprofile = std::env::var_os("USERPROFILE");
         std::env::set_var("HOME", path);
-        Self { previous_home }
+        std::env::set_var("USERPROFILE", path);
+        Self {
+            previous_home,
+            previous_userprofile,
+        }
     }
 }
 
@@ -91,6 +99,10 @@ impl Drop for HomeEnvGuard {
         match self.previous_home.take() {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
+        }
+        match self.previous_userprofile.take() {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
         }
     }
 }

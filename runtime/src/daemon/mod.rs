@@ -13,7 +13,8 @@ mod types;
 
 pub use handlers::run_daemon;
 pub use types::{
-    DaemonState, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse, TaskStatus,
+    DaemonState, EventHistory, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse,
+    TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
 };
 
 use events::{

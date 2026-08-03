@@ -24,6 +24,9 @@ use crate::model_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
 
 const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
 const MODEL_HEALTH_FILE: &str = ".sacode/model-health.json";
+/// 灵枢·自愈合：健康记录恢复窗口（秒）。超过此窗口后，失败惩罚衰减为 0，
+/// 使曾因瞬态故障被标记为 unhealthy 的模型可被重新试探。1 小时。
+const MODEL_HEALTH_RECOVERY_SECS: u64 = 3600;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRoleRoute {
@@ -112,6 +115,10 @@ struct ModelHealthEntry {
     last_status: String,
     #[serde(default)]
     last_error: Option<String>,
+    /// 最后一次健康记录更新时间（unix 秒）。由写入侧（provider_runtime）填充。
+    /// 0 表示旧文件无此字段，此时不应用时间衰减。
+    #[serde(default)]
+    updated_at: u64,
 }
 
 pub fn resolve_role_route(
@@ -344,10 +351,13 @@ fn format_route_summary(role: &AgentRole, primary: &RoutedModel, fallback_count:
 }
 
 fn load_effective_sacode_config(workdir: &Path) -> Option<SaCodeConfig> {
-    let user_path = env::var_os("HOME")
+    // 用户级配置目录：Windows 上 USERPROFILE 指向 C:\Users\<name>，
+    // Unix 上 HOME 指向 /home/<name>。二者都缺失时退化为当前目录。
+    let user_home = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(SACODE_CONFIG_FILE);
+        .unwrap_or_else(|| PathBuf::from("."));
+    let user_path = user_home.join(SACODE_CONFIG_FILE);
     let project_path = workdir.join(SACODE_CONFIG_FILE);
 
     let mut config = load_sacode_config_path(&user_path).unwrap_or_else(default_sacode_config);
@@ -424,7 +434,28 @@ fn model_health_score_delta(entry: &ModelHealthEntry) -> i32 {
     } else {
         -12
     };
+
+    // 灵枢·自愈合：时间窗口衰减
+    // updated_at 为最后一次健康记录更新时间（成功或失败均更新）。
+    // 超过恢复窗口后，失败惩罚与 unhealthy 状态扣分衰减为 0，
+    // 仅保留成功加分，使曾因瞬态故障被标记为 unhealthy 的模型可被重新试探。
+    // updated_at == 0（旧文件无此字段）时不应用衰减，保持原有行为。
+    if entry.updated_at > 0 {
+        let elapsed = current_unix_ts().saturating_sub(entry.updated_at);
+        if elapsed >= MODEL_HEALTH_RECOVERY_SECS {
+            return success;
+        }
+    }
+
     success - failure + status_bonus
+}
+
+/// 当前 unix 时间戳（秒）。与写入侧（provider_runtime::current_unix_ts）保持一致语义。
+fn current_unix_ts() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
 }
 
 fn health_key(provider_name: &str, model_name: &str) -> String {

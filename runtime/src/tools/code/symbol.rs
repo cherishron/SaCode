@@ -192,7 +192,7 @@ fn matches_language(path: &Path, language: Option<&str>) -> bool {
     }
 }
 
-fn detect_language(path: &Path) -> Option<&'static str> {
+pub(crate) fn detect_language(path: &Path) -> Option<&'static str> {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("rs") => Some("rust"),
         Some("py") => Some("python"),

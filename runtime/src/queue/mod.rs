@@ -94,6 +94,12 @@ impl TaskQueue {
 
         drop(ready);
 
+        // 灵枢·Permit 生命周期优化：在 pending 写锁外预先获取 completed_ids 快照，
+        // 避免持锁期间多次 await completed 读锁（原代码每个 priority 都重新拿一次），
+        // 减少 pending 写锁竞争者的等待时间。语义上：completed_ids 是"这一刻"的快照，
+        // 若期间有新 task 完成，下一个调度周期会重新取值并调度 — 无遗漏。
+        let completed_ids = self.get_completed_ids().await;
+
         let mut pending = self.pending.write().await;
         for priority in [
             TaskPriority::Urgent,
@@ -102,7 +108,6 @@ impl TaskQueue {
             TaskPriority::Low,
         ] {
             if let Some(queue) = pending.get_mut(&priority) {
-                let completed_ids = self.get_completed_ids().await;
                 #[allow(clippy::never_loop)]
                 while let Some(task) = queue.pop_front() {
                     if task.is_ready(&completed_ids) {
@@ -461,6 +466,48 @@ impl TaskQueue {
         Ok(restored)
     }
 
+    /// 从 store 恢复历史结果（completed/failed）到内存 HashMap
+    ///
+    /// daemon 重启后 `completed`/`failed` HashMap 为空，导致 `/task/:id/result`、
+    /// `/task/:id/status` 对历史任务返回 not_found。本方法把 store 中已记录的
+    /// 结果按 status 分流回填，去重避免覆盖运行时写入的新结果。
+    /// 返回恢复的 (任务, 结果) 列表，供调用方同步填充状态表
+    pub async fn restore_results(
+        &self,
+    ) -> anyhow::Result<Vec<(ScheduledTask, TaskResult)>> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let entries = store.load_results().await?;
+        let mut restored = Vec::new();
+
+        for (task, result) in entries {
+            let task_id = result.task_id.clone();
+            match result.status {
+                TaskQueueStatus::Completed => {
+                    let mut completed = self.completed.write().await;
+                    if completed.contains_key(&task_id) {
+                        continue;
+                    }
+                    completed.insert(task_id, result.clone());
+                    restored.push((task, result));
+                }
+                TaskQueueStatus::Failed => {
+                    let mut failed = self.failed.write().await;
+                    if failed.contains_key(&task_id) {
+                        continue;
+                    }
+                    failed.insert(task_id, result.clone());
+                    restored.push((task, result));
+                }
+                _ => {}
+            }
+        }
+
+        Ok(restored)
+    }
+
     pub async fn get_restorable_tasks(&self) -> Vec<ScheduledTask> {
         let mut tasks = Vec::new();
 
@@ -518,6 +565,11 @@ pub trait TaskStore: Send + Sync {
     async fn save_result(&self, result: &TaskResult) -> anyhow::Result<()>;
     async fn load(&self, task_id: &str) -> anyhow::Result<Option<ScheduledTask>>;
     async fn load_pending(&self) -> anyhow::Result<Vec<ScheduledTask>>;
+    /// 加载已记录结果的任务（completed/failed），返回 (任务, 结果) 列表
+    ///
+    /// 用于 daemon 重启后恢复历史结果到内存，使 `/task/:id/result`、
+    /// `/task/:id/status` 等查询对历史任务可用，而非返回 not_found
+    async fn load_results(&self) -> anyhow::Result<Vec<(ScheduledTask, TaskResult)>>;
 }
 
 pub struct InMemoryStore {
@@ -562,12 +614,10 @@ impl TaskStore for InMemoryStore {
     }
 
     async fn update_status(&self, task_id: &str, status: TaskQueueStatus) -> anyhow::Result<()> {
-        let tasks = self.tasks.lock().await;
-        if !tasks.contains_key(task_id) {
-            return Ok(());
-        }
-        drop(tasks);
-
+        // 直接更新 statuses，不检查 tasks 是否含该 task_id。
+        // 原检查会导致 restore_results 后历史任务（task 未在 tasks 中）的 status 更新被静默跳过，
+        // 使 /task/:id/status 对历史任务返回过期状态。
+        // status 是独立 HashMap，允许 status 先于 task 存在。
         let mut statuses = self.statuses.lock().await;
         statuses.insert(task_id.to_string(), status);
         Ok(())
@@ -606,5 +656,17 @@ impl TaskStore for InMemoryStore {
             })
             .cloned()
             .collect())
+    }
+
+    async fn load_results(&self) -> anyhow::Result<Vec<(ScheduledTask, TaskResult)>> {
+        let tasks = self.tasks.lock().await;
+        let results = self.results.lock().await;
+        let mut out = Vec::new();
+        for (task_id, result) in results.iter() {
+            if let Some(task) = tasks.get(task_id) {
+                out.push((task.clone(), result.clone()));
+            }
+        }
+        Ok(out)
     }
 }

@@ -9,7 +9,7 @@ use std::{
 use tracing::warn;
 
 use sacode_kernel::{
-    ApprovalPolicy, Checkpoint, Event, ExecutionMode,
+    ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionMode,
     Task, ToolExecutionRecord,
 };
 

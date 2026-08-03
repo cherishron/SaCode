@@ -258,7 +258,17 @@ fn test_shell_exec_uses_docker_backend_when_installed() {
     .expect_err("shell exec should attempt docker backend execution");
 
     let message = error.to_string();
-    assert!(message.contains("No such file or directory") || message.contains("docker"));
+    // 跨平台兼容：Unix 上 docker 不存在时通常含 "No such file or directory" 或 "docker"，
+    // Windows 上则是 "program not found" (os error 2) 或系统错误
+    assert!(
+        message.contains("No such file or directory")
+            || message.contains("docker")
+            || message.contains("program not found")
+            || message.contains("os error 2")
+            || message.contains("系统找不到"),
+        "unexpected error message: {}",
+        message
+    );
 
     crate::sandbox::reset_global_policy();
 }

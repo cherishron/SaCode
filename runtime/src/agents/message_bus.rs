@@ -13,7 +13,7 @@
 //!
 //! 架构设计：
 //! - MessageBus：全局消息总线，基于 tokio broadcast + mpsc
-//! - AgentMailbox：每个子Agent的邮箱，接收定向消息
+//! - AgentMailboxHandle：每个子Agent的邮箱句柄，接收定向消息
 //! - 编排器集成：在 execute_parallel_groups 中注入 MessageBus
 
 use std::collections::HashMap;
@@ -66,17 +66,13 @@ impl AgentMessageKind {
     }
 }
 
-/// Agent 邮箱：接收定向消息
-#[derive(Debug, Clone)]
-pub struct AgentMailbox {
-    /// Agent ID
-    pub agent_id: String,
-    /// 接收消息的通道
-    receiver: mpsc::UnboundedReceiver<AgentMessage>,
-    /// 发送端句柄（用于注册到 MessageBus）
-    sender: mpsc::UnboundedSender<AgentMessage>,
-}
-
+/// Agent 邮箱句柄：用于接收和发送消息
+///
+/// 设计说明：原本设计的 `AgentMailbox` 直接持有 `mpsc::UnboundedReceiver`，
+/// 但 `UnboundedReceiver` 不实现 `Clone`，无法满足多消费者场景。
+/// 当前实现改用 `Arc<tokio::sync::Mutex<UnboundedReceiver>>` 包装的
+/// [`AgentMailboxHandle`]，提供安全的共享访问。
+///
 /// 消息总线：支持广播和直接消息
 pub struct MessageBus {
     /// 广播通道发送端
@@ -403,9 +399,10 @@ mod tests {
 
         // agent-b 应收到消息
         let messages = handle_b.try_recv_direct().await;
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].from, "agent-a");
-        assert_eq!(messages[0].kind, AgentMessageKind::RequestAssist);
+        assert!(messages.is_some(), "应收到一条直接消息");
+        let msg = messages.unwrap();
+        assert_eq!(msg.from, "agent-a");
+        assert_eq!(msg.kind, AgentMessageKind::RequestAssist);
     }
 
     #[tokio::test]

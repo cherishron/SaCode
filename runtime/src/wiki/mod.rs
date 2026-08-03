@@ -378,7 +378,9 @@ fn dir_status(label: &str, path: &Path) -> Result<WikiSourceStatus> {
 }
 
 fn user_sacode_dir() -> PathBuf {
-    env::var_os("HOME")
+    // Windows 上 USERPROFILE 为用户主目录，Unix 上 HOME 为标准；二者均无时退化为当前目录。
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(USER_SACODE_DIR)

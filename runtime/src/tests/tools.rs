@@ -83,6 +83,144 @@ fn test_code_symbols_spec_is_read_only() {
     assert!(!spec.needs_approval());
 }
 
+// ── 灵枢架构升级 smoke test ──────────────────────────────────────
+// 验证工具分层 / 上下文优化 / SDK 入口三大架构升级能走通
+
+#[test]
+fn ling_shu_core_tools_registry_has_exactly_four_tools() {
+    let registry = ToolRegistry::core_tools();
+    let names = registry.names();
+    assert_eq!(names.len(), 4, "core_tools 应仅注册 4 个核心层工具");
+    for name in &["fs.read", "fs.write", "fs.edit", "shell.exec"] {
+        assert!(
+            names.contains(name),
+            "core_tools 应包含核心工具 {}",
+            name
+        );
+    }
+}
+
+#[test]
+fn ling_shu_extended_tools_registry_has_22_tools() {
+    let registry = ToolRegistry::extended_tools();
+    assert_eq!(
+        registry.names().len(),
+        22,
+        "extended_tools 应注册 22 个扩展层工具"
+    );
+}
+
+#[test]
+fn ling_shu_builtin_registry_has_26_tools() {
+    let registry = ToolRegistry::builtin();
+    assert_eq!(registry.names().len(), 26, "builtin 应注册全部 26 个工具");
+}
+
+#[test]
+fn ling_shu_specs_by_layer_returns_correct_counts() {
+    let registry = ToolRegistry::builtin();
+    let core_specs = registry.specs_by_layer(crate::ToolLayer::Core);
+    let extended_specs = registry.specs_by_layer(crate::ToolLayer::Extended);
+    assert_eq!(core_specs.len(), 4);
+    assert_eq!(extended_specs.len(), 22);
+    assert_eq!(core_specs.len() + extended_specs.len(), 26);
+}
+
+#[test]
+fn ling_shu_for_prompt_default_injects_core_only() {
+    let registry = ToolRegistry::builtin();
+    let (specs, trimmed) = registry.for_prompt(None, None, None);
+    assert!(!trimmed, "无预算限制时不应裁剪");
+    assert_eq!(specs.len(), 4, "默认应仅注入 4 个核心层工具");
+    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    for name in &["fs.read", "fs.write", "fs.edit", "shell.exec"] {
+        assert!(names.contains(name), "应包含核心工具 {}", name);
+    }
+}
+
+#[test]
+fn ling_shu_for_prompt_with_code_profile_includes_code_tools() {
+    let registry = ToolRegistry::builtin();
+    let profile = crate::model_routing::TaskProfile {
+        task_kinds: vec!["code".to_string()],
+        ..Default::default()
+    };
+    let (specs, trimmed) = registry.for_prompt(None, Some(&profile), None);
+    assert!(!trimmed);
+    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    // 核心层始终注入
+    assert!(names.contains(&"fs.read"));
+    // code 任务画像命中的扩展工具
+    assert!(names.contains(&"code.symbols"));
+    assert!(names.contains(&"code.deps"));
+    assert!(names.contains(&"code.search"));
+    assert!(names.contains(&"git.diff"));
+}
+
+#[test]
+fn ling_shu_for_prompt_with_role_whitelist_respects_whitelist() {
+    let registry = ToolRegistry::builtin();
+    let role = sacode_kernel::AgentRole {
+        allowed_tools: vec!["web.search".to_string(), "web.fetch".to_string()],
+        ..Default::default()
+    };
+    let (specs, _) = registry.for_prompt(Some(&role), None, None);
+    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    // 核心层始终注入（不受白名单约束）
+    assert!(names.contains(&"fs.read"));
+    // 白名单工具注入
+    assert!(names.contains(&"web.search"));
+    assert!(names.contains(&"web.fetch"));
+    // 非白名单的扩展工具不应注入
+    assert!(!names.contains(&"code.symbols"));
+    assert!(!names.contains(&"browser.open"));
+}
+
+#[test]
+fn ling_shu_for_prompt_with_zero_budget_triggers_trim() {
+    let registry = ToolRegistry::builtin();
+    let (specs, trimmed) = registry.for_prompt(None, None, Some(0));
+    assert!(trimmed, "预算为 0 时应触发裁剪");
+    assert!(specs.is_empty(), "预算为 0 时应无工具注入");
+}
+
+#[test]
+fn ling_shu_fs_read_executes_on_builtin_registry() {
+    let registry = ToolRegistry::builtin();
+    // 读取 runtime crate 的 Cargo.toml（相对 CWD，cargo test 的 CWD 为 crate 根）
+    let output = registry
+        .execute(
+            "fs.read",
+            serde_json::json!({ "path": "Cargo.toml", "limit": 5 }),
+        )
+        .expect("fs.read 应执行成功");
+    assert!(output.success, "fs.read 应成功读取 Cargo.toml");
+}
+
+#[test]
+fn ling_shu_fs_list_executes_on_builtin_registry() {
+    let registry = ToolRegistry::builtin();
+    // 列出 runtime crate 根目录（相对 CWD）
+    let output = registry
+        .execute(
+            "fs.list",
+            serde_json::json!({ "path": ".", "recursive": false }),
+        )
+        .expect("fs.list 应执行成功");
+    assert!(output.success, "fs.list 应成功列出目录");
+}
+
+#[tokio::test]
+async fn ling_shu_sdk_client_builds_with_core_tools() {
+    // 验证 SDK 构建器入口可正常构造（不执行任务，避免依赖 LLM）
+    let workdir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let client = crate::SdkClient::new(workdir)
+        .await
+        .expect("SdkClient 应构建成功");
+    // 仅验证构建，不调用 execute_task
+    let _ = client;
+}
+
 #[test]
 fn test_code_symbols_extracts_rust_symbols_from_file() {
     let _guard = sandbox_test_lock();
@@ -1135,6 +1273,220 @@ fn test_fs_patch_writes_audit_log_on_success() {
 }
 
 #[test]
+fn test_fs_patch_fuzzy_matches_variable_window_size() {
+    // G1: 实际内容行数与 old_string 行数不一致时仍能命中。
+    // 内容有 4 行（含重复 "beta"），old_string 只描述 3 行。
+    // 3 行精确窗口相似度不足，4 行可变窗口命中（只需删除多余行）。
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta\nbeta\ngamma\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "alpha\nbeta\ngamma\n",
+            "new_string": "alpha\nbeta\nDONE\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(
+        result.success,
+        "fuzzy should match variable window: {:?}",
+        result.message
+    );
+    // 4 行窗口被替换为 new_string
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "alpha\nbeta\nDONE\n"
+    );
+}
+
+#[test]
+fn test_fs_patch_fuzzy_supports_replace_all() {
+    // G2: replace_all 路径走 fuzzy，多个相似窗口均被替换。
+    // 两处仅差 1 个字符（"!" vs ""），相似度 ~0.94，远超 0.6 阈值。
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta!\ngamma\nalpha\nbeta!\ngamma\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "alpha\nbeta\ngamma\n",
+            "new_string": "alpha\nbeta\ngamma\nMARKER\n",
+            "replace_all": true
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(
+        result.success,
+        "fuzzy replace_all should match multiple windows: {:?}",
+        result.message
+    );
+    let updated = fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file");
+    assert_eq!(
+        updated,
+        "alpha\nbeta\ngamma\nMARKER\nalpha\nbeta\ngamma\nMARKER\n"
+    );
+}
+
+#[test]
+fn test_fs_patch_conflict_includes_candidates() {
+    // G3: 冲突时返回 candidates 数组，含 line/similarity/preview。
+    // old_string 与内容有部分相似（共享 "alpha\nbeta" 前缀和 "\ngamma\n" 后缀），
+    // 但中间差异过大（" totally different here" 24 字符）使相似度低于 0.6 阈值，
+    // 高于 0.1 候选阈值，触发候选诊断。
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta totally different here\ngamma\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "alpha\nbeta\ngamma\n",
+            "new_string": "replaced\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(!result.success);
+    let message = result.message.expect("conflict payload");
+    assert!(
+        message.contains("candidates"),
+        "conflict should include candidates: {message}"
+    );
+    // candidates 至少包含 1 条（相似度 ~0.42，高于 0.1 候选阈值）
+    assert!(
+        message.contains("\"line\""),
+        "candidates should have line field: {message}"
+    );
+    assert!(
+        message.contains("\"similarity\""),
+        "candidates should have similarity field: {message}"
+    );
+    assert!(
+        message.contains("\"preview\""),
+        "candidates should have preview field: {message}"
+    );
+}
+
+#[test]
+fn test_fs_patch_output_includes_diff_summary() {
+    // G6: 成功输出包含 diff_summary（added/removed 行计数）
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta\ngamma\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "beta\n",
+            "new_string": "beta\nbeta2\nbeta3\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    // diff_summary 应反映：added=2（beta2, beta3），removed=0
+    let files = result.data["files"].as_array().expect("files array");
+    assert_eq!(files.len(), 1);
+    let diff_summary = &files[0]["diff_summary"];
+    assert_eq!(diff_summary["added"], 2);
+    assert_eq!(diff_summary["removed"], 0);
+}
+
+#[test]
+fn test_fs_patch_diff_summary_counts_removal() {
+    // G6: diff_summary 正确统计删除行
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "alpha\nbeta\ngamma\ndelta\nepsilon\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "beta\ngamma\ndelta\n",
+            "new_string": "beta\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success);
+    let files = result.data["files"].as_array().expect("files array");
+    let diff_summary = &files[0]["diff_summary"];
+    // 删除 gamma, delta 两行 → removed=2；无新增 → added=0
+    assert_eq!(diff_summary["removed"], 2);
+    assert_eq!(diff_summary["added"], 0);
+}
+
+#[test]
+fn test_fs_patch_char_level_similarity_distinguishes_minor_diff() {
+    // G5: 字符级相似度对细微差异（空格/标点）敏感，
+    // 旧版行级 diff 会把整行算作 delete+insert，导致相似度过低而拒绝
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+    // 仅多一个空格的差异，行级 diff 会算作整行替换，字符级只算 1 字符
+    fs::write(
+        temp_dir.path().join("note.txt"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .expect("seed file");
+
+    let result = crate::tools::fs::patch::execute(serde_json::json!({
+        "patches": [{
+            "path": "note.txt",
+            "old_string": "fn main () {\n    println!(\"hello\");\n}\n",
+            "new_string": "fn main() {\n    println!(\"world\");\n}\n"
+        }]
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(
+        result.success,
+        "char-level similarity should match minor whitespace diff: {:?}",
+        result.message
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("note.txt")).expect("read file"),
+        "fn main() {\n    println!(\"world\");\n}\n"
+    );
+}
+
+#[test]
 fn test_modify_tool_writes_audit_log_on_success() {
     let _guard = sandbox_test_lock();
     crate::sandbox::reset_global_policy();
@@ -1435,5 +1787,268 @@ fn test_yolo_mode_allows_reading_outside_workspace() {
     .expect("yolo mode should allow outside workspace read");
 
     assert!(result.success);
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_commit_returns_full_metadata() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["config", "user.name", "SaCode Test"])
+        .output()
+        .expect("set user.name");
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("set user.email");
+    fs::write(temp_dir.path().join("file1.txt"), "hello").expect("write file1");
+    fs::write(temp_dir.path().join("file2.txt"), "world").expect("write file2");
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: full metadata",
+        "add_all": true
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success, "expected success, got: {:?}", result);
+    // commit_hash
+    let commit_hash = result.data["commit_hash"]
+        .as_str()
+        .expect("commit_hash should be a string");
+    assert!(!commit_hash.is_empty());
+    // message
+    assert_eq!(result.data["message"], "feat: full metadata");
+    // branch — 兼容 master / main
+    let branch = result.data["branch"]
+        .as_str()
+        .expect("branch should be a string");
+    assert!(
+        branch == "master" || branch == "main",
+        "unexpected branch: {}",
+        branch
+    );
+    // author — C9
+    assert_eq!(result.data["author_name"], "SaCode Test");
+    assert_eq!(result.data["author_email"], "test@example.com");
+    // staged_files — C1
+    let staged = result.data["staged_files"]
+        .as_array()
+        .expect("staged_files should be an array");
+    assert!(
+        staged.len() >= 2,
+        "expected >= 2 staged files, got {}",
+        staged.len()
+    );
+    // stats — C10
+    let stats = &result.data["stats"];
+    assert!(
+        stats["files_changed"].as_u64().unwrap_or(0) >= 1,
+        "expected files_changed >= 1"
+    );
+    // 不应包含 error_kind（成功路径）
+    assert!(
+        result.data.get("error_kind").is_none() || result.data["error_kind"].is_null(),
+        "success path should not have error_kind"
+    );
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_commit_not_a_repo_returns_classified_error() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    // tempdir 默认在系统 Temp 目录，不在任何 git 仓库内
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: should fail"
+    }))
+    .expect("tool execution should not panic");
+
+    assert!(!result.success, "should fail outside git repo");
+    // C3 + C5: error_kind = not_a_repo
+    let kind = result.data["error_kind"]
+        .as_str()
+        .expect("error_kind should be a string");
+    assert_eq!(
+        kind, "not_a_repo",
+        "expected not_a_repo, got: {} (message: {:?})",
+        kind, result.message
+    );
+    assert!(
+        result.message.as_deref().unwrap_or_default().contains("not_a_repo"),
+        "message should contain error_kind, got: {:?}",
+        result.message
+    );
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_commit_nothing_to_commit_returns_classified_error() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["config", "user.name", "SaCode Test"])
+        .output()
+        .expect("set user.name");
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("set user.email");
+    // 不创建任何文件，不 add，直接 commit
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: should fail"
+    }))
+    .expect("tool execution should not panic");
+
+    assert!(!result.success, "should fail with nothing to commit");
+    let kind = result.data["error_kind"]
+        .as_str()
+        .expect("error_kind should be a string");
+    assert_eq!(
+        kind, "nothing_to_commit",
+        "expected nothing_to_commit, got: {} (message: {:?})",
+        kind, result.message
+    );
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_commit_path_not_found_returns_classified_error() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["config", "user.name", "SaCode Test"])
+        .output()
+        .expect("set user.name");
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("set user.email");
+    // paths 指向不存在的文件
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: should fail",
+        "paths": ["missing.txt"]
+    }))
+    .expect("tool execution should not panic");
+
+    assert!(!result.success, "should fail with path not found");
+    let kind = result.data["error_kind"]
+        .as_str()
+        .expect("error_kind should be a string");
+    assert_eq!(
+        kind, "path_not_found",
+        "expected path_not_found, got: {} (message: {:?})",
+        kind, result.message
+    );
+    assert!(
+        result
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("missing.txt"),
+        "message should contain the missing path, got: {:?}",
+        result.message
+    );
+
+    crate::sandbox::reset_global_policy();
+}
+
+#[test]
+fn test_git_commit_dry_run_does_not_commit() {
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let _cwd = CurrentDirGuard::enter(temp_dir.path());
+
+    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["config", "user.name", "SaCode Test"])
+        .output()
+        .expect("set user.name");
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .output()
+        .expect("set user.email");
+    fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
+    // 手动 add，使 staged_files 非空
+    Command::new("git")
+        .args(["add", "file.txt"])
+        .output()
+        .expect("git add");
+
+    let result = crate::tools::git::commit::execute(serde_json::json!({
+        "message": "feat: dry run",
+        "dry_run": true
+    }))
+    .expect("tool execution should succeed");
+
+    assert!(result.success, "dry_run should succeed, got: {:?}", result);
+    // dry_run 标志
+    assert_eq!(result.data["dry_run"], true);
+    // staged_files 应该包含 file.txt
+    let staged = result.data["staged_files"]
+        .as_array()
+        .expect("staged_files should be an array");
+    assert_eq!(staged.len(), 1, "expected 1 staged file");
+    assert!(
+        staged[0]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("file.txt"),
+        "expected staged file ends with file.txt, got: {:?}",
+        staged[0]
+    );
+    // branch 应该返回（detached HEAD 时为 "HEAD"，但 git init 后未 commit 时其实是 unborn branch，
+    // rev-parse --abbrev-ref HEAD 仍返回 "master" 或 "main"）
+    let branch = result.data["branch"]
+        .as_str()
+        .expect("branch should be a string");
+    assert!(!branch.is_empty(), "branch should not be empty");
+    // author 信息
+    assert_eq!(result.data["author_name"], "SaCode Test");
+    assert_eq!(result.data["author_email"], "test@example.com");
+    // 不应有 commit_hash（dry_run 不实际提交）
+    assert!(
+        result.data.get("commit_hash").is_none() || result.data["commit_hash"].is_null(),
+        "dry_run should not produce commit_hash, got: {:?}",
+        result.data.get("commit_hash")
+    );
+    // 不应有 stats（dry_run 不实际提交）
+    assert!(
+        result.data.get("stats").is_none() || result.data["stats"].is_null() || result.data["stats"] == serde_json::json!({}),
+        "dry_run should not produce stats"
+    );
+
+    // 验证确实没有产生 commit
+    let log_output = Command::new("git")
+        .args(["log", "--oneline"])
+        .output()
+        .expect("git log");
+    assert!(
+        !log_output.status.success() || String::from_utf8_lossy(&log_output.stdout).trim().is_empty(),
+        "no commit should exist after dry_run, got log: {}",
+        String::from_utf8_lossy(&log_output.stdout)
+    );
+
     crate::sandbox::reset_global_policy();
 }
