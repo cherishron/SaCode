@@ -7,7 +7,6 @@ pub mod hook;
 pub mod mcp;
 pub mod memory;
 pub mod model_routing;
-pub mod orchestrator;
 pub mod plugin;
 pub mod prompt;
 pub mod provider;
@@ -15,8 +14,8 @@ pub mod queue;
 pub mod retry;
 pub mod run;
 pub mod sandbox;
+pub mod sdk;
 pub mod session;
-pub mod skillhub;
 pub mod skills;
 pub mod store;
 pub mod streaming;
@@ -69,10 +68,9 @@ pub use model_routing::{
     ExecutionNode, FailoverContext, ModelRoutePlan, NodeDecision, NodeScore, NodeToolCall,
     RoutedModel, TaskProfile, TaskRiskLevel,
 };
-pub use orchestrator::RuntimeOrchestrator;
 pub use plugin::{
-    PluginDescriptor, PluginHost, PluginKind, PluginLoader, PluginRegistry, PluginResult,
-    PluginSpec,
+    discover_wasm_plugins, load_wasm_plugin_dir, PluginDescriptor, PluginHost, PluginKind,
+    PluginLoader, PluginRegistry, PluginResult, PluginSpec,
 };
 pub use prompt::{
     build_system_prompt as build_runtime_system_prompt, maybe_expand_skill_prompt, PromptContext,
@@ -80,9 +78,10 @@ pub use prompt::{
 pub use provider::{ProviderClient, StreamChunk, StreamChunkKind, ToolChatResult};
 pub use queue::{InMemoryStore, TaskQueue, TaskStore};
 pub use retry::RetryHandler;
-pub use run::{infer_task_run_state, run_task_once, task_run_from_report, task_run_snapshot};
+pub use run::{infer_task_run_state, task_run_from_report, task_run_snapshot};
 #[cfg(test)]
 pub use sandbox::reset_global_policy;
+pub use sdk::{SdkClient, SdkResult, UsageStats as SdkUsageStats, execute_task as sdk_execute_task};
 pub use sandbox::{
     active_backend, active_policy, current_mode, install_current_mode, install_global_backend,
     install_global_policy, BackendCommandOutput, FsAccess, LocalSandboxBackend, NetworkAccess,
@@ -91,12 +90,12 @@ pub use sandbox::{
 pub use session::{
     CompressionResult, SessionEvent, SessionHandle, SessionPrompt, SessionService, SessionStatus,
 };
-pub use skillhub::{
+pub use skills::hub::{
     SkillHubClient, SkillHubMcpMeta, SkillHubPluginMeta, SkillHubSkillListResponse,
     SkillHubSkillMeta, SkillHubUploadRequest, SkillHubUploadResponse, SkillHubVersionMeta,
 };
 pub use skills::{SkillRegistry, SkillSource, SkillSpec};
 pub use store::StoreDb;
-pub use tools::{SideEffectLevel, ToolOutput, ToolRegistry};
+pub use tools::{SideEffectLevel, ToolLayer, ToolOutput, ToolRegistry};
 pub use wiki::{inspect_wiki, load_wiki_context, WikiContext, WikiSourceStatus, WikiStatus};
 pub use workspace::{FileInfo, WorkspaceInfo, WorkspaceScanner};

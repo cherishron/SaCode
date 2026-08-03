@@ -8,6 +8,8 @@ use std::{
 
 use crate::config::SaCodeConfig;
 
+pub mod hub;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillSpec {
     pub name: String,
@@ -251,7 +253,7 @@ impl SkillRegistry {
     }
 }
 
-fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpec {
+pub(crate) fn parse_skill_file(path: &Path, content: &str, source: SkillSource) -> SkillSpec {
     let default_name = path
         .file_stem()
         .and_then(|value| value.to_str())

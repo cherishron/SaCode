@@ -12,6 +12,8 @@ pub enum PluginKind {
     Builtin,
     Mcp,
     Configured,
+    /// WASM 插件：通过 extism 加载 .wasm 文件，按 manifest.json 注册函数
+    Wasm,
 }
 
 impl PluginKind {
@@ -20,6 +22,7 @@ impl PluginKind {
             Self::Builtin => "builtin",
             Self::Mcp => "mcp",
             Self::Configured => "configured",
+            Self::Wasm => "wasm",
         }
     }
 }
@@ -61,6 +64,12 @@ impl PluginRegistry {
 
         if let Ok(specs) = list_enabled_mcp_tool_specs(&store).await {
             entries.extend(specs.iter().map(PluginLoader::mcp_from_tool_spec));
+        }
+
+        // 扫描 .sacode/plugins/ 下的 WASM 插件 manifest
+        // 失败不致命：仅记录日志并跳过，避免阻断插件发现流程
+        if let Ok(wasm_entries) = super::discovery::discover_wasm_plugins(workdir) {
+            entries.extend(wasm_entries);
         }
 
         entries.sort_by(|a, b| a.name.cmp(&b.name));
