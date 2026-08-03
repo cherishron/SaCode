@@ -1,8 +1,10 @@
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sacode_kernel::{ApprovalPolicy, ExecutionMode};
-use sacode_runtime::{McpConfigStore, ProviderClient, SessionPrompt, SessionService};
+use sacode_runtime::{ProviderClient, SessionPrompt, SessionService};
 use tower_lsp::{
     jsonrpc::Result as LspResult,
     lsp_types::{
@@ -12,12 +14,14 @@ use tower_lsp::{
         DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams,
         HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
         InsertTextFormat, MessageType, Position, Range, ServerCapabilities,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+        TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
     },
     Client, LanguageServer, LspService, Server,
 };
 
+use crate::code_intelligence::{completion_response_from_ast, hover_from_ast};
 use crate::config::LspConfig;
+use crate::diagnostics::DiagnosticsProvider;
 use crate::document::{DocumentManager, TextDocument};
 
 struct SaCodeLanguageServer {
@@ -25,6 +29,14 @@ struct SaCodeLanguageServer {
     documents: Arc<Mutex<DocumentManager>>,
     sessions: SessionService,
     provider_config: Arc<Mutex<Option<sacode_kernel::model::ModelProvider>>>,
+    /// 诊断提供者：按语言调度外部检查器
+    diagnostics_provider: Arc<DiagnosticsProvider>,
+    /// 是否启用诊断发布（来自 LspConfig.capabilities.diagnostics）
+    diagnostics_enabled: bool,
+    /// 诊断去抖间隔毫秒（来自 LspConfig.behavior.diagnostic_interval_ms）
+    diagnostic_interval_ms: u64,
+    /// 按 URI 跟踪待处理的诊断任务，便于在文档变更时取消旧任务
+    pending_diagnostics: Arc<tokio::sync::Mutex<HashMap<Url, tokio::task::JoinHandle<()>>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -56,6 +68,8 @@ impl LanguageServer for SaCodeLanguageServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
         let document = TextDocument {
             uri: params.text_document.uri,
             content: params.text_document.text,
@@ -66,30 +80,42 @@ impl LanguageServer for SaCodeLanguageServer {
             .lock()
             .expect("document mutex poisoned")
             .open(document);
+        // 文档打开后触发首次诊断
+        self.spawn_diagnostics(uri, version).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
         if let Some(change) = params.content_changes.into_iter().last() {
             self.documents
                 .lock()
                 .expect("document mutex poisoned")
-                .update(
-                    &params.text_document.uri,
-                    change.text,
-                    params.text_document.version,
-                );
+                .update(&uri, change.text, version);
         }
+        // 文档变更后触发诊断（带去抖）
+        self.spawn_diagnostics(uri, version).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri.clone();
         self.documents
             .lock()
             .expect("document mutex poisoned")
-            .close(&params.text_document.uri);
+            .close(&uri);
+        // 取消该 URI 的待处理诊断任务
+        let prev = {
+            let mut pending = self.pending_diagnostics.lock().await;
+            pending.remove(&uri)
+        };
+        if let Some(handle) = prev {
+            handle.abort();
+        }
+        // 文档关闭时清空已发布的诊断（LSP 约定）
+        let _ = self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        let sessions = self.sessions.clone();
         let provider_config = self
             .provider_config
             .lock()
@@ -105,6 +131,15 @@ impl LanguageServer for SaCodeLanguageServer {
             .get(&uri)
             .cloned();
 
+        // 优先走 AST 静态补全：基于当前文档符号生成 CompletionItem
+        // 失败或为空时降级到 AI 路径（保持向后兼容）
+        if let Some(doc) = &document {
+            if let Some(response) = completion_response_from_ast(doc, position) {
+                return Ok(Some(response));
+            }
+        }
+
+        let sessions = self.sessions.clone();
         let items =
             completion_items(document, &sessions, &provider_config, position, context).await;
         Ok(Some(CompletionResponse::Array(items)))
@@ -127,6 +162,12 @@ impl LanguageServer for SaCodeLanguageServer {
         else {
             return Ok(None);
         };
+
+        // 优先走 AST 静态 hover：基于符号表查找光标附近的符号
+        // 命中时返回静态信息，避免 AI 调用开销
+        if let Some(hover) = hover_from_ast(&document, position) {
+            return Ok(Some(hover));
+        }
 
         let content = document.content.clone();
         let language_id = document.language_id.clone();
@@ -204,23 +245,44 @@ impl LanguageServer for SaCodeLanguageServer {
             .iter()
             .any(|d| d.severity == Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR));
 
-        if !has_errors
-            && range.start.line == range.end.line
-            && range.start.character == range.end.character
-        {
-            return Ok(Some(Vec::new()));
+        let mut actions = Vec::new();
+
+        // 基于诊断的 quickfix：每个 error / warning 提供一个独立的 Fix 动作
+        // 这比单一 "Fix errors" 更细粒度，便于用户针对具体错误选择
+        for diagnostic in &diagnostics {
+            let severity_label = match diagnostic.severity {
+                Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR) => "Error",
+                Some(tower_lsp::lsp_types::DiagnosticSeverity::WARNING) => "Warning",
+                Some(tower_lsp::lsp_types::DiagnosticSeverity::INFORMATION) => "Info",
+                _ => "Diagnostic",
+            };
+            let source_label = diagnostic.source.as_deref().unwrap_or("unknown");
+            let message = &diagnostic.message;
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!(
+                    "SaCode: Fix {} ({}): {}",
+                    severity_label, source_label, message
+                ),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: None,
+                ..CodeAction::default()
+            }));
         }
 
         let code_snippet = document
             .content
             .lines()
             .skip(range.start.line as usize)
-            .take((range.end.line - range.start.line + 1) as usize)
+            .take((range.end.line - range.start.line + 1).max(1) as usize)
             .collect::<Vec<_>>()
             .join("\n");
 
-        let actions = vec![
-            CodeActionOrCommand::CodeAction(CodeAction {
+        // 当光标未选中具体范围时，仅在有诊断或代码片段非空时给出通用动作
+        let is_caret = range.start.line == range.end.line
+            && range.start.character == range.end.character;
+        if !is_caret || has_errors || !code_snippet.trim().is_empty() {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "SaCode: Explain this code".to_string(),
                 kind: Some(CodeActionKind::QUICKFIX),
                 command: Some(Command {
@@ -232,19 +294,20 @@ impl LanguageServer for SaCodeLanguageServer {
                     ]),
                 }),
                 ..CodeAction::default()
-            }),
-            CodeActionOrCommand::CodeAction(CodeAction {
-                title: "SaCode: Fix errors".to_string(),
-                kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(diagnostics.clone()),
-                edit: if let Some(provider) = provider_config {
-                    Some(generate_fix_edits(&provider, &code_snippet, &document, range).await)
-                } else {
-                    None
-                },
-                ..CodeAction::default()
-            }),
-            CodeActionOrCommand::CodeAction(CodeAction {
+            }));
+
+            // 仅当有 AI provider 时提供修复建议
+            if let Some(provider) = provider_config {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "SaCode: Fix errors".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(diagnostics.clone()),
+                    edit: Some(generate_fix_edits(&provider, &code_snippet, &document, range).await),
+                    ..CodeAction::default()
+                }));
+            }
+
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "SaCode: Refactor".to_string(),
                 kind: Some(CodeActionKind::REFACTOR),
                 command: Some(Command {
@@ -256,23 +319,78 @@ impl LanguageServer for SaCodeLanguageServer {
                     ]),
                 }),
                 ..CodeAction::default()
-            }),
-        ];
+            }));
+        }
 
         Ok(Some(actions))
     }
 }
 
-pub async fn run_stdio_server(_config: &LspConfig) -> Result<()> {
+impl SaCodeLanguageServer {
+    /// 触发文档诊断（带去抖）
+    ///
+    /// 实现策略：
+    /// 1. 取消该 URI 的旧任务（避免快速连续编辑时堆积）
+    /// 2. spawn 新任务：先 sleep `diagnostic_interval_ms`，再运行检查器
+    /// 3. 检查完成后通过 `client.publish_diagnostics` 推送给客户端
+    ///
+    /// 注：spawn 前已克隆文档内容，spawn 内不持有 documents mutex。
+    /// 子进程（cargo/tsc/python）若仍在运行，abort 仅取消 future 不杀进程，
+    /// 其输出会被丢弃，资源浪费可接受。
+    async fn spawn_diagnostics(&self, uri: Url, version: i32) {
+        if !self.diagnostics_enabled {
+            return;
+        }
+        // 取消该 URI 的待处理任务
+        let prev = {
+            let mut pending = self.pending_diagnostics.lock().await;
+            pending.remove(&uri)
+        };
+        if let Some(handle) = prev {
+            handle.abort();
+        }
+        // 在 spawn 前克隆文档，避免在 spawn 内长时间持有 documents mutex
+        let doc = {
+            let docs = self.documents.lock().expect("document mutex poisoned");
+            docs.get(&uri).cloned()
+        };
+        let Some(doc) = doc else {
+            return;
+        };
+        let client = self.client.clone();
+        let provider = self.diagnostics_provider.clone();
+        let interval = self.diagnostic_interval_ms;
+        let uri_for_publish = uri.clone();
+        let handle = tokio::spawn(async move {
+            if interval > 0 {
+                tokio::time::sleep(Duration::from_millis(interval)).await;
+            }
+            let diagnostics = provider.analyze(&doc);
+            let _ = client
+                .publish_diagnostics(uri_for_publish, diagnostics, Some(version))
+                .await;
+        });
+        let mut pending = self.pending_diagnostics.lock().await;
+        pending.insert(uri, handle);
+    }
+}
+
+pub async fn run_stdio_server(config: &LspConfig) -> Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let workdir = std::env::current_dir()?;
     let provider = resolve_provider_for_lsp(&workdir);
-    let (service, socket) = LspService::new(|client| SaCodeLanguageServer {
+    let diagnostics_enabled = config.capabilities.diagnostics;
+    let diagnostic_interval_ms = config.behavior.diagnostic_interval_ms;
+    let (service, socket) = LspService::new(move |client| SaCodeLanguageServer {
         client,
         documents: Arc::new(Mutex::new(DocumentManager::default())),
         sessions: SessionService::new(),
         provider_config: Arc::new(Mutex::new(provider)),
+        diagnostics_provider: Arc::new(DiagnosticsProvider::new(workdir.clone())),
+        diagnostics_enabled,
+        diagnostic_interval_ms,
+        pending_diagnostics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
     Ok(())
@@ -291,43 +409,12 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
 fn resolve_provider_for_lsp(
     workdir: &std::path::Path,
 ) -> Option<sacode_kernel::model::ModelProvider> {
-    let _store = McpConfigStore::new(workdir);
-    let config_path = workdir.join(".sacode/config.json");
-    if !config_path.exists() {
-        return None;
-    }
-
-    let config_content = std::fs::read_to_string(&config_path).ok()?;
-    let config: serde_json::Value = serde_json::from_str(&config_content).ok()?;
-    let current = config.get("current").and_then(|v| v.as_str())?;
-    let providers = config.get("providers").and_then(|v| v.as_object())?;
-    let provider_config = providers.get(current)?;
-    let kind = match current.to_ascii_lowercase().as_str() {
-        "openai" => sacode_kernel::model::ProviderKind::Openai,
-        "deepseek" => sacode_kernel::model::ProviderKind::Deepseek,
-        "mimo" => sacode_kernel::model::ProviderKind::Mimo,
-        "longcat" => sacode_kernel::model::ProviderKind::Longcat,
-        "ollama" => sacode_kernel::model::ProviderKind::Ollama,
-        other => sacode_kernel::model::ProviderKind::Custom(other.to_string()),
-    };
-
-    Some(sacode_kernel::model::ModelProvider {
-        kind,
-        model: provider_config
-            .get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("gpt-5.4")
-            .to_string(),
-        api_key: provider_config
-            .get("api_key")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        base_url: provider_config
-            .get("base_url")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        rule: None,
-    })
+    // 复用 runtime 的 provider 候选加载（来源：.sacode/provider.json），
+    // 取首个候选。早期实现误读 .sacode/config.json，此处统一走 canonical 路径。
+    sacode_runtime::resolve_config_model_candidates(workdir)
+        .into_iter()
+        .next()
+        .map(|(_, _, provider)| provider)
 }
 
 async fn generate_ai_hover(
