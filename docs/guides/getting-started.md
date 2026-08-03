@@ -186,12 +186,19 @@ sacode "分析当前仓库的架构边界"
 
 ### 方式三：直接编辑配置文件
 
-如果你熟悉 JSON 格式，可以直接编辑配置文件：
+如果你熟悉 JSON 格式，可以直接编辑配置文件。SaCode 有两套配置文件，职责不同：
 
-**用户级配置**：`~/.sacode/provider.json`
-**项目级配置**：`<workspace>/.sacode/provider.json`
+| 配置文件 | 用途 | 读取方 | 格式要点 |
+|---------|------|--------|---------|
+| `provider.json` | TUI/REPL 交互配置（`/connect`、`/providers` 命令读写） | TUI、REPL | `providers` 数组 + `default_model` |
+| `config.json` | **任务执行配置**（`sacode "<task>"` 实际读取） | CLI 任务执行、灵枢路由 | `model` + `provider` 嵌套对象 |
 
-**配置格式**：
+**用户级配置**：`~/.sacode/provider.json`、`~/.sacode/config.json`
+**项目级配置**：`<workspace>/.sacode/provider.json`、`<workspace>/.sacode/config.json`
+
+> **注意**：`sacode "<task>"` 单次任务执行实际读取 `config.json` 的 `model` 字段（格式为 `provider/model`，如 `sensenova/sensenova-6.7-flash-lite`）。`provider.json` 主要服务 TUI 交互流程。两者可同时存在，互不冲突。
+
+**provider.json 配置格式**（TUI 交互用）：
 ```json
 {
   "providers": [
@@ -1197,7 +1204,8 @@ sacode
 
 ```text
 .sacode/
-├── provider.json          # Provider 配置（项目级）
+├── provider.json          # Provider 配置（项目级，TUI/REPL 交互用）
+├── config.json            # 任务执行配置（项目级，sacode "<task>" 实际读取）
 ├── mcp.json               # MCP 服务配置
 ├── profile.json           # 模型配置组合
 ├── mistakes.json          # 错题本
@@ -1224,7 +1232,8 @@ sacode
 用户级配置位于：
 ```text
 ~/.sacode/
-├── provider.json          # Provider 配置（用户级）
+├── provider.json          # Provider 配置（用户级，TUI/REPL 交互用）
+├── config.json            # 任务执行配置（用户级，sacode "<task>" 实际读取）
 ├── profile.json           # 模型配置组合（用户级）
 ├── wiki/                  # 用户级知识库
 │   ├── memory/
@@ -1267,6 +1276,39 @@ sacode
     }
   ],
   "default_model": "deepseek-chat"
+}
+```
+
+**优先级**：项目级配置 > 用户级配置
+
+#### `config.json`
+
+**作用**：任务执行配置，`sacode "<task>"` 单次任务执行与灵枢路由实际读取此文件。`model` 字段格式为 `provider/model`（如 `sensenova/sensenova-6.7-flash-lite`）。
+
+**与 `provider.json` 的关系**：`provider.json` 服务 TUI/REPL 交互流程（`/connect`、`/providers` 命令），`config.json` 服务 CLI 任务执行流程，两者独立、可并存。
+
+**示例**：
+```json
+{
+  "model": "sensenova/sensenova-6.7-flash-lite",
+  "small_model": "",
+  "vim_mode": false,
+  "provider": {
+    "sensenova": {
+      "name": "SenseNova",
+      "base_url": "https://token.sensenova.cn/v1",
+      "api_key": "YOUR_API_KEY",
+      "models": {
+        "sensenova-6.7-flash-lite": {
+          "name": "sensenova-6.7-flash-lite",
+          "thinking": false
+        }
+      }
+    }
+  },
+  "model_routing": {
+    "overrides": []
+  }
 }
 ```
 

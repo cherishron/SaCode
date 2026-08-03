@@ -15,35 +15,106 @@
 - Current top-level commands include `repl`, `tui`, `serve`, `acp`, `lsp`, `init`, `init-deep`, `status`, `doctor`, `mcp serve`, and direct task execution via `sacode "<task>"`.
 - `run_with_orchestrator(...)` in `interfaces/cli/src/cmd/mod.rs` is the current multi-agent / structured summary path.
 
-## Built-in Tools (25 total)
+## Built-in Tools (26 total)
 
-| 工具名 | 类别 | SideEffect | 文件 |
-|--------|------|------------|------|
-| `browser.open` | 浏览器 | ReadOnly | `runtime/src/tools/browser/open.rs` |
-| `browser.navigate` | 浏览器 | ReadOnly | `runtime/src/tools/browser/navigate.rs` |
-| `browser.snapshot` | 浏览器 | ReadOnly | `runtime/src/tools/browser/snapshot.rs` |
-| `browser.extract` | 浏览器 | ReadOnly | `runtime/src/tools/browser/extract.rs` |
-| `code.deps` | 代码智能 | ReadOnly | `runtime/src/tools/code/deps.rs` |
-| `code.search` | 代码智能 | ReadOnly | `runtime/src/tools/code/search.rs` |
-| `code.symbols` | 代码智能 | ReadOnly | `runtime/src/tools/code/symbol.rs` |
-| `fs.read` | 文件 | ReadOnly | `runtime/src/tools/fs/read.rs` |
-| `fs.search` | 文件 | ReadOnly | `runtime/src/tools/fs/search.rs` |
-| `fs.write` | 文件 | Modify | `runtime/src/tools/fs/write.rs` |
-| `fs.edit` | 文件 | Modify | `runtime/src/tools/fs/edit.rs` |
-| `fs.patch` | 文件 | Modify | `runtime/src/tools/fs/patch.rs` |
-| `fs.read_multi` | 文件 | ReadOnly | `runtime/src/tools/fs/read_multi.rs` |
-| `fs.list` | 文件 | ReadOnly | `runtime/src/tools/fs/list.rs` |
-| `git.commit` | Git | Modify | `runtime/src/tools/git/commit.rs` |
-| `git.diff` | Git | ReadOnly | `runtime/src/tools/git/diff.rs` |
-| `interaction.ask` | 交互 | ReadOnly | `runtime/src/tools/interaction/ask.rs` |
-| `media.read` | 媒体 | ReadOnly | `runtime/src/tools/media/read.rs` |
-| `media.vision` | 媒体 | ReadOnly | `runtime/src/tools/media/vision.rs` |
-| `shell.exec` | Shell | Modify | `runtime/src/tools/shell/exec.rs` |
-| `task.spawn` | 任务 | ReadOnly | `runtime/src/tools/task/spawn.rs` |
-| `test.fix` | 测试 | Modify | `runtime/src/tools/test/autofix.rs` |
-| `test.run` | 测试 | ReadOnly | `runtime/src/tools/test/runner.rs` |
-| `web.fetch` | Web | ReadOnly | `runtime/src/tools/web/fetch.rs` |
-| `web.search` | Web | ReadOnly | `runtime/src/tools/web/search.rs` |
+26 个内置工具按分层注入策略管理，详见下一节「Tool Layering & Context Optimization」。
+
+| 工具名 | 类别 | SideEffect | 分层 | 文件 |
+|--------|------|------------|------|------|
+| `browser.open` | 浏览器 | ReadOnly | Extended | `runtime/src/tools/browser/open.rs` |
+| `browser.navigate` | 浏览器 | ReadOnly | Extended | `runtime/src/tools/browser/navigate.rs` |
+| `browser.snapshot` | 浏览器 | ReadOnly | Extended | `runtime/src/tools/browser/snapshot.rs` |
+| `browser.extract` | 浏览器 | ReadOnly | Extended | `runtime/src/tools/browser/extract.rs` |
+| `code.deps` | 代码智能 | ReadOnly | Extended | `runtime/src/tools/code/deps.rs` |
+| `code.search` | 代码智能 | ReadOnly | Extended | `runtime/src/tools/code/search.rs` |
+| `code.symbols` | 代码智能 | ReadOnly | Extended | `runtime/src/tools/code/symbol.rs` |
+| `fs.read` | 文件 | ReadOnly | **Core** | `runtime/src/tools/fs/read.rs` |
+| `fs.search` | 文件 | ReadOnly | Extended | `runtime/src/tools/fs/search.rs` |
+| `fs.write` | 文件 | Modify | **Core** | `runtime/src/tools/fs/write.rs` |
+| `fs.edit` | 文件 | Modify | **Core** | `runtime/src/tools/fs/edit.rs` |
+| `fs.patch` | 文件 | Modify | Extended | `runtime/src/tools/fs/patch.rs` |
+| `fs.read_multi` | 文件 | ReadOnly | Extended | `runtime/src/tools/fs/read_multi.rs` |
+| `fs.list` | 文件 | ReadOnly | Extended | `runtime/src/tools/fs/list.rs` |
+| `git.commit` | Git | Modify | Extended | `runtime/src/tools/git/commit.rs` |
+| `git.diff` | Git | ReadOnly | Extended | `runtime/src/tools/git/diff.rs` |
+| `git.pr` | Git | Modify | Extended | `runtime/src/tools/git/pr.rs` |
+| `interaction.ask` | 交互 | ReadOnly | Extended | `runtime/src/tools/interaction/ask.rs` |
+| `media.read` | 媒体 | ReadOnly | Extended | `runtime/src/tools/media/read.rs` |
+| `media.vision` | 媒体 | ReadOnly | Extended | `runtime/src/tools/media/vision.rs` |
+| `shell.exec` | Shell | Modify | **Core** | `runtime/src/tools/shell/exec.rs` |
+| `task.spawn` | 任务 | ReadOnly | Extended | `runtime/src/tools/task/spawn.rs` |
+| `test.fix` | 测试 | Modify | Extended | `runtime/src/tools/test/autofix.rs` |
+| `test.run` | 测试 | ReadOnly | Extended | `runtime/src/tools/test/runner.rs` |
+| `web.fetch` | Web | ReadOnly | Extended | `runtime/src/tools/web/fetch.rs` |
+| `web.search` | Web | ReadOnly | Extended | `runtime/src/tools/web/search.rs` |
+
+## Tool Layering & Context Optimization
+
+灵枢 · 上下文优化机制 — 借鉴 Pi Coding Agent 的极简+可扩展哲学，
+在保持灵枢自组织 / 自防护 / 自愈合三大优势的前提下，
+把 26 个工具的 schema 注入压缩到「按需」级别，目标降低 system prompt token 60-70%。
+
+### 分层定义（`runtime/src/tools/spec.rs`）
+
+| 分层 | 数量 | 工具 | 注入策略 |
+|------|------|------|----------|
+| **Core** | 4 | `fs.read` / `fs.write` / `fs.edit` / `shell.exec` | 始终注入 prompt |
+| **Extended** | 22 | 其余全部 | 按角色白名单或任务画像命中注入 |
+
+`ToolLayer` 标签不污染 `ToolSpec`（避免修改全部 26 个 `spec()` 函数），
+而是在 `ToolRegistry` 注册后由 `apply_default_layers()` 标注到内部 `RegisteredTool.layer`。
+
+### 关键 API（`runtime/src/tools/mod.rs`）
+
+| 方法 | 用途 |
+|------|------|
+| `ToolRegistry::builtin()` | 注册全部 26 工具（向后兼容入口） |
+| `ToolRegistry::core_tools()` | 仅注册 4 个核心层工具 — SDK / 极简 prompt 场景 |
+| `ToolRegistry::extended_tools()` | 仅注册 22 个扩展层工具 |
+| `ToolRegistry::specs_by_layer(layer)` | 按分层返回工具 spec |
+| `ToolRegistry::for_prompt(role, profile, budget)` | **核心**：按角色 + 任务画像 + token 预算筛选注入工具，返回 `(specs, budget_trimmed)` |
+
+### `for_prompt` 筛选规则（优先级递减）
+
+1. **核心层始终注入**：保证 LLM 基础可用性
+2. **角色白名单**：`role.allowed_tools` 非空时，扩展层仅注入白名单工具
+3. **任务画像命中**：无白名单时，按 `TaskProfile::task_kinds` 映射扩展工具（`code`→`code.symbols`/`code.deps`/`code.search`/`git.diff` 等，`test`→`test.run`/`test.fix`，`web`→`web.search`/`web.fetch`，详见 `extended_tools_for_task_profile`）
+4. **token 预算裁剪**：`context_budget` 给定时按 4 字符 / token 近似累加，超出预算则截断并返回 `budget_trimmed=true`
+
+## SDK Module（`runtime/src/sdk.rs`）
+
+极简调用入口 — 把 SaCode 核心能力封装为一行 API，便于嵌入式集成或 RPC 模式复用。
+
+### 关键类型
+
+| 类型 | 用途 |
+|------|------|
+| `SdkClient` | 构建器模式客户端，默认仅注入核心层 4 工具 |
+| `SdkResult` | 执行结果（text / success / usage / injected_tools / budget_trimmed） |
+| `sdk::execute_task(workdir, prompt)` | 便捷入口函数 |
+
+### 默认行为（最省 token）
+
+- mode = `Build`，max_iterations = 5
+- 仅注入核心层 4 工具（`fs.read` / `fs.write` / `fs.edit` / `shell.exec`）
+- 无角色 / 无任务画像 / 无 token 预算
+- 复用 `execute_task_with_provider`，沙箱审计与工具循环自动接管
+
+### 构建器方法
+
+```rust
+let client = SdkClient::new(workdir).await?
+    .with_full_tools()           // 启用全部 26 工具
+    .with_role(role)              // 绑定角色（启用 allowed_tools 白名单）
+    .with_task_profile(profile)  // 设置任务画像（按 task_kinds 命中扩展）
+    .with_context_budget(8000)   // prompt token 预算（字符数近似）
+    .with_mode(ExecutionMode::Yolo)
+    .with_max_iterations(10)
+    .with_extra_instruction("优先 Rust 严格模式");
+```
+
+底层仍走灵枢路由：`resolve_config_model_candidates` 取首个 provider 候选，
+MCP 工具（`.sacode/mcp.json`）按既有流程加载。
 
 ## High-Value Commands
 
@@ -129,12 +200,14 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 - `kernel/src/execution/report.rs` is the data source for `SummaryRecord`, `ConflictRecord`, and related structured output.
 - `runtime/src/model_routing/` holds task profiling and routed model types.
 - `runtime/src/memory/` and `runtime/src/wiki/` back the current knowledge / memory flow.
+- `runtime/src/sdk.rs` 极简 SDK 入口（`SdkClient` + `execute_task`），默认仅注入核心层工具，复用 `execute_task_with_provider` 走灵枢沙箱审计。
+- `runtime/src/tools/mod.rs` 工具分层注册：`core_tools()` / `extended_tools()` / `builtin()`，`for_prompt(role, profile, budget)` 按角色 + 任务画像 + token 预算筛选注入工具。
 - `runtime/src/daemon/` 提供 11 个 REST 端点 + SSE 事件流（`/api/stream`、`/events`）。
 - `runtime/src/streaming/sse.rs` 统一 SSE 输出协议，支持 `task_id` 过滤。
 - `runtime/src/mcp/servers/` 内置 MCP stdio server，暴露 `fs.read`、`fs.list`、`git.diff`。
 - `runtime/src/tools/sandbox_guard.rs` 覆盖所有 Modify 级工具的审批审计，写入 `.sacode/audit.log`。
 - `runtime/src/tools/test/runner.rs` 自动检测框架（cargo/npm/go/pytest）并运行测试。
-- `runtime/src/tools/code/symbol.rs` 和 `deps.rs` 基于正则的符号索引和依赖提取（5 语言）。
+- `runtime/src/tools/code/ast.rs` 基于 tree-sitter 的 AST 解析（5 语言：rust/python/javascript/typescript/go），`symbol.rs` 和 `deps.rs` 通过 `ast_cache()` 复用解析结果；`search.rs` 在 AST 符号索引上叠加 BM25 语义搜索。
 - `runtime/src/tools/web/search.rs` 使用百度/搜狗/360/必应多引擎搜索，`auto` 模式交叉验证。
 
 ## Easy-to-Guess Wrong
@@ -144,8 +217,11 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 - If prose docs disagree with scripts or workflows, trust `Cargo.toml`, `.github/workflows/*`, and `scripts/check-release.js`.
 - `max_iterations` 默认值为 `3`（`interfaces/cli/src/cmd/config.rs`），`/loop` 外层轮数默认 `10`（`loop_max_iterations`），二者独立不应混用。
 - `task_runtime.rs` 中的 `unwrap_or(6)` 对 Option 不生效的问题已解决，当前以 EffectiveConfig 默认值为准。
-- 代码智能工具（`code.symbols`、`code.deps`）当前使用正则解析，非 tree-sitter AST，复杂嵌套结构可能不完整。
+- 代码智能工具（`code.symbols`、`code.deps`、`code.search`）基于 tree-sitter AST 解析（`runtime/src/tools/code/ast.rs`），5 语言覆盖完整。`AstCache`（512 条 LRU + mtime 失效）缓存解析结果，`FileListCache` 缓存目录扫描。复杂嵌套结构由 tree-sitter 容错解析处理，语法错误不阻塞提取。
 - `fs.patch` 使用纯字符串匹配，非 `similar` crate 的 diff 算法，上下文失配时容错有限。
+- **工具总数是 26**（不是 25）：早期文档漏列 `git.pr`。新增工具请同步更新「Built-in Tools」表与 `core_tools()` / `extended_tools()` 的分层归属。
+- **`ToolSpec` 没有 `layer` 字段**：分层标签存于 `ToolRegistry` 内部 `RegisteredTool.layer`，由 `apply_default_layers()` 标注。新增核心层工具需把工具名加入 `CORE_TOOL_NAMES` 常量，不要在 `spec()` 里设 `layer`。
+- `ToolRegistry::for_prompt()` 的 token 预算按 4 字符 / token 近似估算（不引入 tokenizer 依赖），仅用于相对裁剪，非精确计数。
 
 ## 文档导航
 
