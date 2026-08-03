@@ -169,7 +169,7 @@ pub async fn run_task_with_stdin_and_stream<F>(
     stream_handler: Option<F>,
 ) -> Result<RunnerOutput>
 where
-    F: FnMut(StreamEventKind, &str),
+    F: FnMut(StreamEventKind, &str) + Send + 'static,
 {
     let total_started_at = Instant::now();
     let workdir = env::current_dir()?;
