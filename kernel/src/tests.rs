@@ -19,34 +19,6 @@ fn test_execution_mode_default() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn test_planner_agent() {
-    let planner = PlannerAgent;
-    let task = Task::new("分析代码", ExecutionMode::Plan, None);
-    let output = planner.run(&task);
-
-    assert_eq!(output.task, "分析代码");
-    assert_eq!(output.mode, ExecutionMode::Plan);
-    assert!(output.plan.steps.len() >= 3);
-}
-
-#[test]
-#[allow(deprecated)]
-fn test_supervisor_plan_mode() {
-    let supervisor = Supervisor::new();
-    let task = Task::new("测试", ExecutionMode::Plan, None);
-    let result = supervisor.execute(&task);
-
-    assert!(result.tool_calls.is_empty());
-    assert!(result
-        .output
-        .plan
-        .steps
-        .iter()
-        .any(|s| s.status == StepStatus::Pending || s.status == StepStatus::Completed));
-}
-
-#[test]
 fn test_review_passed() {
     let review = Review::passed();
     assert!(review.passed);

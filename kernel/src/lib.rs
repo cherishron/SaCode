@@ -10,6 +10,7 @@ pub mod schema;
 #[cfg(test)]
 mod tests;
 
+#[allow(deprecated)]
 pub use agent::{
     AgentExecutionPlan, AgentOutput, AgentRole, CoderAgent, CoderOutput, ExecutionResult,
     OrchestrationHint, OrchestrationMode, PlannedRole, PlannerAgent, ReviewerAgent,

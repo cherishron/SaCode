@@ -1,6 +1,9 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
+// Supervisor 已废弃但 FFI C ABI 公开 API 仍依赖它（sacode_new/sacode_execute），
+// 待 v0.5 阶段四 task_runner 完全替代后再统一移除。
+#[allow(deprecated)]
 use crate::{ExecutionMode, Supervisor, Task};
 
 /// FFI 句柄 — 封装占位 Supervisor
