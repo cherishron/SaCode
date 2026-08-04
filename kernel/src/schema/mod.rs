@@ -13,6 +13,6 @@ pub use review::{IssueSeverity, Review, ReviewIssue};
 pub use session::Session;
 pub use task::{ExecutionMode, Task};
 pub use task_queue::{
-    BackoffStrategy, QueueStats, RetryCondition, RetryPolicy, ScheduledTask, TaskPriority,
-    TaskQueueStatus, TaskResult,
+    generate_task_id, BackoffStrategy, QueueStats, RetryCondition, RetryPolicy, ScheduledTask,
+    StateTransitionError, TaskPriority, TaskQueueStatus, TaskResult, TaskState,
 };

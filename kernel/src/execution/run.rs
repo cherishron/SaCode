@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::schema::TaskState;
 use crate::{ExecutionMode, ExecutionReport};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -8,6 +9,27 @@ pub enum TaskRunState {
     WaitingForUser,
     WaitingForApproval,
     Failed,
+}
+
+impl TaskRunState {
+    /// 转换为统一 TaskState
+    ///
+    /// 注意：TaskRunState 仅表达执行结果语义，不包含队列态（Pending/Ready/Retrying），
+    /// 因此转换结果要么是终态要么是执行态。
+    pub fn to_task_state(self) -> TaskState {
+        match self {
+            Self::Completed => TaskState::Completed,
+            Self::WaitingForUser => TaskState::WaitingForUser,
+            Self::WaitingForApproval => TaskState::WaitingForApproval,
+            Self::Failed => TaskState::Failed,
+        }
+    }
+}
+
+impl From<TaskRunState> for TaskState {
+    fn from(state: TaskRunState) -> Self {
+        state.to_task_state()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

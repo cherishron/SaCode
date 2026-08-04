@@ -6,7 +6,7 @@ use axum::{
 };
 
 use crate::tools::ToolRegistry;
-use sacode_kernel::{ExecutionMode, ScheduledTask, Task, TaskQueueStatus};
+use sacode_kernel::{generate_task_id, ExecutionMode, ScheduledTask, Task, TaskQueueStatus};
 
 use super::{
     events::emit_event,
@@ -29,7 +29,7 @@ pub async fn create_task(
     State(state): State<Arc<DaemonState>>,
     Json(req): Json<TaskRequest>,
 ) -> Json<TaskResponse> {
-    let task_id = format!("task-{}", chrono::Utc::now().timestamp_millis());
+    let task_id = generate_task_id();
     let mode = parse_mode(&req.mode);
     let priority = parse_priority(&req.priority);
     let retry_policy = parse_retry_policy(&req.retry_policy);
