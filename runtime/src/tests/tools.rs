@@ -187,11 +187,12 @@ fn ling_shu_for_prompt_with_zero_budget_triggers_trim() {
 #[test]
 fn ling_shu_fs_read_executes_on_builtin_registry() {
     let registry = ToolRegistry::builtin();
-    // 读取 runtime crate 的 Cargo.toml（相对 CWD，cargo test 的 CWD 为 crate 根）
+    // 用绝对路径避免并发测试变更 CWD 时读到错误目录
+    let cargo_toml = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let output = registry
         .execute(
             "fs.read",
-            serde_json::json!({ "path": "Cargo.toml", "limit": 5 }),
+            serde_json::json!({ "path": cargo_toml, "limit": 5 }),
         )
         .expect("fs.read 应执行成功");
     assert!(output.success, "fs.read 应成功读取 Cargo.toml");
@@ -200,11 +201,12 @@ fn ling_shu_fs_read_executes_on_builtin_registry() {
 #[test]
 fn ling_shu_fs_list_executes_on_builtin_registry() {
     let registry = ToolRegistry::builtin();
-    // 列出 runtime crate 根目录（相对 CWD）
+    // 用绝对路径避免并发测试变更 CWD 时列到错误目录
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output = registry
         .execute(
             "fs.list",
-            serde_json::json!({ "path": ".", "recursive": false }),
+            serde_json::json!({ "path": dir, "recursive": false }),
         )
         .expect("fs.list 应执行成功");
     assert!(output.success, "fs.list 应成功列出目录");

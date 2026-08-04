@@ -185,11 +185,18 @@ impl SandboxPolicy {
             return true;
         }
 
+        // 规范化入参路径，使其与 resolve_policy_path 规范化后的策略路径处于同一形式。
+        // Windows 上 canonicalize() 会加 \\?\ 前缀，未规范化的 path 与规范化的
+        // denied/allowed 路径做 starts_with 比较会误判（preflight 层未规范化路径
+        // 导致绕过 denied 检查，executor 层规范化后才拦截，audit 日志相位错位）。
+        let canonical = canonicalize_existing_ancestor(path);
+        let check_path = canonical.as_deref().unwrap_or(path);
+
         if self
             .fs
             .denied_paths
             .iter()
-            .any(|p| path.starts_with(resolve_policy_path(p)))
+            .any(|p| check_path.starts_with(resolve_policy_path(p)))
         {
             return false;
         }
@@ -205,7 +212,7 @@ impl SandboxPolicy {
 
         if allowed_paths
             .iter()
-            .any(|p| path.starts_with(resolve_policy_path(p)))
+            .any(|p| check_path.starts_with(resolve_policy_path(p)))
         {
             return true;
         }

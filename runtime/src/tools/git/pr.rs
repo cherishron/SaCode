@@ -409,7 +409,8 @@ mod tests {
 
     #[test]
     fn truncate_str_long() {
+        // max=10 按字节切片，"a very long" 前 10 字节为 "a very lon"（含末尾 n）
         let result = truncate_str("a very long string that exceeds the limit", 10);
-        assert_eq!(result, "a very lo...");
+        assert_eq!(result, "a very lon...");
     }
 }
