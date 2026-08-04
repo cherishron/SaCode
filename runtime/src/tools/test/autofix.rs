@@ -78,7 +78,7 @@ struct FailureDetail {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "test.fix".to_string(),
-        description: "运行测试并生成结构化修复上下文（闭环循环：测试→修复上下文→LLM修复→验证）".to_string(),
+        description: "运行测试并生成结构化修复上下文（单次执行：测试→修复上下文，修复循环由 LLM 工具循环驱动 test.fix→fs.read→fs.edit→test.run）".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -141,96 +141,77 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let framework = input["framework"].as_str().map(str::trim);
     let target = input["target"].as_str().map(str::trim);
     let filter = input["filter"].as_str().map(str::trim);
-    let max_iterations = input["max_iterations"]
+    // max_iterations 保留向后兼容但不再驱动循环（test.fix 不模拟修复，仅生成上下文）
+    let _max_iterations = input["max_iterations"]
         .as_u64()
         .unwrap_or(MAX_FIX_ITERATIONS as u64) as usize;
     let auto_apply = input["auto_apply"].as_bool().unwrap_or(true);
 
-    let mut iterations = Vec::new();
-    let mut current_iteration = 0;
+    // 灵枢 · 自动修复闭环设计：
+    // test.fix 的职责是"单次运行测试 + 生成结构化修复上下文"，不模拟修复循环。
+    // 修复循环由 LLM 在外部工具循环中驱动：test.fix → fs.read → fs.edit → test.run
+    // 原 auto_apply=true 的循环每轮只 run_test + write_fix_context，无修复动作介入，
+    // 测试不会自己通过，循环空转无意义。现简化为单次执行。
 
-    loop {
-        current_iteration += 1;
+    // 运行测试
+    let test_output = run_test(framework, target, filter)?;
+    let test_summary = parse_test_output(&test_output);
 
-        // 运行测试
-        let test_output = run_test(framework, target, filter)?;
-        let test_summary = parse_test_output(&test_output);
-
-        // 如果测试全部通过，修复循环结束
-        if test_summary.success {
-            iterations.push(FixIteration {
-                iteration: current_iteration,
-                test_result: test_summary.clone(),
-                fix_context: None,
-                fix_success: true,
-            });
-            break;
-        }
-
-        // 达到最大迭代次数
-        if current_iteration > max_iterations {
-            let fix_context = build_fix_context(&test_summary);
-            iterations.push(FixIteration {
-                iteration: current_iteration,
-                test_result: test_summary.clone(),
-                fix_context: Some(fix_context),
-                fix_success: false,
-            });
-            break;
-        }
-
-        // 生成结构化修复上下文
-        let fix_context = build_fix_context(&test_summary);
-
-        iterations.push(FixIteration {
-            iteration: current_iteration,
+    // 测试全部通过：无需修复上下文
+    if test_summary.success {
+        let iteration = FixIteration {
+            iteration: 1,
             test_result: test_summary.clone(),
-            fix_context: Some(fix_context.clone()),
-            fix_success: false, // 尚未验证
-        });
-
-        // 无论 auto_apply 是否为 true，都写入 fix-context.json。
-        // LLM 在工具循环中通过文件读取修复上下文（fs.read .sacode/fix-context.json），
-        // 调用 fs.read 读取源码，调用 fs.edit 应用修复，然后再次调用 test.run 验证。
-        write_fix_context(&fix_context)?;
-
-        // 如果不自动应用，仅返回修复上下文
-        if !auto_apply {
-            break;
-        }
+            fix_context: None,
+            fix_success: true,
+        };
+        let summary = format!(
+            "测试全部通过：{} 个测试，0 个失败",
+            test_summary.total
+        );
+        return Ok(ToolOutput::success(serde_json::json!({
+            "success": true,
+            "framework": test_summary.framework,
+            "iterations": [iteration],
+            "total_iterations": 1,
+            "final_result": test_summary,
+            "summary": summary,
+        }))
+        .with_message("所有测试通过，无需修复"));
     }
 
-    // 构建最终结果
-    let final_test = iterations.last().map(|it| it.test_result.clone());
-    let overall_success = final_test.as_ref().is_some_and(|t| t.success);
-    let total_iterations = iterations.len();
+    // 测试有失败：生成结构化修复上下文
+    let fix_context = build_fix_context(&test_summary);
 
-    let summary = if overall_success {
-        format!(
-            "测试修复成功：经过 {} 轮迭代，所有测试通过",
-            total_iterations
-        )
-    } else {
-        let failed = final_test.as_ref().map_or(0, |t| t.failed);
-        format!(
-            "测试修复未完成：经过 {} 轮迭代，仍有 {} 个测试失败。请基于 fix_context 中的 location 和 suggestion 调用 fs.read + fs.edit 修复",
-            total_iterations, failed
-        )
+    // 写入 fix-context.json 供 LLM 工具循环跨工具引用
+    write_fix_context(&fix_context)?;
+
+    let iteration = FixIteration {
+        iteration: 1,
+        test_result: test_summary.clone(),
+        fix_context: Some(fix_context.clone()),
+        fix_success: false,
     };
 
+    let summary = format!(
+        "检测到 {} 个失败测试，已生成修复上下文。{}请基于 fix_context 中的 location 和 suggestion 调用 fs.read + fs.edit 修复，再调用 test.run 验证",
+        test_summary.failed,
+        if auto_apply {
+            ""
+        } else {
+            "（auto_apply=false，仅生成上下文）"
+        }
+    );
+
     Ok(ToolOutput::success(serde_json::json!({
-        "success": overall_success,
-        "framework": final_test.as_ref().map(|t| t.framework.clone()).unwrap_or_default(),
-        "iterations": iterations,
-        "total_iterations": total_iterations,
-        "final_result": final_test,
+        "success": false,
+        "framework": test_summary.framework,
+        "iterations": [iteration],
+        "total_iterations": 1,
+        "final_result": test_summary,
         "summary": summary,
     }))
-    .with_message(if overall_success {
-        "所有测试通过，修复闭环完成"
-    } else {
-        "仍有失败测试，请消费 fix_context 中的 location 和 suggestion 进行修复"
-    }))
+    .with_message("已生成修复上下文，请消费 fix_context 进行修复"))
 }
 
 /// 运行测试（调用 test.run 工具逻辑）
@@ -533,7 +514,7 @@ mod tests {
     ///
     /// 验证完整闭环：
     /// 1. 创建有 bug 的 Python 项目（add 函数返回 a-b 而非 a+b）
-    /// 2. 调用 test.fix(auto_apply=false) 生成 fix_context
+    /// 2. 调用 test.fix 生成 fix_context（单次执行，无空转循环）
     /// 3. 验证 fix-context.json 文件生成且结构正确（location/category/suggestion）
     /// 4. 模拟 LLM：基于 fix_context 修复源文件
     /// 5. 调用 test.run 验证修复后测试通过
@@ -571,8 +552,8 @@ mod tests {
         let original_cwd = std::env::current_dir().expect("获取 cwd 失败");
         std::env::set_current_dir(project).expect("设置 cwd 失败");
 
-        // 3. 调用 test.fix(auto_apply=false) 生成修复上下文
-        let input = serde_json::json!({"framework": "pytest", "auto_apply": false});
+        // 3. 调用 test.fix 生成修复上下文（默认 auto_apply=true，单次执行）
+        let input = serde_json::json!({"framework": "pytest"});
         let result = execute(input).expect("test.fix 执行失败");
 
         // 4. 验证 test.fix 输出：测试应失败
@@ -581,10 +562,19 @@ mod tests {
             "有 bug 时测试应失败"
         );
 
+        // 验证 total_iterations=1（单次执行，无空转循环）
+        let total_iterations = result.data["total_iterations"]
+            .as_u64()
+            .expect("total_iterations 应为数字");
+        assert_eq!(
+            total_iterations, 1,
+            "test.fix 应单次执行，total_iterations 应为 1"
+        );
+
         let iterations = result.data["iterations"]
             .as_array()
             .expect("iterations 应为数组");
-        assert!(!iterations.is_empty(), "至少应有 1 轮迭代");
+        assert_eq!(iterations.len(), 1, "应有且仅有 1 轮迭代");
 
         // 5. 验证 fix_context 结构
         let fix_context = iterations[0]["fix_context"]
@@ -642,6 +632,12 @@ mod tests {
             "def add(a, b):\n    return a + b\n",
         )
         .expect("修复 calc.py 失败");
+
+        // 清除 Python 字节码缓存，避免 pytest 加载旧的 .pyc
+        let pycache = project.join("__pycache__");
+        if pycache.exists() {
+            std::fs::remove_dir_all(&pycache).expect("清除 __pycache__ 失败");
+        }
 
         // 8. 调用 test.run 验证修复后测试通过
         let run_input = serde_json::json!({"framework": "pytest"});
