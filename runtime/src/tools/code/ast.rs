@@ -36,6 +36,45 @@ pub struct AstSummary {
     pub imports: Vec<AstImport>,
 }
 
+/// 带 range 信息的符号记录 — 供 LSP documentSymbol / goto definition 使用
+///
+/// 与 AstSymbol 的区别：包含完整的起止行列和名称选择范围，
+/// 使 LSP 客户端能精确定位符号在编辑器中的高亮区域。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AstSymbolWithRange {
+    pub name: String,
+    pub kind: String,
+    /// 符号完整节点的起始行（1-based）
+    pub start_line: usize,
+    /// 符号完整节点的起始列（1-based）
+    pub start_column: usize,
+    /// 符号完整节点的结束行（1-based）
+    pub end_line: usize,
+    /// 符号完整节点的结束列（1-based）
+    pub end_column: usize,
+    /// 名称部分的选择范围起始行（1-based）
+    pub selection_start_line: usize,
+    /// 名称部分的选择范围起始列（1-based）
+    pub selection_start_column: usize,
+    /// 名称部分的选择范围结束行（1-based）
+    pub selection_end_line: usize,
+    /// 名称部分的选择范围结束列（1-based）
+    pub selection_end_column: usize,
+    pub preview: String,
+}
+
+/// 符号引用位置 — 供 LSP references 使用
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AstReference {
+    pub name: String,
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    /// 是否为定义处（用于 references 请求中 includeDeclaration 过滤）
+    pub is_declaration: bool,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct AstEditor;
 
@@ -81,6 +120,98 @@ impl AstEditor {
         }
         Ok(nodes)
     }
+
+    /// 提取带完整 range 信息的符号列表 — 供 LSP documentSymbol 使用
+    ///
+    /// 与 `summarize` 的区别：返回每个符号的完整节点 range 和名称选择 range，
+    /// 而非仅符号所在的行号。LSP documentSymbol 需要 range 和 selection_range。
+    pub fn symbols_with_range(
+        language: &str,
+        source: &str,
+    ) -> anyhow::Result<Vec<AstSymbolWithRange>> {
+        let parsed = parse_source(language, source)?;
+        let root = parsed.tree.root_node();
+        let mut symbols = Vec::new();
+
+        walk_tree(root, &mut |node| {
+            if let Some((kind, name_node)) = extract_symbol_name_node(&parsed, node) {
+                let name = node_text(parsed.source, name_node).ok();
+                let name_start = name_node.start_position();
+                let name_end = name_node.end_position();
+                let node_start = node.start_position();
+                let node_end = node.end_position();
+                if let Some(name) = name {
+                    symbols.push(AstSymbolWithRange {
+                        name,
+                        kind: kind.to_string(),
+                        start_line: node_start.row + 1,
+                        start_column: node_start.column + 1,
+                        end_line: node_end.row + 1,
+                        end_column: node_end.column + 1,
+                        selection_start_line: name_start.row + 1,
+                        selection_start_column: name_start.column + 1,
+                        selection_end_line: name_end.row + 1,
+                        selection_end_column: name_end.column + 1,
+                        preview: node_text(parsed.source, node)
+                            .unwrap_or_default()
+                            .trim()
+                            .replace('\n', " "),
+                    });
+                }
+            }
+        });
+
+        Ok(symbols)
+    }
+
+    /// 在文档中查找指定符号名的所有引用位置 — 供 LSP references 使用
+    ///
+    /// 策略：遍历 AST 中所有 identifier / type_identifier 等名称节点，
+    /// 匹配符号名。标记定义处（与符号定义节点重合的位置）。
+    pub fn find_references(
+        language: &str,
+        source: &str,
+        symbol_name: &str,
+    ) -> anyhow::Result<Vec<AstReference>> {
+        let parsed = parse_source(language, source)?;
+        let root = parsed.tree.root_node();
+        let mut references = Vec::new();
+
+        // 先收集所有定义位置，用于标记 is_declaration
+        let mut declaration_positions = std::collections::HashSet::new();
+        let symbols = Self::symbols_with_range(language, source)?;
+        for symbol in &symbols {
+            declaration_positions.insert((
+                symbol.selection_start_line,
+                symbol.selection_start_column,
+            ));
+        }
+
+        walk_tree(root, &mut |node| {
+            // 收集所有可能的名称节点
+            if is_name_node(node, parsed.language) {
+                if let Ok(text) = node_text(parsed.source, node) {
+                    let trimmed = text.trim();
+                    if trimmed == symbol_name {
+                        let start = node.start_position();
+                        let end = node.end_position();
+                        let is_declaration = declaration_positions
+                            .contains(&(start.row + 1, start.column + 1));
+                        references.push(AstReference {
+                            name: trimmed.to_string(),
+                            start_line: start.row + 1,
+                            start_column: start.column + 1,
+                            end_line: end.row + 1,
+                            end_column: end.column + 1,
+                            is_declaration,
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(references)
+    }
 }
 
 struct ParsedSource<'a> {
@@ -125,8 +256,29 @@ fn walk_tree(node: Node<'_>, visit: &mut impl FnMut(Node<'_>)) {
 }
 
 fn extract_symbol(parsed: &ParsedSource<'_>, node: Node<'_>) -> Option<AstSymbol> {
+    let (kind, name_node) = extract_symbol_name_node(parsed, node)?;
+    let name = node_text(parsed.source, name_node).ok()?;
+    let start = name_node.start_position();
+    Some(AstSymbol {
+        name,
+        kind: kind.to_string(),
+        line: start.row + 1,
+        preview: node_text(parsed.source, node)
+            .ok()?
+            .trim()
+            .replace('\n', " "),
+    })
+}
+
+/// 提取符号的 kind 和名称节点 — 供 extract_symbol 和 symbols_with_range 共用
+///
+/// 返回 (kind 字符串, name_node)，未命中符号定义时返回 None。
+fn extract_symbol_name_node<'a>(
+    parsed: &ParsedSource<'a>,
+    node: Node<'a>,
+) -> Option<(&'static str, Node<'a>)> {
     let kind = node.kind();
-    let name_node = match parsed.language {
+    match parsed.language {
         "rust" => match kind {
             "function_item" => node.child_by_field_name("name").map(|n| ("fn", n)),
             "struct_item" => node.child_by_field_name("name").map(|n| ("struct", n)),
@@ -167,19 +319,21 @@ fn extract_symbol(parsed: &ParsedSource<'_>, node: Node<'_>) -> Option<AstSymbol
             _ => None,
         },
         _ => None,
-    }?;
+    }
+}
 
-    let name = node_text(parsed.source, name_node.1).ok()?;
-    let start = name_node.1.start_position();
-    Some(AstSymbol {
-        name,
-        kind: name_node.0.to_string(),
-        line: start.row + 1,
-        preview: node_text(parsed.source, node)
-            .ok()?
-            .trim()
-            .replace('\n', " "),
-    })
+/// 判断节点是否为名称节点（identifier 等）— 供 find_references 使用
+///
+/// 不同语言的名称节点 kind 不同，此处统一判断。
+fn is_name_node(node: Node<'_>, language: &str) -> bool {
+    let kind = node.kind();
+    match language {
+        "rust" => matches!(kind, "identifier" | "type_identifier" | "field_identifier"),
+        "python" => matches!(kind, "identifier"),
+        "javascript" | "typescript" => matches!(kind, "identifier" | "type_identifier"),
+        "go" => matches!(kind, "identifier" | "type_identifier"),
+        _ => false,
+    }
 }
 
 fn extract_js_symbol(node: Node<'_>) -> Option<(&'static str, Node<'_>)> {

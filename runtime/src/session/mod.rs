@@ -309,7 +309,18 @@ impl SessionService {
         let mcp_store = McpConfigStore::new(&cwd);
         let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
 
-        let tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+        // 灵枢 · 上下文优化：按任务画像筛选注入 prompt 的工具 schema
+        // 无角色白名单时，for_prompt 按 TaskProfile 自动映射扩展工具
+        let session_profile = crate::model_routing::TaskProfile::from_prompt_and_workspace(
+            &task_info,
+            &cwd,
+        );
+        let (injected_specs, _budget_trimmed) =
+            tools.for_prompt(None, Some(&session_profile), None);
+        let tool_names: Vec<String> = injected_specs
+            .iter()
+            .map(|spec| spec.name.to_string())
+            .collect();
 
         let system_prompt = build_system_prompt(&PromptContext {
             workdir: &cwd,

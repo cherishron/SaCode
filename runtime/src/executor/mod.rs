@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// Supervisor 已废弃，仅作为无 workdir 时的 fallback 占位（保留向后兼容老测试）
-#[allow(deprecated)]
-use sacode_kernel::{Event, Supervisor, TaskQueueStatus, TaskResult, TaskRun};
+use sacode_kernel::{Event, TaskQueueStatus, TaskResult, TaskRun};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
@@ -31,7 +29,7 @@ pub struct TaskExecutor {
     active_tasks: JoinSet<ExecutorTaskResult>,
     poll_interval: Duration,
     /// 工作目录：设置后 spawn 任务体走 task_runner 路径，
-    /// 未设置则走 Supervisor 占位 fallback（保留向后兼容老测试）
+    /// 未设置则走静态占位 fallback（保留向后兼容老测试）
     workdir: Option<PathBuf>,
 }
 
@@ -59,7 +57,7 @@ impl TaskExecutor {
     }
 
     /// 设置工作目录：启用后 spawn 任务体走 task_runner 路径，
-    /// 调用 `execute_task_with_provider` 替代占位 Supervisor
+    /// 调用 `execute_task_with_provider` 替代静态占位
     pub fn with_workdir(mut self, workdir: PathBuf) -> Self {
         self.workdir = Some(workdir);
         self
@@ -115,7 +113,7 @@ impl TaskExecutor {
             self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
-                // 双路径分发：workdir 设置则走 task_runner，否则走 Supervisor 占位 fallback
+                // 双路径分发：workdir 设置则走 task_runner，否则走静态占位 fallback
                 let (result, task_run, intermediate_events) = match workdir {
                     Some(workdir) => {
                         execute_via_task_runner(
@@ -128,11 +126,11 @@ impl TaskExecutor {
                         .await
                     }
                     None => {
-                        execute_via_supervisor_fallback(&task.task, task_id.clone(), started_at)
+                        execute_via_static_fallback(&task.task, task_id.clone(), started_at)
                     }
                 };
 
-                // 发送中间事件（task_runner 路径仅 1 个 done/error；Supervisor 路径全部）
+                // 发送中间事件（task_runner 路径仅 1 个 done/error；静态 fallback 路径全部）
                 for event in &intermediate_events {
                     let event_name = executor_event_name(event);
                     emit_executor_event(
@@ -249,7 +247,7 @@ fn executor_event_name(event: &Event) -> &'static str {
 
 /// task_runner 路径：通过 `execute_task_with_provider` 调用 LLM + 工具循环
 ///
-/// 设计意图：替代占位 Supervisor，使 daemon 路径走真实灵枢路由 + 沙箱审计。
+/// 设计意图：替代静态占位，使 daemon 路径走真实灵枢路由 + 沙箱审计。
 /// 当无可用 provider 时返回 Failed（与 sdk::execute_task 行为一致）。
 async fn execute_via_task_runner(
     workdir: &std::path::Path,
@@ -333,28 +331,27 @@ async fn execute_via_task_runner(
     (result, task_run, events)
 }
 
-/// Supervisor 占位 fallback：保留向后兼容老测试（无 workdir 时使用）
+/// 静态占位 fallback：无 workdir 时生成简化事件，不调用 LLM
 ///
+/// 用于老测试和 daemon workdir 获取失败时的兼容路径。
 /// 新代码应通过 `TaskExecutor::with_workdir` 启用 task_runner 路径。
-#[allow(deprecated)]
-fn execute_via_supervisor_fallback(
+fn execute_via_static_fallback(
     task: &sacode_kernel::Task,
     task_id: String,
     started_at: Instant,
 ) -> (TaskResult, TaskRun, Vec<Event>) {
-    let supervisor = Supervisor::new();
-    let execution = supervisor.execute(task);
-
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
-    let has_error = execution
-        .output
-        .events
-        .iter()
-        .any(|e| matches!(e, Event::Error { .. }));
-    let summary = execution
-        .output
-        .events
+    // 生成简化的静态事件（不依赖 deprecated 结构）
+    let events = vec![
+        Event::message(format!("收到任务：{}", task.prompt)),
+        Event::done(format!(
+            "静态占位完成（mode={:?}，未调用 LLM，请通过 with_workdir 启用 task_runner）",
+            task.mode
+        )),
+    ];
+
+    let summary = events
         .iter()
         .rev()
         .find_map(|e| match e {
@@ -364,24 +361,14 @@ fn execute_via_supervisor_fallback(
         })
         .unwrap_or_else(|| "completed".to_string());
 
-    let events = execution.output.events.clone();
-
-    let result = if has_error {
-        TaskResult::failure(task_id.clone(), summary.clone(), duration_ms)
-    } else {
-        TaskResult::success(task_id.clone(), summary.clone(), duration_ms)
-    };
+    let result = TaskResult::success(task_id.clone(), summary.clone(), duration_ms);
 
     let task_run = task_run_snapshot(
         Some(task_id.clone()),
         task.mode,
         task.prompt.clone(),
-        if has_error {
-            TaskRunState::Failed
-        } else {
-            TaskRunState::Completed
-        },
-        result.output.clone().or_else(|| result.error.clone()),
+        TaskRunState::Completed,
+        Some(result.output.clone().unwrap_or_default()),
     );
 
     (result, task_run, events)

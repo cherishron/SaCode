@@ -35,6 +35,9 @@ pub fn split_tool_name(tool_name: &str) -> Option<(&str, &str)> {
 ///
 /// 返回 `(spec, executor)` 对的列表，由调用方注入 [`ToolRegistry`]。
 /// `host` 共享同一份，避免对同一插件重复加载。
+///
+/// 副作用级别：取自 manifest 中 `PluginFunction.side_effect_level`，
+/// 未声明时回退到 `ReadOnly`（保持向后兼容）。
 pub fn build_tool_specs_from_plugin(
     spec: &PluginSpec,
     host: Arc<Mutex<PluginHost>>,
@@ -44,14 +47,15 @@ pub fn build_tool_specs_from_plugin(
         .iter()
         .map(|function| {
             let tool_name = build_tool_name(&plugin_name, &function.name);
+            let side_effect_level = function.effective_side_effect_level();
             let tool_spec = ToolSpec {
                 name: tool_name,
                 description: function.description.clone(),
                 input_schema: function.input_schema.clone(),
                 output_schema: function.output_schema.clone(),
-                // WASM 插件默认 ReadOnly；副作用由 manifest 显式声明（暂未实现，留扩展点）
-                side_effect_level: SideEffectLevel::ReadOnly,
-                // WASM 调用需用户审批，遵守灵枢沙箱审计
+                // 灵枢 · 沙箱审计：副作用级别由 manifest 声明，未声明回退 ReadOnly
+                side_effect_level,
+                // Modify/Execute 级 WASM 工具需用户审批；ReadOnly 也保留审批以遵守沙箱审计
                 approval_required: true,
                 timeout_ms: Some(15_000),
                 tags: vec!["wasm".to_string(), plugin_name.clone()],
@@ -233,12 +237,14 @@ mod tests {
                     description: "say hi".to_string(),
                     input_schema: serde_json::json!({"type": "object"}),
                     output_schema: serde_json::json!({"type": "string"}),
+                    side_effect_level: None,
                 },
                 PluginFunction {
                     name: "farewell".to_string(),
                     description: "say bye".to_string(),
                     input_schema: serde_json::json!({"type": "object"}),
                     output_schema: serde_json::json!({"type": "string"}),
+                    side_effect_level: None,
                 },
             ],
         };
@@ -247,6 +253,87 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].0.name, "wasm.demo.greet");
         assert_eq!(tools[1].0.name, "wasm.demo.farewell");
+        // 未声明 side_effect_level 时回退 ReadOnly
+        assert_eq!(tools[0].0.side_effect_level, SideEffectLevel::ReadOnly);
+        assert_eq!(tools[1].0.side_effect_level, SideEffectLevel::ReadOnly);
+    }
+
+    /// manifest 声明 Modify 级别时应反映到 ToolSpec
+    #[test]
+    fn build_tool_specs_respects_declared_modify_level() {
+        let spec = PluginSpec {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            description: "demo".to_string(),
+            wasm_path: "plugin.wasm".to_string(),
+            functions: vec![PluginFunction {
+                name: "write_file".to_string(),
+                description: "write file".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "string"}),
+                side_effect_level: Some(SideEffectLevel::Modify),
+            }],
+        };
+        let host = Arc::new(Mutex::new(PluginHost::new()));
+        let tools = build_tool_specs_from_plugin(&spec, host);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].0.side_effect_level, SideEffectLevel::Modify);
+        // Modify 级工具应触发审批
+        assert!(tools[0].0.needs_approval());
+    }
+
+    /// manifest 声明 Execute 级别时应反映到 ToolSpec
+    #[test]
+    fn build_tool_specs_respects_declared_execute_level() {
+        let spec = PluginSpec {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            description: "demo".to_string(),
+            wasm_path: "plugin.wasm".to_string(),
+            functions: vec![PluginFunction {
+                name: "run_cmd".to_string(),
+                description: "run command".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "string"}),
+                side_effect_level: Some(SideEffectLevel::Execute),
+            }],
+        };
+        let host = Arc::new(Mutex::new(PluginHost::new()));
+        let tools = build_tool_specs_from_plugin(&spec, host);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].0.side_effect_level, SideEffectLevel::Execute);
+    }
+
+    /// 同一插件的不同函数可声明不同级别
+    #[test]
+    fn build_tool_specs_supports_mixed_levels_per_function() {
+        let spec = PluginSpec {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            description: "demo".to_string(),
+            wasm_path: "plugin.wasm".to_string(),
+            functions: vec![
+                PluginFunction {
+                    name: "read".to_string(),
+                    description: "read only".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: serde_json::json!({"type": "string"}),
+                    side_effect_level: Some(SideEffectLevel::ReadOnly),
+                },
+                PluginFunction {
+                    name: "write".to_string(),
+                    description: "modify".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: serde_json::json!({"type": "string"}),
+                    side_effect_level: Some(SideEffectLevel::Modify),
+                },
+            ],
+        };
+        let host = Arc::new(Mutex::new(PluginHost::new()));
+        let tools = build_tool_specs_from_plugin(&spec, host);
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].0.side_effect_level, SideEffectLevel::ReadOnly);
+        assert_eq!(tools[1].0.side_effect_level, SideEffectLevel::Modify);
     }
 
     #[test]

@@ -79,8 +79,23 @@ pub fn handle_request(
     }))
 }
 
+/// MCP 暴露侧工具白名单 — 仅暴露 ReadOnly 级工具，确保外部调用无副作用风险
+const EXPOSED_TOOLS: &[&str] = &[
+    "fs.read",
+    "fs.list",
+    "fs.read_multi",
+    "fs.search",
+    "git.diff",
+    "code.symbols",
+    "code.deps",
+    "code.search",
+    "test.run",
+    "web.fetch",
+    "web.search",
+];
+
 fn builtin_stdio_tools(registry: &ToolRegistry) -> Vec<serde_json::Value> {
-    ["fs.read", "fs.list", "git.diff"]
+    EXPOSED_TOOLS
         .iter()
         .filter_map(|name| registry.get(name))
         .map(|spec| {
@@ -99,7 +114,7 @@ fn handle_tool_call(
     name: &str,
     arguments: serde_json::Value,
 ) -> serde_json::Value {
-    if !matches!(name, "fs.read" | "fs.list" | "git.diff") {
+    if !EXPOSED_TOOLS.contains(&name) {
         return json!({
             "content": [{
                 "type": "text",

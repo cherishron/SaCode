@@ -18,7 +18,7 @@ use sacode_kernel::model::{
     preset_providers, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
 };
 use sacode_kernel::{AgentRole, RoleModelPolicy};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
 
@@ -99,13 +99,13 @@ struct RouteCandidate {
     provider: ModelProvider,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ModelHealthStore {
     #[serde(default)]
     entries: BTreeMap<String, ModelHealthEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ModelHealthEntry {
     #[serde(default)]
     success_count: u32,
@@ -460,6 +460,43 @@ fn current_unix_ts() -> u64 {
 
 fn health_key(provider_name: &str, model_name: &str) -> String {
     format!("{}/{}", provider_name, model_name)
+}
+
+/// 灵枢 · 自愈合 — 记录模型健康状态到 `.sacode/model-health.json`
+///
+/// 供多 Agent 编排路径（worker.rs）调用，闭合自愈合反馈回路。
+/// 与 interfaces/cli 的 `record_model_health` 写入同一文件，格式兼容。
+pub fn record_model_health(
+    workdir: &Path,
+    provider_name: &str,
+    model_name: &str,
+    success: bool,
+    error: Option<&str>,
+) {
+    let mut store = load_model_health_store(workdir).unwrap_or_default();
+    let key = health_key(provider_name, model_name);
+    let entry = store.entries.entry(key).or_default();
+    if success {
+        entry.success_count += 1;
+        entry.last_status = "healthy".to_string();
+        entry.last_error = None;
+    } else {
+        entry.failure_count += 1;
+        entry.last_status = "unhealthy".to_string();
+        entry.last_error = error.map(|value| value.to_string());
+    }
+    entry.updated_at = current_unix_ts();
+    let path = workdir.join(MODEL_HEALTH_FILE);
+    save_model_health_store(&path, &store);
+}
+
+fn save_model_health_store(path: &Path, store: &ModelHealthStore) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(content) = serde_json::to_string(store) {
+        let _ = fs::write(path, content);
+    }
 }
 
 fn default_sacode_config() -> SaCodeConfig {

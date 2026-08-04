@@ -11,15 +11,21 @@ use tower_lsp::{
         CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
         CodeActionResponse, Command, CompletionItem, CompletionItemKind, CompletionOptions,
         CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverContents, HoverParams,
-        HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-        InsertTextFormat, MessageType, Position, Range, ServerCapabilities,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
+        DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+        HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+        InsertTextFormat, Location, MessageType, OneOf, Position, PrepareRenameResponse, Range,
+        ReferenceParams, RenameParams, ServerCapabilities, TextDocumentSyncCapability,
+        TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit, WorkspaceSymbolParams,
     },
     Client, LanguageServer, LspService, Server,
 };
 
-use crate::code_intelligence::{completion_response_from_ast, hover_from_ast};
+use crate::code_intelligence::{
+    completion_response_from_ast, document_symbols_from_ast, find_definition_in_document,
+    find_references_in_document, hover_from_ast, prepare_rename_in_document,
+    rename_symbol_in_document,
+};
 use crate::config::LspConfig;
 use crate::diagnostics::DiagnosticsProvider;
 use crate::document::{DocumentManager, TextDocument};
@@ -51,6 +57,11 @@ impl LanguageServer for SaCodeLanguageServer {
                 completion_provider: Some(CompletionOptions::default()),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                // 灵枢 · LSP 能力补齐：documentSymbol / references / definition / rename
+                document_symbol_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                definition_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -324,6 +335,153 @@ impl LanguageServer for SaCodeLanguageServer {
 
         Ok(Some(actions))
     }
+
+    /// 文档符号大纲 — 供 LSP 客户端展示 outline 视图
+    ///
+    /// 复用 runtime 的 tree-sitter AST 解析，返回文档中所有顶层符号。
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> LspResult<Option<DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned();
+
+        let Some(document) = document else {
+            return Ok(None);
+        };
+
+        let symbols = document_symbols_from_ast(&document);
+        if symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+        }
+    }
+
+    /// 引用查找 — 查找光标位置符号在当前文档中的所有引用
+    ///
+    /// 基于 AST identifier 节点匹配，支持 includeDeclaration 过滤。
+    /// 当前仅搜索当前文档，跨文件引用需后续扩展。
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> LspResult<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned();
+
+        let Some(document) = document else {
+            return Ok(None);
+        };
+
+        // 从光标位置提取符号名
+        let symbol_name = extract_symbol_name_from_document(&document, position);
+        let Some(symbol_name) = symbol_name else {
+            return Ok(None);
+        };
+
+        let locations = find_references_in_document(
+            &document,
+            uri,
+            &symbol_name,
+            include_declaration,
+        );
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(locations))
+        }
+    }
+
+    /// 跳转到定义 — 查找光标位置符号的定义位置
+    ///
+    /// 策略：从光标位置提取符号名，在符号表中查找定义。
+    /// 当前仅搜索当前文档，跨文件定义需后续扩展。
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> LspResult<Option<GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned();
+
+        let Some(document) = document else {
+            return Ok(None);
+        };
+
+        let location = find_definition_in_document(&document, uri, position);
+        Ok(location.map(GotoDefinitionResponse::Scalar))
+    }
+
+    /// 重命名 — 为光标位置的符号生成全文档重命名编辑
+    ///
+    /// 复用 references 收集所有引用位置，生成 TextEdit 列表。
+    async fn rename(
+        &self,
+        params: RenameParams,
+    ) -> LspResult<Option<WorkspaceEdit>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned();
+
+        let Some(document) = document else {
+            return Ok(None);
+        };
+
+        let edit = rename_symbol_in_document(&document, uri, position, &new_name);
+        Ok(edit)
+    }
+
+    /// 准备重命名 — 检查光标位置是否可重命名，返回占位 range
+    ///
+    /// LSP 客户端用此结果进入重命名输入模式。
+    async fn prepare_rename(
+        &self,
+        params: tower_lsp::lsp_types::TextDocumentPositionParams,
+    ) -> LspResult<Option<PrepareRenameResponse>> {
+        let uri = &params.text_document.uri;
+        let position = params.position;
+        let document = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .get(uri)
+            .cloned();
+
+        let Some(document) = document else {
+            return Ok(None);
+        };
+
+        let range = prepare_rename_in_document(&document, position);
+        Ok(range.map(|range| {
+            PrepareRenameResponse::RangeWithPlaceholder {
+                range,
+                placeholder: "symbol".to_string(),
+            }
+        }))
+    }
 }
 
 impl SaCodeLanguageServer {
@@ -375,6 +533,39 @@ impl SaCodeLanguageServer {
     }
 }
 
+/// 从文档光标位置提取符号名 — 复用 code_intelligence 的提取逻辑
+///
+/// 用于 references / rename 等需要从光标位置反查符号名的场景。
+fn extract_symbol_name_from_document(document: &TextDocument, position: Position) -> Option<String> {
+    let line = document.content.lines().nth(position.line as usize)?;
+    let char_pos = (position.character as usize).min(line.len());
+
+    let start = line[..char_pos]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(char_pos);
+
+    let end = line[char_pos..]
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, ch)| char_pos + idx + ch.len_utf8())
+        .unwrap_or(char_pos);
+
+    if start >= end {
+        return None;
+    }
+
+    let name = &line[start..end];
+    if name.is_empty() || name.chars().all(|ch| ch.is_numeric()) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 pub async fn run_stdio_server(config: &LspConfig) -> Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -400,9 +591,39 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
     let listener =
         tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port)).await?;
     tracing::info!(host = %config.server.host, port = config.server.port, "LSP TCP server listening");
+    let max_connections = config.server.max_connections;
+    let mut active_connections = 0usize;
+
     loop {
-        let (_stream, _addr) = listener.accept().await?;
-        tracing::debug!("accepted LSP TCP connection");
+        let (stream, addr) = listener.accept().await?;
+        if active_connections >= max_connections {
+            tracing::warn!(%addr, active_connections, max_connections, "LSP TCP connection rejected: max connections reached");
+            continue;
+        }
+        active_connections += 1;
+        tracing::debug!(%addr, active_connections, "accepted LSP TCP connection");
+
+        let workdir = std::env::current_dir()?;
+        let provider = resolve_provider_for_lsp(&workdir);
+        let diagnostics_enabled = config.capabilities.diagnostics;
+        let diagnostic_interval_ms = config.behavior.diagnostic_interval_ms;
+        let (service, socket) = LspService::new(move |client| SaCodeLanguageServer {
+            client,
+            documents: Arc::new(Mutex::new(DocumentManager::default())),
+            sessions: SessionService::new(),
+            provider_config: Arc::new(Mutex::new(provider)),
+            diagnostics_provider: Arc::new(DiagnosticsProvider::new(workdir.clone())),
+            diagnostics_enabled,
+            diagnostic_interval_ms,
+            pending_diagnostics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        });
+
+        // TCP 模式：用 (read, write) 半双工适配 Server::new
+        let (read_half, write_half) = tokio::io::split(stream);
+        tokio::spawn(async move {
+            let _ = Server::new(read_half, write_half, socket).serve(service).await;
+            tracing::debug!(%addr, "LSP TCP connection closed");
+        });
     }
 }
 

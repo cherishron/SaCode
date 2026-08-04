@@ -3,6 +3,7 @@ use std::process::Command;
 
 use anyhow::Result;
 
+use super::FailedTest;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 #[derive(Debug, serde::Deserialize)]
@@ -29,15 +30,6 @@ impl TestFramework {
             Self::Pytest => "pytest",
         }
     }
-}
-
-/// 结构化测试失败条目
-#[derive(Debug, Clone, serde::Serialize)]
-struct FailedTest {
-    name: String,
-    module: String,
-    error_message: String,
-    location: String,
 }
 
 pub fn spec() -> ToolSpec {
@@ -156,7 +148,6 @@ fn parse_test_results(
 ///   test result: FAILED. 3 passed; 2 failed; 0 ignored; ...
 fn parse_rust_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
     let mut failed_names: Vec<(String, String)> = Vec::new(); // (module, name)
-    let mut total: usize = 0;
     let mut passed: usize = 0;
     let mut failed_count: usize = 0;
 
@@ -164,11 +155,15 @@ fn parse_rust_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
         let trimmed = line.trim();
 
         // 匹配 "test module::name ... FAILED" 或 "test name ... FAILED"
+        // cargo test 行格式固定为 `test <full_name> ... <result>`，
+        // 去掉 `test ` 前缀与 ` FAILED` 后缀后，需再剥离 ` ...` 才能得到纯名称
         if trimmed.starts_with("test ") && trimmed.ends_with(" FAILED") {
             let name_part = trimmed
                 .strip_prefix("test ")
                 .and_then(|s| s.strip_suffix(" FAILED"))
                 .unwrap_or("")
+                .trim()
+                .trim_end_matches(" ...")
                 .trim();
             let (module, name) = split_rust_test_name(name_part);
             failed_names.push((module, name));
@@ -186,7 +181,7 @@ fn parse_rust_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
         }
     }
 
-    total = passed + failed_count;
+    let total = passed + failed_count;
 
     // 为每个失败测试提取错误消息
     let failed_tests = build_rust_failed_tests(output, &failed_names);

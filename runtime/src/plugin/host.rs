@@ -3,6 +3,8 @@ use extism::{Manifest, Plugin, Wasm};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::tools::SideEffectLevel;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginSpec {
     pub name: String,
@@ -12,12 +14,26 @@ pub struct PluginSpec {
     pub functions: Vec<PluginFunction>,
 }
 
+/// WASM 插件函数声明
+///
+/// `side_effect_level` 为可选字段：manifest 未声明时回退到 `ReadOnly`，
+/// 声明后按 manifest 指定的级别触发审批与沙箱审计。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginFunction {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
     pub output_schema: serde_json::Value,
+    /// 函数副作用级别（可选）。未声明时默认 ReadOnly。
+    #[serde(default)]
+    pub side_effect_level: Option<SideEffectLevel>,
+}
+
+impl PluginFunction {
+    /// 返回函数的副作用级别，未声明时回退到 ReadOnly
+    pub fn effective_side_effect_level(&self) -> SideEffectLevel {
+        self.side_effect_level.unwrap_or(SideEffectLevel::ReadOnly)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -268,7 +268,7 @@ impl DaemonState {
         let tools = ToolRegistry::builtin();
 
         // 生产路径启用 task_runner（走 execute_task_with_provider + 灵枢沙箱审计），
-        // 测试路径保持 Supervisor fallback，避免测试环境发起真实 LLM 调用
+        // 测试路径保持静态 fallback，避免测试环境发起真实 LLM 调用
         // （项目根目录可能存在 .sacode/provider.json 触发真实 API 请求）
         let executor = if cfg!(test) {
             TaskExecutor::new(queue.clone(), tools.clone())

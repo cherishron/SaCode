@@ -7,10 +7,11 @@
 
 use std::path::Path;
 
-use sacode_runtime::tools::code::ast::{AstEditor, AstSummary, AstSymbol};
+use sacode_runtime::tools::code::ast::{AstEditor, AstSummary, AstSymbol, AstSymbolWithRange};
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, Hover, HoverContents, MarkupContent,
-    MarkupKind, Position, Range,
+    CompletionItem, CompletionItemKind, CompletionResponse, DocumentSymbol,
+    DocumentSymbolResponse, Hover, HoverContents, Location, MarkupContent, MarkupKind, Position,
+    Range, SymbolKind, Url,
 };
 
 use crate::document::TextDocument;
@@ -164,6 +165,269 @@ pub fn completion_response_from_ast(doc: &TextDocument, position: Position) -> O
 /// 在没有 AI provider 时的 hover fallback：基于 AST 给出静态信息
 pub fn hover_fallback(doc: &TextDocument, position: Position) -> Option<Hover> {
     hover_from_ast(doc, position)
+}
+
+// ============================================================================
+// documentSymbol — 桥接 code.symbols 到 LSP
+// ============================================================================
+
+/// 生成文档符号大纲 — 供 LSP textDocument/documentSymbol 使用
+///
+/// 复用 runtime 的 tree-sitter AST 解析，返回带完整 range 的符号树。
+/// LSP 客户端用此结果展示 outline 视图和面包屑导航。
+pub fn document_symbols_from_ast(doc: &TextDocument) -> Vec<DocumentSymbol> {
+    let Some(language) = language_id_to_ast_language(&doc.language_id) else {
+        return Vec::new();
+    };
+    let symbols = AstEditor::symbols_with_range(language, &doc.content).unwrap_or_default();
+    symbols.into_iter().map(symbol_with_range_to_document_symbol).collect()
+}
+
+/// 把 AstSymbolWithRange 转换为 LSP DocumentSymbol
+fn symbol_with_range_to_document_symbol(symbol: AstSymbolWithRange) -> DocumentSymbol {
+    DocumentSymbol {
+        name: symbol.name.clone(),
+        detail: Some(format!("{} (line {})", symbol.kind, symbol.start_line)),
+        kind: symbol_kind_to_lsp_symbol_kind(&symbol.kind),
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: (symbol.start_line as u32).saturating_sub(1),
+                character: (symbol.start_column as u32).saturating_sub(1),
+            },
+            end: Position {
+                line: (symbol.end_line as u32).saturating_sub(1),
+                character: (symbol.end_column as u32).saturating_sub(1),
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: (symbol.selection_start_line as u32).saturating_sub(1),
+                character: (symbol.selection_start_column as u32).saturating_sub(1),
+            },
+            end: Position {
+                line: (symbol.selection_end_line as u32).saturating_sub(1),
+                character: (symbol.selection_end_column as u32).saturating_sub(1),
+            },
+        },
+        children: None,
+    }
+}
+
+/// 把 AST 符号 kind 映射到 LSP SymbolKind
+fn symbol_kind_to_lsp_symbol_kind(kind: &str) -> SymbolKind {
+    match kind {
+        "fn" | "function" => SymbolKind::FUNCTION,
+        "struct" | "class" => SymbolKind::CLASS,
+        "enum" => SymbolKind::ENUM,
+        "trait" | "interface" => SymbolKind::INTERFACE,
+        "type" => SymbolKind::TYPE_PARAMETER,
+        "mod" => SymbolKind::MODULE,
+        "const" => SymbolKind::CONSTANT,
+        "var" => SymbolKind::VARIABLE,
+        "impl" => SymbolKind::OBJECT,
+        _ => SymbolKind::VARIABLE,
+    }
+}
+
+// ============================================================================
+// references — 基于 AST 查找符号引用
+// ============================================================================
+
+/// 在文档中查找指定符号名的所有引用位置 — 供 LSP textDocument/references 使用
+///
+/// 策略：遍历 AST 中所有 identifier 节点，匹配符号名。
+/// include_declaration 控制是否包含定义处。
+pub fn find_references_in_document(
+    doc: &TextDocument,
+    uri: &Url,
+    symbol_name: &str,
+    include_declaration: bool,
+) -> Vec<Location> {
+    let Some(language) = language_id_to_ast_language(&doc.language_id) else {
+        return Vec::new();
+    };
+    let references = AstEditor::find_references(language, &doc.content, symbol_name).unwrap_or_default();
+    references
+        .into_iter()
+        .filter(|reference| include_declaration || !reference.is_declaration)
+        .map(|reference| Location {
+            uri: uri.clone(),
+            range: Range {
+                start: Position {
+                    line: (reference.start_line as u32).saturating_sub(1),
+                    character: (reference.start_column as u32).saturating_sub(1),
+                },
+                end: Position {
+                    line: (reference.end_line as u32).saturating_sub(1),
+                    character: (reference.end_column as u32).saturating_sub(1),
+                },
+            },
+        })
+        .collect()
+}
+
+// ============================================================================
+// goto definition — 基于符号表查找定义位置
+// ============================================================================
+
+/// 在文档中查找指定位置的符号定义 — 供 LSP textDocument/definition 使用
+///
+/// 策略：
+/// 1. 找到光标位置所在的 identifier 文本（作为符号名）
+/// 2. 在符号表中查找该名称的定义位置
+/// 3. 返回定义处的 Location
+pub fn find_definition_in_document(
+    doc: &TextDocument,
+    uri: &Url,
+    position: Position,
+) -> Option<Location> {
+    let language = language_id_to_ast_language(&doc.language_id)?;
+    let symbols = AstEditor::symbols_with_range(language, &doc.content).ok()?;
+
+    // 尝试从光标位置提取符号名
+    let symbol_name = extract_symbol_name_at_position(doc, position)?;
+
+    // 在符号表中查找定义
+    let definition = symbols.into_iter().find(|symbol| symbol.name == symbol_name)?;
+
+    Some(Location {
+        uri: uri.clone(),
+        range: Range {
+            start: Position {
+                line: (definition.selection_start_line as u32).saturating_sub(1),
+                character: (definition.selection_start_column as u32).saturating_sub(1),
+            },
+            end: Position {
+                line: (definition.selection_end_line as u32).saturating_sub(1),
+                character: (definition.selection_end_column as u32).saturating_sub(1),
+            },
+        },
+    })
+}
+
+/// 从文档光标位置提取符号名（基于行文本切分）
+///
+/// 这是一种简化的策略：取光标所在行的光标位置前后的标识符字符。
+/// 不依赖 AST，避免对每个光标位置都解析 AST。
+fn extract_symbol_name_at_position(doc: &TextDocument, position: Position) -> Option<String> {
+    let line = doc.content.lines().nth(position.line as usize)?;
+    let char_pos = (position.character as usize).min(line.len());
+
+    // 向左扫描找到标识符起始
+    let start = line[..char_pos]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(char_pos);
+
+    // 向右扫描找到标识符结束
+    let end = line[char_pos..]
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, ch)| char_pos + idx + ch.len_utf8())
+        .unwrap_or(char_pos);
+
+    if start >= end {
+        return None;
+    }
+
+    let name = &line[start..end];
+    if name.is_empty() || name.chars().all(|ch| ch.is_numeric()) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+// ============================================================================
+// rename — 基于引用列表生成重命名 WorkspaceEdit
+// ============================================================================
+
+/// 为文档中的符号生成重命名编辑 — 供 LSP textDocument/rename 使用
+///
+/// 策略：复用 find_references_in_document 收集所有引用位置，
+/// 为每个引用生成一个 TextEdit 替换为新名称。
+pub fn rename_symbol_in_document(
+    doc: &TextDocument,
+    uri: &Url,
+    position: Position,
+    new_name: &str,
+) -> Option<tower_lsp::lsp_types::WorkspaceEdit> {
+    let symbol_name = extract_symbol_name_at_position(doc, position)?;
+    if symbol_name.is_empty() {
+        return None;
+    }
+
+    let locations = find_references_in_document(doc, uri, &symbol_name, true);
+    if locations.is_empty() {
+        return None;
+    }
+
+    let edits: Vec<tower_lsp::lsp_types::TextEdit> = locations
+        .into_iter()
+        .map(|location| tower_lsp::lsp_types::TextEdit {
+            range: location.range,
+            new_text: new_name.to_string(),
+        })
+        .collect();
+
+    let mut changes = std::collections::HashMap::new();
+    changes.insert(uri.clone(), edits);
+
+    Some(tower_lsp::lsp_types::WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    })
+}
+
+/// 检查光标位置是否可重命名 — 供 LSP textDocument/prepareRename 使用
+///
+/// 返回占位 range，让客户端进入重命名输入模式。
+pub fn prepare_rename_in_document(
+    doc: &TextDocument,
+    position: Position,
+) -> Option<Range> {
+    let symbol_name = extract_symbol_name_at_position(doc, position)?;
+    if symbol_name.is_empty() {
+        return None;
+    }
+
+    // 返回光标所在标识符的 range
+    let line = doc.content.lines().nth(position.line as usize)?;
+    let char_pos = (position.character as usize).min(line.len());
+    let start = line[..char_pos]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(char_pos);
+    let end = line[char_pos..]
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(idx, ch)| char_pos + idx + ch.len_utf8())
+        .unwrap_or(char_pos);
+
+    if start >= end {
+        return None;
+    }
+
+    Some(Range {
+        start: Position {
+            line: position.line,
+            character: start as u32,
+        },
+        end: Position {
+            line: position.line,
+            character: end as u32,
+        },
+    })
 }
 
 #[cfg(test)]

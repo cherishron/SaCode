@@ -15,7 +15,7 @@ use sacode_kernel::{
     RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord,
 };
 
-use super::message_bus::{AgentMessageKind, CommunicationSummary, MessageBus, build_communication_summary};
+use super::message_bus::{AgentMailboxHandle, CommunicationSummary, MessageBus, build_communication_summary};
 use super::summary_compactor::{
     compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity,
     extract_final_consensus, extract_risk_summary, OutputPolarity,
@@ -96,6 +96,51 @@ pub async fn execute_role_driven_orchestration(
         &results,
         &report.conflicts,
     ));
+
+    // 灵枢 · 自防护 — 冲突处置回路
+    // 检测到冲突后，根据严重程度采取不同处置策略：
+    // - validation_conflict（实现与验证冲突）：标记任务失败，阻止错误结果被采纳
+    // - 其他冲突：添加告警事件，在输出中追加处置建议
+    if !report.conflict_records.is_empty() {
+        let has_validation_conflict = report
+            .conflict_records
+            .iter()
+            .any(|record| record.kind == "validation_conflict");
+
+        if has_validation_conflict {
+            // 最严重冲突：实现与验证冲突，标记为错误阻止错误结果被采纳
+            report.events.push(sacode_kernel::Event::error(format!(
+                "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），任务需人工审查。冲突数：{}",
+                report.conflict_records.len()
+            )));
+        } else {
+            // 一般冲突：添加告警，提醒用户关注
+            report.events.push(sacode_kernel::Event::message(format!(
+                "灵枢·自防护：检测到 {} 项冲突，请关注汇总报告中的建议动作",
+                report.conflict_records.len()
+            )));
+        }
+
+        // 在最终输出中追加冲突处置建议
+        if let Some(ref mut output) = report.final_output {
+            let conflict_summary: Vec<String> = report
+                .conflict_records
+                .iter()
+                .map(|record| format!("- [{}] {}", record.kind, record.summary))
+                .collect();
+            output.push_str("\n\n---\n## 灵枢·自防护冲突告警\n");
+            output.push_str(&format!(
+                "检测到 {} 项冲突：\n{}\n",
+                report.conflict_records.len(),
+                conflict_summary.join("\n")
+            ));
+            if has_validation_conflict {
+                output.push_str("\n**处置建议**：实现与验证存在冲突，建议检查实现代码与测试结果的一致性后再继续。\n");
+            } else {
+                output.push_str("\n**处置建议**：请审查上方冲突详情，确认是否需要调整执行策略。\n");
+            }
+        }
+    }
     report.events.push(sacode_kernel::Event::thinking(format!(
         "主 Agent 汇总裁决完成，汇总角色数：{}",
         results.len()
@@ -133,10 +178,22 @@ async fn execute_parallel_groups(
 ) -> Vec<WorkerRunResult> {
     let mut all_results = Vec::new();
 
-    // 注册所有子 Agent 到消息总线
+    // 灵枢 · Agent Teams：注册所有子 Agent 到消息总线，保留邮箱句柄供 worker 使用
+    // worker 通过 mailbox 消费前序 Agent 消息并发布自身进度，形成协作闭环
+    let mut mailboxes: HashMap<String, AgentMailboxHandle> = HashMap::new();
     for task in &plan.tasks {
-        let _ = message_bus.register(task.id.clone()).await;
+        let mailbox = message_bus.register(task.id.clone()).await;
+        mailboxes.insert(task.id.clone(), mailbox);
     }
+
+    // 灵枢 · Agent Teams 阶段三：构建 role_id → task_id 映射
+    // worker 解析输出中的协助请求标记（target=role_id）后，
+    // 通过此映射转换为 mailbox 目标 task_id，发送定向消息
+    let role_task_map: HashMap<String, String> = plan
+        .tasks
+        .iter()
+        .map(|task| (task.role_id.clone(), task.id.clone()))
+        .collect();
 
     report.events.push(sacode_kernel::Event::message(format!(
         "消息总线已初始化，注册 Agent 数：{}",
@@ -166,22 +223,19 @@ async fn execute_parallel_groups(
                 )));
                 continue;
             };
-            worker_runs.push(run_sub_agent(task.clone(), role, profile, workdir));
+            // 取出 mailbox 传给 worker，让子 Agent 能消费前序消息并发布自身进度
+            let mailbox = mailboxes.remove(task_id);
+            worker_runs.push(run_sub_agent(
+                task.clone(),
+                role,
+                profile,
+                workdir,
+                mailbox,
+                &role_task_map,
+            ));
         }
 
         let mut group_results = futures::future::join_all(worker_runs).await;
-
-        // 并发组执行完毕后，通过消息总线同步进度
-        for result in &group_results {
-            let status = if result.result.success { "完成" } else { "失败" };
-            message_bus
-                .broadcast(
-                    &result.task.id,
-                    AgentMessageKind::ProgressSync,
-                    format!("角色 [{}] 任务 [{}] {}", result.role.id, result.task.title, status),
-                )
-                .await;
-        }
 
         report.events.push(sacode_kernel::Event::message(format!(
             "并发组 #{} 执行完成",

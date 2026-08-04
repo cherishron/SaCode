@@ -297,13 +297,9 @@ pub fn build_execution_plan(
     let parallel_groups = if matches!(mode, OrchestrationMode::DefaultFixed) {
         vec![tasks.iter().map(|task| task.id.clone()).collect()]
     } else {
-        vec![
-            tasks.iter().take(2).map(|task| task.id.clone()).collect(),
-            tasks.iter().skip(2).map(|task| task.id.clone()).collect(),
-        ]
-        .into_iter()
-        .filter(|group: &Vec<String>| !group.is_empty())
-        .collect()
+        // 灵枢 · Agent Teams：基于角色 handoff_to 依赖做拓扑排序
+        // 替换原来的静态"前 2 + 剩余"分组，让角色依赖驱动执行顺序
+        build_dependency_groups(&tasks, roles)
     };
 
     AgentExecutionPlan {
@@ -325,6 +321,98 @@ pub fn build_execution_plan(
         parallel_groups,
         max_agents,
     }
+}
+
+/// 灵枢 · Agent Teams：基于角色 handoff_to 依赖构建拓扑排序的并发分组
+///
+/// 替换原来的静态"前 2 + 剩余"分组，让角色依赖驱动执行顺序。
+///
+/// 算法：Kahn's BFS 拓扑排序，同层节点放入同一并发组。
+/// 例如角色依赖链：
+///   requirement-analyst → system-architect → implementer → test-engineer → code-reviewer → reporter
+/// 生成分组：
+///   [requirement-analyst], [system-architect], [implementer], [test-engineer], [code-reviewer], [reporter]
+///
+/// 无依赖的角色会被分到第一组（与 requirement-analyst 同层并发）。
+/// 检测到循环依赖时，把剩余任务全部放入当前组以打破死锁。
+fn build_dependency_groups(
+    tasks: &[SubAgentTask],
+    roles: &[AgentRole],
+) -> Vec<Vec<String>> {
+    use std::collections::{HashMap, HashSet};
+
+    // 构建 role_id → task_id 映射
+    let role_to_task: HashMap<&str, &str> = tasks
+        .iter()
+        .map(|task| (task.role_id.as_str(), task.id.as_str()))
+        .collect();
+
+    // 构建 task 依赖图：如果 task A 的角色 handoff_to 包含角色 B，
+    // 且角色 B 对应 task B，则 A 依赖 B（B 完成后 A 才能开始）
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new(); // prerequisite_task_id → 依赖它的 task_ids
+
+    for task in tasks {
+        in_degree.entry(task.id.as_str()).or_insert(0);
+        dependents.entry(task.id.as_str()).or_insert_with(Vec::new);
+    }
+
+    for task in tasks {
+        let Some(role) = roles.iter().find(|r| r.id == task.role_id) else {
+            continue;
+        };
+        for handoff_role_id in &role.handoff_to {
+            if let Some(&prerequisite_task_id) = role_to_task.get(handoff_role_id.as_str()) {
+                // task 依赖 prerequisite_task_id（prerequisite 完成后 task 才能开始）
+                *in_degree.entry(task.id.as_str()).or_insert(0) += 1;
+                dependents
+                    .entry(prerequisite_task_id)
+                    .or_insert_with(Vec::new)
+                    .push(task.id.as_str());
+            }
+        }
+    }
+
+    // Kahn's algorithm：BFS 拓扑排序，同层节点放入同一并发组
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut remaining: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+
+    while !remaining.is_empty() {
+        // 找出当前入度为 0 的 task
+        let mut current_layer: Vec<&str> = remaining
+            .iter()
+            .filter(|task_id| in_degree.get(*task_id).copied().unwrap_or(0) == 0)
+            .copied()
+            .collect();
+
+        if current_layer.is_empty() {
+            // 循环依赖：把剩余 task 全放入当前组（打破死锁）
+            current_layer = remaining.iter().copied().collect();
+        }
+
+        current_layer.sort(); // 确定性排序，保证测试可复现
+        let group: Vec<String> = current_layer.iter().map(|s| s.to_string()).collect();
+
+        // 从 remaining 中移除当前层
+        for task_id in &current_layer {
+            remaining.remove(task_id);
+        }
+
+        // 更新依赖当前层 task 的入度
+        for task_id in &current_layer {
+            if let Some(deps) = dependents.get(task_id) {
+                for dep in deps {
+                    if let Some(deg) = in_degree.get_mut(dep) {
+                        *deg = deg.saturating_sub(1);
+                    }
+                }
+            }
+        }
+
+        groups.push(group);
+    }
+
+    groups
 }
 
 fn ensure_reporter_selected<'a>(

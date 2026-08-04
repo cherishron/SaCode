@@ -14,8 +14,8 @@ pub use orchestration::{
     RoleModelPolicy, RoleScore, RoleStage, SubAgentResult, SubAgentTask, TaskAnalysis, TaskScope,
     TaskType,
 };
-// PlannerAgent/Supervisor 已废弃但保留供 ffi.rs（C ABI）和 runtime::executor::TaskExecutor 占位路径使用，
-// 待 v0.5 阶段四 task_runner 完全替代后再统一移除。
+// PlannerAgent/Supervisor 已废弃，FFI 和 runtime 均已迁移到自包含实现。
+// 保留导出仅为向后兼容第三方代码可能的对 kernel::Supervisor 的直接引用。
 #[allow(deprecated)]
 pub use planner::{AgentOutput, PlannerAgent};
 pub use reviewer::{ReviewerAgent, ReviewerOutput};

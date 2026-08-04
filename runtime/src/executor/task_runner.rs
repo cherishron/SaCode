@@ -230,7 +230,21 @@ pub async fn execute_task_with_failover(
             true
         } else if let Ok(ref response) = result.response {
             let score = NodeScore::evaluate(None, response, &[], profile);
-            score.decision == crate::NodeDecision::SwitchModel
+            match score.decision {
+                crate::NodeDecision::SwitchModel => true,
+                // WaitForUser / WaitForApproval：需要用户介入，不切换模型，直接退出
+                crate::NodeDecision::WaitForUser
+                | crate::NodeDecision::WaitForApproval => {
+                    if result.pending_question.is_none() {
+                        result.pending_question =
+                            Some(serde_json::Value::String(score.reasons.join("; ")));
+                    }
+                    break;
+                }
+                // Fail：任务明确失败，不切换模型，直接退出
+                crate::NodeDecision::Fail => break,
+                crate::NodeDecision::Accept => false,
+            }
         } else {
             false
         };
@@ -248,14 +262,54 @@ pub async fn execute_task_with_failover(
                     .iter()
                     .find(|(pn, mn, _)| pn == &fallback.provider_name && mn == &fallback.model_name)
                 {
+                    // 从已执行的工具记录中提取上下文（report 为 Option，需安全访问）
+                    let tool_records: Vec<(Option<usize>, String, bool)> = result
+                        .task_run
+                        .report
+                        .as_ref()
+                        .map(|report| {
+                            report
+                                .tool_records
+                                .iter()
+                                .map(|record| {
+                                    (record.step_id, record.tool_name.clone(), record.success)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
                     let failover_context = FailoverContext {
                         original_task: config.user_prompt.clone(),
-                        completed_steps: vec![],
-                        tool_summary: vec![],
+                        // 从已执行的工具记录中提取完成步骤
+                        completed_steps: tool_records
+                            .iter()
+                            .filter(|(_, _, success)| *success)
+                            .map(|(step_id, name, _)| {
+                                format!("step {:?}: {}", step_id, name)
+                            })
+                            .collect(),
+                        // 工具调用摘要（含成功/失败标记）
+                        tool_summary: tool_records
+                            .iter()
+                            .map(|(_, name, success)| {
+                                format!("{} ({})", name, if *success { "ok" } else { "fail" })
+                            })
+                            .collect(),
                         last_error: result.response.clone().err(),
-                        low_score_reasons: vec!["node scored low, switching model".to_string()],
+                        low_score_reasons: vec![
+                            "node scored low, switching model".to_string(),
+                        ],
                         workspace_summary: profile.evidence.clone(),
-                        retained_facts: vec![],
+                        // 从部分成功的响应中提取关键事实（前 500 字符）
+                        retained_facts: result
+                            .response
+                            .as_ref()
+                            .ok()
+                            .map(|response| {
+                                response.chars().take(500).collect::<String>()
+                            })
+                            .into_iter()
+                            .collect(),
                     };
                     let failover_section = failover_context.to_prompt_section();
                     let augmented_prompt = format!("{}\n\n{}", failover_section, config.user_prompt);

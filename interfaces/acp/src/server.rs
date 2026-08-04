@@ -119,6 +119,42 @@ async fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Re
             serde_json::to_value(service.get_session(&session_id)?)?
         }
         "session/list" => serde_json::to_value(service.list_sessions())?,
+        "tools/list" => {
+            let registry = sacode_runtime::ToolRegistry::builtin();
+            let tools: Vec<serde_json::Value> = registry
+                .specs()
+                .iter()
+                .map(|spec| {
+                    serde_json::json!({
+                        "name": spec.name,
+                        "description": spec.description,
+                        "inputSchema": spec.input_schema,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "tools": tools })
+        }
+        "tools/call" => {
+            let tool_name = required_string(&request, "name")?;
+            let arguments = request
+                .params
+                .as_ref()
+                .and_then(|value| value.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let registry = sacode_runtime::ToolRegistry::builtin();
+            match registry.execute(&tool_name, arguments) {
+                Ok(output) => serde_json::json!({
+                    "success": output.success,
+                    "data": output.data,
+                    "message": output.message,
+                }),
+                Err(error) => serde_json::json!({
+                    "success": false,
+                    "error": error.to_string(),
+                }),
+            }
+        }
         other => serde_json::json!({ "warning": format!("unsupported method: {}", other) }),
     };
 
