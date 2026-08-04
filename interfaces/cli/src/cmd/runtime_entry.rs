@@ -162,13 +162,15 @@ pub(super) fn preview(input: &str) -> String {
     }
 }
 
-/// CLI 执行路径写 checkpoint（统一状态机阶段二）
+/// CLI 执行路径写 checkpoint（统一状态机阶段二/三）
 ///
 /// 将 RunnerOutput 转换为 Checkpoint 并持久化到 .sacode/checkpoints/，
 /// 使任务状态可跨进程恢复。失败时静默记录（不阻塞 CLI 主流程）。
 ///
 /// 设计要点：
 /// - 状态映射：TaskRunState → TaskState（经 From impl），无 state 默认 Failed
+/// - task_id 贯穿：从 RunnerOutput.task_run.task_id 读取并写入 checkpoint，
+///   支持跨进程按 task_id 查找 checkpoint 恢复
 /// - 事件历史：截取 RunnerOutput.events 末尾 100 条（Checkpoint::add_event 内部截断）
 /// - 工作目录：使用 output.workspace 作为 checkpoint 存储根
 fn write_checkpoint_for_run(output: &RunnerOutput) -> Result<()> {
@@ -194,6 +196,11 @@ fn write_checkpoint_for_run(output: &RunnerOutput) -> Result<()> {
         .map(TaskState::from)
         .unwrap_or(TaskState::Failed);
     checkpoint.set_status(task_state);
+
+    // 贯穿 task_id（统一状态机阶段三）
+    if let Some(task_id) = output.task_run.task_id.clone() {
+        checkpoint.set_task_id(task_id);
+    }
 
     storage.save(&checkpoint)?;
     Ok(())

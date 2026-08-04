@@ -8,7 +8,7 @@
 use std::env;
 
 use anyhow::Result;
-use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun};
+use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun, generate_task_id};
 use sacode_runtime::{
     AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder, PromptUserDecider,
     TaskRunConfig,
@@ -145,6 +145,7 @@ async fn execute_single_agent_task(
         tools,
         approval: approval_decider,
         error_recorder: Arc::new(LoggingErrorRecorder),
+        task_id: Some(generate_task_id()),
     };
 
     // 执行任务

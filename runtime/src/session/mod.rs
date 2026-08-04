@@ -10,7 +10,7 @@ use tracing::warn;
 
 use sacode_kernel::{
     ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionMode,
-    Task, ToolExecutionRecord,
+    Task, ToolExecutionRecord, generate_task_id,
 };
 
 use crate::CheckpointStorage;
@@ -353,6 +353,7 @@ impl SessionService {
             tools,
             approval: approval_decider,
             error_recorder: std::sync::Arc::new(LoggingErrorRecorder),
+            task_id: Some(generate_task_id()),
         };
 
         let task_run_result = execute_task_with_provider(&config, None).await;

@@ -19,6 +19,12 @@ pub struct Checkpoint {
     /// restore 时可据此判断任务原状态，决定是否恢复执行。
     #[serde(default)]
     pub status: TaskState,
+    /// 统一 task_id（贯穿 CLI → task_runner → Checkpoint）
+    ///
+    /// 旧 checkpoint 文件无此字段，反序列化时默认为 None。
+    /// 非 None 时可用于跨进程按 task_id 查找 checkpoint 恢复。
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,12 +49,19 @@ impl Checkpoint {
             created_at: now.clone(),
             updated_at: now,
             status: TaskState::Pending,
+            task_id: None,
         }
     }
 
     /// 设置任务状态（统一状态机）
     pub fn set_status(&mut self, status: TaskState) {
         self.status = status;
+        self.updated_at = chrono_now();
+    }
+
+    /// 设置统一 task_id
+    pub fn set_task_id(&mut self, task_id: String) {
+        self.task_id = Some(task_id);
         self.updated_at = chrono_now();
     }
 

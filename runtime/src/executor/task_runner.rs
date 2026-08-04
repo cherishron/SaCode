@@ -116,6 +116,11 @@ pub struct TaskRunConfig<'a> {
     pub approval: Arc<dyn ApprovalDecider>,
     /// 错误记录器
     pub error_recorder: Arc<dyn ErrorRecorder>,
+    /// 统一 task_id（贯穿 CLI → task_runner → Checkpoint）
+    ///
+    /// None 表示入口未注入（如子 Agent 内部执行）；
+    /// 非 None 时将写入 TaskRun.task_id，保证跨入口可关联。
+    pub task_id: Option<String>,
 }
 
 // ── 核心执行逻辑 ────────────────────────────────────────────────
@@ -163,7 +168,7 @@ pub async fn execute_task_with_provider(
     };
 
     let task_run = task_run_snapshot(
-        None,
+        config.task_id.clone(),
         config.mode,
         config.user_prompt.clone(),
         state.clone(),
@@ -732,6 +737,7 @@ impl TaskRunConfig<'_> {
             tools: self.tools.clone(),
             approval: self.approval.clone(),
             error_recorder: self.error_recorder.clone(),
+            task_id: self.task_id.clone(),
         }
     }
 }

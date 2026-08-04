@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{
-    Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState,
+    Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState, generate_task_id,
 };
 use sacode_runtime::{
     build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
@@ -245,6 +245,7 @@ where
         tools,
         approval: approval_decider,
         error_recorder,
+        task_id: Some(generate_task_id()),
     };
 
     // 构建流式输出适配器：将 CLI 层 StreamEventKind 转换为 runtime 层

@@ -289,6 +289,7 @@ async fn execute_via_task_runner(
         tools,
         approval: Arc::new(AutoApproveDecider),
         error_recorder: Arc::new(LoggingErrorRecorder),
+        task_id: Some(task_id.clone()),
     };
 
     let run_result = execute_task_with_provider(&config, None).await;

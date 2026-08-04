@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, generate_task_id};
 use serde::{Deserialize, Serialize};
 
 use crate::executor::task_runner::{
@@ -252,6 +252,7 @@ impl SdkClient {
             tools,
             approval: Arc::new(AutoApproveDecider),
             error_recorder: Arc::new(LoggingErrorRecorder),
+            task_id: Some(generate_task_id()),
         };
 
         let result = execute_task_with_provider(&config, None).await;
