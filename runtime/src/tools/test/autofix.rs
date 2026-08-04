@@ -189,17 +189,15 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             fix_success: false, // 尚未验证
         });
 
+        // 无论 auto_apply 是否为 true，都写入 fix-context.json。
+        // LLM 在工具循环中通过文件读取修复上下文（fs.read .sacode/fix-context.json），
+        // 调用 fs.read 读取源码，调用 fs.edit 应用修复，然后再次调用 test.run 验证。
+        write_fix_context(&fix_context)?;
+
         // 如果不自动应用，仅返回修复上下文
         if !auto_apply {
             break;
         }
-
-        // 灵枢 · 自动修复闭环：
-        // test.fix 不直接修改源码，而是输出结构化修复上下文供 LLM 消费。
-        // LLM 在工具循环中读取 fix_context，调用 fs.read 读取源码，
-        // 调用 fs.edit 应用修复，然后再次调用 test.fix 或 test.run 验证。
-        // 此处写入修复上下文文件，便于 LLM 跨工具调用时引用。
-        write_fix_context(&fix_context)?;
     }
 
     // 构建最终结果
@@ -529,5 +527,132 @@ mod tests {
 
         let summary = parse_test_output(&data);
         assert_eq!(summary.failed_tests[0].location, "");
+    }
+
+    /// 端到端验证：test.fix → fix-context.json → 模拟 LLM 修复 → test.run 验证
+    ///
+    /// 验证完整闭环：
+    /// 1. 创建有 bug 的 Python 项目（add 函数返回 a-b 而非 a+b）
+    /// 2. 调用 test.fix(auto_apply=false) 生成 fix_context
+    /// 3. 验证 fix-context.json 文件生成且结构正确（location/category/suggestion）
+    /// 4. 模拟 LLM：基于 fix_context 修复源文件
+    /// 5. 调用 test.run 验证修复后测试通过
+    ///
+    /// 需要 pytest 在 PATH 中，用 `cargo test -- --ignored` 运行
+    #[test]
+    #[ignore = "需要 pytest 在 PATH 中，端到端验证用 --ignored 运行"]
+    fn e2e_pytest_fix_context_generates_and_repair_verifies() {
+        use std::sync::Mutex;
+
+        // 串行化 cwd 操作，避免并行测试冲突
+        static CWGUARD: Mutex<()> = Mutex::new(());
+        let _guard = CWGUARD.lock().unwrap();
+
+        // 1. 创建临时 Python 项目
+        let temp = tempfile::tempdir().expect("创建临时目录失败");
+        let project = temp.path();
+
+        // calc.py — 有 bug：add 返回 a - b 而非 a + b
+        // 注意：避免用 math.py 以免与 Python 标准库 math 冲突
+        std::fs::write(
+            project.join("calc.py"),
+            "def add(a, b):\n    return a - b\n",
+        )
+        .expect("写入 calc.py 失败");
+
+        // test_calc.py — 断言 add(2, 3) == 5
+        std::fs::write(
+            project.join("test_calc.py"),
+            "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+        )
+        .expect("写入 test_calc.py 失败");
+
+        // 2. 改变 cwd 到临时项目目录
+        let original_cwd = std::env::current_dir().expect("获取 cwd 失败");
+        std::env::set_current_dir(project).expect("设置 cwd 失败");
+
+        // 3. 调用 test.fix(auto_apply=false) 生成修复上下文
+        let input = serde_json::json!({"framework": "pytest", "auto_apply": false});
+        let result = execute(input).expect("test.fix 执行失败");
+
+        // 4. 验证 test.fix 输出：测试应失败
+        assert!(
+            !result.data["success"].as_bool().unwrap_or(true),
+            "有 bug 时测试应失败"
+        );
+
+        let iterations = result.data["iterations"]
+            .as_array()
+            .expect("iterations 应为数组");
+        assert!(!iterations.is_empty(), "至少应有 1 轮迭代");
+
+        // 5. 验证 fix_context 结构
+        let fix_context = iterations[0]["fix_context"]
+            .as_object()
+            .expect("fix_context 应为对象");
+        let failures = fix_context["failures"]
+            .as_array()
+            .expect("failures 应为数组");
+        assert!(!failures.is_empty(), "应有至少 1 个失败测试");
+
+        let failure = &failures[0];
+        let name = failure["name"].as_str().unwrap_or("");
+        assert!(
+            name.contains("test_add"),
+            "失败测试名应包含 test_add，实际: {name}"
+        );
+
+        // 错误消息非空（pytest 会输出 AssertionError）
+        let error_msg = failure["error_message"].as_str().unwrap_or("");
+        assert!(!error_msg.is_empty(), "错误消息不应为空");
+
+        // 错误分类应为 assertion_failure
+        let category = failure["category"].as_str().unwrap_or("");
+        assert_eq!(
+            category, "assertion_failure",
+            "断言失败应分类为 assertion_failure，实际: {category}"
+        );
+
+        // 修复建议非空
+        let suggestion = failure["suggestion"].as_str().unwrap_or("");
+        assert!(!suggestion.is_empty(), "修复建议不应为空");
+
+        // strategy_summary 包含工作流指引
+        let strategy = fix_context["strategy_summary"].as_str().unwrap_or("");
+        assert!(strategy.contains("fs.read"), "策略应包含 fs.read 指引");
+        assert!(strategy.contains("fs.edit"), "策略应包含 fs.edit 指引");
+        assert!(strategy.contains("test.run"), "策略应包含 test.run 指引");
+
+        // 6. 验证 fix-context.json 文件已写入磁盘
+        let fix_path = project.join(".sacode").join("fix-context.json");
+        assert!(fix_path.exists(), "fix-context.json 应已生成");
+
+        let file_content = std::fs::read_to_string(&fix_path).expect("读取 fix-context.json 失败");
+        let file_json: serde_json::Value =
+            serde_json::from_str(&file_content).expect("fix-context.json 应为有效 JSON");
+        assert!(
+            file_json["failures"].is_array(),
+            "文件中的 failures 应为数组"
+        );
+
+        // 7. 模拟 LLM 修复：基于 fix_context 的 suggestion 修复 calc.py
+        // fix_context 指出 assertion_failure，LLM 应检查 add 函数实现
+        std::fs::write(
+            project.join("calc.py"),
+            "def add(a, b):\n    return a + b\n",
+        )
+        .expect("修复 calc.py 失败");
+
+        // 8. 调用 test.run 验证修复后测试通过
+        let run_input = serde_json::json!({"framework": "pytest"});
+        let run_result = crate::tools::test::runner::execute(run_input).expect("test.run 执行失败");
+        assert!(
+            run_result.data["success"].as_bool().unwrap_or(false),
+            "修复后测试应通过，实际: {:?}",
+            run_result.data
+        );
+
+        // 9. 恢复 cwd
+        std::env::set_current_dir(original_cwd).expect("恢复 cwd 失败");
     }
 }
