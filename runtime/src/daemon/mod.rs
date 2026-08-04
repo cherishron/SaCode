@@ -22,8 +22,8 @@ use events::{
     stream_task_events,
 };
 use handlers::{
-    cancel_task, create_task, get_pending_tasks, get_queue_status, get_task_result,
-    get_task_status, health_check, list_tools, retry_task,
+    cancel_task, create_task, get_pending_tasks, get_queue_status, get_task_checkpoint,
+    get_task_result, get_task_status, health_check, list_tools, retry_task,
 };
 
 pub async fn create_daemon() -> Router {
@@ -36,6 +36,7 @@ pub async fn create_daemon() -> Router {
         .route("/task", post(create_task))
         .route("/task/:id/status", get(get_task_status))
         .route("/task/:id/result", get(get_task_result))
+        .route("/task/:id/checkpoint", get(get_task_checkpoint))
         .route("/task/:id/retry", post(retry_task))
         .route("/task/:id/cancel", post(cancel_task))
         .route("/events", get(stream_events))

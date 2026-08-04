@@ -173,6 +173,30 @@ pub async fn get_task_status(
         }));
     }
 
+    // 回退查询：CheckpointStorage 按 task_id 查找（跨进程恢复）
+    // 适用于 CLI 进程崩溃后 daemon 重启，task 未入队但 checkpoint 已落盘的场景
+    if let Some(workdir) = state.workdir.as_ref() {
+        let storage = crate::CheckpointStorage::new(workdir);
+        if let Ok(Some(checkpoint)) = storage.load_by_task_id(&task_id) {
+            let derived = format!("{:?}", checkpoint.status).to_lowercase();
+            return Json(serde_json::json!({
+                "task_id": task_id,
+                "status": derived,
+                "queue_status": derived,
+                "source": "checkpoint",
+                "checkpoint": {
+                    "status": checkpoint.status,
+                    "task_id": checkpoint.task_id,
+                    "created_at": checkpoint.created_at,
+                    "updated_at": checkpoint.updated_at,
+                    "event_count": checkpoint.recent_events.len(),
+                    "tool_count": checkpoint.executed_tools.len(),
+                },
+                "message": "task restored from checkpoint (cross-process recovery)",
+            }));
+        }
+    }
+
     Json(serde_json::json!({
         "task_id": task_id,
         "status": "not_found",
@@ -346,6 +370,44 @@ pub async fn list_tools() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "tools": registry.names(),
     }))
+}
+
+/// 按 task_id 查询 checkpoint（跨进程恢复接口）
+///
+/// 查询顺序：内存 tasks → 队列 → SQLite 结果 → CheckpointStorage
+/// 当 CLI 进程崩溃后 daemon 重启，可通过此端点按 task_id 恢复 checkpoint，
+/// 获取任务的完整状态（含事件历史、执行工具记录、统一状态机状态）。
+pub async fn get_task_checkpoint(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    // 无工作目录时无法访问 CheckpointStorage
+    let Some(workdir) = state.workdir.as_ref() else {
+        return Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "not_found",
+            "message": "workdir unavailable, checkpoint lookup disabled",
+        }));
+    };
+
+    let storage = crate::CheckpointStorage::new(workdir);
+    match storage.load_by_task_id(&task_id) {
+        Ok(Some(checkpoint)) => Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "found",
+            "checkpoint": checkpoint,
+        })),
+        Ok(None) => Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "not_found",
+            "message": "no checkpoint found for this task_id",
+        })),
+        Err(error) => Json(serde_json::json!({
+            "task_id": task_id,
+            "status": "error",
+            "message": format!("failed to load checkpoint: {error}"),
+        })),
+    }
 }
 
 pub async fn run_daemon(addr: SocketAddr) {

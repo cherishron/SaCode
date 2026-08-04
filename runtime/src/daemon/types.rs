@@ -228,6 +228,11 @@ pub struct DaemonState {
     pub queue: Arc<TaskQueue>,
     pub executor: Mutex<TaskExecutor>,
     pub retry_handler: RetryHandler,
+    /// 工作目录（用于 CheckpointStorage 按 task_id 恢复 checkpoint）
+    ///
+    /// daemon 启动时从 current_dir 获取，用于跨进程 checkpoint 查询。
+    /// None 表示工作目录不可用（极端情况），checkpoint 相关端点将返回 not_found。
+    pub workdir: Option<std::path::PathBuf>,
 }
 
 impl DaemonState {
@@ -314,6 +319,7 @@ impl DaemonState {
             queue,
             executor: Mutex::new(executor),
             retry_handler,
+            workdir: std::env::current_dir().ok(),
         }
     }
 }
