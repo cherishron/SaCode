@@ -170,8 +170,9 @@ impl SdkClient {
     /// 4. 调用 [`execute_task_with_provider`]，沙箱审计与工具循环自动接管
     pub async fn execute_task(&self, prompt: &str) -> Result<SdkResult> {
         // 1. 构建 ToolRegistry（按是否启用全集决定起点）
+        // 启用全集时附带注册 workdir 下的 WASM 插件工具
         let mut tools = if self.use_full_tools {
-            ToolRegistry::builtin()
+            ToolRegistry::builtin_with_wasm(self.workdir.as_path())
         } else {
             ToolRegistry::core_tools()
         };

@@ -190,7 +190,7 @@ where
     let candidates = resolve_model_candidates(&workdir);
     let route_plan = build_route_plan(&workdir, &candidates, &profile);
 
-    let mut tools = ToolRegistry::builtin();
+    let mut tools = ToolRegistry::builtin_with_wasm(&workdir);
     let mcp_store = McpConfigStore::new(&workdir);
     let _ = register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
     let mut tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();

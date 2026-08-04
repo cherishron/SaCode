@@ -83,7 +83,7 @@ pub async fn run_sub_agent(
     let role_instruction = build_role_system_instruction(&role);
 
     // 构建工具注册表
-    let mut tools = ToolRegistry::builtin();
+    let mut tools = ToolRegistry::builtin_with_wasm(workdir);
     let mcp_store = McpConfigStore::new(workdir);
     let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
 

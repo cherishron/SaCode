@@ -14,7 +14,7 @@ pub mod web;
 
 pub use spec::{SideEffectLevel, ToolLayer, ToolOutput, ToolSpec};
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::model_routing::TaskProfile;
 
@@ -137,6 +137,22 @@ impl ToolRegistry {
         registry.register_fn(web::fetch::spec(), web::fetch::execute);
         registry.register_fn(web::search::spec(), web::search::execute);
         registry.apply_default_layers();
+        registry
+    }
+
+    /// 注册全部内置工具 + workdir 下发现的 WASM 插件工具
+    ///
+    /// 设计意图：
+    /// - 在 [`builtin`] 基础上追加 `.sacode/plugins/` 下的 WASM 工具
+    /// - WASM 加载失败不阻断主流程：仅 stderr 警告，返回已构建的 registry
+    /// - 用于 CLI 主执行路径 / orchestrator / worker agent 等需要完整工具集的入口
+    ///
+    /// 注意：WASM 工具归为 Extended 层（动态注册，不计入 26 个 builtin）。
+    pub fn builtin_with_wasm(workdir: &Path) -> Self {
+        let mut registry = Self::builtin();
+        if let Err(error) = wasm::register_wasm_tools(&mut registry, workdir) {
+            eprintln!("wasm tools registration skipped: {error}");
+        }
         registry
     }
 
@@ -385,4 +401,53 @@ fn estimate_spec_chars(spec: &ToolSpec) -> usize {
         .chars()
         .count();
     spec.name.chars().count() + spec.description.chars().count() + schema_chars
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// builtin_with_wasm 在无 .sacode/plugins 目录时等价于 builtin
+    /// 验证 WASM 注册失败不阻断主流程
+    #[test]
+    fn builtin_with_wasm_falls_back_to_builtin_when_no_plugins_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::builtin_with_wasm(tmp.path());
+
+        // 核心层 4 个工具必须存在
+        assert!(registry.get("fs.read").is_some());
+        assert!(registry.get("fs.write").is_some());
+        assert!(registry.get("fs.edit").is_some());
+        assert!(registry.get("shell.exec").is_some());
+
+        // 无 WASM 工具
+        assert!(registry
+            .specs()
+            .iter()
+            .all(|s| !s.name.starts_with(super::wasm::WASM_TOOL_PREFIX)));
+    }
+
+    /// builtin_with_wasm 加载 .sacode/plugins 下的 WASM 插件
+    #[test]
+    fn builtin_with_wasm_registers_wasm_plugin_from_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugins_root = tmp.path().join(".sacode").join("plugins");
+        let plugin_dir = plugins_root.join("demo");
+        std::fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+
+        // 写入 manifest（声明一个 greet 函数）
+        let manifest = r#"{"name":"demo","version":"0.1.0","description":"demo","wasm_path":"plugin.wasm","functions":[{"name":"greet","description":"say hi","input_schema":{"type":"object"},"output_schema":{"type":"string"},"side_effect_level":null}]}"#;
+        std::fs::write(plugin_dir.join("manifest.json"), manifest).expect("write manifest");
+        // 写入 WASM magic + version 1 占位（extism 加载可能失败，但 ToolSpec 注册不依赖实际加载）
+        std::fs::write(plugin_dir.join("plugin.wasm"), b"\0asm\x01\x00\x00\x00").expect("write wasm");
+
+        let registry = ToolRegistry::builtin_with_wasm(tmp.path());
+        // WASM 工具应出现在 registry 中
+        let wasm_tool = registry.get("wasm.demo.greet");
+        assert!(wasm_tool.is_some(), "wasm tool should be registered");
+        assert_eq!(
+            wasm_tool.unwrap().description, "say hi",
+            "wasm tool description should come from manifest"
+        );
+    }
 }

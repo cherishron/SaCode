@@ -6,11 +6,11 @@
 //! - 执行时通过共享的 [`PluginHost`] 调用对应插件函数
 //! - WASM 工具统一归为 Extended 层（动态注册，不计入 26 个 builtin）
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::plugin::{discover_wasm_plugins, load_wasm_plugin_dir, PluginCall, PluginHost, PluginSpec};
-use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
+use crate::plugin::{load_wasm_plugin_dir, PluginCall, PluginHost, PluginSpec};
+use crate::tools::spec::{ToolOutput, ToolSpec};
 use crate::tools::{ToolExecutor, ToolRegistry};
 
 /// WASM 工具名前缀，所有 WASM 工具均以 `wasm.<plugin>.<function>` 形式注册
@@ -91,15 +91,17 @@ pub fn collect_wasm_tools(
             }
             match load_wasm_plugin_dir(&path) {
                 Ok(spec) => {
+                    // 尝试加载到 PluginHost；失败不阻断 ToolSpec 注册
+                    // 设计意图：LLM 仍能看到工具描述（manifest 已声明），
+                    // 调用时 executor 会返回加载错误，让 LLM 知道工具不可用
                     if let Err(error) = host.load(spec.clone()) {
                         eprintln!(
-                            "wasm tool load skipped {} ({}): {error}",
+                            "wasm plugin load failed {} ({}): {error}",
                             spec.name,
                             spec.wasm_path
                         );
-                    } else {
-                        specs.push(spec);
                     }
+                    specs.push(spec);
                 }
                 Err(error) => {
                     eprintln!(
@@ -198,7 +200,9 @@ pub fn list_wasm_plugin_specs(workdir: &Path) -> Vec<PluginSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::PluginFunction;
+    use crate::plugin::{discover_wasm_plugins, PluginFunction};
+    use crate::tools::spec::SideEffectLevel;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]

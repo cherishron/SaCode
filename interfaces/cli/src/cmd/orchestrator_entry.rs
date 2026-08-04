@@ -108,7 +108,7 @@ async fn execute_single_agent_task(
     use sacode_runtime::ApprovalDecider;
 
     // 构建工具注册表
-    let mut tools = ToolRegistry::builtin();
+    let mut tools = ToolRegistry::builtin_with_wasm(workdir);
     let mcp_store = McpConfigStore::new(workdir);
     let _ = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
 
