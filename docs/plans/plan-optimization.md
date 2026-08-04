@@ -203,14 +203,14 @@ async fn update_status(&self, task_id: &str, _status: TaskQueueStatus) -> anyhow
 
 | 编号 | 优先级 | 问题 | 类别 | 状态 |
 |------|--------|------|------|------|
-| L0-1 | **P0 严重** | 多 Agent 子 Agent 路径不记录模型健康，自愈合闭环断裂 | 灵枢-自愈合 | 待修复 |
-| L0-2 | **P0 严重** | FailoverContext 上下文字段全部填空 Vec，故障切换不继承进度 | 灵枢-自愈合 | 待修复 |
-| L0-3 | **P1 高** | NodeDecision 的 WaitForUser/WaitForApproval/Fail 分支未处理 | 灵枢-自愈合 | 待修复 |
-| L0-4 | **P0 严重** | 工具分层 for_prompt() 仅 SDK 路径调用，主流程全量注入 | 工具分层 | 待修复 |
-| L0-5 | **P1 高** | 五维冲突检测只报告不拦截，无自动回路 | 灵枢-自防护 | 待修复 |
-| L0-6 | **P2 中** | MCP 暴露侧仅 3 个工具，协议方法不全 | MCP 暴露侧 | 待增强 |
-| L0-7 | **P2 中** | LSP 跳转/引用/重命名等核心能力缺失 | LSP 短板 | 待增强 |
-| L0-8 | **P2 中** | ACP capabilities 声明 tools:true 但无 tools method | ACP 协议 | 待修复 |
+| L0-1 | **P0 严重** | 多 Agent 子 Agent 路径不记录模型健康，自愈合闭环断裂 | 灵枢-自愈合 | ✅ 已修复 |
+| L0-2 | **P0 严重** | FailoverContext 上下文字段全部填空 Vec，故障切换不继承进度 | 灵枢-自愈合 | ✅ 已修复 |
+| L0-3 | **P1 高** | NodeDecision 的 WaitForUser/WaitForApproval/Fail 分支未处理 | 灵枢-自愈合 | ✅ 已修复 |
+| L0-4 | **P0 严重** | 工具分层 for_prompt() 仅 SDK 路径调用，主流程全量注入 | 工具分层 | ✅ 已修复 |
+| L0-5 | **P1 高** | 五维冲突检测只报告不拦截，无自动回路 | 灵枢-自防护 | ✅ 已修复 |
+| L0-6 | **P2 中** | MCP 暴露侧仅 3 个工具，协议方法不全 | MCP 暴露侧 | ✅ 已修复 |
+| L0-7 | **P2 中** | LSP 跳转/引用/重命名等核心能力缺失 | LSP 短板 | ✅ 已修复 |
+| L0-8 | **P2 中** | ACP capabilities 声明 tools:true 但无 tools method | ACP 协议 | ✅ 已修复 |
 
 ---
 
@@ -602,8 +602,8 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
 2. **废弃 margin() API** (`interfaces/cli/src/tui/tui_entry.rs:91,110`): ratatui 0.28+ 已标记 deprecated，改用 `Layout::new().horizontal_margin()/vertical_margin()`
 3. **反直觉条件** (`runtime/src/tools/fs/search.rs:74`): `result.stdout.is_empty() == false` → `!result.stdout.is_empty()`
 4. **魔法数字** (`runtime/src/tools/task/spawn.rs:63`): `120_000` 提取为 `const DEFAULT_SPAWN_TIMEOUT_MS: u64 = 120_000;`
-5. **stty 依赖** (`interfaces/cli/src/tui/tui_entry.rs`): 仅 Unix 有效，添加平台条件编译或注释
-6. **id 命令依赖** (`runtime/src/sandbox/executor.rs`): `id -u` Windows 不存在，添加平台分支
+5. ~~**stty 依赖** (`interfaces/cli/src/tui/tui_entry.rs`): 仅 Unix 有效，添加平台条件编译或注释~~ **已完成**：`TerminalFlowControlGuard::new()` 添加 `#[cfg(unix)]`/`#[cfg(not(unix))]` 分支，Windows 上直接返回 `None`，避免 3 次无意义 `stty` 进程创建。
+6. ~~**id 命令依赖** (`runtime/src/sandbox/executor.rs`): `id -u` Windows 不存在，添加平台分支~~ **已完成**：`default_container_user()` 添加 cfg 分支，Windows 直接返回 `65534:65534`；`read_id_output` 标注 `#[cfg(unix)]` 消除 dead_code。
 
 ---
 

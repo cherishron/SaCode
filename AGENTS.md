@@ -213,7 +213,7 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 ## Easy-to-Guess Wrong
 
 - This repo has no root `package.json`, no `rustfmt.toml`, no `clippy.toml`, and no `.pre-commit-config.yaml`; do not assume extra JS or hook workflows exist.
-- `shell.exec` and `fs.search` currently rely on Unix commands (`sh`, `grep`), so Windows behavior is still a real constraint in runtime code.
+- `shell.exec` uses platform-specific shell wrappers: Windows wraps with `cmd.exe /C` when shell operators (`|` `>` `&&` etc.) or builtins are detected (`needs_cmd_wrapper`); Unix wraps with `sh -c` symmetrically (`needs_sh_wrapper`). `fs.search` is pure Rust (`std::fs` + `regex`), no external `grep` dependency. When adding new shell-invoking tools, mirror this wrapper pattern for both platforms.
 - If prose docs disagree with scripts or workflows, trust `Cargo.toml`, `.github/workflows/*`, and `scripts/check-release.js`.
 - `max_iterations` 默认值为 `3`（`interfaces/cli/src/cmd/config.rs`），`/loop` 外层轮数默认 `10`（`loop_max_iterations`），二者独立不应混用。
 - `task_runtime.rs` 中的 `unwrap_or(6)` 对 Option 不生效的问题已解决，当前以 EffectiveConfig 默认值为准。

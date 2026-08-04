@@ -228,8 +228,30 @@ fn build_command_parts(command: &str) -> anyhow::Result<Vec<String>> {
 
     #[cfg(not(target_os = "windows"))]
     {
+        // Unix: 含 shell 操作符（管道、重定向、链式执行）时必须通过 sh -c 解释，
+        // 否则 split_command 会把 | > && 等当作字面参数传给程序
+        if needs_sh_wrapper(command) {
+            return Ok(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                command.to_string(),
+            ]);
+        }
         split_command(command)
     }
+}
+
+/// 判断 Unix 上命令是否需要通过 sh -c 包装执行
+/// 与 Windows 的 needs_cmd_wrapper 对称：检测 shell 操作符
+#[cfg(not(target_os = "windows"))]
+fn needs_sh_wrapper(command: &str) -> bool {
+    const UNIX_SHELL_OPERATORS: &[&str] = &["|", ">", ">>", "<", "&&", "||", "&", ";"];
+    for op in UNIX_SHELL_OPERATORS {
+        if command.contains(op) {
+            return true;
+        }
+    }
+    false
 }
 
 /// 判断 Windows 上命令是否需要通过 cmd.exe 包装执行
@@ -440,6 +462,47 @@ mod tests {
         {
             assert_eq!(parts, vec!["echo", "hello"]);
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn sh_wrapper_for_pipe_and_redirect_operators() {
+        assert!(needs_sh_wrapper("echo hello | grep hello"));
+        assert!(needs_sh_wrapper("ls > out.txt"));
+        assert!(needs_sh_wrapper("cmd >> log.txt"));
+        assert!(needs_sh_wrapper("cat < input.txt"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn sh_wrapper_for_chain_operators() {
+        assert!(needs_sh_wrapper("echo a && echo b"));
+        assert!(needs_sh_wrapper("echo a || echo b"));
+        assert!(needs_sh_wrapper("echo a; echo b"));
+        assert!(needs_sh_wrapper("background_job &"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn no_sh_wrapper_for_simple_unix_commands() {
+        assert!(!needs_sh_wrapper("cargo build"));
+        assert!(!needs_sh_wrapper("git status"));
+        assert!(!needs_sh_wrapper("echo hello world"));
+        assert!(!needs_sh_wrapper("node app.js"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn build_command_parts_wraps_with_sh_on_unix() {
+        let parts = build_command_parts("echo a && echo b").unwrap();
+        assert_eq!(parts, vec!["sh", "-c", "echo a && echo b"]);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn build_command_parts_no_wrap_for_simple_unix_command() {
+        let parts = build_command_parts("cargo build").unwrap();
+        assert_eq!(parts, vec!["cargo", "build"]);
     }
 
     #[test]

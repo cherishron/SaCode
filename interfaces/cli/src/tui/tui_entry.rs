@@ -60,22 +60,31 @@ struct TerminalFlowControlGuard {
 
 impl TerminalFlowControlGuard {
     fn new() -> Self {
-        let previous = Command::new("stty")
-            .arg("-g")
-            .output()
-            .ok()
-            .and_then(|output| {
-                if output.status.success() {
-                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .filter(|value| !value.is_empty());
+        // stty 是 Unix 终端流控命令，Windows 上不存在。
+        // 原 .ok() 容错已保证功能正确，此处 cfg 分支避免 Windows 上 3 次无意义进程创建。
+        #[cfg(unix)]
+        {
+            let previous = Command::new("stty")
+                .arg("-g")
+                .output()
+                .ok()
+                .and_then(|output| {
+                    if output.status.success() {
+                        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .filter(|value| !value.is_empty());
 
-        let _ = Command::new("stty").args(["-ixon", "-ixoff"]).status();
+            let _ = Command::new("stty").args(["-ixon", "-ixoff"]).status();
 
-        Self { previous }
+            Self { previous }
+        }
+        #[cfg(not(unix))]
+        {
+            Self { previous: None }
+        }
     }
 }
 

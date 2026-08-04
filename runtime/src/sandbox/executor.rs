@@ -349,11 +349,22 @@ fn docker_tmpfs_mounts(config: &DockerSandboxConfig) -> Vec<String> {
 }
 
 fn default_container_user() -> String {
-    let uid = read_id_output("id", "-u").unwrap_or_else(|| "65534".to_string());
-    let gid = read_id_output("id", "-g").unwrap_or_else(|| "65534".to_string());
-    format!("{}:{}", uid.trim(), gid.trim())
+    // `id` 命令仅 Unix 存在；Windows 宿主上执行会失败并 fallback 到 65534(nobody)。
+    // Docker Desktop on Windows 的 uid:gid 由 Linux 容器侧处理，宿主无需查询。
+    // cfg 分支避免 Windows 上 2 次无意义进程创建。
+    #[cfg(unix)]
+    {
+        let uid = read_id_output("id", "-u").unwrap_or_else(|| "65534".to_string());
+        let gid = read_id_output("id", "-g").unwrap_or_else(|| "65534".to_string());
+        format!("{}:{}", uid.trim(), gid.trim())
+    }
+    #[cfg(not(unix))]
+    {
+        "65534:65534".to_string()
+    }
 }
 
+#[cfg(unix)]
 fn read_id_output(program: &str, arg: &str) -> Option<String> {
     Command::new(program)
         .arg(arg)
