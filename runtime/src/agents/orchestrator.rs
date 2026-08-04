@@ -718,15 +718,19 @@ fn role_rank(role_id: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_summary_record, collect_conflict_records, infer_overall_conclusion,
-        infer_recommended_next_action,
+        aggregate_worker_results, build_summary_record, collect_conflict_records, fold_worker_results,
+        infer_overall_conclusion, infer_recommended_next_action,
     };
+    use crate::agents::message_bus::CommunicationSummary;
+    use crate::agents::model_router::ResolvedRoleRoute;
     use crate::agents::summary_compactor::{
         compact_aggregate_output, compact_conflict_detail, extract_risk_summary,
     };
     use crate::agents::worker::WorkerRunResult;
+    use crate::model_routing::{ModelRoutePlan, RoutedModel};
     use sacode_kernel::SummaryItemRecord;
-    use sacode_kernel::{AgentRole, ConflictRecord, RoleModelPolicy, SubAgentResult, SubAgentTask};
+    use sacode_kernel::{AgentRole, ConflictRecord, ExecutionReport, RoleModelPolicy, SubAgentResult, SubAgentTask};
+    use std::collections::HashMap;
 
     fn item(role_id: &str, output: &str) -> SummaryItemRecord {
         SummaryItemRecord {
@@ -764,6 +768,38 @@ mod tests {
             events: Vec::new(),
             resolved_route: None,
             resolved_model_summary: "auto".to_string(),
+        }
+    }
+
+    /// 构造指定 success 状态的 worker，用于状态冲突测试
+    fn worker_with_status(role_id: &str, output: &str, success: bool) -> WorkerRunResult {
+        let mut w = worker(role_id, output);
+        w.result.success = success;
+        w
+    }
+
+    /// 构造携带 resolved_route 的 worker，用于路由冲突与 fold 测试
+    fn worker_with_route(role_id: &str, output: &str, route: ResolvedRoleRoute) -> WorkerRunResult {
+        let mut w = worker(role_id, output);
+        w.resolved_route = Some(route);
+        w
+    }
+
+    /// 构造简化的 ResolvedRoleRoute，仅含 primary 路由
+    fn route(provider: &str, model: &str) -> ResolvedRoleRoute {
+        ResolvedRoleRoute {
+            plan: ModelRoutePlan {
+                primary: RoutedModel {
+                    provider_name: provider.to_string(),
+                    model_name: model.to_string(),
+                    route_score: 80,
+                    needs_thinking: false,
+                    reasons: vec!["default".to_string()],
+                },
+                fallbacks: vec![],
+                route_reason: "auto".to_string(),
+            },
+            summary: format!("{}/{}", provider, model),
         }
     }
 
@@ -922,6 +958,310 @@ mod tests {
             next.as_deref(),
             Some("先修复验证阶段发现的阻塞或回归，再重新执行验证与裁决。")
         );
+    }
+
+    // ── 灵枢 · 自组织 · 多角色协同实战覆盖 ──────────────────────
+
+    #[test]
+    fn collect_conflict_records_detects_status_conflict() {
+        // 维度 1：success 状态混合 — status_conflict
+        let explorer = worker_with_status("repo-explorer", "正在分析", true);
+        let devops = worker_with_status("devops-operator", "正在分析", false);
+
+        let conflicts = collect_conflict_records(&[&explorer, &devops]);
+
+        assert!(
+            conflicts.iter().any(|record| record.kind == "status_conflict"),
+            "混合成功状态应触发 status_conflict，实际：{:?}",
+            conflicts
+        );
+    }
+
+    #[test]
+    fn collect_conflict_records_detects_route_conflict() {
+        // 维度 2：主路由不同 — route_conflict
+        // 使用中性输出避免触发其他冲突维度
+        let explorer = worker_with_route("repo-explorer", "正在分析", route("openai", "gpt-4"));
+        let devops = worker_with_route(
+            "devops-operator",
+            "正在分析",
+            route("anthropic", "claude-3"),
+        );
+
+        let conflicts = collect_conflict_records(&[&explorer, &devops]);
+
+        assert!(
+            conflicts.iter().any(|record| record.kind == "route_conflict"),
+            "不同主路由应触发 route_conflict，实际：{:?}",
+            conflicts
+        );
+    }
+
+    #[test]
+    fn collect_conflict_records_detects_conclusion_conflict() {
+        // 维度 4：共识结论不同 — conclusion_conflict
+        // 使用相同极性（正向）避免触发 polarity_conflict
+        let explorer = worker(
+            "repo-explorer",
+            "探索完成。任务完成，共完成 3 个步骤",
+        );
+        let devops = worker(
+            "devops-operator",
+            "交付检查。任务完成，共完成 5 个步骤",
+        );
+
+        let conflicts = collect_conflict_records(&[&explorer, &devops]);
+
+        assert!(
+            conflicts.iter().any(|record| record.kind == "conclusion_conflict"),
+            "不同共识结论应触发 conclusion_conflict，实际：{:?}",
+            conflicts
+        );
+    }
+
+    #[test]
+    fn collect_conflict_records_detects_polarity_conflict() {
+        // 维度 5：极性混合 — polarity_conflict
+        // 实现者正向 + 验证者负向，同时也会触发 validation_conflict，
+        // 这里仅断言 polarity_conflict 被识别
+        let implementer = worker("implementer", "实现结果已整理。任务完成，共完成 5 个步骤");
+        let tester = worker(
+            "test-engineer",
+            "验证风险已识别。验证失败，存在阻塞。",
+        );
+
+        let conflicts = collect_conflict_records(&[&implementer, &tester]);
+
+        assert!(
+            conflicts.iter().any(|record| record.kind == "polarity_conflict"),
+            "正负向极性混合应触发 polarity_conflict，实际：{:?}",
+            conflicts
+        );
+    }
+
+    #[test]
+    fn collect_conflict_records_returns_empty_when_consistent() {
+        // 全部角色一致：相同状态、相同极性、相同结论、无路由 → 无冲突
+        let explorer = worker("repo-explorer", "正在分析");
+        let devops = worker("devops-operator", "正在分析");
+
+        let conflicts = collect_conflict_records(&[&explorer, &devops]);
+
+        assert!(
+            conflicts.is_empty(),
+            "全部一致时不应检测到冲突，实际：{:?}",
+            conflicts
+        );
+    }
+
+    #[test]
+    fn aggregate_worker_results_orders_roles_by_rank() {
+        // 验证 aggregate 输出按 role_rank 排序（reporter 在最末）
+        let results = vec![
+            worker("reporter", "汇总结论已生成，完成 5 个步骤。"),
+            worker("repo-explorer", "探索结论已整理。"),
+            worker("implementer", "实现结论已整理。"),
+        ];
+
+        let output = aggregate_worker_results("测试任务", &results, &[]);
+
+        // roles= 行应按 rank 排序：repo-explorer(2), implementer(3), reporter(7)
+        let roles_line = output
+            .lines()
+            .find(|line| line.starts_with("roles="))
+            .expect("应包含 roles= 行");
+        assert_eq!(
+            roles_line,
+            "roles=repo-explorer,implementer,reporter"
+        );
+    }
+
+    #[test]
+    fn aggregate_worker_results_includes_reporter_summary_line() {
+        // reporter 角色输出应单独提取为 reporter_summary= 行
+        let results = vec![
+            worker("implementer", "实现结果已整理。"),
+            worker(
+                "reporter",
+                "汇总结论已生成，完成 5 个步骤。任务完成，共完成 5 个步骤",
+            ),
+        ];
+
+        let output = aggregate_worker_results("任务 X", &results, &[]);
+
+        let reporter_line = output
+            .lines()
+            .find(|line| line.starts_with("reporter_summary="));
+        assert!(
+            reporter_line.is_some(),
+            "应包含 reporter_summary= 行，实际输出：\n{}",
+            output
+        );
+        assert!(
+            reporter_line
+                .unwrap()
+                .contains("汇总结论已生成，完成 5 个步骤"),
+            "reporter_summary 应包含 reporter 输出摘要"
+        );
+    }
+
+    #[test]
+    fn aggregate_worker_results_includes_conflicts_section() {
+        // conflicts 列表非空时，输出应包含 conflicts= 行
+        let results = vec![worker("implementer", "实现结果已整理。")];
+        let conflicts = vec!["status_conflict: mixed success".to_string()];
+
+        let output = aggregate_worker_results("任务 Y", &results, &conflicts);
+
+        let conflicts_line = output
+            .lines()
+            .find(|line| line.starts_with("conflicts="));
+        assert!(
+            conflicts_line.is_some(),
+            "应包含 conflicts= 行，实际输出：\n{}",
+            output
+        );
+        assert!(conflicts_line.unwrap().contains("status_conflict: mixed success"));
+    }
+
+    #[test]
+    fn aggregate_worker_results_skips_empty_role_output() {
+        // 空输出角色不应在 aggregate 输出中生成 `- role:` 行
+        let results = vec![
+            worker("implementer", "实现结果已整理。"),
+            worker("repo-explorer", "   "),
+        ];
+
+        let output = aggregate_worker_results("任务 Z", &results, &[]);
+
+        // repo-explorer 输出为空，不应在 per-role 行中出现
+        let repo_line = output
+            .lines()
+            .find(|line| line.starts_with("- repo-explorer"));
+        assert!(
+            repo_line.is_none(),
+            "空输出角色不应出现在聚合输出中，实际：\n{}",
+            output
+        );
+        // implementer 仍应出现
+        assert!(
+            output.lines().any(|line| line.starts_with("- implementer")),
+            "非空输出角色应保留"
+        );
+    }
+
+    #[test]
+    fn fold_worker_results_records_route_and_tool_records() {
+        // 验证 fold_worker_results 将 route 与 tool 记录正确折叠到 ExecutionReport
+        let implementer = worker_with_route(
+            "implementer",
+            "实现结果已整理。",
+            route("openai", "gpt-4"),
+        );
+        let tester = worker_with_route(
+            "test-engineer",
+            "验证结论已整理。",
+            route("anthropic", "claude-3"),
+        );
+        let results = vec![implementer, tester];
+
+        let mut report = ExecutionReport::default();
+        let comm_summaries: HashMap<String, CommunicationSummary> = HashMap::new();
+
+        fold_worker_results(&mut report, &results, &comm_summaries);
+
+        // 应生成 2 条 tool_records（每个 worker 一条）
+        assert_eq!(report.tool_records.len(), 2);
+        assert!(report
+            .tool_records
+            .iter()
+            .any(|record| record.tool_name == "subagent.implementer"));
+        assert!(report
+            .tool_records
+            .iter()
+            .any(|record| record.tool_name == "subagent.test-engineer"));
+
+        // 应生成 2 条 route_records，包含不同 provider
+        assert_eq!(report.route_records.len(), 2);
+        let providers: Vec<&str> = report
+            .route_records
+            .iter()
+            .map(|record| record.primary.provider_name.as_str())
+            .collect();
+        assert!(providers.contains(&"openai"));
+        assert!(providers.contains(&"anthropic"));
+
+        // 应生成事件序列（每个 worker 至少 2 条事件：绑定 + 模型决策）
+        assert!(
+            report.events.len() >= 4,
+            "应至少生成 4 条事件（每 worker 2 条），实际：{}",
+            report.events.len()
+        );
+    }
+
+    #[test]
+    fn fold_worker_results_includes_communication_summary_events() {
+        // 通信摘要非空时，应追加通信事件到 report.events
+        let implementer = worker("implementer", "实现结果已整理。");
+        let results = vec![implementer];
+
+        let mut comm_summaries: HashMap<String, CommunicationSummary> = HashMap::new();
+        comm_summaries.insert(
+            "task-implementer".to_string(),
+            CommunicationSummary {
+                sent_count: 1,
+                received_count: 2,
+                messages: Vec::new(),
+            },
+        );
+
+        let mut report = ExecutionReport::default();
+        fold_worker_results(&mut report, &results, &comm_summaries);
+
+        // 应包含通信事件 — Event 不实现 Display，通过模式匹配提取 content
+        let has_comm_event = report.events.iter().any(|event| {
+            if let sacode_kernel::Event::Thinking { content } = event {
+                content.contains("通信：发送 1 条，接收 2 条")
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_comm_event,
+            "应包含通信摘要事件，实际事件：{:?}",
+            report.events
+        );
+    }
+
+    #[test]
+    fn build_summary_record_dedup_risks() {
+        // 重复的 conflicts 条目应在 SummaryRecord.key_risks 中去重
+        // 注意：role-prefixed risks 因 role_id 不同不会去重，故用 conflicts 验证字面去重
+        let results = vec![
+            worker("implementer", "实现结果已整理。"),
+            worker("code-reviewer", "审查结果已整理。"),
+        ];
+        let conflicts = vec![
+            "status_conflict: mixed success".to_string(),
+            "status_conflict: mixed success".to_string(), // 字面重复
+            "route_conflict: different providers".to_string(),
+        ];
+
+        let summary = build_summary_record("test prompt", &results, &conflicts, &[]);
+
+        // worker 输出无风险信号，key_risks 应仅来自 conflicts（已去重）
+        assert_eq!(
+            summary.key_risks.len(),
+            2,
+            "重复 conflicts 应去重为 2 条，实际：{:?}",
+            summary.key_risks
+        );
+        assert!(summary
+            .key_risks
+            .contains(&"status_conflict: mixed success".to_string()));
+        assert!(summary
+            .key_risks
+            .contains(&"route_conflict: different providers".to_string()));
     }
 }
 
