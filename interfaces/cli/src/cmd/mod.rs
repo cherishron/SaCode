@@ -26,6 +26,7 @@ mod repl_entry;
 mod runtime_entry;
 mod sandbox;
 mod serve;
+mod session;
 mod skill;
 pub mod status;
 mod tracing_setup;
@@ -84,6 +85,7 @@ pub enum CliCommand {
     Checkpoint,
     Status,
     Update,
+    Session,
     Help,
     Version,
 }
@@ -142,6 +144,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Checkpoint => checkpoint::run(options.sub_args)?,
         CliCommand::Status => status::run().await?,
         CliCommand::Update => update::run(options.sub_args)?,
+        CliCommand::Session => session::run(options.sub_args)?,
         CliCommand::Vim => vim::run(options.sub_args)?,
     }
 

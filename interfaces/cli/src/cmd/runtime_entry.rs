@@ -1,7 +1,8 @@
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use sacode_kernel::TaskRunState;
+use sacode_kernel::schema::{Checkpoint, TaskState};
+use sacode_kernel::{Task, TaskRunState};
 use serde::Serialize;
 use std::io::Write;
 use tokio::io::{self, AsyncReadExt};
@@ -9,6 +10,7 @@ use tokio::io::{self, AsyncReadExt};
 use super::{CliOptions, JSON_STREAM_PREFIX};
 use crate::runner::{
     format_stream_tail, run_task_with_stdin, run_task_with_stdin_and_stream, StreamEventKind,
+    RunnerOutput,
 };
 
 #[derive(Debug, Serialize)]
@@ -44,6 +46,8 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             stdin.clone(),
         )
         .await?;
+        // CLI 执行路径写 checkpoint（统一状态机阶段二）
+        let _ = write_checkpoint_for_run(&output);
         let response = CliResponse {
             prompt: output.prompt.clone(),
             mode: output.mode,
@@ -94,6 +98,9 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
         }),
     )
     .await?;
+
+    // CLI 执行路径写 checkpoint（统一状态机阶段二）
+    let _ = write_checkpoint_for_run(&output);
 
     if options.json_stream {
         let response = CliResponse {
@@ -153,4 +160,41 @@ pub(super) fn preview(input: &str) -> String {
     } else {
         preview
     }
+}
+
+/// CLI 执行路径写 checkpoint（统一状态机阶段二）
+///
+/// 将 RunnerOutput 转换为 Checkpoint 并持久化到 .sacode/checkpoints/，
+/// 使任务状态可跨进程恢复。失败时静默记录（不阻塞 CLI 主流程）。
+///
+/// 设计要点：
+/// - 状态映射：TaskRunState → TaskState（经 From impl），无 state 默认 Failed
+/// - 事件历史：截取 RunnerOutput.events 末尾 100 条（Checkpoint::add_event 内部截断）
+/// - 工作目录：使用 output.workspace 作为 checkpoint 存储根
+fn write_checkpoint_for_run(output: &RunnerOutput) -> Result<()> {
+    use sacode_runtime::CheckpointStorage;
+
+    let workdir = std::path::Path::new(&output.workspace);
+    let storage = CheckpointStorage::new(workdir);
+
+    // 构建 Task
+    let task = Task::new(output.prompt.clone(), output.mode, None);
+    let mut checkpoint = Checkpoint::new(task);
+
+    // 记录事件历史
+    for event in &output.events {
+        checkpoint.add_event(event.clone());
+    }
+
+    // 设置统一状态机状态
+    let task_state = output
+        .task_run
+        .state
+        .clone()
+        .map(TaskState::from)
+        .unwrap_or(TaskState::Failed);
+    checkpoint.set_status(task_state);
+
+    storage.save(&checkpoint)?;
+    Ok(())
 }

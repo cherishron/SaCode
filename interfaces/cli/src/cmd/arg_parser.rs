@@ -60,6 +60,7 @@ fn simple_subcommand(name: &str) -> Option<CliCommand> {
         "checkpoint" => CliCommand::Checkpoint,
         "status" => CliCommand::Status,
         "update" => CliCommand::Update,
+        "session" => CliCommand::Session,
         _ => return None,
     })
 }

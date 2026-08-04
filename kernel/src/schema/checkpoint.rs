@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::event::Event;
-use crate::schema::Task;
+use crate::schema::{Task, TaskState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -13,6 +13,12 @@ pub struct Checkpoint {
     pub recent_events: Vec<Event>,
     pub created_at: String,
     pub updated_at: String,
+    /// 任务状态（统一状态机）
+    ///
+    /// 旧 checkpoint 文件无此字段，反序列化时默认为 Pending。
+    /// restore 时可据此判断任务原状态，决定是否恢复执行。
+    #[serde(default)]
+    pub status: TaskState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +42,14 @@ impl Checkpoint {
             recent_events: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
+            status: TaskState::Pending,
         }
+    }
+
+    /// 设置任务状态（统一状态机）
+    pub fn set_status(&mut self, status: TaskState) {
+        self.status = status;
+        self.updated_at = chrono_now();
     }
 
     pub fn record_tool(

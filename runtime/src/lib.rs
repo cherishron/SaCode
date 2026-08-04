@@ -88,7 +88,8 @@ pub use sandbox::{
     SandboxBackend, SandboxCommand, SandboxExecutor, SandboxPolicy,
 };
 pub use session::{
-    CompressionResult, SessionEvent, SessionHandle, SessionPrompt, SessionService, SessionStatus,
+    CompressionResult, SessionEvent, SessionHandle, SessionHistory, SessionPrompt, SessionService,
+    SessionStatus,
 };
 pub use skills::hub::{
     SkillHubClient, SkillHubMcpMeta, SkillHubPluginMeta, SkillHubSkillListResponse,
