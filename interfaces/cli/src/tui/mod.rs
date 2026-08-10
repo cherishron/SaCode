@@ -385,7 +385,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::tui) mod tests {
     use super::render::modals::render_pending_question_panel;
     use super::render::orchestration_panel::render_orchestration_panel;
     use super::App;
@@ -405,34 +405,61 @@ mod tests {
 
     struct HomeEnvGuard {
         old_home: Option<std::ffi::OsString>,
+        old_userprofile: Option<std::ffi::OsString>,
     }
 
     impl HomeEnvGuard {
         fn set(path: &std::path::Path) -> Self {
+            // Windows 上 SaCodeConfigStore/PluginConfigStore 优先读取 USERPROFILE，
+            // Unix 上读取 HOME。为完整隔离测试环境，两者都需设置。
             let old_home = std::env::var_os("HOME");
-            unsafe { std::env::set_var("HOME", path) };
-            Self { old_home }
+            let old_userprofile = std::env::var_os("USERPROFILE");
+            unsafe {
+                std::env::set_var("HOME", path);
+                std::env::set_var("USERPROFILE", path);
+            }
+            Self {
+                old_home,
+                old_userprofile,
+            }
         }
     }
 
     impl Drop for HomeEnvGuard {
         fn drop(&mut self) {
-            match self.old_home.take() {
-                Some(value) => unsafe { std::env::set_var("HOME", value) },
-                None => unsafe { std::env::remove_var("HOME") },
+            unsafe {
+                match self.old_home.take() {
+                    Some(value) => std::env::set_var("HOME", value),
+                    None => std::env::remove_var("HOME"),
+                }
+                match self.old_userprofile.take() {
+                    Some(value) => std::env::set_var("USERPROFILE", value),
+                    None => std::env::remove_var("USERPROFILE"),
+                }
             }
         }
     }
 
-    struct TestAppContext {
+    // 全局串行锁：App::new() 会读取 HOME/USERPROFILE/cwd 等全局环境，
+    // 并行测试会互相污染。通过 Mutex 强制使用 test_app() 的测试串行执行。
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub(in crate::tui) struct TestAppContext {
         _workdir: TempDir,
         _home_dir: TempDir,
         _home_guard: HomeEnvGuard,
-        app: App,
+        _lock_guard: std::sync::MutexGuard<'static, ()>,
+        pub(in crate::tui) app: App,
     }
 
     impl TestAppContext {
         fn new() -> Self {
+            // 获取全局锁，保证整个测试期间环境变量不被其他测试篡改。
+            // TEST_LOCK 是 static，故返回的 MutexGuard 为 'static 生命周期。
+            let lock_guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| {
+                // 测试 panic 导致锁中毒时仍可恢复，避免阻塞后续测试
+                poisoned.into_inner()
+            });
             let workdir = tempfile::tempdir().expect("create temp workdir");
             let home_dir = tempfile::tempdir().expect("create temp home");
             let home_guard = HomeEnvGuard::set(home_dir.path());
@@ -444,12 +471,13 @@ mod tests {
                 _workdir: workdir,
                 _home_dir: home_dir,
                 _home_guard: home_guard,
+                _lock_guard: lock_guard,
                 app,
             }
         }
     }
 
-    fn test_app() -> TestAppContext {
+    pub(in crate::tui) fn test_app() -> TestAppContext {
         TestAppContext::new()
     }
 
@@ -1002,6 +1030,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn session_store_restores_auto_approve_flag() {
         let mut ctx = test_app();
         ctx.app.session_auto_approve_edits = true;
@@ -1015,6 +1044,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn plan_mode_uses_builtin_approval_policy() {
         let mut ctx = test_app();
         ctx.app.execution_mode = ExecutionMode::Plan;
@@ -1044,6 +1074,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn render_header_shows_thinking_status() {
         let mut test_ctx = test_app();
         let app = &mut test_ctx.app;
@@ -1486,6 +1517,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn render_input_panel_shows_thinking_indicator_when_enabled() {
         let mut test_ctx = test_app();
         let app = &mut test_ctx.app;

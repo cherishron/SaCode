@@ -57,7 +57,10 @@ pub struct PluginConfigStore {
 
 impl PluginConfigStore {
     pub fn new(workdir: &Path) -> Self {
-        let user_path = env::var_os("HOME")
+        // Windows 上 HOME 通常不存在，USERPROFILE 才是用户主目录；
+        // Unix 上 HOME 是标准。二者均无时退化为当前目录。
+        let user_path = env::var_os("USERPROFILE")
+            .or_else(|| env::var_os("HOME"))
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".sacode/plugins.json");
@@ -85,6 +88,10 @@ impl PluginConfigStore {
             return Ok(PluginConfigFile::default());
         }
         let content = fs::read_to_string(path)?;
+        // 空文件或纯空白文件视为未配置，返回默认值避免 serde 解析失败
+        if content.trim().is_empty() {
+            return Ok(PluginConfigFile::default());
+        }
         Ok(serde_json::from_str(&content)?)
     }
 

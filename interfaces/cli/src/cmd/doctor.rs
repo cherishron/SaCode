@@ -17,9 +17,15 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     let provider_store = ProviderConfigStore::new(workdir);
     let sacode_store = SaCodeConfigStore::new(workdir);
 
-    let provider = provider_store.load_current()?;
-    let config = sacode_store.load_effective()?;
-    let project_config = sacode_store.load()?;
+    let provider = provider_store
+        .load_current()
+        .map_err(|e| anyhow::anyhow!("load_current failed: {e}"))?;
+    let config = sacode_store
+        .load_effective()
+        .map_err(|e| anyhow::anyhow!("load_effective failed: {e}"))?;
+    let project_config = sacode_store
+        .load()
+        .map_err(|e| anyhow::anyhow!("load failed: {e}"))?;
     let memory_files = [
         workdir.join(".sacode/wiki/memory.md"),
         workdir.join(".sacode/wiki/preferences.md"),
@@ -27,8 +33,11 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         workdir.join(".sacode/wiki/decisions.md"),
     ];
     let has_memory = memory_files.iter().any(|path| path.exists());
-    let plugin_status = plugin_status(workdir)?;
-    let mcp_lines = status::render_status(workdir).await?;
+    let plugin_status = plugin_status(workdir)
+        .map_err(|e| anyhow::anyhow!("plugin_status failed: {e}"))?;
+    let mcp_lines = status::render_status(workdir)
+        .await
+        .map_err(|e| anyhow::anyhow!("render_status failed: {e}"))?;
 
     let mut lines = vec!["SaCode Doctor".to_string()];
     lines.push(format!("工作目录: {}", workdir.display()));

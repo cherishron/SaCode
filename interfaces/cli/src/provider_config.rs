@@ -101,6 +101,10 @@ impl ProviderConfigStore {
         }
 
         let content = fs::read_to_string(&self.path)?;
+        // 空文件或纯空白文件视为未配置，避免 serde 解析失败
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
         let value: serde_json::Value = serde_json::from_str(&content)?;
 
         if value.get("providers").is_some() {
@@ -219,7 +223,10 @@ impl ProviderConfigStore {
 
 impl SaCodeConfigStore {
     pub fn new(workdir: &Path) -> Self {
-        let user_path = std::env::var_os("HOME")
+        // Windows 上 HOME 通常不存在，USERPROFILE 才是用户主目录；
+        // Unix 上 HOME 是标准。二者均无时退化为当前目录。
+        let user_path = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
             .join(SACODE_CONFIG_FILE);
@@ -385,6 +392,10 @@ impl SaCodeConfigStore {
         }
 
         let content = fs::read_to_string(path)?;
+        // 空文件或纯空白文件视为未配置，避免 serde 解析失败
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
         let mut config: SaCodeConfig = serde_json::from_str(&content)?;
         self.normalize(&mut config);
         Ok(Some(config))

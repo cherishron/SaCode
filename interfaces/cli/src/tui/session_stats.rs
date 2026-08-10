@@ -143,13 +143,15 @@ mod tests {
     use super::*;
     use crate::provider_config::NamedProviderConfig;
     use crate::provider_config::ProviderConfig;
-    use crate::tui::App;
+    use crate::tui::tests::test_app;
     use sacode_kernel::model::{ModelPricing, ModelRule, ProviderSpec};
     use std::collections::BTreeMap;
 
     #[test]
+    #[serial_test::serial]
     fn record_usage_tracks_multiple_models_and_costs() {
-        let mut app = App::new();
+        let mut ctx = test_app();
+        let app = &mut ctx.app;
         let provider_name = "stats-provider".to_string();
         let model_a = "model-a".to_string();
         let model_b = "model-b".to_string();
@@ -227,8 +229,10 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn shutdown_summary_uses_indented_performance_layout() {
-        let mut app = App::new();
+        let mut ctx = test_app();
+        let app = &mut ctx.app;
         app.perf_stats.total_task_duration_ms = 358_000;
         app.perf_stats.api_duration_ms = 234_000;
         app.perf_stats.tool_duration_ms = 4_300;
