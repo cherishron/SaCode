@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use sacode_kernel::model::MIMO_TOKEN_PLAN_BASE_URL;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::{
     McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry,
@@ -908,7 +909,7 @@ impl ReplSession {
         println!("     URL: https://api.deepseek.com/v1");
         println!();
         println!("  3. Xiaomi MiMo (Token Plan)");
-        println!("     URL: https://token-plan-cn.xiaomimimo.com/v1");
+        println!("     URL: {MIMO_TOKEN_PLAN_BASE_URL}");
         println!();
         println!("  4. LongCat");
         println!("     URL: https://api.longcat.chat/openai");
@@ -925,7 +926,7 @@ impl ReplSession {
         let (name, base_url) = match index {
             1 => ("ollama", "http://127.0.0.1:11434/v1"),
             2 => ("deepseek", "https://api.deepseek.com"),
-            3 => ("mimo", "https://token-plan-cn.xiaomimimo.com/v1"),
+            3 => ("mimo", MIMO_TOKEN_PLAN_BASE_URL),
             4 => ("longcat", "https://api.longcat.chat/openai/v1"),
             5 => ("openai", "https://api.openai.com/v1"),
             _ => anyhow::bail!("Invalid selection: {}", index),

@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::ModelRule;
 
+/// MiMo 按量付费 API 地址（API Key 格式 sk-xxxxx）
+pub const MIMO_API_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
+
+/// MiMo Token Plan 订阅地址（API Key 格式 tp-xxxxx）
+/// 项目默认配置使用此地址
+pub const MIMO_TOKEN_PLAN_BASE_URL: &str = "https://token-plan-cn.xiaomimimo.com/v1";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
@@ -376,7 +383,7 @@ impl ModelProvider {
         Self {
             kind: ProviderKind::Mimo,
             model: model.into(),
-            base_url: Some("https://token-plan-cn.xiaomimimo.com/v1".to_string()),
+            base_url: Some(MIMO_TOKEN_PLAN_BASE_URL.to_string()),
             api_key: None,
             rule: None,
         }

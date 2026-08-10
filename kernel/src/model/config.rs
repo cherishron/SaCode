@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::provider::MIMO_TOKEN_PLAN_BASE_URL;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SaCodeConfig {
     #[serde(default)]
@@ -297,7 +299,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
         "mimo".to_string(),
         ProviderSpec {
             name: "MiMo".to_string(),
-            base_url: "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+            base_url: MIMO_TOKEN_PLAN_BASE_URL.to_string(),
             api_key: String::new(),
             models: {
                 let mut m = BTreeMap::new();

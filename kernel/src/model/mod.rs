@@ -11,6 +11,6 @@ pub use profiles::{AgentProfile, Profiles};
 pub use provider::{
     ChatChoice, ChatMessage, ChatRequest, ChatResponse, ChatUsage, FunctionCall,
     FunctionDefinition, ImageUrlPart, MessageContent, MessagePart, ModelProvider, ProviderKind,
-    ThinkingConfig, ToolCall, ToolDefinition,
+    ThinkingConfig, ToolCall, ToolDefinition, MIMO_API_BASE_URL, MIMO_TOKEN_PLAN_BASE_URL,
 };
 pub use router::ModelRouter;

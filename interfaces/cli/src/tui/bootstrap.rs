@@ -6,6 +6,7 @@ use std::{
 };
 
 use ratatui::layout::Rect;
+use sacode_kernel::model::MIMO_TOKEN_PLAN_BASE_URL;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::ProjectAccessConfigStore;
 
@@ -85,7 +86,7 @@ impl App {
                 ),
                 (
                     "mimo".to_string(),
-                    "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+                    MIMO_TOKEN_PLAN_BASE_URL.to_string(),
                     true,
                 ),
                 (
@@ -243,7 +244,7 @@ impl App {
                 ),
                 (
                     "mimo".to_string(),
-                    "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
+                    MIMO_TOKEN_PLAN_BASE_URL.to_string(),
                     true,
                 ),
                 (

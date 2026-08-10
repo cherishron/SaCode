@@ -1,8 +1,8 @@
 use anyhow::Result;
 use reqwest::Client;
 use sacode_kernel::model::{
-    ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig,
-    ToolDefinition,
+    ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind,
+    ThinkingConfig, ToolDefinition, MIMO_TOKEN_PLAN_BASE_URL,
 };
 use std::collections::BTreeMap;
 
@@ -871,7 +871,7 @@ fn default_base_url(kind: &ProviderKind) -> String {
     match kind {
         ProviderKind::Openai => "https://api.openai.com/v1",
         ProviderKind::Deepseek => "https://api.deepseek.com",
-        ProviderKind::Mimo => "https://api.xiaomimimo.com/v1",
+        ProviderKind::Mimo => MIMO_TOKEN_PLAN_BASE_URL,
         ProviderKind::Longcat => "https://api.longcat.chat/openai/v1",
         ProviderKind::Ollama => "http://127.0.0.1:11434/v1",
         ProviderKind::Custom(_) => "",
@@ -903,7 +903,7 @@ mod tests {
     fn default_base_url_matches_provider_kinds() {
         assert_eq!(
             default_base_url(&sacode_kernel::model::ProviderKind::Mimo),
-            "https://api.xiaomimimo.com/v1"
+            super::MIMO_TOKEN_PLAN_BASE_URL
         );
         assert_eq!(
             default_base_url(&sacode_kernel::model::ProviderKind::Openai),
