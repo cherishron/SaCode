@@ -32,9 +32,14 @@ fn render_wiki_reports_project_sources() {
 }
 
 #[test]
+#[serial_test::serial]
 fn render_wiki_shows_auto_learned_entries() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let workdir = temp_dir.path();
+    // render_wiki → inspect_wiki → user_sacode_dir() 读取 HOME/USERPROFILE，
+    // 需隔离环境避免并行污染
+    let home_dir = tempfile::tempdir().expect("create temp home");
+    let _home_guard = HomeEnvGuard::set(home_dir.path());
 
     learn_from_task(
         workdir,

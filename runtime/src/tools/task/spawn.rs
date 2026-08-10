@@ -3,6 +3,9 @@ use std::time::Instant;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 use crate::{active_backend, active_policy, SandboxCommand};
 
+/// task.spawn 默认超时时间（2 分钟）
+const DEFAULT_SPAWN_TIMEOUT_MS: u64 = 120_000;
+
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "task.spawn".to_string(),
@@ -27,7 +30,7 @@ pub fn spec() -> ToolSpec {
         }),
         side_effect_level: SideEffectLevel::Execute,
         approval_required: true,
-        timeout_ms: Some(120_000),
+        timeout_ms: Some(DEFAULT_SPAWN_TIMEOUT_MS),
         tags: vec!["task".to_string(), "spawn".to_string()],
     }
 }
@@ -64,7 +67,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                 "--json".to_string(),
             ],
             cwd: None,
-            timeout_ms: 120_000,
+            timeout_ms: DEFAULT_SPAWN_TIMEOUT_MS,
         },
     )?;
 

@@ -412,7 +412,9 @@ impl App {
 
         match self.sacode_store.rename_provider(parts[1], parts[2]) {
             Ok(_) => {
-                let _ = self.provider_store.rename(parts[1], parts[2]);
+                if let Err(error) = self.provider_store.rename(parts[1], parts[2]) {
+                    eprintln!("同步 provider.json 重命名失败: {error}");
+                }
                 if let Some(current) = &mut self.current_provider {
                     if current.name == parts[1] {
                         current.name = parts[2].to_string();
@@ -435,7 +437,9 @@ impl App {
 
         match self.sacode_store.remove_provider(parts[1]) {
             Ok(_) => {
-                let _ = self.provider_store.remove(parts[1]);
+                if let Err(error) = self.provider_store.remove(parts[1]) {
+                    eprintln!("同步 provider.json 删除失败: {error}");
+                }
                 self.push_system_message(&format!("Provider {} 已删除。", parts[1]))
             }
             Err(error) => self.push_system_message(&format!("删除 provider 失败: {}", error)),

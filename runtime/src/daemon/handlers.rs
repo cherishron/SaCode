@@ -413,6 +413,15 @@ pub async fn get_task_checkpoint(
 pub async fn run_daemon(addr: SocketAddr) {
     let app = super::create_daemon().await;
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // bind 失败通常是端口占用，panic 会中断整个进程且无有用上下文
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("daemon bind {addr} 失败: {error}");
+            return;
+        }
+    };
+    if let Err(error) = axum::serve(listener, app).await {
+        eprintln!("daemon serve 失败: {error}");
+    }
 }

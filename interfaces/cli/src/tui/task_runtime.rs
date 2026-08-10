@@ -262,6 +262,7 @@ impl App {
             let mode = self.execution_mode;
             let prompt = self.build_task_prompt(&user_input);
             let Some(child) = Self::spawn_chat_child(&workdir, &prompt, mode, approval) else {
+                // sender.send 失败仅发生在 receiver 已 drop（App 关闭/取消），忽略安全
                 let _ = sender.send(AsyncResult::ChatCompleted {
                     task_id,
                     prompt: user_input,
@@ -802,7 +803,10 @@ impl App {
             self.queue.busy_message = format!("正在取消任务 #{}...", task_id);
             self.log_event("cancel_requested", &format!("#{}", task_id));
             if let Some(child) = &self.queue.active_child {
-                let _ = child.lock().unwrap().kill();
+                // Mutex poisoned 表示另一线程 panic，此时进程 kill 失败也不应再 panic
+                if let Ok(mut child_guard) = child.lock() {
+                    let _ = child_guard.kill();
+                }
             }
         }
     }

@@ -117,8 +117,12 @@ impl App {
         let Ok(serialized) = serde_json::to_string(&session) else {
             return;
         };
-        let _ = fs::write(self.project_current_session_path(), &serialized);
-        let _ = fs::write(self.user_session_path(&self.session_id), serialized);
+        if let Err(error) = fs::write(self.project_current_session_path(), &serialized) {
+            eprintln!("保存项目会话失败: {error}");
+        }
+        if let Err(error) = fs::write(self.user_session_path(&self.session_id), serialized) {
+            eprintln!("保存用户会话失败: {error}");
+        }
     }
 
     pub(super) fn load_latest_session(&mut self) {

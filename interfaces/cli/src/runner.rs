@@ -324,11 +324,18 @@ struct MistakeRecorder {
 
 impl ErrorRecorder for MistakeRecorder {
     fn record_tool_error(&self, tool_name: &str, category: &str, detail: String) {
-        let _ = MistakeBookStore::new(&self.workdir).append(tool_name, category, detail);
+        if let Err(error) = MistakeBookStore::new(&self.workdir).append(tool_name, category, detail)
+        {
+            eprintln!("记录工具错误到 mistakes.json 失败: {error}");
+        }
     }
 
     fn record_provider_error(&self, category: &str, detail: String) {
-        let _ = MistakeBookStore::new(&self.workdir).append(category, "模型调用失败", detail);
+        if let Err(error) =
+            MistakeBookStore::new(&self.workdir).append(category, "模型调用失败", detail)
+        {
+            eprintln!("记录模型错误到 mistakes.json 失败: {error}");
+        }
     }
 }
 
