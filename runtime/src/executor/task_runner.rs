@@ -418,7 +418,6 @@ async fn execute_tool_chat(
 ) {
     let client = ProviderClient::new();
     let tools_clone = config.tools.clone();
-    let _workdir_clone = config.workdir.to_path_buf();
     let provider_for_tools = config.provider.clone();
     let mode = config.mode;
     let approval = config.approval.clone();

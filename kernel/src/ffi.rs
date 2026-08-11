@@ -101,6 +101,19 @@ fn extract_mcp_tools(prompt: &str) -> Vec<String> {
         .collect()
 }
 
+/// 将字符串转为 CString，含内部 NUL 字节时返回错误占位而非 panic
+///
+/// FFI 边界需要 CString 以返回 C ABI。正常输入不会含 NUL
+///（JSON 序列化结果、静态 ASCII 字面量、CStr 转换后的 String），
+/// 此函数仅作防御性兜底，避免异常输入导致 panic 中断宿主进程。
+fn into_c_string(s: impl Into<Vec<u8>>) -> CString {
+    CString::new(s).unwrap_or_else(|_| {
+        // 仅在输入含内部 NUL 字节时触发，正常路径不可达
+        CString::new("error: string contains NUL byte")
+            .expect("static ASCII literal without NUL")
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn sacode_new() -> *mut SacodeHandle {
     let handle = Box::new(SacodeHandle::new());
@@ -130,10 +143,10 @@ pub unsafe extern "C" fn sacode_execute(
     mode: i32,
 ) -> *mut c_char {
     if handle.is_null() {
-        return CString::new("error: null handle").unwrap().into_raw();
+        return into_c_string("error: null handle").into_raw();
     }
     if prompt.is_null() {
-        return CString::new("error: null prompt").unwrap().into_raw();
+        return into_c_string("error: null prompt").into_raw();
     }
     let handle = &*handle;
     let prompt = CStr::from_ptr(prompt).to_string_lossy().into_owned();
@@ -145,7 +158,7 @@ pub unsafe extern "C" fn sacode_execute(
     };
 
     let result = handle.execute(&prompt, execution_mode);
-    CString::new(result).unwrap().into_raw()
+    into_c_string(result).into_raw()
 }
 
 /// # Safety
@@ -161,5 +174,5 @@ pub unsafe extern "C" fn sacode_free_string(s: *mut c_char) {
 
 #[no_mangle]
 pub extern "C" fn sacode_version() -> *mut c_char {
-    CString::new(env!("CARGO_PKG_VERSION")).unwrap().into_raw()
+    into_c_string(env!("CARGO_PKG_VERSION")).into_raw()
 }

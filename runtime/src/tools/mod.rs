@@ -49,7 +49,11 @@ struct RegisteredTool {
 /// - [`ToolRegistry::for_prompt`] 按角色 / 任务画像 / token 预算筛选工具 schema
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
-    tools: HashMap<String, RegisteredTool>,
+    // Arc 包裹使 ToolRegistry::clone() 退化为引用计数递增（O(1)），
+    // 消除 executor spawn 循环与 failover 路径中对 26 个工具 spec 的深拷贝。
+    // register/apply_default_layers 通过 Arc::make_mut 实现写时复制，
+    // 构建期 Arc 唯一引用时不触发额外拷贝。
+    tools: Arc<HashMap<String, RegisteredTool>>,
 }
 
 /// 核心层工具名清单 — 始终注入 prompt
@@ -205,8 +209,11 @@ impl ToolRegistry {
     /// 命中 [`CORE_TOOL_NAMES`] 的工具被标记为 [`ToolLayer::Core`]，
     /// 其余保持默认 [`ToolLayer::Extended`]。
     fn apply_default_layers(&mut self) {
+        // Arc::make_mut：构建期 Arc 唯一引用时零拷贝获取可变句柄；
+        // clone 后调用才会触发写时复制（当前调用方都是构建后立即标注，不会触发）。
+        let tools = Arc::make_mut(&mut self.tools);
         for name in CORE_TOOL_NAMES {
-            if let Some(tool) = self.tools.get_mut(*name) {
+            if let Some(tool) = tools.get_mut(*name) {
                 tool.layer = ToolLayer::Core;
             }
         }
@@ -214,7 +221,7 @@ impl ToolRegistry {
 
     pub fn register(&mut self, spec: ToolSpec, executor: Arc<dyn ToolExecutor>) {
         let layer = ToolLayer::default(); // 默认 Extended，由 apply_default_layers 提升
-        self.tools.insert(
+        Arc::make_mut(&mut self.tools).insert(
             spec.name.clone(),
             RegisteredTool {
                 spec,
