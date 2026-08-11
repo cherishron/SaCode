@@ -186,6 +186,11 @@ fn ling_shu_for_prompt_with_zero_budget_triggers_trim() {
 
 #[test]
 fn ling_shu_fs_read_executes_on_builtin_registry() {
+    // 持有 sandbox_test_lock 防止其他测试的 reset_global_policy 干扰：
+    // 默认策略仅允许 "."，fs.read 的绝对路径在其他测试重置策略后会因
+    // allowed_paths 检查 + CWD 被改到临时目录而失败。
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
     let registry = ToolRegistry::builtin();
     // 用绝对路径避免并发测试变更 CWD 时读到错误目录
     let cargo_toml = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
@@ -200,6 +205,9 @@ fn ling_shu_fs_read_executes_on_builtin_registry() {
 
 #[test]
 fn ling_shu_fs_list_executes_on_builtin_registry() {
+    // 持有 sandbox_test_lock 防止其他测试的 reset_global_policy 干扰
+    let _guard = sandbox_test_lock();
+    crate::sandbox::reset_global_policy();
     let registry = ToolRegistry::builtin();
     // 用绝对路径避免并发测试变更 CWD 时列到错误目录
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));

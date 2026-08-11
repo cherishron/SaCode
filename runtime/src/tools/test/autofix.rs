@@ -523,11 +523,8 @@ mod tests {
     #[test]
     #[ignore = "需要 pytest 在 PATH 中，端到端验证用 --ignored 运行"]
     fn e2e_pytest_fix_context_generates_and_repair_verifies() {
-        use std::sync::Mutex;
-
-        // 串行化 cwd 操作，避免并行测试冲突
-        static CWGUARD: Mutex<()> = Mutex::new(());
-        let _guard = CWGUARD.lock().unwrap();
+        // 复用 crate 级共享 CWD 锁，避免与其它测试模块的 set_current_dir 并发冲突
+        use crate::tests::CurrentDirGuard;
 
         // 1. 创建临时 Python 项目
         let temp = tempfile::tempdir().expect("创建临时目录失败");
@@ -548,9 +545,8 @@ mod tests {
         )
         .expect("写入 test_calc.py 失败");
 
-        // 2. 改变 cwd 到临时项目目录
-        let original_cwd = std::env::current_dir().expect("获取 cwd 失败");
-        std::env::set_current_dir(project).expect("设置 cwd 失败");
+        // 2. 改变 cwd 到临时项目目录（CurrentDirGuard 在作用域结束时自动恢复）
+        let _cwd_guard = CurrentDirGuard::enter(project);
 
         // 3. 调用 test.fix 生成修复上下文（默认 auto_apply=true，单次执行）
         let input = serde_json::json!({"framework": "pytest"});
@@ -648,7 +644,6 @@ mod tests {
             run_result.data
         );
 
-        // 9. 恢复 cwd
-        std::env::set_current_dir(original_cwd).expect("恢复 cwd 失败");
+        // _cwd_guard 离开作用域时自动恢复 CWD，无需手动 set_current_dir
     }
 }

@@ -44,20 +44,23 @@ fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn cwd_test_lock() -> std::sync::MutexGuard<'static, ()> {
+// 进程级 CWD 是全局共享状态，所有修改 CWD 的测试必须通过此锁串行化，
+// 避免不同 #[cfg(test)] 模块的 CurrentDirGuard 并发 set_current_dir 互相干扰。
+// 任何需要变更 CWD 的测试都应复用此 helper，不要再定义本地 Mutex。
+pub(crate) fn cwd_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-struct CurrentDirGuard {
+pub(crate) struct CurrentDirGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
     original_dir: PathBuf,
 }
 
 impl CurrentDirGuard {
-    fn enter(path: &Path) -> Self {
+    pub(crate) fn enter(path: &Path) -> Self {
         let lock = cwd_test_lock();
         let original_dir = std::env::current_dir().expect("read current dir");
         std::env::set_current_dir(path).expect("enter temp dir");
@@ -70,7 +73,12 @@ impl CurrentDirGuard {
 
 impl Drop for CurrentDirGuard {
     fn drop(&mut self) {
-        std::env::set_current_dir(&self.original_dir).expect("restore current dir");
+        // 原目录可能被其他并行测试的 tempdir 清理，恢复失败时退化为用户目录
+        if std::env::set_current_dir(&self.original_dir).is_err() {
+            let _ = std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|dir| std::env::set_current_dir(dir));
+        }
     }
 }
 

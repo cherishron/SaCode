@@ -296,44 +296,14 @@ fn wildcard_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock};
+    use std::path::Path;
 
     use regex::Regex;
     use tempfile::tempdir;
 
     use super::{collect_matches, wildcard_match};
-
-    // 串行化 cwd 变更，避免并发测试 restore 时 set_current_dir 失败 panic
-    fn cwd_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    struct CurrentDirGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        original_dir: PathBuf,
-    }
-
-    impl CurrentDirGuard {
-        fn enter(path: &Path) -> Self {
-            let lock = cwd_test_lock();
-            let original_dir = std::env::current_dir().expect("read current dir");
-            std::env::set_current_dir(path).expect("enter temp dir");
-            Self {
-                _lock: lock,
-                original_dir,
-            }
-        }
-    }
-
-    impl Drop for CurrentDirGuard {
-        fn drop(&mut self) {
-            std::env::set_current_dir(&self.original_dir).expect("restore current dir");
-        }
-    }
+    // 复用 crate 级共享 CWD 锁，避免与其它测试模块的 set_current_dir 并发冲突
+    use crate::tests::CurrentDirGuard;
 
     fn write_file(path: &Path, content: &str) {
         std::fs::write(path, content).expect("write test file");
