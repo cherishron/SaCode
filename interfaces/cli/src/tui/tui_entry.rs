@@ -191,14 +191,6 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
         render_session_selector(frame, app, chunks[2]);
     }
 
-    if app.input_mode == InputMode::ConfigSelect {
-        render_config_selector(frame, app);
-    }
-
-    if app.input_mode == InputMode::ConfigEnumSelect {
-        render_config_enum_selector(frame, app);
-    }
-
     if app.input_mode == InputMode::InputOptimizePreview {
         render_input_optimization_preview(frame, app);
     }
