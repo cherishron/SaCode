@@ -27,9 +27,20 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// 获取锁的重试间隔
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionService {
     sessions: Arc<RwLock<HashMap<String, SessionState>>>,
+    /// 可选的持久化后端 — 有时在 create/close/prompt 等操作后同步到 SQLite
+    store: Option<Arc<crate::StoreDb>>,
+}
+
+impl std::fmt::Debug for SessionService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionService")
+            .field("sessions", &self.sessions)
+            .field("store", &self.store.as_ref().map(|_| "StoreDb"))
+            .finish()
+    }
 }
 
 /// 锁获取超时错误
@@ -55,6 +66,33 @@ impl SessionService {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            store: None,
+        }
+    }
+
+    /// 绑定 SQLite 持久化后端 — 绑定后所有 session 操作自动同步到磁盘
+    ///
+    /// 绑定时若 SQLite 中已有 session 记录，会自动加载到内存。
+    /// 传入 None 可解除持久化（已加载的 session 保留在内存中）。
+    pub fn with_store(mut self, store: Option<Arc<crate::StoreDb>>) -> Result<Self> {
+        if let Some(store) = &store {
+            // 从 SQLite 加载已有 sessions 到内存
+            let persisted = store.list_sessions()?;
+            let mut sessions = self.write_sessions("with_store")?;
+            for state in persisted {
+                sessions.insert(state.id.clone(), state);
+            }
+        }
+        self.store = store;
+        Ok(self)
+    }
+
+    /// 把单个 session 同步到 SQLite（如有绑定 store）
+    fn persist_session(&self, state: &SessionState) {
+        if let Some(store) = &self.store {
+            if let Err(error) = store.save_session(state) {
+                warn!("持久化 session {} 失败: {}", state.id, error);
+            }
         }
     }
 
@@ -113,6 +151,7 @@ impl SessionService {
         let id = format!("session-{}", unique_suffix());
         let state = SessionState::new(id.clone(), cwd);
         let handle = state.handle();
+        self.persist_session(&state);
         self.write_sessions("create_session")?
             .insert(id, state);
         Ok(handle)
@@ -142,6 +181,7 @@ impl SessionService {
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
         session.status = SessionStatus::Closed;
+        self.persist_session(session);
         Ok(())
     }
 
@@ -151,6 +191,7 @@ impl SessionService {
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
         session.status = SessionStatus::Cancelled;
+        self.persist_session(session);
         Ok(())
     }
 
@@ -164,6 +205,7 @@ impl SessionService {
         let original_tokens = session.estimate_event_tokens();
 
         session.compress()?;
+        self.persist_session(session);
 
         Ok(CompressionResult {
             original_event_count: original_count,
@@ -193,6 +235,7 @@ impl SessionService {
         let original_tokens = session.estimate_event_tokens();
 
         session.compress()?;
+        self.persist_session(session);
 
         Ok(Some(CompressionResult {
             original_event_count: original_count,
@@ -223,6 +266,7 @@ impl SessionService {
             forked
         };
 
+        self.persist_session(&new_state);
         let handle = new_state.handle();
         self.write_sessions("fork_session_insert")?
             .insert(new_id, new_state);
@@ -235,19 +279,21 @@ impl SessionService {
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
 
-        match session.status {
+        let handle = match session.status {
             SessionStatus::Closed | SessionStatus::Cancelled => {
                 session.status = SessionStatus::Idle;
-                Ok(session.handle())
+                session.handle()
             }
             SessionStatus::Failed(_) => {
                 session.status = SessionStatus::Idle;
-                Ok(session.handle())
+                session.handle()
             }
             SessionStatus::Idle | SessionStatus::Running | SessionStatus::Cancelling => {
-                Ok(session.handle())
+                session.handle()
             }
-        }
+        };
+        self.persist_session(session);
+        Ok(handle)
     }
 
     pub fn session_history(&self, session_id: &str) -> Result<SessionHistory> {
@@ -275,6 +321,7 @@ impl SessionService {
         let mut state = SessionState::new(id.clone(), workdir.to_path_buf());
         state.events = checkpoint.recent_events.clone();
         state.last_checkpoint = Some(checkpoint_name.to_string());
+        self.persist_session(&state);
         let handle = state.handle();
         self.write_sessions("load_session")?
             .insert(id, state);
@@ -403,6 +450,7 @@ impl SessionService {
                 .file_name()
                 .and_then(|value| value.to_str())
                 .map(str::to_string);
+            self.persist_session(session);
         }
 
         let summary = if success {
@@ -415,9 +463,9 @@ impl SessionService {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SessionState {
-    id: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionState {
+    pub(crate) id: String,
     cwd: PathBuf,
     status: SessionStatus,
     tools: Vec<String>,
@@ -814,5 +862,103 @@ mod tests {
         }).await;
 
         list_handle.join().unwrap();
+    }
+
+    /// SQLite 持久化测试 — 创建 session 后用新 SessionService 实例恢复
+    #[test]
+    fn sqlite_persist_and_restore_session() {
+        use crate::StoreDb;
+
+        // 临时数据库路径（每个测试唯一，避免并行冲突）
+        let db_path = std::env::temp_dir().join(format!(
+            "sacode-session-test-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        // 阶段1：创建带持久化的 service，写入 session
+        let db = Arc::new(StoreDb::new(&db_path).unwrap());
+        let service = SessionService::new()
+            .with_store(Some(Arc::clone(&db)))
+            .unwrap();
+        let handle = service.create_session(PathBuf::from("/tmp/persist-test")).unwrap();
+        let session_id = handle.id.clone();
+        service.close_session(&session_id).unwrap();
+
+        // 阶段2：新建 SessionService 实例，绑定同一个 db，验证 session 已恢复
+        let restored_service = SessionService::new()
+            .with_store(Some(db))
+            .unwrap();
+        let sessions = restored_service.list_sessions();
+        assert_eq!(sessions.len(), 1, "应该从 SQLite 恢复 1 个 session");
+        assert_eq!(sessions[0].id, session_id);
+        assert!(matches!(sessions[0].status, SessionStatus::Closed));
+
+        // 清理
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// SQLite 持久化测试 — fork_session 后验证新 session 已持久化
+    #[test]
+    fn sqlite_persist_fork_session() {
+        use crate::StoreDb;
+
+        let db_path = std::env::temp_dir().join(format!(
+            "sacode-session-fork-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let db = Arc::new(StoreDb::new(&db_path).unwrap());
+        let service = SessionService::new()
+            .with_store(Some(Arc::clone(&db)))
+            .unwrap();
+
+        let source = service.create_session(PathBuf::from("/tmp/fork-source")).unwrap();
+        let forked = service.fork_session(&source.id).unwrap();
+
+        // 用新实例恢复，应看到 2 个 session
+        let restored = SessionService::new()
+            .with_store(Some(db))
+            .unwrap();
+        let sessions = restored.list_sessions();
+        assert_eq!(sessions.len(), 2, "源 session + forked session 应都持久化");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// SQLite 持久化测试 — delete_session 后验证已删除
+    #[test]
+    fn sqlite_delete_session() {
+        use crate::StoreDb;
+
+        let db_path = std::env::temp_dir().join(format!(
+            "sacode-session-delete-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let db = Arc::new(StoreDb::new(&db_path).unwrap());
+        let service = SessionService::new()
+            .with_store(Some(Arc::clone(&db)))
+            .unwrap();
+
+        let handle = service.create_session(PathBuf::from("/tmp/delete-test")).unwrap();
+        assert_eq!(service.list_sessions().len(), 1);
+
+        // 直接通过 StoreDb 删除
+        db.delete_session(&handle.id).unwrap();
+        assert!(db.load_session(&handle.id).unwrap().is_none());
+
+        let _ = std::fs::remove_file(&db_path);
     }
 }

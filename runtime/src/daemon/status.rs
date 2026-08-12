@@ -46,6 +46,7 @@ pub fn task_run_state_to_queue_status(state: &sacode_kernel::TaskRunState) -> St
     match state {
         sacode_kernel::TaskRunState::Completed => TaskQueueStatus::Completed.to_string(),
         sacode_kernel::TaskRunState::Failed => TaskQueueStatus::Failed.to_string(),
+        sacode_kernel::TaskRunState::Cancelled => TaskQueueStatus::Cancelled.to_string(),
         sacode_kernel::TaskRunState::WaitingForApproval
         | sacode_kernel::TaskRunState::WaitingForUser => TaskQueueStatus::Running.to_string(),
     }
@@ -67,7 +68,7 @@ pub fn task_run_state_for_queue_status(status: &TaskQueueStatus) -> sacode_kerne
     match status {
         TaskQueueStatus::Completed => sacode_kernel::TaskRunState::Completed,
         TaskQueueStatus::Failed => sacode_kernel::TaskRunState::Failed,
-        TaskQueueStatus::Cancelled => sacode_kernel::TaskRunState::Failed,
+        TaskQueueStatus::Cancelled => sacode_kernel::TaskRunState::Cancelled,
         TaskQueueStatus::Pending
         | TaskQueueStatus::Ready
         | TaskQueueStatus::Running

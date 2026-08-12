@@ -272,16 +272,16 @@ impl DaemonState {
 
         let tools = ToolRegistry::builtin();
 
-        // 生产路径启用 task_runner（走 execute_task_with_provider + 灵枢沙箱审计），
-        // 测试路径保持静态 fallback，避免测试环境发起真实 LLM 调用
-        // （项目根目录可能存在 .sacode/provider.json 触发真实 API 请求）
+        // 路径分发：
+        // - cfg(test)：不设 workdir，走 execute_test_placeholder（避免发起真实 LLM 调用）
+        // - 生产：强制设 workdir，current_dir 失败则 panic（启动期致命错误，不应继续）
         let executor = if cfg!(test) {
             TaskExecutor::new(queue.clone(), tools.clone())
         } else {
-            match std::env::current_dir() {
-                Ok(dir) => TaskExecutor::new(queue.clone(), tools.clone()).with_workdir(dir),
-                Err(_) => TaskExecutor::new(queue.clone(), tools.clone()),
-            }
+            let dir = std::env::current_dir().expect(
+                "daemon 启动时无法获取 current_dir，task_runner 路径无法工作；请检查运行环境",
+            );
+            TaskExecutor::new(queue.clone(), tools.clone()).with_workdir(dir)
         };
         let executor_event_bus = executor.event_bus();
 
