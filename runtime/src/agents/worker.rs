@@ -552,6 +552,24 @@ fn build_peer_context(messages: &[AgentMessage], current_role_id: &str) -> Strin
                     name, msg.from, msg.content
                 ));
             }
+            AgentMessageKind::TaskDelegate => {
+                context.push_str(&format!(
+                    "- [任务委派] 来自 [{}]：{}\n",
+                    msg.from, msg.content
+                ));
+            }
+            AgentMessageKind::TaskResult => {
+                context.push_str(&format!(
+                    "- [任务结果] 来自 [{}]：{}\n",
+                    msg.from, msg.content
+                ));
+            }
+            AgentMessageKind::InterventionRequest => {
+                context.push_str(&format!(
+                    "- [冲突干预] 来自 [{}]：{}\n",
+                    msg.from, msg.content
+                ));
+            }
         }
     }
     let _ = current_role_id; // 保留参数用于未来按角色过滤
@@ -594,11 +612,83 @@ fn extract_assist_responses(output: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// 灵枢 · Agent 协作协议升级（M2）：DAG 死锁防护
+///
+/// 校验一组协助请求是否构成有向无环图（DAG）。
+/// 若请求链形成环（A→B→A），强制双向等待会导致死锁，应拒绝该请求。
+///
+/// `edges`：`(from_role, to_role)` 依赖边列表（来自当前及历史协助请求）
+/// 返回 `Ok(())` 表示无环可安全发送；`Err(cycle)` 表示检测到环
+pub fn validate_assist_dag(
+    edges: &[(String, String)],
+) -> Result<(), Vec<String>> {
+    use std::collections::{HashMap, HashSet};
+
+    // 构建邻接表
+    let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
+    for (from, to) in edges {
+        adjacency
+            .entry(from.clone())
+            .or_default()
+            .push(to.clone());
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut in_stack: HashSet<String> = HashSet::new();
+    let mut cycle_path: Vec<String> = Vec::new();
+
+    fn dfs(
+        node: &str,
+        adjacency: &HashMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+        in_stack: &mut HashSet<String>,
+        cycle_path: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        if in_stack.contains(node) {
+            // 发现回边，构造环路径
+            let start = cycle_path.iter().position(|n| n == node)?;
+            let mut cycle = cycle_path[start..].to_vec();
+            cycle.push(node.to_string());
+            return Some(cycle);
+        }
+        if visited.contains(node) {
+            return None;
+        }
+        visited.insert(node.to_string());
+        in_stack.insert(node.to_string());
+        cycle_path.push(node.to_string());
+
+        for next in adjacency.get(node).unwrap_or(&Vec::new()) {
+            if let Some(cycle) = dfs(next, adjacency, visited, in_stack, cycle_path) {
+                return Some(cycle);
+            }
+        }
+
+        in_stack.remove(node);
+        cycle_path.pop();
+        None
+    }
+
+    for node in adjacency.keys() {
+        if let Some(cycle) = dfs(
+            node,
+            &adjacency,
+            &mut visited,
+            &mut in_stack,
+            &mut cycle_path,
+        ) {
+            return Err(cycle);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_peer_context, build_role_summary_from_result, extract_assist_requests,
-        extract_assist_responses,
+        extract_assist_responses, validate_assist_dag,
     };
     use crate::agents::message_bus::{AgentMessage, AgentMessageKind};
     use sacode_kernel::AgentRole;
@@ -611,13 +701,7 @@ mod tests {
     }
 
     fn message(from: &str, kind: AgentMessageKind, content: &str) -> AgentMessage {
-        AgentMessage {
-            from: from.to_string(),
-            to: None,
-            kind,
-            content: content.to_string(),
-            timestamp: 0,
-        }
+        AgentMessage::new(from.to_string(), None, kind, content.to_string())
     }
 
     #[test]
@@ -733,5 +817,48 @@ mod tests {
         let context = build_peer_context(&messages, "implementer");
         // 空消息列表仍返回头部（但不应被调用，因为调用方会检查 is_empty）
         assert!(context.contains("[前序 Agent 协作上下文]"));
+    }
+
+    // ── M2 DAG 死锁防护测试 ──────────────────────────────
+
+    #[test]
+    fn validate_assist_dag_accepts_acyclic_edges() {
+        // A→B→C 是合法 DAG，应返回 Ok
+        let edges = vec![
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "c".to_string()),
+        ];
+        assert!(validate_assist_dag(&edges).is_ok(), "A→B→C 应无环");
+    }
+
+    #[test]
+    fn validate_assist_dag_rejects_cycle() {
+        // A→B→A 形成环，双向等待会死锁，应拒绝
+        let edges = vec![
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "a".to_string()),
+        ];
+        let result = validate_assist_dag(&edges);
+        assert!(result.is_err(), "A→B→A 应检测到环");
+        let cycle = result.unwrap_err();
+        assert!(cycle.contains(&"a".to_string()), "环路径应包含 a");
+        assert!(cycle.contains(&"b".to_string()), "环路径应包含 b");
+    }
+
+    #[test]
+    fn validate_assist_dag_rejects_self_loop() {
+        // A→A 自环也应拒绝
+        let edges = vec![("a".to_string(), "a".to_string())];
+        assert!(validate_assist_dag(&edges).is_err(), "自环应被拒绝");
+    }
+
+    #[test]
+    fn validate_assist_dag_handles_disconnected_components() {
+        // 两个独立 DAG 不应互相影响
+        let edges = vec![
+            ("a".to_string(), "b".to_string()),
+            ("c".to_string(), "d".to_string()),
+        ];
+        assert!(validate_assist_dag(&edges).is_ok(), "独立 DAG 应无环");
     }
 }

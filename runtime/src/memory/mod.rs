@@ -157,6 +157,12 @@ pub struct MemoryIndexEntry {
     pub context: String,
     pub file_name: String,
     pub created_at: String,
+    /// 最后访问时间（ISO 日期，用于衰减计算）
+    #[serde(default)]
+    pub last_accessed_at: Option<String>,
+    /// 访问计数（用于衰减计算）
+    #[serde(default)]
+    pub access_count: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -211,6 +217,10 @@ fn append_memory_entry_with_status(
     let Some(root) = path.parent() else {
         anyhow::bail!("memory file missing parent directory");
     };
+    // 确保父目录存在（learner 等调用方可能尚未 ensure_memory_file）
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let mut index = load_memory_index(root)?;
     if index.entries.iter().any(|existing| {
         existing.kind == entry.kind
@@ -255,7 +265,9 @@ fn append_memory_entry_with_status(
         content: entry.content.clone(),
         context: entry.context.clone(),
         file_name: entry.kind.file_name().to_string(),
-        created_at,
+        created_at: created_at.clone(),
+        last_accessed_at: Some(created_at),
+        access_count: 0,
     });
     save_memory_index(root, &index)?;
     Ok(true)
@@ -316,7 +328,9 @@ pub fn rebuild_memory_index(root: &Path, scope: MemoryScope) -> Result<MemoryInd
                 content: section.content,
                 context: section.context,
                 file_name: kind.file_name().to_string(),
-                created_at: section.date,
+                created_at: section.date.clone(),
+                last_accessed_at: Some(section.date.clone()),
+                access_count: 0,
             });
         }
     }
@@ -331,18 +345,133 @@ pub fn search_memory_index(index: &MemoryIndex, query: &str) -> Vec<MemoryIndexE
         return Vec::new();
     }
 
-    index
+    // 灵枢 · 学习型记忆（M3）：升级为 BM25 相关性排序
+    // 复用 code/search.rs 的 BM25 参数（k1=1.5, b=0.75），对记忆条目打分后降序返回
+    let query_terms: Vec<&str> = lowered.split_whitespace().collect();
+    if query_terms.is_empty() {
+        return Vec::new();
+    }
+
+    // 构建文档集合（仅 Active 状态）
+    let docs: Vec<&MemoryIndexEntry> = index
         .entries
         .iter()
-        .filter(|entry| {
-            entry.status == MemoryStatus::Active
-                && (entry.content.to_lowercase().contains(&lowered)
-                    || entry.context.to_lowercase().contains(&lowered)
-                    || entry.kind.scope_label().contains(&lowered)
-                    || entry.file_name.to_lowercase().contains(&lowered))
-        })
-        .cloned()
+        .filter(|entry| entry.status == MemoryStatus::Active)
+        .collect();
+    let avg_dl = if docs.is_empty() {
+        0.0
+    } else {
+        docs.iter().map(|d| tokenize(&d.content).len() + tokenize(&d.context).len()).sum::<usize>() as f64
+            / docs.len() as f64
+    };
+    let n_docs = docs.len() as f64;
+
+    let mut scored: Vec<(f64, &MemoryIndexEntry)> = Vec::new();
+    for doc in &docs {
+        let doc_text = format!("{} {}", doc.content, doc.context).to_lowercase();
+        let doc_tokens = tokenize(&doc_text);
+        let doc_len = doc_tokens.len().max(1);
+        let mut score = 0.0f64;
+        for term in &query_terms {
+            let tf = doc_tokens.iter().filter(|t| *t == term).count() as f64;
+            if tf == 0.0 {
+                continue;
+            }
+            // 文档频率：包含该 term 的文档数
+            let df = docs
+                .iter()
+                .filter(|d| {
+                    let text = format!("{} {}", d.content, d.context).to_lowercase();
+                    tokenize(&text).iter().any(|t| t == term)
+                })
+                .count() as f64;
+            // BM25 idf（Lucene 变体：+1 在 ln 内部，避免 df==n_docs 时 idf 变负）
+            let idf = (1.0 + (n_docs - df + 0.5) / (df + 0.5)).ln();
+            let tf_norm = (tf * (BM25_K1 + 1.0))
+                / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * doc_len as f64 / avg_dl.max(1.0)));
+            score += idf * tf_norm;
+        }
+        // 已有关键词子串匹配作为兜底（低权重）
+        if score == 0.0
+            && (doc.content.to_lowercase().contains(&lowered)
+                || doc.context.to_lowercase().contains(&lowered)
+                || doc.kind.scope_label().contains(&lowered)
+                || doc.file_name.to_lowercase().contains(&lowered))
+        {
+            score = 0.01;
+        }
+        if score > 0.0 {
+            scored.push((score, doc));
+        }
+    }
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.into_iter().map(|(_, doc)| (*doc).clone()).collect()
+}
+
+/// 记录记忆条目访问（更新 last_accessed_at 和 access_count）
+pub fn record_memory_access(root: &Path, entry_id: &str) -> Result<bool> {
+    let mut index = load_memory_index(root)?;
+    let Some(entry) = index.entries.iter_mut().find(|entry| entry.id == entry_id) else {
+        return Ok(false);
+    };
+    entry.last_accessed_at = Some(Local::now().format("%Y-%m-%d").to_string());
+    entry.access_count = entry.access_count.saturating_add(1);
+    save_memory_index(root, &index)?;
+    Ok(true)
+}
+
+/// 灵枢 · 学习型记忆（M3）：低频记忆自动衰减到 Archived
+///
+/// 基于 `created_at` + `access_count` 判断：超过 `max_age_days` 且访问次数低于
+/// `min_access_count` 的 Active 条目衰减为 Archived，减少噪声记忆干扰。
+pub fn decay_memory_entries(root: &Path, max_age_days: u32, min_access_count: u32) -> Result<usize> {
+    let mut index = load_memory_index(root)?;
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let mut decayed = 0usize;
+
+    for entry in index.entries.iter_mut() {
+        if entry.status != MemoryStatus::Active {
+            continue;
+        }
+        if entry.access_count >= min_access_count {
+            continue;
+        }
+        if let Some(days) = days_between(&entry.created_at, &today) {
+            if days > max_age_days as i64 {
+                entry.status = MemoryStatus::Archived;
+                decayed += 1;
+            }
+        }
+    }
+
+    if decayed > 0 {
+        save_memory_index(root, &index)?;
+    }
+    Ok(decayed)
+}
+
+/// BM25 词频参数 k1
+const BM25_K1: f64 = 1.5;
+/// BM25 文档长度归一化参数 b
+const BM25_B: f64 = 0.75;
+
+/// 简单分词：按非字母数字边界切分并转小写
+///
+/// 注意：仅以 `!is_alphanumeric()` 作为分隔判定，保留 Unicode 字母；
+/// 不可加入 `!is_ascii()` 否则 ASCII 空格/标点会被当作词内字符，导致无法分词。
+fn tokenize(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_lowercase())
         .collect()
+}
+
+/// 计算两个 ISO 日期（YYYY-MM-DD）之间的天数差
+fn days_between(start: &str, end: &str) -> Option<i64> {
+    let start_date = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d").ok()?;
+    let end_date = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d").ok()?;
+    Some(end_date.signed_duration_since(start_date).num_days())
 }
 
 pub fn list_memory_entries(index: &MemoryIndex) -> Vec<MemoryIndexEntry> {
@@ -571,4 +700,196 @@ fn parse_memory_sections(content: &str) -> Vec<ParsedMemorySection> {
         &current_content,
     );
     sections
+}
+
+/// 灵枢 · 学习型记忆 — 自动学习回路（M3）
+///
+/// 从 session 事件自动提取 mistakes / preferences / code_patterns，
+/// 沉淀为跨会话可复用的记忆。详见 `learner.rs`。
+pub mod learner;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_suffix() -> String {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "fallback".to_string())
+    }
+
+    fn make_entry(
+        id: &str,
+        kind: MemoryKind,
+        content: &str,
+        context: &str,
+        status: MemoryStatus,
+        created_at: &str,
+        access_count: u32,
+    ) -> MemoryIndexEntry {
+        MemoryIndexEntry {
+            id: id.to_string(),
+            kind,
+            scope: MemoryScope::Project,
+            source: MemoryEntrySource::ManualAppend,
+            status,
+            confidence: Some(1.0),
+            content: content.to_string(),
+            context: context.to_string(),
+            file_name: kind.file_name().to_string(),
+            created_at: created_at.to_string(),
+            last_accessed_at: Some(created_at.to_string()),
+            access_count,
+        }
+    }
+
+    #[test]
+    fn bm25_ranks_relevant_entry_first() {
+        let mut index = MemoryIndex::default();
+        index.entries.push(make_entry(
+            "gen-2026-01-01-a",
+            MemoryKind::General,
+            "rust error handling with Result and ?",
+            "how to propagate errors",
+            MemoryStatus::Active,
+            "2026-01-01",
+            1,
+        ));
+        index.entries.push(make_entry(
+            "gen-2026-01-02-b",
+            MemoryKind::General,
+            "python list comprehension tricks",
+            "functional style",
+            MemoryStatus::Active,
+            "2026-01-02",
+            1,
+        ));
+
+        let results = search_memory_index(&index, "rust error handling Result");
+        assert!(!results.is_empty(), "应返回至少一条匹配结果");
+        assert_eq!(results[0].content, "rust error handling with Result and ?");
+    }
+
+    #[test]
+    fn bm25_excludes_non_active_entries() {
+        let mut index = MemoryIndex::default();
+        index.entries.push(make_entry(
+            "gen-2026-01-01-a",
+            MemoryKind::General,
+            "obsolete rust pattern",
+            "old",
+            MemoryStatus::Archived,
+            "2026-01-01",
+            0,
+        ));
+        index.entries.push(make_entry(
+            "gen-2026-01-02-b",
+            MemoryKind::General,
+            "active rust pattern",
+            "new",
+            MemoryStatus::Active,
+            "2026-01-02",
+            1,
+        ));
+
+        let results = search_memory_index(&index, "rust pattern");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "gen-2026-01-02-b");
+    }
+
+    #[test]
+    fn bm25_substring_fallback_matches_non_token() {
+        let mut index = MemoryIndex::default();
+        index.entries.push(make_entry(
+            "gen-2026-01-01-a",
+            MemoryKind::General,
+            "特殊符号-连字符",
+            "context",
+            MemoryStatus::Active,
+            "2026-01-01",
+            1,
+        ));
+        let results = search_memory_index(&index, "连字符");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "gen-2026-01-01-a");
+    }
+
+    #[test]
+    fn decay_moves_low_frequency_old_entries_to_archived() {
+        let dir = std::env::temp_dir().join(format!("sacode_mem_decay_{}", unique_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut index = MemoryIndex::default();
+        index.entries.push(make_entry(
+            "gen-2020-01-01-old",
+            MemoryKind::General,
+            "stale entry",
+            "c",
+            MemoryStatus::Active,
+            "2020-01-01",
+            0,
+        ));
+        index.entries.push(make_entry(
+            "gen-2026-08-10-recent",
+            MemoryKind::General,
+            "fresh entry",
+            "c",
+            MemoryStatus::Active,
+            "2026-08-10",
+            0,
+        ));
+        save_memory_index(&dir, &index).unwrap();
+
+        let decayed = decay_memory_entries(&dir, 30, 1).unwrap();
+        assert_eq!(decayed, 1, "仅超过 30 天且访问<1 的陈旧条目应被衰减");
+
+        let reloaded = load_memory_index(&dir).unwrap();
+        let stale = reloaded
+            .entries
+            .iter()
+            .find(|e| e.id == "gen-2020-01-01-old")
+            .unwrap();
+        assert_eq!(stale.status, MemoryStatus::Archived);
+        let fresh = reloaded
+            .entries
+            .iter()
+            .find(|e| e.id == "gen-2026-08-10-recent")
+            .unwrap();
+        assert_eq!(fresh.status, MemoryStatus::Active);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn record_access_updates_count_and_timestamp() {
+        let dir = std::env::temp_dir().join(format!("sacode_mem_access_{}", unique_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut index = MemoryIndex::default();
+        index.entries.push(make_entry(
+            "gen-2026-01-01-a",
+            MemoryKind::General,
+            "test entry",
+            "c",
+            MemoryStatus::Active,
+            "2026-01-01",
+            0,
+        ));
+        save_memory_index(&dir, &index).unwrap();
+
+        let ok = record_memory_access(&dir, "gen-2026-01-01-a").unwrap();
+        assert!(ok);
+        let reloaded = load_memory_index(&dir).unwrap();
+        let entry = reloaded.entries.iter().find(|e| e.id == "gen-2026-01-01-a").unwrap();
+        assert_eq!(entry.access_count, 1);
+        assert!(entry.last_accessed_at.is_some());
+
+        let missing = record_memory_access(&dir, "does-not-exist").unwrap();
+        assert!(!missing);
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

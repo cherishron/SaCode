@@ -141,7 +141,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Mistakes => mistakes::run(options.sub_args)?,
         CliCommand::Repl => run_repl().await?,
         CliCommand::Tui => tui::run_tui()?,
-        CliCommand::Checkpoint => checkpoint::run(options.sub_args)?,
+        CliCommand::Checkpoint => checkpoint::run(options.sub_args).await?,
         CliCommand::Status => status::run().await?,
         CliCommand::Update => update::run(options.sub_args)?,
         CliCommand::Session => session::run(options.sub_args)?,

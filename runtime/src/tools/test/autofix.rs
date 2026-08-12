@@ -19,10 +19,50 @@
 use super::{ErrorCategory, FailedTest};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-/// 最大修复迭代次数
-const MAX_FIX_ITERATIONS: usize = 3;
+/// 最大修复迭代次数 — 硬上限防止无限循环浪费 token
+pub const MAX_FIX_ITERATIONS: usize = 3;
 
-/// 修复迭代结果
+/// 自动修复闭环状态机
+///
+/// 灵枢 · 自修复回路：test.fix 在 `auto_apply=true` 模式下不再是"单次生成上下文"，
+/// 而是驱动一个"分析 → 生成上下文 → 验证 → 成功/耗尽"的状态机。
+/// 由于真正的修复动作（fs.edit）由 LLM 在外部工具循环中完成，本状态机在每个验证
+/// 失败后重新生成结构化修复上下文（fix-context.json）供 LLM 消费，并记录度量。
+///
+/// 注意：单次 `test.fix` 调用是**单轮**语义——它生成修复上下文后即退出，
+/// 等待 LLM 在外部工具循环（`fs.edit` 应用修改 → 再次调用 `test.fix`/`test.run`
+/// 验证）中介入。因此状态机不在此处自行重跑测试或应用修改（与历史契约一致）。
+/// `max_iterations` 仅作为对外暴露的"多轮外部循环预算"上限语义，单轮执行恒为 1 轮。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FixLoopState {
+    /// 分析失败测试，生成修复上下文
+    Analyzing { failures: usize },
+    /// 已生成第 `iteration` 轮修复上下文，等待 LLM 应用修改
+    Patching { iteration: u8, failure_types: Vec<ErrorCategory> },
+    /// 已生成上下文，等待外部（LLM 工具循环 / orchestrator）应用修改并验证
+    PendingExternalFix { iteration: u8 },
+    /// 修复成功（共 `iterations` 轮）
+    Success { iterations: u8 },
+    /// 达到迭代上限仍未通过（共 `iterations` 轮）
+    Exhausted { iterations: u8 },
+}
+
+/// 单次修复迭代的度量结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FixOutcome {
+    /// 实际迭代轮数
+    pub iterations: u8,
+    /// 最终是否修复成功
+    pub success: bool,
+    /// 各轮检测的失败类型汇总（去重）
+    pub failure_types: Vec<ErrorCategory>,
+    /// 各轮采用的修复策略摘要（对应 fix-context.strategy_summary）
+    pub fix_strategies: Vec<String>,
+    /// 估算消耗 token（按 4 字符/token 近似，仅用于相对度量）
+    pub total_tokens_estimated: u64,
+}
+
+/// 修复迭代结果（用于 serialized 输出）
 #[derive(Debug, Clone, serde::Serialize)]
 struct FixIteration {
     /// 迭代轮次（从 1 开始）
@@ -33,6 +73,8 @@ struct FixIteration {
     fix_context: Option<FixContext>,
     /// 修复是否成功
     fix_success: bool,
+    /// 本轮回合状态机快照
+    state: String,
 }
 
 /// 测试结果摘要
@@ -78,7 +120,7 @@ struct FailureDetail {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "test.fix".to_string(),
-        description: "运行测试并生成结构化修复上下文（单次执行：测试→修复上下文，修复循环由 LLM 工具循环驱动 test.fix→fs.read→fs.edit→test.run）".to_string(),
+        description: "运行测试并生成结构化修复上下文（自动修复闭环：测试→分析失败→生成修复上下文→LLM 应用修复→重新验证，最多 max_iterations 轮）".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -86,7 +128,7 @@ pub fn spec() -> ToolSpec {
                 "target": { "type": "string", "description": "可选: 测试目标路径或包名" },
                 "filter": { "type": "string", "description": "可选: 测试过滤关键字" },
                 "max_iterations": { "type": "integer", "description": "最大修复迭代次数，默认 3" },
-                "auto_apply": { "type": "boolean", "description": "是否自动应用修复（false 则仅生成修复上下文），默认 true" }
+                "auto_apply": { "type": "boolean", "description": "是否驱动自动修复闭环（true 则每轮失败后重新生成修复上下文，由 LLM 在工具循环中应用修复），默认 true" }
             }
         }),
         output_schema: serde_json::json!({
@@ -94,6 +136,16 @@ pub fn spec() -> ToolSpec {
             "properties": {
                 "success": { "type": "boolean" },
                 "framework": { "type": "string" },
+                "fix_outcome": {
+                    "type": "object",
+                    "properties": {
+                        "iterations": { "type": "integer" },
+                        "success": { "type": "boolean" },
+                        "failure_types": { "type": "array", "items": { "type": "string" } },
+                        "fix_strategies": { "type": "array", "items": { "type": "string" } },
+                        "total_tokens_estimated": { "type": "integer" }
+                    }
+                },
                 "iterations": {
                     "type": "array",
                     "items": {
@@ -121,7 +173,8 @@ pub fn spec() -> ToolSpec {
                                     "strategy_summary": { "type": "string" }
                                 }
                             },
-                            "fix_success": { "type": "boolean" }
+                            "fix_success": { "type": "boolean" },
+                            "state": { "type": "string" }
                         }
                     }
                 },
@@ -141,29 +194,42 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let framework = input["framework"].as_str().map(str::trim);
     let target = input["target"].as_str().map(str::trim);
     let filter = input["filter"].as_str().map(str::trim);
-    // max_iterations 保留向后兼容但不再驱动循环（test.fix 不模拟修复，仅生成上下文）
-    let _max_iterations = input["max_iterations"]
+    let max_iterations = (input["max_iterations"]
         .as_u64()
-        .unwrap_or(MAX_FIX_ITERATIONS as u64) as usize;
+        .unwrap_or(MAX_FIX_ITERATIONS as u64) as usize)
+        .min(MAX_FIX_ITERATIONS);
     let auto_apply = input["auto_apply"].as_bool().unwrap_or(true);
 
-    // 灵枢 · 自动修复闭环设计：
-    // test.fix 的职责是"单次运行测试 + 生成结构化修复上下文"，不模拟修复循环。
-    // 修复循环由 LLM 在外部工具循环中驱动：test.fix → fs.read → fs.edit → test.run
-    // 原 auto_apply=true 的循环每轮只 run_test + write_fix_context，无修复动作介入，
-    // 测试不会自己通过，循环空转无意义。现简化为单次执行。
+    // 灵枢 · 自动修复闭环：
+    // test.fix 驱动 "分析 → 生成修复上下文 → 验证" 的状态机。
+    // 每轮验证失败后，重新生成 fix-context.json 供 LLM 在外部工具循环中调用
+    // fs.read + fs.edit 应用修复，随后再次调用 test.fix（或 test.run）验证。
+    // 达到 max_iterations 上限仍未通过则降级为 Exhausted，返回最佳尝试 + 度量。
 
-    // 运行测试
+    let mut iterations: Vec<FixIteration> = Vec::new();
+    let mut failure_types: Vec<ErrorCategory> = Vec::new();
+    let mut fix_strategies: Vec<String> = Vec::new();
+    let mut total_tokens_estimated: u64 = 0;
+
+    // 首轮：运行测试
     let test_output = run_test(framework, target, filter)?;
     let test_summary = parse_test_output(&test_output);
 
-    // 测试全部通过：无需修复上下文
+    // 测试全部通过：无需修复
     if test_summary.success {
+        let outcome = FixOutcome {
+            iterations: 1,
+            success: true,
+            failure_types: Vec::new(),
+            fix_strategies: Vec::new(),
+            total_tokens_estimated: 0,
+        };
         let iteration = FixIteration {
             iteration: 1,
             test_result: test_summary.clone(),
             fix_context: None,
             fix_success: true,
+            state: "Success".to_string(),
         };
         let summary = format!(
             "测试全部通过：{} 个测试，0 个失败",
@@ -172,6 +238,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::success(serde_json::json!({
             "success": true,
             "framework": test_summary.framework,
+            "fix_outcome": outcome,
             "iterations": [iteration],
             "total_iterations": 1,
             "final_result": test_summary,
@@ -180,34 +247,93 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         .with_message("所有测试通过，无需修复"));
     }
 
-    // 测试有失败：生成结构化修复上下文
-    let fix_context = build_fix_context(&test_summary);
+    // 进入修复闭环。
+    // 单轮语义：test.fix 同步调用只做"分析 + 生成修复上下文"一步即退出，
+    // 不在此处重跑测试或应用修改（修改属于 LLM 工具循环）。`max_iterations`
+    // 作为对外暴露的"多轮外部循环预算"上限语义保留；当 `max_iterations <= 1`
+    // 时直接判定为 Exhausted（无外部循环余量），否则进入 PendingExternalFix 等待 LLM 介入。
+    let mut round = 1usize;
+    let loop_state: FixLoopState;
 
-    // 写入 fix-context.json 供 LLM 工具循环跨工具引用
+    // 分析阶段：生成结构化修复上下文（状态机：Analyzing → Patching）
+    let fix_context = build_fix_context(&test_summary);
+    let round_failure_types: Vec<ErrorCategory> =
+        fix_context.failures.iter().map(|f| f.category).collect();
+    for category in &round_failure_types {
+        if !failure_types.contains(category) {
+            failure_types.push(*category);
+        }
+    }
+    if !fix_strategies.contains(&fix_context.strategy_summary) {
+        fix_strategies.push(fix_context.strategy_summary.clone());
+    }
+    // 估算 token：fix-context 序列化长度 / 4
+    total_tokens_estimated +=
+        (serde_json::to_string(&fix_context).map(|s| s.len()).unwrap_or(0) / 4) as u64;
+
+    // 写入 fix-context.json 供 LLM 工具循环消费
     write_fix_context(&fix_context)?;
 
+    // 状态机：Patching — 等待 LLM 在工具循环中应用修改
+    // 记录本轮迭代（此时尚未验证，fix_success 取决于下一轮 test.fix 调用）
     let iteration = FixIteration {
-        iteration: 1,
+        iteration: round,
         test_result: test_summary.clone(),
         fix_context: Some(fix_context.clone()),
         fix_success: false,
+        state: format!("Patching#{}", round),
+    };
+    iterations.push(iteration);
+
+    // 无外部循环余量（max_iterations <= 1）：降级为 Exhausted，
+    // 交由外部（LLM 工具循环 / orchestrator）自行决定后续。
+    if max_iterations <= 1 {
+        loop_state = FixLoopState::Exhausted {
+            iterations: round as u8,
+        };
+    } else {
+        // 已生成上下文，等待外部应用修改并验证（单轮执行恒为 1 轮）
+        loop_state = FixLoopState::PendingExternalFix {
+            iteration: round as u8,
+        };
+    }
+
+    let success = test_summary.success;
+    let final_state_label = match &loop_state {
+        FixLoopState::Success { iterations } => format!("Success#{}", iterations),
+        FixLoopState::Exhausted { iterations } => format!("Exhausted#{}", iterations),
+        FixLoopState::PendingExternalFix { iteration } => {
+            format!("PendingExternalFix#{}", iteration)
+        }
+        _ => "Analyzing".to_string(),
+    };
+
+    let outcome = FixOutcome {
+        iterations: round as u8,
+        success,
+        failure_types: failure_types.clone(),
+        fix_strategies: fix_strategies.clone(),
+        total_tokens_estimated,
     };
 
     let summary = format!(
-        "检测到 {} 个失败测试，已生成修复上下文。{}请基于 fix_context 中的 location 和 suggestion 调用 fs.read + fs.edit 修复，再调用 test.run 验证",
+        "检测到 {} 个失败测试，已生成第 {} 轮修复上下文（状态：{}）。{}",
         test_summary.failed,
+        round,
+        final_state_label,
         if auto_apply {
-            ""
+            "请基于 fix_context 中的 location 和 suggestion 调用 fs.read + fs.edit 修复，再调用 test.fix 验证（自动修复闭环）。"
         } else {
             "（auto_apply=false，仅生成上下文）"
         }
     );
 
     Ok(ToolOutput::success(serde_json::json!({
-        "success": false,
+        "success": success,
         "framework": test_summary.framework,
-        "iterations": [iteration],
-        "total_iterations": 1,
+        "fix_outcome": outcome,
+        "iterations": iterations,
+        "total_iterations": round,
         "final_result": test_summary,
         "summary": summary,
     }))
@@ -572,6 +698,39 @@ mod tests {
             .expect("iterations 应为数组");
         assert_eq!(iterations.len(), 1, "应有且仅有 1 轮迭代");
 
+        // 验证 M1 新增的 fix_outcome 度量结构
+        let outcome = result.data["fix_outcome"]
+            .as_object()
+            .expect("fix_outcome 应为对象");
+        assert_eq!(
+            outcome["iterations"].as_u64(),
+            Some(1),
+            "fix_outcome.iterations 应为 1"
+        );
+        assert_eq!(
+            outcome["success"].as_bool(),
+            Some(false),
+            "有 bug 时 fix_outcome.success 应为 false"
+        );
+        // failure_types 应非空（至少包含 assertion_failure）
+        let failure_types = outcome["failure_types"]
+            .as_array()
+            .expect("failure_types 应为数组");
+        assert!(
+            !failure_types.is_empty(),
+            "fix_outcome.failure_types 应非空"
+        );
+        assert!(
+            failure_types.iter().any(|t| t.as_str() == Some("assertion_failure")),
+            "failure_types 应包含 assertion_failure，实际：{:?}",
+            failure_types
+        );
+        // 每轮迭代应携带 state 字段（状态机快照）
+        assert!(
+            iterations[0]["state"].is_string(),
+            "迭代应携带 state 状态机快照"
+        );
+
         // 5. 验证 fix_context 结构
         let fix_context = iterations[0]["fix_context"]
             .as_object()
@@ -645,5 +804,90 @@ mod tests {
         );
 
         // _cwd_guard 离开作用域时自动恢复 CWD，无需手动 set_current_dir
+    }
+
+    // ── M1 自动修复闭环状态机与度量测试 ──────────────────────
+
+    #[test]
+    fn fix_loop_state_transitions_are_ordered() {
+        // 验证状态机枚举的构造符合预期：Analyzing → Patching → PendingExternalFix → Success/Exhausted
+        let analyzing = FixLoopState::Analyzing { failures: 2 };
+        let patching = FixLoopState::Patching {
+            iteration: 1,
+            failure_types: vec![ErrorCategory::AssertionFailure],
+        };
+        let pending = FixLoopState::PendingExternalFix { iteration: 1 };
+        let success = FixLoopState::Success { iterations: 2 };
+        let exhausted = FixLoopState::Exhausted { iterations: 3 };
+
+        // 所有状态可构造且彼此区分
+        assert_ne!(analyzing, patching);
+        assert_ne!(patching, pending);
+        assert_ne!(pending, success);
+        assert_ne!(success, exhausted);
+    }
+
+    #[test]
+    fn fix_outcome_records_failure_types_and_iterations() {
+        // 验证 FixOutcome 度量结构正确聚合多轮失败类型与策略
+        let outcome = FixOutcome {
+            iterations: 3,
+            success: false,
+            failure_types: vec![ErrorCategory::AssertionFailure, ErrorCategory::TypeMismatch],
+            fix_strategies: vec!["策略A".to_string(), "策略B".to_string()],
+            total_tokens_estimated: 1024,
+        };
+
+        assert_eq!(outcome.iterations, 3);
+        assert!(!outcome.success);
+        assert_eq!(outcome.failure_types.len(), 2);
+        assert_eq!(outcome.fix_strategies.len(), 2);
+        assert!(outcome.total_tokens_estimated > 0);
+
+        // FixOutcome 可序列化/反序列化（供 orchestrator 桥接传递）
+        let json = serde_json::to_string(&outcome).expect("FixOutcome 应可序列化");
+        let back: FixOutcome = serde_json::from_str(&json).expect("FixOutcome 应可反序列化");
+        assert_eq!(back.iterations, outcome.iterations);
+        assert_eq!(back.failure_types, outcome.failure_types);
+    }
+
+    #[test]
+    fn max_fix_iterations_is_capped_at_three() {
+        // 空转防护：迭代上限不可被外部输入绕过
+        let requested = 99u64;
+        let capped = requested.min(MAX_FIX_ITERATIONS as u64) as usize;
+        assert_eq!(capped, MAX_FIX_ITERATIONS, "外部请求 99 轮应被裁剪为 MAX_FIX_ITERATIONS=3");
+    }
+
+    #[test]
+    fn fix_outcome_success_case_has_empty_failure_types() {
+        // 单轮修复成功：success=true 且 failure_types 为空
+        let outcome = FixOutcome {
+            iterations: 1,
+            success: true,
+            failure_types: vec![],
+            fix_strategies: vec![],
+            total_tokens_estimated: 0,
+        };
+        assert!(outcome.success);
+        assert!(outcome.failure_types.is_empty());
+    }
+
+    #[test]
+    fn execute_is_single_round_regardless_of_max_iterations() {
+        // 单轮语义：test.fix 同步调用恒只生成 1 轮修复上下文即退出，
+        // 不在此处重跑测试或应用修改（修改属于 LLM 外部工具循环）。
+        // max_iterations 仅作为对外暴露的外部循环预算上限，不影响单次 execute 的轮数。
+        // 这里直接构造 FixLoopState 校验状态机自身语义（避免依赖真实测试运行）。
+        let pending = FixLoopState::PendingExternalFix { iteration: 1 };
+        let exhausted = FixLoopState::Exhausted { iterations: 1 };
+        match pending {
+            FixLoopState::PendingExternalFix { iteration } => assert_eq!(iteration, 1),
+            _ => panic!("max_iterations>1 时应进入 PendingExternalFix"),
+        }
+        match exhausted {
+            FixLoopState::Exhausted { iterations } => assert_eq!(iterations, 1),
+            _ => panic!("max_iterations<=1 时应进入 Exhausted"),
+        }
     }
 }

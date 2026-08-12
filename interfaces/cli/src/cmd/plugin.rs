@@ -2,7 +2,7 @@ use anyhow::Result;
 use sacode_runtime::{
     PluginDescriptor, PluginKind, PluginLoader, PluginRegistry, SkillHubClient, SkillHubPluginMeta,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::plugin_config::{PluginConfigStore, PluginEntry, PluginSource};
 
@@ -344,6 +344,7 @@ fn configured_source_label(entry: &crate::plugin_config::PluginResolvedEntry) ->
 
 fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<()> {
     let store = PluginConfigStore::new(&PathBuf::from("."));
+    let source = source_from_global(global);
     let local_candidate = if let Ok(handle) = tokio::runtime::Handle::try_current() {
         tokio::task::block_in_place(|| handle.block_on(resolve_install_candidate(name)))?
     } else {
@@ -368,12 +369,13 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
         None
     };
 
-    let (resolved_name, description, kind, source_ref) = if let Some(entry) = local_candidate {
+    let (resolved_name, description, kind, source_ref, download_url) = if let Some(entry) = local_candidate {
         (
             entry.name,
             entry.description,
             entry.kind.label().to_string(),
             entry.source_label,
+            String::new(),
         )
     } else if let Some(entry) = remote_candidate {
         (
@@ -383,6 +385,7 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
             entry
                 .source_ref
                 .unwrap_or_else(|| format!("skillhub:{}", entry.author)),
+            entry.download_url,
         )
     } else {
         (
@@ -394,7 +397,26 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
             } else {
                 "project".to_string()
             },
+            String::new(),
         )
+    };
+
+    // 尝试下载 WASM 文件（如果有 download_url）
+    let wasm_path = if !download_url.trim().is_empty() {
+        let wasm_dir = store.wasm_dir(source);
+        let wasm_file = store.wasm_file_path(&resolved_name, source);
+        match download_wasm_plugin(&download_url, &wasm_dir, &wasm_file) {
+            Ok(path) => {
+                println!("Downloaded WASM plugin: {}", path.display());
+                path.to_string_lossy().to_string()
+            }
+            Err(e) => {
+                eprintln!("Warning: failed to download WASM plugin: {}", e);
+                String::new()
+            }
+        }
+    } else {
+        String::new()
     };
 
     store.upsert(
@@ -405,8 +427,10 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
             description,
             kind,
             source_ref,
+            download_url,
+            wasm_path,
         },
-        source_from_global(global),
+        source,
     )?;
     println!(
         "Installed plugin {} to {} [{}]",
@@ -419,6 +443,42 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
         if global { "user" } else { "project" }
     );
     Ok(())
+}
+
+/// 下载 WASM 插件文件到本地目录
+fn download_wasm_plugin(url: &str, wasm_dir: &Path, wasm_file: &Path) -> Result<PathBuf> {
+    use std::io::Read;
+
+    // 创建目录
+    std::fs::create_dir_all(wasm_dir)?;
+
+    // 使用 reqwest 同步 HTTP 下载
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {}", e))?;
+
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "HTTP {}: failed to download WASM plugin from {}",
+            response.status(),
+            url
+        );
+    }
+
+    let mut body = Vec::new();
+    response
+        .read_to_end(&mut body)
+        .map_err(|e| anyhow::anyhow!("failed to read response body: {}", e))?;
+
+    // 写入文件
+    std::fs::write(wasm_file, &body)?;
+    Ok(wasm_file.to_path_buf())
 }
 
 fn remove_plugin(name: &str, global: bool) -> Result<()> {

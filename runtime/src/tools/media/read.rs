@@ -64,19 +64,23 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "base64" => (encode_base64(&bytes), "base64".to_string()),
         "ocr" | "describe" => {
             let prompt = build_visual_prompt(mode, &file_path.display().to_string());
-            try_visual_read(&input, &file_path, &bytes, mime_type, &prompt).unwrap_or_else(|_| {
-                (
-                    fallback_visual_text(
-                        mode,
-                        &file_path.display().to_string(),
-                        mime_type,
-                        width,
-                        height,
-                        bytes.len(),
-                    ),
-                    "fallback".to_string(),
-                )
-            })
+            // 超时遵守 media.read 的 timeout_ms（默认 10s）
+            let timeout =
+                std::time::Duration::from_millis(spec().timeout_ms.unwrap_or(10_000) as u64);
+            try_visual_read(&input, &file_path, &bytes, mime_type, &prompt, timeout)
+                .unwrap_or_else(|_| {
+                    (
+                        fallback_visual_text(
+                            mode,
+                            &file_path.display().to_string(),
+                            mime_type,
+                            width,
+                            height,
+                            bytes.len(),
+                        ),
+                        "fallback".to_string(),
+                    )
+                })
         }
         _ => {
             return Ok(ToolOutput::failure(

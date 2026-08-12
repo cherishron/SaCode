@@ -414,10 +414,10 @@ impl LanguageServer for SaCodeLanguageServer {
         }
     }
 
-    /// 引用查找 — 查找光标位置符号在当前文档中的所有引用
+    /// 引用查找 — 查找光标位置符号在所有已打开文档中的引用
     ///
     /// 基于 AST identifier 节点匹配，支持 includeDeclaration 过滤。
-    /// 当前仅搜索当前文档，跨文件引用需后续扩展。
+    /// 跨文件搜索：遍历所有已打开文档，对每个文档运行 AST 引用检测。
     async fn references(
         &self,
         params: ReferenceParams,
@@ -425,29 +425,38 @@ impl LanguageServer for SaCodeLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
-        let document = self
-            .documents
-            .lock()
-            .expect("document mutex poisoned")
-            .get(uri)
-            .cloned();
 
-        let Some(document) = document else {
-            return Ok(None);
+        // 获取当前文档以提取符号名
+        let symbol_name = {
+            let docs = self.documents.lock().expect("document mutex poisoned");
+            let doc = docs.get(uri).cloned();
+            doc.and_then(|d| extract_symbol_name_from_document(&d, position))
         };
 
-        // 从光标位置提取符号名
-        let symbol_name = extract_symbol_name_from_document(&document, position);
         let Some(symbol_name) = symbol_name else {
             return Ok(None);
         };
 
-        let locations = find_references_in_document(
-            &document,
-            uri,
-            &symbol_name,
-            include_declaration,
-        );
+        // 跨文件搜索：遍历所有已打开文档
+        let documents: Vec<TextDocument> = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .iter_all()
+            .cloned()
+            .collect();
+
+        let mut locations = Vec::new();
+        for doc in &documents {
+            let doc_locations = find_references_in_document(
+                doc,
+                &doc.uri,
+                &symbol_name,
+                include_declaration,
+            );
+            locations.extend(doc_locations);
+        }
+
         if locations.is_empty() {
             Ok(None)
         } else {
@@ -455,29 +464,49 @@ impl LanguageServer for SaCodeLanguageServer {
         }
     }
 
-    /// 跳转到定义 — 查找光标位置符号的定义位置
+    /// 跳转到定义 — 查找光标位置符号在所有已打开文档中的定义位置
     ///
-    /// 策略：从光标位置提取符号名，在符号表中查找定义。
-    /// 当前仅搜索当前文档，跨文件定义需后续扩展。
+    /// 策略：从光标位置提取符号名，依次扫描所有已打开文档的符号表，
+    /// 返回第一个匹配的定义位置。
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> LspResult<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let document = self
-            .documents
-            .lock()
-            .expect("document mutex poisoned")
-            .get(uri)
-            .cloned();
 
-        let Some(document) = document else {
+        // 提取符号名
+        let symbol_name = {
+            let docs = self.documents.lock().expect("document mutex poisoned");
+            let doc = docs.get(uri).cloned();
+            doc.and_then(|d| extract_symbol_name_from_document(&d, position))
+        };
+
+        let Some(symbol_name) = symbol_name else {
             return Ok(None);
         };
 
-        let location = find_definition_in_document(&document, uri, position);
-        Ok(location.map(GotoDefinitionResponse::Scalar))
+        // 跨文件搜索：遍历所有已打开文档，找第一个匹配的定义
+        let documents: Vec<TextDocument> = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .iter_all()
+            .cloned()
+            .collect();
+
+        for doc in &documents {
+            if let Some(location) = find_definition_in_document(doc, &doc.uri, position) {
+                // 验证找到的符号名是否匹配提取的符号名
+                if let Some(found_name) = extract_symbol_name_from_document(doc, location.range.start) {
+                    if found_name == symbol_name {
+                        return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// 重命名 — 为光标位置的符号生成全文档重命名编辑

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sacode_acp::{run_server, AcpConfig};
+use sacode_acp::{run_server, run_stdio_server, AcpConfig};
 
 pub async fn run(args: Vec<String>) -> Result<()> {
     let mut config = AcpConfig::default();
@@ -14,6 +14,10 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             Ok(())
         }
         Some("serve") | None => run_server(&config).await,
+        Some("stdio") => {
+            println!("ACP stdio server ready");
+            run_stdio_server().await
+        }
         Some(other) => anyhow::bail!("unknown acp command: {}", other),
     }
 }

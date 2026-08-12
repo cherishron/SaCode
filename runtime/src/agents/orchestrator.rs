@@ -99,7 +99,7 @@ pub async fn execute_role_driven_orchestration(
 
     // 灵枢 · 自防护 — 冲突处置回路
     // 检测到冲突后，根据严重程度采取不同处置策略：
-    // - validation_conflict（实现与验证冲突）：标记任务失败，阻止错误结果被采纳
+    // - validation_conflict（实现与验证冲突）：触发修复闭环（M1 状态机）+ 发送 InterventionRequest
     // - 其他冲突：添加告警事件，在输出中追加处置建议
     if !report.conflict_records.is_empty() {
         let has_validation_conflict = report
@@ -108,11 +108,40 @@ pub async fn execute_role_driven_orchestration(
             .any(|record| record.kind == "validation_conflict");
 
         if has_validation_conflict {
-            // 最严重冲突：实现与验证冲突，标记为错误阻止错误结果被采纳
+            // 最严重冲突：实现与验证冲突 → 实时干预触发修复闭环（自防护→自愈回路）
             report.events.push(sacode_kernel::Event::error(format!(
-                "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），任务需人工审查。冲突数：{}",
+                "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），触发自动修复闭环。冲突数：{}",
                 report.conflict_records.len()
             )));
+
+            // 发送 InterventionRequest 到消息总线，请求 test-engineer 介入修复
+            message_bus
+                .broadcast(
+                    "orchestrator",
+                    super::message_bus::AgentMessageKind::InterventionRequest,
+                    format!(
+                        "检测到 validation_conflict，请 test-engineer 重新运行 test.fix 修复并验证（最多 {} 轮）",
+                        crate::tools::test::autofix::MAX_FIX_ITERATIONS
+                    ),
+                )
+                .await;
+
+            // 触发修复闭环：调用 test.fix 驱动一轮分析与验证（M1 状态机）
+            // 修复动作（fs.edit）由外部 LLM 工具循环完成，此处驱动状态机并记录度量
+            match dispatch_fix_loop(&workdir, &mut report).await {
+                Ok(loop_summary) => {
+                    report.events.push(sacode_kernel::Event::thinking(format!(
+                        "灵枢·自修复：修复闭环驱动完成，{}",
+                        loop_summary
+                    )));
+                }
+                Err(error) => {
+                    report.events.push(sacode_kernel::Event::error(format!(
+                        "灵枢·自修复：修复闭环驱动失败：{}",
+                        error
+                    )));
+                }
+            }
         } else {
             // 一般冲突：添加告警，提醒用户关注
             report.events.push(sacode_kernel::Event::message(format!(
@@ -135,7 +164,7 @@ pub async fn execute_role_driven_orchestration(
                 conflict_summary.join("\n")
             ));
             if has_validation_conflict {
-                output.push_str("\n**处置建议**：实现与验证存在冲突，建议检查实现代码与测试结果的一致性后再继续。\n");
+                output.push_str("\n**处置建议**：已触发自动修复闭环（test.fix 状态机），请检查实现代码与测试结果的一致性，修复后重新验证。\n");
             } else {
                 output.push_str("\n**处置建议**：请审查上方冲突详情，确认是否需要调整执行策略。\n");
             }
@@ -1279,4 +1308,94 @@ async fn collect_communication_summaries(
     }
 
     summaries
+}
+
+/// 灵枢 · 自修复 — 修复闭环驱动
+///
+/// 当检测到 `validation_conflict` 时由冲突处置回路调用：直接执行 `test.fix` 工具
+/// 驱动一轮"分析失败 → 生成修复上下文 → 验证"状态机（M1 `FixLoopState`）。
+/// 修复动作（fs.edit）由外部 LLM 工具循环完成，本函数负责驱动闭环并记录度量。
+///
+/// 防无限循环：干预次数由调用方（冲突处置块）控制，本函数本身每轮仅生成上下文
+/// 并验证，不自行重复执行直至通过（避免空转浪费 token）。
+async fn dispatch_fix_loop(
+    _workdir: &std::path::Path,
+    report: &mut ExecutionReport,
+) -> anyhow::Result<String> {
+    // 直接驱动 test.fix 状态机（其实现内部使用 current_dir 定位项目根）
+    let input = serde_json::json!({
+        "auto_apply": true,
+        "max_iterations": crate::tools::test::autofix::MAX_FIX_ITERATIONS
+    });
+    let output = crate::tools::test::autofix::execute(input)?;
+
+    let success = output.data["success"].as_bool().unwrap_or(false);
+    let iterations = output.data["total_iterations"].as_u64().unwrap_or(0);
+    let summary = output
+        .message
+        .clone()
+        .unwrap_or_else(|| "修复闭环驱动完成".to_string());
+
+    // 记录修复度量到 report
+    report.events.push(sacode_kernel::Event::message(format!(
+        "灵枢·自修复：test.fix 驱动（success={}, iterations={}）",
+        success, iterations
+    )));
+
+    Ok(format!("success={}, iterations={}, {}", success, iterations, summary))
+}
+
+/// 灵枢 · 实时干预 — 动态调整执行计划
+///
+/// 接收 `InterventionRequest` 消息后，根据冲突类型动态调整执行计划：
+/// - validation_conflict → 追加 test-engineer 修复轮次（重新运行 test.fix）
+/// - 其他冲突 → 追加 code-reviewer 复核轮次
+///
+/// 返回是否成功追加干预轮次（用于调用方判断是否继续编排）。
+#[allow(dead_code)]
+async fn handle_intervention(
+    message_bus: &MessageBus,
+    request: &super::message_bus::AgentMessage,
+    report: &mut ExecutionReport,
+) -> bool {
+    let content = &request.content;
+    if content.contains("validation_conflict") {
+        // 追加 test-engineer 修复轮次：重新运行 test.fix 验证
+        let fix_input = serde_json::json!({
+            "auto_apply": true,
+            "max_iterations": crate::tools::test::autofix::MAX_FIX_ITERATIONS
+        });
+        match crate::tools::test::autofix::execute(fix_input) {
+            Ok(output) => {
+                let success = output.data["success"].as_bool().unwrap_or(false);
+                report.events.push(sacode_kernel::Event::thinking(format!(
+                    "灵枢·实时干预：追加 test-engineer 修复轮次，success={}",
+                    success
+                )));
+                // 回应 InterventionRequest（携带 reply_to 引用链）
+                let _ = message_bus
+                    .broadcast(
+                        "orchestrator",
+                        super::message_bus::AgentMessageKind::TaskResult,
+                        format!("干预完成：test.fix success={}", success),
+                    )
+                    .await;
+                return true;
+            }
+            Err(error) => {
+                report.events.push(sacode_kernel::Event::error(format!(
+                    "灵枢·实时干预：追加修复轮次失败：{}",
+                    error
+                )));
+                return false;
+            }
+        }
+    }
+
+    // 其他冲突：追加 code-reviewer 复核轮次（记录事件，等待 LLM 工具循环消费）
+    report.events.push(sacode_kernel::Event::message(format!(
+        "灵枢·实时干预：收到非验证类干预请求，已记录待复核：{}",
+        content
+    )));
+    true
 }

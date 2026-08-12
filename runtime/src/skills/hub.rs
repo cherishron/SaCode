@@ -215,6 +215,9 @@ impl SkillHubClient {
             McpServerConfig {
                 server_type: "remote".to_string(),
                 url: meta.url,
+                command: None,
+                args: None,
+                env: None,
                 enabled: true,
             },
         );

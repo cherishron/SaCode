@@ -1,10 +1,24 @@
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 use crate::{active_backend, active_policy, SandboxCommand};
 
 /// task.spawn 默认超时时间（2 分钟）
 const DEFAULT_SPAWN_TIMEOUT_MS: u64 = 120_000;
+
+/// 进程内唯一 task_id 序号生成器（与 SystemTime 纳秒组合保证全局唯一）
+static SPAWN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 生成唯一 task_id：时间戳纳秒 + 原子序号，避免同一时刻多次 spawn 冲突
+fn generate_task_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = SPAWN_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("spawn-{}-{}", nanos, seq)
+}
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -44,7 +58,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     let started_at = Instant::now();
-    let task_id = format!("spawn-{}", started_at.elapsed().as_nanos());
+    let task_id = generate_task_id();
     let composed_prompt = if context.trim().is_empty() {
         prompt.to_string()
     } else {
@@ -104,4 +118,31 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "result": result,
         "duration_ms": duration_ms
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_task_id;
+
+    #[test]
+    fn generate_task_id_is_unique_across_calls() {
+        // 验证 M2 修复：task_id 不再恒为 spawn-0，多次调用生成唯一 ID
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let id = generate_task_id();
+            assert!(!id.starts_with("spawn-0"), "task_id 不应恒为 spawn-0");
+            assert!(ids.insert(id), "连续生成的 task_id 必须唯一");
+        }
+    }
+
+    #[test]
+    fn generate_task_id_has_timestamp_prefix() {
+        // task_id 格式应为 spawn-<nanos>-<seq>
+        let id = generate_task_id();
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 3, "task_id 应包含 3 段：spawn-<nanos>-<seq>");
+        assert_eq!(parts[0], "spawn");
+        assert!(!parts[1].is_empty(), "时间戳段不应为空");
+        assert!(!parts[2].is_empty(), "序号段不应为空");
+    }
 }

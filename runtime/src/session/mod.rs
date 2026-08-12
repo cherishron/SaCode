@@ -14,6 +14,7 @@ use sacode_kernel::{
 };
 
 use crate::CheckpointStorage;
+use crate::memory::learner::AutoLearner;
 use crate::ToolRegistry;
 use crate::executor::task_runner::{
     ApprovalDecider, AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder,
@@ -205,6 +206,8 @@ impl SessionService {
         let original_tokens = session.estimate_event_tokens();
 
         session.compress()?;
+        // 灵枢 · 学习型记忆（M3）：压缩完成后自动沉淀经验教训
+        Self::trigger_auto_learn(&session.cwd, session.compressed_summary.as_deref());
         self.persist_session(session);
 
         Ok(CompressionResult {
@@ -235,6 +238,8 @@ impl SessionService {
         let original_tokens = session.estimate_event_tokens();
 
         session.compress()?;
+        // 灵枢 · 学习型记忆（M3）：压缩完成后自动沉淀经验教训
+        Self::trigger_auto_learn(&session.cwd, session.compressed_summary.as_deref());
         self.persist_session(session);
 
         Ok(Some(CompressionResult {
@@ -245,6 +250,35 @@ impl SessionService {
             compression_ratio: session.compression_ratio.unwrap_or(1.0),
             summary: session.compressed_summary.clone().unwrap_or_default(),
         }))
+    }
+
+    /// 灵枢 · 学习型记忆（M3）：session 压缩后触发自动学习回路
+    ///
+    /// 从压缩摘要中提取 mistakes / preferences / code_patterns 并沉淀。
+    /// 失败不影响主压缩流程（仅 warn 日志）。
+    fn trigger_auto_learn(workdir: &Path, compressed_summary: Option<&str>) {
+        let Some(summary) = compressed_summary else {
+            return;
+        };
+        let learner = AutoLearner::from_session_summary(workdir, summary);
+        match learner.run() {
+            Ok(result) => {
+                if result.mistakes_extracted > 0
+                    || result.preferences_extracted > 0
+                    || result.code_patterns_extracted > 0
+                {
+                    tracing::info!(
+                        "灵枢·学习型记忆：自动提取 mistakes={}, preferences={}, code_patterns={}",
+                        result.mistakes_extracted,
+                        result.preferences_extracted,
+                        result.code_patterns_extracted
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!("灵枢·学习型记忆：自动学习失败：{}", error);
+            }
+        }
     }
 
     pub fn fork_session(&self, source_session_id: &str) -> Result<SessionHandle> {

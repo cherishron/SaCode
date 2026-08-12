@@ -165,10 +165,65 @@ fn build_session_summary(workdir: &Path) -> Result<Option<String>> {
     }
 
     if sections.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(format!("最近会话摘要\n{}", sections.join("\n"))))
+        // M3 升级：即使无 session 摘要，也尝试注入已学习的记忆模式
+        return build_learned_patterns_summary(workdir);
     }
+
+    // M3 升级：追加已学习模式（从 wiki memory 中的 AutoLearned 候选条目）
+    if let Some(learned) = build_learned_patterns_summary(workdir)? {
+        sections.push(learned);
+    }
+
+    Ok(Some(format!("最近会话摘要\n{}", sections.join("\n"))))
+}
+
+/// 从项目级 wiki memory 中提取 AutoLearned 条目，注入当前会话上下文
+///
+/// 这实现了"跨会话学习"的闭环：历史 session 自动沉淀的模式被重新注入新会话。
+fn build_learned_patterns_summary(workdir: &Path) -> Result<Option<String>> {
+    let wiki_dir = workdir.join(PROJECT_WIKI_DIR);
+    if !wiki_dir.exists() {
+        return Ok(None);
+    }
+
+    let index = load_memory_index(&wiki_dir)
+        .ok()
+        .filter(|index| !index.entries.is_empty())
+        .or_else(|| rebuild_memory_index(&wiki_dir, MemoryScope::Project).ok());
+
+    let Some(index) = index else {
+        return Ok(None);
+    };
+
+    // 优先展示 AutoLearned 来源且状态为 Active 或 Candidate 的条目
+    let learned: Vec<&crate::memory::MemoryIndexEntry> = index
+        .entries
+        .iter()
+        .filter(|entry| {
+            matches!(entry.source, crate::memory::MemoryEntrySource::AutoLearned)
+                && (entry.status == crate::memory::MemoryStatus::Active
+                    || entry.status == crate::memory::MemoryStatus::Candidate)
+        })
+        .take(3)
+        .collect();
+
+    if learned.is_empty() {
+        return Ok(None);
+    }
+
+    let lines = learned
+        .iter()
+        .map(|entry| {
+            let status_mark = if entry.status == crate::memory::MemoryStatus::Candidate {
+                "（待审批）"
+            } else {
+                ""
+            };
+            format!("- [{}]{}{}", entry.kind.scope_label(), status_mark, entry.content)
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Some(format!("已学习模式（跨会话）\n{}", lines.join("\n"))))
 }
 
 fn summarize_markdown_dir(path: &Path, label: &str) -> Result<Option<String>> {
@@ -298,17 +353,38 @@ fn summarize_mistakes_file(path: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    let mut lines = vec![format!("项目级 mistakes\n共 {} 条", entries.len())];
-    for entry in entries.iter().rev().take(3) {
+    // M3 升级：按失败频率加权排序，显示高频失败模式（而非仅最近 3 条）
+    use std::collections::HashMap;
+    let mut freq: HashMap<String, (String, usize)> = HashMap::new();
+    for entry in &entries {
         let summary = entry
             .get("summary")
             .and_then(Value::as_str)
-            .unwrap_or("未命名错误");
+            .unwrap_or("未命名错误")
+            .to_string();
         let scope = entry
             .get("scope")
             .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        lines.push(format!("- [{}] {}", scope, summary));
+            .unwrap_or("unknown")
+            .to_string();
+        let counter = freq.entry(summary.clone()).or_insert((scope, 0));
+        counter.1 += 1;
+    }
+
+    let mut ranked: Vec<(String, String, usize)> = freq
+        .into_iter()
+        .map(|(summary, (scope, count))| (summary, scope, count))
+        .collect();
+    ranked.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+
+    let mut lines = vec![format!("项目级 mistakes\n共 {} 条，高频模式 {} 类", entries.len(), ranked.len())];
+    for (summary, scope, count) in ranked.into_iter().take(3) {
+        let weight = if count > 1 {
+            format!(" (×{})", count)
+        } else {
+            String::new()
+        };
+        lines.push(format!("- [{}]{} {}", scope, weight, summary));
     }
     Ok(Some(lines.join("\n")))
 }

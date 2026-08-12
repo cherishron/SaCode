@@ -40,11 +40,13 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             }
         }
         "add" => {
-            if args.len() < 3 {
-                println!("Usage: sacode mcp add <name> <url>");
+            // 两种用法：
+            //   sacode mcp add <name> <url> [--global|-g]            — remote 类型
+            //   sacode mcp add --stdio <name> <command> [args...]    — stdio 类型
+            if args.len() >= 2 && args[1] == "--stdio" {
+                add_stdio_server(&store, &args[2..])?;
             } else {
-                store.add_remote(&args[1], &args[2], McpSource::Project)?;
-                println!("Added MCP server: {}", args[1]);
+                add_remote_server(&store, &args[1..])?;
             }
         }
         "enable" => {
@@ -114,18 +116,88 @@ fn list_servers(store: &McpConfigStore) -> Result<()> {
 
     println!("MCP Servers:");
     for entry in entries {
+        let endpoint = if entry.server.is_stdio() {
+            entry
+                .server
+                .command
+                .as_deref()
+                .unwrap_or("(missing command)")
+                .to_string()
+        } else {
+            entry.server.url.clone()
+        };
+        let state = if entry.server.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
         println!(
-            "  {} - {} {} [{}]",
-            entry.name,
-            entry.server.url,
-            if entry.server.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            },
-            entry.source.label()
+            "  {} [{}] - {} {} [{}]",
+            entry.name, entry.server.server_type, endpoint, state, entry.source.label()
         );
     }
+    Ok(())
+}
+
+/// 添加 remote (HTTP) 类型的 MCP server
+fn add_remote_server(store: &McpConfigStore, args: &[String]) -> Result<()> {
+    if args.len() < 2 {
+        println!("Usage: sacode mcp add <name> <url> [--global|-g]");
+        println!("       sacode mcp add --stdio <name> <command> [args...]");
+        return Ok(());
+    }
+    let source = source_from_args(&args[2..]);
+    store.add_remote(&args[0], &args[1], source)?;
+    println!(
+        "Added remote MCP server: {} -> {} [{}]",
+        args[0],
+        args[1],
+        source.label()
+    );
+    Ok(())
+}
+
+/// 添加 stdio (子进程) 类型的 MCP server
+///
+/// 用法：`sacode mcp add --stdio <name> <command> [args...] [--global|-g]`
+fn add_stdio_server(store: &McpConfigStore, args: &[String]) -> Result<()> {
+    if args.len() < 2 {
+        println!("Usage: sacode mcp add --stdio <name> <command> [args...] [--global|-g]");
+        return Ok(());
+    }
+    let name = &args[0];
+    let command = &args[1];
+
+    // 收集命令行参数，过滤掉 --global/-g 标志
+    let (server_args, global_flags): (Vec<&String>, Vec<&String>) = args[2..]
+        .iter()
+        .partition(|a| a.as_str() != "--global" && a.as_str() != "-g");
+    let server_args: Vec<String> = server_args.iter().map(|s| s.to_string()).collect();
+    let source = if global_flags.is_empty() {
+        McpSource::Project
+    } else {
+        McpSource::User
+    };
+
+    store.add_stdio(
+        name,
+        command,
+        &server_args,
+        &std::collections::BTreeMap::new(),
+        source,
+    )?;
+    let args_display = if server_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", server_args.join(" "))
+    };
+    println!(
+        "Added stdio MCP server: {} -> {}{} [{}]",
+        name,
+        command,
+        args_display,
+        source.label()
+    );
     Ok(())
 }
 
@@ -172,7 +244,14 @@ async fn inspect(store: &McpConfigStore, name: &str) -> Result<()> {
     let details = inspect_server(&server).await?;
     println!("Name: {}", name);
     println!("Type: {}", server.server_type);
-    println!("URL: {}", server.url);
+    if server.is_stdio() {
+        if let Some(cmd) = &server.command {
+            let args = server.args.as_ref().map(|a| a.join(" ")).unwrap_or_default();
+            println!("Command: {} {}", cmd, args);
+        }
+    } else {
+        println!("URL: {}", server.url);
+    }
     println!("Enabled: {}", server.enabled);
     if let Some(protocol) = details.protocol_version {
         println!("Protocol: {}", protocol);
@@ -227,7 +306,8 @@ fn show_default() {
     println!("  sacode mcp install <name> [--global|-g]");
     println!("  sacode mcp list");
     println!("  sacode mcp show <name>");
-    println!("  sacode mcp add <name> <url>");
+    println!("  sacode mcp add <name> <url> [--global|-g]");
+    println!("  sacode mcp add --stdio <name> <command> [args...] [--global|-g]");
     println!("  sacode mcp enable <name> [--global|-g]");
     println!("  sacode mcp disable <name> [--global|-g]");
     println!("  sacode mcp remove <name> [--global|-g]");
@@ -242,7 +322,14 @@ fn show_server(store: &McpConfigStore, name: &str) -> Result<()> {
     println!("Name: {}", name);
     println!("Type: {}", server.server_type);
     println!("Enabled: {}", server.enabled);
-    println!("URL: {}", server.url);
+    if server.is_stdio() {
+        if let Some(cmd) = &server.command {
+            let args = server.args.as_ref().map(|a| a.join(" ")).unwrap_or_default();
+            println!("Command: {} {}", cmd, args);
+        }
+    } else {
+        println!("URL: {}", server.url);
+    }
     Ok(())
 }
 

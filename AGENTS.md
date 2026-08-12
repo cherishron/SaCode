@@ -15,9 +15,9 @@
 - Current top-level commands include `repl`, `tui`, `serve`, `acp`, `lsp`, `init`, `init-deep`, `status`, `doctor`, `mcp serve`, and direct task execution via `sacode "<task>"`.
 - `run_with_orchestrator(...)` in `interfaces/cli/src/cmd/mod.rs` is the current multi-agent / structured summary path.
 
-## Built-in Tools (26 total)
+## Built-in Tools (29 total)
 
-26 个内置工具按分层注入策略管理，详见下一节「Tool Layering & Context Optimization」。
+29 个内置工具按分层注入策略管理，详见下一节「Tool Layering & Context Optimization」。
 
 | 工具名 | 类别 | SideEffect | 分层 | 文件 |
 |--------|------|------------|------|------|
@@ -33,14 +33,17 @@
 | `fs.write` | 文件 | Modify | **Core** | `runtime/src/tools/fs/write.rs` |
 | `fs.edit` | 文件 | Modify | **Core** | `runtime/src/tools/fs/edit.rs` |
 | `fs.patch` | 文件 | Modify | Extended | `runtime/src/tools/fs/patch.rs` |
+| `fs.apply_patch` | 文件 | Modify | Extended | `runtime/src/tools/fs/apply_patch.rs` |
 | `fs.read_multi` | 文件 | ReadOnly | Extended | `runtime/src/tools/fs/read_multi.rs` |
 | `fs.list` | 文件 | ReadOnly | Extended | `runtime/src/tools/fs/list.rs` |
 | `git.commit` | Git | Modify | Extended | `runtime/src/tools/git/commit.rs` |
 | `git.diff` | Git | ReadOnly | Extended | `runtime/src/tools/git/diff.rs` |
 | `git.pr` | Git | Modify | Extended | `runtime/src/tools/git/pr.rs` |
+| `git.push` | Git | Modify | Extended | `runtime/src/tools/git/push.rs` |
 | `interaction.ask` | 交互 | ReadOnly | Extended | `runtime/src/tools/interaction/ask.rs` |
 | `media.read` | 媒体 | ReadOnly | Extended | `runtime/src/tools/media/read.rs` |
 | `media.vision` | 媒体 | ReadOnly | Extended | `runtime/src/tools/media/vision.rs` |
+| `media.video` | 媒体 | ReadOnly | Extended | `runtime/src/tools/media/video.rs` |
 | `shell.exec` | Shell | Modify | **Core** | `runtime/src/tools/shell/exec.rs` |
 | `task.spawn` | 任务 | ReadOnly | Extended | `runtime/src/tools/task/spawn.rs` |
 | `test.fix` | 测试 | Modify | Extended | `runtime/src/tools/test/autofix.rs` |
@@ -52,7 +55,7 @@
 
 灵枢 · 上下文优化机制 — 借鉴 Pi Coding Agent 的极简+可扩展哲学，
 在保持灵枢自组织 / 自防护 / 自愈合三大优势的前提下，
-把 26 个工具的 schema 注入压缩到「按需」级别，目标降低 system prompt token 60-70%。
+把 29 个工具的 schema 注入压缩到「按需」级别，目标降低 system prompt token 60-70%。
 
 ### 分层定义（`runtime/src/tools/spec.rs`）
 
@@ -191,7 +194,9 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 | 子系统 | 代码位置 | 职责 | 灵枢隐喻 |
 |--------|----------|------|----------|
 | **自组织 — 角色驱动编排** | `runtime/src/agents/` | 多角色协同、动态任务分配 | 经络协调脏腑 |
-| **自防护 — 五维冲突检测** | `runtime/src/agents/summary_compactor.rs` | 多维度冲突识别与拦截 | 诊察经脉病候 |
+| **自防护 — 五维冲突检测 + 实时干预** | `runtime/src/agents/summary_compactor.rs`、`runtime/src/agents/orchestrator.rs` | 多维度冲突识别；`validation_conflict` 触发 `InterventionRequest` 实时呼叫修复闭环（`dispatch_fix_loop`） | 诊察经脉病候，即时调方 |
+| **学习型记忆 — 自动学习回路** | `runtime/src/memory/learner.rs`、`runtime/src/memory/mod.rs`、`runtime/src/wiki/mod.rs` | session 压缩后自动提取 mistakes / preferences / code_patterns 沉淀为跨会话记忆；BM25 搜索 + 低频衰减 | 久病成医，经验入经 |
+| **多模态 — 视觉与视频理解** | `runtime/src/tools/media/vision.rs`、`runtime/src/tools/media/video.rs` | 图片/视频帧理解、超时控制、多级降级链、`VisionCache` 缓存 | 望闻问切，观其形 |
 | **自愈合 — 故障转移路由** | `runtime/src/model_routing/` | 智能路由 + 模型故障自动切换 | 表里经备用通路 |
 
 ## Current Architecture Hotspots
@@ -219,7 +224,7 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 - `task_runtime.rs` 中的 `unwrap_or(6)` 对 Option 不生效的问题已解决，当前以 EffectiveConfig 默认值为准。
 - 代码智能工具（`code.symbols`、`code.deps`、`code.search`）基于 tree-sitter AST 解析（`runtime/src/tools/code/ast.rs`），5 语言覆盖完整。`AstCache`（512 条 LRU + mtime 失效）缓存解析结果，`FileListCache` 缓存目录扫描。复杂嵌套结构由 tree-sitter 容错解析处理，语法错误不阻塞提取。
 - `fs.patch` 使用纯字符串匹配，非 `similar` crate 的 diff 算法，上下文失配时容错有限。
-- **工具总数是 26**（不是 25）：早期文档漏列 `git.pr`。新增工具请同步更新「Built-in Tools」表与 `core_tools()` / `extended_tools()` 的分层归属。
+- **工具总数是 29**（4 核心 + 25 扩展）：`git.pr` / `git.push` / `fs.apply_patch` / `media.video` 等均已计入。新增工具请同步更新「Built-in Tools」表与 `core_tools()` / `extended_tools()` 的分层归属，并递增 `runtime/src/tests/tools.rs` 中的 `ling_shu_builtin_registry_has_29_tools` / `ling_shu_extended_tools_registry_has_25_tools` 计数断言。
 - **`ToolSpec` 没有 `layer` 字段**：分层标签存于 `ToolRegistry` 内部 `RegisteredTool.layer`，由 `apply_default_layers()` 标注。新增核心层工具需把工具名加入 `CORE_TOOL_NAMES` 常量，不要在 `spec()` 里设 `layer`。
 - `ToolRegistry::for_prompt()` 的 token 预算按 4 字符 / token 近似估算（不引入 tokenizer 依赖），仅用于相对裁剪，非精确计数。
 

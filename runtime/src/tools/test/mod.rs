@@ -19,7 +19,7 @@ pub struct FailedTest {
 }
 
 /// 错误类型分类 — 用于结构化修复策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCategory {
     /// 导入/引用错误（not found / undefined / cannot find）

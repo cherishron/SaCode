@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 注意：`layer` 不直接存于 [`ToolSpec`]，而是在 [`crate::tools::ToolRegistry`]
 /// 注册时按 [`crate::tools::ToolRegistry::apply_default_layers`] 标注，
-/// 避免修改全部 26 个 `spec()` 函数。
+/// 避免修改全部 29 个 `spec()` 函数。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolLayer {

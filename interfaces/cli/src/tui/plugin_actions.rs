@@ -162,6 +162,8 @@ impl App {
                 description,
                 kind,
                 source_ref,
+                download_url: String::new(),
+                wasm_path: String::new(),
             },
             source,
         ) {

@@ -35,6 +35,9 @@ pub async fn ensure_default_context7(workdir: &Path) -> Result<bool> {
         McpServerConfig {
             server_type: "remote".to_string(),
             url: CONTEXT7_URL.to_string(),
+            command: None,
+            args: None,
+            env: None,
             enabled: true,
         },
     );

@@ -83,8 +83,8 @@ fn extended_tools_for_task_profile(profile: &TaskProfile) -> Vec<&'static str> {
     if needs("web") || needs("research") {
         wanted.extend(["web.search", "web.fetch"]);
     }
-    if needs("media") || needs("image") {
-        wanted.extend(["media.read", "media.vision"]);
+    if needs("media") || needs("image") || needs("video") {
+        wanted.extend(["media.read", "media.vision", "media.video"]);
     }
     if needs("browser") || needs("ui") {
         wanted.extend(["browser.open", "browser.navigate", "browser.snapshot", "browser.extract"]);
@@ -136,6 +136,7 @@ impl ToolRegistry {
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
         registry.register_fn(media::vision::spec(), media::vision::execute);
+        registry.register_fn(media::video::spec(), media::video::execute);
         registry.register_fn(shell::exec::spec(), shell::exec::execute);
         registry.register_fn(task::spawn::spec(), task::spawn::execute);
         registry.register_fn(test::autofix::spec(), test::autofix::execute);
@@ -198,6 +199,7 @@ impl ToolRegistry {
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
         registry.register_fn(media::vision::spec(), media::vision::execute);
+        registry.register_fn(media::video::spec(), media::video::execute);
         registry.register_fn(task::spawn::spec(), task::spawn::execute);
         registry.register_fn(test::autofix::spec(), test::autofix::execute);
         registry.register_fn(test::runner::spec(), test::runner::execute);

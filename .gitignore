@@ -21,6 +21,9 @@ logs/
 *.swp
 *.swo
 
+# CodeBuddy workspace data (local AI/IDE memory & plans)
+.codebuddy/
+
 # OS
 .DS_Store
 Thumbs.db

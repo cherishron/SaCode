@@ -195,6 +195,9 @@ fn test_mcp_store_prefers_project_over_user() {
                     McpServerConfig {
                         server_type: "remote".to_string(),
                         url: "https://user.example/mcp".to_string(),
+                        command: None,
+                        args: None,
+                        env: None,
                         enabled: true,
                     },
                 )]),
@@ -211,6 +214,9 @@ fn test_mcp_store_prefers_project_over_user() {
                     McpServerConfig {
                         server_type: "remote".to_string(),
                         url: "https://project.example/mcp".to_string(),
+                        command: None,
+                        args: None,
+                        env: None,
                         enabled: false,
                     },
                 )]),
@@ -243,6 +249,9 @@ fn test_register_enabled_mcp_tools_sync_keeps_registry_stable_without_servers() 
                     McpServerConfig {
                         server_type: "remote".to_string(),
                         url: "https://127.0.0.1:9/mcp".to_string(),
+                        command: None,
+                        args: None,
+                        env: None,
                         enabled: true,
                     },
                 )]

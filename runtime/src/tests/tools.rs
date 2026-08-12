@@ -103,19 +103,19 @@ fn ling_shu_core_tools_registry_has_exactly_four_tools() {
 }
 
 #[test]
-fn ling_shu_extended_tools_registry_has_22_tools() {
+fn ling_shu_extended_tools_registry_has_25_tools() {
     let registry = ToolRegistry::extended_tools();
     assert_eq!(
         registry.names().len(),
-        24,
-        "extended_tools 应注册 24 个扩展层工具"
+        25,
+        "extended_tools 应注册 25 个扩展层工具"
     );
 }
 
 #[test]
-fn ling_shu_builtin_registry_has_26_tools() {
+fn ling_shu_builtin_registry_has_29_tools() {
     let registry = ToolRegistry::builtin();
-    assert_eq!(registry.names().len(), 28, "builtin 应注册全部 28 个工具");
+    assert_eq!(registry.names().len(), 29, "builtin 应注册全部 29 个工具");
 }
 
 #[test]
@@ -124,8 +124,8 @@ fn ling_shu_specs_by_layer_returns_correct_counts() {
     let core_specs = registry.specs_by_layer(crate::ToolLayer::Core);
     let extended_specs = registry.specs_by_layer(crate::ToolLayer::Extended);
     assert_eq!(core_specs.len(), 4);
-    assert_eq!(extended_specs.len(), 24);
-    assert_eq!(core_specs.len() + extended_specs.len(), 28);
+    assert_eq!(extended_specs.len(), 25);
+    assert_eq!(core_specs.len() + extended_specs.len(), 29);
 }
 
 #[test]

@@ -26,6 +26,12 @@ pub struct PluginEntry {
     pub kind: String,
     #[serde(default)]
     pub source_ref: String,
+    /// WASM 插件文件的下载 URL（可选，仅远程插件有此字段）
+    #[serde(default)]
+    pub download_url: String,
+    /// 本地 WASM 文件路径（下载后设置）
+    #[serde(default)]
+    pub wasm_path: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +122,24 @@ impl PluginConfigStore {
             }
         }
         Ok(merged.into_values().collect())
+    }
+
+    /// WASM 插件文件的存储目录
+    pub fn wasm_dir(&self, source: PluginSource) -> PathBuf {
+        let config_dir = match source {
+            PluginSource::User => self.user_path.parent().unwrap_or(Path::new(".")),
+            PluginSource::Project => self.project_path.parent().unwrap_or(Path::new(".")),
+        };
+        config_dir.join("wasm")
+    }
+
+    /// WASM 插件文件的完整路径（基于插件名生成 .wasm 文件名）
+    pub fn wasm_file_path(&self, name: &str, source: PluginSource) -> PathBuf {
+        let safe_name: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        self.wasm_dir(source).join(format!("{}.wasm", safe_name))
     }
 
     pub fn upsert(&self, plugin: PluginEntry, source: PluginSource) -> Result<()> {
