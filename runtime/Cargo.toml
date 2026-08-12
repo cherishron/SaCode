@@ -22,7 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 similar = "2"
 sacode-kernel = { path = "../kernel" }
-tokio = { workspace = true, features = ["sync", "net", "time"] }
+tokio = { workspace = true, features = ["sync", "net", "time", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing.workspace = true
 tree-sitter = "0.25"

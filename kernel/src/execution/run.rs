@@ -9,6 +9,8 @@ pub enum TaskRunState {
     WaitingForUser,
     WaitingForApproval,
     Failed,
+    /// 已取消 — 任务被用户/系统取消，区别于 Failed（执行失败）
+    Cancelled,
 }
 
 impl TaskRunState {
@@ -22,6 +24,7 @@ impl TaskRunState {
             Self::WaitingForUser => TaskState::WaitingForUser,
             Self::WaitingForApproval => TaskState::WaitingForApproval,
             Self::Failed => TaskState::Failed,
+            Self::Cancelled => TaskState::Cancelled,
         }
     }
 }

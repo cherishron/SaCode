@@ -1,7 +1,9 @@
 pub mod access;
+pub mod apply_patch;
 pub mod edit;
 pub mod list;
 pub mod patch;
+pub mod preflight;
 pub mod read;
 pub mod read_multi;
 pub mod search;

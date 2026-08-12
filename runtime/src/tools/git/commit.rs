@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -6,19 +7,22 @@ use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 /// git.commit 输入参数
 #[derive(Debug, serde::Deserialize)]
 struct GitCommitInput {
-    message: String,
+    /// 可选: 显式提交消息。为空且 auto_message=true 时走 LLM/启发式生成
+    message: Option<String>,
     paths: Option<Vec<String>>,
     add_all: Option<bool>,
     /// 干运行模式：只返回将要提交的元数据（staged_files/branch/author），
     /// 不执行 add 与 commit，便于 LLM 预演
     dry_run: Option<bool>,
+    /// 可选: message 为空时尝试自动生成（先 LLM，失败 fallback 启发式），默认 false
+    auto_message: Option<bool>,
 }
 
 /// 错误分类枚举，序列化为 snake_case 字符串
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum GitErrorKind {
-    /// 非法参数（如 message 为空）
+    /// 非法参数（如 message 为空且未启用 auto_message）
     InvalidArgument,
     /// 当前目录不在 git 工作树内
     NotARepo,
@@ -36,6 +40,20 @@ enum GitErrorKind {
     CommitFailed,
     /// git rev-parse 失败（无法取 commit hash）
     HashFailed,
+    /// 自动生成提交消息失败（LLM 与启发式均失败）
+    AutoMessageFailed,
+}
+
+/// 提交消息来源 — 标注最终 message 的产生方式
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MessageSource {
+    /// 用户显式提供
+    User,
+    /// LLM 自动生成
+    Llm,
+    /// 启发式 fallback 生成
+    Heuristic,
 }
 
 /// 构造结构化失败输出：data 中含 error_kind + message
@@ -87,11 +105,15 @@ fn is_inside_work_tree() -> bool {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "git.commit".to_string(),
-        description: "提交当前仓库变更。行为：1) 默认仅提交已 staged 的变更；2) add_all=true 时先执行 git add -A；3) paths 非空时仅 add 指定路径（前置存在性校验）；4) add_all 与 paths 同时存在时，paths 优先；5) dry_run=true 时跳过 add 与 commit，只返回当前 staged 状态的元数据（staged_files/branch/author），用于预演；6) 不支持 --amend（避免历史改写风险）。返回 commit_hash/staged_files/branch/author_name/author_email/stats；失败时返回 error_kind 分类（not_a_repo/path_not_found/nothing_to_commit/hook_failed/commit_failed 等）。".to_string(),
+        description: "提交当前仓库变更。行为：1) 默认仅提交已 staged 的变更；2) add_all=true 时先执行 git add -A；3) paths 非空时仅 add 指定路径（前置存在性校验）；4) add_all 与 paths 同时存在时，paths 优先；5) dry_run=true 时跳过 add 与 commit，只返回当前 staged 状态的元数据（staged_files/branch/author），用于预演；6) 不支持 --amend（避免历史改写风险）；7) message 为空且 auto_message=true 时，先调用 LLM 基于 staged diff 生成 Conventional Commits 消息，LLM 失败则 fallback 到启发式（按文件路径推断 type/scope）。返回 commit_hash/staged_files/branch/author_name/author_email/stats/message_source（user/llm/heuristic）；失败时返回 error_kind 分类（not_a_repo/path_not_found/nothing_to_commit/hook_failed/commit_failed/auto_message_failed 等）。".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "message": { "type": "string", "description": "提交信息（Conventional Commits 推荐格式：feat/fix/docs/chore/refactor 等）" },
+                "message": { "type": "string", "description": "可选: 显式提交信息（Conventional Commits 推荐格式：feat/fix/docs/chore/refactor 等）。为空时必须设置 auto_message=true" },
+                "auto_message": {
+                    "type": "boolean",
+                    "description": "可选: message 为空时自动生成（先 LLM，失败 fallback 启发式），默认 false"
+                },
                 "paths": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -106,7 +128,7 @@ pub fn spec() -> ToolSpec {
                     "description": "可选: 干运行模式，跳过 add 与 commit，仅返回当前 staged 状态的元数据，默认 false"
                 }
             },
-            "required": ["message"]
+            "required": []
         }),
         output_schema: serde_json::json!({
             "type": "object",
@@ -114,6 +136,11 @@ pub fn spec() -> ToolSpec {
                 "success": { "type": "boolean" },
                 "commit_hash": { "type": "string", "description": "提交哈希（短，8 位），dry_run 时为空" },
                 "message": { "type": "string", "description": "提交信息" },
+                "message_source": {
+                    "type": "string",
+                    "description": "提交消息来源: user（显式提供）/llm（LLM 生成）/heuristic（启发式 fallback）",
+                    "enum": ["user", "llm", "heuristic"]
+                },
                 "staged_files": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -135,7 +162,7 @@ pub fn spec() -> ToolSpec {
                 "summary": { "type": "string" },
                 "error_kind": {
                     "type": "string",
-                    "description": "失败分类: invalid_argument/not_a_repo/path_not_found/nothing_to_commit/add_failed/status_failed/hook_failed/commit_failed/hash_failed",
+                    "description": "失败分类: invalid_argument/not_a_repo/path_not_found/nothing_to_commit/add_failed/status_failed/hook_failed/commit_failed/hash_failed/auto_message_failed",
                     "enum": [
                         "invalid_argument",
                         "not_a_repo",
@@ -145,7 +172,8 @@ pub fn spec() -> ToolSpec {
                         "status_failed",
                         "hook_failed",
                         "commit_failed",
-                        "hash_failed"
+                        "hash_failed",
+                        "auto_message_failed"
                     ]
                 }
             }
@@ -159,11 +187,17 @@ pub fn spec() -> ToolSpec {
 
 pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let payload: GitCommitInput = serde_json::from_value(input)?;
-    let message = payload.message.trim();
-    if message.is_empty() {
+    let user_message = payload
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let auto_message = payload.auto_message.unwrap_or(false);
+    if user_message.is_none() && !auto_message {
         return Ok(git_error(
             GitErrorKind::InvalidArgument,
-            "message is required",
+            "message is required (or set auto_message=true to generate)",
         ));
     }
 
@@ -267,6 +301,27 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         ));
     }
 
+    // 解析最终 message：用户显式 > LLM 生成 > 启发式 fallback
+    let (message, message_source) = match user_message {
+        Some(msg) => (msg, MessageSource::User),
+        None => {
+            // auto_message=true 路径：先尝试 LLM，失败 fallback 启发式
+            let staged_diff = collect_staged_diff_summary(&staged_files);
+            match generate_message_via_llm(&staged_files, &staged_diff) {
+                Some(msg) => (msg, MessageSource::Llm),
+                None => match heuristic_commit_message(&staged_files) {
+                    Some(msg) => (msg, MessageSource::Heuristic),
+                    None => {
+                        return Ok(git_error(
+                            GitErrorKind::AutoMessageFailed,
+                            "failed to generate commit message (LLM unavailable and heuristic exhausted)",
+                        ));
+                    }
+                },
+            }
+        }
+    };
+
     // C2: 当前分支名 — 用 symbolic-ref --short 而非 rev-parse --abbrev-ref，
     // 因为 rev-parse --abbrev-ref 在 unborn 分支（git init 后未 commit）上返回字面 "HEAD"，
     // 而 symbolic-ref --short 在 unborn 分支上仍能返回分支名（master/main）。
@@ -306,6 +361,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             "author_name": author_name,
             "author_email": author_email,
             "message": message,
+            "message_source": message_source,
             "summary": format!("dry-run: {} files staged on branch {}", staged_files.len(), branch)
         }))
         .with_message(format!(
@@ -317,7 +373,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     // 实际提交
     let commit_output = Command::new("git")
-        .args(["commit", "-m", message])
+        .args(["commit", "-m", &message])
         .output()?;
     if !commit_output.status.success() {
         let stderr = String::from_utf8_lossy(&commit_output.stderr)
@@ -373,6 +429,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "success": true,
         "commit_hash": commit_hash,
         "message": message,
+        "message_source": message_source,
         "staged_files": staged_files,
         "branch": branch,
         "author_name": author_name,
@@ -414,4 +471,256 @@ fn extract_number_before(line: &str, word: &str) -> u64 {
         }
     }
     0
+}
+
+/// 收集 staged diff 摘要供 LLM 生成提交消息使用
+/// 截取前 8KB 避免超出 LLM 上下文窗口，并附文件路径列表
+fn collect_staged_diff_summary(staged_files: &[String]) -> String {
+    let diff_output = Command::new("git")
+        .args(["diff", "--cached", "--stat"])
+        .output()
+        .ok();
+    let stat_text = diff_output
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let files_list = staged_files.join("\n");
+    // 限制总长度 8KB，避免 LLM 上下文爆炸
+    let combined = format!("Files:\n{}\n\nStats:\n{}", files_list, stat_text);
+    combined.chars().take(8 * 1024).collect()
+}
+
+/// 通过 LLM 生成 Conventional Commits 格式的提交消息
+/// 在独立线程中创建 tokio Runtime 调用，避免与上层 async runtime 冲突
+/// 失败返回 None，由调用方 fallback 到启发式
+fn generate_message_via_llm(staged_files: &[String], staged_diff: &str) -> Option<String> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let files = staged_files.to_vec();
+    let diff = staged_diff.to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> anyhow::Result<String> {
+            // 独立 Runtime — 不依赖上层 async context
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let message = rt.block_on(async move {
+                let cwd = std::env::current_dir()?;
+                let provider =
+                    crate::agents::model_router::resolve_config_model_candidates(&cwd)
+                        .into_iter()
+                        .next()
+                        .map(|(_, _, p)| p)
+                        .ok_or_else(|| anyhow::anyhow!("no provider configured"))?;
+                let client = crate::provider::client::ProviderClient::new();
+                let prompt = format!(
+                    "你是一个提交消息生成器。根据以下 git staged 变更生成一条 Conventional Commits 格式的提交消息。\n\
+                     要求：\n\
+                     1. 仅返回消息正文一行，格式为 `<type>(<scope>): <subject>` 或 `<type>: <subject>`\n\
+                     2. type 取值: feat/fix/docs/style/refactor/perf/test/build/ci/chore/revert\n\
+                     3. subject 用中文描述，不超过 50 字\n\
+                     4. 不要返回引号、代码块、解释或多余换行\n\n\
+                     变更文件：\n{}\n\nDiff 摘要：\n{}",
+                    files.join("\n"),
+                    diff
+                );
+                let response = client.simple_chat(&provider, &prompt).await?;
+                // 取首行非空文本，去除引号/代码块包裹
+                let cleaned = response
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('`')
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("chore: update")
+                    .trim()
+                    .to_string();
+                Ok::<String, anyhow::Error>(cleaned)
+            })?;
+            Ok(message)
+        })();
+        let _ = tx.send(result);
+    });
+
+    // 30 秒超时 — LLM 调用不应阻塞 commit 过久
+    match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(message)) if !message.trim().is_empty() => Some(message),
+        _ => None,
+    }
+}
+
+/// 启发式生成提交消息 — 基于 staged 文件路径推断 type/scope/subject
+/// 作为 LLM 不可用时的 fallback，确保 auto_message 始终能产出可用消息
+fn heuristic_commit_message(staged_files: &[String]) -> Option<String> {
+    if staged_files.is_empty() {
+        return None;
+    }
+    let change_type = infer_change_type(staged_files);
+    let scope = infer_scope(staged_files);
+    // scope 与 type 同名时省略，避免 "docs(docs): ..." 这类冗余
+    let scope = scope.filter(|s| s != change_type);
+    let subject = infer_subject(staged_files);
+    Some(match scope {
+        Some(s) => format!("{}({}): {}", change_type, s, subject),
+        None => format!("{}: {}", change_type, subject),
+    })
+}
+
+/// 根据文件路径推断 Conventional Commits type
+fn infer_change_type(files: &[String]) -> &'static str {
+    let has_test = files
+        .iter()
+        .any(|f| f.contains("test") || f.contains("tests") || f.contains("/tests/"));
+    let has_doc = files
+        .iter()
+        .any(|f| f.contains("/docs/") || f.ends_with(".md") || f.ends_with("README"));
+    let has_src = files.iter().any(|f| f.contains("/src/"));
+    let has_config = files.iter().any(|f| {
+        f.ends_with("Cargo.toml")
+            || f.ends_with("package.json")
+            || f.ends_with(".toml")
+            || f.ends_with(".yml")
+            || f.ends_with(".yaml")
+            || f.ends_with("Dockerfile")
+    });
+
+    // 文档类变更（无 src 改动）→ docs
+    if has_doc && !has_src {
+        return "docs";
+    }
+    // 仅测试变更 → test
+    if has_test && !has_src {
+        return "test";
+    }
+    // 仅配置/构建变更 → chore
+    if has_config && !has_src {
+        return "chore";
+    }
+    // 默认 feat — src 有改动视为功能变更
+    "feat"
+}
+
+/// 取最常见的一级目录作为 scope
+fn infer_scope(files: &[String]) -> Option<String> {
+    let mut dir_counts: HashMap<String, usize> = HashMap::new();
+    for f in files {
+        // 取路径第一段作为 scope 候选
+        if let Some(first) = f.split('/').next() {
+            // 跳过文件名（无 / 的路径）
+            if f.contains('/') {
+                *dir_counts.entry(first.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    dir_counts
+        .into_iter()
+        .max_by_key(|(_, c)| *c)
+        .map(|(d, _)| d)
+}
+
+/// 生成 subject — 单文件取文件名，多文件取数量
+fn infer_subject(files: &[String]) -> String {
+    if files.len() == 1 {
+        let f = &files[0];
+        let name = f.rsplit('/').next().unwrap_or(f);
+        // 去扩展名
+        let stem = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
+        format!("update {}", stem)
+    } else {
+        format!("update {} files", files.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_change_type_docs() {
+        assert_eq!(
+            infer_change_type(&["docs/guide.md".to_string()]),
+            "docs"
+        );
+    }
+
+    #[test]
+    fn test_infer_change_type_test() {
+        assert_eq!(
+            infer_change_type(&["tests/foo_test.rs".to_string()]),
+            "test"
+        );
+    }
+
+    #[test]
+    fn test_infer_change_type_feat() {
+        assert_eq!(
+            infer_change_type(&["src/main.rs".to_string()]),
+            "feat"
+        );
+    }
+
+    #[test]
+    fn test_infer_change_type_chore() {
+        assert_eq!(
+            infer_change_type(&["Cargo.toml".to_string()]),
+            "chore"
+        );
+    }
+
+    #[test]
+    fn test_infer_scope_common_dir() {
+        let scope = infer_scope(&[
+            "src/tools/git/commit.rs".to_string(),
+            "src/tools/git/push.rs".to_string(),
+        ]);
+        assert_eq!(scope.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn test_infer_scope_no_dir() {
+        // 无目录分隔的纯文件名不应产生 scope
+        let scope = infer_scope(&["README.md".to_string()]);
+        assert_eq!(scope, None);
+    }
+
+    #[test]
+    fn test_infer_subject_single_file() {
+        let subject = infer_subject(&["src/main.rs".to_string()]);
+        assert_eq!(subject, "update main");
+    }
+
+    #[test]
+    fn test_infer_subject_multi_files() {
+        let subject = infer_subject(&[
+            "src/a.rs".to_string(),
+            "src/b.rs".to_string(),
+        ]);
+        assert_eq!(subject, "update 2 files");
+    }
+
+    #[test]
+    fn test_heuristic_commit_message_single_file() {
+        let msg = heuristic_commit_message(&["docs/guide.md".to_string()]);
+        assert_eq!(msg.as_deref(), Some("docs: update guide"));
+    }
+
+    #[test]
+    fn test_heuristic_commit_message_multi_files_with_scope() {
+        let msg = heuristic_commit_message(&[
+            "src/tools/git/commit.rs".to_string(),
+            "src/tools/git/push.rs".to_string(),
+        ]);
+        assert_eq!(
+            msg.as_deref(),
+            Some("feat(src): update 2 files")
+        );
+    }
+
+    #[test]
+    fn test_heuristic_commit_message_empty() {
+        let msg = heuristic_commit_message(&[]);
+        assert_eq!(msg, None);
+    }
 }

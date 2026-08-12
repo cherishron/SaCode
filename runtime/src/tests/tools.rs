@@ -18,8 +18,10 @@ fn test_tool_registry() {
     assert!(names.contains(&"fs.patch"));
     assert!(names.contains(&"fs.read_multi"));
     assert!(names.contains(&"fs.list"));
+    assert!(names.contains(&"fs.apply_patch"));
     assert!(names.contains(&"git.commit"));
     assert!(names.contains(&"git.diff"));
+    assert!(names.contains(&"git.push"));
     assert!(names.contains(&"interaction.ask"));
     assert!(names.contains(&"media.read"));
     assert!(names.contains(&"media.vision"));
@@ -105,15 +107,15 @@ fn ling_shu_extended_tools_registry_has_22_tools() {
     let registry = ToolRegistry::extended_tools();
     assert_eq!(
         registry.names().len(),
-        22,
-        "extended_tools 应注册 22 个扩展层工具"
+        24,
+        "extended_tools 应注册 24 个扩展层工具"
     );
 }
 
 #[test]
 fn ling_shu_builtin_registry_has_26_tools() {
     let registry = ToolRegistry::builtin();
-    assert_eq!(registry.names().len(), 26, "builtin 应注册全部 26 个工具");
+    assert_eq!(registry.names().len(), 28, "builtin 应注册全部 28 个工具");
 }
 
 #[test]
@@ -122,8 +124,8 @@ fn ling_shu_specs_by_layer_returns_correct_counts() {
     let core_specs = registry.specs_by_layer(crate::ToolLayer::Core);
     let extended_specs = registry.specs_by_layer(crate::ToolLayer::Extended);
     assert_eq!(core_specs.len(), 4);
-    assert_eq!(extended_specs.len(), 22);
-    assert_eq!(core_specs.len() + extended_specs.len(), 26);
+    assert_eq!(extended_specs.len(), 24);
+    assert_eq!(core_specs.len() + extended_specs.len(), 28);
 }
 
 #[test]

@@ -128,9 +128,11 @@ impl ToolRegistry {
         registry.register_fn(fs::patch::spec(), fs::patch::execute);
         registry.register_fn(fs::read_multi::spec(), fs::read_multi::execute);
         registry.register_fn(fs::list::spec(), fs::list::execute);
+        registry.register_fn(fs::apply_patch::spec(), fs::apply_patch::execute);
         registry.register_fn(git::commit::spec(), git::commit::execute);
         registry.register_fn(git::diff::spec(), git::diff::execute);
         registry.register_fn(git::pr::spec(), git::pr::execute);
+        registry.register_fn(git::push::spec(), git::push::execute);
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
         registry.register_fn(media::vision::spec(), media::vision::execute);
@@ -188,9 +190,11 @@ impl ToolRegistry {
         registry.register_fn(fs::patch::spec(), fs::patch::execute);
         registry.register_fn(fs::read_multi::spec(), fs::read_multi::execute);
         registry.register_fn(fs::list::spec(), fs::list::execute);
+        registry.register_fn(fs::apply_patch::spec(), fs::apply_patch::execute);
         registry.register_fn(git::commit::spec(), git::commit::execute);
         registry.register_fn(git::diff::spec(), git::diff::execute);
         registry.register_fn(git::pr::spec(), git::pr::execute);
+        registry.register_fn(git::push::spec(), git::push::execute);
         registry.register_fn(interaction::ask::spec(), interaction::ask::execute);
         registry.register_fn(media::read::spec(), media::read::execute);
         registry.register_fn(media::vision::spec(), media::vision::execute);

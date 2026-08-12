@@ -4,7 +4,7 @@ use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 #[derive(Debug, serde::Deserialize)]
 struct GitPrInput {
-    /// 操作类型: create / status / merge / list
+    /// 操作类型: create / status / merge / close / reopen / list
     action: Option<String>,
     /// PR 标题（create 时必填）
     title: Option<String>,
@@ -14,30 +14,33 @@ struct GitPrInput {
     base: Option<String>,
     /// 源分支（create 时可选，默认当前分支）
     head: Option<String>,
-    /// PR 编号（status/merge 时必填）
+    /// PR 编号（status/merge/close/reopen 时必填）
     number: Option<u64>,
     /// 是否以草稿模式创建（create 时可选）
     draft: Option<bool>,
+    /// 关闭/重开时的可选评论（close/reopen 时可选）
+    comment: Option<String>,
 }
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "git.pr".to_string(),
-        description: "管理 GitHub Pull Request（创建/查看/合并/列表）".to_string(),
+        description: "管理 GitHub Pull Request（创建/查看/合并/关闭/重开/列表）".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作类型: create|status|merge|list，默认 list",
-                    "enum": ["create", "status", "merge", "list"]
+                    "description": "操作类型: create|status|merge|close|reopen|list，默认 list",
+                    "enum": ["create", "status", "merge", "close", "reopen", "list"]
                 },
                 "title": { "type": "string", "description": "PR 标题（create 时必填）" },
                 "body": { "type": "string", "description": "PR 正文（create 时可选）" },
                 "base": { "type": "string", "description": "目标分支（create 时可选）" },
                 "head": { "type": "string", "description": "源分支（create 时可选）" },
-                "number": { "type": "integer", "description": "PR 编号（status/merge 时必填）" },
-                "draft": { "type": "boolean", "description": "是否以草稿模式创建（默认 false）" }
+                "number": { "type": "integer", "description": "PR 编号（status/merge/close/reopen 时必填）" },
+                "draft": { "type": "boolean", "description": "是否以草稿模式创建（默认 false）" },
+                "comment": { "type": "string", "description": "关闭/重开时的可选评论（close/reopen 时可选）" }
             }
         }),
         output_schema: serde_json::json!({
@@ -107,9 +110,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "create" => execute_create(&payload),
         "status" => execute_status(&payload),
         "merge" => execute_merge(&payload),
+        "close" => execute_close(&payload),
+        "reopen" => execute_reopen(&payload),
         "list" => execute_list(&payload),
         _ => Ok(ToolOutput::failure(format!(
-            "unknown action '{}'; supported: create, status, merge, list",
+            "unknown action '{}'; supported: create, status, merge, close, reopen, list",
             action
         ))),
     }
@@ -282,6 +287,119 @@ fn execute_merge(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     } else {
         stdout
     }))
+}
+
+fn execute_close(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
+    let number = match payload.number {
+        Some(n) => n,
+        None => return Ok(ToolOutput::failure("number is required for close action")),
+    };
+
+    // 可选评论：先发评论再关闭，确保评论归属到关闭前的 PR 状态
+    if let Some(comment) = &payload.comment {
+        if !comment.trim().is_empty() {
+            let comment_output = Command::new("gh")
+                .args(["pr", "comment", &number.to_string(), "--body", comment.trim()])
+                .output()?;
+            if !comment_output.status.success() {
+                let stderr = String::from_utf8_lossy(&comment_output.stderr).trim().to_string();
+                // 评论失败不阻断关闭，记录警告继续
+                tracing::warn!("failed to comment on PR #{} before close: {}", number, stderr);
+            }
+        }
+    }
+
+    let output = Command::new("gh")
+        .args(["pr", "close", &number.to_string()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(ToolOutput::failure(if stderr.is_empty() {
+            format!("failed to close PR #{}", number)
+        } else {
+            stderr
+        }));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let has_comment = payload
+        .comment
+        .as_deref()
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false);
+    let summary = if has_comment {
+        format!("closed PR #{} (with comment)", number)
+    } else {
+        format!("closed PR #{}", number)
+    };
+
+    Ok(ToolOutput::success(serde_json::json!({
+        "success": true,
+        "action": "close",
+        "summary": summary,
+        "pr": {
+            "number": number,
+            "state": "closed",
+        },
+    }))
+    .with_message(if stdout.is_empty() { summary } else { stdout }))
+}
+
+fn execute_reopen(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
+    let number = match payload.number {
+        Some(n) => n,
+        None => return Ok(ToolOutput::failure("number is required for reopen action")),
+    };
+
+    // 可选评论：先发评论再重开
+    if let Some(comment) = &payload.comment {
+        if !comment.trim().is_empty() {
+            let comment_output = Command::new("gh")
+                .args(["pr", "comment", &number.to_string(), "--body", comment.trim()])
+                .output()?;
+            if !comment_output.status.success() {
+                let stderr = String::from_utf8_lossy(&comment_output.stderr).trim().to_string();
+                tracing::warn!("failed to comment on PR #{} before reopen: {}", number, stderr);
+            }
+        }
+    }
+
+    let output = Command::new("gh")
+        .args(["pr", "reopen", &number.to_string()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(ToolOutput::failure(if stderr.is_empty() {
+            format!("failed to reopen PR #{}", number)
+        } else {
+            stderr
+        }));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let has_comment = payload
+        .comment
+        .as_deref()
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false);
+    let summary = if has_comment {
+        format!("reopened PR #{} (with comment)", number)
+    } else {
+        format!("reopened PR #{}", number)
+    };
+
+    Ok(ToolOutput::success(serde_json::json!({
+        "success": true,
+        "action": "reopen",
+        "summary": summary,
+        "pr": {
+            "number": number,
+            "state": "open",
+        },
+    }))
+    .with_message(if stdout.is_empty() { summary } else { stdout }))
 }
 
 fn execute_list(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {

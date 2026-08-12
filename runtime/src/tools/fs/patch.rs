@@ -6,6 +6,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
+use super::preflight::preflight_edit_file;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -203,6 +204,15 @@ fn build_patch_plan(index: usize, patch: &serde_json::Value) -> anyhow::Result<P
         )));
     }
 
+    // 预检：大文件保护和二进制检测，避免对不适宜的文件误操作
+    if let Err(error) = preflight_edit_file(&absolute_path) {
+        return Ok(PatchPlanOutcome::Conflict(conflict(
+            index,
+            path,
+            &error.to_message(),
+        )));
+    }
+
     let content = fs::read_to_string(&absolute_path)?;
     let (updated_content, replacements) =
         match apply_exact_patch(&content, old_string, new_string, replace_all) {
@@ -339,7 +349,7 @@ fn restore_newlines(input: &str, style: NewlineStyle) -> String {
 const MIN_FUZZY_SIMILARITY: f64 = 0.6;
 
 /// 候选诊断的最低相似度阈值（0.1 = 10%，仅过滤纯噪声）
-const MIN_CANDIDATE_SIMILARITY: f64 = 0.1;
+pub(super) const MIN_CANDIDATE_SIMILARITY: f64 = 0.1;
 
 /// 窗口大小浮动比例（±25%）
 const WINDOW_DELTA_RATIO: usize = 4;
@@ -351,11 +361,11 @@ struct WindowMatch {
     similarity: f64,
 }
 
-/// 冲突诊断候选
-struct Candidate {
-    line: usize,
-    similarity: f64,
-    preview: String,
+/// 冲突诊断候选 — pub(super) 暴露给 fs.edit 复用
+pub(super) struct Candidate {
+    pub line: usize,
+    pub similarity: f64,
+    pub preview: String,
 }
 
 fn apply_fuzzy_patch(
@@ -479,8 +489,8 @@ fn find_all_windows(
     selected
 }
 
-/// G3: 查找 top-3 候选窗口用于冲突诊断
-fn find_candidates(content: &str, old_string: &str) -> Vec<Candidate> {
+/// G3: 查找 top-3 候选窗口用于冲突诊断 — pub(super) 暴露给 fs.edit 复用
+pub(super) fn find_candidates(content: &str, old_string: &str) -> Vec<Candidate> {
     let content_lines: Vec<&str> = content.split_inclusive('\n').collect();
     let old_lines: Vec<&str> = old_string.split_inclusive('\n').collect();
     if old_lines.is_empty() || content_lines.is_empty() {

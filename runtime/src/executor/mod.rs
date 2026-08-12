@@ -29,7 +29,7 @@ pub struct TaskExecutor {
     active_tasks: JoinSet<ExecutorTaskResult>,
     poll_interval: Duration,
     /// 工作目录：设置后 spawn 任务体走 task_runner 路径，
-    /// 未设置则走静态占位 fallback（保留向后兼容老测试）
+    /// 未设置则走测试占位路径（仅 cfg(test) 启用，避免发起真实 LLM 调用）
     workdir: Option<PathBuf>,
 }
 
@@ -113,7 +113,8 @@ impl TaskExecutor {
             self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
-                // 双路径分发：workdir 设置则走 task_runner，否则走静态占位 fallback
+                // 路径分发：workdir 设置走 task_runner（生产路径），
+                // 未设置走 test_placeholder（仅 cfg(test)，避免发起真实 LLM 调用）
                 let (result, task_run, intermediate_events) = match workdir {
                     Some(workdir) => {
                         execute_via_task_runner(
@@ -122,15 +123,14 @@ impl TaskExecutor {
                             task_id.clone(),
                             tools,
                             started_at,
+                            Some(&event_bus),
                         )
                         .await
                     }
-                    None => {
-                        execute_via_static_fallback(&task.task, task_id.clone(), started_at)
-                    }
+                    None => execute_test_placeholder(&task.task, task_id.clone(), started_at),
                 };
 
-                // 发送中间事件（task_runner 路径仅 1 个 done/error；静态 fallback 路径全部）
+                // 发送中间事件（task_runner 路径仅 1 个 done/error；test_placeholder 路径全部）
                 for event in &intermediate_events {
                     let event_name = executor_event_name(event);
                     emit_executor_event(
@@ -245,16 +245,45 @@ fn executor_event_name(event: &Event) -> &'static str {
 
 // ── spawn 任务体执行路径 ──────────────────────────────────────────
 
+/// 把 task_runner 内部的 token 级增量转发到 executor event_bus 的 StreamHandler。
+///
+/// 解决闭包实现 `FnMut(StreamEventKind, &str) + Send + 'static` 时遇到的
+/// HRTB 推断失败问题：`&str` 生命周期无法泛化为任意生命周期，
+/// 用具名结构体显式实现 trait 绕过。
+struct EventBusStreamHandler {
+    event_bus: broadcast::Sender<ExecutorEvent>,
+    task_id: String,
+}
+
+impl task_runner::StreamHandler for EventBusStreamHandler {
+    fn handle(&mut self, kind: task_runner::StreamEventKind, content: &str) {
+        let event_name = match kind {
+            task_runner::StreamEventKind::Message => "message",
+            task_runner::StreamEventKind::Thinking => "thinking",
+        };
+        let _ = self.event_bus.send(ExecutorEvent {
+            task_id: self.task_id.clone(),
+            event_type: event_name.to_string(),
+            data: serde_json::json!({ "content": content }),
+        });
+    }
+}
+
 /// task_runner 路径：通过 `execute_task_with_provider` 调用 LLM + 工具循环
 ///
 /// 设计意图：替代静态占位，使 daemon 路径走真实灵枢路由 + 沙箱审计。
 /// 当无可用 provider 时返回 Failed（与 sdk::execute_task 行为一致）。
+///
+/// `event_bus` 非空时注入 StreamHandler，把 task_runner 内部的 token 级增量
+/// （message/thinking）实时转发到 daemon SSE，消除"daemon SSE 只能收到粗粒度
+/// 事件"的体验差距。None 时退化为原行为（仅终点 done/error 事件）。
 async fn execute_via_task_runner(
     workdir: &std::path::Path,
     task: &sacode_kernel::Task,
     task_id: String,
     tools: ToolRegistry,
     started_at: Instant,
+    event_bus: Option<&broadcast::Sender<ExecutorEvent>>,
 ) -> (TaskResult, TaskRun, Vec<Event>) {
     let candidates = resolve_config_model_candidates(workdir);
     let provider = candidates.first().map(|(_, _, p)| p.clone());
@@ -292,7 +321,17 @@ async fn execute_via_task_runner(
         task_id: Some(task_id.clone()),
     };
 
-    let run_result = execute_task_with_provider(&config, None).await;
+    // 注入 StreamHandler：把 task_runner 内部 token 级增量转发到 event_bus，
+    // 再由 daemon 的 spawn_executor_event_forwarder 转发到 SSE 客户端。
+    // event_bus 为 None 时退化为无流式（保留向后兼容）。
+    let stream_handler: Option<Box<dyn task_runner::StreamHandler>> = event_bus.map(|bus| {
+        Box::new(EventBusStreamHandler {
+            event_bus: bus.clone(),
+            task_id: task_id.clone(),
+        }) as Box<dyn task_runner::StreamHandler>
+    });
+
+    let run_result = execute_task_with_provider(&config, stream_handler).await;
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
     // 提取摘要：成功取 response.ok，失败取 response.err
@@ -316,9 +355,8 @@ async fn execute_via_task_runner(
     let mut task_run = run_result.task_run;
     task_run.task_id = Some(task_id.clone());
 
-    // 中间事件：仅发送一个 done/error 作为终点标记
-    // （task_runner 的中间 message/thinking/tool_call 事件未在 TaskExecutor 层暴露，
-    //  这是 4.3 最小破坏下的取舍；后续如需细粒度事件可接入 stream_handler）
+    // 终点事件：done/error 作为任务结束标记
+    // （中间事件已在执行过程中通过 StreamHandler 实时转发到 event_bus）
     let events = vec![if has_error {
         Event::Error {
             message: summary.clone(),
@@ -332,11 +370,13 @@ async fn execute_via_task_runner(
     (result, task_run, events)
 }
 
-/// 静态占位 fallback：无 workdir 时生成简化事件，不调用 LLM
+/// 测试占位执行路径：不调用 LLM，直接返回占位消息
 ///
-/// 用于老测试和 daemon workdir 获取失败时的兼容路径。
-/// 新代码应通过 `TaskExecutor::with_workdir` 启用 task_runner 路径。
-fn execute_via_static_fallback(
+/// 仅 `workdir=None` 时调用，用于 daemon_queue 等集成测试避免发起真实 LLM 调用。
+/// 生产路径必须通过 `TaskExecutor::with_workdir` 设置 workdir 走 task_runner，
+/// 此函数在生产构建中虽被链接但永不执行（workdir 总是 Some）。
+#[allow(dead_code)]
+fn execute_test_placeholder(
     task: &sacode_kernel::Task,
     task_id: String,
     started_at: Instant,
@@ -347,7 +387,7 @@ fn execute_via_static_fallback(
     let events = vec![
         Event::message(format!("收到任务：{}", task.prompt)),
         Event::done(format!(
-            "静态占位完成（mode={:?}，未调用 LLM，请通过 with_workdir 启用 task_runner）",
+            "测试占位完成（mode={:?}，未调用 LLM，生产路径应通过 with_workdir 启用 task_runner）",
             task.mode
         )),
     ];
