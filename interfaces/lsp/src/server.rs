@@ -11,12 +11,13 @@ use tower_lsp::{
         CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
         CodeActionResponse, Command, CompletionItem, CompletionItemKind, CompletionOptions,
         CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams,
         DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
         HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
         InsertTextFormat, Location, MessageType, OneOf, Position, PrepareRenameResponse, Range,
-        ReferenceParams, RenameParams, ServerCapabilities, TextDocumentSyncCapability,
-        TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit, WorkspaceSymbolParams,
+        ReferenceParams, RenameParams, ServerCapabilities, SymbolInformation,
+        TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
+        WorkspaceSymbolParams, Diagnostic, DiagnosticSeverity,
     },
     Client, LanguageServer, LspService, Server,
 };
@@ -43,6 +44,9 @@ struct SaCodeLanguageServer {
     diagnostic_interval_ms: u64,
     /// 按 URI 跟踪待处理的诊断任务，便于在文档变更时取消旧任务
     pending_diagnostics: Arc<tokio::sync::Mutex<HashMap<Url, tokio::task::JoinHandle<()>>>>,
+    /// 灵枢 · 诊断联动：缓存最近一次发布的诊断，供 hover 等功能读取
+    /// 避免 hover 时重新调用外部检查器（cargo/tsc/go vet）
+    last_diagnostics: Arc<std::sync::Mutex<HashMap<Url, Vec<Diagnostic>>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -57,11 +61,12 @@ impl LanguageServer for SaCodeLanguageServer {
                 completion_provider: Some(CompletionOptions::default()),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                // 灵枢 · LSP 能力补齐：documentSymbol / references / definition / rename
+                // 灵枢 · LSP 能力补齐：documentSymbol / references / definition / rename / workspaceSymbol
                 document_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -176,7 +181,9 @@ impl LanguageServer for SaCodeLanguageServer {
 
         // 优先走 AST 静态 hover：基于符号表查找光标附近的符号
         // 命中时返回静态信息，避免 AI 调用开销
-        if let Some(hover) = hover_from_ast(&document, position) {
+        // 灵枢 · 诊断联动：命中后仍检查该位置的诊断，附加到 hover 内容
+        if let Some(mut hover) = hover_from_ast(&document, position) {
+            append_position_diagnostics(&mut hover, &self.last_diagnostics, uri, position);
             return Ok(Some(hover));
         }
 
@@ -192,7 +199,7 @@ impl LanguageServer for SaCodeLanguageServer {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let hover_content = if let Some(provider) = provider_config {
+        let mut hover_content = if let Some(provider) = provider_config {
             generate_ai_hover(&provider, &code_context, position, &language_id).await
         } else {
             format!(
@@ -207,6 +214,12 @@ impl LanguageServer for SaCodeLanguageServer {
                     .trim()
             )
         };
+
+        // 灵枢 · 诊断联动：附加该位置的诊断信息
+        if let Some(diag_section) = build_position_diagnostics_section(&self.last_diagnostics, uri, position) {
+            hover_content.push_str("\n\n---\n\n");
+            hover_content.push_str(&diag_section);
+        }
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(tower_lsp::lsp_types::MarkupContent {
@@ -360,6 +373,44 @@ impl LanguageServer for SaCodeLanguageServer {
             Ok(None)
         } else {
             Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+        }
+    }
+
+    /// 工作区符号搜索 — 跨所有已打开文档按 query 过滤符号
+    ///
+    /// 实现策略：
+    /// 1. 收集所有已打开文档（仅内存中已打开的，不扫描磁盘）
+    /// 2. 对每个文档调用 `document_symbols_from_ast` 提取嵌套符号树
+    /// 3. 递归扁平化符号树，按 query 大小写不敏感子串匹配过滤
+    /// 4. 返回 WorkspaceSymbol 列表（含 Location 指向源文件位置）
+    ///
+    /// 限制：仅搜索已打开文档；未打开的文件需先 didOpen 才能被搜索到。
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> LspResult<Option<Vec<SymbolInformation>>> {
+        let query = params.query.to_lowercase();
+        // 收集所有已打开文档（克隆后释放锁，避免长时间持锁）
+        let documents: Vec<TextDocument> = self
+            .documents
+            .lock()
+            .expect("document mutex poisoned")
+            .iter_all()
+            .cloned()
+            .collect();
+
+        let mut symbols: Vec<SymbolInformation> = Vec::new();
+        for doc in &documents {
+            let doc_symbols = document_symbols_from_ast(doc);
+            for ds in &doc_symbols {
+                collect_workspace_symbols(ds, &doc.uri, &query, &mut symbols);
+            }
+        }
+
+        if symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(symbols))
         }
     }
 
@@ -519,11 +570,17 @@ impl SaCodeLanguageServer {
         let provider = self.diagnostics_provider.clone();
         let interval = self.diagnostic_interval_ms;
         let uri_for_publish = uri.clone();
+        let last_diagnostics = self.last_diagnostics.clone();
         let handle = tokio::spawn(async move {
             if interval > 0 {
                 tokio::time::sleep(Duration::from_millis(interval)).await;
             }
             let diagnostics = provider.analyze(&doc);
+            // 灵枢 · 诊断联动：缓存诊断结果，供 hover 等功能读取
+            // 避免 hover 时重新调用外部检查器
+            if let Ok(mut cache) = last_diagnostics.lock() {
+                cache.insert(uri_for_publish.clone(), diagnostics.clone());
+            }
             let _ = client
                 .publish_diagnostics(uri_for_publish, diagnostics, Some(version))
                 .await;
@@ -566,6 +623,88 @@ fn extract_symbol_name_from_document(document: &TextDocument, position: Position
     Some(name.to_string())
 }
 
+/// 递归扁平化 DocumentSymbol 嵌套树，按 query 过滤并收集为 SymbolInformation
+///
+/// 匹配规则：query 为空时返回所有符号；非空时按名称大小写不敏感子串匹配。
+/// 无论自身是否匹配，都递归处理 children（子符号可能匹配）。
+fn collect_workspace_symbols(
+    ds: &DocumentSymbol,
+    uri: &Url,
+    query: &str,
+    out: &mut Vec<SymbolInformation>,
+) {
+    let matched = query.is_empty() || ds.name.to_lowercase().contains(query);
+    if matched {
+        out.push(SymbolInformation {
+            name: ds.name.clone(),
+            kind: ds.kind,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: uri.clone(),
+                range: ds.range,
+            },
+            container_name: None,
+        });
+    }
+    if let Some(children) = &ds.children {
+        for child in children {
+            collect_workspace_symbols(child, uri, query, out);
+        }
+    }
+}
+
+/// 灵枢 · 诊断联动：把位置重叠的诊断附加到 AST hover 内容
+///
+/// 用于 hover_from_ast 命中路径：AST hover 返回静态符号信息后，
+/// 追加该位置的诊断（error/warning），让用户 hover 时同时看到符号语义和问题。
+fn append_position_diagnostics(
+    hover: &mut Hover,
+    last_diagnostics: &Arc<std::sync::Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+    uri: &Url,
+    position: Position,
+) {
+    if let Some(section) = build_position_diagnostics_section(last_diagnostics, uri, position) {
+        if let HoverContents::Markup(ref mut markup) = hover.contents {
+            markup.value.push_str("\n\n---\n\n");
+            markup.value.push_str(&section);
+        }
+    }
+}
+
+/// 构建位置重叠诊断的 Markdown 段落
+///
+/// 从 last_diagnostics 缓存读取该 URI 的诊断，过滤出与 position 重叠的诊断，
+/// 返回格式化的 Markdown 段落。无诊断时返回 None。
+fn build_position_diagnostics_section(
+    last_diagnostics: &Arc<std::sync::Mutex<HashMap<Url, Vec<Diagnostic>>>>,
+    uri: &Url,
+    position: Position,
+) -> Option<String> {
+    let cache = last_diagnostics.lock().ok()?;
+    let diagnostics = cache.get(uri)?;
+    let overlapping: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| position >= d.range.start && position < d.range.end)
+        .collect();
+    if overlapping.is_empty() {
+        return None;
+    }
+    let mut section = String::from("**Diagnostics:**\n");
+    for d in &overlapping {
+        let severity_label = match d.severity {
+            Some(DiagnosticSeverity::ERROR) => "ERROR",
+            Some(DiagnosticSeverity::WARNING) => "WARNING",
+            Some(DiagnosticSeverity::INFORMATION) => "INFO",
+            Some(DiagnosticSeverity::HINT) => "HINT",
+            _ => "DIAG",
+        };
+        let source = d.source.as_deref().unwrap_or("unknown");
+        section.push_str(&format!("- **{}** ({}): {}\n", severity_label, source, d.message));
+    }
+    Some(section)
+}
+
 pub async fn run_stdio_server(config: &LspConfig) -> Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -582,6 +721,7 @@ pub async fn run_stdio_server(config: &LspConfig) -> Result<()> {
         diagnostics_enabled,
         diagnostic_interval_ms,
         pending_diagnostics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        last_diagnostics: Arc::new(std::sync::Mutex::new(HashMap::new())),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
     Ok(())
@@ -616,6 +756,7 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
             diagnostics_enabled,
             diagnostic_interval_ms,
             pending_diagnostics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            last_diagnostics: Arc::new(std::sync::Mutex::new(HashMap::new())),
         });
 
         // TCP 模式：用 (read, write) 半双工适配 Server::new

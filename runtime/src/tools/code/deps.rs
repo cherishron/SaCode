@@ -162,9 +162,12 @@ fn collect_source_files_with_language(
 }
 
 fn display_path(root: &Path, file_path: &Path) -> String {
+    // 统一用正斜杠 /，跨平台一致，便于与 import_path_candidates 的候选匹配
     match file_path.strip_prefix(root) {
-        Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
-        _ => file_path.display().to_string(),
+        Ok(relative) if !relative.as_os_str().is_empty() => {
+            relative.display().to_string().replace('\\', "/")
+        }
+        _ => file_path.display().to_string().replace('\\', "/"),
     }
 }
 
@@ -192,6 +195,11 @@ fn extract_imports(path: &Path, language: &str) -> anyhow::Result<Vec<String>> {
 }
 
 fn import_path_candidates(current_file: &str, import: &str) -> Vec<String> {
+    // Rust 模块路径处理：crate:: / super:: / self:: 映射到文件候选
+    if let Some(candidates) = rust_module_candidates(current_file, import) {
+        return candidates;
+    }
+
     if !import.starts_with("./") && !import.starts_with("../") {
         return vec![import.to_string()];
     }
@@ -201,19 +209,100 @@ fn import_path_candidates(current_file: &str, import: &str) -> Vec<String> {
     let joined = normalize_relative_path(&base_dir.join(import));
 
     let mut candidates = BTreeSet::new();
-    candidates.insert(joined.display().to_string());
+    // 统一用正斜杠 /，与 display_path 格式一致
+    candidates.insert(joined.display().to_string().replace('\\', "/"));
 
     if joined.extension().is_none() {
         for ext in ["ts", "tsx", "js", "jsx", "rs", "py", "go"] {
-            candidates.insert(joined.with_extension(ext).display().to_string());
+            candidates.insert(joined.with_extension(ext).display().to_string().replace('\\', "/"));
         }
         for ext in ["ts", "tsx", "js", "jsx"] {
-            candidates.insert(joined.join(format!("index.{}", ext)).display().to_string());
+            candidates.insert(joined.join(format!("index.{}", ext)).display().to_string().replace('\\', "/"));
         }
-        candidates.insert(joined.join("mod.rs").display().to_string());
+        candidates.insert(joined.join("mod.rs").display().to_string().replace('\\', "/"));
     }
 
     candidates.into_iter().collect()
+}
+
+/// Rust 模块路径 → 文件候选映射
+///
+/// 处理三种 Rust 模块前缀：
+/// - `crate::foo::bar` → `src/foo/bar.rs` | `src/foo/bar/mod.rs`（Rust 惯例 src 在根下）
+///   同时生成无 `src/` 前缀的候选，适配 resolved_path 为 src/ 目录的场景
+/// - `super::baz`（可连续 `super::super::`）→ 当前文件上级相应层级的 `baz.rs` | `baz/mod.rs`
+/// - `self::qux` → 当前文件所在目录的 `qux.rs` | `qux/mod.rs`
+///
+/// `std::` / `anyhow::` 等外部 crate 返回 None，由调用方保留 specifier 原样。
+/// 所有候选路径统一用正斜杠 `/`，与 display_path 格式一致。
+fn rust_module_candidates(current_file: &str, import: &str) -> Option<Vec<String>> {
+    // 辅助：把模块路径字符串拼接为文件路径候选（统一用 /）
+    let make_candidates = |base_parts: &[&str], module_path: &str| -> Vec<String> {
+        let prefix = if base_parts.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", base_parts.join("/"))
+        };
+        vec![
+            format!("{}{}.rs", prefix, module_path),
+            format!("{}{}/mod.rs", prefix, module_path),
+        ]
+    };
+
+    if let Some(rest) = import.strip_prefix("crate::") {
+        if rest.is_empty() {
+            return None;
+        }
+        let module_path = rest.replace("::", "/");
+        // crate:: 候选：同时生成带 src/ 和不带，适配不同 resolved_path 层级
+        let mut candidates = BTreeSet::new();
+        for c in make_candidates(&["src"], &module_path) {
+            candidates.insert(c);
+        }
+        for c in make_candidates(&[], &module_path) {
+            candidates.insert(c);
+        }
+        return Some(candidates.into_iter().collect());
+    } else if import.starts_with("super::") {
+        // 统计 super:: 前缀数量，支持 super::super::foo
+        let mut count = 0;
+        let mut rest = import;
+        while let Some(r) = rest.strip_prefix("super::") {
+            count += 1;
+            rest = r;
+        }
+        if rest.is_empty() {
+            return None;
+        }
+        let module_path = rest.replace("::", "/");
+        // current_file 用 / 分隔，拆分各级
+        let parts: Vec<&str> = current_file.split('/').collect();
+        // current_file 如 src/foo/mod.rs，parent 为 src/foo
+        // 去掉最后一段（文件名），再上溯 count 级
+        let mut base_parts: Vec<&str> = if parts.len() > 1 {
+            parts[..parts.len() - 1].to_vec()
+        } else {
+            Vec::new()
+        };
+        for _ in 0..count {
+            base_parts.pop();
+        }
+        return Some(make_candidates(&base_parts, &module_path));
+    } else if let Some(rest) = import.strip_prefix("self::") {
+        if rest.is_empty() {
+            return None;
+        }
+        let module_path = rest.replace("::", "/");
+        let parts: Vec<&str> = current_file.split('/').collect();
+        let base_parts: Vec<&str> = if parts.len() > 1 {
+            parts[..parts.len() - 1].to_vec()
+        } else {
+            Vec::new()
+        };
+        return Some(make_candidates(&base_parts, &module_path));
+    }
+
+    None
 }
 
 fn normalize_relative_path(path: &Path) -> PathBuf {
@@ -228,4 +317,58 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rust_crate_prefix_maps_to_src_candidates() {
+        let candidates = import_path_candidates("src/foo/mod.rs", "crate::bar::baz");
+        // 应生成带 src/ 和不带的两套候选
+        assert!(candidates.iter().any(|c| c == "src/bar/baz.rs"), "应有 src/bar/baz.rs");
+        assert!(candidates.iter().any(|c| c == "src/bar/baz/mod.rs"), "应有 src/bar/baz/mod.rs");
+        assert!(candidates.iter().any(|c| c == "bar/baz.rs"), "应有 bar/baz.rs（无 src 前缀）");
+        assert!(candidates.iter().any(|c| c == "bar/baz/mod.rs"), "应有 bar/baz/mod.rs");
+    }
+
+    #[test]
+    fn rust_super_prefix_maps_to_parent_dir() {
+        // 当前文件 src/foo/mod.rs，super::bar → src/bar.rs | src/bar/mod.rs
+        let candidates = import_path_candidates("src/foo/mod.rs", "super::bar");
+        assert!(candidates.iter().any(|c| c == "src/bar.rs"), "应有 src/bar.rs");
+        assert!(candidates.iter().any(|c| c == "src/bar/mod.rs"), "应有 src/bar/mod.rs");
+    }
+
+    #[test]
+    fn rust_double_super_maps_to_grandparent() {
+        // 当前文件 src/foo/sub/mod.rs，super::super::bar → src/bar.rs
+        let candidates = import_path_candidates("src/foo/sub/mod.rs", "super::super::bar");
+        assert!(candidates.iter().any(|c| c == "src/bar.rs"), "应有 src/bar.rs");
+        assert!(candidates.iter().any(|c| c == "src/bar/mod.rs"), "应有 src/bar/mod.rs");
+    }
+
+    #[test]
+    fn rust_self_prefix_maps_to_current_dir() {
+        // 当前文件 src/foo/mod.rs，self::bar → src/foo/bar.rs
+        let candidates = import_path_candidates("src/foo/mod.rs", "self::bar");
+        assert!(candidates.iter().any(|c| c == "src/foo/bar.rs"), "应有 src/foo/bar.rs");
+        assert!(candidates.iter().any(|c| c == "src/foo/bar/mod.rs"), "应有 src/foo/bar/mod.rs");
+    }
+
+    #[test]
+    fn rust_external_crate_returns_original_specifier() {
+        // std::collections 等外部 crate 不映射到文件，保留原 specifier
+        let candidates = import_path_candidates("src/main.rs", "std::collections::HashMap");
+        assert_eq!(candidates, vec!["std::collections::HashMap".to_string()]);
+    }
+
+    #[test]
+    fn js_relative_path_still_works() {
+        // 确保原有 JS/TS 相对路径处理未被破坏
+        let candidates = import_path_candidates("src/foo.ts", "./bar");
+        assert!(candidates.iter().any(|c| c == "src/bar.ts"), "应有 src/bar.ts");
+        assert!(candidates.iter().any(|c| c == "src/bar.tsx"), "应有 src/bar.tsx");
+    }
 }

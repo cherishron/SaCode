@@ -9,9 +9,8 @@ use std::path::Path;
 
 use sacode_runtime::tools::code::ast::{AstEditor, AstSummary, AstSymbol, AstSymbolWithRange};
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, DocumentSymbol,
-    DocumentSymbolResponse, Hover, HoverContents, Location, MarkupContent, MarkupKind, Position,
-    Range, SymbolKind, Url,
+    CompletionItem, CompletionItemKind, CompletionResponse, DocumentSymbol, Hover, HoverContents,
+    Location, MarkupContent, MarkupKind, Position, Range, SymbolKind, Url,
 };
 
 use crate::document::TextDocument;
@@ -175,15 +174,95 @@ pub fn hover_fallback(doc: &TextDocument, position: Position) -> Option<Hover> {
 ///
 /// 复用 runtime 的 tree-sitter AST 解析，返回带完整 range 的符号树。
 /// LSP 客户端用此结果展示 outline 视图和面包屑导航。
+///
+/// 嵌套策略：tree-sitter 返回扁平符号列表，按 range 包含关系构建嵌套树。
+/// 当符号 A 的 range 完全包含符号 B 的 range 时，B 作为 A 的 children。
+/// 同级符号按 start_line 排序。
 pub fn document_symbols_from_ast(doc: &TextDocument) -> Vec<DocumentSymbol> {
     let Some(language) = language_id_to_ast_language(&doc.language_id) else {
         return Vec::new();
     };
     let symbols = AstEditor::symbols_with_range(language, &doc.content).unwrap_or_default();
-    symbols.into_iter().map(symbol_with_range_to_document_symbol).collect()
+    let document_symbols: Vec<DocumentSymbol> = symbols
+        .into_iter()
+        .map(symbol_with_range_to_document_symbol)
+        .collect();
+    build_nested_document_symbols(document_symbols)
+}
+
+/// 把扁平 DocumentSymbol 列表按 range 包含关系构建为嵌套树
+///
+/// 算法：
+/// 1. 按 start_line 排序（稳定排序，保持同位置符号的原顺序）
+/// 2. 用栈维护当前嵌套路径：新符号的 range 被栈顶符号包含时，作为其 child
+/// 3. 不被包含的符号是顶层符号
+fn build_nested_document_symbols(mut symbols: Vec<DocumentSymbol>) -> Vec<DocumentSymbol> {
+    if symbols.len() <= 1 {
+        return symbols;
+    }
+
+    // 按 range 起始位置排序
+    symbols.sort_by_key(|s| (s.range.start.line, s.range.start.character));
+
+    let mut result: Vec<DocumentSymbol> = Vec::new();
+    // 栈保存 result 中顶层符号的索引路径
+    // 栈顶是当前最内层容器的 (result_index_path)
+    // 简化实现：用递归方式构建
+    for symbol in symbols {
+        let mut inserted = false;
+        // 从后向前遍历 result 中的顶层符号，尝试插入到最深的合适容器
+        for top in result.iter_mut() {
+            if try_insert_child(top, &symbol) {
+                inserted = true;
+                break;
+            }
+        }
+        if !inserted {
+            result.push(symbol);
+        }
+    }
+    result
+}
+
+/// 尝试把 symbol 插入到 parent 的 children 中
+///
+/// 递归查找：如果 symbol 被 parent 包含，检查是否被 parent 的某个 child 包含，
+/// 如果是则递归插入到该 child；否则作为 parent 的直接 child。
+fn try_insert_child(parent: &mut DocumentSymbol, symbol: &DocumentSymbol) -> bool {
+    if !range_contains(&parent.range, &symbol.range) {
+        return false;
+    }
+
+    // 尝试插入到现有 children
+    if let Some(children) = parent.children.as_mut() {
+        for child in children.iter_mut() {
+            if try_insert_child(child, symbol) {
+                return true;
+            }
+        }
+    }
+
+    // 作为 parent 的直接 child
+    parent
+        .children
+        .get_or_insert_with(Vec::new)
+        .push(symbol.clone());
+    true
+}
+
+/// 判断 outer range 是否完全包含 inner range
+fn range_contains(outer: &Range, inner: &Range) -> bool {
+    // outer.start <= inner.start && outer.end >= inner.end
+    let outer_after_inner_start = outer.start.line < inner.start.line
+        || (outer.start.line == inner.start.line
+            && outer.start.character <= inner.start.character);
+    let outer_before_inner_end = outer.end.line > inner.end.line
+        || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character);
+    outer_after_inner_start && outer_before_inner_end
 }
 
 /// 把 AstSymbolWithRange 转换为 LSP DocumentSymbol
+#[allow(deprecated)]
 fn symbol_with_range_to_document_symbol(symbol: AstSymbolWithRange) -> DocumentSymbol {
     DocumentSymbol {
         name: symbol.name.clone(),

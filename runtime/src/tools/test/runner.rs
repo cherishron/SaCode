@@ -220,14 +220,15 @@ fn build_rust_failed_tests(
             format!("{}::{}", module, name)
         };
 
-        // 在输出中查找 "failures:" 段落后的错误详情
+        // 在输出中查找 "failures:" 段落后的错误详情和源码位置
         let error_message = extract_rust_failure_detail(&lines, &full_name);
+        let location = extract_rust_failure_location(&lines, &full_name);
 
         results.push(FailedTest {
             name: name.clone(),
             module: module.clone(),
             error_message,
-            location: String::new(),
+            location,
         });
     }
 
@@ -264,6 +265,100 @@ fn extract_rust_failure_detail(lines: &[&str], test_name: &str) -> String {
     }
 
     String::new()
+}
+
+/// 从 cargo test 的 "failures:" 段落提取失败测试的源码位置
+///
+/// cargo test 输出格式（panic 信息中含位置）：
+/// ```text
+/// ---- test_name ----
+/// test_name
+/// panicked at 'message', src/foo.rs:42:5
+/// ```
+///
+/// 也兼容 backtrace 格式：
+/// ```text
+///    0: std::panicking::begin_panic
+///   at /rustc/.../std::panicking.rs:578:5
+///   1: test_name
+///   at src/foo.rs:42:5
+/// ```
+fn extract_rust_failure_location(lines: &[&str], test_name: &str) -> String {
+    let failures_start = lines.iter().position(|line| line.trim() == "failures:");
+    let Some(start) = failures_start else {
+        return String::new();
+    };
+
+    let header = format!("---- {} ----", test_name);
+    for i in start..lines.len() {
+        if lines[i].trim() == header {
+            // 在失败块中查找 `src/...:line:col` 格式的位置
+            for j in (i + 1)..lines.len() {
+                let line = lines[j].trim();
+                if line.starts_with("----") {
+                    break;
+                }
+                // 匹配 "panicked at '...', src/path:line:col" 或 "at src/path:line:col"
+                if let Some(loc) = extract_rust_location_from_line(line) {
+                    return loc;
+                }
+            }
+            break;
+        }
+    }
+
+    String::new()
+}
+
+/// 从单行中提取 Rust 源码位置（src/path:line 或 src/path:line:col）
+///
+/// 匹配规则：
+/// - 路径以 `.rs` 结尾
+/// - 路径后跟 `:line` 或 `:line:col`
+/// - 路径前通常有 `at ` 或 `, ` 前缀
+fn extract_rust_location_from_line(line: &str) -> Option<String> {
+    // 查找所有 `.rs` 出现位置，尝试从每个位置向前找路径起点，向后找行号
+    let bytes = line.as_bytes();
+    let mut search_start = 0;
+    while let Some(rs_pos) = line[search_start..].find(".rs") {
+        let abs_rs_pos = search_start + rs_pos;
+        // 向前查找路径起点（路径字符：字母/数字/`_`/`-`/`.`/`/`/`\`）
+        let mut path_start = abs_rs_pos;
+        while path_start > 0 {
+            let prev = bytes[path_start - 1];
+            if prev.is_ascii_alphanumeric()
+                || prev == b'_'
+                || prev == b'-'
+                || prev == b'.'
+                || prev == b'/'
+                || prev == b'\\'
+            {
+                path_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let path_end = abs_rs_pos + 3; // 跳过 ".rs"
+
+        // 向后查找 `:line` 或 `:line:col`
+        let rest = &line[path_end..];
+        if rest.starts_with(':') {
+            // 提取 :line:col 部分
+            let mut end = 1;
+            while end < rest.len()
+                && (rest.as_bytes()[end].is_ascii_digit() || rest.as_bytes()[end] == b':')
+            {
+                end += 1;
+            }
+            if end > 1 {
+                let location = format!("{}{}", &line[path_start..path_end], &rest[..end]);
+                return Some(location);
+            }
+        }
+
+        search_start = abs_rs_pos + 3;
+    }
+    None
 }
 
 /// 解析 go test 输出
@@ -660,8 +755,12 @@ test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 5 total";
         assert_eq!(tests[0].name, "test_something");
         assert_eq!(tests[0].module, "foo::bar");
         assert!(tests[0].error_message.contains("panicked"));
+        // location 应从 panic 信息中提取 "src/foo.rs:42:5"
+        assert_eq!(tests[0].location, "src/foo.rs:42:5");
         assert_eq!(tests[1].name, "test_fail");
         assert_eq!(tests[1].module, "baz");
+        // 第二个失败无 panic 位置信息，location 应为空
+        assert_eq!(tests[1].location, "");
     }
 
     #[test]

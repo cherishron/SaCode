@@ -23,6 +23,11 @@ impl DocumentManager {
         self.documents.get(uri)
     }
 
+    /// 返回所有已打开文档的迭代器（用于 workspaceSymbol 扫描）
+    pub fn iter_all(&self) -> impl Iterator<Item = &TextDocument> {
+        self.documents.values()
+    }
+
     pub fn close(&mut self, uri: &Url) {
         self.documents.remove(uri);
     }

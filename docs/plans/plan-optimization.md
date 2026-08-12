@@ -657,3 +657,86 @@ interfaces/cli/
 4. **FFI unwrap**: 不使用固定字符串兜底，避免改变 FFI 语义；单独设计错误返回策略
 5. **Blast radius**: 所有修复保持 API 兼容，优先限制在 runtime 和少量 CLI 调用点
 6. **测试验证**: 每完成一个 P0/P1 修复，优先跑对应定向测试；本轮结束后再跑 `cargo test --workspace`
+
+---
+
+## v0.3 核心体验闭环收口（2026-08-12）
+
+> 目标：把 v0.3 路线图里"骨架就绪但未闭环"的体验项全部收口，让 CLI/REPL/TUI/daemon/SSE 形成完整闭环。
+
+### 完成项总览
+
+| 编号 | 优先级 | 任务 | 状态 | 落地证据 |
+|------|--------|------|------|----------|
+| P1-1 | 高 | daemon 路径透传 task_runner 中间事件到 SSE | ✅ 已完成 | `runtime/src/streaming/sse.rs` 支持 `task_id` 过滤；`daemon/handlers.rs` 在 task_runner 关键节点（工具调用前后 / 模型切换 / 节点评分）发射 SSE 事件 |
+| P1-2 | 高 | 新增 `fs.apply_patch` 工具（Git patch format） | ✅ 已完成 | `runtime/src/tools/fs/patch.rs` 实现 unified diff 解析与多 hunk 应用；支持 `@@ -a,b +c,d @@` 头、上下文行、添加/删除行；reject 时返回冲突 hunk 详情 |
+| P1-3 | 高 | 新增 `git.push` 独立工具 | ✅ 已完成 | `runtime/src/tools/git/push.rs` 暴露 `git.push` 工具，支持 `remote` / `branch` / `force` / `set_upstream` 参数；复用 sandbox 审计 |
+| P1-4 | 高 | CheckpointStorage 增加 `task_id → file` 索引 | ✅ 已完成 | `runtime/src/checkpoint/mod.rs` 新增 `task_index: HashMap<String, BTreeSet<PathBuf>>`，`save` / `list_by_task` / `delete_by_task` 走索引；索引随 checkpoints 持久化 |
+| P2-1 | 中 | `fs.patch` / `fs.edit` 大文件 + 二进制预检 | ✅ 已完成 | `runtime/src/tools/fs/preflight.rs` 提供 `check_size_and_binary()`；`fs.edit` / `fs.patch` 在执行前调用，超阈值或二进制直接返回诊断信息 |
+| P2-2 | 中 | Session 持久化到 SQLite | ✅ 已完成 | `runtime/src/store/db.rs` 用 `rusqlite` 存储 session 消息；`SessionService` 的 `prompt()` 在写消息后落库；启动时按 session_id 恢复历史 |
+| P2-3 | 中 | `TaskRunState` 增加 `Cancelled` 变体 | ✅ 已完成 | `kernel/src/execution/run.rs` 新增 `Cancelled`；`task_runner` 在 cancel 信号触发时转 `Cancelled` 并跳过后续工具调用；报告层区分 `Cancelled` vs `Failed` |
+| P2-4 | 中 | `git.commit` 可选 LLM 自动生成消息 | ✅ 已完成 | `runtime/src/tools/git/commit.rs` 当 `message` 为空时调用 provider 生成 Conventional Commits 格式消息；同步工具内用独立线程 + tokio Runtime 调 LLM，避免阻塞 |
+| P3-1 | 低 | 移除 `execute_via_static_fallback` 双路径 | ✅ 已完成 | `runtime/src/executor/mod.rs` 删除静态 fallback 路径，所有执行统一走 `task_runner` → `execute_task_with_provider`；减少一处行为分叉 |
+| P3-2 | 低 | `fs.edit` 与 `fs.patch` 容错策略对齐 | ✅ 已完成 | `fs.edit` 匹配失败时复用 `fs.patch::find_candidates()` 返回 top-3 候选诊断；两工具错误信息结构一致 |
+| P3-3 | 低 | `git.pr` 增加 `close` / `reopen` action | ✅ 已完成 | `runtime/src/tools/git/pr.rs` 新增 `action: close\|reopen\|merge` 参数，复用 GitHub API 路径 |
+| P3-4 | 低 | SQLite Connection 异步化（对齐 timeout lock 约束） | ✅ 已完成 | `store/db.rs` 把 `Mutex<Connection>` 改为 `Arc<Mutex<Connection>>`，新增 `acquire_lock()`（try_lock + 5s 超时 + 50ms 重试 + 中毒恢复）；满足"所有 Mutex 获取必须 timeout 包装"硬约束 |
+
+### 关键设计决策
+
+1. **SSE 事件透传**：daemon 不再只发最终结果，而是把 task_runner 内部的 `ToolCallStart` / `ToolCallEnd` / `ModelSwitched` / `NodeScored` 等中间事件透传到 `/api/stream`，让外部观察者能实时看到执行过程。
+2. **`fs.apply_patch` 选 Git patch format 而非自定义 JSON**：Git patch 是事实标准，可直接 `git apply` 验证，且与 `git.diff` 工具输出对偶，便于 LLM 闭环使用。
+3. **Session 持久化用 SQLite 而非 JSONL**：单文件、零配置、支持事务；为后续多 session 管理 / 历史检索打基础。SQLite 连接全部走 timeout lock，对齐项目硬约束。
+4. **`TaskRunState::Cancelled` 与 `Failed` 分离**：Cancelled 是用户主动行为，不应触发 failover / 健康降权；Failed 才进入自愈合回路。
+5. **`git.commit` LLM 调用线程隔离**：工具是同步函数，不能直接 `await`；用 `std::thread::spawn` + `Runtime::new()` 隔离 tokio 上下文，避免污染主 runtime。
+
+---
+
+## v0.5 代码智能深度 — 路径 C 收口（2026-08-12）
+
+> 目标：消除"L0-7 标记已修复但 roadmap 说未完成"的文档不一致；把代码智能已有但未桥接的能力全部闭环。
+
+### 路径选型：为什么是 C 而非 A/B
+
+| 路径 | 方案 | 投入 | 收益 | 风险 | 取舍 |
+|------|------|------|------|------|------|
+| A | 重写 AstCache 为基于 salsa 的增量索引 | 大（≥2 周） | 长期收益高，短期不可见 | 高（架构变更） | ❌ 不符当前阶段 |
+| B | LSP 跨进程 AST 缓存共享（IPC + mmap） | 大（≥1 周） | 仅超大 monorepo 可观察 | 中（IPC 复杂度） | ❌ 投入产出比低 |
+| **C** | **聚焦已有能力但未桥接的缺口** | **小（1 工作日）** | **闭环 v0.5 文档不一致** | **低** | **✅ 选择** |
+
+### 路径 C 完成项（核心 6 项）
+
+| 编号 | 优先级 | 任务 | 状态 | 落地证据 |
+|------|--------|------|------|----------|
+| P1 | 高 | Rust 失败测试 `location` 提取 | ✅ 已完成 | `runtime/src/tools/test/autofix.rs` 解析 cargo 输出 `panicked at ... src/foo.rs:LINE:COL` 与 `error[E0XXX]: ... --> src/foo.rs:LINE:COL` 两种格式；测试结果条目带 `location` 字段 |
+| P2 | 高 | LSP `documentSymbol` 嵌套 `children` | ✅ 已完成 | `interfaces/lsp/src/code_intelligence.rs` 的 `document_symbols_from_ast` 递归构建 `DocumentSymbol { children: Some(...) }`；顶层 symbol 与嵌套 symbol 在 VS Code Outline 正确折叠 |
+| P3 | 中 | Go 诊断支持（`go vet` + `parse_go_output`） | ✅ 已完成 | `interfaces/lsp/src/diagnostics/mod.rs` 新增 `analyze_go`（仅 workdir 含 `go.mod` 时执行），`parse_go_output` 支持 `path:line:col: msg` 与 `path:line: msg` 两种格式；5 个单测覆盖格式变体与 severity 判定 |
+| P4 | 中 | `code.deps` Rust 模块名解析 | ✅ 已完成 | `runtime/src/tools/code/deps.rs` 新增 `rust_module_candidates`，处理 `crate::` / `super::`（可连续）/ `self::` 三种前缀到文件候选的映射；生成带 `src/` 和不带 `src/` 两套候选；6 个单测覆盖前缀组合 |
+| P5 | 中 | LSP `workspaceSymbol` method | ✅ 已完成 | `interfaces/lsp/src/server.rs` 新增 `workspace_symbol_provider` capability + `symbol()` 方法；遍历所有已打开文档，递归扁平化嵌套符号树，按 query 大小写不敏感子串过滤；返回 `Vec<SymbolInformation>` |
+| P6 | 中 | LSP diagnostics 与 `code.symbols` 联动 | ✅ 已完成 | `server.rs` 新增 `last_diagnostics: Arc<Mutex<HashMap<Url, Vec<Diagnostic>>>>` 缓存最近一次发布的诊断；`hover()` 命中 AST 符号后调用 `append_position_diagnostics()` 附加该位置重叠的诊断段落（含 severity / source / message） |
+
+### 路径 C 延后项（低 ROI，不阻塞收口）
+
+| 编号 | 任务 | 状态 | 延后理由 |
+|------|------|------|----------|
+| P9 | AstCache 改真 LRU | 🟡 延后 | 当前 512 条 + mtime 失效已覆盖绝大多数场景；真 LRU 仅在超大 monorepo 下有可观察差异，属性能优化非功能缺口 |
+| P10 | `test.run` 扩展 Node 框架 | 🟡 延后 | 当前已支持 `npm test` / `npx jest` / `npx mocha`；扩展 vitest / playwright 属覆盖度优化非核心闭环 |
+
+### 路径 C 核心收益
+
+1. **文档一致性闭环**：roadmap 中"L0-7 已修复但 v0.5 未完成"的不一致已消除 — `workspaceSymbol` / Rust 模块解析 / Go 诊断 / 诊断联动均已落地并附测试。
+2. **代码智能闭环**：`code.symbols`（AST 符号）→ `code.deps`（依赖图，含 Rust 模块解析）→ LSP `documentSymbol` / `workspaceSymbol` → diagnostics → hover 联动，形成完整闭环，无"骨架就绪但未桥接"的缺口。
+3. **跨平台一致性**：所有路径统一用正斜杠 `/`，Windows 反斜杠在 `display_path` / 候选生成 / `parse_go_output` 中统一替换，消除平台分叉。
+4. **测试覆盖**：路径 C 6 项共补 11 个单测（Go 诊断 5 + Rust 模块解析 6），无新增 flaky 测试。
+
+---
+
+## v0.3 + v0.5 路径 C 验证清单
+
+| 验证项 | 命令 | 结果 |
+|--------|------|------|
+| workspace 全量测试 | `cargo test --workspace` | ✅ 全绿（kernel 31 / runtime 450+1 ignored / lsp 30 / acp 187 / cli 2+1 ignored） |
+| CLI binary 链接 | `cargo build -p sacode-cli --bin sacode` | ✅ 通过（RUSTFLAGS="-C link-arg=/DEBUG:FASTLINK"） |
+
+> **环境说明**：Windows MSVC link.exe 在默认 `/DEBUG:FULL` 模式下对 sacode 这种重度依赖（wasmtime / rusqlite / tree-sitter 等）的 binary 会触发 LNK1318 PDB stream 数量限制。改用 `/DEBUG:FASTLINK` 把调试信息留在 obj 文件中，PDB 仅作索引，问题消除。这是环境配置，非代码问题。收口过程中顺带修复 `StoreDb::save_session/load_session/list_sessions` 的 `private_interfaces` warning（`pub` → `pub(crate)`，与 `SessionState` 可见性对齐）。
+
+---

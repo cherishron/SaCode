@@ -7,6 +7,7 @@
 //!   - rust → `cargo check --message-format=json`
 //!   - typescript/javascript → `tsc --noEmit --pretty false`
 //!   - python → `python -m py_compile <file>`
+//!   - go → `go vet ./...`（仅当 workdir 含 go.mod 时执行）
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -42,6 +43,7 @@ impl DiagnosticsProvider {
                 self.analyze_typescript(&doc_path)
             }
             "python" => self.analyze_python(&doc_path),
+            "go" => self.analyze_go(&doc_path),
             _ => Vec::new(),
         }
     }
@@ -101,6 +103,25 @@ impl DiagnosticsProvider {
         // py_compile 通过 stderr 报告语法错误
         let stderr = String::from_utf8_lossy(&output.stderr);
         parse_python_output(&stderr, doc_path)
+    }
+
+    /// go: `go vet ./...`
+    /// 仅当 workdir 含 go.mod 时执行，避免在非 Go 项目中报错。
+    /// `go vet` 输出格式：`path:line:col: message` 或 `path:line: message`
+    fn analyze_go(&self, doc_path: &Path) -> Vec<Diagnostic> {
+        if !self.workdir.join("go.mod").exists() {
+            return Vec::new();
+        }
+        let output = Command::new("go")
+            .args(["vet", "./..."])
+            .current_dir(&self.workdir)
+            .output();
+        let Ok(output) = output else {
+            return Vec::new();
+        };
+        // go vet 诊断输出到 stderr
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        parse_go_output(&stderr, doc_path, &self.workdir)
     }
 }
 
@@ -326,6 +347,79 @@ pub(crate) fn parse_python_output(stderr: &str, doc_path: &Path) -> Vec<Diagnost
     diagnostics
 }
 
+/// 解析 `go vet` 的 stderr 输出
+///
+/// 典型格式：
+/// - `path:line:col: message`（带列号）
+/// - `path:line: message`（无列号）
+/// - `# package-name` 行跳过（编译进度提示）
+///
+/// 路径相对于 workdir，需 join 后与 doc_path 比较。
+pub(crate) fn parse_go_output(
+    stderr: &str,
+    doc_path: &Path,
+    workdir: &Path,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // 拆分 location 与 message — go vet 格式 `path:line:col: message`
+        // path/line/col 之间冒号无空格，message 前是 `": "`（冒号+空格）
+        // 故从左取第一个 `": "` 拆分，message 内部可能含 `": "`（如 "warning: foo"）
+        let Some((location, message)) = trimmed.split_once(": ") else {
+            continue;
+        };
+        let message = message.trim();
+        if message.is_empty() {
+            continue;
+        }
+        // location 形如 path:line 或 path:line:col
+        let parts: Vec<&str> = location.rsplitn(3, ':').collect();
+        let (file_str, line_n, col_n) = match parts.len() {
+            3 => (parts[2], parts[1], Some(parts[0])),
+            2 => (parts[1], parts[0], None),
+            _ => continue,
+        };
+        let Ok(line_n) = line_n.parse::<u32>() else {
+            continue;
+        };
+        let col = match col_n {
+            Some(c) => c.parse::<u32>().unwrap_or(1),
+            None => 1,
+        };
+        let span_path = workdir.join(file_str);
+        if !paths_match(&span_path, doc_path) {
+            continue;
+        }
+        // go vet 默认 error 级别；包含 "warning" 字样时降级为 WARNING
+        let severity = if message.to_ascii_lowercase().contains("warning") {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        };
+        diagnostics.push(Diagnostic {
+            range: Range {
+                start: Position {
+                    line: line_n.saturating_sub(1),
+                    character: col.saturating_sub(1),
+                },
+                end: Position {
+                    line: line_n.saturating_sub(1),
+                    character: col,
+                },
+            },
+            severity: Some(severity),
+            source: Some("go vet".to_string()),
+            message: message.to_string(),
+            ..Default::default()
+        });
+    }
+    diagnostics
+}
+
 /// 从 LSP URI 提取本地文件路径
 fn uri_to_file_path(uri: &tower_lsp::lsp_types::Url) -> Option<PathBuf> {
     uri.to_file_path().ok()
@@ -508,6 +602,64 @@ mod tests {
         };
         // analyze 会尝试执行 cargo / tsc / python；不支持的语言直接返回空
         let diags = provider.analyze(&doc);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn parses_go_vet_error_with_col() {
+        // 格式: path:line:col: message
+        let go_output = "main.go:10:5: expected ';', found x";
+        let (workdir, doc_path) = workdir_doc_pair("main.go");
+        let diags = parse_go_output(go_output, &doc_path, &workdir);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(d.source.as_deref(), Some("go vet"));
+        assert_eq!(d.message, "expected ';', found x");
+        assert_eq!(d.range.start.line, 9);
+        assert_eq!(d.range.start.character, 4);
+        assert_eq!(d.range.end.line, 9);
+        assert_eq!(d.range.end.character, 5);
+    }
+
+    #[test]
+    fn parses_go_vet_error_without_col() {
+        // 格式: path:line: message
+        let go_output = "main.go:5: missing return";
+        let (workdir, doc_path) = workdir_doc_pair("main.go");
+        let diags = parse_go_output(go_output, &doc_path, &workdir);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.range.start.line, 4);
+        assert_eq!(d.range.start.character, 0);
+        assert_eq!(d.range.end.line, 4);
+        assert_eq!(d.range.end.character, 1);
+    }
+
+    #[test]
+    fn parses_go_vet_warning_severity() {
+        let go_output = "main.go:20:3: warning: unreachable code";
+        let (workdir, doc_path) = workdir_doc_pair("main.go");
+        let diags = parse_go_output(go_output, &doc_path, &workdir);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Some(DiagnosticSeverity::WARNING));
+    }
+
+    #[test]
+    fn skips_go_package_progress_lines() {
+        // `# package-name` 是编译进度提示，应跳过
+        let go_output = "# github.com/foo/bar\nmain.go:10:5: some error";
+        let (workdir, doc_path) = workdir_doc_pair("main.go");
+        let diags = parse_go_output(go_output, &doc_path, &workdir);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].message, "some error");
+    }
+
+    #[test]
+    fn filters_go_diagnostics_by_doc_path() {
+        let go_output = "other.go:1:1: error here";
+        let (workdir, doc_path) = workdir_doc_pair("main.go");
+        let diags = parse_go_output(go_output, &doc_path, &workdir);
         assert!(diags.is_empty());
     }
 }
