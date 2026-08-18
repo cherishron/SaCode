@@ -35,6 +35,7 @@ pub struct ReplSession {
     session_summary: Option<String>,
     recent_messages: VecDeque<ReplMessage>,
     pending_question: Option<serde_json::Value>,
+    goal_condition: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,7 @@ impl ReplSession {
             session_summary: None,
             recent_messages: VecDeque::new(),
             pending_question: None,
+            goal_condition: None,
         }
     }
 
@@ -167,6 +169,7 @@ impl ReplSession {
             "/update" => self.handle_update_command(&parts[1..])?,
             "/clear" => self.clear_screen(),
             "/add-dir" => self.add_dir_command(&parts[1..])?,
+            "/goal" => self.handle_goal(&parts[1..])?,
             cmd => println!("Unknown command: {}", cmd),
         }
 
@@ -224,6 +227,32 @@ impl ReplSession {
         }
         println!();
 
+        // 检查完成条件（/goal 设定）
+        if let Some(goal) = &self.goal_condition {
+            if let Ok(response) = &output.provider_response {
+                let response_lower = response.to_lowercase();
+                let goal_lower = goal.to_lowercase();
+                let keywords: Vec<&str> = goal_lower.split_whitespace().collect();
+                let mut matched = 0usize;
+                let mut matched_kws = Vec::new();
+                for kw in &keywords {
+                    if response_lower.contains(kw) {
+                        matched += 1;
+                        matched_kws.push(*kw);
+                    }
+                }
+                if matched >= keywords.len().saturating_sub(1) && matched >= 2 {
+                    println!();
+                    println!("    完成条件检查：满足");
+                    println!("任务完成！");
+                } else {
+                    println!();
+                    println!("    完成条件检查：未完全满足 (匹配 {}/{}: {})", matched, keywords.len(), matched_kws.join(", "));
+                    println!("提示：运行新任务迭代完成，或用 /goal 更新条件");
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -245,6 +274,7 @@ impl ReplSession {
         println!("  /init            - Lightweight project initialization");
         println!("  /init-deep       - Deep project initialization");
         println!("  /mode [plan|build|auto] - Set or show mode");
+        println!("  /goal [完成条件] - Set/show goal for task completion check");
         println!("  /login           - Configure OpenAI-compatible provider");
         println!("  /connect         - Quick connect to a preset provider");
         println!("  /providers       - List and switch provider");
@@ -293,6 +323,25 @@ impl ReplSession {
         println!("Mode set to: {:?}", self.mode);
     }
 
+    fn handle_goal(&mut self, args: &[&str]) -> Result<()> {
+        if args.is_empty() {
+            match &self.goal_condition {
+                Some(condition) => println!("当前完成条件：{}", condition),
+                None => {
+                    println!("用法: /goal <完成条件>");
+                    println!("示例: /goal 所有测试通过");
+                    println!("");
+                    println!("设定后，每个任务执行完毕会自动检查是否满足条件。");
+                }
+            }
+            return Ok(());
+        }
+        let condition = args.join(" ");
+        self.goal_condition = Some(condition.clone());
+        println!("完成条件已设定：{}", condition);
+        println!("后续任务执行完毕将自动检查完成状态。");
+        Ok(())
+    }
     fn show_tools(&self) {
         let registry = ToolRegistry::builtin();
         println!();
