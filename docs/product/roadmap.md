@@ -1,10 +1,27 @@
 # SaCode 产品路线图
 
-> 更新时间：2026-08-12（v0.7 全部 9 项已完成）
+> 更新时间：2026-08-18
 > 当前版本：0.1.33
-> 配套文档：`docs/product/PRD.md`
+> 配套文档：`docs/product/PRD.md`、`docs/report.md`、`docs/report-plan.md`
 
 本文件只回答三件事：当前处在哪个阶段、下一阶段交付什么、后续能力按什么顺序演进。
+
+## 平台化收敛声明（2026-08-18）
+
+基于《SaCode 可行性评估报告》（docs/report.md）维度三"整体方向是否跑偏"结论：
+
+- **定位调整**：明确为"面向国内开发者的终端 AI 编程工具"，平台化是结果不是起点
+- **核心叙事**："Claude Code 的体验，国内模型原生适配，企业级可审计"
+- **资源重新分配**：停止 ACP/LSP/Daemon 的深度投入，资源集中到三个最高 ROI：
+  1. IDE 插件（VSCode 扩展，P1）
+  2. 国内 provider 零配置接入（P0）
+  3. 首次使用体验优化（P0）
+- **过度设计简化**（详见 docs/report-plan.md 步骤 4）：
+  - Loop 四层自治架构 → 轻量 `/goal`
+  - 知识系统 9 文件分类 → 3 文件
+  - 五维冲突检测 → 审批 + 拦截
+
+ACP/LSP/Daemon 维持现有能力，不在本期扩展新功能。
 
 ## 当前阶段判断
 
@@ -83,9 +100,11 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 6. ✅ WASM 插件下载 — `PluginEntry` 新增 `download_url`/`wasm_path` 字段，`install_plugin` 自动下载 WASM 文件
 7. ✅ LSP 跨文件引用 — `references` 和 `goto_definition` 从单文件搜索扩展为遍历所有已打开文档
 
-### v1.0+：产品就绪 ✅ 四大瓶颈已落地（2026-08-12）
+### v1.0+：产品就绪 ✅ 能力已落地（2026-08-12） / 🚧 版本号未发布
 
 目标：形成自动化闭环、协作协议和长期平台能力。
+
+> **状态说明**：v1.0+ 四大产品就绪里程碑（M1-M4）能力维度已完成落地，但 `Cargo.toml` `[workspace.package].version` 仍为 `0.1.33`，尚未升到 `1.0.0`。正式发布 v1.0 需 `node scripts/sync-version.js 1.0.0` + `node scripts/check-release.js --strict-platforms` + GitHub release 流程。
 
 重点交付（实施顺序 1→3→4→2）：
 
@@ -93,6 +112,19 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 2. ✅ 多模态产品化 — `media.vision` 超时/降级/缓存/错误分类加固；新增 `media.video` 视频帧提取（详见 `runtime/src/tools/media/`）
 3. ✅ Agent 协作协议 — 结构化消息协议 + 双向通信 + 实时干预 + 动态角色（详见 `runtime/src/agents/message_bus.rs`、`worker.rs`、`orchestrator.rs`、`role_registry.rs`）
 4. ✅ 学习型记忆 — `AutoLearner` 自动学习回路 + BM25 搜索 + 记忆衰减 + SQLite 双写（详见 `runtime/src/memory/learner.rs`、`mod.rs`、`runtime/src/store/db.rs`）
+
+### v1.2+：体验闭环与简化（2026-08-18 启动，详见 docs/report-plan.md）
+
+基于评估报告四维结论制定的 12 周改进规划，6 个阶段：
+
+| 阶段 | 目标 | 周次 |
+|------|------|------|
+| P0 体验闭环 | 首次配置 ≤2 步、渐进式文档 | W1-W2 |
+| P1 VSCode 扩展 MVP | 复用 sacode serve、侧边栏对话 | W3-W5 |
+| P2 定位聚焦 | PRD/roadmap 修订、平台化收敛 | W6 |
+| P3 简化过度设计 | /goal 轻量、知识 9→3、冲突简化 | W7-W8 |
+| P4 强化核心机制 | 三级模式视觉、沙箱审计文档、审批可视化 | W9-W10 |
+| P5 场景补齐 | CI/CD、代码审查、远程开发、测试编写 | W11-W12 |
 
 ## 并行推进主线
 
@@ -103,9 +135,11 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 1. ✅ 统一任务运行时与状态机（v0.3 已完成）
 2. ✅ Sub-agents（多 Agent 编排已落地）
 3. ✅ Daemon + HTTP API（11 REST 端点 + SSE）
-4. ⬜ Scheduled Tasks
-5. ⬜ Agent Teams
-6. ⬜ Channels
+4. ⬜ Scheduled Tasks（**延后**，平台化收敛，不在本期）
+5. ⬜ Agent Teams（**延后**，平台化收敛，不在本期）
+6. ⬜ Channels（**延后**，平台化收敛，不在本期）
+
+> **调整说明（2026-08-18）**：基于评估报告维度三结论，Scheduled Tasks / Agent Teams / Channels 三项延后，资源集中到 IDE 插件、provider 零配置、首次体验。
 
 这条顺序决定了高阶能力的落地依赖关系，也决定了方案文档在 `docs/plans/archive/` 中的组织方式。
 
@@ -116,11 +150,14 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 | `v0.3` | 补齐终端体验闭环 | 持久化任务、统一状态机、跨入口一致性、Git 提交闭环 | ✅ 已完成 |
 | `v0.5` | 提升代码智能深度 | AST、语义索引、测试运行器、LSP 诊断 | ✅ 已完成 |
 | `v0.7` | 扩展生态与集成 | MCP stdio、ACP 流式、检查点增强、IDE 配置生成、插件运行时、LSP 跨文件 | ✅ 已完成 |
-| `v1.0+` | 达到产品就绪 | 自动修复、多模态、协作协议、学习记忆 | 🚧 进行中（M1-M4 已落地） |
+| `v1.0+` | 达到产品就绪 | 自动修复、多模态、协作协议、学习记忆 | ✅ 能力已落地 / 🚧 版本号未发布（0.1.33） |
+| `v1.2+` | 体验闭环与简化 | IDE 插件、provider 零配置、首次体验、过度设计简化 | 🚧 规划中（详见 docs/report-plan.md） |
 
 ## 参考关系
 
 1. [产品 PRD](PRD.md) — 产品定位、能力范围、当前现状、优先级总表
-2. [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
-3. [项目优化计划](../plans/plan-optimization.md) — 当前问题修复与优化计划
-4. [历史方案归档](../plans/archive/README.md) — 统一运行时与平台演进的历史完整方案
+2. [可行性评估报告](../report.md) — 四维评估（竞争差距/规则审查/方向/UI）
+3. [改进规划方案](../report-plan.md) — 基于评估报告的 12 周实施方案
+4. [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
+5. [项目优化计划](../plans/plan-optimization.md) — 当前问题修复与优化计划
+6. [历史方案归档](../plans/archive/README.md) — 统一运行时与平台演进的历史完整方案

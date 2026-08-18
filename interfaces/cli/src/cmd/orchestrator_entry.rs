@@ -12,10 +12,12 @@ use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun, generate_t
 use sacode_runtime::{
     AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder, PromptUserDecider,
     TaskRunConfig,
-    build_execution_plan, execute_role_driven_task_run, execute_task_with_provider,
+    build_execution_plan, execute_task_with_provider,
     strip_orchestration_prefix,
     build_runtime_system_prompt, PromptContext,
-    CheckpointStorage, McpConfigStore, RoleRegistry,
+    CheckpointStorage, LoopConfigStore, AgentLoop, AgentLoopKind,
+    build_agent_loop, infer_task_run_state, task_run_from_report,
+    McpConfigStore, Profile, RoleRegistry,
     TaskProfile, ToolRegistry,
 };
 
@@ -30,17 +32,49 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     let roles = RoleRegistry::builtin();
     let execution_plan = build_execution_plan(&effective_prompt, &workdir, &profile, roles.all());
 
+    // §3.4 深化：解析命名 Profile（若存在），使其真正驱动工具集约束
+    let named_profile = options.profile.as_ref().and_then(|name| {
+        let profiles_dir = workdir.join(".sacode").join("profiles");
+        match Profile::resolve(&profiles_dir, name) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("warning: profile '{name}' 解析失败，忽略：{e}");
+                None
+            }
+        }
+    });
+
+    // §3.5 第三步：解析 Loop 选择（loop.json + --agent-loop 覆盖）
+    let mut loop_config = LoopConfigStore::new(&workdir).load();
+    if let Some(ref kind_str) = options.agent_loop {
+        loop_config.kind = AgentLoopKind::parse(kind_str);
+    }
+    let agent_loop = build_agent_loop(&loop_config);
+
     let (report, task_run) = if execution_plan.use_multi_agent {
-        // 多 Agent 路径：角色驱动编排（内部已使用 TaskExecutor）
+        // 多 Agent 路径：经由 AgentLoop trait 驱动（§3.5 可替换抽象）
         let task = Task::new(effective_prompt.clone(), options.mode, None);
         let context = ExecutionContext::new(task).with_approval(options.approval);
         let checkpoints = CheckpointStorage::new(&workdir);
-        let (task_run, _actual_plan) = execute_role_driven_task_run(&context, &checkpoints).await?;
-        let report = task_run.report.clone().unwrap_or_default();
+        // §3.5：用 build_agent_loop 选中的 Loop 实现驱动整轮编排。
+        // 当前仅 LingShu 一种实现，其 orchestrate_turn 内部委托
+        // execute_role_driven_orchestration（等价于下方 task_run 构造）。
+        let report = agent_loop
+            .orchestrate_turn(&context, &checkpoints, &workdir, named_profile.as_ref())
+            .await?;
+        let task_run = task_run_from_report(
+            context.task_id.clone(),
+            context.mode,
+            context.task.prompt.clone(),
+            &report,
+            infer_task_run_state(&report),
+        );
         (report, Some(task_run))
     } else {
         // 单 Agent 路径：使用统一 TaskExecutor（替代占位 Supervisor + RuntimeOrchestrator）
-        let result = execute_single_agent_task(&options, &effective_prompt, &workdir, &profile).await?;
+        let result =
+            execute_single_agent_task(&options, &effective_prompt, &workdir, &profile, named_profile.as_ref())
+                .await?;
         result
     };
 
@@ -102,7 +136,8 @@ async fn execute_single_agent_task(
     options: &CliOptions,
     effective_prompt: &str,
     workdir: &std::path::Path,
-    profile: &TaskProfile,
+    _profile: &TaskProfile,
+    named_profile: Option<&Profile>,
 ) -> Result<(ExecutionReport, Option<TaskRun>)> {
     use std::sync::Arc;
     use sacode_runtime::ApprovalDecider;
@@ -110,9 +145,17 @@ async fn execute_single_agent_task(
     // 构建工具注册表
     let mut tools = ToolRegistry::builtin_with_wasm(workdir);
     let mcp_store = McpConfigStore::new(workdir);
-    let _ = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
+    if let Err(error) = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools) {
+        tracing::warn!("注册 MCP 工具失败: {error}");
+    }
 
-    let tool_names: Vec<String> = tools.names().iter().map(|name| name.to_string()).collect();
+    // §3.4 深化：单 Agent 路径也应用命名 Profile 的工具集约束
+    let injected_specs = tools.for_prompt_with_profile(None, Some(_profile), named_profile, None);
+    let tool_names: Vec<String> = if named_profile.is_some() {
+        injected_specs.0.iter().map(|s| s.name.to_string()).collect()
+    } else {
+        tools.names().iter().map(|name| name.to_string()).collect()
+    };
 
     // 构建系统提示词
     let system_prompt = build_runtime_system_prompt(&PromptContext {
@@ -151,8 +194,12 @@ async fn execute_single_agent_task(
     // 执行任务
     let task_run_result = execute_task_with_provider(&config, None).await;
 
-    // 构建 ExecutionReport
-    let mut report = ExecutionReport::default();
+    // 构建 ExecutionReport：优先取 executor 产出的完整报告（含 events、route_records）
+    let mut report = task_run_result
+        .task_run
+        .report
+        .clone()
+        .unwrap_or_default();
     report.final_output = task_run_result.response.clone().ok();
 
     // 构建 TaskRun

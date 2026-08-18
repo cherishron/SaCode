@@ -1,7 +1,7 @@
-use std::fs;
 use std::path::Path;
 
 use crate::sandbox::FsAccess;
+use crate::tools::context::{current_context, EntryType};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
@@ -39,15 +39,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let include_hidden = input["include_hidden"].as_bool().unwrap_or(false);
 
     let dir_path = resolve_allowed_path(path, FsAccess::Read)?;
-    if !dir_path.exists() {
+    let ctx = current_context();
+    if !ctx.exists(&dir_path) {
         return Ok(ToolOutput::failure(format!(
             "directory not found: {}",
-            path
-        )));
-    }
-    if !dir_path.is_dir() {
-        return Ok(ToolOutput::failure(format!(
-            "path is not a directory: {}",
             path
         )));
     }
@@ -85,39 +80,34 @@ fn collect_entries(
     include_hidden: bool,
     entries: &mut Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy().to_string();
+    let ctx = current_context();
+    for entry in ctx.list_dir(current)? {
+        let file_name = entry
+            .relative_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&entry.relative_path)
+            .to_string();
         if !include_hidden && file_name.starts_with('.') {
             continue;
         }
 
-        let path = entry.path();
-        let metadata = entry.metadata()?;
-        let relative = relative_name(root, &path);
-        let kind = if metadata.is_dir() {
-            "directory"
-        } else {
-            "file"
+        let path = current.join(&entry.relative_path);
+        let relative = entry.relative_path.clone();
+        let kind = match entry.entry_type {
+            EntryType::Directory => "directory",
+            EntryType::File => "file",
         };
 
         entries.push(serde_json::json!({
             "name": relative,
             "type": kind,
-            "size": metadata.len()
+            "size": entry.size
         }));
 
-        if recursive && metadata.is_dir() {
+        if recursive && entry.entry_type == EntryType::Directory {
             collect_entries(root, &path, recursive, include_hidden, entries)?;
         }
     }
     Ok(())
-}
-
-fn relative_name(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
 }

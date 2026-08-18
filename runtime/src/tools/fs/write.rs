@@ -43,26 +43,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let path_buf = resolve_allowed_path(path, FsAccess::Write)?;
 
-    if let Some(parent) = path_buf.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-
+    let ctx = crate::tools::context::current_context();
     let bytes_written = match mode {
-        "append" => {
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path_buf)?;
-            file.write_all(content.as_bytes())?;
-            content.len()
-        }
-        _ => {
-            std::fs::write(&path_buf, content)?;
-            content.len()
-        }
+        "append" => ctx.append_text(&path_buf, content)?,
+        _ => ctx.write_text(&path_buf, content)?,
     };
 
     Ok(ToolOutput::success(serde_json::json!({

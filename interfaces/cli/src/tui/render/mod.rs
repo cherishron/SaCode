@@ -17,6 +17,7 @@ pub(crate) use main_layout::render_message_lines;
 pub(crate) use messages_panel::render_messages_panel;
 pub(crate) use modals::{
     render_config_enum_selector, render_config_selector, render_input_optimization_preview,
+    render_pending_question_panel,
 };
 pub(crate) use selectors::{
     render_checkpoint_selector, render_connect_selector, render_mcp_selector, render_mode_selector,

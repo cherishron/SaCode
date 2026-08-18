@@ -252,7 +252,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     // 不在此处重跑测试或应用修改（修改属于 LLM 工具循环）。`max_iterations`
     // 作为对外暴露的"多轮外部循环预算"上限语义保留；当 `max_iterations <= 1`
     // 时直接判定为 Exhausted（无外部循环余量），否则进入 PendingExternalFix 等待 LLM 介入。
-    let mut round = 1usize;
+    let round = 1usize;
     let loop_state: FixLoopState;
 
     // 分析阶段：生成结构化修复上下文（状态机：Analyzing → Patching）

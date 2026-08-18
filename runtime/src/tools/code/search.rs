@@ -482,13 +482,7 @@ fn find_best_matching_symbol(
 
 /// 截断预览文本
 fn truncate_preview(text: &str) -> String {
-    let max_len = 200;
-    if text.len() <= max_len {
-        text.to_string()
-    } else {
-        let end = text.char_indices().take(max_len).last().map(|(i, _)| i).unwrap_or(text.len());
-        format!("{}...", &text[..end])
-    }
+    sacode_kernel::util::truncate_with_ellipsis(text, 200)
 }
 
 /// 收集源文件及其语言

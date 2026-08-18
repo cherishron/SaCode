@@ -6,7 +6,7 @@ use std::{
 };
 
 use ratatui::layout::Rect;
-use sacode_kernel::model::MIMO_TOKEN_PLAN_BASE_URL;
+
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::ProjectAccessConfigStore;
 
@@ -73,33 +73,7 @@ impl App {
                 "idea".to_string(),
             ],
             selected_theme_index: 0,
-            connect_options: vec![
-                (
-                    "ollama".to_string(),
-                    "http://127.0.0.1:11434/v1".to_string(),
-                    false,
-                ),
-                (
-                    "deepseek".to_string(),
-                    "https://api.deepseek.com/v1".to_string(),
-                    true,
-                ),
-                (
-                    "mimo".to_string(),
-                    MIMO_TOKEN_PLAN_BASE_URL.to_string(),
-                    true,
-                ),
-                (
-                    "longcat".to_string(),
-                    "https://api.longcat.chat/openai/v1".to_string(),
-                    true,
-                ),
-                (
-                    "openai".to_string(),
-                    "https://api.openai.com/v1".to_string(),
-                    true,
-                ),
-            ],
+            connect_options: crate::provider_config::preset_connect_options(),
             selected_connect_index: 0,
             pending_connect_provider: None,
             task_tx,
@@ -125,7 +99,7 @@ impl App {
             checkpoint_options: Vec::new(),
             selected_checkpoint_index: 0,
             pending_checkpoint_action: None,
-            mode_options: vec!["plan".to_string(), "build".to_string(), "yolo".to_string()],
+            mode_options: vec!["plan".to_string(), "build".to_string(), "auto".to_string()],
             selected_mode_index: match default_execution_mode {
                 ExecutionMode::Plan => 0,
                 ExecutionMode::Build => 1,
@@ -176,6 +150,11 @@ impl App {
         self.refresh_git_changes();
         self.ensure_default_context7();
         self.spawn_version_check();
+        if self.current_provider.is_none() {
+            self.push_system_message(
+                "⚠️ 未配置模型服务。输入 /login 选择 provider 并配置 API Key 后开始使用。",
+            );
+        }
     }
 
     #[cfg(test)]
@@ -231,33 +210,7 @@ impl App {
                 "idea".to_string(),
             ],
             selected_theme_index: 0,
-            connect_options: vec![
-                (
-                    "ollama".to_string(),
-                    "http://127.0.0.1:11434/v1".to_string(),
-                    false,
-                ),
-                (
-                    "deepseek".to_string(),
-                    "https://api.deepseek.com/v1".to_string(),
-                    true,
-                ),
-                (
-                    "mimo".to_string(),
-                    MIMO_TOKEN_PLAN_BASE_URL.to_string(),
-                    true,
-                ),
-                (
-                    "longcat".to_string(),
-                    "https://api.longcat.chat/openai/v1".to_string(),
-                    true,
-                ),
-                (
-                    "openai".to_string(),
-                    "https://api.openai.com/v1".to_string(),
-                    true,
-                ),
-            ],
+            connect_options: crate::provider_config::preset_connect_options(),
             selected_connect_index: 0,
             pending_connect_provider: None,
             task_tx,
@@ -283,7 +236,7 @@ impl App {
             checkpoint_options: Vec::new(),
             selected_checkpoint_index: 0,
             pending_checkpoint_action: None,
-            mode_options: vec!["plan".to_string(), "build".to_string(), "yolo".to_string()],
+            mode_options: vec!["plan".to_string(), "build".to_string(), "auto".to_string()],
             selected_mode_index: match default_execution_mode {
                 ExecutionMode::Plan => 0,
                 ExecutionMode::Build => 1,

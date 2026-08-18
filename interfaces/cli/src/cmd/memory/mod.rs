@@ -42,6 +42,7 @@ pub fn render_memory(workdir: &Path, args: &[String]) -> Result<String> {
         Some("approve") => render_approve(args, &project_files),
         Some("reject") => render_reject(args, &project_files),
         Some("archive") => render_archive(args, &user_files, &project_files),
+        Some("migrate") => render_migrate(workdir, &user_files, &project_files),
         _ => Ok(usage_text()),
     }
 }
@@ -371,4 +372,34 @@ pub(crate) fn append_project_candidate(
             context,
         },
     )
+}
+
+fn render_migrate(workdir: &Path, user_files: &[MemoryFile], project_files: &[MemoryFile]) -> Result<String> {
+    use std::fs;
+    let mut report = String::from("知识文件迁移\n");
+    let old_new = [
+        ("memory.md", "project.md"),
+        ("workflows.md", "experience.md"),
+        ("decisions.md", "experience.md"),
+    ];
+    for dir in [user_wiki_dir(), workdir.join(PROJECT_WIKI_DIR)] {
+        for (old_name, new_name) in &old_new {
+            let old_path = dir.join(old_name);
+            if !old_path.exists() { continue; }
+            let new_path = dir.join(new_name);
+            let backup = dir.join(format!("{}.bak", old_name));
+            fs::rename(&old_path, &backup)?;
+            report += &format!("  {} -> {} (备份: {}.bak)\n", old_path.display(), new_name, old_name);
+            // 如果新文件已存在则追加内容，否则创建
+            let old_content = fs::read_to_string(&backup)?;
+            if new_path.exists() {
+                let new_content = fs::read_to_string(&new_path)?;
+                fs::write(&new_path, format!("{}\n\n---\n\n{}", new_content, old_content))?;
+            } else {
+                fs::copy(&backup, &new_path)?;
+            }
+        }
+    }
+    report += "迁移完成。旧文件已备份为 .bak，新文件为 project.md / experience.md / preferences.md\n";
+    Ok(report)
 }

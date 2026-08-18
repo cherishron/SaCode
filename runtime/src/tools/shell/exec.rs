@@ -1,5 +1,6 @@
+use crate::sandbox::{active_backend, active_policy, SandboxCommand};
+use crate::tools::context::CommandOutput;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
-use crate::{active_backend, active_policy, BackendCommandOutput, SandboxCommand};
 
 use super::sandbox::ShellSandbox;
 
@@ -127,22 +128,42 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     ShellSandbox::validate(command_str, cwd)?;
 
+    let output = run_local_command(command_str, cwd, timeout_secs * 1000)?;
+
+    Ok(tool_output_from_backend(output))
+}
+
+/// 执行 shell 命令的核心逻辑（供 `LocalContext::exec` 复用）
+///
+/// 抽取自原 `execute`，保持平台包装（`needs_cmd_wrapper` / `needs_sh_wrapper`）
+/// 与危险命令检查行为完全一致——这是 `ExecutionContext::LocalContext`
+/// 保证零回归的关键。
+pub(crate) fn run_local_command(
+    command_str: &str,
+    cwd: Option<&str>,
+    timeout_ms: u64,
+) -> anyhow::Result<CommandOutput> {
     let parts = build_command_parts(command_str)?;
     let Some(program) = parts.first() else {
-        return Ok(ToolOutput::failure("command is required"));
+        anyhow::bail!("command is required");
     };
 
-    let output = active_backend().execute_command(
+    let backend_output = active_backend().execute_command(
         &active_policy(),
         &SandboxCommand {
             program: program.clone(),
             args: parts.iter().skip(1).cloned().collect(),
             cwd: cwd.map(str::to_string),
-            timeout_ms: timeout_secs * 1000,
+            timeout_ms,
         },
     )?;
 
-    Ok(tool_output_from_backend(output))
+    Ok(CommandOutput {
+        stdout: backend_output.stdout,
+        stderr: backend_output.stderr,
+        exit_code: backend_output.exit_code,
+        timed_out: backend_output.timed_out,
+    })
 }
 
 fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
@@ -182,7 +203,7 @@ fn split_command(command: &str) -> anyhow::Result<Vec<String>> {
                             if next == '"' || next == '\'' {
                                 // 转义引号：消费反斜杠，保留引号字符
                                 current.pop();
-                                current.push(chars.next().unwrap());
+                                current.push(chars.next().unwrap_or(next));
                             }
                             // 其他情况（路径分隔符等）：反斜杠已保留，继续
                         }
@@ -343,7 +364,7 @@ fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
-fn tool_output_from_backend(output: BackendCommandOutput) -> ToolOutput {
+fn tool_output_from_backend(output: CommandOutput) -> ToolOutput {
     if output.timed_out {
         return ToolOutput::failure("command timed out");
     }

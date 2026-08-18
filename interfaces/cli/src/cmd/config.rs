@@ -11,6 +11,10 @@ use crate::provider_config::SaCodeConfigStore;
 
 const CONFIG_FILE: &str = ".sacode/config.json";
 
+/// `max_iterations` 的单一真相源默认值（单次任务内工具循环的最大轮次）。
+/// `CliOptions` / `effective_config` 基线 / 各回退路径统一引用，避免 3 与 6 散落矛盾。
+pub const DEFAULT_MAX_ITERATIONS: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigScope {
     User,
@@ -175,7 +179,7 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
             display_name: "默认执行模式",
             description: "新任务默认使用的执行模式",
             value_type: ConfigValueType::Enum {
-                options: vec!["plan", "build", "yolo"],
+                options: vec!["plan", "build", "auto"],
                 labels: vec!["规划", "构建", "Yolo"],
             },
             category: ConfigCategory::Execution,
@@ -585,8 +589,8 @@ fn normalize_execution_mode(value: &str) -> Result<String> {
     match value.trim().to_lowercase().as_str() {
         "plan" => Ok("plan".to_string()),
         "build" => Ok("build".to_string()),
-        "yolo" => Ok("yolo".to_string()),
-        _ => bail!("execution_mode 只支持 plan、build、yolo"),
+        "auto" | "yolo" => Ok("auto".to_string()),
+        _ => bail!("execution_mode 只支持 plan、build、auto"),
     }
 }
 
@@ -699,7 +703,7 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         compress_threshold: 15,
         compress_tail_turns: 15,
         execution_mode: "yolo".to_string(),
-        max_iterations: 3,
+        max_iterations: DEFAULT_MAX_ITERATIONS,
         loop_max_iterations: 10,
         approval_policy: "prompt".to_string(),
         output_style: "concise".to_string(),

@@ -103,7 +103,7 @@ async fn restore_checkpoint(
     // 解析参数
     let dry_run = extra_args.iter().any(|a| a == "--dry-run");
     let mode_override = parse_mode_override(extra_args);
-    let max_iter = parse_max_iter(extra_args).unwrap_or(3);
+    let max_iter = parse_max_iter(extra_args).unwrap_or(super::config::DEFAULT_MAX_ITERATIONS);
     let approval = parse_approval(extra_args);
 
     let mode = mode_override.unwrap_or(checkpoint.task.mode);
@@ -185,7 +185,7 @@ fn parse_mode_override(args: &[String]) -> Option<ExecutionMode> {
                 return match value.as_str() {
                     "build" | "Build" => Some(ExecutionMode::Build),
                     "plan" | "Plan" => Some(ExecutionMode::Plan),
-                    "yolo" | "Yolo" => Some(ExecutionMode::Yolo),
+                    "auto" | "yolo" | "Auto" | "Yolo" => Some(ExecutionMode::Yolo),
                     _ => None,
                 };
             }

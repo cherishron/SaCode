@@ -1,5 +1,6 @@
 mod acp;
 mod arg_parser;
+mod bundle;
 mod checkpoint;
 #[cfg(test)]
 mod command_tests;
@@ -35,6 +36,7 @@ pub mod vim;
 pub mod wiki;
 
 use std::env;
+use std::path::PathBuf;
 
 use crate::tui;
 use anyhow::Result;
@@ -53,6 +55,17 @@ use sacode_kernel::ExecutionMode;
 use tracing_setup::init_tracing;
 
 pub(crate) const JSON_STREAM_PREFIX: &str = "__SACODE_STREAM__";
+
+/// 从子命令参数中提取 `--profile <name>` 的值（子命令路径下 --profile 进入 sub_args）
+fn extract_profile_flag(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--profile" {
+            return iter.next().cloned();
+        }
+    }
+    None
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliCommand {
@@ -86,6 +99,8 @@ pub enum CliCommand {
     Status,
     Update,
     Session,
+    DumpConfig,
+    Bundle,
     Help,
     Version,
 }
@@ -99,6 +114,8 @@ pub struct CliOptions {
     pub json: bool,
     pub json_stream: bool,
     pub approval: ApprovalPolicy,
+    pub profile: Option<String>,
+    pub agent_loop: Option<String>,
     pub sub_args: Vec<String>,
 }
 
@@ -144,7 +161,21 @@ pub async fn run() -> Result<()> {
         CliCommand::Checkpoint => checkpoint::run(options.sub_args).await?,
         CliCommand::Status => status::run().await?,
         CliCommand::Update => update::run(options.sub_args)?,
+        CliCommand::Bundle => bundle::run(options.sub_args)?,
         CliCommand::Session => session::run(options.sub_args)?,
+        CliCommand::DumpConfig => {
+            let workdir = PathBuf::from(".");
+            let runtime_config = sacode_runtime::config::SaCodeConfig::new(&workdir);
+            // --profile 可能来自 options.profile（run 路径）或 sub_args（子命令路径）
+            let profile = options
+                .profile
+                .clone()
+                .or_else(|| extract_profile_flag(&options.sub_args));
+            println!(
+                "{}",
+                runtime_config.dump_effective_config(profile.as_deref())?
+            );
+        }
         CliCommand::Vim => vim::run(options.sub_args)?,
     }
 

@@ -11,13 +11,12 @@ use sacode_kernel::{
 };
 use sacode_runtime::{
     build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
-    register_enabled_mcp_tools_sync, task_run_from_report, task_run_snapshot,
+    register_enabled_mcp_tools_sync, task_run_from_report,
     ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
     McpConfigStore, PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
-    SideEffectLevel, StreamEventKind as RuntimeStreamEventKind, StreamHandler,
+    StreamEventKind as RuntimeStreamEventKind, StreamHandler,
     TaskProfile, TaskRunConfig, ToolRegistry,
-    build_tool_definitions_filtered, enrich_media_provider_args, execute_task_with_failover,
-    format_side_effect_level, is_permission_restricted_error,
+    execute_task_with_failover,
 };
 use serde::Serialize;
 
@@ -213,15 +212,7 @@ where
         system_prompt.push_str(&insight_instruction);
     }
 
-    let primary_provider = if let Some(ref plan) = route_plan {
-        candidates
-            .iter()
-            .find(|(pn, mn, _)| pn == &plan.primary.provider_name && mn == &plan.primary.model_name)
-            .map(|(_, _, provider)| provider.clone())
-            .unwrap_or_else(|| resolve_provider(&workdir))
-    } else {
-        resolve_provider(&workdir)
-    };
+    let primary_provider = resolve_primary_provider(&workdir, &candidates, route_plan.as_ref());
 
     // 将 CLI 层 ApprovalPolicy 映射为 runtime 层 ApprovalDecider
     let approval_decider: Arc<dyn ApprovalDecider> = match approval {
@@ -315,7 +306,23 @@ where
     })
 }
 
-// ── MistakeRecorder：将 MistakeBookStore 适配为 ErrorRecorder ──
+/// 根据路由计划解析主 provider；无计划或未命中时回退到默认 provider
+fn resolve_primary_provider(
+    workdir: &std::path::Path,
+    candidates: &[(String, String, sacode_kernel::model::ModelProvider)],
+    route_plan: Option<&sacode_runtime::ModelRoutePlan>,
+) -> sacode_kernel::model::ModelProvider {
+    if let Some(plan) = route_plan {
+        if let Some((_, _, provider)) = candidates.iter().find(|(pn, mn, _)| {
+            pn == &plan.primary.provider_name && mn == &plan.primary.model_name
+        }) {
+            return provider.clone();
+        }
+    }
+    resolve_provider(workdir)
+}
+
+// ── MistakeRecorder
 
 /// CLI 层的 ErrorRecorder 实现，将错误记录到 MistakeBookStore
 struct MistakeRecorder {
@@ -326,15 +333,15 @@ impl ErrorRecorder for MistakeRecorder {
     fn record_tool_error(&self, tool_name: &str, category: &str, detail: String) {
         if let Err(error) = MistakeBookStore::new(&self.workdir).append(tool_name, category, detail)
         {
-            eprintln!("记录工具错误到 mistakes.json 失败: {error}");
+            tracing::error!("记录工具错误到 mistakes.json 失败: {error}");
         }
     }
 
-    fn record_provider_error(&self, category: &str, detail: String) {
+    fn record_provider_error(&self, scope: &str, detail: String) {
         if let Err(error) =
-            MistakeBookStore::new(&self.workdir).append(category, "模型调用失败", detail)
+            MistakeBookStore::new(&self.workdir).append(scope, "模型调用失败", detail)
         {
-            eprintln!("记录模型错误到 mistakes.json 失败: {error}");
+            tracing::error!("记录模型错误到 mistakes.json 失败: {error}");
         }
     }
 }

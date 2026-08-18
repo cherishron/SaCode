@@ -83,6 +83,27 @@ cargo build --release
 - 架构层次或模块边界：更新 `docs/reference/architecture.md`
 - 开发/构建流程：更新 `docs/reference/development.md`
 - 发布行为：更新 `docs/release/RELEASE.md`
+- 产品定位、目标用户、核心场景：更新 `docs/product/PRD.md`
+- 版本路线、阶段状态：更新 `docs/product/roadmap.md`
+- 用户上手、命令用法：更新 `docs/guides/getting-started.md`、`docs/guides/tutorials.md`、`docs/guides/examples.md`
+
+### 6.1 文档真相源约定
+
+为避免文档表述冲突（如 roadmap.md 历史版本第 86 行"v1.0+ 已落地"与第 119 行"🚧 进行中"矛盾），以以下为事实真相源：
+
+- 版本号：`Cargo.toml` `[workspace.package].version`
+- 平台支持与发布校验：`.github/workflows/*`、`scripts/check-release.js`
+- 工具总数与分层：`runtime/src/tests/tools.rs` 计数断言
+
+文档须与上述真相源一致；如真相源变更，相关文档应在同一 PR 内同步更新，并在文件头标注更新时间。
+
+### 6.2 文档一致性检查
+
+提交前建议确认：
+
+1. PRD 定位与 roadmap 阶段状态一致
+2. getting-started.md / tutorials.md 的命令与 `interfaces/cli/src/cmd/mod.rs` 实际实现一致
+3. 所有新增方案文档在 `docs/README.md` 索引登记
 
 ## 7. npm 发布链路
 
@@ -97,6 +118,7 @@ npm 包当前只支持：
 
 - Linux x64
 - Windows x64
+- macOS x64（Intel）与 arm64（Apple Silicon）
 
 ## 8. 调试建议
 

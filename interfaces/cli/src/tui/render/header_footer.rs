@@ -229,13 +229,18 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     spans.push(status_separator(theme));
+    let mode_color = match app.execution_mode {
+        sacode_kernel::ExecutionMode::Plan => theme.plan,
+        sacode_kernel::ExecutionMode::Build => theme.build,
+        sacode_kernel::ExecutionMode::Yolo => theme.yolo,
+    };
     spans.push(Span::styled(
-        "Alt+M: mode",
-        Style::default().fg(theme.subtle),
+        format!("Mode:{}", app.execution_mode),
+        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
     ));
     spans.push(status_separator(theme));
     spans.push(Span::styled(
-        "Ctrl+Q: quit",
+        "Alt+M: mode",
         Style::default().fg(theme.subtle),
     ));
 

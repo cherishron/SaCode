@@ -20,10 +20,9 @@ const MAX_FILE_SNIPPET_LEN: usize = 600;
 const MAX_WIKI_FILES_PER_SCOPE: usize = 5;
 const MAX_SESSION_SUMMARIES: usize = 2;
 const MEMORY_WIKI_FILES: &[(&str, &str)] = &[
-    ("memory.md", "通用记忆"),
-    ("preferences.md", "偏好记忆"),
-    ("workflows.md", "工作流记忆"),
-    ("decisions.md", "决策记忆"),
+    ("project.md", "项目事实与通用记忆"),
+    ("experience.md", "工作流与决策经验"),
+    ("preferences.md", "偏好与策略"),
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -67,23 +66,18 @@ pub fn inspect_wiki(workdir: &Path) -> Result<WikiStatus> {
         user_sources: vec![
             file_status("用户级 profile", &user_root.join("profile.json"))?,
             dir_status("用户级 wiki", &user_wiki_dir)?,
-            file_status("用户级 memory", &user_wiki_dir.join("memory.md"))?,
+            file_status("用户级 project", &user_wiki_dir.join("project.md"))?,
             file_status("用户级 preferences", &user_wiki_dir.join("preferences.md"))?,
-            file_status("用户级 workflows", &user_wiki_dir.join("workflows.md"))?,
-            file_status("用户级 decisions", &user_wiki_dir.join("decisions.md"))?,
+            file_status("用户级 experience", &user_wiki_dir.join("experience.md"))?,
         ],
         project_sources: vec![
             file_status("项目级 profile", &workdir.join(PROJECT_PROFILE_FILE))?,
             file_status("项目级 project", &workdir.join(PROJECT_CONFIG_FILE))?,
             file_status("项目级 mistakes", &workdir.join(PROJECT_MISTAKES_FILE))?,
             dir_status("项目级 wiki", &project_wiki_dir)?,
-            file_status("项目级 memory", &project_wiki_dir.join("memory.md"))?,
-            file_status(
-                "项目级 preferences",
-                &project_wiki_dir.join("preferences.md"),
-            )?,
-            file_status("项目级 workflows", &project_wiki_dir.join("workflows.md"))?,
-            file_status("项目级 decisions", &project_wiki_dir.join("decisions.md"))?,
+            file_status("项目级 project", &project_wiki_dir.join("project.md"))?,
+            file_status("项目级 preferences", &project_wiki_dir.join("preferences.md"))?,
+            file_status("项目级 experience", &project_wiki_dir.join("experience.md"))?,
         ],
         session_sources: vec![dir_status("项目级 sessions", &sessions_dir)?],
         context: load_wiki_context(workdir)?,

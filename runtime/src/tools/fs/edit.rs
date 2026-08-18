@@ -1,5 +1,3 @@
-use std::fs;
-
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
@@ -62,7 +60,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     let file_path = resolve_allowed_path(path, FsAccess::Write)?;
-    if !file_path.exists() {
+    let ctx = crate::tools::context::current_context();
+    if !ctx.exists(&file_path) {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }
 
@@ -71,7 +70,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure(error.to_message()));
     }
 
-    let content = fs::read_to_string(&file_path)?;
+    let content = ctx.read_text(&file_path)?;
     let occurrences = content.matches(old_string).count();
     if occurrences == 0 {
         // 对齐 fs.patch 容错策略：返回 top-3 候选诊断辅助定位
@@ -95,7 +94,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         content.replacen(old_string, new_string, 1)
     };
 
-    fs::write(&file_path, updated)?;
+    ctx.write_text(&file_path, &updated)?;
 
     Ok(ToolOutput::success(serde_json::json!({
         "success": true,

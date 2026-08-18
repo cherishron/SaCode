@@ -1,7 +1,9 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::Result;
+use wait_timeout::ChildExt;
 
 use super::FailedTest;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
@@ -90,7 +92,32 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         return Ok(ToolOutput::failure("empty test command"));
     };
 
-    let output = Command::new(program).args(args).output()?;
+    let timeout_ms = 120_000;
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let output = match child.wait_timeout(Duration::from_millis(timeout_ms))? {
+        Some(status) => {
+            let stdout = child.wait_with_output()?;
+            std::process::Output {
+                status,
+                stdout: stdout.stdout,
+                stderr: stdout.stderr,
+            }
+        }
+        None => {
+            // 超时：杀掉子进程并返回超时错误
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(ToolOutput::failure(format!(
+                "test command timed out after {}ms: {}",
+                timeout_ms,
+                command.join(" ")
+            )));
+        }
+    };
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let success = output.status.success();

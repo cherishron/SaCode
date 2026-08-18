@@ -265,7 +265,7 @@ node scripts/check-release.js --strict-platforms
 
 SaCode 已具备可用的终端 AI 编程主线能力，包括：
 
-- **23 个内置工具**：覆盖文件、Git、测试、代码智能、Web 搜索、媒体视觉、浏览器等
+- **29 个内置工具**：覆盖文件、Git、测试、代码智能、Web 搜索、媒体视觉、浏览器等
 - **3 种执行模式**：`plan` / `build` / `yolo`，分级控制副作用操作
 - **多 Agent 编排**：`/agents` 入口，支持 planner/coder/reviewer/tester 角色协作
 - **MCP 生态**：支持远程 MCP 接入 + 内置 stdio server

@@ -1,5 +1,3 @@
-use std::fs;
-
 use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
@@ -52,11 +50,12 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     let file_path = resolve_allowed_path(path, FsAccess::Read)?;
-    if !file_path.exists() {
+    let ctx = crate::tools::context::current_context();
+    if !ctx.exists(&file_path) {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }
 
-    let content = fs::read_to_string(&file_path)?;
+    let content = ctx.read_text(&file_path)?;
     let all_lines: Vec<&str> = content.lines().collect();
     let total_lines = all_lines.len();
 

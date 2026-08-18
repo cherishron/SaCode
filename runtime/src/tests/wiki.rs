@@ -41,7 +41,7 @@ fn test_runtime_system_prompt_loads_layered_wiki_context() {
     fs::create_dir_all(workdir.join(".sacode/wiki")).expect("create project wiki");
     fs::write(
         workdir.join(".sacode/wiki/project.md"),
-        "# Project Wiki\n\n- 使用 cargo test -p sacode-cli",
+        "# 项目级记忆\n\n项目事实与通用记忆\n\n## 条目\n\n[记忆条目]\n- Date: 2026-08-18\n- Scope: 项目级\n- Kind: workdir\n- Content:\n  - 使用 cargo test -p sacode-cli\n",
     )
     .expect("write project wiki");
     fs::write(
@@ -59,7 +59,7 @@ fn test_runtime_system_prompt_loads_layered_wiki_context() {
     .expect("build prompt");
 
     assert!(prompt.contains("[Project Knowledge]"));
-    assert!(prompt.contains("Project Wiki"));
+    assert!(prompt.contains("cargo test"));
     assert!(prompt.contains("光标错位"));
 }
 

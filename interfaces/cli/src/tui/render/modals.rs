@@ -84,7 +84,6 @@ pub(crate) fn render_input_optimization_preview(frame: &mut Frame, app: &App) {
     );
 }
 
-#[cfg(test)]
 pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
     use ratatui::style::Modifier;
     use ratatui::widgets::Wrap;

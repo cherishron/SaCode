@@ -1,4 +1,5 @@
 pub mod agent_loader;
+pub mod loop_impl;
 pub mod message_bus;
 pub mod model_router;
 mod orchestrator;
@@ -8,6 +9,9 @@ mod summary_compactor;
 mod worker;
 
 pub use agent_loader::load_custom_agents;
+pub use loop_impl::{
+    run_with_ling_shu_loop, AgentLoop, ExecutionStep, LingShuLoop, StepResult,
+};
 pub use message_bus::{
     AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
     build_communication_summary,

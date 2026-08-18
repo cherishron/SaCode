@@ -96,9 +96,9 @@ impl App {
         match sub {
             "plan" => self.apply_execution_mode("plan", true),
             "build" => self.apply_execution_mode("build", true),
-            "yolo" => self.apply_execution_mode("yolo", true),
+            "auto" | "yolo" => self.apply_execution_mode("auto", true),
             "" => self.open_mode_selector(),
-            _ => self.push_system_message("用法: /mode plan|build|yolo"),
+            _ => self.push_system_message("用法: /mode plan|build|auto"),
         }
     }
 
@@ -117,7 +117,7 @@ impl App {
             _ => (
                 ExecutionMode::Yolo,
                 2,
-                "执行模式已切换为 Yolo（自动执行模式）。\nAI 将自动执行，减少确认步骤。",
+                "执行模式已切换为 Auto（自动执行模式）。\nAI 将自动执行，减少确认步骤。",
             ),
         };
 

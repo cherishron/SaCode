@@ -95,7 +95,7 @@ pub(super) fn get_level1_commands() -> Vec<CommandDef> {
             vec![
                 SubCommandDef::new("plan", "规划模式"),
                 SubCommandDef::new("build", "构建模式"),
-                SubCommandDef::new("yolo", "自动执行模式"),
+                SubCommandDef::new("auto", "自动执行模式"),
             ],
         ),
         CommandDef::with_subs(

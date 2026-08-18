@@ -132,7 +132,7 @@ impl App {
     pub(super) fn cycle_execution_mode(&mut self) {
         let next = match self.execution_mode {
             ExecutionMode::Plan => "build",
-            ExecutionMode::Build => "yolo",
+            ExecutionMode::Build => "auto",
             ExecutionMode::Yolo => "plan",
         };
         self.apply_execution_mode(next, true);

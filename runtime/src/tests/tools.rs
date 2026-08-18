@@ -883,7 +883,7 @@ fn test_tool_registry_blocks_base_url_network_fields() {
         crate::sandbox::SandboxPolicy::new().allow_path(std::path::PathBuf::from(".")),
     );
 
-    let mut registry = ToolRegistry::default();
+    let mut registry = ToolRegistry::default().with_default_interceptors();
     registry.register_fn(
         ToolSpec {
             name: "test.base_url_guard".to_string(),
@@ -926,7 +926,7 @@ fn test_tool_registry_blocks_urls_array_network_fields() {
         crate::sandbox::SandboxPolicy::new().allow_path(std::path::PathBuf::from(".")),
     );
 
-    let mut registry = ToolRegistry::default();
+    let mut registry = ToolRegistry::default().with_default_interceptors();
     registry.register_fn(
         ToolSpec {
             name: "test.urls_guard".to_string(),

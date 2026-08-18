@@ -41,7 +41,7 @@ async fn test_role_driven_task_run_returns_snapshot() {
     let context = sacode_kernel::ExecutionContext::new(task).with_task_id("role-1");
 
     let (run, _plan) =
-        crate::execute_role_driven_task_run(&context, &crate::CheckpointStorage::new(workdir))
+        crate::execute_role_driven_task_run(&context, &crate::CheckpointStorage::new(workdir), workdir, None)
             .await
             .expect("execute role driven task run");
 

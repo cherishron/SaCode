@@ -12,7 +12,6 @@
 //! - test-engineer：测试工程
 //! - security-analyst：安全分析
 
-use anyhow::Result;
 use sacode_kernel::{AgentRole, RoleModelPolicy, RoleStage};
 
 #[derive(Debug, Clone, Default)]

@@ -6,6 +6,7 @@ pub mod ffi;
 pub mod hook;
 pub mod model;
 pub mod schema;
+pub mod util;
 
 #[cfg(test)]
 mod tests;

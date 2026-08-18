@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::provider::MIMO_TOKEN_PLAN_BASE_URL;
+use super::provider::{MIMO_TOKEN_PLAN_BASE_URL, OLLAMA_DEFAULT_BASE_URL};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SaCodeConfig {
@@ -218,7 +218,7 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
         "ollama".to_string(),
         ProviderSpec {
             name: "Ollama".to_string(),
-            base_url: "http://127.0.0.1:11434/v1".to_string(),
+            base_url: OLLAMA_DEFAULT_BASE_URL.to_string(),
             api_key: String::new(),
             models: {
                 let mut m = BTreeMap::new();
@@ -465,5 +465,137 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
         },
     );
 
+
+    // ── 智谱 GLM（OpenAI 兼容）──
+    providers.insert(
+        "zhipu".to_string(),
+        ProviderSpec {
+            name: "智谱 GLM".to_string(),
+            base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "glm-4.7-flash".to_string(),
+                    ModelRule {
+                        name: "glm-4.7-flash 快速免费模型".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 128_000,
+                            output: 16_384,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.0,
+                            output_per_million: 0.0,
+                        }),
+                    },
+                );
+                m.insert(
+                    "glm-4.6".to_string(),
+                    ModelRule {
+                        name: "glm-4.6 旗舰模型".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 200_000,
+                            output: 16_384,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 1.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.95,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 2.0,
+                            output_per_million: 8.0,
+                        }),
+                    },
+                );
+                m
+            },
+        },
+    );
+
+    // ── 通义千问（DashScope OpenAI 兼容）──
+    providers.insert(
+        "qwen".to_string(),
+        ProviderSpec {
+            name: "通义千问".to_string(),
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
+            api_key: String::new(),
+            models: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "qwen-plus".to_string(),
+                    ModelRule {
+                        name: "qwen-plus 通义千问 Plus".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 131_072,
+                            output: 8_192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 2.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.8,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.80,
+                            output_per_million: 2.0,
+                        }),
+                    },
+                );
+                m.insert(
+                    "qwen-turbo".to_string(),
+                    ModelRule {
+                        name: "qwen-turbo 通义千问 Turbo".to_string(),
+                        thinking: false,
+                        reasoning_effort: None,
+                        limit: Some(ModelLimit {
+                            context: 1_000_000,
+                            output: 8_192,
+                        }),
+                        temperature: Some(TemperatureRule {
+                            default: 0.7,
+                            range: Some((0.0, 2.0)),
+                            thinking_override: None,
+                        }),
+                        top_p: Some(TopPRule {
+                            default: 0.8,
+                            range: Some((0.01, 1.0)),
+                        }),
+                        modalities: None,
+                        pricing: Some(ModelPricing {
+                            input_per_million: 0.30,
+                            output_per_million: 0.60,
+                        }),
+                    },
+                );
+                m
+            },
+        },
+    );
     providers
 }

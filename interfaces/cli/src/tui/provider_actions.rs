@@ -2,7 +2,7 @@ use super::{
     agent_harness, App, AsyncContext, AsyncResult, InputMode, ModelOptionEntry, NamedProviderConfig,
 };
 use crate::provider_config::ProviderConfig;
-use sacode_kernel::model::MIMO_TOKEN_PLAN_BASE_URL;
+use sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL;
 use std::thread;
 
 impl App {
@@ -317,17 +317,17 @@ impl App {
             }
         };
 
-        let (name, base_url) = match index {
-            1 => ("ollama", "http://127.0.0.1:11434/v1"),
-            2 => ("deepseek", "https://api.deepseek.com"),
-            3 => ("mimo", MIMO_TOKEN_PLAN_BASE_URL),
-            4 => ("longcat", "https://api.longcat.chat/openai/v1"),
-            5 => ("openai", "https://api.openai.com/v1"),
-            _ => {
-                self.push_system_message(&format!("无效编号: {}", index));
-                self.input.clear();
-                return;
-            }
+        let mut options: Vec<(String, String, bool)> = vec![(
+            "ollama".to_string(),
+            OLLAMA_DEFAULT_BASE_URL.to_string(),
+            false,
+        )];
+        options.extend(crate::provider_config::preset_connect_options());
+
+        let Some((name, base_url, _)) = options.get(index.saturating_sub(1)).cloned() else {
+            self.push_system_message(&format!("无效编号: {}", index));
+            self.input.clear();
+            return;
         };
 
         let api_key = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
@@ -335,8 +335,8 @@ impl App {
         match agent_harness::connect_provider(
             &self.provider_store,
             &self.sacode_store,
-            name,
-            base_url,
+            &name,
+            &base_url,
             api_key,
         ) {
             Ok(result) => {
@@ -391,8 +391,8 @@ impl App {
         match agent_harness::connect_provider(
             &self.provider_store,
             &self.sacode_store,
-            name,
-            base_url,
+            &name,
+            &base_url,
             api_key,
         ) {
             Ok(result) => {

@@ -89,7 +89,7 @@ fn mode_instruction(mode: ExecutionMode) -> &'static str {
             "当前是 build 模式。可以执行修改操作，但保持谨慎，优先最小改动并尊重现有实现。"
         }
         ExecutionMode::Yolo => {
-            "当前是 yolo 模式。可以全自动推进任务，但依然要保持结果正确、步骤清晰和变更克制。"
+            "当前是 auto 模式（原 yolo）。可以全自动推进任务，但依然要保持结果正确、步骤清晰和变更克制。"
         }
     }
 }

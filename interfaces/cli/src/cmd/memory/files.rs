@@ -20,8 +20,13 @@ pub(super) struct MemoryFile {
 
 pub(super) fn load_memory_files(root: &Path, scope: MemoryScope) -> Result<Vec<MemoryFile>> {
     let mut files = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
     for kind in MemoryKind::all() {
         let path = memory_file_path(root, *kind);
+        // Workflow/Decision 合并到 experience.md 后，同一文件只需加载一次
+        if !seen_paths.insert(path.clone()) {
+            continue;
+        }
         ensure_memory_file(&path, scope, *kind)?;
         let content = fs::read_to_string(&path)?;
         files.push(MemoryFile {

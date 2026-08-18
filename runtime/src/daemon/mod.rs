@@ -51,7 +51,7 @@ pub async fn create_daemon() -> Router {
 fn parse_mode(mode: &str) -> ExecutionMode {
     match mode {
         "plan" => ExecutionMode::Plan,
-        "yolo" => ExecutionMode::Yolo,
+        "auto" | "yolo" => ExecutionMode::Yolo,
         _ => ExecutionMode::Build,
     }
 }

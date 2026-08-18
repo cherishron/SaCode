@@ -1,6 +1,8 @@
 use anyhow::Result;
 use sacode_kernel::ApprovalPolicy;
 use sacode_runtime::{SessionPrompt, SessionService};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
@@ -12,21 +14,31 @@ use crate::config::AcpConfig;
 pub async fn run_server(config: &AcpConfig) -> Result<()> {
     let listener = TcpListener::bind((config.server.host.as_str(), config.server.port)).await?;
     let service = SessionService::new();
+    let max_connections = config.server.max_connections;
+    let active_connections = Arc::new(AtomicUsize::new(0usize));
     tracing::info!(
         host = %config.server.host,
         port = config.server.port,
-        max_connections = config.server.max_connections,
+        max_connections,
         "ACP server listening"
     );
 
     loop {
         let (stream, addr) = listener.accept().await?;
-        tracing::debug!(%addr, "accepted ACP connection");
+        if active_connections.load(Ordering::Relaxed) >= max_connections {
+            tracing::warn!(%addr, active_connections = active_connections.load(Ordering::Relaxed), max_connections, "ACP connection rejected: max connections reached");
+            continue;
+        }
+        active_connections.fetch_add(1, Ordering::Relaxed);
+        tracing::debug!(%addr, active_connections = active_connections.load(Ordering::Relaxed), "accepted ACP connection");
         let service = service.clone();
+        let conn_counter = active_connections.clone();
         tokio::spawn(async move {
             if let Err(error) = serve_tcp_connection(stream, service).await {
                 tracing::warn!(%addr, %error, "ACP connection failed");
             }
+            conn_counter.fetch_sub(1, Ordering::Relaxed);
+            tracing::debug!(%addr, "ACP connection closed");
         });
     }
 }
@@ -94,7 +106,25 @@ async fn serve_tcp_connection(
             continue;
         }
 
-        let request: JsonRpcRequest = serde_json::from_str(&line)?;
+        let request: JsonRpcRequest = match serde_json::from_str(&line) {
+            Ok(req) => req,
+            Err(e) => {
+                let error_resp = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": -32700,
+                        "message": format!("parse error: {}", e)
+                    })),
+                };
+                let _ = writer
+                    .write_all(format!("{}\n", serde_json::to_string(&error_resp)?).as_bytes())
+                    .await;
+                let _ = writer.flush().await;
+                continue;
+            }
+        };
         let response = handle_request(&service, request).await?;
         writer
             .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
@@ -110,13 +140,23 @@ async fn serve_tcp_connection(
 
 /// 标准请求处理 — 返回最终响应（无流式推送）
 async fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
-    let result = dispatch_request(service, &request).await?;
-    Ok(JsonRpcResponse {
-        jsonrpc: "2.0".to_string(),
-        id: request.id,
-        result: Some(result),
-        error: None,
-    })
+    match dispatch_request(service, &request).await {
+        Ok(result) => Ok(JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: Some(result),
+            error: None,
+        }),
+        Err(error) => Ok(JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: None,
+            error: Some(serde_json::json!({
+                "code": -32601,
+                "message": format!("{}", error)
+            })),
+        }),
+    }
 }
 
 /// 流式请求处理 — 对 session/prompt 先推送事件通知，再返回最终响应
@@ -294,7 +334,7 @@ async fn dispatch_request(service: &SessionService, request: &JsonRpcRequest) ->
                 }),
             }
         }
-        other => serde_json::json!({ "warning": format!("unsupported method: {}", other) }),
+        other => anyhow::bail!("method not found: {}", other),
     };
 
     Ok(result)
@@ -317,7 +357,7 @@ fn required_string(request: &JsonRpcRequest, key: &str) -> Result<String> {
 fn parse_mode(value: &str) -> sacode_kernel::ExecutionMode {
     match value {
         "plan" => sacode_kernel::ExecutionMode::Plan,
-        "yolo" => sacode_kernel::ExecutionMode::Yolo,
+        "auto" | "yolo" => sacode_kernel::ExecutionMode::Yolo,
         _ => sacode_kernel::ExecutionMode::Build,
     }
 }
@@ -347,6 +387,7 @@ mod tests {
     fn parse_mode_recognizes_values() {
         assert_eq!(parse_mode("plan"), sacode_kernel::ExecutionMode::Plan);
         assert_eq!(parse_mode("yolo"), sacode_kernel::ExecutionMode::Yolo);
+        assert_eq!(parse_mode("auto"), sacode_kernel::ExecutionMode::Yolo);
         assert_eq!(parse_mode("build"), sacode_kernel::ExecutionMode::Build);
         assert_eq!(parse_mode("unknown"), sacode_kernel::ExecutionMode::Build);
     }

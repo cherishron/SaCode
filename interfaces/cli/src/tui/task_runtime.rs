@@ -391,7 +391,7 @@ impl App {
         let max_iterations = effective
             .as_ref()
             .map(|value| value.max_iterations)
-            .unwrap_or(6)
+            .unwrap_or(config::DEFAULT_MAX_ITERATIONS)
             .max(1)
             .to_string();
         let mut command = Command::new(exe);
@@ -442,7 +442,7 @@ impl App {
         let max_iterations = effective
             .as_ref()
             .map(|value| value.max_iterations)
-            .unwrap_or(6)
+            .unwrap_or(config::DEFAULT_MAX_ITERATIONS)
             .max(1)
             .to_string();
         Command::new(exe)

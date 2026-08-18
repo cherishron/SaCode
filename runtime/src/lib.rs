@@ -32,12 +32,21 @@ pub use agents::{
     parse_orchestration_hint, resolve_config_model_candidates, run_sub_agent, score_roles,
     strip_orchestration_prefix, RoleRegistry, WorkerRunResult,
 };
+pub use agents::loop_impl::{
+    AgentLoop, AgentLoopKind, ExecutionStep, LingShuLoop, LoopConfig, LoopSubsystems,
+    StepResult, build_agent_loop,
+};
 pub use checkpoint::CheckpointStorage;
 pub use config::{
-    DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, ProjectAccessConfig,
-    ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig, SandboxBackendConfig,
-    SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig, SandboxModeConfig,
-    SandboxNetworkConfig, SandboxResourceConfig, SandboxShellConfig, SandboxTaskConfig,
+    DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, LoopConfigStore,
+    ProjectAccessConfig, ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig,
+    SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore,
+    SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig,
+    SandboxShellConfig, SandboxTaskConfig,
+};
+pub use config::profile::{
+    BundleManifest, PatchManifest, PatchSet, Profile, ProfileManifest, bundles_dir_of,
+    export_bundle, import_bundle, patches_dir_of, profiles_dir_of,
 };
 pub use daemon::{create_daemon, run_daemon};
 pub use executor::{ExecutorEvent, TaskExecutor};

@@ -32,9 +32,9 @@ impl MemoryKind {
 
     pub fn from_flag(value: &str) -> Option<Self> {
         match value {
-            "memory" => Some(Self::General),
+            "memory" | "project" => Some(Self::General),
             "preference" | "preferences" => Some(Self::Preference),
-            "workflow" | "workflows" => Some(Self::Workflow),
+            "workflow" | "workflows" | "experience" => Some(Self::Workflow),
             "decision" | "decisions" => Some(Self::Decision),
             _ => None,
         }
@@ -42,10 +42,10 @@ impl MemoryKind {
 
     pub fn file_name(self) -> &'static str {
         match self {
-            Self::General => "memory.md",
+            Self::General => "project.md",
             Self::Preference => "preferences.md",
-            Self::Workflow => "workflows.md",
-            Self::Decision => "decisions.md",
+            Self::Workflow => "experience.md",
+            Self::Decision => "experience.md",
         }
     }
 

@@ -8,7 +8,6 @@
 //! 形成"diff → review → apply"闭环，无需 `shell.exec git apply`。
 
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};

@@ -27,7 +27,7 @@ pub fn render_sandbox(workdir: &Path, args: &[String]) -> Result<String> {
         Some("path") => Ok(SandboxConfigStore::new(workdir).path().display().to_string()),
         Some("set") => render_set(workdir, &args[1..]),
         Some("clear") => render_clear(workdir, &args[1..]),
-        _ => Ok("用法: sacode sandbox [show [plan|build|yolo] [--json]|diff [plan|build|yolo] [--json]|doctor [plan|build|yolo] [--json]|init|path|set <mode> <key> <value>|clear <mode> <key>]".to_string()),
+        _ => Ok("用法: sacode sandbox [show [plan|build|auto] [--json]|diff [plan|build|yolo] [--json]|doctor [plan|build|yolo] [--json]|init|path|set <mode> <key> <value>|clear <mode> <key>]".to_string()),
     }
 }
 
@@ -307,7 +307,7 @@ fn render_set(workdir: &Path, args: &[String]) -> Result<String> {
     }
 
     let Some(mode) = parse_mode(&args[0]) else {
-        return Ok("mode 仅支持: plan, build, yolo".to_string());
+        return Ok("mode 仅支持: plan, build, auto".to_string());
     };
     let key = args[1].as_str();
     let value = args[2..].join(" ");
@@ -327,7 +327,7 @@ fn render_clear(workdir: &Path, args: &[String]) -> Result<String> {
     }
 
     let Some(mode) = parse_mode(&args[0]) else {
-        return Ok("mode 仅支持: plan, build, yolo".to_string());
+        return Ok("mode 仅支持: plan, build, auto".to_string());
     };
     let key = args[1].as_str();
 
@@ -344,7 +344,7 @@ fn parse_mode(value: &str) -> Option<ExecutionMode> {
     match value {
         "plan" => Some(ExecutionMode::Plan),
         "build" => Some(ExecutionMode::Build),
-        "yolo" => Some(ExecutionMode::Yolo),
+        "auto" | "yolo" => Some(ExecutionMode::Yolo),
         _ => None,
     }
 }
@@ -840,7 +840,7 @@ mod tests {
         assert!(output.contains("backend.kind: local"));
         assert!(output.contains("[plan]"));
         assert!(output.contains("[build]"));
-        assert!(output.contains("[yolo]"));
+        assert!(output.contains("[auto]"));
     }
 
     #[test]
@@ -852,7 +852,7 @@ mod tests {
         assert!(output.contains("\"policies\""));
         assert!(output.contains("\"mode\": \"plan\""));
         assert!(output.contains("\"mode\": \"build\""));
-        assert!(output.contains("\"mode\": \"yolo\""));
+        assert!(output.contains("\"mode\": \"auto\""));
     }
 
     #[test]

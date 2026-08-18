@@ -9,6 +9,39 @@ pub const MIMO_API_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
 /// 项目默认配置使用此地址
 pub const MIMO_TOKEN_PLAN_BASE_URL: &str = "https://token-plan-cn.xiaomimimo.com/v1";
 
+/// Ollama 本地默认地址
+pub const OLLAMA_DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+
+/// 根据 base_url 和模型名探测 Provider 类型
+pub fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
+    let lower_url = base_url.to_lowercase();
+    let lower_model = model.to_lowercase();
+    if lower_url.contains("xiaomimimo")
+        || lower_url.contains("token-plan")
+        || lower_model.starts_with("mimo")
+    {
+        ProviderKind::Mimo
+    } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
+        ProviderKind::Longcat
+    } else if lower_url.contains("deepseek") {
+        ProviderKind::Deepseek
+    } else if lower_url.contains("127.0.0.1:11434") || lower_url.contains("ollama") {
+        ProviderKind::Ollama
+    } else if lower_url.contains("bigmodel") || lower_model.starts_with("glm-") {
+        // 智谱 GLM（OpenAI 兼容）
+        ProviderKind::Custom("zhipu".to_string())
+    } else if lower_url.contains("openai") || lower_model.starts_with("gpt-") {
+        ProviderKind::Openai
+    } else {
+        ProviderKind::Custom("openai-compatible".to_string())
+    }
+}
+
+/// 规范化 base_url：去除首尾空白与末尾斜杠
+pub fn normalize_base_url(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
@@ -403,7 +436,7 @@ impl ModelProvider {
         Self {
             kind: ProviderKind::Ollama,
             model: model.into(),
-            base_url: Some("http://127.0.0.1:11434/v1".to_string()),
+            base_url: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
             api_key: None,
             rule: None,
         }

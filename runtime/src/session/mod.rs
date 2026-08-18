@@ -16,6 +16,8 @@ use sacode_kernel::{
 use crate::CheckpointStorage;
 use crate::memory::learner::AutoLearner;
 use crate::ToolRegistry;
+
+pub mod event_log;
 use crate::executor::task_runner::{
     ApprovalDecider, AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder,
     PromptUserDecider, TaskRunConfig, execute_task_with_provider,

@@ -16,10 +16,9 @@ fn render_memory_initializes_typed_files() {
     let output = render_memory(workdir, &[]).expect("render memory");
     assert!(output.contains("用户级"));
     assert!(output.contains("项目级"));
-    assert!(workdir.join(".sacode/wiki/memory.md").exists());
+    assert!(workdir.join(".sacode/wiki/project.md").exists());
+    assert!(workdir.join(".sacode/wiki/experience.md").exists());
     assert!(workdir.join(".sacode/wiki/preferences.md").exists());
-    assert!(workdir.join(".sacode/wiki/workflows.md").exists());
-    assert!(workdir.join(".sacode/wiki/decisions.md").exists());
 }
 
 #[test]
@@ -40,7 +39,7 @@ fn render_memory_append_writes_typed_file() {
     assert!(output.contains("工作流记忆"));
 
     let stored =
-        fs::read_to_string(workdir.join(".sacode/wiki/workflows.md")).expect("read workflows");
+        fs::read_to_string(workdir.join(".sacode/wiki/experience.md")).expect("read experience");
     assert!(stored.contains("Kind: workflow"));
     assert!(stored.contains("每次修改后先检查交互状态"));
     let index = fs::read_to_string(workdir.join(".sacode/wiki/index.json")).expect("read index");

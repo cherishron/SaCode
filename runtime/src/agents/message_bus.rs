@@ -663,12 +663,7 @@ pub fn build_communication_summary(
 }
 
 fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let end = s.char_indices().take(max).last().map(|(i, _)| i).unwrap_or(s.len());
-        format!("{}...", &s[..end])
-    }
+    sacode_kernel::util::truncate_with_ellipsis(s, max)
 }
 
 #[cfg(test)]

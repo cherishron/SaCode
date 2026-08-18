@@ -61,6 +61,8 @@ fn simple_subcommand(name: &str) -> Option<CliCommand> {
         "status" => CliCommand::Status,
         "update" => CliCommand::Update,
         "session" => CliCommand::Session,
+        "dump-config" => CliCommand::DumpConfig,
+        "bundle" => CliCommand::Bundle,
         _ => return None,
     })
 }
@@ -69,10 +71,12 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
     let mut command = CliCommand::Run;
     let mut prompt = Vec::new();
     let mut mode = ExecutionMode::Build;
-    let mut max_iterations = 3;
+    let mut max_iterations = super::config::DEFAULT_MAX_ITERATIONS;
     let mut json = false;
     let mut json_stream = false;
     let mut approval = ApprovalPolicy::Prompt;
+    let mut profile: Option<String> = None;
+    let mut agent_loop: Option<String> = None;
 
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -81,6 +85,16 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             "-V" | "--version" => command = CliCommand::Version,
             "--json" => json = true,
             "--json-stream" => json_stream = true,
+            "--profile" => {
+                if let Some(value) = iter.next() {
+                    profile = Some(value);
+                }
+            }
+            "--agent-loop" => {
+                if let Some(value) = iter.next() {
+                    agent_loop = Some(value);
+                }
+            }
             "--prompt" => approval = ApprovalPolicy::Prompt,
             "--approve" => approval = ApprovalPolicy::AutoApprove,
             "--deny" => approval = ApprovalPolicy::AutoDeny,
@@ -88,7 +102,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
                 if let Some(value) = iter.next() {
                     mode = match value.as_str() {
                         "plan" => ExecutionMode::Plan,
-                        "yolo" => ExecutionMode::Yolo,
+                        "auto" | "yolo" => ExecutionMode::Yolo,
                         _ => ExecutionMode::Build,
                     };
                 }
@@ -119,6 +133,8 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
         json,
         json_stream,
         approval,
+        profile,
+        agent_loop,
         sub_args: Vec::new(),
     }
 }
@@ -128,10 +144,12 @@ fn default_options(command: CliCommand) -> CliOptions {
         command,
         prompt: String::new(),
         mode: ExecutionMode::Build,
-        max_iterations: 3,
+        max_iterations: super::config::DEFAULT_MAX_ITERATIONS,
         json: false,
         json_stream: false,
         approval: ApprovalPolicy::Prompt,
+        profile: None,
+        agent_loop: None,
         sub_args: Vec::new(),
     }
 }

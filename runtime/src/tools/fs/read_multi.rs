@@ -1,6 +1,5 @@
-use std::fs;
-
 use crate::sandbox::FsAccess;
+use crate::tools::context::current_context;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::access::resolve_allowed_path;
@@ -95,10 +94,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
 fn read_one(path: &str, limit_per_file: usize) -> anyhow::Result<serde_json::Value> {
     let file_path = resolve_allowed_path(path, FsAccess::Read)?;
-    if !file_path.exists() {
+    let ctx = current_context();
+    if !ctx.exists(&file_path) {
         anyhow::bail!("file not found: {}", path);
     }
-    let content = fs::read_to_string(&file_path)?;
+    let content = ctx.read_text(&file_path)?;
     let all_lines: Vec<&str> = content.lines().collect();
     let selected = all_lines
         .iter()

@@ -402,7 +402,7 @@ fn execute_reopen(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     .with_message(if stdout.is_empty() { summary } else { stdout }))
 }
 
-fn execute_list(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
+fn execute_list(_payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     let mut cmd = Command::new("gh");
     cmd.args([
         "pr",
@@ -481,11 +481,7 @@ fn parse_pr_list_json(json_str: &str) -> Vec<serde_json::Value> {
 }
 
 fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
-    }
+    sacode_kernel::util::truncate_with_ellipsis(s, max)
 }
 
 #[cfg(test)]

@@ -7,6 +7,8 @@ pub enum ExecutionMode {
     Plan,
     #[default]
     Build,
+    /// auto 模式（原 yolo）：全自动推进任务。serde 序列化为 "auto"，反序列化兼容旧值 "yolo"。
+    #[serde(rename = "auto", alias = "yolo")]
     Yolo,
 }
 
@@ -15,7 +17,7 @@ impl fmt::Display for ExecutionMode {
         match self {
             ExecutionMode::Plan => write!(f, "plan"),
             ExecutionMode::Build => write!(f, "build"),
-            ExecutionMode::Yolo => write!(f, "yolo"),
+            ExecutionMode::Yolo => write!(f, "auto"),
         }
     }
 }

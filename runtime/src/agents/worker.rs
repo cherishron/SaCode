@@ -17,6 +17,7 @@ use crate::executor::task_runner::{
     AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
     execute_task_with_failover,
 };
+use crate::config::profile::Profile;
 use crate::model_routing::TaskProfile;
 use crate::prompt::{build_system_prompt, PromptContext};
 use crate::tools::ToolRegistry;
@@ -72,6 +73,7 @@ pub async fn run_sub_agent(
     workdir: &std::path::Path,
     mut mailbox: Option<AgentMailboxHandle>,
     role_task_map: &HashMap<String, String>,
+    named_profile: Option<&Profile>,
 ) -> WorkerRunResult {
     let resolved_route = resolve_role_route(workdir, &role, profile);
     let resolved_model_summary = resolved_route
@@ -87,9 +89,12 @@ pub async fn run_sub_agent(
     let mcp_store = McpConfigStore::new(workdir);
     let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
 
-    // 灵枢 · 上下文优化：按角色 + 任务画像筛选注入 prompt 的工具 schema
+    // 灵枢 · 上下文优化：按角色 + 任务画像 + 命名 Profile 筛选注入 prompt 的工具 schema
     // 工具仍全量注册在 registry 中（确保可执行），仅 prompt 注入做分层筛选
-    let (injected_specs, _budget_trimmed) = tools.for_prompt(Some(&role), Some(profile), None);
+    // §3.4 深化：named_profile 提供 enabled_tools/disabled_tools 白名单约束，
+    // 使 `sacode --profile web` 真正影响 worker 注入的工具集（非仅 dump）。
+    let (injected_specs, _budget_trimmed) =
+        tools.for_prompt_with_profile(Some(&role), Some(profile), named_profile, None);
     let tool_names: Vec<String> = injected_specs
         .iter()
         .map(|spec| spec.name.to_string())
@@ -230,81 +235,16 @@ pub async fn run_sub_agent(
 
     let summary = build_role_summary_from_result(&role, &output_text, success);
 
-    // 灵枢 · Agent Teams：发布自身执行结果摘要到消息总线，供后续 Agent 消费
-    // 后续组的子 Agent 在执行前会通过 mailbox.try_recv_all() 消费此消息
-    if let Some(mailbox) = mailbox {
-        let status_label = if success { "完成" } else { "失败" };
-        let summary_text = truncate_summary(&output_text);
-        mailbox
-            .broadcast(
-                AgentMessageKind::ProgressSync,
-                format!(
-                    "角色 [{}] 任务 [{}] {}：{}",
-                    role.id, task.title, status_label, summary_text
-                ),
-            )
-            .await;
-
-        // 灵枢 · Agent Teams 阶段三：检测输出中的协助请求/响应标记
-        // 通过标记将请求/响应转换为定向消息，实现 agent 间双向协作
-        // 死锁防护：单次执行最多发送 MAX_ASSIST_REQUESTS_PER_RUN 个协助请求
-        let assist_requests = extract_assist_requests(&output_text);
-        let assist_responses = extract_assist_responses(&output_text);
-
-        let mut sent_requests = 0usize;
-        for (target_role_id, content) in &assist_requests {
-            if sent_requests >= MAX_ASSIST_REQUESTS_PER_RUN {
-                tracing::warn!(
-                    "角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求",
-                    role.id,
-                    MAX_ASSIST_REQUESTS_PER_RUN,
-                    target_role_id
-                );
-                break;
-            }
-            if let Some(target_task_id) = role_task_map.get(target_role_id) {
-                let sent = mailbox
-                    .send_to(
-                        target_task_id,
-                        AgentMessageKind::RequestAssist,
-                        content.clone(),
-                    )
-                    .await;
-                if sent {
-                    sent_requests += 1;
-                    tracing::info!(
-                        "角色 [{}] 向 [{}] 发送协助请求",
-                        role.id,
-                        target_role_id
-                    );
-                }
-            } else {
-                tracing::warn!(
-                    "角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到",
-                    role.id,
-                    target_role_id
-                );
-            }
-        }
-
-        // 协助响应不限制数量（是回应已有请求，不会引发循环）
-        for (target_role_id, content) in &assist_responses {
-            if let Some(target_task_id) = role_task_map.get(target_role_id) {
-                mailbox
-                    .send_to(
-                        target_task_id,
-                        AgentMessageKind::AssistResponse,
-                        content.clone(),
-                    )
-                    .await;
-                tracing::info!(
-                    "角色 [{}] 向 [{}] 发送协助响应",
-                    role.id,
-                    target_role_id
-                );
-            }
-        }
-    }
+    // 灵枢 · Agent Teams：发布自身执行结果摘要与协助请求/响应到消息总线
+    broadcast_sub_agent_outputs(
+        mailbox,
+        &role,
+        &task,
+        success,
+        &output_text,
+        role_task_map,
+    )
+    .await;
 
     WorkerRunResult {
         result: SubAgentResult {
@@ -317,6 +257,62 @@ pub async fn run_sub_agent(
         events,
         resolved_route,
         resolved_model_summary,
+    }
+}
+
+/// 灵枢 · Agent Teams：发布自身执行结果摘要与协助请求/响应到消息总线
+async fn broadcast_sub_agent_outputs(
+    mailbox: Option<AgentMailboxHandle>,
+    role: &AgentRole,
+    task: &SubAgentTask,
+    success: bool,
+    output_text: &str,
+    role_task_map: &HashMap<String, String>,
+) {
+    let Some(mailbox) = mailbox else { return };
+
+    let status_label = if success { "完成" } else { "失败" };
+    let summary_text = truncate_summary(output_text);
+    mailbox
+        .broadcast(
+            AgentMessageKind::ProgressSync,
+            format!("角色 [{}] 任务 [{}] {}：{}", role.id, task.title, status_label, summary_text),
+        )
+        .await;
+
+    // 灵枢 · Agent Teams 阶段三：检测输出中的协助请求/响应标记
+    // 通过标记将请求/响应转换为定向消息，实现 agent 间双向协作
+    // 死锁防护：单次执行最多发送 MAX_ASSIST_REQUESTS_PER_RUN 个协助请求
+    let assist_requests = extract_assist_requests(output_text);
+    let assist_responses = extract_assist_responses(output_text);
+
+    let mut sent_requests = 0usize;
+    for (target_role_id, content) in &assist_requests {
+        if sent_requests >= MAX_ASSIST_REQUESTS_PER_RUN {
+            tracing::warn!("角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求", role.id, MAX_ASSIST_REQUESTS_PER_RUN, target_role_id);
+            break;
+        }
+        if let Some(target_task_id) = role_task_map.get(target_role_id) {
+            let sent = mailbox
+                .send_to(target_task_id, AgentMessageKind::RequestAssist, content.clone())
+                .await;
+            if sent {
+                sent_requests += 1;
+                tracing::info!("角色 [{}] 向 [{}] 发送协助请求", role.id, target_role_id);
+            }
+        } else {
+            tracing::warn!("角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到", role.id, target_role_id);
+        }
+    }
+
+    // 协助响应不限制数量（是回应已有请求，不会引发循环）
+    for (target_role_id, content) in &assist_responses {
+        if let Some(target_task_id) = role_task_map.get(target_role_id) {
+            mailbox
+                .send_to(target_task_id, AgentMessageKind::AssistResponse, content.clone())
+                .await;
+            tracing::info!("角色 [{}] 向 [{}] 发送协助响应", role.id, target_role_id);
+        }
     }
 }
 
@@ -619,6 +615,7 @@ fn extract_assist_responses(output: &str) -> Vec<(String, String)> {
 ///
 /// `edges`：`(from_role, to_role)` 依赖边列表（来自当前及历史协助请求）
 /// 返回 `Ok(())` 表示无环可安全发送；`Err(cycle)` 表示检测到环
+#[allow(dead_code)]
 pub fn validate_assist_dag(
     edges: &[(String, String)],
 ) -> Result<(), Vec<String>> {

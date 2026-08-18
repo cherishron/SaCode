@@ -3,7 +3,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 
 use crate::sandbox::FsAccess;
@@ -13,7 +13,8 @@ use crate::provider::client::ProviderClient;
 use crate::tools::fs::access::resolve_allowed_path;
 
 use sacode_kernel::model::{
-    ChatMessage, ImageUrlPart, MessagePart, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
+    detect_provider_kind, normalize_base_url, ChatMessage, ImageUrlPart,
+    MessagePart, ModelProvider, ProviderSpec, SaCodeConfig,
 };
 
 /// 灵枢 · 多模态（M4）：视觉请求错误分类
@@ -567,31 +568,6 @@ fn provider_api_key(spec: &ProviderSpec) -> Option<String> {
         None
     } else {
         Some(key.to_string())
-    }
-}
-
-fn normalize_base_url(base_url: &str) -> String {
-    base_url.trim_end_matches('/').to_string()
-}
-
-fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
-    let lower_url = base_url.to_lowercase();
-    let lower_model = model.to_lowercase();
-    if lower_url.contains("xiaomimimo")
-        || lower_url.contains("token-plan")
-        || lower_model.starts_with("mimo")
-    {
-        ProviderKind::Mimo
-    } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
-        ProviderKind::Longcat
-    } else if lower_url.contains("deepseek") {
-        ProviderKind::Deepseek
-    } else if lower_url.contains("127.0.0.1:11434") || lower_url.contains("ollama") {
-        ProviderKind::Ollama
-    } else if lower_url.contains("openai") || lower_model.starts_with("gpt-") {
-        ProviderKind::Openai
-    } else {
-        ProviderKind::Custom("openai-compatible".to_string())
     }
 }
 

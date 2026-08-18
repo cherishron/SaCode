@@ -31,6 +31,7 @@ use sacode_kernel::{
 };
 
 mod daemon_queue;
+mod interceptor;
 mod mcp_stdio;
 mod sandbox;
 mod task_run;

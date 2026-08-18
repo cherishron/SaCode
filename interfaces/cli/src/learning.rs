@@ -256,7 +256,7 @@ mod tests {
         )
         .expect("learn from task");
         assert!(!facts.is_empty());
-        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/workflows.md"))
+        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/experience.md"))
             .expect("read workflows");
         assert!(workflows.contains("自动学习条目"));
     }

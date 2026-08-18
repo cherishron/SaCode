@@ -15,7 +15,8 @@ use std::{
 };
 
 use sacode_kernel::model::{
-    preset_providers, ModelProvider, ProviderKind, ProviderSpec, SaCodeConfig,
+    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider,
+    ProviderSpec, SaCodeConfig,
 };
 use sacode_kernel::{AgentRole, RoleModelPolicy};
 use serde::{Deserialize, Serialize};
@@ -66,6 +67,7 @@ pub fn build_route_plan_from_candidates(
         .collect::<Vec<_>>();
 
     routed.sort_by_key(|route| Reverse(route.route_score));
+    apply_default_model_preference(&config, &mut routed);
     apply_route_overrides(&config, profile, &mut routed);
     apply_role_preferences(&effective_policy, &mut routed);
 
@@ -273,6 +275,23 @@ fn score_candidate(
         route_score: score,
         needs_thinking,
         reasons,
+    }
+}
+
+/// 让 config.json 中 model 字段指定的默认模型获得最高优先分
+fn apply_default_model_preference(config: &SaCodeConfig, routed: &mut Vec<RoutedModel>) {
+    if config.model.trim().is_empty() {
+        return;
+    }
+    let Some((provider_name, model_name)) = config.resolve_model(&config.model) else {
+        return;
+    };
+    for route in routed.iter_mut() {
+        if route.provider_name == provider_name && route.model_name == model_name {
+            route.route_score += 100;
+            route.reasons.push("config default model".to_string());
+            return;
+        }
     }
 }
 
@@ -521,25 +540,4 @@ fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> Mod
     }
 }
 
-fn detect_provider_kind(base_url: &str, model: &str) -> ProviderKind {
-    let lower_url = base_url.to_lowercase();
-    let lower_model = model.to_lowercase();
-    if lower_url.contains("xiaomimimo")
-        || lower_url.contains("token-plan")
-        || lower_model.starts_with("mimo")
-    {
-        ProviderKind::Mimo
-    } else if lower_url.contains("longcat") || lower_model.contains("longcat") {
-        ProviderKind::Longcat
-    } else if lower_url.contains("deepseek") {
-        ProviderKind::Deepseek
-    } else if lower_url.contains("127.0.0.1:11434") || lower_url.contains("ollama") {
-        ProviderKind::Ollama
-    } else {
-        ProviderKind::Custom("openai-compatible".to_string())
-    }
-}
 
-fn normalize_base_url(value: &str) -> String {
-    value.trim().trim_end_matches('/').to_string()
-}
