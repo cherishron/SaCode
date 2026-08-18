@@ -5,7 +5,7 @@ use std::{
 };
 
 use ratatui::{layout::Rect, text::Line};
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, LoopState};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_harness;
@@ -207,6 +207,7 @@ struct App {
     log_path: PathBuf,
     git_changes: Vec<String>,
     orchestration_summary: Option<String>,
+    loop_state: Option<LoopState>,
     message_viewport: Rect,
     input_viewport: Rect,
     #[cfg(test)]

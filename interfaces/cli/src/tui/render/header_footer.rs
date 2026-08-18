@@ -248,4 +248,35 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
+    // Phase progress bar for multi-agent loop
+    if let Some(phase_line) = phase_progress_bar(app) {
+        let phase_area = Rect { x: area.x, y: area.y.saturating_add(1), width: area.width, height: 1 };
+        frame.render_widget(
+            Paragraph::new(phase_line).alignment(Alignment::Left),
+            phase_area,
+        );
+    }
+}
+
+fn phase_progress_bar(app: &App) -> Option<Line<'_>> {
+    let plan = app.loop_state.as_ref()?.plan.as_ref()?;
+    let phases = &plan.phases;
+    if phases.is_empty() { return None; }
+    let theme = app.theme;
+    let current = app.loop_state.as_ref()?.current_phase_index;
+    let mut spans = vec![];
+    for (i, phase) in phases.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" | ", Style::default().fg(theme.subtle)));
+        }
+        let (icon, style) = if i < current {
+            ("[OK]", Style::default().fg(theme.accent))
+        } else if i == current {
+            ("[>>]", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+        } else {
+            ("[  ]", Style::default().fg(theme.subtle))
+        };
+        spans.push(Span::styled(format!("{} {}", icon, phase.title), style));
+    }
+    Some(Line::from(spans))
 }

@@ -38,7 +38,9 @@ impl App {
                     tool_duration_ms,
                     total_duration_ms,
                     loop_state,
-                } => self.handle_chat_completed(
+                } => {
+                    self.loop_state = loop_state.clone();
+                    self.handle_chat_completed(
                     task_id,
                     prompt,
                     response,
@@ -53,7 +55,8 @@ impl App {
                     tool_duration_ms,
                     total_duration_ms,
                     loop_state,
-                ),
+                    );
+                },
                 AsyncResult::LoginCompleted {
                     provider_name,
                     config,

@@ -146,6 +146,7 @@ impl App {
             log_path,
             git_changes: Vec::new(),
             orchestration_summary: None,
+            loop_state: None,
             message_viewport: Rect::default(),
             input_viewport: Rect::default(),
             #[cfg(test)]
@@ -293,6 +294,7 @@ impl App {
             log_path,
             git_changes: Vec::new(),
             orchestration_summary: None,
+            loop_state: None,
             message_viewport: Rect::default(),
             input_viewport: Rect::default(),
             suppress_side_effects: true,
