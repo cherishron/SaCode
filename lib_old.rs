@@ -32,21 +32,12 @@ pub use agents::{
     parse_orchestration_hint, resolve_config_model_candidates, run_sub_agent, score_roles,
     strip_orchestration_prefix, RoleRegistry, WorkerRunResult,
 };
-pub use agents::loop_impl::{
-    AgentLoop, AgentLoopKind, ExecutionStep, LingShuLoop, LoopConfig, LoopSubsystems,
-    StepResult, build_agent_loop,
-};
 pub use checkpoint::CheckpointStorage;
 pub use config::{
-    DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, LoopConfigStore,
-    ProjectAccessConfig, ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig,
-    SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore,
-    SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig,
-    SandboxShellConfig, SandboxTaskConfig,
-};
-pub use config::profile::{
-    BundleManifest, PatchManifest, PatchSet, Profile, ProfileManifest, bundles_dir_of,
-    export_bundle, import_bundle, patches_dir_of, profiles_dir_of,
+    DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, ProjectAccessConfig,
+    ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig, SandboxBackendConfig,
+    SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig, SandboxModeConfig,
+    SandboxNetworkConfig, SandboxResourceConfig, SandboxShellConfig, SandboxTaskConfig,
 };
 pub use daemon::{create_daemon, run_daemon};
 pub use executor::{ExecutorEvent, TaskExecutor};
@@ -69,11 +60,9 @@ pub use mcp::{
 pub use memory::{
     append_candidate_memory_entry, append_memory_entry, approve_memory_entry, archive_memory_entry,
     ensure_memory_file, list_memory_entries, load_memory_index, memory_file_path,
-    memory_index_path, migrate_legacy_memory_files, promote_memory_entry, rebuild_memory_index,
-    reject_memory_entry,
+    memory_index_path, promote_memory_entry, rebuild_memory_index, reject_memory_entry,
     save_memory_index, search_memory_index, MemoryEntry, MemoryEntrySource, MemoryIndex,
-    MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE,
-    PROJECT_WIKI_DIR,
+    MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE, PROJECT_WIKI_DIR,
 };
 pub use model_routing::{
     ExecutionNode, FailoverContext, ModelRoutePlan, NodeDecision, NodeScore, NodeToolCall,

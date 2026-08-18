@@ -1,0 +1,13 @@
+diff --git a/runtime/src/daemon/mod.rs b/runtime/src/daemon/mod.rs
+index 08b7e3a..eb69b7c 100644
+--- a/runtime/src/daemon/mod.rs
++++ b/runtime/src/daemon/mod.rs
+@@ -51,7 +51,7 @@ pub async fn create_daemon() -> Router {
+ fn parse_mode(mode: &str) -> ExecutionMode {
+     match mode {
+         "plan" => ExecutionMode::Plan,
+-        "yolo" => ExecutionMode::Yolo,
++        "auto" | "yolo" => ExecutionMode::Yolo,
+         _ => ExecutionMode::Build,
+     }
+ }

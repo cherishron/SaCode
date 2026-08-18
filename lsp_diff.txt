@@ -1,0 +1,247 @@
+diff --git a/interfaces/lsp/src/server.rs b/interfaces/lsp/src/server.rs
+index f1f3d03..568f859 100644
+--- a/interfaces/lsp/src/server.rs
++++ b/interfaces/lsp/src/server.rs
+@@ -94,7 +94,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         };
+         self.documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .open(document);
+         // 文档打开后触发首次诊断
+         self.spawn_diagnostics(uri, version).await;
+@@ -106,7 +106,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         if let Some(change) = params.content_changes.into_iter().last() {
+             self.documents
+                 .lock()
+-                .expect("document mutex poisoned")
++                .unwrap_or_else(|e| e.into_inner())
+                 .update(&uri, change.text, version);
+         }
+         // 文档变更后触发诊断（带去抖）
+@@ -117,7 +117,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let uri = params.text_document.uri.clone();
+         self.documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .close(&uri);
+         // 取消该 URI 的待处理诊断任务
+         let prev = {
+@@ -135,7 +135,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let provider_config = self
+             .provider_config
+             .lock()
+-            .expect("provider mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .clone();
+         let uri = params.text_document_position.text_document.uri;
+         let position = params.text_document_position.position;
+@@ -143,7 +143,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let document = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(&uri)
+             .cloned();
+ 
+@@ -165,14 +165,14 @@ impl LanguageServer for SaCodeLanguageServer {
+         let provider_config = self
+             .provider_config
+             .lock()
+-            .expect("provider mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .clone();
+         let uri = &params.text_document_position_params.text_document.uri;
+         let position = params.text_document_position_params.position;
+         let Some(document) = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(uri)
+             .cloned()
+         else {
+@@ -250,13 +250,13 @@ impl LanguageServer for SaCodeLanguageServer {
+         let provider_config = self
+             .provider_config
+             .lock()
+-            .expect("provider mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .clone();
+         let uri = &params.text_document.uri;
+         let Some(document) = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(uri)
+             .cloned()
+         else {
+@@ -360,7 +360,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let document = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(uri)
+             .cloned();
+ 
+@@ -394,7 +394,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let documents: Vec<TextDocument> = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .iter_all()
+             .cloned()
+             .collect();
+@@ -428,7 +428,7 @@ impl LanguageServer for SaCodeLanguageServer {
+ 
+         // 获取当前文档以提取符号名
+         let symbol_name = {
+-            let docs = self.documents.lock().expect("document mutex poisoned");
++            let docs = self.documents.lock().unwrap_or_else(|e| e.into_inner());
+             let doc = docs.get(uri).cloned();
+             doc.and_then(|d| extract_symbol_name_from_document(&d, position))
+         };
+@@ -441,7 +441,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let documents: Vec<TextDocument> = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .iter_all()
+             .cloned()
+             .collect();
+@@ -477,7 +477,7 @@ impl LanguageServer for SaCodeLanguageServer {
+ 
+         // 提取符号名
+         let symbol_name = {
+-            let docs = self.documents.lock().expect("document mutex poisoned");
++            let docs = self.documents.lock().unwrap_or_else(|e| e.into_inner());
+             let doc = docs.get(uri).cloned();
+             doc.and_then(|d| extract_symbol_name_from_document(&d, position))
+         };
+@@ -490,7 +490,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let documents: Vec<TextDocument> = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .iter_all()
+             .cloned()
+             .collect();
+@@ -522,7 +522,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let document = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(uri)
+             .cloned();
+ 
+@@ -546,7 +546,7 @@ impl LanguageServer for SaCodeLanguageServer {
+         let document = self
+             .documents
+             .lock()
+-            .expect("document mutex poisoned")
++            .unwrap_or_else(|e| e.into_inner())
+             .get(uri)
+             .cloned();
+ 
+@@ -589,7 +589,7 @@ impl SaCodeLanguageServer {
+         }
+         // 在 spawn 前克隆文档，避免在 spawn 内长时间持有 documents mutex
+         let doc = {
+-            let docs = self.documents.lock().expect("document mutex poisoned");
++            let docs = self.documents.lock().unwrap_or_else(|e| e.into_inner());
+             docs.get(&uri).cloned()
+         };
+         let Some(doc) = doc else {
+@@ -619,12 +619,30 @@ impl SaCodeLanguageServer {
+     }
+ }
+ 
++/// 将 LSP UTF-16 code unit 偏移转换为字节偏移
++fn utf16_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
++    let mut current_utf16 = 0usize;
++    for (byte_idx, ch) in s.char_indices() {
++        if current_utf16 >= utf16_offset {
++            return Some(byte_idx);
++        }
++        current_utf16 += ch.len_utf16();
++    }
++    if current_utf16 == utf16_offset {
++        Some(s.len())
++    } else {
++        None
++    }
++}
++
+ /// 从文档光标位置提取符号名 — 复用 code_intelligence 的提取逻辑
+ ///
+ /// 用于 references / rename 等需要从光标位置反查符号名的场景。
+ fn extract_symbol_name_from_document(document: &TextDocument, position: Position) -> Option<String> {
+     let line = document.content.lines().nth(position.line as usize)?;
+-    let char_pos = (position.character as usize).min(line.len());
++
++    // LSP position.character 是 UTF-16 code unit 偏移，需转换为字节偏移
++    let char_pos = utf16_to_byte_offset(line, position.character as usize)?;
+ 
+     let start = line[..char_pos]
+         .char_indices()
+@@ -761,18 +779,18 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
+         tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port)).await?;
+     tracing::info!(host = %config.server.host, port = config.server.port, "LSP TCP server listening");
+     let max_connections = config.server.max_connections;
+-    let mut active_connections = 0usize;
++    let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0usize));
+ 
+     loop {
+         let (stream, addr) = listener.accept().await?;
+-        if active_connections >= max_connections {
+-            tracing::warn!(%addr, active_connections, max_connections, "LSP TCP connection rejected: max connections reached");
++        if active_connections.load(std::sync::atomic::Ordering::Relaxed) >= max_connections {
++            tracing::warn!(%addr, active_connections = active_connections.load(std::sync::atomic::Ordering::Relaxed), max_connections, "LSP TCP connection rejected: max connections reached");
+             continue;
+         }
+-        active_connections += 1;
+-        tracing::debug!(%addr, active_connections, "accepted LSP TCP connection");
++        active_connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        tracing::debug!(%addr, active_connections = active_connections.load(std::sync::atomic::Ordering::Relaxed), "accepted LSP TCP connection");
+ 
+-        let workdir = std::env::current_dir()?;
++        let workdir = std::env::current_dir().unwrap_or_else(|_| ".".into());
+         let provider = resolve_provider_for_lsp(&workdir);
+         let diagnostics_enabled = config.capabilities.diagnostics;
+         let diagnostic_interval_ms = config.behavior.diagnostic_interval_ms;
+@@ -790,8 +808,10 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
+ 
+         // TCP 模式：用 (read, write) 半双工适配 Server::new
+         let (read_half, write_half) = tokio::io::split(stream);
++        let conn_counter = active_connections.clone();
+         tokio::spawn(async move {
+             let _ = Server::new(read_half, write_half, socket).serve(service).await;
++            conn_counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+             tracing::debug!(%addr, "LSP TCP connection closed");
+         });
+     }
+@@ -990,11 +1010,10 @@ async fn generate_ai_completions(
+             .take(3)
+             .map(|line| line.trim().to_string())
+             .collect::<Vec<_>>(),
+-        Err(_) => vec![
+-            "completion 1".to_string(),
+-            "completion 2".to_string(),
+-            "completion 3".to_string(),
+-        ],
++        Err(error) => {
++            tracing::warn!("AI 补全请求失败，返回空结果: {error}");
++            Vec::new()
++        }
+     };
+ 
+     completions

@@ -1,0 +1,232 @@
+diff --git a/runtime/src/agents/agent_loader.rs b/runtime/src/agents/agent_loader.rs
+index cbd046b..415fddc 100644
+--- a/runtime/src/agents/agent_loader.rs
++++ b/runtime/src/agents/agent_loader.rs
+@@ -137,7 +137,6 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
+     let mut primary_model: Option<String> = None;
+     let mut provider: Option<String> = None;
+ 
+-    let mut in_list = false;
+     let mut list_key = String::new();
+     let mut in_model_policy = false;
+ 
+@@ -152,7 +151,6 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
+         // 检测 model_policy 嵌套块
+         if trimmed.starts_with("model_policy:") {
+             in_model_policy = true;
+-            in_list = false;
+             continue;
+         }
+ 
+@@ -180,7 +178,6 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
+             let value = value.trim().trim_matches('"').trim_matches('\'');
+ 
+             // 重置列表状态
+-            in_list = false;
+ 
+             if in_model_policy {
+                 match key {
+@@ -199,7 +196,6 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
+                 "system_prompt" => system_prompt = value.to_string(),
+                 "stage" => stage = parse_stage(value),
+                 "responsibilities" | "preferred_context" | "deliverables" | "handoff_to" => {
+-                    in_list = true;
+                     list_key = key.to_string();
+                 }
+                 _ => {}
+@@ -236,10 +232,118 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
+ }
+ 
+ /// 解析 TOML 格式的 Agent 定义
++///
++/// 支持 TOML 语法：
++/// - `key = value`（字符串 / 布尔）
++/// - `key = ["a", "b"]`（字符串数组）
++/// - `[model_policy]` 表头（进入 model_policy 块）
+ fn parse_toml_agent(content: &str) -> anyhow::Result<AgentRole> {
+-    // 简易 TOML 解析（避免引入 toml 依赖）
+-    // 复用 YAML 解析逻辑，因为键值对格式类似
+-    parse_yaml_agent(content)
++    let mut id = String::new();
++    let mut name = String::new();
++    let mut system_prompt = String::new();
++    let mut responsibilities = Vec::new();
++    let mut preferred_context = Vec::new();
++    let mut deliverables = Vec::new();
++    let mut handoff_to = Vec::new();
++    let mut stage: Option<RoleStage> = None;
++    let mut thinking: Option<bool> = None;
++    let mut auto_route = true;
++    let mut primary_model: Option<String> = None;
++    let mut provider: Option<String> = None;
++
++    let mut in_model_policy = false;
++
++    for line in content.lines() {
++        let trimmed = line.trim();
++
++        // 跳过注释和空行
++        if trimmed.starts_with('#') || trimmed.is_empty() {
++            continue;
++        }
++
++        // 表头：`[model_policy]`
++        if trimmed.starts_with('[') && trimmed.ends_with(']') {
++            let section = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
++            in_model_policy = section == "model_policy";
++            continue;
++        }
++
++        // 键值对：`key = value`
++        let Some((key, value)) = trimmed.split_once('=') else {
++            continue;
++        };
++        let key = key.trim();
++        let value = value.trim();
++
++        if in_model_policy {
++            match key {
++                "thinking" => thinking = parse_bool(value),
++                "auto_route" => auto_route = parse_bool(value).unwrap_or(true),
++                "primary_model" => primary_model = Some(unquote_toml(value)),
++                "provider" => provider = Some(unquote_toml(value)),
++                _ => {}
++            }
++            continue;
++        }
++
++        match key {
++            "id" => id = unquote_toml(value),
++            "name" => name = unquote_toml(value),
++            "system_prompt" => system_prompt = unquote_toml(value),
++            "stage" => stage = parse_stage(&unquote_toml(value)),
++            "responsibilities" => responsibilities = parse_toml_array(value),
++            "preferred_context" => preferred_context = parse_toml_array(value),
++            "deliverables" => deliverables = parse_toml_array(value),
++            "handoff_to" => handoff_to = parse_toml_array(value),
++            _ => {}
++        }
++    }
++
++    if id.is_empty() {
++        anyhow::bail!("Agent 定义缺少必填字段: id");
++    }
++
++    if name.is_empty() {
++        name = id.clone();
++    }
++
++    Ok(AgentRole {
++        id,
++        name,
++        stage,
++        system_prompt,
++        responsibilities,
++        preferred_context,
++        deliverables,
++        handoff_to,
++        model_policy: RoleModelPolicy {
++            thinking,
++            auto_route,
++            primary_model,
++            provider,
++            ..RoleModelPolicy::default()
++        },
++        ..AgentRole::default()
++    })
++}
++
++/// 去除 TOML 字符串值的首尾引号
++fn unquote_toml(value: &str) -> String {
++    value.trim().trim_matches('"').trim_matches('\'').to_string()
++}
++
++/// 解析 TOML 字符串数组：`["a", "b"]`
++fn parse_toml_array(value: &str) -> Vec<String> {
++    let value = value.trim();
++    if !value.starts_with('[') || !value.ends_with(']') {
++        return Vec::new();
++    }
++    let inner = &value[1..value.len() - 1];
++    inner
++        .split(',')
++        .map(|item| unquote_toml(item))
++        .filter(|item| !item.is_empty())
++        .collect()
+ }
+ 
+ fn parse_bool(value: &str) -> Option<bool> {
+@@ -351,6 +455,41 @@ system_prompt: "Missing ID"
+         assert_eq!(parse_bool("maybe"), None);
+     }
+ 
++    #[test]
++    fn parse_toml_agent_basic() {
++        let toml = r#"
++# 安全审查 Agent (TOML)
++id = "security-auditor"
++name = "Security Auditor"
++system_prompt = "审查代码安全漏洞"
++stage = "quality"
++responsibilities = ["检查 SQL 注入风险", "验证认证逻辑"]
++preferred_context = ["security", "authentication"]
++deliverables = ["security_report"]
++
++[model_policy]
++thinking = true
++auto_route = true
++primary_model = "claude-3.7-sonnet"
++"#;
++        let role = parse_toml_agent(toml).unwrap();
++        assert_eq!(role.id, "security-auditor");
++        assert_eq!(role.name, "Security Auditor");
++        assert_eq!(role.system_prompt, "审查代码安全漏洞");
++        assert_eq!(role.responsibilities.len(), 2);
++        assert_eq!(role.preferred_context.len(), 2);
++        assert_eq!(role.deliverables.len(), 1);
++        assert_eq!(role.model_policy.thinking, Some(true));
++        assert_eq!(role.model_policy.primary_model.as_deref(), Some("claude-3.7-sonnet"));
++    }
++
++    #[test]
++    fn parse_toml_array_variants() {
++        assert_eq!(parse_toml_array("[\"a\", \"b\"]"), vec!["a".to_string(), "b".to_string()]);
++        assert_eq!(parse_toml_array("[]"), Vec::<String>::new());
++        assert_eq!(parse_toml_array("not-an-array"), Vec::<String>::new());
++    }
++
+     #[test]
+     fn load_custom_agents_handles_missing_dir() {
+         let dir = tempfile::tempdir().unwrap();
+diff --git a/runtime/src/agents/mod.rs b/runtime/src/agents/mod.rs
+index e011c6f..b1e61be 100644
+--- a/runtime/src/agents/mod.rs
++++ b/runtime/src/agents/mod.rs
+@@ -1,4 +1,5 @@
+ pub mod agent_loader;
++pub mod loop_impl;
+ pub mod message_bus;
+ pub mod model_router;
+ mod orchestrator;
+@@ -8,6 +9,9 @@ mod summary_compactor;
+ mod worker;
+ 
+ pub use agent_loader::load_custom_agents;
++pub use loop_impl::{
++    run_with_ling_shu_loop, AgentLoop, ExecutionStep, LingShuLoop, StepResult,
++};
+ pub use message_bus::{
+     AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
+     build_communication_summary,
+diff --git a/runtime/src/agents/role_registry.rs b/runtime/src/agents/role_registry.rs
+index 96856a7..0f3fe24 100644
+--- a/runtime/src/agents/role_registry.rs
++++ b/runtime/src/agents/role_registry.rs
+@@ -12,7 +12,6 @@
+ //! - test-engineer：测试工程
+ //! - security-analyst：安全分析
+ 
+-use anyhow::Result;
+ use sacode_kernel::{AgentRole, RoleModelPolicy, RoleStage};
+ 
+ #[derive(Debug, Clone, Default)]

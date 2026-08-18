@@ -1,0 +1,282 @@
+diff --git a/interfaces/cli/src/learning.rs b/interfaces/cli/src/learning.rs
+index cb1e602..21f327b 100644
+--- a/interfaces/cli/src/learning.rs
++++ b/interfaces/cli/src/learning.rs
+@@ -256,7 +256,7 @@ mod tests {
+         )
+         .expect("learn from task");
+         assert!(!facts.is_empty());
+-        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/workflows.md"))
++        let workflows = std::fs::read_to_string(workdir.join(".sacode/wiki/experience.md"))
+             .expect("read workflows");
+         assert!(workflows.contains("自动学习条目"));
+     }
+diff --git a/interfaces/cli/src/repl.rs b/interfaces/cli/src/repl.rs
+index 144fc88..0f22885 100644
+--- a/interfaces/cli/src/repl.rs
++++ b/interfaces/cli/src/repl.rs
+@@ -5,7 +5,7 @@ use std::{
+ };
+ 
+ use anyhow::Result;
+-use sacode_kernel::model::MIMO_TOKEN_PLAN_BASE_URL;
++use sacode_kernel::model::{MIMO_TOKEN_PLAN_BASE_URL, OLLAMA_DEFAULT_BASE_URL};
+ use sacode_kernel::ExecutionMode;
+ use sacode_runtime::{
+     McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry,
+@@ -18,7 +18,7 @@ use crate::{
+         config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status,
+         update, vim, wiki, ApprovalPolicy,
+     },
+-    provider_config::{ProviderConfig, ProviderConfigStore, SaCodeConfigStore},
++    provider_config::{ProviderConfigStore, SaCodeConfigStore},
+     runner::{
+         format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream,
+         StreamEventKind,
+@@ -83,6 +83,11 @@ impl ReplSession {
+             println!("{}", update_prompt(&current_version, &remote_version));
+             println!();
+         }
++        if self.sacode_store.current_provider_name()?.is_none() {
++            println!();
++            println!("⚠️  未配置模型服务。输入 /login 选择 provider 并配置 API Key 后开始使用。");
++            println!();
++        }
+         let stdin = io::stdin();
+         let mut lines = stdin.lock().lines();
+ 
+@@ -131,7 +136,7 @@ impl ReplSession {
+                     self.set_mode(parts[1]);
+                 } else {
+                     println!("Current mode: {:?}", self.mode);
+-                    println!("Available: plan, build, yolo");
++                    println!("Available: plan, build, auto");
+                 }
+             }
+             "/tools" => self.show_tools(),
+@@ -181,7 +186,9 @@ impl ReplSession {
+                 _ => ApprovalPolicy::Prompt,
+             })
+             .unwrap_or(ApprovalPolicy::Prompt);
+-        let max_iterations = runtime_config.map(|cfg| cfg.max_iterations).unwrap_or(3);
++        let max_iterations = runtime_config
++            .map(|cfg| cfg.max_iterations)
++            .unwrap_or(config::DEFAULT_MAX_ITERATIONS);
+         println!();
+         io::stdout().flush()?;
+         let output = run_task_with_stdin_and_stream(
+@@ -237,7 +244,7 @@ impl ReplSession {
+         println!("  /help, /h        - Show this help");
+         println!("  /init            - Lightweight project initialization");
+         println!("  /init-deep       - Deep project initialization");
+-        println!("  /mode [plan|build|yolo] - Set or show mode");
++        println!("  /mode [plan|build|auto] - Set or show mode");
+         println!("  /login           - Configure OpenAI-compatible provider");
+         println!("  /connect         - Quick connect to a preset provider");
+         println!("  /providers       - List and switch provider");
+@@ -277,7 +284,7 @@ impl ReplSession {
+         match mode {
+             "plan" => self.mode = ExecutionMode::Plan,
+             "build" => self.mode = ExecutionMode::Build,
+-            "yolo" => self.mode = ExecutionMode::Yolo,
++            "auto" | "yolo" => self.mode = ExecutionMode::Yolo,
+             _ => {
+                 println!("Unknown mode: {}", mode);
+                 return;
+@@ -696,50 +703,55 @@ impl ReplSession {
+         println!();
+         Ok(())
+     }
+-
+     fn login_provider(&mut self) -> Result<()> {
+         println!();
+         let current_name = self
+             .sacode_store
+             .current_provider_name()?
+             .unwrap_or_else(|| "default".to_string());
+-        let existing_spec = self.sacode_store.provider(&current_name)?;
+-        let existing = existing_spec
+-            .as_ref()
+-            .map(|spec| ProviderConfig {
+-                base_url: spec.base_url.clone(),
+-                api_key: spec.api_key.clone(),
+-                model: self
+-                    .sacode_store
+-                    .load_or_default()
+-                    .ok()
+-                    .and_then(|config| config.resolve_model(&config.model).map(|(_, model)| model))
+-                    .unwrap_or_default(),
+-            })
+-            .unwrap_or_default();
+-        let provider_name = prompt_input("Provider name", Some(current_name.as_str()))?;
+-        let base_url = prompt_input(
+-            "Base URL",
+-            if existing.base_url.is_empty() {
+-                None
+-            } else {
+-                Some(existing.base_url.as_str())
+-            },
+-        )?;
+-        let api_key = prompt_input("API Key", None)?;
+ 
+-        let config = ProviderConfig {
+-            base_url,
+-            api_key,
+-            model: existing.model,
++        // 1) 展示预设 provider 选择列表
++        let mut options = crate::provider_config::preset_connect_options();
++        options.insert(0, (
++            "ollama".to_string(),
++            OLLAMA_DEFAULT_BASE_URL.to_string(),
++            false,
++        ));
++        println!("选择你的模型服务：");
++        for (index, (name, base_url, _)) in options.iter().enumerate() {
++            println!("  {}. {} ({})", index + 1, name, base_url);
++        }
++        println!("  {}. 自定义（手动输入 Base URL）", options.len() + 1);
++
++        let (provider_name, base_url, needs_key) = loop {
++            let selection = prompt_input("选择编号", None)?;
++            match selection.parse::<usize>() {
++                Ok(index) if index >= 1 && index <= options.len() => {
++                    let (name, url, needs_key) = options[index - 1].clone();
++                    break (name, url, needs_key);
++                }
++                Ok(index) if index == options.len() + 1 => {
++                    let name = prompt_input("Provider 名称", Some(current_name.as_str()))?;
++                    let url = prompt_input("Base URL", None)?;
++                    break (name, url, true);
++                }
++                _ => println!("无效编号，请重新选择。"),
++            }
++        };
++
++        // 2) 输入 API Key（Ollama 本地无需 Key）
++        let api_key = if needs_key {
++            prompt_input(&format!("{} 的 API Key", provider_name), None)?
++        } else {
++            String::new()
+         };
+ 
+         let result = agent_harness::connect_provider(
+             &self.provider_store,
+             &self.sacode_store,
+             &provider_name,
+-            &config.base_url,
+-            config.api_key,
++            &base_url,
++            api_key,
+         )?;
+         let models =
+             agent_harness::collect_model_options(&self.provider_store, &self.sacode_store)?
+@@ -748,6 +760,8 @@ impl ReplSession {
+                 .map(|option| option.model_name)
+                 .collect::<Vec<_>>();
+ 
++        println!();
++        println!("✅ 已配置 provider {}", provider_name);
+         println!("Saved provider {} to .sacode/config.json", provider_name);
+         println!("Discovered {} models.", models.len());
+         if !result.current_provider.config.model.is_empty() {
+@@ -903,7 +917,7 @@ impl ReplSession {
+         println!("Quick Connect - Preset Providers:");
+         println!();
+         println!("  1. Ollama (Local)");
+-        println!("     URL: http://127.0.0.1:11434/v1");
++        println!("     URL: {}", OLLAMA_DEFAULT_BASE_URL);
+         println!();
+         println!("  2. DeepSeek");
+         println!("     URL: https://api.deepseek.com/v1");
+@@ -924,7 +938,7 @@ impl ReplSession {
+             .map_err(|_| anyhow::anyhow!("Invalid number"))?;
+ 
+         let (name, base_url) = match index {
+-            1 => ("ollama", "http://127.0.0.1:11434/v1"),
++            1 => ("ollama", OLLAMA_DEFAULT_BASE_URL),
+             2 => ("deepseek", "https://api.deepseek.com"),
+             3 => ("mimo", MIMO_TOKEN_PLAN_BASE_URL),
+             4 => ("longcat", "https://api.longcat.chat/openai/v1"),
+diff --git a/interfaces/cli/src/runner.rs b/interfaces/cli/src/runner.rs
+index d4fcb1f..ae44593 100644
+--- a/interfaces/cli/src/runner.rs
++++ b/interfaces/cli/src/runner.rs
+@@ -11,13 +11,12 @@ use sacode_kernel::{
+ };
+ use sacode_runtime::{
+     build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
+-    register_enabled_mcp_tools_sync, task_run_from_report, task_run_snapshot,
++    register_enabled_mcp_tools_sync, task_run_from_report,
+     ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
+     McpConfigStore, PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
+-    SideEffectLevel, StreamEventKind as RuntimeStreamEventKind, StreamHandler,
++    StreamEventKind as RuntimeStreamEventKind, StreamHandler,
+     TaskProfile, TaskRunConfig, ToolRegistry,
+-    build_tool_definitions_filtered, enrich_media_provider_args, execute_task_with_failover,
+-    format_side_effect_level, is_permission_restricted_error,
++    execute_task_with_failover,
+ };
+ use serde::Serialize;
+ 
+@@ -213,15 +212,7 @@ where
+         system_prompt.push_str(&insight_instruction);
+     }
+ 
+-    let primary_provider = if let Some(ref plan) = route_plan {
+-        candidates
+-            .iter()
+-            .find(|(pn, mn, _)| pn == &plan.primary.provider_name && mn == &plan.primary.model_name)
+-            .map(|(_, _, provider)| provider.clone())
+-            .unwrap_or_else(|| resolve_provider(&workdir))
+-    } else {
+-        resolve_provider(&workdir)
+-    };
++    let primary_provider = resolve_primary_provider(&workdir, &candidates, route_plan.as_ref());
+ 
+     // 将 CLI 层 ApprovalPolicy 映射为 runtime 层 ApprovalDecider
+     let approval_decider: Arc<dyn ApprovalDecider> = match approval {
+@@ -315,7 +306,23 @@ where
+     })
+ }
+ 
+-// ── MistakeRecorder：将 MistakeBookStore 适配为 ErrorRecorder ──
++/// 根据路由计划解析主 provider；无计划或未命中时回退到默认 provider
++fn resolve_primary_provider(
++    workdir: &std::path::Path,
++    candidates: &[(String, String, sacode_kernel::model::ModelProvider)],
++    route_plan: Option<&sacode_runtime::ModelRoutePlan>,
++) -> sacode_kernel::model::ModelProvider {
++    if let Some(plan) = route_plan {
++        if let Some((_, _, provider)) = candidates.iter().find(|(pn, mn, _)| {
++            pn == &plan.primary.provider_name && mn == &plan.primary.model_name
++        }) {
++            return provider.clone();
++        }
++    }
++    resolve_provider(workdir)
++}
++
++// ── MistakeRecorder
+ 
+ /// CLI 层的 ErrorRecorder 实现，将错误记录到 MistakeBookStore
+ struct MistakeRecorder {
+@@ -326,15 +333,15 @@ impl ErrorRecorder for MistakeRecorder {
+     fn record_tool_error(&self, tool_name: &str, category: &str, detail: String) {
+         if let Err(error) = MistakeBookStore::new(&self.workdir).append(tool_name, category, detail)
+         {
+-            eprintln!("记录工具错误到 mistakes.json 失败: {error}");
++            tracing::error!("记录工具错误到 mistakes.json 失败: {error}");
+         }
+     }
+ 
+-    fn record_provider_error(&self, category: &str, detail: String) {
++    fn record_provider_error(&self, scope: &str, detail: String) {
+         if let Err(error) =
+-            MistakeBookStore::new(&self.workdir).append(category, "模型调用失败", detail)
++            MistakeBookStore::new(&self.workdir).append(scope, "模型调用失败", detail)
+         {
+-            eprintln!("记录模型错误到 mistakes.json 失败: {error}");
++            tracing::error!("记录模型错误到 mistakes.json 失败: {error}");
+         }
+     }
+ }

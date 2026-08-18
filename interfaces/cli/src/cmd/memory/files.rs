@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use sacode_runtime::{
     append_candidate_memory_entry, append_memory_entry, ensure_memory_file, memory_file_path,
-    MemoryEntry, MemoryKind, MemoryScope,
+    migrate_legacy_memory_files, MemoryEntry, MemoryKind, MemoryScope,
 };
 
 const USER_WIKI_DIR: &str = ".sacode/wiki";
@@ -19,6 +19,8 @@ pub(super) struct MemoryFile {
 }
 
 pub(super) fn load_memory_files(root: &Path, scope: MemoryScope) -> Result<Vec<MemoryFile>> {
+    // 自动迁移旧版记忆文件（memory.md → project.md 等），幂等安全
+    migrate_legacy_memory_files(root, scope)?;
     let mut files = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
     for kind in MemoryKind::all() {

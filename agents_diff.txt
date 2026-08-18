@@ -1,0 +1,1090 @@
+diff --git a/runtime/src/agents/loop_impl.rs b/runtime/src/agents/loop_impl.rs
+new file mode 100644
+index 0000000..449de9c
+--- /dev/null
++++ b/runtime/src/agents/loop_impl.rs
+@@ -0,0 +1,413 @@
++//! 灵枢 · Agent Loop 可替换抽象（§3.5）
++//!
++//! 借鉴 deepseek-harness 的 `core/agent-loop` 设计，把 SaCode 的编排主循环
++//! 抽象为可替换的 `AgentLoop` trait，便于在不改动产品层代码的前提下替换
++//! 循环策略（如 ReAct / Tree-of-Thought / Plan-and-Execute）。
++//!
++//! 设计约束（见 comparison doc §3.5）：
++//! - **编译期选择，非运行时热替换**：Rust 静态分发更适合用 feature flag /
++//!   配置编译选择 Loop 实现，避免 trait 对象动态分发的高频开销。
++//! - **灵枢三子系统不可割裂**：`LingShuLoop`（默认实现）封装现有
++//!   `execute_role_driven_orchestration` 全部逻辑，保留自组织（角色编排 /
++//!   DAG 调度）、自防护（`InterventionRequest` / `dispatch_fix_loop`）、
++//!   自愈合（模型故障转移路由）。
++//!
++//! 命名注意：本模块使用的上下文类型为 `sacode_kernel::ExecutionContext`
++//! （struct），与 `crate::tools::context::ExecutionContext`（运行时执行环境
++//! 能力接口 trait）是两种完全不同的类型，请勿混淆。
++
++use anyhow::Result;
++use async_trait::async_trait;
++use serde::{Deserialize, Serialize};
++use sacode_kernel::{ExecutionContext, ExecutionReport, TaskRun};
++
++use super::{execute_role_driven_orchestration, RoleRegistry};
++use crate::config::profile::Profile;
++use crate::CheckpointStorage;
++
++/// 单步执行描述：一次模型请求 + 工具调用循环。
++///
++/// 对应 DSH 的 `step`。在灵枢默认实现中，整轮角色编排是 `turn` 的单位，
++/// `step` 作为更细粒度的执行抽象存在，供自定义 Loop 复用。
++#[derive(Debug, Clone)]
++pub struct ExecutionStep {
++    /// 步骤序号
++    pub step_id: usize,
++    /// 步骤描述
++    pub description: String,
++    /// 该步骤允许使用的工具白名单（空表示不限制）
++    pub tools: Vec<String>,
++    /// 期望输出
++    pub expected_output: String,
++}
++
++/// 单步执行结果。
++#[derive(Debug, Clone, Default)]
++pub struct StepResult {
++    /// 本步产生的文本输出
++    pub output: String,
++    /// 是否触发了冲突处置（自防护）
++    pub conflict_handled: bool,
++    /// 是否发生了模型故障转移（自愈合）
++    pub model_failover: bool,
++}
++
++/// §3.5 第二步：灵枢子系统可组合开关。
++///
++/// 把灵枢三子系统（自组织 / 自防护 / 自愈合）暴露为可独立开启/关闭的开关，
++/// 供自定义 `AgentLoop` 实现组合使用。这样替换 Loop 策略时，可以选择性启用
++/// 所需子系统（例如某自定义 Loop 只用自防护、不用自组织）。
++///
++/// 设计约束：开关是「数据面」配置，由 `AgentLoop` 实现在内部解释执行。
++/// `LingShuLoop` 默认全开，确保与现有 `execute_role_driven_orchestration`
++/// 行为完全一致（向后兼容）。后续可逐步把开关透传到 orchestrator 内部的
++/// 各子系统钩子（见 doc §3.5 风险项），本期先把可组合能力落地为结构化配置。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++pub struct LoopSubsystems {
++    /// 自组织：角色驱动编排 / DAG 并行组调度
++    pub self_organization: bool,
++    /// 自防护：冲突检测 → InterventionRequest → dispatch_fix_loop
++    pub self_protection: bool,
++    /// 自愈合：模型故障转移路由
++    pub self_healing: bool,
++}
++
++impl Default for LoopSubsystems {
++    /// 默认全开 —— 与现有 orchestrator 行为一致
++    fn default() -> Self {
++        Self {
++            self_organization: true,
++            self_protection: true,
++            self_healing: true,
++        }
++    }
++}
++
++impl LoopSubsystems {
++    /// 仅自防护（无自组织 / 无自愈合）—— 适合轻量自定义 Loop
++    pub fn protection_only() -> Self {
++        Self {
++            self_organization: false,
++            self_protection: true,
++            self_healing: false,
++        }
++    }
++
++    /// 全部关闭 —— 纯透传，适合对照基线
++    pub fn none() -> Self {
++        Self {
++            self_organization: false,
++            self_protection: false,
++            self_healing: false,
++        }
++    }
++}
++
++/// §3.5 第三步：Loop 实现种类（编译期已知集合）。
++///
++/// 按 doc §3.5「不追求运行时热替换，走编译期选择」，这里用枚举而非 trait
++/// 对象动态分发。新增 Loop 实现时在此枚举追加变体 + `build` 实现即可，
++/// 配合 feature flag 可控制可用集合，避免二进制膨胀。
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++pub enum AgentLoopKind {
++    /// 灵枢默认实现：自组织 + 自防护 + 自愈合
++    #[default]
++    LingShu,
++}
++
++impl AgentLoopKind {
++    /// 从配置字符串解析（未知值回退默认 `LingShu`）
++    pub fn parse(s: &str) -> Self {
++        match s.trim().to_ascii_lowercase().as_str() {
++            "ling_shu" | "lingshu" | "" => AgentLoopKind::LingShu,
++            _ => AgentLoopKind::LingShu,
++        }
++    }
++
++    /// 配置字符串表示
++    pub fn as_str(&self) -> &'static str {
++        match self {
++            AgentLoopKind::LingShu => "ling_shu",
++        }
++    }
++}
++
++/// Loop 配置：实现种类 + 子系统开关组合。
++///
++/// 由 `.sacode/loop.json` 加载，CLI `--agent-loop` 可覆盖 `kind`。
++#[derive(Debug, Clone, Default, Serialize, Deserialize)]
++pub struct LoopConfig {
++    /// Loop 实现种类
++    #[serde(default)]
++    pub kind: AgentLoopKind,
++    /// 子系统开关组合
++    #[serde(default)]
++    pub subsystems: LoopSubsystems,
++}
++
++impl LoopConfig {
++    /// 默认配置：灵枢默认 Loop + 全开子系统
++    pub fn default_config() -> Self {
++        Self::default()
++    }
++}
++
++/// Agent Loop 抽象：把"如何驱动一个任务"与"产品层编排逻辑"解耦。
++///
++/// - `orchestrate_turn`：完整任务周期（对应 DSH 的 `turn`），从输入到完成。
++/// - `orchestrate_step`：单次模型请求 + 工具调用循环（对应 DSH 的 `step`）。
++///
++/// 实现必须保证灵枢三子系统（自组织 / 自防护 / 自愈合）协同可用；
++/// `LingShuLoop` 作为默认实现，直接复用现有 orchestrator 逻辑，确保
++/// 行为向后兼容。
++///
++/// 注意：trait 不强制 `Send`/`Sync` 的异步方法边界。按 doc §3.5，Loop 走
++/// **编译期静态分发**（feature flag / 配置编译选择），不做运行时 `dyn`
++/// 跨线程热替换，因此无需约束 future 为 `Send`。`LingShuLoop` 结构本身仍
++/// 满足 `Send + Sync`，可在多线程运行时中持有。
++#[async_trait(?Send)]
++pub trait AgentLoop {
++    /// 完整任务周期：从用户输入到任务完成。
++    ///
++    /// `workdir` 提供任务工作目录上下文（角色画像、`from_prompt_and_workspace`
++    /// 需要）。`named_profile` 为可选命名 Profile（§3.4），用于约束工具集，
++    /// 由具体 Loop 实现解释应用。返回结构化 `ExecutionReport`。
++    async fn orchestrate_turn(
++        &self,
++        context: &ExecutionContext,
++        checkpoints: &CheckpointStorage,
++        workdir: &std::path::Path,
++        named_profile: Option<&Profile>,
++    ) -> Result<ExecutionReport>;
++
++    /// 单步执行：单次模型请求 + 工具调用。
++    ///
++    /// 默认实现委托 `orchestrate_turn` 作为单步的退化形式（灵枢默认 Loop 中
++    /// `step` 由 `execute_parallel_groups` 内部逐组驱动）。自定义 Loop
++    /// 可覆盖此方法实现更细粒度的控制。
++    async fn orchestrate_step(
++        &self,
++        context: &ExecutionContext,
++        step: &ExecutionStep,
++    ) -> Result<StepResult> {
++        // 退化实现：step 在灵枢默认 Loop 中不是独立入口，仅在上下文中登记
++        // 步骤信息并复用 turn 语义。自定义策略（如 ReAct）应覆盖此方法。
++        let _ = step;
++        Ok(StepResult {
++            output: format!("step#{} registered within ling_shu turn", step.step_id),
++            ..Default::default()
++        })
++    }
++}
++
++/// 灵枢默认 Loop 实现：封装现有 `execute_role_driven_orchestration` 全部逻辑。
++///
++/// 持有 `RoleRegistry`（自组织角色注册表）+ `LoopSubsystems`（子系统开关），
++/// 复用消息总线与检查点存储。任何 `AgentLoop` 实现都可通过组合这些子系统
++/// 复现灵枢能力。
++pub struct LingShuLoop {
++    roles: RoleRegistry,
++    /// 子系统开关组合（§3.5 第二步可组合化）
++    subsystems: LoopSubsystems,
++}
++
++impl Default for LingShuLoop {
++    fn default() -> Self {
++        Self::new()
++    }
++}
++
++impl LingShuLoop {
++    /// 创建默认 Loop，内置全部内置角色（`RoleRegistry::builtin()`），子系统全开。
++    pub fn new() -> Self {
++        Self {
++            roles: RoleRegistry::builtin(),
++            subsystems: LoopSubsystems::default(),
++        }
++    }
++
++    /// 使用自定义角色注册表创建 Loop（供测试或自定义编排复用）。
++    pub fn with_roles(roles: RoleRegistry) -> Self {
++        Self {
++            roles,
++            subsystems: LoopSubsystems::default(),
++        }
++    }
++
++    /// 使用指定子系统开关创建 Loop（§3.5 第二步可组合化）。
++    pub fn with_subsystems(roles: RoleRegistry, subsystems: LoopSubsystems) -> Self {
++        Self { roles, subsystems }
++    }
++
++    /// 暴露内置角色注册表，供自定义 Loop 组合灵枢子系统。
++    pub fn roles(&self) -> &RoleRegistry {
++        &self.roles
++    }
++
++    /// 暴露子系统开关组合（§3.5 第二步可组合化数据面）。
++    pub fn subsystems(&self) -> LoopSubsystems {
++        self.subsystems
++    }
++}
++
++#[async_trait(?Send)]
++impl AgentLoop for LingShuLoop {
++    async fn orchestrate_turn(
++        &self,
++        context: &ExecutionContext,
++        checkpoints: &CheckpointStorage,
++        workdir: &std::path::Path,
++        named_profile: Option<&Profile>,
++    ) -> Result<ExecutionReport> {
++        // 灵枢默认实现直接委托现有 orchestrator，保证：
++        // - 自组织：角色编排 / DAG 并行组调度
++        // - 自防护：冲突检测 → InterventionRequest → dispatch_fix_loop
++        // - 自愈合：模型故障转移路由（worker 内部）
++        //
++        // `self.subsystems` 在本期作为可组合数据面暴露（供自定义 Loop 组合）；
++        // LingShuLoop 默认全开，确保与现有 orchestrator 行为完全一致。
++        // 后续可将开关透传到 orchestrator 内部各子系统钩子（doc §3.5 风险项）。
++        let (report, _plan) =
++            execute_role_driven_orchestration(context, checkpoints, workdir, named_profile)
++                .await?;
++        Ok(report)
++    }
++}
++
++/// §3.5 第三步：根据 `LoopConfig` 构建对应 Loop 实现（编译期已知类型）。
++///
++/// 返回具体类型而非 `dyn AgentLoop`，保持静态分发，避免 trait 对象动态分发
++/// 在 Loop 每步产生的高频开销。CLI `--agent-loop` / `loop.json` 仅控制此处
++/// 的 `kind` 与 `subsystems` 选择。
++pub fn build_agent_loop(config: &LoopConfig) -> LingShuLoop {
++    match config.kind {
++        AgentLoopKind::LingShu => {
++            LingShuLoop::with_subsystems(RoleRegistry::builtin(), config.subsystems)
++        }
++    }
++}
++
++/// 便捷入口：以 `LingShuLoop` 默认实现驱动一个任务周期，返回 `TaskRun`。
++///
++/// 等价替换直接调用 `execute_role_driven_task_run`，但经由 `AgentLoop` trait，
++/// 便于将来按配置切换 Loop 实现（编译期选择）。
++pub async fn run_with_ling_shu_loop(
++    context: &ExecutionContext,
++    checkpoints: &CheckpointStorage,
++    workdir: &std::path::Path,
++) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
++    let loop_impl = LingShuLoop::new();
++    let report = loop_impl.orchestrate_turn(context, checkpoints, workdir, None).await?;
++    let task_run = crate::task_run_from_report(
++        context.task_id.clone(),
++        context.mode,
++        context.task.prompt.clone(),
++        &report,
++        crate::infer_task_run_state(&report),
++    );
++    Ok((task_run, sacode_kernel::AgentExecutionPlan::default()))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use sacode_kernel::{ExecutionMode, Task};
++    use std::path::Path;
++
++    fn sample_context(prompt: &str) -> ExecutionContext {
++        ExecutionContext::new(Task::new(prompt, ExecutionMode::Build, None))
++    }
++
++    #[test]
++    fn ling_shu_loop_carries_builtin_roles() {
++        let loop_impl = LingShuLoop::new();
++        // 内置角色注册表必须可用，保证自组织子系统不被割裂。
++        assert!(!loop_impl.roles().all().is_empty());
++    }
++
++    #[test]
++    fn ling_shu_loop_is_default_send_sync() {
++        fn assert_send_sync<T: Send + Sync>() {}
++        assert_send_sync::<LingShuLoop>();
++    }
++
++    // ── §3.5 第二步：子系统可组合化 ──
++
++    #[test]
++    fn loop_subsystems_default_all_on() {
++        let s = LoopSubsystems::default();
++        assert!(s.self_organization && s.self_protection && s.self_healing);
++    }
++
++    #[test]
++    fn loop_subsystems_presets() {
++        let p = LoopSubsystems::protection_only();
++        assert!(!p.self_organization && p.self_protection && !p.self_healing);
++        let n = LoopSubsystems::none();
++        assert!(!n.self_organization && !n.self_protection && !n.self_healing);
++    }
++
++    // ── §3.5 第三步：Loop 注册与选择 ──
++
++    #[test]
++    fn agent_loop_kind_parse_known_and_unknown() {
++        assert_eq!(AgentLoopKind::parse("ling_shu"), AgentLoopKind::LingShu);
++        assert_eq!(AgentLoopKind::parse(""), AgentLoopKind::LingShu);
++        // 未知值回退默认，不 panic
++        assert_eq!(AgentLoopKind::parse("react"), AgentLoopKind::LingShu);
++        assert_eq!(AgentLoopKind::LingShu.as_str(), "ling_shu");
++    }
++
++    #[test]
++    fn build_agent_loop_carries_subsystems() {
++        let cfg = LoopConfig {
++            kind: AgentLoopKind::LingShu,
++            subsystems: LoopSubsystems::protection_only(),
++        };
++        let loop_impl = build_agent_loop(&cfg);
++        assert_eq!(loop_impl.subsystems(), LoopSubsystems::protection_only());
++        // 角色注册表仍可用（自组织数据面保留）
++        assert!(!loop_impl.roles().all().is_empty());
++    }
++
++    #[test]
++    fn build_agent_loop_default_full_subsystems() {
++        let loop_impl = build_agent_loop(&LoopConfig::default());
++        assert_eq!(loop_impl.subsystems(), LoopSubsystems::default());
++    }
++
++    #[tokio::test]
++    async fn ling_shu_loop_step_delegates_without_panic() {
++        let loop_impl = LingShuLoop::new();
++        let ctx = sample_context("test step delegation");
++        let step = ExecutionStep {
++            step_id: 1,
++            description: "probe".into(),
++            tools: vec![],
++            expected_output: String::new(),
++        };
++        let result = loop_impl.orchestrate_step(&ctx, &step).await;
++        assert!(result.is_ok());
++        let step_result = result.unwrap();
++        assert!(!step_result.output.is_empty());
++    }
++
++    // orchestrate_turn 的等价性由集成测试覆盖：run_with_ling_shu_loop 应与
++    // execute_role_driven_task_run 产出一致的 ExecutionReport 结构。
++    // 此处用轻量断言验证编排入口可用，避免触发真实 LLM 调用。
++    #[tokio::test]
++    async fn ling_shu_loop_turn_entrypoint_compiles_and_dispatches() {
++        let loop_impl = LingShuLoop::new();
++        let ctx = sample_context("verify loop entrypoint exists");
++        let checkpoints = CheckpointStorage::new(Path::new("."));
++        // 不调用真实 LLM，仅验证 trait 方法签名与人参可调用性。
++        // 真实闭环由 runtime 集成测试 / CLI 端到端验证。
++        let _ = loop_impl
++            .orchestrate_turn(&ctx, &checkpoints, Path::new("."), None)
++            .await;
++        // 若 LLM 不可用，orchestrate_turn 会返回 Err，这里只验证签名可调用。
++        // 因此用类型断言代替运行时成功断言：
++        fn _assert_trait_obj(_: &dyn AgentLoop) {}
++        _assert_trait_obj(&loop_impl);
++    }
++}
+diff --git a/runtime/src/agents/message_bus.rs b/runtime/src/agents/message_bus.rs
+index 8ad4b13..8b2ca53 100644
+--- a/runtime/src/agents/message_bus.rs
++++ b/runtime/src/agents/message_bus.rs
+@@ -663,12 +663,7 @@ pub fn build_communication_summary(
+ }
+ 
+ fn truncate_str(s: &str, max: usize) -> String {
+-    if s.len() <= max {
+-        s.to_string()
+-    } else {
+-        let end = s.char_indices().take(max).last().map(|(i, _)| i).unwrap_or(s.len());
+-        format!("{}...", &s[..end])
+-    }
++    sacode_kernel::util::truncate_with_ellipsis(s, max)
+ }
+ 
+ #[cfg(test)]
+diff --git a/runtime/src/agents/orchestrator.rs b/runtime/src/agents/orchestrator.rs
+index 51fd134..b2d9eff 100644
+--- a/runtime/src/agents/orchestrator.rs
++++ b/runtime/src/agents/orchestrator.rs
+@@ -22,17 +22,19 @@ use super::summary_compactor::{
+ };
+ use super::{build_execution_plan, RoleRegistry};
+ use crate::agents::worker::{run_sub_agent, WorkerRunResult};
++use crate::config::profile::Profile;
+ use crate::model_routing::TaskProfile;
+ use crate::{task_run_from_report, CheckpointStorage};
+ 
+ pub async fn execute_role_driven_orchestration(
+     context: &ExecutionContext,
+     checkpoints: &CheckpointStorage,
++    workdir: &std::path::Path,
++    named_profile: Option<&Profile>,
+ ) -> Result<(ExecutionReport, sacode_kernel::AgentExecutionPlan)> {
+-    let workdir = std::env::current_dir()?;
+     let roles = RoleRegistry::builtin();
+-    let profile = TaskProfile::from_prompt_and_workspace(&context.task.prompt, &workdir);
+-    let plan = build_execution_plan(&context.task.prompt, &workdir, &profile, roles.all());
++    let profile = TaskProfile::from_prompt_and_workspace(&context.task.prompt, workdir);
++    let plan = build_execution_plan(&context.task.prompt, workdir, &profile, roles.all());
+ 
+     let mut report = ExecutionReport {
+         plan: Some(sacode_kernel::Plan::new(
+@@ -62,7 +64,7 @@ pub async fn execute_role_driven_orchestration(
+     // 创建消息总线，支持子 Agent 间通信
+     let message_bus = MessageBus::new();
+ 
+-    let results = execute_parallel_groups(&plan, &roles, &profile, &workdir, &mut report, &message_bus).await;
++    let results = execute_parallel_groups(&plan, &roles, &profile, workdir, &mut report, &message_bus, named_profile).await;
+ 
+     // 收集通信摘要
+     let comm_summaries = collect_communication_summaries(&results, &message_bus).await;
+@@ -98,78 +100,97 @@ pub async fn execute_role_driven_orchestration(
+     ));
+ 
+     // 灵枢 · 自防护 — 冲突处置回路
+-    // 检测到冲突后，根据严重程度采取不同处置策略：
+-    // - validation_conflict（实现与验证冲突）：触发修复闭环（M1 状态机）+ 发送 InterventionRequest
+-    // - 其他冲突：添加告警事件，在输出中追加处置建议
+-    if !report.conflict_records.is_empty() {
+-        let has_validation_conflict = report
+-            .conflict_records
+-            .iter()
+-            .any(|record| record.kind == "validation_conflict");
++    handle_conflict_disposition(&mut report, &message_bus, workdir).await;
+ 
+-        if has_validation_conflict {
+-            // 最严重冲突：实现与验证冲突 → 实时干预触发修复闭环（自防护→自愈回路）
+-            report.events.push(sacode_kernel::Event::error(format!(
+-                "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），触发自动修复闭环。冲突数：{}",
+-                report.conflict_records.len()
+-            )));
++    finalize_orchestration_events(&mut report, &results);
+ 
+-            // 发送 InterventionRequest 到消息总线，请求 test-engineer 介入修复
+-            message_bus
+-                .broadcast(
+-                    "orchestrator",
+-                    super::message_bus::AgentMessageKind::InterventionRequest,
+-                    format!(
+-                        "检测到 validation_conflict，请 test-engineer 重新运行 test.fix 修复并验证（最多 {} 轮）",
+-                        crate::tools::test::autofix::MAX_FIX_ITERATIONS
+-                    ),
+-                )
+-                .await;
+-
+-            // 触发修复闭环：调用 test.fix 驱动一轮分析与验证（M1 状态机）
+-            // 修复动作（fs.edit）由外部 LLM 工具循环完成，此处驱动状态机并记录度量
+-            match dispatch_fix_loop(&workdir, &mut report).await {
+-                Ok(loop_summary) => {
+-                    report.events.push(sacode_kernel::Event::thinking(format!(
+-                        "灵枢·自修复：修复闭环驱动完成，{}",
+-                        loop_summary
+-                    )));
+-                }
+-                Err(error) => {
+-                    report.events.push(sacode_kernel::Event::error(format!(
+-                        "灵枢·自修复：修复闭环驱动失败：{}",
+-                        error
+-                    )));
+-                }
++    Ok((report, plan))
++}
++
++
++/// 灵枢 · 自防护 — 冲突处置回路
++/// 检测到冲突后，根据严重程度采取不同处置策略：
++/// - validation_conflict（实现与验证冲突）：触发修复闭环（M1 状态机）+ 发送 InterventionRequest
++/// - 其他冲突：添加告警事件，在输出中追加处置建议
++async fn handle_conflict_disposition(
++    report: &mut ExecutionReport,
++    message_bus: &MessageBus,
++    workdir: &std::path::Path,
++) {
++    if report.conflict_records.is_empty() {
++        return;
++    }
++    let has_validation_conflict = report
++        .conflict_records
++        .iter()
++        .any(|record| record.kind == "validation_conflict");
++
++    if has_validation_conflict {
++        // 最严重冲突：实现与验证冲突 → 实时干预触发修复闭环（自防护→自愈回路）
++        report.events.push(sacode_kernel::Event::error(format!(
++            "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），触发修复闭环。冲突数：{}",
++            report.conflict_records.len()
++        )));
++
++        // 发送 InterventionRequest 到消息总线，请求 test-engineer 介入修复
++        message_bus
++            .broadcast(
++                "orchestrator",
++                super::message_bus::AgentMessageKind::InterventionRequest,
++                format!(
++                    "检测到 validation_conflict，请 test-engineer 重新运行 test.fix 修复并验证（最多 {} 轮）",
++                    crate::tools::test::autofix::MAX_FIX_ITERATIONS
++                ),
++            )
++            .await;
++
++        // 触发修复闭环：调用 test.fix 驱动一轮分析与验证（M1 状态机）
++        // 修复动作（fs.edit）由外部 LLM 工具循环完成，此处驱动状态机并记录度量
++        match dispatch_fix_loop(workdir, report).await {
++            Ok(loop_summary) => {
++                report.events.push(sacode_kernel::Event::thinking(format!(
++                    "灵枢·自修复：修复闭环驱动完成，{}",
++                    loop_summary
++                )));
++            }
++            Err(error) => {
++                report.events.push(sacode_kernel::Event::error(format!(
++                    "灵枢·自修复：修复闭环驱动失败：{}",
++                    error
++                )));
+             }
+-        } else {
+-            // 一般冲突：添加告警，提醒用户关注
+-            report.events.push(sacode_kernel::Event::message(format!(
+-                "灵枢·自防护：检测到 {} 项冲突，请关注汇总报告中的建议动作",
+-                report.conflict_records.len()
+-            )));
+         }
++    } else {
++        // 一般冲突：添加告警，提醒用户关注
++        report.events.push(sacode_kernel::Event::message(format!(
++            "灵枢·自防护：检测到 {} 项冲突，请关注汇总报告中的建议动作",
++            report.conflict_records.len()
++        )));
++    }
+ 
+-        // 在最终输出中追加冲突处置建议
+-        if let Some(ref mut output) = report.final_output {
+-            let conflict_summary: Vec<String> = report
+-                .conflict_records
+-                .iter()
+-                .map(|record| format!("- [{}] {}", record.kind, record.summary))
+-                .collect();
+-            output.push_str("\n\n---\n## 灵枢·自防护冲突告警\n");
+-            output.push_str(&format!(
+-                "检测到 {} 项冲突：\n{}\n",
+-                report.conflict_records.len(),
+-                conflict_summary.join("\n")
+-            ));
+-            if has_validation_conflict {
+-                output.push_str("\n**处置建议**：已触发自动修复闭环（test.fix 状态机），请检查实现代码与测试结果的一致性，修复后重新验证。\n");
+-            } else {
+-                output.push_str("\n**处置建议**：请审查上方冲突详情，确认是否需要调整执行策略。\n");
+-            }
++    // 在最终输出中追加冲突处置建议
++    if let Some(ref mut output) = report.final_output {
++        let conflict_summary: Vec<String> = report
++            .conflict_records
++            .iter()
++            .map(|record| format!("- [{}] {}", record.kind, record.summary))
++            .collect();
++        output.push_str("\n\n---\n## 灵枢·自防护冲突告警\n");
++        output.push_str(&format!(
++            "检测到 {} 项冲突：\n{}\n",
++            report.conflict_records.len(),
++            conflict_summary.join("\n")
++        ));
++        if has_validation_conflict {
++            output.push_str("\n**处置建议**：已触发自动修复闭环（test.fix 状态机），请检查实现代码与测试结果的一致性，修复后重新验证。\n");
++        } else {
++            output.push_str("\n**处置建议**：请审查上方冲突详情，确认是否需要调整执行策略。\n");
+         }
+     }
++}
++
++/// 收尾：追加汇总裁决与完成事件
++fn finalize_orchestration_events(report: &mut ExecutionReport, results: &[WorkerRunResult]) {
+     report.events.push(sacode_kernel::Event::thinking(format!(
+         "主 Agent 汇总裁决完成，汇总角色数：{}",
+         results.len()
+@@ -178,15 +199,14 @@ pub async fn execute_role_driven_orchestration(
+         "角色驱动编排完成，子 Agent 数量：{}",
+         results.len()
+     )));
+-
+-    Ok((report, plan))
+ }
+-
+ pub async fn execute_role_driven_task_run(
+     context: &ExecutionContext,
+     checkpoints: &CheckpointStorage,
++    workdir: &std::path::Path,
++    named_profile: Option<&Profile>,
+ ) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
+-    let (report, plan) = execute_role_driven_orchestration(context, checkpoints).await?;
++    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile).await?;
+     let task_run = task_run_from_report(
+         context.task_id.clone(),
+         context.mode,
+@@ -204,6 +224,7 @@ async fn execute_parallel_groups(
+     workdir: &std::path::Path,
+     report: &mut ExecutionReport,
+     message_bus: &MessageBus,
++    named_profile: Option<&Profile>,
+ ) -> Vec<WorkerRunResult> {
+     let mut all_results = Vec::new();
+ 
+@@ -261,6 +282,7 @@ async fn execute_parallel_groups(
+                 workdir,
+                 mailbox,
+                 &role_task_map,
++                named_profile,
+             ));
+         }
+ 
+@@ -417,49 +439,21 @@ fn aggregate_worker_results(
+ }
+ 
+ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord> {
+-    let success_values = results
+-        .iter()
+-        .map(|item| item.result.success)
+-        .collect::<std::collections::BTreeSet<_>>();
+-    let mut conflicts = Vec::new();
+-    if success_values.len() > 1 {
+-        conflicts.push(ConflictRecord {
+-            kind: "status_conflict".to_string(),
+-            summary: "mixed success status across roles".to_string(),
+-            details: results
+-                .iter()
+-                .map(|item| {
+-                    compact_conflict_detail(&format!("{}={}", item.role.id, item.result.success))
+-                })
+-                .collect(),
+-        });
++    let mut conflicts: Vec<ConflictRecord> = Vec::new();
++
++    // 降级：status_conflict/route_conflict/conclusion_conflict/polarity_conflict 降级为日志记录
++    // 不再触发独立干预，仅保留 validation_conflict 主路径
++    if results.iter().map(|r| r.result.success).collect::<std::collections::BTreeSet<_>>().len() > 1 {
++        tracing::debug!("collect_conflict_records: status_conflict (mixed success across roles)");
+     }
+ 
+-    let route_values = results
+-        .iter()
+-        .filter_map(|item| {
+-            item.resolved_route.as_ref().map(|route| {
+-                format!(
+-                    "{}/{}",
+-                    route.plan.primary.provider_name, route.plan.primary.model_name
+-                )
+-            })
+-        })
+-        .collect::<std::collections::BTreeSet<_>>();
+-    if route_values.len() > 1 {
+-        conflicts.push(ConflictRecord {
+-            kind: "route_conflict".to_string(),
+-            summary: format!(
+-                "multiple primary routes: {}",
+-                route_values.iter().cloned().collect::<Vec<_>>().join(", ")
+-            ),
+-            details: route_values
+-                .into_iter()
+-                .map(|detail| compact_conflict_detail(&detail))
+-                .collect(),
+-        });
++    if results.iter().filter_map(|r| r.resolved_route.as_ref().map(|route| {
++        format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name)
++    })).collect::<std::collections::BTreeSet<_>>().len() > 1 {
++        tracing::debug!("collect_conflict_records: route_conflict (multiple primary routes)");
+     }
+ 
++    // validation_conflict — 保留为主路径
+     let implementer_polarity = results
+         .iter()
+         .find(|item| item.role.id == "implementer")
+@@ -479,83 +473,31 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
+     if !validation_disagreements.is_empty() {
+         conflicts.push(ConflictRecord {
+             kind: "validation_conflict".to_string(),
+-            summary: format!(
+-                "implementation completion conflicts with validation findings: {}",
+-                validation_disagreements
+-                    .iter()
+-                    .map(|(role_id, _, _)| *role_id)
+-                    .collect::<Vec<_>>()
+-                    .join(", ")
+-            ),
+-            details: validation_disagreements
+-                .iter()
+-                .map(|(role_id, _, output)| {
+-                    compact_conflict_detail(&format!("{}: {}", role_id, output))
+-                })
+-                .collect(),
++            summary: format!("implementation completion conflicts with validation findings: {}",
++                validation_disagreements.iter().map(|(role_id, _, _)| *role_id).collect::<Vec<_>>().join(", ")),
++            details: validation_disagreements.iter().map(|(role_id, _, output)| {
++                compact_conflict_detail(&format!("{}: {}", role_id, output))
++            }).collect(),
+         });
+     }
+ 
+-    let conclusion_values = results
+-        .iter()
+-        .filter_map(|item| consensus_output(item.result.output.trim()))
+-        .collect::<std::collections::BTreeSet<_>>();
+-    if conclusion_values.len() > 1 {
+-        conflicts.push(ConflictRecord {
+-            kind: "conclusion_conflict".to_string(),
+-            summary: format!(
+-                "multiple distinct role conclusions: {}",
+-                conclusion_values
+-                    .iter()
+-                    .cloned()
+-                    .collect::<Vec<_>>()
+-                    .join(" | ")
+-            ),
+-            details: conclusion_values
+-                .into_iter()
+-                .map(|detail| compact_conflict_detail(&detail))
+-                .collect::<std::collections::BTreeSet<_>>()
+-                .into_iter()
+-                .collect(),
+-        });
++    if results.iter().filter_map(|r| consensus_output(r.result.output.trim())).collect::<std::collections::BTreeSet<_>>().len() > 1 {
++        tracing::debug!("collect_conflict_records: conclusion_conflict (multiple distinct conclusions)");
+     }
+ 
+-    let polarities = results
+-        .iter()
+-        .filter_map(|item| {
+-            detect_output_polarity(item.result.output.trim())
+-                .map(|polarity| (item.role.id.as_str(), polarity))
+-        })
+-        .collect::<Vec<_>>();
+-    let has_positive = polarities
+-        .iter()
+-        .any(|(_, polarity)| *polarity == OutputPolarity::Positive);
+-    let has_negative = polarities
+-        .iter()
+-        .any(|(_, polarity)| *polarity == OutputPolarity::Negative);
+-    if has_positive && has_negative {
+-        conflicts.push(ConflictRecord {
+-            kind: "polarity_conflict".to_string(),
+-            summary: format!(
+-                "mixed role conclusion polarity: {}",
+-                polarities
+-                    .iter()
+-                    .map(|(role_id, polarity)| format!("{}={}", role_id, polarity.as_str()))
+-                    .collect::<Vec<_>>()
+-                    .join(", ")
+-            ),
+-            details: polarities
+-                .iter()
+-                .map(|(role_id, polarity)| {
+-                    compact_conflict_detail(&format!("{}={}", role_id, polarity.as_str()))
+-                })
+-                .collect(),
+-        });
++    let polarities: Vec<_> = results.iter().filter_map(|item| {
++        detect_output_polarity(item.result.output.trim()).map(|p| (item.role.id.as_str(), p))
++    }).collect();
++    if polarities.iter().any(|(_, p)| *p == OutputPolarity::Positive)
++        && polarities.iter().any(|(_, p)| *p == OutputPolarity::Negative) {
++        tracing::debug!("collect_conflict_records: polarity_conflict (mixed output polarity)");
+     }
+ 
+     conflicts
+ }
+ 
++
++
+ fn build_summary_record(
+     task_prompt: &str,
+     results: &[WorkerRunResult],
+@@ -1000,8 +942,8 @@ mod tests {
+         let conflicts = collect_conflict_records(&[&explorer, &devops]);
+ 
+         assert!(
+-            conflicts.iter().any(|record| record.kind == "status_conflict"),
+-            "混合成功状态应触发 status_conflict，实际：{:?}",
++            conflicts.is_empty(),
++            "status_conflict 已降级为日志，不再出现在冲突记录中，实际：{:?}",
+             conflicts
+         );
+     }
+@@ -1020,8 +962,8 @@ mod tests {
+         let conflicts = collect_conflict_records(&[&explorer, &devops]);
+ 
+         assert!(
+-            conflicts.iter().any(|record| record.kind == "route_conflict"),
+-            "不同主路由应触发 route_conflict，实际：{:?}",
++            conflicts.is_empty(),
++            "route_conflict 已降级为日志，不再出现在冲突记录中，实际：{:?}",
+             conflicts
+         );
+     }
+@@ -1042,14 +984,15 @@ mod tests {
+         let conflicts = collect_conflict_records(&[&explorer, &devops]);
+ 
+         assert!(
+-            conflicts.iter().any(|record| record.kind == "conclusion_conflict"),
+-            "不同共识结论应触发 conclusion_conflict，实际：{:?}",
++            conflicts.is_empty(),
++            "conclusion_conflict 已降级为日志，不再出现在冲突记录中，实际：{:?}",
+             conflicts
+         );
+     }
+ 
+     #[test]
+     fn collect_conflict_records_detects_polarity_conflict() {
++        // 极性混合触发 validation_conflict，polarity_conflict 已降级为日志
+         // 维度 5：极性混合 — polarity_conflict
+         // 实现者正向 + 验证者负向，同时也会触发 validation_conflict，
+         // 这里仅断言 polarity_conflict 被识别
+@@ -1062,8 +1005,18 @@ mod tests {
+         let conflicts = collect_conflict_records(&[&implementer, &tester]);
+ 
+         assert!(
+-            conflicts.iter().any(|record| record.kind == "polarity_conflict"),
+-            "正负向极性混合应触发 polarity_conflict，实际：{:?}",
++            !conflicts.is_empty(),
++            "极性混合应触发 validation_conflict，实际为空：{:?}",
++            conflicts
++        );
++        assert!(
++            conflicts.iter().any(|r| r.kind == "validation_conflict"),
++            "应包含 validation_conflict，实际：{:?}",
++            conflicts
++        );
++        assert!(
++            !conflicts.iter().any(|r| r.kind == "polarity_conflict"),
++            "polarity_conflict 已降级为日志，不应出现在冲突记录中，实际：{:?}",
+             conflicts
+         );
+     }
+diff --git a/runtime/src/agents/worker.rs b/runtime/src/agents/worker.rs
+index 0fa6b6e..f69084e 100644
+--- a/runtime/src/agents/worker.rs
++++ b/runtime/src/agents/worker.rs
+@@ -17,6 +17,7 @@ use crate::executor::task_runner::{
+     AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
+     execute_task_with_failover,
+ };
++use crate::config::profile::Profile;
+ use crate::model_routing::TaskProfile;
+ use crate::prompt::{build_system_prompt, PromptContext};
+ use crate::tools::ToolRegistry;
+@@ -72,6 +73,7 @@ pub async fn run_sub_agent(
+     workdir: &std::path::Path,
+     mut mailbox: Option<AgentMailboxHandle>,
+     role_task_map: &HashMap<String, String>,
++    named_profile: Option<&Profile>,
+ ) -> WorkerRunResult {
+     let resolved_route = resolve_role_route(workdir, &role, profile);
+     let resolved_model_summary = resolved_route
+@@ -87,9 +89,12 @@ pub async fn run_sub_agent(
+     let mcp_store = McpConfigStore::new(workdir);
+     let _ = crate::register_enabled_mcp_tools_sync(&mcp_store, &mut tools);
+ 
+-    // 灵枢 · 上下文优化：按角色 + 任务画像筛选注入 prompt 的工具 schema
++    // 灵枢 · 上下文优化：按角色 + 任务画像 + 命名 Profile 筛选注入 prompt 的工具 schema
+     // 工具仍全量注册在 registry 中（确保可执行），仅 prompt 注入做分层筛选
+-    let (injected_specs, _budget_trimmed) = tools.for_prompt(Some(&role), Some(profile), None);
++    // §3.4 深化：named_profile 提供 enabled_tools/disabled_tools 白名单约束，
++    // 使 `sacode --profile web` 真正影响 worker 注入的工具集（非仅 dump）。
++    let (injected_specs, _budget_trimmed) =
++        tools.for_prompt_with_profile(Some(&role), Some(profile), named_profile, None);
+     let tool_names: Vec<String> = injected_specs
+         .iter()
+         .map(|spec| spec.name.to_string())
+@@ -230,81 +235,16 @@ pub async fn run_sub_agent(
+ 
+     let summary = build_role_summary_from_result(&role, &output_text, success);
+ 
+-    // 灵枢 · Agent Teams：发布自身执行结果摘要到消息总线，供后续 Agent 消费
+-    // 后续组的子 Agent 在执行前会通过 mailbox.try_recv_all() 消费此消息
+-    if let Some(mailbox) = mailbox {
+-        let status_label = if success { "完成" } else { "失败" };
+-        let summary_text = truncate_summary(&output_text);
+-        mailbox
+-            .broadcast(
+-                AgentMessageKind::ProgressSync,
+-                format!(
+-                    "角色 [{}] 任务 [{}] {}：{}",
+-                    role.id, task.title, status_label, summary_text
+-                ),
+-            )
+-            .await;
+-
+-        // 灵枢 · Agent Teams 阶段三：检测输出中的协助请求/响应标记
+-        // 通过标记将请求/响应转换为定向消息，实现 agent 间双向协作
+-        // 死锁防护：单次执行最多发送 MAX_ASSIST_REQUESTS_PER_RUN 个协助请求
+-        let assist_requests = extract_assist_requests(&output_text);
+-        let assist_responses = extract_assist_responses(&output_text);
+-
+-        let mut sent_requests = 0usize;
+-        for (target_role_id, content) in &assist_requests {
+-            if sent_requests >= MAX_ASSIST_REQUESTS_PER_RUN {
+-                tracing::warn!(
+-                    "角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求",
+-                    role.id,
+-                    MAX_ASSIST_REQUESTS_PER_RUN,
+-                    target_role_id
+-                );
+-                break;
+-            }
+-            if let Some(target_task_id) = role_task_map.get(target_role_id) {
+-                let sent = mailbox
+-                    .send_to(
+-                        target_task_id,
+-                        AgentMessageKind::RequestAssist,
+-                        content.clone(),
+-                    )
+-                    .await;
+-                if sent {
+-                    sent_requests += 1;
+-                    tracing::info!(
+-                        "角色 [{}] 向 [{}] 发送协助请求",
+-                        role.id,
+-                        target_role_id
+-                    );
+-                }
+-            } else {
+-                tracing::warn!(
+-                    "角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到",
+-                    role.id,
+-                    target_role_id
+-                );
+-            }
+-        }
+-
+-        // 协助响应不限制数量（是回应已有请求，不会引发循环）
+-        for (target_role_id, content) in &assist_responses {
+-            if let Some(target_task_id) = role_task_map.get(target_role_id) {
+-                mailbox
+-                    .send_to(
+-                        target_task_id,
+-                        AgentMessageKind::AssistResponse,
+-                        content.clone(),
+-                    )
+-                    .await;
+-                tracing::info!(
+-                    "角色 [{}] 向 [{}] 发送协助响应",
+-                    role.id,
+-                    target_role_id
+-                );
+-            }
+-        }
+-    }
++    // 灵枢 · Agent Teams：发布自身执行结果摘要与协助请求/响应到消息总线
++    broadcast_sub_agent_outputs(
++        mailbox,
++        &role,
++        &task,
++        success,
++        &output_text,
++        role_task_map,
++    )
++    .await;
+ 
+     WorkerRunResult {
+         result: SubAgentResult {
+@@ -320,6 +260,62 @@ pub async fn run_sub_agent(
+     }
+ }
+ 
++/// 灵枢 · Agent Teams：发布自身执行结果摘要与协助请求/响应到消息总线
++async fn broadcast_sub_agent_outputs(
++    mailbox: Option<AgentMailboxHandle>,
++    role: &AgentRole,
++    task: &SubAgentTask,
++    success: bool,
++    output_text: &str,
++    role_task_map: &HashMap<String, String>,
++) {
++    let Some(mailbox) = mailbox else { return };
++
++    let status_label = if success { "完成" } else { "失败" };
++    let summary_text = truncate_summary(output_text);
++    mailbox
++        .broadcast(
++            AgentMessageKind::ProgressSync,
++            format!("角色 [{}] 任务 [{}] {}：{}", role.id, task.title, status_label, summary_text),
++        )
++        .await;
++
++    // 灵枢 · Agent Teams 阶段三：检测输出中的协助请求/响应标记
++    // 通过标记将请求/响应转换为定向消息，实现 agent 间双向协作
++    // 死锁防护：单次执行最多发送 MAX_ASSIST_REQUESTS_PER_RUN 个协助请求
++    let assist_requests = extract_assist_requests(output_text);
++    let assist_responses = extract_assist_responses(output_text);
++
++    let mut sent_requests = 0usize;
++    for (target_role_id, content) in &assist_requests {
++        if sent_requests >= MAX_ASSIST_REQUESTS_PER_RUN {
++            tracing::warn!("角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求", role.id, MAX_ASSIST_REQUESTS_PER_RUN, target_role_id);
++            break;
++        }
++        if let Some(target_task_id) = role_task_map.get(target_role_id) {
++            let sent = mailbox
++                .send_to(target_task_id, AgentMessageKind::RequestAssist, content.clone())
++                .await;
++            if sent {
++                sent_requests += 1;
++                tracing::info!("角色 [{}] 向 [{}] 发送协助请求", role.id, target_role_id);
++            }
++        } else {
++            tracing::warn!("角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到", role.id, target_role_id);
++        }
++    }
++
++    // 协助响应不限制数量（是回应已有请求，不会引发循环）
++    for (target_role_id, content) in &assist_responses {
++        if let Some(target_task_id) = role_task_map.get(target_role_id) {
++            mailbox
++                .send_to(target_task_id, AgentMessageKind::AssistResponse, content.clone())
++                .await;
++            tracing::info!("角色 [{}] 向 [{}] 发送协助响应", role.id, target_role_id);
++        }
++    }
++}
++
+ /// 构建角色专属系统指令
+ fn build_role_system_instruction(role: &AgentRole) -> String {
+     let mut instruction = format!(
+@@ -619,6 +615,7 @@ fn extract_assist_responses(output: &str) -> Vec<(String, String)> {
+ ///
+ /// `edges`：`(from_role, to_role)` 依赖边列表（来自当前及历史协助请求）
+ /// 返回 `Ok(())` 表示无环可安全发送；`Err(cycle)` 表示检测到环
++#[allow(dead_code)]
+ pub fn validate_assist_dag(
+     edges: &[(String, String)],
+ ) -> Result<(), Vec<String>> {

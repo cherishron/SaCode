@@ -1,0 +1,210 @@
+diff --git a/runtime/src/executor/task_runner.rs b/runtime/src/executor/task_runner.rs
+index e3712de..9cb07a0 100644
+--- a/runtime/src/executor/task_runner.rs
++++ b/runtime/src/executor/task_runner.rs
+@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
+ 
+ use anyhow::Result;
+ use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
+-use sacode_kernel::{ExecutionMode, TaskRun, TaskRunState};
++use sacode_kernel::{
++    Event, ExecutionMode, ExecutionReport, RouteRecord, RoutedModelRecord, TaskRun,
++    TaskRunState,
++};
+ 
+-use crate::provider::{ProviderClient, StreamChunk, StreamChunkKind, ToolChatResult};
++use crate::provider::{ProviderClient, StreamChunkKind, ToolChatResult};
+ use crate::tools::{SideEffectLevel, ToolRegistry};
+-use crate::{task_run_snapshot, FailoverContext, NodeScore, TaskProfile};
++use crate::{task_run_from_report, FailoverContext, NodeScore, TaskProfile};
+ 
+ // ── 审批决策 trait ──────────────────────────────────────────────
+ 
+@@ -167,16 +170,42 @@ pub async fn execute_task_with_provider(
+         None => TaskRunState::Failed,
+     };
+ 
+-    let task_run = task_run_snapshot(
++    let mut report = ExecutionReport::default();
++    report.final_output = response.as_ref().ok().cloned();
++    if let Some(output) = response.as_ref().ok() {
++        report.events.push(Event::Message {
++            content: output.clone(),
++        });
++        report.events.push(Event::Done {
++            summary: output.clone(),
++        });
++    }
++    if let Some(error) = response.as_ref().err() {
++        report.events.push(Event::Error {
++            message: error.clone(),
++        });
++    }
++    // 记录实际使用的路由信息（provider + model）
++    if config.provider.api_key.is_some() {
++        report.route_records.push(RouteRecord {
++            task_id: config.task_id.clone().unwrap_or_default(),
++            role_id: "main".to_string(),
++            primary: RoutedModelRecord {
++                provider_name: format!("{:?}", config.provider.kind),
++                model_name: config.provider.model.clone(),
++                ..RoutedModelRecord::default()
++            },
++            fallbacks: Vec::new(),
++            route_reason: "single-agent default route".to_string(),
++        });
++    }
++
++    let task_run = task_run_from_report(
+         config.task_id.clone(),
+         config.mode,
+         config.user_prompt.clone(),
++        &report,
+         state.clone(),
+-        response
+-            .as_ref()
+-            .ok()
+-            .cloned()
+-            .or_else(|| response.as_ref().err().cloned()),
+     );
+ 
+     TaskRunResult {
+@@ -680,10 +709,32 @@ fn format_tool_chat_result(result: &ToolChatResult, max_iterations: usize) -> St
+         } else {
+             result.final_text.trim().to_string()
+         };
+-        format!(
+-            "本次任务达到最大迭代次数 {}，我已停止继续自动调用工具。\n\n{}",
+-            max_iterations, summary
+-        )
++
++        // 区分「迭代耗尽」与「工具持续失败」：若最后一轮工具报错，说明任务中断更可能是
++        // 工具执行失败（如权限/访问拒绝）所致，而非单纯轮次用尽，给出更明确的归因与指引。
++        let failure_note = result.last_tool_error.as_ref().map(|err| {
++            let mut note = format!(
++                "注意：任务在多轮工具调用中持续遇到错误而停止（并非单纯迭代耗尽）。最后错误：{}",
++                err
++            );
++            let hint = tool_error_hint(err);
++            if !hint.is_empty() {
++                note.push_str("\n\n");
++                note.push_str(&hint);
++            }
++            note
++        });
++
++        match failure_note {
++            Some(note) => format!(
++                "本次任务达到最大迭代次数 {}，我已停止继续自动调用工具。\n\n{}\n\n{}",
++                max_iterations, note, summary
++            ),
++            None => format!(
++                "本次任务达到最大迭代次数 {}，我已停止继续自动调用工具。\n\n{}",
++                max_iterations, summary
++            ),
++        }
+     } else if result.final_text.trim().is_empty() {
+         "工具调用已完成，但模型未生成总结，已返回工具结果摘要。".to_string()
+     } else {
+@@ -707,6 +758,35 @@ pub fn is_permission_restricted_error(error: &str) -> bool {
+     .any(|needle| lowered.contains(needle))
+ }
+ 
++/// 判断错误是否为「访问被拒绝」类（含 Windows `os error 5` / 中文「拒绝访问」/
++/// POSIX `Permission denied`），用于给出更明确的平台指引。
++pub fn is_access_denied_error(error: &str) -> bool {
++    let lowered = error.to_lowercase();
++    lowered.contains("permission denied")
++        || lowered.contains("拒绝访问")
++        || lowered.contains("access is denied")
++        || lowered.contains("eaccess")
++        || lowered.contains("os error 5")
++}
++
++/// 为工具执行错误生成针对性的排查指引（特别是 Windows 访问拒绝场景）。
++fn tool_error_hint(error: &str) -> String {
++    if is_access_denied_error(error) {
++        [
++            "这通常是 Windows 访问被拒绝（os error 5 / ERROR_ACCESS_DENIED）：",
++            "• 目标路径在受保护目录（如 C:\\Windows、Program Files），请改用工作区内的目录；",
++            "• 文件可能被 IDE / 杀毒软件 / 其他进程独占锁定，请关闭占用程序后重试；",
++            "• 若通过 shell.exec 执行命令，需要管理员权限的操作请改用普通用户可写路径；",
++            "• 可尝试将任务目标目录移到项目工作区内，避免跨盘符 / 系统目录。",
++        ]
++        .join("\n")
++    } else if is_permission_restricted_error(error) {
++        "这是沙箱策略拦截（路径 / 网络 / 工作目录受限）。请检查目标是否在允许范围内，或通过配置放宽沙箱策略。".to_string()
++    } else {
++        String::new()
++    }
++}
++
+ /// 格式化副作用级别
+ pub fn format_side_effect_level(level: SideEffectLevel) -> &'static str {
+     match level {
+@@ -824,3 +904,65 @@ impl ErrorRecorder for LoggingErrorRecorder {
+         tracing::warn!("[TaskRunner] provider error: {} - {}", category, detail);
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::provider::client::ToolChatResult;
++
++    fn base_result() -> ToolChatResult {
++        ToolChatResult {
++            messages: vec![],
++            final_text: String::new(),
++            reasoning_content: None,
++            tool_calls_made: 0,
++            rounds: 3,
++            usage: None,
++            pending_question: None,
++            hit_round_limit: true,
++            last_tool_error: None,
++        }
++    }
++
++    #[test]
++    fn format_tool_chat_result_plain_round_limit_no_error() {
++        let r = base_result();
++        let out = format_tool_chat_result(&r, 3);
++        assert!(out.contains("达到最大迭代次数 3"));
++        // 无工具错误时不应出现「持续遇到错误」归因
++        assert!(!out.contains("并非单纯迭代耗尽"));
++    }
++
++    #[test]
++    fn format_tool_chat_result_detects_persistent_tool_failure() {
++        let mut r = base_result();
++        r.last_tool_error = Some("something broke".to_string());
++        let out = format_tool_chat_result(&r, 3);
++        assert!(out.contains("达到最大迭代次数 3"));
++        assert!(out.contains("并非单纯迭代耗尽"));
++        assert!(out.contains("最后错误：something broke"));
++    }
++
++    #[test]
++    fn format_tool_chat_result_gives_windows_access_denied_hint() {
++        let mut r = base_result();
++        r.last_tool_error =
++            Some("拒绝访问。 (os error 5)".to_string());
++        let out = format_tool_chat_result(&r, 3);
++        assert!(out.contains("并非单纯迭代耗尽"));
++        // Windows 访问拒绝指引应包含受保护目录提示
++        assert!(out.contains("受保护目录") || out.contains("C:\\Windows"));
++    }
++
++    #[test]
++    fn is_access_denied_error_recognizes_os_error_5_and_posix() {
++        assert!(is_access_denied_error("拒绝访问。 (os error 5)"));
++        assert!(is_access_denied_error("Permission denied (os error 13)"));
++        assert!(!is_access_denied_error("connection timed out"));
++    }
++
++    #[test]
++    fn tool_error_hint_empty_for_unrelated_error() {
++        assert!(tool_error_hint("connection timed out").is_empty());
++    }
++}

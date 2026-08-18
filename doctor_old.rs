@@ -27,9 +27,10 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         .load()
         .map_err(|e| anyhow::anyhow!("load failed: {e}"))?;
     let memory_files = [
-        workdir.join(".sacode/wiki/project.md"),
+        workdir.join(".sacode/wiki/memory.md"),
         workdir.join(".sacode/wiki/preferences.md"),
-        workdir.join(".sacode/wiki/experience.md"),
+        workdir.join(".sacode/wiki/workflows.md"),
+        workdir.join(".sacode/wiki/decisions.md"),
     ];
     let has_memory = memory_files.iter().any(|path| path.exists());
     let plugin_status = plugin_status(workdir)

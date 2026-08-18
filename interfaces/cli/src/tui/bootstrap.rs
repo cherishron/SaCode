@@ -7,6 +7,7 @@ use std::{
 
 use ratatui::layout::Rect;
 
+use sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::ProjectAccessConfigStore;
 
@@ -73,7 +74,17 @@ impl App {
                 "idea".to_string(),
             ],
             selected_theme_index: 0,
-            connect_options: crate::provider_config::preset_connect_options(),
+            connect_options: {
+                // 与 REPL 侧保持对齐：ollama 因 localhost 被 preset_connect_options 过滤掉，
+                // TUI 启动时需要显式加入，否则用户无法从 /connect 选择列表里选中 ollama。
+                let mut opts: Vec<(String, String, bool)> = vec![(
+                    "ollama".to_string(),
+                    OLLAMA_DEFAULT_BASE_URL.to_string(),
+                    false,
+                )];
+                opts.extend(crate::provider_config::preset_connect_options());
+                opts
+            },
             selected_connect_index: 0,
             pending_connect_provider: None,
             task_tx,
@@ -210,7 +221,17 @@ impl App {
                 "idea".to_string(),
             ],
             selected_theme_index: 0,
-            connect_options: crate::provider_config::preset_connect_options(),
+            connect_options: {
+                // 与 REPL 侧保持对齐：ollama 因 localhost 被 preset_connect_options 过滤掉，
+                // TUI 启动时需要显式加入，否则用户无法从 /connect 选择列表里选中 ollama。
+                let mut opts: Vec<(String, String, bool)> = vec![(
+                    "ollama".to_string(),
+                    OLLAMA_DEFAULT_BASE_URL.to_string(),
+                    false,
+                )];
+                opts.extend(crate::provider_config::preset_connect_options());
+                opts
+            },
             selected_connect_index: 0,
             pending_connect_provider: None,
             task_tx,

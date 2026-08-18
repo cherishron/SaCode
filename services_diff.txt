@@ -1,0 +1,199 @@
+diff --git a/runtime/src/session/event_log.rs b/runtime/src/session/event_log.rs
+new file mode 100644
+index 0000000..f077a8b
+--- /dev/null
++++ b/runtime/src/session/event_log.rs
+@@ -0,0 +1,180 @@
++//! 会话事件日志 — Event Sourcing 雏形（§3.1 第一步：事件日志持久化）
++//!
++//! 借鉴 deepseek-harness 的 "SessionEvent 日志是唯一真相源" 设计
++//! （见 `docs/reference/comparison-with-deepseek-harness.md` §3.1）。
++//!
++//! SaCode 已有 `daemon::EventHistory`（内存 `VecDeque` + `replay_after`）
++//! 与 SSE `stream_from_broadcast_with_replay`（Last-Event-ID 续传）——
++//! 已有事件流重建的 80% 基础设施。本模块补齐**持久化**缺口：
++//!
++//! - 工具执行事件落盘到 `.sacode/events.log`（JSON 行，append-only）
++//! - 进程内保留内存缓冲，支持 `replay_after(seq)` 回放
++//! - 与 `daemon::StreamEvent` 共用 `seq` 单调递增序号语义
++//!
++//! 本期定位：**事件日志持久化**（第一步），不改变 `ExecutionReport.events`
++//! 的状态对象地位（那是 v1.2 第二步：状态作为事件投影）。持久化事件流
++//! 为后续"状态即投影"提供可回放真相源。
++
++use std::{
++    collections::VecDeque,
++    path::PathBuf,
++    sync::{
++        atomic::{AtomicU64, Ordering},
++        Mutex as StdMutex,
++        OnceLock,
++    },
++};
++
++use serde::{Deserialize, Serialize};
++
++/// 会话事件类型
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum SessionEventType {
++    /// 工具调用开始（对应 `Event::ToolCallStarted`）
++    ToolCallStarted,
++    /// 工具调用结束（对应 `Event::ToolCallFinished`）
++    ToolCallFinished,
++    /// 工具被拦截器拒绝（pre_execute 返回 Deny）
++    ToolCallDenied,
++}
++
++/// 一条持久化会话事件
++///
++/// 字段对齐 `daemon::StreamEvent`（`task_id` / `event_type` / `data` / `seq`），
++/// 以便后续 v1.2 阶段可直接投影为 SSE 事件流。
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct SessionEvent {
++    /// 会话标识（空字符串表示独立调用，未关联会话）
++    pub session_id: String,
++    /// 事件类型
++    #[serde(rename = "type")]
++    pub event_type: SessionEventType,
++    /// 事件载荷：工具名、input、output、success、error 等
++    pub data: serde_json::Value,
++    /// 单调递增序号（跨进程内所有会话共享，用于回放）
++    #[serde(skip)]
++    pub seq: u64,
++    /// RFC3339 时间戳（非确定性字段，事件化存储以支持幂等回放）
++    pub ts: String,
++}
++
++impl SessionEvent {
++    /// 投影为 SSE 兼容的 `data` payload（不含 `seq`）
++    pub fn to_sse_data(&self) -> serde_json::Value {
++        let mut v = self.data.clone();
++        v["session_id"] = serde_json::Value::String(self.session_id.clone());
++        v["type"] = serde_json::Value::String(match self.event_type {
++            SessionEventType::ToolCallStarted => "tool_call_started".to_string(),
++            SessionEventType::ToolCallFinished => "tool_call_finished".to_string(),
++            SessionEventType::ToolCallDenied => "tool_call_denied".to_string(),
++        });
++        v["ts"] = serde_json::Value::String(self.ts.clone());
++        v
++    }
++}
++
++/// 持久化会话事件日志（进程内单例）
++///
++/// - 内存 `VecDeque` 缓冲最近 `capacity` 条，支持 `replay_after`
++/// - 落盘 `.sacode/events.log`（按当前工作目录解析）
++/// - 落盘失败（如工作目录不可写）时降级为纯内存模式，不中断工具执行
++pub struct SessionEventLog {
++    seq: AtomicU64,
++    buffer: StdMutex<VecDeque<SessionEvent>>,
++    capacity: usize,
++    /// 落盘路径；None 表示纯内存模式（落盘失败降级）
++    log_path: StdMutex<Option<PathBuf>>,
++}
++
++impl SessionEventLog {
++    const DEFAULT_CAPACITY: usize = 4096;
++
++    fn new(capacity: usize) -> Self {
++        let log_path = std::env::current_dir()
++            .ok()
++            .map(|dir| dir.join(".sacode").join("events.log"));
++
++        // 预创建 .sacode 目录；失败则降级纯内存
++        let resolved = match log_path {
++            Some(path) => {
++                if path.parent().map(|p| std::fs::create_dir_all(p)).is_some() {
++                    Some(path)
++                } else {
++                    None
++                }
++            }
++            None => None,
++        };
++
++        Self {
++            seq: AtomicU64::new(0),
++            buffer: StdMutex::new(VecDeque::with_capacity(capacity)),
++            capacity,
++            log_path: StdMutex::new(resolved),
++        }
++    }
++
++    /// 全局单例（进程内共享，seq 单调递增）
++    pub fn global() -> &'static SessionEventLog {
++        static INSTANCE: OnceLock<SessionEventLog> = OnceLock::new();
++        INSTANCE.get_or_init(|| SessionEventLog::new(Self::DEFAULT_CAPACITY))
++    }
++
++    /// 记录一条事件，返回分配的 seq
++    ///
++    /// 同时写入内存缓冲（供回放）与落盘（append-only）。
++    /// 落盘失败仅打印 warn 并降级，不影响工具执行链路。
++    pub fn record(&self, session_id: &str, event_type: SessionEventType, data: serde_json::Value) -> u64 {
++        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
++        let ts = chrono::Utc::now().to_rfc3339();
++
++        let event = SessionEvent {
++            session_id: session_id.to_string(),
++            event_type,
++            data,
++            seq,
++            ts,
++        };
++
++        // 内存缓冲
++        {
++            let mut buf = self.buffer.lock().expect("session event buffer poisoned");
++            buf.push_back(event.clone());
++            while buf.len() > self.capacity {
++                buf.pop_front();
++            }
++        }
++
++        // 落盘（追加）
++        if let Some(path) = self.log_path.lock().expect("log path poisoned").clone() {
++            if let Ok(mut file) = std::fs::OpenOptions::new()
++                .create(true)
++                .append(true)
++                .open(&path)
++            {
++                use std::io::Write;
++                let _ = writeln!(file, "{}", serde_json::to_string(&event).unwrap_or_default());
++            } else {
++                // 落盘失败：降级纯内存（仅一次）
++                *self.log_path.lock().expect("log path poisoned") = None;
++            }
++        }
++
++        seq
++    }
++
++    /// 回放 seq > `last_seq` 的所有事件（升序）
++    pub fn replay_after(&self, last_seq: u64) -> Vec<SessionEvent> {
++        let buf = self.buffer.lock().expect("session event buffer poisoned");
++        buf.iter()
++            .filter(|e| e.seq > last_seq)
++            .cloned()
++            .collect()
++    }
++
++    /// 当前最大 seq
++    pub fn current_seq(&self) -> u64 {
++        self.seq.load(Ordering::Relaxed)
++    }
++}
+diff --git a/runtime/src/session/mod.rs b/runtime/src/session/mod.rs
+index 5d16924..6e1bad8 100644
+--- a/runtime/src/session/mod.rs
++++ b/runtime/src/session/mod.rs
+@@ -16,6 +16,8 @@ use sacode_kernel::{
+ use crate::CheckpointStorage;
+ use crate::memory::learner::AutoLearner;
+ use crate::ToolRegistry;
++
++pub mod event_log;
+ use crate::executor::task_runner::{
+     ApprovalDecider, AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder,
+     PromptUserDecider, TaskRunConfig, execute_task_with_provider,

@@ -1,0 +1,58 @@
+diff --git a/runtime/src/tools/code/cache.rs b/runtime/src/tools/code/cache.rs
+index 359ed17..01b4645 100644
+--- a/runtime/src/tools/code/cache.rs
++++ b/runtime/src/tools/code/cache.rs
+@@ -39,7 +39,7 @@ impl AstCache {
+             modified.map(|t| format!("{:?}", t)).unwrap_or_default()
+         );
+ 
+-        let entries = self.entries.read().unwrap();
++        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+         if let Some(cached) = entries.get(&cache_key) {
+             return Ok(cached.summary.clone());
+         }
+@@ -48,7 +48,7 @@ impl AstCache {
+         let summary = super::ast::AstEditor::summarize(language, source)?;
+ 
+         {
+-            let mut entries = self.entries.write().unwrap();
++            let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+             if entries.len() >= self.max_entries {
+                 let oldest = entries
+                     .iter()
+@@ -71,7 +71,7 @@ impl AstCache {
+     }
+ 
+     pub fn invalidate(&self, path: &std::path::Path) {
+-        let mut entries = self.entries.write().unwrap();
++        let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+         let prefix = format!("{}:", path.display());
+         entries.retain(|key, _| !key.starts_with(&prefix));
+     }
+@@ -110,7 +110,7 @@ impl FileListCache {
+         let dir_modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+ 
+         {
+-            let entries = self.entries.read().unwrap();
++            let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+             if let Some(cached) = entries.get(dir) {
+                 if cached.dir_modified == dir_modified {
+                     return Ok(cached.files.clone());
+@@ -122,7 +122,7 @@ impl FileListCache {
+         collect_fn(dir, language, &mut files)?;
+ 
+         {
+-            let mut entries = self.entries.write().unwrap();
++            let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+             entries.insert(
+                 dir.to_path_buf(),
+                 DirFileListCache {
+@@ -136,7 +136,7 @@ impl FileListCache {
+     }
+ 
+     pub fn invalidate(&self, path: &std::path::Path) {
+-        let mut entries = self.entries.write().unwrap();
++        let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+         if path.is_file() {
+             if let Some(parent) = path.parent() {
+                 entries.remove(parent);

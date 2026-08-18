@@ -32,9 +32,9 @@ impl MemoryKind {
 
     pub fn from_flag(value: &str) -> Option<Self> {
         match value {
-            "memory" | "project" => Some(Self::General),
+            "memory" => Some(Self::General),
             "preference" | "preferences" => Some(Self::Preference),
-            "workflow" | "workflows" | "experience" => Some(Self::Workflow),
+            "workflow" | "workflows" => Some(Self::Workflow),
             "decision" | "decisions" => Some(Self::Decision),
             _ => None,
         }
@@ -42,10 +42,10 @@ impl MemoryKind {
 
     pub fn file_name(self) -> &'static str {
         match self {
-            Self::General => "project.md",
+            Self::General => "memory.md",
             Self::Preference => "preferences.md",
-            Self::Workflow => "experience.md",
-            Self::Decision => "experience.md",
+            Self::Workflow => "workflows.md",
+            Self::Decision => "decisions.md",
         }
     }
 
@@ -176,67 +176,6 @@ pub fn memory_file_path(root: &Path, kind: MemoryKind) -> PathBuf {
 
 pub fn memory_index_path(root: &Path) -> PathBuf {
     root.join(MEMORY_INDEX_FILE)
-}
-
-/// 旧版（v1.0 之前）使用的文件名及其对应的新文件名与 MemoryKind。
-///
-/// | 旧文件名 | 新文件名 | MemoryKind |
-/// |---|---|---|
-/// | memory.md | project.md | General |
-/// | workflows.md | experience.md | Workflow |
-/// | decisions.md | experience.md | Decision |
-const LEGACY_MEMORY_FILES: [(&str, MemoryKind); 3] = [
-    ("memory.md", MemoryKind::General),
-    ("workflows.md", MemoryKind::Workflow),
-    ("decisions.md", MemoryKind::Decision),
-];
-
-/// 将旧版记忆文件自动迁移到新版命名。
-///
-/// 行为：
-/// - 旧文件不存在 / 已备份 → 跳过。
-/// - 新文件不存在 → 用对应 MemoryKind 的标题/描述初始化新文件，再将旧内容追加进去。
-/// - 新文件已存在 → 将旧文件内容以 `---` 分隔追加到新文件末尾。
-/// - 迁移后旧文件被重命名为 `<旧文件名>.bak`。
-///
-/// 幂等：同一个旧文件只会迁移一次（迁移后即被重命名为 .bak，再次调用会跳过）。
-pub fn migrate_legacy_memory_files(root: &Path, scope: MemoryScope) -> Result<()> {
-    // 确保父目录存在
-    if let Some(parent) = root.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    for &(old_name, kind) in LEGACY_MEMORY_FILES.iter() {
-        let old_path = root.join(old_name);
-        if !old_path.exists() {
-            continue;
-        }
-        let backup_path = root.join(format!("{}.bak", old_name));
-        // 已存在 .bak → 已经迁移过，跳过
-        if backup_path.exists() {
-            continue;
-        }
-        let new_path = root.join(kind.file_name());
-        let old_content = fs::read_to_string(&old_path)?;
-        // 重命名旧文件为 .bak
-        fs::rename(&old_path, &backup_path)?;
-
-        let migrated_block = format!(
-            "---\n\n[从 {} 迁移]\n\n{}",
-            old_name, old_content
-        );
-
-        if new_path.exists() {
-            // 新文件已存在：追加旧内容
-            let new_content = fs::read_to_string(&new_path)?;
-            fs::write(&new_path, format!("{}\n\n{}", new_content, migrated_block))?;
-        } else {
-            // 新文件不存在：先按新命名初始化，再追加旧内容
-            ensure_memory_file(&new_path, scope, kind)?;
-            let new_content = fs::read_to_string(&new_path)?;
-            fs::write(&new_path, format!("{}\n\n{}", new_content, migrated_block))?;
-        }
-    }
-    Ok(())
 }
 
 pub fn ensure_memory_file(path: &Path, scope: MemoryScope, kind: MemoryKind) -> Result<()> {

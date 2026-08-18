@@ -1,0 +1,91 @@
+diff --git a/runtime/src/provider/client.rs b/runtime/src/provider/client.rs
+index fd7ed67..21672d4 100644
+--- a/runtime/src/provider/client.rs
++++ b/runtime/src/provider/client.rs
+@@ -38,6 +38,8 @@ pub struct ToolChatResult {
+     pub usage: Option<ChatUsage>,
+     pub pending_question: Option<serde_json::Value>,
+     pub hit_round_limit: bool,
++    /// 工具执行中最后一次出现的错误信息（若有）。用于区分「迭代耗尽」与「工具持续失败」。
++    pub last_tool_error: Option<String>,
+ }
+ 
+ impl ProviderClient {
+@@ -192,6 +194,7 @@ impl ProviderClient {
+         let mut tool_calls_made = 0;
+         let mut rounds = 0;
+         let mut last_tool_outputs: Vec<(String, serde_json::Value)> = Vec::new();
++        let mut last_tool_error: Option<String> = None;
+         let mut usage = ChatUsage {
+             prompt_tokens: 0,
+             completion_tokens: 0,
+@@ -235,10 +238,14 @@ impl ProviderClient {
+                     usage: has_usage.then_some(usage),
+                     pending_question: None,
+                     hit_round_limit: false,
++                    last_tool_error: None,
+                 });
+             }
+ 
+-            let tool_calls = assistant_msg.tool_calls.clone().unwrap();
++            let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
++            if tool_calls.is_empty() {
++                break;
++            }
+             messages.push(assistant_msg);
+ 
+             for tool_call in &tool_calls {
+@@ -264,7 +271,10 @@ impl ProviderClient {
+                         last_tool_outputs.push((tool_call.function.name.clone(), data.clone()));
+                         serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string())
+                     }
+-                    Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
++                    Err(error) => {
++                        last_tool_error = Some(error.to_string());
++                        serde_json::json!({ "error": error.to_string() }).to_string()
++                    }
+                 };
+ 
+                 messages.push(ChatMessage::tool_result_named(
+@@ -287,6 +297,7 @@ impl ProviderClient {
+                         usage: has_usage.then_some(usage),
+                         pending_question: Some(pending_question),
+                         hit_round_limit: false,
++                        last_tool_error: None,
+                     });
+                 }
+             }
+@@ -327,6 +338,7 @@ impl ProviderClient {
+             usage: has_usage.then_some(usage),
+             pending_question: None,
+             hit_round_limit: true,
++            last_tool_error,
+         })
+     }
+ 
+@@ -873,7 +885,7 @@ fn default_base_url(kind: &ProviderKind) -> String {
+         ProviderKind::Deepseek => "https://api.deepseek.com",
+         ProviderKind::Mimo => MIMO_TOKEN_PLAN_BASE_URL,
+         ProviderKind::Longcat => "https://api.longcat.chat/openai/v1",
+-        ProviderKind::Ollama => "http://127.0.0.1:11434/v1",
++        ProviderKind::Ollama => sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL,
+         ProviderKind::Custom(_) => "",
+     }
+     .to_string()
+@@ -919,7 +931,7 @@ mod tests {
+         );
+         assert_eq!(
+             default_base_url(&sacode_kernel::model::ProviderKind::Ollama),
+-            "http://127.0.0.1:11434/v1"
++            sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL
+         );
+         assert_eq!(
+             default_base_url(&sacode_kernel::model::ProviderKind::Custom(
+@@ -1034,6 +1046,7 @@ mod tests {
+             usage: None,
+             pending_question: None,
+             hit_round_limit: false,
++            last_tool_error: None,
+         };
+         assert_eq!(result.final_text, "done");
+         assert_eq!(result.reasoning_content.unwrap(), "thinking");
