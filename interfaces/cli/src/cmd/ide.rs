@@ -21,7 +21,8 @@ pub fn render_ide(workdir: &Path, args: &[String]) -> Result<String> {
         Some("jetbrains") => render_jetbrains(workdir, &config),
         Some("generate") => render_generate(workdir, &config, &args[1..]),
         Some("config") => render_config(workdir, &mut config, &args[1..], &store),
-        Some(_) => Ok("用法: /ide [status|vscode|cursor|jetbrains|generate|config show|path|set acp|lsp --host HOST --port PORT]".to_string()),
+        Some("install") => render_install(workdir),
+        Some(_) => Ok("用法: /ide [status|vscode|cursor|jetbrains|generate|install|config show|path|set acp|lsp --host HOST --port PORT]".to_string()),
     }
 }
 
@@ -292,6 +293,67 @@ fn apply_server_args(config: &mut ProtocolServerConfig, args: &[String]) -> Resu
         }
     }
     Ok(())
+}
+
+/// 安装 SaCode VSCode 扩展到本地扩展目录
+fn render_install(workdir: &Path) -> Result<String> {
+    let extension_dir = workdir.join("interfaces").join("vscode");
+    if !extension_dir.exists() {
+        return Ok(
+            "未找到 VSCode 扩展目录 (interfaces/vscode/)。请确认在 SaCode 项目根目录下运行。"
+                .to_string(),
+        );
+    }
+
+    let code_path = find_code_cli();
+    let mut lines = Vec::new();
+    lines.push("=== SaCode VSCode 扩展安装 ===".to_string());
+    lines.push("".to_string());
+    lines.push(format!("扩展源目录: {}", extension_dir.display()));
+    lines.push("".to_string());
+
+    if let Some(code) = code_path {
+        lines.push(format!("code CLI 已找到: {}", code.display()));
+        lines.push("".to_string());
+        lines.push("执行以下步骤：".to_string());
+        lines.push("".to_string());
+        lines.push(format!("  cd {} && npm install && npm run compile", extension_dir.display()));
+        lines.push("  code --install-extension cherishron.sacode-vscode-0.1.0 --force".to_string());
+        lines.push("  code --reload-window".to_string());
+        lines.push("".to_string());
+        lines.push("或在 VS Code 中按 F5 打开扩展开发宿主窗口。".to_string());
+    } else {
+        lines.push("未检测到 code CLI。请手动安装扩展：".to_string());
+        lines.push("".to_string());
+        lines.push("1. 打开 VS Code".to_string());
+        lines.push("2. 打开扩展视图 (Ctrl+Shift+X)".to_string());
+        lines.push("3. 点击 ... 菜单 → Install from VSIX...".to_string());
+        lines.push("4. 编译后选择 VSIX 文件".to_string());
+        lines.push("".to_string());
+        lines.push("编译扩展：".to_string());
+        lines.push(format!("  cd {} && npm install && npx vsce package", extension_dir.display()));
+    }
+
+    lines.push("".to_string());
+    lines.push("启动 daemon 后扩展将自动连接：".to_string());
+    lines.push("  sacode serve".to_string());
+    lines.push("".to_string());
+    lines.push("配置 daemon 地址：Settings → 搜索 sacode.daemonHost / sacode.daemonPort".to_string());
+
+    Ok(lines.join("\n"))
+}
+
+fn find_code_cli() -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        for name in &["code", "code.cmd", "code.exe"] {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

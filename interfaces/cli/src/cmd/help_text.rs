@@ -9,7 +9,7 @@ pub(super) const HELP_LINES: &[&str] = &[
     "  sacode doctor",
     "  sacode diff [--cached]",
     "  sacode hooks",
-    "  sacode ide [status|vscode|cursor|jetbrains|config show|path|set acp|lsp --host HOST --port PORT]",
+    "  sacode ide [status|vscode|cursor|jetbrains|install|config show|path|set acp|lsp --host HOST --port PORT]",
     "  sacode config [show|path|user ...|project ...|set <key> <value>|clear <key>]",
     "  sacode keybindings",
     "  sacode outstyle [show|concise|explain|teach|clear|path|project ...]",

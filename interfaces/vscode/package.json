@@ -1,0 +1,78 @@
+{
+  "name": "sacode-vscode",
+  "displayName": "SaCode",
+  "description": "SaCode AI coding agent integration for VS Code",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sacode",
+          "title": "SaCode",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sacode": [
+        {
+          "id": "sacode-panel",
+          "name": "Agent"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sacode.runTask",
+        "title": "SaCode: Run Task",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sacode.configure",
+        "title": "SaCode: Configure Daemon"
+      },
+      {
+        "command": "sacode.status",
+        "title": "SaCode: Check Status"
+      },
+      {
+        "command": "sacode.stop",
+        "title": "SaCode: Stop Task",
+        "icon": "$(stop)"
+      }
+    ],
+    "configuration": {
+      "title": "SaCode",
+      "properties": {
+        "sacode.daemonHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "SaCode daemon host"
+        },
+        "sacode.daemonPort": {
+          "type": "number",
+          "default": 8080,
+          "description": "SaCode daemon port"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  },
+  "publisher": "cherishron",
+  "license": "MulanPSL-2.0"
+}
