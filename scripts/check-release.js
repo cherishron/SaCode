@@ -83,10 +83,11 @@ function verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, expectedVe
 function verifyPackedNpmContents(npmDir, filesToVerify) {
   let packOutput;
   try {
-    packOutput = execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--json'], {
+    const npmCmd = process.platform === 'win32' ? 'cmd' : 'npm';
+    const npmArgs = process.platform === 'win32' ? ['/c', 'npm.cmd', 'pack', '--json'] : ['pack', '--json'];
+    packOutput = execFileSync(npmCmd, npmArgs, {
       cwd: npmDir,
       encoding: 'utf8',
-      shell: process.platform === 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error) {
