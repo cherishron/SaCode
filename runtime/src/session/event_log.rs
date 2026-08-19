@@ -179,6 +179,14 @@ impl SessionEventLog {
     }
 
     /// 从事件流投影出会话级状态摘要
+    ///
+    /// **限制**（R7）：投影只扫描进程内共享内存缓冲（默认 [`Self::DEFAULT_CAPACITY`]
+    /// = 4096 条，跨所有会话共享）。缓冲满后最旧事件被环状淘汰，**淘汰后的计数会
+    /// 静默偏低**，且本方法不暴露 `truncated` 标志——长会话/多会话并发下 `total_calls`
+    /// 等字段是"缓冲窗口内"的下界，非全量精确值。
+    ///
+    /// 另：`seq` 字段标注 `#[serde(skip)]`，落盘事件回放时无法重建 seq，
+    /// 故 `last_seq` 仅反映内存缓冲内的最大值，不代表持久化全量 seq。
     pub fn project_session_state(&self, session_id: &str) -> SessionStateProjection {
         let buf = self.buffer.lock().expect("session event buffer poisoned");
         let mut projection = SessionStateProjection::default();

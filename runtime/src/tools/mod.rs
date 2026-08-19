@@ -86,11 +86,11 @@ impl ToolRegistry {
         self
     }
 
-    /// 按 Profile 的 `extra.interceptors` 配置挂载额外拦截器
+    /// 按 Profile 的 `extra.interceptors` 配置挂载**额外**拦截器
+    ///
+    /// 不重复挂载默认拦截器链（`builtin()` 等构造器已调用 `with_default_interceptors()`），
+    /// 仅追加 Profile 声明的拦截器。未知名称 warn 跳过，不阻断启动。
     pub fn with_profile_interceptors(mut self, profile: Option<&crate::config::profile::Profile>) -> Self {
-        for interceptor in interceptors::default::default_interceptors() {
-            self.register_interceptor(Arc::from(interceptor));
-        }
         if let Some(profile) = profile {
             if let Some(extra) = profile.manifest.extra.get("interceptors") {
                 if let Some(names) = extra.as_array() {
