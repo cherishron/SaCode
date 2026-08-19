@@ -197,7 +197,7 @@ impl App {
                         .get("name")
                         .and_then(|value| value.as_str())
                         .unwrap_or("工具");
-                    lines.push(format!("[工具] {} 开始执行", name));
+                    lines.push(format!("[工具] {} ...running", name));
                 }
                 "tool_call_finished" => {
                     let name = event
@@ -213,11 +213,19 @@ impl App {
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
                     let summary = Self::summarize_json_output(&output);
-                    let status = if success { "完成" } else { "失败" };
-                    if summary.is_empty() {
-                        lines.push(format!("[工具] {} {}", name, status));
+                    if success {
+                        if summary.is_empty() {
+                            lines.push(format!("[工具] {} 完成 ✓", name));
+                        } else {
+                            lines.push(format!("[工具] {} 完成 ✓: {}", name, summary));
+                        }
                     } else {
-                        lines.push(format!("[工具] {} {}: {}", name, status, summary));
+                        let fail_msg = if summary.is_empty() {
+                            String::from("失败 ✗")
+                        } else {
+                            format!("失败 ✗: {}", summary)
+                        };
+                        lines.push(format!("[工具] {} {}", name, fail_msg));
                     }
                 }
                 "done" => {

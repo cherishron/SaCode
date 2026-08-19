@@ -156,62 +156,78 @@ fn render_tool_block(
     let text = content
         .strip_prefix(PREFIX_TOOL)
         .unwrap_or(content)
-        .trim_start();
+        .trim_start()
+        .to_owned();
 
-    // Try to parse "ToolName(args)" or "ToolName rest"
-    let (tool_name, args) = if let Some(open_idx) = text.find('(') {
-        if text.ends_with(')') {
-            let name = &text[..open_idx];
-            let args = &text[open_idx + 1..text.len() - 1];
-            (name.trim(), Some(args.trim()))
+    // Parse "<ToolName> <status>" or "<ToolName> <status>: <summary>"
+    let (tool_name, status, summary) = if let Some(col_idx) = text.find(':') {
+        let before = &text[..col_idx];
+        let after = text[col_idx + 1..].trim().to_owned();
+        if let Some(space_idx) = before.rfind(' ') {
+            let name = before[..space_idx].trim().to_owned();
+            let s = before[space_idx + 1..].trim().to_owned();
+            (name, s, Some(after))
         } else {
-            (text, None)
+            (text.clone(), String::new(), None)
         }
+    } else if let Some(space_idx) = text.rfind(' ') {
+        let name = text[..space_idx].trim().to_owned();
+        let s = text[space_idx + 1..].trim().to_owned();
+        (name, s, None)
     } else {
-        let parts: Vec<&str> = text.splitn(2, ' ').collect();
-        if parts.len() == 2 {
-            (parts[0], Some(parts[1]))
-        } else {
-            (text, None)
-        }
+        (text.clone(), String::new(), None)
     };
 
-    // First line: ● ToolName(args)
-    let mut first_spans = vec![Span::styled(
-        if first_in_message { "● " } else { "  " },
-        Style::default().fg(theme.info),
-    )];
-    if let Some(args) = args {
-        first_spans.push(Span::styled(
-            format!("{}(", tool_name),
-            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
-        ));
-        first_spans.push(Span::styled(
-            args.to_string(),
-            Style::default().fg(theme.text),
-        ));
-        first_spans.push(Span::styled(
-            ")",
-            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
-        ));
+    let (icon, status_color, status_label_owned) = if status == "开始执行" || status == "...running" {
+        ("▶", theme.info, "运行中".to_string())
+    } else if status == "完成" || status == "完成 ✓" {
+        ("✓", theme.build, "完成".to_string())
+    } else if status == "失败" || status == "失败 ✗" {
+        ("✗", theme.warning, "失败".to_string())
     } else {
-        first_spans.push(Span::styled(
-            tool_name.to_string(),
+        ("●", theme.info, status.clone())
+    };
+
+    // First line: icon ToolName
+    let mut first_spans = vec![
+        Span::styled(
+            if first_in_message { "● " } else { "  " },
+            Style::default().fg(theme.info),
+        ),
+        Span::styled(
+            icon,
+            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            tool_name,
             Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
-        ));
-    }
+        ),
+    ];
     push_wrapped_line_spans(&mut lines, first_spans, width);
 
-    // Second line: status hint
-    push_wrapped_text_lines(
-        &mut lines,
-        "   ",
-        "   ",
-        "└─ ...running (ctrl+b to background execution)",
-        Style::default(),
+    // Second line: └─ status
+    let mut status_spans = vec![Span::styled(
+        "  └─ ",
         Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
-        width,
-    );
+    )];
+    status_spans.push(Span::styled(
+        status_label_owned,
+        Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+    ));
+    if let Some(ref summary) = summary {
+        status_spans.push(Span::styled(
+            format!(": {}", summary),
+            Style::default().fg(theme.text),
+        ));
+    }
+    if status == "...running" || status == "开始执行" {
+        status_spans.push(Span::styled(
+            " (ctrl+b to background execution)",
+            Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
+        ));
+    }
+    push_wrapped_line_spans(&mut lines, status_spans, width);
 
     lines
 }
