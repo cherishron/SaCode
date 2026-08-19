@@ -198,7 +198,7 @@ git diff | sacode "根据改动生成一条简洁准确的 commit message"
 | `/status` | 状态查看 |
 | `/insight` | 项目洞察 |
 | `/skills` | Skills 管理 |
-| `/mcp` | MCP 管理 |
+| `/mcps` | MCP 管理 |
 | `/tasks` | 任务管理 |
 
 ### 快捷键
@@ -255,7 +255,7 @@ git diff | sacode "根据改动生成一条简洁准确的 commit message"
 /checkpoint restore checkpoint-20250108-143022
 
 # 清理
-/checkpoint clean
+/checkpoint delete <name>
 ```
 
 ---
@@ -297,6 +297,8 @@ git commit -m "chore: 初始化 SaCode 项目配置"
 ```
 
 > 改进说明：规划方案步骤 4.1 将 Loop 四层自治架构轻量化为 `/goal <完成条件>`，对齐 Claude Code，详见 [report-plan.md](../report-plan.md)。
+>
+> 用法：`/goal 所有测试通过` → 每当任务执行完毕自动检查是否满足完成条件（关键词匹配），满足则标记任务完成。
 
 ---
 
