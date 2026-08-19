@@ -5,7 +5,7 @@
 ## 1. 主入口
 
 ```bash
-sacode "<task>" [--mode plan|build|yolo] [--max-iterations N] [--json] [--prompt|--approve|--deny]
+sacode "<task>" [--mode plan|build|auto] [--max-iterations N] [--json] [--prompt|--approve|--deny]
 sacode repl
 sacode tui
 ```
@@ -145,7 +145,7 @@ TUI 还支持这些分组命令：
 - `Ctrl+Q`：退出
 - `Esc`：清空输入或取消当前执行
 - `Ctrl+T`：开启或关闭思考功能
-- `Ctrl+M`：切换 `plan` / `build` / `yolo`
+- `Ctrl+M`：切换 `plan` / `build` / `auto`
 
 ## 10. 推荐阅读顺序
 

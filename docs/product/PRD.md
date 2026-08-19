@@ -19,7 +19,7 @@ SaCode 面向国内重度终端开发者，提供从代码分析、任务规划�
 
 1. **Claude Code 的体验** — 终端原生、多 Agent 编排、三级执行模式
 2. **国内模型原生适配** — DeepSeek、通义千问、智谱 GLM 等 provider 零配置接入，国内搜索引擎适配
-3. **企业级可审计** — 三级执行模式（plan/build/yolo）+ 沙箱审计日志（audit.log）+ checkpoint 恢复
+3. **企业级可审计** — 三级执行模式（plan/build/auto）+ 沙箱审计日志（audit.log）+ checkpoint 恢复
 
 长期目标：
 
@@ -86,7 +86,7 @@ SaCode 面向国内重度终端开发者，提供从代码分析、任务规划�
 
 ## 5.2 命名调整
 
-- `yolo` 模式将重命名为对企业用户更严肃的名称（如 `auto` 或 `full`，详见步骤 4.5）
+- `yolo` 模式已重命名为 `auto`（内部变体名保留 `Yolo`，serde 序列化 `auto`、反序列化兼容旧值 `yolo`，详见步骤 4.5）
 
 ## 6. 核心场景
 
@@ -122,7 +122,7 @@ sacode "重构用户认证模块并补齐测试" --mode build
 ### 7.1 用户目标
 
 1. 用户可以直接在终端中分析代码、生成计划、修改文件、执行命令。
-2. 用户可以根据风险等级在 `plan`、`build`、`yolo` 之间切换。
+2. 用户可以根据风险等级在 `plan`、`build`、`auto`（旧名 `yolo` 仍兼容）之间切换。
 3. 用户可以在不同 provider、不同模型、不同成本档位之间切换。
 4. 用户可以在 CLI、TUI、REPL 和后续 Daemon 接口中共享核心能力。
 
@@ -160,7 +160,7 @@ sacode "重构用户认证模块并补齐测试" --mode build
 
 1. `sacode` CLI 主入口
 2. Ghost / Chat / Agent 三类使用方式
-3. `plan` / `build` / `yolo` 模式切换
+3. `plan` / `build` / `auto` 模式切换
 4. 工作区扫描、文件读取、搜索、Shell 执行、Git diff 等核心工具
 5. 统一事件流与结构化结果输出
 6. 审批流基础能力
@@ -361,7 +361,7 @@ SaCode 当前的产品策略基于《可行性评估报告》（docs/report.md�
    - 国内 provider 零配置接入（DeepSeek/Qwen/GLM，P0）
    - 首次使用体验优化（配置 ≤2 步，P0）
 2. **强化差异化**：
-   - 三级执行模式（plan/build/yolo）+ 沙箱审计 + checkpoint 恢复作为企业决策因子
+   - 三级执行模式（plan/build/auto）+ 沙箱审计 + checkpoint 恢复作为企业决策因子
 3. **简化过度设计**：
    - Loop 四层 → 轻量 /goal
    - 知识 9 文件 → 3 文件

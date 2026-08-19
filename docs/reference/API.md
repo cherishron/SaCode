@@ -17,7 +17,7 @@
 sacode                              # 默认进入聊天式 TUI
 sacode "分析代码结构"                # 默认 Build 模式
 sacode "修复 bug" --mode build       # Build 模式（需要审批）
-sacode "格式化代码" --mode yolo       # Yolo 模式（全自动）
+sacode "格式化代码" --mode auto       # auto 模式（全自动）
 sacode "设计方案" --mode plan         # Plan 模式（仅规划）
 sacode --version                     # 显示版本
 sacode --help                        # 显示帮助
@@ -31,7 +31,7 @@ sacode --help                        # 显示帮助
 - **Ctrl+Q**：退出 TUI
 - **Esc**：清空当前输入
 - **Ctrl+T**：开启或关闭思考功能
-- **Ctrl+M**：在 `plan` / `build` / `yolo` 间切换执行模式
+- **Ctrl+M**：在 `plan` / `build` / `auto` 间切换执行模式
 - **↑/↓**：滚动历史消息
 - **PageUp/PageDown**：快速滚动
 - **Enter**：发送任务

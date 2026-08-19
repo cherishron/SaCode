@@ -79,7 +79,7 @@ sacode "只修改 interfaces/cli/src/tui 相关文件，修复输入框光标定
 ### 高确定性批处理
 
 ```bash
-sacode "批量整理 docs 下 Markdown 标题层级和导航链接" --mode yolo
+sacode "批量整理 docs 下 Markdown 标题层级和导航链接" --mode auto
 ```
 
 ## 5. 文档工作流

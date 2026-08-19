@@ -14,7 +14,7 @@
 | TUI（默认） | `sacode` | 交互式开发 |
 | REPL | `sacode repl` | 轻量交互 |
 | 单次任务 | `sacode "任务描述"` | 脚本/管道 |
-| 指定模式 | `sacode "任务" --mode plan\|build\|yolo` | 按风险控制 |
+| 指定模式 | `sacode "任务" --mode plan\|build\|auto` | 按风险控制 |
 | 指定模型 | `sacode "任务" --model gpt-4` | 切换模型 |
 
 ---
@@ -105,22 +105,22 @@ sacode "为 /memory 命令添加删除功能" --mode build
 
 ---
 
-## 6. 批处理（yolo 模式）
+## 6. 批处理（auto 模式）
 
 ```bash
 # 批量格式化
-sacode "批量格式化这个仓库的所有 Rust 代码" --mode yolo
+sacode "批量格式化这个仓库的所有 Rust 代码" --mode auto
 
 # 文档标准化
-sacode "批量整理 docs 目录下的 Markdown 文档标题层级" --mode yolo
+sacode "批量整理 docs 目录下的 Markdown 文档标题层级" --mode auto
 
 # 清理无用代码
-sacode "删除所有注释掉的代码块" --mode yolo
+sacode "删除所有注释掉的代码块" --mode auto
 ```
 
-> ⚠️ yolo 模式自动执行无需确认，使用前建议先在 plan 模式查看影响范围。
+> ⚠️ auto 模式自动执行无需确认，使用前建议先在 plan 模式查看影响范围。
 >
-> 改进说明：`yolo` 将重命名为更严肃名称（如 `auto`/`full`），详见 [report-plan.md](../report-plan.md) 步骤 4.5。
+> 说明：`yolo` 已重命名为 `auto`，旧配置/命令 `--mode yolo` 仍兼容。
 
 ---
 
@@ -180,7 +180,7 @@ git diff | sacode "根据改动生成一条简洁准确的 commit message"
 |------|------|
 | `/login` | 配置 Provider |
 | `/models` | 管理模型 |
-| `/mode` | 切换 plan/build/yolo |
+| `/mode` | 切换 plan/build/auto |
 | `/agents` | 多 Agent 编排 |
 | `/help` | 上下文感知帮助 |
 
