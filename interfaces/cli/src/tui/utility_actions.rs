@@ -5,66 +5,16 @@ use crate::cmd::{
 
 impl App {
     pub(super) fn help_command(&mut self) {
-        self.push_system_message(
-            "SaCode 帮助:\n\
-            \n一级命令:\n\
-            /init      - 轻量初始化项目配置\n\
-            /init-deep - 深度初始化项目配置\n\
-            /new       - 创建新会话\n\
-            /sessions  - 切换历史会话\n\
-            /clear     - 清空当前上下文\n\
-            /compress  - 压缩当前会话上下文\n\
-            /profile   - 配置管理 (ls/use/show)\n\
-            /plugin    - 插件管理 (list/install/remove/enable/disable)\n\
-            /checkpoint - 检查点管理 (list/save/restore/delete)\n\
-            /mode      - 执行模式 (plan/build/yolo)\n\
-            /skills    - Skills 管理 (list/show/run/add/remove)\n\
-            /mcps      - MCP 管理 (list/show/remove)\n\
-            /providers - 管理 Provider\n\
-            /models    - 选择模型\n\
-            /login     - 配置 Provider 登录\n\
-            /connect   - 快速接入 Provider\n\
-            /add-dir   - 添加项目可访问目录\n\
-            /status    - 查看 MCP 与插件状态\n\
-            /doctor    - 诊断当前配置与可用性\n\
-            /diff      - 查看当前 Git 差异摘要\n\
-            /hooks     - 查看运行时 Hook 与生命周期\n\
-            /ide       - 查看 IDE 接入向导或配置\n\
-            /config    - 交互式管理分层配置\n\
-            /keybindings - 查看快捷键说明\n\
-            /outstyle  - 切换 AI 输出风格（默认用户级）\n\
-            /vim       - 切换 Vim 风格导航\n\
-            /memory    - 查看或管理分类项目记忆\n\
-            /wiki      - 查看分层知识库加载状态\n\
-            /insight   - 生成编程洞察\n\
-            /tools     - 显示可用工具\n\
-            /stats     - 查看 token 与费用统计\n\
-            /copy last - 复制最后一条助手回复\n\
-            /fold last - 折叠最后一条思考详情\n\
-            /expand last - 展开最后一条思考详情\n\
-            /fold all  - 折叠全部思考详情\n\
-            /expand all - 展开全部思考详情\n\
-            /theme     - 切换主题模板 (github/vscode/idea)\n\
-            /agents    - 查看内置角色或启动多角色编排\n\
-            /todo      - 任务列表管理 (show/confirm/clear)\n\
-            /answer    - 回答当前等待中的问题\n\
-            /tasks     - 持久任务管理 (list/add/show/edit/start/done/cancel/clear/export)\n\
-            /update    - 检查、更新或回滚当前 sacode 版本\n\
-            /cancel    - 取消当前任务或清空等待队列\n\
-            /help      - 显示帮助\n\
-            /quit      - 退出\n\
-            /exit      - 退出\n\
-            \n快捷键:\n\
-            Ctrl+Q - 等价于 /quit\n\
-            Ctrl+A - 优化当前输入\n\
-            Ctrl+S - 折叠或展开全部思考详情\n\
-            Ctrl+T - 开启或关闭思考功能\n\
-            Alt+M - 在 plan/build/yolo 间切换执行模式\n\
-            Ctrl+Z - 撤回上次输入优化\n\
-            Esc    - 取消当前任务或取消选择\n\
-            上下键  - 浏览已发送输入历史\n\
-            输入 /  - 显示命令列表",
+        let mode = match self.execution_mode {
+            sacode_kernel::ExecutionMode::Plan => "plan",
+            sacode_kernel::ExecutionMode::Build => "build",
+            sacode_kernel::ExecutionMode::Yolo => "auto",
+        };
+        let msg = format!(
+            "SaCode 帮助（当前模式: {}）\n\n            📌 一级命令（5 个常用入口）：\n            /login   - 配置 Provider 登录\n            /models  - 选择 AI 模型\n            /mode    - 切换执行模式（plan/build/auto）\n            /agents  - 多 Agent 编排\n            /help    - 显示帮助（支持 /help plan/build/auto）\n\n            📋 配置与初始化：\n            /init        /init-deep  /new  /sessions  /clear  /compress\n            /profile     /plugin     /checkpoint /config  /keybindings\n            /add-dir     /status     /doctor    /outstyle /vim /theme\n\n            📦 技能与扩展：\n            /skills      /mcps       /providers /connect /models\n\n            🧠 知识与记忆：\n            /memory      /wiki       /insight   /tools /prompt\n\n            ✏️  代码与 Git：\n            /diff        /hooks      /ide       /goal\n\n            📊 任务与工作流：\n            /todo        /tasks      /answer    /stats  /cancel\n\n            🔧 视图控制：\n            /copy last   /fold last  /expand last /fold all /expand all\n\n            ⚙️  系统：\n            /update      /quit  /exit\n\n            ⌨️  快捷键：\n            Ctrl+Q - 退出   Ctrl+A - 优化输入   Ctrl+S - 折叠/展开\n            Ctrl+T - 思考开关   Alt+M - 模式切换   Ctrl+Z - 撤回优化\n            Esc - 取消   上下键 - 历史   / - 命令列表",
+            mode,
         );
+        self.push_system_message(&msg);
     }
 
     pub(super) fn show_usage_stats(&mut self) {

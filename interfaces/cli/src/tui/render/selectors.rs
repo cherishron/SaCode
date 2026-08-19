@@ -201,7 +201,7 @@ pub(crate) fn render_mode_selector(frame: &mut Frame, app: &App, input_area: Rec
     let mode_desc = [
         ("plan", "Plan - 规划模式"),
         ("build", "Build - 构建模式"),
-        ("yolo", "Yolo - 自动执行模式"),
+        ("auto", "Auto - 自动执行模式"),
     ];
 
     let current_index = match app.execution_mode {
