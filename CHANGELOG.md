@@ -7,7 +7,101 @@
 
 ---
 
-## [0.1.32] - 2026-06-08
+## [1.0.0] - 2026-08-19
+
+### 新增
+
+- **v1.0+ 产品就绪四大里程碑**
+  - M1 自动修复闭环：`test.fix` 失败后进入 `FixLoopState` 迭代状态机，orchestrator 桥接 `dispatch_fix_loop`，记录 `FixOutcome` 修复度量
+  - M2 Agent 协作协议：`AgentMessage` 扩展 `task_state`/`priority`/`reply_to`/`deadline`，`request_and_wait` 双向通信，`validation_conflict` 实时触发修复，`role_registry` 动态角色，消息历史持久化
+  - M3 学习型记忆：`AutoLearner` 自动学习回路 + BM25 搜索 + 记忆衰减 + SQLite 双写（`memory_entries`/`mistake_entries`）
+  - M4 多模态产品化：`media.vision` 超时/降级/缓存/错误分类加固；`media.video` 视频帧提取（ffmpeg 调用，不可用优雅降级）
+
+- **VSCode 扩展 MVP**（`interfaces/vscode/`）
+  - 侧边栏 Webview 面板：输入框 + 消息流
+  - 4 个命令：`sacode: Start`、`sacode: Stop`、`sacode: Clear`、`sacode: Toggle Sidebar`
+  - SSE 连接 daemon（`/health`、`POST /task`、`GET /task/:id/result`、`/api/stream`）
+  - `sacode ide install` 自动检测 VSCode CLI 并安装扩展
+
+- **TUI Loop 阶段进度条**
+  - 顶部 `[OK] [>>] [  ]` 阶段标签可视化多 Agent 执行阶段
+  - `loop_state: Option<LoopState>` 跟踪轮次与阶段
+
+- **`/goal` 轻量命令**
+  - 替代四层自治架构：`/goal <完成条件>` 设定任务完成条件
+  - 任务执行完毕后自动关键词匹配检查
+
+- **yolo → auto 模式重命名**
+  - 内部变体名保留 `Yolo`，Display 输出 `auto`，serde 序列化 `auto`，反序列化兼容旧值 `yolo`
+  - CLI `--mode` 接受 `auto|yolo`，TUI/REPL 显示 `auto`
+
+- **Provider 零配置接入**
+  - 内置预设：DeepSeek、通义千问（Qwen）、智谱 GLM、MiMo、LongCat、OpenAI、Ollama
+  - `/login` 交互式两步配置：选择预设 → 输入 API Key
+  - 自动检测 Provider 类型并匹配模型库
+
+- **知识系统 9→3 文件合并**
+  - `project.md`（项目事实与通用记忆）
+  - `experience.md`（工作流与决策经验）
+  - `preferences.md`（偏好与策略）
+
+- **统一任务状态机**
+  - `TaskState` 枚举 + 合法转移图 + 统一 `task_id` 生成
+  - Session SQLite 持久化，`TaskRunState::Cancelled` 区分取消与失败
+  - daemon 跨进程 checkpoint 恢复桥接
+
+- **LSP 代码智能深度**
+  - 5 语言 AST 解析（rust/python/javascript/typescript/go）
+  - LSP 诊断（cargo / tsc / py_compile / go vet）
+  - `documentSymbol` / `workspaceSymbol` / `hover` 诊断联动
+  - 跨文件引用（`references` / `goto_definition`）
+
+- **工具链扩展**
+  - `test.run`：自动检测框架（cargo/npm/go/pytest），失败测试 `location` 提取
+  - `test.fix`：自动修复闭环（分析→修补→验证→成功/超限）
+  - `git.commit` / `git.push` / `git.pr`（close/reopen/merge）
+  - `fs.apply_patch`：标准 Git patch format 解析应用
+  - `code.symbols` / `code.deps`（Rust 模块路径解析）
+  - `media.vision` / `media.video`
+
+- **MCP/ACP 生态**
+  - MCP stdio server（`sacode mcp serve`）
+  - 插件发现、配置安装、远端元信息搜索
+  - WASM 插件下载安装
+
+- **CI/CD 与发布**
+  - `check-release.js` Windows 兼容（`npm.cmd` + `shell:true`、tar CRLF 解析）
+  - 自动发布流程：GitHub Actions 四平台构建 + npm publish + GitHub Release
+  - 沙箱审计日志（`.sacode/audit.log`，JSON 行格式）
+
+### 变更
+
+- `yolo` 模式重命名为 `auto`（`--mode yolo` 仍兼容，serde alias）
+- 平台化收敛：ACP/LSP/Daemon 维持现状，资源集中到 IDE 插件/provider 零配置/首次体验
+- 冲突检测五维矩阵 → 审批流 + 危险命令拦截
+- Provider 配置降级链修复，默认模型不再跌入 OpenAI
+- 搜索引擎从 DuckDuckGo 替换为 Baidu/Sogou/360/Bing
+
+### 修复
+
+- LSP active_connections 计数器泄漏
+- LSP UTF-16 偏移导致 panic
+- LSP 多处 document mutex poisoned expect
+- cache.rs RwLock unwrap panic
+- provider/client.rs tool_calls unwrap panic
+- git/pr.rs truncate_str 非字符安全切片
+- ACP max_connections 未强制执行
+- ACP 不支持的 JSON-RPC 方法返回成功
+- MistakeRecorder 参数语义错乱
+- MCP 工具注册错误被静默忽略
+- 单 Agent 模式 ExecutionReport 缺失字段
+- 测试运行器缺少超时强制
+- 编排器 current_dir 竞态
+- shell/exec.rs split_command 反斜杠 panic
+- serial_test 依赖位置和 session sleep 竞争
+- 跨平台稳定性：shell.exec/stty/id 命令平台条件编译
+
+---
 
 ### 新增
 
