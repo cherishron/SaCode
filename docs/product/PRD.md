@@ -3,8 +3,8 @@
 ## 1. 文档信息
 
 - 产品名称：SaCode
-- 文档版本：v1.3
-- 更新时间：2026-08-18
+- 文档版本：v1.4
+- 更新时间：2026-08-19
 - 文档类型：产品需求文档（PRD）
 - 产品定位：面向国内开发者的终端 AI 编程工具
 - 核心叙事：**Claude Code 的体验，国内模型原生适配，企业级可审计。**
@@ -142,21 +142,17 @@ sacode "重构用户认证模块并补齐测试" --mode build
 
 ## 8. 当前产品现状
 
-截至 `0.1.33`，SaCode 已具备以下基础能力：
+截至 `1.0.0`，SaCode 已具备以下基础能力：
 
 1. Rust workspace 三层架构：`interfaces/* -> runtime -> kernel`
-2. CLI、TUI、REPL 主入口
-3. 多角色编排与结构化总结输出
-4. 模型智能路由与 profile 配置
-5. 项目级记忆、wiki、checkpoint、队列与 daemon 雏形
-6. MCP、ACP、LSP 等扩展入口
+2. CLI、TUI、REPL 主入口 + VSCode 扩展（interfaces/vscode/）接入
+3. 多角色编排与结构化总结输出，Loop 阶段进度条可视化
+4. 模型智能路由与 profile 配置，provider 零配置接入（DeepSeek/Qwen/GLM/Ollama 等预设）
+5. 项目级记忆（3 文件：project/experience/preferences）、wiki、checkpoint、队列与 daemon
+6. MCP、ACP、LSP 等扩展入口（维持现状，不再深度扩展）
+7. v1.0+ 产品就绪能力：自动修复闭环（test.fix）、Agent 协作协议、学习型记忆（AutoLearner）、多模态（media.vision/media.video）
 
-当前仍影响 1.0 体验闭环的关键缺口包括：
-
-1. SSE/实时流式输出仍在补齐
-2. 持久化任务存储刚进入落地阶段，统一运行时仍需继续收口
-3. 精确编辑能力仍缺 `apply_patch / diff_edit`
-4. Git 提交闭环、测试运行器、AST/符号级智能尚未完备
+1.0 版本号已发布，产品就绪里程碑（M1 自动修复闭环 / M2 Agent 协作协议 / M3 学习型记忆 / M4 多模态产品化）与上手体验闭环（/goal 轻量命令、首次体验 ≤2 步配置）均已落地。
 
 ## 9. 核心能力范围
 
