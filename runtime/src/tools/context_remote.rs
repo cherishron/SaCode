@@ -166,11 +166,33 @@ impl ExecutionContext for RemoteContext {
         Ok(entries)
     }
 
+    fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)> {
+        let path = path.to_string_lossy();
+        // stat -c (Linux) / stat -f (BSD/macOS) 兼容
+        let output = self.run(&format!("stat -c '%s %Y' {path} 2>/dev/null || stat -f '%z %m' {path}"))?;
+        if output.exit_code != 0 {
+            return Err(anyhow!("remote metadata failed: {}", output.stderr));
+        }
+        let parts: Vec<&str> = output.stdout.trim().split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(anyhow!("remote metadata: unexpected stat output"));
+        }
+        let size = parts[0].parse::<u64>().unwrap_or(0);
+        let modified = parts[1].parse::<u64>().ok();
+        Ok((size, modified))
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        let path = path.to_string_lossy();
+        let output = self.run(&format!("mkdir -p {path}"))?;
+        if output.exit_code != 0 {
+            return Err(anyhow!("remote mkdir failed: {}", output.stderr));
+        }
+        Ok(())
+    }
+
     fn exec(&self, command: &str, cwd: Option<&str>, timeout_ms: u64) -> Result<CommandOutput> {
-        // exec 不自行加 cwd 包装（调用方语义已在 command 中），但尊重透传超时。
-        // 注意：这里用调用方传入的 timeout 覆盖默认，前缀拼接仍走 wrap。
         let wrapped = self.wrap(command);
-        // run_local_command 已处理平台包装与危险检查
         run_local_command(&wrapped, cwd, timeout_ms)
     }
 }

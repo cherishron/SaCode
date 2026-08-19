@@ -67,6 +67,12 @@ pub trait ExecutionContext: Send + Sync {
     /// 读取文件（返回原始字节）。用于二进制文件（如图片/视频）。
     fn read_bytes(&self, path: &Path) -> Result<Vec<u8>>;
 
+    /// 读取文件的前 N 字节。用于二进制检测等场景，避免读取整个文件。
+    fn read_bytes_partial(&self, path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+        let bytes = self.read_bytes(path)?;
+        Ok(bytes.into_iter().take(max_bytes).collect())
+    }
+
     /// 写入文件（覆盖）。`path` 需为已通过沙箱校验的路径。
     fn write_text(&self, path: &Path, content: &str) -> Result<usize>;
 
@@ -81,6 +87,13 @@ pub trait ExecutionContext: Send + Sync {
     /// - `dir`：已通过沙箱校验的目录路径
     /// - 返回目录下的直接子条目（含类型与大小），不含 `.`/`..`
     fn list_dir(&self, dir: &Path) -> Result<Vec<DirEntry>>;
+
+    /// 获取文件/目录元数据（大小、修改时间）。
+    /// 返回 (size_bytes, modified_unix_timestamp) 元组。
+    fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)>;
+
+    /// 创建目录（递归）。
+    fn create_dir_all(&self, path: &Path) -> Result<()>;
 
     /// 执行 shell 命令。
     ///
@@ -203,6 +216,22 @@ impl ExecutionContext for LocalContext {
         // 复用 shell/exec 中已有的完整平台包装与危险命令检查逻辑，
         // 保证与原 `shell.exec::execute` 行为完全一致。
         crate::tools::shell::exec::run_local_command(command, cwd, timeout_ms)
+    }
+
+    fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)> {
+        let meta = std::fs::metadata(path)?;
+        let size = meta.len();
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        Ok((size, modified))
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)?;
+        Ok(())
     }
 }
 

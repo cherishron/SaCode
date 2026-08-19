@@ -29,14 +29,14 @@ impl AstCache {
         language: &str,
         source: &str,
     ) -> anyhow::Result<AstSummary> {
-        let metadata = std::fs::metadata(path).ok();
-        let modified = metadata.and_then(|m| m.modified().ok());
+        let ctx = crate::tools::context::current_context();
+        let modified = ctx.metadata(path).ok().and_then(|(_, m)| m);
 
         let cache_key = format!(
             "{}:{}:{}",
             path.display(),
             language,
-            modified.map(|t| format!("{:?}", t)).unwrap_or_default()
+            modified.map(|t| format!("{}", t)).unwrap_or_default()
         );
 
         let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
@@ -80,7 +80,7 @@ impl AstCache {
 #[derive(Debug, Clone)]
 struct DirFileListCache {
     files: Vec<std::path::PathBuf>,
-    dir_modified: Option<SystemTime>,
+    dir_modified: Option<u64>,
 }
 
 pub struct FileListCache {
@@ -107,7 +107,8 @@ impl FileListCache {
             &mut Vec<std::path::PathBuf>,
         ) -> anyhow::Result<()>,
     {
-        let dir_modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+        let ctx = crate::tools::context::current_context();
+        let dir_modified = ctx.metadata(dir).ok().and_then(|(_, m)| m);
 
         {
             let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());

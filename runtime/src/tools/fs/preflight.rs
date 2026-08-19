@@ -73,8 +73,8 @@ impl std::error::Error for PreflightError {}
 /// let content = fs::read_to_string(&file_path)?;
 /// ```
 pub fn preflight_edit_file(path: &Path) -> Result<(), PreflightError> {
-    let metadata = std::fs::metadata(path).map_err(PreflightError::Metadata)?;
-    let size = metadata.len();
+    let ctx = crate::tools::context::current_context();
+    let (size, _) = ctx.metadata(path).map_err(|e| PreflightError::Metadata(std::io::Error::other(e.to_string())))?;
     if size > MAX_FILE_SIZE_BYTES {
         return Err(PreflightError::FileTooLarge {
             size,
@@ -92,11 +92,11 @@ pub fn preflight_edit_file(path: &Path) -> Result<(), PreflightError> {
 /// 策略与 git 对齐：NUL 字节几乎不出现在文本文件中，
 /// 出现 NUL 即判定为二进制。空文件视为非二进制（文本）。
 fn is_binary_file(path: &Path) -> Result<bool, PreflightError> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(PreflightError::Read)?;
-    let mut buffer = [0u8; BINARY_SAMPLE_SIZE];
-    let bytes_read = file.read(&mut buffer).map_err(PreflightError::Read)?;
-    Ok(buffer[..bytes_read].contains(&0))
+    let ctx = crate::tools::context::current_context();
+    let bytes = ctx
+        .read_bytes_partial(path, BINARY_SAMPLE_SIZE)
+        .map_err(|e| PreflightError::Read(std::io::Error::other(e.to_string())))?;
+    Ok(bytes.contains(&0))
 }
 
 #[cfg(test)]
