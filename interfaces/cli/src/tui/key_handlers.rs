@@ -387,6 +387,24 @@ impl App {
             {
                 self.cycle_execution_mode();
             }
+            KeyCode::Char('y')
+                if self.input_mode == InputMode::PendingQuestion
+                    && self.interaction.pending_approval_request.is_some()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                use std::collections::HashSet;
+                self.interaction.selected_pending_answers = vec![HashSet::from([1])];
+                self.submit_pending_approval_answer();
+            }
+            KeyCode::Char('n')
+                if self.input_mode == InputMode::PendingQuestion
+                    && self.interaction.pending_approval_request.is_some()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                use std::collections::HashSet;
+                self.interaction.selected_pending_answers = vec![HashSet::from([0])];
+                self.submit_pending_approval_answer();
+            }
             KeyCode::Char('z')
                 if self.input_mode == InputMode::Chat
                     && key.modifiers.contains(KeyModifiers::CONTROL) =>

@@ -251,7 +251,7 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         "Enter: 确认提交 | Left: 返回上一题 | Esc: 返回聊天"
     } else if app.input.is_empty() {
         if is_approval {
-            "Up/Down: 选择审批结果 | Space: 勾选 | Enter: 提交 | Esc: 返回聊天"
+            "Y: 允许一次 | N: 拒绝 | Enter: 提交 | Esc: 返回聊天"
         } else {
             "Left/Right: 切换问题 | Up/Down: 选择 | Space: 勾选 | Enter: 下一题 | Esc: 返回聊天"
         }
