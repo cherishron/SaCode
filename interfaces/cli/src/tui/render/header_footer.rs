@@ -155,7 +155,20 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("Ctrl+Q: quit", Style::default().fg(theme.subtle)),
         status_separator(theme),
         Span::styled(
-            format!("模式 {}", app.execution_mode_label()),
+            format!(
+                "{} {} {}",
+                match app.execution_mode {
+                    sacode_kernel::ExecutionMode::Plan => "◉",
+                    sacode_kernel::ExecutionMode::Build => "⚙",
+                    sacode_kernel::ExecutionMode::Yolo => "▶",
+                },
+                match app.execution_mode {
+                    sacode_kernel::ExecutionMode::Plan => "PLAN",
+                    sacode_kernel::ExecutionMode::Build => "BUILD",
+                    sacode_kernel::ExecutionMode::Yolo => "AUTO",
+                },
+                model_name,
+            ),
             Style::default()
                 .fg(match app.execution_mode {
                     sacode_kernel::ExecutionMode::Plan => theme.plan,
@@ -234,9 +247,16 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         sacode_kernel::ExecutionMode::Build => theme.build,
         sacode_kernel::ExecutionMode::Yolo => theme.yolo,
     };
+    let (mode_icon, mode_label) = match app.execution_mode {
+        sacode_kernel::ExecutionMode::Plan => ("◉", "PLAN"),
+        sacode_kernel::ExecutionMode::Build => ("⚙", "BUILD"),
+        sacode_kernel::ExecutionMode::Yolo => ("▶", "AUTO"),
+    };
     spans.push(Span::styled(
-        format!("Mode:{}", app.execution_mode),
-        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
+        format!("{} {}", mode_icon, mode_label),
+        Style::default()
+            .fg(mode_color)
+            .add_modifier(Modifier::BOLD),
     ));
     spans.push(status_separator(theme));
     spans.push(Span::styled(
