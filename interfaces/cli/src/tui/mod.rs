@@ -750,7 +750,7 @@ pub(in crate::tui) mod tests {
         assert!(line_dump.contains("思考"));
         assert!(line_dump.contains("分析调用链"));
         assert!(line_dump.contains("grep"));
-        assert!(line_dump.contains("...running"));
+        assert!(line_dump.contains("完成"));
         assert!(line_dump.contains("已刷新模型列表"));
         assert!(!line_dump.contains("[思考]"));
     }

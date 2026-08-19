@@ -85,6 +85,29 @@ impl ToolRegistry {
         }
         self
     }
+
+    /// 按 Profile 的 `extra.interceptors` 配置挂载额外拦截器
+    pub fn with_profile_interceptors(mut self, profile: Option<&crate::config::profile::Profile>) -> Self {
+        for interceptor in interceptors::default::default_interceptors() {
+            self.register_interceptor(Arc::from(interceptor));
+        }
+        if let Some(profile) = profile {
+            if let Some(extra) = profile.manifest.extra.get("interceptors") {
+                if let Some(names) = extra.as_array() {
+                    for name in names {
+                        if let Some(n) = name.as_str() {
+                            if let Some(interceptor) = interceptors::default::interceptor_by_name(n) {
+                                self.register_interceptor(Arc::from(interceptor));
+                            } else {
+                                tracing::warn!("unknown interceptor '{}' in profile, skipped", n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
 }
 
 /// 核心层工具名清单 — 始终注入 prompt

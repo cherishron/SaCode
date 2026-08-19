@@ -98,7 +98,7 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         return Ok(ToolOutput::failure("empty test command"));
     };
 
-    let timeout_ms = payload.timeout_ms.unwrap_or(120_000);
+    let timeout_ms = payload.timeout_ms.unwrap_or(120_000).max(1_000);
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -688,7 +688,7 @@ fn detect_framework(cwd: &Path) -> Option<TestFramework> {
         Some(TestFramework::Node)
     } else if cwd.join("go.mod").exists() {
         Some(TestFramework::Go)
-    } else if cwd.join("pyproject.toml").exists() || cwd.join("pytest.ini").exists() || cwd.join("requirements.txt").exists() {
+    } else if cwd.join("pyproject.toml").exists() || cwd.join("pytest.ini").exists() {
         Some(TestFramework::Pytest)
     } else {
         None

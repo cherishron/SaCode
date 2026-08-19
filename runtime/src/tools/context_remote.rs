@@ -1,9 +1,16 @@
 //! 远程执行环境 — RemoteContext（§3.3 第四步）
 //!
 //! 把 [`crate::tools::context::ExecutionContext`] 的实现从本地进程替换为
-//! "通过命令前缀转发到远端"的执行世界。这是 §3.3 抽象的核心价值闭环：
-//! **工具代码零改**，只需 `set_default_context(Arc::new(RemoteContext::new(prefix)))`
-//! 即可把全部 29 个工具的整体执行环境切换到远程沙箱。
+//! "通过命令前缀转发到远端"的执行世界。
+//!
+//! **当前迁移范围**：仅 `ExecutionContext` trait 方法覆盖的 FS 操作（read_text /
+//! read_bytes / write_text / append_text / exists / list_dir / metadata /
+//! create_dir_all）和 `exec`。以下工具**未走 `current_context()`**，仍本地执行：
+//! - `shell.exec` 直接调用 `run_local_command`（非 `ctx.exec`）
+//! - `test.run` 本地 `Command::spawn`
+//! - `fs.search` 本地 `std::fs::walkdir`
+//!
+//! 完整远程化需把这些工具也迁移到 `ctx.exec()` / `ctx.read_bytes_partial()` 等。
 //!
 //! 设计：
 //! - `command_prefix`：在每条命令前注入的 argv（如 `["ssh", "user@host"]`、
@@ -78,9 +85,14 @@ impl RemoteContext {
     }
 }
 
+/// 对远端路径做单引号转义，防止空格/特殊字符破坏 shell 命令
+fn shell_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
 impl ExecutionContext for RemoteContext {
     fn read_text(&self, path: &Path) -> Result<String> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(&path.to_string_lossy());
         // 远程 cat：文本通道读取
         let output = self.run(&format!("cat {path}"))?;
         if output.exit_code != 0 {
@@ -90,7 +102,7 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn read_bytes(&self, path: &Path) -> Result<Vec<u8>> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(&path.to_string_lossy());
         // 经文本通道 `cat` 读取并转字节。注意：文本通道会破坏二进制内容
         // （换行归一、非 UTF-8 字节丢失）。生产级远程实现应改用 base64 编码回传
         // 或 gRPC 二进制流。本期作为"抽象可行性验证"保留文本通道。
@@ -102,12 +114,12 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn write_text(&self, path: &Path, content: &str) -> Result<usize> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(&path.to_string_lossy());
         // 创建父目录（远端）后写入。
         // 用单引号包裹 content，并对内容中的单引号做转义（'\'' 序列）。
         let escaped = content.replace('\'', "'\\''");
         let command = format!(
-            "mkdir -p \"$(dirname '{path}')\" && printf '%s' '{escaped}' > '{path}'"
+            "mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' > {path}"
         );
         let output = self.run(&command)?;
         if output.exit_code != 0 {
@@ -117,10 +129,10 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn append_text(&self, path: &Path, content: &str) -> Result<usize> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(&path.to_string_lossy());
         let escaped = content.replace('\'', "'\\''");
         let command = format!(
-            "mkdir -p \"$(dirname '{path}')\" && printf '%s' '{escaped}' >> '{path}'"
+            "mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' >> {path}"
         );
         let output = self.run(&command)?;
         if output.exit_code != 0 {
@@ -130,7 +142,7 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn exists(&self, path: &Path) -> bool {
-        let path = path.to_string_lossy();
+        let path = shell_quote(&path.to_string_lossy());
         match self.run(&format!("test -e {path}")) {
             Ok(output) => output.exit_code == 0,
             Err(_) => false,
@@ -138,7 +150,7 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn list_dir(&self, dir: &Path) -> Result<Vec<DirEntry>> {
-        let dir = dir.to_string_lossy();
+        let dir = shell_quote(&dir.to_string_lossy());
         // `ls -1p`：每行一个条目，目录以 `/` 结尾。
         let output = self.run(&format!("ls -1p {dir}"))?;
         if output.exit_code != 0 {
@@ -167,7 +179,7 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(path.to_string_lossy().as_ref());
         // stat -c (Linux) / stat -f (BSD/macOS) 兼容
         let output = self.run(&format!("stat -c '%s %Y' {path} 2>/dev/null || stat -f '%z %m' {path}"))?;
         if output.exit_code != 0 {
@@ -183,7 +195,7 @@ impl ExecutionContext for RemoteContext {
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
-        let path = path.to_string_lossy();
+        let path = shell_quote(path.to_string_lossy().as_ref());
         let output = self.run(&format!("mkdir -p {path}"))?;
         if output.exit_code != 0 {
             return Err(anyhow!("remote mkdir failed: {}", output.stderr));

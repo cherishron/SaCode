@@ -52,7 +52,6 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         loop_config.kind = AgentLoopKind::parse(kind_str);
     }
     let agent_loop = build_agent_loop(&loop_config);
-    let subsystems = loop_config.subsystems;
 
     // §3.3 第四步：若指定 --remote <prefix>，激活远程执行环境
     // 例：sacode orchestrator --remote "ssh user@host" <prompt>
@@ -156,7 +155,8 @@ async fn execute_single_agent_task(
     use sacode_runtime::ApprovalDecider;
 
     // 构建工具注册表
-    let mut tools = ToolRegistry::builtin_with_wasm(workdir);
+    let mut tools = ToolRegistry::builtin_with_wasm(workdir)
+        .with_profile_interceptors(named_profile);
     let mcp_store = McpConfigStore::new(workdir);
     if let Err(error) = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools) {
         tracing::warn!("注册 MCP 工具失败: {error}");

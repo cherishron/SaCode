@@ -187,6 +187,15 @@ impl ExecutionContext for LocalContext {
         Ok(std::fs::read(path)?)
     }
 
+    fn read_bytes_partial(&self, path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+        use std::io::Read;
+        let file = std::fs::File::open(path)?;
+        let mut reader = std::io::Read::take(file, max_bytes as u64);
+        let mut buf = Vec::with_capacity(max_bytes.min(4096));
+        reader.read_to_end(&mut buf)?;
+        Ok(buf)
+    }
+
     fn list_dir(&self, dir: &Path) -> Result<Vec<DirEntry>> {
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(dir)? {

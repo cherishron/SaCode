@@ -94,11 +94,19 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             "--agent-loop" => {
                 if let Some(value) = iter.next() {
                     agent_loop = Some(value);
+                } else {
+                    eprintln!("warning: --agent-loop requires a kind (ling_shu), skipping");
                 }
             }
             "--remote" => {
                 if let Some(value) = iter.next() {
-                    remote_prefix = Some(value);
+                    if value.starts_with('-') {
+                        eprintln!("warning: --remote requires a prefix, e.g. --remote 'ssh user@host'");
+                    } else {
+                        remote_prefix = Some(value);
+                    }
+                } else {
+                    eprintln!("warning: --remote requires a prefix, e.g. --remote 'ssh user@host'");
                 }
             }
             "--prompt" => approval = ApprovalPolicy::Prompt,
