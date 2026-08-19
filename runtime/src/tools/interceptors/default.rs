@@ -303,3 +303,23 @@ pub fn run_preflight_chain(
     }
     Ok(current_input)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interceptor_by_name_returns_known_interceptors() {
+        assert!(interceptor_by_name("audit").is_some());
+        assert!(interceptor_by_name("network_block").is_some());
+        assert!(interceptor_by_name("task_spawn_block").is_some());
+        assert!(interceptor_by_name("command_block").is_some());
+        assert!(interceptor_by_name("path_restrict").is_some());
+    }
+
+    #[test]
+    fn interceptor_by_name_returns_none_for_unknown() {
+        assert!(interceptor_by_name("does_not_exist").is_none());
+        assert!(interceptor_by_name("").is_none());
+    }
+}

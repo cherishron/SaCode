@@ -36,10 +36,6 @@ struct CliResponse {
 }
 
 pub(super) async fn run_task(options: CliOptions) -> Result<()> {
-    // N3: Run 路径不支持 --remote，但 parse_run_args 会静默接受。
-    if options.remote_prefix.is_some() {
-        eprintln!("warning: --remote is only supported in orchestrator mode (sacode orchestrator --remote ...), ignored in run mode");
-    }
     let stdin = read_stdin_if_needed().await?;
     if options.json {
         let output = run_task_with_stdin(

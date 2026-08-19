@@ -280,6 +280,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_run_mode_accepts_remote_prefix() {
+        let options = parse_args(vec![
+            "--remote".to_string(),
+            "ssh user@host".to_string(),
+            "部署".to_string(),
+        ]);
+
+        assert_eq!(options.command, CliCommand::Run);
+        assert_eq!(options.remote_prefix, Some("ssh user@host".to_string()));
+    }
+
+    #[test]
     fn parse_args_parses_subcommands() {
         let options = parse_args(vec!["checkpoint".to_string(), "list".to_string()]);
 

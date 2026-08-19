@@ -713,4 +713,72 @@ mod tests {
         assert!(names.contains(&"git.commit"), "git.commit should survive");
         assert!(!names.contains(&"git.push"), "git.push should be disabled");
     }
+
+    /// 默认拦截器链应恰好挂载一次；`with_profile_interceptors` 不重复追加。
+    #[test]
+    fn with_profile_interceptors_does_not_duplicate_defaults() {
+        let default_len = ToolRegistry::builtin()
+            .interceptors
+            .len();
+
+        let no_profile_len = ToolRegistry::builtin()
+            .with_profile_interceptors(None)
+            .interceptors
+            .len();
+        assert_eq!(
+            no_profile_len, default_len,
+            "with_profile_interceptors(None) 不应重复挂载默认拦截器"
+        );
+
+        let profile = crate::config::profile::Profile {
+            name: "audit".to_string(),
+            inheritance_chain: vec![],
+            manifest: {
+                let mut m = crate::config::profile::ProfileManifest::default();
+                m.extra.insert(
+                    "interceptors".to_string(),
+                    serde_json::json!(["audit"]),
+                );
+                m
+            },
+        };
+        let with_profile_len = ToolRegistry::builtin()
+            .with_profile_interceptors(Some(&profile))
+            .interceptors
+            .len();
+        assert_eq!(
+            with_profile_len,
+            default_len + 1,
+            "with_profile_interceptors 应仅追加 profile 声明的拦截器，且不重复默认链"
+        );
+    }
+
+    /// profile.interceptors 非数组时 warn 且不追加拦截器。
+    #[test]
+    fn with_profile_interceptors_warns_on_non_array() {
+        let default_len = ToolRegistry::builtin()
+            .interceptors
+            .len();
+
+        let profile = crate::config::profile::Profile {
+            name: "bad".to_string(),
+            inheritance_chain: vec![],
+            manifest: {
+                let mut m = crate::config::profile::ProfileManifest::default();
+                m.extra.insert(
+                    "interceptors".to_string(),
+                    serde_json::json!("audit"),
+                );
+                m
+            },
+        };
+        let len = ToolRegistry::builtin()
+            .with_profile_interceptors(Some(&profile))
+            .interceptors
+            .len();
+        assert_eq!(
+            len, default_len,
+            "非数组 interceptors 不应追加任何拦截器"
+        );
+    }
 }

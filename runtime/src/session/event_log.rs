@@ -225,3 +225,42 @@ pub struct SessionStateProjection {
     pub last_tool: Option<String>,
     pub last_seq: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_log() -> SessionEventLog {
+        SessionEventLog::new(16)
+    }
+
+    #[test]
+    fn project_session_state_counts_total_completed_failed_denied() {
+        let log = fresh_log();
+        let sid = "sess-1";
+        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "fs.read"}));
+        log.record(sid, SessionEventType::ToolCallFinished, serde_json::json!({"success": true}));
+        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "shell.exec"}));
+        log.record(sid, SessionEventType::ToolCallFinished, serde_json::json!({"success": false}));
+        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "fs.write"}));
+        log.record(sid, SessionEventType::ToolCallDenied, serde_json::json!({"reason": "blocked"}));
+
+        let p = log.project_session_state(sid);
+        assert_eq!(p.session_id, sid);
+        assert_eq!(p.total_calls, 3);
+        assert_eq!(p.completed, 1);
+        assert_eq!(p.failed, 1);
+        assert_eq!(p.denied, 1);
+        assert_eq!(p.last_tool, Some("fs.write".to_string()));
+    }
+
+    #[test]
+    fn project_session_state_filters_other_sessions() {
+        let log = fresh_log();
+        log.record("a", SessionEventType::ToolCallStarted, serde_json::json!({"name": "tool"}));
+        log.record("b", SessionEventType::ToolCallFinished, serde_json::json!({"success": true}));
+        let p = log.project_session_state("a");
+        assert_eq!(p.total_calls, 1);
+        assert_eq!(p.completed, 0);
+    }
+}

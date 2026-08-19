@@ -717,26 +717,44 @@ pub(in crate::tui) mod tests {
     #[test]
     fn render_messages_panel_groups_thinking_and_status_messages() {
         let mut app = App::new();
+        // 运行中态
         app.messages.push(super::Message {
             role: super::MessageRole::Assistant,
-            content: "[工具] grep 已完成".to_string(),
+            content: "[工具] grep ...running".to_string(),
             thinking: "分析调用链".to_string(),
             timestamp: "12:00:01".to_string(),
             collapsed: false,
         });
+        // 成功态
         app.messages.push(super::Message {
-            role: super::MessageRole::System,
-            content: "[成功] 已刷新模型列表".to_string(),
+            role: super::MessageRole::Assistant,
+            content: "[工具] cargo test 完成: 822 passed".to_string(),
             thinking: String::new(),
             timestamp: "12:00:02".to_string(),
             collapsed: false,
         });
-        let backend = TestBackend::new(140, 16);
+        // 失败态
+        app.messages.push(super::Message {
+            role: super::MessageRole::Assistant,
+            content: "[工具] rustc 失败: cannot find crate".to_string(),
+            thinking: String::new(),
+            timestamp: "12:00:03".to_string(),
+            collapsed: false,
+        });
+        // 系统状态消息
+        app.messages.push(super::Message {
+            role: super::MessageRole::System,
+            content: "[成功] 已刷新模型列表".to_string(),
+            thinking: String::new(),
+            timestamp: "12:00:04".to_string(),
+            collapsed: false,
+        });
+        let backend = TestBackend::new(140, 20);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
         terminal
             .draw(|frame| {
-                render_messages_panel(frame, &mut app, Rect::new(0, 0, 140, 16));
+                render_messages_panel(frame, &mut app, Rect::new(0, 0, 140, 20));
             })
             .expect("draw messages panel");
 
@@ -747,12 +765,24 @@ pub(in crate::tui) mod tests {
             .map(|line| line.line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        // 三态图标/文案
+        assert!(line_dump.contains("▶"), "运行中态应渲染 ▶ 图标");
+        assert!(line_dump.contains("运行中"), "运行中态应渲染 运行中 文案");
+        assert!(line_dump.contains("✓"), "成功态应渲染 ✓ 图标");
+        assert!(line_dump.contains("完成"), "成功态应渲染 完成 文案");
+        assert!(line_dump.contains("✗"), "失败态应渲染 ✗ 图标");
+        assert!(line_dump.contains("失败"), "失败态应渲染 失败 文案");
+        // 工具名与摘要
+        assert!(line_dump.contains("grep"));
+        assert!(line_dump.contains("cargo test"));
+        assert!(line_dump.contains("rustc"));
+        assert!(line_dump.contains("822 passed"));
+        // 思考折叠
         assert!(line_dump.contains("思考"));
         assert!(line_dump.contains("分析调用链"));
-        assert!(line_dump.contains("grep"));
-        assert!(line_dump.contains("完成"));
-        assert!(line_dump.contains("已刷新模型列表"));
         assert!(!line_dump.contains("[思考]"));
+        // 系统状态消息
+        assert!(line_dump.contains("已刷新模型列表"));
     }
 
     #[test]

@@ -139,6 +139,11 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
         command = CliCommand::Orchestrator;
     }
 
+    // N3: Run 路径不支持 --remote
+    if remote_prefix.is_some() && command == CliCommand::Run {
+        eprintln!("warning: --remote is only supported in orchestrator mode (sacode orchestrator --remote ...), ignored in run mode");
+    }
+
     CliOptions {
         command,
         prompt: prompt_text,

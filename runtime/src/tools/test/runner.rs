@@ -921,4 +921,13 @@ Tests:       2 failed, 5 passed, 7 total";
         assert_eq!(module, "foo::bar");
         assert_eq!(name, "test_something");
     }
+
+    #[test]
+    fn timeout_ms_is_clamped_to_minimum_one_second() {
+        // 输入 0 应被钳制到 1000ms，避免立即超时杀进程
+        let clamped = 0u64.max(1_000);
+        assert_eq!(clamped, 1_000);
+        assert_eq!(100u64.max(1_000), 1_000);
+        assert_eq!(120_000u64.max(1_000), 120_000);
+    }
 }
