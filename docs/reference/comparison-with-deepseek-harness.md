@@ -3,7 +3,7 @@
 本文档对 SaCode 与 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（DeepSeek AI 开源的 Agent 运行底座，下文简称 **DSH**）进行系统性对比，目的是为 SaCode 的后续架构演进提供外部参照与决策依据。
 
 - 受众：SaCode 维护者与潜在贡献者
-- SaCode 版本基线：`0.1.33`（v1.0+ 能力已落地，版本号未发布）
+- SaCode 版本基线：`1.0.0`（v1.0+ 能力已落地，版本号已定为 1.0.0）
 - DSH 版本基线：开发者预览 `v0.1`（MIT，TypeScript/pnpm monorepo）
 
 ---
