@@ -1,7 +1,7 @@
 # SaCode 产品路线图
 
-> 更新时间：2026-08-18
-> 当前版本：0.1.33
+> 更新时间：2026-08-19
+> 当前版本：1.0.0
 > 配套文档：`docs/product/PRD.md`、`docs/report.md`、`docs/report-plan.md`
 
 本文件只回答三件事：当前处在哪个阶段、下一阶段交付什么、后续能力按什么顺序演进。
@@ -100,11 +100,11 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 6. ✅ WASM 插件下载 — `PluginEntry` 新增 `download_url`/`wasm_path` 字段，`install_plugin` 自动下载 WASM 文件
 7. ✅ LSP 跨文件引用 — `references` 和 `goto_definition` 从单文件搜索扩展为遍历所有已打开文档
 
-### v1.0+：产品就绪 ✅ 能力已落地（2026-08-12） / 🚧 版本号未发布
+### v1.0+：产品就绪 ✅ 已发布（1.0.0）
 
 目标：形成自动化闭环、协作协议和长期平台能力。
 
-> **状态说明**：v1.0+ 四大产品就绪里程碑（M1-M4）能力维度已完成落地，但 `Cargo.toml` `[workspace.package].version` 仍为 `0.1.33`，尚未升到 `1.0.0`。正式发布 v1.0 需 `node scripts/sync-version.js 1.0.0` + `node scripts/check-release.js --strict-platforms` + GitHub release 流程。
+> **状态说明**：v1.0+ 四大产品就绪里程碑（M1-M4）能力维度已完成落地，版本号已发布为 `1.0.0`（`Cargo.toml` `[workspace.package].version` / `npm-package/package.json` / platform manifest 均已同步）。正式发布流程：`node scripts/sync-version.js 1.0.0` + `node scripts/check-release.js --strict-platforms` + GitHub release。
 
 重点交付（实施顺序 1→3→4→2）：
 
@@ -117,14 +117,14 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 
 基于评估报告四维结论制定的 12 周改进规划，6 个阶段：
 
-| 阶段 | 目标 | 周次 |
-|------|------|------|
-| P0 体验闭环 | 首次配置 ≤2 步、渐进式文档 | W1-W2 |
-| P1 VSCode 扩展 MVP | 复用 sacode serve、侧边栏对话 | W3-W5 |
-| P2 定位聚焦 | PRD/roadmap 修订、平台化收敛 | W6 |
-| P3 简化过度设计 | /goal 轻量、知识 9→3、冲突简化 | W7-W8 |
-| P4 强化核心机制 | 三级模式视觉、沙箱审计文档、审批可视化 | W9-W10 |
-| P5 场景补齐 | CI/CD、代码审查、远程开发、测试编写 | W11-W12 |
+| 阶段 | 目标 | 周次 | 状态 |
+|------|------|------|------|
+| P0 体验闭环 | 首次配置 ≤2 步、渐进式文档 | W1-W2 | ✅ 已落地（/login 2 步交互配置） |
+| P1 VSCode 扩展 MVP | 复用 sacode serve、侧边栏对话 | W3-W5 | ✅ 已落地（interfaces/vscode/） |
+| P2 定位聚焦 | PRD/roadmap 修订、平台化收敛 | W6 | ✅ 已落地（PRD v1.4、roadmap v1.0.0） |
+| P3 简化过度设计 | /goal 轻量、知识 9→3、冲突简化 | W7-W8 | ✅ 已落地（/goal、3 文件记忆、审批+拦截） |
+| P4 强化核心机制 | 三级模式视觉、沙箱审计文档、审批可视化 | W9-W10 | 🚧 部分落地（Loop 阶段进度条；沙箱审计文档/审批可视化待补） |
+| P5 场景补齐 | CI/CD、代码审查、远程开发、测试编写 | W11-W12 | 🚧 部分落地（ci-integration.md、review-pr skill；远程/测试文档待补） |
 
 ## 并行推进主线
 
@@ -151,7 +151,7 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 | `v0.5` | 提升代码智能深度 | AST、语义索引、测试运行器、LSP 诊断 | ✅ 已完成 |
 | `v0.7` | 扩展生态与集成 | MCP stdio、ACP 流式、检查点增强、IDE 配置生成、插件运行时、LSP 跨文件 | ✅ 已完成 |
 | `v1.0+` | 达到产品就绪 | 自动修复、多模态、协作协议、学习记忆 | ✅ 能力已落地 / ✅ 版本号已发布（1.0.0） |
-| `v1.2+` | 体验闭环与简化 | IDE 插件、provider 零配置、首次体验、过度设计简化 | ✅ 能力已落地：VSCode 扩展 MVP（interfaces/vscode/）、provider 预设、/goal 轻量、知识文件 9→3 |
+| `v1.2+` | 体验闭环与简化 | IDE 插件、provider 零配置、首次体验、过度设计简化 | ✅ 核心已落地（P0-P3 完成）；🚧 P4/P5 部分落地（沙箱审计文档、远程/测试场景待补） |
 
 ## 参考关系
 
