@@ -1015,7 +1015,8 @@ pub(in crate::tui) mod tests {
         app.interaction.pending_approval_request = Some(PendingApprovalRequest {
             task_prompt: "修复模型列表加载".to_string(),
             tool_name: "bash".to_string(),
-            allowed_dir: None,
+            allowed_dir: Some(std::env::temp_dir()),
+            input_summary: Some("rm -rf /tmp/cache".to_string()),
         });
         app.interaction
             .pending_question_items
@@ -1058,6 +1059,8 @@ pub(in crate::tui) mod tests {
             Some("允许执行 bash 工具吗？")
         );
         assert!(rendered.contains("bash"));
+        assert!(rendered.contains("rm -rf /tmp/cache"));
+        assert!(rendered.contains("tmp"));
     }
 
     #[test]

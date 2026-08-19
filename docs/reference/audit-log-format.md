@@ -164,3 +164,36 @@ output {
   }
 }
 ```
+
+## 补充：events.log 格式
+
+### 概述
+
+SaCode 的事件日志 `.sacode/events.log` 与审计日志类似，采用 JSON Lines 格式，但记录的是**工具执行全生命周期事件**（ToolCallStarted → ToolCallFinished / ToolCallDenied），而非仅 `Modify` 级工具的沙箱拦截。
+
+### 字段定义
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 事件类型：`tool_call_started` / `tool_call_finished` / `tool_call_denied` |
+| `session_id` | string | 会话标识（空字符串表示独立调用） |
+| `ts` | string | RFC3339 时间戳 |
+| `seq` | integer | 单调递增全局序号（用于回放重建） |
+| `tool` | string | 工具名 |
+| `input` | object | 工具输入参数 |
+| `output` | object | 工具输出结果（仅 `tool_call_finished`） |
+| `success` | boolean | 是否成功（仅 `tool_call_finished`） |
+| `error` | string | 错误信息（仅失败时） |
+| `reason` | string | 拒绝原因（仅 `tool_call_denied`） |
+
+### 示例
+
+```json
+{"type":"tool_call_started","session_id":"","ts":"2026-08-19T10:00:00Z","seq":1,"tool":"fs.read","input":{"path":"src/main.rs"}}
+{"type":"tool_call_finished","session_id":"","ts":"2026-08-19T10:00:00Z","seq":2,"tool":"fs.read","input":{"path":"src/main.rs"},"output":{"content":"..."},"success":true}
+{"type":"tool_call_denied","session_id":"","ts":"2026-08-19T10:00:00Z","seq":3,"tool":"shell.exec","input":{"command":"rm -rf /"},"reason":"dangerous command blocked"}
+```
+
+### SIEM 接入
+
+events.log 同样可通过 Filebeat/Logstash 采集，索引建议为 `sacode-events-%{+YYYY.MM.dd}`，便于与 audit.log 关联分析。

@@ -36,6 +36,8 @@ pub struct PendingApprovalRequest {
     pub task_prompt: String,
     pub tool_name: String,
     pub allowed_dir: Option<PathBuf>,
+    /// 操作摘要：shell 命令文本或文件路径，用于审批面板展示
+    pub input_summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +186,20 @@ impl App {
                 .unwrap_or_default()
                 .to_string(),
             allowed_dir: Self::extract_allowed_dir(question.get("args").unwrap_or(&Value::Null)),
+            input_summary: Self::extract_input_summary(question.get("args").unwrap_or(&Value::Null)),
         })
+    }
+
+    fn extract_input_summary(args: &Value) -> Option<String> {
+        // shell.exec: args.command
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            return Some(cmd.to_string());
+        }
+        // fs.write/fs.edit: args.path
+        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+            return Some(path.to_string());
+        }
+        None
     }
 
     fn extract_allowed_dir(args: &Value) -> Option<PathBuf> {

@@ -141,7 +141,7 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
 
     let question_lines =
         if let Some(request) = &app.interaction.pending_approval_request {
-            vec![
+            let mut lines = vec![
             Line::from(vec![
                 Span::styled(
                     "审批工具",
@@ -156,11 +156,26 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
                     .fg(theme.assistant)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled(
-                "提交后会按当前执行模式继续任务，并在文件访问、工具调用或执行权限受限时申请授权。",
+            ];
+            // 操作摘要
+            if let Some(summary) = &request.input_summary {
+                lines.push(Line::from(vec![
+                    Span::styled("操作: ", Style::default().fg(theme.subtle)),
+                    Span::styled(summary.as_str(), Style::default().fg(theme.warning)),
+                ]));
+            }
+            // 影响范围
+            if let Some(dir) = &request.allowed_dir {
+                lines.push(Line::from(vec![
+                    Span::styled("范围: ", Style::default().fg(theme.subtle)),
+                    Span::styled(dir.display().to_string(), Style::default().fg(theme.info)),
+                ]));
+            }
+            lines.push(Line::from(Span::styled(
+                "按 Enter 确认 / Left 拒绝。提交后按当前执行模式继续任务。",
                 Style::default().fg(theme.subtle),
-            )),
-        ]
+            )));
+            lines
         } else if app.interaction.pending_confirm_submission {
             vec![
                 Line::from(Span::styled(
