@@ -8,6 +8,8 @@
 use std::env;
 
 use anyhow::Result;
+use sacode_runtime::tools::context_remote::RemoteContext;
+use sacode_runtime::tools::context::set_default_context;
 use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun, generate_task_id};
 use sacode_runtime::{
     AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder, PromptUserDecider,
@@ -51,6 +53,16 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     }
     let agent_loop = build_agent_loop(&loop_config);
     let subsystems = loop_config.subsystems;
+
+    // §3.3 第四步：若指定 --remote <prefix>，激活远程执行环境
+    // 例：sacode orchestrator --remote "ssh user@host" <prompt>
+    //     sacode orchestrator --remote "docker exec -i container" <prompt>
+    if let Some(ref prefix) = options.remote_prefix {
+        let parts: Vec<String> = prefix.split_whitespace().map(String::from).collect();
+        let remote = std::sync::Arc::new(RemoteContext::new(parts));
+        set_default_context(remote);
+        eprintln!("已激活远程执行环境：{}", prefix);
+    }
 
     let (report, task_run) = if execution_plan.use_multi_agent {
         // 多 Agent 路径：经由 AgentLoop trait 驱动（§3.5 可替换抽象）

@@ -116,6 +116,7 @@ pub struct CliOptions {
     pub approval: ApprovalPolicy,
     pub profile: Option<String>,
     pub agent_loop: Option<String>,
+    pub remote_prefix: Option<String>,
     pub sub_args: Vec<String>,
 }
 

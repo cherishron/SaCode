@@ -77,6 +77,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
     let mut approval = ApprovalPolicy::Prompt;
     let mut profile: Option<String> = None;
     let mut agent_loop: Option<String> = None;
+    let mut remote_prefix: Option<String> = None;
 
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -93,6 +94,11 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             "--agent-loop" => {
                 if let Some(value) = iter.next() {
                     agent_loop = Some(value);
+                }
+            }
+            "--remote" => {
+                if let Some(value) = iter.next() {
+                    remote_prefix = Some(value);
                 }
             }
             "--prompt" => approval = ApprovalPolicy::Prompt,
@@ -135,6 +141,7 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
         approval,
         profile,
         agent_loop,
+        remote_prefix,
         sub_args: Vec::new(),
     }
 }
@@ -150,6 +157,7 @@ fn default_options(command: CliCommand) -> CliOptions {
         approval: ApprovalPolicy::Prompt,
         profile: None,
         agent_loop: None,
+        remote_prefix: None,
         sub_args: Vec::new(),
     }
 }
