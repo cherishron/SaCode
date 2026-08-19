@@ -83,9 +83,10 @@ function verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, expectedVe
 function verifyPackedNpmContents(npmDir, filesToVerify) {
   let packOutput;
   try {
-    packOutput = execFileSync('npm', ['pack', '--json'], {
+    packOutput = execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--json'], {
       cwd: npmDir,
       encoding: 'utf8',
+      shell: process.platform === 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error) {
@@ -115,7 +116,7 @@ function verifyPackedNpmContents(npmDir, filesToVerify) {
     fail(`failed to inspect packed tarball ${tarballName}: ${error.message}`);
   }
 
-  const tarEntries = tarList.split('\n').filter(Boolean);
+  const tarEntries = tarList.split(/\r?\n/).map((e) => e.trim()).filter(Boolean);
   for (const file of filesToVerify) {
     const packagedPath = `package/platforms/${file}`;
     if (!tarEntries.includes(packagedPath)) {
