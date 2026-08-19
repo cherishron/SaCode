@@ -177,4 +177,43 @@ impl SessionEventLog {
     pub fn current_seq(&self) -> u64 {
         self.seq.load(Ordering::Relaxed)
     }
+
+    /// 从事件流投影出会话级状态摘要
+    pub fn project_session_state(&self, session_id: &str) -> SessionStateProjection {
+        let buf = self.buffer.lock().expect("session event buffer poisoned");
+        let mut projection = SessionStateProjection::default();
+        projection.session_id = session_id.to_string();
+
+        for event in buf.iter().filter(|e| e.session_id == session_id) {
+            projection.last_seq = event.seq;
+            match event.event_type {
+                SessionEventType::ToolCallStarted => {
+                    projection.total_calls += 1;
+                    if let Some(name) = event.data.get("name").and_then(|v| v.as_str()) {
+                        projection.last_tool = Some(name.to_string());
+                    }
+                }
+                SessionEventType::ToolCallFinished => {
+                    let success = event.data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if success { projection.completed += 1; } else { projection.failed += 1; }
+                }
+                SessionEventType::ToolCallDenied => {
+                    projection.denied += 1;
+                }
+            }
+        }
+        projection
+    }
+}
+
+/// 会话级状态投影 — 从事件流重建的统计摘要
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionStateProjection {
+    pub session_id: String,
+    pub total_calls: u32,
+    pub completed: u32,
+    pub failed: u32,
+    pub denied: u32,
+    pub last_tool: Option<String>,
+    pub last_seq: u64,
 }
