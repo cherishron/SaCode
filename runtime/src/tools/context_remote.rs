@@ -30,6 +30,17 @@
 //!
 //! 平台差异：前缀命令的拼接沿用现有 `build_command_parts` 的平台包装逻辑
 //! （`needs_cmd_wrapper` / `needs_sh_wrapper`），保证与本地 `shell.exec` 一致。
+//!
+//! **路径语义限制（N1）**：当前 FS 工具的沙箱校验（`fs/access.rs::resolve_allowed_path`）
+//! 用**本地** `current_dir().canonicalize()` 解析相对路径、用**本地**文件系统校验路径合法性。
+//! 远程模式下存在三重死路：
+//! 1. 相对路径被解析为本地绝对路径（如 `E:\Project\...`）→ 发给 Linux 远端必然不存在；
+//! 2. 代码只在远端时，本地无此文件 → `canonicalize` 直接报错，到不了 ctx；
+//! 3. 用户传远端绝对路径 `/remote/abs` → 本地 sandbox 判定越界拒绝。
+//!
+//! 因此 `--remote` 仅在"本地/远端路径完全同构"场景下可用（如 Docker bind mount 同路径、
+//! 或空前缀本地测试）。生产级远程化需引入路径映射层（如 workdir 映射或 chroot 语义），
+//! 让沙箱校验与路径解析都在远端语义下完成。
 
 use std::path::Path;
 
@@ -40,10 +51,10 @@ use crate::tools::context::{
 };
 use crate::tools::shell::exec::run_local_command;
 
-/// 远程执行环境
+/// 远程执行环境（实验性）
 ///
-/// 通过 `command_prefix` 把每个 FS/exec 操作转发到远端。工具的 `current_context()`
-/// 调用无需任何改动即可整体迁移到该执行世界。
+/// 通过 `command_prefix` 把 FS/exec 操作转发到远端。
+/// 注意：当前有路径语义限制（见模块文档 N1），仅路径同构场景可用。
 pub struct RemoteContext {
     /// 命令前缀 argv（如 `["ssh", "user@host"]`）。空向量表示本地等价。
     command_prefix: Vec<String>,

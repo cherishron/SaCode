@@ -103,6 +103,9 @@ impl ToolRegistry {
                             }
                         }
                     }
+                } else {
+                    // N4: interceptors 必须是数组，非数组时 warn（与 unknown name warn 对称）
+                    tracing::warn!("profile.interceptors must be an array, got: {:?}", extra);
                 }
             }
         }
