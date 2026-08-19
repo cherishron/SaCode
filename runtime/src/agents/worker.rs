@@ -13,9 +13,10 @@ use sacode_kernel::{
 
 use super::message_bus::{AgentMailboxHandle, AgentMessage, AgentMessageKind};
 use super::model_router::{resolve_role_route, ResolvedRoleRoute};
+use super::loop_impl::LoopSubsystems;
 use crate::executor::task_runner::{
     AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
-    execute_task_with_failover,
+    execute_task_with_failover, execute_task_with_provider,
 };
 use crate::config::profile::Profile;
 use crate::model_routing::TaskProfile;
@@ -74,6 +75,7 @@ pub async fn run_sub_agent(
     mut mailbox: Option<AgentMailboxHandle>,
     role_task_map: &HashMap<String, String>,
     named_profile: Option<&Profile>,
+    subsystems: LoopSubsystems,
 ) -> WorkerRunResult {
     let resolved_route = resolve_role_route(workdir, &role, profile);
     let resolved_model_summary = resolved_route
@@ -196,15 +198,19 @@ pub async fn run_sub_agent(
             );
         };
 
-    let task_run_result = execute_task_with_failover(
-        &config,
-        resolved_route.as_ref().map(|r| &r.plan),
-        &candidates,
-        profile,
-        None, // 子 Agent 暂不支持流式输出
-        Some(&health_recorder), // 记录模型健康，闭合自愈合回路
-    )
-    .await;
+    let task_run_result = if subsystems.self_healing {
+        execute_task_with_failover(
+            &config,
+            resolved_route.as_ref().map(|r| &r.plan),
+            &candidates,
+            profile,
+            None, // 子 Agent 暂不支持流式输出
+            Some(&health_recorder), // 记录模型健康，闭合自愈合回路
+        )
+        .await
+    } else {
+        execute_task_with_provider(&config, None).await
+    };
 
     // 构建事件序列
     let mut events = vec![sacode_kernel::Event::message(format!(

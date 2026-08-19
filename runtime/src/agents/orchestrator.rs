@@ -21,6 +21,7 @@ use super::summary_compactor::{
     extract_final_consensus, extract_risk_summary, OutputPolarity,
 };
 use super::{build_execution_plan, RoleRegistry};
+use super::loop_impl::LoopSubsystems;
 use crate::agents::worker::{run_sub_agent, WorkerRunResult};
 use crate::config::profile::Profile;
 use crate::model_routing::TaskProfile;
@@ -31,6 +32,7 @@ pub async fn execute_role_driven_orchestration(
     checkpoints: &CheckpointStorage,
     workdir: &std::path::Path,
     named_profile: Option<&Profile>,
+    subsystems: LoopSubsystems,
 ) -> Result<(ExecutionReport, sacode_kernel::AgentExecutionPlan)> {
     let roles = RoleRegistry::builtin();
     let profile = TaskProfile::from_prompt_and_workspace(&context.task.prompt, workdir);
@@ -43,8 +45,9 @@ pub async fn execute_role_driven_orchestration(
             context.mode.to_string(),
         )),
         events: vec![sacode_kernel::Event::message(format!(
-            "进入角色驱动编排模式：{:?}",
-            plan.mode
+            "进入角色驱动编排模式：{:?}，子系统={:?}",
+            plan.mode,
+            subsystems
         ))],
         tool_records: Vec::new(),
         route_records: Vec::new(),
@@ -64,7 +67,7 @@ pub async fn execute_role_driven_orchestration(
     // 创建消息总线，支持子 Agent 间通信
     let message_bus = MessageBus::new();
 
-    let results = execute_parallel_groups(&plan, &roles, &profile, workdir, &mut report, &message_bus, named_profile).await;
+    let results = execute_parallel_groups(&plan, &roles, &profile, workdir, &mut report, &message_bus, named_profile, subsystems).await;
 
     // 收集通信摘要
     let comm_summaries = collect_communication_summaries(&results, &message_bus).await;
@@ -99,8 +102,12 @@ pub async fn execute_role_driven_orchestration(
         &report.conflicts,
     ));
 
-    // 灵枢 · 自防护 — 冲突处置回路
-    handle_conflict_disposition(&mut report, &message_bus, workdir).await;
+    // 灵枢 · 自防护 — 冲突处置回路（受 subsystems.self_protection 开关控制）
+    if subsystems.self_protection {
+        handle_conflict_disposition(&mut report, &message_bus, workdir).await;
+    } else {
+        report.events.push(sacode_kernel::Event::thinking("自防护子系统已关闭，跳过冲突处置"));
+    }
 
     finalize_orchestration_events(&mut report, &results);
 
@@ -206,7 +213,7 @@ pub async fn execute_role_driven_task_run(
     workdir: &std::path::Path,
     named_profile: Option<&Profile>,
 ) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
-    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile).await?;
+    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, LoopSubsystems::default()).await?;
     let task_run = task_run_from_report(
         context.task_id.clone(),
         context.mode,
@@ -225,6 +232,7 @@ async fn execute_parallel_groups(
     report: &mut ExecutionReport,
     message_bus: &MessageBus,
     named_profile: Option<&Profile>,
+    subsystems: LoopSubsystems,
 ) -> Vec<WorkerRunResult> {
     let mut all_results = Vec::new();
 
@@ -283,6 +291,7 @@ async fn execute_parallel_groups(
                 mailbox,
                 &role_task_map,
                 named_profile,
+                subsystems,
             ));
         }
 

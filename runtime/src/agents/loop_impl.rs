@@ -268,7 +268,7 @@ impl AgentLoop for LingShuLoop {
         // LingShuLoop 默认全开，确保与现有 orchestrator 行为完全一致。
         // 后续可将开关透传到 orchestrator 内部各子系统钩子（doc §3.5 风险项）。
         let (report, _plan) =
-            execute_role_driven_orchestration(context, checkpoints, workdir, named_profile)
+            execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, self.subsystems)
                 .await?;
         Ok(report)
     }

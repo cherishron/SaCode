@@ -50,6 +50,7 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         loop_config.kind = AgentLoopKind::parse(kind_str);
     }
     let agent_loop = build_agent_loop(&loop_config);
+    let subsystems = loop_config.subsystems;
 
     let (report, task_run) = if execution_plan.use_multi_agent {
         // 多 Agent 路径：经由 AgentLoop trait 驱动（§3.5 可替换抽象）
