@@ -16,6 +16,8 @@ struct TestRunInput {
     framework: Option<String>,
     target: Option<String>,
     filter: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +48,8 @@ pub fn spec() -> ToolSpec {
             "properties": {
                 "framework": { "type": "string", "description": "可选: cargo|npm|go|pytest" },
                 "target": { "type": "string", "description": "可选: 测试目标路径或包名" },
-                "filter": { "type": "string", "description": "可选: 测试过滤关键字" }
+                "filter": { "type": "string", "description": "可选: 测试过滤关键字" },
+                "timeout_ms": { "type": "integer", "description": "可选: 超时毫秒数，默认 120000（2分钟）" }
             }
         }),
         output_schema: serde_json::json!({
@@ -95,7 +98,7 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         return Ok(ToolOutput::failure("empty test command"));
     };
 
-    let timeout_ms = 120_000;
+    let timeout_ms = payload.timeout_ms.unwrap_or(120_000);
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -685,7 +688,7 @@ fn detect_framework(cwd: &Path) -> Option<TestFramework> {
         Some(TestFramework::Node)
     } else if cwd.join("go.mod").exists() {
         Some(TestFramework::Go)
-    } else if cwd.join("pyproject.toml").exists() || cwd.join("pytest.ini").exists() {
+    } else if cwd.join("pyproject.toml").exists() || cwd.join("pytest.ini").exists() || cwd.join("requirements.txt").exists() {
         Some(TestFramework::Pytest)
     } else {
         None
