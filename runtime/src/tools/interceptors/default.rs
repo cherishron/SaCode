@@ -251,6 +251,25 @@ pub fn default_interceptors() -> Vec<Box<dyn ToolInterceptor>> {
     ]
 }
 
+/// 按名称构造拦截器实例（供 Profile 按需挂载）
+///
+/// 支持的名称：
+/// - `"audit"` → AuditInterceptor
+/// - `"network_block"` → NetworkPolicyInterceptor
+/// - `"task_spawn_block"` → TaskSpawnInterceptor
+/// - `"command_block"` → CommandPolicyInterceptor
+/// - `"path_restrict"` → PathPolicyInterceptor
+pub fn interceptor_by_name(name: &str) -> Option<Box<dyn ToolInterceptor>> {
+    Some(match name {
+        "audit" => Box::new(AuditInterceptor),
+        "network_block" => Box::new(NetworkPolicyInterceptor),
+        "task_spawn_block" => Box::new(TaskSpawnInterceptor),
+        "command_block" => Box::new(CommandPolicyInterceptor),
+        "path_restrict" => Box::new(PathPolicyInterceptor),
+        _ => return None,
+    })
+}
+
 /// 供 `sandbox_guard::preflight` 向后兼容入口使用：若某拦截器 Deny，返回其 reason
 pub fn run_preflight_chain(
     spec: &ToolSpec,
