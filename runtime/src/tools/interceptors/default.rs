@@ -164,7 +164,7 @@ impl ToolInterceptor for AuditInterceptor {
             audit_preflight_allowed(&spec.name, input);
             // 发布 ToolCallStarted 事件到持久化事件流
             SessionEventLog::global().record(
-                &ctx.session_id,
+                ctx.session_id.as_deref().unwrap_or(""),
                 SessionEventType::ToolCallStarted,
                 serde_json::json!({
                     "tool": spec.name,
@@ -223,7 +223,7 @@ impl ToolInterceptor for AuditInterceptor {
 
         // 发布 ToolCallFinished 事件到持久化事件流（§3.1）
         SessionEventLog::global().record(
-            &ctx.session_id,
+            ctx.session_id.as_deref().unwrap_or(""),
             SessionEventType::ToolCallFinished,
             serde_json::json!({
                 "tool": spec.name,
@@ -266,7 +266,7 @@ pub fn run_preflight_chain(
                 // 发布 ToolCallDenied 事件
                 if sg_should_audit(spec) {
                     SessionEventLog::global().record(
-                        &ctx.session_id,
+                        ctx.session_id.as_deref().unwrap_or(""),
                         SessionEventType::ToolCallDenied,
                         serde_json::json!({
                             "tool": spec.name,

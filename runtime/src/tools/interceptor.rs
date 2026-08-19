@@ -20,11 +20,11 @@ use super::{SideEffectLevel, ToolOutput, ToolSpec};
 /// 单次工具调用的执行上下文
 ///
 /// 用于把 session / task 维度信息传给拦截器，使其能把事件关联到正确的会话流。
-/// 当前仅携带 `session_id`（对应 `.sacode/events.log` 的会话分片），后续可扩展。
+/// 当前携带 `session_id`（对应 `.sacode/events.log` 的会话分片）和 `task_id`，后续可扩展。
 #[derive(Debug, Clone, Default)]
 pub struct InterceptContext {
-    /// 会话标识；空字符串表示未关联会话（如独立 `sacode "<task>"` 调用）
-    pub session_id: String,
+    /// 会话标识；None 表示未关联会话（如独立 `sacode "<task>"` 调用）
+    pub session_id: Option<String>,
     /// 触发本次工具调用的任务标识（可选，用于跨任务事件关联）
     pub task_id: Option<String>,
 }
