@@ -36,43 +36,25 @@ fn default_message_id() -> String {
 }
 
 /// 任务状态 — 用于结构化消息协议中的任务生命周期追踪
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
-    /// 待处理
+    #[default]
     Pending,
-    /// 执行中
     Running,
-    /// 阻塞（等待外部输入/协助）
     Blocked,
-    /// 完成
     Done,
-    /// 失败
     Failed,
 }
 
-impl Default for TaskState {
-    fn default() -> Self {
-        TaskState::Pending
-    }
-}
-
 /// 消息优先级
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessagePriority {
-    /// 低优先级
     Low,
-    /// 普通优先级
+    #[default]
     Normal,
-    /// 高优先级（如冲突干预、修复请求）
     High,
-}
-
-impl Default for MessagePriority {
-    fn default() -> Self {
-        MessagePriority::Normal
-    }
 }
 
 /// Agent 间通信消息
@@ -370,6 +352,7 @@ impl AgentMailboxHandle {
     }
 
     /// 发送结构化直接消息（携带任务状态/优先级/引用链/截止时间）
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_structured(
         &self,
         to: &str,
@@ -478,13 +461,11 @@ impl AgentMailboxHandle {
             // 优先消费上一轮缓冲到本地 pending 队列的入站消息（其余请求的响应或广播）
             {
                 let mut pending = self.pending.lock().await;
-                while let Some(msg) = pending.pop_front() {
+                if let Some(msg) = pending.front().cloned() {
                     if msg.reply_to.as_deref() == Some(request_id.as_str()) {
+                        pending.pop_front();
                         return Ok(msg);
                     }
-                    // 仍不匹配本请求：放回尾部，下一轮继续检查
-                    pending.push_back(msg);
-                    break;
                 }
             }
 

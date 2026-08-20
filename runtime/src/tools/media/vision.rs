@@ -144,6 +144,7 @@ impl VisionCache {
 }
 
 /// 进程级共享缓存（512 条）
+#[allow(clippy::incompatible_msrv)]
 pub static VISION_CACHE: std::sync::LazyLock<Arc<VisionCache>> =
     std::sync::LazyLock::new(|| Arc::new(VisionCache::new(512)));
 
@@ -242,7 +243,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     // 灵枢 · 多模态（M4）：超时控制取自 ToolSpec.timeout_ms（默认 20s）
     let timeout_ms = spec().timeout_ms.unwrap_or(20_000);
-    let timeout = Duration::from_millis(timeout_ms as u64);
+    let timeout = Duration::from_millis(timeout_ms);
 
     // 灵枢 · 多模态（M4）：结果缓存（路径+mtime+size+model 命中）
     let model_hint = input
@@ -335,9 +336,7 @@ fn run_vision_with_fallback(
     prompt: &str,
     timeout: Duration,
 ) -> Result<(String, String), VisionError> {
-    match try_visual_read(input, file_path, bytes, mime_type, prompt, timeout)
-        .map_err(VisionError::from)
-    {
+    match try_visual_read(input, file_path, bytes, mime_type, prompt, timeout) {
         Ok(result) => Ok(result),
         // 致命错误：不降级，直接向上传递
         Err(VisionError::Timeout) => Err(VisionError::Timeout),

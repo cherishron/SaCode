@@ -1,0 +1,104 @@
+﻿cargo : warning: unused import: `std::path::PathBuf`
+At line:1 char:158
++ ... \Project\cherishron\SaCode; cargo test --workspace --lib 2>&1 | Out-F ...
++                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unused...:path::PathBuf`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  --> runtime\src\tools\code\tests.rs:10:5
+   |
+10 | use std::path::PathBuf;
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `current_context`
+   --> runtime\src\tools\context_remote.rs:255:33
+    |
+255 |     use crate::tools::context::{current_context, set_default_context};
+    |                                 ^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> runtime\src\agents\message_bus.rs:804:13
+    |
+804 |         let mut responder = bus.register("responder".to_string()).await;
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> runtime\src\agents\message_bus.rs:917:13
+    |
+917 |         let mut sender = bus.register("sender".to_string()).await;
+    |             ----^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> runtime\src\agents\message_bus.rs:918:13
+    |
+918 |         let mut responder = bus.register("responder".to_string()).await;
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `forked`
+   --> runtime\src\session\mod.rs:977:13
+    |
+977 |         let forked = service.fork_session(&source.id).unwrap();
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_forked`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `has_broken_fn`
+   --> runtime\src\tools\code\tests.rs:676:9
+    |
+676 |     let has_broken_fn = summary_broken.symbols.iter().any(|s| s.name == "broken");
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_has_broken_fn`
+
+warning: `sacode-runtime` (lib test) generated 7 warnings (run `cargo fix --lib -p sacode-runtime --tests` to apply 7 
+suggestions)
+   Compiling sacode-cli v1.1.0 (E:\Project\cherishron\SaCode\interfaces\cli)
+warning: unused import: `sacode_runtime::SideEffectLevel`
+   --> interfaces\cli\src\runner.rs:619:9
+    |
+619 |     use sacode_runtime::SideEffectLevel;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0308]: arguments to this function are incorrect
+   --> interfaces\cli\src\tui\provider_actions.rs:335:15
+    |
+335 |         match agent_harness::connect_provider(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+338 |             name,
+    |             ---- expected `&str`, found `String`
+339 |             base_url,
+    |             -------- expected `&str`, found `String`
+    |
+note: function defined here
+   --> interfaces\cli\src\agent_harness.rs:19:8
+    |
+ 19 | pub fn connect_provider(
+    |        ^^^^^^^^^^^^^^^^
+...
+ 22 |     name: &str,
+    |     ----------
+ 23 |     base_url: &str,
+    |     --------------
+help: consider borrowing here
+    |
+338 |             &name,
+    |             +
+help: consider borrowing here
+    |
+339 |             &base_url,
+    |             +
+
+For more information about this error, try `rustc --explain E0308`.
+warning: `sacode-cli` (lib test) generated 1 warning
+error: could not compile `sacode-cli` (lib test) due to 1 previous error; 1 warning emitted

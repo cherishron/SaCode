@@ -391,8 +391,8 @@ impl App {
         match agent_harness::connect_provider(
             &self.provider_store,
             &self.sacode_store,
-            &name,
-            &base_url,
+            name,
+            base_url,
             api_key,
         ) {
             Ok(result) => {

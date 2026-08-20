@@ -346,7 +346,7 @@ fn parse_toml_array(value: &str) -> Vec<String> {
     let inner = &value[1..value.len() - 1];
     inner
         .split(',')
-        .map(|item| unquote_toml(item))
+        .map(unquote_toml)
         .filter(|item| !item.is_empty())
         .collect()
 }

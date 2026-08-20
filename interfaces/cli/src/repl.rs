@@ -335,7 +335,7 @@ impl ReplSession {
                 None => {
                     println!("用法: /goal <完成条件>");
                     println!("示例: /goal 所有测试通过");
-                    println!("");
+                    println!();
                     println!("设定后，每个任务执行完毕会自动检查是否满足条件。");
                 }
             }

@@ -462,11 +462,9 @@ fn extract_number_before(line: &str, word: &str) -> u64 {
     let parts: Vec<&str> = line.split_whitespace().collect();
     for (i, p) in parts.iter().enumerate() {
         // 处理 "files" / "file" / "insertions(+)" / "deletion(-)" 等变体
-        if p.starts_with(word) || p.starts_with(&format!("{}(", word)) {
-            if i > 0 {
-                if let Ok(n) = parts[i - 1].parse::<u64>() {
-                    return n;
-                }
+        if (p.starts_with(word) || p.starts_with(&format!("{}(", word))) && i > 0 {
+            if let Ok(n) = parts[i - 1].parse::<u64>() {
+                return n;
             }
         }
     }

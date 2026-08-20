@@ -258,6 +258,7 @@ pub async fn execute_role_driven_task_run(
     Ok((task_run, plan))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_parallel_groups(
     plan: &sacode_kernel::AgentExecutionPlan,
     roles: &RoleRegistry,

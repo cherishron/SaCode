@@ -65,6 +65,7 @@ pub struct WorkerRunResult {
 ///
 /// `role_task_map`：role_id → task_id 映射，用于将输出中的协助请求标记
 /// （target=role_id）转换为 mailbox 的目标 task_id。
+#[allow(clippy::too_many_arguments)]
 pub async fn run_sub_agent(
     task: SubAgentTask,
     role: AgentRole,

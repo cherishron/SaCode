@@ -1,4 +1,9 @@
-use std::{fs, path::PathBuf, process::Command, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
@@ -113,7 +118,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     // 帧级超时：将工具总超时按帧数平摊，避免多帧时最坏累计远超 ToolSpec.timeout_ms
     // （例如 frames=5、timeout=60s 时，若每帧各用 60s，最坏累计 300s）。
     let per_frame_timeout = {
-        let total = spec().timeout_ms.unwrap_or(60_000) as u64;
+        let total = spec().timeout_ms.unwrap_or(60_000);
         let frames = frames.max(1) as u64;
         Duration::from_millis(total / frames)
     };
@@ -165,11 +170,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 /// 均匀采样提取视频关键帧为 PNG 图片
-fn extract_frames(
-    video: &PathBuf,
-    work_dir: &PathBuf,
-    frames: usize,
-) -> anyhow::Result<Vec<PathBuf>> {
+fn extract_frames(video: &Path, work_dir: &Path, frames: usize) -> anyhow::Result<Vec<PathBuf>> {
     // 先探测视频时长（秒）
     let duration = probe_duration(video)?;
     let count = frames.max(1);
@@ -198,7 +199,7 @@ fn extract_frames(
 }
 
 /// 调用 ffmpeg 在指定时间点提取单帧
-fn extract_single_frame(video: &PathBuf, out: &PathBuf, ts: f64) -> anyhow::Result<()> {
+fn extract_single_frame(video: &Path, out: &Path, ts: f64) -> anyhow::Result<()> {
     let status = Command::new("ffmpeg")
         .args([
             "-y",
@@ -225,7 +226,7 @@ fn extract_single_frame(video: &PathBuf, out: &PathBuf, ts: f64) -> anyhow::Resu
 }
 
 /// 探测视频时长（秒），失败返回 0.0
-fn probe_duration(video: &PathBuf) -> anyhow::Result<f64> {
+fn probe_duration(video: &Path) -> anyhow::Result<f64> {
     let output = Command::new("ffprobe")
         .args([
             "-v",

@@ -253,7 +253,6 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     // 作为对外暴露的"多轮外部循环预算"上限语义保留；当 `max_iterations <= 1`
     // 时直接判定为 Exhausted（无外部循环余量），否则进入 PendingExternalFix 等待 LLM 介入。
     let round = 1usize;
-    let loop_state: FixLoopState;
 
     // 分析阶段：生成结构化修复上下文（状态机：Analyzing → Patching）
     let fix_context = build_fix_context(&test_summary);
@@ -289,16 +288,16 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     // 无外部循环余量（max_iterations <= 1）：降级为 Exhausted，
     // 交由外部（LLM 工具循环 / orchestrator）自行决定后续。
-    if max_iterations <= 1 {
-        loop_state = FixLoopState::Exhausted {
+    let loop_state: FixLoopState = if max_iterations <= 1 {
+        FixLoopState::Exhausted {
             iterations: round as u8,
-        };
+        }
     } else {
         // 已生成上下文，等待外部应用修改并验证（单轮执行恒为 1 轮）
-        loop_state = FixLoopState::PendingExternalFix {
+        FixLoopState::PendingExternalFix {
             iteration: round as u8,
-        };
-    }
+        }
+    };
 
     let success = test_summary.success;
     let final_state_label = match &loop_state {

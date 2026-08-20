@@ -72,7 +72,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 fn collect_entries(
-    root: &Path,
+    _root: &Path,
     current: &Path,
     recursive: bool,
     include_hidden: bool,
@@ -104,7 +104,7 @@ fn collect_entries(
         }));
 
         if recursive && entry.entry_type == EntryType::Directory {
-            collect_entries(root, &path, recursive, include_hidden, entries)?;
+            collect_entries(_root, &path, recursive, include_hidden, entries)?;
         }
     }
     Ok(())

@@ -10,9 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
-use sacode_kernel::{
-    Event, ExecutionMode, ExecutionReport, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState,
-};
+use sacode_kernel::{Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState};
 
 use crate::provider::{ProviderClient, StreamChunkKind, ToolChatResult};
 use crate::tools::{SideEffectLevel, ToolRegistry};
@@ -180,9 +178,11 @@ pub async fn execute_task_with_provider(
         None => TaskRunState::Failed,
     };
 
-    let mut report = ExecutionReport::default();
-    report.final_output = response.as_ref().ok().cloned();
-    if let Some(output) = response.as_ref().ok() {
+    let mut report = sacode_kernel::ExecutionReport {
+        final_output: response.as_ref().ok().cloned(),
+        ..Default::default()
+    };
+    if let Ok(output) = response.as_ref() {
         report.events.push(Event::Message {
             content: output.clone(),
         });
@@ -231,6 +231,7 @@ pub async fn execute_task_with_provider(
 }
 
 /// 执行带 Failover 的完整任务（主模型 → 备选模型切换）
+#[allow(clippy::type_complexity)]
 pub async fn execute_task_with_failover(
     config: &TaskRunConfig<'_>,
     route_plan: Option<&crate::ModelRoutePlan>,

@@ -355,6 +355,7 @@ impl Bm25Index {
     }
 
     /// 执行 BM25 搜索
+    #[allow(clippy::type_complexity)]
     fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         // 扩展查询词项
         let query_terms = expand_query(query);

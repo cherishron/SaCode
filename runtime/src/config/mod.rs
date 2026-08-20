@@ -255,16 +255,10 @@ impl LoopConfigStore {
 
     /// 读取 Loop 配置；文件不存在或损坏时回退默认。
     pub fn load(&self) -> crate::agents::loop_impl::LoopConfig {
-        if !self.path.exists() {
-            return crate::agents::loop_impl::LoopConfig::default();
-        }
-        match std::fs::read_to_string(&self.path)
+        std::fs::read_to_string(&self.path)
             .ok()
             .and_then(|c| serde_json::from_str::<crate::agents::loop_impl::LoopConfig>(&c).ok())
-        {
-            Some(config) => config,
-            None => crate::agents::loop_impl::LoopConfig::default(),
-        }
+            .unwrap_or_default()
     }
 
     /// 覆盖保存 Loop 配置（用于 `sacode config set agent-loop ...` 等场景）。

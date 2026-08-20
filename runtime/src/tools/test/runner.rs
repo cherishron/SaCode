@@ -114,7 +114,7 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         let buf = stdout_buf.clone();
         thread::spawn(move || {
             let mut lock = buf.lock().unwrap();
-            let _ = stdout.read_to_end(&mut *lock);
+            let _ = stdout.read_to_end(&mut lock);
         })
     };
 
@@ -123,7 +123,7 @@ pub fn execute(input: serde_json::Value) -> Result<ToolOutput> {
         let buf = stderr_buf.clone();
         thread::spawn(move || {
             let mut lock = buf.lock().unwrap();
-            let _ = stderr.read_to_end(&mut *lock);
+            let _ = stderr.read_to_end(&mut lock);
         })
     };
 
@@ -305,8 +305,8 @@ fn extract_rust_failure_detail(lines: &[&str], test_name: &str) -> String {
         if lines[i].trim() == header {
             // 收集后续行直到下一个 "----" 或空行分隔
             let mut detail_lines = Vec::new();
-            for j in (i + 1)..lines.len() {
-                let line = lines[j].trim();
+            for raw in &lines[i + 1..] {
+                let line = raw.trim();
                 if line.starts_with("----") || line.is_empty() && detail_lines.len() > 3 {
                     break;
                 }
@@ -349,8 +349,8 @@ fn extract_rust_failure_location(lines: &[&str], test_name: &str) -> String {
     for i in start..lines.len() {
         if lines[i].trim() == header {
             // 在失败块中查找 `src/...:line:col` 格式的位置
-            for j in (i + 1)..lines.len() {
-                let line = lines[j].trim();
+            for raw in &lines[i + 1..] {
+                let line = raw.trim();
                 if line.starts_with("----") {
                     break;
                 }
@@ -612,8 +612,8 @@ fn parse_node_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
             let name = trimmed.strip_prefix("● ").unwrap_or("").to_string();
             // 收集后续行作为错误消息
             let mut error_lines = Vec::new();
-            for j in (i + 1)..lines.len().min(i + 10) {
-                let next = lines[j].trim();
+            for raw in &lines[i + 1..lines.len().min(i + 10)] {
+                let next = raw.trim();
                 if next.starts_with("● ") || next.starts_with("FAIL") || next.starts_with("PASS")
                 {
                     break;

@@ -279,7 +279,7 @@ fn score_candidate(
 }
 
 /// 让 config.json 中 model 字段指定的默认模型获得最高优先分
-fn apply_default_model_preference(config: &SaCodeConfig, routed: &mut Vec<RoutedModel>) {
+fn apply_default_model_preference(config: &SaCodeConfig, routed: &mut [RoutedModel]) {
     if config.model.trim().is_empty() {
         return;
     }

@@ -16,6 +16,12 @@ use crate::tools::{ToolExecutor, ToolRegistry};
 /// WASM 工具名前缀，所有 WASM 工具均以 `wasm.<plugin>.<function>` 形式注册
 pub const WASM_TOOL_PREFIX: &str = "wasm.";
 
+/// 加载 WASM 插件得到的 (ToolSpec, executor) 对集合 + 共享 PluginHost
+type WasmToolsResult = (
+    Vec<(ToolSpec, Arc<dyn ToolExecutor>)>,
+    Arc<Mutex<PluginHost>>,
+);
+
 /// 工具名分隔符（用于拆分 plugin / function 名）
 const TOOL_NAME_SEPARATOR: &str = ".";
 
@@ -74,12 +80,7 @@ pub fn build_tool_specs_from_plugin(
 /// 并返回所有 (ToolSpec, executor) 对
 ///
 /// 错误处理：单个插件加载失败不阻断整体，错误记录到 stderr。
-pub fn collect_wasm_tools(
-    workdir: &Path,
-) -> anyhow::Result<(
-    Vec<(ToolSpec, Arc<dyn ToolExecutor>)>,
-    Arc<Mutex<PluginHost>>,
-)> {
+pub fn collect_wasm_tools(workdir: &Path) -> anyhow::Result<WasmToolsResult> {
     let mut host = PluginHost::new();
     let mut specs: Vec<PluginSpec> = Vec::new();
 

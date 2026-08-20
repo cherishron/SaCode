@@ -86,8 +86,10 @@ impl Profile {
     pub fn resolve(profiles_dir: &Path, name: &str) -> Result<Self> {
         let mut chain: Vec<String> = Vec::new();
         let mut current = name.to_string();
-        let mut merged = ProfileManifest::default();
-        merged.name = name.to_string();
+        let mut merged = ProfileManifest {
+            name: name.to_string(),
+            ..Default::default()
+        };
 
         // 沿 extends 向上遍历，父链覆盖顺序：祖先 → ... → 父 → 自身（自身最后，优先级最高）
         let mut visited = std::collections::HashSet::new();
@@ -451,8 +453,10 @@ pub fn export_bundle(
     profile: Option<&Profile>,
     patches: &PatchSet,
 ) -> Result<PathBuf> {
-    let mut manifest = ProfileManifest::default();
-    manifest.name = name.to_string();
+    let mut manifest = ProfileManifest {
+        name: name.to_string(),
+        ..Default::default()
+    };
     if let Some(profile) = profile {
         manifest.model = profile.manifest.model.clone();
         manifest.execution_mode = profile.manifest.execution_mode.clone();

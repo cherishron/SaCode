@@ -205,7 +205,7 @@ impl ExecutionContext for RemoteContext {
         if output.exit_code != 0 {
             return Err(anyhow!("remote metadata failed: {}", output.stderr));
         }
-        let parts: Vec<&str> = output.stdout.trim().split_whitespace().collect();
+        let parts: Vec<&str> = output.stdout.split_whitespace().collect();
         if parts.len() < 2 {
             return Err(anyhow!("remote metadata: unexpected stat output"));
         }

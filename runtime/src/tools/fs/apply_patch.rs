@@ -241,20 +241,20 @@ fn parse_unified_diff(text: &str) -> anyhow::Result<Vec<FilePatch>> {
         // hunk body 行
         if in_hunk_body {
             if let Some(hunk) = current_hunk.as_mut() {
-                if line.starts_with('+') {
+                if let Some(content) = line.strip_prefix('+') {
                     hunk.lines.push(HunkLine {
                         kind: HunkLineKind::Add,
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
-                } else if line.starts_with('-') {
+                } else if let Some(content) = line.strip_prefix('-') {
                     hunk.lines.push(HunkLine {
                         kind: HunkLineKind::Remove,
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
-                } else if line.starts_with(' ') {
+                } else if let Some(content) = line.strip_prefix(' ') {
                     hunk.lines.push(HunkLine {
                         kind: HunkLineKind::Context,
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
                 } else if line == "\\ No newline at end of file" {
                     // 忽略此标记，不影响 hunk 解析

@@ -65,8 +65,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "ocr" | "describe" => {
             let prompt = build_visual_prompt(mode, &file_path.display().to_string());
             // 超时遵守 media.read 的 timeout_ms（默认 10s）
-            let timeout =
-                std::time::Duration::from_millis(spec().timeout_ms.unwrap_or(10_000) as u64);
+            let timeout = std::time::Duration::from_millis(spec().timeout_ms.unwrap_or(10_000));
             try_visual_read(&input, &file_path, &bytes, mime_type, &prompt, timeout).unwrap_or_else(
                 |_| {
                     (

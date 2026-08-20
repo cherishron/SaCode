@@ -100,16 +100,11 @@ impl SessionEventLog {
             .map(|dir| dir.join(".sacode").join("events.log"));
 
         // 预创建 .sacode 目录；失败则降级纯内存
-        let resolved = match log_path {
-            Some(path) => {
-                if path.parent().map(|p| std::fs::create_dir_all(p)).is_some() {
-                    Some(path)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
+        let resolved = log_path.filter(|path| {
+            path.parent()
+                .and_then(|p| std::fs::create_dir_all(p).ok())
+                .is_some()
+        });
 
         Self {
             seq: AtomicU64::new(0),
@@ -124,16 +119,11 @@ impl SessionEventLog {
     ///
     /// `log_path: None` 等价纯内存模式（不落盘）；`Some(path)` 时自动创建父目录。
     pub fn new_with_path(capacity: usize, log_path: Option<PathBuf>) -> Self {
-        let resolved = match log_path {
-            Some(path) => {
-                if path.parent().map(|p| std::fs::create_dir_all(p)).is_some() {
-                    Some(path)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
+        let resolved = log_path.filter(|path| {
+            path.parent()
+                .and_then(|p| std::fs::create_dir_all(p).ok())
+                .is_some()
+        });
 
         Self {
             seq: AtomicU64::new(0),
@@ -259,8 +249,10 @@ impl SessionEventLog {
     /// - 磁盘不可用（纯内存模式）：退化为内存投影，`truncated` 依据淘汰计数
     /// - 复杂度 O(文件大小 + 缓冲大小)，按需调用（如会话结束统计），不在热路径
     pub fn project_session_state_complete(&self, session_id: &str) -> SessionStateProjection {
-        let mut projection = SessionStateProjection::default();
-        projection.session_id = session_id.to_string();
+        let mut projection = SessionStateProjection {
+            session_id: session_id.to_string(),
+            ..Default::default()
+        };
 
         let disk_events = self.replay_disk_after(0);
         if !disk_events.is_empty() {
@@ -299,8 +291,10 @@ impl SessionEventLog {
     /// 需要全量精确投影时使用 [`Self::project_session_state_complete`]（磁盘合并）。
     pub fn project_session_state(&self, session_id: &str) -> SessionStateProjection {
         let buf = self.buffer.lock().expect("session event buffer poisoned");
-        let mut projection = SessionStateProjection::default();
-        projection.session_id = session_id.to_string();
+        let mut projection = SessionStateProjection {
+            session_id: session_id.to_string(),
+            ..Default::default()
+        };
 
         for event in buf.iter().filter(|e| e.session_id == session_id) {
             apply_event(&mut projection, event);

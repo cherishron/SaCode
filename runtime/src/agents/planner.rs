@@ -351,7 +351,7 @@ fn build_dependency_groups(tasks: &[SubAgentTask], roles: &[AgentRole]) -> Vec<V
 
     for task in tasks {
         in_degree.entry(task.id.as_str()).or_insert(0);
-        dependents.entry(task.id.as_str()).or_insert_with(Vec::new);
+        dependents.entry(task.id.as_str()).or_default();
     }
 
     for task in tasks {
@@ -364,7 +364,7 @@ fn build_dependency_groups(tasks: &[SubAgentTask], roles: &[AgentRole]) -> Vec<V
                 *in_degree.entry(task.id.as_str()).or_insert(0) += 1;
                 dependents
                     .entry(prerequisite_task_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(task.id.as_str());
             }
         }

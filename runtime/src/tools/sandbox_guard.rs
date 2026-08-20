@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -18,9 +18,8 @@ pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
 
     let interceptors = default_interceptors();
     let ctx = InterceptContext::default();
-    match run_preflight_chain(spec, input, &ctx, &interceptors)? {
-        _ => Ok(()),
-    }
+    run_preflight_chain(spec, input, &ctx, &interceptors)?;
+    Ok(())
 }
 
 /// 向后兼容入口：执行后审计
@@ -87,7 +86,7 @@ pub(crate) fn audit_command_blocked(tool_name: &str, input: &serde_json::Value, 
     );
 }
 
-pub(crate) fn audit_path_blocked(tool_name: &str, input: &serde_json::Value, resolved: &PathBuf) {
+pub(crate) fn audit_path_blocked(tool_name: &str, input: &serde_json::Value, resolved: &Path) {
     write_audit_log(
         tool_name,
         "preflight_blocked",
