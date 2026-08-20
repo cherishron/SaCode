@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
 use crate::executor::task_runner::{
-    AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig, execute_task_with_provider,
+    execute_task_with_provider, AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
 };
 use crate::tools::ToolRegistry;
 use crate::{queue::TaskQueue, resolve_config_model_candidates, task_run_snapshot};

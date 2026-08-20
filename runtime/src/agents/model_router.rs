@@ -15,8 +15,8 @@ use std::{
 };
 
 use sacode_kernel::model::{
-    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider,
-    ProviderSpec, SaCodeConfig,
+    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider, ProviderSpec,
+    SaCodeConfig,
 };
 use sacode_kernel::{AgentRole, RoleModelPolicy};
 use serde::{Deserialize, Serialize};
@@ -539,5 +539,3 @@ fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> Mod
         rule: spec.models.get(model_name).cloned(),
     }
 }
-
-

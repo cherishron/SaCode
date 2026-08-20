@@ -18,8 +18,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use sacode_kernel::{ExecutionContext, ExecutionReport, TaskRun};
+use serde::{Deserialize, Serialize};
 
 use super::{execute_role_driven_orchestration, RoleRegistry};
 use crate::config::profile::Profile;
@@ -187,7 +187,7 @@ pub trait AgentLoop {
     /// 可覆盖此方法实现更细粒度的控制。
     async fn orchestrate_step(
         &self,
-        context: &ExecutionContext,
+        _context: &ExecutionContext,
         step: &ExecutionStep,
     ) -> Result<StepResult> {
         // 退化实现：step 在灵枢默认 Loop 中不是独立入口，仅在上下文中登记
@@ -267,9 +267,14 @@ impl AgentLoop for LingShuLoop {
         // `self.subsystems` 在本期作为可组合数据面暴露（供自定义 Loop 组合）；
         // LingShuLoop 默认全开，确保与现有 orchestrator 行为完全一致。
         // 后续可将开关透传到 orchestrator 内部各子系统钩子（doc §3.5 风险项）。
-        let (report, _plan) =
-            execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, self.subsystems)
-                .await?;
+        let (report, _plan) = execute_role_driven_orchestration(
+            context,
+            checkpoints,
+            workdir,
+            named_profile,
+            self.subsystems,
+        )
+        .await?;
         Ok(report)
     }
 }
@@ -297,7 +302,9 @@ pub async fn run_with_ling_shu_loop(
     workdir: &std::path::Path,
 ) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
     let loop_impl = LingShuLoop::new();
-    let report = loop_impl.orchestrate_turn(context, checkpoints, workdir, None).await?;
+    let report = loop_impl
+        .orchestrate_turn(context, checkpoints, workdir, None)
+        .await?;
     let task_run = crate::task_run_from_report(
         context.task_id.clone(),
         context.mode,

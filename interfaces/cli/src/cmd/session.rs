@@ -44,7 +44,10 @@ pub fn run(args: Vec<String>) -> Result<()> {
             println!("session {id} 历史元数据：");
             println!("  事件数:       {}", history.event_count);
             println!("  预估 tokens:  {}", history.estimated_tokens);
-            println!("  压缩:         {}", if history.compressed { "是" } else { "否" });
+            println!(
+                "  压缩:         {}",
+                if history.compressed { "是" } else { "否" }
+            );
             if let Some(ratio) = history.compression_ratio {
                 println!("  压缩率:       {:.2}%", ratio * 100.0);
             }

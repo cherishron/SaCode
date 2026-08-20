@@ -38,7 +38,10 @@ pub enum FixLoopState {
     /// 分析失败测试，生成修复上下文
     Analyzing { failures: usize },
     /// 已生成第 `iteration` 轮修复上下文，等待 LLM 应用修改
-    Patching { iteration: u8, failure_types: Vec<ErrorCategory> },
+    Patching {
+        iteration: u8,
+        failure_types: Vec<ErrorCategory>,
+    },
     /// 已生成上下文，等待外部（LLM 工具循环 / orchestrator）应用修改并验证
     PendingExternalFix { iteration: u8 },
     /// 修复成功（共 `iterations` 轮）
@@ -231,10 +234,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             fix_success: true,
             state: "Success".to_string(),
         };
-        let summary = format!(
-            "测试全部通过：{} 个测试，0 个失败",
-            test_summary.total
-        );
+        let summary = format!("测试全部通过：{} 个测试，0 个失败", test_summary.total);
         return Ok(ToolOutput::success(serde_json::json!({
             "success": true,
             "framework": test_summary.framework,
@@ -268,8 +268,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         fix_strategies.push(fix_context.strategy_summary.clone());
     }
     // 估算 token：fix-context 序列化长度 / 4
-    total_tokens_estimated +=
-        (serde_json::to_string(&fix_context).map(|s| s.len()).unwrap_or(0) / 4) as u64;
+    total_tokens_estimated += (serde_json::to_string(&fix_context)
+        .map(|s| s.len())
+        .unwrap_or(0)
+        / 4) as u64;
 
     // 写入 fix-context.json 供 LLM 工具循环消费
     write_fix_context(&fix_context)?;
@@ -420,10 +422,7 @@ fn build_fix_context(test_result: &TestResultSummary) -> FixContext {
 fn build_strategy_summary(failures: &[FailureDetail]) -> String {
     let mut lines = Vec::new();
 
-    lines.push(format!(
-        "# 修复策略（{} 个失败测试）",
-        failures.len()
-    ));
+    lines.push(format!("# 修复策略（{} 个失败测试）", failures.len()));
     lines.push(String::new());
     lines.push("建议工作流：".to_string());
     lines.push("1. 根据 location 调用 fs.read 读取失败测试相关源码".to_string());
@@ -499,7 +498,10 @@ mod tests {
         assert_eq!(context.failures.len(), 2);
 
         // 断言错误
-        assert_eq!(context.failures[0].category, ErrorCategory::AssertionFailure);
+        assert_eq!(
+            context.failures[0].category,
+            ErrorCategory::AssertionFailure
+        );
         assert!(context.failures[0].suggestion.contains("断言条件"));
         assert_eq!(context.failures[0].location, "src/math.rs:42");
 
@@ -721,7 +723,9 @@ mod tests {
             "fix_outcome.failure_types 应非空"
         );
         assert!(
-            failure_types.iter().any(|t| t.as_str() == Some("assertion_failure")),
+            failure_types
+                .iter()
+                .any(|t| t.as_str() == Some("assertion_failure")),
             "failure_types 应包含 assertion_failure，实际：{:?}",
             failure_types
         );
@@ -856,7 +860,10 @@ mod tests {
         // 空转防护：迭代上限不可被外部输入绕过
         let requested = 99u64;
         let capped = requested.min(MAX_FIX_ITERATIONS as u64) as usize;
-        assert_eq!(capped, MAX_FIX_ITERATIONS, "外部请求 99 轮应被裁剪为 MAX_FIX_ITERATIONS=3");
+        assert_eq!(
+            capped, MAX_FIX_ITERATIONS,
+            "外部请求 99 轮应被裁剪为 MAX_FIX_ITERATIONS=3"
+        );
     }
 
     #[test]

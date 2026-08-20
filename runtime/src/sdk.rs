@@ -29,14 +29,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use sacode_kernel::{ExecutionMode, generate_task_id};
+use sacode_kernel::{generate_task_id, ExecutionMode};
 use serde::{Deserialize, Serialize};
 
 use crate::executor::task_runner::{
-    AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig, execute_task_with_provider,
+    execute_task_with_provider, AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
 };
 use crate::model_routing::TaskProfile;
-use crate::prompt::{PromptContext, build_system_prompt};
+use crate::prompt::{build_system_prompt, PromptContext};
 use crate::tools::{ToolLayer, ToolRegistry};
 
 /// SDK 执行结果
@@ -188,8 +188,7 @@ impl SdkClient {
             self.context_budget,
         );
 
-        let injected_names: Vec<String> =
-            injected_specs.iter().map(|s| s.name.clone()).collect();
+        let injected_names: Vec<String> = injected_specs.iter().map(|s| s.name.clone()).collect();
 
         // 3. 构建 system prompt
         let tool_names_owned = injected_names.clone();
@@ -314,6 +313,8 @@ impl SdkClient {
 /// # }
 /// ```
 pub async fn execute_task(workdir: PathBuf, prompt: &str) -> Result<SdkResult> {
-    let client = SdkClient::new(workdir).await.context("创建 SdkClient 失败")?;
+    let client = SdkClient::new(workdir)
+        .await
+        .context("创建 SdkClient 失败")?;
     client.execute_task(prompt).await
 }

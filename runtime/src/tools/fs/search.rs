@@ -373,10 +373,7 @@ mod tests {
             &temp.path().join("node_modules/pkg/index.js"),
             "let target = 2;\n",
         );
-        write_file(
-            &temp.path().join(".git/objects/pack"),
-            "let target = 3;\n",
-        );
+        write_file(&temp.path().join(".git/objects/pack"), "let target = 3;\n");
 
         let regex = Regex::new("target").expect("regex");
         let mut matches = Vec::new();

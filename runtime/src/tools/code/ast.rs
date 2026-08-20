@@ -181,10 +181,8 @@ impl AstEditor {
         let mut declaration_positions = std::collections::HashSet::new();
         let symbols = Self::symbols_with_range(language, source)?;
         for symbol in &symbols {
-            declaration_positions.insert((
-                symbol.selection_start_line,
-                symbol.selection_start_column,
-            ));
+            declaration_positions
+                .insert((symbol.selection_start_line, symbol.selection_start_column));
         }
 
         walk_tree(root, &mut |node| {
@@ -195,8 +193,8 @@ impl AstEditor {
                     if trimmed == symbol_name {
                         let start = node.start_position();
                         let end = node.end_position();
-                        let is_declaration = declaration_positions
-                            .contains(&(start.row + 1, start.column + 1));
+                        let is_declaration =
+                            declaration_positions.contains(&(start.row + 1, start.column + 1));
                         references.push(AstReference {
                             name: trimmed.to_string(),
                             start_line: start.row + 1,

@@ -139,13 +139,14 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
         return;
     };
 
-    let question_lines =
-        if let Some(request) = &app.interaction.pending_approval_request {
-            let mut lines = vec![
+    let question_lines = if let Some(request) = &app.interaction.pending_approval_request {
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled(
                     "审批工具",
-                    Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.warning)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled(&request.tool_name, Style::default().fg(theme.info)),
@@ -156,57 +157,57 @@ pub(crate) fn render_pending_question_panel(frame: &mut Frame, app: &App) {
                     .fg(theme.assistant)
                     .add_modifier(Modifier::BOLD),
             )),
-            ];
-            // 操作摘要
-            if let Some(summary) = &request.input_summary {
-                lines.push(Line::from(vec![
-                    Span::styled("操作: ", Style::default().fg(theme.subtle)),
-                    Span::styled(summary.as_str(), Style::default().fg(theme.warning)),
-                ]));
-            }
-            // 影响范围
-            if let Some(dir) = &request.allowed_dir {
-                lines.push(Line::from(vec![
-                    Span::styled("范围: ", Style::default().fg(theme.subtle)),
-                    Span::styled(dir.display().to_string(), Style::default().fg(theme.info)),
-                ]));
-            }
-            lines.push(Line::from(Span::styled(
-                "按 Enter 确认 / Left 拒绝。提交后按当前执行模式继续任务。",
+        ];
+        // 操作摘要
+        if let Some(summary) = &request.input_summary {
+            lines.push(Line::from(vec![
+                Span::styled("操作: ", Style::default().fg(theme.subtle)),
+                Span::styled(summary.as_str(), Style::default().fg(theme.warning)),
+            ]));
+        }
+        // 影响范围
+        if let Some(dir) = &request.allowed_dir {
+            lines.push(Line::from(vec![
+                Span::styled("范围: ", Style::default().fg(theme.subtle)),
+                Span::styled(dir.display().to_string(), Style::default().fg(theme.info)),
+            ]));
+        }
+        lines.push(Line::from(Span::styled(
+            "按 Enter 确认 / Left 拒绝。提交后按当前执行模式继续任务。",
+            Style::default().fg(theme.subtle),
+        )));
+        lines
+    } else if app.interaction.pending_confirm_submission {
+        vec![
+            Line::from(Span::styled(
+                "确认提交所有回答",
+                Style::default()
+                    .fg(theme.assistant)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "按 Enter 提交，按 Left 返回上一个问题继续修改。",
                 Style::default().fg(theme.subtle),
-            )));
-            lines
-        } else if app.interaction.pending_confirm_submission {
-            vec![
-                Line::from(Span::styled(
-                    "确认提交所有回答",
-                    Style::default()
-                        .fg(theme.assistant)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    "按 Enter 提交，按 Left 返回上一个问题继续修改。",
-                    Style::default().fg(theme.subtle),
-                )),
-            ]
-        } else {
-            vec![
-                Line::from(Span::styled(
-                    &question.question,
-                    Style::default()
-                        .fg(theme.assistant)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    if question.allow_multiple {
-                        "多选：Space 勾选，Enter 提交"
-                    } else {
-                        "单选：方向键选择，Space 勾选，Enter 提交"
-                    },
-                    Style::default().fg(theme.subtle),
-                )),
-            ]
-        };
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(Span::styled(
+                &question.question,
+                Style::default()
+                    .fg(theme.assistant)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                if question.allow_multiple {
+                    "多选：Space 勾选，Enter 提交"
+                } else {
+                    "单选：方向键选择，Space 勾选，Enter 提交"
+                },
+                Style::default().fg(theme.subtle),
+            )),
+        ]
+    };
     frame.render_widget(Paragraph::new(question_lines), sections[1]);
 
     let selected_answers = app

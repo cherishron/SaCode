@@ -95,12 +95,19 @@ impl Profile {
 
         loop {
             if !visited.insert(current.clone()) {
-                return Err(anyhow!("profile inheritance cycle detected at '{}'", current));
+                return Err(anyhow!(
+                    "profile inheritance cycle detected at '{}'",
+                    current
+                ));
             }
             let path = profile_path(profiles_dir, &current);
             if !path.exists() {
                 if current == name {
-                    return Err(anyhow!("profile '{}' not found in {}", name, profiles_dir.display()));
+                    return Err(anyhow!(
+                        "profile '{}' not found in {}",
+                        name,
+                        profiles_dir.display()
+                    ));
                 }
                 // 父 Profile 不存在：停止继承（允许 extends 到不存在的基线，退化为默认）
                 break;
@@ -145,7 +152,8 @@ impl Profile {
         // 再剔除 disabled_tools
         if !self.manifest.disabled_tools.is_empty() {
             tools.retain(|t| {
-                !self.manifest
+                !self
+                    .manifest
                     .disabled_tools
                     .iter()
                     .any(|pat| glob_match(pat, t))
@@ -514,7 +522,10 @@ mod tests {
         let profile = Profile::resolve(dir.path(), "web").expect("resolve");
         assert_eq!(profile.name, "web");
         assert_eq!(profile.manifest.model, "deepseek-chat");
-        assert!(profile.manifest.enabled_tools.contains(&"shell.exec".to_string()));
+        assert!(profile
+            .manifest
+            .enabled_tools
+            .contains(&"shell.exec".to_string()));
 
         let tools = profile.resolve_tools(&[
             "fs.read".to_string(),
@@ -526,7 +537,10 @@ mod tests {
         assert!(tools.contains(&"fs.read".to_string()));
         assert!(tools.contains(&"web.search".to_string()));
         assert!(tools.contains(&"shell.exec".to_string()));
-        assert!(!tools.contains(&"git.commit".to_string()), "git should be filtered out by enabled_tools glob");
+        assert!(
+            !tools.contains(&"git.commit".to_string()),
+            "git should be filtered out by enabled_tools glob"
+        );
     }
 
     #[test]
@@ -544,7 +558,10 @@ mod tests {
         );
 
         let profile = Profile::resolve(dir.path(), "web").expect("resolve");
-        assert_eq!(profile.inheritance_chain, vec!["web".to_string(), "base".to_string()]);
+        assert_eq!(
+            profile.inheritance_chain,
+            vec!["web".to_string(), "base".to_string()]
+        );
         // 自身覆盖 model
         assert_eq!(profile.manifest.model, "deepseek-chat");
         // 继承 base 的 mcp_servers（自身未声明）
@@ -581,13 +598,22 @@ mod tests {
         .expect("write patch");
 
         let patch_set = PatchSet::load_all(dir.path()).expect("load patches");
-        assert_eq!(patch_set.names(), vec!["team-base".to_string(), "personal".to_string()]);
+        assert_eq!(
+            patch_set.names(),
+            vec!["team-base".to_string(), "personal".to_string()]
+        );
 
         // 先 team-base 后 personal：personal 的 model 覆盖 team-base
         let mut base = ProfileManifest::default();
         patch_set.apply_onto(&mut base);
-        assert_eq!(base.model, "gpt-4o", "higher priority patch overrides model");
-        assert_eq!(base.enabled_tools, vec!["fs.*".to_string(), "web.*".to_string()]);
+        assert_eq!(
+            base.model, "gpt-4o",
+            "higher priority patch overrides model"
+        );
+        assert_eq!(
+            base.enabled_tools,
+            vec!["fs.*".to_string(), "web.*".to_string()]
+        );
         assert_eq!(base.disabled_tools, vec!["git.push".to_string()]);
     }
 
@@ -606,13 +632,21 @@ mod tests {
         );
         let profile = Profile::resolve(&profiles_dir_of(&project_dir), "web").expect("resolve");
 
-        let exported = export_bundle(&project_dir, "team-web", Some(&profile), &PatchSet::default())
-            .expect("export bundle");
+        let exported = export_bundle(
+            &project_dir,
+            "team-web",
+            Some(&profile),
+            &PatchSet::default(),
+        )
+        .expect("export bundle");
         assert!(exported.exists());
         let bundle = BundleManifest::load_from(&exported).expect("load bundle");
         assert_eq!(bundle.name, "team-web");
         assert_eq!(bundle.extends_profile, "web");
-        assert_eq!(bundle.enabled_tools, vec!["fs.*".to_string(), "web.*".to_string()]);
+        assert_eq!(
+            bundle.enabled_tools,
+            vec!["fs.*".to_string(), "web.*".to_string()]
+        );
 
         // 导入到另一个项目目录，应复制到其 bundles 目录
         let other_dir = tempfile::tempdir().expect("tempdir");

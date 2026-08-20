@@ -186,7 +186,9 @@ impl App {
                 .unwrap_or_default()
                 .to_string(),
             allowed_dir: Self::extract_allowed_dir(question.get("args").unwrap_or(&Value::Null)),
-            input_summary: Self::extract_input_summary(question.get("args").unwrap_or(&Value::Null)),
+            input_summary: Self::extract_input_summary(
+                question.get("args").unwrap_or(&Value::Null),
+            ),
         })
     }
 

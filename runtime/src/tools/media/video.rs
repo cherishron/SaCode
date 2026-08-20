@@ -165,7 +165,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 /// 均匀采样提取视频关键帧为 PNG 图片
-fn extract_frames(video: &PathBuf, work_dir: &PathBuf, frames: usize) -> anyhow::Result<Vec<PathBuf>> {
+fn extract_frames(
+    video: &PathBuf,
+    work_dir: &PathBuf,
+    frames: usize,
+) -> anyhow::Result<Vec<PathBuf>> {
     // 先探测视频时长（秒）
     let duration = probe_duration(video)?;
     let count = frames.max(1);
@@ -300,7 +304,10 @@ mod tests {
         assert_eq!(detect_video_mime("clip.mp4"), "video/mp4");
         assert_eq!(detect_video_mime("clip.webm"), "video/webm");
         assert_eq!(detect_video_mime("clip.mov"), "video/quicktime");
-        assert_eq!(detect_video_mime("clip.unknown"), "application/octet-stream");
+        assert_eq!(
+            detect_video_mime("clip.unknown"),
+            "application/octet-stream"
+        );
     }
 
     #[test]
@@ -331,4 +338,3 @@ mod tests {
         }
     }
 }
-

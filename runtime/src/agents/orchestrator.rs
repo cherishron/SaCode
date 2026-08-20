@@ -15,13 +15,15 @@ use sacode_kernel::{
     RoutedModelRecord, SummaryItemRecord, SummaryRecord, TaskRun, ToolExecutionRecord,
 };
 
-use super::message_bus::{AgentMailboxHandle, CommunicationSummary, MessageBus, build_communication_summary};
+use super::loop_impl::LoopSubsystems;
+use super::message_bus::{
+    build_communication_summary, AgentMailboxHandle, CommunicationSummary, MessageBus,
+};
 use super::summary_compactor::{
     compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity,
     extract_final_consensus, extract_risk_summary, OutputPolarity,
 };
 use super::{build_execution_plan, RoleRegistry};
-use super::loop_impl::LoopSubsystems;
 use crate::agents::worker::{run_sub_agent, WorkerRunResult};
 use crate::config::profile::Profile;
 use crate::model_routing::TaskProfile;
@@ -46,8 +48,7 @@ pub async fn execute_role_driven_orchestration(
         )),
         events: vec![sacode_kernel::Event::message(format!(
             "进入角色驱动编排模式：{:?}，子系统={:?}",
-            plan.mode,
-            subsystems
+            plan.mode, subsystems
         ))],
         tool_records: Vec::new(),
         route_records: Vec::new(),
@@ -67,7 +68,17 @@ pub async fn execute_role_driven_orchestration(
     // 创建消息总线，支持子 Agent 间通信
     let message_bus = MessageBus::new();
 
-    let results = execute_parallel_groups(&plan, &roles, &profile, workdir, &mut report, &message_bus, named_profile, subsystems).await;
+    let results = execute_parallel_groups(
+        &plan,
+        &roles,
+        &profile,
+        workdir,
+        &mut report,
+        &message_bus,
+        named_profile,
+        subsystems,
+    )
+    .await;
 
     // 收集通信摘要
     let comm_summaries = collect_communication_summaries(&results, &message_bus).await;
@@ -112,7 +123,6 @@ pub async fn execute_role_driven_orchestration(
     Ok((report, plan))
 }
 
-
 /// 灵枢 · 自防护 — 冲突处置回路
 ///
 /// 检测到冲突后，根据严重程度采取不同处置策略：
@@ -142,7 +152,11 @@ async fn handle_conflict_disposition(
         // 最严重冲突：实现与验证冲突 → 实时干预触发修复闭环（自防护→自愈回路）
         report.events.push(sacode_kernel::Event::error(format!(
             "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），{}。冲突数：{}",
-            if fix_loop_triggered { "触发修复闭环" } else { "自防护已关闭，仅记录冲突" },
+            if fix_loop_triggered {
+                "触发修复闭环"
+            } else {
+                "自防护已关闭，仅记录冲突"
+            },
             report.conflict_records.len()
         )));
 
@@ -231,7 +245,9 @@ pub async fn execute_role_driven_task_run(
     named_profile: Option<&Profile>,
     subsystems: LoopSubsystems,
 ) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
-    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, subsystems).await?;
+    let (report, plan) =
+        execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, subsystems)
+            .await?;
     let task_run = task_run_from_report(
         context.task_id.clone(),
         context.mode,
@@ -325,7 +341,11 @@ async fn execute_parallel_groups(
     all_results
 }
 
-fn fold_worker_results(report: &mut ExecutionReport, results: &[WorkerRunResult], comm_summaries: &HashMap<String, CommunicationSummary>) {
+fn fold_worker_results(
+    report: &mut ExecutionReport,
+    results: &[WorkerRunResult],
+    comm_summaries: &HashMap<String, CommunicationSummary>,
+) {
     for item in results {
         report.events.push(sacode_kernel::Event::message(format!(
             "子 Agent [{}] 绑定角色 [{}]",
@@ -470,13 +490,30 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
 
     // 降级：status_conflict/route_conflict/conclusion_conflict/polarity_conflict 降级为日志记录
     // 不再触发独立干预，仅保留 validation_conflict 主路径
-    if results.iter().map(|r| r.result.success).collect::<std::collections::BTreeSet<_>>().len() > 1 {
+    if results
+        .iter()
+        .map(|r| r.result.success)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1
+    {
         tracing::debug!("collect_conflict_records: status_conflict (mixed success across roles)");
     }
 
-    if results.iter().filter_map(|r| r.resolved_route.as_ref().map(|route| {
-        format!("{}/{}", route.plan.primary.provider_name, route.plan.primary.model_name)
-    })).collect::<std::collections::BTreeSet<_>>().len() > 1 {
+    if results
+        .iter()
+        .filter_map(|r| {
+            r.resolved_route.as_ref().map(|route| {
+                format!(
+                    "{}/{}",
+                    route.plan.primary.provider_name, route.plan.primary.model_name
+                )
+            })
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1
+    {
         tracing::debug!("collect_conflict_records: route_conflict (multiple primary routes)");
     }
 
@@ -500,30 +537,53 @@ fn collect_conflict_records(results: &[&WorkerRunResult]) -> Vec<ConflictRecord>
     if !validation_disagreements.is_empty() {
         conflicts.push(ConflictRecord {
             kind: "validation_conflict".to_string(),
-            summary: format!("implementation completion conflicts with validation findings: {}",
-                validation_disagreements.iter().map(|(role_id, _, _)| *role_id).collect::<Vec<_>>().join(", ")),
-            details: validation_disagreements.iter().map(|(role_id, _, output)| {
-                compact_conflict_detail(&format!("{}: {}", role_id, output))
-            }).collect(),
+            summary: format!(
+                "implementation completion conflicts with validation findings: {}",
+                validation_disagreements
+                    .iter()
+                    .map(|(role_id, _, _)| *role_id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            details: validation_disagreements
+                .iter()
+                .map(|(role_id, _, output)| {
+                    compact_conflict_detail(&format!("{}: {}", role_id, output))
+                })
+                .collect(),
         });
     }
 
-    if results.iter().filter_map(|r| consensus_output(r.result.output.trim())).collect::<std::collections::BTreeSet<_>>().len() > 1 {
-        tracing::debug!("collect_conflict_records: conclusion_conflict (multiple distinct conclusions)");
+    if results
+        .iter()
+        .filter_map(|r| consensus_output(r.result.output.trim()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1
+    {
+        tracing::debug!(
+            "collect_conflict_records: conclusion_conflict (multiple distinct conclusions)"
+        );
     }
 
-    let polarities: Vec<_> = results.iter().filter_map(|item| {
-        detect_output_polarity(item.result.output.trim()).map(|p| (item.role.id.as_str(), p))
-    }).collect();
-    if polarities.iter().any(|(_, p)| *p == OutputPolarity::Positive)
-        && polarities.iter().any(|(_, p)| *p == OutputPolarity::Negative) {
+    let polarities: Vec<_> = results
+        .iter()
+        .filter_map(|item| {
+            detect_output_polarity(item.result.output.trim()).map(|p| (item.role.id.as_str(), p))
+        })
+        .collect();
+    if polarities
+        .iter()
+        .any(|(_, p)| *p == OutputPolarity::Positive)
+        && polarities
+            .iter()
+            .any(|(_, p)| *p == OutputPolarity::Negative)
+    {
         tracing::debug!("collect_conflict_records: polarity_conflict (mixed output polarity)");
     }
 
     conflicts
 }
-
-
 
 fn build_summary_record(
     task_prompt: &str,
@@ -716,8 +776,8 @@ fn role_rank(role_id: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_worker_results, build_summary_record, collect_conflict_records, fold_worker_results,
-        infer_overall_conclusion, infer_recommended_next_action,
+        aggregate_worker_results, build_summary_record, collect_conflict_records,
+        fold_worker_results, infer_overall_conclusion, infer_recommended_next_action,
     };
     use crate::agents::message_bus::CommunicationSummary;
     use crate::agents::model_router::ResolvedRoleRoute;
@@ -727,7 +787,9 @@ mod tests {
     use crate::agents::worker::WorkerRunResult;
     use crate::model_routing::{ModelRoutePlan, RoutedModel};
     use sacode_kernel::SummaryItemRecord;
-    use sacode_kernel::{AgentRole, ConflictRecord, ExecutionReport, RoleModelPolicy, SubAgentResult, SubAgentTask};
+    use sacode_kernel::{
+        AgentRole, ConflictRecord, ExecutionReport, RoleModelPolicy, SubAgentResult, SubAgentTask,
+    };
     use std::collections::HashMap;
 
     fn item(role_id: &str, output: &str) -> SummaryItemRecord {
@@ -999,14 +1061,8 @@ mod tests {
     fn collect_conflict_records_detects_conclusion_conflict() {
         // 维度 4：共识结论不同 — conclusion_conflict
         // 使用相同极性（正向）避免触发 polarity_conflict
-        let explorer = worker(
-            "repo-explorer",
-            "探索完成。任务完成，共完成 3 个步骤",
-        );
-        let devops = worker(
-            "devops-operator",
-            "交付检查。任务完成，共完成 5 个步骤",
-        );
+        let explorer = worker("repo-explorer", "探索完成。任务完成，共完成 3 个步骤");
+        let devops = worker("devops-operator", "交付检查。任务完成，共完成 5 个步骤");
 
         let conflicts = collect_conflict_records(&[&explorer, &devops]);
 
@@ -1024,10 +1080,7 @@ mod tests {
         // 实现者正向 + 验证者负向，同时也会触发 validation_conflict，
         // 这里仅断言 polarity_conflict 被识别
         let implementer = worker("implementer", "实现结果已整理。任务完成，共完成 5 个步骤");
-        let tester = worker(
-            "test-engineer",
-            "验证风险已识别。验证失败，存在阻塞。",
-        );
+        let tester = worker("test-engineer", "验证风险已识别。验证失败，存在阻塞。");
 
         let conflicts = collect_conflict_records(&[&implementer, &tester]);
 
@@ -1079,10 +1132,7 @@ mod tests {
             .lines()
             .find(|line| line.starts_with("roles="))
             .expect("应包含 roles= 行");
-        assert_eq!(
-            roles_line,
-            "roles=repo-explorer,implementer,reporter"
-        );
+        assert_eq!(roles_line, "roles=repo-explorer,implementer,reporter");
     }
 
     #[test]
@@ -1122,15 +1172,15 @@ mod tests {
 
         let output = aggregate_worker_results("任务 Y", &results, &conflicts);
 
-        let conflicts_line = output
-            .lines()
-            .find(|line| line.starts_with("conflicts="));
+        let conflicts_line = output.lines().find(|line| line.starts_with("conflicts="));
         assert!(
             conflicts_line.is_some(),
             "应包含 conflicts= 行，实际输出：\n{}",
             output
         );
-        assert!(conflicts_line.unwrap().contains("status_conflict: mixed success"));
+        assert!(conflicts_line
+            .unwrap()
+            .contains("status_conflict: mixed success"));
     }
 
     #[test]
@@ -1162,11 +1212,8 @@ mod tests {
     #[test]
     fn fold_worker_results_records_route_and_tool_records() {
         // 验证 fold_worker_results 将 route 与 tool 记录正确折叠到 ExecutionReport
-        let implementer = worker_with_route(
-            "implementer",
-            "实现结果已整理。",
-            route("openai", "gpt-4"),
-        );
+        let implementer =
+            worker_with_route("implementer", "实现结果已整理。", route("openai", "gpt-4"));
         let tester = worker_with_route(
             "test-engineer",
             "验证结论已整理。",
@@ -1290,15 +1337,18 @@ mod tests {
 
     /// 从事件列表中提取包含指定文本的事件数量
     fn count_events_with(events: &[sacode_kernel::Event], needle: &str) -> usize {
-        events.iter().filter(|event| {
-            let text = match event {
-                sacode_kernel::Event::Error { message } => Some(message.as_str()),
-                sacode_kernel::Event::Thinking { content } => Some(content.as_str()),
-                sacode_kernel::Event::Message { content } => Some(content.as_str()),
-                _ => None,
-            };
-            text.map_or(false, |t| t.contains(needle))
-        }).count()
+        events
+            .iter()
+            .filter(|event| {
+                let text = match event {
+                    sacode_kernel::Event::Error { message } => Some(message.as_str()),
+                    sacode_kernel::Event::Thinking { content } => Some(content.as_str()),
+                    sacode_kernel::Event::Message { content } => Some(content.as_str()),
+                    _ => None,
+                };
+                text.map_or(false, |t| t.contains(needle))
+            })
+            .count()
     }
 
     #[tokio::test]
@@ -1309,14 +1359,24 @@ mod tests {
         let bus = MessageBus::new();
         let workdir = std::path::Path::new(".");
 
-        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::none()).await;
+        handle_conflict_disposition(
+            &mut report,
+            &bus,
+            workdir,
+            crate::agents::loop_impl::LoopSubsystems::none(),
+        )
+        .await;
 
         // 错误事件应包含"自防护已关闭"
         assert_eq!(
             count_events_with(&report.events, "自防护已关闭"),
             1,
             "self_protection=false 时错误事件应包含'自防护已关闭'，实际事件：{:?}",
-            report.events.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>()
+            report
+                .events
+                .iter()
+                .map(|e| format!("{:?}", e))
+                .collect::<Vec<_>>()
         );
 
         // 不应有修复闭环驱动事件（dispatch_fix_loop 未被调用）
@@ -1328,7 +1388,11 @@ mod tests {
 
         // 最终输出应包含"未触发自动修复闭环"
         assert!(
-            report.final_output.as_ref().unwrap().contains("未触发自动修复闭环"),
+            report
+                .final_output
+                .as_ref()
+                .unwrap()
+                .contains("未触发自动修复闭环"),
             "输出应提示用户人工检查，实际：{}",
             report.final_output.as_ref().unwrap()
         );
@@ -1342,7 +1406,13 @@ mod tests {
         let bus = MessageBus::new();
         let workdir = std::path::Path::new(".");
 
-        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::default()).await;
+        handle_conflict_disposition(
+            &mut report,
+            &bus,
+            workdir,
+            crate::agents::loop_impl::LoopSubsystems::default(),
+        )
+        .await;
 
         // 错误事件应包含"触发修复闭环"
         assert_eq!(
@@ -1356,12 +1426,20 @@ mod tests {
         assert!(
             fix_events >= 1,
             "self_protection=true 时应调用 dispatch_fix_loop 并记录事件，实际：{:?}",
-            report.events.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>()
+            report
+                .events
+                .iter()
+                .map(|e| format!("{:?}", e))
+                .collect::<Vec<_>>()
         );
 
         // 最终输出应包含"已触发自动修复闭环"
         assert!(
-            report.final_output.as_ref().unwrap().contains("已触发自动修复闭环"),
+            report
+                .final_output
+                .as_ref()
+                .unwrap()
+                .contains("已触发自动修复闭环"),
             "输出应提示修复闭环已触发，实际：{}",
             report.final_output.as_ref().unwrap()
         );
@@ -1380,10 +1458,24 @@ mod tests {
         let bus = MessageBus::new();
         let workdir = std::path::Path::new(".");
 
-        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::default()).await;
+        handle_conflict_disposition(
+            &mut report,
+            &bus,
+            workdir,
+            crate::agents::loop_impl::LoopSubsystems::default(),
+        )
+        .await;
 
-        assert_eq!(report.events.len(), initial_event_count, "无冲突时不应追加事件");
-        assert_eq!(*report.final_output.as_ref().unwrap(), "正常输出", "输出不应被修改");
+        assert_eq!(
+            report.events.len(),
+            initial_event_count,
+            "无冲突时不应追加事件"
+        );
+        assert_eq!(
+            *report.final_output.as_ref().unwrap(),
+            "正常输出",
+            "输出不应被修改"
+        );
     }
 }
 
@@ -1435,7 +1527,10 @@ async fn dispatch_fix_loop(
         success, iterations
     )));
 
-    Ok(format!("success={}, iterations={}, {}", success, iterations, summary))
+    Ok(format!(
+        "success={}, iterations={}, {}",
+        success, iterations, summary
+    ))
 }
 
 /// 灵枢 · 实时干预 — 动态调整执行计划

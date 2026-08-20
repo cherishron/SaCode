@@ -13,8 +13,8 @@ use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 use similar::TextDiff;
 
-use crate::tools::context::current_context;
 use super::preflight::preflight_edit_file;
+use crate::tools::context::current_context;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -71,9 +71,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("patch is required"))?;
     let check = input["check"].as_bool().unwrap_or(false);
-    let path_whitelist: Option<Vec<String>> = input["paths"]
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+    let path_whitelist: Option<Vec<String>> = input["paths"].as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
+    });
 
     let file_patches = parse_unified_diff(patch_text)?;
     let mut details = Vec::new();
@@ -123,10 +125,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     } else if success {
         format!("成功应用 {} 个文件", applied_count)
     } else {
-        format!(
-            "应用 {} 个文件，{} 个失败",
-            applied_count, failed_count
-        )
+        format!("应用 {} 个文件，{} 个失败", applied_count, failed_count)
     };
 
     let mut output = ToolOutput::success(serde_json::json!({
@@ -150,8 +149,11 @@ struct FilePatch {
 #[derive(Debug)]
 struct Hunk {
     old_start: usize,
+    #[allow(dead_code)]
     old_count: usize,
+    #[allow(dead_code)]
     new_start: usize,
+    #[allow(dead_code)]
     new_count: usize,
     lines: Vec<HunkLine>,
 }
@@ -295,9 +297,7 @@ fn parse_diff_git_path(line: &str) -> anyhow::Result<String> {
     }
     let new_path_raw = parts[3];
     // 去除 b/ 前缀
-    let path = new_path_raw
-        .strip_prefix("b/")
-        .unwrap_or(new_path_raw);
+    let path = new_path_raw.strip_prefix("b/").unwrap_or(new_path_raw);
     Ok(path.to_string())
 }
 
@@ -451,7 +451,11 @@ fn apply_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
     // 替换部分
     new_lines.extend(replacement_lines.iter().map(|l| l.content.clone()));
     // 后半部分（hunk 之后）
-    new_lines.extend(lines[start_idx + expected_lines.len()..].iter().map(|s| s.to_string()));
+    new_lines.extend(
+        lines[start_idx + expected_lines.len()..]
+            .iter()
+            .map(|s| s.to_string()),
+    );
 
     // 重建字符串，保留末尾换行
     let had_trailing_newline = content.ends_with('\n');
@@ -519,8 +523,7 @@ index abc..def 100644
 
     #[test]
     fn parses_hunk_header_with_context() {
-        let hunk =
-            parse_hunk_header("@@ -10,5 +10,7 @@ fn main() {").expect("parse header");
+        let hunk = parse_hunk_header("@@ -10,5 +10,7 @@ fn main() {").expect("parse header");
         assert_eq!(hunk.old_start, 10);
         assert_eq!(hunk.old_count, 5);
         assert_eq!(hunk.new_start, 10);
@@ -548,9 +551,18 @@ index abc..def 100644
             new_start: 2,
             new_count: 2,
             lines: vec![
-                HunkLine { kind: HunkLineKind::Remove, content: "line2".to_string() },
-                HunkLine { kind: HunkLineKind::Add, content: "line2a".to_string() },
-                HunkLine { kind: HunkLineKind::Add, content: "line2b".to_string() },
+                HunkLine {
+                    kind: HunkLineKind::Remove,
+                    content: "line2".to_string(),
+                },
+                HunkLine {
+                    kind: HunkLineKind::Add,
+                    content: "line2a".to_string(),
+                },
+                HunkLine {
+                    kind: HunkLineKind::Add,
+                    content: "line2b".to_string(),
+                },
             ],
         };
         let result = apply_hunk(content, &hunk).expect("apply hunk");
@@ -566,8 +578,14 @@ index abc..def 100644
             new_start: 2,
             new_count: 1,
             lines: vec![
-                HunkLine { kind: HunkLineKind::Remove, content: "different".to_string() },
-                HunkLine { kind: HunkLineKind::Add, content: "new".to_string() },
+                HunkLine {
+                    kind: HunkLineKind::Remove,
+                    content: "different".to_string(),
+                },
+                HunkLine {
+                    kind: HunkLineKind::Add,
+                    content: "new".to_string(),
+                },
             ],
         };
         let result = apply_hunk(content, &hunk);
@@ -583,9 +601,18 @@ index abc..def 100644
             new_start: 1,
             new_count: 3,
             lines: vec![
-                HunkLine { kind: HunkLineKind::Context, content: "line1".to_string() },
-                HunkLine { kind: HunkLineKind::Context, content: "line2".to_string() },
-                HunkLine { kind: HunkLineKind::Context, content: "line3".to_string() },
+                HunkLine {
+                    kind: HunkLineKind::Context,
+                    content: "line1".to_string(),
+                },
+                HunkLine {
+                    kind: HunkLineKind::Context,
+                    content: "line2".to_string(),
+                },
+                HunkLine {
+                    kind: HunkLineKind::Context,
+                    content: "line3".to_string(),
+                },
             ],
         };
         let result = apply_hunk(content, &hunk).expect("apply hunk");

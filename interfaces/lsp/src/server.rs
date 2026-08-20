@@ -10,14 +10,14 @@ use tower_lsp::{
     lsp_types::{
         CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionProviderCapability,
         CodeActionResponse, Command, CompletionItem, CompletionItemKind, CompletionOptions,
-        CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams,
-        DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-        HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-        InsertTextFormat, Location, MessageType, OneOf, Position, PrepareRenameResponse, Range,
-        ReferenceParams, RenameParams, ServerCapabilities, SymbolInformation,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
-        WorkspaceSymbolParams, Diagnostic, DiagnosticSeverity,
+        CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
+        DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+        GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+        InitializeParams, InitializeResult, InitializedParams, InsertTextFormat, Location,
+        MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameParams,
+        ServerCapabilities, SymbolInformation, TextDocumentSyncCapability, TextDocumentSyncKind,
+        TextEdit, Url, WorkspaceEdit, WorkspaceSymbolParams,
     },
     Client, LanguageServer, LspService, Server,
 };
@@ -216,7 +216,9 @@ impl LanguageServer for SaCodeLanguageServer {
         };
 
         // 灵枢 · 诊断联动：附加该位置的诊断信息
-        if let Some(diag_section) = build_position_diagnostics_section(&self.last_diagnostics, uri, position) {
+        if let Some(diag_section) =
+            build_position_diagnostics_section(&self.last_diagnostics, uri, position)
+        {
             hover_content.push_str("\n\n---\n\n");
             hover_content.push_str(&diag_section);
         }
@@ -303,8 +305,8 @@ impl LanguageServer for SaCodeLanguageServer {
             .join("\n");
 
         // 当光标未选中具体范围时，仅在有诊断或代码片段非空时给出通用动作
-        let is_caret = range.start.line == range.end.line
-            && range.start.character == range.end.character;
+        let is_caret =
+            range.start.line == range.end.line && range.start.character == range.end.character;
         if !is_caret || has_errors || !code_snippet.trim().is_empty() {
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "SaCode: Explain this code".to_string(),
@@ -326,7 +328,9 @@ impl LanguageServer for SaCodeLanguageServer {
                     title: "SaCode: Fix errors".to_string(),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(diagnostics.clone()),
-                    edit: Some(generate_fix_edits(&provider, &code_snippet, &document, range).await),
+                    edit: Some(
+                        generate_fix_edits(&provider, &code_snippet, &document, range).await,
+                    ),
                     ..CodeAction::default()
                 }));
             }
@@ -418,10 +422,7 @@ impl LanguageServer for SaCodeLanguageServer {
     ///
     /// 基于 AST identifier 节点匹配，支持 includeDeclaration 过滤。
     /// 跨文件搜索：遍历所有已打开文档，对每个文档运行 AST 引用检测。
-    async fn references(
-        &self,
-        params: ReferenceParams,
-    ) -> LspResult<Option<Vec<Location>>> {
+    async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
@@ -448,12 +449,8 @@ impl LanguageServer for SaCodeLanguageServer {
 
         let mut locations = Vec::new();
         for doc in &documents {
-            let doc_locations = find_references_in_document(
-                doc,
-                &doc.uri,
-                &symbol_name,
-                include_declaration,
-            );
+            let doc_locations =
+                find_references_in_document(doc, &doc.uri, &symbol_name, include_declaration);
             locations.extend(doc_locations);
         }
 
@@ -498,7 +495,9 @@ impl LanguageServer for SaCodeLanguageServer {
         for doc in &documents {
             if let Some(location) = find_definition_in_document(doc, &doc.uri, position) {
                 // 验证找到的符号名是否匹配提取的符号名
-                if let Some(found_name) = extract_symbol_name_from_document(doc, location.range.start) {
+                if let Some(found_name) =
+                    extract_symbol_name_from_document(doc, location.range.start)
+                {
                     if found_name == symbol_name {
                         return Ok(Some(GotoDefinitionResponse::Scalar(location)));
                     }
@@ -512,10 +511,7 @@ impl LanguageServer for SaCodeLanguageServer {
     /// 重命名 — 为光标位置的符号生成全文档重命名编辑
     ///
     /// 复用 references 收集所有引用位置，生成 TextEdit 列表。
-    async fn rename(
-        &self,
-        params: RenameParams,
-    ) -> LspResult<Option<WorkspaceEdit>> {
+    async fn rename(&self, params: RenameParams) -> LspResult<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let new_name = params.new_name;
@@ -555,12 +551,12 @@ impl LanguageServer for SaCodeLanguageServer {
         };
 
         let range = prepare_rename_in_document(&document, position);
-        Ok(range.map(|range| {
-            PrepareRenameResponse::RangeWithPlaceholder {
+        Ok(
+            range.map(|range| PrepareRenameResponse::RangeWithPlaceholder {
                 range,
                 placeholder: "symbol".to_string(),
-            }
-        }))
+            }),
+        )
     }
 }
 
@@ -638,7 +634,10 @@ fn utf16_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
 /// 从文档光标位置提取符号名 — 复用 code_intelligence 的提取逻辑
 ///
 /// 用于 references / rename 等需要从光标位置反查符号名的场景。
-fn extract_symbol_name_from_document(document: &TextDocument, position: Position) -> Option<String> {
+fn extract_symbol_name_from_document(
+    document: &TextDocument,
+    position: Position,
+) -> Option<String> {
     let line = document.content.lines().nth(position.line as usize)?;
 
     // LSP position.character 是 UTF-16 code unit 偏移，需转换为字节偏移
@@ -682,17 +681,19 @@ fn collect_workspace_symbols(
 ) {
     let matched = query.is_empty() || ds.name.to_lowercase().contains(query);
     if matched {
-        out.push(SymbolInformation {
+        let si = SymbolInformation {
             name: ds.name.clone(),
             kind: ds.kind,
             tags: None,
+            #[allow(deprecated)]
             deprecated: None,
             location: Location {
                 uri: uri.clone(),
                 range: ds.range,
             },
             container_name: None,
-        });
+        };
+        out.push(si);
     }
     if let Some(children) = &ds.children {
         for child in children {
@@ -747,7 +748,10 @@ fn build_position_diagnostics_section(
             _ => "DIAG",
         };
         let source = d.source.as_deref().unwrap_or("unknown");
-        section.push_str(&format!("- **{}** ({}): {}\n", severity_label, source, d.message));
+        section.push_str(&format!(
+            "- **{}** ({}): {}\n",
+            severity_label, source, d.message
+        ));
     }
     Some(section)
 }
@@ -810,7 +814,9 @@ pub async fn run_tcp_server(config: &LspConfig) -> Result<()> {
         let (read_half, write_half) = tokio::io::split(stream);
         let conn_counter = active_connections.clone();
         tokio::spawn(async move {
-            let _ = Server::new(read_half, write_half, socket).serve(service).await;
+            let _ = Server::new(read_half, write_half, socket)
+                .serve(service)
+                .await;
             conn_counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             tracing::debug!(%addr, "LSP TCP connection closed");
         });

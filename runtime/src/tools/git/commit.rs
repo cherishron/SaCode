@@ -639,10 +639,7 @@ mod tests {
 
     #[test]
     fn test_infer_change_type_docs() {
-        assert_eq!(
-            infer_change_type(&["docs/guide.md".to_string()]),
-            "docs"
-        );
+        assert_eq!(infer_change_type(&["docs/guide.md".to_string()]), "docs");
     }
 
     #[test]
@@ -655,18 +652,12 @@ mod tests {
 
     #[test]
     fn test_infer_change_type_feat() {
-        assert_eq!(
-            infer_change_type(&["src/main.rs".to_string()]),
-            "feat"
-        );
+        assert_eq!(infer_change_type(&["src/main.rs".to_string()]), "feat");
     }
 
     #[test]
     fn test_infer_change_type_chore() {
-        assert_eq!(
-            infer_change_type(&["Cargo.toml".to_string()]),
-            "chore"
-        );
+        assert_eq!(infer_change_type(&["Cargo.toml".to_string()]), "chore");
     }
 
     #[test]
@@ -693,10 +684,7 @@ mod tests {
 
     #[test]
     fn test_infer_subject_multi_files() {
-        let subject = infer_subject(&[
-            "src/a.rs".to_string(),
-            "src/b.rs".to_string(),
-        ]);
+        let subject = infer_subject(&["src/a.rs".to_string(), "src/b.rs".to_string()]);
         assert_eq!(subject, "update 2 files");
     }
 
@@ -712,10 +700,7 @@ mod tests {
             "src/tools/git/commit.rs".to_string(),
             "src/tools/git/push.rs".to_string(),
         ]);
-        assert_eq!(
-            msg.as_deref(),
-            Some("feat(src): update 2 files")
-        );
+        assert_eq!(msg.as_deref(), Some("feat(src): update 2 files"));
     }
 
     #[test]

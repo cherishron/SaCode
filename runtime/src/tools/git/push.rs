@@ -164,14 +164,15 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
     cmd.arg(&remote).arg(&branch);
 
-    let output = cmd.output().map_err(|e| anyhow::anyhow!("git push 执行失败: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| anyhow::anyhow!("git push 执行失败: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
         // 检查是否有实际推送（dry-run 或 Everything up-to-date 时无实际变更）
-        let up_to_date = stderr.contains("Everything up-to-date")
-            || stderr.contains("Up-to-date");
+        let up_to_date = stderr.contains("Everything up-to-date") || stderr.contains("Up-to-date");
         let summary = if dry_run {
             format!("干运行：将推送到 {}/{}", remote, branch)
         } else if up_to_date {
@@ -192,19 +193,31 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     } else {
         // 错误分类
         let (kind, msg) = if stderr.contains("Everything up-to-date") {
-            (GitPushErrorKind::NothingToPush, "本地与远程已同步，无可推送的提交".to_string())
+            (
+                GitPushErrorKind::NothingToPush,
+                "本地与远程已同步，无可推送的提交".to_string(),
+            )
         } else if stderr.contains("non-fast-forward")
             || stderr.contains("fetch first")
             || stderr.contains("rejected")
         {
-            (GitPushErrorKind::Rejected, "推送被拒绝：远程有新提交，需先 pull 或使用 force".to_string())
+            (
+                GitPushErrorKind::Rejected,
+                "推送被拒绝：远程有新提交，需先 pull 或使用 force".to_string(),
+            )
         } else if stderr.contains("Could not read from remote repository")
             || stderr.contains("Permission denied")
             || stderr.contains("fatal: '")
         {
-            (GitPushErrorKind::RemoteError, format!("远程仓库错误: {}", stderr.trim()))
+            (
+                GitPushErrorKind::RemoteError,
+                format!("远程仓库错误: {}", stderr.trim()),
+            )
         } else {
-            (GitPushErrorKind::PushFailed, format!("推送失败: {}", stderr.trim()))
+            (
+                GitPushErrorKind::PushFailed,
+                format!("推送失败: {}", stderr.trim()),
+            )
         };
         Ok(git_push_error(kind, msg))
     }
@@ -256,8 +269,7 @@ mod tests {
             // 如果临时目录恰好是 git 仓库（罕见），跳过断言
             if !output.success {
                 assert_eq!(
-                    output.data["error_kind"],
-                    "not_a_repo",
+                    output.data["error_kind"], "not_a_repo",
                     "非 git 目录应返回 not_a_repo"
                 );
             }

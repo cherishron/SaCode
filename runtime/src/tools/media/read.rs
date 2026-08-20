@@ -67,8 +67,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             // 超时遵守 media.read 的 timeout_ms（默认 10s）
             let timeout =
                 std::time::Duration::from_millis(spec().timeout_ms.unwrap_or(10_000) as u64);
-            try_visual_read(&input, &file_path, &bytes, mime_type, &prompt, timeout)
-                .unwrap_or_else(|_| {
+            try_visual_read(&input, &file_path, &bytes, mime_type, &prompt, timeout).unwrap_or_else(
+                |_| {
                     (
                         fallback_visual_text(
                             mode,
@@ -80,7 +80,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                         ),
                         "fallback".to_string(),
                     )
-                })
+                },
+            )
         }
         _ => {
             return Ok(ToolOutput::failure(

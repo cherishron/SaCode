@@ -228,16 +228,14 @@ impl SandboxBackend for LocalSandboxBackend {
 
                 // 尝试收集已产生的输出（超时前进程可能已有部分输出）
                 let output = match child.try_wait() {
-                    Ok(Some(_)) => {
-                        match child.wait_with_output() {
-                            Ok(out) => {
-                                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                                (stdout, stderr)
-                            }
-                            Err(_) => (String::new(), String::new()),
+                    Ok(Some(_)) => match child.wait_with_output() {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                            (stdout, stderr)
                         }
-                    }
+                        Err(_) => (String::new(), String::new()),
+                    },
                     _ => (String::new(), String::new()),
                 };
 

@@ -17,16 +17,15 @@
 //!   Docker 场景 `["docker", "exec", "-i", "container"]`）。空前缀等价于本地。
 //! - FS 操作翻译为远程 shell 命令：
 //!   - `read_text`  → `cat <path>`
-//!   - `read_bytes`→ `cat <path>`（文本通道，二进制场景需 base64，见下）
+//!   - `read_bytes` → `base64 -w0 <path>`（二进制安全，本地解码）
 //!   - `write_text`→ `printf '%s' <content> > <path>`（含父目录创建）
 //!   - `append_text` → `printf '%s' <content> >> <path>`
 //!   - `exists`     → `test -e <path>`
 //!   - `list_dir`   → `ls -1p <dir>` 解析（目录带 `/` 后缀）
 //! - `exec`：直接把原命令作为后缀拼接，由 `run_local_command` 经前缀执行。
 //!
-//! 二进制安全：当前 `read_bytes` 经文本通道 `cat` 会破坏二进制。生产级远程实现
-//! 应改为 `base64 -w0` 编码回传再解码。本期作为"抽象可行性验证"保留文本通道，
-//! 并在文档与测试中标明此限制（见对比文档 §3.3 风险）。
+//! 二进制安全：`read_bytes` 使用 base64 编码回传再解码，确保二进制内容不被
+//! 文本通道（换行归一、非 UTF-8 字节丢失）破坏。
 //!
 //! 平台差异：前缀命令的拼接沿用现有 `build_command_parts` 的平台包装逻辑
 //! （`needs_cmd_wrapper` / `needs_sh_wrapper`），保证与本地 `shell.exec` 一致。
@@ -46,9 +45,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 
-use crate::tools::context::{
-    CommandOutput, DirEntry, EntryType, ExecutionContext,
-};
+use crate::tools::context::{CommandOutput, DirEntry, EntryType, ExecutionContext};
 use crate::tools::shell::exec::run_local_command;
 
 /// 远程执行环境（实验性）
@@ -105,6 +102,15 @@ fn shell_quote(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+/// 解码 base64 字符串为字节数组（用于 `read_bytes` 远端二进制安全传输）。
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    use base64::{engine::general_purpose, Engine};
+    let trimmed = input.trim();
+    general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|e| anyhow!("base64 decode failed: {e}"))
+}
+
 impl ExecutionContext for RemoteContext {
     fn read_text(&self, path: &Path) -> Result<String> {
         let path = shell_quote(&path.to_string_lossy());
@@ -118,14 +124,14 @@ impl ExecutionContext for RemoteContext {
 
     fn read_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = shell_quote(&path.to_string_lossy());
-        // 经文本通道 `cat` 读取并转字节。注意：文本通道会破坏二进制内容
-        // （换行归一、非 UTF-8 字节丢失）。生产级远程实现应改用 base64 编码回传
-        // 或 gRPC 二进制流。本期作为"抽象可行性验证"保留文本通道。
-        let output = self.run(&format!("cat {path}"))?;
+        // 二进制安全：远端 base64 编码后本地解码，避免文本通道破坏二进制内容。
+        // 优先 `base64 -w0`（Linux coreutils），回退 `base64`（BSD/macOS 无 -w）。
+        let output = self.run(&format!("base64 -w0 {path} 2>/dev/null || base64 {path}"))?;
         if output.exit_code != 0 {
             return Err(anyhow!("remote read_bytes failed: {}", output.stderr));
         }
-        Ok(output.stdout.into_bytes())
+        let decoded = base64_decode(&output.stdout)?;
+        Ok(decoded)
     }
 
     fn write_text(&self, path: &Path, content: &str) -> Result<usize> {
@@ -133,9 +139,7 @@ impl ExecutionContext for RemoteContext {
         // 创建父目录（远端）后写入。
         // 用单引号包裹 content，并对内容中的单引号做转义（'\'' 序列）。
         let escaped = content.replace('\'', "'\\''");
-        let command = format!(
-            "mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' > {path}"
-        );
+        let command = format!("mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' > {path}");
         let output = self.run(&command)?;
         if output.exit_code != 0 {
             return Err(anyhow!("remote write failed: {}", output.stderr));
@@ -146,9 +150,8 @@ impl ExecutionContext for RemoteContext {
     fn append_text(&self, path: &Path, content: &str) -> Result<usize> {
         let path = shell_quote(&path.to_string_lossy());
         let escaped = content.replace('\'', "'\\''");
-        let command = format!(
-            "mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' >> {path}"
-        );
+        let command =
+            format!("mkdir -p \"$(dirname {path})\" && printf '%s' '{escaped}' >> {path}");
         let output = self.run(&command)?;
         if output.exit_code != 0 {
             return Err(anyhow!("remote append failed: {}", output.stderr));
@@ -196,7 +199,9 @@ impl ExecutionContext for RemoteContext {
     fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)> {
         let path = shell_quote(path.to_string_lossy().as_ref());
         // stat -c (Linux) / stat -f (BSD/macOS) 兼容
-        let output = self.run(&format!("stat -c '%s %Y' {path} 2>/dev/null || stat -f '%z %m' {path}"))?;
+        let output = self.run(&format!(
+            "stat -c '%s %Y' {path} 2>/dev/null || stat -f '%z %m' {path}"
+        ))?;
         if output.exit_code != 0 {
             return Err(anyhow!("remote metadata failed: {}", output.stderr));
         }
@@ -223,7 +228,11 @@ impl ExecutionContext for RemoteContext {
         run_local_command(&wrapped, cwd, timeout_ms)
     }
 
-    fn resolve_path(&self, path: &str, access: crate::sandbox::FsAccess) -> Result<std::path::PathBuf> {
+    fn resolve_path(
+        &self,
+        path: &str,
+        access: crate::sandbox::FsAccess,
+    ) -> Result<std::path::PathBuf> {
         let _ = access;
         let p = std::path::PathBuf::from(path);
         if p.is_absolute() {
@@ -287,8 +296,10 @@ mod tests {
     #[test]
     fn set_default_context_switches_execution_world() {
         let probe = "sacode_remote_probe_xyz";
-        let remote: Arc<dyn ExecutionContext> =
-            Arc::new(RemoteContext::new(vec![probe.to_string(), "user@host".to_string()], None));
+        let remote: Arc<dyn ExecutionContext> = Arc::new(RemoteContext::new(
+            vec![probe.to_string(), "user@host".to_string()],
+            None,
+        ));
 
         // set_default_context 调用不 panic（OnceLock 重复 set 静默忽略，符合预期）
         set_default_context(remote.clone());
@@ -325,5 +336,23 @@ mod tests {
         let listed = ctx.list_dir(dir.path()).expect("list");
         assert!(listed.iter().any(|e| e.relative_path == "remote_local.txt"));
     }
-}
 
+    /// base64 解码单元测试
+    #[test]
+    fn base64_decode_roundtrip() {
+        // "hello" -> base64 -> "aGVsbG8="
+        let decoded = base64_decode("aGVsbG8=").expect("decode");
+        assert_eq!(decoded, b"hello");
+
+        // 空字符串
+        let empty = base64_decode("").expect("decode empty");
+        assert!(empty.is_empty());
+
+        // 二进制数据
+        let binary = base64_decode("/v8=").expect("decode binary");
+        assert_eq!(binary, vec![0xFE, 0xFF]);
+
+        // 无效 base64 应返回错误
+        assert!(base64_decode("!!!invalid!!!").is_err());
+    }
+}

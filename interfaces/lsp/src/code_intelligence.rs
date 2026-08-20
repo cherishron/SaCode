@@ -67,10 +67,12 @@ fn symbol_to_completion_item(symbol: AstSymbol) -> CompletionItem {
         label: symbol.name.clone(),
         kind: Some(symbol_kind_to_completion_kind(&symbol.kind)),
         detail: Some(format!("{} (line {})", symbol.kind, symbol.line)),
-        documentation: Some(tower_lsp::lsp_types::Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```rust\n{}\n```", symbol.preview),
-        })),
+        documentation: Some(tower_lsp::lsp_types::Documentation::MarkupContent(
+            MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```rust\n{}\n```", symbol.preview),
+            },
+        )),
         insert_text: Some(symbol.name),
         insert_text_format: Some(tower_lsp::lsp_types::InsertTextFormat::PLAIN_TEXT),
         ..CompletionItem::default()
@@ -108,16 +110,16 @@ pub fn hover_from_ast(doc: &TextDocument, position: Position) -> Option<Hover> {
         .iter()
         .find(|s| s.line == target_line)
         .or_else(|| {
-            summary.symbols.iter().filter(|s| s.line.abs_diff(target_line) <= 2).min_by_key(|s| s.line.abs_diff(target_line))
+            summary
+                .symbols
+                .iter()
+                .filter(|s| s.line.abs_diff(target_line) <= 2)
+                .min_by_key(|s| s.line.abs_diff(target_line))
         })?;
 
     let content = format!(
         "**{} {}** (line {})\n\n```{}\n{}\n```",
-        symbol.kind,
-        symbol.name,
-        symbol.line,
-        doc.language_id,
-        symbol.preview
+        symbol.kind, symbol.name, symbol.line, doc.language_id, symbol.preview
     );
 
     Some(Hover {
@@ -141,7 +143,10 @@ pub fn hover_from_ast(doc: &TextDocument, position: Position) -> Option<Hover> {
 /// 在指定文档路径下，从 LSP URI 解析出文件路径
 ///
 /// 用于 code_action 路径过滤（与 diagnostics 模块的 uri_to_file_path 等价）
-pub fn uri_to_local_path(uri: &tower_lsp::lsp_types::Url, workdir: &Path) -> Option<std::path::PathBuf> {
+pub fn uri_to_local_path(
+    uri: &tower_lsp::lsp_types::Url,
+    workdir: &Path,
+) -> Option<std::path::PathBuf> {
     let path = uri.to_file_path().ok()?;
     // 若 path 在 workdir 内，返回相对路径，便于与 cargo/tsc 输出对齐
     if let Ok(relative) = path.strip_prefix(workdir) {
@@ -152,7 +157,10 @@ pub fn uri_to_local_path(uri: &tower_lsp::lsp_types::Url, workdir: &Path) -> Opt
 }
 
 /// 把 completion_items_from_ast 的结果包装为 CompletionResponse
-pub fn completion_response_from_ast(doc: &TextDocument, position: Position) -> Option<CompletionResponse> {
+pub fn completion_response_from_ast(
+    doc: &TextDocument,
+    position: Position,
+) -> Option<CompletionResponse> {
     let items = completion_items_from_ast(doc, position);
     if items.is_empty() {
         None
@@ -254,8 +262,7 @@ fn try_insert_child(parent: &mut DocumentSymbol, symbol: &DocumentSymbol) -> boo
 fn range_contains(outer: &Range, inner: &Range) -> bool {
     // outer.start <= inner.start && outer.end >= inner.end
     let outer_after_inner_start = outer.start.line < inner.start.line
-        || (outer.start.line == inner.start.line
-            && outer.start.character <= inner.start.character);
+        || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character);
     let outer_before_inner_end = outer.end.line > inner.end.line
         || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character);
     outer_after_inner_start && outer_before_inner_end
@@ -327,7 +334,8 @@ pub fn find_references_in_document(
     let Some(language) = language_id_to_ast_language(&doc.language_id) else {
         return Vec::new();
     };
-    let references = AstEditor::find_references(language, &doc.content, symbol_name).unwrap_or_default();
+    let references =
+        AstEditor::find_references(language, &doc.content, symbol_name).unwrap_or_default();
     references
         .into_iter()
         .filter(|reference| include_declaration || !reference.is_declaration)
@@ -369,7 +377,9 @@ pub fn find_definition_in_document(
     let symbol_name = extract_symbol_name_at_position(doc, position)?;
 
     // 在符号表中查找定义
-    let definition = symbols.into_iter().find(|symbol| symbol.name == symbol_name)?;
+    let definition = symbols
+        .into_iter()
+        .find(|symbol| symbol.name == symbol_name)?;
 
     Some(Location {
         uri: uri.clone(),
@@ -467,10 +477,7 @@ pub fn rename_symbol_in_document(
 /// 检查光标位置是否可重命名 — 供 LSP textDocument/prepareRename 使用
 ///
 /// 返回占位 range，让客户端进入重命名输入模式。
-pub fn prepare_rename_in_document(
-    doc: &TextDocument,
-    position: Position,
-) -> Option<Range> {
+pub fn prepare_rename_in_document(doc: &TextDocument, position: Position) -> Option<Range> {
     let symbol_name = extract_symbol_name_at_position(doc, position)?;
     if symbol_name.is_empty() {
         return None;
@@ -528,8 +535,14 @@ mod tests {
     fn language_id_mapping_supports_common_languages() {
         assert_eq!(language_id_to_ast_language("rust"), Some("rust"));
         assert_eq!(language_id_to_ast_language("python"), Some("python"));
-        assert_eq!(language_id_to_ast_language("typescript"), Some("typescript"));
-        assert_eq!(language_id_to_ast_language("typescriptreact"), Some("typescript"));
+        assert_eq!(
+            language_id_to_ast_language("typescript"),
+            Some("typescript")
+        );
+        assert_eq!(
+            language_id_to_ast_language("typescriptreact"),
+            Some("typescript")
+        );
         assert_eq!(language_id_to_ast_language("go"), Some("go"));
         assert_eq!(language_id_to_ast_language("markdown"), None);
     }
@@ -547,7 +560,13 @@ mod tests {
     fn completion_items_filters_after_cursor() {
         let doc = rust_doc("fn first() {}\nfn second() {}\nfn third() {}\n");
         // 光标在第 1 行（0-based），只能看到第 1+1=2 行之前的符号
-        let items = completion_items_from_ast(&doc, Position { line: 1, character: 0 });
+        let items = completion_items_from_ast(
+            &doc,
+            Position {
+                line: 1,
+                character: 0,
+            },
+        );
         let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"first"));
         // second 在第 2 行（1-based），不算 ≤ position.line+1=2，应包含
@@ -564,14 +583,27 @@ mod tests {
             version: 1,
             language_id: "markdown".to_string(),
         };
-        let items = completion_items_from_ast(&doc, Position { line: 0, character: 0 });
+        let items = completion_items_from_ast(
+            &doc,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
         assert!(items.is_empty());
     }
 
     #[test]
     fn hover_finds_symbol_at_same_line() {
         let doc = rust_doc("fn greet() {\n    println!(\"hi\");\n}\n");
-        let hover = hover_from_ast(&doc, Position { line: 0, character: 5 }).expect("hover");
+        let hover = hover_from_ast(
+            &doc,
+            Position {
+                line: 0,
+                character: 5,
+            },
+        )
+        .expect("hover");
         match hover.contents {
             HoverContents::Markup(content) => {
                 assert!(content.value.contains("greet"));
@@ -585,7 +617,13 @@ mod tests {
     fn hover_returns_none_when_no_symbols_nearby() {
         let doc = rust_doc("fn greet() {}\n");
         // 光标在第 100 行，附近无符号
-        let hover = hover_from_ast(&doc, Position { line: 100, character: 0 });
+        let hover = hover_from_ast(
+            &doc,
+            Position {
+                line: 100,
+                character: 0,
+            },
+        );
         assert!(hover.is_none());
     }
 
@@ -597,30 +635,60 @@ mod tests {
             version: 1,
             language_id: "markdown".to_string(),
         };
-        let hover = hover_from_ast(&doc, Position { line: 0, character: 0 });
+        let hover = hover_from_ast(
+            &doc,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
         assert!(hover.is_none());
     }
 
     #[test]
     fn symbol_kind_mapping_covers_common_variants() {
-        assert_eq!(symbol_kind_to_completion_kind("fn"), CompletionItemKind::FUNCTION);
-        assert_eq!(symbol_kind_to_completion_kind("struct"), CompletionItemKind::CLASS);
-        assert_eq!(symbol_kind_to_completion_kind("trait"), CompletionItemKind::INTERFACE);
-        assert_eq!(symbol_kind_to_completion_kind("unknown"), CompletionItemKind::TEXT);
+        assert_eq!(
+            symbol_kind_to_completion_kind("fn"),
+            CompletionItemKind::FUNCTION
+        );
+        assert_eq!(
+            symbol_kind_to_completion_kind("struct"),
+            CompletionItemKind::CLASS
+        );
+        assert_eq!(
+            symbol_kind_to_completion_kind("trait"),
+            CompletionItemKind::INTERFACE
+        );
+        assert_eq!(
+            symbol_kind_to_completion_kind("unknown"),
+            CompletionItemKind::TEXT
+        );
     }
 
     #[test]
     fn completion_response_returns_none_for_empty() {
         let doc = rust_doc("// no symbols\n");
-        let response = completion_response_from_ast(&doc, Position { line: 0, character: 0 });
+        let response = completion_response_from_ast(
+            &doc,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
         assert!(response.is_none());
     }
 
     #[test]
     fn completion_response_returns_array_for_non_empty() {
         let doc = rust_doc("fn greet() {}\n");
-        let response =
-            completion_response_from_ast(&doc, Position { line: 0, character: 0 }).expect("response");
+        let response = completion_response_from_ast(
+            &doc,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        )
+        .expect("response");
         match response {
             CompletionResponse::Array(items) => assert!(!items.is_empty()),
             _ => panic!("expected array"),

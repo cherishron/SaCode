@@ -261,10 +261,7 @@ fn split_rust_test_name(full_name: &str) -> (String, String) {
 }
 
 /// 从 cargo test 输出中提取失败测试的错误消息
-fn build_rust_failed_tests(
-    output: &str,
-    failed_names: &[(String, String)],
-) -> Vec<FailedTest> {
+fn build_rust_failed_tests(output: &str, failed_names: &[(String, String)]) -> Vec<FailedTest> {
     if failed_names.is_empty() {
         return Vec::new();
     }
@@ -544,7 +541,10 @@ fn parse_pytest_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) 
             // 拆分路径::类::方法
             let segments: Vec<&str> = location_part.split("::").collect();
             let (module, name) = if segments.len() >= 2 {
-                (segments[0].to_string(), segments.last().unwrap().to_string())
+                (
+                    segments[0].to_string(),
+                    segments.last().unwrap().to_string(),
+                )
             } else {
                 (String::new(), location_part.clone())
             };
@@ -614,7 +614,8 @@ fn parse_node_results(output: &str) -> (usize, usize, usize, Vec<FailedTest>) {
             let mut error_lines = Vec::new();
             for j in (i + 1)..lines.len().min(i + 10) {
                 let next = lines[j].trim();
-                if next.starts_with("● ") || next.starts_with("FAIL") || next.starts_with("PASS") {
+                if next.starts_with("● ") || next.starts_with("FAIL") || next.starts_with("PASS")
+                {
                     break;
                 }
                 if !next.is_empty() {
@@ -904,7 +905,10 @@ Tests:       2 failed, 5 passed, 7 total";
     fn extract_number_from_summary() {
         assert_eq!(extract_number("3 passed; 2 failed", "passed"), Some(3));
         assert_eq!(extract_number("3 passed; 2 failed", "failed"), Some(2));
-        assert_eq!(extract_number("1 passed, 5 failed in 0.5s", "passed"), Some(1));
+        assert_eq!(
+            extract_number("1 passed, 5 failed in 0.5s", "passed"),
+            Some(1)
+        );
         assert_eq!(extract_number("no match here", "passed"), None);
     }
 

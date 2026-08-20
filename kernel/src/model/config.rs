@@ -465,7 +465,6 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
         },
     );
 
-
     // ── 智谱 GLM（OpenAI 兼容）──
     providers.insert(
         "zhipu".to_string(),

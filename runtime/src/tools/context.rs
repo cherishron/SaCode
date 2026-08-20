@@ -103,7 +103,11 @@ pub trait ExecutionContext: Send + Sync {
     fn exec(&self, command: &str, cwd: Option<&str>, timeout_ms: u64) -> Result<CommandOutput>;
 
     /// 解析路径（沙箱校验 + 路径规范化）。
-    fn resolve_path(&self, path: &str, access: crate::sandbox::FsAccess) -> Result<std::path::PathBuf>;
+    fn resolve_path(
+        &self,
+        path: &str,
+        access: crate::sandbox::FsAccess,
+    ) -> Result<std::path::PathBuf>;
 }
 
 /// 本地执行环境 — 封装现有 `std::fs` / `std::process` 调用与平台包装逻辑
@@ -300,4 +304,3 @@ mod tests {
         assert!(ctx.exists(&file));
     }
 }
-

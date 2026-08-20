@@ -71,7 +71,11 @@ fn render_jetbrains(_workdir: &Path, config: &sacode_runtime::IdeServerConfig) -
 /// 生成 IDE 配置文件（.vscode/settings.json 等）
 ///
 /// 可选目标：vscode（默认）, cursor
-fn render_generate(workdir: &Path, config: &sacode_runtime::IdeServerConfig, args: &[String]) -> Result<String> {
+fn render_generate(
+    workdir: &Path,
+    config: &sacode_runtime::IdeServerConfig,
+    args: &[String],
+) -> Result<String> {
     let target = args.first().map(|value| value.as_str()).unwrap_or("vscode");
     let vscode_dir = workdir.join(".vscode");
 
@@ -158,7 +162,11 @@ fn render_generate(workdir: &Path, config: &sacode_runtime::IdeServerConfig, arg
             let ext_path = vscode_dir.join("extensions.json");
             std::fs::write(&ext_path, serde_json::to_string_pretty(&extensions)?)?;
 
-            let ide_name = if target == "cursor" { "Cursor" } else { "VS Code" };
+            let ide_name = if target == "cursor" {
+                "Cursor"
+            } else {
+                "VS Code"
+            };
             Ok(format!(
                 "已生成 {} 配置文件:\n\
                  - .vscode/settings.json（LSP/ACP 连接地址）\n\
@@ -171,7 +179,10 @@ fn render_generate(workdir: &Path, config: &sacode_runtime::IdeServerConfig, arg
                 ide_name, ide_name
             ))
         }
-        other => Ok(format!("不支持的 IDE 目标: {}。可选: vscode, cursor", other)),
+        other => Ok(format!(
+            "不支持的 IDE 目标: {}。可选: vscode, cursor",
+            other
+        )),
     }
 }
 
@@ -317,7 +328,10 @@ fn render_install(workdir: &Path) -> Result<String> {
         lines.push("".to_string());
         lines.push("执行以下步骤：".to_string());
         lines.push("".to_string());
-        lines.push(format!("  cd {} && npm install && npm run compile", extension_dir.display()));
+        lines.push(format!(
+            "  cd {} && npm install && npm run compile",
+            extension_dir.display()
+        ));
         lines.push("  code --install-extension cherishron.sacode-vscode-0.1.0 --force".to_string());
         lines.push("  code --reload-window".to_string());
         lines.push("".to_string());
@@ -331,14 +345,19 @@ fn render_install(workdir: &Path) -> Result<String> {
         lines.push("4. 编译后选择 VSIX 文件".to_string());
         lines.push("".to_string());
         lines.push("编译扩展：".to_string());
-        lines.push(format!("  cd {} && npm install && npx vsce package", extension_dir.display()));
+        lines.push(format!(
+            "  cd {} && npm install && npx vsce package",
+            extension_dir.display()
+        ));
     }
 
     lines.push("".to_string());
     lines.push("启动 daemon 后扩展将自动连接：".to_string());
     lines.push("  sacode serve".to_string());
     lines.push("".to_string());
-    lines.push("配置 daemon 地址：Settings → 搜索 sacode.daemonHost / sacode.daemonPort".to_string());
+    lines.push(
+        "配置 daemon 地址：Settings → 搜索 sacode.daemonHost / sacode.daemonPort".to_string(),
+    );
 
     Ok(lines.join("\n"))
 }

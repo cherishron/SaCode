@@ -8,19 +8,15 @@
 use std::env;
 
 use anyhow::Result;
-use sacode_runtime::tools::context_remote::RemoteContext;
+use sacode_kernel::{generate_task_id, ExecutionContext, ExecutionReport, Task, TaskRun};
 use sacode_runtime::tools::context::set_default_context;
-use sacode_kernel::{ExecutionContext, ExecutionReport, Task, TaskRun, generate_task_id};
+use sacode_runtime::tools::context_remote::RemoteContext;
 use sacode_runtime::{
-    AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder, PromptUserDecider,
-    TaskRunConfig,
-    build_execution_plan, execute_task_with_provider,
-    strip_orchestration_prefix,
-    build_runtime_system_prompt, PromptContext,
-    CheckpointStorage, LoopConfigStore, AgentLoop, AgentLoopKind,
-    build_agent_loop, infer_task_run_state, task_run_from_report,
-    McpConfigStore, Profile, RoleRegistry,
-    TaskProfile, ToolRegistry,
+    build_agent_loop, build_execution_plan, build_runtime_system_prompt,
+    execute_task_with_provider, infer_task_run_state, strip_orchestration_prefix,
+    task_run_from_report, AgentLoop, AgentLoopKind, AutoApproveDecider, AutoDenyDecider,
+    CheckpointStorage, LoggingErrorRecorder, LoopConfigStore, McpConfigStore, Profile,
+    PromptContext, PromptUserDecider, RoleRegistry, TaskProfile, TaskRunConfig, ToolRegistry,
 };
 
 use super::{orchestrator_support::format_summary_record, CliOptions};
@@ -84,9 +80,14 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         (report, Some(task_run))
     } else {
         // 单 Agent 路径：使用统一 TaskExecutor（替代占位 Supervisor + RuntimeOrchestrator）
-        let result =
-            execute_single_agent_task(&options, &effective_prompt, &workdir, &profile, named_profile.as_ref())
-                .await?;
+        let result = execute_single_agent_task(
+            &options,
+            &effective_prompt,
+            &workdir,
+            &profile,
+            named_profile.as_ref(),
+        )
+        .await?;
         result
     };
 
@@ -151,12 +152,12 @@ async fn execute_single_agent_task(
     _profile: &TaskProfile,
     named_profile: Option<&Profile>,
 ) -> Result<(ExecutionReport, Option<TaskRun>)> {
-    use std::sync::Arc;
     use sacode_runtime::ApprovalDecider;
+    use std::sync::Arc;
 
     // 构建工具注册表
-    let mut tools = ToolRegistry::builtin_with_wasm(workdir)
-        .with_profile_interceptors(named_profile);
+    let mut tools =
+        ToolRegistry::builtin_with_wasm(workdir).with_profile_interceptors(named_profile);
     let mcp_store = McpConfigStore::new(workdir);
     if let Err(error) = sacode_runtime::register_enabled_mcp_tools_sync(&mcp_store, &mut tools) {
         tracing::warn!("注册 MCP 工具失败: {error}");
@@ -165,7 +166,11 @@ async fn execute_single_agent_task(
     // §3.4 深化：单 Agent 路径也应用命名 Profile 的工具集约束
     let injected_specs = tools.for_prompt_with_profile(None, Some(_profile), named_profile, None);
     let tool_names: Vec<String> = if named_profile.is_some() {
-        injected_specs.0.iter().map(|s| s.name.to_string()).collect()
+        injected_specs
+            .0
+            .iter()
+            .map(|s| s.name.to_string())
+            .collect()
     } else {
         tools.names().iter().map(|name| name.to_string()).collect()
     };
@@ -211,11 +216,7 @@ async fn execute_single_agent_task(
     let task_run_result = execute_task_with_provider(&config, None).await;
 
     // 构建 ExecutionReport：优先取 executor 产出的完整报告（含 events、route_records）
-    let mut report = task_run_result
-        .task_run
-        .report
-        .clone()
-        .unwrap_or_default();
+    let mut report = task_run_result.task_run.report.clone().unwrap_or_default();
     report.final_output = task_run_result.response.clone().ok();
 
     // 构建 TaskRun

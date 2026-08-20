@@ -67,10 +67,7 @@ pub fn load_custom_agents(workdir: &Path) -> Vec<AgentRole> {
                         Ok(role) => {
                             // 避免与项目级 Agent ID 冲突
                             if agents.iter().any(|a| a.id == role.id) {
-                                tracing::warn!(
-                                    "用户级 Agent [{}] 与项目级冲突，跳过",
-                                    role.id
-                                );
+                                tracing::warn!("用户级 Agent [{}] 与项目级冲突，跳过", role.id);
                                 continue;
                             }
                             tracing::info!("加载用户级 Agent 定义: {} ({})", role.id, role.name);
@@ -155,7 +152,11 @@ fn parse_yaml_agent(content: &str) -> anyhow::Result<AgentRole> {
         }
 
         // 非缩进行结束 model_policy 块
-        if in_model_policy && !trimmed.starts_with('-') && !line.starts_with(' ') && !line.starts_with('\t') {
+        if in_model_policy
+            && !trimmed.starts_with('-')
+            && !line.starts_with(' ')
+            && !line.starts_with('\t')
+        {
             in_model_policy = false;
         }
 
@@ -329,7 +330,11 @@ fn parse_toml_agent(content: &str) -> anyhow::Result<AgentRole> {
 
 /// 去除 TOML 字符串值的首尾引号
 fn unquote_toml(value: &str) -> String {
-    value.trim().trim_matches('"').trim_matches('\'').to_string()
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
 }
 
 /// 解析 TOML 字符串数组：`["a", "b"]`
@@ -406,7 +411,10 @@ model_policy:
         assert_eq!(role.preferred_context.len(), 2);
         assert_eq!(role.deliverables.len(), 1);
         assert_eq!(role.model_policy.thinking, Some(true));
-        assert_eq!(role.model_policy.primary_model.as_deref(), Some("claude-3.7-sonnet"));
+        assert_eq!(
+            role.model_policy.primary_model.as_deref(),
+            Some("claude-3.7-sonnet")
+        );
     }
 
     #[test]
@@ -436,9 +444,15 @@ system_prompt: "Missing ID"
 
     #[test]
     fn parse_stage_variants() {
-        assert!(matches!(parse_stage("requirements"), Some(RoleStage::Requirements)));
+        assert!(matches!(
+            parse_stage("requirements"),
+            Some(RoleStage::Requirements)
+        ));
         assert!(matches!(parse_stage("design"), Some(RoleStage::Design)));
-        assert!(matches!(parse_stage("implementation"), Some(RoleStage::Implementation)));
+        assert!(matches!(
+            parse_stage("implementation"),
+            Some(RoleStage::Implementation)
+        ));
         assert!(matches!(parse_stage("quality"), Some(RoleStage::Quality)));
         assert!(matches!(parse_stage("delivery"), Some(RoleStage::Delivery)));
         assert!(parse_stage("unknown").is_none());
@@ -480,12 +494,18 @@ primary_model = "claude-3.7-sonnet"
         assert_eq!(role.preferred_context.len(), 2);
         assert_eq!(role.deliverables.len(), 1);
         assert_eq!(role.model_policy.thinking, Some(true));
-        assert_eq!(role.model_policy.primary_model.as_deref(), Some("claude-3.7-sonnet"));
+        assert_eq!(
+            role.model_policy.primary_model.as_deref(),
+            Some("claude-3.7-sonnet")
+        );
     }
 
     #[test]
     fn parse_toml_array_variants() {
-        assert_eq!(parse_toml_array("[\"a\", \"b\"]"), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            parse_toml_array("[\"a\", \"b\"]"),
+            vec!["a".to_string(), "b".to_string()]
+        );
         assert_eq!(parse_toml_array("[]"), Vec::<String>::new());
         assert_eq!(parse_toml_array("not-an-array"), Vec::<String>::new());
     }

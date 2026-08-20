@@ -3,7 +3,6 @@ use sacode_kernel::schema::{Checkpoint, Task};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-
 const CHECKPOINT_DIR: &str = ".sacode/checkpoints";
 /// task_id → [filenames] 索引文件名
 const INDEX_FILENAME: &str = "index.json";
@@ -182,11 +181,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn make_checkpoint(task_id: &str, created_at: &str) -> Checkpoint {
-        let mut cp = Checkpoint::new(Task::new(
-            "test prompt",
-            ExecutionMode::Build,
-            None,
-        ));
+        let mut cp = Checkpoint::new(Task::new("test prompt", ExecutionMode::Build, None));
         cp.task_id = Some(task_id.to_string());
         cp.created_at = created_at.to_string();
         cp.updated_at = created_at.to_string();
@@ -225,10 +220,17 @@ mod tests {
         let storage = CheckpointStorage::new(temp.path());
 
         // 直接写 checkpoint 文件，不经过 save（跳过索引创建）
-        let checkpoint_path = temp.path().join(CHECKPOINT_DIR).join("checkpoint-20260101T000000.json");
+        let checkpoint_path = temp
+            .path()
+            .join(CHECKPOINT_DIR)
+            .join("checkpoint-20260101T000000.json");
         std::fs::create_dir_all(checkpoint_path.parent().unwrap()).unwrap();
         let checkpoint = make_checkpoint("task-2", "20260101T000000");
-        std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint).unwrap()).unwrap();
+        std::fs::write(
+            &checkpoint_path,
+            serde_json::to_string_pretty(&checkpoint).unwrap(),
+        )
+        .unwrap();
 
         // 索引不存在，应回退到遍历
         let files = storage.list_by_task_id("task-2").expect("list by task_id");

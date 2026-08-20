@@ -40,10 +40,15 @@ async fn test_role_driven_task_run_returns_snapshot() {
     let task = Task::new("生成一个简单计划", ExecutionMode::Plan, None);
     let context = sacode_kernel::ExecutionContext::new(task).with_task_id("role-1");
 
-    let (run, _plan) =
-        crate::execute_role_driven_task_run(&context, &crate::CheckpointStorage::new(workdir), workdir, None, crate::agents::loop_impl::LoopSubsystems::default())
-            .await
-            .expect("execute role driven task run");
+    let (run, _plan) = crate::execute_role_driven_task_run(
+        &context,
+        &crate::CheckpointStorage::new(workdir),
+        workdir,
+        None,
+        crate::agents::loop_impl::LoopSubsystems::default(),
+    )
+    .await
+    .expect("execute role driven task run");
 
     assert_eq!(run.task_id.as_deref(), Some("role-1"));
     assert_eq!(run.mode, Some(ExecutionMode::Plan));

@@ -369,37 +369,38 @@ fn install_plugin(client: &SkillHubClient, name: &str, global: bool) -> Result<(
         None
     };
 
-    let (resolved_name, description, kind, source_ref, download_url) = if let Some(entry) = local_candidate {
-        (
-            entry.name,
-            entry.description,
-            entry.kind.label().to_string(),
-            entry.source_label,
-            String::new(),
-        )
-    } else if let Some(entry) = remote_candidate {
-        (
-            entry.name,
-            entry.description,
-            PluginKind::Configured.label().to_string(),
-            entry
-                .source_ref
-                .unwrap_or_else(|| format!("skillhub:{}", entry.author)),
-            entry.download_url,
-        )
-    } else {
-        (
-            name.to_string(),
-            "Configured plugin entry".to_string(),
-            "configured".to_string(),
-            if global {
-                "user".to_string()
-            } else {
-                "project".to_string()
-            },
-            String::new(),
-        )
-    };
+    let (resolved_name, description, kind, source_ref, download_url) =
+        if let Some(entry) = local_candidate {
+            (
+                entry.name,
+                entry.description,
+                entry.kind.label().to_string(),
+                entry.source_label,
+                String::new(),
+            )
+        } else if let Some(entry) = remote_candidate {
+            (
+                entry.name,
+                entry.description,
+                PluginKind::Configured.label().to_string(),
+                entry
+                    .source_ref
+                    .unwrap_or_else(|| format!("skillhub:{}", entry.author)),
+                entry.download_url,
+            )
+        } else {
+            (
+                name.to_string(),
+                "Configured plugin entry".to_string(),
+                "configured".to_string(),
+                if global {
+                    "user".to_string()
+                } else {
+                    "project".to_string()
+                },
+                String::new(),
+            )
+        };
 
     // 尝试下载 WASM 文件（如果有 download_url）
     let wasm_path = if !download_url.trim().is_empty() {

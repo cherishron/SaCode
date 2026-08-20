@@ -6,7 +6,9 @@
 //! - 工具调用事件发布到 `SessionEventLog`（可回放）
 
 use crate::session::event_log::{SessionEventLog, SessionEventType};
-use crate::tools::interceptor::{InterceptContext, PostExecuteDecision, PreExecuteDecision, ToolInterceptor};
+use crate::tools::interceptor::{
+    InterceptContext, PostExecuteDecision, PreExecuteDecision, ToolInterceptor,
+};
 use crate::tools::{ToolOutput, ToolRegistry};
 use serde_json::json;
 
@@ -67,10 +69,7 @@ fn default_interceptors_allow_readonly_tool() {
     let registry = ToolRegistry::builtin();
 
     // fs.read 是 ReadOnly，pre_execute 全部 Allow，执行成功
-    let output = registry.execute(
-        "fs.read",
-        json!({ "path": "Cargo.toml" }),
-    );
+    let output = registry.execute("fs.read", json!({ "path": "Cargo.toml" }));
     // 文件不存在会返回错误，但拦截器链不应阻断（错误来自 executor 本身）
     // 仅验证拦截器未 panic / 未错误 Deny
     let _ = output;
@@ -85,7 +84,10 @@ fn custom_deny_interceptor_blocks_execution() {
     let result = registry.execute("fs.read", json!({ "path": "Cargo.toml" }));
     assert!(result.is_err(), "Deny 拦截器应阻断执行");
     assert!(
-        result.unwrap_err().to_string().contains("blocked by test interceptor"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by test interceptor"),
         "错误信息应来自 Deny 拦截器"
     );
 }
@@ -149,8 +151,5 @@ fn readonly_tool_skips_audit_event() {
     let after = SessionEventLog::global().current_seq();
 
     // ReadOnly 工具不发布会话事件（与原 should_audit 仅 Modify 语义一致）
-    assert_eq!(
-        after, before,
-        "ReadOnly 级工具不应发布会话审计事件"
-    );
+    assert_eq!(after, before, "ReadOnly 级工具不应发布会话审计事件");
 }

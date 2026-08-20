@@ -222,6 +222,7 @@ pub enum OutputPolarity {
 }
 
 impl OutputPolarity {
+    #[allow(dead_code)]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Positive => "positive",
@@ -265,8 +266,8 @@ fn normalized_output(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_aggregate_output, compact_conflict_detail, consensus_output, detect_output_polarity,
-        extract_final_consensus, extract_risk_summary, OutputPolarity,
+        compact_aggregate_output, compact_conflict_detail, consensus_output,
+        detect_output_polarity, extract_final_consensus, extract_risk_summary, OutputPolarity,
     };
 
     #[test]
@@ -404,7 +405,10 @@ mod tests {
     fn detect_output_polarity_returns_none_for_neutral_output() {
         // 中性输出：无任何正负向关键词
         assert_eq!(detect_output_polarity("正在分析架构方案"), None);
-        assert_eq!(detect_output_polarity("reviewing the module structure"), None);
+        assert_eq!(
+            detect_output_polarity("reviewing the module structure"),
+            None
+        );
     }
 
     #[test]
@@ -508,16 +512,17 @@ mod tests {
             ("implementer", "实现结果已整理。任务完成，共完成 5 个步骤"),
             ("test-engineer", "验证失败，存在阻塞。建议补齐回归验证。"),
             ("code-reviewer", "审查风险已识别。回归风险待处理。"),
-            ("devops-operator", "交付检查已整理。任务完成，共完成 2 个步骤"),
+            (
+                "devops-operator",
+                "交付检查已整理。任务完成，共完成 2 个步骤",
+            ),
             ("reporter", "汇总结论已生成，存在多角色冲突。"),
         ];
 
         // 验证每个角色输出都能被正确识别极性
         let polarities: Vec<_> = outputs
             .iter()
-            .filter_map(|(role, output)| {
-                detect_output_polarity(output).map(|p| (*role, p))
-            })
+            .filter_map(|(role, output)| detect_output_polarity(output).map(|p| (*role, p)))
             .collect();
 
         // 至少应识别到一个正向和一个负向
@@ -544,7 +549,9 @@ mod tests {
             "应能提取到完成类共识"
         );
         assert!(
-            conclusions.iter().any(|c| c.contains("失败") || c.contains("风险")),
+            conclusions
+                .iter()
+                .any(|c| c.contains("失败") || c.contains("风险")),
             "应能提取到失败 / 风险类结论"
         );
     }

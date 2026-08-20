@@ -90,13 +90,17 @@ impl ToolRegistry {
     ///
     /// 不重复挂载默认拦截器链（`builtin()` 等构造器已调用 `with_default_interceptors()`），
     /// 仅追加 Profile 声明的拦截器。未知名称 warn 跳过，不阻断启动。
-    pub fn with_profile_interceptors(mut self, profile: Option<&crate::config::profile::Profile>) -> Self {
+    pub fn with_profile_interceptors(
+        mut self,
+        profile: Option<&crate::config::profile::Profile>,
+    ) -> Self {
         if let Some(profile) = profile {
             if let Some(extra) = profile.manifest.extra.get("interceptors") {
                 if let Some(names) = extra.as_array() {
                     for name in names {
                         if let Some(n) = name.as_str() {
-                            if let Some(interceptor) = interceptors::default::interceptor_by_name(n) {
+                            if let Some(interceptor) = interceptors::default::interceptor_by_name(n)
+                            {
                                 self.register_interceptor(Arc::from(interceptor));
                             } else {
                                 tracing::warn!("unknown interceptor '{}' in profile, skipped", n);
@@ -129,10 +133,27 @@ fn extended_tools_for_task_profile(profile: &TaskProfile) -> Vec<&'static str> {
     let needs = |kind: &str| profile.task_kinds.iter().any(|k| k == kind);
 
     if needs("code") || needs("implement") || needs("refactor") {
-        wanted.extend(["fs.list", "fs.search", "fs.read_multi", "fs.patch", "code.symbols", "code.deps", "code.search", "git.diff"]);
+        wanted.extend([
+            "fs.list",
+            "fs.search",
+            "fs.read_multi",
+            "fs.patch",
+            "code.symbols",
+            "code.deps",
+            "code.search",
+            "git.diff",
+        ]);
     }
     if needs("explore") || needs("repo") {
-        wanted.extend(["fs.list", "fs.search", "fs.read_multi", "code.symbols", "code.deps", "code.search", "git.diff"]);
+        wanted.extend([
+            "fs.list",
+            "fs.search",
+            "fs.read_multi",
+            "code.symbols",
+            "code.deps",
+            "code.search",
+            "git.diff",
+        ]);
     }
     if needs("test") || needs("validate") {
         wanted.extend(["test.run", "test.fix"]);
@@ -144,7 +165,12 @@ fn extended_tools_for_task_profile(profile: &TaskProfile) -> Vec<&'static str> {
         wanted.extend(["media.read", "media.vision", "media.video"]);
     }
     if needs("browser") || needs("ui") {
-        wanted.extend(["browser.open", "browser.navigate", "browser.snapshot", "browser.extract"]);
+        wanted.extend([
+            "browser.open",
+            "browser.navigate",
+            "browser.snapshot",
+            "browser.extract",
+        ]);
     }
     if needs("git") || needs("delivery") {
         wanted.extend(["git.commit", "git.diff", "git.pr"]);
@@ -452,9 +478,7 @@ impl ToolRegistry {
         }
 
         // 1b. 角色白名单（若提供且非空）
-        let has_role_whitelist = role
-            .map(|r| !r.allowed_tools.is_empty())
-            .unwrap_or(false);
+        let has_role_whitelist = role.map(|r| !r.allowed_tools.is_empty()).unwrap_or(false);
         if let Some(role) = role {
             for name in &role.allowed_tools {
                 // 白名单里也允许出现核心工具（无害，去重即可）
@@ -570,11 +594,7 @@ use crate::config::profile::glob_match;
 /// token 估算按 4 字符 / token 折算（与常见 tokenizer 量级一致）。
 /// 不引入额外 tokenizer 依赖，仅用于预算裁剪的相对比较。
 fn estimate_spec_chars(spec: &ToolSpec) -> usize {
-    let schema_chars = spec
-        .input_schema
-        .to_string()
-        .chars()
-        .count();
+    let schema_chars = spec.input_schema.to_string().chars().count();
     spec.name.chars().count() + spec.description.chars().count() + schema_chars
 }
 
@@ -614,14 +634,16 @@ mod tests {
         let manifest = r#"{"name":"demo","version":"0.1.0","description":"demo","wasm_path":"plugin.wasm","functions":[{"name":"greet","description":"say hi","input_schema":{"type":"object"},"output_schema":{"type":"string"},"side_effect_level":null}]}"#;
         std::fs::write(plugin_dir.join("manifest.json"), manifest).expect("write manifest");
         // 写入 WASM magic + version 1 占位（extism 加载可能失败，但 ToolSpec 注册不依赖实际加载）
-        std::fs::write(plugin_dir.join("plugin.wasm"), b"\0asm\x01\x00\x00\x00").expect("write wasm");
+        std::fs::write(plugin_dir.join("plugin.wasm"), b"\0asm\x01\x00\x00\x00")
+            .expect("write wasm");
 
         let registry = ToolRegistry::builtin_with_wasm(tmp.path());
         // WASM 工具应出现在 registry 中
         let wasm_tool = registry.get("wasm.demo.greet");
         assert!(wasm_tool.is_some(), "wasm tool should be registered");
         assert_eq!(
-            wasm_tool.unwrap().description, "say hi",
+            wasm_tool.unwrap().description,
+            "say hi",
             "wasm tool description should come from manifest"
         );
     }
@@ -636,9 +658,11 @@ mod tests {
 
         // 构造一个会命中 web + git + media 的任务画像，使候选集包含这些扩展工具
         let mut task_profile = crate::model_routing::TaskProfile::default();
-        task_profile
-            .task_kinds
-            .extend(["web", "git", "media", "test"].iter().map(|s| s.to_string()));
+        task_profile.task_kinds.extend(
+            ["web", "git", "media", "test"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
 
         // 构造一个只放行 fs/web 的 Profile
         let mut manifest = crate::config::profile::ProfileManifest::default();
@@ -661,12 +685,24 @@ mod tests {
         assert!(names.contains(&"shell.exec"));
 
         // 扩展层受 enabled_tools 约束：web.* 通过（命中任务画像且在白名单内）
-        assert!(names.iter().any(|n| n.starts_with("web.")), "web.* glob should match");
+        assert!(
+            names.iter().any(|n| n.starts_with("web.")),
+            "web.* glob should match"
+        );
 
         // git/media/test 命中了任务画像，但被 Profile 的 enabled_tools 白名单剔除
-        assert!(!names.contains(&"git.commit"), "git.* outside web/fs glob should be filtered");
-        assert!(!names.contains(&"media.read"), "media.* should be filtered by profile");
-        assert!(!names.contains(&"test.run"), "test.* should be filtered by profile");
+        assert!(
+            !names.contains(&"git.commit"),
+            "git.* outside web/fs glob should be filtered"
+        );
+        assert!(
+            !names.contains(&"media.read"),
+            "media.* should be filtered by profile"
+        );
+        assert!(
+            !names.contains(&"test.run"),
+            "test.* should be filtered by profile"
+        );
         // 不存在任何不在 web.* 或核心层之外的扩展工具
         for n in &names {
             if n.starts_with("web.") {
@@ -717,9 +753,7 @@ mod tests {
     /// 默认拦截器链应恰好挂载一次；`with_profile_interceptors` 不重复追加。
     #[test]
     fn with_profile_interceptors_does_not_duplicate_defaults() {
-        let default_len = ToolRegistry::builtin()
-            .interceptors
-            .len();
+        let default_len = ToolRegistry::builtin().interceptors.len();
 
         let no_profile_len = ToolRegistry::builtin()
             .with_profile_interceptors(None)
@@ -735,10 +769,8 @@ mod tests {
             inheritance_chain: vec![],
             manifest: {
                 let mut m = crate::config::profile::ProfileManifest::default();
-                m.extra.insert(
-                    "interceptors".to_string(),
-                    serde_json::json!(["audit"]),
-                );
+                m.extra
+                    .insert("interceptors".to_string(), serde_json::json!(["audit"]));
                 m
             },
         };
@@ -756,19 +788,15 @@ mod tests {
     /// profile.interceptors 非数组时 warn 且不追加拦截器。
     #[test]
     fn with_profile_interceptors_warns_on_non_array() {
-        let default_len = ToolRegistry::builtin()
-            .interceptors
-            .len();
+        let default_len = ToolRegistry::builtin().interceptors.len();
 
         let profile = crate::config::profile::Profile {
             name: "bad".to_string(),
             inheritance_chain: vec![],
             manifest: {
                 let mut m = crate::config::profile::ProfileManifest::default();
-                m.extra.insert(
-                    "interceptors".to_string(),
-                    serde_json::json!("audit"),
-                );
+                m.extra
+                    .insert("interceptors".to_string(), serde_json::json!("audit"));
                 m
             },
         };
@@ -776,9 +804,6 @@ mod tests {
             .with_profile_interceptors(Some(&profile))
             .interceptors
             .len();
-        assert_eq!(
-            len, default_len,
-            "非数组 interceptors 不应追加任何拦截器"
-        );
+        assert_eq!(len, default_len, "非数组 interceptors 不应追加任何拦截器");
     }
 }

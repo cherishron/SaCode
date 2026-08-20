@@ -4,15 +4,14 @@
 //! 使 orchestrator、session、daemon 等路径均可复用。
 
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
 use sacode_kernel::{
-    Event, ExecutionMode, ExecutionReport, RouteRecord, RoutedModelRecord, TaskRun,
-    TaskRunState,
+    Event, ExecutionMode, ExecutionReport, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState,
 };
 
 use crate::provider::{ProviderClient, StreamChunkKind, ToolChatResult};
@@ -27,7 +26,12 @@ pub trait ApprovalDecider: Send + Sync {
     fn needs_interactive_approval(&self, tool_name: &str, mode: ExecutionMode) -> bool;
 
     /// 对需要审批的工具调用做出决策
-    fn decide(&self, tool_name: &str, side_effect_level: SideEffectLevel, args: &serde_json::Value) -> ApprovalDecision;
+    fn decide(
+        &self,
+        tool_name: &str,
+        side_effect_level: SideEffectLevel,
+        args: &serde_json::Value,
+    ) -> ApprovalDecision;
 }
 
 /// 审批决策结果
@@ -145,7 +149,13 @@ pub async fn execute_task_with_provider(
                 .is_some_and(|v| !v.is_empty())
         {
             if tool_defs.is_empty() {
-                execute_simple_chat(&config.provider, &config.user_prompt, stream_handler, config.error_recorder.as_ref()).await
+                execute_simple_chat(
+                    &config.provider,
+                    &config.user_prompt,
+                    stream_handler,
+                    config.error_recorder.as_ref(),
+                )
+                .await
             } else {
                 execute_tool_chat(config, tool_defs, stream_handler).await
             }
@@ -267,8 +277,7 @@ pub async fn execute_task_with_failover(
             match score.decision {
                 crate::NodeDecision::SwitchModel => true,
                 // WaitForUser / WaitForApproval：需要用户介入，不切换模型，直接退出
-                crate::NodeDecision::WaitForUser
-                | crate::NodeDecision::WaitForApproval => {
+                crate::NodeDecision::WaitForUser | crate::NodeDecision::WaitForApproval => {
                     if result.pending_question.is_none() {
                         result.pending_question =
                             Some(serde_json::Value::String(score.reasons.join("; ")));
@@ -318,9 +327,7 @@ pub async fn execute_task_with_failover(
                         completed_steps: tool_records
                             .iter()
                             .filter(|(_, _, success)| *success)
-                            .map(|(step_id, name, _)| {
-                                format!("step {:?}: {}", step_id, name)
-                            })
+                            .map(|(step_id, name, _)| format!("step {:?}: {}", step_id, name))
                             .collect(),
                         // 工具调用摘要（含成功/失败标记）
                         tool_summary: tool_records
@@ -330,23 +337,20 @@ pub async fn execute_task_with_failover(
                             })
                             .collect(),
                         last_error: result.response.clone().err(),
-                        low_score_reasons: vec![
-                            "node scored low, switching model".to_string(),
-                        ],
+                        low_score_reasons: vec!["node scored low, switching model".to_string()],
                         workspace_summary: profile.evidence.clone(),
                         // 从部分成功的响应中提取关键事实（前 500 字符）
                         retained_facts: result
                             .response
                             .as_ref()
                             .ok()
-                            .map(|response| {
-                                response.chars().take(500).collect::<String>()
-                            })
+                            .map(|response| response.chars().take(500).collect::<String>())
                             .into_iter()
                             .collect(),
                     };
                     let failover_section = failover_context.to_prompt_section();
-                    let augmented_prompt = format!("{}\n\n{}", failover_section, config.user_prompt);
+                    let augmented_prompt =
+                        format!("{}\n\n{}", failover_section, config.user_prompt);
 
                     let fallback_config = TaskRunConfig {
                         user_prompt: augmented_prompt,
@@ -519,10 +523,8 @@ async fn execute_tool_chat(
                         && is_permission_restricted_error(&error.to_string())
                     {
                         let level_str = format_side_effect_level(side_effect_level);
-                        tool_duration_for_executor.fetch_add(
-                            elapsed_ms(tool_started_at.elapsed()),
-                            Ordering::Relaxed,
-                        );
+                        tool_duration_for_executor
+                            .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
                         return Ok(serde_json::json!({
                             "pending": true,
                             "kind": "tool_approval",
@@ -547,16 +549,12 @@ async fn execute_tool_chat(
                     Ok(serde_json::json!({ "error": error.to_string() }))
                 }
             };
-            tool_duration_for_executor.fetch_add(
-                elapsed_ms(tool_started_at.elapsed()),
-                Ordering::Relaxed,
-            );
+            tool_duration_for_executor
+                .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
             result
         } else {
-            tool_duration_for_executor.fetch_add(
-                elapsed_ms(tool_started_at.elapsed()),
-                Ordering::Relaxed,
-            );
+            tool_duration_for_executor
+                .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
             Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
         }
     };
@@ -611,10 +609,7 @@ async fn execute_tool_chat(
             )
         }
         Err(error) => {
-            error_recorder_outer.record_provider_error(
-                "provider:tool_chat",
-                error.to_string(),
-            );
+            error_recorder_outer.record_provider_error("provider:tool_chat", error.to_string());
             (
                 Err(error.to_string()),
                 None,
@@ -631,10 +626,7 @@ async fn execute_tool_chat(
 
 /// 构建工具定义列表，Plan 模式下仅暴露只读工具
 /// 如果传入 tool_names，仅包含指定工具；否则包含注册表中所有工具
-pub fn build_tool_definitions(
-    registry: &ToolRegistry,
-    mode: ExecutionMode,
-) -> Vec<ToolDefinition> {
+pub fn build_tool_definitions(registry: &ToolRegistry, mode: ExecutionMode) -> Vec<ToolDefinition> {
     build_tool_definitions_filtered(registry, None, mode)
 }
 
@@ -897,7 +889,12 @@ pub struct LoggingErrorRecorder;
 
 impl ErrorRecorder for LoggingErrorRecorder {
     fn record_tool_error(&self, tool_name: &str, category: &str, detail: String) {
-        tracing::warn!("[TaskRunner] tool error: {} - {}: {}", tool_name, category, detail);
+        tracing::warn!(
+            "[TaskRunner] tool error: {} - {}: {}",
+            tool_name,
+            category,
+            detail
+        );
     }
 
     fn record_provider_error(&self, category: &str, detail: String) {
@@ -946,8 +943,7 @@ mod tests {
     #[test]
     fn format_tool_chat_result_gives_windows_access_denied_hint() {
         let mut r = base_result();
-        r.last_tool_error =
-            Some("拒绝访问。 (os error 5)".to_string());
+        r.last_tool_error = Some("拒绝访问。 (os error 5)".to_string());
         let out = format_tool_chat_result(&r, 3);
         assert!(out.contains("并非单纯迭代耗尽"));
         // Windows 访问拒绝指引应包含受保护目录提示

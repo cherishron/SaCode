@@ -995,11 +995,8 @@ async fn test_task_queue_restore_results_from_store() {
         Task::new("success restore test", ExecutionMode::Build, None),
     );
     store.save(&success_task).await.expect("save success task");
-    let success_result = sacode_kernel::TaskResult::success(
-        success_task.id.clone(),
-        "done output".to_string(),
-        123,
-    );
+    let success_result =
+        sacode_kernel::TaskResult::success(success_task.id.clone(), "done output".to_string(), 123);
     store
         .save_result(&success_result)
         .await
@@ -1010,11 +1007,8 @@ async fn test_task_queue_restore_results_from_store() {
         Task::new("failed restore test", ExecutionMode::Plan, None),
     );
     store.save(&failed_task).await.expect("save failed task");
-    let failure_result = sacode_kernel::TaskResult::failure(
-        failed_task.id.clone(),
-        "boom error".to_string(),
-        45,
-    );
+    let failure_result =
+        sacode_kernel::TaskResult::failure(failed_task.id.clone(), "boom error".to_string(), 45);
     store
         .save_result(&failure_result)
         .await
@@ -1056,11 +1050,8 @@ async fn test_daemon_restores_completed_results_from_store() {
         Task::new("historical prompt", ExecutionMode::Build, None),
     );
     store.save(&task).await.expect("save task");
-    let result = sacode_kernel::TaskResult::success(
-        task.id.clone(),
-        "historical output".to_string(),
-        999,
-    );
+    let result =
+        sacode_kernel::TaskResult::success(task.id.clone(), "historical output".to_string(), 999);
     store.save_result(&result).await.expect("save result");
 
     let app = create_daemon().await;

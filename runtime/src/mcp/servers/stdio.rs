@@ -53,8 +53,7 @@ pub fn run_stdio_server() -> Result<()> {
         };
 
         // notification（无 id）不回复，仅处理请求
-        let is_notification = !request.is_object()
-            || request.get("id").is_none();
+        let is_notification = !request.is_object() || request.get("id").is_none();
         if is_notification {
             // 仍需处理 notifications/initialized 等，但不回复
             continue;
@@ -86,12 +85,12 @@ pub fn run_stdio_server() -> Result<()> {
     Ok(())
 }
 
-pub fn handle_request(
-    registry: &ToolRegistry,
-    request: &Value,
-) -> Result<Value> {
+pub fn handle_request(registry: &ToolRegistry, request: &Value) -> Result<Value> {
     // 校验 jsonrpc 版本 — 必须为 "2.0"
-    let jsonrpc = request.get("jsonrpc").and_then(|v| v.as_str()).unwrap_or("");
+    let jsonrpc = request
+        .get("jsonrpc")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if jsonrpc != "2.0" {
         return Ok(json!({
             "jsonrpc": "2.0",
@@ -103,10 +102,7 @@ pub fn handle_request(
         }));
     }
 
-    let id = request
-        .get("id")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request
         .get("method")
         .and_then(|value| value.as_str())
@@ -186,7 +182,7 @@ pub fn handle_request(
                     "message": format!("prompt not found: {}", name)
                 }
             }));
-        },
+        }
         // logging 协议方法 — 接受 setLevel 但无实际日志路由
         "logging/setLevel" => json!({}),
         _ => {
@@ -238,11 +234,7 @@ fn builtin_stdio_tools(registry: &ToolRegistry) -> Vec<Value> {
         .collect()
 }
 
-fn handle_tool_call(
-    registry: &ToolRegistry,
-    name: &str,
-    arguments: Value,
-) -> Value {
+fn handle_tool_call(registry: &ToolRegistry, name: &str, arguments: Value) -> Value {
     if !EXPOSED_TOOLS.contains(&name) {
         return json!({
             "content": [{
@@ -377,7 +369,11 @@ mod tests {
     #[test]
     fn resources_read_unknown_uri_returns_32602() {
         let registry = ToolRegistry::builtin();
-        let req = make_request("resources/read", Some(9), Some(json!({ "uri": "file:///nonexistent" })));
+        let req = make_request(
+            "resources/read",
+            Some(9),
+            Some(json!({ "uri": "file:///nonexistent" })),
+        );
         let resp = handle_request(&registry, &req).unwrap();
         assert_eq!(resp["error"]["code"], error_code::INVALID_PARAMS);
     }
@@ -385,7 +381,11 @@ mod tests {
     #[test]
     fn prompts_get_unknown_name_returns_32602() {
         let registry = ToolRegistry::builtin();
-        let req = make_request("prompts/get", Some(10), Some(json!({ "name": "nonexistent" })));
+        let req = make_request(
+            "prompts/get",
+            Some(10),
+            Some(json!({ "name": "nonexistent" })),
+        );
         let resp = handle_request(&registry, &req).unwrap();
         assert_eq!(resp["error"]["code"], error_code::INVALID_PARAMS);
     }
@@ -393,7 +393,11 @@ mod tests {
     #[test]
     fn logging_set_level_accepted() {
         let registry = ToolRegistry::builtin();
-        let req = make_request("logging/setLevel", Some(11), Some(json!({ "level": "info" })));
+        let req = make_request(
+            "logging/setLevel",
+            Some(11),
+            Some(json!({ "level": "info" })),
+        );
         let resp = handle_request(&registry, &req).unwrap();
         assert!(resp["result"].is_object());
     }
@@ -401,10 +405,14 @@ mod tests {
     #[test]
     fn tools_call_unsupported_returns_iserror() {
         let registry = ToolRegistry::builtin();
-        let req = make_request("tools/call", Some(12), Some(json!({
-            "name": "fs.write",
-            "arguments": {}
-        })));
+        let req = make_request(
+            "tools/call",
+            Some(12),
+            Some(json!({
+                "name": "fs.write",
+                "arguments": {}
+            })),
+        );
         let resp = handle_request(&registry, &req).unwrap();
         assert_eq!(resp["result"]["isError"], true);
     }

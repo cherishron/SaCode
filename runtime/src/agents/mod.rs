@@ -9,12 +9,9 @@ mod summary_compactor;
 mod worker;
 
 pub use agent_loader::load_custom_agents;
-pub use loop_impl::{
-    run_with_ling_shu_loop, AgentLoop, ExecutionStep, LingShuLoop, StepResult,
-};
+pub use loop_impl::{run_with_ling_shu_loop, AgentLoop, ExecutionStep, LingShuLoop, StepResult};
 pub use message_bus::{
-    AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
-    build_communication_summary,
+    build_communication_summary, AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
 };
 pub use model_router::{
     build_route_plan_from_candidates, resolve_config_model_candidates, resolve_role_route,

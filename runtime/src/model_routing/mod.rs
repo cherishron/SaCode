@@ -594,7 +594,8 @@ mod tests {
         // 429 / rate limit 错误应触发切换
         let profile = TaskProfile::default();
 
-        let score = NodeScore::evaluate(Some("rate limit exceeded (429)"), "response", &[], &profile);
+        let score =
+            NodeScore::evaluate(Some("rate limit exceeded (429)"), "response", &[], &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
         assert!(score.reasons.iter().any(|r| r.contains("rate limited")));
     }
@@ -606,7 +607,10 @@ mod tests {
 
         let score = NodeScore::evaluate(Some("401 unauthorized"), "response", &[], &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
-        assert!(score.reasons.iter().any(|r| r.contains("authentication error")));
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("authentication error")));
     }
 
     #[test]
@@ -616,7 +620,10 @@ mod tests {
 
         let score = NodeScore::evaluate(Some("503 service unavailable"), "response", &[], &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
-        assert!(score.reasons.iter().any(|r| r.contains("service unavailable")));
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("service unavailable")));
     }
 
     #[test]
@@ -626,7 +633,10 @@ mod tests {
 
         let score = NodeScore::evaluate(Some("network reset"), "response", &[], &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
-        assert!(score.reasons.iter().any(|r| r.contains("provider error: network reset")));
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("provider error: network reset")));
     }
 
     #[test]
@@ -653,7 +663,10 @@ mod tests {
 
         let score = NodeScore::evaluate(None, "partial result", &tool_calls, &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
-        assert!(score.reasons.iter().any(|r| r.contains("majority of tools failed")));
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("majority of tools failed")));
     }
 
     #[test]
@@ -686,7 +699,8 @@ mod tests {
             ..Default::default()
         };
         // 短响应避免触发 refusal 长度阈值
-        let response = "as i mentioned earlier, as discussed, to reiterate. i need more context to proceed.";
+        let response =
+            "as i mentioned earlier, as discussed, to reiterate. i need more context to proceed.";
 
         let score = NodeScore::evaluate(None, response, &[], &profile);
         assert_eq!(score.decision, NodeDecision::SwitchModel);
@@ -706,7 +720,10 @@ mod tests {
 
         let score = NodeScore::evaluate(None, response, &[], &profile);
         assert_eq!(score.decision, NodeDecision::Accept);
-        assert!(score.reasons.iter().any(|r| r.contains("asks for clarification")));
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("asks for clarification")));
     }
 
     #[test]
@@ -730,11 +747,10 @@ mod tests {
 
         let score = NodeScore::evaluate(None, "正在分析问题", &[], &profile);
         assert_eq!(score.decision, NodeDecision::Accept);
-        assert!(
-            score.reasons
-                .iter()
-                .any(|r| r.contains("implementation task but no code"))
-        );
+        assert!(score
+            .reasons
+            .iter()
+            .any(|r| r.contains("implementation task but no code")));
     }
 
     #[test]
@@ -813,7 +829,10 @@ mod tests {
             last_error: Some("provider timeout".to_string()),
             low_score_reasons: vec!["响应为空".to_string(), "缺少代码块".to_string()],
             workspace_summary: vec!["Rust workspace".to_string()],
-            retained_facts: vec!["使用 tokio runtime".to_string(), "auth 模块在 src/auth".to_string()],
+            retained_facts: vec![
+                "使用 tokio runtime".to_string(),
+                "auth 模块在 src/auth".to_string(),
+            ],
         };
 
         let section = ctx.to_prompt_section();
@@ -843,7 +862,8 @@ mod tests {
         // Rust + cli + tui 多界面实现应判为高风险
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let workdir = temp_dir.path();
-        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"").expect("write cargo");
+        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"")
+            .expect("write cargo");
         std::fs::create_dir_all(workdir.join("interfaces/cli")).expect("create cli dir");
         std::fs::create_dir_all(workdir.join("interfaces/tui")).expect("create tui dir");
 
@@ -860,7 +880,8 @@ mod tests {
         // Rust + 实现类任务应判为中风险
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let workdir = temp_dir.path();
-        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"").expect("write cargo");
+        std::fs::write(workdir.join("Cargo.toml"), "[package]\nname = \"test\"")
+            .expect("write cargo");
 
         let profile = TaskProfile::from_prompt_and_workspace("implement new feature", workdir);
 
@@ -887,12 +908,16 @@ mod tests {
         // requirements.txt 存在时应识别为 python 语言
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let workdir = temp_dir.path();
-        std::fs::write(workdir.join("requirements.txt"), "fastapi\nuvicorn").expect("write requirements");
+        std::fs::write(workdir.join("requirements.txt"), "fastapi\nuvicorn")
+            .expect("write requirements");
 
         let profile = TaskProfile::from_prompt_and_workspace("fix the bug", workdir);
 
         assert!(profile.languages.contains(&"python".to_string()));
-        assert!(profile.evidence.iter().any(|e| e.contains("pyproject.toml or requirements.txt")));
+        assert!(profile
+            .evidence
+            .iter()
+            .any(|e| e.contains("pyproject.toml or requirements.txt")));
         assert!(profile.task_kinds.contains(&"bugfix".to_string()));
     }
 
@@ -937,11 +962,9 @@ mod tests {
         let profile = TaskProfile::from_prompt_and_workspace("分析当前架构设计并重构优化", workdir);
 
         assert!(profile.needs_reasoning);
-        assert!(
-            profile
-                .evidence
-                .iter()
-                .any(|e| e.contains("reasoning-heavy task"))
-        );
+        assert!(profile
+            .evidence
+            .iter()
+            .any(|e| e.contains("reasoning-heavy task")));
     }
 }

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use reqwest::Client;
 use sacode_kernel::model::{
-    ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind,
-    ThinkingConfig, ToolDefinition, MIMO_TOKEN_PLAN_BASE_URL,
+    ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig,
+    ToolDefinition, MIMO_TOKEN_PLAN_BASE_URL,
 };
 use std::collections::BTreeMap;
 
@@ -547,7 +547,9 @@ where
                 if let Some(delta) = choice.get("delta") {
                     append_stream_value(delta.get("content"), &mut state.content, false, on_chunk);
                     // 兼容 reasoning_content（OpenAI 系）与 reasoning（sensenova 系）两种字段名
-                    let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning"));
+                    let reasoning = delta
+                        .get("reasoning_content")
+                        .or_else(|| delta.get("reasoning"));
                     append_stream_value(reasoning, &mut state.reasoning_content, true, on_chunk);
 
                     if let Some(tool_calls) =

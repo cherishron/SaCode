@@ -178,7 +178,8 @@ fn render_tool_block(
         (text.clone(), String::new(), None)
     };
 
-    let (icon, status_color, status_label_owned) = if status == "开始执行" || status == "...running" {
+    let (icon, status_color, status_label_owned) = if status == "开始执行" || status == "...running"
+    {
         ("▶", theme.info, "运行中".to_string())
     } else if status == "完成" || status == "完成 ✓" {
         ("✓", theme.build, "完成".to_string())
@@ -189,14 +190,16 @@ fn render_tool_block(
     };
 
     // First line: icon ToolName
-    let mut first_spans = vec![
+    let first_spans = vec![
         Span::styled(
             if first_in_message { "● " } else { "  " },
             Style::default().fg(theme.info),
         ),
         Span::styled(
             icon,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(
@@ -213,7 +216,9 @@ fn render_tool_block(
     )];
     status_spans.push(Span::styled(
         status_label_owned,
-        Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(status_color)
+            .add_modifier(Modifier::BOLD),
     ));
     if let Some(ref summary) = summary {
         status_spans.push(Span::styled(

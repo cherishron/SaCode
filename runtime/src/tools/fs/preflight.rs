@@ -37,14 +37,9 @@ impl PreflightError {
     pub fn to_message(&self) -> String {
         match self {
             Self::FileTooLarge { size, max } => {
-                format!(
-                    "file too large: {} bytes (max {} bytes)",
-                    size, max
-                )
+                format!("file too large: {} bytes (max {} bytes)", size, max)
             }
-            Self::BinaryFile => {
-                "file appears to be binary (contains NUL bytes)".to_string()
-            }
+            Self::BinaryFile => "file appears to be binary (contains NUL bytes)".to_string(),
             Self::Metadata(error) => format!("failed to read file metadata: {}", error),
             Self::Read(error) => format!("failed to read file: {}", error),
         }
@@ -74,7 +69,9 @@ impl std::error::Error for PreflightError {}
 /// ```
 pub fn preflight_edit_file(path: &Path) -> Result<(), PreflightError> {
     let ctx = crate::tools::context::current_context();
-    let (size, _) = ctx.metadata(path).map_err(|e| PreflightError::Metadata(std::io::Error::other(e.to_string())))?;
+    let (size, _) = ctx
+        .metadata(path)
+        .map_err(|e| PreflightError::Metadata(std::io::Error::other(e.to_string())))?;
     if size > MAX_FILE_SIZE_BYTES {
         return Err(PreflightError::FileTooLarge {
             size,
@@ -179,10 +176,7 @@ mod tests {
         drop(file);
 
         let error = preflight_edit_file(&path).unwrap_err();
-        assert!(matches!(
-            error,
-            PreflightError::FileTooLarge { .. }
-        ));
+        assert!(matches!(error, PreflightError::FileTooLarge { .. }));
         assert!(error.to_message().contains("too large"));
     }
 

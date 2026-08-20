@@ -101,7 +101,9 @@ fn parse_run_args(args: Vec<String>) -> CliOptions {
             "--remote" => {
                 if let Some(value) = iter.next() {
                     if value.starts_with('-') {
-                        eprintln!("warning: --remote requires a prefix, e.g. --remote 'ssh user@host'");
+                        eprintln!(
+                            "warning: --remote requires a prefix, e.g. --remote 'ssh user@host'"
+                        );
                     } else {
                         remote_prefix = Some(value);
                     }

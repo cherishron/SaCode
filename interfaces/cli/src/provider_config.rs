@@ -7,8 +7,8 @@ use std::{
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use sacode_kernel::model::{
-    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider,
-    ProviderSpec, SaCodeConfig,
+    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider, ProviderSpec,
+    SaCodeConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -437,7 +437,6 @@ impl ProviderConfig {
     }
 }
 
-
 /// 从 kernel 预设生成 TUI /connect 选择列表：(name, base_url, needs_api_key)
 /// 统一收敛预设来源，避免 TUI 侧硬编码。
 pub fn preset_connect_options() -> Vec<(String, String, bool)> {
@@ -458,7 +457,6 @@ pub fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) ->
         rule: spec.models.get(model_name).cloned(),
     }
 }
-
 
 pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<String>> {
     let client = Client::builder()
@@ -505,7 +503,6 @@ pub fn fallback_models(provider_name: &str) -> Vec<String> {
     }
 }
 
-
 fn normalize_catalog(catalog: &mut ProviderCatalog) {
     let mut normalized = BTreeMap::new();
     for (name, mut config) in catalog.providers.clone() {
@@ -533,9 +530,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use sacode_kernel::model::{detect_provider_kind, normalize_base_url, OLLAMA_DEFAULT_BASE_URL};
     use super::{ProviderConfig, ProviderConfigStore};
     use sacode_kernel::model::ProviderKind;
+    use sacode_kernel::model::{detect_provider_kind, normalize_base_url, OLLAMA_DEFAULT_BASE_URL};
 
     #[test]
     fn detect_provider_kind_mimo_from_url() {

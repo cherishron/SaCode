@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use sacode_runtime::{export_bundle, import_bundle, PatchSet, Profile, profiles_dir_of};
+use sacode_runtime::{export_bundle, import_bundle, profiles_dir_of, PatchSet, Profile};
 
 pub fn run(args: Vec<String>) -> Result<()> {
     if args.is_empty() {
@@ -65,7 +65,10 @@ fn export(name: String, profile_name: Option<String>) -> Result<()> {
     let path = export_bundle(&project_dir, &name, profile.as_ref(), &patches)?;
     println!("exported bundle → {}", path.display());
     if let Some(p) = &profile {
-        println!("  from profile: {} (chain: {:?})", p.name, p.inheritance_chain);
+        println!(
+            "  from profile: {} (chain: {:?})",
+            p.name, p.inheritance_chain
+        );
     }
     println!("  applied patches (priority order): {:?}", patches.names());
     Ok(())
@@ -119,7 +122,9 @@ fn extract_flag(args: &[String], flag: &str) -> Option<String> {
 
 fn print_help() {
     println!("Bundle commands:");
-    println!("  sacode bundle export <name> [--profile <profile>] - Export current combo to a bundle");
+    println!(
+        "  sacode bundle export <name> [--profile <profile>] - Export current combo to a bundle"
+    );
     println!("  sacode bundle import <path>                          - Import a bundle into local project");
     println!("  sacode bundle ls                                    - List local bundles");
 }

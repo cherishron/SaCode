@@ -253,10 +253,7 @@ impl TaskStore for StoreDb {
             ",
         )?;
         let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
 
         let mut out = Vec::new();
@@ -296,8 +293,8 @@ use crate::session::SessionState;
 impl StoreDb {
     /// 保存或更新 session（upsert 语义）
     pub(crate) fn save_session(&self, state: &SessionState) -> Result<()> {
-        let state_json = serde_json::to_string(state)
-            .context("failed to serialize session state")?;
+        let state_json =
+            serde_json::to_string(state).context("failed to serialize session state")?;
         let connection = self.acquire_lock("save_session")?;
         connection.execute(
             "
@@ -313,6 +310,7 @@ impl StoreDb {
     }
 
     /// 按 id 加载单个 session
+    #[allow(dead_code)]
     pub(crate) fn load_session(&self, session_id: &str) -> Result<Option<SessionState>> {
         let connection = self.acquire_lock("load_session")?;
         let raw = connection
@@ -329,9 +327,8 @@ impl StoreDb {
     /// 列出所有 session（按 updated_at 降序，最近的在前）
     pub(crate) fn list_sessions(&self) -> Result<Vec<SessionState>> {
         let connection = self.acquire_lock("list_sessions")?;
-        let mut statement = connection.prepare(
-            "SELECT state_json FROM sessions ORDER BY updated_at DESC, id ASC",
-        )?;
+        let mut statement = connection
+            .prepare("SELECT state_json FROM sessions ORDER BY updated_at DESC, id ASC")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
         let mut sessions = Vec::new();
         for row in rows {
@@ -396,7 +393,11 @@ impl StoreDb {
                 params![
                     entry.id,
                     entry.kind.scope_label(),
-                    if entry.scope.is_user() { "user" } else { "project" },
+                    if entry.scope.is_user() {
+                        "user"
+                    } else {
+                        "project"
+                    },
                     source,
                     status,
                     entry.confidence,
@@ -420,7 +421,11 @@ impl StoreDb {
                 params![
                     entry.id,
                     entry.kind.scope_label(),
-                    if entry.scope.is_user() { "user" } else { "project" },
+                    if entry.scope.is_user() {
+                        "user"
+                    } else {
+                        "project"
+                    },
                     source,
                     status,
                     entry.confidence,
@@ -455,18 +460,18 @@ impl StoreDb {
         )?;
         let rows = statement.query_map(params![status_str], |row| {
             Ok((
-                row.get::<_, String>(0)?,  // entry_id
-                row.get::<_, String>(1)?,  // kind
-                row.get::<_, String>(2)?,  // scope
-                row.get::<_, String>(3)?,  // source
-                row.get::<_, String>(4)?,  // status
-                row.get::<_, Option<f32>>(5)?, // confidence
-                row.get::<_, String>(6)?,  // content
-                row.get::<_, String>(7)?,  // context
-                row.get::<_, String>(8)?,  // file_name
-                row.get::<_, String>(9)?,  // created_at
+                row.get::<_, String>(0)?,          // entry_id
+                row.get::<_, String>(1)?,          // kind
+                row.get::<_, String>(2)?,          // scope
+                row.get::<_, String>(3)?,          // source
+                row.get::<_, String>(4)?,          // status
+                row.get::<_, Option<f32>>(5)?,     // confidence
+                row.get::<_, String>(6)?,          // content
+                row.get::<_, String>(7)?,          // context
+                row.get::<_, String>(8)?,          // file_name
+                row.get::<_, String>(9)?,          // created_at
                 row.get::<_, Option<String>>(10)?, // last_accessed_at
-                row.get::<_, u32>(11)?,    // access_count
+                row.get::<_, u32>(11)?,            // access_count
             ))
         })?;
 
@@ -617,10 +622,14 @@ mod tests {
         updated.access_count = 3;
         db.save_memory_entry(&updated).unwrap();
 
-        let candidates = db.list_memory_entries_by_status(MemoryStatus::Candidate).unwrap();
+        let candidates = db
+            .list_memory_entries_by_status(MemoryStatus::Candidate)
+            .unwrap();
         assert!(candidates.is_empty(), "更新后不应仍有 candidate");
 
-        let active = db.list_memory_entries_by_status(MemoryStatus::Active).unwrap();
+        let active = db
+            .list_memory_entries_by_status(MemoryStatus::Active)
+            .unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].id, "gen-2026-01-01-test");
         assert_eq!(active[0].access_count, 3);

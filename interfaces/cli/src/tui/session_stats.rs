@@ -3,6 +3,7 @@ use sacode_kernel::model::{ChatUsage, ModelRule};
 use super::{format_duration_ms, App, PricingRule};
 
 impl App {
+    #[allow(dead_code)]
     pub(super) fn execution_mode_label(&self) -> &'static str {
         match self.execution_mode {
             sacode_kernel::ExecutionMode::Plan => "plan",

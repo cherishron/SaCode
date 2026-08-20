@@ -2,10 +2,13 @@ use anyhow::{Context, Result};
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
+use super::{parse_skill_file, SkillSource, SkillSpec};
 use crate::mcp::{McpConfig, McpServerConfig, McpSource};
-use super::{SkillSource, SkillSpec, parse_skill_file};
 
 const DEFAULT_SKILLHUB_BASE_URL: &str = "https://skillhub.monkeycode-ai.com";
 

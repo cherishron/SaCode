@@ -30,8 +30,11 @@ where
     });
     let boxed_stream: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
         Box::pin(event_stream);
-    Sse::new(boxed_stream)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"))
+    Sse::new(boxed_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    )
 }
 
 /// 无 replay 的 SSE 流：直接消费 broadcast
@@ -93,12 +96,11 @@ fn replay_then_live_stream(
 
     // 3. replay 流 + live 流（去重）
     let replay_stream = stream::iter(replay_filtered);
-    let live_stream = filter_stream_events(receiver, task_filter)
-        .filter(move |evt| {
-            // 跳过 live 中已被 replay 覆盖的事件（通过 seq 去重）
-            let evt_seq = evt.seq.unwrap_or(0);
-            futures::future::ready(evt_seq > replay_max_seq)
-        });
+    let live_stream = filter_stream_events(receiver, task_filter).filter(move |evt| {
+        // 跳过 live 中已被 replay 覆盖的事件（通过 seq 去重）
+        let evt_seq = evt.seq.unwrap_or(0);
+        futures::future::ready(evt_seq > replay_max_seq)
+    });
 
     replay_stream.chain(live_stream)
 }
@@ -307,12 +309,7 @@ mod tests {
         assert_eq!([s1, s2], [1, 2]);
 
         // 客户端携带 Last-Event-ID=0 重连，应回放 seq>0 的历史
-        let stream = replay_then_live_stream(
-            rx,
-            Some("task-1".to_string()),
-            &history,
-            Some(0),
-        );
+        let stream = replay_then_live_stream(rx, Some("task-1".to_string()), &history, Some(0));
 
         // 发送 live 事件：必须经过 history.push 以获得 seq，模拟生产环境 forwarder 行为
         let mut live_evt = make_event("task-1", "task_completed");

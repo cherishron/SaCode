@@ -2,8 +2,6 @@ use crate::sandbox::FsAccess;
 use crate::tools::context::current_context;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-
-
 fn build_file_summary(path: &str, lines: usize, total_lines: usize) -> String {
     format!(
         "read {} lines from {} ({} lines total)",

@@ -184,10 +184,7 @@ impl TaskStatus {
     /// 从历史结果恢复任务状态：填充 output/error/duration_ms，
     /// 用于 daemon 重启后 `/task/:id/status` 对历史任务返回完整信息
     /// （含 prompt/mode/priority），而非仅靠 `queue.get_result` 的降级路径
-    pub fn restored_with_result(
-        task: &sacode_kernel::ScheduledTask,
-        result: &TaskResult,
-    ) -> Self {
+    pub fn restored_with_result(task: &sacode_kernel::ScheduledTask, result: &TaskResult) -> Self {
         Self {
             task_id: result.task_id.clone(),
             prompt: task.task.prompt.clone(),
@@ -366,10 +363,7 @@ impl EventHistory {
     /// `last_seq` 来自客户端 Last-Event-ID header
     pub fn replay_after(&self, last_seq: u64) -> Vec<(u64, StreamEvent)> {
         let buf = self.buffer.lock().expect("event history mutex poisoned");
-        buf.iter()
-            .filter(|(s, _)| *s > last_seq)
-            .cloned()
-            .collect()
+        buf.iter().filter(|(s, _)| *s > last_seq).cloned().collect()
     }
 
     /// 当前已分配的最大 seq，用于判断是否有可回放的历史

@@ -5,8 +5,8 @@ use similar::{Algorithm, ChangeTag, TextDiff};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use crate::tools::context::current_context;
 use super::preflight::preflight_edit_file;
+use crate::tools::context::current_context;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -433,7 +433,13 @@ fn find_best_window(
             }
             match &best {
                 Some(current) if similarity <= current.similarity => {}
-                _ => best = Some(WindowMatch { start, end, similarity }),
+                _ => {
+                    best = Some(WindowMatch {
+                        start,
+                        end,
+                        similarity,
+                    })
+                }
             }
         }
     }
@@ -463,7 +469,11 @@ fn find_all_windows(
             let candidate = content_lines[start..end].join("");
             let similarity = diff_similarity(&needle, &candidate);
             if similarity >= min_similarity {
-                all.push(WindowMatch { start, end, similarity });
+                all.push(WindowMatch {
+                    start,
+                    end,
+                    similarity,
+                });
             }
         }
     }

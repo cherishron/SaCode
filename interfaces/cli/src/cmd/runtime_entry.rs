@@ -9,8 +9,8 @@ use tokio::io::{self, AsyncReadExt};
 
 use super::{CliOptions, JSON_STREAM_PREFIX};
 use crate::runner::{
-    format_stream_tail, run_task_with_stdin, run_task_with_stdin_and_stream, StreamEventKind,
-    RunnerOutput,
+    format_stream_tail, run_task_with_stdin, run_task_with_stdin_and_stream, RunnerOutput,
+    StreamEventKind,
 };
 
 #[derive(Debug, Serialize)]

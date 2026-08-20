@@ -6,7 +6,7 @@ pub mod server;
 
 pub use code_intelligence::{
     completion_items_from_ast, completion_response_from_ast, document_symbols_from_ast,
-    find_definition_in_document, find_references_in_document, hover_from_ast, hover_fallback,
+    find_definition_in_document, find_references_in_document, hover_fallback, hover_from_ast,
     language_id_to_ast_language, prepare_rename_in_document, rename_symbol_in_document,
     summarize_document, uri_to_local_path,
 };

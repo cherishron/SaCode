@@ -335,10 +335,7 @@ pub fn build_execution_plan(
 ///
 /// 无依赖的角色会被分到第一组（与 requirement-analyst 同层并发）。
 /// 检测到循环依赖时，把剩余任务全部放入当前组以打破死锁。
-fn build_dependency_groups(
-    tasks: &[SubAgentTask],
-    roles: &[AgentRole],
-) -> Vec<Vec<String>> {
+fn build_dependency_groups(tasks: &[SubAgentTask], roles: &[AgentRole]) -> Vec<Vec<String>> {
     use std::collections::{HashMap, HashSet};
 
     // 构建 role_id → task_id 映射

@@ -308,14 +308,17 @@ impl StdioMcpClient {
         };
 
         // 发送 initialize — 失败说明子进程不可用
-        client.send_request("initialize", Some(serde_json::json!({
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "sacode",
-                "version": env!("CARGO_PKG_VERSION")
-            }
-        })))?;
+        client.send_request(
+            "initialize",
+            Some(serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "sacode",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
+        )?;
 
         Ok(client)
     }
@@ -370,12 +373,16 @@ impl StdioMcpClient {
                 if let Some(error) = response.get("error") {
                     anyhow::bail!(
                         "stdio MCP server returned error: {}",
-                        error.get("message")
+                        error
+                            .get("message")
                             .and_then(|m| m.as_str())
                             .unwrap_or("unknown")
                     );
                 }
-                return Ok(response.get("result").cloned().unwrap_or(serde_json::json!({})));
+                return Ok(response
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({})));
             }
             // id 不匹配 — 可能是 notification，跳过继续读
         }
@@ -442,11 +449,14 @@ impl StdioMcpClient {
 
     /// 探测 server 元信息（复用已建立的连接）
     pub fn inspect(&mut self) -> Result<McpServerDetails> {
-        let result = self.send_request("initialize", Some(serde_json::json!({
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": { "name": "sacode", "version": env!("CARGO_PKG_VERSION") }
-        })))?;
+        let result = self.send_request(
+            "initialize",
+            Some(serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "sacode", "version": env!("CARGO_PKG_VERSION") }
+            })),
+        )?;
 
         Ok(McpServerDetails {
             protocol_version: result
@@ -946,7 +956,10 @@ mod tests {
             server_type: "stdio".to_string(),
             url: String::new(),
             command: Some("npx".to_string()),
-            args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem".to_string(),
+            ]),
             env: Some(BTreeMap::from([("DEBUG".to_string(), "true".to_string())])),
             enabled: true,
         };
@@ -956,7 +969,10 @@ mod tests {
         assert!(deserialized.is_stdio());
         assert_eq!(deserialized.command.as_deref(), Some("npx"));
         assert_eq!(deserialized.args.as_ref().unwrap().len(), 2);
-        assert_eq!(deserialized.env.as_ref().unwrap().get("DEBUG"), Some(&"true".to_string()));
+        assert_eq!(
+            deserialized.env.as_ref().unwrap().get("DEBUG"),
+            Some(&"true".to_string())
+        );
     }
 
     #[test]
@@ -1013,7 +1029,10 @@ mod tests {
         assert!(loaded.is_stdio());
         assert_eq!(loaded.command.as_deref(), Some("my-server"));
         assert_eq!(loaded.args.as_ref().unwrap(), &args);
-        assert_eq!(loaded.env.as_ref().unwrap().get("KEY"), Some(&"value".to_string()));
+        assert_eq!(
+            loaded.env.as_ref().unwrap().get("KEY"),
+            Some(&"value".to_string())
+        );
 
         // 清理
         std::fs::remove_dir_all(&temp).ok();

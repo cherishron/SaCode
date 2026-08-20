@@ -51,10 +51,7 @@ pub fn discover_wasm_plugins(workdir: &Path) -> Result<Vec<PluginDescriptor>> {
             }
             Err(error) => {
                 // 单个插件失败不阻断其他发现，记录到 stderr
-                eprintln!(
-                    "wasm plugin discovery skipped {}: {error}",
-                    path.display()
-                );
+                eprintln!("wasm plugin discovery skipped {}: {error}", path.display());
             }
         }
     }

@@ -375,10 +375,9 @@ impl TaskState {
             Self::Pending => TaskQueueStatus::Pending,
             Self::Ready => TaskQueueStatus::Ready,
             Self::Retrying => TaskQueueStatus::Retrying,
-            Self::Running
-            | Self::WaitingForUser
-            | Self::WaitingForApproval
-            | Self::Cancelling => TaskQueueStatus::Running,
+            Self::Running | Self::WaitingForUser | Self::WaitingForApproval | Self::Cancelling => {
+                TaskQueueStatus::Running
+            }
             Self::Completed => TaskQueueStatus::Completed,
             Self::Failed => TaskQueueStatus::Failed,
             Self::Cancelled => TaskQueueStatus::Cancelled,

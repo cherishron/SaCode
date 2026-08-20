@@ -81,8 +81,14 @@ def standalone_function():
 "#;
     let summary = AstEditor::summarize("python", source).expect("python parse should succeed");
     let symbol_names: Vec<&str> = summary.symbols.iter().map(|s| s.name.as_str()).collect();
-    assert!(symbol_names.contains(&"DataProcessor"), "应提取 class DataProcessor");
-    assert!(symbol_names.contains(&"standalone_function"), "应提取 function standalone_function");
+    assert!(
+        symbol_names.contains(&"DataProcessor"),
+        "应提取 class DataProcessor"
+    );
+    assert!(
+        symbol_names.contains(&"standalone_function"),
+        "应提取 function standalone_function"
+    );
 }
 
 #[test]
@@ -164,8 +170,14 @@ const maxRetries = 3
     assert!(symbol_names.contains(&"Server"), "应提取 type Server");
     assert!(symbol_names.contains(&"Start"), "应提取 func Start");
     assert!(symbol_names.contains(&"NewServer"), "应提取 func NewServer");
-    assert!(symbol_names.contains(&"defaultPort"), "应提取 var defaultPort");
-    assert!(symbol_names.contains(&"maxRetries"), "应提取 const maxRetries");
+    assert!(
+        symbol_names.contains(&"defaultPort"),
+        "应提取 var defaultPort"
+    );
+    assert!(
+        symbol_names.contains(&"maxRetries"),
+        "应提取 const maxRetries"
+    );
 }
 
 #[test]
@@ -173,7 +185,10 @@ fn ast_unsupported_language_returns_error() {
     let result = AstEditor::summarize("haskell", "main = putStrLn \"hello\"");
     assert!(result.is_err(), "不支持的语言应返回错误");
     assert!(
-        result.unwrap_err().to_string().contains("unsupported language"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported language"),
         "错误信息应指明不支持的语言"
     );
 }
@@ -191,7 +206,8 @@ fn ast_empty_source_produces_minimal_summary() {
 fn ast_syntax_error_source_still_parses() {
     // 缺少右花括号的 Rust 代码
     let source = "fn broken() { let x = 1";
-    let summary = AstEditor::summarize("rust", source).expect("语法错误源码应仍可解析（tree-sitter 容错）");
+    let summary =
+        AstEditor::summarize("rust", source).expect("语法错误源码应仍可解析（tree-sitter 容错）");
     // tree-sitter 的 ERROR 节点不应导致 panic
     assert!(summary.node_count > 0, "语法错误源码仍应有 AST 节点");
 }
@@ -205,13 +221,21 @@ use anyhow::Result;
 use crate::inner::Worker;
 "#;
     let summary = AstEditor::summarize("rust", source).expect("rust parse should succeed");
-    let specifiers: Vec<&str> = summary.imports.iter().map(|i| i.specifier.as_str()).collect();
+    let specifiers: Vec<&str> = summary
+        .imports
+        .iter()
+        .map(|i| i.specifier.as_str())
+        .collect();
     assert!(
-        specifiers.iter().any(|s| s.contains("std::collections::HashMap")),
+        specifiers
+            .iter()
+            .any(|s| s.contains("std::collections::HashMap")),
         "应提取 use std::collections::HashMap"
     );
     assert!(
-        specifiers.iter().any(|s| s.contains("crate::inner::Worker")),
+        specifiers
+            .iter()
+            .any(|s| s.contains("crate::inner::Worker")),
         "应提取 use crate::inner::Worker"
     );
 }
@@ -225,7 +249,11 @@ from pathlib import Path
 from collections import OrderedDict
 "#;
     let summary = AstEditor::summarize("python", source).expect("python parse should succeed");
-    let specifiers: Vec<&str> = summary.imports.iter().map(|i| i.specifier.as_str()).collect();
+    let specifiers: Vec<&str> = summary
+        .imports
+        .iter()
+        .map(|i| i.specifier.as_str())
+        .collect();
     assert!(specifiers.iter().any(|s| *s == "os"), "应提取 import os");
     assert!(
         specifiers.iter().any(|s| s.contains("pathlib")),
@@ -241,7 +269,11 @@ import { useState } from 'react';
 const express = require('express');
 "#;
     let summary = AstEditor::summarize("javascript", source).expect("js parse should succeed");
-    let specifiers: Vec<&str> = summary.imports.iter().map(|i| i.specifier.as_str()).collect();
+    let specifiers: Vec<&str> = summary
+        .imports
+        .iter()
+        .map(|i| i.specifier.as_str())
+        .collect();
     assert!(
         specifiers.iter().any(|s| *s == "react"),
         "应提取 import from 'react'"
@@ -266,11 +298,27 @@ import (
 )
 "#;
     let summary = AstEditor::summarize("go", source).expect("go parse should succeed");
-    let specifiers: Vec<&str> = summary.imports.iter().map(|i| i.specifier.as_str()).collect();
-    assert!(specifiers.iter().any(|s| *s == "fmt"), "应提取 import \"fmt\"");
-    assert!(specifiers.iter().any(|s| *s == "net/http"), "应提取 import \"net/http\"");
-    assert!(specifiers.iter().any(|s| *s == "os"), "应提取多行 import \"os\"");
-    assert!(specifiers.iter().any(|s| *s == "strings"), "应提取多行 import \"strings\"");
+    let specifiers: Vec<&str> = summary
+        .imports
+        .iter()
+        .map(|i| i.specifier.as_str())
+        .collect();
+    assert!(
+        specifiers.iter().any(|s| *s == "fmt"),
+        "应提取 import \"fmt\""
+    );
+    assert!(
+        specifiers.iter().any(|s| *s == "net/http"),
+        "应提取 import \"net/http\""
+    );
+    assert!(
+        specifiers.iter().any(|s| *s == "os"),
+        "应提取多行 import \"os\""
+    );
+    assert!(
+        specifiers.iter().any(|s| *s == "strings"),
+        "应提取多行 import \"strings\""
+    );
 }
 
 #[test]
@@ -351,8 +399,16 @@ fn semantic_search_current_capability_kind_filter() {
     let summary = AstEditor::summarize("rust", source).expect("parse should succeed");
 
     let functions: Vec<_> = summary.symbols.iter().filter(|s| s.kind == "fn").collect();
-    let structs: Vec<_> = summary.symbols.iter().filter(|s| s.kind == "struct").collect();
-    let enums: Vec<_> = summary.symbols.iter().filter(|s| s.kind == "enum").collect();
+    let structs: Vec<_> = summary
+        .symbols
+        .iter()
+        .filter(|s| s.kind == "struct")
+        .collect();
+    let enums: Vec<_> = summary
+        .symbols
+        .iter()
+        .filter(|s| s.kind == "enum")
+        .collect();
 
     assert_eq!(functions.len(), 1, "应找到 1 个 fn");
     assert_eq!(structs.len(), 1, "应找到 1 个 struct");
@@ -431,7 +487,11 @@ fn validate_token(token: &str) -> bool {}
         .iter()
         .filter(|s| s.name.contains("http"))
         .collect::<Vec<_>>();
-    assert_eq!(by_substring.len(), 1, "子串匹配只能找到 handle_http_request");
+    assert_eq!(
+        by_substring.len(),
+        1,
+        "子串匹配只能找到 handle_http_request"
+    );
 
     // "处理HTTP请求" 语义上应匹配 handle_http_request，但当前无法实现
     // 这需要嵌入向量语义搜索层
@@ -613,10 +673,7 @@ fn closed_loop_reparse_after_syntax_fix() {
     let broken = "fn broken( { let x = 1";
     let summary_broken = AstEditor::summarize("rust", broken).expect("语法错误应容错解析");
     // 语法错误时可能提取不到完整符号
-    let has_broken_fn = summary_broken
-        .symbols
-        .iter()
-        .any(|s| s.name == "broken");
+    let has_broken_fn = summary_broken.symbols.iter().any(|s| s.name == "broken");
 
     let fixed = "fn broken() { let x = 1; }";
     let summary_fixed = AstEditor::summarize("rust", fixed).expect("修复后应正常解析");
@@ -726,7 +783,10 @@ fn perf_multi_language_parse_latency() {
         ("rust", "fn main() { let x = 1; }\n".repeat(50)),
         ("python", "def main():\n    x = 1\n".repeat(50)),
         ("javascript", "function main() { let x = 1; }\n".repeat(50)),
-        ("typescript", "function main(): void { let x = 1; }\n".repeat(50)),
+        (
+            "typescript",
+            "function main(): void { let x = 1; }\n".repeat(50),
+        ),
         ("go", "func main() { x := 1 }\n".repeat(50)),
     ];
 
@@ -827,14 +887,8 @@ fn architecture_tool_spec_interface_consistency() {
     );
 
     // 验证 SideEffectLevel 一致性：code.* 工具应为 ReadOnly
-    assert!(
-        symbol_spec.is_read_only(),
-        "code.symbols 应为 ReadOnly"
-    );
-    assert!(
-        deps_spec.is_read_only(),
-        "code.deps 应为 ReadOnly"
-    );
+    assert!(symbol_spec.is_read_only(), "code.symbols 应为 ReadOnly");
+    assert!(deps_spec.is_read_only(), "code.deps 应为 ReadOnly");
 
     // 验证 input_schema 结构一致性：都应有 path 属性
     let symbol_props = symbol_spec.input_schema["properties"]
@@ -848,13 +902,13 @@ fn architecture_tool_spec_interface_consistency() {
         symbol_props.contains_key("path"),
         "code.symbols 应有 path 属性"
     );
-    assert!(
-        deps_props.contains_key("path"),
-        "code.deps 应有 path 属性"
-    );
+    assert!(deps_props.contains_key("path"), "code.deps 应有 path 属性");
 
     // 验证 output_schema 结构一致性：都应有 count 和 truncated
-    for (name, spec) in &[(&symbol_spec.name, &symbol_spec), (&deps_spec.name, &deps_spec)] {
+    for (name, spec) in &[
+        (&symbol_spec.name, &symbol_spec),
+        (&deps_spec.name, &deps_spec),
+    ] {
         let output_props = spec.output_schema["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} output_schema 应有 properties", name));
@@ -917,8 +971,7 @@ fn architecture_ast_summary_serialization_consistency() {
 
     // 序列化
     let json = serde_json::to_string(&summary).expect("AstSummary 应可序列化");
-    let deserialized: AstSummary =
-        serde_json::from_str(&json).expect("AstSummary 应可反序列化");
+    let deserialized: AstSummary = serde_json::from_str(&json).expect("AstSummary 应可反序列化");
 
     // 验证一致性
     assert_eq!(

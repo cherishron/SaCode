@@ -15,13 +15,15 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::session::event_log::{SessionEventLog, SessionEventType};
-use crate::tools::interceptor::{InterceptContext, PostExecuteDecision, PreExecuteDecision, ToolInterceptor};
+use crate::tools::interceptor::{
+    InterceptContext, PostExecuteDecision, PreExecuteDecision, ToolInterceptor,
+};
+use crate::tools::sandbox_guard::should_audit as sg_should_audit;
 use crate::tools::sandbox_guard::{
-    audit_network_blocked, audit_path_blocked, audit_preflight_allowed, audit_preflight_start,
-    audit_command_blocked, audit_task_spawn_blocked, extract_command, extract_paths,
+    audit_command_blocked, audit_network_blocked, audit_path_blocked, audit_preflight_allowed,
+    audit_preflight_start, audit_task_spawn_blocked, extract_command, extract_paths,
     path_access_for_tool, required_network_access,
 };
-use crate::tools::sandbox_guard::{should_audit as sg_should_audit};
 use crate::tools::{ToolOutput, ToolSpec};
 
 /// 网络访问策略拦截器

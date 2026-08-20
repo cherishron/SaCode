@@ -41,22 +41,22 @@ impl App {
                 } => {
                     self.loop_state = loop_state.clone();
                     self.handle_chat_completed(
-                    task_id,
-                    prompt,
-                    response,
-                    hit_round_limit,
-                    orchestration_summary,
-                    task_run,
-                    learned_facts,
-                    pending_question,
-                    plan,
-                    usage,
-                    api_duration_ms,
-                    tool_duration_ms,
-                    total_duration_ms,
-                    loop_state,
+                        task_id,
+                        prompt,
+                        response,
+                        hit_round_limit,
+                        orchestration_summary,
+                        task_run,
+                        learned_facts,
+                        pending_question,
+                        plan,
+                        usage,
+                        api_duration_ms,
+                        tool_duration_ms,
+                        total_duration_ms,
+                        loop_state,
                     );
-                },
+                }
                 AsyncResult::LoginCompleted {
                     provider_name,
                     config,

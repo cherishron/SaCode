@@ -20,8 +20,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex as StdMutex,
-        OnceLock,
+        Mutex as StdMutex, OnceLock,
     },
 };
 
@@ -125,7 +124,12 @@ impl SessionEventLog {
     ///
     /// 同时写入内存缓冲（供回放）与落盘（append-only）。
     /// 落盘失败仅打印 warn 并降级，不影响工具执行链路。
-    pub fn record(&self, session_id: &str, event_type: SessionEventType, data: serde_json::Value) -> u64 {
+    pub fn record(
+        &self,
+        session_id: &str,
+        event_type: SessionEventType,
+        data: serde_json::Value,
+    ) -> u64 {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let ts = chrono::Utc::now().to_rfc3339();
 
@@ -154,7 +158,11 @@ impl SessionEventLog {
                 .open(&path)
             {
                 use std::io::Write;
-                let _ = writeln!(file, "{}", serde_json::to_string(&event).unwrap_or_default());
+                let _ = writeln!(
+                    file,
+                    "{}",
+                    serde_json::to_string(&event).unwrap_or_default()
+                );
             } else {
                 // 落盘失败：降级纯内存（仅一次）
                 *self.log_path.lock().expect("log path poisoned") = None;
@@ -167,10 +175,7 @@ impl SessionEventLog {
     /// 回放 seq > `last_seq` 的所有事件（升序）
     pub fn replay_after(&self, last_seq: u64) -> Vec<SessionEvent> {
         let buf = self.buffer.lock().expect("session event buffer poisoned");
-        buf.iter()
-            .filter(|e| e.seq > last_seq)
-            .cloned()
-            .collect()
+        buf.iter().filter(|e| e.seq > last_seq).cloned().collect()
     }
 
     /// 当前最大 seq
@@ -202,8 +207,16 @@ impl SessionEventLog {
                     }
                 }
                 SessionEventType::ToolCallFinished => {
-                    let success = event.data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-                    if success { projection.completed += 1; } else { projection.failed += 1; }
+                    let success = event
+                        .data
+                        .get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if success {
+                        projection.completed += 1;
+                    } else {
+                        projection.failed += 1;
+                    }
                 }
                 SessionEventType::ToolCallDenied => {
                     projection.denied += 1;
@@ -238,12 +251,36 @@ mod tests {
     fn project_session_state_counts_total_completed_failed_denied() {
         let log = fresh_log();
         let sid = "sess-1";
-        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "fs.read"}));
-        log.record(sid, SessionEventType::ToolCallFinished, serde_json::json!({"success": true}));
-        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "shell.exec"}));
-        log.record(sid, SessionEventType::ToolCallFinished, serde_json::json!({"success": false}));
-        log.record(sid, SessionEventType::ToolCallStarted, serde_json::json!({"name": "fs.write"}));
-        log.record(sid, SessionEventType::ToolCallDenied, serde_json::json!({"reason": "blocked"}));
+        log.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"name": "fs.read"}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallFinished,
+            serde_json::json!({"success": true}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"name": "shell.exec"}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallFinished,
+            serde_json::json!({"success": false}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"name": "fs.write"}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallDenied,
+            serde_json::json!({"reason": "blocked"}),
+        );
 
         let p = log.project_session_state(sid);
         assert_eq!(p.session_id, sid);
@@ -257,8 +294,16 @@ mod tests {
     #[test]
     fn project_session_state_filters_other_sessions() {
         let log = fresh_log();
-        log.record("a", SessionEventType::ToolCallStarted, serde_json::json!({"name": "tool"}));
-        log.record("b", SessionEventType::ToolCallFinished, serde_json::json!({"success": true}));
+        log.record(
+            "a",
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"name": "tool"}),
+        );
+        log.record(
+            "b",
+            SessionEventType::ToolCallFinished,
+            serde_json::json!({"success": true}),
+        );
         let p = log.project_session_state("a");
         assert_eq!(p.total_calls, 1);
         assert_eq!(p.completed, 0);

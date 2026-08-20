@@ -133,7 +133,11 @@ fn list_servers(store: &McpConfigStore) -> Result<()> {
         };
         println!(
             "  {} [{}] - {} {} [{}]",
-            entry.name, entry.server.server_type, endpoint, state, entry.source.label()
+            entry.name,
+            entry.server.server_type,
+            endpoint,
+            state,
+            entry.source.label()
         );
     }
     Ok(())
@@ -246,7 +250,11 @@ async fn inspect(store: &McpConfigStore, name: &str) -> Result<()> {
     println!("Type: {}", server.server_type);
     if server.is_stdio() {
         if let Some(cmd) = &server.command {
-            let args = server.args.as_ref().map(|a| a.join(" ")).unwrap_or_default();
+            let args = server
+                .args
+                .as_ref()
+                .map(|a| a.join(" "))
+                .unwrap_or_default();
             println!("Command: {} {}", cmd, args);
         }
     } else {
@@ -324,7 +332,11 @@ fn show_server(store: &McpConfigStore, name: &str) -> Result<()> {
     println!("Enabled: {}", server.enabled);
     if server.is_stdio() {
         if let Some(cmd) = &server.command {
-            let args = server.args.as_ref().map(|a| a.join(" ")).unwrap_or_default();
+            let args = server
+                .args
+                .as_ref()
+                .map(|a| a.join(" "))
+                .unwrap_or_default();
             println!("Command: {} {}", cmd, args);
         }
     } else {

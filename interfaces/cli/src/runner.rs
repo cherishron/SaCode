@@ -7,16 +7,15 @@ use std::{
 use anyhow::Result;
 use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{
-    Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState, generate_task_id,
+    generate_task_id, Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState,
 };
 use sacode_runtime::{
-    build_runtime_system_prompt, infer_task_run_state, maybe_expand_skill_prompt,
-    register_enabled_mcp_tools_sync, task_run_from_report,
-    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
-    McpConfigStore, PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
-    StreamEventKind as RuntimeStreamEventKind, StreamHandler,
-    TaskProfile, TaskRunConfig, ToolRegistry,
-    execute_task_with_failover,
+    build_runtime_system_prompt, execute_task_with_failover, infer_task_run_state,
+    maybe_expand_skill_prompt, register_enabled_mcp_tools_sync, task_run_from_report,
+    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder, McpConfigStore,
+    PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
+    StreamEventKind as RuntimeStreamEventKind, StreamHandler, TaskProfile, TaskRunConfig,
+    ToolRegistry,
 };
 use serde::Serialize;
 
@@ -253,7 +252,11 @@ where
     });
 
     // 模型健康记录回调
-    let model_health_recorder = |workdir: &std::path::Path, provider_name: &str, model_name: &str, success: bool, error: Option<&str>| {
+    let model_health_recorder = |workdir: &std::path::Path,
+                                 provider_name: &str,
+                                 model_name: &str,
+                                 success: bool,
+                                 error: Option<&str>| {
         record_model_health(workdir, provider_name, model_name, success, error);
     };
 
@@ -313,9 +316,10 @@ fn resolve_primary_provider(
     route_plan: Option<&sacode_runtime::ModelRoutePlan>,
 ) -> sacode_kernel::model::ModelProvider {
     if let Some(plan) = route_plan {
-        if let Some((_, _, provider)) = candidates.iter().find(|(pn, mn, _)| {
-            pn == &plan.primary.provider_name && mn == &plan.primary.model_name
-        }) {
+        if let Some((_, _, provider)) = candidates
+            .iter()
+            .find(|(pn, mn, _)| pn == &plan.primary.provider_name && mn == &plan.primary.model_name)
+        {
             return provider.clone();
         }
     }
@@ -609,11 +613,11 @@ mod tests {
     use crate::learning::{LearnedFact, LearnedKind};
     use sacode_kernel::model::ModelProvider;
     use sacode_kernel::{Event, ExecutionMode, ExecutionReport, Plan, TaskRun};
-    use sacode_runtime::SideEffectLevel;
-    use sacode_runtime::ToolRegistry;
+    use sacode_runtime::build_tool_definitions_filtered;
     use sacode_runtime::enrich_media_provider_args;
     use sacode_runtime::is_permission_restricted_error;
-    use sacode_runtime::build_tool_definitions_filtered;
+    use sacode_runtime::SideEffectLevel;
+    use sacode_runtime::ToolRegistry;
 
     #[test]
     fn permission_restricted_error_detects_sandbox_failures() {
@@ -640,7 +644,8 @@ mod tests {
             "shell.exec".to_string(),
         ];
 
-        let defs = build_tool_definitions_filtered(&registry, Some(&tool_names), ExecutionMode::Plan);
+        let defs =
+            build_tool_definitions_filtered(&registry, Some(&tool_names), ExecutionMode::Plan);
         let names = defs
             .iter()
             .map(|def| def.function.name.as_str())

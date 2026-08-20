@@ -76,7 +76,10 @@ pub fn inspect_wiki(workdir: &Path) -> Result<WikiStatus> {
             file_status("项目级 mistakes", &workdir.join(PROJECT_MISTAKES_FILE))?,
             dir_status("项目级 wiki", &project_wiki_dir)?,
             file_status("项目级 project", &project_wiki_dir.join("project.md"))?,
-            file_status("项目级 preferences", &project_wiki_dir.join("preferences.md"))?,
+            file_status(
+                "项目级 preferences",
+                &project_wiki_dir.join("preferences.md"),
+            )?,
             file_status("项目级 experience", &project_wiki_dir.join("experience.md"))?,
         ],
         session_sources: vec![dir_status("项目级 sessions", &sessions_dir)?],
@@ -213,7 +216,12 @@ fn build_learned_patterns_summary(workdir: &Path) -> Result<Option<String>> {
             } else {
                 ""
             };
-            format!("- [{}]{}{}", entry.kind.scope_label(), status_mark, entry.content)
+            format!(
+                "- [{}]{}{}",
+                entry.kind.scope_label(),
+                status_mark,
+                entry.content
+            )
         })
         .collect::<Vec<_>>();
 
@@ -371,7 +379,11 @@ fn summarize_mistakes_file(path: &Path) -> Result<Option<String>> {
         .collect();
     ranked.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
-    let mut lines = vec![format!("项目级 mistakes\n共 {} 条，高频模式 {} 类", entries.len(), ranked.len())];
+    let mut lines = vec![format!(
+        "项目级 mistakes\n共 {} 条，高频模式 {} 类",
+        entries.len(),
+        ranked.len()
+    )];
     for (summary, scope, count) in ranked.into_iter().take(3) {
         let weight = if count > 1 {
             format!(" (×{})", count)

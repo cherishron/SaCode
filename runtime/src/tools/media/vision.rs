@@ -13,8 +13,8 @@ use crate::provider::client::ProviderClient;
 use crate::tools::context::current_context;
 
 use sacode_kernel::model::{
-    detect_provider_kind, normalize_base_url, ChatMessage, ImageUrlPart,
-    MessagePart, ModelProvider, ProviderSpec, SaCodeConfig,
+    detect_provider_kind, normalize_base_url, ChatMessage, ImageUrlPart, MessagePart,
+    ModelProvider, ProviderSpec, SaCodeConfig,
 };
 
 /// 灵枢 · 多模态（M4）：视觉请求错误分类
@@ -95,7 +95,13 @@ impl VisionCache {
     }
 
     /// 查询缓存；未命中或任一维度变化返回 None
-    pub fn get(&self, path: &str, mtime_ms: u64, size: u64, model: &str) -> Option<(String, String)> {
+    pub fn get(
+        &self,
+        path: &str,
+        mtime_ms: u64,
+        size: u64,
+        model: &str,
+    ) -> Option<(String, String)> {
         let key = Self::cache_key(path, mtime_ms, size, model);
         let entries = self.entries.lock().ok()?;
         entries
@@ -166,7 +172,6 @@ fn failure_with_kind(message: impl Into<String>, kind: &str) -> ToolOutput {
         message: Some(format!("{}: {}", kind, msg)),
     }
 }
-
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -267,7 +272,14 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let result = run_vision_with_fallback(&input, &file_path, &bytes, mime_type, &prompt, timeout);
     match result {
         Ok((text, source)) => {
-            VISION_CACHE.put(path, mtime_ms, size_bytes as u64, &model_hint, &text, &source);
+            VISION_CACHE.put(
+                path,
+                mtime_ms,
+                size_bytes as u64,
+                &model_hint,
+                &text,
+                &source,
+            );
             let summary = format_summary(mime_type, size_bytes, width, height);
             Ok(ToolOutput::success(serde_json::json!({
                 "path": file_path.display().to_string(),
@@ -323,7 +335,9 @@ fn run_vision_with_fallback(
     prompt: &str,
     timeout: Duration,
 ) -> Result<(String, String), VisionError> {
-    match try_visual_read(input, file_path, bytes, mime_type, prompt, timeout).map_err(VisionError::from) {
+    match try_visual_read(input, file_path, bytes, mime_type, prompt, timeout)
+        .map_err(VisionError::from)
+    {
         Ok(result) => Ok(result),
         // 致命错误：不降级，直接向上传递
         Err(VisionError::Timeout) => Err(VisionError::Timeout),
@@ -332,9 +346,9 @@ fn run_vision_with_fallback(
         // 其他错误：尝试备用视觉模型
         Err(other) => {
             if let Some(fallback) = resolve_fallback_visual_provider(input) {
-                if let Ok(result) =
-                    try_visual_read_with_provider(&fallback, file_path, bytes, mime_type, prompt, timeout)
-                {
+                if let Ok(result) = try_visual_read_with_provider(
+                    &fallback, file_path, bytes, mime_type, prompt, timeout,
+                ) {
                     return Ok(result);
                 }
             }
@@ -700,7 +714,10 @@ mod tests {
         // message 仅保留人类可读汇总（避免 with_message 覆盖导致 data 为 null）。
         let out = failure_with_kind("视觉模型请求超时", "vision_timeout");
         assert!(!out.success);
-        assert_eq!(out.data.get("error_kind").and_then(|v| v.as_str()), Some("vision_timeout"));
+        assert_eq!(
+            out.data.get("error_kind").and_then(|v| v.as_str()),
+            Some("vision_timeout")
+        );
         assert_eq!(
             out.data.get("message").and_then(|v| v.as_str()),
             Some("视觉模型请求超时")
@@ -710,4 +727,3 @@ mod tests {
         assert!(msg.contains("视觉模型请求超时"));
     }
 }
-

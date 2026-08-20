@@ -254,9 +254,7 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     };
     spans.push(Span::styled(
         format!("{} {}", mode_icon, mode_label),
-        Style::default()
-            .fg(mode_color)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
     ));
     spans.push(status_separator(theme));
     spans.push(Span::styled(
@@ -270,7 +268,12 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     );
     // Phase progress bar for multi-agent loop
     if let Some(phase_line) = phase_progress_bar(app) {
-        let phase_area = Rect { x: area.x, y: area.y.saturating_add(1), width: area.width, height: 1 };
+        let phase_area = Rect {
+            x: area.x,
+            y: area.y.saturating_add(1),
+            width: area.width,
+            height: 1,
+        };
         frame.render_widget(
             Paragraph::new(phase_line).alignment(Alignment::Left),
             phase_area,
@@ -281,7 +284,9 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 fn phase_progress_bar(app: &App) -> Option<Line<'_>> {
     let plan = app.loop_state.as_ref()?.plan.as_ref()?;
     let phases = &plan.phases;
-    if phases.is_empty() { return None; }
+    if phases.is_empty() {
+        return None;
+    }
     let theme = app.theme;
     let current = app.loop_state.as_ref()?.current_phase_index;
     let mut spans = vec![];
@@ -292,7 +297,12 @@ fn phase_progress_bar(app: &App) -> Option<Line<'_>> {
         let (icon, style) = if i < current {
             ("[OK]", Style::default().fg(theme.accent))
         } else if i == current {
-            ("[>>]", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+            (
+                "[>>]",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             ("[  ]", Style::default().fg(theme.subtle))
         };

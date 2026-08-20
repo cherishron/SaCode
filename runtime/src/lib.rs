@@ -26,37 +26,37 @@ pub mod workspace;
 #[cfg(test)]
 mod tests;
 
+pub use agents::loop_impl::{
+    build_agent_loop, AgentLoop, AgentLoopKind, ExecutionStep, LingShuLoop, LoopConfig,
+    LoopSubsystems, StepResult,
+};
 pub use agents::{
     analyze_task, build_execution_plan, build_route_plan_from_candidates, builtin_roles,
     execute_role_driven_orchestration, execute_role_driven_task_run, find_role,
     parse_orchestration_hint, resolve_config_model_candidates, run_sub_agent, score_roles,
     strip_orchestration_prefix, RoleRegistry, WorkerRunResult,
 };
-pub use agents::loop_impl::{
-    AgentLoop, AgentLoopKind, ExecutionStep, LingShuLoop, LoopConfig, LoopSubsystems,
-    StepResult, build_agent_loop,
-};
 pub use checkpoint::CheckpointStorage;
+pub use config::profile::{
+    bundles_dir_of, export_bundle, import_bundle, patches_dir_of, profiles_dir_of, BundleManifest,
+    PatchManifest, PatchSet, Profile, ProfileManifest,
+};
 pub use config::{
     DockerSandboxConfig, IdeServerConfig, IdeServerConfigStore, LoopConfigStore,
     ProjectAccessConfig, ProjectAccessConfigStore, ProtocolServerConfig, SaCodeConfig,
-    SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore,
-    SandboxFsConfig, SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig,
-    SandboxShellConfig, SandboxTaskConfig,
-};
-pub use config::profile::{
-    BundleManifest, PatchManifest, PatchSet, Profile, ProfileManifest, bundles_dir_of,
-    export_bundle, import_bundle, patches_dir_of, profiles_dir_of,
+    SandboxBackendConfig, SandboxBackendKind, SandboxConfig, SandboxConfigStore, SandboxFsConfig,
+    SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig, SandboxShellConfig,
+    SandboxTaskConfig,
 };
 pub use daemon::{create_daemon, run_daemon};
-pub use executor::{ExecutorEvent, TaskExecutor};
 pub use executor::task_runner::{
-    ApprovalDecision, ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
-    LoggingErrorRecorder, NoopErrorRecorder, PromptUserDecider, StreamEventKind, StreamHandler,
-    TaskRunConfig, TaskRunResult, build_tool_definitions, build_tool_definitions_filtered,
-    enrich_media_provider_args, execute_task_with_failover, execute_task_with_provider,
-    format_side_effect_level, is_permission_restricted_error,
+    build_tool_definitions, build_tool_definitions_filtered, enrich_media_provider_args,
+    execute_task_with_failover, execute_task_with_provider, format_side_effect_level,
+    is_permission_restricted_error, ApprovalDecider, ApprovalDecision, AutoApproveDecider,
+    AutoDenyDecider, ErrorRecorder, LoggingErrorRecorder, NoopErrorRecorder, PromptUserDecider,
+    StreamEventKind, StreamHandler, TaskRunConfig, TaskRunResult,
 };
+pub use executor::{ExecutorEvent, TaskExecutor};
 pub use hook::{HookExecutor, LoggingHook};
 pub use mcp::{
     call_mcp_tool_sync, call_tool as call_mcp_tool, find_enabled_search_tool,
@@ -70,9 +70,8 @@ pub use memory::{
     append_candidate_memory_entry, append_memory_entry, approve_memory_entry, archive_memory_entry,
     ensure_memory_file, list_memory_entries, load_memory_index, memory_file_path,
     memory_index_path, migrate_legacy_memory_files, promote_memory_entry, rebuild_memory_index,
-    reject_memory_entry,
-    save_memory_index, search_memory_index, MemoryEntry, MemoryEntrySource, MemoryIndex,
-    MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE,
+    reject_memory_entry, save_memory_index, search_memory_index, MemoryEntry, MemoryEntrySource,
+    MemoryIndex, MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE,
     PROJECT_WIKI_DIR,
 };
 pub use model_routing::{
@@ -92,11 +91,13 @@ pub use retry::RetryHandler;
 pub use run::{infer_task_run_state, task_run_from_report, task_run_snapshot};
 #[cfg(test)]
 pub use sandbox::reset_global_policy;
-pub use sdk::{SdkClient, SdkResult, UsageStats as SdkUsageStats, execute_task as sdk_execute_task};
 pub use sandbox::{
     active_backend, active_policy, current_mode, install_current_mode, install_global_backend,
     install_global_policy, BackendCommandOutput, FsAccess, LocalSandboxBackend, NetworkAccess,
     SandboxBackend, SandboxCommand, SandboxExecutor, SandboxPolicy,
+};
+pub use sdk::{
+    execute_task as sdk_execute_task, SdkClient, SdkResult, UsageStats as SdkUsageStats,
 };
 pub use session::{
     CompressionResult, SessionEvent, SessionHandle, SessionHistory, SessionPrompt, SessionService,

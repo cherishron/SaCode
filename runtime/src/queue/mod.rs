@@ -472,9 +472,7 @@ impl TaskQueue {
     /// `/task/:id/status` 对历史任务返回 not_found。本方法把 store 中已记录的
     /// 结果按 status 分流回填，去重避免覆盖运行时写入的新结果。
     /// 返回恢复的 (任务, 结果) 列表，供调用方同步填充状态表
-    pub async fn restore_results(
-        &self,
-    ) -> anyhow::Result<Vec<(ScheduledTask, TaskResult)>> {
+    pub async fn restore_results(&self) -> anyhow::Result<Vec<(ScheduledTask, TaskResult)>> {
         let Some(store) = self.store.as_ref() else {
             return Ok(Vec::new());
         };

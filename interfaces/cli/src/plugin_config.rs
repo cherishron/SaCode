@@ -137,7 +137,13 @@ impl PluginConfigStore {
     pub fn wasm_file_path(&self, name: &str, source: PluginSource) -> PathBuf {
         let safe_name: String = name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.wasm_dir(source).join(format!("{}.wasm", safe_name))
     }

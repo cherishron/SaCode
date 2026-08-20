@@ -141,8 +141,7 @@ async fn restore_checkpoint(
 
     // 调用执行入口 — 真正恢复执行
     use crate::runner::{format_stream_tail, run_task_with_stdin};
-    let output =
-        run_task_with_stdin(&enhanced_prompt, mode, approval, max_iter, None).await?;
+    let output = run_task_with_stdin(&enhanced_prompt, mode, approval, max_iter, None).await?;
 
     println!();
     println!("{}", format_stream_tail(&output));
@@ -164,12 +163,7 @@ fn build_restore_prompt(checkpoint: &sacode_kernel::schema::Checkpoint) -> Strin
         prompt.push_str("Previous tool execution history:\n");
         for (i, tool) in checkpoint.executed_tools.iter().enumerate() {
             let status = if tool.success { "success" } else { "failed" };
-            prompt.push_str(&format!(
-                "{}. {} ({})\n",
-                i + 1,
-                tool.name,
-                status
-            ));
+            prompt.push_str(&format!("{}. {} ({})\n", i + 1, tool.name, status));
         }
         prompt.push_str("\nContinue from where the previous execution left off, avoiding repeating already-completed successful steps.");
     }
@@ -242,15 +236,27 @@ fn diff_checkpoints(storage: &CheckpointStorage, file_a: &str, file_b: &str) -> 
         cp_b.executed_tools.len()
     );
 
-    let tools_a: Vec<ToolSignature> = cp_a.executed_tools.iter().map(ToolSignature::from).collect();
-    let tools_b: Vec<ToolSignature> = cp_b.executed_tools.iter().map(ToolSignature::from).collect();
+    let tools_a: Vec<ToolSignature> = cp_a
+        .executed_tools
+        .iter()
+        .map(ToolSignature::from)
+        .collect();
+    let tools_b: Vec<ToolSignature> = cp_b
+        .executed_tools
+        .iter()
+        .map(ToolSignature::from)
+        .collect();
     let diff = compute_tool_diff(&tools_a, &tools_b);
 
     println!("\nTool call differences:");
     for entry in &diff.entries {
         match entry.kind {
-            DiffKind::Added => println!("  + {} (added in B, {} call(s))", entry.name, entry.count_b),
-            DiffKind::Removed => println!("  - {} (only in A, {} call(s))", entry.name, entry.count_a),
+            DiffKind::Added => {
+                println!("  + {} (added in B, {} call(s))", entry.name, entry.count_b)
+            }
+            DiffKind::Removed => {
+                println!("  - {} (only in A, {} call(s))", entry.name, entry.count_a)
+            }
             DiffKind::CountChanged => println!(
                 "  ~ {} (count changed: A={}, B={})",
                 entry.name, entry.count_a, entry.count_b
@@ -274,15 +280,11 @@ fn diff_checkpoints(storage: &CheckpointStorage, file_a: &str, file_b: &str) -> 
     println!("\nSummary:");
     println!(
         "  A: {} tools ({} OK, {} FAIL)",
-        diff.total_a,
-        diff.ok_a,
-        diff.fail_a
+        diff.total_a, diff.ok_a, diff.fail_a
     );
     println!(
         "  B: {} tools ({} OK, {} FAIL)",
-        diff.total_b,
-        diff.ok_b,
-        diff.fail_b
+        diff.total_b, diff.ok_b, diff.fail_b
     );
     println!(
         "  Added: {}, Removed: {}, Changed: {}",
@@ -348,8 +350,14 @@ fn compute_tool_diff(tools_a: &[ToolSignature], tools_b: &[ToolSignature]) -> Di
     for name in all_names {
         let count_a = names_a.get(name).copied().unwrap_or(0);
         let count_b = names_b.get(name).copied().unwrap_or(0);
-        let success_a: usize = tools_a.iter().filter(|t| t.name == name && t.success).count();
-        let success_b: usize = tools_b.iter().filter(|t| t.name == name && t.success).count();
+        let success_a: usize = tools_a
+            .iter()
+            .filter(|t| t.name == name && t.success)
+            .count();
+        let success_b: usize = tools_b
+            .iter()
+            .filter(|t| t.name == name && t.success)
+            .count();
 
         let kind = if count_a == 0 && count_b > 0 {
             added += count_b;
@@ -470,8 +478,14 @@ mod tests {
 
     #[test]
     fn parse_max_iter_parses_positive_integers() {
-        assert_eq!(parse_max_iter(&["--max-iter".to_string(), "10".to_string()]), Some(10));
-        assert_eq!(parse_max_iter(&["--max-iter".to_string(), "1".to_string()]), Some(1));
+        assert_eq!(
+            parse_max_iter(&["--max-iter".to_string(), "10".to_string()]),
+            Some(10)
+        );
+        assert_eq!(
+            parse_max_iter(&["--max-iter".to_string(), "1".to_string()]),
+            Some(1)
+        );
         assert_eq!(parse_max_iter(&[]), None);
         // 无效整数
         assert_eq!(
@@ -499,10 +513,7 @@ mod tests {
             sacode_kernel::ApprovalPolicy::Prompt
         );
         // 默认
-        assert_eq!(
-            parse_approval(&[]),
-            sacode_kernel::ApprovalPolicy::Prompt
-        );
+        assert_eq!(parse_approval(&[]), sacode_kernel::ApprovalPolicy::Prompt);
     }
 
     #[test]
@@ -534,12 +545,19 @@ mod tests {
 
     #[test]
     fn compute_tool_diff_detects_added_tools() {
-        let a = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-        ];
+        let a = vec![ToolSignature {
+            name: "fs.read".to_string(),
+            success: true,
+        }];
         let b = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-            ToolSignature { name: "shell.exec".to_string(), success: true },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: true,
+            },
         ];
         let diff = compute_tool_diff(&a, &b);
         assert_eq!(diff.added, 1);
@@ -547,19 +565,30 @@ mod tests {
         assert_eq!(diff.total_a, 1);
         assert_eq!(diff.total_b, 2);
         // shell.exec 应标记为 Added
-        let shell_entry = diff.entries.iter().find(|e| e.name == "shell.exec").unwrap();
+        let shell_entry = diff
+            .entries
+            .iter()
+            .find(|e| e.name == "shell.exec")
+            .unwrap();
         assert_eq!(shell_entry.kind, DiffKind::Added);
     }
 
     #[test]
     fn compute_tool_diff_detects_removed_tools() {
         let a = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-            ToolSignature { name: "git.diff".to_string(), success: true },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "git.diff".to_string(),
+                success: true,
+            },
         ];
-        let b = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-        ];
+        let b = vec![ToolSignature {
+            name: "fs.read".to_string(),
+            success: true,
+        }];
         let diff = compute_tool_diff(&a, &b);
         assert_eq!(diff.added, 0);
         assert_eq!(diff.removed, 1);
@@ -569,12 +598,19 @@ mod tests {
 
     #[test]
     fn compute_tool_diff_detects_count_change() {
-        let a = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-        ];
+        let a = vec![ToolSignature {
+            name: "fs.read".to_string(),
+            success: true,
+        }];
         let b = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-            ToolSignature { name: "fs.read".to_string(), success: true },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
         ];
         let diff = compute_tool_diff(&a, &b);
         assert_eq!(diff.changed, 1);
@@ -587,16 +623,32 @@ mod tests {
     #[test]
     fn compute_tool_diff_detects_result_change() {
         let a = vec![
-            ToolSignature { name: "shell.exec".to_string(), success: true },
-            ToolSignature { name: "shell.exec".to_string(), success: true },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: true,
+            },
         ];
         let b = vec![
-            ToolSignature { name: "shell.exec".to_string(), success: true },
-            ToolSignature { name: "shell.exec".to_string(), success: false },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: false,
+            },
         ];
         let diff = compute_tool_diff(&a, &b);
         assert_eq!(diff.changed, 1);
-        let entry = diff.entries.iter().find(|e| e.name == "shell.exec").unwrap();
+        let entry = diff
+            .entries
+            .iter()
+            .find(|e| e.name == "shell.exec")
+            .unwrap();
         assert_eq!(entry.kind, DiffKind::ResultChanged);
         assert_eq!(entry.success_a, 2);
         assert_eq!(entry.success_b, 1);
@@ -605,12 +657,24 @@ mod tests {
     #[test]
     fn compute_tool_diff_no_changes() {
         let a = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-            ToolSignature { name: "shell.exec".to_string(), success: false },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: false,
+            },
         ];
         let b = vec![
-            ToolSignature { name: "fs.read".to_string(), success: true },
-            ToolSignature { name: "shell.exec".to_string(), success: false },
+            ToolSignature {
+                name: "fs.read".to_string(),
+                success: true,
+            },
+            ToolSignature {
+                name: "shell.exec".to_string(),
+                success: false,
+            },
         ];
         let diff = compute_tool_diff(&a, &b);
         assert_eq!(diff.added, 0);
@@ -630,7 +694,10 @@ mod tests {
     #[test]
     fn truncate_prompt_short_strings_unchanged() {
         assert_eq!(truncate_prompt("hello", 50), "hello");
-        assert_eq!(truncate_prompt("exactly50chars_exactly50chars_exactly50char", 50), "exactly50chars_exactly50chars_exactly50char");
+        assert_eq!(
+            truncate_prompt("exactly50chars_exactly50chars_exactly50char", 50),
+            "exactly50chars_exactly50chars_exactly50char"
+        );
     }
 
     #[test]

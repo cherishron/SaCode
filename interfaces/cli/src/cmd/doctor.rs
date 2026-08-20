@@ -32,8 +32,8 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         workdir.join(".sacode/wiki/experience.md"),
     ];
     let has_memory = memory_files.iter().any(|path| path.exists());
-    let plugin_status = plugin_status(workdir)
-        .map_err(|e| anyhow::anyhow!("plugin_status failed: {e}"))?;
+    let plugin_status =
+        plugin_status(workdir).map_err(|e| anyhow::anyhow!("plugin_status failed: {e}"))?;
     let mcp_lines = status::render_status(workdir)
         .await
         .map_err(|e| anyhow::anyhow!("render_status failed: {e}"))?;

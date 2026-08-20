@@ -220,10 +220,7 @@ pub fn migrate_legacy_memory_files(root: &Path, scope: MemoryScope) -> Result<()
         // 重命名旧文件为 .bak
         fs::rename(&old_path, &backup_path)?;
 
-        let migrated_block = format!(
-            "---\n\n[从 {} 迁移]\n\n{}",
-            old_name, old_content
-        );
+        let migrated_block = format!("---\n\n[从 {} 迁移]\n\n{}", old_name, old_content);
 
         if new_path.exists() {
             // 新文件已存在：追加旧内容
@@ -422,7 +419,9 @@ pub fn search_memory_index(index: &MemoryIndex, query: &str) -> Vec<MemoryIndexE
     let avg_dl = if docs.is_empty() {
         0.0
     } else {
-        docs.iter().map(|d| tokenize(&d.content).len() + tokenize(&d.context).len()).sum::<usize>() as f64
+        docs.iter()
+            .map(|d| tokenize(&d.content).len() + tokenize(&d.context).len())
+            .sum::<usize>() as f64
             / docs.len() as f64
     };
     let n_docs = docs.len() as f64;
@@ -486,7 +485,11 @@ pub fn record_memory_access(root: &Path, entry_id: &str) -> Result<bool> {
 ///
 /// 基于 `created_at` + `access_count` 判断：超过 `max_age_days` 且访问次数低于
 /// `min_access_count` 的 Active 条目衰减为 Archived，减少噪声记忆干扰。
-pub fn decay_memory_entries(root: &Path, max_age_days: u32, min_access_count: u32) -> Result<usize> {
+pub fn decay_memory_entries(
+    root: &Path,
+    max_age_days: u32,
+    min_access_count: u32,
+) -> Result<usize> {
     let mut index = load_memory_index(root)?;
     let today = Local::now().format("%Y-%m-%d").to_string();
     let mut decayed = 0usize;
@@ -944,7 +947,11 @@ mod tests {
         let ok = record_memory_access(&dir, "gen-2026-01-01-a").unwrap();
         assert!(ok);
         let reloaded = load_memory_index(&dir).unwrap();
-        let entry = reloaded.entries.iter().find(|e| e.id == "gen-2026-01-01-a").unwrap();
+        let entry = reloaded
+            .entries
+            .iter()
+            .find(|e| e.id == "gen-2026-01-01-a")
+            .unwrap();
         assert_eq!(entry.access_count, 1);
         assert!(entry.last_accessed_at.is_some());
 

@@ -9,18 +9,18 @@ use std::{
 use tracing::warn;
 
 use sacode_kernel::{
-    ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionMode,
-    Task, ToolExecutionRecord, generate_task_id,
+    generate_task_id, ApprovalAction, ApprovalPolicy, Checkpoint, Event, ExecutionMode, Task,
+    ToolExecutionRecord,
 };
 
-use crate::CheckpointStorage;
 use crate::memory::learner::AutoLearner;
+use crate::CheckpointStorage;
 use crate::ToolRegistry;
 
 pub mod event_log;
 use crate::executor::task_runner::{
-    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, LoggingErrorRecorder,
-    PromptUserDecider, TaskRunConfig, execute_task_with_provider,
+    execute_task_with_provider, ApprovalDecider, AutoApproveDecider, AutoDenyDecider,
+    LoggingErrorRecorder, PromptUserDecider, TaskRunConfig,
 };
 use crate::prompt::{build_system_prompt, PromptContext};
 use crate::McpConfigStore;
@@ -100,7 +100,10 @@ impl SessionService {
     }
 
     /// 带超时的读锁获取
-    fn read_sessions(&self, operation: &str) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, SessionState>>> {
+    fn read_sessions(
+        &self,
+        operation: &str,
+    ) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, SessionState>>> {
         let start = Instant::now();
         loop {
             match self.sessions.try_read() {
@@ -126,7 +129,10 @@ impl SessionService {
     }
 
     /// 带超时的写锁获取
-    fn write_sessions(&self, operation: &str) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, SessionState>>> {
+    fn write_sessions(
+        &self,
+        operation: &str,
+    ) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, SessionState>>> {
         let start = Instant::now();
         loop {
             match self.sessions.try_write() {
@@ -155,8 +161,7 @@ impl SessionService {
         let state = SessionState::new(id.clone(), cwd);
         let handle = state.handle();
         self.persist_session(&state);
-        self.write_sessions("create_session")?
-            .insert(id, state);
+        self.write_sessions("create_session")?.insert(id, state);
         Ok(handle)
     }
 
@@ -289,9 +294,9 @@ impl SessionService {
         // 从源会话复制状态
         let new_state = {
             let sessions = self.read_sessions("fork_session")?;
-            let source = sessions
-                .get(source_session_id)
-                .ok_or_else(|| anyhow::anyhow!("source session not found: {}", source_session_id))?;
+            let source = sessions.get(source_session_id).ok_or_else(|| {
+                anyhow::anyhow!("source session not found: {}", source_session_id)
+            })?;
 
             let mut forked = SessionState::new(new_id.clone(), source.cwd.clone());
             // 复制事件历史到分支
@@ -359,12 +364,15 @@ impl SessionService {
         state.last_checkpoint = Some(checkpoint_name.to_string());
         self.persist_session(&state);
         let handle = state.handle();
-        self.write_sessions("load_session")?
-            .insert(id, state);
+        self.write_sessions("load_session")?.insert(id, state);
         Ok(handle)
     }
 
-    pub async fn prompt(&self, session_id: &str, prompt: SessionPrompt) -> Result<Vec<SessionEvent>> {
+    pub async fn prompt(
+        &self,
+        session_id: &str,
+        prompt: SessionPrompt,
+    ) -> Result<Vec<SessionEvent>> {
         // 阶段1：短暂持锁，仅做状态校验和状态切换
         let (cwd, task_info) = {
             let mut sessions = self.write_sessions("prompt_start")?;
@@ -394,10 +402,8 @@ impl SessionService {
 
         // 灵枢 · 上下文优化：按任务画像筛选注入 prompt 的工具 schema
         // 无角色白名单时，for_prompt 按 TaskProfile 自动映射扩展工具
-        let session_profile = crate::model_routing::TaskProfile::from_prompt_and_workspace(
-            &task_info,
-            &cwd,
-        );
+        let session_profile =
+            crate::model_routing::TaskProfile::from_prompt_and_workspace(&task_info, &cwd);
         let (injected_specs, _budget_trimmed) =
             tools.for_prompt(None, Some(&session_profile), None);
         let tool_names: Vec<String> = injected_specs
@@ -451,9 +457,13 @@ impl SessionService {
             .unwrap_or_else(|error| format!("执行失败：{}", error));
 
         if success {
-            events.push(SessionEvent::KernelEvent(Event::message(response_text.clone())));
+            events.push(SessionEvent::KernelEvent(Event::message(
+                response_text.clone(),
+            )));
         } else {
-            events.push(SessionEvent::KernelEvent(Event::error(response_text.clone())));
+            events.push(SessionEvent::KernelEvent(Event::error(
+                response_text.clone(),
+            )));
         }
 
         // 处理 pending question
@@ -891,11 +901,16 @@ mod tests {
         });
 
         // prompt 执行（即使内部任务很快完成，锁的释放模式是正确的）
-        let _ = service.prompt(&session_id, SessionPrompt {
-            content: "test".to_string(),
-            mode: ExecutionMode::Build,
-            approval: ApprovalPolicy::AutoDeny,
-        }).await;
+        let _ = service
+            .prompt(
+                &session_id,
+                SessionPrompt {
+                    content: "test".to_string(),
+                    mode: ExecutionMode::Build,
+                    approval: ApprovalPolicy::AutoDeny,
+                },
+            )
+            .await;
 
         list_handle.join().unwrap();
     }
@@ -920,14 +935,14 @@ mod tests {
         let service = SessionService::new()
             .with_store(Some(Arc::clone(&db)))
             .unwrap();
-        let handle = service.create_session(PathBuf::from("/tmp/persist-test")).unwrap();
+        let handle = service
+            .create_session(PathBuf::from("/tmp/persist-test"))
+            .unwrap();
         let session_id = handle.id.clone();
         service.close_session(&session_id).unwrap();
 
         // 阶段2：新建 SessionService 实例，绑定同一个 db，验证 session 已恢复
-        let restored_service = SessionService::new()
-            .with_store(Some(db))
-            .unwrap();
+        let restored_service = SessionService::new().with_store(Some(db)).unwrap();
         let sessions = restored_service.list_sessions();
         assert_eq!(sessions.len(), 1, "应该从 SQLite 恢复 1 个 session");
         assert_eq!(sessions[0].id, session_id);
@@ -956,13 +971,13 @@ mod tests {
             .with_store(Some(Arc::clone(&db)))
             .unwrap();
 
-        let source = service.create_session(PathBuf::from("/tmp/fork-source")).unwrap();
+        let source = service
+            .create_session(PathBuf::from("/tmp/fork-source"))
+            .unwrap();
         let forked = service.fork_session(&source.id).unwrap();
 
         // 用新实例恢复，应看到 2 个 session
-        let restored = SessionService::new()
-            .with_store(Some(db))
-            .unwrap();
+        let restored = SessionService::new().with_store(Some(db)).unwrap();
         let sessions = restored.list_sessions();
         assert_eq!(sessions.len(), 2, "源 session + forked session 应都持久化");
 
@@ -988,7 +1003,9 @@ mod tests {
             .with_store(Some(Arc::clone(&db)))
             .unwrap();
 
-        let handle = service.create_session(PathBuf::from("/tmp/delete-test")).unwrap();
+        let handle = service
+            .create_session(PathBuf::from("/tmp/delete-test"))
+            .unwrap();
         assert_eq!(service.list_sessions().len(), 1);
 
         // 直接通过 StoreDb 删除

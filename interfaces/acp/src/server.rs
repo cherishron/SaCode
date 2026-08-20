@@ -139,7 +139,10 @@ async fn serve_tcp_connection(
 // ============================================================================
 
 /// 标准请求处理 — 返回最终响应（无流式推送）
-async fn handle_request(service: &SessionService, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
+async fn handle_request(
+    service: &SessionService,
+    request: JsonRpcRequest,
+) -> Result<JsonRpcResponse> {
     match dispatch_request(service, &request).await {
         Ok(result) => Ok(JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -165,8 +168,8 @@ async fn handle_request_streaming(
     request: &JsonRpcRequest,
     writer: &mut (impl tokio::io::AsyncWrite + Unpin),
 ) -> Result<JsonRpcResponse> {
-    let is_streaming_method = request.method == "session/prompt"
-        || request.method == "session/update";
+    let is_streaming_method =
+        request.method == "session/prompt" || request.method == "session/update";
 
     if !is_streaming_method {
         // 非流式方法，直接返回
@@ -224,7 +227,10 @@ async fn handle_request_streaming(
 }
 
 /// 请求分发 — 执行具体方法
-async fn dispatch_request(service: &SessionService, request: &JsonRpcRequest) -> Result<serde_json::Value> {
+async fn dispatch_request(
+    service: &SessionService,
+    request: &JsonRpcRequest,
+) -> Result<serde_json::Value> {
     let result = match request.method.as_str() {
         "initialize" => serde_json::json!({
             "capabilities": {

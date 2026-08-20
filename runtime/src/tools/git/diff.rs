@@ -90,8 +90,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                         .map(|line| line.split('|').next().unwrap_or("").trim().to_string())
                         .collect();
                     let file_count = files.len();
-                    let files: Vec<String> =
-                        files.into_iter().take(MAX_DIFF_FILES).collect();
+                    let files: Vec<String> = files.into_iter().take(MAX_DIFF_FILES).collect();
                     let stats = parse_stats(&diff_output);
 
                     Ok(ToolOutput::success(serde_json::json!({
@@ -108,8 +107,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
                     // 完整 patch 模式：返回可被 `git apply` 消费的 patch 文本
                     let files = extract_files_from_patch(&diff_output);
                     let file_count = files.len();
-                    let files: Vec<String> =
-                        files.into_iter().take(MAX_DIFF_FILES).collect();
+                    let files: Vec<String> = files.into_iter().take(MAX_DIFF_FILES).collect();
                     let stats = count_patch_stats(&diff_output);
 
                     Ok(ToolOutput::success(serde_json::json!({

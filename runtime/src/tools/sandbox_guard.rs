@@ -13,8 +13,8 @@ use super::{SideEffectLevel, ToolOutput, ToolSpec};
 /// 新代码应优先使用 `ToolRegistry::execute` 的拦截器机制。
 pub fn preflight(spec: &ToolSpec, input: &serde_json::Value) -> Result<()> {
     use super::interceptor::InterceptContext;
-    use super::interceptors::default::run_preflight_chain;
     use super::interceptors::default::default_interceptors;
+    use super::interceptors::default::run_preflight_chain;
 
     let interceptors = default_interceptors();
     let ctx = InterceptContext::default();
@@ -58,7 +58,13 @@ pub(crate) fn audit_preflight_allowed(tool_name: &str, input: &serde_json::Value
 }
 
 pub(crate) fn audit_network_blocked(tool_name: &str, input: &serde_json::Value) {
-    write_audit_log(tool_name, "preflight_blocked", "network_blocked", Some(input), None);
+    write_audit_log(
+        tool_name,
+        "preflight_blocked",
+        "network_blocked",
+        Some(input),
+        None,
+    );
 }
 
 pub(crate) fn audit_task_spawn_blocked(tool_name: &str, input: &serde_json::Value) {
@@ -133,7 +139,10 @@ pub(crate) fn write_audit_log(
     let _ = writeln!(file, "{}", payload);
 }
 
-pub(crate) fn required_network_access(name: &str, input: &serde_json::Value) -> Option<NetworkAccess> {
+pub(crate) fn required_network_access(
+    name: &str,
+    input: &serde_json::Value,
+) -> Option<NetworkAccess> {
     network_access_for_tool(name).or_else(|| network_access_from_fields(input))
 }
 

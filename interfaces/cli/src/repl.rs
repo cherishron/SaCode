@@ -247,7 +247,12 @@ impl ReplSession {
                     println!("任务完成！");
                 } else {
                     println!();
-                    println!("    完成条件检查：未完全满足 (匹配 {}/{}: {})", matched, keywords.len(), matched_kws.join(", "));
+                    println!(
+                        "    完成条件检查：未完全满足 (匹配 {}/{}: {})",
+                        matched,
+                        keywords.len(),
+                        matched_kws.join(", ")
+                    );
                     println!("提示：运行新任务迭代完成，或用 /goal 更新条件");
                 }
             }
@@ -761,11 +766,14 @@ impl ReplSession {
 
         // 1) 展示预设 provider 选择列表
         let mut options = crate::provider_config::preset_connect_options();
-        options.insert(0, (
-            "ollama".to_string(),
-            OLLAMA_DEFAULT_BASE_URL.to_string(),
-            false,
-        ));
+        options.insert(
+            0,
+            (
+                "ollama".to_string(),
+                OLLAMA_DEFAULT_BASE_URL.to_string(),
+                false,
+            ),
+        );
         println!("选择你的模型服务：");
         for (index, (name, base_url, _)) in options.iter().enumerate() {
             println!("  {}. {} ({})", index + 1, name, base_url);

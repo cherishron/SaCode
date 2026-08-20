@@ -172,7 +172,9 @@ impl SaCodeConfig {
             serde_json::Value::String(self.user_dir.display().to_string()),
         );
 
-        Ok(serde_json::to_string_pretty(&serde_json::Value::Object(dump))?)
+        Ok(serde_json::to_string_pretty(&serde_json::Value::Object(
+            dump,
+        ))?)
     }
 }
 
@@ -245,7 +247,9 @@ pub struct LoopConfigStore {
 impl LoopConfigStore {
     pub fn new(workdir: &Path) -> Self {
         Self {
-            path: SaCodeConfig::new(workdir).project_dir.join(LOOP_CONFIG_FILE),
+            path: SaCodeConfig::new(workdir)
+                .project_dir
+                .join(LOOP_CONFIG_FILE),
         }
     }
 

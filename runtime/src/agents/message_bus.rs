@@ -537,11 +537,7 @@ impl AgentMailboxHandle {
                 }
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "Agent [{}] 广播消息落后 {} 条",
-                        self.agent_id,
-                        n
-                    );
+                    tracing::warn!("Agent [{}] 广播消息落后 {} 条", self.agent_id, n);
                     continue;
                 }
                 Err(broadcast::error::TryRecvError::Closed) => break,
@@ -676,8 +672,12 @@ mod tests {
         let mut handle_a = bus.register("agent-a".to_string()).await;
         let _handle_b = bus.register("agent-b".to_string()).await;
 
-        bus.broadcast("agent-a", AgentMessageKind::Discovery, "found auth module".to_string())
-            .await;
+        bus.broadcast(
+            "agent-a",
+            AgentMessageKind::Discovery,
+            "found auth module".to_string(),
+        )
+        .await;
 
         let messages = handle_a.try_recv_broadcast().await;
         // agent-a 不应收到自己发出的广播
@@ -727,10 +727,7 @@ mod tests {
             .await;
 
         handle_a
-            .broadcast(
-                AgentMessageKind::ProgressSync,
-                "50% complete".to_string(),
-            )
+            .broadcast(AgentMessageKind::ProgressSync, "50% complete".to_string())
             .await;
 
         let history = bus.message_history().await;
@@ -770,7 +767,10 @@ mod tests {
     fn agent_message_kind_as_str() {
         assert_eq!(AgentMessageKind::Discovery.as_str(), "discovery");
         assert_eq!(AgentMessageKind::RequestAssist.as_str(), "request_assist");
-        assert_eq!(AgentMessageKind::Custom("review".to_string()).as_str(), "review");
+        assert_eq!(
+            AgentMessageKind::Custom("review".to_string()).as_str(),
+            "review"
+        );
     }
 
     // ── M2 协议升级测试 ──────────────────────────────────
@@ -921,7 +921,11 @@ mod tests {
                 .message_id()
             })
             .collect();
-        assert_eq!(ids.len(), 10_000, "同一 Agent 连续发送 1w 条消息不应有重复 ID");
+        assert_eq!(
+            ids.len(),
+            10_000,
+            "同一 Agent 连续发送 1w 条消息不应有重复 ID"
+        );
     }
 
     #[tokio::test]

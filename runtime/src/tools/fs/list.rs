@@ -4,8 +4,6 @@ use crate::sandbox::FsAccess;
 use crate::tools::context::{current_context, EntryType};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-
-
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "fs.list".to_string(),

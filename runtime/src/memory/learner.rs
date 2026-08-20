@@ -48,10 +48,7 @@ impl AutoLearner {
     pub fn from_session_summary(workdir: &Path, compressed_summary: &str) -> Self {
         Self {
             workdir: workdir.to_path_buf(),
-            session_events: compressed_summary
-                .lines()
-                .map(str::to_string)
-                .collect(),
+            session_events: compressed_summary.lines().map(str::to_string).collect(),
         }
     }
 
@@ -75,7 +72,9 @@ impl AutoLearner {
             }
         }
         if !mistakes.is_empty() {
-            result.notes.push(format!("提取 {} 个失败模式", mistakes.len()));
+            result
+                .notes
+                .push(format!("提取 {} 个失败模式", mistakes.len()));
         }
 
         // 2. 提取 preferences → preferences.md（Candidate）
@@ -93,7 +92,8 @@ impl AutoLearner {
                 context: "从用户审批行为自动学习".to_string(),
             };
             let current = fs::read_to_string(&prefs_path).unwrap_or_default();
-            let appended = append_candidate_memory_entry(&prefs_path, &current, &entry).unwrap_or(false);
+            let appended =
+                append_candidate_memory_entry(&prefs_path, &current, &entry).unwrap_or(false);
             if appended {
                 result.preferences_extracted += 1;
             }
@@ -124,7 +124,9 @@ impl AutoLearner {
             }
         }
         if !patterns.is_empty() {
-            result.notes.push(format!("提取 {} 个代码规范模式", patterns.len()));
+            result
+                .notes
+                .push(format!("提取 {} 个代码规范模式", patterns.len()));
         }
 
         Ok(result)
@@ -136,7 +138,10 @@ impl AutoLearner {
         let joined = self.session_events.join("\n");
 
         // 测试失败模式
-        if joined.contains("test failed") || joined.contains("测试失败") || joined.contains("验证失败") {
+        if joined.contains("test failed")
+            || joined.contains("测试失败")
+            || joined.contains("验证失败")
+        {
             let scope = if joined.contains("回归") {
                 "regression"
             } else {
@@ -150,7 +155,10 @@ impl AutoLearner {
         }
 
         // shell 执行错误
-        if joined.contains("command failed") || joined.contains("命令执行失败") || joined.contains("exit_code != 0") {
+        if joined.contains("command failed")
+            || joined.contains("命令执行失败")
+            || joined.contains("exit_code != 0")
+        {
             mistakes.push(MistakePattern {
                 summary: "Shell 命令执行失败，需检查命令参数与执行环境".to_string(),
                 scope: "shell".to_string(),
@@ -161,7 +169,8 @@ impl AutoLearner {
         // 冲突模式：要求同时出现 "validation_conflict" 或"验证"+"冲突"，
         // 避免误命中"内存冲突""合并冲突"等无关上下文（子串"冲突"过于宽泛）。
         let conflict_hit = joined.contains("validation_conflict")
-            || (joined.contains("冲突") && (joined.contains("验证") || joined.contains("validation")));
+            || (joined.contains("冲突")
+                && (joined.contains("验证") || joined.contains("validation")));
         if conflict_hit {
             mistakes.push(MistakePattern {
                 summary: "实现与验证存在冲突，需消解后再交付".to_string(),
@@ -204,7 +213,8 @@ impl AutoLearner {
         let joined = self.session_events.join("\n");
 
         // 缩进风格
-        if joined.contains("4 空格") || joined.contains("4-space") || joined.contains("四个空格") {
+        if joined.contains("4 空格") || joined.contains("4-space") || joined.contains("四个空格")
+        {
             patterns.push("代码缩进偏好使用 4 空格".to_string());
         } else if joined.contains("tab") || joined.contains("制表符") {
             patterns.push("代码缩进偏好使用 Tab".to_string());

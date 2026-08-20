@@ -170,18 +170,12 @@ pub(crate) fn parse_cargo_check_output(
             if !is_primary {
                 continue;
             }
-            let file_name = span
-                .get("file_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let file_name = span.get("file_name").and_then(|v| v.as_str()).unwrap_or("");
             let span_path = workdir.join(file_name);
             if !paths_match(&span_path, doc_path) {
                 continue;
             }
-            let line_start = span
-                .get("line_start")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1) as u32;
+            let line_start = span.get("line_start").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
             let line_end = span
                 .get("line_end")
                 .and_then(|v| v.as_u64())
@@ -219,11 +213,7 @@ pub(crate) fn parse_cargo_check_output(
 /// 解析 tsc 输出
 ///
 /// 格式：`path(line,col): error TSxxxx: message` 或 `path(line,col): warning TSxxxx: message`
-pub(crate) fn parse_tsc_output(
-    output: &str,
-    doc_path: &Path,
-    workdir: &Path,
-) -> Vec<Diagnostic> {
+pub(crate) fn parse_tsc_output(output: &str, doc_path: &Path, workdir: &Path) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for line in output.lines() {
         // 格式: path(line,col): error TSxxxx: message
@@ -238,9 +228,7 @@ pub(crate) fn parse_tsc_output(
         let Some((line_str, col_str)) = coords.split_once(',') else {
             continue;
         };
-        let rest = line[close_paren + 1..]
-            .trim_start_matches(':')
-            .trim_start();
+        let rest = line[close_paren + 1..].trim_start_matches(':').trim_start();
         let (severity, code_msg) = match rest.split_whitespace().next() {
             Some("error") => (DiagnosticSeverity::ERROR, rest[5..].trim_start()),
             Some("warning") => (DiagnosticSeverity::WARNING, rest[7..].trim_start()),
@@ -355,11 +343,7 @@ pub(crate) fn parse_python_output(stderr: &str, doc_path: &Path) -> Vec<Diagnost
 /// - `# package-name` 行跳过（编译进度提示）
 ///
 /// 路径相对于 workdir，需 join 后与 doc_path 比较。
-pub(crate) fn parse_go_output(
-    stderr: &str,
-    doc_path: &Path,
-    workdir: &Path,
-) -> Vec<Diagnostic> {
+pub(crate) fn parse_go_output(stderr: &str, doc_path: &Path, workdir: &Path) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for line in stderr.lines() {
         let trimmed = line.trim();
@@ -497,14 +481,18 @@ mod tests {
 
     #[test]
     fn parses_tsc_error_line() {
-        let tsc_output = "src/foo.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.";
+        let tsc_output =
+            "src/foo.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.";
         let (workdir, doc_path) = workdir_doc_pair("src/foo.ts");
         let diags = parse_tsc_output(tsc_output, &doc_path, &workdir);
         assert_eq!(diags.len(), 1);
         let d = &diags[0];
         assert_eq!(d.severity, Some(DiagnosticSeverity::ERROR));
         assert_eq!(d.source.as_deref(), Some("tsc"));
-        assert_eq!(d.message, "Type 'string' is not assignable to type 'number'.");
+        assert_eq!(
+            d.message,
+            "Type 'string' is not assignable to type 'number'."
+        );
         assert_eq!(d.range.start.line, 9);
         assert_eq!(d.range.start.character, 4);
         assert_eq!(d.range.end.line, 9);

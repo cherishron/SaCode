@@ -7,18 +7,16 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use regex::Regex;
-use sacode_kernel::{
-    AgentRole, ExecutionMode, SubAgentResult, SubAgentTask,
-};
+use sacode_kernel::{AgentRole, ExecutionMode, SubAgentResult, SubAgentTask};
 
+use super::loop_impl::LoopSubsystems;
 use super::message_bus::{AgentMailboxHandle, AgentMessage, AgentMessageKind};
 use super::model_router::{resolve_role_route, ResolvedRoleRoute};
-use super::loop_impl::LoopSubsystems;
-use crate::executor::task_runner::{
-    AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
-    execute_task_with_failover, execute_task_with_provider,
-};
 use crate::config::profile::Profile;
+use crate::executor::task_runner::{
+    execute_task_with_failover, execute_task_with_provider, AutoApproveDecider,
+    LoggingErrorRecorder, TaskRunConfig,
+};
 use crate::model_routing::TaskProfile;
 use crate::prompt::{build_system_prompt, PromptContext};
 use crate::tools::ToolRegistry;
@@ -124,7 +122,10 @@ pub async fn run_sub_agent(
         String::new()
     };
 
-    let system_prompt = format!("{}\n\n{}{}", role_instruction, base_system_prompt, peer_context);
+    let system_prompt = format!(
+        "{}\n\n{}{}",
+        role_instruction, base_system_prompt, peer_context
+    );
 
     // 解析模型候选
     let candidates = super::model_router::resolve_config_model_candidates(workdir);
@@ -136,8 +137,7 @@ pub async fn run_sub_agent(
             candidates
                 .iter()
                 .find(|(pn, mn, _)| {
-                    pn == &route.plan.primary.provider_name
-                        && mn == &route.plan.primary.model_name
+                    pn == &route.plan.primary.provider_name && mn == &route.plan.primary.model_name
                 })
                 .map(|(_, _, provider)| provider.clone())
         })
@@ -158,9 +158,7 @@ pub async fn run_sub_agent(
                 },
                 task,
                 role,
-                events: vec![
-                    sacode_kernel::Event::error("无可用模型配置"),
-                ],
+                events: vec![sacode_kernel::Event::error("无可用模型配置")],
                 resolved_route,
                 resolved_model_summary,
             };
@@ -178,25 +176,24 @@ pub async fn run_sub_agent(
         tools,
         approval: std::sync::Arc::new(AutoApproveDecider), // 子 Agent 自动批准
         error_recorder: std::sync::Arc::new(LoggingErrorRecorder), // 仅日志记录
-        task_id: None, // 子 Agent 内部执行，不注入统一 task_id
+        task_id: None,                                     // 子 Agent 内部执行，不注入统一 task_id
     };
 
     // 通过统一 TaskExecutor 执行（含 Failover）
     // 灵枢 · 自愈合：子 Agent 执行结果反馈到模型健康缓存，闭合路由自愈回路
-    let health_recorder =
-        |workdir: &std::path::Path,
-         provider_name: &str,
-         model_name: &str,
-         success: bool,
-         error: Option<&str>| {
-            super::model_router::record_model_health(
-                workdir,
-                provider_name,
-                model_name,
-                success,
-                error,
-            );
-        };
+    let health_recorder = |workdir: &std::path::Path,
+                           provider_name: &str,
+                           model_name: &str,
+                           success: bool,
+                           error: Option<&str>| {
+        super::model_router::record_model_health(
+            workdir,
+            provider_name,
+            model_name,
+            success,
+            error,
+        );
+    };
 
     let task_run_result = if subsystems.self_healing {
         execute_task_with_failover(
@@ -204,7 +201,7 @@ pub async fn run_sub_agent(
             resolved_route.as_ref().map(|r| &r.plan),
             &candidates,
             profile,
-            None, // 子 Agent 暂不支持流式输出
+            None,                   // 子 Agent 暂不支持流式输出
             Some(&health_recorder), // 记录模型健康，闭合自愈合回路
         )
         .await
@@ -242,15 +239,7 @@ pub async fn run_sub_agent(
     let summary = build_role_summary_from_result(&role, &output_text, success);
 
     // 灵枢 · Agent Teams：发布自身执行结果摘要与协助请求/响应到消息总线
-    broadcast_sub_agent_outputs(
-        mailbox,
-        &role,
-        &task,
-        success,
-        &output_text,
-        role_task_map,
-    )
-    .await;
+    broadcast_sub_agent_outputs(mailbox, &role, &task, success, &output_text, role_task_map).await;
 
     WorkerRunResult {
         result: SubAgentResult {
@@ -282,7 +271,10 @@ async fn broadcast_sub_agent_outputs(
     mailbox
         .broadcast(
             AgentMessageKind::ProgressSync,
-            format!("角色 [{}] 任务 [{}] {}：{}", role.id, task.title, status_label, summary_text),
+            format!(
+                "角色 [{}] 任务 [{}] {}：{}",
+                role.id, task.title, status_label, summary_text
+            ),
         )
         .await;
 
@@ -295,19 +287,32 @@ async fn broadcast_sub_agent_outputs(
     let mut sent_requests = 0usize;
     for (target_role_id, content) in &assist_requests {
         if sent_requests >= MAX_ASSIST_REQUESTS_PER_RUN {
-            tracing::warn!("角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求", role.id, MAX_ASSIST_REQUESTS_PER_RUN, target_role_id);
+            tracing::warn!(
+                "角色 [{}] 单次执行协助请求已达上限 {}，忽略对 [{}] 的请求",
+                role.id,
+                MAX_ASSIST_REQUESTS_PER_RUN,
+                target_role_id
+            );
             break;
         }
         if let Some(target_task_id) = role_task_map.get(target_role_id) {
             let sent = mailbox
-                .send_to(target_task_id, AgentMessageKind::RequestAssist, content.clone())
+                .send_to(
+                    target_task_id,
+                    AgentMessageKind::RequestAssist,
+                    content.clone(),
+                )
                 .await;
             if sent {
                 sent_requests += 1;
                 tracing::info!("角色 [{}] 向 [{}] 发送协助请求", role.id, target_role_id);
             }
         } else {
-            tracing::warn!("角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到", role.id, target_role_id);
+            tracing::warn!(
+                "角色 [{}] 的协助请求目标 [{}] 未在 role_task_map 中找到",
+                role.id,
+                target_role_id
+            );
         }
     }
 
@@ -315,7 +320,11 @@ async fn broadcast_sub_agent_outputs(
     for (target_role_id, content) in &assist_responses {
         if let Some(target_task_id) = role_task_map.get(target_role_id) {
             mailbox
-                .send_to(target_task_id, AgentMessageKind::AssistResponse, content.clone())
+                .send_to(
+                    target_task_id,
+                    AgentMessageKind::AssistResponse,
+                    content.clone(),
+                )
                 .await;
             tracing::info!("角色 [{}] 向 [{}] 发送协助响应", role.id, target_role_id);
         }
@@ -473,7 +482,12 @@ fn build_role_summary_from_result(role: &AgentRole, output: &str, success: bool)
 fn truncate_summary(text: &str) -> &str {
     // 截取前 500 字符作为摘要
     if text.len() > 500 {
-        let end = text.char_indices().take(500).last().map(|(i, _)| i).unwrap_or(text.len());
+        let end = text
+            .char_indices()
+            .take(500)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
         &text[..end]
     } else {
         text
@@ -586,7 +600,10 @@ fn extract_assist_requests(output: &str) -> Vec<(String, String)> {
     assist_request_re()
         .captures_iter(output)
         .map(|cap| {
-            let target = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let target = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
             let content = cap
                 .get(2)
                 .map(|m| m.as_str().trim().to_string())
@@ -604,7 +621,10 @@ fn extract_assist_responses(output: &str) -> Vec<(String, String)> {
     assist_response_re()
         .captures_iter(output)
         .map(|cap| {
-            let target = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let target = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
             let content = cap
                 .get(2)
                 .map(|m| m.as_str().trim().to_string())
@@ -622,18 +642,13 @@ fn extract_assist_responses(output: &str) -> Vec<(String, String)> {
 /// `edges`：`(from_role, to_role)` 依赖边列表（来自当前及历史协助请求）
 /// 返回 `Ok(())` 表示无环可安全发送；`Err(cycle)` 表示检测到环
 #[allow(dead_code)]
-pub fn validate_assist_dag(
-    edges: &[(String, String)],
-) -> Result<(), Vec<String>> {
+pub fn validate_assist_dag(edges: &[(String, String)]) -> Result<(), Vec<String>> {
     use std::collections::{HashMap, HashSet};
 
     // 构建邻接表
     let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
     for (from, to) in edges {
-        adjacency
-            .entry(from.clone())
-            .or_default()
-            .push(to.clone());
+        adjacency.entry(from.clone()).or_default().push(to.clone());
     }
 
     let mut visited: HashSet<String> = HashSet::new();
@@ -709,11 +724,8 @@ mod tests {
 
     #[test]
     fn build_role_summary_uses_success_tone_for_implementer() {
-        let summary = build_role_summary_from_result(
-            &role("implementer"),
-            "任务完成，共完成 3 个步骤",
-            true,
-        );
+        let summary =
+            build_role_summary_from_result(&role("implementer"), "任务完成，共完成 3 个步骤", true);
 
         assert!(summary.contains("实现结果已整理"));
         assert!(summary.contains("实现结论：任务完成"));
@@ -721,11 +733,8 @@ mod tests {
 
     #[test]
     fn build_role_summary_uses_failure_tone_for_test_engineer() {
-        let summary = build_role_summary_from_result(
-            &role("test-engineer"),
-            "验证失败，存在阻塞",
-            false,
-        );
+        let summary =
+            build_role_summary_from_result(&role("test-engineer"), "验证失败，存在阻塞", false);
 
         assert!(summary.contains("验证风险已识别"));
         assert!(summary.contains("测试结论：验证失败"));
@@ -746,7 +755,8 @@ mod tests {
 
     #[test]
     fn extract_assist_requests_parses_single_request() {
-        let output = "分析完成。\n[ASSIST_REQUEST:test-engineer]需要验证鉴权流程[/ASSIST_REQUEST]\n结束。";
+        let output =
+            "分析完成。\n[ASSIST_REQUEST:test-engineer]需要验证鉴权流程[/ASSIST_REQUEST]\n结束。";
         let requests = extract_assist_requests(output);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].0, "test-engineer");
@@ -793,10 +803,26 @@ mod tests {
     fn build_peer_context_distinguishes_message_types() {
         let messages = vec![
             message("architect", AgentMessageKind::ProgressSync, "架构分析完成"),
-            message("repo-explorer", AgentMessageKind::Discovery, "发现 auth 模块"),
-            message("test-engineer", AgentMessageKind::RequestAssist, "需要实现细节"),
-            message("implementer", AgentMessageKind::AssistResponse, "实现已完成"),
-            message("reviewer", AgentMessageKind::ConflictWarning, "发现潜在冲突"),
+            message(
+                "repo-explorer",
+                AgentMessageKind::Discovery,
+                "发现 auth 模块",
+            ),
+            message(
+                "test-engineer",
+                AgentMessageKind::RequestAssist,
+                "需要实现细节",
+            ),
+            message(
+                "implementer",
+                AgentMessageKind::AssistResponse,
+                "实现已完成",
+            ),
+            message(
+                "reviewer",
+                AgentMessageKind::ConflictWarning,
+                "发现潜在冲突",
+            ),
         ];
 
         let context = build_peer_context(&messages, "implementer");

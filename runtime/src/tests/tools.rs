@@ -94,11 +94,7 @@ fn ling_shu_core_tools_registry_has_exactly_four_tools() {
     let names = registry.names();
     assert_eq!(names.len(), 4, "core_tools 应仅注册 4 个核心层工具");
     for name in &["fs.read", "fs.write", "fs.edit", "shell.exec"] {
-        assert!(
-            names.contains(name),
-            "core_tools 应包含核心工具 {}",
-            name
-        );
+        assert!(names.contains(name), "core_tools 应包含核心工具 {}", name);
     }
 }
 
@@ -1409,11 +1405,7 @@ fn test_fs_patch_output_includes_diff_summary() {
     crate::sandbox::reset_global_policy();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
-    fs::write(
-        temp_dir.path().join("note.txt"),
-        "alpha\nbeta\ngamma\n",
-    )
-    .expect("seed file");
+    fs::write(temp_dir.path().join("note.txt"), "alpha\nbeta\ngamma\n").expect("seed file");
 
     let result = crate::tools::fs::patch::execute(serde_json::json!({
         "patches": [{
@@ -1809,7 +1801,10 @@ fn test_git_commit_returns_full_metadata() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
     Command::new("git")
         .args(["config", "user.name", "SaCode Test"])
         .output()
@@ -1895,7 +1890,11 @@ fn test_git_commit_not_a_repo_returns_classified_error() {
         kind, result.message
     );
     assert!(
-        result.message.as_deref().unwrap_or_default().contains("not_a_repo"),
+        result
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not_a_repo"),
         "message should contain error_kind, got: {:?}",
         result.message
     );
@@ -1910,7 +1909,10 @@ fn test_git_commit_nothing_to_commit_returns_classified_error() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
     Command::new("git")
         .args(["config", "user.name", "SaCode Test"])
         .output()
@@ -1946,7 +1948,10 @@ fn test_git_commit_path_not_found_returns_classified_error() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
     Command::new("git")
         .args(["config", "user.name", "SaCode Test"])
         .output()
@@ -1992,7 +1997,10 @@ fn test_git_commit_dry_run_does_not_commit() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git").args(["init"]).output().expect("git init");
+    Command::new("git")
+        .args(["init"])
+        .output()
+        .expect("git init");
     Command::new("git")
         .args(["config", "user.name", "SaCode Test"])
         .output()
@@ -2023,10 +2031,7 @@ fn test_git_commit_dry_run_does_not_commit() {
         .expect("staged_files should be an array");
     assert_eq!(staged.len(), 1, "expected 1 staged file");
     assert!(
-        staged[0]
-            .as_str()
-            .unwrap_or_default()
-            .ends_with("file.txt"),
+        staged[0].as_str().unwrap_or_default().ends_with("file.txt"),
         "expected staged file ends with file.txt, got: {:?}",
         staged[0]
     );
@@ -2047,7 +2052,9 @@ fn test_git_commit_dry_run_does_not_commit() {
     );
     // 不应有 stats（dry_run 不实际提交）
     assert!(
-        result.data.get("stats").is_none() || result.data["stats"].is_null() || result.data["stats"] == serde_json::json!({}),
+        result.data.get("stats").is_none()
+            || result.data["stats"].is_null()
+            || result.data["stats"] == serde_json::json!({}),
         "dry_run should not produce stats"
     );
 
@@ -2057,7 +2064,10 @@ fn test_git_commit_dry_run_does_not_commit() {
         .output()
         .expect("git log");
     assert!(
-        !log_output.status.success() || String::from_utf8_lossy(&log_output.stdout).trim().is_empty(),
+        !log_output.status.success()
+            || String::from_utf8_lossy(&log_output.stdout)
+                .trim()
+                .is_empty(),
         "no commit should exist after dry_run, got log: {}",
         String::from_utf8_lossy(&log_output.stdout)
     );

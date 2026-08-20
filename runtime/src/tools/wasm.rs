@@ -76,7 +76,10 @@ pub fn build_tool_specs_from_plugin(
 /// 错误处理：单个插件加载失败不阻断整体，错误记录到 stderr。
 pub fn collect_wasm_tools(
     workdir: &Path,
-) -> anyhow::Result<(Vec<(ToolSpec, Arc<dyn ToolExecutor>)>, Arc<Mutex<PluginHost>>)> {
+) -> anyhow::Result<(
+    Vec<(ToolSpec, Arc<dyn ToolExecutor>)>,
+    Arc<Mutex<PluginHost>>,
+)> {
     let mut host = PluginHost::new();
     let mut specs: Vec<PluginSpec> = Vec::new();
 
@@ -97,17 +100,13 @@ pub fn collect_wasm_tools(
                     if let Err(error) = host.load(spec.clone()) {
                         eprintln!(
                             "wasm plugin load failed {} ({}): {error}",
-                            spec.name,
-                            spec.wasm_path
+                            spec.name, spec.wasm_path
                         );
                     }
                     specs.push(spec);
                 }
                 Err(error) => {
-                    eprintln!(
-                        "wasm tool discovery skipped {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("wasm tool discovery skipped {}: {error}", path.display());
                 }
             }
         }
@@ -375,7 +374,10 @@ mod tests {
         let mut registry = ToolRegistry::default();
         let host = register_wasm_tools(&mut registry, tmp.path()).expect("register");
         assert!(host.lock().is_ok());
-        assert!(registry.specs().iter().all(|s| !s.name.starts_with(WASM_TOOL_PREFIX)));
+        assert!(registry
+            .specs()
+            .iter()
+            .all(|s| !s.name.starts_with(WASM_TOOL_PREFIX)));
     }
 
     /// 路径常量在模块内可用

@@ -41,40 +41,189 @@ const BM25_B: f64 = 0.75;
 /// 用于将自然语言查询扩展到相关的代码术语
 static SEMANTIC_EXPANSIONS: &[(&str, &[&str])] = &[
     // 错误处理
-    ("error", &["error", "err", "result", "failure", "exception", "panic", "throw", "catch"]),
-    ("错误", &["error", "err", "result", "failure", "exception", "panic", "throw", "catch", "错误"]),
-    ("异常", &["exception", "error", "panic", "throw", "catch", "异常"]),
+    (
+        "error",
+        &[
+            "error",
+            "err",
+            "result",
+            "failure",
+            "exception",
+            "panic",
+            "throw",
+            "catch",
+        ],
+    ),
+    (
+        "错误",
+        &[
+            "error",
+            "err",
+            "result",
+            "failure",
+            "exception",
+            "panic",
+            "throw",
+            "catch",
+            "错误",
+        ],
+    ),
+    (
+        "异常",
+        &["exception", "error", "panic", "throw", "catch", "异常"],
+    ),
     // 测试
-    ("test", &["test", "spec", "mock", "stub", "assert", "expect", "verify", "validate"]),
-    ("测试", &["test", "spec", "assert", "expect", "verify", "validate", "测试"]),
+    (
+        "test",
+        &[
+            "test", "spec", "mock", "stub", "assert", "expect", "verify", "validate",
+        ],
+    ),
+    (
+        "测试",
+        &[
+            "test", "spec", "assert", "expect", "verify", "validate", "测试",
+        ],
+    ),
     // HTTP / 网络
-    ("http", &["http", "request", "response", "route", "handler", "endpoint", "api", "rest", "get", "post", "put", "delete"]),
-    ("请求", &["request", "http", "fetch", "api", "handler", "请求"]),
-    ("路由", &["route", "router", "handler", "endpoint", "path", "路由"]),
+    (
+        "http",
+        &[
+            "http", "request", "response", "route", "handler", "endpoint", "api", "rest", "get",
+            "post", "put", "delete",
+        ],
+    ),
+    (
+        "请求",
+        &["request", "http", "fetch", "api", "handler", "请求"],
+    ),
+    (
+        "路由",
+        &["route", "router", "handler", "endpoint", "path", "路由"],
+    ),
     // 数据库
-    ("database", &["db", "database", "sql", "query", "model", "schema", "migration", "repository", "dao"]),
-    ("数据库", &["db", "database", "sql", "query", "model", "schema", "migration", "数据库"]),
+    (
+        "database",
+        &[
+            "db",
+            "database",
+            "sql",
+            "query",
+            "model",
+            "schema",
+            "migration",
+            "repository",
+            "dao",
+        ],
+    ),
+    (
+        "数据库",
+        &[
+            "db",
+            "database",
+            "sql",
+            "query",
+            "model",
+            "schema",
+            "migration",
+            "数据库",
+        ],
+    ),
     // 配置
-    ("config", &["config", "setting", "option", "preference", "env", "configuration"]),
+    (
+        "config",
+        &[
+            "config",
+            "setting",
+            "option",
+            "preference",
+            "env",
+            "configuration",
+        ],
+    ),
     ("配置", &["config", "setting", "option", "env", "配置"]),
     // 认证
-    ("auth", &["auth", "login", "token", "session", "credential", "password", "jwt", "oauth"]),
-    ("认证", &["auth", "login", "token", "session", "认证", "登录"]),
+    (
+        "auth",
+        &[
+            "auth",
+            "login",
+            "token",
+            "session",
+            "credential",
+            "password",
+            "jwt",
+            "oauth",
+        ],
+    ),
+    (
+        "认证",
+        &["auth", "login", "token", "session", "认证", "登录"],
+    ),
     // 日志
-    ("log", &["log", "logger", "tracing", "debug", "info", "warn", "error", "trace"]),
+    (
+        "log",
+        &[
+            "log", "logger", "tracing", "debug", "info", "warn", "error", "trace",
+        ],
+    ),
     ("日志", &["log", "logger", "tracing", "日志"]),
     // 并发
-    ("concurrent", &["async", "await", "thread", "spawn", "parallel", "concurrent", "lock", "mutex", "channel"]),
-    ("并发", &["async", "await", "thread", "spawn", "parallel", "concurrent", "并发"]),
+    (
+        "concurrent",
+        &[
+            "async",
+            "await",
+            "thread",
+            "spawn",
+            "parallel",
+            "concurrent",
+            "lock",
+            "mutex",
+            "channel",
+        ],
+    ),
+    (
+        "并发",
+        &[
+            "async",
+            "await",
+            "thread",
+            "spawn",
+            "parallel",
+            "concurrent",
+            "并发",
+        ],
+    ),
     ("异步", &["async", "await", "future", "promise", "异步"]),
     // 序列化
-    ("serialize", &["serialize", "deserialize", "json", "encode", "decode", "parse", "format"]),
-    ("序列化", &["serialize", "json", "encode", "decode", "parse", "序列化"]),
+    (
+        "serialize",
+        &[
+            "serialize",
+            "deserialize",
+            "json",
+            "encode",
+            "decode",
+            "parse",
+            "format",
+        ],
+    ),
+    (
+        "序列化",
+        &["serialize", "json", "encode", "decode", "parse", "序列化"],
+    ),
     // 缓存
-    ("cache", &["cache", "memoize", "store", "buffer", "lru", "缓存"]),
+    (
+        "cache",
+        &["cache", "memoize", "store", "buffer", "lru", "缓存"],
+    ),
     ("缓存", &["cache", "memoize", "store", "缓存"]),
     // 构建
-    ("build", &["build", "compile", "make", "cargo", "npm", "构建", "编译"]),
+    (
+        "build",
+        &["build", "compile", "make", "cargo", "npm", "构建", "编译"],
+    ),
     ("构建", &["build", "compile", "make", "构建"]),
 ];
 
@@ -231,7 +380,10 @@ impl Bm25Index {
 
                     // BM25 TF 部分
                     let tf_norm = (tf * (BM25_K1 + 1.0))
-                        / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * doc.doc_length as f64 / self.avg_doc_length));
+                        / (tf
+                            + BM25_K1
+                                * (1.0 - BM25_B
+                                    + BM25_B * doc.doc_length as f64 / self.avg_doc_length));
 
                     score += idf * tf_norm * weight;
                     matched_terms.push((term.clone(), "semantic".to_string()));
@@ -260,16 +412,26 @@ impl Bm25Index {
             let (symbol_name, symbol_kind, line, preview, match_type) = match best_symbol {
                 Some(sym) => {
                     // 判断匹配类型
-                    let mt = if query_terms.iter().any(|(t, _)| sym.name.eq_ignore_ascii_case(t)) {
+                    let mt = if query_terms
+                        .iter()
+                        .any(|(t, _)| sym.name.eq_ignore_ascii_case(t))
+                    {
                         "exact_name"
-                    } else if query_terms.iter().any(|(t, _)| {
-                        sym.name.to_lowercase().contains(&t.to_lowercase())
-                    }) {
+                    } else if query_terms
+                        .iter()
+                        .any(|(t, _)| sym.name.to_lowercase().contains(&t.to_lowercase()))
+                    {
                         "fuzzy_name"
                     } else {
                         "semantic"
                     };
-                    (Some(sym.name.clone()), Some(sym.kind.clone()), Some(sym.line), sym.preview.clone(), mt.to_string())
+                    (
+                        Some(sym.name.clone()),
+                        Some(sym.kind.clone()),
+                        Some(sym.line),
+                        sym.preview.clone(),
+                        mt.to_string(),
+                    )
                 }
                 None => {
                     // 无符号匹配，使用文件级内容匹配
@@ -500,7 +662,15 @@ fn collect_source_files_with_language(
     }
 
     // 跳过常见非源码目录
-    let skip_dirs = ["node_modules", ".git", "target", "dist", "build", "__pycache__", ".sacode"];
+    let skip_dirs = [
+        "node_modules",
+        ".git",
+        "target",
+        "dist",
+        "build",
+        "__pycache__",
+        ".sacode",
+    ];
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
@@ -581,7 +751,11 @@ pub fn spec() -> ToolSpec {
         side_effect_level: SideEffectLevel::ReadOnly,
         approval_required: false,
         timeout_ms: Some(30_000),
-        tags: vec!["code".to_string(), "search".to_string(), "semantic".to_string()],
+        tags: vec![
+            "code".to_string(),
+            "search".to_string(),
+            "semantic".to_string(),
+        ],
     }
 }
 
@@ -621,9 +795,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     // 构建带语言信息的文件列表
     let files_with_lang: Vec<(PathBuf, String)> = source_files
         .into_iter()
-        .filter_map(|p| {
-            detect_language(&p).map(|lang| (p, lang.to_string()))
-        })
+        .filter_map(|p| detect_language(&p).map(|lang| (p, lang.to_string())))
         .collect();
 
     // 构建 BM25 索引
@@ -655,10 +827,6 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         "count": count,
         "expanded_terms": expanded_terms,
     })))
-}
-
-fn resolve_allowed_path(path: &str, access: FsAccess) -> anyhow::Result<PathBuf> {
-    crate::tools::context::current_context().resolve_path(path, access)
 }
 
 #[cfg(test)]
@@ -745,7 +913,11 @@ mod tests {
         // 高相关文件
         let auth_file = dir.path().join("auth.rs");
         let mut f = std::fs::File::create(&auth_file).unwrap();
-        writeln!(f, "pub fn authenticate_user(token: &str) -> Result<User> {{").unwrap();
+        writeln!(
+            f,
+            "pub fn authenticate_user(token: &str) -> Result<User> {{"
+        )
+        .unwrap();
         writeln!(f, "    validate_token(token)?;").unwrap();
         writeln!(f, "    Ok(User::default())").unwrap();
         writeln!(f, "}}").unwrap();

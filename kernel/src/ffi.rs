@@ -109,8 +109,7 @@ fn extract_mcp_tools(prompt: &str) -> Vec<String> {
 fn into_c_string(s: impl Into<Vec<u8>>) -> CString {
     CString::new(s).unwrap_or_else(|_| {
         // 仅在输入含内部 NUL 字节时触发，正常路径不可达
-        CString::new("error: string contains NUL byte")
-            .expect("static ASCII literal without NUL")
+        CString::new("error: string contains NUL byte").expect("static ASCII literal without NUL")
     })
 }
 

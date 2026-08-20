@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use crate::tools::context::current_context;
 use super::cache::{ast_cache, file_list_cache};
+use crate::tools::context::current_context;
 
 const DEFAULT_LIMIT: usize = 200;
 
@@ -214,12 +214,30 @@ fn import_path_candidates(current_file: &str, import: &str) -> Vec<String> {
 
     if joined.extension().is_none() {
         for ext in ["ts", "tsx", "js", "jsx", "rs", "py", "go"] {
-            candidates.insert(joined.with_extension(ext).display().to_string().replace('\\', "/"));
+            candidates.insert(
+                joined
+                    .with_extension(ext)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/"),
+            );
         }
         for ext in ["ts", "tsx", "js", "jsx"] {
-            candidates.insert(joined.join(format!("index.{}", ext)).display().to_string().replace('\\', "/"));
+            candidates.insert(
+                joined
+                    .join(format!("index.{}", ext))
+                    .display()
+                    .to_string()
+                    .replace('\\', "/"),
+            );
         }
-        candidates.insert(joined.join("mod.rs").display().to_string().replace('\\', "/"));
+        candidates.insert(
+            joined
+                .join("mod.rs")
+                .display()
+                .to_string()
+                .replace('\\', "/"),
+        );
     }
 
     candidates.into_iter().collect()
@@ -327,34 +345,64 @@ mod tests {
     fn rust_crate_prefix_maps_to_src_candidates() {
         let candidates = import_path_candidates("src/foo/mod.rs", "crate::bar::baz");
         // 应生成带 src/ 和不带的两套候选
-        assert!(candidates.iter().any(|c| c == "src/bar/baz.rs"), "应有 src/bar/baz.rs");
-        assert!(candidates.iter().any(|c| c == "src/bar/baz/mod.rs"), "应有 src/bar/baz/mod.rs");
-        assert!(candidates.iter().any(|c| c == "bar/baz.rs"), "应有 bar/baz.rs（无 src 前缀）");
-        assert!(candidates.iter().any(|c| c == "bar/baz/mod.rs"), "应有 bar/baz/mod.rs");
+        assert!(
+            candidates.iter().any(|c| c == "src/bar/baz.rs"),
+            "应有 src/bar/baz.rs"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "src/bar/baz/mod.rs"),
+            "应有 src/bar/baz/mod.rs"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "bar/baz.rs"),
+            "应有 bar/baz.rs（无 src 前缀）"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "bar/baz/mod.rs"),
+            "应有 bar/baz/mod.rs"
+        );
     }
 
     #[test]
     fn rust_super_prefix_maps_to_parent_dir() {
         // 当前文件 src/foo/mod.rs，super::bar → src/bar.rs | src/bar/mod.rs
         let candidates = import_path_candidates("src/foo/mod.rs", "super::bar");
-        assert!(candidates.iter().any(|c| c == "src/bar.rs"), "应有 src/bar.rs");
-        assert!(candidates.iter().any(|c| c == "src/bar/mod.rs"), "应有 src/bar/mod.rs");
+        assert!(
+            candidates.iter().any(|c| c == "src/bar.rs"),
+            "应有 src/bar.rs"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "src/bar/mod.rs"),
+            "应有 src/bar/mod.rs"
+        );
     }
 
     #[test]
     fn rust_double_super_maps_to_grandparent() {
         // 当前文件 src/foo/sub/mod.rs，super::super::bar → src/bar.rs
         let candidates = import_path_candidates("src/foo/sub/mod.rs", "super::super::bar");
-        assert!(candidates.iter().any(|c| c == "src/bar.rs"), "应有 src/bar.rs");
-        assert!(candidates.iter().any(|c| c == "src/bar/mod.rs"), "应有 src/bar/mod.rs");
+        assert!(
+            candidates.iter().any(|c| c == "src/bar.rs"),
+            "应有 src/bar.rs"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "src/bar/mod.rs"),
+            "应有 src/bar/mod.rs"
+        );
     }
 
     #[test]
     fn rust_self_prefix_maps_to_current_dir() {
         // 当前文件 src/foo/mod.rs，self::bar → src/foo/bar.rs
         let candidates = import_path_candidates("src/foo/mod.rs", "self::bar");
-        assert!(candidates.iter().any(|c| c == "src/foo/bar.rs"), "应有 src/foo/bar.rs");
-        assert!(candidates.iter().any(|c| c == "src/foo/bar/mod.rs"), "应有 src/foo/bar/mod.rs");
+        assert!(
+            candidates.iter().any(|c| c == "src/foo/bar.rs"),
+            "应有 src/foo/bar.rs"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "src/foo/bar/mod.rs"),
+            "应有 src/foo/bar/mod.rs"
+        );
     }
 
     #[test]
@@ -368,7 +416,13 @@ mod tests {
     fn js_relative_path_still_works() {
         // 确保原有 JS/TS 相对路径处理未被破坏
         let candidates = import_path_candidates("src/foo.ts", "./bar");
-        assert!(candidates.iter().any(|c| c == "src/bar.ts"), "应有 src/bar.ts");
-        assert!(candidates.iter().any(|c| c == "src/bar.tsx"), "应有 src/bar.tsx");
+        assert!(
+            candidates.iter().any(|c| c == "src/bar.ts"),
+            "应有 src/bar.ts"
+        );
+        assert!(
+            candidates.iter().any(|c| c == "src/bar.tsx"),
+            "应有 src/bar.tsx"
+        );
     }
 }

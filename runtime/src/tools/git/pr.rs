@@ -134,7 +134,9 @@ fn execute_create(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
 
     // 推送失败不阻断，可能分支已存在远程
     let push_warn = if !push_output.status.success() {
-        let stderr = String::from_utf8_lossy(&push_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&push_output.stderr)
+            .trim()
+            .to_string();
         Some(format!("git push warning: {}", truncate_str(&stderr, 200)))
     } else {
         None
@@ -170,7 +172,10 @@ fn execute_create(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     }
 
     // 使用 --json 输出结构化数据
-    cmd.args(["--json", "number,title,state,url,headRefName,baseRefName,isDraft"]);
+    cmd.args([
+        "--json",
+        "number,title,state,url,headRefName,baseRefName,isDraft",
+    ]);
 
     let output = cmd.output()?;
     if !output.status.success() {
@@ -188,10 +193,7 @@ fn execute_create(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     let mut summary = format!(
         "created PR #{}: {} ({})",
         pr_data.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
-        pr_data
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
+        pr_data.get("title").and_then(|v| v.as_str()).unwrap_or(""),
         pr_data.get("url").and_then(|v| v.as_str()).unwrap_or("")
     );
     if let Some(warn) = push_warn {
@@ -239,10 +241,7 @@ fn execute_status(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         .get("state")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let title = pr_data
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let title = pr_data.get("title").and_then(|v| v.as_str()).unwrap_or("");
 
     Ok(ToolOutput::success(serde_json::json!({
         "success": true,
@@ -259,7 +258,13 @@ fn execute_merge(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     };
 
     let output = Command::new("gh")
-        .args(["pr", "merge", &number.to_string(), "--merge", "--delete-branch"])
+        .args([
+            "pr",
+            "merge",
+            &number.to_string(),
+            "--merge",
+            "--delete-branch",
+        ])
         .output()?;
 
     if !output.status.success() {
@@ -299,12 +304,24 @@ fn execute_close(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     if let Some(comment) = &payload.comment {
         if !comment.trim().is_empty() {
             let comment_output = Command::new("gh")
-                .args(["pr", "comment", &number.to_string(), "--body", comment.trim()])
+                .args([
+                    "pr",
+                    "comment",
+                    &number.to_string(),
+                    "--body",
+                    comment.trim(),
+                ])
                 .output()?;
             if !comment_output.status.success() {
-                let stderr = String::from_utf8_lossy(&comment_output.stderr).trim().to_string();
+                let stderr = String::from_utf8_lossy(&comment_output.stderr)
+                    .trim()
+                    .to_string();
                 // 评论失败不阻断关闭，记录警告继续
-                tracing::warn!("failed to comment on PR #{} before close: {}", number, stderr);
+                tracing::warn!(
+                    "failed to comment on PR #{} before close: {}",
+                    number,
+                    stderr
+                );
             }
         }
     }
@@ -356,11 +373,23 @@ fn execute_reopen(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     if let Some(comment) = &payload.comment {
         if !comment.trim().is_empty() {
             let comment_output = Command::new("gh")
-                .args(["pr", "comment", &number.to_string(), "--body", comment.trim()])
+                .args([
+                    "pr",
+                    "comment",
+                    &number.to_string(),
+                    "--body",
+                    comment.trim(),
+                ])
                 .output()?;
             if !comment_output.status.success() {
-                let stderr = String::from_utf8_lossy(&comment_output.stderr).trim().to_string();
-                tracing::warn!("failed to comment on PR #{} before reopen: {}", number, stderr);
+                let stderr = String::from_utf8_lossy(&comment_output.stderr)
+                    .trim()
+                    .to_string();
+                tracing::warn!(
+                    "failed to comment on PR #{} before reopen: {}",
+                    number,
+                    stderr
+                );
             }
         }
     }
