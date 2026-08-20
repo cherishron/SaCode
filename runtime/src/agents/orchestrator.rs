@@ -102,12 +102,10 @@ pub async fn execute_role_driven_orchestration(
         &report.conflicts,
     ));
 
-    // 灵枢 · 自防护 — 冲突处置回路（受 subsystems.self_protection 开关控制）
-    if subsystems.self_protection {
-        handle_conflict_disposition(&mut report, &message_bus, workdir).await;
-    } else {
-        report.events.push(sacode_kernel::Event::thinking("自防护子系统已关闭，跳过冲突处置"));
-    }
+    // 灵枢 · 自防护 — 冲突处置回路
+    // 门控下沉至干预点（C2 贯穿）：self_protection 关闭时仍记录冲突与告警，
+    // 仅跳过 InterventionRequest 干预与修复闭环，对齐"仅记录冲突"语义。
+    handle_conflict_disposition(&mut report, &message_bus, workdir, subsystems).await;
 
     finalize_orchestration_events(&mut report, &results);
 
@@ -116,13 +114,18 @@ pub async fn execute_role_driven_orchestration(
 
 
 /// 灵枢 · 自防护 — 冲突处置回路
+///
 /// 检测到冲突后，根据严重程度采取不同处置策略：
 /// - validation_conflict（实现与验证冲突）：触发修复闭环（M1 状态机）+ 发送 InterventionRequest
 /// - 其他冲突：添加告警事件，在输出中追加处置建议
+///
+/// 门控语义（C2 贯穿）：`subsystems.self_protection` 关闭时**仍记录冲突与告警**，
+/// 仅跳过 InterventionRequest 干预与修复闭环——保证冲突可见性不随自防护关闭而丢失。
 async fn handle_conflict_disposition(
     report: &mut ExecutionReport,
     message_bus: &MessageBus,
     workdir: &std::path::Path,
+    subsystems: LoopSubsystems,
 ) {
     if report.conflict_records.is_empty() {
         return;
@@ -132,39 +135,45 @@ async fn handle_conflict_disposition(
         .iter()
         .any(|record| record.kind == "validation_conflict");
 
+    // self_protection 门控：决定 validation_conflict 是否触发修复闭环
+    let fix_loop_triggered = has_validation_conflict && subsystems.self_protection;
+
     if has_validation_conflict {
         // 最严重冲突：实现与验证冲突 → 实时干预触发修复闭环（自防护→自愈回路）
         report.events.push(sacode_kernel::Event::error(format!(
-            "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），触发修复闭环。冲突数：{}",
+            "灵枢·自防护：检测到验证冲突（实现与验证结果不一致），{}。冲突数：{}",
+            if fix_loop_triggered { "触发修复闭环" } else { "自防护已关闭，仅记录冲突" },
             report.conflict_records.len()
         )));
 
-        // 发送 InterventionRequest 到消息总线，请求 test-engineer 介入修复
-        message_bus
-            .broadcast(
-                "orchestrator",
-                super::message_bus::AgentMessageKind::InterventionRequest,
-                format!(
-                    "检测到 validation_conflict，请 test-engineer 重新运行 test.fix 修复并验证（最多 {} 轮）",
-                    crate::tools::test::autofix::MAX_FIX_ITERATIONS
-                ),
-            )
-            .await;
+        if fix_loop_triggered {
+            // 发送 InterventionRequest 到消息总线，请求 test-engineer 介入修复
+            message_bus
+                .broadcast(
+                    "orchestrator",
+                    super::message_bus::AgentMessageKind::InterventionRequest,
+                    format!(
+                        "检测到 validation_conflict，请 test-engineer 重新运行 test.fix 修复并验证（最多 {} 轮）",
+                        crate::tools::test::autofix::MAX_FIX_ITERATIONS
+                    ),
+                )
+                .await;
 
-        // 触发修复闭环：调用 test.fix 驱动一轮分析与验证（M1 状态机）
-        // 修复动作（fs.edit）由外部 LLM 工具循环完成，此处驱动状态机并记录度量
-        match dispatch_fix_loop(workdir, report).await {
-            Ok(loop_summary) => {
-                report.events.push(sacode_kernel::Event::thinking(format!(
-                    "灵枢·自修复：修复闭环驱动完成，{}",
-                    loop_summary
-                )));
-            }
-            Err(error) => {
-                report.events.push(sacode_kernel::Event::error(format!(
-                    "灵枢·自修复：修复闭环驱动失败：{}",
-                    error
-                )));
+            // 触发修复闭环：调用 test.fix 驱动一轮分析与验证（M1 状态机）
+            // 修复动作（fs.edit）由外部 LLM 工具循环完成，此处驱动状态机并记录度量
+            match dispatch_fix_loop(workdir, report).await {
+                Ok(loop_summary) => {
+                    report.events.push(sacode_kernel::Event::thinking(format!(
+                        "灵枢·自修复：修复闭环驱动完成，{}",
+                        loop_summary
+                    )));
+                }
+                Err(error) => {
+                    report.events.push(sacode_kernel::Event::error(format!(
+                        "灵枢·自修复：修复闭环驱动失败：{}",
+                        error
+                    )));
+                }
             }
         }
     } else {
@@ -189,7 +198,11 @@ async fn handle_conflict_disposition(
             conflict_summary.join("\n")
         ));
         if has_validation_conflict {
-            output.push_str("\n**处置建议**：已触发自动修复闭环（test.fix 状态机），请检查实现代码与测试结果的一致性，修复后重新验证。\n");
+            output.push_str(if fix_loop_triggered {
+                "\n**处置建议**：已触发自动修复闭环（test.fix 状态机），请检查实现代码与测试结果的一致性，修复后重新验证。\n"
+            } else {
+                "\n**处置建议**：检测到验证冲突，但自防护子系统已关闭，未触发自动修复闭环。请人工检查实现与测试结果的一致性。\n"
+            });
         } else {
             output.push_str("\n**处置建议**：请审查上方冲突详情，确认是否需要调整执行策略。\n");
         }
@@ -207,13 +220,18 @@ fn finalize_orchestration_events(report: &mut ExecutionReport, results: &[Worker
         results.len()
     )));
 }
+/// 单任务执行入口（C2 贯穿）：接受 `subsystems` 参数控制灵枢三子系统行为。
+///
+/// 调用方（CLI / SDK / 测试）可按需传入 `LoopSubsystems::default()`（全开）、
+/// `LoopSubsystems::protection_only()`（仅自防护）或 `LoopSubsystems::none()`（全关）。
 pub async fn execute_role_driven_task_run(
     context: &ExecutionContext,
     checkpoints: &CheckpointStorage,
     workdir: &std::path::Path,
     named_profile: Option<&Profile>,
+    subsystems: LoopSubsystems,
 ) -> Result<(TaskRun, sacode_kernel::AgentExecutionPlan)> {
-    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, LoopSubsystems::default()).await?;
+    let (report, plan) = execute_role_driven_orchestration(context, checkpoints, workdir, named_profile, subsystems).await?;
     let task_run = task_run_from_report(
         context.task_id.clone(),
         context.mode,
@@ -1253,6 +1271,119 @@ mod tests {
         assert!(summary
             .key_risks
             .contains(&"route_conflict: different providers".to_string()));
+    }
+
+    // ── C2 贯穿 · 自防护门控单元测试 ──────────────────────────
+
+    /// 构造含 validation_conflict 的 ExecutionReport，用于门控测试
+    fn report_with_validation_conflict() -> ExecutionReport {
+        ExecutionReport {
+            conflict_records: vec![ConflictRecord {
+                kind: "validation_conflict".to_string(),
+                summary: "实现与验证不一致".to_string(),
+                details: vec!["test-engineer 验证失败".to_string()],
+            }],
+            final_output: Some("初始输出".to_string()),
+            ..ExecutionReport::default()
+        }
+    }
+
+    /// 从事件列表中提取包含指定文本的事件数量
+    fn count_events_with(events: &[sacode_kernel::Event], needle: &str) -> usize {
+        events.iter().filter(|event| {
+            let text = match event {
+                sacode_kernel::Event::Error { message } => Some(message.as_str()),
+                sacode_kernel::Event::Thinking { content } => Some(content.as_str()),
+                sacode_kernel::Event::Message { content } => Some(content.as_str()),
+                _ => None,
+            };
+            text.map_or(false, |t| t.contains(needle))
+        }).count()
+    }
+
+    #[tokio::test]
+    async fn protection_only_skips_fix_loop_on_validation_conflict() {
+        // self_protection=false → 不触发修复闭环，仅记录冲突与告警
+        use super::{handle_conflict_disposition, MessageBus};
+        let mut report = report_with_validation_conflict();
+        let bus = MessageBus::new();
+        let workdir = std::path::Path::new(".");
+
+        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::none()).await;
+
+        // 错误事件应包含"自防护已关闭"
+        assert_eq!(
+            count_events_with(&report.events, "自防护已关闭"),
+            1,
+            "self_protection=false 时错误事件应包含'自防护已关闭'，实际事件：{:?}",
+            report.events.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>()
+        );
+
+        // 不应有修复闭环驱动事件（dispatch_fix_loop 未被调用）
+        assert_eq!(
+            count_events_with(&report.events, "修复闭环驱动"),
+            0,
+            "self_protection=false 时不应调用 dispatch_fix_loop"
+        );
+
+        // 最终输出应包含"未触发自动修复闭环"
+        assert!(
+            report.final_output.as_ref().unwrap().contains("未触发自动修复闭环"),
+            "输出应提示用户人工检查，实际：{}",
+            report.final_output.as_ref().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn default_subsystems_triggers_fix_loop_on_validation_conflict() {
+        // self_protection=true（默认）→ 触发修复闭环
+        use super::{handle_conflict_disposition, MessageBus};
+        let mut report = report_with_validation_conflict();
+        let bus = MessageBus::new();
+        let workdir = std::path::Path::new(".");
+
+        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::default()).await;
+
+        // 错误事件应包含"触发修复闭环"
+        assert_eq!(
+            count_events_with(&report.events, "触发修复闭环"),
+            1,
+            "self_protection=true 时错误事件应包含'触发修复闭环'"
+        );
+
+        // dispatch_fix_loop 被调用——无论成功失败都应有相关事件
+        let fix_events = count_events_with(&report.events, "修复闭环驱动");
+        assert!(
+            fix_events >= 1,
+            "self_protection=true 时应调用 dispatch_fix_loop 并记录事件，实际：{:?}",
+            report.events.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>()
+        );
+
+        // 最终输出应包含"已触发自动修复闭环"
+        assert!(
+            report.final_output.as_ref().unwrap().contains("已触发自动修复闭环"),
+            "输出应提示修复闭环已触发，实际：{}",
+            report.final_output.as_ref().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_conflict_skips_disposition_entirely() {
+        // 无冲突时 handle_conflict_disposition 应立即返回，不追加任何事件
+        use super::{handle_conflict_disposition, MessageBus};
+        let mut report = ExecutionReport {
+            conflict_records: Vec::new(),
+            final_output: Some("正常输出".to_string()),
+            ..ExecutionReport::default()
+        };
+        let initial_event_count = report.events.len();
+        let bus = MessageBus::new();
+        let workdir = std::path::Path::new(".");
+
+        handle_conflict_disposition(&mut report, &bus, workdir, crate::agents::loop_impl::LoopSubsystems::default()).await;
+
+        assert_eq!(report.events.len(), initial_event_count, "无冲突时不应追加事件");
+        assert_eq!(*report.final_output.as_ref().unwrap(), "正常输出", "输出不应被修改");
     }
 }
 

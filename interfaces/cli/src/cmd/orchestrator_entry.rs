@@ -205,6 +205,9 @@ async fn execute_single_agent_task(
     };
 
     // 执行任务
+    // NOTE（C2 审计）：单 Agent 路径直接调用 execute_task_with_provider，
+    // 不经过 worker.rs 的 self_healing 门控——此处天然等价于 self_healing=false。
+    // 若后续需要单 Agent failover，应改为调用 execute_task_with_failover 或引入 subsystems 参数。
     let task_run_result = execute_task_with_provider(&config, None).await;
 
     // 构建 ExecutionReport：优先取 executor 产出的完整报告（含 events、route_records）
