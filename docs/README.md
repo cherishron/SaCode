@@ -70,6 +70,7 @@
 - `plans/plan-optimization.md`：代码质量审查与问题修复计划（P0/P1/P2 优先级）
 - `plans/project-knowledge-system-plan.md`：项目级知识沉淀系统方案（注意：report-plan.md 已将其 9 文件分类合并为 3 文件）
 - `plans/project-knowledge-system-implementation-plan.md`：知识沉淀系统实施清单（参见 [project-knowledge-system-plan.md](project-knowledge-system-plan.md)）
+- `plans/event-sourcing-step2-design.md`：事件溯源第二步 — ExecutionReport 投影化实施切片（现状/目标/3 切片/风险兼容/验收口径）
 
 历史归档：
 

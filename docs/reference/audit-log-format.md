@@ -186,6 +186,14 @@ SaCode 的事件日志 `.sacode/events.log` 与审计日志类似，采用 JSON 
 | `error` | string | 错误信息（仅失败时） |
 | `reason` | string | 拒绝原因（仅 `tool_call_denied`） |
 
+### seq 字段说明（v1.1）
+
+- `seq` 自 v1.1.0 起**落盘写入**（`#[serde(default)]` 反序列化）。
+- **旧日志兼容**：v1.1.0 之前写入的 events.log 无 `seq` 字段，回放时反序列化得
+  `seq=0`，`replay_disk_after` 按**行序**（append-only 保证行序即序号序）重分配为
+  `1..=N`，保证旧日志可完整回放。
+- 磁盘回放与内存缓冲的 `seq` 一致：同一事件在内存与磁盘中序号相同（连续性保证）。
+
 ### 示例
 
 ```json
@@ -193,6 +201,14 @@ SaCode 的事件日志 `.sacode/events.log` 与审计日志类似，采用 JSON 
 {"type":"tool_call_finished","session_id":"","ts":"2026-08-19T10:00:00Z","seq":2,"tool":"fs.read","input":{"path":"src/main.rs"},"output":{"content":"..."},"success":true}
 {"type":"tool_call_denied","session_id":"","ts":"2026-08-19T10:00:00Z","seq":3,"tool":"shell.exec","input":{"command":"rm -rf /"},"reason":"dangerous command blocked"}
 ```
+
+### 投影与淘汰
+
+- 进程内内存缓冲默认 4096 条（跨会话共享），满后最旧事件被**环状淘汰**。
+- `project_session_state()`（内存投影）在淘汰发生时结果静默偏低，`truncated` 字段
+  置 `true` 显式暴露该状态。
+- `project_session_state_complete()`（磁盘全量 + 内存增量合并投影）不受缓冲淘汰
+  影响，`truncated` 恒为 `false`，用于需要全量精确统计的场合（如会话结束汇总）。
 
 ### SIEM 接入
 

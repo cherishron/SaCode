@@ -41,6 +41,45 @@
 - TUI 断言 `contains("...running")` 恢复为真实状态渲染
 ---
 
+## [1.1.0] - 2026-08-20
+
+### 新增
+
+- **v1.1 稳定化**：编译器 10 条 warning 清零，预提交钩子升级为 fmt → clippy → build → test 全关卡
+
+- **C1 远程路径映射层**
+  - `ExecutionContext::resolve_path` trait 方法，LocalContext / RemoteContext 分别实现
+  - 14 个 FS 工具调用点从 `resolve_allowed_path` 迁移到 `current_context().resolve_path()`
+  - RemoteContext `read_bytes` 二进制安全（base64 编码传输）
+
+- **C2 LoopSubsystems 贯穿**：自防护门控下沉至干预点，修复闭环受 `self_protection` 控制
+
+- **C3 事件流投影收尾**（`SessionEventLog`）
+  - `seq` 字段落盘（`#[serde(default)]`），旧 events.log 可兼容回放
+  - `replay_disk_after(last_seq)`：磁盘 JSON 行回放，旧日志按行序重建 seq
+  - `project_session_state_complete()`：磁盘全量 + 内存增量合并投影
+  - `SessionStateProjection.truncated` 标志暴露缓冲环状淘汰状态
+  - `new_with_path()` 构造器支持注入落盘路径（测试隔离，消除 `.sacode/events.log` 污染）
+  - 测试：磁盘回放 seq 连续性 / 旧日志兼容 / 投影幂等（内存+磁盘）/ 淘汰恢复
+
+- **§3.2 拦截器补缺**（Retry 重试闭环 + 异步拦截器基建）
+  - `execute_with_ctx` 重试循环：执行失败且有 Retry 决策时按 `max_attempts` 重试（上限 `MAX_RETRY_ATTEMPTS = 3`）
+  - 每轮重试重跑完整 pre/post 链（审计完整），成功时 Retry 决策等价 Keep（默认行为零变化）
+  - `AsyncToolInterceptor` trait + `BoxFuture`（手写，零 async_trait 依赖）
+  - `SyncInterceptorAsAsync` 适配器：既有同步链逻辑可被异步入口复用
+  - `execute_with_ctx_async`：同步链先跑 + 异步链后跑，Retry 在 async 入口生效
+  - 测试：Retry 直到成功 / 超限返回失败 / 成功忽略 Retry / Deny 不重试 / 异步 Deny 阻断 / 异步 Allow 放行 / 同步+异步链顺序 / async 入口 Retry / 同步入口忽略异步链
+
+### 变更
+
+- `SessionEventLog::new()` 内部结构调整：增加 `evicted_total` 计数与 `new_with_path` 构造器（原签名不变）
+- `record()` 落盘 double-lock 修复：一次 lock 取 path clone 后立即释放，消除 TOCTOU 窗口
+
+### 修复
+
+- `record()` 内存缓冲环状淘汰时 `evicted_total` 未递增
+- `project_session_state()` 静默偏低问题：新增 `truncated` 标志显式暴露淘汰状态
+
 ## [1.0.0] - 2026-08-19
 
 ### 新增

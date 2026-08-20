@@ -1,7 +1,7 @@
 # SaCode 产品路线图
 
-> 更新时间：2026-08-19
-> 当前版本：1.0.0
+> 更新时间：2026-08-20
+> 当前版本：1.1.0
 > 配套文档：`docs/product/PRD.md`、`docs/report.md`、`docs/report-plan.md`
 
 本文件只回答三件事：当前处在哪个阶段、下一阶段交付什么、后续能力按什么顺序演进。
@@ -112,6 +112,20 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 2. ✅ 多模态产品化 — `media.vision` 超时/降级/缓存/错误分类加固；新增 `media.video` 视频帧提取（详见 `runtime/src/tools/media/`）
 3. ✅ Agent 协作协议 — 结构化消息协议 + 双向通信 + 实时干预 + 动态角色（详见 `runtime/src/agents/message_bus.rs`、`worker.rs`、`orchestrator.rs`、`role_registry.rs`）
 4. ✅ 学习型记忆 — `AutoLearner` 自动学习回路 + BM25 搜索 + 记忆衰减 + SQLite 双写（详见 `runtime/src/memory/learner.rs`、`mod.rs`、`runtime/src/store/db.rs`）
+
+### v1.1：稳定化与事件流收口 ✅ 已发布（1.1.0）
+
+目标：工程稳定性 + 事件流投影 + 拦截器补缺，为 v1.2 体验闭环提供可信地基。
+
+重点交付（实施顺序 C1→C2→C3→B，详见 docs/report-plan.md）：
+
+1. ✅ 远程路径映射层 — `ExecutionContext::resolve_path` trait 方法，LocalContext / RemoteContext 分别实现；14 个 FS 工具调用点迁移（详见 `runtime/src/tools/context_remote.rs`、`runtime/src/tools/fs/`）
+2. ✅ LoopSubsystems 贯穿 — 自防护门控下沉至干预点，修复闭环受 `self_protection` 控制（详见 `runtime/src/agents/loop_impl.rs`）
+3. ✅ 事件流投影收尾 — `seq` 落盘 + 旧日志兼容回放 + `project_session_state_complete` 磁盘/内存合并投影 + `truncated` 淘汰标志（详见 `runtime/src/session/event_log.rs`、`docs/plans/event-sourcing-step2-design.md`）
+4. ✅ 拦截器补缺 — Retry 重试闭环（`MAX_RETRY_ATTEMPTS=3` 钳制）+ 异步拦截器基建（`AsyncToolInterceptor` / `SyncInterceptorAsAsync` / `execute_with_ctx_async`，零 async_trait 依赖）（详见 `runtime/src/tools/interceptor.rs`、`runtime/src/tools/mod.rs`）
+5. ✅ 工程稳定化 — 编译器 warning 清零、预提交钩子 fmt → clippy → build → test 全关卡（详见 `.githooks/pre-commit`）
+
+> **状态说明**：v1.1.0 已发布（`Cargo.toml` / `npm-package/package.json` / platform manifest 均已同步）。测试基线：runtime lib 571 passed（原 558 + 新增 13）/ cli 207 passed / build 0 error 0 warning。
 
 ### v1.2+：体验闭环与简化（2026-08-18 启动，详见 docs/report-plan.md）
 

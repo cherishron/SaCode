@@ -22,7 +22,10 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::model_routing::TaskProfile;
 
-use interceptor::{InterceptContext, PostExecuteDecision, PreExecuteDecision, ToolInterceptor};
+use interceptor::{
+    AsyncToolInterceptor, InterceptContext, PostExecuteDecision, PreExecuteDecision,
+    ToolInterceptor,
+};
 
 pub trait ToolExecutor: Send + Sync {
     fn execute(&self, input: serde_json::Value) -> anyhow::Result<ToolOutput>;
@@ -67,6 +70,8 @@ pub struct ToolRegistry {
     tools: Arc<HashMap<String, RegisteredTool>>,
     /// 工具执行拦截器链（pre_execute / post_execute 顺序执行）
     interceptors: Arc<Vec<Arc<dyn ToolInterceptor>>>,
+    /// 异步工具执行拦截器链（仅 `execute_with_ctx_async` 入口运行）
+    async_interceptors: Arc<Vec<Arc<dyn AsyncToolInterceptor>>>,
 }
 
 impl ToolRegistry {
@@ -76,6 +81,16 @@ impl ToolRegistry {
         let mut chain = (*self.interceptors).clone();
         chain.push(interceptor);
         self.interceptors = Arc::new(chain);
+    }
+
+    /// 注册一个异步工具执行拦截器（追加到异步链尾）
+    ///
+    /// 异步链仅经 [`Self::execute_with_ctx_async`] 入口运行；同步 `execute_with_ctx`
+    /// 不执行异步链（调用方需按需迁移 async 入口）。
+    pub fn register_async_interceptor(&mut self, interceptor: Arc<dyn AsyncToolInterceptor>) {
+        let mut chain = (*self.async_interceptors).clone();
+        chain.push(interceptor);
+        self.async_interceptors = Arc::new(chain);
     }
 
     /// 用默认拦截器链初始化（等价于原 `sandbox_guard` 行为）
@@ -380,6 +395,15 @@ impl ToolRegistry {
     /// 2. 执行工具 executor（使用最终 input）
     /// 3. `post_execute` 链顺序执行（审计 result、事件发布、结果改写）
     ///    - `Transform` 改写返回给调用方的 output
+    ///    - `Retry` 仅在执行**失败**时生效：按 `max_attempts`（上限 [`Self::MAX_RETRY_ATTEMPTS`]）
+    ///      重试工具调用；执行成功时 Retry 等价于 Keep
+    ///
+    /// 重试语义：
+    /// - 每轮重试各执行一次完整 `post_execute` 链（保证审计完整），重试前重跑
+    ///   `pre_execute` 链（供策略/审批拦截器逐轮裁决）
+    /// - 每轮真实执行各发一对 ToolCallStarted/Finished 事件（审计语义：
+    ///   每次真实执行都要记录），投影计数含重试
+    /// - 默认拦截器链无人返回 Retry → 重试循环不激活，默认行为零变化
     ///
     /// 默认拦截器链等价于原 `sandbox_guard::preflight` + `audit_execution_result` 行为，
     /// 额外把工具调用事件发布到持久化 `SessionEventLog`（§3.1 事件流投影第一步）。
@@ -394,53 +418,205 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
 
-        // ── pre_execute 链 ──
-        let mut effective_input = input.clone();
-        let mut deny_reason: Option<String> = None;
-        for interceptor in self.interceptors.iter() {
-            match interceptor.pre_execute(&tool.spec, &effective_input, ctx) {
-                PreExecuteDecision::Allow => {}
-                PreExecuteDecision::Deny { reason } => {
-                    deny_reason = Some(reason);
-                    break;
-                }
-                PreExecuteDecision::Modify { new_input } => {
-                    effective_input = new_input;
-                }
-            }
-        }
-
-        // ── post_execute 链（无论 pre 是否 Deny、exec 是否成功都执行，保证审计完整）──
-        let exec_result = match &deny_reason {
-            Some(reason) => Err(anyhow::anyhow!(reason.clone())),
-            None => tool.executor.execute(effective_input.clone()),
-        };
-
-        let mut final_output: Option<ToolOutput> = None;
-        let mut final_error: Option<String> = None;
-        match &exec_result {
-            Ok(output) => final_output = Some(output.clone()),
-            Err(error) => final_error = Some(error.to_string()),
-        }
-
-        for interceptor in self.interceptors.iter() {
-            match interceptor.post_execute(
-                &tool.spec,
-                &effective_input,
-                final_output.as_ref(),
-                final_error.as_deref(),
-                ctx,
-            ) {
-                PostExecuteDecision::Keep => {}
-                // 重试策略留作第二步（v1.2 异步拦截器），本期等价于 Keep
-                PostExecuteDecision::Retry { .. } => {}
-                PostExecuteDecision::Transform { new_output } => {
-                    final_output = Some(new_output);
+        // 单次尝试：pre_execute 链 → 执行 → post_execute 链。
+        // 返回 (exec_result, retry_max) —— retry_max 由 post_execute 链的
+        // Retry 决策提供（仅在执行失败时有效）。
+        fn run_attempt(
+            interceptors: &[Arc<dyn ToolInterceptor>],
+            tool: &RegisteredTool,
+            input: &serde_json::Value,
+            ctx: &InterceptContext,
+        ) -> (anyhow::Result<ToolOutput>, Option<usize>) {
+            // ── pre_execute 链 ──
+            let mut effective_input = input.clone();
+            let mut deny_reason: Option<String> = None;
+            for interceptor in interceptors.iter() {
+                match interceptor.pre_execute(&tool.spec, &effective_input, ctx) {
+                    PreExecuteDecision::Allow => {}
+                    PreExecuteDecision::Deny { reason } => {
+                        deny_reason = Some(reason);
+                        break;
+                    }
+                    PreExecuteDecision::Modify { new_input } => {
+                        effective_input = new_input;
+                    }
                 }
             }
+
+            let exec_result = match &deny_reason {
+                Some(reason) => Err(anyhow::anyhow!(reason.clone())),
+                None => tool.executor.execute(effective_input.clone()),
+            };
+
+            let mut final_output: Option<ToolOutput> = None;
+            let mut final_error: Option<String> = None;
+            match &exec_result {
+                Ok(output) => final_output = Some(output.clone()),
+                Err(error) => final_error = Some(error.to_string()),
+            }
+
+            let mut retry_max: Option<usize> = None;
+            for interceptor in interceptors.iter() {
+                match interceptor.post_execute(
+                    &tool.spec,
+                    &effective_input,
+                    final_output.as_ref(),
+                    final_error.as_deref(),
+                    ctx,
+                ) {
+                    PostExecuteDecision::Keep => {}
+                    // Retry 仅在执行失败时生效（成功时等价 Keep）。
+                    // max_attempts 建议值来自拦截器，最终以本方法钳制为准。
+                    PostExecuteDecision::Retry { max_attempts } => {
+                        if exec_result.is_err() {
+                            retry_max =
+                                Some(retry_max.map_or(max_attempts, |a| a.min(max_attempts)));
+                        }
+                    }
+                    PostExecuteDecision::Transform { new_output } => {
+                        final_output = Some(new_output);
+                    }
+                }
+            }
+
+            (exec_result, retry_max)
         }
 
-        exec_result
+        // ── 重试循环 ──
+        // 第 1 次为常规执行；若失败且存在 Retry 决策，则按 max_attempts 重试。
+        let mut attempt = 0usize;
+        loop {
+            let (result, retry_max) = run_attempt(&self.interceptors, tool, &input, ctx);
+            let succeeded = result.is_ok();
+
+            if succeeded {
+                return result;
+            }
+
+            // 执行失败：看是否有 Retry 决策且未超过上限
+            let max = retry_max.unwrap_or(0).min(Self::MAX_RETRY_ATTEMPTS);
+            attempt += 1;
+            if attempt >= max {
+                return result;
+            }
+            // 继续循环：重跑 pre_execute 链 + 执行 + post_execute 链
+        }
+    }
+
+    /// Retry 重试次数的全局上限（钳制），防止拦截器返回超大 max_attempts 造成长循环
+    pub const MAX_RETRY_ATTEMPTS: usize = 3;
+
+    /// 异步拦截器入口的工具执行（走 §3.2 异步拦截器链）
+    ///
+    /// 语义与 [`Self::execute_with_ctx`] 相同（pre 链 → 执行 → post 链 → Retry 循环），
+    /// 但 `pre_execute` / `post_execute` 允许 await（异步拦截器）。
+    ///
+    /// 执行顺序：**同步链先跑，异步链后跑**（同步链为既有默认拦截器，保证审计/
+    /// 事件发布与同步入口一致；异步链追加策略/审批裁决）。工具 executor 本身
+    /// 仍同步调用（不异步化工具）。
+    ///
+    /// 同步 `execute_with_ctx` 不跑异步链；需要异步拦截器的调用方应迁移到本入口。
+    pub async fn execute_with_ctx_async(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+        ctx: &InterceptContext,
+    ) -> anyhow::Result<ToolOutput> {
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
+
+        // 合并链：同步拦截器包成 SyncInterceptorAsAsync 前置，异步拦截器后置
+        // （同步链语义与 execute_with_ctx 完全一致）
+        let sync_as_async: Vec<Arc<dyn AsyncToolInterceptor>> = self
+            .interceptors
+            .iter()
+            .map(|i| {
+                Arc::new(interceptor::SyncInterceptorAsAsync::new(i.clone()))
+                    as Arc<dyn AsyncToolInterceptor>
+            })
+            .collect();
+        let mut chain = sync_as_async;
+        chain.extend(self.async_interceptors.iter().cloned());
+
+        async fn run_attempt_async(
+            chain: &[Arc<dyn AsyncToolInterceptor>],
+            tool: &RegisteredTool,
+            input: &serde_json::Value,
+            ctx: &InterceptContext,
+        ) -> (anyhow::Result<ToolOutput>, Option<usize>) {
+            // ── pre_execute 链（异步）──
+            let mut effective_input = input.clone();
+            let mut deny_reason: Option<String> = None;
+            for interceptor in chain.iter() {
+                let decision = interceptor
+                    .pre_execute(&tool.spec, &effective_input, ctx)
+                    .await;
+                match decision {
+                    PreExecuteDecision::Allow => {}
+                    PreExecuteDecision::Deny { reason } => {
+                        deny_reason = Some(reason);
+                        break;
+                    }
+                    PreExecuteDecision::Modify { new_input } => {
+                        effective_input = new_input;
+                    }
+                }
+            }
+
+            let exec_result = match &deny_reason {
+                Some(reason) => Err(anyhow::anyhow!(reason.clone())),
+                None => tool.executor.execute(effective_input.clone()),
+            };
+
+            let mut final_output: Option<ToolOutput> = None;
+            let mut final_error: Option<String> = None;
+            match &exec_result {
+                Ok(output) => final_output = Some(output.clone()),
+                Err(error) => final_error = Some(error.to_string()),
+            }
+
+            let mut retry_max: Option<usize> = None;
+            for interceptor in chain.iter() {
+                let decision = interceptor
+                    .post_execute(
+                        &tool.spec,
+                        &effective_input,
+                        final_output.as_ref(),
+                        final_error.as_deref(),
+                        ctx,
+                    )
+                    .await;
+                match decision {
+                    PostExecuteDecision::Keep => {}
+                    PostExecuteDecision::Retry { max_attempts } => {
+                        if exec_result.is_err() {
+                            retry_max =
+                                Some(retry_max.map_or(max_attempts, |a| a.min(max_attempts)));
+                        }
+                    }
+                    PostExecuteDecision::Transform { new_output } => {
+                        final_output = Some(new_output);
+                    }
+                }
+            }
+
+            (exec_result, retry_max)
+        }
+
+        let mut attempt = 0usize;
+        loop {
+            let (result, retry_max) = run_attempt_async(&chain, tool, &input, ctx).await;
+            if result.is_ok() {
+                return result;
+            }
+            let max = retry_max.unwrap_or(0).min(Self::MAX_RETRY_ATTEMPTS);
+            attempt += 1;
+            if attempt >= max {
+                return result;
+            }
+        }
     }
 
     // ── 灵枢 · 上下文优化 ──────────────────────────────────────────
@@ -600,7 +776,9 @@ fn estimate_spec_chars(spec: &ToolSpec) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::interceptor::BoxFuture;
     use super::*;
+    use serde_json::Value;
 
     /// builtin_with_wasm 在无 .sacode/plugins 目录时等价于 builtin
     /// 验证 WASM 注册失败不阻断主流程
@@ -805,5 +983,400 @@ mod tests {
             .interceptors
             .len();
         assert_eq!(len, default_len, "非数组 interceptors 不应追加任何拦截器");
+    }
+
+    // ── §3.2 补缺：Retry 重试闭环 ───────────────────────────────────
+
+    /// 固定返回 Ok 的测试 executor
+    fn ok_executor() -> Arc<dyn ToolExecutor> {
+        struct OkExec;
+        impl ToolExecutor for OkExec {
+            fn execute(&self, _input: serde_json::Value) -> anyhow::Result<ToolOutput> {
+                Ok(ToolOutput {
+                    success: true,
+                    data: serde_json::json!({"result": "ok"}),
+                    message: None,
+                })
+            }
+        }
+        Arc::new(OkExec)
+    }
+
+    /// 固定返回 Err 的测试 executor
+    fn err_executor() -> Arc<dyn ToolExecutor> {
+        struct ErrExec;
+        impl ToolExecutor for ErrExec {
+            fn execute(&self, _input: serde_json::Value) -> anyhow::Result<ToolOutput> {
+                anyhow::bail!("executor boom")
+            }
+        }
+        Arc::new(ErrExec)
+    }
+
+    /// 计数型 executor：记录调用次数，可配置前 N 次失败后成功
+    fn counting_executor(attempts_to_success: usize) -> Arc<dyn ToolExecutor> {
+        struct CountingExec {
+            attempts_to_success: usize,
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        impl ToolExecutor for CountingExec {
+            fn execute(&self, _input: serde_json::Value) -> anyhow::Result<ToolOutput> {
+                let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                if n <= self.attempts_to_success {
+                    anyhow::bail!("transient failure #{n}")
+                } else {
+                    Ok(ToolOutput {
+                        success: true,
+                        data: serde_json::json!({"n": n}),
+                        message: None,
+                    })
+                }
+            }
+        }
+        Arc::new(CountingExec {
+            attempts_to_success,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn retry_spec(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.to_string(),
+            description: name.to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!({}),
+            side_effect_level: SideEffectLevel::ReadOnly,
+            approval_required: false,
+            timeout_ms: None,
+            tags: Vec::new(),
+        }
+    }
+
+    /// Retry 决策拦截器：exec 失败时请求重试（max_attempts 可配）
+    fn retry_interceptor(max_attempts: usize) -> Arc<dyn ToolInterceptor> {
+        struct RetryInterceptor {
+            max_attempts: usize,
+        }
+        impl ToolInterceptor for RetryInterceptor {
+            fn pre_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _ctx: &InterceptContext,
+            ) -> PreExecuteDecision {
+                PreExecuteDecision::Allow
+            }
+            fn post_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _output: Option<&ToolOutput>,
+                _error: Option<&str>,
+                _ctx: &InterceptContext,
+            ) -> PostExecuteDecision {
+                if _output.is_none() {
+                    // 执行失败 → 请求重试
+                    PostExecuteDecision::Retry {
+                        max_attempts: self.max_attempts,
+                    }
+                } else {
+                    PostExecuteDecision::Keep
+                }
+            }
+            fn name(&self) -> &'static str {
+                "test-retry"
+            }
+        }
+        Arc::new(RetryInterceptor { max_attempts })
+    }
+
+    /// Retry 在 exec 失败时重试，成功后返回（且每轮真实执行都调用 executor）
+    #[test]
+    fn retry_loop_retries_until_success() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.retry"), counting_executor(2));
+        registry.register_interceptor(retry_interceptor(5)); // 请求 5 次，受 MAX_RETRY_ATTEMPTS=3 钳制
+
+        let out = registry
+            .execute_with_ctx(
+                "t.retry",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .expect("retry should eventually succeed");
+        // 前 2 次失败 + 第 3 次成功 = 3 次调用（<= MAX_RETRY_ATTEMPTS=3）
+        assert!(out.success);
+        assert_eq!(out.data["n"], 3);
+    }
+
+    /// Retry 超过 MAX_RETRY_ATTEMPTS 后返回最后一次失败错误
+    #[test]
+    fn retry_loop_bails_after_max_attempts() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.exhaust"), err_executor());
+        registry.register_interceptor(retry_interceptor(10)); // 请求 10 次
+
+        let err = registry
+            .execute_with_ctx(
+                "t.exhaust",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .expect_err("should fail after exhausting retries");
+        assert!(err.to_string().contains("boom"), "got: {err}");
+    }
+
+    /// 执行成功时 Retry 决策等价于 Keep（不触发重试）
+    #[test]
+    fn retry_decision_ignored_when_success() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.keep"), ok_executor());
+        registry.register_interceptor(retry_interceptor(5));
+
+        let out = registry
+            .execute_with_ctx(
+                "t.keep",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .expect("success should pass through");
+        assert!(out.success);
+        assert_eq!(out.data["result"], "ok");
+    }
+
+    /// Deny 不触发重试（pre_execute 拒绝即终态）
+    #[test]
+    fn deny_does_not_retry() {
+        struct DenyInterceptor;
+        impl ToolInterceptor for DenyInterceptor {
+            fn pre_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _ctx: &InterceptContext,
+            ) -> PreExecuteDecision {
+                PreExecuteDecision::Deny {
+                    reason: "blocked by policy".to_string(),
+                }
+            }
+            fn post_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _output: Option<&ToolOutput>,
+                _error: Option<&str>,
+                _ctx: &InterceptContext,
+            ) -> PostExecuteDecision {
+                PostExecuteDecision::Keep
+            }
+            fn name(&self) -> &'static str {
+                "test-deny"
+            }
+        }
+
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.deny"), err_executor());
+        registry.register_interceptor(Arc::new(DenyInterceptor));
+        registry.register_interceptor(retry_interceptor(5));
+
+        let err = registry
+            .execute_with_ctx(
+                "t.deny",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .expect_err("deny should short-circuit");
+        assert!(err.to_string().contains("blocked"), "got: {err}");
+    }
+
+    // ── §3.2 补缺：异步拦截器 ───────────────────────────────────────
+
+    /// 测试用异步拦截器：pre_execute 裁决可配（Allow / Deny）
+    fn async_deny_interceptor() -> Arc<dyn AsyncToolInterceptor> {
+        struct AsyncDeny;
+        impl AsyncToolInterceptor for AsyncDeny {
+            fn pre_execute<'a>(
+                &'a self,
+                _spec: &'a ToolSpec,
+                _input: &'a Value,
+                _ctx: &'a InterceptContext,
+            ) -> BoxFuture<'a, PreExecuteDecision> {
+                Box::pin(async {
+                    PreExecuteDecision::Deny {
+                        reason: "async policy blocked".to_string(),
+                    }
+                })
+            }
+            fn name(&self) -> &'static str {
+                "async-deny"
+            }
+        }
+        Arc::new(AsyncDeny)
+    }
+
+    fn async_allow_interceptor() -> Arc<dyn AsyncToolInterceptor> {
+        struct AsyncAllow;
+        impl AsyncToolInterceptor for AsyncAllow {
+            fn pre_execute<'a>(
+                &'a self,
+                _spec: &'a ToolSpec,
+                _input: &'a Value,
+                _ctx: &'a InterceptContext,
+            ) -> BoxFuture<'a, PreExecuteDecision> {
+                Box::pin(async { PreExecuteDecision::Allow })
+            }
+            fn name(&self) -> &'static str {
+                "async-allow"
+            }
+        }
+        Arc::new(AsyncAllow)
+    }
+
+    /// 记录 pre/post 顺序的同步拦截器（验证同步+异步链顺序）
+    fn order_tracking_interceptor(
+        order: Arc<std::sync::Mutex<Vec<String>>>,
+        tag: &'static str,
+    ) -> Arc<dyn ToolInterceptor> {
+        struct OrderTracking {
+            order: Arc<std::sync::Mutex<Vec<String>>>,
+            tag: &'static str,
+        }
+        impl ToolInterceptor for OrderTracking {
+            fn pre_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _ctx: &InterceptContext,
+            ) -> PreExecuteDecision {
+                self.order
+                    .lock()
+                    .expect("order lock")
+                    .push(format!("pre:{}", self.tag));
+                PreExecuteDecision::Allow
+            }
+            fn post_execute(
+                &self,
+                _spec: &ToolSpec,
+                _input: &Value,
+                _output: Option<&ToolOutput>,
+                _error: Option<&str>,
+                _ctx: &InterceptContext,
+            ) -> PostExecuteDecision {
+                self.order
+                    .lock()
+                    .expect("order lock")
+                    .push(format!("post:{}", self.tag));
+                PostExecuteDecision::Keep
+            }
+            fn name(&self) -> &'static str {
+                "order-tracking"
+            }
+        }
+        Arc::new(OrderTracking { order, tag })
+    }
+
+    /// 异步 Deny 阻断执行（异步入口）
+    #[tokio::test]
+    async fn async_deny_blocks_execution() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.async-deny"), ok_executor());
+        registry.register_async_interceptor(async_deny_interceptor());
+
+        let err = registry
+            .execute_with_ctx_async(
+                "t.async-deny",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .await
+            .expect_err("async deny should block");
+        assert!(
+            err.to_string().contains("async policy blocked"),
+            "got: {err}"
+        );
+    }
+
+    /// 异步 Allow 放行（异步入口）
+    #[tokio::test]
+    async fn async_allow_passes_through() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.async-allow"), ok_executor());
+        registry.register_async_interceptor(async_allow_interceptor());
+
+        let out = registry
+            .execute_with_ctx_async(
+                "t.async-allow",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .await
+            .expect("async allow should pass");
+        assert!(out.success);
+    }
+
+    /// 同步+异步链顺序：同步链先跑（pre 顺序、post 顺序均保持），异步链后跑
+    #[tokio::test]
+    async fn sync_then_async_chain_order() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.order"), ok_executor());
+        registry.register_interceptor(order_tracking_interceptor(order.clone(), "sync1"));
+        registry.register_interceptor(order_tracking_interceptor(order.clone(), "sync2"));
+        registry.register_async_interceptor(async_allow_interceptor()); // 无 pre 记录，纯放行
+
+        let out = registry
+            .execute_with_ctx_async(
+                "t.order",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .await
+            .expect("order chain should pass");
+        assert!(out.success);
+
+        let seq = order.lock().expect("order lock");
+        // 同步链 pre 顺序执行：pre:sync1 → pre:sync2 → (exec) → post:sync1 → post:sync2
+        assert_eq!(
+            seq.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            vec!["pre:sync1", "pre:sync2", "post:sync1", "post:sync2"]
+        );
+    }
+
+    /// Retry 在 async 入口生效（异步链内 SyncInterceptorAsAsync 包装的 Retry 拦截器）
+    #[tokio::test]
+    async fn retry_loop_active_in_async_entry() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.async-retry"), counting_executor(1));
+        // 同步 Retry 拦截器经 SyncInterceptorAsAsync 包装进异步链
+        registry.register_interceptor(retry_interceptor(3));
+
+        let out = registry
+            .execute_with_ctx_async(
+                "t.async-retry",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .await
+            .expect("async retry should eventually succeed");
+        assert!(out.success);
+        assert_eq!(out.data["n"], 2, "1 次失败 + 1 次成功 = 2 次调用");
+    }
+
+    /// 同步入口不跑异步链：异步 Deny 在 execute_with_ctx 下不生效（工具照常执行）
+    #[test]
+    fn sync_entry_ignores_async_interceptors() {
+        let mut registry = ToolRegistry::default();
+        registry.register(retry_spec("t.sync-only"), ok_executor());
+        registry.register_async_interceptor(async_deny_interceptor());
+
+        // 同步入口：异步拦截器不运行，执行成功
+        let out = registry
+            .execute_with_ctx(
+                "t.sync-only",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .expect("sync entry should ignore async interceptors");
+        assert!(out.success);
     }
 }

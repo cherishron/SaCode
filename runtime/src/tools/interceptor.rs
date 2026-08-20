@@ -9,13 +9,24 @@
 //! 而无需修改工具代码本身。
 //!
 //! 设计约束（Rust 静态分发 + 灵枢既有优势不削弱）：
-//! - 拦截器为同步 trait（`Send + Sync`），保留与原 `preflight` 一致的执行语义。
-//! - 异步拦截器（人工审批 UI、远程策略服务）留作第二步（v1.2），本期不做。
+//! - 同步拦截器 [`ToolInterceptor`] 为同步 trait（`Send + Sync`），保留与原
+//!   `preflight` 一致的执行语义（热路径零开销）。
+//! - 异步拦截器 [`AsyncToolInterceptor`] 为 `pre_execute` / `post_execute` 返回
+//!   手写 `BoxFuture`（不用 async_trait crate，零新依赖），供人工审批 UI、
+//!   远程策略服务等需要异步 I/O 的场景挂载。异步链仅经
+//!   [`crate::tools::ToolRegistry::execute_with_ctx_async`] 入口运行。
+//! - [`SyncInterceptorAsAsync`] 适配器把同步拦截器包装进异步链，使既有同步链
+//!   逻辑可被异步入口复用（顺序保持）。
 //! - 默认注册的拦截器组合必须等价于原 `sandbox_guard` 行为，保证向后兼容。
 
 use serde_json::Value;
 
 use super::{SideEffectLevel, ToolOutput, ToolSpec};
+
+/// 异步 future 的 boxed 形式（手写，零 async_trait 依赖）
+///
+/// 生命周期参数 `'a` 允许借用在调用栈上构造的 `ToolSpec` / `Value` / `InterceptContext`。
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 /// 单次工具调用的执行上下文
 ///
@@ -93,4 +104,83 @@ pub trait ToolInterceptor: Send + Sync {
 /// 与原 `sandbox_guard::should_audit` 语义一致：仅 `Modify` 级工具强制审计。
 pub fn should_audit(spec: &ToolSpec) -> bool {
     matches!(spec.side_effect_level, SideEffectLevel::Modify)
+}
+
+/// 异步工具执行拦截器
+///
+/// 与同步 [`ToolInterceptor`] 共用 [`PreExecuteDecision`] / [`PostExecuteDecision`] 裁决类型，
+/// 但 `pre_execute` / `post_execute` 返回 `BoxFuture`（可 await 异步 I/O）。
+///
+/// 使用场景：人工审批 UI、远程策略服务、需要网络 RTT 的决策逻辑。
+/// 仅经 [`crate::tools::ToolRegistry::execute_with_ctx_async`] 入口运行；
+/// 同步 `execute_with_ctx` 不跑异步链（调用方需按需迁移 async 入口）。
+pub trait AsyncToolInterceptor: Send + Sync {
+    /// 执行前拦截（异步）。默认放行。
+    fn pre_execute<'a>(
+        &'a self,
+        _spec: &'a ToolSpec,
+        _input: &'a Value,
+        _ctx: &'a InterceptContext,
+    ) -> BoxFuture<'a, PreExecuteDecision> {
+        Box::pin(async { PreExecuteDecision::Allow })
+    }
+
+    /// 执行后拦截（异步）。默认 Keep。
+    fn post_execute<'a>(
+        &'a self,
+        _spec: &'a ToolSpec,
+        _input: &'a Value,
+        _output: Option<&'a ToolOutput>,
+        _error: Option<&'a str>,
+        _ctx: &'a InterceptContext,
+    ) -> BoxFuture<'a, PostExecuteDecision> {
+        Box::pin(async { PostExecuteDecision::Keep })
+    }
+
+    /// 拦截器名称，用于审计日志与调试
+    fn name(&self) -> &'static str;
+}
+
+/// 同步拦截器 → 异步链适配器
+///
+/// 把实现 [`ToolInterceptor`] 的同步拦截器包装进异步链，使既有同步链逻辑
+/// （默认拦截器、Profile 挂载等）可在 `execute_with_ctx_async` 入口复用，
+/// 且**不改变**其同步语义（内部仍同步调用，仅外壳 async）。
+pub struct SyncInterceptorAsAsync {
+    inner: std::sync::Arc<dyn ToolInterceptor>,
+}
+
+impl SyncInterceptorAsAsync {
+    /// 从同步拦截器构造异步适配器
+    pub fn new(inner: std::sync::Arc<dyn ToolInterceptor>) -> Self {
+        Self { inner }
+    }
+}
+
+impl AsyncToolInterceptor for SyncInterceptorAsAsync {
+    fn pre_execute<'a>(
+        &'a self,
+        spec: &'a ToolSpec,
+        input: &'a Value,
+        ctx: &'a InterceptContext,
+    ) -> BoxFuture<'a, PreExecuteDecision> {
+        let decision = self.inner.pre_execute(spec, input, ctx);
+        Box::pin(async move { decision })
+    }
+
+    fn post_execute<'a>(
+        &'a self,
+        spec: &'a ToolSpec,
+        input: &'a Value,
+        output: Option<&'a ToolOutput>,
+        error: Option<&'a str>,
+        ctx: &'a InterceptContext,
+    ) -> BoxFuture<'a, PostExecuteDecision> {
+        let decision = self.inner.post_execute(spec, input, output, error, ctx);
+        Box::pin(async move { decision })
+    }
+
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
 }
