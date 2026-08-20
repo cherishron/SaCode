@@ -1,0 +1,26 @@
+#!/bin/sh
+# SaCode 预提交验证钩子
+#
+# 在每次 git commit 前执行快速验证：
+#   1. cargo build --workspace 全量编译
+#   2. cargo test --workspace --lib 单元测试
+#
+# 通过 core.hooksPath=.githooks 启用（见 scripts/setup-hooks.sh）。
+# 跳过方式：git commit --no-verify（仅限紧急情况，应谨慎使用）。
+
+set -e
+
+echo "==> [pre-commit] SaCode 提交前验证开始"
+
+# 只对 Rust 相关变更做完整验证；纯文档变更跳过（提升体验）
+if git diff --cached --name-only | grep -qE '\.(rs|toml)$'; then
+    echo "==> [pre-commit] 检测到 Rust 变更，执行 cargo build --workspace"
+    cargo build --workspace
+    echo "==> [pre-commit] cargo build 通过，执行 cargo test --workspace --lib"
+    cargo test --workspace --lib
+    echo "==> [pre-commit] 单元测试全部通过"
+else
+    echo "==> [pre-commit] 无 Rust 变更，跳过编译与测试"
+fi
+
+echo "==> [pre-commit] 验证通过 ✓"

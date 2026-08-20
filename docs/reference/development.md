@@ -49,6 +49,19 @@ cargo build --release
 
 这与 CI 主链路保持一致。
 
+### 预提交验证钩子
+
+仓库提供 pre-commit 钩子，在每次 `git commit` 前自动执行 `cargo build --workspace` + `cargo test --workspace --lib`（仅当暂存区含 Rust 变更时）。启用方式：
+
+```bash
+# Unix / Git Bash / WSL
+sh scripts/setup-hooks.sh
+# Windows CMD
+scripts\setup-hooks.bat
+```
+
+钩子通过 `git config core.hooksPath .githooks` 启用（仓库级配置，新克隆需重新执行）。紧急情况可用 `git commit --no-verify` 跳过，但应谨慎使用。
+
 ## 4. 代码分层约定
 
 ### `kernel`
