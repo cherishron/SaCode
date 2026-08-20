@@ -13,7 +13,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 use similar::TextDiff;
 
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use super::preflight::preflight_edit_file;
 
 pub fn spec() -> ToolSpec {
@@ -357,7 +357,7 @@ fn parse_range(s: &str) -> anyhow::Result<(usize, usize)> {
 
 /// 应用单个文件的 patch
 fn apply_file_patch(file_patch: &FilePatch, check: bool) -> anyhow::Result<usize> {
-    let resolved_path = resolve_allowed_path(&file_patch.path, FsAccess::Write)?;
+    let resolved_path = current_context().resolve_path(&file_patch.path, FsAccess::Write)?;
 
     // 预检：大文件保护 + 二进制检测（与 fs.edit / fs.patch 共享逻辑）
     if let Err(error) = preflight_edit_file(&resolved_path) {

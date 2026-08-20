@@ -10,7 +10,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use crate::provider::client::ProviderClient;
-use crate::tools::fs::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 
 use sacode_kernel::model::{
     detect_provider_kind, normalize_base_url, ChatMessage, ImageUrlPart,
@@ -217,7 +217,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("mode must be one of: ocr, describe"));
     }
 
-    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let file_path = current_context().resolve_path(path, FsAccess::Read)?;
     if !file_path.exists() {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }

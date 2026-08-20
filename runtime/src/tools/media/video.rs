@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, process::Command, time::Duration};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use crate::tools::fs::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use crate::tools::media::vision::try_visual_read;
 
 pub fn spec() -> ToolSpec {
@@ -53,7 +53,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
     let frames = input["frames"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
 
-    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let file_path = current_context().resolve_path(path, FsAccess::Read)?;
     if !file_path.exists() {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }

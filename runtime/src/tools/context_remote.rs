@@ -60,17 +60,21 @@ pub struct RemoteContext {
     command_prefix: Vec<String>,
     /// 命令执行超时（毫秒）
     timeout_ms: u64,
+    /// 远程工作目录（可选）。用于对绝对路径做边界校验，确保路径位于远端 workdir 之内。
+    remote_workdir: Option<String>,
 }
 
 impl RemoteContext {
     /// 构造远程执行环境
     ///
     /// - `command_prefix`：注入到每条命令前的 argv，空向量等价于本地。
+    /// - `remote_workdir`：可选的远程工作目录，用于对绝对路径做边界校验。
     /// - `timeout_ms`：单条命令超时（毫秒），默认 30_000。
-    pub fn new(command_prefix: Vec<String>) -> Self {
+    pub fn new(command_prefix: Vec<String>, remote_workdir: Option<String>) -> Self {
         Self {
             command_prefix,
             timeout_ms: 30_000,
+            remote_workdir,
         }
     }
 
@@ -218,6 +222,20 @@ impl ExecutionContext for RemoteContext {
         let wrapped = self.wrap(command);
         run_local_command(&wrapped, cwd, timeout_ms)
     }
+
+    fn resolve_path(&self, path: &str, access: crate::sandbox::FsAccess) -> Result<std::path::PathBuf> {
+        let _ = access;
+        let p = std::path::PathBuf::from(path);
+        if p.is_absolute() {
+            if let Some(ref wd) = self.remote_workdir {
+                let wd = std::path::PathBuf::from(wd);
+                if !p.starts_with(&wd) {
+                    anyhow::bail!("path {:?} is outside remote workdir {:?}", p, wd);
+                }
+            }
+        }
+        Ok(p)
+    }
 }
 
 #[cfg(test)]
@@ -233,7 +251,7 @@ mod tests {
         // 用确定不存在的前缀，避免依赖环境中是否安装 ssh（Windows 10+ 自带
         // OpenSSH 会导致 ssh 真实发起网络请求，使测试变为网络依赖）。
         let probe = "sacode_remote_probe_xyz";
-        let ctx = RemoteContext::new(vec![probe.to_string(), "user@host".to_string()]);
+        let ctx = RemoteContext::new(vec![probe.to_string(), "user@host".to_string()], None);
         // 注入前缀后，echo 命令被发往前缀命令；本地无该命令，exec 会返回
         // Err（program not found）或 Ok 但非 0 退出。两种都证明前缀被注入、
         // echo hello 未被本地执行。核心是「输出里不应出现 hello」。
@@ -251,7 +269,7 @@ mod tests {
 
     #[test]
     fn remote_context_empty_prefix_no_wrap() {
-        let ctx = RemoteContext::new(vec![]);
+        let ctx = RemoteContext::new(vec![], None);
         // 空前缀：exec 直接透传原命令，本地 echo 应成功且不含探测前缀。
         let output = ctx
             .exec("echo hello", None, 1000)
@@ -270,7 +288,7 @@ mod tests {
     fn set_default_context_switches_execution_world() {
         let probe = "sacode_remote_probe_xyz";
         let remote: Arc<dyn ExecutionContext> =
-            Arc::new(RemoteContext::new(vec![probe.to_string(), "user@host".to_string()]));
+            Arc::new(RemoteContext::new(vec![probe.to_string(), "user@host".to_string()], None));
 
         // set_default_context 调用不 panic（OnceLock 重复 set 静默忽略，符合预期）
         set_default_context(remote.clone());
@@ -292,7 +310,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn remote_context_posix_fs_operations() {
-        let ctx = RemoteContext::new(vec![]); // 本地即 Unix，等价于远端 POSIX
+        let ctx = RemoteContext::new(vec![], None); // 本地即 Unix，等价于远端 POSIX
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join("remote_local.txt");
 

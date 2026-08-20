@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::sandbox::FsAccess;
+use crate::tools::context::current_context;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
 use super::cache::{ast_cache, file_list_cache};
@@ -594,7 +595,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("query is required"));
     }
 
-    let resolved_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let resolved_path = current_context().resolve_path(path, FsAccess::Read)?;
     if !resolved_path.exists() {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }
@@ -657,7 +658,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 }
 
 fn resolve_allowed_path(path: &str, access: FsAccess) -> anyhow::Result<PathBuf> {
-    super::super::fs::access::resolve_allowed_path(path, access)
+    crate::tools::context::current_context().resolve_path(path, access)
 }
 
 #[cfg(test)]

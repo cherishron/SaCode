@@ -1,7 +1,7 @@
 use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 
 fn build_summary(path: &str, lines: usize, total_lines: usize) -> String {
     format!(
@@ -49,7 +49,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("path is required"));
     }
 
-    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let file_path = current_context().resolve_path(path, FsAccess::Read)?;
     let ctx = crate::tools::context::current_context();
     if !ctx.exists(&file_path) {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));

@@ -3,7 +3,7 @@ use std::fs;
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use crate::tools::fs::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 
 use super::vision::{
     build_visual_prompt, detect_dimensions, detect_mime_type, encode_base64, fallback_visual_text,
@@ -52,7 +52,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("path is required"));
     }
 
-    let file_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let file_path = current_context().resolve_path(path, FsAccess::Read)?;
     if !file_path.exists() {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));
     }

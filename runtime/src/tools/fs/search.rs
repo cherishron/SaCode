@@ -5,7 +5,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::spec::{SideEffectLevel, ToolOutput, ToolSpec};
 use regex::Regex;
 
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 
 const MAX_SEARCH_MATCHES: usize = 50;
 /// 单文件最大读取字节数，防止读取超大文件导致内存溢出
@@ -59,7 +59,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("pattern is required"));
     }
 
-    let resolved_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let resolved_path = current_context().resolve_path(path, FsAccess::Read)?;
 
     let matcher =
         Regex::new(pattern).map_err(|error| anyhow::anyhow!("invalid regex pattern: {}", error))?;

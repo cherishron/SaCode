@@ -22,7 +22,7 @@
 //! - 不引入 async：高频工具（如 `fs.read`）的动态分发开销已极小，
 //!   暂不叠加 `spawn_blocking` 复杂度。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
@@ -101,6 +101,9 @@ pub trait ExecutionContext: Send + Sync {
     /// - `cwd`：可选工作目录
     /// - `timeout_ms`：超时毫秒数
     fn exec(&self, command: &str, cwd: Option<&str>, timeout_ms: u64) -> Result<CommandOutput>;
+
+    /// 解析路径（沙箱校验 + 路径规范化）。
+    fn resolve_path(&self, path: &str, access: crate::sandbox::FsAccess) -> Result<std::path::PathBuf>;
 }
 
 /// 本地执行环境 — 封装现有 `std::fs` / `std::process` 调用与平台包装逻辑
@@ -225,6 +228,10 @@ impl ExecutionContext for LocalContext {
         // 复用 shell/exec 中已有的完整平台包装与危险命令检查逻辑，
         // 保证与原 `shell.exec::execute` 行为完全一致。
         crate::tools::shell::exec::run_local_command(command, cwd, timeout_ms)
+    }
+
+    fn resolve_path(&self, path: &str, access: crate::sandbox::FsAccess) -> Result<PathBuf> {
+        crate::tools::fs::access::resolve_allowed_path(path, access)
     }
 
     fn metadata(&self, path: &Path) -> Result<(u64, Option<u64>)> {

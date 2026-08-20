@@ -58,7 +58,7 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     //     sacode orchestrator --remote "docker exec -i container" <prompt>
     if let Some(ref prefix) = options.remote_prefix {
         let parts: Vec<String> = prefix.split_whitespace().map(String::from).collect();
-        let remote = std::sync::Arc::new(RemoteContext::new(parts));
+        let remote = std::sync::Arc::new(RemoteContext::new(parts, None));
         set_default_context(remote);
         eprintln!("已激活远程执行环境：{}", prefix);
     }

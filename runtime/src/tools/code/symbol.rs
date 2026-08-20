@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::super::fs::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use super::cache::{ast_cache, file_list_cache};
 
 const DEFAULT_LIMIT: usize = 200;
@@ -73,7 +73,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("path is required"));
     }
 
-    let resolved_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let resolved_path = current_context().resolve_path(path, FsAccess::Read)?;
     if !resolved_path.exists() {
         return Ok(ToolOutput::failure(format!("path not found: {}", path)));
     }

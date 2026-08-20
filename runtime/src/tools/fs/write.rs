@@ -1,4 +1,4 @@
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
@@ -41,7 +41,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
     let mode = input["mode"].as_str().unwrap_or("write");
 
-    let path_buf = resolve_allowed_path(path, FsAccess::Write)?;
+    let path_buf = current_context().resolve_path(path, FsAccess::Write)?;
 
     let ctx = crate::tools::context::current_context();
     let bytes_written = match mode {

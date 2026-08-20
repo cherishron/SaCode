@@ -1,7 +1,7 @@
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use super::patch::find_candidates;
 use super::preflight::preflight_edit_file;
 
@@ -59,7 +59,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("old_string is required"));
     }
 
-    let file_path = resolve_allowed_path(path, FsAccess::Write)?;
+    let file_path = current_context().resolve_path(path, FsAccess::Write)?;
     let ctx = crate::tools::context::current_context();
     if !ctx.exists(&file_path) {
         return Ok(ToolOutput::failure(format!("file not found: {}", path)));

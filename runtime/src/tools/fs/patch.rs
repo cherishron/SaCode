@@ -5,7 +5,7 @@ use similar::{Algorithm, ChangeTag, TextDiff};
 use crate::sandbox::FsAccess;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::access::resolve_allowed_path;
+use crate::tools::context::current_context;
 use super::preflight::preflight_edit_file;
 
 pub fn spec() -> ToolSpec {
@@ -195,7 +195,7 @@ fn build_patch_plan(index: usize, patch: &serde_json::Value) -> anyhow::Result<P
         )));
     }
 
-    let absolute_path = resolve_allowed_path(path, FsAccess::Write)?;
+    let absolute_path = current_context().resolve_path(path, FsAccess::Write)?;
     if !absolute_path.exists() {
         return Ok(PatchPlanOutcome::Conflict(conflict(
             index,

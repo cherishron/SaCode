@@ -4,7 +4,7 @@ use crate::sandbox::FsAccess;
 use crate::tools::context::{current_context, EntryType};
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
 
-use super::access::resolve_allowed_path;
+
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -38,7 +38,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     let recursive = input["recursive"].as_bool().unwrap_or(false);
     let include_hidden = input["include_hidden"].as_bool().unwrap_or(false);
 
-    let dir_path = resolve_allowed_path(path, FsAccess::Read)?;
+    let dir_path = current_context().resolve_path(path, FsAccess::Read)?;
     let ctx = current_context();
     if !ctx.exists(&dir_path) {
         return Ok(ToolOutput::failure(format!(
