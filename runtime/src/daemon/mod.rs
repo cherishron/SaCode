@@ -6,11 +6,13 @@ use axum::{
 };
 use sacode_kernel::{ExecutionMode, TaskPriority};
 
+mod approval;
 mod events;
 mod handlers;
 mod status;
 mod types;
 
+pub use approval::HttpApprovalDecider;
 pub use handlers::run_daemon;
 pub use types::{
     DaemonState, EventHistory, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse,
@@ -28,6 +30,19 @@ use handlers::{
 
 pub async fn create_daemon() -> Router {
     let state = Arc::new(DaemonState::new().await);
+
+    // 注入 HTTP 审批决策器工厂（daemon 路径 build 模式下工具调用走 SSE→VSCode 审批）
+    {
+        let state_for_factory = state.clone();
+        let mut executor = state.executor.lock().await;
+        executor.set_approval_factory(Arc::new(move |task_id| {
+            Arc::new(HttpApprovalDecider::new(
+                state_for_factory.clone(),
+                task_id.to_string(),
+            ))
+        }));
+    }
+
     spawn_executor_event_forwarder(state.clone());
     spawn_daemon_workers(state.clone());
 
@@ -39,6 +54,7 @@ pub async fn create_daemon() -> Router {
         .route("/task/:id/checkpoint", get(get_task_checkpoint))
         .route("/task/:id/retry", post(retry_task))
         .route("/task/:id/cancel", post(cancel_task))
+        .route("/task/:id/approve", post(approval::resolve_approval))
         .route("/events", get(stream_events))
         .route("/events/:id", get(stream_task_events))
         .route("/api/stream", get(stream_api_events))

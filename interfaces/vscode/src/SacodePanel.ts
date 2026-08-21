@@ -344,6 +344,21 @@ export class SacodePanel {
                         this.postMessage({ command: 'done' });
                         this.currentTaskId = null;
                     }
+                    // P1-1: 审批请求事件 — 弹出 QuickPick 审批面板
+                    if (eventType === 'approval_requested' && this.currentTaskId) {
+                        const toolName = data.tool_name || payload.tool_name || 'unknown';
+                        const args = data.args || payload.args || {};
+                        const argsStr = typeof args === 'string'
+                            ? args.slice(0, 200)
+                            : JSON.stringify(args).slice(0, 200);
+                        this.postMessage({
+                            command: 'message',
+                            type: 'tool',
+                            text: `[审批请求] ${toolName}: ${argsStr}`,
+                        });
+                        // 在扩展侧弹出 QuickPick
+                        this.showApprovalQuickPick(this.currentTaskId, toolName, argsStr);
+                    }
                 },
                 (err) => {
                     this.postMessage({ command: 'error', text: err.message });
@@ -366,6 +381,31 @@ export class SacodePanel {
             }, 30000);
         } catch (err: any) {
             this.postMessage({ command: 'error', text: err.message });
+        }
+    }
+
+    /**
+     * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
+     */
+    private async showApprovalQuickPick(taskId: string, toolName: string, argsStr: string): Promise<void> {
+        const items = [
+            {
+                label: '$(check) 允许执行',
+                description: '批准该工具调用',
+                approved: true,
+            },
+            {
+                label: '$(x) 拒绝',
+                description: '取消这次修改操作',
+                approved: false,
+            },
+        ];
+        const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: `审批: ${toolName} — ${argsStr.slice(0, 80)}`,
+            title: 'SaCode 工具审批',
+        });
+        if (selected) {
+            await this.client.resolveApproval(taskId, selected.approved);
         }
     }
 

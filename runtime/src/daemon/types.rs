@@ -230,6 +230,12 @@ pub struct DaemonState {
     /// daemon 启动时从 current_dir 获取，用于跨进程 checkpoint 查询。
     /// None 表示工作目录不可用（极端情况），checkpoint 相关端点将返回 not_found。
     pub workdir: Option<std::path::PathBuf>,
+    /// 待审批请求映射：task_id → oneshot sender
+    ///
+    /// 当 task_runner 返回 `pending_question`（含 tool_approval）时，
+    /// executor 创建 oneshot channel，把 sender 存入此 map，receiver 在执行循环中等待。
+    /// VSCode 扩展通过 POST /task/:id/approve 回传审批结果，解除阻塞。
+    pub pending_approvals: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
 }
 
 impl DaemonState {
@@ -317,6 +323,7 @@ impl DaemonState {
             executor: Mutex::new(executor),
             retry_handler,
             workdir: std::env::current_dir().ok(),
+            pending_approvals: Mutex::new(HashMap::new()),
         }
     }
 }

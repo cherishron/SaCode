@@ -9,7 +9,8 @@ use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
 use crate::executor::task_runner::{
-    execute_task_with_provider, AutoApproveDecider, LoggingErrorRecorder, TaskRunConfig,
+    execute_task_with_provider, ApprovalDecider, AutoApproveDecider, LoggingErrorRecorder,
+    TaskRunConfig,
 };
 use crate::tools::ToolRegistry;
 use crate::{queue::TaskQueue, resolve_config_model_candidates, task_run_snapshot};
@@ -31,6 +32,12 @@ pub struct TaskExecutor {
     /// 工作目录：设置后 spawn 任务体走 task_runner 路径，
     /// 未设置则走测试占位路径（仅 cfg(test) 启用，避免发起真实 LLM 调用）
     workdir: Option<PathBuf>,
+    /// 审批决策器工厂：按 task_id 生成 ApprovalDecider
+    ///
+    /// daemon 路径注入 HttpApprovalDecider 工厂，使 build 模式下工具调用
+    /// 通过 SSE → VSCode 扩展 → POST /task/:id/approve 链路审批。
+    /// None 时退化为 AutoApproveDecider（原行为）。
+    approval_factory: Option<Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>>,
 }
 
 /// executor 侧 broadcast 容量：提升到 256 以容纳单任务多事件突发，
@@ -53,6 +60,7 @@ impl TaskExecutor {
             active_tasks: JoinSet::new(),
             poll_interval: Duration::from_millis(100),
             workdir: None,
+            approval_factory: None,
         }
     }
 
@@ -60,6 +68,15 @@ impl TaskExecutor {
     /// 调用 `execute_task_with_provider` 替代静态占位
     pub fn with_workdir(mut self, workdir: PathBuf) -> Self {
         self.workdir = Some(workdir);
+        self
+    }
+
+    /// 设置审批决策器工厂：daemon 路径注入 HttpApprovalDecider 工厂
+    pub fn with_approval_factory(
+        mut self,
+        factory: Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>,
+    ) -> Self {
+        self.approval_factory = Some(factory);
         self
     }
 
@@ -74,6 +91,14 @@ impl TaskExecutor {
 
     pub fn event_bus(&self) -> broadcast::Sender<ExecutorEvent> {
         self.event_bus.clone()
+    }
+
+    /// 后置注入审批决策器工厂（daemon 路径在 DaemonState 构造后调用）
+    pub fn set_approval_factory(
+        &mut self,
+        factory: Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>,
+    ) {
+        self.approval_factory = Some(factory);
     }
 
     pub async fn run(&mut self) {
@@ -109,6 +134,11 @@ impl TaskExecutor {
             let event_bus = self.event_bus.clone();
             let tools = self.tools.clone();
             let workdir = self.workdir.clone();
+            let approval = self
+                .approval_factory
+                .as_ref()
+                .map(|factory| factory(&task_id))
+                .unwrap_or_else(|| Arc::new(AutoApproveDecider));
 
             self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
@@ -124,6 +154,7 @@ impl TaskExecutor {
                             tools,
                             started_at,
                             Some(&event_bus),
+                            approval,
                         )
                         .await
                     }
@@ -284,6 +315,7 @@ async fn execute_via_task_runner(
     tools: ToolRegistry,
     started_at: Instant,
     event_bus: Option<&broadcast::Sender<ExecutorEvent>>,
+    approval: Arc<dyn ApprovalDecider>,
 ) -> (TaskResult, TaskRun, Vec<Event>) {
     let candidates = resolve_config_model_candidates(workdir);
     let provider = candidates.first().map(|(_, _, p)| p.clone());
@@ -306,8 +338,7 @@ async fn execute_via_task_runner(
         return (result, task_run, events);
     };
 
-    // 构建 TaskRunConfig：使用 AutoApproveDecider + LoggingErrorRecorder
-    // （daemon 路径无交互式审批，错误仅记日志）
+    // 构建 TaskRunConfig：使用外部传入的 ApprovalDecider（daemon 可注入 HTTP 审批器）
     let config = TaskRunConfig {
         workdir,
         mode: task.mode,
@@ -316,7 +347,7 @@ async fn execute_via_task_runner(
         user_prompt: task.prompt.clone(),
         provider,
         tools,
-        approval: Arc::new(AutoApproveDecider),
+        approval,
         error_recorder: Arc::new(LoggingErrorRecorder),
         task_id: Some(task_id.clone()),
         session_id: None,

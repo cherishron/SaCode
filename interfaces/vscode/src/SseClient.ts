@@ -46,6 +46,19 @@ export class SseClient {
         await fetch(`${this.baseUrl}/task/${taskId}/cancel`, { method: 'POST' });
     }
 
+    /**
+     * P1-1: 提交审批结果
+     * @param taskId 任务 ID
+     * @param approved 是否批准
+     */
+    async resolveApproval(taskId: string, approved: boolean): Promise<void> {
+        await fetch(`${this.baseUrl}/task/${taskId}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approved }),
+        });
+    }
+
     async listTools(): Promise<string[]> {
         const res = await fetch(`${this.baseUrl}/tools`);
         const data = await res.json();
