@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::net::SocketAddr;
 
 pub async fn run(args: Vec<String>) -> Result<()> {
     let enable_acp = args.iter().any(|arg| arg == "--acp");
@@ -21,6 +22,23 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    println!("Usage: sacode serve --acp --lsp");
+    // 解析端口（默认 8080）
+    let port = args
+        .iter()
+        .find_map(|arg| {
+            arg.strip_prefix("--port=")
+                .and_then(|p| p.parse::<u16>().ok())
+        })
+        .unwrap_or(8080);
+    let host = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--host=").map(|h| h.to_string()))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .map_err(|e| anyhow::anyhow!("无效的监听地址: {}", e))?;
+
+    eprintln!("SaCode daemon 启动中... http://{}", addr);
+    sacode_runtime::daemon::run_daemon(addr).await;
     Ok(())
 }

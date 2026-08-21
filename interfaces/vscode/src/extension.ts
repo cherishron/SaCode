@@ -1,12 +1,35 @@
 import * as vscode from 'vscode';
 import { SacodePanel } from './SacodePanel';
+import { SseClient } from './SseClient';
+import { DaemonManager } from './DaemonManager';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('SaCode extension activating...');
 
-    // Register the SaCode panel view
+    const config = vscode.workspace.getConfiguration('sacode');
+    const host = config.get<string>('daemonHost', '127.0.0.1');
+    const port = config.get<number>('daemonPort', 8080);
+    const client = new SseClient({ host, port });
+
+    // P0-2: Daemon 进程自动管理
+    const daemonManager = new DaemonManager(context, client);
+    context.subscriptions.push(daemonManager);
+    daemonManager.ensureRunning().then(() => {
+        // daemon 就绪后通知面板
+        SacodePanel.setDaemonReady(daemonManager.isRunning);
+    });
+
+    // P0-1: 选区上下文注入 — 监听编辑器选区变化
+    context.subscriptions.push(
+        vscode.window.onDidChangeTextEditorSelection((event) => {
+            const selection = event.textEditor.selection;
+            const text = event.textEditor.document.getText(selection);
+            SacodePanel.setSelectionContext(text);
+        })
+    );
+
     const panelCommand = vscode.commands.registerCommand('sacode.runTask', () => {
-        SacodePanel.createOrShow(context.extensionUri);
+        SacodePanel.createOrShow(context.extensionUri, client);
     });
 
     const configureCommand = vscode.commands.registerCommand('sacode.configure', () => {
@@ -14,20 +37,30 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const statusCommand = vscode.commands.registerCommand('sacode.status', () => {
-        SacodePanel.createOrShow(context.extensionUri);
+        SacodePanel.createOrShow(context.extensionUri, client);
     });
 
     const stopCommand = vscode.commands.registerCommand('sacode.stop', () => {
-        vscode.commands.executeCommand('workbench.action.closePanel');
+        SacodePanel.stopCurrentTask();
+    });
+
+    const restartDaemonCommand = vscode.commands.registerCommand('sacode.restartDaemon', () => {
+        daemonManager.ensureRunning();
     });
 
     // Register the sidebar view provider
-    const provider = new SacodeViewProvider(context.extensionUri);
+    const provider = new SacodeViewProvider(context.extensionUri, client);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SacodeViewProvider.viewType, provider)
     );
 
-    context.subscriptions.push(panelCommand, configureCommand, statusCommand, stopCommand);
+    context.subscriptions.push(
+        panelCommand,
+        configureCommand,
+        statusCommand,
+        stopCommand,
+        restartDaemonCommand
+    );
 
     // Auto-open sidebar on first activation
     vscode.commands.executeCommand('workbench.view.extension.sacode');
@@ -41,7 +74,7 @@ class SacodeViewProvider implements vscode.WebviewViewProvider {
     static readonly viewType = 'sacode-panel';
     private view?: vscode.WebviewView;
 
-    constructor(private extensionUri: vscode.Uri) {}
+    constructor(private extensionUri: vscode.Uri, private client: SseClient) {}
 
     resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -55,7 +88,10 @@ class SacodeViewProvider implements vscode.WebviewViewProvider {
         };
         webviewView.webview.html = this.getHtml();
         webviewView.webview.onDidReceiveMessage((msg) => {
-            vscode.window.showInformationMessage(`SaCode: ${msg.command}`);
+            if (msg.command === 'runTask') {
+                SacodePanel.createOrShow(this.extensionUri, this.client);
+                SacodePanel.runWithPrompt(msg.text);
+            }
         });
     }
 
@@ -80,8 +116,7 @@ class SacodeViewProvider implements vscode.WebviewViewProvider {
     <textarea id="prompt" rows="3" placeholder="Describe the task..."></textarea>
     <button onclick="runTask()">Run Task</button>
     <div class="info">
-        <p>Make sure <code>sacode serve</code> is running first.</p>
-        <p>Use <code>sacode acp serve</code> for ACP protocol.</p>
+        <p>Daemon is managed automatically. Use <code>Ctrl+Enter</code> to run.</p>
     </div>
     <script>
         const vscode = acquireVsCodeApi();

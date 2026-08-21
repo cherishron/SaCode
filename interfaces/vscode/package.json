@@ -2,7 +2,7 @@
   "name": "sacode-vscode",
   "displayName": "SaCode",
   "description": "SaCode AI coding agent integration for VS Code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -35,7 +35,7 @@
       },
       {
         "command": "sacode.configure",
-        "title": "SaCode: Configure Daemon"
+        "title": "SaCode: Configure"
       },
       {
         "command": "sacode.status",
@@ -45,6 +45,10 @@
         "command": "sacode.stop",
         "title": "SaCode: Stop Task",
         "icon": "$(stop)"
+      },
+      {
+        "command": "sacode.restartDaemon",
+        "title": "SaCode: Restart Daemon"
       }
     ],
     "configuration": {
@@ -59,6 +63,11 @@
           "type": "number",
           "default": 8080,
           "description": "SaCode daemon port"
+        },
+        "sacode.binaryPath": {
+          "type": "string",
+          "default": "sacode",
+          "description": "Path to the sacode binary (if not in PATH, use full path)"
         }
       }
     }

@@ -10,22 +10,43 @@ export class SacodePanel {
     private currentTaskId: string | null = null;
     private abortStream: (() => void) | null = null;
     private disposables: vscode.Disposable[] = [];
+    private static daemonReady: boolean = false;
+    private static selectedText: string = '';
 
-    constructor(private extensionUri: vscode.Uri) {
-        const config = vscode.workspace.getConfiguration('sacode');
-        const host = config.get<string>('daemonHost', '127.0.0.1');
-        const port = config.get<number>('daemonPort', 8080);
-        this.client = new SseClient({ host, port });
+    constructor(private extensionUri: vscode.Uri, client: SseClient) {
+        this.client = client;
     }
 
-    static createOrShow(extensionUri: vscode.Uri) {
+    static createOrShow(extensionUri: vscode.Uri, client: SseClient) {
         if (SacodePanel.instance?.panel) {
             SacodePanel.instance.panel.reveal(vscode.ViewColumn.Beside);
             return;
         }
-        const instance = new SacodePanel(extensionUri);
+        const instance = new SacodePanel(extensionUri, client);
         instance.createPanel();
         SacodePanel.instance = instance;
+    }
+
+    static setDaemonReady(ready: boolean) {
+        SacodePanel.daemonReady = ready;
+        SacodePanel.instance?.postMessage({ command: 'status', connected: ready });
+    }
+
+    static setSelectionContext(text: string) {
+        SacodePanel.selectedText = text;
+        SacodePanel.instance?.postMessage({
+            command: 'selection',
+            text: text,
+            length: text.length,
+        });
+    }
+
+    static stopCurrentTask() {
+        SacodePanel.instance?.stopTask();
+    }
+
+    static runWithPrompt(prompt: string) {
+        SacodePanel.instance?.runTask(prompt);
     }
 
     static render() {
@@ -87,6 +108,8 @@ export class SacodePanel {
         .header .status { font-size: 11px; color: var(--muted); }
         .header .status.connected { color: var(--success); }
         .header .status.disconnected { color: var(--warning); }
+        .selection-bar { padding: 4px 12px; background: rgba(88, 166, 255, 0.1); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--accent); display: none; }
+        .selection-bar.visible { display: block; }
         .input-area { padding: 8px; border-bottom: 1px solid var(--border); }
         .input-area textarea { width: 100%; padding: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; resize: vertical; min-height: 60px; font-family: inherit; font-size: 13px; }
         .input-area .actions { display: flex; gap: 6px; margin-top: 6px; }
@@ -99,8 +122,11 @@ export class SacodePanel {
         .msg.tool { border-left-color: var(--warning); }
         .msg.error { border-left-color: #da3633; }
         .msg.thinking { border-left-color: var(--muted); font-style: italic; color: var(--muted); }
+        .msg.diff { border-left-color: var(--success); }
         .msg .label { font-size: 10px; color: var(--muted); margin-bottom: 2px; text-transform: uppercase; }
         .msg pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+        .msg .diff-add { color: var(--success); }
+        .msg .diff-del { color: #da3633; }
     </style>
 </head>
 <body>
@@ -110,6 +136,9 @@ export class SacodePanel {
             <span class="status" id="status">checking...</span>
             <span style="flex:1"></span>
             <span id="taskId" style="font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div class="selection-bar" id="selectionBar">
+            <span id="selectionInfo"></span>
         </div>
         <div class="input-area">
             <textarea id="prompt" placeholder="Describe the task to run..." rows="3"></textarea>
@@ -128,6 +157,9 @@ export class SacodePanel {
         const stopBtn = document.getElementById('stopBtn');
         const status = document.getElementById('status');
         const taskId = document.getElementById('taskId');
+        const selectionBar = document.getElementById('selectionBar');
+        const selectionInfo = document.getElementById('selectionInfo');
+        let selectedText = '';
 
         function addMessage(type, text) {
             const div = document.createElement('div');
@@ -137,7 +169,26 @@ export class SacodePanel {
             label.textContent = type;
             div.appendChild(label);
             const pre = document.createElement('pre');
-            pre.textContent = text;
+
+            // diff 高亮：检测 +/- 前缀行
+            if (type === 'diff') {
+                const lines = text.split('\\n');
+                const frag = document.createDocumentFragment();
+                for (const line of lines) {
+                    const span = document.createElement('span');
+                    if (line.startsWith('+') && !line.startsWith('+++')) {
+                        span.className = 'diff-add';
+                    } else if (line.startsWith('-') && !line.startsWith('---')) {
+                        span.className = 'diff-del';
+                    }
+                    span.textContent = line + '\\n';
+                    frag.appendChild(span);
+                }
+                pre.appendChild(frag);
+            } else {
+                pre.textContent = text;
+            }
+
             div.appendChild(pre);
             messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
@@ -146,11 +197,18 @@ export class SacodePanel {
         function runTask() {
             const text = prompt.value.trim();
             if (!text) return;
+            // 如果有选区文本，合并为前缀
+            const fullPrompt = selectedText
+                ? '[选区上下文]\\n' + selectedText + '\\n\\n[任务]\\n' + text
+                : text;
             addMessage('system', text);
+            if (selectedText) {
+                addMessage('thinking', '已注入选区 ' + selectedText.length + ' 字符');
+            }
             runBtn.disabled = true;
             stopBtn.disabled = false;
             prompt.value = '';
-            vscode.postMessage({ command: 'runTask', text });
+            vscode.postMessage({ command: 'runTask', text: fullPrompt });
         }
 
         function stopTask() {
@@ -168,6 +226,15 @@ export class SacodePanel {
                     break;
                 case 'taskId':
                     taskId.textContent = 'task: ' + msg.id;
+                    break;
+                case 'selection':
+                    selectedText = msg.text || '';
+                    if (selectedText) {
+                        selectionBar.classList.add('visible');
+                        selectionInfo.textContent = '已选 ' + selectedText.length + ' 字符，将作为上下文注入';
+                    } else {
+                        selectionBar.classList.remove('visible');
+                    }
                     break;
                 case 'message':
                     addMessage(msg.type, msg.text);
@@ -221,7 +288,7 @@ export class SacodePanel {
         try {
             const connected = await this.client.healthCheck();
             if (!connected) {
-                this.postMessage({ command: 'error', text: 'Daemon not running. Execute "sacode serve" first.' });
+                this.postMessage({ command: 'error', text: 'Daemon not running. Run "sacode serve" or restart VSCode.' });
                 return;
             }
 
@@ -232,23 +299,48 @@ export class SacodePanel {
             this.abortStream = this.client.streamEvents(
                 (event) => {
                     const data = event.data;
-                    if (data.kind === 'tool' || data.kind === 'tool_call') {
+                    // 修复 SSE 事件解析：使用 event_type 字段（与 daemon normalize_stream_event 一致）
+                    const eventType = data.event_type || data.event || data.kind;
+                    const payload = data.payload || data;
+
+                    // 工具调用事件
+                    if (eventType === 'tool_call_started' || eventType === 'tool' || eventType === 'tool_call') {
+                        const toolName = data.name || payload.name || payload.tool || 'tool';
+                        const toolInput = data.input || payload.input || {};
+                        const inputStr = typeof toolInput === 'string'
+                            ? toolInput
+                            : JSON.stringify(toolInput).slice(0, 200);
                         this.postMessage({
                             command: 'message',
                             type: 'tool',
-                            text: data.tool_name
-                                ? `[${data.tool_name}] ${data.arguments || ''}`
-                                : JSON.stringify(data, null, 2),
+                            text: `[${toolName}] ${inputStr}`,
                         });
+
+                        // P1-2: 检测 diff 工具调用
+                        if (toolName === 'fs.edit' || toolName === 'fs.apply_patch') {
+                            const diffText = this.extractDiff(toolName, toolInput);
+                            if (diffText) {
+                                this.postMessage({
+                                    command: 'message',
+                                    type: 'diff',
+                                    text: diffText,
+                                });
+                            }
+                        }
                     }
-                    if (data.kind === 'message' || data.kind === 'text') {
-                        this.postMessage({
-                            command: 'message',
-                            type: 'system',
-                            text: data.content || data.text || JSON.stringify(data),
-                        });
+                    // 文本/消息事件
+                    else if (eventType === 'message' || eventType === 'text' || eventType === 'thinking') {
+                        const content = data.content || data.text || payload.content || payload.text;
+                        if (content) {
+                            this.postMessage({
+                                command: 'message',
+                                type: eventType === 'thinking' ? 'thinking' : 'system',
+                                text: content,
+                            });
+                        }
                     }
-                    if (data.event === 'task_completed' || data.status === 'completed') {
+                    // 任务完成
+                    if (eventType === 'task_completed' || data.status === 'completed' || eventType === 'done') {
                         this.postMessage({ command: 'done' });
                         this.currentTaskId = null;
                     }
@@ -275,6 +367,27 @@ export class SacodePanel {
         } catch (err: any) {
             this.postMessage({ command: 'error', text: err.message });
         }
+    }
+
+    /**
+     * P1-2: 从工具输入参数提取 diff 文本
+     */
+    private extractDiff(toolName: string, input: any): string | null {
+        if (toolName === 'fs.edit') {
+            const path = input.path || input.file || '';
+            const oldStr = input.old_string || input.old_str || '';
+            const newStr = input.new_string || input.new_str || '';
+            if (oldStr || newStr) {
+                return `--- ${path}\n+++ ${path}\n${oldStr.split('\n').map((l: string) => `-${l}`).join('\n')}\n${newStr.split('\n').map((l: string) => `+${l}`).join('\n')}`;
+            }
+        }
+        if (toolName === 'fs.apply_patch') {
+            const patch = input.patch || input.diff || input.content;
+            if (typeof patch === 'string' && patch.includes('@@')) {
+                return patch;
+            }
+        }
+        return null;
     }
 
     private async stopTask() {
