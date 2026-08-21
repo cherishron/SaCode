@@ -253,6 +253,7 @@ impl SdkClient {
             approval: Arc::new(AutoApproveDecider),
             error_recorder: Arc::new(LoggingErrorRecorder),
             task_id: Some(generate_task_id()),
+            session_id: None,
         };
 
         let result = execute_task_with_provider(&config, None).await;

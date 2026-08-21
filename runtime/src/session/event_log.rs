@@ -311,16 +311,16 @@ fn apply_event(projection: &mut SessionStateProjection, event: &SessionEvent) {
     match event.event_type {
         SessionEventType::ToolCallStarted => {
             projection.total_calls += 1;
-            if let Some(name) = event.data.get("name").and_then(|v| v.as_str()) {
+            if let Some(name) = event.data.get("tool").and_then(|v| v.as_str()) {
                 projection.last_tool = Some(name.to_string());
             }
         }
         SessionEventType::ToolCallFinished => {
             let success = event
                 .data
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+                .get("status")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s == "success");
             if success {
                 projection.completed += 1;
             } else {
@@ -378,27 +378,27 @@ mod tests {
         log.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "fs.read"}),
+            serde_json::json!({"tool": "fs.read"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallFinished,
-            serde_json::json!({"success": true}),
+            serde_json::json!({"status": "success"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "shell.exec"}),
+            serde_json::json!({"tool": "shell.exec"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallFinished,
-            serde_json::json!({"success": false}),
+            serde_json::json!({"status": "failure"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "fs.write"}),
+            serde_json::json!({"tool": "fs.write"}),
         );
         log.record(
             sid,
@@ -421,12 +421,12 @@ mod tests {
         log.record(
             "a",
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "tool"}),
+            serde_json::json!({"tool": "tool"}),
         );
         log.record(
             "b",
             SessionEventType::ToolCallFinished,
-            serde_json::json!({"success": true}),
+            serde_json::json!({"status": "success"}),
         );
         let p = log.project_session_state("a");
         assert_eq!(p.total_calls, 1);
@@ -441,7 +441,7 @@ mod tests {
             log.record(
                 sid,
                 SessionEventType::ToolCallStarted,
-                serde_json::json!({"name": format!("tool-{i}")}),
+                serde_json::json!({"tool": format!("tool-{i}")}),
             );
         }
 
@@ -495,17 +495,17 @@ mod tests {
         log.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "a"}),
+            serde_json::json!({"tool": "a"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallFinished,
-            serde_json::json!({"success": true}),
+            serde_json::json!({"status": "success"}),
         );
         log.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "b"}),
+            serde_json::json!({"tool": "b"}),
         );
         log.record(
             sid,
@@ -529,12 +529,12 @@ mod tests {
         log_disk.record(
             sid,
             SessionEventType::ToolCallStarted,
-            serde_json::json!({"name": "a"}),
+            serde_json::json!({"tool": "a"}),
         );
         log_disk.record(
             sid,
             SessionEventType::ToolCallFinished,
-            serde_json::json!({"success": true}),
+            serde_json::json!({"status": "success"}),
         );
         log_disk.record(
             sid,
@@ -568,7 +568,7 @@ mod tests {
             log.record(
                 sid,
                 SessionEventType::ToolCallStarted,
-                serde_json::json!({"name": format!("t{i}")}),
+                serde_json::json!({"tool": format!("t{i}")}),
             );
         }
 

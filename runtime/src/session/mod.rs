@@ -443,6 +443,7 @@ impl SessionService {
             approval: approval_decider,
             error_recorder: std::sync::Arc::new(LoggingErrorRecorder),
             task_id: Some(generate_task_id()),
+            session_id: Some(session_id.to_string()),
         };
 
         let task_run_result = execute_task_with_provider(&config, None).await;

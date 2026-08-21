@@ -386,6 +386,24 @@ impl ToolRegistry {
         self.execute_with_ctx(name, input, &InterceptContext::default())
     }
 
+    /// 携带 session_id 的工具执行（走 §3.2 拦截器链）
+    ///
+    /// 与 [`Self::execute`] 行为一致，但把 `session_id` 注入 `InterceptContext`，
+    /// 使 `AuditInterceptor` 发布的事件带正确 session_id（而非空串）。
+    /// 供 task_runner / worker 等需要事件投影隔离的执行路径使用。
+    pub fn execute_with_session_id(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+        session_id: &str,
+    ) -> anyhow::Result<ToolOutput> {
+        let ctx = InterceptContext {
+            session_id: Some(session_id.to_string()),
+            ..Default::default()
+        };
+        self.execute_with_ctx(name, input, &ctx)
+    }
+
     /// 带拦截器上下文的工具执行（走 §3.2 拦截器链）
     ///
     /// 执行流程：

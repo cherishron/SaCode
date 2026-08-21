@@ -207,6 +207,7 @@ async fn execute_single_agent_task(
         approval: approval_decider,
         error_recorder: Arc::new(LoggingErrorRecorder),
         task_id: Some(generate_task_id()),
+        session_id: None, // CLI 单 Agent 路径不经过 SessionService，事件投影用空串隔离
     };
 
     // 执行任务

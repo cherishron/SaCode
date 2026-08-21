@@ -178,6 +178,7 @@ pub async fn run_sub_agent(
         approval: std::sync::Arc::new(AutoApproveDecider), // 子 Agent 自动批准
         error_recorder: std::sync::Arc::new(LoggingErrorRecorder), // 仅日志记录
         task_id: None,                                     // 子 Agent 内部执行，不注入统一 task_id
+        session_id: None,
     };
 
     // 通过统一 TaskExecutor 执行（含 Failover）

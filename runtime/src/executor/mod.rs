@@ -319,6 +319,7 @@ async fn execute_via_task_runner(
         approval: Arc::new(AutoApproveDecider),
         error_recorder: Arc::new(LoggingErrorRecorder),
         task_id: Some(task_id.clone()),
+        session_id: None,
     };
 
     // 注入 StreamHandler：把 task_runner 内部 token 级增量转发到 event_bus，

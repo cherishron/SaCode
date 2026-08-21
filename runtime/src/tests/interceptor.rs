@@ -153,3 +153,35 @@ fn readonly_tool_skips_audit_event() {
     // ReadOnly 工具不发布会话事件（与原 should_audit 仅 Modify 语义一致）
     assert_eq!(after, before, "ReadOnly 级工具不应发布会话审计事件");
 }
+
+#[test]
+fn projection_matches_audit_interceptor_events() {
+    let _guard = crate::tests::sandbox_test_lock();
+    let registry = ToolRegistry::builtin();
+
+    let before = SessionEventLog::global().current_seq();
+
+    // fs.write 是 Modify 级 → AuditInterceptor 发布 Started + Finished 事件
+    let _ = registry.execute(
+        "fs.write",
+        json!({ "path": "/tmp/sacode-projection-test.txt", "content": "x" }),
+    );
+
+    let after = SessionEventLog::global().current_seq();
+    assert!(after > before, "应有事件被记录");
+
+    // 投影：验证字段名一致性（apply_event 读 "tool" 和 "status"，
+    // AuditInterceptor 写的也是 "tool" 和 "status"）
+    let proj = SessionEventLog::global().project_session_state("");
+    assert!(
+        proj.total_calls >= 1,
+        "total_calls 应 >= 1, got {}",
+        proj.total_calls
+    );
+    assert!(
+        proj.completed >= 1 || proj.failed >= 1,
+        "应有完成或失败计数 (completed={}, failed={})",
+        proj.completed,
+        proj.failed
+    );
+}

@@ -1,0 +1,43 @@
+﻿cargo :     Checking sacode-kernel v1.1.0 (E:\Project\cherishron\SaCode\kernel)
+At line:1 char:158
++ ... shron\SaCode; cargo clippy -p sacode-cli --lib --no-deps 2>&1 | Out-F ...
++                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking sa...\SaCode\kernel):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Checking sacode-runtime v1.1.0 (E:\Project\cherishron\SaCode\runtime)
+    Checking sacode-lsp v1.1.0 (E:\Project\cherishron\SaCode\interfaces\lsp)
+    Checking sacode-acp v1.1.0 (E:\Project\cherishron\SaCode\interfaces\acp)
+    Checking sacode-cli v1.1.0 (E:\Project\cherishron\SaCode\interfaces\cli)
+error[E0308]: arguments to this function are incorrect
+   --> interfaces\cli\src\tui\provider_actions.rs:335:15
+    |
+335 |         match agent_harness::connect_provider(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+338 |             name,
+    |             ---- expected `&str`, found `String`
+339 |             base_url,
+    |             -------- expected `&str`, found `String`
+    |
+note: function defined here
+   --> interfaces\cli\src\agent_harness.rs:19:8
+    |
+ 19 | pub fn connect_provider(
+    |        ^^^^^^^^^^^^^^^^
+...
+ 22 |     name: &str,
+    |     ----------
+ 23 |     base_url: &str,
+    |     --------------
+help: consider borrowing here
+    |
+338 |             &name,
+    |             +
+help: consider borrowing here
+    |
+339 |             &base_url,
+    |             +
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `sacode-cli` (lib) due to 1 previous error

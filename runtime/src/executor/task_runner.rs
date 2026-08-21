@@ -126,6 +126,10 @@ pub struct TaskRunConfig<'a> {
     /// None 表示入口未注入（如子 Agent 内部执行）；
     /// 非 None 时将写入 TaskRun.task_id，保证跨入口可关联。
     pub task_id: Option<String>,
+    /// 会话 ID（注入 InterceptContext，使事件流投影按会话隔离）
+    ///
+    /// None 时退化为空串（与原行为一致）。
+    pub session_id: Option<String>,
 }
 
 // ── 核心执行逻辑 ────────────────────────────────────────────────
@@ -507,7 +511,11 @@ async fn execute_tool_chat(
             } else {
                 args.clone()
             };
-            let result = match tools_clone.execute(name, tool_input) {
+            let result = match tools_clone.execute_with_session_id(
+                name,
+                tool_input,
+                config.session_id.as_deref().unwrap_or(""),
+            ) {
                 Ok(output) => Ok(if output.success {
                     output.data
                 } else {
@@ -810,6 +818,7 @@ impl TaskRunConfig<'_> {
             approval: self.approval.clone(),
             error_recorder: self.error_recorder.clone(),
             task_id: self.task_id.clone(),
+            session_id: self.session_id.clone(),
         }
     }
 }

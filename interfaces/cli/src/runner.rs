@@ -236,6 +236,7 @@ where
         approval: approval_decider,
         error_recorder,
         task_id: Some(generate_task_id()),
+        session_id: None,
     };
 
     // 构建流式输出适配器：将 CLI 层 StreamEventKind 转换为 runtime 层
