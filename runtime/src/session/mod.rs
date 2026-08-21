@@ -13,6 +13,8 @@ use sacode_kernel::{
     ToolExecutionRecord,
 };
 
+use crate::session::event_log::{SessionEventLog, SessionStateProjection};
+
 use crate::memory::learner::AutoLearner;
 use crate::CheckpointStorage;
 use crate::ToolRegistry;
@@ -486,6 +488,9 @@ impl SessionService {
         let checkpoint_path = checkpoints.save(&checkpoint)?;
 
         // 阶段3：短暂持锁，仅更新 session 状态
+        // 事件投影：从 SessionEventLog 获取本会话的工具调用统计（§3.1 投影）
+        let projection = SessionEventLog::global().project_session_state(session_id);
+
         {
             let mut sessions = self.write_sessions("prompt_finish")?;
             let session = sessions
@@ -497,6 +502,8 @@ impl SessionService {
                 .file_name()
                 .and_then(|value| value.to_str())
                 .map(str::to_string);
+            // 从事件流投影补全 last_tool_records（§3.1 投影 → ExecutionReport 统计）
+            session.last_tool_records = projection_to_tool_records(&projection);
             self.persist_session(session);
         }
 
@@ -800,6 +807,25 @@ fn generate_compression_summary(key_events: &[Event], tool_events: &[Event]) -> 
     }
 }
 
+/// 从事件流投影生成 ToolExecutionRecord 列表（§3.1 投影 → ExecutionReport 统计）
+///
+/// 投影只包含汇总计数（total/completed/failed），不保留逐条工具名。
+/// 生成一条聚合记录，tool_name 为 last_tool（若有），success 按 completed > 0 判定。
+/// 供 `SessionState.last_tool_records` 使用，不影响 `ExecutionReport.tool_records`（路径内聚合保持不变）。
+fn projection_to_tool_records(projection: &SessionStateProjection) -> Vec<ToolExecutionRecord> {
+    if projection.total_calls == 0 {
+        return Vec::new();
+    }
+    vec![ToolExecutionRecord {
+        step_id: None,
+        tool_name: projection
+            .last_tool
+            .clone()
+            .unwrap_or_else(|| "(aggregated)".to_string()),
+        success: projection.completed > 0,
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,5 +1040,46 @@ mod tests {
         assert!(db.load_session(&handle.id).unwrap().is_none());
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn projection_to_tool_records_empty_when_no_calls() {
+        let proj = SessionStateProjection::default();
+        assert!(projection_to_tool_records(&proj).is_empty());
+    }
+
+    #[test]
+    fn projection_to_tool_records_aggregates_counts() {
+        let proj = SessionStateProjection {
+            session_id: "s1".into(),
+            total_calls: 5,
+            completed: 3,
+            failed: 2,
+            denied: 0,
+            last_tool: Some("fs.write".into()),
+            last_seq: 10,
+            truncated: false,
+        };
+        let records = projection_to_tool_records(&proj);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tool_name, "fs.write");
+        assert!(records[0].success); // completed > 0
+    }
+
+    #[test]
+    fn projection_to_tool_records_all_failed() {
+        let proj = SessionStateProjection {
+            session_id: "s2".into(),
+            total_calls: 2,
+            completed: 0,
+            failed: 2,
+            denied: 0,
+            last_tool: Some("shell.exec".into()),
+            last_seq: 5,
+            truncated: false,
+        };
+        let records = projection_to_tool_records(&proj);
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].success); // completed == 0
     }
 }
