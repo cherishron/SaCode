@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_daemon_health_endpoint() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .oneshot(
@@ -27,7 +27,7 @@ async fn test_daemon_health_endpoint() {
 
 #[tokio::test]
 async fn test_daemon_tools_endpoint_lists_builtin_tools() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .oneshot(
@@ -54,7 +54,7 @@ async fn test_daemon_tools_endpoint_lists_builtin_tools() {
 
 #[tokio::test]
 async fn test_daemon_task_lifecycle() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -127,7 +127,7 @@ async fn test_daemon_task_lifecycle() {
 
 #[tokio::test]
 async fn test_daemon_events_endpoint_streams_sse() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -175,7 +175,7 @@ async fn test_daemon_events_endpoint_streams_sse() {
 
 #[tokio::test]
 async fn test_daemon_task_events_endpoint_filters_by_task_id() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -218,7 +218,7 @@ async fn test_daemon_task_events_endpoint_filters_by_task_id() {
 
 #[tokio::test]
 async fn test_daemon_api_stream_endpoint_streams_sse() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -243,7 +243,7 @@ async fn test_daemon_api_stream_endpoint_streams_sse() {
 
 #[tokio::test]
 async fn test_daemon_api_stream_endpoint_supports_task_filter() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -286,7 +286,7 @@ async fn test_daemon_api_stream_endpoint_supports_task_filter() {
 
 #[tokio::test]
 async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -365,7 +365,7 @@ async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
 
 #[tokio::test]
 async fn test_daemon_status_and_result_include_task_run() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -484,7 +484,7 @@ async fn test_task_executor_emits_task_run_in_completion_event() {
 
 #[tokio::test]
 async fn test_daemon_emit_event_normalizes_payload_shape() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -917,7 +917,7 @@ async fn test_task_queue_restore_pending_tasks_from_store() {
 
 #[tokio::test]
 async fn test_daemon_queue_status_endpoint() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .oneshot(
@@ -1106,7 +1106,7 @@ async fn test_daemon_restores_completed_results_from_store() {
 
 #[tokio::test]
 async fn test_daemon_task_with_priority() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()
@@ -1135,7 +1135,7 @@ async fn test_daemon_task_with_priority() {
 
 #[tokio::test]
 async fn test_daemon_task_cancel_endpoint() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let create_response = app
         .clone()
@@ -1199,7 +1199,7 @@ async fn test_daemon_task_cancel_endpoint() {
 
 #[tokio::test]
 async fn test_daemon_task_with_retry_policy() {
-    let app = create_daemon().await;
+    let app = create_isolated_daemon().await;
 
     let response = app
         .clone()

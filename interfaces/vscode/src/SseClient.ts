@@ -49,13 +49,14 @@ export class SseClient {
     /**
      * P1-1: 提交审批结果
      * @param taskId 任务 ID
+     * @param approvalId 审批请求 ID（来自 approval_requested 事件）
      * @param approved 是否批准
      */
-    async resolveApproval(taskId: string, approved: boolean): Promise<void> {
+    async resolveApproval(taskId: string, approvalId: string, approved: boolean): Promise<void> {
         await fetch(`${this.baseUrl}/task/${taskId}/approve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ approved }),
+            body: JSON.stringify({ approval_id: approvalId, approved }),
         });
     }
 

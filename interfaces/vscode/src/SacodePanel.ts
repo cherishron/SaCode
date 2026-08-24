@@ -347,6 +347,7 @@ export class SacodePanel {
                     // P1-1: 审批请求事件 — 弹出 QuickPick 审批面板
                     if (eventType === 'approval_requested' && this.currentTaskId) {
                         const toolName = data.tool_name || payload.tool_name || 'unknown';
+                        const approvalId = data.approval_id || payload.approval_id || '';
                         const args = data.args || payload.args || {};
                         const argsStr = typeof args === 'string'
                             ? args.slice(0, 200)
@@ -357,7 +358,7 @@ export class SacodePanel {
                             text: `[审批请求] ${toolName}: ${argsStr}`,
                         });
                         // 在扩展侧弹出 QuickPick
-                        this.showApprovalQuickPick(this.currentTaskId, toolName, argsStr);
+                        this.showApprovalQuickPick(this.currentTaskId, approvalId, toolName, argsStr);
                     }
                 },
                 (err) => {
@@ -387,7 +388,12 @@ export class SacodePanel {
     /**
      * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
      */
-    private async showApprovalQuickPick(taskId: string, toolName: string, argsStr: string): Promise<void> {
+    private async showApprovalQuickPick(
+        taskId: string,
+        approvalId: string,
+        toolName: string,
+        argsStr: string,
+    ): Promise<void> {
         const items = [
             {
                 label: '$(check) 允许执行',
@@ -405,7 +411,7 @@ export class SacodePanel {
             title: 'SaCode 工具审批',
         });
         if (selected) {
-            await this.client.resolveApproval(taskId, selected.approved);
+            await this.client.resolveApproval(taskId, approvalId, selected.approved);
         }
     }
 

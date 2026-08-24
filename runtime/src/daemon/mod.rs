@@ -12,11 +12,11 @@ mod handlers;
 mod status;
 mod types;
 
-pub use approval::HttpApprovalDecider;
+pub use approval::{resolve_approval, HttpApprovalDecider};
 pub use handlers::run_daemon;
 pub use types::{
-    DaemonState, EventHistory, RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse,
-    TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
+    DaemonState, EventHistory, PendingApproval, RetryPolicyRequest, StreamEvent, TaskRequest,
+    TaskResponse, TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
 };
 
 use events::{
@@ -30,7 +30,17 @@ use handlers::{
 
 pub async fn create_daemon() -> Router {
     let state = Arc::new(DaemonState::new().await);
+    build_router(state).await
+}
 
+/// 以显式工作目录构造 daemon（测试用独立临时目录，避免并行测试共享 SQLite store）
+pub async fn create_daemon_in(dir: std::path::PathBuf) -> Router {
+    let state = Arc::new(DaemonState::new_with_workdir(Some(dir)).await);
+    build_router(state).await
+}
+
+/// 共享路由构建：注入审批工厂 + spawn worker + 注册端点
+async fn build_router(state: Arc<DaemonState>) -> Router {
     // 注入 HTTP 审批决策器工厂（daemon 路径 build 模式下工具调用走 SSE→VSCode 审批）
     {
         let state_for_factory = state.clone();

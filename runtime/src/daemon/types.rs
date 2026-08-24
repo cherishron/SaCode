@@ -230,20 +230,43 @@ pub struct DaemonState {
     /// daemon 启动时从 current_dir 获取，用于跨进程 checkpoint 查询。
     /// None 表示工作目录不可用（极端情况），checkpoint 相关端点将返回 not_found。
     pub workdir: Option<std::path::PathBuf>,
-    /// 待审批请求映射：task_id → oneshot sender
+    /// 待审批请求映射：approval_id → PendingApproval
     ///
     /// 当 task_runner 返回 `pending_question`（含 tool_approval）时，
     /// executor 创建 oneshot channel，把 sender 存入此 map，receiver 在执行循环中等待。
     /// VSCode 扩展通过 POST /task/:id/approve 回传审批结果，解除阻塞。
-    pub pending_approvals: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    ///
+    /// 以 approval_id 为键（而非 task_id），保证同一任务连续/并发的多个审批
+    /// 不会互相覆盖；每次审批都有唯一 ID，迟到或重复响应无法批准下一次审批。
+    pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
+}
+
+/// 一条待审批请求
+#[derive(Debug)]
+pub struct PendingApproval {
+    /// 所属任务 ID
+    pub task_id: String,
+    /// 创建时间（用于超时判定）
+    pub created_at: std::time::Instant,
+    /// 审批结果回传通道：VSCode 扩展通过 /task/:id/approve 发送 true/false
+    pub tx: tokio::sync::oneshot::Sender<bool>,
 }
 
 impl DaemonState {
     pub async fn new() -> Self {
+        Self::new_with_workdir(None).await
+    }
+
+    /// 以显式工作目录构造 DaemonState
+    ///
+    /// `Some(dir)`：store 与 executor 都基于该目录（测试用独立临时目录，
+    /// 避免并行测试共享 `.sacode/task-store.sqlite3` 导致 SQLite 写锁冲突）。
+    /// `None`：从 current_dir 取，生产默认行为。
+    pub async fn new_with_workdir(base_dir: Option<std::path::PathBuf>) -> Self {
         let (tx, _) = broadcast::channel(DAEMON_EVENT_BUS_CAPACITY);
         let mut queue_builder = TaskQueue::new(10);
-        if let Ok(current_dir) = std::env::current_dir() {
-            match StoreDb::from_workspace(&current_dir) {
+        if let Some(dir) = base_dir.clone().or_else(|| std::env::current_dir().ok()) {
+            match StoreDb::from_workspace(&dir) {
                 Ok(store) => {
                     queue_builder = queue_builder.with_store(Arc::new(store));
                 }
@@ -281,9 +304,12 @@ impl DaemonState {
         let executor = if cfg!(test) {
             TaskExecutor::new(queue.clone(), tools.clone())
         } else {
-            let dir = std::env::current_dir().expect(
-                "daemon 启动时无法获取 current_dir，task_runner 路径无法工作；请检查运行环境",
-            );
+            let dir = base_dir
+                .clone()
+                .or_else(|| std::env::current_dir().ok())
+                .expect(
+                    "daemon 启动时无法获取 current_dir，task_runner 路径无法工作；请检查运行环境",
+                );
             TaskExecutor::new(queue.clone(), tools.clone()).with_workdir(dir)
         };
         let executor_event_bus = executor.event_bus();
@@ -322,7 +348,7 @@ impl DaemonState {
             queue,
             executor: Mutex::new(executor),
             retry_handler,
-            workdir: std::env::current_dir().ok(),
+            workdir: base_dir.clone().or_else(|| std::env::current_dir().ok()),
             pending_approvals: Mutex::new(HashMap::new()),
         }
     }

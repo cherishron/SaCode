@@ -16,7 +16,7 @@ use crate::{
         DockerSandboxConfig, SaCodeConfig, SandboxBackendConfig, SandboxBackendKind, SandboxConfig,
         SandboxConfigStore, SandboxModeConfig,
     },
-    create_daemon, load_memory_index, load_wiki_context,
+    create_daemon, create_daemon_in, load_memory_index, load_wiki_context,
     mcp::{register_enabled_tools_sync as register_enabled_mcp_tools_sync, McpConfig},
     queue::{InMemoryStore, TaskQueue, TaskStore},
     rebuild_memory_index,
@@ -30,6 +30,7 @@ use sacode_kernel::{
     ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus,
 };
 
+mod approval_flow;
 mod daemon_queue;
 mod interceptor;
 mod mcp_stdio;
@@ -38,6 +39,16 @@ mod task_run;
 mod tools;
 mod wiki;
 
+/// 创建使用独立临时工作目录的 daemon
+///
+/// 避免并行测试共享仓库根目录 `.sacode/task-store.sqlite3`：
+/// 多个 daemon 测试并行打开同一 SQLite 文件会触发写锁冲突，
+/// 导致 create_task 随机返回 error（SQLITE_BUSY）。
+pub(crate) async fn create_isolated_daemon() -> axum::Router {
+    let tempdir = tempfile::tempdir().expect("create temp dir for daemon");
+    let dir = tempdir.keep();
+    create_daemon_in(dir).await
+}
 fn sandbox_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))

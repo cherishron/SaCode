@@ -48,7 +48,7 @@ pub use config::{
     SandboxModeConfig, SandboxNetworkConfig, SandboxResourceConfig, SandboxShellConfig,
     SandboxTaskConfig,
 };
-pub use daemon::{create_daemon, run_daemon};
+pub use daemon::{create_daemon, create_daemon_in, run_daemon};
 pub use executor::task_runner::{
     build_tool_definitions, build_tool_definitions_filtered, enrich_media_provider_args,
     execute_task_with_failover, execute_task_with_provider, format_side_effect_level,
