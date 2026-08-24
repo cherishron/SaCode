@@ -689,12 +689,18 @@ pub enum SessionEvent {
 }
 
 fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    SystemTime::now()
+    /// 进程内自增序号，防止同毫秒时间戳碰撞（尤其在并行测试中）
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{millis}-{seq}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
