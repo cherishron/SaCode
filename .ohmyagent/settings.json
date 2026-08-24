@@ -1,8 +1,0 @@
-{
-  "permission_rules": [
-    {
-      "tool": "PowerShell(Set-Location *)",
-      "decision": "allow"
-    }
-  ]
-}
