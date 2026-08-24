@@ -56,7 +56,7 @@ pub use executor::task_runner::{
     AutoDenyDecider, ErrorRecorder, LoggingErrorRecorder, NoopErrorRecorder, PromptUserDecider,
     StreamEventKind, StreamHandler, TaskRunConfig, TaskRunResult,
 };
-pub use executor::{ExecutorEvent, TaskExecutor};
+pub use executor::{ApprovalFactory, ExecutorEvent, TaskExecutor};
 pub use hook::{HookExecutor, LoggingHook};
 pub use mcp::{
     call_mcp_tool_sync, call_tool as call_mcp_tool, find_enabled_search_tool,

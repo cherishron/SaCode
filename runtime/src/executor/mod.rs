@@ -37,12 +37,15 @@ pub struct TaskExecutor {
     /// daemon 路径注入 HttpApprovalDecider 工厂，使 build 模式下工具调用
     /// 通过 SSE → VSCode 扩展 → POST /task/:id/approve 链路审批。
     /// None 时退化为 AutoApproveDecider（原行为）。
-    approval_factory: Option<Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>>,
+    approval_factory: Option<ApprovalFactory>,
 }
 
 /// executor 侧 broadcast 容量：提升到 256 以容纳单任务多事件突发，
 /// 与 daemon::DAEMON_EVENT_BUS_CAPACITY 对齐，减少 forwarder Lagged 丢事件概率
 const EXECUTOR_EVENT_BUS_CAPACITY: usize = 256;
+
+/// 审批决策器工厂类型：按 task_id 生成对应的 ApprovalDecider
+pub type ApprovalFactory = Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>;
 
 struct ExecutorTaskResult {
     task_id: String,
@@ -72,10 +75,7 @@ impl TaskExecutor {
     }
 
     /// 设置审批决策器工厂：daemon 路径注入 HttpApprovalDecider 工厂
-    pub fn with_approval_factory(
-        mut self,
-        factory: Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>,
-    ) -> Self {
+    pub fn with_approval_factory(mut self, factory: ApprovalFactory) -> Self {
         self.approval_factory = Some(factory);
         self
     }
@@ -94,10 +94,7 @@ impl TaskExecutor {
     }
 
     /// 后置注入审批决策器工厂（daemon 路径在 DaemonState 构造后调用）
-    pub fn set_approval_factory(
-        &mut self,
-        factory: Arc<dyn Fn(&str) -> Arc<dyn ApprovalDecider> + Send + Sync>,
-    ) {
+    pub fn set_approval_factory(&mut self, factory: ApprovalFactory) {
         self.approval_factory = Some(factory);
     }
 
