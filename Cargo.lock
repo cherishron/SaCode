@@ -2731,6 +2731,7 @@ dependencies = [
  "extism",
  "futures",
  "http-body-util",
+ "ignore",
  "libc",
  "regex",
  "reqwest",

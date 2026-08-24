@@ -101,44 +101,46 @@ fn collect_matches(
     file_pattern: Option<&str>,
     matches: &mut Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
-    collect_matches_recursive(root, current, matcher, file_pattern, matches, 0)
-}
+    // 用 ignore::WalkBuilder 处理目录遍历，自动支持 .gitignore 语义
+    // max_depth(Some(MAX_DEPTH)) 防止符号链接无限递归（WalkBuilder 默认会跟随符号链接）
+    let mut builder = ignore::WalkBuilder::new(current);
+    builder
+        .max_depth(Some(MAX_DEPTH))
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    // 额外过滤：跳过常见非源码目录（node_modules/target 等），
+    // 这些目录即使没有 .gitignore 也应跳过
+    let walker = builder
+        .filter_entry(move |entry| {
+            if entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
+                return false;
+            }
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                return !should_skip_dir(entry.path());
+            }
+            true
+        })
+        .build();
 
-fn collect_matches_recursive(
-    root: &Path,
-    current: &Path,
-    matcher: &Regex,
-    file_pattern: Option<&str>,
-    matches: &mut Vec<serde_json::Value>,
-    depth: usize,
-) -> anyhow::Result<()> {
-    if depth > MAX_DEPTH {
-        return Ok(());
-    }
-
-    if current.is_file() {
-        if matches_file_pattern(root, current, file_pattern) {
-            collect_file_matches(root, current, matcher, matches)?;
-        }
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        // 跳过符号链接和联结点，防止无限递归
-        if path.is_symlink() {
-            continue;
-        }
-
-        if path.is_dir() {
-            if should_skip_dir(&path) {
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                // 遍历错误（如权限不足）时静默跳过，不影响其他文件搜索
+                let _ = err;
                 continue;
             }
-            collect_matches_recursive(root, &path, matcher, file_pattern, matches, depth + 1)?;
-        } else if path.is_file() && matches_file_pattern(root, &path, file_pattern) {
-            collect_file_matches(root, &path, matcher, matches)?;
+        };
+
+        let path = entry.path();
+
+        if path.is_symlink() {
+            continue; // 跳过符号链接
+        }
+
+        if path.is_file() && matches_file_pattern(root, path, file_pattern) {
+            collect_file_matches(root, path, matcher, matches)?;
         }
     }
 
@@ -292,6 +294,72 @@ fn wildcard_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     }
 
     pattern_index == pattern.len()
+}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use std::path::Path;
+
+    use regex::Regex;
+    use tempfile::tempdir;
+
+    use super::collect_matches;
+    use crate::tests::CurrentDirGuard;
+
+    fn write_file(path: &Path, content: &str) {
+        std::fs::write(path, content).expect("write test file");
+    }
+
+    #[test]
+    fn respects_gitignore_patterns() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = CurrentDirGuard::enter(temp.path());
+        // 必须在临时根目录有 .git 目录，WalkBuilder 才会检查 .gitignore
+        std::fs::create_dir_all(temp.path().join(".git")).expect("create .git dir");
+        std::fs::create_dir_all(temp.path().join("src")).expect("create src dir");
+        std::fs::create_dir_all(temp.path().join("ignored_dir")).expect("create ignored dir");
+        std::fs::write(temp.path().join(".gitignore"), "ignored_dir/\n*.log\n").unwrap();
+
+        write_file(&temp.path().join("src/main.rs"), "let target = 1;\n");
+        write_file(
+            &temp.path().join("ignored_dir/secret.rs"),
+            "let target = 2;\n",
+        );
+        write_file(&temp.path().join("debug.log"), "let target = 3;\n");
+
+        let regex = Regex::new("target").expect("regex");
+        let mut matches = Vec::new();
+        collect_matches(temp.path(), temp.path(), &regex, None, &mut matches)
+            .expect("collect matches");
+
+        // 应只匹配 src/main.rs，忽略 ignored_dir/ 和 *.log
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["file"], "src/main.rs");
+    }
+
+    #[test]
+    fn windows_skip_dirs_still_work() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = CurrentDirGuard::enter(temp.path());
+        // 无 .gitignore，但有 should_skip_dir 的目录
+        std::fs::create_dir_all(temp.path().join("node_modules/pkg")).expect("create node_modules");
+        std::fs::create_dir_all(temp.path().join("src")).expect("create src dir");
+
+        write_file(
+            &temp.path().join("node_modules/pkg/index.js"),
+            "let target = 1;\n",
+        );
+        write_file(&temp.path().join("src/main.rs"), "let target = 2;\n");
+
+        let regex = Regex::new("target").expect("regex");
+        let mut matches = Vec::new();
+        collect_matches(temp.path(), temp.path(), &regex, None, &mut matches)
+            .expect("collect matches");
+
+        // node_modules 被 should_skip_dir 跳过，只剩 src/main.rs
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["file"], "src/main.rs");
+    }
 }
 
 #[cfg(test)]

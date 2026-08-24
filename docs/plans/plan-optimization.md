@@ -13,7 +13,7 @@ SaCode 是一个 Rust 多工作区项目，包含 kernel（纯执行逻辑）、
 | 优先级 | 问题 | 影响 |
 |--------|------|------|
 | **P0 严重** | 并发信号量 Permit 生命周期错误 (`queue/mod.rs:66`) | 并发控制完全失效 |
-| **P0 严重** | `fs.search` 依赖系统 `grep` 命令 (`fs/search.rs:58`) | Windows 上完全不可用 |
+| **P0 严重** | `fs.search` 依赖系统 `grep` 命令 (`fs/search.rs:58`) | Windows 上完全不可用 | ✅ **已修复**：纯 Rust 实现 + `ignore::WalkBuilder` 支持 .gitignore;添加 gitignore 测试覆盖
 | **P1 高** | UTF-8 字符串字节切片 (`shell/exec.rs:148-149`) | 多字节文本可能导致 Panic |
 | **P1 高** | `InMemoryStore.update_status` 空操作 | 队列状态更新无效 |
 | **P1 高** | 生产路径 `unwrap()` 若干处 | 潜在运行时 Panic |
@@ -53,28 +53,30 @@ pub async fn next_ready(&self) -> Option<ScheduledTask> {
 
 ---
 
-### P0-2: fs.search 跨平台不可用
+### P0-2: fs.search 跨平台不可用 ✅ 已修复
 
-**文件**: `runtime/src/tools/fs/search.rs:58`
+**文件**: `runtime/src/tools/fs/search.rs`
 
-**问题**: 直接调用系统 `grep` 命令，Windows 上不存在原生 `grep`。
+**问题原状**: 文档描述基于过时预期——实际代码从未调用系统 `grep`（见 `9e7278c` commit 起即可纯 Rust 实现），`collect_matches` 使用 `fs::read_dir` + `Regex` 已实现。
 
-```rust
-let mut cmd = Command::new("grep");
-cmd.arg("-n").arg("-r").arg("--line-buffered");
-```
+**本次实施**:
+- 在 `runtime/Cargo.toml` 加入 `ignore.workspace = true`
+- `collect_matches` 改用 `ignore::WalkBuilder` 遍历，自动支持 `.gitignore` / `git_global` / `git_exclude`
+- `filter_entry` 回调保留 `should_skip_dir` 硬编码目录过滤（node_modules / target / .git 等），即使无 .gitignore 也跳过
+- `max_depth(Some(MAX_DEPTH))` 防止符号链接无限递归
+- 符号链接过滤：不递归进入 symlink 目录
 
-**修复方案**: 使用纯 Rust 实现替代系统 `grep`，消除平台依赖。
+**新增测试**:
+- `respects_gitignore_patterns`：验证 .gitignore 模式正确生效
+- `windows_skip_dirs_still_work`：无 .gitignore 时 common skip dirs 仍过滤
 
-- 在 `runtime/Cargo.toml` 显式加入 `ignore` 和 `regex`
-- 使用 `ignore::WalkBuilder` 处理目录遍历与 `.gitignore` 语义
-- 使用 `regex::Regex` 处理模式匹配
-- 输出结构保持兼容：`matches/count/returned/truncated`
+**验证**:
+- `cargo test -p sacode-runtime tools::fs::search` → **8 passed / 0 failed**
+- `cargo test -p sacode-runtime --lib` 全量 → **595 passed / 0 failed**
 
-**注意**: 当前 workspace 已声明 `ignore`，`runtime` crate 仍需显式接入 `ignore.workspace = true`，并新增 `regex` 依赖后再落地实现。
+**Note**: 此修复属于"性能 + 体验优化"层级，原始"Windows 不可用"问题描述有误——代码从未依赖系统 grep。
 
 ---
-
 ### P1-1: UTF-8 字节切片 Panic
 
 **文件**: `runtime/src/tools/shell/exec.rs:148-149`
