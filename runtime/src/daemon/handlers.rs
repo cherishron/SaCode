@@ -331,7 +331,17 @@ pub async fn cancel_task(
                 sync_task_status_from_task_run(status);
             }
         }
-        emit_event(&state, &task_id, "task_cancelled", serde_json::json!({}));
+        emit_event(&state, &task_id, "task_cancelled", serde_json::json!({})); // 清理该 task 的待审批 pending：cancel 后 oneshot sender 被 drop，
+                                                                               // 等待中的审批决定线程（HttpApprovalDecider::decide 轮询环）
+                                                                               // 会收到 Closed 并返回 Denied，避免任务挂起直到超时（5 分钟）。
+        let cleared = state.clear_pending_approvals_for_task(&task_id).await;
+        if cleared > 0 {
+            tracing::info!(
+                ?task_id,
+                cleared,
+                "cleared stale pending approvals on cancel"
+            );
+        }
         Json(serde_json::json!({
             "task_id": task_id,
             "status": "cancelled",
