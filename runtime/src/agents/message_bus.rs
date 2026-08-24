@@ -801,7 +801,7 @@ mod tests {
         // 验证双向通信：sender 发送请求后等待 receiver 通过 reply_to 回应的消息
         let bus = MessageBus::new();
         let sender = bus.register("sender".to_string()).await;
-        let mut responder = bus.register("responder".to_string()).await;
+        let responder = bus.register("responder".to_string()).await;
 
         // responder 在后台接收请求并回复（带 reply_to 引用）
         let responder_task = tokio::spawn(async move {
@@ -914,8 +914,8 @@ mod tests {
         // 回归：等待响应期间收到的无关入站消息不应被错投给目标 Agent，
         // 而应缓冲到本地 pending 队列，供 try_recv_direct 后续消费。
         let bus = MessageBus::new();
-        let mut sender = bus.register("sender".to_string()).await;
-        let mut responder = bus.register("responder".to_string()).await;
+        let sender = bus.register("sender".to_string()).await;
+        let responder = bus.register("responder".to_string()).await;
 
         // 后台：responder 先给 sender 发一条无关广播式直接消息，再回复协助请求
         let resp_task = tokio::spawn(async move {

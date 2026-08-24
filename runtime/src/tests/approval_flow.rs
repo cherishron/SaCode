@@ -5,7 +5,6 @@ use axum::{
     http::{Request, StatusCode},
     response::IntoResponse,
 };
-use http_body_util::BodyExt;
 use tower::util::ServiceExt;
 
 use crate::daemon::{create_daemon_in, resolve_approval, DaemonState, PendingApproval};
@@ -452,7 +451,6 @@ async fn end_to_end_http_approval_flow() {
 #[tokio::test]
 async fn end_to_end_http_approval_deny_flow() {
     use crate::ApprovalDecider;
-    use sacode_kernel::ExecutionMode;
 
     let tempdir = tempfile::tempdir().expect("tempdir");
     let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);

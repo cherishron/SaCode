@@ -1007,7 +1007,7 @@ mod tests {
         let source = service
             .create_session(PathBuf::from("/tmp/fork-source"))
             .unwrap();
-        let forked = service.fork_session(&source.id).unwrap();
+        let _forked = service.fork_session(&source.id).unwrap();
 
         // 用新实例恢复，应看到 2 个 session
         let restored = SessionService::new().with_store(Some(db)).unwrap();

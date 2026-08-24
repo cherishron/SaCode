@@ -7,7 +7,6 @@
 //! 4. 性能潜力数据支撑测试 — 量化解析延迟、缓存命中率、内存占用
 
 use std::fs;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use super::ast::{AstEditor, AstSummary};
@@ -673,7 +672,7 @@ fn closed_loop_reparse_after_syntax_fix() {
     let broken = "fn broken( { let x = 1";
     let summary_broken = AstEditor::summarize("rust", broken).expect("语法错误应容错解析");
     // 语法错误时可能提取不到完整符号
-    let has_broken_fn = summary_broken.symbols.iter().any(|s| s.name == "broken");
+    let _has_broken_fn = summary_broken.symbols.iter().any(|s| s.name == "broken");
 
     let fixed = "fn broken() { let x = 1; }";
     let summary_fixed = AstEditor::summarize("rust", fixed).expect("修复后应正常解析");

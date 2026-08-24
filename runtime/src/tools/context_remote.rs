@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::tools::context::{current_context, set_default_context};
+    use crate::tools::context::set_default_context;
 
     /// 验证命令前缀拼接逻辑（不实际执行，纯字符串构造）
     #[test]
