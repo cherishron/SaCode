@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { SseClient } from './SseClient';
 import { ApprovalDeduplicator } from './ApprovalDeduplicator';
+import { ApprovalRequestView, approvalQuickPickOptions, resolveApprovalWithRetry } from './ApprovalUi';
 
 export class SacodePanel {
     public static readonly viewType = 'sacode-panel';
@@ -362,22 +363,31 @@ export class SacodePanel {
                     if (eventType === 'approval_requested') {
                         const toolName = data.tool_name || payload.tool_name || 'unknown';
                         const approvalId = data.approval_id || payload.approval_id || '';
+                        const approvalTaskId = event.task_id || data.task_id || payload.task_id || taskId;
                         if (!approvalId) {
                             this.postMessage({ command: 'error', text: 'Approval event is missing approval_id' });
                             return;
                         }
                         if (!this.approvals.accept(approvalId)) return;
 
-                        const args = data.args || payload.args || {};
-                        const argsStr = typeof args === 'string'
-                            ? args.slice(0, 200)
-                            : JSON.stringify(args).slice(0, 200);
+                        const rawArgs = data.args || payload.args || {};
+                        const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+                            ? rawArgs as Record<string, unknown>
+                            : { value: rawArgs };
+                        const request: ApprovalRequestView = {
+                            taskId: approvalTaskId,
+                            approvalId,
+                            toolName,
+                            sideEffect: data.side_effect_level || payload.side_effect_level || 'Unknown',
+                            args,
+                        };
+                        const presentation = approvalQuickPickOptions(request).presentation;
                         this.postMessage({
                             command: 'message',
                             type: 'tool',
-                            text: `[审批请求] ${toolName}: ${argsStr}`,
+                            text: `[审批请求] ${presentation.summary}: ${presentation.detail}`,
                         });
-                        void this.showApprovalQuickPick(taskId, approvalId, toolName, argsStr);
+                        void this.showApprovalQuickPick(request);
                     }
                 },
                 (err) => {
@@ -408,35 +418,19 @@ export class SacodePanel {
     /**
      * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
      */
-    private async showApprovalQuickPick(
-        taskId: string,
-        approvalId: string,
-        toolName: string,
-        argsStr: string,
-    ): Promise<void> {
-        const items = [
-            {
-                label: '$(check) 允许执行',
-                description: '批准该工具调用',
-                approved: true,
-            },
-            {
-                label: '$(x) 拒绝',
-                description: '取消这次修改操作',
-                approved: false,
-            },
-        ];
+    private async showApprovalQuickPick(request: ApprovalRequestView): Promise<void> {
+        const { presentation, items } = approvalQuickPickOptions(request);
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: `审批: ${toolName} — ${argsStr.slice(0, 80)}`,
-            title: 'SaCode 工具审批',
+            placeHolder: presentation.detail,
+            title: `SaCode 工具审批 · ${presentation.summary}`,
         });
-        if (!selected) return;
+        const approved = selected?.approved ?? false;
+        const reason = selected ? (approved ? undefined : 'user_denied') : 'user_dismissed';
         try {
-            await this.client.resolveApproval(taskId, approvalId, selected.approved);
+            await resolveApprovalWithRetry(this.client, request, approved, reason);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this.postMessage({ command: 'error', text: message });
-            vscode.window.showErrorMessage(`SaCode approval failed: ${message}`);
         }
     }
 

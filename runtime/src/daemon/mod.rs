@@ -15,8 +15,8 @@ mod types;
 pub use approval::{resolve_approval, HttpApprovalDecider};
 pub use handlers::run_daemon;
 pub use types::{
-    DaemonState, EventHistory, PendingApproval, RetryPolicyRequest, StreamEvent, TaskRequest,
-    TaskResponse, TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
+    ApprovalResolution, DaemonState, EventHistory, PendingApproval, RetryPolicyRequest,
+    StreamEvent, TaskRequest, TaskResponse, TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
 };
 
 use events::{

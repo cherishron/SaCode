@@ -7,7 +7,9 @@ use axum::{
 };
 use tower::util::ServiceExt;
 
-use crate::daemon::{create_daemon_in, resolve_approval, DaemonState, PendingApproval};
+use crate::daemon::{
+    create_daemon_in, resolve_approval, ApprovalResolution, DaemonState, PendingApproval,
+};
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX)
@@ -43,10 +45,13 @@ async fn create_isolated_daemon_test() -> axum::Router {
 async fn state_with_pending(
     task_id: &str,
     approval_id: &str,
-) -> (Arc<DaemonState>, tokio::sync::oneshot::Receiver<bool>) {
+) -> (
+    Arc<DaemonState>,
+    tokio::sync::oneshot::Receiver<ApprovalResolution>,
+) {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
-    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
     {
         let mut pending = state.pending_approvals.lock().await;
         pending.insert(
@@ -103,6 +108,49 @@ async fn approve_missing_approved_returns_400() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let payload = body_json(response).await;
     assert_eq!(payload["status"], "bad_request");
+}
+
+#[tokio::test]
+async fn approve_non_string_reason_returns_400() {
+    let app = create_isolated_daemon_test().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task/task-1/approve")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"approval_id":"task-1-0","approved":false,"reason":42}"#,
+                ))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should respond");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn approve_reason_over_limit_returns_400() {
+    let app = create_isolated_daemon_test().await;
+    let body = serde_json::json!({
+        "approval_id": "task-1-0",
+        "approved": false,
+        "reason": "x".repeat(129),
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task/task-1/approve")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should respond");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -170,7 +218,29 @@ async fn approve_valid_resolves_and_sends_true() {
     assert_eq!(payload["approved"], true);
 
     let result = rx.try_recv().expect("approval result should be sent");
-    assert!(result);
+    assert!(result.approved);
+    assert_eq!(result.reason, None);
+}
+
+#[tokio::test]
+async fn approve_user_dismissed_reason_reaches_waiter() {
+    let (state, mut rx) = state_with_pending("task-1", "task-1-dismissed").await;
+
+    let response = resolve_approval(
+        axum::extract::State(state),
+        axum::extract::Path("task-1".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": "task-1-dismissed",
+            "approved": false,
+            "reason": "user_dismissed"
+        })),
+    )
+    .await;
+
+    assert_eq!(response.0, StatusCode::OK);
+    let result = rx.try_recv().expect("approval result should be sent");
+    assert!(!result.approved);
+    assert_eq!(result.reason.as_deref(), Some("user_dismissed"));
 }
 
 #[tokio::test]
@@ -189,7 +259,8 @@ async fn approve_valid_deny_sends_false() {
 
     assert_eq!(response.0, StatusCode::OK);
     let result = rx.try_recv().expect("approval result should be sent");
-    assert!(!result);
+    assert!(!result.approved);
+    assert_eq!(result.reason, None);
 }
 
 /// 重复响应：同一 approval_id 第二次提交应返回 404（已被消费）
@@ -207,7 +278,7 @@ async fn approve_duplicate_returns_404() {
     )
     .await;
     assert_eq!(first.0, StatusCode::OK);
-    assert!(rx.try_recv().unwrap());
+    assert!(rx.try_recv().unwrap().approved);
 
     // 第二次：条目已移除 → 404
     let second = resolve_approval(
@@ -233,9 +304,15 @@ async fn approval_registration_precedes_notification() {
     let mut pending = state.pending_approvals.lock().await;
     let entry = pending.remove("task-race-0").expect("entry should exist");
     drop(pending);
-    entry.tx.send(true).expect("send approval");
+    entry
+        .tx
+        .send(ApprovalResolution {
+            approved: true,
+            reason: None,
+        })
+        .expect("send approval");
 
-    assert!(rx.try_recv().expect("should receive approved"));
+    assert!(rx.try_recv().expect("should receive approved").approved);
 }
 
 // ── P0-2 审批并发模型 ─────────────────────────────────────────────
@@ -251,7 +328,7 @@ async fn concurrent_approvals_across_tasks_do_not_interfere() {
     for i in 0..5 {
         let task = format!("task-{i}");
         let approval_id = format!("task-{i}-0");
-        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        let (tx, rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
         {
             let mut pending = state.pending_approvals.lock().await;
             pending.insert(
@@ -294,7 +371,7 @@ async fn concurrent_approvals_across_tasks_do_not_interfere() {
     for (i, (_, _, rx)) in rxs.into_iter().enumerate() {
         let expected = i % 2 == 0;
         assert_eq!(
-            rx.await.unwrap(),
+            rx.await.unwrap().approved,
             expected,
             "task-{i} got wrong approval result"
         );
@@ -366,7 +443,7 @@ async fn cancel_task_clears_only_own_task_pendings() {
         ("task-a-1", "task-a"),
         ("task-b-0", "task-b"),
     ] {
-        let (tx, _rx) = tokio::sync::oneshot::channel::<bool>();
+        let (tx, _rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
         pending.insert(
             approval_id.to_string(),
             PendingApproval {
@@ -464,6 +541,7 @@ async fn end_to_end_http_approval_deny_flow() {
         axum::Json(serde_json::json!({
             "approval_id": approval_id,
             "approved": false,
+            "reason": "user_dismissed",
         })),
     )
     .await;
@@ -471,6 +549,12 @@ async fn end_to_end_http_approval_deny_flow() {
 
     let decision = decide_handle.await.expect("decide task panicked");
     assert!(matches!(decision, crate::ApprovalDecision::Denied));
+    let events = state.event_history.replay_after(0);
+    assert!(events.iter().any(|(_, event)| {
+        event.event_type == "approval_resolved"
+            && event.data["reason"] == "user_dismissed"
+            && event.data["approved"] == false
+    }));
 }
 
 /// 端到端审批通道隔离：不同任务的异步等待只收到自己的回传。

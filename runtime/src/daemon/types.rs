@@ -241,6 +241,13 @@ pub struct DaemonState {
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
 }
 
+/// 审批回传结果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalResolution {
+    pub approved: bool,
+    pub reason: Option<String>,
+}
+
 /// 一条待审批请求
 #[derive(Debug)]
 pub struct PendingApproval {
@@ -248,8 +255,8 @@ pub struct PendingApproval {
     pub task_id: String,
     /// 创建时间（用于超时判定）
     pub created_at: std::time::Instant,
-    /// 审批结果回传通道：VSCode 扩展通过 /task/:id/approve 发送 true/false
-    pub tx: tokio::sync::oneshot::Sender<bool>,
+    /// 审批结果回传通道
+    pub tx: tokio::sync::oneshot::Sender<ApprovalResolution>,
 }
 
 impl DaemonState {

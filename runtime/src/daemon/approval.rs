@@ -11,7 +11,7 @@ use crate::tools::SideEffectLevel;
 use sacode_kernel::ExecutionMode;
 
 use super::events::emit_event;
-use super::{DaemonState, PendingApproval};
+use super::{ApprovalResolution, DaemonState, PendingApproval};
 
 /// 全局审批序号：保证同一任务内多个审批 ID 唯一
 static APPROVAL_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -24,7 +24,7 @@ fn generate_approval_id(task_id: &str) -> String {
 
 /// POST /task/:id/approve — VSCode 扩展回传审批结果
 ///
-/// 请求体: `{ "approval_id": "...", "approved": true/false }`
+/// 请求体: `{ "approval_id": "...", "approved": true/false, "reason": "..."? }`
 ///
 /// 响应状态码：
 /// - 200：审批已接收并解除等待
@@ -61,6 +61,29 @@ pub async fn resolve_approval(
         }
     };
 
+    let reason = match req.get("reason") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(reason)) if reason.len() <= 128 => Some(reason.clone()),
+        Some(serde_json::Value::String(_)) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "bad_request",
+                    "error": "reason must be at most 128 bytes"
+                })),
+            )
+        }
+        Some(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "bad_request",
+                    "error": "reason must be a string"
+                })),
+            )
+        }
+    };
+
     let mut pending = state.pending_approvals.lock().await;
     match pending.remove(&approval_id) {
         Some(entry) => {
@@ -77,14 +100,18 @@ pub async fn resolve_approval(
                 );
             }
             // 发送审批结果，解除 task_runner 的等待
-            let _ = entry.tx.send(approved);
+            let _ = entry.tx.send(ApprovalResolution {
+                approved,
+                reason: reason.clone(),
+            });
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "task_id": task_id,
                     "approval_id": approval_id,
                     "status": "resolved",
-                    "approved": approved
+                    "approved": approved,
+                    "reason": reason
                 })),
             )
         }
@@ -162,7 +189,7 @@ impl ApprovalDecider for HttpApprovalDecider {
         args: &serde_json::Value,
     ) -> ApprovalDecision {
         let approval_id = generate_approval_id(&self.task_id);
-        let (tx, mut rx) = oneshot::channel::<bool>();
+        let (tx, mut rx) = oneshot::channel::<ApprovalResolution>();
 
         {
             let mut pending = self.state.pending_approvals.lock().await;
@@ -189,9 +216,13 @@ impl ApprovalDecider for HttpApprovalDecider {
         );
 
         match tokio::time::timeout(self.timeout, &mut rx).await {
-            Ok(Ok(approved)) => {
-                self.emit_resolved(&approval_id, approved, None);
-                if approved {
+            Ok(Ok(resolution)) => {
+                self.emit_resolved(
+                    &approval_id,
+                    resolution.approved,
+                    resolution.reason.as_deref(),
+                );
+                if resolution.approved {
                     ApprovalDecision::Approved
                 } else {
                     ApprovalDecision::Denied
@@ -212,9 +243,13 @@ impl ApprovalDecider for HttpApprovalDecider {
                     // resolve_approval 或 cancel 可能刚好取走 sender；区分已提交决定与
                     // sender 被取消清理，避免在超时边界上误报原因。
                     return match rx.await {
-                        Ok(approved) => {
-                            self.emit_resolved(&approval_id, approved, None);
-                            if approved {
+                        Ok(resolution) => {
+                            self.emit_resolved(
+                                &approval_id,
+                                resolution.approved,
+                                resolution.reason.as_deref(),
+                            );
+                            if resolution.approved {
                                 ApprovalDecision::Approved
                             } else {
                                 ApprovalDecision::Denied

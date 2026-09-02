@@ -9,5 +9,5 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["src/SseClient.ts", "src/types.ts", "src/ApprovalDeduplicator.ts", "test/**/*.ts"]
+  "include": ["src/SseClient.ts", "src/types.ts", "src/ApprovalDeduplicator.ts", "src/ApprovalPresentation.ts", "test/**/*.ts"]
 }

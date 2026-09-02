@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApprovalDeduplicator } from '../src/ApprovalDeduplicator';
+import { buildApprovalPresentation } from '../src/ApprovalPresentation';
 import { parseSseFrame, SseClient } from '../src/SseClient';
 
 test('parseSseFrame parses CRLF frames and event names', () => {
@@ -30,6 +31,37 @@ test('ApprovalDeduplicator accepts each approval id once until cleared', () => {
     assert.equal(approvals.accept(''), false);
     approvals.clear();
     assert.equal(approvals.accept('approval-1'), true);
+});
+
+test('buildApprovalPresentation normalizes target and displays side effect', () => {
+    const presentation = buildApprovalPresentation('fs.edit', 'Modify', {
+        path: '  src\\file.ts\n',
+        diff: '@@ -1 +1 @@\n-old\n+new',
+    });
+    assert.equal(presentation.summary, 'fs.edit · Modify');
+    assert.match(presentation.detail, /路径: src\\file.ts/);
+    assert.match(presentation.detail, /Diff: @@ -1 \+1 @@ -old \+new/);
+    assert.match(presentation.detail, /影响等级: Modify/);
+});
+
+test('resolveApproval sends approval reason in request body', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody = '';
+    globalThis.fetch = async (_input, init) => {
+        requestBody = String(init?.body || '');
+        return new Response(null, { status: 200 });
+    };
+    try {
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        await client.resolveApproval('task-1', 'approval-1', false, 'user_dismissed');
+        assert.deepEqual(JSON.parse(requestBody), {
+            approval_id: 'approval-1',
+            approved: false,
+            reason: 'user_dismissed',
+        });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test('resolveApproval surfaces daemon status and JSON error detail', async () => {

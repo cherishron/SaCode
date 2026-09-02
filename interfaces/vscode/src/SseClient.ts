@@ -94,12 +94,17 @@ export class SseClient {
         if (!res.ok) throw await responseError(res, 'Task cancellation');
     }
 
-    async resolveApproval(taskId: string, approvalId: string, approved: boolean): Promise<void> {
+    async resolveApproval(
+        taskId: string,
+        approvalId: string,
+        approved: boolean,
+        reason?: string,
+    ): Promise<void> {
         if (!approvalId) throw new Error('Approval request is missing approval_id');
         const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/approve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ approval_id: approvalId, approved }),
+            body: JSON.stringify({ approval_id: approvalId, approved, ...(reason ? { reason } : {}) }),
         });
         if (!res.ok) throw await responseError(res, 'Approval resolution');
     }
