@@ -103,41 +103,69 @@ pub async fn resolve_approval(
 ///
 /// 当工具需要审批时（Build 模式 + 非 mcp 工具），先注册 pending 请求
 /// （含唯一 approval_id），再通过 SSE 发布 `approval_requested` 事件，
-/// 然后阻塞等待 VSCode 扩展通过 `POST /task/:id/approve` 回传审批结果。
+/// 然后异步等待 VSCode 扩展通过 `POST /task/:id/approve` 回传审批结果。
 ///
-/// 先注册再通知：消除"SSE 已发出但 pending 表尚未登记"的竞态窗口，
-/// 扩展即使在事件到达的瞬间立即回传，也能匹配到已登记的审批。
-///
-/// 阻塞机制：`decide()` 是同步函数，内部轮询 oneshot receiver。
-/// 轮询超时 5 分钟后自动拒绝（防止扩展崩溃导致任务永久挂起）。
+/// 先注册再通知：消除“SSE 已发出但 pending 表尚未登记”的竞态窗口。
+/// 等待使用 `oneshot.await` + `tokio::time::timeout`，不会占用 Tokio worker 线程。
 pub struct HttpApprovalDecider {
     state: Arc<DaemonState>,
     task_id: String,
+    timeout: std::time::Duration,
 }
 
 impl HttpApprovalDecider {
+    const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
     pub fn new(state: Arc<DaemonState>, task_id: String) -> Self {
-        Self { state, task_id }
+        Self {
+            state,
+            task_id,
+            timeout: Self::DEFAULT_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_timeout(
+        state: Arc<DaemonState>,
+        task_id: String,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            state,
+            task_id,
+            timeout,
+        }
+    }
+
+    fn emit_resolved(&self, approval_id: &str, approved: bool, reason: Option<&str>) {
+        let mut data = serde_json::json!({
+            "approval_id": approval_id,
+            "approved": approved,
+        });
+        if let Some(reason) = reason {
+            data["reason"] = serde_json::Value::String(reason.to_string());
+        }
+        emit_event(&self.state, &self.task_id, "approval_resolved", data);
     }
 }
 
+#[async_trait::async_trait]
 impl ApprovalDecider for HttpApprovalDecider {
     fn needs_interactive_approval(&self, tool_name: &str, mode: ExecutionMode) -> bool {
         mode == ExecutionMode::Build && !tool_name.starts_with("mcp.")
     }
 
-    fn decide(
+    async fn decide(
         &self,
         tool_name: &str,
         side_effect_level: SideEffectLevel,
         args: &serde_json::Value,
     ) -> ApprovalDecision {
         let approval_id = generate_approval_id(&self.task_id);
-
-        // 创建 oneshot channel，把 sender 存入 pending_approvals
         let (tx, mut rx) = oneshot::channel::<bool>();
+
         {
-            let mut pending = self.state.pending_approvals.blocking_lock();
+            let mut pending = self.state.pending_approvals.lock().await;
             pending.insert(
                 approval_id.clone(),
                 PendingApproval {
@@ -148,7 +176,6 @@ impl ApprovalDecider for HttpApprovalDecider {
             );
         }
 
-        // 先注册再通知：pending 表已含此 approval_id，扩展即时回传也能命中
         emit_event(
             &self.state,
             &self.task_id,
@@ -161,50 +188,51 @@ impl ApprovalDecider for HttpApprovalDecider {
             }),
         );
 
-        // 阻塞等待审批结果（轮询，超时 5 分钟）
-        let timeout = std::time::Duration::from_secs(300);
-        let start = std::time::Instant::now();
-        loop {
-            // 尝试非阻塞接收
-            match rx.try_recv() {
-                Ok(approved) => {
-                    // 发送 approval_resolved 事件
-                    emit_event(
-                        &self.state,
-                        &self.task_id,
-                        "approval_resolved",
-                        serde_json::json!({ "approved": approved }),
-                    );
-                    return if approved {
-                        ApprovalDecision::Approved
-                    } else {
-                        ApprovalDecision::Denied
+        match tokio::time::timeout(self.timeout, &mut rx).await {
+            Ok(Ok(approved)) => {
+                self.emit_resolved(&approval_id, approved, None);
+                if approved {
+                    ApprovalDecision::Approved
+                } else {
+                    ApprovalDecision::Denied
+                }
+            }
+            Ok(Err(_)) => {
+                // cancel 清理 pending 时 sender 被 drop，oneshot 会立即唤醒。
+                self.emit_resolved(&approval_id, false, Some("cancelled"));
+                ApprovalDecision::Denied
+            }
+            Err(_) => {
+                let removed = {
+                    let mut pending = self.state.pending_approvals.lock().await;
+                    pending.remove(&approval_id).is_some()
+                };
+
+                if !removed {
+                    // resolve_approval 或 cancel 可能刚好取走 sender；区分已提交决定与
+                    // sender 被取消清理，避免在超时边界上误报原因。
+                    return match rx.await {
+                        Ok(approved) => {
+                            self.emit_resolved(&approval_id, approved, None);
+                            if approved {
+                                ApprovalDecision::Approved
+                            } else {
+                                ApprovalDecision::Denied
+                            }
+                        }
+                        Err(_) => {
+                            self.emit_resolved(&approval_id, false, Some("cancelled"));
+                            ApprovalDecision::Denied
+                        }
                     };
                 }
-                Err(oneshot::error::TryRecvError::Empty) => {
-                    if start.elapsed() > timeout {
-                        // 超时自动拒绝
-                        let mut pending = self.state.pending_approvals.blocking_lock();
-                        pending.remove(&approval_id);
-                        emit_event(
-                            &self.state,
-                            &self.task_id,
-                            "approval_resolved",
-                            serde_json::json!({ "approved": false, "reason": "timeout" }),
-                        );
-                        return ApprovalDecision::Denied;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    // sender 被 drop（不应发生）
-                    return ApprovalDecision::Denied;
-                }
+
+                self.emit_resolved(&approval_id, false, Some("timeout"));
+                ApprovalDecision::Denied
             }
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

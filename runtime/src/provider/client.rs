@@ -5,6 +5,7 @@ use sacode_kernel::model::{
     ToolDefinition, MIMO_TOKEN_PLAN_BASE_URL,
 };
 use std::collections::BTreeMap;
+use std::future::Future;
 
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
@@ -159,8 +160,32 @@ impl ProviderClient {
     where
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
     {
+        self.tool_chat_async(
+            provider,
+            system_prompt,
+            user_prompt,
+            tools,
+            |name, args| std::future::ready(tool_executor(name, args)),
+            max_tool_rounds,
+        )
+        .await
+    }
+
+    pub async fn tool_chat_async<F, Fut>(
+        &self,
+        provider: &ModelProvider,
+        system_prompt: &str,
+        user_prompt: &str,
+        tools: Vec<ToolDefinition>,
+        tool_executor: F,
+        max_tool_rounds: usize,
+    ) -> Result<ToolChatResult>
+    where
+        F: Fn(&str, &serde_json::Value) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value>>,
+    {
         let mut noop = |_chunk: &StreamChunk| {};
-        self.tool_chat_streaming(
+        self.tool_chat_streaming_async(
             provider,
             system_prompt,
             user_prompt,
@@ -180,11 +205,39 @@ impl ProviderClient {
         user_prompt: &str,
         tools: Vec<ToolDefinition>,
         tool_executor: F,
-        on_chunk: &mut G,
+        mut on_chunk: G,
         max_tool_rounds: usize,
     ) -> Result<ToolChatResult>
     where
         F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value>,
+        G: FnMut(&StreamChunk),
+    {
+        self.tool_chat_streaming_async(
+            provider,
+            system_prompt,
+            user_prompt,
+            tools,
+            |name, args| std::future::ready(tool_executor(name, args)),
+            &mut on_chunk,
+            max_tool_rounds,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn tool_chat_streaming_async<F, Fut, G>(
+        &self,
+        provider: &ModelProvider,
+        system_prompt: &str,
+        user_prompt: &str,
+        tools: Vec<ToolDefinition>,
+        tool_executor: F,
+        on_chunk: &mut G,
+        max_tool_rounds: usize,
+    ) -> Result<ToolChatResult>
+    where
+        F: Fn(&str, &serde_json::Value) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value>>,
         G: FnMut(&StreamChunk),
     {
         let mut messages = vec![
@@ -253,7 +306,7 @@ impl ProviderClient {
                 let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
                     .unwrap_or_else(|_| serde_json::json!({}));
 
-                let tool_result = tool_executor(&tool_call.function.name, &args);
+                let tool_result = tool_executor(&tool_call.function.name, &args).await;
                 let pending_question = if tool_call.function.name == "interaction.ask" {
                     tool_result
                         .as_ref()

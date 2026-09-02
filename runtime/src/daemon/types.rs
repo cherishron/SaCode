@@ -356,8 +356,8 @@ impl DaemonState {
     /// 清理指定任务的待审批条目
     ///
     /// 返回清理数量。当前任务被 cancel 时调用：
-    /// 条目被 drop → tx sender 关闭 → 等待中的 decider 收到 Closed 错误返回 Denied，
-    /// 保证任务能干净退出而不是永远挂起。
+    /// 条目被 drop → tx sender 关闭 → 异步等待中的 decider 立即返回 Denied，
+    /// 并发出 reason=cancelled 的 approval_resolved 事件。
     pub async fn clear_pending_approvals_for_task(&self, task_id: &str) -> usize {
         let mut pending = self.pending_approvals.lock().await;
         let keys: Vec<String> = pending

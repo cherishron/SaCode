@@ -617,7 +617,6 @@ mod tests {
     use sacode_runtime::build_tool_definitions_filtered;
     use sacode_runtime::enrich_media_provider_args;
     use sacode_runtime::is_permission_restricted_error;
-    use sacode_runtime::SideEffectLevel;
     use sacode_runtime::ToolRegistry;
 
     #[test]

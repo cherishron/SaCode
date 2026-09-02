@@ -16,6 +16,23 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&body).expect("valid json")
 }
 
+async fn wait_for_pending_approval(
+    state: &DaemonState,
+    expected_count: usize,
+) -> Vec<(String, String)> {
+    for _ in 0..40 {
+        let pending = state.pending_approvals.lock().await;
+        if pending.len() == expected_count {
+            return pending
+                .iter()
+                .map(|(approval_id, entry)| (approval_id.clone(), entry.task_id.clone()))
+                .collect();
+        }
+        drop(pending);
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("expected {expected_count} pending approvals");
+}
 /// 创建使用独立临时工作目录的 daemon
 async fn create_isolated_daemon_test() -> axum::Router {
     let tempdir = tempfile::tempdir().expect("tempdir");
@@ -381,8 +398,7 @@ fn approval_ids_do_not_collide_per_task() {
 }
 // ── P0-3 端到端审批链路 ──────────────────────────────────────────
 
-/// 端到端：spawn `HttpApprovalDecider::decide` 等待线程，通过 HTTP approve 提交结果，
-/// decide 线程应收到 Approved 决定并返回。
+/// 端到端：异步等待审批，通过 HTTP approve 提交结果后返回 Approved。
 #[tokio::test]
 async fn end_to_end_http_approval_flow() {
     use crate::ApprovalDecider;
@@ -390,43 +406,21 @@ async fn end_to_end_http_approval_flow() {
 
     let tempdir = tempfile::tempdir().expect("tempdir");
     let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
-
-    // 1. spawn decider 线程：decide 是同步阻塞调用，会注册 pending 并轮询等待
     let state_for_decide = state.clone();
-    let decide_handle = std::thread::spawn(move || {
+    let decide_handle = tokio::spawn(async move {
         let decider =
             crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-e2e".to_string());
-        // decide 需要 ApprovalDecider trait，build 模式 + 非 mcp 工具触发
         assert!(decider.needs_interactive_approval("fs.write", ExecutionMode::Build));
-        decider.decide(
-            "fs.write",
-            crate::SideEffectLevel::Modify,
-            &serde_json::json!({ "path": "/tmp/test.txt", "content": "hello" }),
-        )
+        decider
+            .decide(
+                "fs.write",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "path": "/tmp/test.txt", "content": "hello" }),
+            )
+            .await
     });
 
-    // 2. 等待 pending 注册完成（轮询 max 2s）
-    let approval_id = {
-        let mut last_seen = String::new();
-        for _ in 0..20 {
-            let pending = state.pending_approvals.lock().await;
-            if let Some((id, _)) = pending.iter().next() {
-                last_seen = id.clone();
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        assert!(
-            !last_seen.is_empty(),
-            "pending approval should be registered"
-        );
-        last_seen
-    };
-
-    // 3. SSE 事件应已发送 — 但由于在 cfg(test) 下 SSE 通过 broadcast channel 发，
-    //    这里仅检查 pending 已注册即可。真正的 SSE 集成由独立 SSE 测试覆盖。
-
-    // 4. 通过 resolve_approval handler 提交批准
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
     let response = resolve_approval(
         axum::extract::State(state.clone()),
         axum::extract::Path("task-e2e".to_string()),
@@ -438,52 +432,34 @@ async fn end_to_end_http_approval_flow() {
     .await;
     assert_eq!(response.0, StatusCode::OK);
 
-    // 5. decide 线程应结束且返回 Approved
-    let decision = decide_handle.join().expect("decide thread panicked");
+    let decision = decide_handle.await.expect("decide task panicked");
     assert!(matches!(decision, crate::ApprovalDecision::Approved));
-
-    // 6. pending map 应为空（resolve 时已移除）
-    let pending = state.pending_approvals.lock().await;
-    assert!(pending.is_empty());
+    assert!(state.pending_approvals.lock().await.is_empty());
 }
 
-/// 端到端拒批：decide 收到 Denied 决定
+/// 端到端拒批：异步 decide 收到 Denied 决定。
 #[tokio::test]
 async fn end_to_end_http_approval_deny_flow() {
     use crate::ApprovalDecider;
 
     let tempdir = tempfile::tempdir().expect("tempdir");
     let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
-
     let state_for_decide = state.clone();
-    let decide_handle = std::thread::spawn(move || {
+    let decide_handle = tokio::spawn(async move {
         let decider =
             crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-deny".to_string());
-        decider.decide(
-            "fs.delete",
-            crate::SideEffectLevel::Execute,
-            &serde_json::json!({ "path": "/tmp/important.txt" }),
-        )
+        decider
+            .decide(
+                "fs.delete",
+                crate::SideEffectLevel::Execute,
+                &serde_json::json!({ "path": "/tmp/important.txt" }),
+            )
+            .await
     });
 
-    // 等待注册
-    let approval_id = {
-        let mut last = String::new();
-        for _ in 0..20 {
-            let pending = state.pending_approvals.lock().await;
-            if let Some((id, _)) = pending.iter().next() {
-                last = id.clone();
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        last
-    };
-    assert!(!approval_id.is_empty());
-
-    // 拒绝
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
     let response = resolve_approval(
-        axum::extract::State(state),
+        axum::extract::State(state.clone()),
         axum::extract::Path("task-deny".to_string()),
         axum::Json(serde_json::json!({
             "approval_id": approval_id,
@@ -493,11 +469,11 @@ async fn end_to_end_http_approval_deny_flow() {
     .await;
     assert_eq!(response.0, StatusCode::OK);
 
-    let decision = decide_handle.join().expect("decide thread panicked");
+    let decision = decide_handle.await.expect("decide task panicked");
     assert!(matches!(decision, crate::ApprovalDecision::Denied));
 }
 
-/// 端到端审批通道隔离：不同任务的 decide 线程只收到自己的回传
+/// 端到端审批通道隔离：不同任务的异步等待只收到自己的回传。
 #[tokio::test]
 async fn end_to_end_approvals_isolated_per_task() {
     use crate::ApprovalDecider;
@@ -505,60 +481,37 @@ async fn end_to_end_approvals_isolated_per_task() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
 
-    // 三个并发任务都进入审批
     let mut handles = Vec::new();
     for i in 0..3 {
-        let s = state.clone();
+        let state = state.clone();
         let task_id = format!("task-iso-{i}");
-        handles.push(std::thread::spawn(move || {
-            let decider = crate::daemon::HttpApprovalDecider::new(s, task_id);
-            decider.decide(
-                "fs.write",
-                crate::SideEffectLevel::Modify,
-                &serde_json::json!({ "task": i }),
-            )
+        handles.push(tokio::spawn(async move {
+            crate::daemon::HttpApprovalDecider::new(state, task_id)
+                .decide(
+                    "fs.write",
+                    crate::SideEffectLevel::Modify,
+                    &serde_json::json!({ "task": i }),
+                )
+                .await
         }));
     }
 
-    // 等所有 pending 注册完成
-    let mut pendings: Vec<(String, String)> = Vec::new();
-    for _ in 0..30 {
-        let pending = state.pending_approvals.lock().await;
-        if pending.len() == 3 {
-            for (id, entry) in pending.iter() {
-                pendings.push((id.clone(), entry.task_id.clone()));
-            }
-            break;
-        }
-        drop(pending);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert_eq!(pendings.len(), 3);
-    drop(pendings);
-
-    // 按 task 顺序 resolve（每个任务对应自己的 approval_id）
-    let pending_snapshot = {
-        let p = state.pending_approvals.lock().await;
-        p.iter()
-            .map(|(k, v)| (k.clone(), v.task_id.clone()))
-            .collect::<Vec<_>>()
-    };
+    let pending_snapshot = wait_for_pending_approval(&state, 3).await;
     for (approval_id, task_id) in pending_snapshot {
         let response = resolve_approval(
             axum::extract::State(state.clone()),
             axum::extract::Path(task_id.clone()),
             axum::Json(serde_json::json!({
                 "approval_id": approval_id,
-                "approved": task_id == "task-iso-1", // 只有 task-iso-1 被批准
+                "approved": task_id == "task-iso-1",
             })),
         )
         .await;
         assert_eq!(response.0, StatusCode::OK);
     }
 
-    // 检查 decide 结果
     for (i, handle) in handles.into_iter().enumerate() {
-        let decision = handle.join().expect("decide panicked");
+        let decision = handle.await.expect("decide task panicked");
         let expected_approved = i == 1;
         match (decision, expected_approved) {
             (crate::ApprovalDecision::Approved, true) => {}
@@ -566,4 +519,125 @@ async fn end_to_end_approvals_isolated_per_task() {
             other => panic!("task-iso-{i} unexpected decision: {:?}", other),
         }
     }
+}
+
+/// 超时自动拒绝并清理 pending，同时发出带 reason 的 resolved 事件。
+#[tokio::test]
+async fn approval_timeout_is_async_and_observable() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let decider = crate::daemon::HttpApprovalDecider::with_timeout(
+        state.clone(),
+        "task-timeout".to_string(),
+        std::time::Duration::from_millis(20),
+    );
+
+    let decision = decider
+        .decide(
+            "fs.write",
+            crate::SideEffectLevel::Modify,
+            &serde_json::json!({ "path": "file.txt" }),
+        )
+        .await;
+
+    assert!(matches!(decision, crate::ApprovalDecision::Denied));
+    assert!(state.pending_approvals.lock().await.is_empty());
+    let events = state.event_history.replay_after(0);
+    assert!(events.iter().any(|(_, event)| {
+        event.event_type == "approval_resolved"
+            && event.data["reason"] == "timeout"
+            && event.data["approved"] == false
+            && event.data["approval_id"].is_string()
+    }));
+}
+
+/// 取消清理 sender 后异步等待立即结束，并发出 reason=cancelled 事件。
+#[tokio::test]
+async fn approval_cancel_wakes_async_waiter() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-cancel-async".to_string())
+            .decide(
+                "fs.write",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "path": "file.txt" }),
+            )
+            .await
+    });
+
+    wait_for_pending_approval(&state, 1).await;
+    assert_eq!(
+        state
+            .clear_pending_approvals_for_task("task-cancel-async")
+            .await,
+        1
+    );
+    let decision = tokio::time::timeout(std::time::Duration::from_secs(1), decide_handle)
+        .await
+        .expect("cancel should wake approval waiter")
+        .expect("decide task panicked");
+    assert!(matches!(decision, crate::ApprovalDecision::Denied));
+    let events = state.event_history.replay_after(0);
+    assert!(events.iter().any(|(_, event)| {
+        event.event_type == "approval_resolved"
+            && event.data["reason"] == "cancelled"
+            && event.data["approved"] == false
+    }));
+}
+
+/// 单线程 Tokio runtime 回归：等待审批必须让出 worker，其他异步任务仍可运行。
+#[tokio::test(flavor = "current_thread")]
+async fn approval_wait_does_not_block_tokio_worker() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-nonblocking".to_string())
+            .decide(
+                "fs.write",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "path": "file.txt" }),
+            )
+            .await
+    });
+
+    let approval_id = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        wait_for_pending_approval(&state, 1),
+    )
+    .await
+    .expect("pending registration should not block current-thread runtime")[0]
+        .0
+        .clone();
+
+    let heartbeat = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        tokio::task::yield_now().await;
+        42
+    })
+    .await
+    .expect("approval wait blocked Tokio worker");
+    assert_eq!(heartbeat, 42);
+
+    let response = resolve_approval(
+        axum::extract::State(state),
+        axum::extract::Path("task-nonblocking".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": true,
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::OK);
+    assert!(matches!(
+        decide_handle.await.expect("decide task panicked"),
+        crate::ApprovalDecision::Approved
+    ));
 }

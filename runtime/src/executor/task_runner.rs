@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
 use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
 use sacode_kernel::{Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState};
 
@@ -19,12 +18,13 @@ use crate::{task_run_from_report, FailoverContext, NodeScore, TaskProfile};
 // ── 审批决策 trait ──────────────────────────────────────────────
 
 /// 工具审批决策接口，解耦 CLI 层的 ApprovalPolicy 硬编码
+#[async_trait::async_trait]
 pub trait ApprovalDecider: Send + Sync {
     /// 判断是否需要对工具调用进行交互式审批
     fn needs_interactive_approval(&self, tool_name: &str, mode: ExecutionMode) -> bool;
 
     /// 对需要审批的工具调用做出决策
-    fn decide(
+    async fn decide(
         &self,
         tool_name: &str,
         side_effect_level: SideEffectLevel,
@@ -464,115 +464,122 @@ async fn execute_tool_chat(
     let tool_duration = Arc::new(AtomicU64::new(0));
 
     let tool_duration_for_executor = tool_duration.clone();
-    let tool_executor = move |name: &str, args: &serde_json::Value| -> Result<serde_json::Value> {
-        let tool_started_at = Instant::now();
-        let spec = tools_clone.get(name);
-        let side_effect_level = spec
-            .map(|s| s.side_effect_level)
-            .unwrap_or(SideEffectLevel::Execute);
-        let needs_approval =
-            spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
-        let requires_prompt_approval = needs_approval && mode == ExecutionMode::Build;
+    let session_id = config.session_id.clone().unwrap_or_default();
+    let tool_executor = move |name: &str, args: &serde_json::Value| {
+        let name = name.to_string();
+        let args = args.clone();
+        let tools = tools_clone.clone();
+        let provider = provider_for_tools.clone();
+        let approval = approval.clone();
+        let error_recorder = error_recorder.clone();
+        let tool_duration = tool_duration_for_executor.clone();
+        let session_id = session_id.clone();
 
-        if requires_prompt_approval {
-            let decision = approval.decide(name, side_effect_level, args);
-            match decision {
-                ApprovalDecision::Approved => {}
-                ApprovalDecision::Denied => {
-                    return Ok(serde_json::json!({ "error": "denied by policy" }))
-                }
-                ApprovalDecision::PromptUser {
-                    question: _,
-                    tool_name,
-                    side_effect_level: level,
-                    args: tool_args,
-                } => {
-                    return Ok(serde_json::json!({
-                        "pending": true,
-                        "kind": "tool_approval",
-                        "question": format!("工具 {} 需要修改工作区，是否允许继续执行？", tool_name),
-                        "options": [
-                            { "label": "拒绝", "description": "取消这次修改操作" },
-                            { "label": "允许一次", "description": "仅本次执行允许该修改操作" },
-                            { "label": "本会话总是允许", "description": "本会话内后续修改操作都自动允许" }
-                        ],
-                        "multiple": false,
-                        "tool_name": tool_name,
-                        "side_effect_level": level,
-                        "args": tool_args,
-                    }));
-                }
-            }
-        }
+        async move {
+            let tool_started_at = Instant::now();
+            let spec = tools.get(&name);
+            let side_effect_level = spec
+                .map(|s| s.side_effect_level)
+                .unwrap_or(SideEffectLevel::Execute);
+            let needs_approval =
+                spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
+            let requires_prompt_approval = needs_approval && mode == ExecutionMode::Build;
 
-        if let Some(_spec) = spec {
-            let tool_input = if matches!(name, "media.read" | "media.vision") {
-                enrich_media_provider_args(args, &provider_for_tools)
-            } else {
-                args.clone()
-            };
-            let result = match tools_clone.execute_with_session_id(
-                name,
-                tool_input,
-                config.session_id.as_deref().unwrap_or(""),
-            ) {
-                Ok(output) => Ok(if output.success {
-                    output.data
-                } else {
-                    error_recorder.record_tool_error(
-                        &format!("tool:{}", name),
-                        "工具执行失败",
-                        output.message.clone().unwrap_or_default(),
-                    );
-                    serde_json::json!({ "error": output.message.unwrap_or_default() })
-                }),
-                Err(error) => {
-                    // 检查是否为权限受限错误，需要交互式审批
-                    if mode == ExecutionMode::Build
-                        && is_permission_restricted_error(&error.to_string())
-                    {
-                        let level_str = format_side_effect_level(side_effect_level);
-                        tool_duration_for_executor
-                            .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
+            if requires_prompt_approval {
+                let decision = approval.decide(&name, side_effect_level, &args).await;
+                match decision {
+                    ApprovalDecision::Approved => {}
+                    ApprovalDecision::Denied => {
+                        return Ok(serde_json::json!({ "error": "denied by policy" }));
+                    }
+                    ApprovalDecision::PromptUser {
+                        question: _,
+                        tool_name,
+                        side_effect_level: level,
+                        args: tool_args,
+                    } => {
                         return Ok(serde_json::json!({
                             "pending": true,
                             "kind": "tool_approval",
-                            "question": format!("工具 {} 当前因权限受限无法继续，是否请求用户授权后重试？", name),
+                            "question": format!("工具 {} 需要修改工作区，是否允许继续执行？", tool_name),
                             "options": [
-                                { "label": "拒绝", "description": "保持当前权限范围并结束这次操作" },
-                                { "label": "允许一次", "description": "本次请求用户授权并继续执行当前操作" },
-                                { "label": "本会话总是允许", "description": "本会话内遇到同类权限申请时都继续请求授权" }
+                                { "label": "拒绝", "description": "取消这次修改操作" },
+                                { "label": "允许一次", "description": "仅本次执行允许该修改操作" },
+                                { "label": "本会话总是允许", "description": "本会话内后续修改操作都自动允许" }
                             ],
                             "multiple": false,
-                            "tool_name": name,
-                            "side_effect_level": level_str,
-                            "args": args,
-                            "error": error.to_string(),
+                            "tool_name": tool_name,
+                            "side_effect_level": level,
+                            "args": tool_args,
                         }));
                     }
-                    error_recorder.record_tool_error(
-                        &format!("tool:{}", name),
-                        "工具执行异常",
-                        error.to_string(),
-                    );
-                    Ok(serde_json::json!({ "error": error.to_string() }))
                 }
-            };
-            tool_duration_for_executor
-                .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
-            result
-        } else {
-            tool_duration_for_executor
-                .fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
-            Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
+            }
+
+            if let Some(_spec) = spec {
+                let tool_input = if matches!(name.as_str(), "media.read" | "media.vision") {
+                    enrich_media_provider_args(&args, &provider)
+                } else {
+                    args.clone()
+                };
+                let result = match tools.execute_with_session_id(&name, tool_input, &session_id) {
+                    Ok(output) => Ok(if output.success {
+                        output.data
+                    } else {
+                        error_recorder.record_tool_error(
+                            &format!("tool:{}", name),
+                            "工具执行失败",
+                            output.message.clone().unwrap_or_default(),
+                        );
+                        serde_json::json!({ "error": output.message.unwrap_or_default() })
+                    }),
+                    Err(error) => {
+                        // 检查是否为权限受限错误，需要交互式审批
+                        if mode == ExecutionMode::Build
+                            && is_permission_restricted_error(&error.to_string())
+                        {
+                            let level_str = format_side_effect_level(side_effect_level);
+                            tool_duration.fetch_add(
+                                elapsed_ms(tool_started_at.elapsed()),
+                                Ordering::Relaxed,
+                            );
+                            return Ok(serde_json::json!({
+                                "pending": true,
+                                "kind": "tool_approval",
+                                "question": format!("工具 {} 当前因权限受限无法继续，是否请求用户授权后重试？", name),
+                                "options": [
+                                    { "label": "拒绝", "description": "保持当前权限范围并结束这次操作" },
+                                    { "label": "允许一次", "description": "本次请求用户授权并继续执行当前操作" },
+                                    { "label": "本会话总是允许", "description": "本会话内遇到同类权限申请时都继续请求授权" }
+                                ],
+                                "multiple": false,
+                                "tool_name": name,
+                                "side_effect_level": level_str,
+                                "args": args,
+                                "error": error.to_string(),
+                            }));
+                        }
+                        error_recorder.record_tool_error(
+                            &format!("tool:{}", name),
+                            "工具执行异常",
+                            error.to_string(),
+                        );
+                        Ok(serde_json::json!({ "error": error.to_string() }))
+                    }
+                };
+                tool_duration.fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
+                result
+            } else {
+                tool_duration.fetch_add(elapsed_ms(tool_started_at.elapsed()), Ordering::Relaxed);
+                Ok(serde_json::json!({ "error": format!("unknown tool: {}", name) }))
+            }
         }
     };
-
     let api_started_at = Instant::now();
     let effective_max_iterations = config.max_iterations.max(1);
     let result = if let Some(handler) = stream_handler.as_deref_mut() {
         client
-            .tool_chat_streaming(
+            .tool_chat_streaming_async(
                 &config.provider,
                 &config.system_prompt,
                 &config.user_prompt,
@@ -594,7 +601,7 @@ async fn execute_tool_chat(
             .await
     } else {
         client
-            .tool_chat(
+            .tool_chat_async(
                 &config.provider,
                 &config.system_prompt,
                 &config.user_prompt,
@@ -828,12 +835,13 @@ impl TaskRunConfig<'_> {
 /// 自动批准所有操作的审批器（用于 Plan 模式或受信任场景）
 pub struct AutoApproveDecider;
 
+#[async_trait::async_trait]
 impl ApprovalDecider for AutoApproveDecider {
     fn needs_interactive_approval(&self, _tool_name: &str, _mode: ExecutionMode) -> bool {
         false
     }
 
-    fn decide(
+    async fn decide(
         &self,
         _tool_name: &str,
         _side_effect_level: SideEffectLevel,
@@ -846,12 +854,13 @@ impl ApprovalDecider for AutoApproveDecider {
 /// 自动拒绝所有 Modify 级别操作的审批器
 pub struct AutoDenyDecider;
 
+#[async_trait::async_trait]
 impl ApprovalDecider for AutoDenyDecider {
     fn needs_interactive_approval(&self, tool_name: &str, mode: ExecutionMode) -> bool {
         mode == ExecutionMode::Build && !tool_name.starts_with("mcp.")
     }
 
-    fn decide(
+    async fn decide(
         &self,
         _tool_name: &str,
         _side_effect_level: SideEffectLevel,
@@ -864,12 +873,13 @@ impl ApprovalDecider for AutoDenyDecider {
 /// 交互式审批器（返回 pending question，由调用方处理用户交互）
 pub struct PromptUserDecider;
 
+#[async_trait::async_trait]
 impl ApprovalDecider for PromptUserDecider {
     fn needs_interactive_approval(&self, tool_name: &str, mode: ExecutionMode) -> bool {
         mode == ExecutionMode::Build && !tool_name.starts_with("mcp.")
     }
 
-    fn decide(
+    async fn decide(
         &self,
         tool_name: &str,
         side_effect_level: SideEffectLevel,
