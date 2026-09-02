@@ -49,6 +49,7 @@ node_modules/
 
 # Build / distribution output
 dist/
+dist-test/
 build/
 .monkeycode/
 

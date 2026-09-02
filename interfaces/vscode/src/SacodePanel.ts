@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SseClient } from './SseClient';
+import { ApprovalDeduplicator } from './ApprovalDeduplicator';
 
 export class SacodePanel {
     public static readonly viewType = 'sacode-panel';
@@ -9,6 +10,8 @@ export class SacodePanel {
     private client: SseClient;
     private currentTaskId: string | null = null;
     private abortStream: (() => void) | null = null;
+    private taskGeneration = 0;
+    private readonly approvals = new ApprovalDeduplicator();
     private disposables: vscode.Disposable[] = [];
     private static daemonReady: boolean = false;
     private static selectedText: string = '';
@@ -293,17 +296,20 @@ export class SacodePanel {
             }
 
             const response = await this.client.createTask(text);
-            this.currentTaskId = response.task_id;
-            this.postMessage({ command: 'taskId', id: response.task_id });
+            this.abortStream?.();
+            const taskId = response.task_id;
+            const generation = ++this.taskGeneration;
+            this.currentTaskId = taskId;
+            this.approvals.clear();
+            this.postMessage({ command: 'taskId', id: taskId });
 
             this.abortStream = this.client.streamEvents(
                 (event) => {
+                    if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
                     const data = event.data;
-                    // 修复 SSE 事件解析：使用 event_type 字段（与 daemon normalize_stream_event 一致）
-                    const eventType = data.event_type || data.event || data.kind;
+                    const eventType = data.event_type || data.event || data.kind || event.event;
                     const payload = data.payload || data;
 
-                    // 工具调用事件
                     if (eventType === 'tool_call_started' || eventType === 'tool' || eventType === 'tool_call') {
                         const toolName = data.name || payload.name || payload.tool || 'tool';
                         const toolInput = data.input || payload.input || {};
@@ -316,20 +322,13 @@ export class SacodePanel {
                             text: `[${toolName}] ${inputStr}`,
                         });
 
-                        // P1-2: 检测 diff 工具调用
                         if (toolName === 'fs.edit' || toolName === 'fs.apply_patch') {
                             const diffText = this.extractDiff(toolName, toolInput);
                             if (diffText) {
-                                this.postMessage({
-                                    command: 'message',
-                                    type: 'diff',
-                                    text: diffText,
-                                });
+                                this.postMessage({ command: 'message', type: 'diff', text: diffText });
                             }
                         }
-                    }
-                    // 文本/消息事件
-                    else if (eventType === 'message' || eventType === 'text' || eventType === 'thinking') {
+                    } else if (eventType === 'message' || eventType === 'text' || eventType === 'thinking') {
                         const content = data.content || data.text || payload.content || payload.text;
                         if (content) {
                             this.postMessage({
@@ -339,15 +338,36 @@ export class SacodePanel {
                             });
                         }
                     }
-                    // 任务完成
-                    if (eventType === 'task_completed' || data.status === 'completed' || eventType === 'done') {
-                        this.postMessage({ command: 'done' });
-                        this.currentTaskId = null;
+
+                    if (
+                        eventType === 'task_completed' ||
+                        eventType === 'task_failed' ||
+                        eventType === 'task_cancelled' ||
+                        data.status === 'completed' ||
+                        data.status === 'failed' ||
+                        data.status === 'cancelled' ||
+                        payload.status === 'completed' ||
+                        payload.status === 'failed' ||
+                        payload.status === 'cancelled' ||
+                        eventType === 'done'
+                    ) {
+                        if (eventType === 'task_failed') {
+                            const message = data.error || payload.error || data.message || 'Task failed';
+                            this.postMessage({ command: 'error', text: String(message) });
+                        }
+                        this.finishTask(taskId, generation);
+                        return;
                     }
-                    // P1-1: 审批请求事件 — 弹出 QuickPick 审批面板
-                    if (eventType === 'approval_requested' && this.currentTaskId) {
+
+                    if (eventType === 'approval_requested') {
                         const toolName = data.tool_name || payload.tool_name || 'unknown';
                         const approvalId = data.approval_id || payload.approval_id || '';
+                        if (!approvalId) {
+                            this.postMessage({ command: 'error', text: 'Approval event is missing approval_id' });
+                            return;
+                        }
+                        if (!this.approvals.accept(approvalId)) return;
+
                         const args = data.args || payload.args || {};
                         const argsStr = typeof args === 'string'
                             ? args.slice(0, 200)
@@ -357,34 +377,34 @@ export class SacodePanel {
                             type: 'tool',
                             text: `[审批请求] ${toolName}: ${argsStr}`,
                         });
-                        // 在扩展侧弹出 QuickPick
-                        this.showApprovalQuickPick(this.currentTaskId, approvalId, toolName, argsStr);
+                        void this.showApprovalQuickPick(taskId, approvalId, toolName, argsStr);
                     }
                 },
                 (err) => {
+                    if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
                     this.postMessage({ command: 'error', text: err.message });
-                    this.currentTaskId = null;
-                }
+                    this.finishTask(taskId, generation);
+                },
+                taskId,
             );
 
-            // Also poll for result after a delay
             setTimeout(async () => {
-                if (!this.currentTaskId) return;
+                if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
                 try {
-                    const result = await this.client.getTaskResult(this.currentTaskId);
+                    const result = await this.client.getTaskResult(taskId);
                     if (result.response) {
                         this.postMessage({ command: 'message', type: 'system', text: result.response });
                     }
-                    this.postMessage({ command: 'done' });
+                    this.finishTask(taskId, generation);
                 } catch {
-                    // Stream already handled it
+                    // SSE handles pending, failed and cancelled task states.
                 }
             }, 30000);
-        } catch (err: any) {
-            this.postMessage({ command: 'error', text: err.message });
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.postMessage({ command: 'error', text: message });
         }
     }
-
     /**
      * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
      */
@@ -410,8 +430,13 @@ export class SacodePanel {
             placeHolder: `审批: ${toolName} — ${argsStr.slice(0, 80)}`,
             title: 'SaCode 工具审批',
         });
-        if (selected) {
+        if (!selected) return;
+        try {
             await this.client.resolveApproval(taskId, approvalId, selected.approved);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.postMessage({ command: 'error', text: message });
+            vscode.window.showErrorMessage(`SaCode approval failed: ${message}`);
         }
     }
 
@@ -437,15 +462,27 @@ export class SacodePanel {
     }
 
     private async stopTask() {
-        if (this.currentTaskId) {
-            await this.client.cancelTask(this.currentTaskId);
-            this.currentTaskId = null;
+        const taskId = this.currentTaskId;
+        const generation = this.taskGeneration;
+        if (taskId) {
+            try {
+                await this.client.cancelTask(taskId);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.postMessage({ command: 'error', text: message });
+            }
         }
-        this.abortStream?.();
-        this.abortStream = null;
-        this.postMessage({ command: 'done' });
+        this.finishTask(taskId, generation);
     }
 
+    private finishTask(taskId: string | null, generation: number): void {
+        if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
+        this.abortStream?.();
+        this.abortStream = null;
+        this.currentTaskId = null;
+        this.approvals.clear();
+        this.postMessage({ command: 'done' });
+    }
     private postMessage(msg: any) {
         this.panel?.webview.postMessage(msg);
     }

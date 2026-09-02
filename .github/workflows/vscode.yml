@@ -1,0 +1,39 @@
+name: VSCode Extension
+
+on:
+  push:
+    branches: [main, master, dev]
+    paths:
+      - 'interfaces/vscode/**'
+      - '.github/workflows/vscode.yml'
+  pull_request:
+    branches: [main, master, dev]
+    paths:
+      - 'interfaces/vscode/**'
+      - '.github/workflows/vscode.yml'
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: interfaces/vscode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: interfaces/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile extension
+        run: npm run compile
+
+      - name: Run client tests
+        run: npm test
