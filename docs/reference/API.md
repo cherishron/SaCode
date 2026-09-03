@@ -8,6 +8,7 @@
 - TUI / REPL 常用交互命令
 - tools / skills / MCP
 - provider 与项目级配置
+- daemon HTTP、SSE 与审批协议（详见 [daemon-api.md](daemon-api.md)）
 
 ## CLI 命令
 
@@ -369,13 +370,14 @@ sacode lsp serve
 sacode lsp serve --tcp --host 127.0.0.1 --port 8766
 ```
 
-### 组合入口
+### Daemon 入口
 
 ```bash
-sacode serve --acp --lsp
+sacode serve
+sacode serve --host=127.0.0.1 --port=8080
 ```
 
-当前 `serve` 主要作为聚合入口和提示入口使用；实际协议服务能力分别由 `acp` 和 `lsp` 子命令承载。
+无协议参数时，`sacode serve` 启动 HTTP/SSE daemon，默认监听 `127.0.0.1:8080`。`--acp` 或 `--lsp` 当前只提示使用对应的独立子命令；同时传入二者的组合模式仍是 scaffold。daemon 没有内建认证或 TLS，不应直接暴露到不可信网络。
 
 ### Daemon HTTP 接口
 
@@ -387,6 +389,8 @@ SaCode runtime 当前提供以下最小可用 Daemon 路由：
 - `GET /task/:id/result`
 - `POST /task/:id/retry`
 - `POST /task/:id/cancel`
+- `POST /task/:id/approve`
+- `GET /task/:id/checkpoint`
 - `GET /events`
 - `GET /events/:id`
 - `GET /api/stream`
@@ -397,7 +401,7 @@ SaCode runtime 当前提供以下最小可用 Daemon 路由：
 创建任务示例：
 
 ```bash
-curl -X POST http://127.0.0.1:8765/task \
+curl -X POST http://127.0.0.1:8080/task \
   -H "content-type: application/json" \
   -d '{"prompt":"分析代码结构","mode":"build"}'
 ```
@@ -438,6 +442,10 @@ Daemon 当前支持三种 SSE 入口：
 - `thinking`
 - `tool_call_started`
 - `tool_call_finished`
+- `approval_requested`
+- `approval_resolved`
+- `task_cancelled`
+- `lagged`
 
 统一 SSE `data` 结构：
 
@@ -480,6 +488,10 @@ Daemon 当前支持三种 SSE 入口：
 - `task_id`、`event_type`、`timestamp`、`payload` 是统一后的稳定字段
 - `result`、`task_run` 等顶层字段当前继续保留，用于兼容旧消费方
 - 新接入方建议优先消费 `payload.*`
+- `/events/:id` 与 `/api/stream` 支持 `Last-Event-ID` 内存回放；`/events` 不支持
+- 单任务流在 `task_completed`、`task_failed`、`task_cancelled` 后关闭；全局流保持打开
+- 审批事件、HTTP 400/404/409、一次性幂等和重连语义详见 [Daemon HTTP、SSE 与审批 API](daemon-api.md)
+- VSCode 安装与 daemon 自动管理排障详见 [VSCode 扩展使用与排障](../guides/vscode-extension.md)
 
 ## 工具注册表
 
