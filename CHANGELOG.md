@@ -5,40 +5,71 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-
-
-
 ## [Unreleased]
 
 ### 新增
 
-- **TUI三态渲染验证** (report-plan 步骤 2)
+- **VSCode 扩展 v0.2.0**（`f5f79fa`）
+  - 自动探测并管理本地 `sacode serve` daemon，支持自定义 `sacode.binaryPath`、状态栏和重启命令
+  - 将编辑器选区注入任务上下文，并在面板中展示 `fs.edit` / `fs.apply_patch` diff
+  - `sacode serve` 无协议参数时启动 HTTP daemon；默认仍只监听 `127.0.0.1:8080`
+
+- **VSCode 审批流可视化**（`7576005`）
+  - daemon 新增 `approval_requested` / `approval_resolved` SSE 事件与 `POST /task/:id/approve` 回传端点
+  - Build 模式工具调用可在 VSCode QuickPick 中显式允许或拒绝
+  - **安全影响**：未收到有效审批、审批通道关闭或等待超时时默认拒绝，不再由 daemon 自动批准交互式工具调用
+  - **兼容性影响**：HTTP/SSE 协议为增量扩展；旧客户端可继续连接，但无法应答的新审批请求会安全拒绝
+
+- **Phase2 平台化补全**
+  - Windows 命令适配：内置命令自动 `cmd.exe /C` 包裹、危险命令检测、进程组隔离（`CREATE_NEW_PROCESS_GROUP` + `taskkill /T`）
+  - macOS 支持：CI release 双架构（`x86_64` + `aarch64`）、npm darwin 二进制映射
+  - 增量索引缓存：`code/cache.rs` 中的 AstCache + FileListCache，基于 mtime 驱动失效
+  - CI 自动修复：`cargo fmt --check` + `cargo clippy` + `auto-fix.yml` PR 自动格式化
+
+- **模型库全面升级**
+  - DeepSeek：`deepseek-v4-pro` / `v4-flash` 升级至 1M 上下文 / 384K 输出
+  - OpenAI：`gpt-5.4`（128K/16K）/ `gpt-5.5`（1M，输出待定）
+  - LongCat：精简为 `LongCat-2.0-Preview`（1M/128K，免费）
+  - MiMo：移除 `v2-omni`，保留 `v2.5-pro`（图文）/ `v2.5`（文本）
+  - Ollama：`glm-4.7-flash`
+
+- **TUI 三态渲染验证**（report-plan 步骤 2）
   - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
   - 工具名、摘要字段渲染测试
 
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
+- **PendingApprovalRequest 操作摘要增强**（report-plan 步骤 5.2/6.2）
   - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
+  - 审批面板渲染：工具名 + 操作摘要 + 影响范围（allowed_dir）+ 确认/拒绝快捷键提示
 
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
+- **events.log 事件日志格式文档**（report-plan 步骤 B2）
   - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
   - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
 
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
+- **拦截器按 Profile 挂载**（`with_profile_interceptors`）
   - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
   - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
 
+### 变更
+
+- VSCode SSE 解析与 daemon 的 `event_type` / `payload` 协议对齐，保留旧 `event` / `kind` 字段回退
+- 测试文件中的旧模型名更新为当前模型库
+- `.gitignore` 新增 `dist/`、`build/`、`.monkeycode/` 忽略
+
 ### 修复
 
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
+- Provider 配置降级链：`resolve_provider` 在 model 为空时不再跌入 `ModelProvider::openai`
+- `connect_provider` 始终保存 provider 配置，确保 `default_model` 不为空
+- MiMo `base_url` 对齐：构造函数与 preset 统一为 `token-plan-cn.xiaomimimo.com`
+- T7 事件投影 `project_session_state()`：total_calls/completed/failed/denied 计数
+- T8 Profile-based interceptor mounting（单 Agent 路径接线）
+- T9 test.run `timeout_ms` 参数 + 最小值钳制（1000ms）
+- `--remote` Run 路径静默忽略告警（N3）
+- profile.extra.interceptors 非数组类型校验警告（N4）
+- RemoteContext 路径单引号引用（shell 注入防护）
 - read_bytes_partial LocalContext 覆写为 File::take 流式读取
 - orchestrator_entry.rs 未使用 subsystems 变量清理
 - TUI 断言 `contains("...running")` 恢复为真实状态渲染
+
 ---
 
 ## [1.1.0] - 2026-08-20
@@ -173,104 +204,6 @@
 - shell/exec.rs split_command 反斜杠 panic
 - serial_test 依赖位置和 session sleep 竞争
 - 跨平台稳定性：shell.exec/stty/id 命令平台条件编译
-
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
-### 新增
-
-- Phase2 平台化补全
-  - Windows 命令适配：内置命令自动 `cmd.exe /C` 包裹、危险命令检测、进程组隔离（`CREATE_NEW_PROCESS_GROUP` + `taskkill /T`）
-  - macOS 支持：CI release 双架构（`x86_64` + `aarch64`）、npm darwin 二进制映射
-  - 增量索引缓存：`code/cache.rs`（155 行），AstCache + FileListCache，基于 mtime 驱动失效
-  - CI 自动修复：`cargo fmt --check` + `cargo clippy` + `auto-fix.yml` PR 自动格式化
-- 模型库全面升级
-  - DeepSeek：`deepseek-v4-pro`/`v4-flash` 升级至 1M 上下文 / 384K 输出
-  - OpenAI：`gpt-5.4` (128K/16K) / `gpt-5.5` (1M, 输出待定)
-  - LongCat：精简为 `LongCat-2.0-Preview` (1M/128K, 免费)
-  - MiMo：移除 `v2-omni`，保留 `v2.5-pro`(图文) / `v2.5`(文本)
-  - Ollama：`glm-4.7-flash`
-
-### 修复
-
-- Provider 配置降级链：`resolve_provider` 在 model 为空时不再跌入 `ModelProvider::openai`
-- `connect_provider`：始终保存 provider 配置，确保 `default_model` 不为空
-- MiMo `base_url` 对齐：构造函数与 preset 统一为 `token-plan-cn.xiaomimimo.com`
-
-### 变更
-
-- 测试文件中 12 处旧模型名全部更新为当前模型库
-- `.gitignore` 新增 `dist/`、`build/`、`.monkeycode/` 忽略
-
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.28] - 2026-06-08
 
 ### 新增
@@ -280,42 +213,6 @@
   - npm 安装链路支持 macOS x64（Intel）和 arm64（Apple Silicon）
   - 发布检查脚本支持 macOS 平台验证
   - 交叉编译文档添加 macOS 构建指南
-
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
 
 ## [0.1.27] - 2026-06-08
 
@@ -372,42 +269,6 @@
 - Plan 模式支持跳过 `tool_approval` 并追加执行确认提示
 - footer 上下文显示恢复为圆环加百分比
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.9] - 2026-05-25
 
 ### 新增
@@ -446,42 +307,6 @@
 - CLI/REPL/TUI 执行路径统一调用 `run_task()` → `run_tool_chat()`
 - 旧 `cmd/mod.rs` 执行逻辑标记 `#[cfg(test)]` 仅供测试保留
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.8] - 2026-05-22
 
 ### 新增
@@ -507,42 +332,6 @@
   - Ctrl+Q 退出（替代 Esc）
   - Esc 清空当前输入（取消单次对话）
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.7] - 2026-05-22
 
 ### 变更
@@ -551,42 +340,6 @@
   - 消息区域显示时间戳 + 用户/SaCode 标识
   - 底部输入框，placeholder 提示输入任务
   - 支持滚动浏览历史消息
-
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
 
 ## [0.1.6] - 2026-05-22
 
@@ -628,42 +381,6 @@
   - 根因: npm 包包含旧 Windows 二进制
   - 解决: 重新构建并验证 manifest 机制
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.5] - 2026-05-22
 
 ### 新增
@@ -684,42 +401,6 @@
 - 发布后发现 Windows 二进制仍是旧版本
 - 缺少平台清单校验机制
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## [0.1.4] - 之前版本
 
 历史版本记录待补充。
@@ -735,42 +416,6 @@
 - npm 发布: `@cherishron/sacode`
 - CI: test.yml, npm-test.yml, release.yml
 
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
-
 ## 版本规划
 
 ### 近期
@@ -784,51 +429,15 @@
 
 ### 中期
 
-- macOS 支持
+- macOS 构建、测试与发布链路 ✅（真实 npm 发布安装仍需版本发布后验证）
 - 多语言 SDK (Python, Go)
 - Web UI
 
 ### 远期
 
 - 多 agent 协作深度增强
-- IDE 插件
+- VSCode IDE 插件 ✅（v0.2.0，含 daemon 管理、SSE、diff 与审批交互）
 - 云端部署
-
-
-
-
-## [Unreleased]
-
-### 新增
-
-- **TUI三态渲染验证** (report-plan 步骤 2)
-  - `render_messages_panel_groups_thinking_and_status_messages` 断言恢复为真实状态渲染：运行中▶/成功✓/失败✗图标与文案验证
-  - 工具名、摘要字段渲染测试
-
-- **PendingApprovalRequest 操作摘要增强** (report-plan 步骤 5.2/6.2)
-  - 增加 `input_summary: Option<String>` 字段，来源：tool_approval JSON args.command / args.path
-  - 审批面板渲染：工具名 + 操作摘要 + 影响范围(allowed_dir) + 确认/拒绝快捷键提示
-
-- **events.log 事件日志格式文档** (report-plan 步骤 B2)
-  - `.sacode/events.log` 字段定义（type/session_id/ts/seq/tool/input/output/success/error/reason）
-  - SIEM 接入示例（Filebeat/Logstash，索引 sacode-events-*）
-
-- **拦截器按 Profile 挂载** (`with_profile_interceptors`)
-  - 从 Profile manifest `extra.interceptors` 数组解析并追加到默认链
-  - `interceptor_by_name()` 注册表支持 5 种拦截器按需加载
-
-### 修复
-
-- T7 事件投影 `project_session_state()`: total_calls/completed/failed/denied 计数
-- T8 Profile-based interceptor mounting (单 Agent 路径接线)
-- T9 test.run `timeout_ms` 参数 + 最小值钳制(1000ms)
-- --remote Run 路径静默忽略告警 (N3)
-- profile.extra.interceptors 非数组类型校验警告 (N4)
-- RemoteContext 路径单引号引用 (shell 注入防护)
-- read_bytes_partial LocalContext 覆写为 File::take 流式读取
-- orchestrator_entry.rs 未使用 subsystems 变量清理
-- TUI 断言 `contains("...running")` 恢复为真实状态渲染
----
 
 ## 获取最新版本
 

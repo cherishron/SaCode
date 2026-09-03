@@ -1,5 +1,9 @@
 # SaCode 改进实施计划（细化版）
 
+> **状态：已归档（2026-09-03）**。计划中的代码、文档与 VSCode MVP 已落地；代表性证据包括 `e53612a`、`5925de3`、`d415e16`、`f5f79fa`、`7576005`、`78ad9f8`，审批交互后续由 `6694d3b`、`432fe10`、`77d4c1e` 加固。本文件保留为历史实施记录，不再作为当前待办真源。
+>
+> **验证口径**：仓库自动化验证以基线提交和实际命令为准，不沿用历史累计测试数字。当前 Windows 基线见 `21f8f43`：workspace 非 doctest 测试通过，runtime 为 601 passed / 1 个显式 quarantine ignored；该 quarantine 已按完整测试路径单独运行通过。
+
 > 依据：`.monkeycode/uploads/report-plan.md`（《SaCode 改进规划方案》）
 > 本文件将报告 8 个步骤细化为可执行改动清单（文件级、函数级、验证方式），并标注现状差异与分批交付策略。
 > 最后更新：2026-08-18
@@ -221,13 +225,13 @@
 
 ## 十二、验收清单（全量完成后）
 
-- [ ] `/login` 两步交互配置跑通，首次启动有引导
-- [ ] `doctor` 显示配置的国内 provider
-- [ ] PRD/roadmap/README 定位一致、无幽灵引用、无拼写错误
-- [ ] `/goal` 可用；知识文件为 3 个；冲突仅保留审批+拦截
-- [ ] `auto` 模式命名生效且 `yolo` 旧配置兼容
-- [ ] TUI：工具卡片、审批弹窗、footer 模式名、/help 上下文感知
-- [ ] CI 模板、review-pr 增强、远程/测试文档齐备
-- [ ] 开源策略评估文档产出
-- [ ] VSCode 扩展 MVP 可连 `sacode serve`
-- [ ] `cargo build --workspace` + `cargo test --workspace` 全绿
+- [x] `/login` 两步交互配置与首次启动引导已落地
+- [x] `doctor` 可显示配置的国内 provider
+- [x] PRD/roadmap/README 定位与文档引用已完成一致性整理
+- [x] `/goal` 可用；知识文件收敛为 3 个；冲突主路径保留审批+拦截
+- [x] `auto` 模式命名生效且 `yolo` 旧配置兼容
+- [x] TUI 工具卡片、审批弹窗、模式徽章与 `/help` 上下文感知已落地
+- [x] CI 模板、`/review-pr` 增强、远程开发与测试流程文档齐备
+- [x] 开源策略评估文档已产出（`docs/decision/open-source-strategy.md`）
+- [x] VSCode 扩展 MVP 已接通 `sacode serve`，并补充 daemon 管理、SSE 与审批交互
+- [x] workspace build/test 已纳入 Linux、macOS、Windows CI；外部依赖测试显式 quarantine 后单独强制执行

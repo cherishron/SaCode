@@ -2,6 +2,19 @@
 
 > 基于 2026-06-08 与 7 款竞品重新评估结果，聚焦 4 项核心差距的实施方案。
 
+## 归档摘要
+
+> **状态：已归档（2026-09-03）**。主体实现由 `9e7278c` 完成，评审修复由 `dfe9932` 补齐；Windows Rust CI 与跳过测试债务由 `21f8f43` 收口。本文件保留为历史设计依据，不再作为待办真源。
+>
+> **验收口径**：仓库内可自动验证的实现项已更新为完成；真实 macOS Intel/Apple Silicon 的 npm 全局安装、发布产物和内存上限等依赖外部环境或专项测量的条目仍明确保留为未验证，不据此否定方案已归档。
+
+| 方向 | 归档状态 | 主要证据 |
+|------|----------|----------|
+| Windows 命令适配 | 已落地 | `9e7278c`、`dfe9932`；`21f8f43` 新增 Windows Rust build/test CI |
+| macOS 构建与 npm 链路 | 仓库配置已落地，真实发布待外部验证 | `.github/workflows/release.yml`、`.github/workflows/npm-test.yml`、`scripts/prepare-npm-platforms.js` |
+| 增量索引缓存 | 已落地并有命中/失效/淘汰测试 | `runtime/src/tools/code/cache.rs`、`runtime/src/tools/code/tests.rs` |
+| CI 格式化与自动修复 | 已落地 | `.github/workflows/test.yml`、`.github/workflows/auto-fix.yml` |
+
 ## 背景
 
 当前 SaCode 在"多 Agent 编排 + MCP 双模 + Daemon + 沙箱审计"维度已形成独特优势，但在以下 4 项存在差距，影响用户基数和产品质量：
@@ -132,11 +145,11 @@ fn should_skip_dir(name: &str) -> bool {
 
 ### 1.5 验收标准
 
-- [ ] `sacode "列出当前目录文件"` 在 Windows 上能正确执行 `dir` 命令
-- [ ] `sacode "显示当前路径"` 能正确执行 `echo %cd%`
-- [ ] `shell.exec` 拒绝执行 `format C:`、`del /F /S C:\*` 等危险命令
-- [ ] `fs.search` 不遍历 `$RECYCLE.BIN` 等系统目录
-- [ ] 子进程超时/取消后进程树被完全终止（无孤儿进程）
+- [x] Windows shell 内置命令通过 `cmd.exe /C` 执行（单元/集成测试覆盖 `dir`、`echo` 等路径）
+- [x] Windows Rust workspace build/test 已纳入 CI（`21f8f43`）
+- [x] `shell.exec` 拒绝执行 `format C:`、`del /F /S C:\*` 等危险命令
+- [x] `fs.search` 使用 ignore-aware 遍历并保持 Windows 相对路径语义（`4de9bac`）
+- [x] 子进程超时/取消使用进程组与 `taskkill /T` 清理进程树
 
 ---
 
@@ -268,11 +281,11 @@ const binaryNames = {
 
 ### 2.4 验收标准
 
-- [ ] GitHub Actions release 可生成 `darwin-x64` 和 `darwin-arm64` 二进制
-- [ ] `npm install -g @cherishron/sacode` 在 macOS 上成功安装并运行
-- [ ] `sacode --version` 在 macOS Intel 和 Apple Silicon 上正常输出
-- [ ] `cargo test --workspace` 在 macOS CI 通过
-- [ ] `scripts/check-release.js` 不因 macOS 相关文案报错
+- [x] GitHub Actions release 已配置生成 `darwin-x64` 和 `darwin-arm64` 二进制
+- [ ] 真实发布后验证 `npm install -g @cherishron/sacode` 在 macOS 上成功安装并运行（外部发布验证）
+- [ ] 在真实 macOS Intel 和 Apple Silicon 机器验证 `sacode --version`（外部硬件验证）
+- [x] `cargo test --workspace` 已纳入 macOS CI
+- [x] `scripts/check-release.js` 已识别并校验 macOS 平台文案与产物映射
 
 ---
 
@@ -497,11 +510,11 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 
 ### 3.4 验收标准
 
-- [ ] 同一文件连续两次调用 `code.symbols`，第二次从缓存命中（日志可验证）
-- [ ] 文件被 `fs.write` 修改后，缓存自动失效
-- [ ] 目录文件无变化时 `collect_source_files` 不重复遍历
-- [ ] 缓存条目达到上限（512）后自动淘汰最旧条目
-- [ ] 缓存不超过合理内存上限（<50MB）
+- [x] 同一文件连续访问时缓存命中并返回一致结果（`closed_loop_cache_hit_returns_same_result`）
+- [x] 文件修改后缓存自动失效（`closed_loop_cache_invalidation_on_file_change`）
+- [x] 目录文件无变化时 `FileListCache` 复用已收集文件列表
+- [x] 缓存条目达到上限后自动淘汰条目（`closed_loop_cache_eviction_under_capacity`；全局上限 512）
+- [ ] 缓存不超过合理内存上限（<50MB，尚无稳定的跨平台内存基准）
 
 ---
 
@@ -601,10 +614,10 @@ jobs:
 
 ### 4.4 验收标准
 
-- [ ] PR 提交后自动运行 `cargo fmt --check` + `cargo clippy`
-- [ ] 不符合格式的代码在 lint job 中报红
-- [ ] PR 中有格式问题的代码被 auto-fix workflow 自动修复推送
-- [ ] release 检查脚本含格式/lint 状态校验
+- [x] PR 提交后自动运行 `cargo fmt --check` + `cargo clippy`
+- [x] 不符合格式或 clippy 要求的代码在 lint job 中报红
+- [x] PR 中有格式问题的代码由 `auto-fix.yml` 自动格式化并推送
+- [ ] release 检查脚本含格式/lint 状态校验（当前由独立 CI lint job 负责，不在 `check-release.js` 重复执行）
 
 ---
 
