@@ -316,9 +316,8 @@ mod tests {
         // 相对 cwd 的不存在路径（sandbox 允许），应返回 failure 输出
         let name = format!("sacode_video_nonexistent_{}.mp4", std::process::id());
         let out = execute(serde_json::json!({ "path": name.clone() }));
-        match out {
-            Ok(tool_out) => assert!(!tool_out.success),
-            Err(_) => {} // sandbox 拦截属可接受路径
+        if let Ok(tool_out) = out {
+            assert!(!tool_out.success);
         }
     }
 

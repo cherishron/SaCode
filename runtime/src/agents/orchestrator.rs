@@ -7,6 +7,8 @@
 //! - 角色如同经络，各司其职
 //! - 任务如同脏腑需求，动态分配给最适合的角色
 
+#![allow(clippy::items_after_test_module)]
+
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -1347,7 +1349,7 @@ mod tests {
                     sacode_kernel::Event::Message { content } => Some(content.as_str()),
                     _ => None,
                 };
-                text.map_or(false, |t| t.contains(needle))
+                text.is_some_and(|t| t.contains(needle))
             })
             .count()
     }

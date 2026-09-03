@@ -40,7 +40,17 @@ jobs:
         run: cargo build -p sacode-cli --bin sacode
 
       - name: Run tests
-        run: cargo test --workspace -- --skip render_header_shows_thinking_status --skip render_input_panel_shows_thinking_indicator --skip test_shell_exec_uses_docker --skip test_code_deps_extracts_multiline --skip test_fs_patch_applies_fuzzy --skip returns_relative_paths_for_nested_matches
+        run: cargo test --workspace
+
+      - name: Setup Python for quarantined tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run quarantined pytest integration test
+        run: |
+          python -m pip install pytest
+          cargo test -p sacode-runtime tools::test::autofix::tests::e2e_pytest_fix_context_generates_and_repair_verifies -- --ignored --exact
 
       - name: Build release
         run: cargo build --release
@@ -68,4 +78,38 @@ jobs:
         run: cargo build -p sacode-cli --bin sacode
 
       - name: Run tests
-        run: cargo test --workspace -- --skip render_header_shows_thinking_status --skip render_input_panel_shows_thinking_indicator --skip test_shell_exec_uses_docker --skip test_code_deps_extracts_multiline --skip test_fs_patch_applies_fuzzy --skip returns_relative_paths_for_nested_matches
+        run: cargo test --workspace
+
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run unit and integration tests
+        run: cargo test --workspace --lib --bins --tests
+
+      - name: Run doctests sequentially
+        shell: pwsh
+        run: |
+          $packages = @('sacode-kernel', 'sacode-runtime', 'sacode-acp', 'sacode-lsp', 'sacode-cli')
+          foreach ($package in $packages) {
+            cargo test -p $package --doc
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Setup Python for quarantined tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run quarantined pytest integration test
+        run: |
+          python -m pip install pytest
+          cargo test -p sacode-runtime tools::test::autofix::tests::e2e_pytest_fix_context_generates_and_repair_verifies -- --ignored --exact

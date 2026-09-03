@@ -60,12 +60,16 @@ impl std::error::Error for PreflightError {}
 /// 任一检查失败立即返回，避免对不适宜的文件做后续处理。
 ///
 /// # 示例
-/// ```ignore
-/// let file_path = resolve_allowed_path(path, FsAccess::Write)?;
-/// if let Err(error) = preflight_edit_file(&file_path) {
-///     return Ok(ToolOutput::failure(error.to_message()));
-/// }
-/// let content = fs::read_to_string(&file_path)?;
+/// ```no_run
+/// use std::path::Path;
+/// use sacode_runtime::tools::fs::preflight::preflight_edit_file;
+///
+/// # fn validate(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// preflight_edit_file(path)?;
+/// let content = std::fs::read_to_string(path)?;
+/// # assert!(content.len() <= 10 * 1024 * 1024);
+/// # Ok(())
+/// # }
 /// ```
 pub fn preflight_edit_file(path: &Path) -> Result<(), PreflightError> {
     let ctx = crate::tools::context::current_context();

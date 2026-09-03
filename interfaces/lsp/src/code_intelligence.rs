@@ -519,7 +519,6 @@ pub fn prepare_rename_in_document(doc: &TextDocument, position: Position) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tower_lsp::lsp_types::Url;
 
     fn rust_doc(content: &str) -> TextDocument {
@@ -697,7 +696,7 @@ mod tests {
 
     #[test]
     fn uri_to_local_path_handles_file_scheme() {
-        let workdir = PathBuf::from(std::env::current_dir().expect("cwd"));
+        let workdir = std::env::current_dir().expect("cwd");
         let url = Url::from_file_path(&workdir).expect("Url::from_file_path");
         let path = uri_to_local_path(&url, &workdir);
         assert!(path.is_some());

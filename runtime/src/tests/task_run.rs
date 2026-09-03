@@ -24,6 +24,7 @@ fn test_task_run_snapshot_preserves_waiting_state_and_output() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // CWD/HOME are process-global and must stay isolated for the full async call.
 async fn test_role_driven_task_run_returns_snapshot() {
     // 持有沙箱锁全程，避免 cwd/HOME 隔离期间与其它沙箱测试并发
     let _guard = sandbox_test_lock();

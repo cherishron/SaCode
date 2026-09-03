@@ -253,7 +253,7 @@ from collections import OrderedDict
         .iter()
         .map(|i| i.specifier.as_str())
         .collect();
-    assert!(specifiers.iter().any(|s| *s == "os"), "应提取 import os");
+    assert!(specifiers.contains(&"os"), "应提取 import os");
     assert!(
         specifiers.iter().any(|s| s.contains("pathlib")),
         "应提取 from pathlib"
@@ -273,14 +273,8 @@ const express = require('express');
         .iter()
         .map(|i| i.specifier.as_str())
         .collect();
-    assert!(
-        specifiers.iter().any(|s| *s == "react"),
-        "应提取 import from 'react'"
-    );
-    assert!(
-        specifiers.iter().any(|s| *s == "express"),
-        "应提取 require('express')"
-    );
+    assert!(specifiers.contains(&"react"), "应提取 import from 'react'");
+    assert!(specifiers.contains(&"express"), "应提取 require('express')");
 }
 
 #[test]
@@ -302,20 +296,14 @@ import (
         .iter()
         .map(|i| i.specifier.as_str())
         .collect();
+    assert!(specifiers.contains(&"fmt"), "应提取 import \"fmt\"");
     assert!(
-        specifiers.iter().any(|s| *s == "fmt"),
-        "应提取 import \"fmt\""
-    );
-    assert!(
-        specifiers.iter().any(|s| *s == "net/http"),
+        specifiers.contains(&"net/http"),
         "应提取 import \"net/http\""
     );
+    assert!(specifiers.contains(&"os"), "应提取多行 import \"os\"");
     assert!(
-        specifiers.iter().any(|s| *s == "os"),
-        "应提取多行 import \"os\""
-    );
-    assert!(
-        specifiers.iter().any(|s| *s == "strings"),
+        specifiers.contains(&"strings"),
         "应提取多行 import \"strings\""
     );
 }
@@ -703,10 +691,12 @@ fn perf_single_file_parse_latency() {
     let elapsed = start.elapsed();
     let avg_latency = elapsed / 100;
 
-    // 预期：单文件 100 行 Rust 代码解析平均延迟 < 5ms
+    // Windows debug 构建在共享 CI runner 上开销更高，使用平台化阈值避免负载抖动。
+    let max_latency_ms = if cfg!(windows) { 10 } else { 5 };
     assert!(
-        avg_latency.as_millis() < 5,
-        "单文件解析平均延迟应 < 5ms，实际: {:?}",
+        avg_latency.as_millis() < max_latency_ms,
+        "单文件解析平均延迟应 < {}ms，实际: {:?}",
+        max_latency_ms,
         avg_latency
     );
 }

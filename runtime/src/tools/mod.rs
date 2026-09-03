@@ -861,9 +861,11 @@ mod tests {
         );
 
         // 构造一个只放行 fs/web 的 Profile
-        let mut manifest = crate::config::profile::ProfileManifest::default();
-        manifest.name = "web".to_string();
-        manifest.enabled_tools = vec!["fs.*".to_string(), "web.*".to_string()];
+        let manifest = crate::config::profile::ProfileManifest {
+            name: "web".to_string(),
+            enabled_tools: vec!["fs.*".to_string(), "web.*".to_string()],
+            ..Default::default()
+        };
         let profile = crate::config::profile::Profile {
             name: "web".to_string(),
             inheritance_chain: vec!["web".to_string()],
@@ -929,9 +931,11 @@ mod tests {
             .task_kinds
             .extend(["git", "web"].iter().map(|s| s.to_string()));
 
-        let mut manifest = crate::config::profile::ProfileManifest::default();
-        manifest.name = "no-git-push".to_string();
-        manifest.disabled_tools = vec!["git.push".to_string()];
+        let manifest = crate::config::profile::ProfileManifest {
+            name: "no-git-push".to_string(),
+            disabled_tools: vec!["git.push".to_string()],
+            ..Default::default()
+        };
         let profile = crate::config::profile::Profile {
             name: "no-git-push".to_string(),
             inheritance_chain: vec!["no-git-push".to_string()],

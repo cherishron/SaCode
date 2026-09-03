@@ -89,7 +89,7 @@ impl Drop for CurrentDirGuard {
         if std::env::set_current_dir(&self.original_dir).is_err() {
             let _ = std::env::var_os("USERPROFILE")
                 .or_else(|| std::env::var_os("HOME"))
-                .map(|dir| std::env::set_current_dir(dir));
+                .map(std::env::set_current_dir);
         }
     }
 }
