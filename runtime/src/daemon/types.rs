@@ -248,6 +248,8 @@ pub struct DaemonState {
 pub struct ApprovalResolution {
     pub approved: bool,
     pub reason: Option<String>,
+    /// 审批后执行的完整工具参数；仅在受限参数覆盖校验通过时存在
+    pub approved_args: Option<serde_json::Value>,
 }
 
 /// 一条待审批请求

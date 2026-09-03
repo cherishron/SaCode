@@ -319,6 +319,7 @@ async fn approval_registration_precedes_notification() {
         .send(ApprovalResolution {
             approved: true,
             reason: None,
+            approved_args: None,
         })
         .expect("send approval");
 
@@ -508,6 +509,128 @@ async fn end_to_end_http_approval_flow() {
     let decision = decide_handle.await.expect("decide task panicked");
     assert!(matches!(decision, crate::ApprovalDecision::Approved));
     assert!(state.pending_approvals.lock().await.is_empty());
+}
+
+/// Diff 审阅可批准 fs.apply_patch 的部分文件，并保留原始 patch 参数。
+#[tokio::test]
+async fn approval_accepts_restricted_apply_patch_paths_override() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-partial".to_string())
+            .decide(
+                "fs.apply_patch",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "patch": "diff --git a/a b/a", "check": false }),
+            )
+            .await
+    });
+
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
+    let response = resolve_approval(
+        axum::extract::State(state),
+        axum::extract::Path("task-partial".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": true,
+            "args_override": { "paths": ["src/a.rs"] },
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::OK);
+    assert_eq!(
+        decide_handle.await.expect("decide task panicked"),
+        crate::ApprovalDecision::ApprovedWithArgs(serde_json::json!({
+            "patch": "diff --git a/a b/a",
+            "check": false,
+            "paths": ["src/a.rs"],
+        }))
+    );
+}
+
+/// Diff 审阅不能扩大工具调用原本携带的 paths 白名单。
+#[tokio::test]
+async fn approval_override_cannot_expand_original_paths() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-expand".to_string())
+            .decide(
+                "fs.apply_patch",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "patch": "diff", "paths": ["src/a.rs"] }),
+            )
+            .await
+    });
+
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
+    let response = resolve_approval(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("task-expand".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": true,
+            "args_override": { "paths": ["src/b.rs"] },
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::BAD_REQUEST);
+    assert_eq!(state.pending_approvals.lock().await.len(), 1);
+    state.clear_pending_approvals_for_task("task-expand").await;
+    assert!(matches!(
+        decide_handle.await.expect("decide task panicked"),
+        crate::ApprovalDecision::Denied
+    ));
+}
+
+/// 参数覆盖只允许 fs.apply_patch.paths，非法覆盖不消费待审批条目。
+#[tokio::test]
+async fn approval_rejects_unrestricted_args_override() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(
+            state_for_decide,
+            "task-invalid-override".to_string(),
+        )
+        .decide(
+            "fs.edit",
+            crate::SideEffectLevel::Modify,
+            &serde_json::json!({ "path": "a.rs", "old_string": "a", "new_string": "b" }),
+        )
+        .await
+    });
+
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
+    let response = resolve_approval(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("task-invalid-override".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": true,
+            "args_override": { "path": "other.rs" },
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::BAD_REQUEST);
+    assert_eq!(state.pending_approvals.lock().await.len(), 1);
+
+    state
+        .clear_pending_approvals_for_task("task-invalid-override")
+        .await;
+    assert!(matches!(
+        decide_handle.await.expect("decide task panicked"),
+        crate::ApprovalDecision::Denied
+    ));
 }
 
 /// 端到端拒批：异步 decide 收到 Denied 决定。

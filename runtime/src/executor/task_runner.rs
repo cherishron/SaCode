@@ -35,8 +35,10 @@ pub trait ApprovalDecider: Send + Sync {
 /// 审批决策结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
-    /// 自动批准
+    /// 自动批准，使用原始工具参数
     Approved,
+    /// 批准并使用审批客户端返回的受限参数覆盖
+    ApprovedWithArgs(serde_json::Value),
     /// 自动拒绝
     Denied,
     /// 需要用户交互（返回 pending question）
@@ -485,10 +487,14 @@ async fn execute_tool_chat(
                 spec.map(|s| s.needs_approval()).unwrap_or(false) || name.starts_with("mcp.");
             let requires_prompt_approval = needs_approval && mode == ExecutionMode::Build;
 
+            let mut effective_args = args.clone();
             if requires_prompt_approval {
                 let decision = approval.decide(&name, side_effect_level, &args).await;
                 match decision {
                     ApprovalDecision::Approved => {}
+                    ApprovalDecision::ApprovedWithArgs(approved_args) => {
+                        effective_args = approved_args;
+                    }
                     ApprovalDecision::Denied => {
                         return Ok(serde_json::json!({ "error": "denied by policy" }));
                     }
@@ -518,9 +524,9 @@ async fn execute_tool_chat(
 
             if let Some(_spec) = spec {
                 let tool_input = if matches!(name.as_str(), "media.read" | "media.vision") {
-                    enrich_media_provider_args(&args, &provider)
+                    enrich_media_provider_args(&effective_args, &provider)
                 } else {
-                    args.clone()
+                    effective_args
                 };
                 let result = match tools.execute_with_session_id(&name, tool_input, &session_id) {
                     Ok(output) => Ok(if output.success {

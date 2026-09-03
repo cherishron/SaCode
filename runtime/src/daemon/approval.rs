@@ -49,13 +49,75 @@ fn generate_approval_id(task_id: &str) -> String {
 
 /// POST /task/:id/approve — VSCode 扩展回传审批结果
 ///
-/// 请求体: `{ "approval_id": "...", "approved": true/false, "reason": "..."? }`
+/// 请求体: `{ "approval_id": "...", "approved": true/false, "reason": "..."?, "args_override": {...}? }`
 ///
 /// 响应状态码：
 /// - 200：审批已接收并解除等待
 /// - 400：缺少 `approval_id` 或 `approved` 字段
 /// - 404：该 approval_id 不存在或已处理
 /// - 409：approval_id 与路径 task_id 不匹配
+fn validate_args_override(
+    entry: &PendingApproval,
+    approved: bool,
+    args_override: Option<serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(override_value) = args_override else {
+        return Ok(None);
+    };
+    if !approved {
+        return Err("args_override requires approved=true".to_string());
+    }
+    if entry.tool_name != "fs.apply_patch" {
+        return Err("args_override is only supported for fs.apply_patch".to_string());
+    }
+    let object = override_value
+        .as_object()
+        .ok_or_else(|| "args_override must be an object".to_string())?;
+    if object.len() != 1 || !object.contains_key("paths") {
+        return Err("fs.apply_patch args_override may only contain paths".to_string());
+    }
+    let paths = object["paths"]
+        .as_array()
+        .ok_or_else(|| "args_override.paths must be an array".to_string())?;
+    if paths.is_empty() || paths.len() > 128 {
+        return Err("args_override.paths must contain 1 to 128 paths".to_string());
+    }
+    if paths.iter().any(|path| match path.as_str() {
+        Some(value) => value.is_empty() || value.len() > 1024,
+        None => true,
+    }) {
+        return Err(
+            "args_override.paths entries must be non-empty strings up to 1024 bytes".to_string(),
+        );
+    }
+
+    let mut approved_args = entry
+        .args
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "pending approval args must be an object".to_string())?;
+    if let Some(original_paths) = approved_args
+        .get("paths")
+        .and_then(|value| value.as_array())
+    {
+        let original_paths: std::collections::HashSet<&str> = original_paths
+            .iter()
+            .filter_map(|path| path.as_str())
+            .collect();
+        if paths
+            .iter()
+            .filter_map(|path| path.as_str())
+            .any(|path| !original_paths.contains(path))
+        {
+            return Err(
+                "args_override.paths may not expand the original paths whitelist".to_string(),
+            );
+        }
+    }
+    approved_args.insert("paths".to_string(), serde_json::Value::Array(paths.clone()));
+    Ok(Some(serde_json::Value::Object(approved_args)))
+}
+
 pub async fn resolve_approval(
     State(state): State<Arc<DaemonState>>,
     Path(task_id): Path<String>,
@@ -109,6 +171,8 @@ pub async fn resolve_approval(
         }
     };
 
+    let args_override = req.get("args_override").cloned();
+
     let mut pending = state.pending_approvals.lock().await;
     match pending.remove(&approval_id) {
         Some(entry) => {
@@ -124,10 +188,24 @@ pub async fn resolve_approval(
                     })),
                 );
             }
+            let approved_args = match validate_args_override(&entry, approved, args_override) {
+                Ok(args) => args,
+                Err(error) => {
+                    pending.insert(approval_id.clone(), entry);
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "status": "bad_request",
+                            "error": error,
+                        })),
+                    );
+                }
+            };
             // 发送审批结果，解除 task_runner 的等待
             let _ = entry.tx.send(ApprovalResolution {
                 approved,
                 reason: reason.clone(),
+                approved_args,
             });
             (
                 StatusCode::OK,
@@ -269,7 +347,10 @@ impl ApprovalDecider for HttpApprovalDecider {
                 });
                 self.emit_resolved(&approval_id, approved, resolution.reason.as_deref());
                 if approved {
-                    ApprovalDecision::Approved
+                    resolution
+                        .approved_args
+                        .map(ApprovalDecision::ApprovedWithArgs)
+                        .unwrap_or(ApprovalDecision::Approved)
                 } else {
                     ApprovalDecision::Denied
                 }
@@ -303,7 +384,10 @@ impl ApprovalDecider for HttpApprovalDecider {
                                 resolution.reason.as_deref(),
                             );
                             if approved {
-                                ApprovalDecision::Approved
+                                resolution
+                                    .approved_args
+                                    .map(ApprovalDecision::ApprovedWithArgs)
+                                    .unwrap_or(ApprovalDecision::Approved)
                             } else {
                                 ApprovalDecision::Denied
                             }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { daemonHealthError, SseClient } from './SseClient';
 import { ApprovalDeduplicator } from './ApprovalDeduplicator';
 import { ApprovalRequestView, approvalQuickPickOptions, resolveApprovalWithRetry } from './ApprovalUi';
+import { ApprovalDiffReviewer, DiffReviewResult } from './ApprovalDiffReviewer';
 
 export class SacodePanel {
     public static readonly viewType = 'sacode-panel';
@@ -13,6 +14,7 @@ export class SacodePanel {
     private abortStream: (() => void) | null = null;
     private taskGeneration = 0;
     private readonly approvals = new ApprovalDeduplicator();
+    private readonly diffReviewer = new ApprovalDiffReviewer();
     private disposables: vscode.Disposable[] = [];
     private static daemonReady: boolean = false;
     private static selectedText: string = '';
@@ -460,6 +462,31 @@ export class SacodePanel {
      * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
      */
     private async showApprovalQuickPick(request: ApprovalRequestView): Promise<void> {
+        if (this.diffReviewer.supports(request)) {
+            let review: DiffReviewResult | undefined;
+            try {
+                review = await this.diffReviewer.review(request);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                void vscode.window.showWarningMessage(`SaCode Diff 预览失败，已回退普通审批: ${message}`);
+            }
+            if (review) {
+                try {
+                    await resolveApprovalWithRetry(
+                        this.client,
+                        request,
+                        review.approved,
+                        review.reason,
+                        review.argsOverride,
+                    );
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.postMessage({ command: 'error', text: message });
+                }
+                return;
+            }
+        }
+
         const { presentation, items } = approvalQuickPickOptions(request);
         const selected = await vscode.window.showQuickPick(items, {
             placeHolder: presentation.detail,
@@ -524,6 +551,7 @@ export class SacodePanel {
 
     private dispose() {
         this.abortStream?.();
+        this.diffReviewer.dispose();
         this.disposables.forEach((d) => d.dispose());
         this.disposables = [];
         this.panel = null;

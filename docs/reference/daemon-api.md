@@ -230,6 +230,16 @@ curl -X POST http://127.0.0.1:8080/task/task-1/approve \
   -d '{"approval_id":"task-1-7","approved":true}'
 ```
 
+只批准多文件 `fs.apply_patch` 中经审阅的文件：
+
+```bash
+curl -X POST http://127.0.0.1:8080/task/task-1/approve \
+  -H "content-type: application/json" \
+  -d '{"approval_id":"task-1-7","approved":true,"reason":"diff_review_partial","args_override":{"paths":["src/a.rs","src/b.rs"]}}'
+```
+
+`args_override` 不是通用参数重写接口。daemon 只接受 `fs.apply_patch.paths` 白名单；如果原工具调用已带 `paths`，覆盖值只能缩小该集合、不能扩大。校验失败返回 400 且不消费 pending 审批；原始 `patch`、`check` 等字段仍由 daemon 保存的审批请求决定。
+
 拒绝并附理由：
 
 ```bash
@@ -245,6 +255,7 @@ curl -X POST http://127.0.0.1:8080/task/task-1/approve \
 | `approval_id` | 是 | 非空字符串，必须属于路径中的任务 |
 | `approved` | 是 | JSON boolean |
 | `reason` | 否 | 字符串，最多 128 字节 |
+| `args_override` | 否 | 仅 `approved=true` 的 `fs.apply_patch` 支持；对象只能包含 `paths`，值为 1–128 个非空路径字符串 |
 
 响应状态：
 

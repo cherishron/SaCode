@@ -181,12 +181,18 @@ export class SseClient {
         approvalId: string,
         approved: boolean,
         reason?: string,
+        argsOverride?: Record<string, unknown>,
     ): Promise<void> {
         if (!approvalId) throw new Error('Approval request is missing approval_id');
         const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/approve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ approval_id: approvalId, approved, ...(reason ? { reason } : {}) }),
+            body: JSON.stringify({
+                approval_id: approvalId,
+                approved,
+                ...(reason ? { reason } : {}),
+                ...(argsOverride ? { args_override: argsOverride } : {}),
+            }),
         });
         if (!res.ok) throw await responseError(res, 'Approval resolution');
     }

@@ -123,6 +123,33 @@ test('resolveApproval sends approval reason in request body', async () => {
     }
 });
 
+test('resolveApproval sends restricted argument override', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody = '';
+    globalThis.fetch = async (_input, init) => {
+        requestBody = String(init?.body || '');
+        return new Response(null, { status: 200 });
+    };
+    try {
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        await client.resolveApproval(
+            'task-1',
+            'approval-1',
+            true,
+            'diff_review_partial',
+            { paths: ['src/a.ts'] },
+        );
+        assert.deepEqual(JSON.parse(requestBody), {
+            approval_id: 'approval-1',
+            approved: true,
+            reason: 'diff_review_partial',
+            args_override: { paths: ['src/a.ts'] },
+        });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test('resolveApproval surfaces daemon status and JSON error detail', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(

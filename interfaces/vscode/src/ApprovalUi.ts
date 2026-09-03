@@ -16,6 +16,7 @@ export async function resolveApprovalWithRetry(
     request: ApprovalRequestView,
     approved: boolean,
     reason?: string,
+    argsOverride?: Record<string, unknown>,
 ): Promise<void> {
     while (true) {
         try {
@@ -24,6 +25,7 @@ export async function resolveApprovalWithRetry(
                 request.approvalId,
                 approved,
                 reason,
+                argsOverride,
             );
             return;
         } catch (err: unknown) {

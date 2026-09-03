@@ -492,6 +492,7 @@ Daemon 当前支持三种 SSE 入口：
 - 新接入方建议优先消费 `payload.*`
 - `/events/:id` 与 `/api/stream` 支持 `Last-Event-ID` 内存回放；`/events` 不支持
 - 单任务流在 `task_completed`、`task_failed`、`task_cancelled` 后关闭；全局流保持打开
+- `fs.apply_patch` 审批可通过受限 `args_override.paths` 只应用经用户接受的文件；该覆盖不能改写 patch 或扩大原 paths 白名单
 - 审批事件、HTTP 400/404/409、一次性幂等和重连语义详见 [Daemon HTTP、SSE 与审批 API](daemon-api.md)
 - VSCode 安装与 daemon 自动管理排障详见 [VSCode 扩展使用与排障](../guides/vscode-extension.md)
 
