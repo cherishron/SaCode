@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use axum::{
@@ -54,16 +55,25 @@ async fn state_with_pending(
     let (tx, rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
     {
         let mut pending = state.pending_approvals.lock().await;
-        pending.insert(
-            approval_id.to_string(),
-            PendingApproval {
-                task_id: task_id.to_string(),
-                created_at: std::time::Instant::now(),
-                tx,
-            },
-        );
+        pending.insert(approval_id.to_string(), pending_approval(task_id, tx));
     }
     (state, rx)
+}
+
+/// 测试辅助：构造带默认工具元数据的 PendingApproval
+fn pending_approval(
+    task_id: &str,
+    tx: tokio::sync::oneshot::Sender<ApprovalResolution>,
+) -> PendingApproval {
+    PendingApproval {
+        task_id: task_id.to_string(),
+        created_at: std::time::Instant::now(),
+        tool_name: "fs.write".to_string(),
+        side_effect_level: "Modify".to_string(),
+        args: serde_json::json!({ "path": "file.txt" }),
+        timeout: std::time::Duration::from_secs(300),
+        tx,
+    }
 }
 
 // ── HTTP 语义测试 ────────────────────────────────────────────────
@@ -331,14 +341,7 @@ async fn concurrent_approvals_across_tasks_do_not_interfere() {
         let (tx, rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
         {
             let mut pending = state.pending_approvals.lock().await;
-            pending.insert(
-                approval_id.clone(),
-                PendingApproval {
-                    task_id: task.clone(),
-                    created_at: std::time::Instant::now(),
-                    tx,
-                },
-            );
+            pending.insert(approval_id.clone(), pending_approval(&task, tx));
         }
         rxs.push((task, approval_id, rx));
     }
@@ -444,14 +447,7 @@ async fn cancel_task_clears_only_own_task_pendings() {
         ("task-b-0", "task-b"),
     ] {
         let (tx, _rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
-        pending.insert(
-            approval_id.to_string(),
-            PendingApproval {
-                task_id: task_id.to_string(),
-                created_at: std::time::Instant::now(),
-                tx,
-            },
-        );
+        pending.insert(approval_id.to_string(), pending_approval(task_id, tx));
     }
     drop(pending);
 
@@ -724,4 +720,267 @@ async fn approval_wait_does_not_block_tokio_worker() {
         decide_handle.await.expect("decide task panicked"),
         crate::ApprovalDecision::Approved
     ));
+}
+
+// ── P2-1 审批恢复 + 可观测性指标 ────────────────────────────────────
+
+/// 列出待审批：只返回目标任务的条目，字段与 approval_requested 一致，按 approval_id 排序
+#[tokio::test]
+async fn list_approvals_returns_pending_entries_for_task() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+
+    for (approval_id, task_id) in [
+        ("task-x-1", "task-x"),
+        ("task-x-0", "task-x"),
+        ("task-y-0", "task-y"),
+    ] {
+        let (tx, _rx) = tokio::sync::oneshot::channel::<ApprovalResolution>();
+        let mut pending = state.pending_approvals.lock().await;
+        pending.insert(approval_id.to_string(), pending_approval(task_id, tx));
+    }
+
+    let response = crate::daemon::list_task_approvals(
+        axum::extract::State(state),
+        axum::extract::Path("task-x".to_string()),
+    )
+    .await;
+
+    let approvals = response.0["approvals"].as_array().expect("approvals array");
+    assert_eq!(approvals.len(), 2, "只应返回 task-x 的待审批");
+    // 按 approval_id 排序
+    assert_eq!(approvals[0]["approval_id"], "task-x-0");
+    assert_eq!(approvals[1]["approval_id"], "task-x-1");
+    for entry in approvals {
+        assert_eq!(entry["task_id"], "task-x");
+        assert_eq!(entry["tool_name"], "fs.write");
+        assert_eq!(entry["side_effect_level"], "Modify");
+        assert_eq!(entry["args"]["path"], "file.txt");
+        assert!(entry["waited_secs"].is_number());
+        assert_eq!(entry["timeout_secs"], 300);
+        assert!(entry["expires_in_secs"].as_u64().unwrap() <= 300);
+    }
+}
+
+/// 列出待审批：无 pending 时返回空数组而不是 404
+#[tokio::test]
+async fn list_approvals_empty_when_no_pending() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+
+    let response = crate::daemon::list_task_approvals(
+        axum::extract::State(state),
+        axum::extract::Path("task-none".to_string()),
+    )
+    .await;
+
+    assert_eq!(response.0["task_id"], "task-none");
+    assert_eq!(
+        response.0["approvals"]
+            .as_array()
+            .expect("approvals array")
+            .len(),
+        0
+    );
+}
+
+/// HTTP 路由集成：GET /task/:id/approvals 通过完整 daemon router 可达
+#[tokio::test]
+async fn list_approvals_reachable_via_http_router() {
+    let app = create_isolated_daemon_test().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/task/task-http/approvals")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = body_json(response).await;
+    assert_eq!(payload["task_id"], "task-http");
+    assert_eq!(payload["approvals"].as_array().unwrap().len(), 0);
+}
+
+/// HTTP 路由集成：GET /metrics 可达且返回审批指标结构
+#[tokio::test]
+async fn metrics_endpoint_returns_approval_snapshot() {
+    let app = create_isolated_daemon_test().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = body_json(response).await;
+    let approval = &payload["approval"];
+    assert_eq!(approval["requested"], 0);
+    assert_eq!(approval["pending"], 0);
+    assert_eq!(approval["approved"], 0);
+    assert_eq!(approval["denied"], 0);
+    assert_eq!(approval["timed_out"], 0);
+    assert_eq!(approval["cancelled"], 0);
+    assert_eq!(approval["resolved"], 0);
+    assert_eq!(approval["avg_wait_ms"], 0);
+}
+
+/// 指标：批准的审批计入 approved 并累计等待时间
+#[tokio::test]
+async fn metrics_count_approved_with_wait_time() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-metrics".to_string())
+            .decide(
+                "fs.write",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "path": "file.txt" }),
+            )
+            .await
+    });
+
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
+    // 让等待时间非零，确保 total_wait_ms > 0
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let response = resolve_approval(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("task-metrics".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": true,
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::OK);
+    decide_handle.await.expect("decide task panicked");
+
+    let snapshot = state.metrics.snapshot();
+    let approval = &snapshot["approval"];
+    assert_eq!(approval["requested"], 1);
+    assert_eq!(approval["approved"], 1);
+    assert_eq!(approval["denied"], 0);
+    assert_eq!(approval["resolved"], 1);
+    assert!(approval["total_wait_ms"].as_u64().unwrap() > 0);
+    assert_eq!(approval["avg_wait_ms"], approval["total_wait_ms"]);
+}
+
+/// 指标：拒绝计入 denied
+#[tokio::test]
+async fn metrics_count_denied() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-deny-m".to_string())
+            .decide(
+                "fs.delete",
+                crate::SideEffectLevel::Execute,
+                &serde_json::json!({ "path": "/tmp/important" }),
+            )
+            .await
+    });
+
+    let approval_id = wait_for_pending_approval(&state, 1).await[0].0.clone();
+    let response = resolve_approval(
+        axum::extract::State(state.clone()),
+        axum::extract::Path("task-deny-m".to_string()),
+        axum::Json(serde_json::json!({
+            "approval_id": approval_id,
+            "approved": false,
+        })),
+    )
+    .await;
+    assert_eq!(response.0, StatusCode::OK);
+    decide_handle.await.expect("decide task panicked");
+
+    let approval = &state.metrics.snapshot()["approval"];
+    assert_eq!(approval["approved"], 0);
+    assert_eq!(approval["denied"], 1);
+    assert_eq!(approval["resolved"], 1);
+}
+
+/// 指标：超时计入 timed_out
+#[tokio::test]
+async fn metrics_count_timeout() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let decider = crate::daemon::HttpApprovalDecider::with_timeout(
+        state.clone(),
+        "task-to-m".to_string(),
+        std::time::Duration::from_millis(20),
+    );
+
+    decider
+        .decide(
+            "fs.write",
+            crate::SideEffectLevel::Modify,
+            &serde_json::json!({ "path": "file.txt" }),
+        )
+        .await;
+
+    let approval = &state.metrics.snapshot()["approval"];
+    assert_eq!(approval["requested"], 1);
+    assert_eq!(approval["timed_out"], 1);
+    assert_eq!(approval["resolved"], 1);
+    assert!(approval["total_wait_ms"].as_u64().unwrap() >= 20);
+}
+
+/// 指标：取消计入 cancelled
+#[tokio::test]
+async fn metrics_count_cancelled() {
+    use crate::ApprovalDecider;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new_with_workdir(Some(tempdir.keep())).await);
+    let state_for_decide = state.clone();
+    let decide_handle = tokio::spawn(async move {
+        crate::daemon::HttpApprovalDecider::new(state_for_decide, "task-cancel-m".to_string())
+            .decide(
+                "fs.write",
+                crate::SideEffectLevel::Modify,
+                &serde_json::json!({ "path": "file.txt" }),
+            )
+            .await
+    });
+
+    wait_for_pending_approval(&state, 1).await;
+    state
+        .clear_pending_approvals_for_task("task-cancel-m")
+        .await;
+    decide_handle.await.expect("decide task panicked");
+
+    let approval = &state.metrics.snapshot()["approval"];
+    assert_eq!(approval["cancelled"], 1);
+    assert_eq!(approval["resolved"], 1);
+}
+
+/// 指标：多次解决的 avg_wait_ms 为均值
+#[tokio::test]
+async fn metrics_avg_wait_ms_averages_resolved() {
+    let metrics = crate::daemon::ApprovalMetrics::default();
+    metrics.approved.store(1, Ordering::Relaxed);
+    metrics.denied.store(1, Ordering::Relaxed);
+    metrics.total_wait_ms.store(3000, Ordering::Relaxed);
+
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot["resolved"], 2);
+    assert_eq!(snapshot["avg_wait_ms"], 1500);
 }

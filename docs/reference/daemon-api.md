@@ -30,6 +30,8 @@ sacode serve --host=127.0.0.1 --port=8080
 | POST | `/task/:id/retry` | 重试失败任务 |
 | POST | `/task/:id/cancel` | 取消任务，并清理该任务的待审批请求 |
 | POST | `/task/:id/approve` | 回传一次审批结果 |
+| GET | `/task/:id/approvals` | 查询任务当前待审批列表，用于客户端恢复 |
+| GET | `/metrics` | 查询 daemon 审批指标快照 |
 | GET | `/events` | 全局 SSE；不支持历史回放 |
 | GET | `/events/:id` | 单任务 SSE；支持 `Last-Event-ID` |
 | GET | `/api/stream` | 统一 SSE；可用 `task_id` 查询参数过滤 |
@@ -188,6 +190,36 @@ data: {
 
 客户端不得仅用 `task_id` 回传审批，也不得把旧 `approval_id` 用于后续请求。
 
+### GET /task/:id/approvals
+
+客户端可在首次订阅或 SSE 重连成功后查询任务当前仍在等待的审批：
+
+```bash
+curl http://127.0.0.1:8080/task/task-1/approvals
+```
+
+响应示例：
+
+```json
+{
+  "task_id": "task-1",
+  "approvals": [
+    {
+      "approval_id": "task-1-7",
+      "task_id": "task-1",
+      "tool_name": "fs.write",
+      "side_effect_level": "Modify",
+      "args": { "path": "README.md", "content": "..." },
+      "waited_secs": 12,
+      "timeout_secs": 300,
+      "expires_in_secs": 288
+    }
+  ]
+}
+```
+
+无待审批时返回 200 和空数组。该接口只反映 daemon 进程内当前 pending 状态，不恢复 daemon 重启前的审批；重启会关闭原审批通道并安全拒绝。客户端应按 `approval_id` 与已处理事件/UI 去重。
+
 ### POST /task/:id/approve
 
 批准：
@@ -255,6 +287,33 @@ data: {
 
 `reason` 可省略。daemon 自动产生的理由包括 `timeout` 与 `cancelled`；客户端也可以提交不超过 128 字节的自定义理由。
 
+### GET /metrics
+
+`/metrics` 返回 daemon 生命周期内累计的审批指标：
+
+```json
+{
+  "approval": {
+    "requested": 8,
+    "pending": 1,
+    "approved": 4,
+    "denied": 1,
+    "timed_out": 1,
+    "cancelled": 1,
+    "resolved": 7,
+    "total_wait_ms": 18342,
+    "avg_wait_ms": 2620
+  }
+}
+```
+
+- `pending` 是查询时实时待审批深度；
+- `requested` 在审批登记后累加；
+- `approved`、`denied`、`timed_out`、`cancelled` 为互斥终态计数；
+- `resolved` 是四种终态计数之和；
+- `total_wait_ms` 与 `avg_wait_ms` 只统计已解决审批；
+- 指标保存在内存中，daemon 重启后归零。
+
 ### 审批事件与断线回放
 
 `approval_requested` 和 `approval_resolved` 与其他事件一样进入 256 条内存历史。使用 `Last-Event-ID` 重连时可能出现以下情况：
@@ -264,7 +323,7 @@ data: {
 3. 只回放 `approval_resolved`：客户端应清理同 ID 的本地待处理 UI。
 4. requested 已陈旧：回传会得到 404，客户端应关闭该审批 UI 并查询任务状态。
 
-客户端应按 `approval_id` 去重，而不是按工具名或任务 ID 去重。当前 VSCode 扩展会在单次任务流中去重重复的 requested 事件；自定义客户端若实现自动重连，也必须保持同等语义。
+客户端应按 `approval_id` 去重，而不是按工具名或任务 ID 去重。当前 VSCode 扩展会携带 `Last-Event-ID` 自动重连，并在每次连接成功后查询 `/task/:id/approvals` 对账；事件回放与查询结果共享同一个去重器，因此同一审批不会重复弹窗。自定义客户端若实现自动重连，也必须保持同等语义。
 
 ## 兼容性约定
 

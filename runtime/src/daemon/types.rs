@@ -239,6 +239,8 @@ pub struct DaemonState {
     /// 以 approval_id 为键（而非 task_id），保证同一任务连续/并发的多个审批
     /// 不会互相覆盖；每次审批都有唯一 ID，迟到或重复响应无法批准下一次审批。
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
+    /// daemon 可观测性指标（审批计数与等待时间；P2-3 将扩展 SSE 指标）
+    pub metrics: Arc<DaemonMetrics>,
 }
 
 /// 审批回传结果
@@ -255,8 +257,90 @@ pub struct PendingApproval {
     pub task_id: String,
     /// 创建时间（用于超时判定）
     pub created_at: std::time::Instant,
+    /// 待执行工具名（供 `GET /task/:id/approvals` 恢复展示）
+    pub tool_name: String,
+    /// 工具副作用级别（`SideEffectLevel` 的 Debug 字符串表示）
+    pub side_effect_level: String,
+    /// 工具参数（UI 在批准前应展示关键操作与目标）
+    pub args: serde_json::Value,
+    /// 本次审批最大等待时长
+    pub timeout: std::time::Duration,
     /// 审批结果回传通道
     pub tx: tokio::sync::oneshot::Sender<ApprovalResolution>,
+}
+
+impl PendingApproval {
+    /// 序列化为 `/task/:id/approvals` 响应条目
+    ///
+    /// `created_at` 是 `Instant`（单调时钟），无法直接序列化为墙钟时间；
+    /// 这里返回相对 daemon 启动的等待秒数 `waited_secs`，客户端据此展示“已等待 N 秒”。
+    pub fn to_json(&self, approval_id: &str) -> serde_json::Value {
+        let waited_secs = self.created_at.elapsed().as_secs();
+        let timeout_secs = self.timeout.as_secs();
+        serde_json::json!({
+            "approval_id": approval_id,
+            "task_id": self.task_id,
+            "tool_name": self.tool_name,
+            "side_effect_level": self.side_effect_level,
+            "args": self.args,
+            "waited_secs": waited_secs,
+            "timeout_secs": timeout_secs,
+            "expires_in_secs": timeout_secs.saturating_sub(waited_secs),
+        })
+    }
+}
+
+/// 审批指标：请求、批准、拒绝、超时、取消计数与累计等待时间
+///
+/// 全部使用原子计数器，daemon 生命周期内累计；`/metrics` 端点返回快照。
+/// `total_wait_ms` 仅在审批“已解决”（批准/拒绝/超时/取消）时累加，
+/// 因此 `avg_wait_ms = total_wait_ms / resolved_total`，resolved_total 为
+/// approved + denied + timed_out + cancelled。
+#[derive(Debug, Default)]
+pub struct ApprovalMetrics {
+    pub requested: AtomicU64,
+    pub approved: AtomicU64,
+    pub denied: AtomicU64,
+    pub timed_out: AtomicU64,
+    pub cancelled: AtomicU64,
+    pub total_wait_ms: AtomicU64,
+}
+
+impl ApprovalMetrics {
+    pub fn snapshot(&self) -> serde_json::Value {
+        let requested = self.requested.load(Ordering::Relaxed);
+        let approved = self.approved.load(Ordering::Relaxed);
+        let denied = self.denied.load(Ordering::Relaxed);
+        let timed_out = self.timed_out.load(Ordering::Relaxed);
+        let cancelled = self.cancelled.load(Ordering::Relaxed);
+        let total_wait_ms = self.total_wait_ms.load(Ordering::Relaxed);
+        let resolved = approved + denied + timed_out + cancelled;
+        let avg_wait_ms = total_wait_ms.checked_div(resolved).unwrap_or(0);
+        serde_json::json!({
+            "requested": requested,
+            "approved": approved,
+            "denied": denied,
+            "timed_out": timed_out,
+            "cancelled": cancelled,
+            "resolved": resolved,
+            "total_wait_ms": total_wait_ms,
+            "avg_wait_ms": avg_wait_ms,
+        })
+    }
+}
+
+/// daemon 级指标聚合；当前仅含审批指标，P2-3 将补充 SSE 指标
+#[derive(Debug, Default)]
+pub struct DaemonMetrics {
+    pub approval: ApprovalMetrics,
+}
+
+impl DaemonMetrics {
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "approval": self.approval.snapshot(),
+        })
+    }
 }
 
 impl DaemonState {
@@ -357,7 +441,22 @@ impl DaemonState {
             retry_handler,
             workdir: base_dir.clone().or_else(|| std::env::current_dir().ok()),
             pending_approvals: Mutex::new(HashMap::new()),
+            metrics: Arc::new(DaemonMetrics::default()),
         }
+    }
+
+    /// 列出指定任务当前待审批条目（用于 `GET /task/:id/approvals`）
+    ///
+    /// 返回按 approval_id 排序的 JSON 数组，保证输出稳定、便于测试与客户端去重。
+    pub async fn list_pending_approvals(&self, task_id: &str) -> Vec<serde_json::Value> {
+        let pending = self.pending_approvals.lock().await;
+        let mut entries: Vec<(String, serde_json::Value)> = pending
+            .iter()
+            .filter(|(_, entry)| entry.task_id == task_id)
+            .map(|(approval_id, entry)| (approval_id.clone(), entry.to_json(approval_id)))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.into_iter().map(|(_, value)| value).collect()
     }
 
     /// 清理指定任务的待审批条目

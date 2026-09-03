@@ -24,5 +24,17 @@ export interface TaskResult {
 export interface SSEEvent {
     event: string;
     data: any;
+    id?: string;
     task_id?: string;
+}
+
+export interface PendingApprovalEntry {
+    approval_id: string;
+    task_id: string;
+    tool_name: string;
+    side_effect_level: string;
+    args: Record<string, unknown>;
+    waited_secs: number;
+    timeout_secs: number;
+    expires_in_secs: number;
 }

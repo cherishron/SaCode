@@ -12,11 +12,12 @@ mod handlers;
 mod status;
 mod types;
 
-pub use approval::{resolve_approval, HttpApprovalDecider};
+pub use approval::{get_metrics, list_task_approvals, resolve_approval, HttpApprovalDecider};
 pub use handlers::run_daemon;
 pub use types::{
-    ApprovalResolution, DaemonState, EventHistory, PendingApproval, RetryPolicyRequest,
-    StreamEvent, TaskRequest, TaskResponse, TaskStatus, DAEMON_EVENT_BUS_CAPACITY,
+    ApprovalMetrics, ApprovalResolution, DaemonMetrics, DaemonState, EventHistory, PendingApproval,
+    RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse, TaskStatus,
+    DAEMON_EVENT_BUS_CAPACITY,
 };
 
 use events::{
@@ -65,10 +66,12 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
         .route("/task/:id/retry", post(retry_task))
         .route("/task/:id/cancel", post(cancel_task))
         .route("/task/:id/approve", post(approval::resolve_approval))
+        .route("/task/:id/approvals", get(approval::list_task_approvals))
         .route("/events", get(stream_events))
         .route("/events/:id", get(stream_task_events))
         .route("/api/stream", get(stream_api_events))
         .route("/tools", get(list_tools))
+        .route("/metrics", get(approval::get_metrics))
         .route("/queue/status", get(get_queue_status))
         .route("/queue/pending", get(get_pending_tasks))
         .with_state(state)

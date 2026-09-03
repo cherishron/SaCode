@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### 新增
+
+- daemon 新增 `GET /task/:id/approvals`，客户端可恢复连接前或离线期间仍在等待的审批。
+- daemon 新增 `GET /metrics`，暴露审批 requested/pending/approved/denied/timed_out/cancelled 与等待时间指标。
+- VSCode 任务流意外中断后携带 `Last-Event-ID` 自动重连，并在每次连接成功后查询待审批列表对账。
+
 ## [1.1.1] - 2026-09-03
 
 ### 新增

@@ -13,6 +13,31 @@ use sacode_kernel::ExecutionMode;
 use super::events::emit_event;
 use super::{ApprovalResolution, DaemonState, PendingApproval};
 
+/// GET /task/:id/approvals — 查询任务当前待审批列表
+///
+/// 用于客户端（如 VSCode 扩展）断线重连后恢复审批 UI，不依赖 SSE 恰好在线。
+/// 返回 `{ "task_id", "approvals": [ {approval_id, tool_name, side_effect_level, args, waited_secs}, ... ] }`。
+pub async fn list_task_approvals(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let approvals = state.list_pending_approvals(&task_id).await;
+    Json(serde_json::json!({
+        "task_id": task_id,
+        "approvals": approvals,
+    }))
+}
+
+/// GET /metrics — daemon 可观测性指标快照
+///
+/// 当前包含审批计数与等待时间；P2-3 将补充 SSE 连接/吞吐/lagged 指标。
+pub async fn get_metrics(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let pending = state.pending_approvals.lock().await.len() as u64;
+    let mut snapshot = state.metrics.snapshot();
+    snapshot["approval"]["pending"] = serde_json::json!(pending);
+    Json(snapshot)
+}
+
 /// 全局审批序号：保证同一任务内多个审批 ID 唯一
 static APPROVAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -190,6 +215,7 @@ impl ApprovalDecider for HttpApprovalDecider {
     ) -> ApprovalDecision {
         let approval_id = generate_approval_id(&self.task_id);
         let (tx, mut rx) = oneshot::channel::<ApprovalResolution>();
+        let created_at = std::time::Instant::now();
 
         {
             let mut pending = self.state.pending_approvals.lock().await;
@@ -197,11 +223,20 @@ impl ApprovalDecider for HttpApprovalDecider {
                 approval_id.clone(),
                 PendingApproval {
                     task_id: self.task_id.clone(),
-                    created_at: std::time::Instant::now(),
+                    created_at,
+                    tool_name: tool_name.to_string(),
+                    side_effect_level: format!("{:?}", side_effect_level),
+                    args: args.clone(),
+                    timeout: self.timeout,
                     tx,
                 },
             );
         }
+        self.state
+            .metrics
+            .approval
+            .requested
+            .fetch_add(1, Ordering::Relaxed);
 
         emit_event(
             &self.state,
@@ -215,14 +250,25 @@ impl ApprovalDecider for HttpApprovalDecider {
             }),
         );
 
+        // 统一的指标记录：审批一旦解决（批准/拒绝/超时/取消）即累加对应计数与等待时间
+        let approval_metrics = &self.state.metrics.approval;
+        let record = |counter: &AtomicU64| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            approval_metrics
+                .total_wait_ms
+                .fetch_add(created_at.elapsed().as_millis() as u64, Ordering::Relaxed);
+        };
+
         match tokio::time::timeout(self.timeout, &mut rx).await {
             Ok(Ok(resolution)) => {
-                self.emit_resolved(
-                    &approval_id,
-                    resolution.approved,
-                    resolution.reason.as_deref(),
-                );
-                if resolution.approved {
+                let approved = resolution.approved;
+                record(if approved {
+                    &approval_metrics.approved
+                } else {
+                    &approval_metrics.denied
+                });
+                self.emit_resolved(&approval_id, approved, resolution.reason.as_deref());
+                if approved {
                     ApprovalDecision::Approved
                 } else {
                     ApprovalDecision::Denied
@@ -230,6 +276,7 @@ impl ApprovalDecider for HttpApprovalDecider {
             }
             Ok(Err(_)) => {
                 // cancel 清理 pending 时 sender 被 drop，oneshot 会立即唤醒。
+                record(&approval_metrics.cancelled);
                 self.emit_resolved(&approval_id, false, Some("cancelled"));
                 ApprovalDecision::Denied
             }
@@ -244,24 +291,32 @@ impl ApprovalDecider for HttpApprovalDecider {
                     // sender 被取消清理，避免在超时边界上误报原因。
                     return match rx.await {
                         Ok(resolution) => {
+                            let approved = resolution.approved;
+                            record(if approved {
+                                &approval_metrics.approved
+                            } else {
+                                &approval_metrics.denied
+                            });
                             self.emit_resolved(
                                 &approval_id,
-                                resolution.approved,
+                                approved,
                                 resolution.reason.as_deref(),
                             );
-                            if resolution.approved {
+                            if approved {
                                 ApprovalDecision::Approved
                             } else {
                                 ApprovalDecision::Denied
                             }
                         }
                         Err(_) => {
+                            record(&approval_metrics.cancelled);
                             self.emit_resolved(&approval_id, false, Some("cancelled"));
                             ApprovalDecision::Denied
                         }
                     };
                 }
 
+                record(&approval_metrics.timed_out);
                 self.emit_resolved(&approval_id, false, Some("timeout"));
                 ApprovalDecision::Denied
             }

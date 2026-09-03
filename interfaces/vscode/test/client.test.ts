@@ -66,6 +66,12 @@ test('parseSseFrame parses CRLF frames and event names', () => {
     });
 });
 
+test('parseSseFrame preserves the SSE event id for reconnect', () => {
+    const event = parseSseFrame('id: 42\nevent: message\ndata: {"task_id":"task-1","text":"hello"}');
+    assert.equal(event?.id, '42');
+    assert.equal(event?.data.text, 'hello');
+});
+
 test('parseSseFrame joins multiline data and ignores comments', () => {
     const event = parseSseFrame(': keepalive\ndata: {"task_id":"task-2",\ndata: "status":"completed"}');
     assert.equal(event?.event, 'message');
@@ -130,6 +136,111 @@ test('resolveApproval surfaces daemon status and JSON error detail', async () =>
             /Approval resolution failed \(409 Conflict\): approval task mismatch/,
         );
     } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('listApprovals fetches encoded task path and parses pending approvals', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = '';
+    globalThis.fetch = async (input) => {
+        requestedUrl = String(input);
+        return new Response(JSON.stringify({
+            task_id: 'task/with space',
+            approvals: [{
+                approval_id: 'approval-1',
+                task_id: 'task/with space',
+                tool_name: 'fs.write',
+                side_effect_level: 'Modify',
+                args: { path: 'README.md' },
+                waited_secs: 3,
+                timeout_secs: 300,
+                expires_in_secs: 297,
+            }],
+        }), { status: 200 });
+    };
+    try {
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        const approvals = await client.listApprovals('task/with space');
+        assert.equal(requestedUrl, 'http://127.0.0.1:8080/task/task%2Fwith%20space/approvals');
+        assert.deepEqual(approvals, [{
+            approval_id: 'approval-1',
+            task_id: 'task/with space',
+            tool_name: 'fs.write',
+            side_effect_level: 'Modify',
+            args: { path: 'README.md' },
+            waited_secs: 3,
+            timeout_secs: 300,
+            expires_in_secs: 297,
+        }]);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('listApprovals defaults missing approvals to empty and surfaces errors', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+        globalThis.fetch = async () => new Response(JSON.stringify({ task_id: 'task-1' }), { status: 200 });
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        assert.deepEqual(await client.listApprovals('task-1'), []);
+
+        globalThis.fetch = async () => new Response(
+            JSON.stringify({ error: 'approval lookup unavailable' }),
+            { status: 503, statusText: 'Unavailable' },
+        );
+        await assert.rejects(
+            client.listApprovals('task-1'),
+            /Approval list request failed \(503 Unavailable\): approval lookup unavailable/,
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('streamEvents reconnects with Last-Event-ID and calls onOpen per connection', async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    let secondLastEventId = '';
+    let abort = () => {};
+    try {
+        let resolveReconnected = () => {};
+        const reconnected = new Promise<void>((resolve) => {
+            resolveReconnected = resolve;
+            globalThis.fetch = async (_input, init) => {
+                requests += 1;
+                if (requests === 1) {
+                    return new Response('id: 42\nevent: message\ndata: {"task_id":"task-1","text":"first"}\n\n', {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/event-stream' },
+                    });
+                }
+                secondLastEventId = new Headers(init?.headers).get('Last-Event-ID') || '';
+                return new Response('event: message\ndata: {"task_id":"task-1","text":"second"}\n\n', {
+                    status: 200,
+                    headers: { 'Content-Type': 'text/event-stream' },
+                });
+            };
+        });
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        let opens = 0;
+        abort = client.streamEvents(
+            (event) => {
+                if (event.data.text === 'second') {
+                    abort();
+                    resolveReconnected();
+                }
+            },
+            (error) => assert.fail(`unexpected initial stream error: ${error.message}`),
+            'task-1',
+            () => { opens += 1; },
+        );
+        await reconnected;
+        assert.equal(requests, 2);
+        assert.equal(secondLastEventId, '42');
+        assert.equal(opens, 2);
+    } finally {
+        abort();
         globalThis.fetch = originalFetch;
     }
 });

@@ -1,4 +1,4 @@
-import { CreateTaskResponse, DaemonConfig, SSEEvent, TaskResult, TaskStatus } from './types';
+import { CreateTaskResponse, DaemonConfig, PendingApprovalEntry, SSEEvent, TaskResult, TaskStatus } from './types';
 
 export const MINIMUM_DAEMON_VERSION = '1.1.1';
 
@@ -82,6 +82,7 @@ async function responseError(response: Response, action: string): Promise<Error>
 
 export function parseSseFrame(frame: string): SSEEvent | null {
     let event = 'message';
+    let id: string | undefined;
     const dataLines: string[] = [];
 
     for (const rawLine of frame.split(/\r?\n/)) {
@@ -92,13 +93,14 @@ export function parseSseFrame(frame: string): SSEEvent | null {
         if (value.startsWith(' ')) value = value.slice(1);
 
         if (field === 'event') event = value || 'message';
+        if (field === 'id') id = value;
         if (field === 'data') dataLines.push(value);
     }
 
     if (dataLines.length === 0) return null;
     try {
         const data = JSON.parse(dataLines.join('\n'));
-        return { event, data, task_id: data.task_id };
+        return { event, data, ...(id !== undefined ? { id } : {}), task_id: data.task_id };
     } catch {
         return null;
     }
@@ -189,6 +191,13 @@ export class SseClient {
         if (!res.ok) throw await responseError(res, 'Approval resolution');
     }
 
+    async listApprovals(taskId: string): Promise<PendingApprovalEntry[]> {
+        const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/approvals`);
+        if (!res.ok) throw await responseError(res, 'Approval list request');
+        const data = await res.json() as { approvals?: PendingApprovalEntry[] };
+        return data.approvals || [];
+    }
+
     async listTools(): Promise<string[]> {
         const res = await fetch(`${this.baseUrl}/tools`);
         if (!res.ok) throw await responseError(res, 'Tool list request');
@@ -196,26 +205,42 @@ export class SseClient {
         return data.tools || [];
     }
 
-    /** Stream events for one task. Returns an abort function. */
+    /**
+     * Stream events for one task. Returns an abort function.
+     *
+     * A stream that connected successfully is retried after an unexpected disconnect. The
+     * latest SSE id is sent as Last-Event-ID so the daemon can replay missed events. `onOpen`
+     * runs after every successful connection and lets callers reconcile non-event state such
+     * as pending approvals.
+     */
     streamEvents(
         onEvent: (event: SSEEvent) => void,
         onError: (err: Error) => void,
         taskId?: string,
+        onOpen?: () => void,
     ): () => void {
         const controller = new AbortController();
         this.abortController?.abort();
         this.abortController = controller;
         const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : '';
+        let lastEventId: string | undefined;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let connectedOnce = false;
 
-        void fetch(`${this.baseUrl}/api/stream${query}`, {
-            signal: controller.signal,
-            headers: { Accept: 'text/event-stream' },
-        })
-            .then(async (response) => {
+        const connect = async (): Promise<void> => {
+            try {
+                const headers: Record<string, string> = { Accept: 'text/event-stream' };
+                if (lastEventId) headers['Last-Event-ID'] = lastEventId;
+                const response = await fetch(`${this.baseUrl}/api/stream${query}`, {
+                    signal: controller.signal,
+                    headers,
+                });
                 if (!response.ok) throw await responseError(response, 'Event stream');
                 const reader = response.body?.getReader();
                 if (!reader) throw new Error('Event stream returned no response body');
 
+                connectedOnce = true;
+                onOpen?.();
                 const decoder = new TextDecoder();
                 let buffer = '';
                 while (true) {
@@ -225,22 +250,36 @@ export class SseClient {
                     buffer = frames.pop() || '';
                     for (const frame of frames) {
                         const event = parseSseFrame(frame);
-                        if (event) onEvent(event);
+                        if (event) {
+                            if (event.id !== undefined) lastEventId = event.id || undefined;
+                            onEvent(event);
+                        }
                     }
                     if (done) break;
                 }
                 const finalEvent = parseSseFrame(buffer);
-                if (finalEvent) onEvent(finalEvent);
-            })
-            .catch((err: unknown) => {
+                if (finalEvent) {
+                    if (finalEvent.id !== undefined) lastEventId = finalEvent.id || undefined;
+                    onEvent(finalEvent);
+                }
+                if (!controller.signal.aborted) {
+                    reconnectTimer = setTimeout(() => void connect(), 1000);
+                }
+            } catch (err: unknown) {
                 if (controller.signal.aborted) return;
-                onError(err instanceof Error ? err : new Error(String(err)));
-            })
-            .finally(() => {
-                if (this.abortController === controller) this.abortController = null;
-            });
+                const error = err instanceof Error ? err : new Error(String(err));
+                if (!connectedOnce) {
+                    onError(error);
+                    return;
+                }
+                reconnectTimer = setTimeout(() => void connect(), 1000);
+            }
+        };
+
+        void connect();
 
         return () => {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
             controller.abort();
             if (this.abortController === controller) this.abortController = null;
         };

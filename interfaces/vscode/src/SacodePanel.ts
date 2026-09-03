@@ -404,6 +404,7 @@ export class SacodePanel {
                     this.finishTask(taskId, generation);
                 },
                 taskId,
+                () => void this.recoverPendingApprovals(taskId, generation),
             );
 
             setTimeout(async () => {
@@ -423,6 +424,38 @@ export class SacodePanel {
             this.postMessage({ command: 'error', text: message });
         }
     }
+    /**
+     * P2-1: 审批恢复 — 从 daemon 拉取当前待审批列表并补弹。
+     *
+     * SSE 连接建立后调用一次，补偿 approval_requested 已发出但客户端不在线的窗口期。
+     * deduplicator 确保已弹窗的审批不会重复提示。
+     */
+    private async recoverPendingApprovals(taskId: string, generation: number): Promise<void> {
+        try {
+            const pending = await this.client.listApprovals(taskId);
+            for (const entry of pending) {
+                if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
+                if (!this.approvals.accept(entry.approval_id)) continue;
+                const request: ApprovalRequestView = {
+                    taskId: entry.task_id,
+                    approvalId: entry.approval_id,
+                    toolName: entry.tool_name,
+                    sideEffect: entry.side_effect_level,
+                    args: entry.args,
+                };
+                const presentation = approvalQuickPickOptions(request).presentation;
+                this.postMessage({
+                    command: 'message',
+                    type: 'tool',
+                    text: `[审批恢复] ${presentation.summary}: ${presentation.detail}`,
+                });
+                void this.showApprovalQuickPick(request);
+            }
+        } catch {
+            // 旧 daemon 不支持该端点或网络暂不可达时，保留现有 SSE 行为。
+        }
+    }
+
     /**
      * P1-1: 审批 QuickPick — 用户选择后调 /task/:id/approve
      */
