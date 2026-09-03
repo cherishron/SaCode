@@ -1,5 +1,65 @@
 import { CreateTaskResponse, DaemonConfig, SSEEvent, TaskResult, TaskStatus } from './types';
 
+export const MINIMUM_DAEMON_VERSION = '1.1.1';
+
+export interface DaemonHealth {
+    status: string;
+    version: string;
+}
+
+export function daemonHealthError(health: DaemonHealth): string | null {
+    if (health.status !== 'healthy') {
+        return `SaCode daemon reported status "${health.status}".`;
+    }
+    if (!isVersionAtLeast(health.version, MINIMUM_DAEMON_VERSION)) {
+        const version = health.version || 'unknown';
+        return `SaCode daemon ${version} is incompatible. Upgrade to ${MINIMUM_DAEMON_VERSION} or newer.`;
+    }
+    return null;
+}
+
+export function isVersionAtLeast(actual: string, minimum: string): boolean {
+    interface ParsedVersion {
+        core: number[];
+        prerelease: string[] | null;
+    }
+    const parse = (version: string): ParsedVersion | null => {
+        const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+        if (!match) return null;
+        return {
+            core: match.slice(1, 4).map(Number),
+            prerelease: match[4] ? match[4].split('.') : null,
+        };
+    };
+    const actualVersion = parse(actual);
+    const minimumVersion = parse(minimum);
+    if (!actualVersion || !minimumVersion) return false;
+
+    for (let index = 0; index < 3; index += 1) {
+        if (actualVersion.core[index] !== minimumVersion.core[index]) {
+            return actualVersion.core[index] > minimumVersion.core[index];
+        }
+    }
+
+    if (!actualVersion.prerelease) return true;
+    if (!minimumVersion.prerelease) return false;
+    const length = Math.max(actualVersion.prerelease.length, minimumVersion.prerelease.length);
+    for (let index = 0; index < length; index += 1) {
+        const actualPart = actualVersion.prerelease[index];
+        const minimumPart = minimumVersion.prerelease[index];
+        if (actualPart === undefined) return false;
+        if (minimumPart === undefined) return true;
+        if (actualPart === minimumPart) continue;
+        const actualNumber = /^\d+$/.test(actualPart) ? Number(actualPart) : null;
+        const minimumNumber = /^\d+$/.test(minimumPart) ? Number(minimumPart) : null;
+        if (actualNumber !== null && minimumNumber !== null) return actualNumber > minimumNumber;
+        if (actualNumber !== null) return false;
+        if (minimumNumber !== null) return true;
+        return actualPart > minimumPart;
+    }
+    return true;
+}
+
 async function responseError(response: Response, action: string): Promise<Error> {
     let detail = '';
     try {
@@ -56,13 +116,33 @@ export class SseClient {
         return `http://${this.config.host}:${this.config.port}`;
     }
 
-    async healthCheck(): Promise<boolean> {
+    async health(): Promise<DaemonHealth | null> {
+        let res: Response;
         try {
-            const res = await fetch(`${this.baseUrl}/health`);
-            return res.ok;
+            res = await fetch(`${this.baseUrl}/health`);
         } catch {
-            return false;
+            return null;
         }
+        if (!res.ok) {
+            return { status: `http_${res.status}`, version: '' };
+        }
+        try {
+            const body = await res.json() as Partial<DaemonHealth>;
+            if (typeof body.status !== 'string') {
+                return { status: 'invalid_response', version: '' };
+            }
+            return {
+                status: body.status,
+                version: typeof body.version === 'string' ? body.version : '',
+            };
+        } catch {
+            return { status: 'invalid_response', version: '' };
+        }
+    }
+
+    async healthCheck(): Promise<boolean> {
+        const health = await this.health();
+        return health !== null && daemonHealthError(health) === null;
     }
 
     async createTask(prompt: string, mode: string = 'build'): Promise<CreateTaskResponse> {

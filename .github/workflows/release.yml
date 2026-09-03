@@ -3,6 +3,13 @@ name: Build and Release
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     tags:
@@ -10,7 +17,108 @@ on:
   workflow_dispatch:
 
 jobs:
+  preflight:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: interfaces/vscode/package-lock.json
+
+      - name: Resolve release version
+        id: get_version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(node -p "require('./npm-package/package.json').version")"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag and source versions
+        shell: bash
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          test "$(node -p "require('./npm-package/package.json').version")" = "$VERSION"
+          test "$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)" = "$VERSION"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      - name: Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Rust workspace tests
+        run: cargo test --locked --workspace --lib --bins --tests
+
+      - name: Rust doctests sequentially
+        shell: pwsh
+        run: |
+          $packages = @('sacode-kernel', 'sacode-runtime', 'sacode-acp', 'sacode-lsp', 'sacode-cli')
+          foreach ($package in $packages) {
+            cargo test --locked -p $package --doc
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Approval smoke test
+        run: cargo test --locked -p sacode-runtime tests::approval_flow::approval_registration_precedes_notification -- --exact
+
+      - name: External dependency quarantine
+        run: cargo test --locked -p sacode-runtime tools::test::autofix::tests::e2e_pytest_fix_context_generates_and_repair_verifies -- --ignored --exact
+
+      - name: Build and test VSCode extension
+        working-directory: interfaces/vscode
+        run: |
+          npm ci
+          npm run compile
+          npm test
+
+      - name: Verify reproducible VSIX
+        shell: pwsh
+        working-directory: interfaces/vscode
+        run: |
+          npm run package:vsix
+          $vsix = @(Get-Item 'sacode-vscode-*.vsix')
+          if ($vsix.Count -ne 1) { throw "Expected one VSIX, found $($vsix.Count)" }
+          $firstHash = (Get-FileHash $vsix[0].FullName -Algorithm SHA256).Hash
+          Remove-Item $vsix[0].FullName
+          npm run package:vsix
+          $vsix = @(Get-Item 'sacode-vscode-*.vsix')
+          if ($vsix.Count -ne 1) { throw "Expected one VSIX, found $($vsix.Count)" }
+          $secondHash = (Get-FileHash $vsix[0].FullName -Algorithm SHA256).Hash
+          if ($firstHash -ne $secondHash) {
+            throw "VSIX hashes differ: $firstHash != $secondHash"
+          }
+          Write-Host "VSIX SHA-256: $secondHash"
+
+      - name: Check VSCode release contract
+        run: node scripts/check-vscode-release.js "${{ steps.get_version.outputs.VERSION }}"
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-vsix
+          path: interfaces/vscode/*.vsix
+
   build:
+    needs: preflight
     strategy:
       matrix:
         include:
@@ -32,21 +140,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Get version from tag
+      - name: Resolve release version
         id: get_version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(node -p "require('./npm-package/package.json').version")"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Sync project version
         run: node scripts/sync-version.js ${{ steps.get_version.outputs.VERSION }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Prepare binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
@@ -80,44 +199,70 @@ jobs:
         run: npm-package/platforms/${{ matrix.artifact }} --version
 
   release:
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [preflight, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reset platform directory
-        run: |
-          mkdir -p npm-package/platforms
-          rm -f npm-package/platforms/*
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: npm-package/platforms
-          merge-multiple: true
-
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Prepare npm platforms
-        run: |
-          node scripts/prepare-npm-platforms.js ${{ steps.get_version.outputs.VERSION }} --clean \
-            --source-file linux-x64 npm-package/platforms/sacode-linux-x64 \
-            --source-file win32-x64 npm-package/platforms/sacode-win32-x64.exe \
-            --source-file darwin-x64 npm-package/platforms/sacode-darwin-x64 \
-            --source-file darwin-arm64 npm-package/platforms/sacode-darwin-arm64
-
-      - name: Check release consistency
-        run: node scripts/check-release.js --strict-platforms
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Reset release directories
+        run: |
+          rm -rf release-artifacts
+          mkdir -p release-artifacts/platforms npm-package/platforms
+          rm -f npm-package/platforms/*
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sacode-*
+          path: release-artifacts/platforms
+          merge-multiple: true
+
+      - name: Download VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-vsix
+          path: interfaces/vscode
+
+      - name: Resolve release version
+        id: get_version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(node -p "require('./npm-package/package.json').version")"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare npm platforms
+        run: |
+          node scripts/prepare-npm-platforms.js ${{ steps.get_version.outputs.VERSION }} --clean \
+            --source-file linux-x64 release-artifacts/platforms/sacode-linux-x64 \
+            --source-file win32-x64 release-artifacts/platforms/sacode-win32-x64.exe \
+            --source-file darwin-x64 release-artifacts/platforms/sacode-darwin-x64 \
+            --source-file darwin-arm64 release-artifacts/platforms/sacode-darwin-arm64
+
+      - name: Check release consistency
+        run: |
+          node scripts/check-release.js --strict-platforms
+          node scripts/check-vscode-release.js ${{ steps.get_version.outputs.VERSION }}
 
       - name: Verify packed npm package
         run: |
@@ -127,22 +272,7 @@ jobs:
           npm install -g "./$PACKAGE_TGZ"
           test "$(sacode --version)" = "sacode $PACKAGE_VERSION"
 
-      # ── Always publish to GitHub Packages (uses GITHUB_TOKEN) ──
-
-      - name: Setup GitHub Packages registry
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://npm.pkg.github.com'
-
-      - name: Publish to GitHub Packages
-        run: |
-          cd npm-package
-          npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── Optionally publish to npmjs.org (if NPM_TOKEN secret is set) ──
+      # ── Optionally publish to npmjs.org first (if NPM_TOKEN is set) ──
 
       - name: Setup npmjs.org registry
         if: env.NPM_TOKEN != ''
@@ -155,29 +285,33 @@ jobs:
         if: env.NPM_TOKEN != ''
         run: |
           cd npm-package
-          npm publish
+          npm publish --registry=https://registry.npmjs.org
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── Always publish to GitHub Packages (uses GITHUB_TOKEN) ──
+
+      - name: Setup GitHub Packages registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Publish to GitHub Packages
+        run: |
+          cd npm-package
+          npm publish --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── GitHub Release ──
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: npm-package/platforms/*
-          body: |
-            ## Installation
-            
-            ### npmjs.org
-            ```bash
-            npm install -g @cherishron/sacode@${{ steps.get_version.outputs.VERSION }}
-            ```
-            
-            ### GitHub Packages
-            ```bash
-            npm install -g @cherishron/sacode@${{ steps.get_version.outputs.VERSION }} --registry=https://npm.pkg.github.com
-            ```
-            
-            Or download binary directly from assets below.
+          files: |
+            npm-package/platforms/*
+            interfaces/vscode/*.vsix
+          body_path: docs/release/${{ steps.get_version.outputs.VERSION }}.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

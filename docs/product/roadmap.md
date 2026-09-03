@@ -1,7 +1,7 @@
 # SaCode 产品路线图
 
-> 更新时间：2026-08-20
-> 当前版本：1.1.0
+> 更新时间：2026-09-03
+> 当前版本：1.1.1（VSCode 扩展 0.2.1）
 > 配套文档：`docs/product/PRD.md`、`docs/report.md`、`docs/report-plan.md`
 
 本文件只回答三件事：当前处在哪个阶段、下一阶段交付什么、后续能力按什么顺序演进。
@@ -113,7 +113,7 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 3. ✅ Agent 协作协议 — 结构化消息协议 + 双向通信 + 实时干预 + 动态角色（详见 `runtime/src/agents/message_bus.rs`、`worker.rs`、`orchestrator.rs`、`role_registry.rs`）
 4. ✅ 学习型记忆 — `AutoLearner` 自动学习回路 + BM25 搜索 + 记忆衰减 + SQLite 双写（详见 `runtime/src/memory/learner.rs`、`mod.rs`、`runtime/src/store/db.rs`）
 
-### v1.1：稳定化与事件流收口 ✅ 已发布（1.1.0）
+### v1.1：稳定化与事件流收口 ✅ 已发布（1.1.1）
 
 目标：工程稳定性 + 事件流投影 + 拦截器补缺，为 v1.2 体验闭环提供可信地基。
 
@@ -125,7 +125,7 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 4. ✅ 拦截器补缺 — Retry 重试闭环（`MAX_RETRY_ATTEMPTS=3` 钳制）+ 异步拦截器基建（`AsyncToolInterceptor` / `SyncInterceptorAsAsync` / `execute_with_ctx_async`，零 async_trait 依赖）（详见 `runtime/src/tools/interceptor.rs`、`runtime/src/tools/mod.rs`）
 5. ✅ 工程稳定化 — 编译器 warning 清零、预提交钩子 fmt → clippy → build → test 全关卡（详见 `.githooks/pre-commit`）
 
-> **状态说明**：v1.1.0 已发布（`Cargo.toml` / `npm-package/package.json` / platform manifest 均已同步）。测试基线：runtime lib 571 passed（原 558 + 新增 13）/ cli 207 passed / build 0 error 0 warning。
+> **状态说明**：v1.1.1 发布准备完成（CLI/npm 1.1.1、VSCode 扩展 0.2.1）。发布门禁覆盖 Windows workspace 非 doctest、逐 crate doctest、pytest quarantine、审批 smoke、VSCode compile/test、确定性 VSIX 与 npm tarball 内嵌二进制版本检查。
 
 ### v1.2+：体验闭环与简化（2026-08-18 启动，详见 docs/report-plan.md）
 

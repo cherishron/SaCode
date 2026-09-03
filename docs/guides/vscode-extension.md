@@ -1,6 +1,6 @@
 # VSCode 扩展使用与 daemon 排障
 
-SaCode VSCode 扩展位于 `interfaces/vscode/`，要求 VS Code `1.85.0` 或更高版本。扩展通过本地 HTTP/SSE 连接 `sacode serve`，支持任务发起、选区上下文注入、工具/diff 展示和 Build 模式审批。
+SaCode VSCode 扩展位于 `interfaces/vscode/`，要求 VS Code `1.85.0` 或更高版本。扩展 0.2.1 要求 SaCode daemon 1.1.1 或更高版本。扩展通过本地 HTTP/SSE 连接 `sacode serve`，支持任务发起、选区上下文注入、工具/diff 展示和 Build 模式审批。
 
 ## 安装
 
@@ -8,7 +8,7 @@ SaCode VSCode 扩展位于 `interfaces/vscode/`，要求 VS Code `1.85.0` 或更
 
 ```bash
 cd interfaces/vscode
-npm install
+npm ci
 npm run compile
 ```
 
@@ -22,14 +22,16 @@ npm test
 
 ### 从 VSIX 安装
 
-先安装 VSCE，再打包并安装生成的 VSIX：
+使用锁文件中的固定 VSCE 版本打包并安装生成的 VSIX：
 
 ```bash
 cd interfaces/vscode
-npm install
-npx vsce package
-code --install-extension <生成的-vsix-文件> --force
+npm ci
+npm run package:vsix
+code --install-extension sacode-vscode-0.2.1.vsix --force
 ```
+
+`package:vsix` 会调用 `scripts/normalize-vsix.py` 固定 ZIP 条目顺序、时间戳和压缩参数。发布门禁连续构建两次并比较 SHA-256，禁止改用浮动版本的 `npx vsce`。
 
 若 `code` 命令不可用，在 VS Code 扩展视图的菜单中选择 **Install from VSIX...**。
 
@@ -40,10 +42,11 @@ code --install-extension <生成的-vsix-文件> --force
 扩展激活时会执行以下流程：
 
 1. 请求配置地址的 `GET /health`；
-2. 若已有 daemon 健康，直接复用，不再启动子进程；
-3. 若连接失败，执行 `sacode serve --port=<port> --host=<host>`；
-4. 每 2 秒检查一次健康状态，最多 10 次；
-5. 扩展退出时，只清理它自己启动的 daemon 子进程，不终止预先存在的 daemon。
+2. 若已有 daemon 状态健康且版本满足最低要求，直接复用，不再启动子进程；
+3. 若地址可达但 daemon 版本过旧、缺少版本字段或报告非健康状态，显示错误且不启动第二个进程；
+4. 只有连接失败时，才执行 `sacode serve --port=<port> --host=<host>`；
+5. 每 2 秒检查一次健康状态，最多 10 次；
+6. 扩展退出时，只清理它自己启动的 daemon 子进程，不终止预先存在的 daemon。
 
 状态栏含义：
 
@@ -124,7 +127,7 @@ Build 模式中的非 `mcp.*` 工具调用会产生审批请求。扩展展示�
 常见原因：
 
 - `sacode.binaryPath` 不存在或无执行权限；
-- 二进制版本过旧，不支持 HTTP daemon；
+- 二进制版本低于扩展声明的最低 daemon 版本；
 - 端口已占用；
 - 安全软件阻止子进程启动；
 - daemon 启动后在健康检查时间内退出。

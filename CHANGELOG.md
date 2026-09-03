@@ -7,7 +7,13 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-03
+
 ### 新增
+
+- VSCode 扩展 0.2.1 声明最低 daemon 1.1.1，运行时拒绝连接更旧版本。
+- 发布门禁增加审批 smoke、pytest quarantine、VSCode compile/test、确定性 VSIX 双次 SHA-256 和归档 metadata 检查。
+- `docs/release/1.1.1.md` 提供升级、回滚与已知限制说明。
 
 - **VSCode 扩展 v0.2.0**（`f5f79fa`）
   - 自动探测并管理本地 `sacode serve` daemon，支持自定义 `sacode.binaryPath`、状态栏和重启命令
@@ -51,12 +57,18 @@
 
 ### 变更
 
+- release workflow 将 `sacode-vscode-0.2.1.vsix` 与四平台 CLI 二进制附加到同一 `v1.1.1` release。
+- VSIX 使用固定 `@vscode/vsce` 3.9.2，并对 ZIP metadata 做确定性规范化。
 - VSCode SSE 解析与 daemon 的 `event_type` / `payload` 协议对齐，保留旧 `event` / `kind` 字段回退
 - 测试文件中的旧模型名更新为当前模型库
 - `.gitignore` 新增 `dist/`、`build/`、`.monkeycode/` 忽略
 
 ### 修复
 
+- daemon 审批使用一次性 `approval_id`，修复注册竞态和同任务并发审批覆盖。
+- daemon 审批等待改为异步，超时、取消和通道关闭均默认拒绝。
+- VSCode 审批弹窗关闭按显式拒绝处理，SSE 解析和错误报告更加健壮。
+- Windows Rust CI 使用非 doctest workspace 测试、逐 crate 串行 doctest 和独立 quarantine。
 - Provider 配置降级链：`resolve_provider` 在 model 为空时不再跌入 `ModelProvider::openai`
 - `connect_provider` 始终保存 provider 配置，确保 `default_model` 不为空
 - MiMo `base_url` 对齐：构造函数与 preset 统一为 `token-plan-cn.xiaomimimo.com`

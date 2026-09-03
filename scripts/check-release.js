@@ -80,7 +80,7 @@ function verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, expectedVe
   }
 }
 
-function verifyPackedNpmContents(npmDir, filesToVerify) {
+function verifyPackedNpmContents(npmDir, filesToVerify, expectedMap, expectedVersion) {
   let packOutput;
   try {
     const npmCmd = process.platform === 'win32' ? 'cmd' : 'npm';
@@ -107,6 +107,9 @@ function verifyPackedNpmContents(npmDir, filesToVerify) {
   }
 
   const tarballPath = path.join(npmDir, tarballName);
+  process.on('exit', () => {
+    if (fs.existsSync(tarballPath)) fs.unlinkSync(tarballPath);
+  });
   let tarList;
   try {
     tarList = execFileSync('tar', ['-tf', tarballPath], {
@@ -122,6 +125,21 @@ function verifyPackedNpmContents(npmDir, filesToVerify) {
     const packagedPath = `package/platforms/${file}`;
     if (!tarEntries.includes(packagedPath)) {
       fail(`packed npm tarball is missing ${packagedPath}`);
+    }
+  }
+
+  const currentBinary = currentPlatformBinary(expectedMap);
+  if (currentBinary) {
+    const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sacode-pack-'));
+    try {
+      execFileSync('tar', ['-xf', tarballPath, '-C', tempDir, `package/platforms/${currentBinary}`], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      verifyCurrentPlatformBinaryVersion(path.join(tempDir, 'package', 'platforms'), expectedMap, expectedVersion);
+    } catch (error) {
+      fail(`failed to verify packed binary ${currentBinary}: ${error.message}`);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   }
 
@@ -199,7 +217,7 @@ for (const file of manifestFiles) {
 }
 
 verifyCurrentPlatformBinaryVersion(platformDir, expectedMap, cargoVersion);
-verifyPackedNpmContents(npmDir, manifestFiles);
+verifyPackedNpmContents(npmDir, manifestFiles, expectedMap, cargoVersion);
 
 if (strict) {
   if (JSON.stringify(manifestFiles) !== JSON.stringify(expectedFiles)) {

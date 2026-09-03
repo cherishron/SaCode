@@ -2,12 +2,20 @@
   "name": "sacode-vscode",
   "displayName": "SaCode",
   "description": "SaCode AI coding agent integration for VS Code",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["AI", "Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "sacode": {
+    "minimumDaemonVersion": "1.1.1"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -76,13 +84,19 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "package:vsix": "vsce package --no-dependencies --out sacode-vscode-0.2.1.vsix && python ../../scripts/normalize-vsix.py sacode-vscode-0.2.1.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "3.9.2",
     "typescript": "^5.0.0"
   },
   "publisher": "cherishron",
-  "license": "MulanPSL-2.0"
+  "license": "MulanPSL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/cherishron/SaCode.git"
+  }
 }

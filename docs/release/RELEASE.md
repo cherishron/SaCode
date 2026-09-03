@@ -1,268 +1,124 @@
 # SaCode 发布流程
 
-本文档说明 SaCode 的版本发布链路、发布前检查项和平台产物约束。若你是第一次接触本仓库，建议先阅读 `docs/reference/development.md`。
+本文档说明 CLI/npm 与 VSCode 扩展的版本发布门禁。当前采用双版本：CLI/npm 使用 `MAJOR.MINOR.PATCH` 与 tag `v<version>`，VSCode 扩展独立使用自己的版本号。
 
-## 发布方式
+## 1. 自动发布
 
-SaCode 当前支持两种发布方式：
+`.github/workflows/release.yml` 在推送 `v*` tag 后执行。`workflow_dispatch` 只运行门禁和构建演练，`release` job 有 tag 条件保护，不会发布 npm 或创建 release：
 
-1. **GitHub Actions 自动发布**（推荐）
-2. **本地手动发布**
+1. **发布前门禁**
+   - 校验 tag、Cargo、npm 版本，以及扩展最低 daemon 版本源/VSIX 一致性；
+   - `cargo fmt --all -- --check`；
+   - `cargo clippy --workspace --all-targets -- -D warnings`；
+   - workspace 测试、审批 smoke 和 pytest quarantine；
+   - VSCode `npm ci`、compile、test；
+   - 双次构建 VSIX，要求 SHA-256 完全一致；
+   - 检查 VSIX 文件集合、扩展版本和最低 daemon 元数据。
+2. **四平台构建**
+   - Linux x64：`sacode-linux-x64`；
+   - Windows x64：`sacode-win32-x64.exe`；
+   - macOS x64：`sacode-darwin-x64`；
+   - macOS arm64：`sacode-darwin-arm64`。
+3. **npm 门禁与发布**
+   - 生成 `platforms/manifest.json`；
+   - 执行 `node scripts/check-release.js --strict-platforms`；
+   - `npm pack` 后全局安装 tarball，验证 `sacode --version` 与 tag 一致；
+   - 发布 GitHub Packages；配置 `NPM_TOKEN` 时同时发布 npmjs.org。
+4. **GitHub Release**
+   - 附加四个平台二进制和 `sacode-vscode-<version>.vsix`；
+   - release body 使用 `docs/release/<CLI版本>.md`。
 
----
+> 当前 `origin` 可能不是 GitHub remote。推送 tag 前必须确认目标远端能够执行 `.github/workflows/release.yml`；否则 tag 仅存在于该远端，不代表 GitHub Packages、npm 或 GitHub Release 已发布。
 
-## 1. GitHub Actions 自动发布
+## 2. 发布前本地门禁
 
-### 前置条件
+Windows 上按 CI 策略执行：
 
-- 有 push tag 权限
-
-### 步骤
-
-```bash
-# 确保代码已提交
-git status
-
-# 创建版本 tag
-git tag v0.1.6
-
-# 推送 tag 到远端
-git push origin v0.1.6
+```text
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --lib --bins --tests
+cargo test -p sacode-kernel --doc
+cargo test -p sacode-runtime --doc
+cargo test -p sacode-acp --doc
+cargo test -p sacode-lsp --doc
+cargo test -p sacode-cli --doc
+cargo test -p sacode-runtime tests::approval_flow::approval_registration_precedes_notification -- --exact
+cargo test -p sacode-runtime tools::test::autofix::tests::e2e_pytest_fix_context_generates_and_repair_verifies -- --ignored --exact
 ```
 
-### 自动流程
+VSCode 扩展：
 
-触发 `.github/workflows/release.yml`，主流程包括：
-
-1. **构建阶段**（并行）
-   - Linux: `ubuntu-latest` 构建 `x86_64-unknown-linux-gnu`
-   - Windows: `windows-latest` 构建 `x86_64-pc-windows-msvc`
-
-2. **准备二进制**
-   - `sacode-linux-x64`
-   - `sacode-win32-x64.exe`
-
-3. **写入平台清单**
-   - 生成 `npm-package/platforms/manifest.json`
-
-4. **发布检查**
-   - `node scripts/check-release.js --strict-platforms`
-
-5. **npm 发布**
-   - 发布 `@cherishron/sacode@<version>`
-
-6. **GitHub Release**
-   - 创建 release，附带二进制文件
-
----
-
-## 2. 本地手动发布
-
-### 2.1 交叉编译
-
-Linux 环境可以交叉编译 Windows 二进制。本地交叉编译文档使用 GNU 目标，GitHub Actions 发布链路使用 MSVC 目标。
-
-```bash
-# 安装 mingw-w64
-apt-get install mingw-w64
-
-# 配置 cargo linker
-# .cargo/config.toml 已包含配置
-
-# 编译 Linux 目标
-cargo build --release --target x86_64-unknown-linux-gnu
-
-# 编译 Windows 目标
-cargo build --release --target x86_64-pc-windows-gnu
+```text
+cd interfaces/vscode
+npm ci
+npm run compile
+npm test
+npm run package:vsix
+cd ../..
+node scripts/check-vscode-release.js <CLI版本> <扩展版本>
 ```
 
-### 2.2 准备 npm 包
+`package:vsix` 使用固定版本的 `@vscode/vsce`，再由 `scripts/normalize-vsix.py` 固定 ZIP 条目顺序、时间戳和压缩参数。发布前应连续构建两次并比较 SHA-256。
 
-```bash
-# 复制二进制到 npm 包
-cp target/release/sacode npm-package/platforms/sacode-linux-x64
-cp target/x86_64-pc-windows-gnu/release/sacode.exe npm-package/platforms/sacode-win32-x64.exe
+npm tarball/CLI：
 
-# 设置执行权限
-chmod +x npm-package/platforms/sacode-linux-x64
-```
-
-### 2.3 同步版本
-
-```bash
-# 同步项目版本到 0.1.x
-node scripts/sync-version.js 0.1.7
-
-# 写入平台清单
-node scripts/write-platform-manifest.js 0.1.7
-```
-
-### 2.4 发布检查
-
-```bash
-# 基础检查（版本、README、manifest、当前平台二进制版本）
+```text
+cargo build --release -p sacode-cli --bin sacode
+node scripts/prepare-npm-platforms.js <CLI版本> --clean --platform win32-x64 --source-file win32-x64 target/release/sacode.exe
 node scripts/check-release.js
-
-# 严格检查（额外验证平台文件集合）
-node scripts/check-release.js --strict-platforms
-```
-
-### 2.5 发布
-
-```bash
 cd npm-package
-npm pack   # 预览包内容
-npm publish
+npm pack
 ```
 
-## 3. 与 CI 对齐的本地验证顺序
+从 tarball 解包或安装后执行 `sacode --version`，输出必须是 `sacode <CLI版本>`。本地生成的 `.tgz`、`.vsix` 和平台二进制不得提交。
 
-建议按以下顺序执行：
+## 3. 版本同步
 
-```bash
-cargo test --workspace
-cargo build --release
-node scripts/check-release.js
-./target/release/sacode --version
+```text
+node scripts/sync-version.js <CLI版本>
 ```
 
-如果改动影响 npm 分发，再继续执行：
+该脚本同步 workspace `Cargo.toml`、npm package 与 API 示例。随后运行 Cargo 命令更新 `Cargo.lock`。
 
-```bash
-node npm-package/bin/sacode.js --version
-node scripts/check-release.js --strict-platforms
+VSCode 版本独立维护，需同步：
+
+- `interfaces/vscode/package.json` 的 `version`；
+- `interfaces/vscode/package-lock.json` 根版本；
+- `package:vsix` 输出文件名；
+- `sacode.minimumDaemonVersion`；
+- `src/SseClient.ts` 的 `MINIMUM_DAEMON_VERSION`；
+- `docs/release/<CLI版本>.md`。
+
+`scripts/check-vscode-release.js` 会检查这些来源及 VSIX 内部 metadata 一致性。
+
+## 4. Tag 与发布
+
+完成门禁、提交并推送发布准备 commit 后：
+
+```text
+git fetch origin --tags
+git tag --list "v<CLI版本>"
+git ls-remote --tags origin "refs/tags/v<CLI版本>"
+git tag -a v<CLI版本> -m "SaCode <CLI版本>"
+git push origin v<CLI版本>
 ```
 
----
+禁止覆盖已有 tag。推送后必须核实 CI、npm registry 和 release assets 的实际结果；不能仅凭本地 tag 宣称发布完成。
 
-## 4. 发布检查项
+## 5. 回滚
 
-`scripts/check-release.js` 会验证：
+- npm 版本不可覆盖或删除后重发；发现问题应发布新的 patch，必要时使用 registry deprecate；
+- Git tag 和已发布 release 不应强制移动；
+- CLI 回滚时必须同时考虑 VSCode 最低 daemon 版本；
+- 具体版本的升级、回滚与已知限制写入 `docs/release/<CLI版本>.md`。
 
-| 检查项 | 说明 |
-|--------|------|
-| npm 包名 | 必须为 `@cherishron/sacode` |
-| 版本一致性 | npm、Cargo、manifest 版本必须一致 |
-| bin 配置 | `bin.sacode` 必须指向 `./bin/sacode.js` |
-| install script | 必须为 `node bin/install.js` |
-| README 安装命令 | 必须包含正确的 npm install 命令 |
-| README 平台列表 | 必须列出 Linux x64 和 Windows x64 |
-| README 不含 macOS | 当前不支持 macOS，不能误导用户 |
-| 启动器映射 | `bin/sacode.js` 的平台映射必须正确 |
-| 安装脚本映射 | `bin/install.js` 的平台映射必须正确 |
-| manifest 存在 | `platforms/manifest.json` 必须存在 |
-| manifest 版本 | 必须与 Cargo 版本一致 |
-| manifest 文件列表 | 必须包含正确的平台二进制文件名 |
-| 当前平台二进制版本 | 当前主机可执行的 `platforms/*` 二进制 `--version` 必须与包版本一致 |
+## 6. 发布文件
 
----
-
-## 5. 平台清单 (manifest.json)
-
-### 格式
-
-```json
-{
-  "version": "0.1.6",
-  "generatedAt": "2026-05-22T08:00:00Z",
-  "files": [
-    "sacode-linux-x64",
-    "sacode-win32-x64.exe"
-  ]
-}
-```
-
-### 作用
-
-- 记录发布时的版本号
-- 记录包含的平台二进制文件
-- 发布检查时验证版本一致性
-- 防止"新壳旧核"问题（npm 包外壳新版本，但二进制是旧版本）
-
----
-
-## 6. 版本号规则
-
-遵循 semver：
-
-- `MAJOR.MINOR.PATCH`
-- MAJOR: 不兼容的 API 变更
-- MINOR: 新功能，向后兼容
-- PATCH: bug 修复，向后兼容
-
----
-
-## 7. 当前支持平台
-
-| 平台 | 架构 | 二进制文件名 |
-|------|------|-------------|
-| Linux | x64 | `sacode-linux-x64` |
-| Windows | x64 | `sacode-win32-x64.exe` |
-
-macOS 支持计划中，暂未包含在发布包内。
-
----
-
-## 8. 常见问题
-
-### Q: npm 发布失败，提示版本已存在
-
-```bash
-npm error 403 You cannot publish over the previously published versions
-```
-
-**原因**: npm 不允许覆盖已发布的版本
-
-**解决**: 提升版本号后再发布
-
-```bash
-node scripts/sync-version.js 0.1.7
-node scripts/write-platform-manifest.js 0.1.7
-npm publish
-```
-
-### Q: 发布检查失败，提示 manifest 缺失
-
-```bash
-release check failed: platform manifest is missing
-```
-
-**原因**: 未生成 `platforms/manifest.json`
-
-**解决**: 运行清单生成脚本
-
-```bash
-node scripts/write-platform-manifest.js <version>
-```
-
-### Q: 发布检查失败，版本不一致
-
-```bash
-release check failed: npm version 0.1.5 does not match Cargo version 0.1.6
-```
-
-**原因**: 多处版本号未同步
-
-**解决**: 使用版本同步脚本
-
-```bash
-node scripts/sync-version.js 0.1.6
-```
-
-### Q: Windows 用户安装后版本仍是旧版
-
-**原因**: npm 包里的 `platforms/sacode-win32-x64.exe` 是旧二进制
-
-**解决**: 重新构建 Windows 二进制，更新 `platforms/` 目录，重新发布
-
----
-
-## 相关文件
-
-- `.github/workflows/release.yml` - CI 发布流程
-- `.github/workflows/npm-test.yml` - CI 构建测试
-- `scripts/sync-version.js` - 版本同步脚本
-- `scripts/write-platform-manifest.js` - 清单生成脚本
-- `scripts/check-release.js` - 发布检查脚本
-- `npm-package/platforms/manifest.json` - 平台清单
-- `.cargo/config.toml` - 交叉编译 linker 配置
+- `.github/workflows/release.yml`：自动门禁、构建与发布；
+- `scripts/sync-version.js`：CLI/npm 版本同步；
+- `scripts/prepare-npm-platforms.js`：平台产物和 manifest；
+- `scripts/check-release.js`：npm/二进制/tarball 检查；
+- `scripts/check-vscode-release.js`：VSIX、版本和兼容性检查；
+- `scripts/normalize-vsix.py`：确定性 VSIX 重打包；
+- `docs/release/<version>.md`：release notes。

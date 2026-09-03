@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SseClient } from './SseClient';
+import { daemonHealthError, SseClient } from './SseClient';
 import { ApprovalDeduplicator } from './ApprovalDeduplicator';
 import { ApprovalRequestView, approvalQuickPickOptions, resolveApprovalWithRetry } from './ApprovalUi';
 
@@ -270,8 +270,11 @@ export class SacodePanel {
     }
 
     private async checkConnection() {
-        const connected = await this.client.healthCheck();
-        this.postMessage({ command: 'status', connected });
+        const health = await this.client.health();
+        this.postMessage({
+            command: 'status',
+            connected: health !== null && daemonHealthError(health) === null,
+        });
     }
 
     private async handleMessage(msg: any) {
@@ -290,9 +293,14 @@ export class SacodePanel {
 
     private async runTask(text: string) {
         try {
-            const connected = await this.client.healthCheck();
-            if (!connected) {
+            const health = await this.client.health();
+            if (!health) {
                 this.postMessage({ command: 'error', text: 'Daemon not running. Run "sacode serve" or restart VSCode.' });
+                return;
+            }
+            const healthError = daemonHealthError(health);
+            if (healthError) {
+                this.postMessage({ command: 'error', text: healthError });
                 return;
             }
 

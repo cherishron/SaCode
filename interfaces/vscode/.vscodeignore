@@ -1,0 +1,9 @@
+.github/**
+.vscode/**
+src/**
+test/**
+dist-test/**
+node_modules/**
+tsconfig*.json
+*.vsix
+*.sha256

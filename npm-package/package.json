@@ -1,6 +1,6 @@
 {
   "name": "@cherishron/sacode",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Terminal-first AI coding assistant - supports Linux, macOS, and Windows",
   "license": "MulanPSL-2.0",
   "main": "bin/sacode.js",

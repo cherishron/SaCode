@@ -2,7 +2,60 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApprovalDeduplicator } from '../src/ApprovalDeduplicator';
 import { buildApprovalPresentation } from '../src/ApprovalPresentation';
-import { parseSseFrame, SseClient } from '../src/SseClient';
+import { daemonHealthError, isVersionAtLeast, MINIMUM_DAEMON_VERSION, parseSseFrame, SseClient } from '../src/SseClient';
+
+test('minimum daemon version accepts compatible patch and newer releases', () => {
+    assert.equal(MINIMUM_DAEMON_VERSION, '1.1.1');
+    assert.equal(isVersionAtLeast('1.1.1', MINIMUM_DAEMON_VERSION), true);
+    assert.equal(isVersionAtLeast('v1.1.2', MINIMUM_DAEMON_VERSION), true);
+    assert.equal(isVersionAtLeast('1.2.0-beta.1', MINIMUM_DAEMON_VERSION), true);
+    assert.equal(isVersionAtLeast('1.1.1+build.7', MINIMUM_DAEMON_VERSION), true);
+    assert.equal(isVersionAtLeast('1.1.1-beta.1', MINIMUM_DAEMON_VERSION), false);
+    assert.equal(isVersionAtLeast('1.1.1-beta.2', '1.1.1-beta.1'), true);
+    assert.equal(isVersionAtLeast('1.1.1-beta.1', '1.1.1-beta.2'), false);
+    assert.equal(isVersionAtLeast('1.1.0', MINIMUM_DAEMON_VERSION), false);
+    assert.equal(isVersionAtLeast('invalid', MINIMUM_DAEMON_VERSION), false);
+});
+
+test('daemon health errors distinguish compatibility and status failures', () => {
+    assert.equal(daemonHealthError({ status: 'healthy', version: '1.1.1' }), null);
+    assert.match(daemonHealthError({ status: 'healthy', version: '1.1.0' }) || '', /incompatible/);
+    assert.match(daemonHealthError({ status: 'unhealthy', version: '1.1.1' }) || '', /unhealthy/);
+});
+
+test('health parses daemon version and rejects malformed responses', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+        globalThis.fetch = async () => new Response(
+            JSON.stringify({ status: 'healthy', version: '1.1.1' }),
+            { status: 200 },
+        );
+        const client = new SseClient({ host: '127.0.0.1', port: 8080 });
+        assert.deepEqual(await client.health(), { status: 'healthy', version: '1.1.1' });
+        assert.equal(await client.healthCheck(), true);
+
+        globalThis.fetch = async () => new Response(
+            JSON.stringify({ status: 'healthy' }),
+            { status: 200 },
+        );
+        assert.deepEqual(await client.health(), { status: 'healthy', version: '' });
+        assert.equal(await client.healthCheck(), false);
+
+        globalThis.fetch = async () => new Response(
+            JSON.stringify({ status: 'unhealthy', version: '1.1.1' }),
+            { status: 200 },
+        );
+        assert.equal(await client.healthCheck(), false);
+
+        globalThis.fetch = async () => new Response('not found', { status: 404 });
+        assert.deepEqual(await client.health(), { status: 'http_404', version: '' });
+
+        globalThis.fetch = async () => new Response('not-json', { status: 200 });
+        assert.deepEqual(await client.health(), { status: 'invalid_response', version: '' });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
 
 test('parseSseFrame parses CRLF frames and event names', () => {
     const event = parseSseFrame('event: approval_requested\r\ndata: {"task_id":"task-1","approval_id":"a-1"}\r\n');

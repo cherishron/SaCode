@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
-import { SseClient } from './SseClient';
+import { daemonHealthError, SseClient } from './SseClient';
 
 /**
  * Daemon 进程自动管理器
@@ -31,13 +31,18 @@ export class DaemonManager implements vscode.Disposable {
      * 确保 daemon 正在运行：先 healthCheck，失败则 spawn
      */
     async ensureRunning(): Promise<void> {
-        // 先尝试连接已有 daemon
-        if (await this.client.healthCheck()) {
-            this.setState('running');
+        const health = await this.client.health();
+        if (health) {
+            const error = daemonHealthError(health);
+            if (!error) {
+                this.setState('running');
+                return;
+            }
+            this.setState('error');
+            vscode.window.showErrorMessage(error);
             return;
         }
 
-        // 启动新 daemon
         await this.spawnDaemon();
     }
 
@@ -93,9 +98,14 @@ export class DaemonManager implements vscode.Disposable {
                 );
             }
         } catch (err: any) {
+            if (this.process) {
+                this.process.removeAllListeners('exit');
+                this.process.kill();
+                this.process = null;
+            }
             this.setState('error');
             vscode.window.showErrorMessage(
-                `Failed to spawn SaCode daemon: ${err.message}`
+                err instanceof Error ? err.message : `Failed to start SaCode daemon: ${String(err)}`
             );
         }
     }
@@ -106,9 +116,11 @@ export class DaemonManager implements vscode.Disposable {
     private async pollHealth(maxAttempts: number, intervalMs: number): Promise<boolean> {
         for (let i = 0; i < maxAttempts; i++) {
             await this.sleep(intervalMs);
-            if (await this.client.healthCheck()) {
-                return true;
-            }
+            const health = await this.client.health();
+            if (!health) continue;
+            const error = daemonHealthError(health);
+            if (!error) return true;
+            throw new Error(error);
         }
         return false;
     }
