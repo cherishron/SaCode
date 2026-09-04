@@ -15,6 +15,8 @@
 - VSCode 任务流意外中断后携带 `Last-Event-ID` 自动重连，并在每次连接成功后查询待审批列表对账。
 - VSCode 对 `fs.edit` / `fs.apply_patch` 审批使用原生 Diff Editor；多文件 patch 可逐文件接受或拒绝。
 - 审批 API 支持受限 `args_override.paths`，用于只执行经用户接受的 `fs.apply_patch` 文件。
+- 会话投影支持 checkpoint 增量回放：`.sacode/checkpoints/<session_id>.json`，重启后续号，旧 `events.log` 缺 `seq` 仍可回放。
+- 文档明确 `audit.log` 与 `events.log` 的职责边界、关联方式、保留策略与敏感字段。
 
 ## [1.1.1] - 2026-09-03
 

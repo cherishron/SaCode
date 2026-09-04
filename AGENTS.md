@@ -211,7 +211,7 @@ SaCode 核心技术优势命名为 **灵枢**（Ling Shu），源自《黄帝内
 - `runtime/src/streaming/sse.rs` 统一 SSE 输出协议，支持 `task_id` 过滤。
 - `runtime/src/mcp/servers/` 内置 MCP stdio server，暴露 `fs.read`、`fs.list`、`git.diff`。
 - `runtime/src/tools/sandbox_guard.rs` 覆盖所有 Modify 级工具的审批审计，写入 `.sacode/audit.log`。
-- `runtime/src/session/event_log.rs` 事件流投影（§3.1）：`SessionEventLog` 全局限时缓冲 + `.sacode/events.log` 落盘；`seq` 落盘（`#[serde(default)]`，旧日志按行序重建）；`replay_after` / `replay_disk_after` 回放；`project_session_state`（内存）与 `project_session_state_complete`（磁盘+内存合并）投影，`SessionStateProjection.truncated` 暴露缓冲环状淘汰状态。新增测试用 `new_with_path` 注入 tempdir，不要写真实 `.sacode/events.log`。
+- `runtime/src/session/event_log.rs` 事件流投影（§3.1）：`SessionEventLog` 全局限时缓冲 + `.sacode/events.log` 落盘；`seq` 落盘（`#[serde(default)]`，旧日志按行序重建）；重启时从磁盘恢复 seq；`replay_after` / `replay_disk_after` 回放；`project_session_state`（内存）与 `project_session_state_complete`（checkpoint 增量，缺失则磁盘+内存合并）投影；`save_projection_checkpoint` 写入 `.sacode/checkpoints/<session_id>.json`。测试用 `new_with_path` 注入 tempdir，不要写真实 `.sacode/events.log`。
 - `runtime/src/tools/interceptor.rs` + `runtime/src/tools/mod.rs` 拦截器机制（§3.2）：同步 `ToolInterceptor`（pre/post 决策链）；`execute_with_ctx` 重试闭环——执行失败且有 `Retry` 决策时按 `max_attempts` 重试（上限 `MAX_RETRY_ATTEMPTS=3`，成功时 Retry 等价 Keep）；异步 `AsyncToolInterceptor`（`BoxFuture`，零 async_trait 依赖）+ `SyncInterceptorAsAsync` 适配器 + `execute_with_ctx_async` 异步入口（同步链先跑 + 异步链后跑）。同步 `execute_with_ctx` 不跑异步链。
 - `runtime/src/tools/test/runner.rs` 自动检测框架（cargo/npm/go/pytest）并运行测试。
 - `runtime/src/tools/code/ast.rs` 基于 tree-sitter 的 AST 解析（5 语言：rust/python/javascript/typescript/go），`symbol.rs` 和 `deps.rs` 通过 `ast_cache()` 复用解析结果；`search.rs` 在 AST 符号索引上叠加 BM25 语义搜索。

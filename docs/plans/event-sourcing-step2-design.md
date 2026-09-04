@@ -68,8 +68,8 @@ v1.1 已完成事件流投影的第一步（事件记录与基础投影），构
 
 ## 5. 验收口径（切片完成后）
 
-- [ ] 会话结束 report 统计与 `project_session_state_complete` 输出一致（幂等测试覆盖）
-- [ ] 重启后 report 可从磁盘事件重建，与内存路径计数一致
-- [ ] checkpoint 快照写入后可增量重放，结果与全量重放一致
-- [ ] 旧 events.log 项目可正常启动与回放（无 `seq` 崩溃）
-- [ ] audit.log / events.log 职责边界文档化
+- [x] 会话结束 report 统计与 `project_session_state_complete` 输出一致（幂等测试覆盖）
+- [x] 重启后 report 可从磁盘事件重建，与内存路径计数一致
+- [x] checkpoint 快照写入后可增量重放，结果与全量重放一致
+- [x] 旧 events.log 项目可正常启动与回放（无 `seq` 崩溃）
+- [x] audit.log / events.log 职责边界文档化

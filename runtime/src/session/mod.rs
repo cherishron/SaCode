@@ -218,6 +218,7 @@ impl SessionService {
         // 灵枢 · 学习型记忆（M3）：压缩完成后自动沉淀经验教训
         Self::trigger_auto_learn(&session.cwd, session.compressed_summary.as_deref());
         self.persist_session(session);
+        SessionEventLog::global().save_projection_checkpoint(session_id);
 
         Ok(CompressionResult {
             original_event_count: original_count,
@@ -250,6 +251,7 @@ impl SessionService {
         // 灵枢 · 学习型记忆（M3）：压缩完成后自动沉淀经验教训
         Self::trigger_auto_learn(&session.cwd, session.compressed_summary.as_deref());
         self.persist_session(session);
+        SessionEventLog::global().save_projection_checkpoint(session_id);
 
         Ok(Some(CompressionResult {
             original_event_count: original_count,
@@ -506,6 +508,7 @@ impl SessionService {
             session.last_tool_records = projection_to_tool_records(&projection);
             self.persist_session(session);
         }
+        SessionEventLog::global().save_projection_checkpoint(session_id);
 
         let summary = if success {
             response_text

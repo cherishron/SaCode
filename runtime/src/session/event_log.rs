@@ -11,13 +11,12 @@
 //! - 进程内保留内存缓冲，支持 `replay_after(seq)` 回放
 //! - 与 `daemon::StreamEvent` 共用 `seq` 单调递增序号语义
 //!
-//! 本期定位：**事件日志持久化**（第一步），不改变 `ExecutionReport.events`
-//! 的状态对象地位（那是 v1.2 第二步：状态作为事件投影）。持久化事件流
-//! 为后续"状态即投影"提供可回放真相源。
+//! 本期已补齐投影快照：会话结束/压缩时写入 `.sacode/checkpoints/<session_id>.json`，
+//! `project_session_state_complete` 以快照为基底增量回放；损坏则全量扫描 events.log。
 
 use std::{
     collections::VecDeque,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Mutex as StdMutex, OnceLock,
@@ -106,13 +105,15 @@ impl SessionEventLog {
                 .is_some()
         });
 
-        Self {
+        let log = Self {
             seq: AtomicU64::new(0),
             buffer: StdMutex::new(VecDeque::with_capacity(capacity)),
             capacity,
             log_path: StdMutex::new(resolved),
             evicted_total: AtomicU64::new(0),
-        }
+        };
+        log.restore_seq_from_disk();
+        log
     }
 
     /// 带显式落盘路径的构造器（测试注入 tempdir 用，避免写真实 `.sacode/events.log`）
@@ -125,13 +126,15 @@ impl SessionEventLog {
                 .is_some()
         });
 
-        Self {
+        let log = Self {
             seq: AtomicU64::new(0),
             buffer: StdMutex::new(VecDeque::with_capacity(capacity)),
             capacity,
             log_path: StdMutex::new(resolved),
             evicted_total: AtomicU64::new(0),
-        }
+        };
+        log.restore_seq_from_disk();
+        log
     }
 
     /// 全局单例（进程内共享，seq 单调递增）
@@ -242,13 +245,76 @@ impl SessionEventLog {
         self.seq.load(Ordering::Relaxed)
     }
 
-    /// 全量投影：磁盘全量（旧日志行序重建） + 内存增量（seq > 磁盘最大 seq）合并
+    /// 从已有 events.log 恢复 seq 游标，避免重启后序号回绕冲突。
+    fn restore_seq_from_disk(&self) {
+        let Some(path) = self.log_path.lock().ok().and_then(|guard| guard.clone()) else {
+            return;
+        };
+        let max = max_seq_on_disk(&path);
+        if max > 0 {
+            self.seq.store(max, Ordering::Relaxed);
+        }
+    }
+
+    /// 会话投影快照路径：与 events.log 同级的 `checkpoints/<session_id>.json`
+    pub(crate) fn projection_checkpoint_path(&self, session_id: &str) -> Option<PathBuf> {
+        let name = sanitize_session_id(session_id);
+        if name.is_empty() {
+            return None;
+        }
+        let log_path = self.log_path.lock().ok()?.clone()?;
+        let parent = log_path.parent()?;
+        Some(parent.join("checkpoints").join(format!("{name}.json")))
+    }
+
+    fn load_projection_checkpoint(&self, session_id: &str) -> Option<SessionProjectionCheckpoint> {
+        let path = self.projection_checkpoint_path(session_id)?;
+        let json = std::fs::read_to_string(path).ok()?;
+        let snap: SessionProjectionCheckpoint = serde_json::from_str(&json).ok()?;
+        if snap.session_id != session_id {
+            return None;
+        }
+        Some(snap)
+    }
+
+    /// 将会话投影快照写入 `.sacode/checkpoints/<session_id>.json`。
+    /// 空 session_id、纯内存模式或 IO 失败时静默跳过，不影响会话主路径。
+    pub fn save_projection_checkpoint(&self, session_id: &str) {
+        let Some(path) = self.projection_checkpoint_path(session_id) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let stats = self.project_session_state_complete(session_id);
+        let snap = SessionProjectionCheckpoint {
+            session_id: session_id.to_string(),
+            last_seq: stats.last_seq,
+            stats,
+            ts: chrono::Utc::now().to_rfc3339(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&snap) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// 全量投影：优先以会话 checkpoint 为基底，只重放 `last_seq` 之后的增量。
     ///
-    /// - 磁盘可用时：先扫磁盘（保证不被内存 4096 环状淘汰截断），再补内存中
-    ///   seq 更大的增量（同一进程内新写入尚未刷盘前也计入）
+    /// - 快照损坏或缺失时退化为磁盘全量 + 内存增量（事件日志为最终真相）
     /// - 磁盘不可用（纯内存模式）：退化为内存投影，`truncated` 依据淘汰计数
-    /// - 复杂度 O(文件大小 + 缓冲大小)，按需调用（如会话结束统计），不在热路径
+    /// - 复杂度：有快照时 O(增量)，无快照时 O(文件大小 + 缓冲大小)
     pub fn project_session_state_complete(&self, session_id: &str) -> SessionStateProjection {
+        if let Some(snap) = self.load_projection_checkpoint(session_id) {
+            let mut projection = snap.stats;
+            projection.session_id = session_id.to_string();
+            self.apply_events_after(&mut projection, session_id, snap.last_seq);
+            projection.truncated = false;
+            return projection;
+        }
+        self.project_session_state_from_log(session_id)
+    }
+
+    fn project_session_state_from_log(&self, session_id: &str) -> SessionStateProjection {
         let mut projection = SessionStateProjection {
             session_id: session_id.to_string(),
             ..Default::default()
@@ -256,12 +322,10 @@ impl SessionEventLog {
 
         let disk_events = self.replay_disk_after(0);
         if !disk_events.is_empty() {
-            // 磁盘全量投影
             let disk_max_seq = disk_events.iter().map(|e| e.seq).max().unwrap_or(0);
             for event in disk_events.iter().filter(|e| e.session_id == session_id) {
                 apply_event(&mut projection, event);
             }
-            // 内存增量：seq > 磁盘最大 seq（同一进程尚未刷盘/重复刷盘事件）
             let buf = self.buffer.lock().expect("session event buffer poisoned");
             for event in buf
                 .iter()
@@ -271,7 +335,6 @@ impl SessionEventLog {
             }
             projection.truncated = false;
         } else {
-            // 纯内存投影
             let buf = self.buffer.lock().expect("session event buffer poisoned");
             for event in buf.iter().filter(|e| e.session_id == session_id) {
                 apply_event(&mut projection, event);
@@ -280,6 +343,26 @@ impl SessionEventLog {
             projection.truncated = evicted > 0;
         }
         projection
+    }
+
+    fn apply_events_after(
+        &self,
+        projection: &mut SessionStateProjection,
+        session_id: &str,
+        last_seq: u64,
+    ) {
+        let disk_events = self.replay_disk_after(last_seq);
+        let disk_max_seq = disk_events.iter().map(|e| e.seq).max().unwrap_or(last_seq);
+        for event in disk_events.iter().filter(|e| e.session_id == session_id) {
+            apply_event(projection, event);
+        }
+        let buf = self.buffer.lock().expect("session event buffer poisoned");
+        for event in buf
+            .iter()
+            .filter(|e| e.session_id == session_id && e.seq > disk_max_seq)
+        {
+            apply_event(projection, event);
+        }
     }
 
     /// 从事件流投影出会话级状态摘要
@@ -334,7 +417,7 @@ fn apply_event(projection: &mut SessionStateProjection, event: &SessionEvent) {
 }
 
 /// 会话级状态投影 — 从事件流重建的统计摘要
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionStateProjection {
     pub session_id: String,
     pub total_calls: u32,
@@ -346,6 +429,53 @@ pub struct SessionStateProjection {
     /// 投影是否因内存缓冲环状淘汰而不完整（磁盘不可用时内存投影置 true；
     /// 磁盘可用走全量投影时恒为 false）
     pub truncated: bool,
+}
+
+/// 会话级投影快照：作为 `project_session_state_complete` 的增量回放基底。
+///
+/// 损坏或缺失时忽略，退化为全量扫描 events.log。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionProjectionCheckpoint {
+    pub session_id: String,
+    pub stats: SessionStateProjection,
+    pub last_seq: u64,
+    pub ts: String,
+}
+
+fn sanitize_session_id(session_id: &str) -> String {
+    session_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn max_seq_on_disk(path: &Path) -> u64 {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let mut row_seq = 0u64;
+    let mut max_seq = 0u64;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<SessionEvent>(line) else {
+            continue;
+        };
+        row_seq += 1;
+        let seq = if event.seq == 0 { row_seq } else { event.seq };
+        if seq > max_seq {
+            max_seq = seq;
+        }
+    }
+    max_seq
 }
 
 #[cfg(test)]
@@ -482,6 +612,7 @@ mod tests {
         // 行序重建：第 1 行 seq=1，第 2 行 seq=2
         assert_eq!(disk[0].seq, 1);
         assert_eq!(disk[1].seq, 2);
+        assert_eq!(log.current_seq(), 2);
         // event_type 正确解析
         assert_eq!(disk[0].event_type, SessionEventType::ToolCallStarted);
         assert_eq!(disk[1].event_type, SessionEventType::ToolCallFinished);
@@ -582,5 +713,97 @@ mod tests {
         assert_eq!(complete.total_calls, 5);
         assert!(!complete.truncated);
         assert_eq!(complete.last_seq, 5);
+    }
+
+    #[test]
+    fn checkpoint_incremental_replay_matches_full_replay() {
+        let (log, _dir) = fresh_disk_log();
+        let sid = "ckpt-inc";
+        for tool in ["a", "b", "c"] {
+            log.record(
+                sid,
+                SessionEventType::ToolCallStarted,
+                serde_json::json!({"tool": tool}),
+            );
+            log.record(
+                sid,
+                SessionEventType::ToolCallFinished,
+                serde_json::json!({"status": "success"}),
+            );
+        }
+        log.save_projection_checkpoint(sid);
+        let after_snap = log.project_session_state_complete(sid);
+        assert_eq!(after_snap.total_calls, 3);
+        assert_eq!(after_snap.completed, 3);
+
+        log.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"tool": "d"}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallDenied,
+            serde_json::json!({"reason": "blocked"}),
+        );
+
+        let incremental = log.project_session_state_complete(sid);
+        let path = log
+            .projection_checkpoint_path(sid)
+            .expect("checkpoint path");
+        std::fs::remove_file(&path).expect("remove snapshot for full replay");
+        let full = log.project_session_state_complete(sid);
+        assert_eq!(incremental.total_calls, full.total_calls);
+        assert_eq!(incremental.completed, full.completed);
+        assert_eq!(incremental.denied, full.denied);
+        assert_eq!(incremental.last_seq, full.last_seq);
+        assert_eq!(incremental.last_tool, full.last_tool);
+        assert_eq!(incremental.total_calls, 4);
+        assert_eq!(incremental.denied, 1);
+    }
+
+    #[test]
+    fn checkpoint_survives_restart_and_corrupt_snapshot_falls_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("events.log");
+        let sid = "ckpt-restart";
+        let log = SessionEventLog::new_with_path(16, Some(path.clone()));
+        log.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"tool": "fs.read"}),
+        );
+        log.record(
+            sid,
+            SessionEventType::ToolCallFinished,
+            serde_json::json!({"status": "success"}),
+        );
+        log.save_projection_checkpoint(sid);
+        let original = log.project_session_state_complete(sid);
+        assert_eq!(log.current_seq(), 2);
+
+        let restarted = SessionEventLog::new_with_path(16, Some(path.clone()));
+        assert_eq!(restarted.current_seq(), 2);
+        let restored = restarted.project_session_state_complete(sid);
+        assert_eq!(restored.total_calls, original.total_calls);
+        assert_eq!(restored.completed, original.completed);
+        assert_eq!(restored.last_seq, original.last_seq);
+        assert!(!restored.truncated);
+
+        restarted.record(
+            sid,
+            SessionEventType::ToolCallStarted,
+            serde_json::json!({"tool": "fs.write"}),
+        );
+        assert_eq!(restarted.current_seq(), 3);
+
+        let ckpt = restarted
+            .projection_checkpoint_path(sid)
+            .expect("checkpoint path");
+        std::fs::write(&ckpt, "{not-json").expect("corrupt snapshot");
+        let fallback = restarted.project_session_state_complete(sid);
+        assert_eq!(fallback.total_calls, 2);
+        assert_eq!(fallback.last_seq, 3);
+        assert!(!fallback.truncated);
     }
 }

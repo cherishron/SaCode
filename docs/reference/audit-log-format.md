@@ -207,9 +207,44 @@ SaCode 的事件日志 `.sacode/events.log` 与审计日志类似，采用 JSON 
 - 进程内内存缓冲默认 4096 条（跨会话共享），满后最旧事件被**环状淘汰**。
 - `project_session_state()`（内存投影）在淘汰发生时结果静默偏低，`truncated` 字段
   置 `true` 显式暴露该状态。
-- `project_session_state_complete()`（磁盘全量 + 内存增量合并投影）不受缓冲淘汰
-  影响，`truncated` 恒为 `false`，用于需要全量精确统计的场合（如会话结束汇总）。
+- `project_session_state_complete()` 优先读取 `.sacode/checkpoints/<session_id>.json`
+  投影快照，只重放 `last_seq` 之后的增量；快照缺失或损坏时退化为磁盘全量 + 内存增量。
+  有磁盘或有效快照时 `truncated` 为 `false`。
+- 会话结束或压缩时会覆盖写入投影快照；事件日志仍是最终真相。
 
 ### SIEM 接入
 
 events.log 同样可通过 Filebeat/Logstash 采集，索引建议为 `sacode-events-%{+YYYY.MM.dd}`，便于与 audit.log 关联分析。
+
+## audit.log 与 events.log 职责边界
+
+两份日志互补，**不互相替代**，也不删除对方字段。
+
+| | `audit.log` | `events.log` |
+|--|-------------|--------------|
+| 视角 | 沙箱 / 审批 / 拦截 | 工具调用生命周期 |
+| 写入方 | `AuditInterceptor`、`sandbox_guard` | `SessionEventLog`（拦截器 Started/Finished/Denied） |
+| 覆盖范围 | 主要为 `Modify` 级副作用 | 所有被拦截器记录的工具调用 |
+| 阶段 | `preflight_*`、`execution` | `tool_call_started` / `finished` / `denied` |
+| 序号 | 无 `seq` | 全局单调 `seq`（落盘；旧日志按行序重建） |
+
+### 关联方式
+
+SIEM 侧建议按时间窗口 join：
+
+1. 主键倾向：`events.log.seq` 标识一次行为事件；
+2. 与 `audit.log` 关联：同一 `tool` + 接近的 `ts`（通常同一秒内 preflight → started → execution → finished）；
+3. `session_id` 仅 events.log 稳定存在；audit.log 当前不写 session，跨会话审计仍以 tool + ts 为准。
+
+### 保留策略
+
+- 两份日志都是 **JSON Lines、append-only**；当前运行时**不轮转、不截断**。
+- `events.log` 另有进程内 4096 条环形缓冲，仅影响内存投影；磁盘与 checkpoint 不受淘汰影响。
+- 投影快照 `.sacode/checkpoints/<session_id>.json` 为覆盖写；与任务 checkpoint（`checkpoint-*.json`）共存，互不解析。
+- daemon / 进程重启后从磁盘 `events.log` 恢复 `seq` 游标，避免序号回绕。
+
+### 敏感字段
+
+- `input` 可能包含文件内容、命令行、路径；`output` / `extra.result` 可能包含工具输出。
+- 接入 SIEM 前应按企业策略脱敏或截断，不要把完整 payload 发到不可信管道。
+- 本切片不删除既有字段，以免破坏现有采集规则。
