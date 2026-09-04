@@ -109,13 +109,17 @@ jobs:
           Write-Host "VSIX SHA-256: $secondHash"
 
       - name: Check VSCode release contract
-        run: node scripts/check-vscode-release.js "${{ steps.get_version.outputs.VERSION }}"
+        run: |
+          node scripts/check-vscode-release.js "${{ steps.get_version.outputs.VERSION }}"
+          node scripts/vscode-install-smoke.js
 
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
           name: vscode-vsix
-          path: interfaces/vscode/*.vsix
+          path: |
+            interfaces/vscode/*.vsix
+            interfaces/vscode/*.vsix.sha256
 
   build:
     needs: preflight
@@ -312,6 +316,7 @@ jobs:
           files: |
             npm-package/platforms/*
             interfaces/vscode/*.vsix
+            interfaces/vscode/*.vsix.sha256
           body_path: docs/release/${{ steps.get_version.outputs.VERSION }}.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

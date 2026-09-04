@@ -35,7 +35,7 @@ code --install-extension sacode-vscode-0.2.1.vsix --force
 
 若 `code` 命令不可用，在 VS Code 扩展视图的菜单中选择 **Install from VSIX...**。
 
-仓库内的 `sacode ide install` 会输出基于当前源码目录的编译/安装指引；正式发布包与兼容矩阵以对应版本的发布说明为准。
+仓库内的 `sacode ide install` 会输出基于当前源码目录的编译/安装指引。正式发布包、升级/降级配对与 Marketplace 策略见 [兼容矩阵](../release/compatibility.md)。
 
 ## daemon 自动管理
 

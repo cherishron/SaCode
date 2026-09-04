@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
@@ -15,6 +16,8 @@ const cargoVersion = cargoToml.match(/\[workspace\.package\][\s\S]*?\nversion\s*
 const expectedCliVersion = process.argv[2] || cargoVersion;
 const expectedExtensionVersion = process.argv[3] || packageJson.version;
 const releaseNotesPath = path.join(root, 'docs', 'release', `${expectedCliVersion}.md`);
+const compatibilityPath = path.join(root, 'docs', 'release', 'compatibility.json');
+const compatibilityDocPath = path.join(root, 'docs', 'release', 'compatibility.md');
 
 function fail(message) {
   console.error(`VSCode release check failed: ${message}`);
@@ -133,6 +136,30 @@ if (!client.includes(`MINIMUM_DAEMON_VERSION = '${minimumDaemonVersion}'`)) {
   fail('runtime minimum daemon version constant is out of sync');
 }
 
+if (!fs.existsSync(compatibilityPath)) fail('missing docs/release/compatibility.json');
+const compatibility = readJson(compatibilityPath);
+if (compatibility.current?.cli !== expectedCliVersion) {
+  fail(`compatibility.json current.cli ${compatibility.current?.cli || '<missing>'} does not match ${expectedCliVersion}`);
+}
+if (compatibility.current?.extension !== expectedExtensionVersion) {
+  fail(`compatibility.json current.extension does not match ${expectedExtensionVersion}`);
+}
+if (compatibility.current?.minimumDaemonVersion !== minimumDaemonVersion) {
+  fail('compatibility.json current.minimumDaemonVersion is out of sync');
+}
+const currentRelease = (compatibility.releases || []).find((item) => item.extension === expectedExtensionVersion);
+if (!currentRelease || currentRelease.cli !== expectedCliVersion || currentRelease.minimumDaemonVersion !== minimumDaemonVersion) {
+  fail('compatibility.json releases[] missing current CLI/extension/min daemon tuple');
+}
+if (compatibility.distribution?.vscodeMarketplace !== false || compatibility.distribution?.openVsx !== false) {
+  fail('compatibility.json must keep Marketplace/Open VSX auto-publish disabled');
+}
+if (!fs.existsSync(compatibilityDocPath)) fail('missing docs/release/compatibility.md');
+const compatibilityDoc = fs.readFileSync(compatibilityDocPath, 'utf8');
+if (!compatibilityDoc.includes(expectedExtensionVersion) || !compatibilityDoc.includes(expectedCliVersion)) {
+  fail('compatibility.md does not mention current CLI and extension versions');
+}
+
 if (!fs.existsSync(releaseNotesPath)) fail(`missing release notes ${path.basename(releaseNotesPath)}`);
 const notes = fs.readFileSync(releaseNotesPath, 'utf8');
 for (const heading of ['## 升级', '## 回滚', '## 已知限制']) {
@@ -169,4 +196,9 @@ if (packedPackage.sacode?.minimumDaemonVersion !== minimumDaemonVersion) {
   fail(`VSIX minimumDaemonVersion does not match ${minimumDaemonVersion}`);
 }
 
+const hash = crypto.createHash('sha256').update(fs.readFileSync(vsixPath)).digest('hex');
+const checksumPath = `${vsixPath}.sha256`;
+fs.writeFileSync(checksumPath, `${hash}  ${expectedVsixName}\n`);
+
 console.log(`VSCode release check passed for CLI ${expectedCliVersion} / extension ${expectedExtensionVersion}`);
+console.log(`VSIX SHA-256: ${hash}`);

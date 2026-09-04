@@ -17,6 +17,7 @@
 - 审批 API 支持受限 `args_override.paths`，用于只执行经用户接受的 `fs.apply_patch` 文件。
 - 会话投影支持 checkpoint 增量回放：`.sacode/checkpoints/<session_id>.json`，重启后续号，旧 `events.log` 缺 `seq` 仍可回放。
 - 文档明确 `audit.log` 与 `events.log` 的职责边界、关联方式、保留策略与敏感字段。
+- VSCode 扩展发布工程化：兼容矩阵、VSIX SHA-256、Ubuntu/Windows/macOS 打包冒烟；VSIX 不自动发布 Marketplace/Open VSX。
 
 ## [1.1.1] - 2026-09-03
 

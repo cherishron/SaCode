@@ -5,16 +5,30 @@ on:
     branches: [main, master, dev]
     paths:
       - 'interfaces/vscode/**'
+      - 'scripts/check-vscode-release.js'
+      - 'scripts/normalize-vsix.py'
+      - 'scripts/vscode-install-smoke.js'
+      - 'docs/release/compatibility.json'
+      - 'docs/release/compatibility.md'
       - '.github/workflows/vscode.yml'
   pull_request:
     branches: [main, master, dev]
     paths:
       - 'interfaces/vscode/**'
+      - 'scripts/check-vscode-release.js'
+      - 'scripts/normalize-vsix.py'
+      - 'scripts/vscode-install-smoke.js'
+      - 'docs/release/compatibility.json'
+      - 'docs/release/compatibility.md'
       - '.github/workflows/vscode.yml'
 
 jobs:
-  compile-and-test:
-    runs-on: ubuntu-latest
+  compile-package-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         working-directory: interfaces/vscode
@@ -29,6 +43,11 @@ jobs:
           cache: npm
           cache-dependency-path: interfaces/vscode/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: npm ci
 
@@ -37,3 +56,14 @@ jobs:
 
       - name: Run client tests
         run: npm test
+
+      - name: Package VSIX
+        run: npm run package:vsix
+
+      - name: Check VSCode release contract
+        working-directory: ${{ github.workspace }}
+        run: node scripts/check-vscode-release.js
+
+      - name: Install / compatibility smoke
+        working-directory: ${{ github.workspace }}
+        run: node scripts/vscode-install-smoke.js

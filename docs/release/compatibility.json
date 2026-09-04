@@ -1,0 +1,31 @@
+{
+  "current": {
+    "extension": "0.2.1",
+    "cli": "1.1.1",
+    "minimumDaemonVersion": "1.1.1"
+  },
+  "releases": [
+    {
+      "extension": "0.2.1",
+      "cli": "1.1.1",
+      "minimumDaemonVersion": "1.1.1"
+    },
+    {
+      "extension": "0.2.0",
+      "cli": "1.1.0",
+      "minimumDaemonVersion": "1.1.0"
+    }
+  ],
+  "incompatible": [
+    {
+      "extension": "0.2.1",
+      "daemon": "1.1.0",
+      "reason": "extension 0.2.1 requires daemon >= 1.1.1"
+    }
+  ],
+  "distribution": {
+    "vscodeMarketplace": false,
+    "openVsx": false,
+    "channel": "github-or-gitee-release-vsix"
+  }
+}

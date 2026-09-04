@@ -57,6 +57,7 @@ dist-test/
 build/
 .monkeycode/
 interfaces/vscode/*.vsix
+interfaces/vscode/*.vsix.sha256
 npm-package/*.tgz
 
 # Temp output files (clippy/test redirects)

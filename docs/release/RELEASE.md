@@ -57,6 +57,7 @@ npm test
 npm run package:vsix
 cd ../..
 node scripts/check-vscode-release.js <CLI版本> <扩展版本>
+node scripts/vscode-install-smoke.js
 ```
 
 `package:vsix` 使用固定版本的 `@vscode/vsce`，再由 `scripts/normalize-vsix.py` 固定 ZIP 条目顺序、时间戳和压缩参数。发布前应连续构建两次并比较 SHA-256。
@@ -71,7 +72,7 @@ cd npm-package
 npm pack
 ```
 
-从 tarball 解包或安装后执行 `sacode --version`，输出必须是 `sacode <CLI版本>`。本地生成的 `.tgz`、`.vsix` 和平台二进制不得提交。
+从 tarball 解包或安装后执行 `sacode --version`，输出必须是 `sacode <CLI版本>`。本地生成的 `.tgz`、`.vsix`、`.vsix.sha256` 和平台二进制不得提交。
 
 ## 3. 版本同步
 
@@ -88,9 +89,10 @@ VSCode 版本独立维护，需同步：
 - `package:vsix` 输出文件名；
 - `sacode.minimumDaemonVersion`；
 - `src/SseClient.ts` 的 `MINIMUM_DAEMON_VERSION`；
+- `docs/release/compatibility.json` 的 `current` 与 `releases`；
 - `docs/release/<CLI版本>.md`。
 
-`scripts/check-vscode-release.js` 会检查这些来源及 VSIX 内部 metadata 一致性。
+`scripts/check-vscode-release.js` 会检查这些来源、`docs/release/compatibility.json` 以及 VSIX 内部 metadata 一致性，并写出 `sacode-vscode-<version>.vsix.sha256`。
 
 ## 4. Tag 与发布
 
@@ -116,9 +118,18 @@ git push origin v<CLI版本>
 ## 6. 发布文件
 
 - `.github/workflows/release.yml`：自动门禁、构建与发布；
+- `.github/workflows/vscode.yml`：Ubuntu / Windows / macOS 扩展编译、打包与冒烟；
 - `scripts/sync-version.js`：CLI/npm 版本同步；
 - `scripts/prepare-npm-platforms.js`：平台产物和 manifest；
 - `scripts/check-release.js`：npm/二进制/tarball 检查；
-- `scripts/check-vscode-release.js`：VSIX、版本和兼容性检查；
+- `scripts/check-vscode-release.js`：VSIX、版本、兼容矩阵和 SHA-256 检查；
+- `scripts/vscode-install-smoke.js`：兼容矩阵与可选 `code --install-extension` 冒烟；
 - `scripts/normalize-vsix.py`：确定性 VSIX 重打包；
+- `docs/release/compatibility.json` / `compatibility.md`：扩展与 daemon 配对真源；
 - `docs/release/<version>.md`：release notes。
+
+## 7. Marketplace / Open VSX
+
+**不自动发布**到 VS Code Marketplace 或 Open VSX。VSIX 只作为 GitHub / Gitee Release 附件分发。`docs/release/compatibility.json` 的 `distribution.vscodeMarketplace` / `openVsx` 必须为 `false`，由检查脚本锁定。
+
+商店分发需要独立的 publisher 验证与审核任务，禁止把 `vsce publish` 接到现有 tag 发布工作流。

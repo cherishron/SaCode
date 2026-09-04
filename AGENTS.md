@@ -131,6 +131,9 @@ MCP 工具（`.sacode/mcp.json`）按既有流程加载。
 - Release consistency check: `node scripts/check-release.js`
 - Strict release artifact check: `node scripts/check-release.js --strict-platforms`
 
+- VSCode VSIX contract: `node scripts/check-vscode-release.js`
+- VSCode install/compat smoke: `node scripts/vscode-install-smoke.js`
+
 ## CI Order
 
 - `.github/workflows/test.yml` runs in this order:
@@ -154,6 +157,7 @@ MCP 工具（`.sacode/mcp.json`）按既有流程加载。
   - npm README mentions `npm install -g @cherishron/sacode`
   - only Linux x64 and Windows x64 are advertised
   - `npm-package/platforms/manifest.json` matches expected files
+- `scripts/check-vscode-release.js` enforces extension/CLI/`minimumDaemonVersion`/`docs/release/compatibility.json` and writes the VSIX SHA-256 sidecar. Do not enable Marketplace or Open VSX auto-publish.
 
 ## Platform Constraints
 
