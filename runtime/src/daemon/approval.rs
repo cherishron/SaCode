@@ -30,7 +30,7 @@ pub async fn list_task_approvals(
 
 /// GET /metrics — daemon 可观测性指标快照
 ///
-/// 当前包含审批计数与等待时间；P2-3 将补充 SSE 连接/吞吐/lagged 指标。
+/// 当前包含审批计数与等待时间，以及 SSE 连接、吞吐、回放和 lagged 指标。
 pub async fn get_metrics(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
     let pending = state.pending_approvals.lock().await.len() as u64;
     let mut snapshot = state.metrics.snapshot();

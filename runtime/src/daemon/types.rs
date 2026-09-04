@@ -239,7 +239,7 @@ pub struct DaemonState {
     /// 以 approval_id 为键（而非 task_id），保证同一任务连续/并发的多个审批
     /// 不会互相覆盖；每次审批都有唯一 ID，迟到或重复响应无法批准下一次审批。
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
-    /// daemon 可观测性指标（审批计数与等待时间；P2-3 将扩展 SSE 指标）
+    /// daemon 可观测性指标（审批计数与 SSE 连接/吞吐/lagged）
     pub metrics: Arc<DaemonMetrics>,
 }
 
@@ -331,16 +331,65 @@ impl ApprovalMetrics {
     }
 }
 
-/// daemon 级指标聚合；当前仅含审批指标，P2-3 将补充 SSE 指标
+/// SSE 连接与传输指标；daemon 生命周期内累计，`active` 为当前连接数。
+#[derive(Debug, Default)]
+pub struct SseMetrics {
+    pub opened: AtomicU64,
+    pub active: AtomicU64,
+    pub closed: AtomicU64,
+    pub replay_connections: AtomicU64,
+    pub replayed_events: AtomicU64,
+    pub delivered: AtomicU64,
+    pub lagged: AtomicU64,
+    pub skipped: AtomicU64,
+    pub forwarder_lagged: AtomicU64,
+    pub forwarder_skipped: AtomicU64,
+    pub total_connection_ms: AtomicU64,
+}
+
+impl SseMetrics {
+    pub fn snapshot(&self) -> serde_json::Value {
+        let opened = self.opened.load(Ordering::Relaxed);
+        let active = self.active.load(Ordering::Relaxed);
+        let closed = self.closed.load(Ordering::Relaxed);
+        let replay_connections = self.replay_connections.load(Ordering::Relaxed);
+        let replayed_events = self.replayed_events.load(Ordering::Relaxed);
+        let delivered = self.delivered.load(Ordering::Relaxed);
+        let lagged = self.lagged.load(Ordering::Relaxed);
+        let skipped = self.skipped.load(Ordering::Relaxed);
+        let forwarder_lagged = self.forwarder_lagged.load(Ordering::Relaxed);
+        let forwarder_skipped = self.forwarder_skipped.load(Ordering::Relaxed);
+        let total_connection_ms = self.total_connection_ms.load(Ordering::Relaxed);
+        let avg_connection_ms = total_connection_ms.checked_div(closed).unwrap_or(0);
+        serde_json::json!({
+            "opened": opened,
+            "active": active,
+            "closed": closed,
+            "replay_connections": replay_connections,
+            "replayed_events": replayed_events,
+            "delivered": delivered,
+            "lagged": lagged,
+            "skipped": skipped,
+            "forwarder_lagged": forwarder_lagged,
+            "forwarder_skipped": forwarder_skipped,
+            "total_connection_ms": total_connection_ms,
+            "avg_connection_ms": avg_connection_ms,
+        })
+    }
+}
+
+/// daemon 级指标聚合。
 #[derive(Debug, Default)]
 pub struct DaemonMetrics {
     pub approval: ApprovalMetrics,
+    pub sse: SseMetrics,
 }
 
 impl DaemonMetrics {
     pub fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "approval": self.approval.snapshot(),
+            "sse": self.sse.snapshot(),
         })
     }
 }

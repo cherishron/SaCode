@@ -16,7 +16,7 @@ pub use approval::{get_metrics, list_task_approvals, resolve_approval, HttpAppro
 pub use handlers::run_daemon;
 pub use types::{
     ApprovalMetrics, ApprovalResolution, DaemonMetrics, DaemonState, EventHistory, PendingApproval,
-    RetryPolicyRequest, StreamEvent, TaskRequest, TaskResponse, TaskStatus,
+    RetryPolicyRequest, SseMetrics, StreamEvent, TaskRequest, TaskResponse, TaskStatus,
     DAEMON_EVENT_BUS_CAPACITY,
 };
 

@@ -174,6 +174,60 @@ async fn test_daemon_events_endpoint_streams_sse() {
 }
 
 #[tokio::test]
+async fn test_metrics_endpoint_tracks_sse_connection() {
+    let app = create_isolated_daemon().await;
+
+    let sse_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/events")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should open event stream");
+    assert_eq!(sse_response.status(), StatusCode::OK);
+
+    let metrics_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return metrics");
+    let body = to_bytes(metrics_response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    assert_eq!(payload["sse"]["opened"], 1);
+    assert_eq!(payload["sse"]["active"], 1);
+    assert_eq!(payload["sse"]["closed"], 0);
+
+    drop(sse_response);
+
+    let metrics_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return metrics");
+    let body = to_bytes(metrics_response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    assert_eq!(payload["sse"]["opened"], 1);
+    assert_eq!(payload["sse"]["active"], 0);
+    assert_eq!(payload["sse"]["closed"], 1);
+}
+
+#[tokio::test]
 async fn test_daemon_task_events_endpoint_filters_by_task_id() {
     let app = create_isolated_daemon().await;
 

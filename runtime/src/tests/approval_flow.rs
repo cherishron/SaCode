@@ -956,6 +956,18 @@ async fn metrics_endpoint_returns_approval_snapshot() {
     assert_eq!(approval["cancelled"], 0);
     assert_eq!(approval["resolved"], 0);
     assert_eq!(approval["avg_wait_ms"], 0);
+    let sse = &payload["sse"];
+    assert_eq!(sse["opened"], 0);
+    assert_eq!(sse["active"], 0);
+    assert_eq!(sse["closed"], 0);
+    assert_eq!(sse["replay_connections"], 0);
+    assert_eq!(sse["replayed_events"], 0);
+    assert_eq!(sse["delivered"], 0);
+    assert_eq!(sse["lagged"], 0);
+    assert_eq!(sse["skipped"], 0);
+    assert_eq!(sse["forwarder_lagged"], 0);
+    assert_eq!(sse["forwarder_skipped"], 0);
+    assert_eq!(sse["avg_connection_ms"], 0);
 }
 
 /// 指标：批准的审批计入 approved 并累计等待时间

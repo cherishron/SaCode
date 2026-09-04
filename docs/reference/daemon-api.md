@@ -31,7 +31,7 @@ sacode serve --host=127.0.0.1 --port=8080
 | POST | `/task/:id/cancel` | 取消任务，并清理该任务的待审批请求 |
 | POST | `/task/:id/approve` | 回传一次审批结果 |
 | GET | `/task/:id/approvals` | 查询任务当前待审批列表，用于客户端恢复 |
-| GET | `/metrics` | 查询 daemon 审批指标快照 |
+| GET | `/metrics` | 查询 daemon 审批与 SSE 指标快照 |
 | GET | `/events` | 全局 SSE；不支持历史回放 |
 | GET | `/events/:id` | 单任务 SSE；支持 `Last-Event-ID` |
 | GET | `/api/stream` | 统一 SSE；可用 `task_id` 查询参数过滤 |
@@ -300,7 +300,7 @@ data: {
 
 ### GET /metrics
 
-`/metrics` 返回 daemon 生命周期内累计的审批指标：
+`/metrics` 返回 daemon 生命周期内累计的审批与 SSE 指标：
 
 ```json
 {
@@ -314,15 +314,40 @@ data: {
     "resolved": 7,
     "total_wait_ms": 18342,
     "avg_wait_ms": 2620
+  },
+  "sse": {
+    "opened": 3,
+    "active": 1,
+    "closed": 2,
+    "replay_connections": 1,
+    "replayed_events": 12,
+    "delivered": 40,
+    "lagged": 0,
+    "skipped": 0,
+    "forwarder_lagged": 0,
+    "forwarder_skipped": 0,
+    "total_connection_ms": 8500,
+    "avg_connection_ms": 4250
   }
 }
 ```
+
+审批字段：
 
 - `pending` 是查询时实时待审批深度；
 - `requested` 在审批登记后累加；
 - `approved`、`denied`、`timed_out`、`cancelled` 为互斥终态计数；
 - `resolved` 是四种终态计数之和；
-- `total_wait_ms` 与 `avg_wait_ms` 只统计已解决审批；
+- `total_wait_ms` 与 `avg_wait_ms` 只统计已解决审批。
+
+SSE 字段：
+
+- `opened` / `closed` 为累计连接次数；`active` 为当前仍打开的 SSE 连接数；
+- `replay_connections` 统计携带 `Last-Event-ID` 的连接；`replayed_events` 是实际回放条数；
+- `delivered` 是下发给客户端的事件数（含 `lagged` 提示事件，不含 keep-alive ping）；
+- `lagged` / `skipped` 统计 SSE 订阅方跟不上 broadcast 时的溢出次数与丢弃事件数；
+- `forwarder_lagged` / `forwarder_skipped` 统计 executor → daemon 转发层溢出；
+- `total_connection_ms` 与 `avg_connection_ms` 只统计已关闭连接；
 - 指标保存在内存中，daemon 重启后归零。
 
 ### 审批事件与断线回放

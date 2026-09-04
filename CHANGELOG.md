@@ -11,6 +11,7 @@
 
 - daemon 新增 `GET /task/:id/approvals`，客户端可恢复连接前或离线期间仍在等待的审批。
 - daemon 新增 `GET /metrics`，暴露审批 requested/pending/approved/denied/timed_out/cancelled 与等待时间指标。
+- `/metrics` 增加 SSE 连接、投递、回放、lagged 与 executor forwarder 丢包指标。
 - VSCode 任务流意外中断后携带 `Last-Event-ID` 自动重连，并在每次连接成功后查询待审批列表对账。
 - VSCode 对 `fs.edit` / `fs.apply_patch` 审批使用原生 Diff Editor；多文件 patch 可逐文件接受或拒绝。
 - 审批 API 支持受限 `args_override.paths`，用于只执行经用户接受的 `fs.apply_patch` 文件。

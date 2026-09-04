@@ -58,6 +58,16 @@ pub fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
                     // executor event_bus 溢出，从 executor 到 daemon 的事件已丢失
                     // 这是端到端流式任务的连通性断点：SSE 客户端将永久漏掉这些事件
                     // 记录 warn 以便运维定位，客户端可通过 Last-Event-ID 重连续传已缓冲部分
+                    state
+                        .metrics
+                        .sse
+                        .forwarder_lagged
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    state
+                        .metrics
+                        .sse
+                        .forwarder_skipped
+                        .fetch_add(skipped, std::sync::atomic::Ordering::Relaxed);
                     tracing::warn!(
                         target: "sacode.daemon.forwarder",
                         skipped,
@@ -122,7 +132,7 @@ pub async fn stream_events(
     State(state): State<Arc<DaemonState>>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
     // 全局事件流：不支持 Last-Event-ID replay（跨任务回放成本高，由消费方按需重连单任务）
-    stream_from_broadcast(state.event_bus.subscribe(), None)
+    stream_from_broadcast(state.event_bus.subscribe(), None, state.metrics.clone())
 }
 
 pub async fn stream_task_events(
@@ -136,6 +146,7 @@ pub async fn stream_task_events(
         Some(task_id),
         &state.event_history,
         last_event_id,
+        state.metrics.clone(),
     )
 }
 
@@ -150,6 +161,7 @@ pub async fn stream_api_events(
         query.task_id,
         &state.event_history,
         last_event_id,
+        state.metrics.clone(),
     )
 }
 

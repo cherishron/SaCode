@@ -392,7 +392,7 @@ SaCode runtime 当前提供以下最小可用 Daemon 路由：
 - `POST /task/:id/approve`
 - `GET /task/:id/approvals`
 - `GET /task/:id/checkpoint`
-- `GET /metrics`
+- `GET /metrics`（审批计数 + SSE 连接/吞吐/回放/lagged）
 - `GET /events`
 - `GET /events/:id`
 - `GET /api/stream`
