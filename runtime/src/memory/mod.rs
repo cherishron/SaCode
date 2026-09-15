@@ -896,13 +896,24 @@ mod tests {
             "2020-01-01",
             0,
         ));
+        // 用相对于"今天"5天前的日期，确保在 30 天衰减阈值内不被衰减
+        let recent_date = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            let secs_per_day = 86400u64;
+            let five_days_ago_secs = now.as_secs().saturating_sub(5 * secs_per_day);
+            let dt =
+                chrono::DateTime::from_timestamp(five_days_ago_secs as i64, 0).unwrap_or_default();
+            dt.format("%Y-%m-%d").to_string()
+        };
         index.entries.push(make_entry(
-            "gen-2026-08-10-recent",
+            "gen-2026-09-10-recent",
             MemoryKind::General,
             "fresh entry",
             "c",
             MemoryStatus::Active,
-            "2026-08-10",
+            &recent_date,
             0,
         ));
         save_memory_index(&dir, &index).unwrap();
@@ -920,7 +931,7 @@ mod tests {
         let fresh = reloaded
             .entries
             .iter()
-            .find(|e| e.id == "gen-2026-08-10-recent")
+            .find(|e| e.id == "gen-2026-09-10-recent")
             .unwrap();
         assert_eq!(fresh.status, MemoryStatus::Active);
 

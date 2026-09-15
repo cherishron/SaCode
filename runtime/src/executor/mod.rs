@@ -8,6 +8,8 @@ use sacode_kernel::{Event, TaskQueueStatus, TaskResult, TaskRun};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
+use std::collections::HashMap;
+
 use crate::executor::task_runner::{
     execute_task_with_provider, ApprovalDecider, AutoApproveDecider, LoggingErrorRecorder,
     TaskRunConfig,
@@ -38,6 +40,8 @@ pub struct TaskExecutor {
     /// 通过 SSE → VSCode 扩展 → POST /task/:id/approve 链路审批。
     /// None 时退化为 AutoApproveDecider（原行为）。
     approval_factory: Option<ApprovalFactory>,
+    /// task_id → AbortHandle 映射，用于在取消时中止正在运行的任务
+    abort_handles: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
 }
 
 /// executor 侧 broadcast 容量：提升到 256 以容纳单任务多事件突发，
@@ -64,6 +68,7 @@ impl TaskExecutor {
             poll_interval: Duration::from_millis(100),
             workdir: None,
             approval_factory: None,
+            abort_handles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -128,6 +133,7 @@ impl TaskExecutor {
             );
 
             let task_id = task.id.clone();
+            let handle_task_id = task_id.clone();
             let event_bus = self.event_bus.clone();
             let tools = self.tools.clone();
             let workdir = self.workdir.clone();
@@ -137,7 +143,7 @@ impl TaskExecutor {
                 .map(|factory| factory(&task_id))
                 .unwrap_or_else(|| Arc::new(AutoApproveDecider));
 
-            self.active_tasks.spawn(async move {
+            let abort_handle = self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
                 // 路径分发：workdir 设置走 task_runner（生产路径），
@@ -176,10 +182,24 @@ impl TaskExecutor {
                 }
             });
 
+            // 存储 AbortHandle，使 cancel_task 可中止正在运行的任务
+            {
+                let mut handles = self.abort_handles.lock().await;
+                handles.insert(handle_task_id, abort_handle);
+            }
+
             spawned += 1;
         }
 
         spawned
+    }
+
+    /// 中止正在运行的指定任务（cancel 路径调用）
+    pub async fn abort_task(&self, task_id: &str) {
+        let mut handles = self.abort_handles.lock().await;
+        if let Some(handle) = handles.remove(task_id) {
+            handle.abort();
+        }
     }
 
     async fn process_completed_tasks(&mut self) {
@@ -187,6 +207,12 @@ impl TaskExecutor {
             match result {
                 Ok(exec_result) => {
                     let task_id = &exec_result.task_id;
+
+                    // 任务完成后清理 abort_handle 映射
+                    {
+                        let mut handles = self.abort_handles.lock().await;
+                        handles.remove(task_id);
+                    }
 
                     match exec_result.result.status {
                         TaskQueueStatus::Completed => {

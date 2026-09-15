@@ -14,6 +14,8 @@ pub struct TaskQueue {
     running: RwLock<HashMap<String, ScheduledTask>>,
     completed: RwLock<HashMap<String, TaskResult>>,
     failed: RwLock<HashMap<String, TaskResult>>,
+    /// 失败任务的 ScheduledTask 副本，供 get_task / retry_task 取回
+    failed_tasks: RwLock<HashMap<String, ScheduledTask>>,
     completed_runs: RwLock<HashMap<String, TaskRun>>,
     failed_runs: RwLock<HashMap<String, TaskRun>>,
     retrying: RwLock<HashMap<String, ScheduledTask>>,
@@ -31,6 +33,7 @@ impl TaskQueue {
             running: RwLock::new(HashMap::new()),
             completed: RwLock::new(HashMap::new()),
             failed: RwLock::new(HashMap::new()),
+            failed_tasks: RwLock::new(HashMap::new()),
             completed_runs: RwLock::new(HashMap::new()),
             failed_runs: RwLock::new(HashMap::new()),
             retrying: RwLock::new(HashMap::new()),
@@ -83,16 +86,20 @@ impl TaskQueue {
             return None;
         };
 
-        let mut ready = self.ready.write().await;
-        if let Some(task) = ready.pop_front() {
+        // 先从 ready 队列弹出任务，弹出后立即释放 ready 写锁，
+        // 再获取 running 写锁插入 — 避免同时持有 ready(W) + running(W) 造成锁环。
+        let task = {
+            let mut ready = self.ready.write().await;
+            ready.pop_front()
+        };
+
+        if let Some(task) = task {
             let mut running = self.running.write().await;
             running.insert(task.id.clone(), task.clone());
             let mut running_permits = self.running_permits.write().await;
             running_permits.insert(task.id.clone(), permit);
             return Some(task);
         }
-
-        drop(ready);
 
         // 灵枢·Permit 生命周期优化：在 pending 写锁外预先获取 completed_ids 快照，
         // 避免持锁期间多次 await completed 读锁（原代码每个 priority 都重新拿一次），
@@ -111,6 +118,9 @@ impl TaskQueue {
                 #[allow(clippy::never_loop)]
                 while let Some(task) = queue.pop_front() {
                     if task.is_ready(&completed_ids) {
+                        // 弹出后释放 pending 写锁，再获取 running 写锁，
+                        // 避免同时持有 pending(W) + running(W)。
+                        drop(pending);
                         let mut running = self.running.write().await;
                         running.insert(task.id.clone(), task.clone());
                         let mut running_permits = self.running_permits.write().await;
@@ -181,6 +191,9 @@ impl TaskQueue {
             } else {
                 let mut failed = self.failed.write().await;
                 failed.insert(task_id.to_string(), result.clone());
+
+                let mut failed_tasks = self.failed_tasks.write().await;
+                failed_tasks.insert(task_id.to_string(), task);
 
                 let mut failed_runs = self.failed_runs.write().await;
                 failed_runs.insert(task_id.to_string(), task_run);
@@ -355,6 +368,17 @@ impl TaskQueue {
             }
         }
 
+        // 失败的任务也需可被 get_task 取回，retry_task 依赖此路径做手动重试
+        let failed_tasks = self.failed_tasks.read().await;
+        if let Some(task) = failed_tasks.get(task_id) {
+            return Some(task.clone());
+        }
+
+        let cancelled = self.cancelled.read().await;
+        if let Some(task) = cancelled.get(task_id) {
+            return Some(task.clone());
+        }
+
         None
     }
 
@@ -370,6 +394,13 @@ impl TaskQueue {
         }
 
         None
+    }
+
+    /// 从 failed 表中移除任务（手动重试前调用）
+    pub async fn remove_failed_task(&self, task_id: &str) {
+        self.failed.write().await.remove(task_id);
+        self.failed_tasks.write().await.remove(task_id);
+        self.failed_runs.write().await.remove(task_id);
     }
 
     pub async fn get_task_run(&self, task_id: &str) -> Option<TaskRun> {

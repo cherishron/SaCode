@@ -64,7 +64,11 @@ impl CheckpointStorage {
     pub fn save(&self, checkpoint: &Checkpoint) -> Result<PathBuf> {
         std::fs::create_dir_all(&self.base_path)?;
 
-        let filename = format!("checkpoint-{}.json", checkpoint.created_at);
+        // 用纳秒精度生成文件名，避免同一秒内多个 checkpoint 互相覆盖
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let filename = format!("checkpoint-{}-{}.json", now.as_secs(), now.subsec_nanos());
         let path = self.base_path.join(&filename);
 
         let json = serde_json::to_string_pretty(checkpoint)?;

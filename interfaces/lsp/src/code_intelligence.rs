@@ -400,9 +400,12 @@ pub fn find_definition_in_document(
 ///
 /// 这是一种简化的策略：取光标所在行的光标位置前后的标识符字符。
 /// 不依赖 AST，避免对每个光标位置都解析 AST。
+///
+/// 安全性：LSP position.character 是 UTF-16 code unit 偏移，
+/// 需先转换为字节偏移再切分字符串，否则在多字节字符（如中文）上会 panic。
 fn extract_symbol_name_at_position(doc: &TextDocument, position: Position) -> Option<String> {
     let line = doc.content.lines().nth(position.line as usize)?;
-    let char_pos = (position.character as usize).min(line.len());
+    let char_pos = utf16_to_byte_offset(line, position.character as usize)?;
 
     // 向左扫描找到标识符起始
     let start = line[..char_pos]
@@ -430,6 +433,25 @@ fn extract_symbol_name_at_position(doc: &TextDocument, position: Position) -> Op
         return None;
     }
     Some(name.to_string())
+}
+
+/// 将 LSP UTF-16 code unit 偏移安全转换为字节偏移
+///
+/// 多字节字符（如中文占 3 个 UTF-8 字节、2 个 UTF-16 码元）的中间位置
+/// 不是字符边界，直接用于字符串切分会 panic。
+fn utf16_to_byte_offset(s: &str, utf16_offset: usize) -> Option<usize> {
+    let mut current_utf16 = 0usize;
+    for (byte_idx, ch) in s.char_indices() {
+        if current_utf16 >= utf16_offset {
+            return Some(byte_idx);
+        }
+        current_utf16 += ch.len_utf16();
+    }
+    if current_utf16 == utf16_offset {
+        Some(s.len())
+    } else {
+        None
+    }
 }
 
 // ============================================================================
@@ -485,7 +507,7 @@ pub fn prepare_rename_in_document(doc: &TextDocument, position: Position) -> Opt
 
     // 返回光标所在标识符的 range
     let line = doc.content.lines().nth(position.line as usize)?;
-    let char_pos = (position.character as usize).min(line.len());
+    let char_pos = utf16_to_byte_offset(line, position.character as usize)?;
     let start = line[..char_pos]
         .char_indices()
         .rev()

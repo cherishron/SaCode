@@ -3,6 +3,16 @@ import * as vscode from 'vscode';
 import { ApprovalRequestView } from './ApprovalUi';
 import { applyHunks, parseUnifiedDiff } from './ApprovalDiff';
 
+/**
+ * 字面替换第一个匹配：只替换 oldText 在 original 中的第一次出现，
+ * 不解释 $& $` $' $1 等替换模式（与 Rust String::replacen 语义一致）。
+ */
+function replaceFirstLiteral(original: string, oldText: string, newText: string): string {
+  const idx = original.indexOf(oldText);
+  if (idx < 0) return original;
+  return original.slice(0, idx) + newText + original.slice(idx + oldText.length);
+}
+
 interface DiffPreview {
     path: string;
     original: string;
@@ -84,7 +94,11 @@ export class ApprovalDiffReviewer implements vscode.Disposable {
             return [{
                 path: filePath,
                 original,
-                proposed: replaceAll ? original.split(oldText).join(newText) : original.replace(oldText, newText),
+                // 用字面替换，与 Rust 端 String::replacen 语义一致；
+                // 避免使用 String.replace，它把 $& $` $' $1 等当替换模式处理。
+                proposed: replaceAll
+                    ? original.split(oldText).join(newText)
+                    : replaceFirstLiteral(original, oldText, newText),
             }];
         }
 

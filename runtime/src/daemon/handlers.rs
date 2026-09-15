@@ -283,6 +283,7 @@ pub async fn retry_task(
         }
 
         task.increment_attempt();
+        state.queue.remove_failed_task(&task_id).await;
 
         match state.queue.submit(task).await {
             Ok(_) => {
@@ -317,6 +318,11 @@ pub async fn cancel_task(
     let cancelled = state.queue.cancel(&task_id).await;
 
     if cancelled {
+        // 中止 executor 中正在运行的 JoinHandle，使 LLM 调用和工具操作真正停止
+        {
+            let executor = state.executor.lock().await;
+            executor.abort_task(&task_id).await;
+        }
         {
             let mut tasks = state.tasks.write().await;
             if let Some(status) = tasks.get_mut(&task_id) {
