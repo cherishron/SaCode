@@ -18,7 +18,16 @@ pub mod web;
 
 pub use spec::{SideEffectLevel, ToolLayer, ToolOutput, ToolSpec};
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use crate::model_routing::TaskProfile;
 
@@ -137,6 +146,40 @@ impl ToolRegistry {
 /// 选择原则：体量小、几乎所有任务路径都需要、覆盖文件读写与命令执行的基础能力。
 /// 任何扩展都不应让这 4 个工具缺席，否则会破坏 LLM 的基本可用性。
 const CORE_TOOL_NAMES: &[&str] = &["fs.read", "fs.write", "fs.edit", "shell.exec"];
+
+thread_local! {
+    static ACTIVE_TOOL_CANCELLATION: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+struct ToolCancellationScope;
+
+impl ToolCancellationScope {
+    fn enter(cancellation: Option<Arc<AtomicBool>>) -> Self {
+        ACTIVE_TOOL_CANCELLATION.with(|slot| {
+            *slot.borrow_mut() = cancellation;
+        });
+        Self
+    }
+}
+
+impl Drop for ToolCancellationScope {
+    fn drop(&mut self) {
+        ACTIVE_TOOL_CANCELLATION.with(|slot| {
+            slot.borrow_mut().take();
+        });
+    }
+}
+
+pub(crate) fn current_tool_cancellation() -> Option<Arc<AtomicBool>> {
+    ACTIVE_TOOL_CANCELLATION.with(|slot| slot.borrow().clone())
+}
+
+fn ensure_not_cancelled(cancellation: Option<&Arc<AtomicBool>>) -> anyhow::Result<()> {
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        anyhow::bail!("tool execution cancelled");
+    }
+    Ok(())
+}
 
 /// 任务画像 → 扩展层工具命中规则的静态映射
 ///
@@ -463,7 +506,10 @@ impl ToolRegistry {
 
             let exec_result = match &deny_reason {
                 Some(reason) => Err(anyhow::anyhow!(reason.clone())),
-                None => tool.executor.execute(effective_input.clone()),
+                None => ensure_not_cancelled(ctx.cancellation.as_ref()).and_then(|_| {
+                    let _scope = ToolCancellationScope::enter(ctx.cancellation.clone());
+                    tool.executor.execute(effective_input.clone())
+                }),
             };
 
             let mut final_output: Option<ToolOutput> = None;
@@ -531,7 +577,7 @@ impl ToolRegistry {
     ///
     /// 执行顺序：**同步链先跑，异步链后跑**（同步链为既有默认拦截器，保证审计/
     /// 事件发布与同步入口一致；异步链追加策略/审批裁决）。工具 executor 本身
-    /// 仍同步调用（不异步化工具）。
+    /// 仍同步调用；外部命令工具需在自身实现中落实进程级超时。
     ///
     /// 同步 `execute_with_ctx` 不跑异步链；需要异步拦截器的调用方应迁移到本入口。
     pub async fn execute_with_ctx_async(
@@ -585,7 +631,44 @@ impl ToolRegistry {
 
             let exec_result = match &deny_reason {
                 Some(reason) => Err(anyhow::anyhow!(reason.clone())),
-                None => tool.executor.execute(effective_input.clone()),
+                None => {
+                    if let Err(error) = ensure_not_cancelled(ctx.cancellation.as_ref()) {
+                        return (Err(error), None);
+                    }
+                    let executor = tool.executor.clone();
+                    let input = effective_input.clone();
+                    let cancellation = ctx.cancellation.clone();
+                    let execution = tokio::task::spawn_blocking(move || {
+                        let _scope = ToolCancellationScope::enter(cancellation);
+                        executor.execute(input)
+                    });
+                    if let Some(timeout_ms) = tool.spec.timeout_ms {
+                        match tokio::time::timeout(Duration::from_millis(timeout_ms), execution)
+                            .await
+                        {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(error)) => {
+                                Err(anyhow::anyhow!("tool execution task failed: {}", error))
+                            }
+                            Err(_) => {
+                                if let Some(cancellation) = &ctx.cancellation {
+                                    cancellation.store(true, Ordering::Release);
+                                }
+                                Err(anyhow::anyhow!(
+                                    "tool execution timed out after {}ms",
+                                    timeout_ms
+                                ))
+                            }
+                        }
+                    } else {
+                        match execution.await {
+                            Ok(result) => result,
+                            Err(error) => {
+                                Err(anyhow::anyhow!("tool execution task failed: {}", error))
+                            }
+                        }
+                    }
+                }
             };
 
             let mut final_output: Option<ToolOutput> = None;
@@ -1072,6 +1155,42 @@ mod tests {
             timeout_ms: None,
             tags: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn async_execution_enforces_tool_timeout() {
+        struct SlowExec;
+        impl ToolExecutor for SlowExec {
+            fn execute(&self, _input: serde_json::Value) -> anyhow::Result<ToolOutput> {
+                std::thread::sleep(Duration::from_millis(200));
+                Ok(ToolOutput::success(serde_json::json!({"done": true})))
+            }
+        }
+
+        let mut registry = ToolRegistry::default();
+        let mut spec = retry_spec("t.timeout");
+        spec.timeout_ms = Some(20);
+        registry.register(spec, Arc::new(SlowExec));
+
+        let started = std::time::Instant::now();
+        let error = registry
+            .execute_with_ctx_async(
+                "t.timeout",
+                serde_json::json!({}),
+                &InterceptContext::default(),
+            )
+            .await
+            .expect_err("tool should time out");
+        assert!(error.to_string().contains("timed out"), "got: {error}");
+        assert!(started.elapsed() < Duration::from_millis(150));
+    }
+
+    #[test]
+    fn execute_side_effects_require_audit() {
+        let mut spec = retry_spec("t.execute");
+        spec.side_effect_level = SideEffectLevel::Execute;
+        assert!(interceptor::should_audit(&spec));
+        assert!(sandbox_guard::should_audit(&spec));
     }
 
     /// Retry 决策拦截器：exec 失败时请求重试（max_attempts 可配）

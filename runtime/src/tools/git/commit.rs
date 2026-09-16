@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
+use super::output_with_timeout;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+
+const GIT_TIMEOUT_MS: u64 = 15_000;
 
 /// git.commit 输入参数
 #[derive(Debug, serde::Deserialize)]
@@ -227,7 +230,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             for path in paths {
                 cmd.arg(path);
             }
-            let add_output = cmd.output()?;
+            let add_output = output_with_timeout(&mut cmd, GIT_TIMEOUT_MS)?;
             if !add_output.status.success() {
                 let stderr = String::from_utf8_lossy(&add_output.stderr)
                     .trim()
@@ -249,7 +252,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
             }
         }
     } else if payload.add_all.unwrap_or(false) && !dry_run {
-        let add_output = Command::new("git").args(["add", "-A"]).output()?;
+        let add_output =
+            output_with_timeout(Command::new("git").args(["add", "-A"]), GIT_TIMEOUT_MS)?;
         if !add_output.status.success() {
             let stderr = String::from_utf8_lossy(&add_output.stderr)
                 .trim()
@@ -372,9 +376,10 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
 
     // 实际提交
-    let commit_output = Command::new("git")
-        .args(["commit", "-m", &message])
-        .output()?;
+    let commit_output = output_with_timeout(
+        Command::new("git").args(["commit", "-m", &message]),
+        GIT_TIMEOUT_MS,
+    )?;
     if !commit_output.status.success() {
         let stderr = String::from_utf8_lossy(&commit_output.stderr)
             .trim()

@@ -1,7 +1,7 @@
 pub mod task_runner;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
 
 use sacode_kernel::{Event, TaskQueueStatus, TaskResult, TaskRun};
@@ -41,8 +41,11 @@ pub struct TaskExecutor {
     /// None 时退化为 AutoApproveDecider（原行为）。
     approval_factory: Option<ApprovalFactory>,
     /// task_id → AbortHandle 映射，用于在取消时中止正在运行的任务
-    abort_handles: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    abort_handles: Arc<tokio::sync::Mutex<HashMap<String, TaskCancelHandle>>>,
 }
+
+/// 任务取消句柄：AbortHandle + 协作式取消标记，取消时同时通知工具执行进程
+type TaskCancelHandle = (tokio::task::AbortHandle, Arc<AtomicBool>);
 
 /// executor 侧 broadcast 容量：提升到 256 以容纳单任务多事件突发，
 /// 与 daemon::DAEMON_EVENT_BUS_CAPACITY 对齐，减少 forwarder Lagged 丢事件概率
@@ -143,6 +146,8 @@ impl TaskExecutor {
                 .map(|factory| factory(&task_id))
                 .unwrap_or_else(|| Arc::new(AutoApproveDecider));
 
+            let cancellation = Arc::new(AtomicBool::new(false));
+            let task_cancellation = cancellation.clone();
             let abort_handle = self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
@@ -158,6 +163,7 @@ impl TaskExecutor {
                             started_at,
                             Some(&event_bus),
                             approval,
+                            Some(task_cancellation),
                         )
                         .await
                     }
@@ -185,7 +191,7 @@ impl TaskExecutor {
             // 存储 AbortHandle，使 cancel_task 可中止正在运行的任务
             {
                 let mut handles = self.abort_handles.lock().await;
-                handles.insert(handle_task_id, abort_handle);
+                handles.insert(handle_task_id, (abort_handle, cancellation));
             }
 
             spawned += 1;
@@ -197,7 +203,8 @@ impl TaskExecutor {
     /// 中止正在运行的指定任务（cancel 路径调用）
     pub async fn abort_task(&self, task_id: &str) {
         let mut handles = self.abort_handles.lock().await;
-        if let Some(handle) = handles.remove(task_id) {
+        if let Some((handle, cancellation)) = handles.remove(task_id) {
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
             handle.abort();
         }
     }
@@ -331,6 +338,7 @@ impl task_runner::StreamHandler for EventBusStreamHandler {
 /// `event_bus` 非空时注入 StreamHandler，把 task_runner 内部的 token 级增量
 /// （message/thinking）实时转发到 daemon SSE，消除"daemon SSE 只能收到粗粒度
 /// 事件"的体验差距。None 时退化为原行为（仅终点 done/error 事件）。
+#[allow(clippy::too_many_arguments)]
 async fn execute_via_task_runner(
     workdir: &std::path::Path,
     task: &sacode_kernel::Task,
@@ -339,6 +347,7 @@ async fn execute_via_task_runner(
     started_at: Instant,
     event_bus: Option<&broadcast::Sender<ExecutorEvent>>,
     approval: Arc<dyn ApprovalDecider>,
+    cancellation: Option<Arc<AtomicBool>>,
 ) -> (TaskResult, TaskRun, Vec<Event>) {
     let candidates = resolve_config_model_candidates(workdir);
     let provider = candidates.first().map(|(_, _, p)| p.clone());
@@ -374,6 +383,7 @@ async fn execute_via_task_runner(
         error_recorder: Arc::new(LoggingErrorRecorder),
         task_id: Some(task_id.clone()),
         session_id: None,
+        cancellation,
     };
 
     // 注入 StreamHandler：把 task_runner 内部 token 级增量转发到 event_bus，

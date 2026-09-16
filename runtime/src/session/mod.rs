@@ -32,9 +32,16 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// 获取锁的重试间隔
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
+/// 会话取消句柄：AbortHandle + 协作式取消标记，取消时同时通知工具执行进程
+type SessionCancelHandle = (
+    futures::future::AbortHandle,
+    Arc<std::sync::atomic::AtomicBool>,
+);
+
 #[derive(Clone)]
 pub struct SessionService {
     sessions: Arc<RwLock<HashMap<String, SessionState>>>,
+    active_prompts: Arc<RwLock<HashMap<String, SessionCancelHandle>>>,
     /// 可选的持久化后端 — 有时在 create/close/prompt 等操作后同步到 SQLite
     store: Option<Arc<crate::StoreDb>>,
 }
@@ -71,6 +78,7 @@ impl SessionService {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            active_prompts: Arc::new(RwLock::new(HashMap::new())),
             store: None,
         }
     }
@@ -196,6 +204,12 @@ impl SessionService {
     }
 
     pub fn cancel_session(&self, session_id: &str) -> Result<()> {
+        if let Ok(mut active_prompts) = self.active_prompts.write() {
+            if let Some((handle, cancellation)) = active_prompts.remove(session_id) {
+                cancellation.store(true, std::sync::atomic::Ordering::Release);
+                handle.abort();
+            }
+        }
         let mut sessions = self.write_sessions("cancel_session")?;
         let session = sessions
             .get_mut(session_id)
@@ -436,6 +450,7 @@ impl SessionService {
             ApprovalPolicy::Prompt => std::sync::Arc::new(PromptUserDecider),
         };
 
+        let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let config = TaskRunConfig {
             workdir: &cwd,
             mode: prompt.mode,
@@ -448,9 +463,39 @@ impl SessionService {
             error_recorder: std::sync::Arc::new(LoggingErrorRecorder),
             task_id: Some(generate_task_id()),
             session_id: Some(session_id.to_string()),
+            cancellation: Some(cancellation.clone()),
         };
 
-        let task_run_result = execute_task_with_provider(&config, None).await;
+        let session_id_owned = session_id.to_string();
+        let (abort_handle, abort_registration) = futures::future::AbortHandle::new_pair();
+        {
+            let mut active_prompts = self
+                .active_prompts
+                .write()
+                .map_err(|_| anyhow::anyhow!("active prompt registry lock poisoned"))?;
+            active_prompts.insert(
+                session_id_owned.clone(),
+                (abort_handle, cancellation.clone()),
+            );
+        }
+        let execution = futures::future::Abortable::new(
+            execute_task_with_provider(&config, None),
+            abort_registration,
+        );
+        let task_run_result = match execution.await {
+            Ok(result) => result,
+            Err(_) => {
+                if let Ok(mut active_prompts) = self.active_prompts.write() {
+                    active_prompts.remove(&session_id_owned);
+                }
+                return Ok(vec![SessionEvent::Done {
+                    summary: "cancelled".to_string(),
+                }]);
+            }
+        };
+        if let Ok(mut active_prompts) = self.active_prompts.write() {
+            active_prompts.remove(&session_id_owned);
+        }
 
         // 构建事件序列
         let task = Task::new(task_info.clone(), prompt.mode, None);

@@ -330,7 +330,7 @@ pub async fn cancel_task(
                     Some(status.task_id.clone()),
                     parse_mode(&status.mode),
                     status.prompt.clone(),
-                    TaskQueueStatus::Failed,
+                    TaskQueueStatus::Cancelled,
                     Some("Task cancelled".to_string()),
                 ));
                 status.error = Some("Task cancelled".to_string());

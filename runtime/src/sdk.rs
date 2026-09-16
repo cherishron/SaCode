@@ -254,6 +254,7 @@ impl SdkClient {
             error_recorder: Arc::new(LoggingErrorRecorder),
             task_id: Some(generate_task_id()),
             session_id: None,
+            cancellation: None,
         };
 
         let result = execute_task_with_provider(&config, None).await;

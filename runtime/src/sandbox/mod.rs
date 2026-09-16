@@ -3,6 +3,7 @@ mod executor;
 use crate::ProjectAccessConfigStore;
 use sacode_kernel::ExecutionMode;
 
+pub(crate) use executor::terminate_process_tree;
 pub use executor::{
     BackendCommandOutput, DockerSandboxBackend, LocalSandboxBackend, SandboxBackend,
     SandboxCommand, SandboxExecutor,

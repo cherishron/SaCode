@@ -6,7 +6,6 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-use wait_timeout::ChildExt;
 
 use crate::config::DockerSandboxConfig;
 use crate::sandbox::{install_global_backend, install_global_policy, SandboxPolicy};
@@ -184,7 +183,24 @@ impl SandboxBackend for LocalSandboxBackend {
         );
 
         let timeout = Duration::from_millis(timeout_ms);
-        let status = child.wait_timeout(timeout)?;
+        let started = std::time::Instant::now();
+        let cancellation = crate::tools::current_tool_cancellation();
+        let status = loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+            {
+                terminate_process_tree(&mut child)?;
+                anyhow::bail!("Command cancelled");
+            }
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if started.elapsed() >= timeout {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
 
         match status {
             Some(exit_status) => {
@@ -439,7 +455,7 @@ fn configure_process_isolation(command: &mut Command) {
     }
 }
 
-fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
+pub(crate) fn terminate_process_tree(child: &mut std::process::Child) -> Result<()> {
     #[cfg(unix)]
     {
         let process_group = -(child.id() as i32);

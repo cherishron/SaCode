@@ -50,9 +50,23 @@ pub async fn run_server(config: &AcpConfig) -> Result<()> {
 pub async fn run_stdio_server() -> Result<()> {
     let service = SessionService::new();
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::BufWriter::new(tokio::io::stdout());
-    let mut lines = BufReader::new(stdin).lines();
+    let lines = BufReader::new(stdin).lines();
+    let writer = std::sync::Arc::new(tokio::sync::Mutex::new(tokio::io::BufWriter::new(
+        tokio::io::stdout(),
+    )));
+    run_stdio_loop(service, lines, writer).await
+}
 
+async fn run_stdio_loop<R, W>(
+    service: SessionService,
+    mut lines: tokio::io::Lines<BufReader<R>>,
+    writer: std::sync::Arc<tokio::sync::Mutex<W>>,
+) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let mut requests = tokio::task::JoinSet::new();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
@@ -70,23 +84,33 @@ pub async fn run_stdio_server() -> Result<()> {
                         "message": format!("parse error: {}", e)
                     })),
                 };
-                let _ = stdout
+                let mut writer = writer.lock().await;
+                writer
                     .write_all(format!("{}\n", serde_json::to_string(&error_resp)?).as_bytes())
-                    .await;
-                let _ = stdout.flush().await;
+                    .await?;
+                writer.flush().await?;
                 continue;
             }
         };
 
-        // 处理请求 — 对 session/prompt 做流式推送
-        let response = handle_request_streaming(&service, &request, &mut stdout).await?;
-        // 写最终响应
-        stdout
-            .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
-            .await?;
-        stdout.flush().await?;
+        let service = service.clone();
+        let writer = writer.clone();
+        requests.spawn(async move {
+            let mut notifications = Vec::new();
+            let response = handle_request_streaming(&service, &request, &mut notifications).await?;
+            let mut writer = writer.lock().await;
+            writer.write_all(&notifications).await?;
+            writer
+                .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
+                .await?;
+            writer.flush().await?;
+            Ok::<(), anyhow::Error>(())
+        });
     }
 
+    while let Some(result) = requests.join_next().await {
+        result??;
+    }
     Ok(())
 }
 
@@ -328,16 +352,26 @@ async fn dispatch_request(
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
             let registry = sacode_runtime::ToolRegistry::builtin();
-            match registry.execute(&tool_name, arguments) {
-                Ok(output) => serde_json::json!({
-                    "success": output.success,
-                    "data": output.data,
-                    "message": output.message,
-                }),
-                Err(error) => serde_json::json!({
+            let spec = registry
+                .get(&tool_name)
+                .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_name))?;
+            if spec.needs_approval() {
+                serde_json::json!({
                     "success": false,
-                    "error": error.to_string(),
-                }),
+                    "error": "tool requires approval; invoke it through session/prompt",
+                })
+            } else {
+                match registry.execute(&tool_name, arguments) {
+                    Ok(output) => serde_json::json!({
+                        "success": output.success,
+                        "data": output.data,
+                        "message": output.message,
+                    }),
+                    Err(error) => serde_json::json!({
+                        "success": false,
+                        "error": error.to_string(),
+                    }),
+                }
             }
         }
         other => anyhow::bail!("method not found: {}", other),

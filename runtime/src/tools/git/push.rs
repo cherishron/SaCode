@@ -7,7 +7,10 @@
 
 use std::process::Command;
 
+use super::output_with_timeout;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+
+const GIT_PUSH_TIMEOUT_MS: u64 = 30_000;
 
 /// git.push 输入参数
 #[derive(Debug, serde::Deserialize)]
@@ -164,8 +167,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
     }
     cmd.arg(&remote).arg(&branch);
 
-    let output = cmd
-        .output()
+    let output = output_with_timeout(&mut cmd, GIT_PUSH_TIMEOUT_MS)
         .map_err(|e| anyhow::anyhow!("git push 执行失败: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

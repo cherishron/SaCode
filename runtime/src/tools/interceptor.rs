@@ -20,6 +20,7 @@
 //! - 默认注册的拦截器组合必须等价于原 `sandbox_guard` 行为，保证向后兼容。
 
 use serde_json::Value;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use super::{SideEffectLevel, ToolOutput, ToolSpec};
 
@@ -38,6 +39,8 @@ pub struct InterceptContext {
     pub session_id: Option<String>,
     /// 触发本次工具调用的任务标识（可选，用于跨任务事件关联）
     pub task_id: Option<String>,
+    /// 协作式取消标记；外部命令等待循环会检测并终止进程树。
+    pub cancellation: Option<Arc<AtomicBool>>,
 }
 
 /// `pre_execute` 的裁决结果
@@ -99,11 +102,11 @@ pub trait ToolInterceptor: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// `side_effect_level` 是否达到需要审计/拦截的阈值
+/// `side_effect_level` 是否达到需要审计/拦截的阈值。
 ///
-/// 与原 `sandbox_guard::should_audit` 语义一致：仅 `Modify` 级工具强制审计。
+/// `Execute` 与 `Modify` 都会产生外部可观察副作用，因此都必须审计。
 pub fn should_audit(spec: &ToolSpec) -> bool {
-    matches!(spec.side_effect_level, SideEffectLevel::Modify)
+    !matches!(spec.side_effect_level, SideEffectLevel::ReadOnly)
 }
 
 /// 异步工具执行拦截器

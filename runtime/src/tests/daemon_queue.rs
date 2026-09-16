@@ -1242,9 +1242,12 @@ async fn test_daemon_task_cancel_endpoint() {
     let status_payload: serde_json::Value =
         serde_json::from_slice(&status_body).expect("valid status json");
 
-    assert_eq!(status_payload["status"], "failed");
-    assert_eq!(status_payload["queue_status"], "failed");
-    assert_eq!(status_payload["task_run"]["state"].as_str(), Some("Failed"));
+    assert_eq!(status_payload["status"], "cancelled");
+    assert_eq!(status_payload["queue_status"], "cancelled");
+    assert_eq!(
+        status_payload["task_run"]["state"].as_str(),
+        Some("Cancelled")
+    );
     assert_eq!(
         status_payload["task_run"]["output_text"].as_str(),
         Some("Task cancelled")

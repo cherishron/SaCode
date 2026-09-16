@@ -45,7 +45,7 @@ pub fn audit_execution_result(
 // ── 审计辅助函数：供默认拦截器复用 ───────────────────────────────
 
 pub(crate) fn should_audit(spec: &ToolSpec) -> bool {
-    matches!(spec.side_effect_level, SideEffectLevel::Modify)
+    !matches!(spec.side_effect_level, SideEffectLevel::ReadOnly)
 }
 
 pub(crate) fn audit_preflight_start(tool_name: &str, input: &serde_json::Value) {

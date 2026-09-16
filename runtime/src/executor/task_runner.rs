@@ -5,13 +5,14 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
 
 use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
 use sacode_kernel::{Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState};
 
 use crate::provider::{ProviderClient, StreamChunkKind, ToolChatResult};
+use crate::tools::interceptor::InterceptContext;
 use crate::tools::{SideEffectLevel, ToolRegistry};
 use crate::{task_run_from_report, FailoverContext, NodeScore, TaskProfile};
 
@@ -132,6 +133,8 @@ pub struct TaskRunConfig<'a> {
     ///
     /// None 时退化为空串（与原行为一致）。
     pub session_id: Option<String>,
+    /// 协作式取消标记；模型 future 取消时同步通知正在执行的外部工具。
+    pub cancellation: Option<Arc<AtomicBool>>,
 }
 
 // ── 核心执行逻辑 ────────────────────────────────────────────────
@@ -467,6 +470,8 @@ async fn execute_tool_chat(
 
     let tool_duration_for_executor = tool_duration.clone();
     let session_id = config.session_id.clone().unwrap_or_default();
+    let task_id = config.task_id.clone();
+    let cancellation = config.cancellation.clone();
     let tool_executor = move |name: &str, args: &serde_json::Value| {
         let name = name.to_string();
         let args = args.clone();
@@ -476,6 +481,8 @@ async fn execute_tool_chat(
         let error_recorder = error_recorder.clone();
         let tool_duration = tool_duration_for_executor.clone();
         let session_id = session_id.clone();
+        let task_id = task_id.clone();
+        let cancellation = cancellation.clone();
 
         async move {
             let tool_started_at = Instant::now();
@@ -528,7 +535,15 @@ async fn execute_tool_chat(
                 } else {
                     effective_args
                 };
-                let result = match tools.execute_with_session_id(&name, tool_input, &session_id) {
+                let intercept_ctx = InterceptContext {
+                    session_id: (!session_id.is_empty()).then(|| session_id.clone()),
+                    task_id,
+                    cancellation,
+                };
+                let result = match tools
+                    .execute_with_ctx_async(&name, tool_input, &intercept_ctx)
+                    .await
+                {
                     Ok(output) => Ok(if output.success {
                         output.data
                     } else {
@@ -832,6 +847,7 @@ impl TaskRunConfig<'_> {
             error_recorder: self.error_recorder.clone(),
             task_id: self.task_id.clone(),
             session_id: self.session_id.clone(),
+            cancellation: self.cancellation.clone(),
         }
     }
 }

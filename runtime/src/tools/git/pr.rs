@@ -1,6 +1,10 @@
 use std::process::Command;
 
+use super::output_with_timeout;
 use crate::tools::{SideEffectLevel, ToolOutput, ToolSpec};
+
+/// git.pr 工具的进程级超时（毫秒），覆盖 gh CLI 与 git push 等所有子进程
+const GIT_PR_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, serde::Deserialize)]
 struct GitPrInput {
@@ -128,9 +132,10 @@ fn execute_create(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
 
     // 先推送当前分支到远程
     let current_branch = get_current_branch()?;
-    let push_output = Command::new("git")
-        .args(["push", "-u", "origin", &current_branch])
-        .output()?;
+    let push_output = output_with_timeout(
+        Command::new("git").args(["push", "-u", "origin", &current_branch]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     // 推送失败不阻断，可能分支已存在远程
     let push_warn = if !push_output.status.success() {
@@ -177,7 +182,7 @@ fn execute_create(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         "number,title,state,url,headRefName,baseRefName,isDraft",
     ]);
 
-    let output = cmd.output()?;
+    let output = output_with_timeout(&mut cmd, GIT_PR_TIMEOUT_MS)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
@@ -215,15 +220,16 @@ fn execute_status(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         None => return Ok(ToolOutput::failure("number is required for status action")),
     };
 
-    let output = Command::new("gh")
-        .args([
+    let output = output_with_timeout(
+        Command::new("gh").args([
             "pr",
             "view",
             &number.to_string(),
             "--json",
             "number,title,state,url,headRefName,baseRefName,mergeable,isDraft",
-        ])
-        .output()?;
+        ]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -257,15 +263,16 @@ fn execute_merge(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         None => return Ok(ToolOutput::failure("number is required for merge action")),
     };
 
-    let output = Command::new("gh")
-        .args([
+    let output = output_with_timeout(
+        Command::new("gh").args([
             "pr",
             "merge",
             &number.to_string(),
             "--merge",
             "--delete-branch",
-        ])
-        .output()?;
+        ]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -303,15 +310,16 @@ fn execute_close(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     // 可选评论：先发评论再关闭，确保评论归属到关闭前的 PR 状态
     if let Some(comment) = &payload.comment {
         if !comment.trim().is_empty() {
-            let comment_output = Command::new("gh")
-                .args([
+            let comment_output = output_with_timeout(
+                Command::new("gh").args([
                     "pr",
                     "comment",
                     &number.to_string(),
                     "--body",
                     comment.trim(),
-                ])
-                .output()?;
+                ]),
+                GIT_PR_TIMEOUT_MS,
+            )?;
             if !comment_output.status.success() {
                 let stderr = String::from_utf8_lossy(&comment_output.stderr)
                     .trim()
@@ -326,9 +334,10 @@ fn execute_close(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         }
     }
 
-    let output = Command::new("gh")
-        .args(["pr", "close", &number.to_string()])
-        .output()?;
+    let output = output_with_timeout(
+        Command::new("gh").args(["pr", "close", &number.to_string()]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -372,15 +381,16 @@ fn execute_reopen(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     // 可选评论：先发评论再重开
     if let Some(comment) = &payload.comment {
         if !comment.trim().is_empty() {
-            let comment_output = Command::new("gh")
-                .args([
+            let comment_output = output_with_timeout(
+                Command::new("gh").args([
                     "pr",
                     "comment",
                     &number.to_string(),
                     "--body",
                     comment.trim(),
-                ])
-                .output()?;
+                ]),
+                GIT_PR_TIMEOUT_MS,
+            )?;
             if !comment_output.status.success() {
                 let stderr = String::from_utf8_lossy(&comment_output.stderr)
                     .trim()
@@ -394,9 +404,10 @@ fn execute_reopen(payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
         }
     }
 
-    let output = Command::new("gh")
-        .args(["pr", "reopen", &number.to_string()])
-        .output()?;
+    let output = output_with_timeout(
+        Command::new("gh").args(["pr", "reopen", &number.to_string()]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -445,7 +456,7 @@ fn execute_list(_payload: &GitPrInput) -> anyhow::Result<ToolOutput> {
     // 默认只列出当前用户相关的 PR
     cmd.args(["--author", "@me"]);
 
-    let output = cmd.output()?;
+    let output = output_with_timeout(&mut cmd, GIT_PR_TIMEOUT_MS)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Ok(ToolOutput::failure(if stderr.is_empty() {
@@ -484,9 +495,10 @@ fn is_git_repo() -> bool {
 }
 
 fn get_current_branch() -> anyhow::Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()?;
+    let output = output_with_timeout(
+        Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]),
+        GIT_PR_TIMEOUT_MS,
+    )?;
 
     if !output.status.success() {
         anyhow::bail!("failed to get current branch");
