@@ -3,6 +3,25 @@ import { daemonHealthError, SseClient } from './SseClient';
 import { ApprovalDeduplicator } from './ApprovalDeduplicator';
 import { ApprovalRequestView, approvalQuickPickOptions, resolveApprovalWithRetry } from './ApprovalUi';
 import { ApprovalDiffReviewer, DiffReviewResult } from './ApprovalDiffReviewer';
+import { decodeSseEvent, isRecord } from './sseEvents';
+import type { ApprovalInfo } from './sseEvents';
+import type { SSEEvent } from './types';
+import {
+    FAILURE_CATEGORY_LABELS,
+    SUGGESTED_ACTION_LABELS,
+    TASK_STATE_LABELS,
+    isTerminalState,
+} from './taskProtocol';
+import type { TaskSnapshot } from './taskProtocol';
+
+type PanelMessage =
+    | { command: 'status'; connected: boolean }
+    | { command: 'taskId'; id: string }
+    | { command: 'selection'; text: string; length: number }
+    | { command: 'message'; type: string; text: string }
+    | { command: 'done' }
+    | { command: 'error'; text: string };
+
 
 export class SacodePanel {
     public static readonly viewType = 'sacode-panel';
@@ -279,16 +298,23 @@ export class SacodePanel {
         });
     }
 
-    private async handleMessage(msg: any) {
-        switch (msg.command) {
+    private handleMessage(message: unknown): void {
+        if (!isRecord(message)) return;
+        const command = typeof message.command === 'string' ? message.command : undefined;
+        switch (command) {
             case 'ready':
-                this.checkConnection();
+                void this.checkConnection();
                 break;
             case 'runTask':
-                await this.runTask(msg.text);
+                if (typeof message.text === 'string' && message.text.trim().length > 0) {
+                    void this.runTask(message.text);
+                }
                 break;
             case 'stopTask':
-                await this.stopTask();
+                void this.stopTask();
+                break;
+            default:
+                // 未知 webview 消息安全忽略，不中断后续事件。
                 break;
         }
     }
@@ -315,98 +341,14 @@ export class SacodePanel {
             this.postMessage({ command: 'taskId', id: taskId });
 
             this.abortStream = this.client.streamEvents(
-                (event) => {
-                    if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
-                    const data = event.data;
-                    const eventType = data.event_type || data.event || data.kind || event.event;
-                    const payload = data.payload || data;
-
-                    if (eventType === 'tool_call_started' || eventType === 'tool' || eventType === 'tool_call') {
-                        const toolName = data.name || payload.name || payload.tool || 'tool';
-                        const toolInput = data.input || payload.input || {};
-                        const inputStr = typeof toolInput === 'string'
-                            ? toolInput
-                            : JSON.stringify(toolInput).slice(0, 200);
-                        this.postMessage({
-                            command: 'message',
-                            type: 'tool',
-                            text: `[${toolName}] ${inputStr}`,
-                        });
-
-                        if (toolName === 'fs.edit' || toolName === 'fs.apply_patch') {
-                            const diffText = this.extractDiff(toolName, toolInput);
-                            if (diffText) {
-                                this.postMessage({ command: 'message', type: 'diff', text: diffText });
-                            }
-                        }
-                    } else if (eventType === 'message' || eventType === 'text' || eventType === 'thinking') {
-                        const content = data.content || data.text || payload.content || payload.text;
-                        if (content) {
-                            this.postMessage({
-                                command: 'message',
-                                type: eventType === 'thinking' ? 'thinking' : 'system',
-                                text: content,
-                            });
-                        }
-                    }
-
-                    if (
-                        eventType === 'task_completed' ||
-                        eventType === 'task_failed' ||
-                        eventType === 'task_cancelled' ||
-                        data.status === 'completed' ||
-                        data.status === 'failed' ||
-                        data.status === 'cancelled' ||
-                        payload.status === 'completed' ||
-                        payload.status === 'failed' ||
-                        payload.status === 'cancelled' ||
-                        eventType === 'done'
-                    ) {
-                        if (eventType === 'task_failed') {
-                            const message = data.error || payload.error || data.message || 'Task failed';
-                            this.postMessage({ command: 'error', text: String(message) });
-                        }
-                        this.finishTask(taskId, generation);
-                        return;
-                    }
-
-                    if (eventType === 'approval_requested') {
-                        const toolName = data.tool_name || payload.tool_name || 'unknown';
-                        const approvalId = data.approval_id || payload.approval_id || '';
-                        const approvalTaskId = event.task_id || data.task_id || payload.task_id || taskId;
-                        if (!approvalId) {
-                            this.postMessage({ command: 'error', text: 'Approval event is missing approval_id' });
-                            return;
-                        }
-                        if (!this.approvals.accept(approvalId)) return;
-
-                        const rawArgs = data.args || payload.args || {};
-                        const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
-                            ? rawArgs as Record<string, unknown>
-                            : { value: rawArgs };
-                        const request: ApprovalRequestView = {
-                            taskId: approvalTaskId,
-                            approvalId,
-                            toolName,
-                            sideEffect: data.side_effect_level || payload.side_effect_level || 'Unknown',
-                            args,
-                        };
-                        const presentation = approvalQuickPickOptions(request).presentation;
-                        this.postMessage({
-                            command: 'message',
-                            type: 'tool',
-                            text: `[审批请求] ${presentation.summary}: ${presentation.detail}`,
-                        });
-                        void this.showApprovalQuickPick(request);
-                    }
-                },
+                (event) => this.handleTaskEvent(event, taskId, generation),
                 (err) => {
                     if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
                     this.postMessage({ command: 'error', text: err.message });
                     this.finishTask(taskId, generation);
                 },
                 taskId,
-                () => void this.recoverPendingApprovals(taskId, generation),
+                () => this.onStreamOpen(taskId, generation),
             );
 
             setTimeout(async () => {
@@ -426,6 +368,144 @@ export class SacodePanel {
             this.postMessage({ command: 'error', text: message });
         }
     }
+    /**
+     * 类型化消费单个 SSE 事件。未知事件或形状不匹配一律安全忽略。
+     */
+    private handleTaskEvent(event: { event: string; data: unknown; task_id?: string }, taskId: string, generation: number): void {
+        if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
+        const decoded = decodeSseEvent(event);
+
+        if (decoded.approval) {
+            this.handleApproval(decoded.approval, taskId);
+            return;
+        }
+
+        if (decoded.toolCall) {
+            const { name, input } = decoded.toolCall;
+            const inputText = typeof input === 'string'
+                ? input
+                : JSON.stringify(input).slice(0, 200);
+            this.postMessage({ command: 'message', type: 'tool', text: `[${name}] ${inputText}` });
+            if (name === 'fs.edit' || name === 'fs.apply_patch') {
+                const diffText = this.extractDiff(name, input);
+                if (diffText) {
+                    this.postMessage({ command: 'message', type: 'diff', text: diffText });
+                }
+            }
+        }
+
+        if (decoded.text) {
+            this.postMessage({
+                command: 'message',
+                type: decoded.text.kind === 'thinking' ? 'thinking' : 'system',
+                text: decoded.text.content,
+            });
+        }
+
+        if (decoded.terminal) {
+            const snapshot = decoded.snapshot;
+            if (decoded.terminal.outcome === 'failed' && !snapshot) {
+                const message = decoded.terminal.message ?? 'Task failed';
+                this.postMessage({ command: 'error', text: String(message) });
+            }
+            if (snapshot) this.reportTerminal(snapshot);
+            this.finishTask(taskId, generation);
+            return;
+        }
+
+        if (decoded.snapshot) {
+            const snapshot = decoded.snapshot;
+            if (isTerminalState(snapshot.state)) {
+                this.reportTerminal(snapshot);
+                this.finishTask(taskId, generation);
+            } else {
+                this.postMessage({
+                    command: 'message',
+                    type: 'system',
+                    text: `任务状态：${TASK_STATE_LABELS[snapshot.state]}`,
+                });
+            }
+        }
+    }
+
+    /**
+     * 流（重）连接成功后收敛状态：以 daemon 任务快照为真相源，
+     * 补齐断线期间丢失的终态与待审批。
+     */
+    private async onStreamOpen(taskId: string, generation: number): Promise<void> {
+        void this.reconcileTaskState(taskId, generation);
+        await this.recoverPendingApprovals(taskId, generation);
+    }
+
+    /**
+     * 断线重连后用任务真相源核对最终状态：
+     * 快照显示终态而 SSE 未收到终态事件时，按快照收敛并展示一致结果。
+     */
+    private async reconcileTaskState(taskId: string, generation: number): Promise<void> {
+        const snapshot = await this.confirmFinalState(taskId, generation);
+        if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
+        if (!snapshot) return;
+        this.postMessage({
+            command: 'message',
+            type: 'system',
+            text: `已与服务端同步任务状态：${TASK_STATE_LABELS[snapshot.state]}`,
+        });
+        this.reportTerminal(snapshot);
+        this.finishTask(taskId, generation);
+    }
+
+    /**
+     * 轮询任务真相源直到返回终态快照；查询失败或仍未终态时返回 null。
+     */
+    private async confirmFinalState(
+        taskId: string,
+        generation: number,
+        attempts = 5,
+        intervalMs = 500,
+    ): Promise<TaskSnapshot | null> {
+        for (let index = 0; index < attempts; index += 1) {
+            if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return null;
+            try {
+                const status = await this.client.getTaskStatus(taskId);
+                const snapshot = status.task;
+                if (snapshot && isTerminalState(snapshot.state)) return snapshot;
+            } catch {
+                // 状态端点暂不可达时继续重试，由 SSE 保持现状。
+            }
+            if (index < attempts - 1) await sleep(intervalMs);
+        }
+        return null;
+    }
+
+    /**
+     * 按终态快照渲染一致的最终结果：失败带分类与建议动作，不静默降级。
+     */
+    private reportTerminal(snapshot: TaskSnapshot): void {
+        if (snapshot.state === 'failed') {
+            const failure = snapshot.failure;
+            const message = failure
+                ? `${FAILURE_CATEGORY_LABELS[failure.category]}失败（${failure.code}）：${failure.safe_message}`
+                : '任务失败';
+            this.postMessage({ command: 'error', text: message });
+            if (failure) {
+                this.postMessage({
+                    command: 'message',
+                    type: 'system',
+                    text: `建议操作：${SUGGESTED_ACTION_LABELS[failure.suggested_action]}`,
+                });
+            }
+            return;
+        }
+        if (snapshot.state === 'cancelled') {
+            this.postMessage({ command: 'message', type: 'system', text: '任务已取消' });
+            return;
+        }
+        if (snapshot.result?.text) {
+            this.postMessage({ command: 'message', type: 'system', text: snapshot.result.text });
+        }
+        this.postMessage({ command: 'message', type: 'system', text: '任务已完成' });
+    }
+
     /**
      * P2-1: 审批恢复 — 从 daemon 拉取当前待审批列表并补弹。
      *
@@ -456,6 +536,31 @@ export class SacodePanel {
         } catch {
             // 旧 daemon 不支持该端点或网络暂不可达时，保留现有 SSE 行为。
         }
+    }
+
+    /**
+     * 审批事件与审批恢复共用同一入口：deduplicator 保证每个 approval_id 只弹一次。
+     */
+    private handleApproval(approval: ApprovalInfo, taskId: string): void {
+        if (!approval.approvalId) {
+            this.postMessage({ command: 'error', text: 'Approval event is missing approval_id' });
+            return;
+        }
+        if (!this.approvals.accept(approval.approvalId)) return;
+        const request: ApprovalRequestView = {
+            taskId: approval.taskId || taskId,
+            approvalId: approval.approvalId,
+            toolName: approval.toolName,
+            sideEffect: approval.sideEffect,
+            args: approval.args,
+        };
+        const presentation = approvalQuickPickOptions(request).presentation;
+        this.postMessage({
+            command: 'message',
+            type: 'tool',
+            text: `[审批请求] ${presentation.summary}: ${presentation.detail}`,
+        });
+        void this.showApprovalQuickPick(request);
     }
 
     /**
@@ -505,34 +610,57 @@ export class SacodePanel {
     /**
      * P1-2: 从工具输入参数提取 diff 文本
      */
-    private extractDiff(toolName: string, input: any): string | null {
+    private extractDiff(toolName: string, input: Record<string, unknown> | string): string | null {
+        if (typeof input === 'string') return null;
         if (toolName === 'fs.edit') {
-            const path = input.path || input.file || '';
-            const oldStr = input.old_string || input.old_str || '';
-            const newStr = input.new_string || input.new_str || '';
+            const path = stringValue(input.path) ?? stringValue(input.file) ?? '';
+            const oldStr = stringValue(input.old_string) ?? stringValue(input.old_str) ?? '';
+            const newStr = stringValue(input.new_string) ?? stringValue(input.new_str) ?? '';
             if (oldStr || newStr) {
                 return `--- ${path}\n+++ ${path}\n${oldStr.split('\n').map((l: string) => `-${l}`).join('\n')}\n${newStr.split('\n').map((l: string) => `+${l}`).join('\n')}`;
             }
         }
         if (toolName === 'fs.apply_patch') {
-            const patch = input.patch || input.diff || input.content;
-            if (typeof patch === 'string' && patch.includes('@@')) {
+            const patch = stringValue(input.patch) ?? stringValue(input.diff) ?? stringValue(input.content);
+            if (patch && patch.includes('@@')) {
                 return patch;
             }
         }
         return null;
     }
 
-    private async stopTask() {
+    /**
+     * 取消任务后以 daemon 真相源确认最终状态，避免在取消未生效时误报成功。
+     */
+    private async stopTask(): Promise<void> {
         const taskId = this.currentTaskId;
         const generation = this.taskGeneration;
-        if (taskId) {
-            try {
-                await this.client.cancelTask(taskId);
-            } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err);
-                this.postMessage({ command: 'error', text: message });
-            }
+        if (!taskId) {
+            this.finishTask(null, generation);
+            return;
+        }
+
+        let requested = false;
+        try {
+            await this.client.cancelTask(taskId);
+            requested = true;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.postMessage({ command: 'error', text: `取消请求失败: ${message}` });
+        }
+
+        const snapshot = await this.confirmFinalState(taskId, generation);
+        if (generation !== this.taskGeneration || this.currentTaskId !== taskId) return;
+        if (snapshot) {
+            this.reportTerminal(snapshot);
+        } else {
+            this.postMessage({
+                command: 'message',
+                type: 'system',
+                text: requested
+                    ? '取消请求已提交，服务端尚未返回终态，请通过任务列表确认'
+                    : '无法确认任务最终状态，请通过任务列表确认',
+            });
         }
         this.finishTask(taskId, generation);
     }
@@ -545,8 +673,8 @@ export class SacodePanel {
         this.approvals.clear();
         this.postMessage({ command: 'done' });
     }
-    private postMessage(msg: any) {
-        this.panel?.webview.postMessage(msg);
+    private postMessage(message: PanelMessage): void {
+        this.panel?.webview.postMessage(message);
     }
 
     private dispose() {
@@ -557,4 +685,12 @@ export class SacodePanel {
         this.panel = null;
         SacodePanel.instance = null;
     }
+}
+
+function stringValue(value: unknown): string | undefined {
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }

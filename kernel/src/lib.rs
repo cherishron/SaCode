@@ -27,7 +27,13 @@ pub use execution::{
 };
 pub use hook::{Hook, HookContext, HookResult};
 pub use schema::{
-    generate_task_id, BackoffStrategy, Checkpoint, ExecutionMode, Plan, QueueStats, RetryCondition,
-    RetryPolicy, Review, ScheduledTask, StateTransitionError, Step, StepStatus, Task, TaskPriority,
-    TaskQueueStatus, TaskResult, TaskState,
+    generate_task_id, AcceptanceEnvironment, AcceptanceEvidenceKind, AcceptanceEvidenceRef,
+    AcceptanceMetricSample, AcceptanceOutcome, AcceptanceOutcomeCounts, AcceptanceRecord,
+    AcceptanceReleaseSummary, AcceptanceSchemaError, BackoffStrategy, Checkpoint, EntrySource,
+    ExecutionMode, ExplicitContextRef, FailureCategory, FailureDetail, Plan, QueueStats,
+    ResultSummary, RetryCondition, RetryPolicy, Review, RouteSummary, ScheduledTask,
+    StateTransitionError, Step, StepStatus, SuggestedAction, Task, TaskCreateRequest,
+    TaskFinalization, TaskPhase, TaskPriority, TaskProtocolError, TaskQueueStatus, TaskResult,
+    TaskSnapshot, TaskState, TaskTimestamps, TerminalOutcome, ValidationStatus, ValidationSummary,
+    WorkspaceBoundary, ACCEPTANCE_SCHEMA_VERSION, TASK_PROTOCOL_VERSION,
 };

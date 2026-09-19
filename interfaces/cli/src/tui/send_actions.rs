@@ -7,6 +7,14 @@ impl App {
                 if self.input.is_empty() {
                     return;
                 }
+                if !crate::provider_runtime::has_authorized_provider(&self.workdir) {
+                    self.input_mode = InputMode::ConnectSelect;
+                    self.selected_connect_index = 0;
+                    self.push_system_message(
+                        "当前没有可用且已授权的 Provider。请先选择 Provider 并完成凭据验证。",
+                    );
+                    return;
+                }
             }
             InputMode::LoginBaseUrl => {
                 self.finish_login_base_url();

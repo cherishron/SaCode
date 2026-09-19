@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sacode_kernel::{
-    QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun,
+    QueueStats, ScheduledTask, TaskPriority, TaskQueueStatus, TaskResult, TaskRun, TaskState,
+    TerminalOutcome,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::warn;
@@ -153,11 +154,22 @@ impl TaskQueue {
         }
     }
 
-    pub async fn mark_completed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
+    pub async fn mark_completed(
+        &self,
+        task_id: &str,
+        result: TaskResult,
+        task_run: TaskRun,
+    ) -> bool {
         let mut running = self.running.write().await;
-        running.remove(task_id);
+        if running.remove(task_id).is_none() {
+            return false;
+        }
         drop(running);
         self.release_running_permit(task_id).await;
+
+        let finalization = TaskState::Running.finalize(TerminalOutcome::Success);
+        debug_assert!(finalization.applied);
+        debug_assert_eq!(finalization.state, TaskState::Completed);
 
         let mut completed = self.completed.write().await;
         completed.insert(task_id.to_string(), result.clone());
@@ -170,9 +182,10 @@ impl TaskQueue {
                 warn!(task_id, ?error, "failed to persist completed task result");
             }
         }
+        true
     }
 
-    pub async fn mark_failed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) {
+    pub async fn mark_failed(&self, task_id: &str, result: TaskResult, task_run: TaskRun) -> bool {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {
             drop(running);
@@ -188,7 +201,11 @@ impl TaskQueue {
                         warn!(task_id, ?error, "failed to persist retrying task status");
                     }
                 }
+                return true;
             } else {
+                let finalization = TaskState::Running.finalize(TerminalOutcome::Failure);
+                debug_assert!(finalization.applied);
+                debug_assert_eq!(finalization.state, TaskState::Failed);
                 let mut failed = self.failed.write().await;
                 failed.insert(task_id.to_string(), result.clone());
 
@@ -203,8 +220,10 @@ impl TaskQueue {
                         warn!(task_id, ?error, "failed to persist failed task result");
                     }
                 }
+                return true;
             }
         }
+        false
     }
 
     pub async fn mark_retrying(&self, task_id: &str) {
@@ -239,6 +258,9 @@ impl TaskQueue {
     pub async fn cancel(&self, task_id: &str) -> bool {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {
+            let finalization = TaskState::Running.finalize(TerminalOutcome::Cancelled);
+            debug_assert!(finalization.applied);
+            debug_assert_eq!(finalization.state, TaskState::Cancelled);
             drop(running);
             self.release_running_permit(task_id).await;
             let mut cancelled = self.cancelled.write().await;
@@ -263,6 +285,8 @@ impl TaskQueue {
         let mut ready = self.ready.write().await;
         if let Some(pos) = ready.iter().position(|t| t.id == task_id) {
             if let Some(task) = ready.remove(pos) {
+                let finalization = TaskState::Ready.finalize(TerminalOutcome::Cancelled);
+                debug_assert!(finalization.applied);
                 let mut cancelled = self.cancelled.write().await;
                 cancelled.insert(task_id.to_string(), task);
 
@@ -286,6 +310,8 @@ impl TaskQueue {
         for queue in pending.values_mut() {
             if let Some(pos) = queue.iter().position(|t| t.id == task_id) {
                 if let Some(task) = queue.remove(pos) {
+                    let finalization = TaskState::Pending.finalize(TerminalOutcome::Cancelled);
+                    debug_assert!(finalization.applied);
                     let mut cancelled = self.cancelled.write().await;
                     cancelled.insert(task_id.to_string(), task);
 

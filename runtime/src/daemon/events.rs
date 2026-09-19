@@ -6,7 +6,7 @@ use axum::{
 };
 use tokio::sync::broadcast;
 
-use sacode_kernel::{TaskQueueStatus, TaskRun};
+use sacode_kernel::{TaskQueueStatus, TaskRun, TASK_PROTOCOL_VERSION};
 
 use crate::streaming::sse::{stream_from_broadcast, stream_from_broadcast_with_replay};
 
@@ -44,10 +44,25 @@ pub fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
             match receiver.recv().await {
                 Ok(evt) => {
                     update_task_status_from_executor_event(&state, &evt).await;
+                    let mut data = evt.data;
+                    if let Some(task) = state
+                        .tasks
+                        .read()
+                        .await
+                        .get(&evt.task_id)
+                        .map(super::TaskStatus::snapshot)
+                    {
+                        if let serde_json::Value::Object(map) = &mut data {
+                            map.insert(
+                                "task".to_string(),
+                                serde_json::to_value(task).unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                    }
                     let mut stream_evt = StreamEvent {
                         task_id: evt.task_id.clone(),
                         event_type: evt.event_type.clone(),
-                        data: normalize_stream_event(&evt.task_id, &evt.event_type, evt.data),
+                        data: normalize_stream_event(&evt.task_id, &evt.event_type, data),
                         seq: None,
                     };
                     // 转发到 daemon event_bus 前先写入历史，保证 executor→daemon→SSE 全链路可续传
@@ -107,6 +122,10 @@ fn normalize_stream_event(
     };
 
     let mut normalized = serde_json::Map::new();
+    normalized.insert(
+        "protocol_version".to_string(),
+        serde_json::json!(TASK_PROTOCOL_VERSION),
+    );
     normalized.insert(
         "task_id".to_string(),
         serde_json::Value::String(task_id.to_string()),

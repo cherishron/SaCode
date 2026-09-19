@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
 
-use sacode_kernel::model::{ChatUsage, ModelProvider, ToolDefinition};
+use sacode_kernel::model::{ChatUsage, ModelProvider, ProviderFailure, ToolDefinition};
 use sacode_kernel::{Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState};
 
-use crate::provider::{ProviderClient, StreamChunkKind, ToolChatResult};
+use crate::provider::{ProviderClient, ProviderClientError, StreamChunkKind, ToolChatResult};
 use crate::tools::interceptor::InterceptContext;
 use crate::tools::{SideEffectLevel, ToolRegistry};
 use crate::{task_run_from_report, FailoverContext, NodeScore, TaskProfile};
@@ -100,6 +100,9 @@ pub struct TaskRunResult {
     pub state: TaskRunState,
     /// 任务运行快照
     pub task_run: TaskRun,
+    /// 结构化 Provider 失败信息（仅当错误来自 Provider 调用时存在）。
+    /// 用于 failover 决策：不可重试的失败（认证、模型不可用）不触发切换。
+    pub provider_failure: Option<ProviderFailure>,
 }
 
 // ── 任务执行配置 ────────────────────────────────────────────────
@@ -147,35 +150,43 @@ pub async fn execute_task_with_provider(
     let _total_started_at = Instant::now();
     let tool_defs = build_tool_definitions(&config.tools, config.mode);
 
-    let (response, pending_question, usage, hit_round_limit, api_duration_ms, tool_duration_ms) =
-        if config.provider.api_key.is_some()
-            && config
-                .provider
-                .base_url
-                .as_ref()
-                .is_some_and(|v| !v.is_empty())
-        {
-            if tool_defs.is_empty() {
-                execute_simple_chat(
-                    &config.provider,
-                    &config.user_prompt,
-                    stream_handler,
-                    config.error_recorder.as_ref(),
-                )
-                .await
-            } else {
-                execute_tool_chat(config, tool_defs, stream_handler).await
-            }
-        } else {
-            (
-                Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()),
-                None,
-                None,
-                false,
-                0,
-                0,
+    let (
+        response,
+        pending_question,
+        usage,
+        hit_round_limit,
+        api_duration_ms,
+        tool_duration_ms,
+        provider_failure,
+    ) = if config.provider.api_key.is_some()
+        && config
+            .provider
+            .base_url
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())
+    {
+        if tool_defs.is_empty() {
+            execute_simple_chat(
+                &config.provider,
+                &config.user_prompt,
+                stream_handler,
+                config.error_recorder.as_ref(),
             )
-        };
+            .await
+        } else {
+            execute_tool_chat(config, tool_defs, stream_handler).await
+        }
+    } else {
+        (
+            Err("没有可用的 provider 配置，请先运行 /login 或 sacode init".to_string()),
+            None,
+            None,
+            false,
+            0,
+            0,
+            None,
+        )
+    };
 
     let state = match pending_question.as_ref() {
         Some(q) if q.get("kind").and_then(|v| v.as_str()) == Some("tool_approval") => {
@@ -236,6 +247,7 @@ pub async fn execute_task_with_provider(
         tool_duration_ms,
         state,
         task_run,
+        provider_failure,
     }
 }
 
@@ -280,6 +292,15 @@ pub async fn execute_task_with_failover(
         .unwrap_or(1);
 
     while attempt_count < max_attempts {
+        // 灵枢·自防护：不可重试的 Provider 失败（认证、模型不可用等）
+        // 不得盲目切换 Provider 重试同一任务。
+        if result
+            .provider_failure
+            .as_ref()
+            .is_some_and(|failure| !failure.retryable)
+        {
+            break;
+        }
         let should_switch = if result.response.is_err() {
             true
         } else if let Ok(ref response) = result.response {
@@ -315,6 +336,15 @@ pub async fn execute_task_with_failover(
                     .iter()
                     .find(|(pn, mn, _)| pn == &fallback.provider_name && mn == &fallback.model_name)
                 {
+                    // 灵枢·自防护：发送任务内容到 fallback 前的二次授权防线，
+                    // 以当前磁盘配置为准，未授权 Provider 一律不得接收任务内容。
+                    if !crate::agents::failover_is_authorized(
+                        config.workdir,
+                        &fallback.provider_name,
+                        &fallback.model_name,
+                    ) {
+                        break;
+                    }
                     // 从已执行的工具记录中提取上下文（report 为 Option，需安全访问）
                     let tool_records: Vec<(Option<usize>, String, bool)> = result
                         .task_run
@@ -362,13 +392,40 @@ pub async fn execute_task_with_failover(
                     let augmented_prompt =
                         format!("{}\n\n{}", failover_section, config.user_prompt);
 
+                    let switch_reason = result
+                        .provider_failure
+                        .as_ref()
+                        .map(|failure| format!("auto failover after {}", failure.code))
+                        .unwrap_or_else(|| "auto failover after low quality response".to_string());
+
                     let fallback_config = TaskRunConfig {
                         user_prompt: augmented_prompt,
                         provider: fallback_provider.clone(),
                         ..config.clone_ref()
                     };
 
+                    let previous_routes = result
+                        .task_run
+                        .report
+                        .as_ref()
+                        .map(|report| report.route_records.clone())
+                        .unwrap_or_default();
                     result = execute_task_with_provider(&fallback_config, None).await;
+
+                    if let Some(report) = result.task_run.report.as_mut() {
+                        report.route_records = previous_routes;
+                        report.route_records.push(RouteRecord {
+                            task_id: config.task_id.clone().unwrap_or_default(),
+                            role_id: "main".to_string(),
+                            primary: RoutedModelRecord {
+                                provider_name: fallback.provider_name.clone(),
+                                model_name: fallback.model_name.clone(),
+                                ..RoutedModelRecord::default()
+                            },
+                            fallbacks: Vec::new(),
+                            route_reason: switch_reason,
+                        });
+                    }
 
                     if let Some(recorder) = model_health_recorder {
                         recorder(
@@ -401,6 +458,7 @@ async fn execute_simple_chat(
     bool,
     u64,
     u64,
+    Option<ProviderFailure>,
 ) {
     let client = ProviderClient::new();
     let api_started_at = Instant::now();
@@ -431,6 +489,7 @@ async fn execute_simple_chat(
             false,
             elapsed_ms(api_started_at.elapsed()),
             0,
+            None,
         ),
         Err(error) => {
             error_recorder.record_provider_error("provider:chat", error.to_string());
@@ -441,6 +500,7 @@ async fn execute_simple_chat(
                 false,
                 elapsed_ms(api_started_at.elapsed()),
                 0,
+                provider_failure_of(&error),
             )
         }
     }
@@ -458,6 +518,7 @@ async fn execute_tool_chat(
     bool,
     u64,
     u64,
+    Option<ProviderFailure>,
 ) {
     let client = ProviderClient::new();
     let tools_clone = config.tools.clone();
@@ -643,6 +704,7 @@ async fn execute_tool_chat(
                 tool_result.hit_round_limit,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(Ordering::Relaxed),
+                None,
             )
         }
         Err(error) => {
@@ -654,6 +716,7 @@ async fn execute_tool_chat(
                 false,
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(Ordering::Relaxed),
+                provider_failure_of(&error),
             )
         }
     }
@@ -823,6 +886,13 @@ pub fn format_side_effect_level(level: SideEffectLevel) -> &'static str {
         SideEffectLevel::Modify => "modify",
         SideEffectLevel::Execute => "execute",
     }
+}
+
+/// 从 anyhow 错误中提取结构化 Provider 失败信息（非 Provider 错误返回 None）
+fn provider_failure_of(error: &anyhow::Error) -> Option<ProviderFailure> {
+    error
+        .downcast_ref::<ProviderClientError>()
+        .map(|value| value.failure.clone())
 }
 
 fn elapsed_ms(duration: Duration) -> u64 {

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { ApprovalDeduplicator } from '../src/ApprovalDeduplicator';
 import { buildApprovalPresentation } from '../src/ApprovalPresentation';
 import { daemonHealthError, isVersionAtLeast, MINIMUM_DAEMON_VERSION, parseSseFrame, SseClient } from '../src/SseClient';
+import { decodeSseEvent } from '../src/sseEvents';
 
 test('minimum daemon version accepts compatible patch and newer releases', () => {
     assert.equal(MINIMUM_DAEMON_VERSION, '1.1.1');
@@ -68,8 +69,9 @@ test('parseSseFrame parses CRLF frames and event names', () => {
 
 test('parseSseFrame preserves the SSE event id for reconnect', () => {
     const event = parseSseFrame('id: 42\nevent: message\ndata: {"task_id":"task-1","text":"hello"}');
-    assert.equal(event?.id, '42');
-    assert.equal(event?.data.text, 'hello');
+    assert.ok(event);
+    assert.equal(event.id, '42');
+    assert.equal(decodeSseEvent(event).text?.content, 'hello');
 });
 
 test('parseSseFrame joins multiline data and ignores comments', () => {
@@ -253,7 +255,7 @@ test('streamEvents reconnects with Last-Event-ID and calls onOpen per connection
         let opens = 0;
         abort = client.streamEvents(
             (event) => {
-                if (event.data.text === 'second') {
+                if (decodeSseEvent(event).text?.content === 'second') {
                     abort();
                     resolveReconnected();
                 }

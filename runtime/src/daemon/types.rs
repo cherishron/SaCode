@@ -9,9 +9,12 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::warn;
 
 use crate::{
-    executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb,
+    assemble_task_snapshot, executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler,
+    tools::ToolRegistry, StoreDb, TaskSnapshotProjection,
 };
-use sacode_kernel::{TaskQueueStatus, TaskResult, TaskRun};
+use sacode_kernel::{
+    EntrySource, TaskQueueStatus, TaskResult, TaskRun, TaskSnapshot, TASK_PROTOCOL_VERSION,
+};
 
 use super::{
     parse_mode, status::sync_task_status_from_task_run, status::task_run_for_queue_status,
@@ -70,28 +73,57 @@ fn default_max_ms() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResponse {
+    pub protocol_version: u32,
     pub task_id: String,
     pub status: String,
     pub message: String,
     pub queue_status: String,
+    pub task: TaskSnapshot,
 }
 
 impl TaskResponse {
-    pub fn queued(task_id: String, queue_status: TaskQueueStatus, message: String) -> Self {
+    pub fn queued(
+        task_id: String,
+        mode: sacode_kernel::ExecutionMode,
+        queue_status: TaskQueueStatus,
+        message: String,
+    ) -> Self {
+        let task = assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: &task_id,
+            mode,
+            source: EntrySource::Daemon,
+            queue_status: Some(queue_status),
+            task_run: None,
+            output: None,
+            error: None,
+        });
         Self {
+            protocol_version: TASK_PROTOCOL_VERSION,
             task_id,
             status: "queued".to_string(),
             message,
             queue_status: queue_status.to_string(),
+            task,
         }
     }
 
-    pub fn error(task_id: String, message: String) -> Self {
+    pub fn error(task_id: String, mode: sacode_kernel::ExecutionMode, message: String) -> Self {
+        let task = assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: &task_id,
+            mode,
+            source: EntrySource::Daemon,
+            queue_status: Some(TaskQueueStatus::Failed),
+            task_run: None,
+            output: None,
+            error: Some(&message),
+        });
         Self {
+            protocol_version: TASK_PROTOCOL_VERSION,
             task_id,
             status: "error".to_string(),
             message,
             queue_status: "error".to_string(),
+            task,
         }
     }
 }
@@ -159,6 +191,20 @@ impl TaskStatus {
             .and_then(|run| run.state.as_ref())
             .map(super::status::task_run_state_to_queue_status)
             .unwrap_or_else(|| self.queue_status.clone())
+    }
+
+    pub fn snapshot(&self) -> TaskSnapshot {
+        assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: &self.task_id,
+            mode: parse_mode(&self.mode),
+            source: EntrySource::Daemon,
+            queue_status: Some(super::status::parse_queue_status(
+                &self.derived_queue_status(),
+            )),
+            task_run: self.task_run.as_ref(),
+            output: self.output.as_deref(),
+            error: self.error.as_deref(),
+        })
     }
 
     pub fn restored(task: &sacode_kernel::ScheduledTask, queue_status: TaskQueueStatus) -> Self {

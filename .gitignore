@@ -34,6 +34,9 @@ temp/
 .cache/
 .sacode/
 
+# Windows 保留设备名误产物（>nul 重定向残留）
+nul
+
 # Backup
 *.bak
 *.backup

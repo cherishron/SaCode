@@ -11,7 +11,8 @@
     "Other"
   ],
   "sacode": {
-    "minimumDaemonVersion": "1.1.1"
+    "minimumDaemonVersion": "1.1.1",
+    "protocolVersion": 1
   },
   "activationEvents": [
     "onStartupFinished"

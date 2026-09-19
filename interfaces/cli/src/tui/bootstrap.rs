@@ -7,13 +7,12 @@ use std::{
 
 use ratatui::layout::Rect;
 
-use sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::ProjectAccessConfigStore;
 
 use crate::cmd::config;
 use crate::provider_config::{ProviderConfigStore, SaCodeConfigStore};
-use crate::provider_runtime::resolve_named_provider;
+use crate::provider_runtime::resolve_authorized_named_provider;
 use crate::task_store::TaskStore;
 
 use super::{
@@ -29,7 +28,7 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let access_store = ProjectAccessConfigStore::new(&workdir);
         let task_store = TaskStore::new(&workdir);
-        let current_provider = resolve_named_provider(&workdir);
+        let current_provider = resolve_authorized_named_provider(&workdir);
         let log_path = user_sacode_dir().join("logs/tui.log");
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
@@ -77,13 +76,7 @@ impl App {
             connect_options: {
                 // 与 REPL 侧保持对齐：ollama 因 localhost 被 preset_connect_options 过滤掉，
                 // TUI 启动时需要显式加入，否则用户无法从 /connect 选择列表里选中 ollama。
-                let mut opts: Vec<(String, String, bool)> = vec![(
-                    "ollama".to_string(),
-                    OLLAMA_DEFAULT_BASE_URL.to_string(),
-                    false,
-                )];
-                opts.extend(crate::provider_config::preset_connect_options());
-                opts
+                crate::provider_config::builtin_connect_options()
             },
             selected_connect_index: 0,
             pending_connect_provider: None,
@@ -163,8 +156,10 @@ impl App {
         self.ensure_default_context7();
         self.spawn_version_check();
         if self.current_provider.is_none() {
+            self.input_mode = InputMode::ConnectSelect;
+            self.selected_connect_index = 0;
             self.push_system_message(
-                "⚠️ 未配置模型服务。输入 /login 选择 provider 并配置 API Key 后开始使用。",
+                "未检测到可用且已授权的 Provider。请选择 Provider，随后输入凭据完成验证；Esc 可稍后通过 /connect 或 /login 再配置。",
             );
         }
     }
@@ -177,7 +172,7 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let access_store = ProjectAccessConfigStore::new(&workdir);
         let task_store = TaskStore::new(&workdir);
-        let current_provider = resolve_named_provider(&workdir);
+        let current_provider = resolve_authorized_named_provider(&workdir);
         let log_path = user_sacode_dir().join("logs/tui.log");
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
@@ -225,13 +220,7 @@ impl App {
             connect_options: {
                 // 与 REPL 侧保持对齐：ollama 因 localhost 被 preset_connect_options 过滤掉，
                 // TUI 启动时需要显式加入，否则用户无法从 /connect 选择列表里选中 ollama。
-                let mut opts: Vec<(String, String, bool)> = vec![(
-                    "ollama".to_string(),
-                    OLLAMA_DEFAULT_BASE_URL.to_string(),
-                    false,
-                )];
-                opts.extend(crate::provider_config::preset_connect_options());
-                opts
+                crate::provider_config::builtin_connect_options()
             },
             selected_connect_index: 0,
             pending_connect_provider: None,

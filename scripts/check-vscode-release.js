@@ -10,6 +10,8 @@ const extensionDir = path.join(root, 'interfaces', 'vscode');
 const packagePath = path.join(extensionDir, 'package.json');
 const lockPath = path.join(extensionDir, 'package-lock.json');
 const clientPath = path.join(extensionDir, 'src', 'SseClient.ts');
+const protocolPath = path.join(extensionDir, 'src', 'taskProtocol.ts');
+const fixturePath = path.join(extensionDir, 'test', 'fixtures', 'task-protocol');
 const packageJson = readJson(packagePath);
 const cargoToml = fs.readFileSync(path.join(root, 'Cargo.toml'), 'utf8');
 const cargoVersion = cargoToml.match(/\[workspace\.package\][\s\S]*?\nversion\s*=\s*"([^"]+)"/)?.[1];
@@ -135,6 +137,14 @@ const client = fs.readFileSync(clientPath, 'utf8');
 if (!client.includes(`MINIMUM_DAEMON_VERSION = '${minimumDaemonVersion}'`)) {
   fail('runtime minimum daemon version constant is out of sync');
 }
+if (!fs.existsSync(protocolPath)) fail('missing src/taskProtocol.ts');
+const protocolSource = fs.readFileSync(protocolPath, 'utf8');
+const protocolMatch = protocolSource.match(/export const TASK_PROTOCOL_VERSION = (\d+)/);
+const taskProtocolVersion = protocolMatch ? Number(protocolMatch[1]) : null;
+if (taskProtocolVersion === null || pkg.sacode?.protocolVersion !== taskProtocolVersion) {
+  fail(`package.json protocolVersion ${pkg.sacode?.protocolVersion ?? '<missing>'} does not match taskProtocol.ts ${taskProtocolVersion ?? '<missing>'}`);
+}
+if (!fs.existsSync(fixturePath)) fail('missing shared task protocol fixtures');
 
 if (!fs.existsSync(compatibilityPath)) fail('missing docs/release/compatibility.json');
 const compatibility = readJson(compatibilityPath);
@@ -147,9 +157,12 @@ if (compatibility.current?.extension !== expectedExtensionVersion) {
 if (compatibility.current?.minimumDaemonVersion !== minimumDaemonVersion) {
   fail('compatibility.json current.minimumDaemonVersion is out of sync');
 }
+if (compatibility.current?.protocolVersion !== taskProtocolVersion) {
+  fail('compatibility.json current.protocolVersion is out of sync');
+}
 const currentRelease = (compatibility.releases || []).find((item) => item.extension === expectedExtensionVersion);
-if (!currentRelease || currentRelease.cli !== expectedCliVersion || currentRelease.minimumDaemonVersion !== minimumDaemonVersion) {
-  fail('compatibility.json releases[] missing current CLI/extension/min daemon tuple');
+if (!currentRelease || currentRelease.cli !== expectedCliVersion || currentRelease.minimumDaemonVersion !== minimumDaemonVersion || currentRelease.protocolVersion !== taskProtocolVersion) {
+  fail('compatibility.json releases[] missing current CLI/extension/min daemon/protocol tuple');
 }
 if (compatibility.distribution?.vscodeMarketplace !== false || compatibility.distribution?.openVsx !== false) {
   fail('compatibility.json must keep Marketplace/Open VSX auto-publish disabled');
@@ -177,6 +190,8 @@ for (const required of [
   'extension/readme.md',
   'extension/dist/extension.js',
   'extension/dist/SseClient.js',
+  'extension/dist/taskProtocol.js',
+  'extension/dist/sseEvents.js',
   'extension/dist/DaemonManager.js',
   'extension/LICENSE.txt',
 ]) {
@@ -194,6 +209,9 @@ if (packedPackage.version !== expectedExtensionVersion) {
 }
 if (packedPackage.sacode?.minimumDaemonVersion !== minimumDaemonVersion) {
   fail(`VSIX minimumDaemonVersion does not match ${minimumDaemonVersion}`);
+}
+if (packedPackage.sacode?.protocolVersion !== taskProtocolVersion) {
+  fail(`VSIX protocolVersion does not match ${taskProtocolVersion}`);
 }
 
 const hash = crypto.createHash('sha256').update(fs.readFileSync(vsixPath)).digest('hex');

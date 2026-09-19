@@ -2,10 +2,18 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::provider::{MIMO_TOKEN_PLAN_BASE_URL, OLLAMA_DEFAULT_BASE_URL};
+use super::provider::{
+    detect_provider_kind, ProviderAuthorization, ProviderAuthorizationSource, ProviderProfile,
+    ProviderProfileType, ProviderRuntimeState, SecretRef, MIMO_TOKEN_PLAN_BASE_URL,
+    OLLAMA_DEFAULT_BASE_URL,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub const PROVIDER_CONFIG_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaCodeConfig {
+    #[serde(default = "legacy_provider_schema_version")]
+    pub provider_schema_version: u32,
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -17,7 +25,52 @@ pub struct SaCodeConfig {
     #[serde(default)]
     pub provider: BTreeMap<String, ProviderSpec>,
     #[serde(default)]
+    pub provider_state: BTreeMap<String, ProviderRuntimeState>,
+    #[serde(default)]
+    pub provider_policy: ProviderPolicyConfig,
+    #[serde(default)]
     pub model_routing: ModelRoutingConfig,
+}
+
+impl Default for SaCodeConfig {
+    fn default() -> Self {
+        Self {
+            provider_schema_version: PROVIDER_CONFIG_SCHEMA_VERSION,
+            model: String::new(),
+            small_model: String::new(),
+            outstyle: String::new(),
+            vim_mode: false,
+            provider: BTreeMap::new(),
+            provider_state: BTreeMap::new(),
+            provider_policy: ProviderPolicyConfig::default(),
+            model_routing: ModelRoutingConfig::default(),
+        }
+    }
+}
+
+fn legacy_provider_schema_version() -> u32 {
+    0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderPolicyConfig {
+    #[serde(default = "default_provider_validation_timeout_ms")]
+    pub validation_timeout_ms: u64,
+    #[serde(default)]
+    pub auto_failover: bool,
+}
+
+impl Default for ProviderPolicyConfig {
+    fn default() -> Self {
+        Self {
+            validation_timeout_ms: default_provider_validation_timeout_ms(),
+            auto_failover: false,
+        }
+    }
+}
+
+fn default_provider_validation_timeout_ms() -> u64 {
+    10_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -117,6 +170,88 @@ pub struct Modalities {
 }
 
 impl SaCodeConfig {
+    pub fn migrate_provider_compatibility(&mut self) -> bool {
+        if self.provider_schema_version >= PROVIDER_CONFIG_SCHEMA_VERSION {
+            self.retain_legacy_authorization_for_current();
+            return false;
+        }
+
+        let current_provider = self
+            .resolve_model(&self.model)
+            .map(|(provider, _)| provider);
+        for (provider_id, spec) in &self.provider {
+            self.provider_state
+                .entry(provider_id.clone())
+                .or_insert_with(|| ProviderRuntimeState {
+                    profile_type: ProviderProfileType::Custom,
+                    credential_ref: SecretRef::legacy_inline(&spec.api_key),
+                    validation: Default::default(),
+                    authorization: if current_provider.as_deref() == Some(provider_id.as_str()) {
+                        ProviderAuthorization::legacy_current()
+                    } else {
+                        ProviderAuthorization::default()
+                    },
+                });
+        }
+        self.provider_schema_version = PROVIDER_CONFIG_SCHEMA_VERSION;
+        self.provider_policy.auto_failover = false;
+        self.retain_legacy_authorization_for_current();
+        true
+    }
+
+    pub fn retain_legacy_authorization_for_current(&mut self) {
+        let current_provider = self
+            .resolve_model(&self.model)
+            .map(|(provider, _)| provider);
+        for (provider_id, state) in &mut self.provider_state {
+            if state.authorization.source == ProviderAuthorizationSource::LegacyCurrent
+                && current_provider.as_deref() != Some(provider_id.as_str())
+            {
+                state.authorization = ProviderAuthorization::default();
+            }
+        }
+    }
+
+    pub fn provider_profile(&self, provider_id: &str) -> Option<ProviderProfile> {
+        let spec = self.provider.get(provider_id)?;
+        let state = self
+            .provider_state
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_default();
+        let selected_model = self
+            .resolve_model(&self.model)
+            .filter(|(current, _)| current == provider_id)
+            .map(|(_, model)| model);
+        let inferred_model = selected_model
+            .as_deref()
+            .or_else(|| spec.models.keys().next().map(String::as_str))
+            .unwrap_or_default();
+        Some(ProviderProfile {
+            provider_id: provider_id.to_string(),
+            display_name: if spec.name.trim().is_empty() {
+                provider_id.to_string()
+            } else {
+                spec.name.clone()
+            },
+            kind: detect_provider_kind(&spec.base_url, inferred_model),
+            profile_type: state.profile_type,
+            endpoint: spec.base_url.clone(),
+            credential_ref: state
+                .credential_ref
+                .or_else(|| SecretRef::legacy_inline(&spec.api_key)),
+            selected_model,
+            validation: state.validation,
+            authorization: state.authorization,
+        })
+    }
+
+    pub fn provider_is_authorized(&self, provider_id: &str, model: &str) -> bool {
+        self.provider_state
+            .get(provider_id)
+            .is_some_and(|state| state.authorization.permits_model(model))
+    }
+
     pub fn resolve_provider_and_model(
         &self,
         model_spec: &str,
@@ -597,4 +732,136 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
         },
     );
     providers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ProviderAuthorizationSource, ProviderValidationStatus, SecretRefKind};
+
+    fn legacy_config() -> SaCodeConfig {
+        serde_json::from_value(serde_json::json!({
+            "model": "primary/model-a",
+            "provider": {
+                "primary": {
+                    "name": "Primary",
+                    "base_url": "https://primary.example/v1",
+                    "api_key": "sk-primary-secret",
+                    "models": {
+                        "model-a": { "name": "Model A" }
+                    }
+                },
+                "fallback": {
+                    "name": "Fallback",
+                    "base_url": "https://fallback.example/v1",
+                    "api_key": "sk-fallback-secret",
+                    "models": {
+                        "model-b": { "name": "Model B" }
+                    }
+                }
+            }
+        }))
+        .expect("deserialize legacy provider config")
+    }
+
+    #[test]
+    fn legacy_config_migrates_to_unverified_current_only_authorization() {
+        let mut config = legacy_config();
+        assert_eq!(config.provider_schema_version, 0);
+
+        assert!(config.migrate_provider_compatibility());
+        assert_eq!(
+            config.provider_schema_version,
+            PROVIDER_CONFIG_SCHEMA_VERSION
+        );
+        assert!(!config.provider_policy.auto_failover);
+
+        let primary = config.provider_state.get("primary").expect("primary state");
+        assert_eq!(
+            primary.validation.status,
+            ProviderValidationStatus::Unverified
+        );
+        assert!(primary.authorization.allow_task_content);
+        assert!(!primary.authorization.allow_auto_failover);
+        assert_eq!(
+            primary.authorization.source,
+            ProviderAuthorizationSource::LegacyCurrent
+        );
+        assert_eq!(
+            primary.credential_ref.as_ref().map(|value| value.kind),
+            Some(SecretRefKind::LegacyInline)
+        );
+        assert_eq!(
+            primary
+                .credential_ref
+                .as_ref()
+                .map(|value| value.masked.as_str()),
+            Some("****cret")
+        );
+
+        let fallback = config
+            .provider_state
+            .get("fallback")
+            .expect("fallback state");
+        assert!(!fallback.authorization.allow_task_content);
+        assert!(!fallback.authorization.allow_auto_failover);
+        assert_eq!(
+            fallback.authorization.source,
+            ProviderAuthorizationSource::None
+        );
+    }
+
+    #[test]
+    fn switching_current_provider_does_not_expand_legacy_authorization() {
+        let mut config = legacy_config();
+        config.migrate_provider_compatibility();
+        config.model = "fallback/model-b".to_string();
+
+        config.retain_legacy_authorization_for_current();
+
+        assert!(!config.provider_is_authorized("primary", "model-a"));
+        assert!(!config.provider_is_authorized("fallback", "model-b"));
+    }
+
+    #[test]
+    fn new_config_defaults_disable_failover_and_authorization() {
+        let config = SaCodeConfig::default();
+        assert_eq!(
+            config.provider_schema_version,
+            PROVIDER_CONFIG_SCHEMA_VERSION
+        );
+        assert_eq!(config.provider_policy.validation_timeout_ms, 10_000);
+        assert!(!config.provider_policy.auto_failover);
+        assert!(config.provider_state.is_empty());
+    }
+
+    #[test]
+    fn provider_profile_never_exposes_inline_secret() {
+        let mut config = legacy_config();
+        config.migrate_provider_compatibility();
+
+        let profile = config
+            .provider_profile("primary")
+            .expect("provider profile");
+        assert_eq!(profile.provider_id, "primary");
+        assert_eq!(profile.display_name, "Primary");
+        assert_eq!(profile.selected_model.as_deref(), Some("model-a"));
+        let serialized = serde_json::to_string(&profile).expect("serialize profile");
+        assert!(!serialized.contains("sk-primary-secret"));
+        assert!(serialized.contains("****cret"));
+    }
+
+    #[test]
+    fn explicit_authorization_can_be_scoped_to_models() {
+        let authorization = ProviderAuthorization {
+            allow_task_content: true,
+            allow_auto_failover: true,
+            source: ProviderAuthorizationSource::Explicit,
+            models: vec!["allowed".to_string()],
+            updated_at: Some("2026-09-19T00:00:00Z".to_string()),
+        };
+
+        assert!(authorization.permits_model("allowed"));
+        assert!(!authorization.permits_model("other"));
+    }
 }

@@ -2,10 +2,11 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if let Err(error) = sacode_cli::run().await {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
+    match sacode_cli::run().await {
+        Ok(code) => ExitCode::from(code),
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(3)
+        }
     }
-
-    ExitCode::SUCCESS
 }

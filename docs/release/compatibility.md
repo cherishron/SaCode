@@ -9,9 +9,12 @@
 | VSCode 扩展 | 0.2.1 |
 | CLI / daemon | 1.1.1 |
 | 扩展最低 daemon | 1.1.1 |
+| 任务协议版本 | 1 |
 | VS Code 引擎 | `^1.85.0` |
 
 新 daemon 可服务旧扩展（只要协议未删除字段）。新扩展不可连接低于 `minimumDaemonVersion` 的 daemon；运行时会报不兼容，而不会在同一端口再拉起第二个进程。
+
+任务协议版本是独立于发行版本的能力门禁：扩展只支持协议 `1`（`interfaces/vscode/src/taskProtocol.ts` 的 `TASK_PROTOCOL_VERSION`）。当 `/task` 创建响应缺失或声明不受支持的 `protocol_version` 时，扩展在创建任务阶段明确失败并提示升级，不会降级为「任务成功」。`/task/:id/status` 与 SSE 事件同样声明协议版本；历史 daemon 未声明时状态查询降级读取，不阻塞既有基础流程。`yolo` 仅作为输入别名接受，客户端与 daemon 输出统一为 `auto`。
 
 ## 历史配对
 

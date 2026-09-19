@@ -2,7 +2,6 @@ use super::{
     agent_harness, App, AsyncContext, AsyncResult, InputMode, ModelOptionEntry, NamedProviderConfig,
 };
 use crate::provider_config::ProviderConfig;
-use sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL;
 use std::thread;
 
 impl App {
@@ -317,12 +316,7 @@ impl App {
             }
         };
 
-        let mut options: Vec<(String, String, bool)> = vec![(
-            "ollama".to_string(),
-            OLLAMA_DEFAULT_BASE_URL.to_string(),
-            false,
-        )];
-        options.extend(crate::provider_config::preset_connect_options());
+        let options = crate::provider_config::builtin_connect_options();
 
         let Some((name, base_url, _)) = options.get(index.saturating_sub(1)).cloned() else {
             self.push_system_message(&format!("无效编号: {}", index));
@@ -341,9 +335,13 @@ impl App {
         ) {
             Ok(result) => {
                 self.current_provider = Some(result.current_provider);
-                self.open_model_picker();
+                let provider = self.current_provider.as_ref().expect("provider just set");
+                self.push_success_message(&format!(
+                    "Provider 已验证为 available：{} / {}。",
+                    provider.name, provider.config.model
+                ));
             }
-            Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
+            Err(error) => self.push_system_message(&error.to_string()),
         }
         self.input.clear();
     }
@@ -397,9 +395,13 @@ impl App {
         ) {
             Ok(result) => {
                 self.current_provider = Some(result.current_provider);
-                self.open_model_picker();
+                let provider = self.current_provider.as_ref().expect("provider just set");
+                self.push_success_message(&format!(
+                    "Provider 已验证为 available：{} / {}。",
+                    provider.name, provider.config.model
+                ));
             }
-            Err(error) => self.push_system_message(&format!("保存 provider 失败: {}", error)),
+            Err(error) => self.push_system_message(&error.to_string()),
         }
     }
 
@@ -491,7 +493,7 @@ impl App {
                 Err(error) => {
                     let _ = sender.send(AsyncResult::Failed {
                         context: AsyncContext::Login,
-                        message: format!("保存 provider 配置失败: {}", error),
+                        message: error.to_string(),
                     });
                 }
             }
@@ -618,12 +620,16 @@ impl App {
     }
 
     pub(super) fn handle_login_completed(&mut self, provider_name: String, config: ProviderConfig) {
+        let model = config.model.clone();
         self.current_provider = Some(NamedProviderConfig {
-            name: provider_name,
+            name: provider_name.clone(),
             config,
         });
         self.clear_busy_state();
-        self.open_model_picker();
+        self.push_success_message(&format!(
+            "Provider 已验证为 available：{} / {}。",
+            provider_name, model
+        ));
     }
 
     pub(super) fn handle_providers_loaded(

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use super::task::Task;
+use super::{task::Task, TaskFinalization, TerminalOutcome};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTask {
@@ -353,6 +353,19 @@ impl TaskState {
         )
     }
 
+    pub fn finalize(self, outcome: TerminalOutcome) -> TaskFinalization {
+        if self.is_terminal() {
+            return TaskFinalization {
+                state: self,
+                applied: false,
+            };
+        }
+        TaskFinalization {
+            state: outcome.task_state(),
+            applied: true,
+        }
+    }
+
     /// 从 TaskQueueStatus 无损转换
     pub fn from_queue_status(status: TaskQueueStatus) -> Self {
         match status {
@@ -547,6 +560,17 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.from, TaskState::Completed);
         assert_eq!(err.to, TaskState::Running);
+    }
+
+    #[test]
+    fn finalization_is_idempotent_and_terminal_absorbing() {
+        let first = TaskState::Running.finalize(TerminalOutcome::Success);
+        assert_eq!(first.state, TaskState::Completed);
+        assert!(first.applied);
+
+        let repeated = first.state.finalize(TerminalOutcome::Failure);
+        assert_eq!(repeated.state, TaskState::Completed);
+        assert!(!repeated.applied);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use anyhow::Result;
 use sacode_kernel::schema::{Checkpoint, TaskState};
-use sacode_kernel::{Task, TaskRunState};
+use sacode_kernel::{EntrySource, Task, TaskRunState, TaskSnapshot, TASK_PROTOCOL_VERSION};
 use serde::Serialize;
 use std::io::Write;
 use tokio::io::{self, AsyncReadExt};
@@ -15,6 +15,9 @@ use crate::runner::{
 
 #[derive(Debug, Serialize)]
 struct CliResponse {
+    schema_version: u32,
+    task_id: String,
+    task: TaskSnapshot,
     prompt: String,
     mode: sacode_kernel::ExecutionMode,
     max_iterations: usize,
@@ -35,7 +38,7 @@ struct CliResponse {
     total_duration_ms: u64,
 }
 
-pub(super) async fn run_task(options: CliOptions) -> Result<()> {
+pub(super) async fn run_task(options: CliOptions) -> Result<u8> {
     let stdin = read_stdin_if_needed().await?;
     if options.json {
         let output = run_task_with_stdin(
@@ -48,7 +51,11 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
         .await?;
         // CLI 执行路径写 checkpoint（统一状态机阶段二）
         let _ = write_checkpoint_for_run(&output);
+        let task = output.task_snapshot(EntrySource::Automation);
         let response = CliResponse {
+            schema_version: TASK_PROTOCOL_VERSION,
+            task_id: task.task_id.clone(),
+            task,
             prompt: output.prompt.clone(),
             mode: output.mode,
             max_iterations: options.max_iterations,
@@ -69,7 +76,7 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             total_duration_ms: output.total_duration_ms,
         };
         println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
+        return Ok(output.exit_code());
     }
 
     let json_stream = options.json_stream;
@@ -103,7 +110,11 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
     let _ = write_checkpoint_for_run(&output);
 
     if options.json_stream {
+        let task = output.task_snapshot(EntrySource::Automation);
         let response = CliResponse {
+            schema_version: TASK_PROTOCOL_VERSION,
+            task_id: task.task_id.clone(),
+            task,
             prompt: output.prompt.clone(),
             mode: output.mode,
             max_iterations: options.max_iterations,
@@ -124,7 +135,7 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
             total_duration_ms: output.total_duration_ms,
         };
         println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
+        return Ok(output.exit_code());
     }
 
     println!();
@@ -134,7 +145,7 @@ pub(super) async fn run_task(options: CliOptions) -> Result<()> {
         println!("Stdin: {}", preview(&stdin));
     }
 
-    Ok(())
+    Ok(output.exit_code())
 }
 
 async fn read_stdin_if_needed() -> Result<Option<String>> {

@@ -7,6 +7,8 @@ use sacode_kernel::model::{
 use std::collections::BTreeMap;
 use std::future::Future;
 
+use super::ProviderClientError;
+
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
 const TOOL_SUMMARY_MAX_CHARS: usize = 500;
@@ -45,9 +47,13 @@ pub struct ToolChatResult {
 
 impl ProviderClient {
     pub fn new() -> Self {
+        Self::with_timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT))
+    }
+
+    pub fn with_timeout(timeout: std::time::Duration) -> Self {
         Self {
             http: Client::builder()
-                .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT))
+                .timeout(timeout)
                 .build()
                 .unwrap_or_else(|_| Client::new()),
         }
@@ -64,7 +70,7 @@ impl ProviderClient {
             .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
-        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
+        let api_key = resolved_api_key(provider);
 
         let mut builder = self.http.post(&url).json(&request);
 
@@ -72,15 +78,22 @@ impl ProviderClient {
             builder = builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let response = builder.send().await?;
+        let response = builder
+            .send()
+            .await
+            .map_err(ProviderClientError::from_transport)?;
         let status = response.status();
 
         if !status.is_success() {
-            let text = response.text().await?;
-            anyhow::bail!("Provider error ({}): {}", status, text);
+            let headers = response.headers().clone();
+            let text = response.text().await.unwrap_or_default();
+            return Err(ProviderClientError::from_http(status, &headers, &text).into());
         }
 
-        let chat_response: ChatResponse = response.json().await?;
+        let chat_response: ChatResponse = response
+            .json()
+            .await
+            .map_err(|_| ProviderClientError::invalid_response("provider/invalid_json"))?;
         Ok(chat_response)
     }
 
@@ -421,7 +434,7 @@ impl ProviderClient {
             .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
-        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
+        let api_key = resolved_api_key(provider);
 
         let request = build_request(provider, vec![ChatMessage::user(prompt)], None, true);
 
@@ -431,12 +444,16 @@ impl ProviderClient {
             builder = builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let mut response = builder.send().await?;
+        let mut response = builder
+            .send()
+            .await
+            .map_err(ProviderClientError::from_transport)?;
         let status = response.status();
 
         if !status.is_success() {
-            let text = response.text().await?;
-            anyhow::bail!("Provider error ({}): {}", status, text);
+            let headers = response.headers().clone();
+            let text = response.text().await.unwrap_or_default();
+            return Err(ProviderClientError::from_http(status, &headers, &text).into());
         }
 
         let mut usage = None;
@@ -476,7 +493,7 @@ impl ProviderClient {
             .unwrap_or_else(|| default_base_url(&provider.kind));
         let url = format!("{}/chat/completions", base_url);
 
-        let api_key = provider.api_key.clone().or_else(|| env_key(&provider.kind));
+        let api_key = resolved_api_key(provider);
         let request = build_request(provider, messages, tools, true);
 
         let mut builder = self.http.post(&url).json(&request);
@@ -484,12 +501,16 @@ impl ProviderClient {
             builder = builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let mut response = builder.send().await?;
+        let mut response = builder
+            .send()
+            .await
+            .map_err(ProviderClientError::from_transport)?;
         let status = response.status();
 
         if !status.is_success() {
-            let text = response.text().await?;
-            anyhow::bail!("Provider error ({}): {}", status, text);
+            let headers = response.headers().clone();
+            let text = response.text().await.unwrap_or_default();
+            return Err(ProviderClientError::from_http(status, &headers, &text).into());
         }
 
         let mut state = StreamRoundState::default();
@@ -956,6 +977,16 @@ fn env_key(kind: &ProviderKind) -> Option<String> {
         ProviderKind::Ollama => None,
         ProviderKind::Custom(_) => None,
     }
+}
+
+pub(crate) fn resolved_api_key(provider: &ModelProvider) -> Option<String> {
+    provider
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| env_key(&provider.kind))
 }
 
 #[cfg(test)]

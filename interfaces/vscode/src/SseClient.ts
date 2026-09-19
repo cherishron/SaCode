@@ -1,4 +1,18 @@
-import { CreateTaskResponse, DaemonConfig, PendingApprovalEntry, SSEEvent, TaskResult, TaskStatus } from './types';
+import {
+    TASK_PROTOCOL_VERSION,
+    isProtocolVersionSupported,
+    normalizeExecutionMode,
+    parseTaskSnapshot,
+} from './taskProtocol';
+import type { ExecutionModeInput, TaskCreateRequest } from './taskProtocol';
+import {
+    CreateTaskResponse,
+    DaemonConfig,
+    PendingApprovalEntry,
+    SSEEvent,
+    TaskResult,
+    TaskStatus,
+} from './types';
 
 export const MINIMUM_DAEMON_VERSION = '1.1.1';
 
@@ -6,6 +20,9 @@ export interface DaemonHealth {
     status: string;
     version: string;
 }
+
+/** 协议版本不兼容：客户端能力低于 daemon 响应声明 */
+export class ProtocolCompatibilityError extends Error {}
 
 export function daemonHealthError(health: DaemonHealth): string | null {
     if (health.status !== 'healthy') {
@@ -16,6 +33,16 @@ export function daemonHealthError(health: DaemonHealth): string | null {
         return `SaCode daemon ${version} is incompatible. Upgrade to ${MINIMUM_DAEMON_VERSION} or newer.`;
     }
     return null;
+}
+
+/**
+ * 校验 daemon 声明的协议版本与扩展能力是否匹配。
+ * 缺失或未知协议版本视为不兼容，明确失败而不是静默降级。
+ */
+export function protocolVersionError(version: unknown): string | null {
+    if (isProtocolVersionSupported(version)) return null;
+    const actual = typeof version === 'number' ? String(version) : 'missing';
+    return `SaCode protocol version ${actual} is unsupported by this extension (supports ${TASK_PROTOCOL_VERSION}). Upgrade the SaCode extension or daemon.`;
 }
 
 export function isVersionAtLeast(actual: string, minimum: string): boolean {
@@ -66,8 +93,8 @@ async function responseError(response: Response, action: string): Promise<Error>
         const body = await response.text();
         if (body) {
             try {
-                const parsed = JSON.parse(body);
-                detail = parsed.error || parsed.message || body;
+                const parsed: unknown = JSON.parse(body);
+                detail = errorText(parsed) || body;
             } catch {
                 detail = body;
             }
@@ -78,6 +105,13 @@ async function responseError(response: Response, action: string): Promise<Error>
 
     const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
     return new Error(`${action} failed (${status})${detail ? `: ${detail}` : ''}`);
+}
+
+function errorText(value: unknown): string {
+    if (!isRecord(value)) return '';
+    if (typeof value.error === 'string') return value.error;
+    if (typeof value.message === 'string') return value.message;
+    return '';
 }
 
 export function parseSseFrame(frame: string): SSEEvent | null {
@@ -99,11 +133,142 @@ export function parseSseFrame(frame: string): SSEEvent | null {
 
     if (dataLines.length === 0) return null;
     try {
-        const data = JSON.parse(dataLines.join('\n'));
-        return { event, data, ...(id !== undefined ? { id } : {}), task_id: data.task_id };
+        const data: unknown = JSON.parse(dataLines.join('\n'));
+        const eventTaskId = extractTaskId(data);
+        return {
+            event,
+            data,
+            ...(id !== undefined ? { id } : {}),
+            ...(eventTaskId !== undefined ? { task_id: eventTaskId } : {}),
+        };
     } catch {
         return null;
     }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractTaskId(value: unknown): string | undefined {
+    if (!isRecord(value)) return undefined;
+    const taskId = value.task_id;
+    return typeof taskId === 'string' && taskId.length > 0 ? taskId : undefined;
+}
+
+/** 校验协议版本后解析 /task 创建响应；版本不兼容时抛 ProtocolCompatibilityError */
+export function parseTaskResponse(body: unknown): CreateTaskResponse {
+    if (!isRecord(body)) {
+        throw new Error('Task creation returned an unexpected response body');
+    }
+    const error = protocolVersionError(body.protocol_version);
+    if (error) throw new ProtocolCompatibilityError(error);
+    if (typeof body.task_id !== 'string' || typeof body.status !== 'string') {
+        throw new Error('Task creation response is missing task_id or status');
+    }
+    const taskSnapshot = parseTaskSnapshot(body.task);
+    return {
+        protocol_version: body.protocol_version as number,
+        task_id: body.task_id,
+        status: body.status,
+        message: typeof body.message === 'string' ? body.message : '',
+        queue_status: typeof body.queue_status === 'string' ? body.queue_status : '',
+        ...(taskSnapshot !== null ? { task: taskSnapshot } : {}),
+    };
+}
+
+/** 解析 /task/:id/result 响应：字段缺失时按协议错误处理 */
+export function parseTaskResult(body: unknown): TaskResult {
+    if (
+        !isRecord(body) ||
+        typeof body.task_id !== 'string' ||
+        typeof body.status !== 'string' ||
+        typeof body.response !== 'string'
+    ) {
+        throw new Error('Task result returned an unexpected response body');
+    }
+    const facts = body.learned_facts;
+    return {
+        task_id: body.task_id,
+        response: body.response,
+        status: body.status,
+        learned_facts: Array.isArray(facts) ? facts.filter(isString) : [],
+    };
+}
+
+/**
+ * 解析任务状态响应：嵌套快照可解析时返回 TaskSnapshot，否则降级为 null。
+ * 顶层状态字段缺失时按协议错误处理，协议版本声明存在但不受支持时明确失败。
+ */
+export function parseTaskStatusBody(body: unknown): TaskStatus {
+    if (!isRecord(body)) {
+        throw new Error('Task status returned an unexpected response body');
+    }
+    const protocolError = body.protocol_version === undefined
+        ? null
+        : protocolVersionError(body.protocol_version);
+    if (protocolError) throw new ProtocolCompatibilityError(protocolError);
+    if (typeof body.task_id !== 'string' || typeof body.status !== 'string') {
+        throw new Error('Task status response is missing task_id or status');
+    }
+    return {
+        task_id: body.task_id,
+        status: body.status,
+        queue_status: typeof body.queue_status === 'string' ? body.queue_status : undefined,
+        prompt: typeof body.prompt === 'string' ? body.prompt : undefined,
+        mode: typeof body.mode === 'string' ? body.mode : undefined,
+        error: typeof body.error === 'string' ? body.error : undefined,
+        output: typeof body.output === 'string' ? body.output : undefined,
+        duration_ms: typeof body.duration_ms === 'number' ? body.duration_ms : undefined,
+        protocol_version: typeof body.protocol_version === 'number' ? body.protocol_version : undefined,
+        task: parseTaskSnapshot(body.task),
+    };
+}
+
+function isString(value: unknown): value is string {
+    return typeof value === 'string';
+}
+
+function numberField(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/** 解析待审批条目：非法条目跳过，不中断其余条目 */
+function parsePendingApproval(value: unknown): PendingApprovalEntry | null {
+    if (!isRecord(value)) return null;
+    if (
+        typeof value.approval_id !== 'string' ||
+        typeof value.task_id !== 'string' ||
+        typeof value.tool_name !== 'string'
+    ) {
+        return null;
+    }
+    return {
+        approval_id: value.approval_id,
+        task_id: value.task_id,
+        tool_name: value.tool_name,
+        side_effect_level: typeof value.side_effect_level === 'string'
+            ? value.side_effect_level
+            : 'Unknown',
+        args: isRecord(value.args) ? value.args : {},
+        waited_secs: numberField(value.waited_secs) ?? 0,
+        timeout_secs: numberField(value.timeout_secs) ?? 0,
+        expires_in_secs: numberField(value.expires_in_secs) ?? 0,
+    };
+}
+
+/** 解析审批列表：结构缺失或非法时安全降级为已解析子集 */
+export function parseApprovalList(body: unknown): PendingApprovalEntry[] {
+    if (!isRecord(body) || !Array.isArray(body.approvals)) return [];
+    return body.approvals
+        .map(parsePendingApproval)
+        .filter((entry): entry is PendingApprovalEntry => entry !== null);
+}
+
+/** 解析工具列表：非字符串项跳过 */
+export function parseToolList(body: unknown): string[] {
+    if (!isRecord(body) || !Array.isArray(body.tools)) return [];
+    return body.tools.filter(isString);
 }
 
 export class SseClient {
@@ -129,8 +294,8 @@ export class SseClient {
             return { status: `http_${res.status}`, version: '' };
         }
         try {
-            const body = await res.json() as Partial<DaemonHealth>;
-            if (typeof body.status !== 'string') {
+            const body: unknown = await res.json();
+            if (!isRecord(body) || typeof body.status !== 'string') {
                 return { status: 'invalid_response', version: '' };
             }
             return {
@@ -147,26 +312,38 @@ export class SseClient {
         return health !== null && daemonHealthError(health) === null;
     }
 
-    async createTask(prompt: string, mode: string = 'build'): Promise<CreateTaskResponse> {
+    async createTask(
+        prompt: string,
+        mode: ExecutionModeInput = 'build',
+        workspaceRoot?: string,
+    ): Promise<CreateTaskResponse> {
+        const request: TaskCreateRequest = {
+            schema_version: TASK_PROTOCOL_VERSION,
+            prompt,
+            mode: normalizeExecutionMode(mode),
+            source: 'vscode',
+            workspace: { root: workspaceRoot ?? '.' },
+            explicit_contexts: [],
+        };
         const res = await fetch(`${this.baseUrl}/task`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, mode }),
+            body: JSON.stringify(request),
         });
         if (!res.ok) throw await responseError(res, 'Task creation');
-        return res.json() as Promise<CreateTaskResponse>;
+        return parseTaskResponse(await res.json());
     }
 
     async getTaskStatus(taskId: string): Promise<TaskStatus> {
         const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/status`);
         if (!res.ok) throw await responseError(res, 'Task status request');
-        return res.json() as Promise<TaskStatus>;
+        return parseTaskStatusBody(await res.json());
     }
 
     async getTaskResult(taskId: string): Promise<TaskResult> {
         const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/result`);
         if (!res.ok) throw await responseError(res, 'Task result request');
-        return res.json() as Promise<TaskResult>;
+        return parseTaskResult(await res.json());
     }
 
     async cancelTask(taskId: string): Promise<void> {
@@ -200,15 +377,13 @@ export class SseClient {
     async listApprovals(taskId: string): Promise<PendingApprovalEntry[]> {
         const res = await fetch(`${this.baseUrl}/task/${encodeURIComponent(taskId)}/approvals`);
         if (!res.ok) throw await responseError(res, 'Approval list request');
-        const data = await res.json() as { approvals?: PendingApprovalEntry[] };
-        return data.approvals || [];
+        return parseApprovalList(await res.json());
     }
 
     async listTools(): Promise<string[]> {
         const res = await fetch(`${this.baseUrl}/tools`);
         if (!res.ok) throw await responseError(res, 'Tool list request');
-        const data = await res.json() as { tools?: string[] };
-        return data.tools || [];
+        return parseToolList(await res.json());
     }
 
     /**

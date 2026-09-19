@@ -5,14 +5,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use sacode_kernel::model::ModelProvider;
+use sacode_kernel::model::{ModelProvider, ProviderValidationStatus};
 use sacode_runtime::{
     build_route_plan_from_candidates, resolve_config_model_candidates, ModelRoutePlan, TaskProfile,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::provider_config::{
-    provider_spec_to_model_provider, NamedProviderConfig, ProviderConfigStore, SaCodeConfigStore,
+    provider_spec_to_model_provider, NamedProviderConfig, ProviderConfig, ProviderConfigStore,
+    SaCodeConfigStore,
 };
 
 const MODEL_HEALTH_FILE: &str = ".sacode/model-health.json";
@@ -40,6 +41,27 @@ struct ModelHealthEntry {
 pub fn resolve_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
     let store = ProviderConfigStore::new(workdir);
     store.load_current().ok().flatten()
+}
+
+pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
+    let store = SaCodeConfigStore::new(workdir);
+    let config = store.load_effective().ok()?;
+    let (provider_name, model_name) = config.resolve_model(&config.model)?;
+    let state = config.provider_state.get(&provider_name)?;
+    if state.validation.status != ProviderValidationStatus::Available
+        || !state.authorization.permits_model(&model_name)
+    {
+        return None;
+    }
+    let spec = config.provider.get(&provider_name)?;
+    Some(NamedProviderConfig {
+        name: provider_name,
+        config: ProviderConfig {
+            base_url: spec.base_url.clone(),
+            api_key: spec.api_key.clone(),
+            model: model_name,
+        },
+    })
 }
 
 pub fn record_model_health(
@@ -160,6 +182,10 @@ pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelPro
     }
 
     candidates
+}
+
+pub fn has_authorized_provider(workdir: &Path) -> bool {
+    resolve_authorized_named_provider(workdir).is_some()
 }
 
 pub fn build_route_plan(
@@ -362,5 +388,83 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("override")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_authorized_named_provider_requires_available_and_authorized() {
+        use sacode_kernel::model::{
+            ProviderAuthorization, ProviderAuthorizationSource, ProviderProfileType,
+            ProviderRuntimeState, ProviderValidationSnapshot,
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let workdir = std::env::temp_dir().join(format!("sacode-authz-{unique}"));
+        std::fs::create_dir_all(workdir.join(".sacode")).expect("create workdir");
+        let user_sandbox = std::env::temp_dir().join(format!("sacode-authz-home-{unique}"));
+        std::fs::create_dir_all(&user_sandbox).expect("create user sandbox");
+        std::env::set_var("USERPROFILE", &user_sandbox);
+        std::env::set_var("HOME", &user_sandbox);
+
+        let mut models = BTreeMap::new();
+        models.insert("model-a".to_string(), ModelRule::default());
+        let store = SaCodeConfigStore::new(&workdir);
+        let mut config = store.load_or_default().expect("load default config");
+        config.provider.insert(
+            "p".to_string(),
+            ProviderSpec {
+                name: "P".to_string(),
+                base_url: "https://p.example/v1".to_string(),
+                api_key: String::new(),
+                models,
+            },
+        );
+        config.provider_state.insert(
+            "p".to_string(),
+            ProviderRuntimeState {
+                profile_type: ProviderProfileType::Preset,
+                credential_ref: None,
+                validation: ProviderValidationSnapshot::default(),
+                authorization: ProviderAuthorization::legacy_current(),
+            },
+        );
+        config.model = "p/model-a".to_string();
+        store.save(&config).expect("save config");
+
+        assert!(
+            resolve_authorized_named_provider(&workdir).is_none(),
+            "unverified provider must not count as available and authorized"
+        );
+
+        let mut config = store.load_or_default().expect("reload config");
+        config
+            .provider_state
+            .get_mut("p")
+            .expect("provider state")
+            .validation
+            .status = ProviderValidationStatus::Available;
+        store.save(&config).expect("save available state");
+
+        let named = resolve_authorized_named_provider(&workdir)
+            .expect("available provider with legacy authorization must resolve");
+        assert_eq!(named.name, "p");
+        assert_eq!(named.config.model, "model-a");
+
+        let mut config = store.load_or_default().expect("reload config");
+        let state = config.provider_state.get_mut("p").expect("provider state");
+        state.authorization.source = ProviderAuthorizationSource::Explicit;
+        state.authorization.models = vec!["model-z".to_string()];
+        store.save(&config).expect("save scoped authorization");
+
+        assert!(
+            resolve_authorized_named_provider(&workdir).is_none(),
+            "model outside authorization scope must not resolve"
+        );
+
+        let _ = std::fs::remove_dir_all(&workdir);
+        let _ = std::fs::remove_dir_all(&user_sandbox);
     }
 }

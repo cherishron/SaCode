@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::executor::task_runner::{ApprovalDecider, ApprovalDecision};
 use crate::tools::SideEffectLevel;
-use sacode_kernel::ExecutionMode;
+use sacode_kernel::{ExecutionMode, TASK_PROTOCOL_VERSION};
 
 use super::events::emit_event;
 use super::{ApprovalResolution, DaemonState, PendingApproval};
@@ -23,6 +23,7 @@ pub async fn list_task_approvals(
 ) -> Json<serde_json::Value> {
     let approvals = state.list_pending_approvals(&task_id).await;
     Json(serde_json::json!({
+        "protocol_version": TASK_PROTOCOL_VERSION,
         "task_id": task_id,
         "approvals": approvals,
     }))
@@ -210,6 +211,7 @@ pub async fn resolve_approval(
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
+                    "protocol_version": TASK_PROTOCOL_VERSION,
                     "task_id": task_id,
                     "approval_id": approval_id,
                     "status": "resolved",

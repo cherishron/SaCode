@@ -78,6 +78,9 @@ async fn test_daemon_task_lifecycle() {
     let task_id = payload["task_id"].as_str().expect("task id").to_string();
 
     assert_eq!(payload["status"], "queued");
+    assert_eq!(payload["protocol_version"], TASK_PROTOCOL_VERSION);
+    assert_eq!(payload["task"]["task_id"], task_id);
+    assert!(payload["task"]["state"] == "pending" || payload["task"]["state"] == "running");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -99,6 +102,8 @@ async fn test_daemon_task_lifecycle() {
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
 
     assert_eq!(payload["task_id"], task_id);
+    assert_eq!(payload["protocol_version"], TASK_PROTOCOL_VERSION);
+    assert_eq!(payload["task"]["task_id"], task_id);
     assert!(matches!(
         payload["queue_status"].as_str(),
         Some("pending") | Some("ready") | Some("running") | Some("completed") | Some("failed")
@@ -410,6 +415,10 @@ async fn test_daemon_api_stream_task_event_contains_normalized_fields() {
 
         assert!(event_payload.get("payload").is_some());
         assert!(event_payload.get("event_type").is_some());
+        assert_eq!(
+            event_payload["protocol_version"],
+            serde_json::json!(TASK_PROTOCOL_VERSION)
+        );
         saw_matching_event = true;
         break;
     }
@@ -462,6 +471,11 @@ async fn test_daemon_status_and_result_include_task_run() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(status_payload.get("task_run").is_some());
+    assert_eq!(
+        status_payload["protocol_version"],
+        serde_json::json!(TASK_PROTOCOL_VERSION)
+    );
+    assert!(status_payload.get("task").is_some());
 
     let mut result_payload = serde_json::Value::Null;
     for _ in 0..10 {
@@ -485,6 +499,11 @@ async fn test_daemon_status_and_result_include_task_run() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(result_payload.get("task_run").is_some());
+    assert_eq!(
+        result_payload["protocol_version"],
+        serde_json::json!(TASK_PROTOCOL_VERSION)
+    );
+    assert!(result_payload.get("task").is_some());
 }
 
 #[tokio::test]
@@ -793,6 +812,44 @@ async fn test_task_queue_cancel() {
 
     let status = queue.status(&task_id).await;
     assert_eq!(status, Some(TaskQueueStatus::Cancelled));
+
+    let repeated = queue.cancel(&task_id).await;
+    assert!(!repeated);
+    assert_eq!(
+        queue.status(&task_id).await,
+        Some(TaskQueueStatus::Cancelled)
+    );
+}
+
+#[tokio::test]
+async fn test_task_queue_terminal_state_is_not_overwritten() {
+    let queue = Arc::new(TaskQueue::new(1));
+    let task = ScheduledTask::new(
+        "terminal-absorbing-1".to_string(),
+        Task::new("terminal test", ExecutionMode::Build, None),
+    );
+    let task_id = queue.submit(task).await.expect("submit task");
+    let _ = queue.next_ready().await.expect("ready task");
+
+    assert!(queue.cancel(&task_id).await);
+    let applied = queue
+        .mark_completed(
+            &task_id,
+            sacode_kernel::TaskResult::success(task_id.clone(), "done".to_string(), 1),
+            sacode_kernel::TaskRun {
+                task_id: Some(task_id.clone()),
+                state: Some(sacode_kernel::TaskRunState::Completed),
+                ..sacode_kernel::TaskRun::default()
+            },
+        )
+        .await;
+
+    assert!(!applied);
+    assert_eq!(
+        queue.status(&task_id).await,
+        Some(TaskQueueStatus::Cancelled)
+    );
+    assert!(queue.get_result(&task_id).await.is_none());
 }
 
 #[tokio::test]
@@ -1244,6 +1301,7 @@ async fn test_daemon_task_cancel_endpoint() {
 
     assert_eq!(status_payload["status"], "cancelled");
     assert_eq!(status_payload["queue_status"], "cancelled");
+    assert_eq!(status_payload["task"]["terminal_outcome"], "cancelled");
     assert_eq!(
         status_payload["task_run"]["state"].as_str(),
         Some("Cancelled")

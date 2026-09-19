@@ -35,7 +35,7 @@ sacode                              # open the default TUI
 sacode repl                         # open REPL
 sacode "fix the failing tests"      # run a build task
 sacode "design a refactor plan" --mode plan
-sacode "format this repository" --mode yolo
+sacode "format this repository" --mode auto
 git diff | sacode "write a commit message"
 ```
 
@@ -44,7 +44,7 @@ git diff | sacode "write a commit message"
 - `Ctrl+Q`: quit
 - `Esc`: clear input or cancel current execution
 - `Ctrl+T`: toggle thinking
-- `Ctrl+M`: switch `plan` / `build` / `yolo`
+- `Ctrl+M`: switch `plan` / `build` / `auto`
 
 ## Built-in Commands
 
@@ -71,12 +71,16 @@ SaCode stores project runtime data in `.sacode/`:
 └── checkpoints/
 ```
 
-## Supported Platforms
+## Platform Status
 
-- Linux x64
-- Windows x64
-- macOS x64 (Intel)
-- macOS arm64 (Apple Silicon)
+| Platform | Build Status | Support Status | Notes |
+|---|---|---|---|
+| Linux x64 | 已验收 | 已验收 | Official release platform |
+| Windows x64 | 已验收 | 已验收 | Official release platform |
+| macOS x64 | 已验收 | 部分验收 | Build configured; real Intel installation validation pending |
+| macOS arm64 | 已验收 | 部分验收 | Build configured; real Apple Silicon installation validation pending |
+
+The legacy input value `yolo` remains accepted for compatibility, but user-facing examples and output use `auto`.
 
 ## More Docs
 

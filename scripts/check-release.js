@@ -112,7 +112,8 @@ function verifyPackedNpmContents(npmDir, filesToVerify, expectedMap, expectedVer
   });
   let tarList;
   try {
-    tarList = execFileSync('tar', ['-tf', tarballPath], {
+    tarList = execFileSync('tar', ['-tf', tarballName], {
+      cwd: npmDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -132,7 +133,8 @@ function verifyPackedNpmContents(npmDir, filesToVerify, expectedMap, expectedVer
   if (currentBinary) {
     const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sacode-pack-'));
     try {
-      execFileSync('tar', ['-xf', tarballPath, '-C', tempDir, `package/platforms/${currentBinary}`], {
+      execFileSync('tar', ['-xf', tarballName, '-C', tempDir, `package/platforms/${currentBinary}`], {
+        cwd: npmDir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       verifyCurrentPlatformBinaryVersion(path.join(tempDir, 'package', 'platforms'), expectedMap, expectedVersion);
@@ -182,8 +184,24 @@ if (!readme.includes('npm install -g @cherishron/sacode')) {
   fail('npm README install command is out of date');
 }
 
-if (!readme.includes('- Linux x64') || !readme.includes('- Windows x64') || !readme.includes('- macOS x64') || !readme.includes('- macOS arm64')) {
-  fail('npm README supported platform list is incomplete');
+const SUPPORTED_RELEASE_PLATFORMS = ['Linux x64', 'Windows x64'];
+const platformRows = readme
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .filter((line) => line.startsWith('|'))
+  .map((line) => line.split('|').map((cell) => cell.trim()).slice(1, -1))
+  .filter((cells) => cells.length >= 4 && !cells.every((cell) => /^:?-+:?$/.test(cell)));
+const platformSupport = (name) => ((platformRows.find((cells) => cells[0] === name) || [])[2]) || null;
+
+for (const platform of SUPPORTED_RELEASE_PLATFORMS) {
+  if (platformSupport(platform) !== '已验收') {
+    fail(`npm README must list ${platform} as an accepted support platform`);
+  }
+}
+for (const cells of platformRows) {
+  if (!SUPPORTED_RELEASE_PLATFORMS.includes(cells[0]) && cells[2] === '已验收') {
+    fail(`npm README must not claim ${cells[0]} as an accepted release platform`);
+  }
 }
 
 if (JSON.stringify(launcherMap) !== JSON.stringify(expectedMap)) {

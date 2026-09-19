@@ -1,0 +1,19 @@
+{
+  "schema_version": 0,
+  "task_id": "task-legacy",
+  "mode": "build",
+  "source": "vscode",
+  "state": "completed",
+  "phase": "finished",
+  "terminal_outcome": "success",
+  "failure": null,
+  "result": null,
+  "validation": null,
+  "route": null,
+  "timestamps": {
+    "created_at": null,
+    "started_at": null,
+    "updated_at": null,
+    "finished_at": null
+  }
+}

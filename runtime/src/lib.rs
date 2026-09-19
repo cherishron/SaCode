@@ -3,6 +3,7 @@ pub mod checkpoint;
 pub mod config;
 pub mod daemon;
 pub mod executor;
+pub mod failure;
 pub mod hook;
 pub mod mcp;
 pub mod memory;
@@ -19,6 +20,7 @@ pub mod session;
 pub mod skills;
 pub mod store;
 pub mod streaming;
+pub mod task_protocol;
 pub mod tools;
 pub mod wiki;
 pub mod workspace;
@@ -57,6 +59,7 @@ pub use executor::task_runner::{
     StreamEventKind, StreamHandler, TaskRunConfig, TaskRunResult,
 };
 pub use executor::{ApprovalFactory, ExecutorEvent, TaskExecutor};
+pub use failure::{classify_failure, classify_provider_failure, provider_failure_detail};
 pub use hook::{HookExecutor, LoggingHook};
 pub use mcp::{
     call_mcp_tool_sync, call_tool as call_mcp_tool, find_enabled_search_tool,
@@ -109,6 +112,9 @@ pub use skills::hub::{
 };
 pub use skills::{SkillRegistry, SkillSource, SkillSpec};
 pub use store::StoreDb;
+pub use task_protocol::{
+    assemble_checkpoint_snapshot, assemble_task_snapshot, TaskSnapshotProjection,
+};
 pub use tools::{SideEffectLevel, ToolLayer, ToolOutput, ToolRegistry};
 pub use wiki::{inspect_wiki, load_wiki_context, WikiContext, WikiSourceStatus, WikiStatus};
 pub use workspace::{FileInfo, WorkspaceInfo, WorkspaceScanner};

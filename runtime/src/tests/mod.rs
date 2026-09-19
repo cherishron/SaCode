@@ -28,6 +28,7 @@ use crate::{
 };
 use sacode_kernel::{
     ExecutionMode, RetryPolicy, ScheduledTask, Task, TaskPriority, TaskQueueStatus,
+    TASK_PROTOCOL_VERSION,
 };
 
 mod approval_flow;
@@ -35,6 +36,7 @@ mod daemon_queue;
 mod interceptor;
 mod mcp_stdio;
 mod sandbox;
+mod task_protocol_fixtures;
 mod task_run;
 mod tools;
 mod wiki;

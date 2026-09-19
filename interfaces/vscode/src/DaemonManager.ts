@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
-import { daemonHealthError, SseClient } from './SseClient';
+import { daemonHealthError, MINIMUM_DAEMON_VERSION, SseClient } from './SseClient';
+import { TASK_PROTOCOL_VERSION } from './taskProtocol';
 
 /**
  * Daemon 进程自动管理器
@@ -97,7 +98,7 @@ export class DaemonManager implements vscode.Disposable {
                     'SaCode daemon started but health check failed. Check sacode serve output.'
                 );
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             if (this.process) {
                 this.process.removeAllListeners('exit');
                 this.process.kill();
@@ -134,7 +135,7 @@ export class DaemonManager implements vscode.Disposable {
         switch (this.state) {
             case 'running':
                 this.statusBarItem.text = '$(check) SaCode';
-                this.statusBarItem.tooltip = 'SaCode daemon: running';
+                this.statusBarItem.tooltip = `SaCode daemon: running\n协议版本 ${TASK_PROTOCOL_VERSION} · 最低 Daemon ${MINIMUM_DAEMON_VERSION}`;
                 this.statusBarItem.show();
                 break;
             case 'starting':

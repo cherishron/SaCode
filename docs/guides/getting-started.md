@@ -26,11 +26,16 @@ sudo mv sacode /usr/local/bin/
 sacode --version
 ```
 
-### 支持平台
+### 平台状态
 
-- Linux x64
-- Windows x64
-- macOS（计划中，详见 [路线图](../product/roadmap.md)）
+| 平台 | 构建状态 | 正式支持状态 | 说明 |
+|---|---|---|---|
+| Linux x64 | 已验收 | 已验收 | 正式发布平台 |
+| Windows x64 | 已验收 | 已验收 | 正式发布平台 |
+| macOS x64 | 已验收 | 部分验收 | 已纳入构建，等待真实发布产物和 Intel 环境安装验收 |
+| macOS arm64 | 已验收 | 部分验收 | 已纳入构建，等待真实发布产物和 Apple Silicon 环境安装验收 |
+
+平台状态以 [产品状态清单](../product/status.json) 为准。“已构建”不等同于“已完成真实平台安装验收”。
 
 ### 常见安装问题
 

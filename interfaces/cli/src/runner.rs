@@ -7,15 +7,16 @@ use std::{
 use anyhow::Result;
 use sacode_kernel::model::ChatUsage;
 use sacode_kernel::{
-    generate_task_id, Event, ExecutionMode, ExecutionReport, TaskRun, TaskRunState,
+    generate_task_id, EntrySource, Event, ExecutionMode, ExecutionReport, TaskQueueStatus, TaskRun,
+    TaskRunState, TaskSnapshot,
 };
 use sacode_runtime::{
-    build_runtime_system_prompt, execute_task_with_failover, infer_task_run_state,
-    maybe_expand_skill_prompt, register_enabled_mcp_tools_sync, task_run_from_report,
-    ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder, McpConfigStore,
-    PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
+    assemble_task_snapshot, build_runtime_system_prompt, execute_task_with_failover,
+    infer_task_run_state, maybe_expand_skill_prompt, register_enabled_mcp_tools_sync,
+    task_run_from_report, ApprovalDecider, AutoApproveDecider, AutoDenyDecider, ErrorRecorder,
+    McpConfigStore, PromptContext, PromptUserDecider, SandboxConfigStore, SandboxPolicy,
     StreamEventKind as RuntimeStreamEventKind, StreamHandler, TaskProfile, TaskRunConfig,
-    ToolRegistry,
+    TaskSnapshotProjection, ToolRegistry,
 };
 use serde::Serialize;
 
@@ -68,6 +69,35 @@ pub struct RunnerOutput {
 impl RunnerOutput {
     pub fn effective_state(&self) -> TaskRunState {
         self.task_run.state.clone().unwrap_or(TaskRunState::Failed)
+    }
+
+    pub fn task_snapshot(&self, source: EntrySource) -> TaskSnapshot {
+        let queue_status = match self.effective_state() {
+            TaskRunState::Completed => TaskQueueStatus::Completed,
+            TaskRunState::Failed => TaskQueueStatus::Failed,
+            TaskRunState::Cancelled => TaskQueueStatus::Cancelled,
+            TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval => {
+                TaskQueueStatus::Running
+            }
+        };
+        assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: self.task_run.task_id.as_deref().unwrap_or("unknown"),
+            mode: self.mode,
+            source,
+            queue_status: Some(queue_status),
+            task_run: Some(&self.task_run),
+            output: self.provider_response.as_ref().ok().map(String::as_str),
+            error: self.provider_response.as_ref().err().map(String::as_str),
+        })
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        match self.effective_state() {
+            TaskRunState::Completed => 0,
+            TaskRunState::Failed => 2,
+            TaskRunState::Cancelled => 130,
+            TaskRunState::WaitingForUser | TaskRunState::WaitingForApproval => 0,
+        }
     }
 
     pub fn from_execution_report(
@@ -359,9 +389,10 @@ fn elapsed_ms(duration: Duration) -> u64 {
 // ── 输出格式化 ──────────────────────────────────────────────────
 
 pub fn format_output(output: &RunnerOutput) -> String {
+    let snapshot = output.task_snapshot(EntrySource::Cli);
     let mut lines = vec![
         "SaCode".to_string(),
-        format!("Mode: {:?}", output.mode),
+        format!("Mode: {}", output.mode),
         format!("Max Iterations: {}", output.max_iterations),
         format!("Task: {}", output.prompt),
         format!("Workspace: {}", output.workspace),
@@ -376,7 +407,18 @@ pub fn format_output(output: &RunnerOutput) -> String {
         Err(error) => lines.push(format!("Provider: {}", error)),
     }
 
-    lines.push(format!("State: {:?}", output.effective_state()));
+    lines.push(format!("State: {}", snapshot.state));
+    lines.push(format!("Phase: {:?}", snapshot.phase));
+    if let Some(failure) = snapshot.failure {
+        lines.push(format!("Failure: {}", failure.code));
+        lines.push(format!("Action: {:?}", failure.suggested_action));
+    }
+    if let Some(route) = snapshot.route {
+        lines.push(format!("Route: {}/{}", route.provider, route.model));
+    }
+    if let Some(validation) = snapshot.validation {
+        lines.push(format!("Validation: {:?}", validation.status));
+    }
 
     if let Some(question) = &output.pending_question {
         lines.push("Pending Question:".to_string());
@@ -475,7 +517,22 @@ pub fn format_chat_output(output: &RunnerOutput) -> String {
 }
 
 pub fn format_stream_tail(output: &RunnerOutput) -> String {
-    let mut lines = vec![format!("State: {:?}", output.effective_state())];
+    let snapshot = output.task_snapshot(EntrySource::Cli);
+    let mut lines = vec![
+        format!("State: {}", snapshot.state),
+        format!("Phase: {:?}", snapshot.phase),
+    ];
+
+    if let Some(failure) = snapshot.failure {
+        lines.push(format!("Failure: {}", failure.code));
+        lines.push(format!("Action: {:?}", failure.suggested_action));
+    }
+    if let Some(route) = snapshot.route {
+        lines.push(format!("Route: {}/{}", route.provider, route.model));
+    }
+    if let Some(validation) = snapshot.validation {
+        lines.push(format!("Validation: {:?}", validation.status));
+    }
 
     if let Some(question) = &output.pending_question {
         lines.push("Pending Question:".to_string());
@@ -797,7 +854,8 @@ mod tests {
         };
 
         let text = format_output(&output);
-        assert!(text.contains("State: Completed"));
+        assert!(text.contains("State: completed"));
+        assert!(text.contains("Mode: build"));
     }
 
     #[test]
@@ -832,7 +890,7 @@ mod tests {
         };
 
         let text = format_output(&output);
-        assert!(text.contains("State: Completed"));
+        assert!(text.contains("State: completed"));
     }
 
     #[test]
@@ -867,7 +925,7 @@ mod tests {
         };
 
         let text = format_stream_tail(&output);
-        assert!(text.contains("State: Completed"));
+        assert!(text.contains("State: completed"));
         assert!(!text.contains("Provider Response"));
         assert!(!text.contains("这里是完整模型正文"));
     }
@@ -897,5 +955,85 @@ mod tests {
                 .and_then(|r| r.final_output.clone()),
             Some("编排完成".to_string())
         );
+    }
+
+    #[test]
+    fn task_snapshot_normalizes_auto_mode_and_failure() {
+        let output = RunnerOutput {
+            prompt: "测试任务".to_string(),
+            mode: ExecutionMode::Yolo,
+            max_iterations: 1,
+            tool_names: Vec::new(),
+            workspace: "/workspace".to_string(),
+            plan: Plan {
+                task: "测试任务".to_string(),
+                steps: Vec::new(),
+                mode: "auto".to_string(),
+            },
+            events: Vec::new(),
+            tool_results: Vec::new(),
+            provider_response: Err("401 api key sk-secret is invalid".to_string()),
+            learned_facts: Vec::new(),
+            pending_question: None,
+            usage: None,
+            hit_round_limit: false,
+            api_duration_ms: 0,
+            tool_duration_ms: 0,
+            total_duration_ms: 0,
+            task_run: TaskRun {
+                task_id: Some("task-1".to_string()),
+                mode: Some(ExecutionMode::Yolo),
+                state: Some(TaskRunState::Failed),
+                ..TaskRun::default()
+            },
+        };
+
+        let snapshot = output.task_snapshot(sacode_kernel::EntrySource::Automation);
+        let value = serde_json::to_value(snapshot).expect("serialize snapshot");
+        assert_eq!(value["mode"], "auto");
+        assert_eq!(value["terminal_outcome"], "failure");
+        assert_eq!(value["failure"]["code"], "provider/authentication");
+        assert!(!value.to_string().contains("sk-secret"));
+        assert_eq!(output.exit_code(), 2);
+    }
+
+    #[test]
+    fn exit_codes_follow_automation_contract() {
+        let states = [
+            (TaskRunState::Completed, 0),
+            (TaskRunState::Failed, 2),
+            (TaskRunState::Cancelled, 130),
+            (TaskRunState::WaitingForApproval, 0),
+        ];
+
+        for (state, expected) in states {
+            let output = RunnerOutput {
+                prompt: "task".to_string(),
+                mode: ExecutionMode::Build,
+                max_iterations: 1,
+                tool_names: Vec::new(),
+                workspace: "/workspace".to_string(),
+                plan: Plan {
+                    task: "task".to_string(),
+                    steps: Vec::new(),
+                    mode: "build".to_string(),
+                },
+                events: Vec::new(),
+                tool_results: Vec::new(),
+                provider_response: Ok(String::new()),
+                learned_facts: Vec::new(),
+                pending_question: None,
+                usage: None,
+                hit_round_limit: false,
+                api_duration_ms: 0,
+                tool_duration_ms: 0,
+                total_duration_ms: 0,
+                task_run: TaskRun {
+                    state: Some(state),
+                    ..TaskRun::default()
+                },
+            };
+            assert_eq!(output.exit_code(), expected);
+        }
     }
 }

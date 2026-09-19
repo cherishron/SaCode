@@ -228,6 +228,7 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::CurrentDirGuard;
 
     #[test]
     fn parses_git_push_input() {
@@ -259,22 +260,15 @@ mod tests {
 
     #[test]
     fn rejects_non_repo() {
-        // 在系统临时目录（非 git 仓库）执行
-        let temp = std::env::temp_dir();
-        let original = std::env::current_dir().unwrap();
-        // 注意：不持有 cwd_test_lock，因为这是 git 工具测试，不是 CWD 测试
-        // 且 is_inside_work_tree 在临时目录通常返回 false（除非用户全局有 git 配置）
-        let _ = std::env::set_current_dir(&temp);
-        let result = execute(serde_json::json!({}));
-        let _ = std::env::set_current_dir(&original);
-        if let Ok(output) = result {
-            // 如果临时目录恰好是 git 仓库（罕见），跳过断言
-            if !output.success {
-                assert_eq!(
-                    output.data["error_kind"], "not_a_repo",
-                    "非 git 目录应返回 not_a_repo"
-                );
-            }
-        }
+        let temp = tempfile::tempdir().expect("create non-repo temp dir");
+        let _cwd = CurrentDirGuard::enter(temp.path());
+
+        let output = execute(serde_json::json!({})).expect("execute git push");
+
+        assert!(!output.success);
+        assert_eq!(
+            output.data["error_kind"], "not_a_repo",
+            "非 git 目录应返回 not_a_repo"
+        );
     }
 }

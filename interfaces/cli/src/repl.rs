@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use sacode_kernel::model::{MIMO_TOKEN_PLAN_BASE_URL, OLLAMA_DEFAULT_BASE_URL};
+use sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL;
 use sacode_kernel::ExecutionMode;
 use sacode_runtime::{
     McpConfigStore, McpSource, ProjectAccessConfigStore, SkillRegistry, ToolRegistry,
@@ -18,7 +18,9 @@ use crate::{
         config, diff, doctor, hooks, ide, insight, keybindings, memory, outstyle, prompt, status,
         update, vim, wiki, ApprovalPolicy,
     },
+    provider_config::builtin_connect_options,
     provider_config::{ProviderConfigStore, SaCodeConfigStore},
+    provider_runtime::has_authorized_provider,
     runner::{
         format_learned_facts_summary, format_stream_tail, run_task_with_stdin_and_stream,
         StreamEventKind,
@@ -85,10 +87,14 @@ impl ReplSession {
             println!("{}", update_prompt(&current_version, &remote_version));
             println!();
         }
-        if self.sacode_store.current_provider_name()?.is_none() {
+        if !has_authorized_provider(&workdir) {
             println!();
-            println!("⚠️  未配置模型服务。输入 /login 选择 provider 并配置 API Key 后开始使用。");
+            println!("未检测到可用且已授权的 Provider，进入首次配置引导。");
             println!();
+            if let Err(error) = self.connect_provider() {
+                println!("Provider 配置未完成：{}", error);
+                println!("可再次运行 /connect 重试，或使用 /login 配置自定义 Provider。");
+            }
         }
         let stdin = io::stdin();
         let mut lines = stdin.lock().lines();
@@ -973,37 +979,31 @@ impl ReplSession {
         println!();
         println!("Quick Connect - Preset Providers:");
         println!();
-        println!("  1. Ollama (Local)");
-        println!("     URL: {}", OLLAMA_DEFAULT_BASE_URL);
-        println!();
-        println!("  2. DeepSeek");
-        println!("     URL: https://api.deepseek.com/v1");
-        println!();
-        println!("  3. Xiaomi MiMo (Token Plan)");
-        println!("     URL: {MIMO_TOKEN_PLAN_BASE_URL}");
-        println!();
-        println!("  4. LongCat");
-        println!("     URL: https://api.longcat.chat/openai");
-        println!();
-        println!("  5. OpenAI");
-        println!("     URL: https://api.openai.com/v1");
-        println!();
+        let options = builtin_connect_options();
+        for (index, (name, base_url, needs_key)) in options.iter().enumerate() {
+            let credential = if *needs_key {
+                "需要凭据"
+            } else {
+                "本地无需凭据"
+            };
+            println!("  {}. {} ({})", index + 1, name, credential);
+            println!("     {}", base_url);
+            println!();
+        }
 
         let selection = prompt_input("Select provider number", None)?;
         let index: usize = selection
             .parse()
             .map_err(|_| anyhow::anyhow!("Invalid number"))?;
 
-        let (name, base_url) = match index {
-            1 => ("ollama", OLLAMA_DEFAULT_BASE_URL),
-            2 => ("deepseek", "https://api.deepseek.com"),
-            3 => ("mimo", MIMO_TOKEN_PLAN_BASE_URL),
-            4 => ("longcat", "https://api.longcat.chat/openai/v1"),
-            5 => ("openai", "https://api.openai.com/v1"),
-            _ => anyhow::bail!("Invalid selection: {}", index),
+        let (name, base_url, needs_key) = options
+            .get(index.saturating_sub(1))
+            .ok_or_else(|| anyhow::anyhow!("Invalid selection: {}", index))?;
+        let api_key = if *needs_key {
+            prompt_input("API Key", None)?
+        } else {
+            String::new()
         };
-
-        let api_key = prompt_input("API Key (ollama 留空即可)", None)?;
 
         let result = agent_harness::connect_provider(
             &self.provider_store,
@@ -1013,7 +1013,7 @@ impl ReplSession {
             api_key,
         )?;
         println!(
-            "Provider {} 已连接，当前默认模型: {}",
+            "Provider 已验证为 available：{} / {}",
             result.current_provider.name, result.current_provider.config.model
         );
         println!();

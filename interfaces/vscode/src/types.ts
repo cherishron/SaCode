@@ -1,17 +1,33 @@
+import type { ExecutionMode, ExecutionModeInput, TaskSnapshot } from './taskProtocol';
+
 export interface DaemonConfig {
     host: string;
     port: number;
 }
 
+/** Daemon /task 创建响应：协议版本 + 顶层兼容字段 + 嵌套任务快照 */
 export interface CreateTaskResponse {
+    protocol_version: number;
     task_id: string;
     status: string;
+    message: string;
+    queue_status: string;
+    /** 嵌套任务快照；旧 daemon 缺失或解析失败时为 undefined */
+    task?: TaskSnapshot;
 }
 
 export interface TaskStatus {
     task_id: string;
     status: string;
-    phase?: string;
+    queue_status?: string;
+    prompt?: string;
+    mode?: string;
+    error?: string | null;
+    output?: string | null;
+    duration_ms?: number | null;
+    protocol_version?: number;
+    /** 嵌套任务快照（协议版本 >= 1 时存在）；解析失败为 null */
+    task?: TaskSnapshot | null;
 }
 
 export interface TaskResult {
@@ -21,9 +37,10 @@ export interface TaskResult {
     learned_facts: string[];
 }
 
+/** SSE 事件：data 为未知边界，消费方必须用运行时校验处理 */
 export interface SSEEvent {
     event: string;
-    data: any;
+    data: unknown;
     id?: string;
     task_id?: string;
 }
@@ -38,3 +55,5 @@ export interface PendingApprovalEntry {
     timeout_secs: number;
     expires_in_secs: number;
 }
+
+export type { ExecutionMode, ExecutionModeInput, TaskSnapshot };

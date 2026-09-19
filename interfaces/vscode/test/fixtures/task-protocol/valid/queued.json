@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "task_id": "task-queued",
+  "mode": "build",
+  "source": "vscode",
+  "state": "pending",
+  "phase": "queued",
+  "terminal_outcome": null,
+  "failure": null,
+  "result": null,
+  "validation": null,
+  "route": null,
+  "timestamps": {
+    "created_at": "2026-09-18T10:00:00Z",
+    "started_at": null,
+    "updated_at": "2026-09-18T10:00:00Z",
+    "finished_at": null
+  }
+}

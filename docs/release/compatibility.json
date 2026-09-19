@@ -2,13 +2,15 @@
   "current": {
     "extension": "0.2.1",
     "cli": "1.1.1",
-    "minimumDaemonVersion": "1.1.1"
+    "minimumDaemonVersion": "1.1.1",
+    "protocolVersion": 1
   },
   "releases": [
     {
       "extension": "0.2.1",
       "cli": "1.1.1",
-      "minimumDaemonVersion": "1.1.1"
+      "minimumDaemonVersion": "1.1.1",
+      "protocolVersion": 1
     },
     {
       "extension": "0.2.0",
@@ -21,6 +23,11 @@
       "extension": "0.2.1",
       "daemon": "1.1.0",
       "reason": "extension 0.2.1 requires daemon >= 1.1.1"
+    },
+    {
+      "extension": "0.2.1",
+      "protocolVersion": 2,
+      "reason": "extension 0.2.1 supports task protocol 1 only"
     }
   ],
   "distribution": {

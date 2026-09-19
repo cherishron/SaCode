@@ -53,6 +53,186 @@ pub enum ProviderKind {
     Custom(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderProfileType {
+    Preset,
+    #[default]
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderValidationStatus {
+    #[default]
+    Unverified,
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderFailureCategory {
+    Authentication,
+    QuotaOrRateLimit,
+    ModelUnavailable,
+    Network,
+    Service,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRecoveryAction {
+    ReenterCredential,
+    CheckQuota,
+    SelectModel,
+    CheckNetwork,
+    RetryLater,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderFailure {
+    pub category: ProviderFailureCategory,
+    pub code: String,
+    pub retryable: bool,
+    pub action: ProviderRecoveryAction,
+    pub safe_message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderValidationSnapshot {
+    #[serde(default = "provider_validation_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub status: ProviderValidationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<ProviderFailure>,
+    #[serde(default)]
+    pub available_models: Vec<String>,
+}
+
+impl Default for ProviderValidationSnapshot {
+    fn default() -> Self {
+        Self {
+            schema_version: provider_validation_schema_version(),
+            status: ProviderValidationStatus::Unverified,
+            checked_at: None,
+            model: None,
+            failure: None,
+            available_models: Vec::new(),
+        }
+    }
+}
+
+fn provider_validation_schema_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAuthorizationSource {
+    #[default]
+    None,
+    LegacyCurrent,
+    Explicit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProviderAuthorization {
+    #[serde(default)]
+    pub allow_task_content: bool,
+    #[serde(default)]
+    pub allow_auto_failover: bool,
+    #[serde(default)]
+    pub source: ProviderAuthorizationSource,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+impl ProviderAuthorization {
+    pub fn legacy_current() -> Self {
+        Self {
+            allow_task_content: true,
+            allow_auto_failover: false,
+            source: ProviderAuthorizationSource::LegacyCurrent,
+            models: Vec::new(),
+            updated_at: None,
+        }
+    }
+
+    pub fn permits_model(&self, model: &str) -> bool {
+        self.allow_task_content
+            && (self.models.is_empty() || self.models.iter().any(|value| value == model))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRefKind {
+    Environment,
+    Stored,
+    LegacyInline,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretRef {
+    pub kind: SecretRefKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    pub masked: String,
+}
+
+impl SecretRef {
+    pub fn legacy_inline(secret: &str) -> Option<Self> {
+        let secret = secret.trim();
+        if secret.is_empty() {
+            return None;
+        }
+        let suffix = secret.chars().rev().take(4).collect::<Vec<_>>();
+        let suffix = suffix.into_iter().rev().collect::<String>();
+        Some(Self {
+            kind: SecretRefKind::LegacyInline,
+            locator: None,
+            masked: format!("****{suffix}"),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProviderRuntimeState {
+    #[serde(default)]
+    pub profile_type: ProviderProfileType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<SecretRef>,
+    #[serde(default)]
+    pub validation: ProviderValidationSnapshot,
+    #[serde(default)]
+    pub authorization: ProviderAuthorization,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderProfile {
+    pub provider_id: String,
+    pub display_name: String,
+    pub kind: ProviderKind,
+    pub profile_type: ProviderProfileType,
+    pub endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<SecretRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_model: Option<String>,
+    pub validation: ProviderValidationSnapshot,
+    pub authorization: ProviderAuthorization,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingConfig {
     #[serde(rename = "type")]

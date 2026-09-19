@@ -120,15 +120,15 @@ pub struct CliOptions {
     pub sub_args: Vec<String>,
 }
 
-pub async fn run() -> Result<()> {
+pub async fn run() -> Result<u8> {
     init_tracing();
     let options = parse_args(env::args().skip(1).collect());
 
     match options.command {
         CliCommand::Help => print_help(),
         CliCommand::Version => println!("sacode {}", env!("CARGO_PKG_VERSION")),
-        CliCommand::Run => run_task(options).await?,
-        CliCommand::Orchestrator => run_with_orchestrator(options).await?,
+        CliCommand::Run => return run_task(options).await,
+        CliCommand::Orchestrator => return run_with_orchestrator(options).await,
         CliCommand::Profile => profile::run(options.sub_args)?,
         CliCommand::Plugin => plugin::run(options.sub_args).await?,
         CliCommand::Doctor => doctor::run().await?,
@@ -180,7 +180,7 @@ pub async fn run() -> Result<()> {
         CliCommand::Vim => vim::run(options.sub_args)?,
     }
 
-    Ok(())
+    Ok(0)
 }
 
 #[cfg(test)]

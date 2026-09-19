@@ -6,7 +6,12 @@ use axum::{
 };
 
 use crate::tools::ToolRegistry;
-use sacode_kernel::{generate_task_id, ExecutionMode, ScheduledTask, Task, TaskQueueStatus};
+use sacode_kernel::{
+    generate_task_id, EntrySource, ExecutionMode, ScheduledTask, Task, TaskQueueStatus,
+    TASK_PROTOCOL_VERSION,
+};
+
+use crate::{assemble_checkpoint_snapshot, assemble_task_snapshot, TaskSnapshotProjection};
 
 use super::{
     events::emit_event,
@@ -58,7 +63,20 @@ pub async fn create_task(
         &state,
         &task_id,
         "task_created",
-        serde_json::json!({ "prompt": req.prompt, "mode": req.mode, "priority": priority.to_string() }),
+        serde_json::json!({
+            "prompt": req.prompt,
+            "mode": req.mode,
+            "priority": priority.to_string(),
+            "task": assemble_task_snapshot(TaskSnapshotProjection {
+                task_id: &task_id,
+                mode,
+                source: EntrySource::Daemon,
+                queue_status: Some(TaskQueueStatus::Pending),
+                task_run: None,
+                output: None,
+                error: None,
+            }),
+        }),
     );
 
     match state.queue.submit(scheduled_task).await {
@@ -68,6 +86,7 @@ pub async fn create_task(
 
             Json(TaskResponse::queued(
                 task_id,
+                mode,
                 if spawned > 0 {
                     TaskQueueStatus::Running
                 } else {
@@ -78,6 +97,7 @@ pub async fn create_task(
         }
         Err(e) => Json(TaskResponse::error(
             task_id,
+            mode,
             format!("Failed to submit task: {}", e),
         )),
     }
@@ -100,7 +120,9 @@ pub async fn get_task_status(
             ))
         });
         let derived_status = status.derived_queue_status();
+        let task = status.snapshot();
         return Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
             "task_id": status.task_id,
             "prompt": status.prompt,
             "mode": status.mode,
@@ -116,6 +138,7 @@ pub async fn get_task_status(
             "error": status.error,
             "output": status.output,
             "task_run": task_run,
+            "task": task,
         }));
     }
 
@@ -133,7 +156,17 @@ pub async fn get_task_status(
                 .as_ref()
                 .map(task_run_state_to_queue_status)
                 .unwrap_or_else(|| "pending".to_string());
+            let snapshot = assemble_task_snapshot(TaskSnapshotProjection {
+                task_id: &task_id,
+                mode: task.task.mode,
+                source: EntrySource::Daemon,
+                queue_status: Some(queue_status),
+                task_run: Some(&task_run),
+                output: None,
+                error: None,
+            });
             return Json(serde_json::json!({
+                "protocol_version": TASK_PROTOCOL_VERSION,
                 "task_id": task_id,
                 "prompt": task.task.prompt,
                 "mode": task.task.mode.to_string(),
@@ -143,6 +176,7 @@ pub async fn get_task_status(
                 "current_attempt": task.current_attempt,
                 "max_attempts": task.retry_policy.max_attempts,
                 "task_run": task_run,
+                "task": snapshot,
             }));
         }
     }
@@ -162,7 +196,17 @@ pub async fn get_task_status(
             .as_ref()
             .map(task_run_state_to_queue_status)
             .unwrap_or_else(|| "not_found".to_string());
+        let snapshot = assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: &task_id,
+            mode: task_run.mode.unwrap_or(ExecutionMode::Build),
+            source: EntrySource::Daemon,
+            queue_status: Some(result.status),
+            task_run: Some(&task_run),
+            output: result.output.as_deref(),
+            error: result.error.as_deref(),
+        });
         return Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
             "task_id": task_id,
             "status": derived.clone(),
             "queue_status": derived,
@@ -170,6 +214,7 @@ pub async fn get_task_status(
             "error": result.error,
             "output": result.output,
             "task_run": task_run,
+            "task": snapshot,
         }));
     }
 
@@ -179,7 +224,9 @@ pub async fn get_task_status(
         let storage = crate::CheckpointStorage::new(workdir);
         if let Ok(Some(checkpoint)) = storage.load_by_task_id(&task_id) {
             let derived = format!("{:?}", checkpoint.status).to_lowercase();
+            let task = assemble_checkpoint_snapshot(&task_id, &checkpoint);
             return Json(serde_json::json!({
+                "protocol_version": TASK_PROTOCOL_VERSION,
                 "task_id": task_id,
                 "status": derived,
                 "queue_status": derived,
@@ -192,6 +239,7 @@ pub async fn get_task_status(
                     "event_count": checkpoint.recent_events.len(),
                     "tool_count": checkpoint.executed_tools.len(),
                 },
+                "task": task,
                 "message": "task restored from checkpoint (cross-process recovery)",
             }));
         }
@@ -212,7 +260,9 @@ pub async fn get_task_result(
         let tasks = state.tasks.read().await;
         if let Some(status) = tasks.get(&task_id) {
             let derived_status = status.derived_queue_status();
+            let task = status.snapshot();
             return Json(serde_json::json!({
+                "protocol_version": TASK_PROTOCOL_VERSION,
                 "task_id": status.task_id.clone(),
                 "status": derived_status.clone(),
                 "queue_status": derived_status,
@@ -220,6 +270,7 @@ pub async fn get_task_result(
                 "error": status.error.clone(),
                 "output": status.output.clone(),
                 "task_run": status.task_run.clone(),
+                "task": task,
             }));
         }
     }
@@ -239,7 +290,17 @@ pub async fn get_task_result(
             .as_ref()
             .map(task_run_state_to_queue_status)
             .unwrap_or_else(|| "not_found".to_string());
+        let snapshot = assemble_task_snapshot(TaskSnapshotProjection {
+            task_id: &task_id,
+            mode: task_run.mode.unwrap_or(ExecutionMode::Build),
+            source: EntrySource::Daemon,
+            queue_status: Some(result.status),
+            task_run: Some(&task_run),
+            output: result.output.as_deref(),
+            error: result.error.as_deref(),
+        });
         return Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
             "task_id": result.task_id,
             "status": derived,
             "queue_status": derived,
@@ -248,6 +309,7 @@ pub async fn get_task_result(
             "duration_ms": result.duration_ms,
             "completed_at": result.completed_at,
             "task_run": task_run,
+            "task": snapshot,
         }));
     }
 
@@ -337,7 +399,18 @@ pub async fn cancel_task(
                 sync_task_status_from_task_run(status);
             }
         }
-        emit_event(&state, &task_id, "task_cancelled", serde_json::json!({}));
+        let cancelled_task = state
+            .tasks
+            .read()
+            .await
+            .get(&task_id)
+            .map(TaskStatus::snapshot);
+        emit_event(
+            &state,
+            &task_id,
+            "task_cancelled",
+            serde_json::json!({ "task": cancelled_task }),
+        );
         // 清理该 task 的待审批 pending：sender drop 会立即唤醒异步等待者，
         // HttpApprovalDecider 随后发出 reason=cancelled 的 approval_resolved 事件。
         let cleared = state.clear_pending_approvals_for_task(&task_id).await;
@@ -349,9 +422,25 @@ pub async fn cancel_task(
             );
         }
         Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
             "task_id": task_id,
             "status": "cancelled",
             "message": "Task cancelled successfully",
+            "task": cancelled_task,
+        }))
+    } else if state.queue.status(&task_id).await == Some(TaskQueueStatus::Cancelled) {
+        let task = state
+            .tasks
+            .read()
+            .await
+            .get(&task_id)
+            .map(TaskStatus::snapshot);
+        Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
+            "task_id": task_id,
+            "status": "cancelled",
+            "message": "Task was already cancelled",
+            "task": task,
         }))
     } else {
         Json(serde_json::json!({

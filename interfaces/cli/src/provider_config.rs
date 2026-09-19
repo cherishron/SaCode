@@ -4,8 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
-use reqwest::blocking::Client;
+use anyhow::Result;
 use sacode_kernel::model::{
     detect_provider_kind, normalize_base_url, preset_providers, ModelProvider, ProviderSpec,
     SaCodeConfig,
@@ -46,16 +45,6 @@ pub struct ProviderConfigStore {
 pub struct SaCodeConfigStore {
     user_path: PathBuf,
     project_path: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelsResponse {
-    data: Vec<ModelItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelItem {
-    id: String,
 }
 
 impl ProviderConfigStore {
@@ -261,6 +250,11 @@ impl SaCodeConfigStore {
                 config.vim_mode = true;
             }
             config.provider.extend(project.provider);
+            config.provider_state.extend(project.provider_state);
+            if project.provider_schema_version > 0 {
+                config.provider_schema_version = project.provider_schema_version;
+                config.provider_policy = project.provider_policy;
+            }
             if !project.model_routing.overrides.is_empty() {
                 config.model_routing = project.model_routing;
             }
@@ -398,6 +392,7 @@ impl SaCodeConfigStore {
             return Ok(None);
         }
         let mut config: SaCodeConfig = serde_json::from_str(&content)?;
+        config.migrate_provider_compatibility();
         self.normalize(&mut config);
         Ok(Some(config))
     }
@@ -415,11 +410,14 @@ impl SaCodeConfigStore {
 
 fn default_sacode_config() -> SaCodeConfig {
     SaCodeConfig {
+        provider_schema_version: sacode_kernel::model::PROVIDER_CONFIG_SCHEMA_VERSION,
         model: String::new(),
         small_model: String::new(),
         outstyle: String::new(),
         vim_mode: false,
         provider: preset_providers(),
+        provider_state: Default::default(),
+        provider_policy: Default::default(),
         model_routing: Default::default(),
     }
 }
@@ -442,9 +440,19 @@ impl ProviderConfig {
 pub fn preset_connect_options() -> Vec<(String, String, bool)> {
     preset_providers()
         .into_iter()
-        .filter(|(name, _)| *name != "ollama") // ollama 无需 API Key
+        .filter(|(name, _)| *name != "ollama")
         .map(|(name, spec)| (name, spec.base_url, true))
         .collect()
+}
+
+pub fn builtin_connect_options() -> Vec<(String, String, bool)> {
+    let mut options = vec![(
+        "ollama".to_string(),
+        sacode_kernel::model::OLLAMA_DEFAULT_BASE_URL.to_string(),
+        false,
+    )];
+    options.extend(preset_connect_options());
+    options
 }
 
 pub fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> ModelProvider {
@@ -456,37 +464,6 @@ pub fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) ->
         api_key: Some(spec.api_key.clone()),
         rule: spec.models.get(model_name).cloned(),
     }
-}
-
-pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<String>> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| Client::new());
-    let url = format!("{}/models", normalize_base_url(&config.base_url));
-
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .send()
-        .with_context(|| format!("请求模型列表失败: {url}"))?;
-    let status = response.status();
-
-    if !status.is_success() {
-        let text = response.text().unwrap_or_default();
-        anyhow::bail!("模型列表请求失败 ({}): {}", status, text);
-    }
-
-    let payload: ModelsResponse = response.json()?;
-    let mut models: Vec<String> = payload
-        .data
-        .into_iter()
-        .map(|item| item.id)
-        .filter(|id| !id.trim().is_empty())
-        .collect();
-    models.sort();
-    models.dedup();
-    Ok(models)
 }
 
 pub fn fallback_models(provider_name: &str) -> Vec<String> {
@@ -748,5 +725,57 @@ mod tests {
         assert_eq!(loaded.config.base_url, "https://example.com/v1");
         assert_eq!(loaded.config.api_key, "legacy-key");
         assert_eq!(loaded.config.model, "legacy-model");
+    }
+
+    #[test]
+    fn sacode_store_migrates_legacy_config_to_current_only_authorization() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let workdir = std::env::temp_dir().join(format!("sacode-config-migration-{unique}"));
+        let config_dir = workdir.join(".sacode");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+        fs::write(
+            config_dir.join("config.json"),
+            r#"{
+  "model": "primary/model-a",
+  "provider": {
+    "primary": {
+      "name": "Primary",
+      "base_url": "https://primary.example/v1",
+      "api_key": "sk-primary-secret",
+      "models": { "model-a": { "name": "Model A" } }
+    },
+    "fallback": {
+      "name": "Fallback",
+      "base_url": "https://fallback.example/v1",
+      "api_key": "sk-fallback-secret",
+      "models": { "model-b": { "name": "Model B" } }
+    }
+  }
+}"#,
+        )
+        .expect("write legacy config");
+
+        let store = super::SaCodeConfigStore::new(&workdir);
+        let config = store
+            .load()
+            .expect("load config")
+            .expect("config should exist");
+        assert_eq!(
+            config.provider_schema_version,
+            sacode_kernel::model::PROVIDER_CONFIG_SCHEMA_VERSION
+        );
+        assert!(config.provider_is_authorized("primary", "model-a"));
+        assert!(!config.provider_is_authorized("fallback", "model-b"));
+        assert!(!config.provider_policy.auto_failover);
+
+        store.save(&config).expect("write migrated config");
+        let written =
+            fs::read_to_string(config_dir.join("config.json")).expect("read migrated config");
+        assert!(written.contains("\"provider_schema_version\": 1"));
+        assert!(written.contains("\"provider_state\""));
+        assert!(written.contains("\"auto_failover\": false"));
     }
 }

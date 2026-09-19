@@ -8,7 +8,10 @@
 use std::env;
 
 use anyhow::Result;
-use sacode_kernel::{generate_task_id, ExecutionContext, ExecutionReport, Task, TaskRun};
+use sacode_kernel::{
+    generate_task_id, EntrySource, ExecutionContext, ExecutionReport, Task, TaskRun,
+    TASK_PROTOCOL_VERSION,
+};
 use sacode_runtime::tools::context::set_default_context;
 use sacode_runtime::tools::context_remote::RemoteContext;
 use sacode_runtime::{
@@ -23,7 +26,7 @@ use super::{orchestrator_support::format_summary_record, CliOptions};
 use crate::cmd::ApprovalPolicy;
 use crate::runner::{format_output, RunnerOutput};
 
-pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
+pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<u8> {
     let workdir = env::current_dir()?;
     let effective_prompt = strip_orchestration_prefix(&options.prompt);
     let profile = TaskProfile::from_prompt_and_workspace(&effective_prompt, &workdir);
@@ -105,7 +108,11 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
     }
 
     if options.json {
+        let task = output.task_snapshot(EntrySource::Automation);
         let response = serde_json::json!({
+            "schema_version": TASK_PROTOCOL_VERSION,
+            "task_id": task.task_id,
+            "task": task,
             "prompt": output.prompt,
             "mode": output.mode,
             "workspace": output.workspace,
@@ -138,7 +145,7 @@ pub(super) async fn run_with_orchestrator(options: CliOptions) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(output.exit_code())
 }
 
 /// 单 Agent 路径：通过统一 TaskExecutor 执行

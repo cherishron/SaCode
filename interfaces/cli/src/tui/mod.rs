@@ -635,7 +635,7 @@ pub(in crate::tui) mod tests {
 
     #[test]
     fn render_input_panel_renders_typed_content_and_updates_viewport() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.input = "hello world".to_string();
         let backend = TestBackend::new(100, 8);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -655,7 +655,7 @@ pub(in crate::tui) mod tests {
 
     #[test]
     fn render_input_panel_keeps_cursor_near_latest_visible_lines() {
-        let mut app = App::new();
+        let mut app = App::new_for_test();
         app.input = ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6"].join("\n");
         let backend = TestBackend::new(60, 6);
         let mut terminal = Terminal::new(backend).expect("terminal");

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task_id": "task-failure-mismatch",
+  "mode": "build",
+  "source": "vscode",
+  "state": "completed",
+  "phase": "finished",
+  "terminal_outcome": "success",
+  "failure": {
+    "category": "system",
+    "code": "system/unexpected_failure",
+    "retryable": false,
+    "suggested_action": "report_issue",
+    "safe_message": "task ended with a failure record"
+  },
+  "result": null,
+  "validation": null,
+  "route": null,
+  "timestamps": {
+    "created_at": null,
+    "started_at": null,
+    "updated_at": null,
+    "finished_at": null
+  }
+}

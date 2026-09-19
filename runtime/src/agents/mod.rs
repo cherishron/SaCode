@@ -14,8 +14,8 @@ pub use message_bus::{
     build_communication_summary, AgentMessage, AgentMessageKind, CommunicationSummary, MessageBus,
 };
 pub use model_router::{
-    build_route_plan_from_candidates, resolve_config_model_candidates, resolve_role_route,
-    ResolvedRoleRoute,
+    build_route_plan_from_candidates, failover_is_authorized, resolve_config_model_candidates,
+    resolve_role_route, ResolvedRoleRoute,
 };
 pub use orchestrator::{execute_role_driven_orchestration, execute_role_driven_task_run};
 pub use planner::{

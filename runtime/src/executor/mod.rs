@@ -223,38 +223,46 @@ impl TaskExecutor {
 
                     match exec_result.result.status {
                         TaskQueueStatus::Completed => {
-                            self.queue
+                            let applied = self
+                                .queue
                                 .mark_completed(
                                     task_id,
                                     exec_result.result.clone(),
                                     exec_result.task_run.clone(),
                                 )
                                 .await;
-                            self.emit_event(
-                                task_id,
-                                "task_completed",
-                                serde_json::json!({
-                                    "result": exec_result.result,
-                                    "task_run": exec_result.task_run,
-                                }),
-                            );
+                            if applied {
+                                self.emit_event(
+                                    task_id,
+                                    "task_completed",
+                                    serde_json::json!({
+                                        "result": exec_result.result,
+                                        "task_run": exec_result.task_run,
+                                    }),
+                                );
+                            }
                         }
                         TaskQueueStatus::Failed => {
-                            self.queue
+                            let applied = self
+                                .queue
                                 .mark_failed(
                                     task_id,
                                     exec_result.result.clone(),
                                     exec_result.task_run.clone(),
                                 )
                                 .await;
-                            self.emit_event(
-                                task_id,
-                                "task_failed",
-                                serde_json::json!({
-                                    "result": exec_result.result,
-                                    "task_run": exec_result.task_run,
-                                }),
-                            );
+                            if applied
+                                && self.queue.status(task_id).await == Some(TaskQueueStatus::Failed)
+                            {
+                                self.emit_event(
+                                    task_id,
+                                    "task_failed",
+                                    serde_json::json!({
+                                        "result": exec_result.result,
+                                        "task_run": exec_result.task_run,
+                                    }),
+                                );
+                            }
                         }
                         _ => {}
                     }
