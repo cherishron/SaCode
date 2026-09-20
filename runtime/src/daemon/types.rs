@@ -9,11 +9,12 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::warn;
 
 use crate::{
-    assemble_task_snapshot, executor::TaskExecutor, queue::TaskQueue, retry::RetryHandler,
-    tools::ToolRegistry, StoreDb, TaskSnapshotProjection,
+    agent_backends::BackendRegistry, assemble_task_snapshot, executor::TaskExecutor,
+    queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb, TaskSnapshotProjection,
 };
 use sacode_kernel::{
-    EntrySource, TaskQueueStatus, TaskResult, TaskRun, TaskSnapshot, TASK_PROTOCOL_VERSION,
+    BackendTaskMeta, EntrySource, TaskQueueStatus, TaskResult, TaskRun, TaskSnapshot,
+    TASK_PROTOCOL_VERSION,
 };
 
 use super::{
@@ -42,6 +43,12 @@ pub struct TaskRequest {
     pub scheduled_at: Option<String>,
     #[serde(default)]
     pub deadline: Option<String>,
+    /// Optional Agent Backend routing (M0/M2). Missing/empty → sacode.
+    #[serde(default)]
+    pub backend_id: Option<String>,
+    /// Optional client session correlation id.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +94,7 @@ impl TaskResponse {
         mode: sacode_kernel::ExecutionMode,
         queue_status: TaskQueueStatus,
         message: String,
+        backend: Option<BackendTaskMeta>,
     ) -> Self {
         let task = assemble_task_snapshot(TaskSnapshotProjection {
             task_id: &task_id,
@@ -96,6 +104,7 @@ impl TaskResponse {
             task_run: None,
             output: None,
             error: None,
+            backend: backend.as_ref(),
         });
         Self {
             protocol_version: TASK_PROTOCOL_VERSION,
@@ -116,6 +125,7 @@ impl TaskResponse {
             task_run: None,
             output: None,
             error: Some(&message),
+            backend: None,
         });
         Self {
             protocol_version: TASK_PROTOCOL_VERSION,
@@ -125,6 +135,28 @@ impl TaskResponse {
             queue_status: "error".to_string(),
             task,
         }
+    }
+
+    pub fn backend_dispatch_error(
+        task_id: String,
+        mode: sacode_kernel::ExecutionMode,
+        backend_id: &str,
+        code: &str,
+        message: &str,
+    ) -> Self {
+        let _ = backend_id;
+        let msg = format!("{code}: {message}");
+        Self::error(task_id, mode, msg)
+    }
+
+    pub fn backend_not_found(
+        task_id: String,
+        mode: sacode_kernel::ExecutionMode,
+        backend_id: &str,
+        code: &str,
+    ) -> Self {
+        let message = format!("{code}: agent backend not registered: {backend_id}");
+        Self::error(task_id, mode, message)
     }
 }
 
@@ -146,6 +178,9 @@ pub struct TaskStatus {
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_run: Option<TaskRun>,
+    /// Agent Backend routing metadata (M0/M2). None → native sacode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<BackendTaskMeta>,
 }
 
 impl TaskStatus {
@@ -180,9 +215,15 @@ impl TaskStatus {
             error: None,
             output: None,
             task_run: Some(task_run),
+            backend: None,
         };
         sync_task_status_from_task_run(&mut status);
         status
+    }
+
+    pub fn with_backend(mut self, backend: Option<BackendTaskMeta>) -> Self {
+        self.backend = backend;
+        self
     }
 
     pub fn derived_queue_status(&self) -> String {
@@ -204,6 +245,7 @@ impl TaskStatus {
             task_run: self.task_run.as_ref(),
             output: self.output.as_deref(),
             error: self.error.as_deref(),
+            backend: self.backend.as_ref(),
         })
     }
 
@@ -224,6 +266,7 @@ impl TaskStatus {
             error: None,
             output: None,
             task_run: None,
+            backend: None,
         }
     }
 
@@ -247,6 +290,7 @@ impl TaskStatus {
             error: result.error.clone(),
             output: result.output.clone(),
             task_run: None,
+            backend: None,
         }
     }
 }
@@ -287,6 +331,8 @@ pub struct DaemonState {
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
     /// daemon 可观测性指标（审批计数与 SSE 连接/吞吐/lagged）
     pub metrics: Arc<DaemonMetrics>,
+    /// Agent Backend registry (M0/M2). Default registers native `sacode` only.
+    pub agent_backends: Arc<BackendRegistry>,
 }
 
 /// 审批回传结果
@@ -539,6 +585,7 @@ impl DaemonState {
             workdir: base_dir.clone().or_else(|| std::env::current_dir().ok()),
             pending_approvals: Mutex::new(HashMap::new()),
             metrics: Arc::new(DaemonMetrics::default()),
+            agent_backends: Arc::new(BackendRegistry::new()),
         }
     }
 

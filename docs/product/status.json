@@ -52,6 +52,11 @@
       "evidence": "首次配置流程已实现，端到端成功率与失败恢复指标待验收"
     },
     {
+      "id": "identity-i3-client",
+      "status": "部分验收",
+      "evidence": "SaCode account OIDC 客户端骨架已实现（PKCE、keyring secret_ref、网关换钥契约、mock 测试）；待 sa-idp I1 与网关换钥端点联调"
+    },
+    {
       "id": "p1-vscode-mvp",
       "status": "部分验收",
       "evidence": "基础任务和审批已实现，跨入口一致性与选区透明待验收"
@@ -75,6 +80,16 @@
       "id": "p5-scenarios",
       "status": "部分验收",
       "evidence": "场景资料和能力存在，四类端到端验收待补"
+    },
+    {
+      "id": "acp-client-opencode",
+      "status": "部分验收",
+      "evidence": "本机 OpenCode 1.18.31（bun x opencode-ai acp）已打通：daemon POST /task backend_id=opencode → ACP session → output=PONG；HTTP 4096 serve 模式未联调"
+    },
+    {
+      "id": "desktop-native-mvp",
+      "status": "部分验收",
+      "evidence": "M0–M4 daemon+OpenCode ACP E2E 已通；M1 VSCode 已迁 client-core（32 tests）；Desktop Vite UI 壳已搭（待 Tauri sidecar）"
     },
     {
       "id": "scheduled-tasks",

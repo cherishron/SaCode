@@ -88,6 +88,9 @@
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "package:vsix": "vsce package --no-dependencies --out sacode-vscode-0.2.1.vsix && python ../../scripts/normalize-vsix.py sacode-vscode-0.2.1.vsix"
   },
+  "dependencies": {
+    "@cherishron/sacode-client-core": "file:../client-core"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",

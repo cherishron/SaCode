@@ -302,6 +302,8 @@ mod tests {
             base_url: Some(base_url),
             api_key: Some("secret-never-log".to_string()),
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 

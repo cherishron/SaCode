@@ -48,7 +48,7 @@
 
 - `reference/command-reference.md`：CLI / TUI 高频命令速查（命令权威来源：`interfaces/cli/src/cmd/mod.rs`）
 - `reference/API.md`：CLI、TUI、工具系统、配置文件、Daemon、MCP 接口总览（参见 [reference/architecture.md](reference/architecture.md) 了解整体架构）
-- `reference/daemon-api.md`：daemon HTTP 路由、SSE data/Last-Event-ID、approval_id、超时、幂等与 HTTP 状态规范
+- `reference/daemon-api.md`：daemon 当前已实现的 HTTP 路由、SSE data/Last-Event-ID、approval_id、超时、幂等与 HTTP 状态规范；Desktop 新端点仍为规划态
 - `reference/architecture.md`：workspace 分层、执行链路、数据落点、agents 和 routing 结构（参见 [reference/development.md](reference/development.md) 了解如何参与开发）
 - `reference/development.md`：本地开发、测试、调试、文档更新约定（参见 [release/RELEASE.md](release/RELEASE.md) 和 [build/CROSS_COMPILE.md](build/CROSS_COMPILE.md)）
 - `reference/comparison-with-deepseek-harness.md`：SaCode 与 deepseek-harness 的 7 维架构对比与可借鉴优点分析
@@ -56,8 +56,10 @@
 
 ### Product — 产品与路线
 
-- `product/PRD.md`：最新产品需求文档，包含定位、目标、当前能力与阶段路线（v1.2, 2026-08-18，定位调整为"面向国内开发者的终端 AI 编程工具"）
-- `product/roadmap.md`：按版本阶段拆解的路线图（当前 0.1.33，含平台化收敛声明）
+- `product/PRD.md`：最新总体产品需求文档，包含定位、目标、当前能力与阶段路线
+- `product/desktop-multi-agent-prd.md`：Desktop、多客户端共享层、Agent Backend 与 OpenCode ACP 接入专项 PRD
+- `product/unified-identity-prd.md`：统一账号体系专项 PRD（users 锚点、微信/短信/JWT、SaCode·SaApp·小程序多端延申）
+- `product/roadmap.md`：按版本阶段拆解的路线图（当前 1.1.1，含客户端化定向扩展）
 
 ### 评估与规划（根目录）
 
@@ -68,6 +70,8 @@
 
 当前活跃方案：
 
+- `plans/desktop-multi-agent-implementation-plan.md`：Desktop、多客户端、ACP Client 与 OpenCode Backend 的目录迁移、版本切片和发布门禁
+- `plans/unified-identity-schema.sql`：统一账号体系完整建库 SQL（身份表结构真源，配套 [product/unified-identity-prd.md](product/unified-identity-prd.md)）
 - `plans/capability-upgrade-plan.md`：基于 7 款竞品对比的功能完整态升级方案（工具补齐、架构暴露、生态能力）
 - `plans/phase2-platform-closure-plan.md`：**已归档** — 平台化补全的历史设计与验收证据
 - `plans/loop-autonomous-delivery-plan.md`：Loop 自治交付升级方案（从局部修复到端到端任务交付，注意：report-plan.md 已将其轻量化）

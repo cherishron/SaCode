@@ -92,8 +92,31 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     lines.push(String::new());
     lines.push("建议: ".to_string());
 
+    // 统一身份状态（始终展示；无 session 时提示可 account login）
+    if let Ok(status) = sacode_runtime::identity::status_summary(None) {
+        if status.logged_in {
+            lines.push(format!(
+                "- identity: logged_in | provider={} | models={} | gateway={}",
+                status.provider_name,
+                status.models_count,
+                if status.gateway_base_url.is_empty() {
+                    "-"
+                } else {
+                    &status.gateway_base_url
+                }
+            ));
+        } else {
+            lines.push(
+                "- identity: not logged in（可选：sacode account login，sa-idp OIDC）".to_string(),
+            );
+        }
+    }
+
     if provider.is_none() {
         lines.push("- 先运行 /login 或 sacode init 配置 Provider。".to_string());
+        lines.push(
+            "- 或使用 saai 统一身份：sacode account login（sa-idp OIDC + 网关）。".to_string(),
+        );
     }
     if config.model.trim().is_empty() {
         lines.push("- 运行 /models 选择默认模型。".to_string());

@@ -3,6 +3,8 @@ import type { ExecutionMode, ExecutionModeInput, TaskSnapshot } from './taskProt
 export interface DaemonConfig {
     host: string;
     port: number;
+    /** Optional daemon bearer token (M5). */
+    token?: string;
 }
 
 /** Daemon /task 创建响应：协议版本 + 顶层兼容字段 + 嵌套任务快照 */

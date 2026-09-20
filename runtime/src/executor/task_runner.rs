@@ -9,7 +9,10 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Duration, Instant};
 
 use sacode_kernel::model::{ChatUsage, ModelProvider, ProviderFailure, ToolDefinition};
-use sacode_kernel::{Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState};
+use sacode_kernel::{
+    Event, ExecutionMode, RouteRecord, RoutedModelRecord, TaskRun, TaskRunState,
+    ToolExecutionRecord,
+};
 
 use crate::provider::{ProviderClient, ProviderClientError, StreamChunkKind, ToolChatResult};
 use crate::tools::interceptor::InterceptContext;
@@ -158,6 +161,7 @@ pub async fn execute_task_with_provider(
         api_duration_ms,
         tool_duration_ms,
         provider_failure,
+        tool_records,
     ) = if config.provider.api_key.is_some()
         && config
             .provider
@@ -185,6 +189,7 @@ pub async fn execute_task_with_provider(
             0,
             0,
             None,
+            None,
         )
     };
 
@@ -209,6 +214,19 @@ pub async fn execute_task_with_provider(
         report.events.push(Event::Done {
             summary: output.clone(),
         });
+    }
+    if let Some(records) = tool_records {
+        report
+            .tool_records
+            .extend(
+                records
+                    .into_iter()
+                    .map(|(tool_name, success)| ToolExecutionRecord {
+                        step_id: None,
+                        tool_name,
+                        success,
+                    }),
+            );
     }
     if let Some(error) = response.as_ref().err() {
         report.events.push(Event::Error {
@@ -459,6 +477,7 @@ async fn execute_simple_chat(
     u64,
     u64,
     Option<ProviderFailure>,
+    Option<Vec<(String, bool)>>,
 ) {
     let client = ProviderClient::new();
     let api_started_at = Instant::now();
@@ -490,6 +509,7 @@ async fn execute_simple_chat(
             elapsed_ms(api_started_at.elapsed()),
             0,
             None,
+            None,
         ),
         Err(error) => {
             error_recorder.record_provider_error("provider:chat", error.to_string());
@@ -501,6 +521,7 @@ async fn execute_simple_chat(
                 elapsed_ms(api_started_at.elapsed()),
                 0,
                 provider_failure_of(&error),
+                None,
             )
         }
     }
@@ -519,6 +540,7 @@ async fn execute_tool_chat(
     u64,
     u64,
     Option<ProviderFailure>,
+    Option<Vec<(String, bool)>>,
 ) {
     let client = ProviderClient::new();
     let tools_clone = config.tools.clone();
@@ -705,6 +727,7 @@ async fn execute_tool_chat(
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(Ordering::Relaxed),
                 None,
+                Some(tool_result.tool_records),
             )
         }
         Err(error) => {
@@ -717,6 +740,7 @@ async fn execute_tool_chat(
                 elapsed_ms(api_started_at.elapsed()),
                 tool_duration.load(Ordering::Relaxed),
                 provider_failure_of(&error),
+                None,
             )
         }
     }
@@ -1025,6 +1049,7 @@ mod tests {
             final_text: String::new(),
             reasoning_content: None,
             tool_calls_made: 0,
+            tool_records: vec![],
             rounds: 3,
             usage: None,
             pending_question: None,

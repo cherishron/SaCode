@@ -1119,6 +1119,8 @@ pub(in crate::tui) mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: String::new(),
             models: std::collections::BTreeMap::new(),
+            auth_header: None,
+            auth_scheme: None,
         };
         spec.models.insert(
             model_name.clone(),
@@ -1137,6 +1139,9 @@ pub(in crate::tui) mod tests {
                 base_url: "https://example.com/v1".to_string(),
                 api_key: String::new(),
                 model: model_name,
+                auth_header: None,
+                auth_scheme: None,
+                secret_ref: None,
             },
         });
 
@@ -1562,6 +1567,8 @@ pub(in crate::tui) mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: String::new(),
             models: std::collections::BTreeMap::new(),
+            auth_header: None,
+            auth_scheme: None,
         };
         spec.models.insert(
             model_name.clone(),
@@ -1580,6 +1587,9 @@ pub(in crate::tui) mod tests {
                 base_url: "https://example.com/v1".to_string(),
                 api_key: String::new(),
                 model: model_name,
+                auth_header: None,
+                auth_scheme: None,
+                secret_ref: None,
             },
         });
         app.input = "hello world".to_string();

@@ -37,6 +37,8 @@ pub struct ToolChatResult {
     pub final_text: String,
     pub reasoning_content: Option<String>,
     pub tool_calls_made: usize,
+    /// 实际执行过的工具及其成功状态（按调用顺序）。
+    pub tool_records: Vec<(String, bool)>,
     pub rounds: usize,
     pub usage: Option<ChatUsage>,
     pub pending_question: Option<serde_json::Value>,
@@ -75,7 +77,8 @@ impl ProviderClient {
         let mut builder = self.http.post(&url).json(&request);
 
         if let Some(key) = api_key {
-            builder = builder.header("Authorization", format!("Bearer {}", key));
+            let (name, value) = provider.auth_header(&key);
+            builder = builder.header(name, value);
         }
 
         let response = builder
@@ -258,6 +261,7 @@ impl ProviderClient {
             ChatMessage::user(user_prompt),
         ];
         let mut tool_calls_made = 0;
+        let mut tool_records: Vec<(String, bool)> = Vec::new();
         let mut rounds = 0;
         let mut last_tool_outputs: Vec<(String, serde_json::Value)> = Vec::new();
         let mut last_tool_error: Option<String> = None;
@@ -300,6 +304,7 @@ impl ProviderClient {
                     final_text,
                     reasoning_content: reasoning,
                     tool_calls_made,
+                    tool_records,
                     rounds,
                     usage: has_usage.then_some(usage),
                     pending_question: None,
@@ -320,17 +325,21 @@ impl ProviderClient {
                     .unwrap_or_else(|_| serde_json::json!({}));
 
                 let tool_result = tool_executor(&tool_call.function.name, &args).await;
-                let pending_question = if tool_call.function.name == "interaction.ask" {
-                    tool_result
-                        .as_ref()
-                        .ok()
-                        .filter(|data| {
-                            data.get("pending").and_then(|value| value.as_bool()) == Some(true)
-                        })
-                        .cloned()
-                } else {
-                    None
-                };
+                let tool_succeeded = tool_result
+                    .as_ref()
+                    .map(|data| {
+                        data.get("error").is_none()
+                            && data.get("pending").and_then(|value| value.as_bool()) != Some(true)
+                    })
+                    .unwrap_or(false);
+                tool_records.push((tool_call.function.name.clone(), tool_succeeded));
+                let pending_question = tool_result
+                    .as_ref()
+                    .ok()
+                    .filter(|data| {
+                        data.get("pending").and_then(|value| value.as_bool()) == Some(true)
+                    })
+                    .cloned();
 
                 let result_content = match tool_result {
                     Ok(data) => {
@@ -359,6 +368,7 @@ impl ProviderClient {
                         final_text: "需要用户回答后继续执行。".to_string(),
                         reasoning_content: reasoning,
                         tool_calls_made,
+                        tool_records,
                         rounds,
                         usage: has_usage.then_some(usage),
                         pending_question: Some(pending_question),
@@ -400,6 +410,7 @@ impl ProviderClient {
             },
             reasoning_content: reasoning,
             tool_calls_made,
+            tool_records,
             rounds,
             usage: has_usage.then_some(usage),
             pending_question: None,
@@ -441,7 +452,8 @@ impl ProviderClient {
         let mut builder = self.http.post(&url).json(&request);
 
         if let Some(key) = api_key {
-            builder = builder.header("Authorization", format!("Bearer {}", key));
+            let (name, value) = provider.auth_header(&key);
+            builder = builder.header(name, value);
         }
 
         let mut response = builder
@@ -498,7 +510,8 @@ impl ProviderClient {
 
         let mut builder = self.http.post(&url).json(&request);
         if let Some(key) = api_key {
-            builder = builder.header("Authorization", format!("Bearer {}", key));
+            let (name, value) = provider.auth_header(&key);
+            builder = builder.header(name, value);
         }
 
         let mut response = builder
@@ -1028,6 +1041,38 @@ mod tests {
     }
 
     #[test]
+    fn auth_header_defaults_to_bearer_authorization() {
+        let provider = sacode_kernel::model::ModelProvider::openai("gpt-4o").with_api_key("secret");
+        assert_eq!(
+            provider.auth_header("secret"),
+            ("Authorization".to_string(), "Bearer secret".to_string())
+        );
+    }
+
+    #[test]
+    fn auth_header_supports_bare_custom_header() {
+        let mut provider =
+            sacode_kernel::model::ModelProvider::openai("gpt-4o").with_api_key("secret");
+        provider.auth_header = Some("x-api-key".to_string());
+        assert_eq!(
+            provider.auth_header("secret"),
+            ("x-api-key".to_string(), "secret".to_string())
+        );
+    }
+
+    #[test]
+    fn auth_header_supports_custom_scheme() {
+        let mut provider =
+            sacode_kernel::model::ModelProvider::openai("gpt-4o").with_api_key("secret");
+        provider.auth_header = Some("X-Credential".to_string());
+        provider.auth_scheme = Some("Token".to_string());
+        assert_eq!(
+            provider.auth_header("secret"),
+            ("X-Credential".to_string(), "Token secret".to_string())
+        );
+    }
+
+    #[test]
     fn chat_request_with_thinking_serializes_correctly() {
         let req = ChatRequest::with_thinking(
             "mimo-v2.5-pro",
@@ -1128,6 +1173,7 @@ mod tests {
             final_text: "done".to_string(),
             reasoning_content: Some("thinking".to_string()),
             tool_calls_made: 2,
+            tool_records: vec![("fs.read".to_string(), true)],
             rounds: 3,
             usage: None,
             pending_question: None,

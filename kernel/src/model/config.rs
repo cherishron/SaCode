@@ -105,6 +105,12 @@ pub struct ProviderSpec {
     pub api_key: String,
     #[serde(default)]
     pub models: BTreeMap<String, ModelRule>,
+    /// 认证头名称覆盖，`None` 表示默认的 `Authorization`。
+    #[serde(default)]
+    pub auth_header: Option<String>,
+    /// 认证头 scheme 前缀覆盖，`Some("")` 表示发送裸密钥。
+    #[serde(default)]
+    pub auth_scheme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -247,9 +253,15 @@ impl SaCodeConfig {
     }
 
     pub fn provider_is_authorized(&self, provider_id: &str, model: &str) -> bool {
-        self.provider_state
-            .get(provider_id)
-            .is_some_and(|state| state.authorization.permits_model(model))
+        if let Some(state) = self.provider_state.get(provider_id) {
+            return state.authorization.permits_model(model);
+        }
+        if let Some((current_provider, current_model)) = self.resolve_model(self.model.as_str()) {
+            if current_provider == provider_id && current_model == model {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn resolve_provider_and_model(
@@ -355,6 +367,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "Ollama".to_string(),
             base_url: OLLAMA_DEFAULT_BASE_URL.to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert("glm-4.7-flash".to_string(), ModelRule::default());
@@ -370,6 +384,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "DeepSeek".to_string(),
             base_url: "https://api.deepseek.com".to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -436,6 +452,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "MiMo".to_string(),
             base_url: MIMO_TOKEN_PLAN_BASE_URL.to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -508,6 +526,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "LongCat".to_string(),
             base_url: "https://api.longcat.chat/openai/v1".to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -541,6 +561,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "OpenAI".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -607,6 +629,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "智谱 GLM".to_string(),
             base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -673,6 +697,8 @@ pub fn preset_providers() -> BTreeMap<String, ProviderSpec> {
             name: "通义千问".to_string(),
             base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
             api_key: String::new(),
+            auth_header: None,
+            auth_scheme: None,
             models: {
                 let mut m = BTreeMap::new();
                 m.insert(

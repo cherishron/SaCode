@@ -1,3 +1,4 @@
+pub mod agent_backends;
 pub mod agents;
 pub mod checkpoint;
 pub mod config;
@@ -5,6 +6,7 @@ pub mod daemon;
 pub mod executor;
 pub mod failure;
 pub mod hook;
+pub mod identity;
 pub mod mcp;
 pub mod memory;
 pub mod model_routing;
@@ -28,6 +30,9 @@ pub mod workspace;
 #[cfg(test)]
 mod tests;
 
+pub use agent_backends::{
+    BackendDispatchError, BackendRegistry, BackendTaskContext, NativeBackend,
+};
 pub use agents::loop_impl::{
     build_agent_loop, AgentLoop, AgentLoopKind, ExecutionStep, LingShuLoop, LoopConfig,
     LoopSubsystems, StepResult,

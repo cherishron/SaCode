@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use super::agent_backend::{normalize_backend_id, AgentBackendId, BackendTaskMeta};
 use super::{ExecutionMode, TaskState};
 
 pub const TASK_PROTOCOL_VERSION: u32 = 1;
@@ -144,6 +145,18 @@ pub struct TaskCreateRequest {
     pub workspace: WorkspaceBoundary,
     #[serde(default)]
     pub explicit_contexts: Vec<ExplicitContextRef>,
+    /// Optional Agent Backend routing. Missing/empty → `sacode` (M0 compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<AgentBackendId>,
+    /// Optional client-side session correlation id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+impl TaskCreateRequest {
+    pub fn effective_backend_id(&self) -> AgentBackendId {
+        normalize_backend_id(self.backend_id.clone())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,6 +223,9 @@ pub struct TaskSnapshot {
     #[serde(default)]
     pub route: Option<RouteSummary>,
     pub timestamps: TaskTimestamps,
+    /// Optional Agent Backend metadata (M0). Absent → native sacode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<BackendTaskMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +341,8 @@ mod tests {
                 root: ".".to_string(),
             },
             explicit_contexts: Vec::new(),
+            backend_id: None,
+            session_id: None,
         }
     }
 
@@ -343,7 +361,58 @@ mod tests {
             validation: None,
             route: None,
             timestamps: TaskTimestamps::default(),
+            backend: None,
         }
+    }
+
+    #[test]
+    fn legacy_task_create_request_json_without_backend_fields() {
+        let legacy = serde_json::json!({
+            "schema_version": TASK_PROTOCOL_VERSION,
+            "prompt": "legacy task",
+            "mode": "build",
+            "source": "cli",
+            "workspace": { "root": "." },
+            "explicit_contexts": []
+        });
+        let parsed: TaskCreateRequest = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.backend_id.is_none());
+        assert!(parsed.session_id.is_none());
+        assert_eq!(parsed.effective_backend_id().as_str(), "sacode");
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn task_create_request_with_opencode_backend_roundtrip() {
+        let mut req = request();
+        req.backend_id = Some(AgentBackendId::new("opencode"));
+        req.session_id = Some("desktop-session-1".into());
+        req.validate().unwrap();
+        assert_eq!(req.effective_backend_id().as_str(), "opencode");
+        let raw = serde_json::to_value(&req).unwrap();
+        assert_eq!(raw["backend_id"], "opencode");
+        assert_eq!(raw["session_id"], "desktop-session-1");
+        let parsed: TaskCreateRequest = serde_json::from_value(raw).unwrap();
+        assert_eq!(parsed, req);
+    }
+
+    #[test]
+    fn legacy_task_snapshot_json_without_backend_meta() {
+        let mut value = serde_json::to_value(snapshot(TaskState::Completed)).unwrap();
+        value.as_object_mut().unwrap().remove("backend");
+        let parsed: TaskSnapshot = serde_json::from_value(value).unwrap();
+        assert!(parsed.backend.is_none());
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn task_snapshot_with_backend_meta_roundtrip() {
+        let mut snap = snapshot(TaskState::Running);
+        snap.backend = Some(BackendTaskMeta::sacode());
+        let raw = serde_json::to_string(&snap).unwrap();
+        let parsed: TaskSnapshot = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed, snap);
+        parsed.validate().unwrap();
     }
 
     #[test]

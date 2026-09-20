@@ -18,6 +18,26 @@ SaCode 是一个 Rust workspace，当前成员包括：
 interfaces/* -> runtime -> kernel
 ```
 
+## 1.1 Desktop 与多 Agent 目标结构
+
+Desktop 主线采用渐进式目录扩展，不立即移动现有 CLI、VSCode、ACP 和 LSP：
+
+```text
+interfaces/desktop      -> Tauri WebView UI + Rust shell；sidecar token/HTTP/SSE 仅由 Rust shell 持有
+interfaces/client-core  -> VSCode/Desktop 共用 Task Protocol、重连和审批状态机；transport 可注入
+integrations/acp        -> 通用 ACP JSON-RPC、framing 与 stdio Client
+runtime/agent_backends  -> Native SaCode / ACP Agent Backend
+```
+
+目标依赖方向：
+
+```text
+interfaces/* -> runtime -> kernel
+                    └──> integrations/acp
+```
+
+`integrations/acp` 是协议与 transport 层，不承载 UI、daemon 或 SaCode 工具逻辑。现有 `interfaces/acp` 保持 SaCode ACP Server 职责；调用 OpenCode 使用新增 ACP Client。daemon 保持单一 `TaskQueue` 消费与生命周期所有权，在出队后按 `backend_id` 路由，禁止各 Backend 竞争消费队列。详细决策见 [Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)。
+
 ## 2. 各层职责
 
 ### `kernel/` - 纯逻辑层

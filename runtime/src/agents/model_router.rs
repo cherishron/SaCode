@@ -578,6 +578,8 @@ fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> Mod
         base_url: Some(normalize_base_url(&spec.base_url)),
         api_key: Some(spec.api_key.clone()),
         rule: spec.models.get(model_name).cloned(),
+        auth_header: spec.auth_header.clone(),
+        auth_scheme: spec.auth_scheme.clone(),
     }
 }
 #[cfg(test)]
@@ -604,6 +606,8 @@ mod tests {
                 .iter()
                 .map(|model| (model.to_string(), rule(model)))
                 .collect(),
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 

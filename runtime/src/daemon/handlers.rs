@@ -7,8 +7,8 @@ use axum::{
 
 use crate::tools::ToolRegistry;
 use sacode_kernel::{
-    generate_task_id, EntrySource, ExecutionMode, ScheduledTask, Task, TaskQueueStatus,
-    TASK_PROTOCOL_VERSION,
+    generate_task_id, normalize_backend_id, AgentBackendId, BackendTaskMeta, EntrySource,
+    ExecutionMode, ScheduledTask, Task, TaskQueueStatus, TASK_PROTOCOL_VERSION,
 };
 
 use crate::{assemble_checkpoint_snapshot, assemble_task_snapshot, TaskSnapshotProjection};
@@ -40,10 +40,34 @@ pub async fn create_task(
     let retry_policy = parse_retry_policy(&req.retry_policy);
     let task = Task::new(req.prompt.clone(), mode, None);
 
+    let backend_id = normalize_backend_id(
+        req.backend_id
+            .as_deref()
+            .map(AgentBackendId::new)
+            .filter(|id| !id.as_str().is_empty()),
+    );
+    let backend = match state.agent_backends.resolve(Some(backend_id.clone())) {
+        Ok((resolved, descriptor)) => BackendTaskMeta {
+            backend_id: resolved,
+            backend_kind: Some(descriptor.kind),
+            agent_session_id: req.session_id.clone(),
+        },
+        Err(err) => {
+            return Json(TaskResponse::backend_dispatch_error(
+                task_id,
+                mode,
+                backend_id.as_str(),
+                err.code.as_str(),
+                &err.safe_message,
+            ));
+        }
+    };
+
     let scheduled_task = ScheduledTask::new(task_id.clone(), task)
         .with_priority(priority)
         .with_dependencies(req.dependencies.clone())
-        .with_retry_policy(retry_policy);
+        .with_retry_policy(retry_policy)
+        .with_backend_id(backend.backend_id.as_str());
 
     {
         let mut tasks = state.tasks.write().await;
@@ -55,7 +79,8 @@ pub async fn create_task(
                 req.mode.clone(),
                 priority.to_string(),
                 scheduled_task.retry_policy.max_attempts,
-            ),
+            )
+            .with_backend(Some(backend.clone())),
         );
     }
 
@@ -67,6 +92,7 @@ pub async fn create_task(
             "prompt": req.prompt,
             "mode": req.mode,
             "priority": priority.to_string(),
+            "backend_id": backend.backend_id.as_str(),
             "task": assemble_task_snapshot(TaskSnapshotProjection {
                 task_id: &task_id,
                 mode,
@@ -75,6 +101,7 @@ pub async fn create_task(
                 task_run: None,
                 output: None,
                 error: None,
+                backend: Some(&backend),
             }),
         }),
     );
@@ -93,6 +120,7 @@ pub async fn create_task(
                     TaskQueueStatus::Pending
                 },
                 "Task created and submitted to queue".to_string(),
+                Some(backend),
             ))
         }
         Err(e) => Json(TaskResponse::error(
@@ -101,6 +129,14 @@ pub async fn create_task(
             format!("Failed to submit task: {}", e),
         )),
     }
+}
+
+pub async fn list_agents(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let agents = state.agent_backends.list();
+    Json(serde_json::json!({
+        "agents": agents,
+        "default_backend_id": sacode_kernel::DEFAULT_AGENT_BACKEND_ID,
+    }))
 }
 
 pub async fn get_task_status(
@@ -164,6 +200,7 @@ pub async fn get_task_status(
                 task_run: Some(&task_run),
                 output: None,
                 error: None,
+                backend: None,
             });
             return Json(serde_json::json!({
                 "protocol_version": TASK_PROTOCOL_VERSION,
@@ -204,6 +241,7 @@ pub async fn get_task_status(
             task_run: Some(&task_run),
             output: result.output.as_deref(),
             error: result.error.as_deref(),
+            backend: None,
         });
         return Json(serde_json::json!({
             "protocol_version": TASK_PROTOCOL_VERSION,
@@ -298,6 +336,7 @@ pub async fn get_task_result(
             task_run: Some(&task_run),
             output: result.output.as_deref(),
             error: result.error.as_deref(),
+            backend: None,
         });
         return Json(serde_json::json!({
             "protocol_version": TASK_PROTOCOL_VERSION,

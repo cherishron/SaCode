@@ -1,5 +1,8 @@
 use anyhow::Result;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
+
+use sacode_runtime::daemon::{run_daemon_with_options, DaemonBindOptions};
 
 pub async fn run(args: Vec<String>) -> Result<()> {
     let enable_acp = args.iter().any(|arg| arg == "--acp");
@@ -22,23 +25,85 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    // 解析端口（默认 8080）
-    let port = args
-        .iter()
-        .find_map(|arg| {
-            arg.strip_prefix("--port=")
-                .and_then(|p| p.parse::<u16>().ok())
-        })
-        .unwrap_or(8080);
-    let host = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--host=").map(|h| h.to_string()))
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let addr: SocketAddr = format!("{}:{}", host, port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("无效的监听地址: {}", e))?;
+    // --port=0 / --port 0 → OS-assigned loopback port (Desktop sidecar)
+    let mut port: u16 = 8080;
+    let mut host = "127.0.0.1".to_string();
+    let mut ready_file: Option<PathBuf> = None;
+    let mut nonce: Option<String> = None;
+    let mut auth_token: Option<String> = None;
 
-    eprintln!("SaCode daemon 启动中... http://{}", addr);
-    sacode_runtime::daemon::run_daemon(addr).await;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if let Some(value) = arg.strip_prefix("--port=") {
+            port = value
+                .parse::<u16>()
+                .map_err(|e| anyhow::anyhow!("无效端口 {value}: {e}"))?;
+        } else if arg == "--port" {
+            i += 1;
+            let value = args
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("--port 需要参数"))?;
+            port = value
+                .parse::<u16>()
+                .map_err(|e| anyhow::anyhow!("无效端口 {value}: {e}"))?;
+        } else if arg == "--port0" {
+            port = 0;
+        } else if let Some(value) = arg.strip_prefix("--host=") {
+            host = value.to_string();
+        } else if arg == "--host" {
+            i += 1;
+            host = args
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("--host 需要参数"))?
+                .clone();
+        } else if let Some(value) = arg.strip_prefix("--ready-file=") {
+            ready_file = Some(PathBuf::from(value));
+        } else if arg == "--ready-file" {
+            i += 1;
+            let value = args
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("--ready-file 需要参数"))?;
+            ready_file = Some(PathBuf::from(value));
+        } else if let Some(value) = arg.strip_prefix("--nonce=") {
+            nonce = Some(value.to_string());
+        } else if let Some(value) = arg.strip_prefix("--auth-token=") {
+            auth_token = Some(value.to_string());
+        } else if arg == "--auth-token" {
+            i += 1;
+            let value = args
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("--auth-token 需要参数"))?;
+            auth_token = Some(value.clone());
+        }
+        i += 1;
+    }
+
+    // Env fallback for token (preferred by Desktop shell so it never appears in argv logs)
+    if auth_token.is_none() {
+        if let Ok(token) = std::env::var("SACODE_DAEMON_TOKEN") {
+            if !token.trim().is_empty() {
+                auth_token = Some(token);
+            }
+        }
+    }
+
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|e| anyhow::anyhow!("无效 host {host}: {e}"))?;
+    let addr = SocketAddr::new(ip, port);
+
+    run_daemon_with_options(DaemonBindOptions {
+        addr,
+        ready_file,
+        nonce,
+        auth_token,
+    })
+    .await;
     Ok(())
+}
+
+#[allow(dead_code)]
+fn default_loopback() -> IpAddr {
+    IpAddr::V4(Ipv4Addr::LOCALHOST)
 }

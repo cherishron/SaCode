@@ -63,6 +63,9 @@ impl App {
                 .as_ref()
                 .map(|value| value.config.model.clone())
                 .unwrap_or_default(),
+            auth_header: None,
+            auth_scheme: None,
+            secret_ref: None,
         };
 
         self.queue.processing = true;

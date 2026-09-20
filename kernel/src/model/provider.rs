@@ -134,6 +134,17 @@ fn provider_validation_schema_version() -> u32 {
     1
 }
 
+impl ProviderValidationSnapshot {
+    /// 是否允许使用该 Provider。
+    ///
+    /// `Available` 表示验证通过；`Unverified` 表示尚未探测（例如由旧版配置迁移而来），
+    /// 此时是否可用交由 `ProviderAuthorization` 判定；只有明确验证失败的 `Unavailable`
+    /// 才拒绝使用。若把 `Unverified` 也一并拒绝，存量配置将永远无法通过门禁。
+    pub fn is_usable(&self) -> bool {
+        self.status != ProviderValidationStatus::Unavailable
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderAuthorizationSource {
@@ -180,6 +191,7 @@ pub enum SecretRefKind {
     Environment,
     Stored,
     LegacyInline,
+    OsKeyring,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +215,41 @@ impl SecretRef {
             locator: None,
             masked: format!("****{suffix}"),
         })
+    }
+
+    /// OS keyring reference. Locator format: `os-keyring:{service}/{account}`.
+    pub fn os_keyring(locator: impl Into<String>) -> Self {
+        let locator = locator.into();
+        Self {
+            kind: SecretRefKind::OsKeyring,
+            locator: Some(locator),
+            masked: "****".to_string(),
+        }
+    }
+
+    pub fn environment(var: impl Into<String>) -> Self {
+        let var = var.into();
+        Self {
+            kind: SecretRefKind::Environment,
+            locator: Some(var),
+            masked: "****".to_string(),
+        }
+    }
+
+    pub fn mask_secret(secret: &str) -> String {
+        let secret = secret.trim();
+        if secret.is_empty() {
+            return "****".to_string();
+        }
+        let suffix: String = secret
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("****{suffix}")
     }
 }
 
@@ -249,6 +296,18 @@ pub struct ModelProvider {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<ModelRule>,
+    /// 认证头名称覆盖。`None` 表示使用默认的 `Authorization`。
+    ///
+    /// 部分 OpenAI 兼容网关（如百智云 AI 网关）要求把密钥放在 `x-api-key`
+    /// 这类自定义头上，而非 `Authorization`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+    /// 认证头 scheme 前缀覆盖。`Some("")` 表示不添加前缀（发送裸密钥）。
+    ///
+    /// `None` 时按 `auth_header` 推断：使用默认 `Authorization` 时为 `Bearer`，
+    /// 使用自定义头时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_scheme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,6 +638,8 @@ impl ModelProvider {
             base_url: Some("https://api.openai.com/v1".to_string()),
             api_key: None,
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 
@@ -589,6 +650,8 @@ impl ModelProvider {
             base_url: Some("https://api.deepseek.com".to_string()),
             api_key: None,
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 
@@ -599,6 +662,8 @@ impl ModelProvider {
             base_url: Some(MIMO_TOKEN_PLAN_BASE_URL.to_string()),
             api_key: None,
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 
@@ -609,6 +674,8 @@ impl ModelProvider {
             base_url: Some("https://api.longcat.chat/openai/v1".to_string()),
             api_key: None,
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 
@@ -619,6 +686,8 @@ impl ModelProvider {
             base_url: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
             api_key: None,
             rule: None,
+            auth_header: None,
+            auth_scheme: None,
         }
     }
 
@@ -630,6 +699,32 @@ impl ModelProvider {
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
         self
+    }
+
+    /// 构造认证头 `(name, value)`。
+    ///
+    /// 默认行为与历史版本一致：`Authorization: Bearer <key>`。
+    /// 配置 `auth_header` 后改用自定义头名；除非显式设置 `auth_scheme`，
+    /// 否则发送裸密钥值（适用于 `x-api-key` 风格网关）。
+    pub fn auth_header(&self, key: &str) -> (String, String) {
+        let name = self
+            .auth_header
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Authorization")
+            .to_string();
+        let scheme = match self.auth_scheme.as_deref() {
+            Some(scheme) => scheme.trim().to_string(),
+            None if name.eq_ignore_ascii_case("Authorization") => "Bearer".to_string(),
+            None => String::new(),
+        };
+        let value = if scheme.is_empty() {
+            key.to_string()
+        } else {
+            format!("{scheme} {key}")
+        };
+        (name, value)
     }
 
     pub fn needs_thinking(&self) -> bool {

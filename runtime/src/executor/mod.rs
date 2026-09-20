@@ -42,6 +42,8 @@ pub struct TaskExecutor {
     approval_factory: Option<ApprovalFactory>,
     /// task_id → AbortHandle 映射，用于在取消时中止正在运行的任务
     abort_handles: Arc<tokio::sync::Mutex<HashMap<String, TaskCancelHandle>>>,
+    /// Optional ACP backends (OpenCode) keyed by backend_id (M4).
+    acp_backends: Arc<tokio::sync::Mutex<HashMap<String, crate::agent_backends::AcpBackendConfig>>>,
 }
 
 /// 任务取消句柄：AbortHandle + 协作式取消标记，取消时同时通知工具执行进程
@@ -72,7 +74,20 @@ impl TaskExecutor {
             workdir: None,
             approval_factory: None,
             abort_handles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            acp_backends: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Register an ACP backend config for executor dispatch (M4).
+    pub async fn set_acp_backend(&self, config: crate::agent_backends::AcpBackendConfig) {
+        self.acp_backends
+            .lock()
+            .await
+            .insert(config.id.as_str().to_string(), config);
+    }
+
+    pub async fn remove_acp_backend(&self, backend_id: &str) {
+        self.acp_backends.lock().await.remove(backend_id);
     }
 
     /// 设置工作目录：启用后 spawn 任务体走 task_runner 路径，
@@ -126,12 +141,14 @@ impl TaskExecutor {
 
         while let Some(task) = self.queue.next_ready().await {
             self.queue.mark_running(&task.id).await;
+            let backend_id = task.effective_backend_id();
             self.emit_event(
                 &task.id,
                 "task_started",
                 serde_json::json!({
                     "prompt": task.task.prompt,
                     "mode": task.task.mode.to_string(),
+                    "backend_id": backend_id,
                 }),
             );
 
@@ -146,29 +163,113 @@ impl TaskExecutor {
                 .map(|factory| factory(&task_id))
                 .unwrap_or_else(|| Arc::new(AutoApproveDecider));
 
+            // M2 dispatch: only native `sacode` uses task_runner today.
+            // Other backends (ACP/OpenCode) fail closed instead of silently
+            // running the native LLM path.
+            let dispatch_backend = backend_id.clone();
+            let acp_backends = self.acp_backends.clone();
+
             let cancellation = Arc::new(AtomicBool::new(false));
             let task_cancellation = cancellation.clone();
             let abort_handle = self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
-                // 路径分发：workdir 设置走 task_runner（生产路径），
-                // 未设置走 test_placeholder（仅 cfg(test)，避免发起真实 LLM 调用）
-                let (result, task_run, intermediate_events) = match workdir {
-                    Some(workdir) => {
-                        execute_via_task_runner(
-                            &workdir,
-                            &task.task,
-                            task_id.clone(),
-                            tools,
-                            started_at,
-                            Some(&event_bus),
-                            approval,
-                            Some(task_cancellation),
-                        )
-                        .await
-                    }
-                    None => execute_test_placeholder(&task.task, task_id.clone(), started_at),
-                };
+                let (result, task_run, intermediate_events) =
+                    if dispatch_backend != sacode_kernel::DEFAULT_AGENT_BACKEND_ID {
+                        let acp_config = acp_backends
+                            .lock()
+                            .await
+                            .get(&dispatch_backend)
+                            .cloned();
+                        match acp_config {
+                            Some(config) => {
+                                let backend =
+                                    crate::agent_backends::AcpProcessBackend::new(config);
+                                let outcome = backend
+                                    .execute_prompt(
+                                        &task_id,
+                                        &task.task.prompt,
+                                        task.task.mode,
+                                        Some(&event_bus),
+                                    )
+                                    .await;
+                                let task_run = crate::task_run_snapshot(
+                                    Some(task_id.clone()),
+                                    task.task.mode,
+                                    task.task.prompt.clone(),
+                                    if outcome.success {
+                                        TaskRunState::Completed
+                                    } else {
+                                        TaskRunState::Failed
+                                    },
+                                    outcome.output.clone(),
+                                );
+                                let result = if outcome.success {
+                                    TaskResult::success(
+                                        task_id.clone(),
+                                        outcome.output.unwrap_or_default(),
+                                        outcome.duration_ms,
+                                    )
+                                } else {
+                                    TaskResult::failure(
+                                        task_id.clone(),
+                                        outcome.error.unwrap_or_else(|| {
+                                            "ACP backend execution failed".to_string()
+                                        }),
+                                        outcome.duration_ms,
+                                    )
+                                };
+                                (result, task_run, Vec::new())
+                            }
+                            None => {
+                                let task_run = crate::task_run_snapshot(
+                                    Some(task_id.clone()),
+                                    task.task.mode,
+                                    task.task.prompt.clone(),
+                                    TaskRunState::Failed,
+                                    None,
+                                );
+                                let message = format!(
+                                    "backend {} is registered but has no ACP executable config; set SACODE_OPENCODE_EXECUTABLE",
+                                    dispatch_backend
+                                );
+                                emit_executor_event(
+                                    &event_bus,
+                                    &task_id,
+                                    "task_failed",
+                                    serde_json::json!({
+                                        "code": "backend/unavailable",
+                                        "backend_id": dispatch_backend,
+                                        "message": message,
+                                    }),
+                                );
+                                (
+                                    TaskResult::failure(task_id.clone(), message, 0),
+                                    task_run,
+                                    Vec::new(),
+                                )
+                            }
+                        }
+                    } else {
+                        match workdir {
+                            Some(workdir) => {
+                                execute_via_task_runner(
+                                    &workdir,
+                                    &task.task,
+                                    task_id.clone(),
+                                    tools,
+                                    started_at,
+                                    Some(&event_bus),
+                                    approval,
+                                    Some(task_cancellation),
+                                )
+                                .await
+                            }
+                            None => {
+                                execute_test_placeholder(&task.task, task_id.clone(), started_at)
+                            }
+                        }
+                    };
 
                 // 发送中间事件（task_runner 路径仅 1 个 done/error；test_placeholder 路径全部）
                 for event in &intermediate_events {

@@ -1,4 +1,5 @@
 mod acceptance;
+mod agent_backend;
 mod checkpoint;
 mod choice;
 mod plan;
@@ -12,6 +13,10 @@ pub use acceptance::{
     AcceptanceEnvironment, AcceptanceEvidenceKind, AcceptanceEvidenceRef, AcceptanceMetricSample,
     AcceptanceOutcome, AcceptanceOutcomeCounts, AcceptanceRecord, AcceptanceReleaseSummary,
     AcceptanceSchemaError, ACCEPTANCE_SCHEMA_VERSION,
+};
+pub use agent_backend::{
+    normalize_backend_id, AgentBackendHealth, AgentBackendId, AgentBackendKind, AgentCapabilities,
+    AgentDescriptor, AgentEvent, BackendFailureCode, BackendTaskMeta, DEFAULT_AGENT_BACKEND_ID,
 };
 pub use checkpoint::{Checkpoint, ToolRecord};
 pub use choice::Choice;

@@ -15,6 +15,9 @@ pub struct ScheduledTask {
     pub deadline: Option<DateTime<Utc>>,
     pub current_attempt: u32,
     pub created_at: DateTime<Utc>,
+    /// Agent Backend routing (M0/M2). None/empty → sacode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_id: Option<String>,
 }
 
 impl ScheduledTask {
@@ -29,7 +32,23 @@ impl ScheduledTask {
             deadline: None,
             current_attempt: 0,
             created_at: Utc::now(),
+            backend_id: None,
         }
+    }
+
+    pub fn with_backend_id(mut self, backend_id: impl Into<String>) -> Self {
+        let id = backend_id.into().trim().to_string();
+        self.backend_id = if id.is_empty() { None } else { Some(id) };
+        self
+    }
+
+    pub fn effective_backend_id(&self) -> String {
+        self.backend_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::DEFAULT_AGENT_BACKEND_ID.to_string())
     }
 
     pub fn with_priority(self, priority: TaskPriority) -> Self {

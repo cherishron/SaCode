@@ -21,9 +21,57 @@ pub fn provider_failure_detail(failure: &ProviderFailure) -> FailureDetail {
 
 pub fn classify_provider_failure(error: &str) -> FailureDetail {
     let lower = error.to_ascii_lowercase();
+    // 优先按结构化错误码前缀识别，避免关键词漏匹配（例如 "provider/authentication" 不含 401/403）。
+    if lower.starts_with("provider/authentication") {
+        return failure(
+            "provider/authentication",
+            false,
+            SuggestedAction::ReconfigureProvider,
+            "Provider authentication failed. Check the configured credential.",
+        );
+    }
+    if lower.starts_with("provider/quota_or_rate_limit") {
+        return failure(
+            "provider/quota_or_rate_limit",
+            true,
+            SuggestedAction::Retry,
+            "Provider quota or rate limit was reached. Retry later or review the account quota.",
+        );
+    }
+    if lower.starts_with("provider/model_unavailable") {
+        return failure(
+            "provider/model_unavailable",
+            false,
+            SuggestedAction::ReconfigureProvider,
+            "The selected model is unavailable. Select an accessible model.",
+        );
+    }
+    if lower.starts_with("provider/network") {
+        return failure(
+            "provider/network",
+            true,
+            SuggestedAction::Retry,
+            "The provider could not be reached. Check the network and endpoint, then retry.",
+        );
+    }
+    if lower.starts_with("provider/service") {
+        return failure(
+            "provider/service",
+            true,
+            SuggestedAction::Retry,
+            "The provider returned an unexpected service error. Retry later or inspect internal logs.",
+        );
+    }
     if contains_any(
         &lower,
-        &["401", "403", "unauthorized", "forbidden", "api key"],
+        &[
+            "401",
+            "403",
+            "unauthorized",
+            "forbidden",
+            "api key",
+            "authentication",
+        ],
     ) {
         return failure(
             "provider/authentication",
@@ -187,6 +235,21 @@ mod tests {
     #[test]
     fn provider_failure_classifies_known_categories() {
         let cases = [
+            (
+                "provider/authentication: Provider authentication failed.",
+                "provider/authentication",
+                false,
+            ),
+            (
+                "provider/quota_or_rate_limit: quota exhausted",
+                "provider/quota_or_rate_limit",
+                true,
+            ),
+            (
+                "provider/model_unavailable: select another model",
+                "provider/model_unavailable",
+                false,
+            ),
             (
                 "Provider error (401): invalid API key",
                 "provider/authentication",

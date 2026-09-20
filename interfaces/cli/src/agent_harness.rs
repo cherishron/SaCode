@@ -36,6 +36,9 @@ pub fn connect_provider(
             .into_iter()
             .next()
             .unwrap_or_else(|| name.to_string()),
+        auth_header: None,
+        auth_scheme: None,
+        secret_ref: None,
     };
     let availability = ProviderAvailabilityService::default();
     let mut model_provider = config.to_model_provider();
@@ -61,6 +64,8 @@ pub fn connect_provider(
             String::new()
         },
         models: std::collections::BTreeMap::new(),
+        auth_header: None,
+        auth_scheme: None,
     };
     spec.name = name.to_string();
     spec.base_url = base_url.to_string();
@@ -185,9 +190,7 @@ pub fn collect_model_options(
             let Some(state) = authorization_config.provider_state.get(&provider_name) else {
                 continue;
             };
-            if state.validation.status != ProviderValidationStatus::Available
-                || !state.authorization.permits_model(&model_name)
-            {
+            if !state.validation.is_usable() || !state.authorization.permits_model(&model_name) {
                 continue;
             }
             options.push(ModelOption {
@@ -216,9 +219,7 @@ pub fn switch_model(
         .provider_state
         .get(provider_name)
         .ok_or_else(|| anyhow::anyhow!("provider is not verified: {}", provider_name))?;
-    if state.validation.status != ProviderValidationStatus::Available
-        || !state.authorization.permits_model(model_name)
-    {
+    if !state.validation.is_usable() || !state.authorization.permits_model(model_name) {
         anyhow::bail!("model is not authorized: {}/{}", provider_name, model_name);
     }
     let mut config = provider_store

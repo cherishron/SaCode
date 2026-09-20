@@ -88,6 +88,7 @@ impl RunnerOutput {
             task_run: Some(&self.task_run),
             output: self.provider_response.as_ref().ok().map(String::as_str),
             error: self.provider_response.as_ref().err().map(String::as_str),
+            backend: None,
         })
     }
 

@@ -1,12 +1,24 @@
 # SaCode 产品路线图
 
-> 更新时间：2026-09-03
+> 更新时间：2026-09-20
 > 当前版本：1.1.1（VSCode 扩展 0.2.1）
-> 配套文档：`docs/product/PRD.md`、`docs/report.md`、`docs/report-plan.md`
+> 配套文档：`docs/product/PRD.md`、`docs/product/desktop-multi-agent-prd.md`、`docs/report.md`、`docs/report-plan.md`
 
 本文件只回答三件事：当前处在哪个阶段、下一阶段交付什么、后续能力按什么顺序演进。
 
-## 平台化收敛声明（2026-08-18）
+## 客户端化定向扩展（2026-09-20）
+
+在 CLI/TUI、VSCode、daemon 审批和事件恢复能力完成后，路线图新增 Desktop 与多 Agent Backend 主线。该主线覆盖旧的“ACP/LSP/Daemon 全部维持现状”表述，但范围严格限制为：
+
+1. Tauri Desktop；
+2. VSCode/Desktop 共用 client-core；
+3. daemon Agent Backend 与 sidecar 安全；
+4. ACP Client 和 OpenCode 接入；
+5. 统一审批、事件、取消和审计。
+
+LSP 继续维持现状，Scheduled Tasks / Agent Teams / Channels 继续延后。详细范围和执行顺序见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md) 与 [实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
+
+## 原平台化收敛声明（2026-08-18，已被定向扩展修订）
 
 基于《SaCode 可行性评估报告》（docs/report.md）维度三"整体方向是否跑偏"结论：
 
@@ -21,7 +33,7 @@
   - 知识系统 9 文件分类 → 3 文件
   - 五维冲突检测 → 审批 + 拦截
 
-ACP/LSP/Daemon 维持现有能力，不在本期扩展新功能。
+ACP/LSP/Daemon 的通用平台化仍不扩张；Desktop 和 ACP Agent Backend 所需能力按 2026-09-20 专项决策定向实施。
 
 ## 当前阶段判断
 
@@ -153,6 +165,39 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 | scheduled-tasks | 延后 | 平台化收敛后不进入本期 |
 | agent-teams | 延后 | 平台化收敛后不进入本期 |
 | channels | 延后 | 平台化收敛后不进入本期 |
+
+## v1.3–v1.5：Desktop 与多 Agent 客户端
+
+### v1.3：Desktop Native MVP
+
+| 项 | 交付物 | 优先级 |
+|----|--------|--------|
+| client-core | VSCode/Desktop 共用 HTTP、SSE、审批和协议校验 | P0 |
+| Tauri Desktop | 工作区、会话、工具卡片、审批、Diff | P0 |
+| Native Backend | daemon BackendRegistry + SaCode 默认 Backend | P0 |
+| sidecar 安全 | OS 原子分配端口、私有 ready-file、token、进程清理 | P0 |
+| Desktop E2E | Desktop → daemon → SaCode 完整回归 | P1 |
+
+### v1.4：ACP Client + OpenCode Backend
+
+| 项 | 交付物 | 优先级 |
+|----|--------|--------|
+| ACP protocol/client | JSON-RPC framing、stdio transport、请求分发 | P0 |
+| OpenCode adapter | probe/session/prompt/cancel/event mapping | P0 |
+| 权限桥接 | ACP permission → SaCode approval/audit | P0 |
+| 兼容矩阵 | 真实 OpenCode 版本 smoke 与脱敏 fixture | P1 |
+| 跨平台进程管理 | Windows/macOS/Linux 子进程清理 | P1 |
+
+### v1.5：发布与多客户端收口
+
+| 项 | 交付物 | 优先级 |
+|----|--------|--------|
+| Desktop installers | Windows/macOS/Linux 构建产物 | P0 |
+| 凭据迁移 | OS keyring + 旧明文配置迁移 | P0 |
+| VSCode Backend 选择 | 可选使用外部 Agent Backend | P1 |
+| 发布门禁 | sidecar/ACP/Desktop 确定性检查 | P1 |
+
+专项里程碑的详细依赖和验收见 [实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
 
 ## 并行推进主线
 

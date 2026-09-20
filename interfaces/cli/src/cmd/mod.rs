@@ -1,3 +1,4 @@
+mod account;
 mod acp;
 mod arg_parser;
 mod bundle;
@@ -87,6 +88,7 @@ pub enum CliCommand {
     Sandbox,
     Mcp,
     Acp,
+    Account,
     Lsp,
     Memory,
     Insight,
@@ -144,6 +146,7 @@ pub async fn run() -> Result<u8> {
         CliCommand::Sandbox => sandbox::run(options.sub_args)?,
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
         CliCommand::Acp => acp::run(options.sub_args).await?,
+        CliCommand::Account => account::run(options.sub_args).await?,
         CliCommand::Lsp => lsp::run(options.sub_args).await?,
         CliCommand::Memory => memory::run(options.sub_args)?,
         CliCommand::Insight => insight::run()?,
@@ -305,6 +308,24 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Doctor);
         assert!(options.sub_args.is_empty());
+    }
+
+    #[test]
+    fn parse_args_parses_account_subcommand() {
+        let options = parse_args(vec![
+            "account".to_string(),
+            "login".to_string(),
+            "--dry-run".to_string(),
+        ]);
+        assert_eq!(options.command, CliCommand::Account);
+        assert_eq!(
+            options.sub_args,
+            vec!["login".to_string(), "--dry-run".to_string()]
+        );
+
+        let status = parse_args(vec!["account".to_string(), "status".to_string()]);
+        assert_eq!(status.command, CliCommand::Account);
+        assert_eq!(status.sub_args, vec!["status".to_string()]);
     }
 
     #[test]

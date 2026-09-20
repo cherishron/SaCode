@@ -1,6 +1,6 @@
 use sacode_kernel::{
-    EntrySource, ExecutionMode, FailureCategory, ResultSummary, RouteSummary, TaskPhase,
-    TaskQueueStatus, TaskRun, TaskSnapshot, TaskState, TaskTimestamps, TerminalOutcome,
+    BackendTaskMeta, EntrySource, ExecutionMode, FailureCategory, ResultSummary, RouteSummary,
+    TaskPhase, TaskQueueStatus, TaskRun, TaskSnapshot, TaskState, TaskTimestamps, TerminalOutcome,
     ValidationStatus, ValidationSummary, TASK_PROTOCOL_VERSION,
 };
 
@@ -14,6 +14,8 @@ pub struct TaskSnapshotProjection<'a> {
     pub task_run: Option<&'a TaskRun>,
     pub output: Option<&'a str>,
     pub error: Option<&'a str>,
+    /// Optional Agent Backend metadata (M0). None → native sacode.
+    pub backend: Option<&'a BackendTaskMeta>,
 }
 
 pub fn assemble_checkpoint_snapshot(
@@ -36,6 +38,7 @@ pub fn assemble_checkpoint_snapshot(
         task_run: Some(&task_run),
         output: None,
         error: None,
+        backend: None,
     });
     snapshot.timestamps.created_at = Some(checkpoint.created_at.clone());
     snapshot
@@ -115,6 +118,7 @@ pub fn assemble_task_snapshot(projection: TaskSnapshotProjection<'_>) -> TaskSna
         }),
         route,
         timestamps,
+        backend: projection.backend.cloned(),
     }
 }
 
@@ -151,6 +155,7 @@ mod tests {
             task_run,
             output: None,
             error,
+            backend: None,
         }
     }
 

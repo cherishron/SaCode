@@ -7,9 +7,35 @@
 ```bash
 sacode serve
 sacode serve --host=127.0.0.1 --port=8080
+# Desktop sidecar：OS 分配端口 + ready-file 握手
+sacode serve --port 0 --ready-file /path/to/ready.json --nonce <instance>
+# 可选 bearer token（不写入 ready-file；也可用环境变量 SACODE_DAEMON_TOKEN）
+sacode serve --port 0 --ready-file ready.json --auth-token <token>
 ```
 
-默认监听 `127.0.0.1:8080`。daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、取消任务和批准具有副作用的工具调用，因此默认安全假设是：
+默认监听 `127.0.0.1:8080`。`--port 0` / `--port0` 时由 OS 分配 loopback 端口，stdout 打印实际 `http://host:port`。
+
+### ready-file 握手（Desktop sidecar）
+
+当指定 `--ready-file PATH` 时，daemon 在 bind 成功后写入 JSON（**不含 token**）：
+
+```json
+{
+  "schema_version": 1,
+  "host": "127.0.0.1",
+  "port": 49152,
+  "pid": 12345,
+  "version": "1.1.1",
+  "protocol_version": 1,
+  "base_url": "http://127.0.0.1:49152",
+  "nonce": "instance-nonce",
+  "auth_required": true
+}
+```
+
+客户端校验 nonce 与 `/health` 后删除/失效 ready-file。进程退出时 daemon 会尽力删除该文件。
+
+daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、取消任务和批准具有副作用的工具调用，因此默认安全假设是：
 
 - 仅由本机可信用户访问；
 - 启动目录就是任务工作目录与本地状态存储基准；
@@ -17,6 +43,8 @@ sacode serve --host=127.0.0.1 --port=8080
 - 如需绑定非 loopback 地址，应在前置代理或网络层补充 TLS、强认证、来源限制与防火墙规则。
 
 不建议使用 `--host=0.0.0.0` 直接对外提供服务。审批端点不是认证机制，能够访问 daemon 的调用方也能够提交审批结果。
+
+> 规划说明（2026-09-20）：Desktop 专项将新增可选 bearer token、`--port 0`/ready-file sidecar 握手以及 Agent Backend 路由。在这些能力落地前，本页以下内容仍是当前实现真源；不得把专项 PRD 中的规划端点当作已发布 API。详见 [Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)。
 
 ## 路由概览
 
@@ -32,6 +60,32 @@ sacode serve --host=127.0.0.1 --port=8080
 | POST | `/task/:id/approve` | 回传一次审批结果 |
 | GET | `/task/:id/approvals` | 查询任务当前待审批列表，用于客户端恢复 |
 | GET | `/metrics` | 查询 daemon 审批与 SSE 指标快照 |
+| GET | `/agents` | **M2 草案**：列出已注册 Agent Backend（默认仅 `sacode`） |
+
+> **M4 草案**：设置环境变量 `SACODE_OPENCODE_EXECUTABLE` 时，daemon 启动会注册 `opencode` Backend，并在 `POST /task` 的 `backend_id=opencode` 时走 ACP 执行。
+>
+> 本机已验证（OpenCode 1.18.31 via bun）：
+>
+> ```powershell
+> # ACP stdio（推荐，daemon 分发用）
+> $env:SACODE_OPENCODE_EXECUTABLE = "C:\Users\jingg\.version-fox\cache\nodejs\v-24.14.1\nodejs-24.14.1\node_modules\bun\bin\bun.exe"
+> $env:SACODE_OPENCODE_ARGS = "x opencode-ai acp"
+> # 可选：工作目录
+> $env:SACODE_OPENCODE_CWD = "E:\Project\sa\saai"
+>
+> # 也可用包装脚本
+> # SACODE_OPENCODE_EXECUTABLE=E:\Project\sa\saai\SaCode\scripts\opencode-acp.cmd
+>
+> sacode serve --port 0 --ready-file %TEMP%\sacode-ready.json
+> curl -X POST http://127.0.0.1:<port>/task -H "content-type: application/json" ^
+>   -d "{\"prompt\":\"say pong\",\"mode\":\"build\",\"backend_id\":\"opencode\"}"
+> ```
+>
+> 契约要点（OpenCode 1.18+）：`session/new` 必须带 `mcpServers: []`；`session/prompt` 的 `prompt` 必须是内容部件数组 `[{type:text,text:...}]`，不是裸字符串。
+>
+> 另有 HTTP 模式：`opencode serve --port 4096` / `opencode web`（headless server），与 ACP stdio 不是同一接入面；daemon M4 走 ACP。
+>
+> **M5 草案**：设置 `SACODE_DAEMON_TOKEN`（或 `sacode serve --auth-token`）时，除 `/health` 外的路由要求 `Authorization: Bearer <token>`，否则返回 401。
 | GET | `/events` | 全局 SSE；不支持历史回放 |
 | GET | `/events/:id` | 单任务 SSE；支持 `Last-Event-ID` |
 | GET | `/api/stream` | 统一 SSE；可用 `task_id` 查询参数过滤 |
@@ -60,6 +114,10 @@ curl -X POST http://127.0.0.1:8080/task \
 | `retry_policy` | 否 | 重试策略对象 |
 | `scheduled_at` | 否 | 调度时间元数据 |
 | `deadline` | 否 | 截止时间元数据 |
+| `backend_id` | 否 | **M0 草案**：Agent Backend 路由。缺省/空 → `sacode`（与旧行为一致）。非默认 backend（如 `opencode`）需 daemon 注册后才可调度；未注册时任务应在创建或执行阶段失败并带 `backend/not_found` |
+| `session_id` | 否 | **M0 草案**：客户端会话关联 ID，随 TaskSnapshot.backend 可选回显 |
+
+> M0 冻结：`backend_id` / `session_id` / TaskSnapshot.backend 已进入 kernel Task Protocol（`schema_version` 仍为 1，字段可选，旧客户端可忽略）。`AgentEvent` 仅为 daemon 内部 Backend 适配模型，**不得**作为第二套对外 SSE 协议。
 
 返回示例：
 

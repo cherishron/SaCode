@@ -33,6 +33,13 @@ tmp/
 temp/
 .cache/
 .sacode/
+.arts/
+.codegraph/
+.tmp-i3-home/
+.tmp-i3-work/
+.tmp-i3-keyring/
+**/desktop-sidecar/
+
 
 # Windows 保留设备名误产物（>nul 重定向残留）
 nul

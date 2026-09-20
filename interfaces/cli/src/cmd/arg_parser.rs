@@ -53,6 +53,7 @@ fn simple_subcommand(name: &str) -> Option<CliCommand> {
         "memory" => CliCommand::Memory,
         "insight" => CliCommand::Insight,
         "acp" => CliCommand::Acp,
+        "account" => CliCommand::Account,
         "lsp" => CliCommand::Lsp,
         "serve" => CliCommand::Serve,
         "init" => CliCommand::Init,

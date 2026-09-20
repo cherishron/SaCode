@@ -492,6 +492,14 @@ fn resolve_fallback_visual_provider(input: &serde_json::Value) -> Option<ModelPr
             .and_then(|v| v.as_str())
             .map(|v| v.to_string()),
         rule: None,
+        auth_header: input
+            .get("fallback_auth_header")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        auth_scheme: input
+            .get("fallback_auth_scheme")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
     })
 }
 
@@ -510,6 +518,14 @@ pub(super) fn resolve_visual_provider(input: &serde_json::Value) -> anyhow::Resu
                 .and_then(|v| v.as_str())
                 .map(|v| v.to_string()),
             rule: None,
+            auth_header: input
+                .get("auth_header")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            auth_scheme: input
+                .get("auth_scheme")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
         });
     }
 
@@ -532,6 +548,8 @@ pub(super) fn resolve_visual_provider(input: &serde_json::Value) -> anyhow::Resu
         base_url: Some(normalize_base_url(&provider_spec.base_url)),
         api_key: provider_api_key(provider_spec),
         rule: Some(rule.clone()),
+        auth_header: provider_spec.auth_header.clone(),
+        auth_scheme: provider_spec.auth_scheme.clone(),
     })
 }
 

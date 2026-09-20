@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use sacode_kernel::model::{ModelProvider, ProviderValidationStatus};
+use sacode_kernel::model::ModelProvider;
 use sacode_runtime::{
     build_route_plan_from_candidates, resolve_config_model_candidates, ModelRoutePlan, TaskProfile,
 };
@@ -48,18 +48,25 @@ pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProvider
     let config = store.load_effective().ok()?;
     let (provider_name, model_name) = config.resolve_model(&config.model)?;
     let state = config.provider_state.get(&provider_name)?;
-    if state.validation.status != ProviderValidationStatus::Available
-        || !state.authorization.permits_model(&model_name)
-    {
+    if !state.validation.is_usable() || !state.authorization.permits_model(&model_name) {
         return None;
     }
     let spec = config.provider.get(&provider_name)?;
+    // Prefer secret_ref persisted on provider.json identity entries.
+    let secret_ref = ProviderConfigStore::new(&PathBuf::from("."))
+        .get(&provider_name)
+        .ok()
+        .flatten()
+        .and_then(|c| c.secret_ref);
     Some(NamedProviderConfig {
         name: provider_name,
         config: ProviderConfig {
             base_url: spec.base_url.clone(),
             api_key: spec.api_key.clone(),
             model: model_name,
+            auth_header: spec.auth_header.clone(),
+            auth_scheme: spec.auth_scheme.clone(),
+            secret_ref,
         },
     })
 }
@@ -107,7 +114,11 @@ pub fn resolve_provider(workdir: &Path) -> ModelProvider {
     }
 
     if let Some(named) = resolve_named_provider(workdir) {
-        let config = named.config;
+        let mut config = named.config;
+        // Resolve identity key material from secret_ref when plaintext api_key is empty.
+        if config.api_key.is_empty() {
+            config.api_key = config.resolved_api_key();
+        }
         if !config.base_url.is_empty() && !config.api_key.is_empty() {
             if !config.model.is_empty() {
                 tracing::debug!(
@@ -169,7 +180,10 @@ pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelPro
 
     if candidates.is_empty() {
         if let Some(named) = resolve_named_provider(workdir) {
-            let config = named.config;
+            let mut config = named.config;
+            if config.api_key.is_empty() {
+                config.api_key = config.resolved_api_key();
+            }
             if !config.base_url.is_empty() && !config.api_key.is_empty() && !config.model.is_empty()
             {
                 candidates.push((
@@ -248,6 +262,8 @@ mod tests {
             name: "test".to_string(),
             base_url: "https://example.com/v1".to_string(),
             api_key: "test-key".to_string(),
+            auth_header: None,
+            auth_scheme: None,
             models,
         }
     }
@@ -336,6 +352,8 @@ mod tests {
                 name: "test".to_string(),
                 base_url: "https://example.com/v1".to_string(),
                 api_key: "test-key".to_string(),
+                auth_header: None,
+                auth_scheme: None,
                 models: models.clone(),
             },
         );
@@ -392,10 +410,10 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn resolve_authorized_named_provider_requires_available_and_authorized() {
+    fn resolve_authorized_named_provider_accepts_unverified_but_rejects_failed() {
         use sacode_kernel::model::{
             ProviderAuthorization, ProviderAuthorizationSource, ProviderProfileType,
-            ProviderRuntimeState, ProviderValidationSnapshot,
+            ProviderRuntimeState, ProviderValidationSnapshot, ProviderValidationStatus,
         };
 
         let unique = SystemTime::now()
@@ -419,6 +437,8 @@ mod tests {
                 name: "P".to_string(),
                 base_url: "https://p.example/v1".to_string(),
                 api_key: String::new(),
+                auth_header: None,
+                auth_scheme: None,
                 models,
             },
         );
@@ -434,10 +454,10 @@ mod tests {
         config.model = "p/model-a".to_string();
         store.save(&config).expect("save config");
 
-        assert!(
-            resolve_authorized_named_provider(&workdir).is_none(),
-            "unverified provider must not count as available and authorized"
-        );
+        let named = resolve_authorized_named_provider(&workdir)
+            .expect("unverified provider with legacy authorization must resolve");
+        assert_eq!(named.name, "p");
+        assert_eq!(named.config.model, "model-a");
 
         let mut config = store.load_or_default().expect("reload config");
         config
@@ -445,7 +465,17 @@ mod tests {
             .get_mut("p")
             .expect("provider state")
             .validation
-            .status = ProviderValidationStatus::Available;
+            .status = ProviderValidationStatus::Unavailable;
+        store.save(&config).expect("save unavailable state");
+
+        assert!(
+            resolve_authorized_named_provider(&workdir).is_none(),
+            "unavailable provider must not resolve"
+        );
+
+        let mut config = store.load_or_default().expect("reload config");
+        let state = config.provider_state.get_mut("p").expect("provider state");
+        state.validation.status = ProviderValidationStatus::Available;
         store.save(&config).expect("save available state");
 
         let named = resolve_authorized_named_provider(&workdir)

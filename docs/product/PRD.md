@@ -3,13 +3,15 @@
 ## 1. 文档信息
 
 - 产品名称：SaCode
-- 文档版本：v1.4
-- 更新时间：2026-08-19
+- 文档版本：v1.5
+- 更新时间：2026-09-20
 - 文档类型：产品需求文档（PRD）
 - 产品定位：面向国内开发者的终端 AI 编程工具
 - 核心叙事：**Claude Code 的体验，国内模型原生适配，企业级可审计。**
 
 > 定位调整说明（v1.2→v1.3）：基于《SaCode 可行性评估报告》（docs/report.md）四维评估，明确产品为"面向国内开发者的终端 AI 编程工具"，平台化是结果不是起点。配套规划方案见 `docs/report-plan.md`。MulanPSL-2.0 协议、国内搜索引擎适配、国产模型兼容已体现这一定位。
+>
+> 客户端化决策（v1.5）：在 CLI/TUI 主线稳定、VSCode 与 daemon 审批闭环完成后，新增独立 Desktop 与可插拔 Agent Backend。该决策只扩展支撑客户端和 ACP Agent 接入所需的 daemon/ACP 能力，不恢复 Scheduled Tasks、Agent Teams、Channels 等已延后平台功能。专项真源见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)。
 
 ## 2. 产品愿景
 
@@ -24,20 +26,22 @@ SaCode 面向国内重度终端开发者，提供从代码分析、任务规划�
 长期目标：
 
 1. 成为国内终端环境中的默认 AI 编程入口。
-2. 以统一执行运行时支撑 CLI、TUI、IDE 集成（VSCode 扩展优先），平台化是结果不是起点。
+2. 以统一执行运行时支撑 CLI、TUI、VSCode 和独立 Desktop，平台化是结果不是起点。
 3. 在三级执行模式、沙箱审计、学习型记忆上形成差异化能力。
 
 
-### 平台化收敛声明（v1.3 新增）
+### 平台化收敛声明（v1.5 修订）
 
-依据《SaCode 改进规划方案》（report-plan.md）步骤 3，平台化能力做如下收敛，资源集中投入"首次体验、国内 provider 零配置接入、IDE 集成"：
+依据《SaCode 改进规划方案》（report-plan.md）步骤 3，通用平台化能力仍保持收敛，但允许为正式客户端和外部 Agent 互操作做定向扩展：
 
-1. **ACP（interfaces/acp/）**：维持现状，不新增功能。
-2. **LSP（interfaces/lsp/）**：维持现状，不新增功能。
-3. **Daemon**：维持现有 11 个 HTTP/SSE 端点（供 VSCode 扩展使用），不扩展新端点。
-4. 从平台化深度投入释放的人力，投入 VSCode 扩展、provider 预设、代码库理解质量。
+1. **ACP**：保留 SaCode ACP Server；新增通用 ACP Client，仅用于受控接入 OpenCode 等 Agent。
+2. **LSP**：维持现状，不新增功能。
+3. **Daemon**：保留现有 HTTP/SSE 主协议，并仅扩展 Agent Backend、sidecar 认证和客户端恢复所需端点。
+4. **客户端**：CLI/TUI 继续是核心入口；VSCode 与 Tauri Desktop 共用 client-core。
+5. Scheduled Tasks / Agent Teams / Channels 继续延后，不因本次客户端化恢复。
 
-平台化是**结果**不是起点：先让用户在终端内完成"配置 → 第一个任务 ≤3 分钟"，再通过 IDE 插件扩大用户基数。
+平台化仍是结果不是起点；本次扩展的验收目标是桌面用户能安全完成 SaCode/OpenCode 编程任务，而不是建设通用 Agent 云平台。
+
 ## 3. 目标用户
 
 ### 3.1 核心用户
@@ -134,11 +138,11 @@ sacode "重构用户认证模块并补齐测试" --mode build
 
 ### 7.3 范围边界
 
-1. 当前阶段聚焦终端与开发工作流，不承担完整 IDE 替代目标。
-2. **IDE 插件不是桌面 GUI** — VSCode 扩展是 P1 优先级，不与"不提供桌面 GUI"冲突。
-3. 当前阶段不提供桌面端 GUI（VSCode 扩展属于 IDE 集成，非独立桌面应用）。
+1. 当前阶段聚焦开发工作流，不承担完整 IDE 替代目标。
+2. VSCode 扩展和 Desktop 是同一运行时的客户端，不实现第二套 Agent 执行引擎。
+3. Desktop 提供独立 GUI，但首版不内置完整代码编辑器，以会话、工具、审批和 Diff 为核心。
 4. 当前阶段优先闭环高频编程任务，不追求一次性覆盖所有语言智能编辑能力。
-5. **平台化收敛** — ACP/LSP/Daemon 维持现状不扩展，资源集中到 IDE 插件、provider 零配置、首次体验（详见 docs/report-plan.md）。
+5. **定向平台扩展** — 只建设 Desktop、多客户端共享层和 ACP Agent 接入所需能力；Scheduled Tasks / Agent Teams / Channels 继续延后。
 
 ## 8. 当前产品现状
 
@@ -149,7 +153,7 @@ sacode "重构用户认证模块并补齐测试" --mode build
 3. 多角色编排与结构化总结输出，Loop 阶段进度条可视化
 4. 模型智能路由与 profile 配置，provider 零配置接入（DeepSeek/Qwen/GLM/Ollama 等预设）
 5. 项目级记忆（3 文件：project/experience/preferences）、wiki、checkpoint、队列与 daemon
-6. MCP、ACP、LSP 等扩展入口（维持现状，不再深度扩展）
+6. MCP、ACP Server、LSP 等扩展入口；ACP Client 与 Desktop 按专项 PRD 进入实施
 7. v1.0+ 产品就绪能力：自动修复闭环（test.fix）、Agent 协作协议、学习型记忆（AutoLearner）、多模态（media.vision/media.video）
 
 1.0 版本号已作为历史里程碑发布；当前正式版本为 1.1.1。产品就绪能力已进入验收收敛阶段，能力状态以 `docs/product/status.json` 及其关联证据为准。
@@ -364,17 +368,17 @@ SaCode 当前的产品策略基于《可行性评估报告》（docs/report.md�
    - 首次使用体验优化（配置 ≤2 步，P0）
 2. **强化差异化**：
    - 三级执行模式（plan/build/auto）+ 沙箱审计 + checkpoint 恢复作为企业决策因子
-3. **简化过度设计**：
-   - Loop 四层 → 轻量 /goal
-   - 知识 9 文件 → 3 文件
-   - 五维冲突 → 审批 + 拦截
+3. **控制平台化范围**：
+   - 只扩展 Desktop、多客户端共享层和 ACP Agent Backend 所需能力
+   - Scheduled Tasks / Agent Teams / Channels 继续延后
+   - OpenCode 等外部 Agent 必须进入统一审批、审计与事件模型
 
-**停止平台化能力的深度投入**（ACP/LSP/Daemon 扩展），平台化是结果不是起点。
-
-详细规划方案见 [report-plan.md](../report-plan.md)。
+专项方案见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)，详细实施见 [Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
 
 ## 19. 相关文档
 
+- [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md) — 桌面端、Agent Backend 与 OpenCode ACP 接入专项真源
+- [Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md) — 目录调整、版本切片、任务依赖和发布门禁
 - [可行性评估报告](../report.md) — 四维评估（竞争差距/规则审查/方向/UI）
 - [改进规划方案](../report-plan.md) — 基于评估报告的 12 周实施方案
 - [产品路线图](roadmap.md) — 版本阶段与交付计划

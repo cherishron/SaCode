@@ -161,6 +161,8 @@ mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: String::new(),
             models: BTreeMap::new(),
+            auth_header: None,
+            auth_scheme: None,
         };
         spec.models.insert(
             model_a.clone(),
@@ -194,6 +196,10 @@ mod tests {
                 base_url: "https://example.com/v1".to_string(),
                 api_key: String::new(),
                 model: model_a.clone(),
+                auth_header: None,
+                auth_scheme: None,
+
+                secret_ref: None,
             },
         });
         app.record_usage(ChatUsage {
@@ -208,6 +214,10 @@ mod tests {
                 base_url: "https://example.com/v1".to_string(),
                 api_key: String::new(),
                 model: model_b.clone(),
+                auth_header: None,
+                auth_scheme: None,
+
+                secret_ref: None,
             },
         });
         app.record_usage(ChatUsage {

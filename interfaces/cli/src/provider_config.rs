@@ -17,9 +17,18 @@ const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfig {
     pub base_url: String,
+    /// Plaintext key for legacy providers. Identity/sa-ai entries keep this empty
+    /// and resolve from `secret_ref`.
+    #[serde(default)]
     pub api_key: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub auth_header: Option<String>,
+    #[serde(default)]
+    pub auth_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<sacode_kernel::model::SecretRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -126,6 +135,9 @@ impl ProviderConfigStore {
             base_url: normalize_base_url(&config.base_url),
             api_key: config.api_key.clone(),
             model: config.model.clone(),
+            auth_header: config.auth_header.clone(),
+            auth_scheme: config.auth_scheme.clone(),
+            secret_ref: config.secret_ref.clone(),
         };
 
         let mut catalog = self.load_catalog()?.unwrap_or_default();
@@ -423,14 +435,30 @@ fn default_sacode_config() -> SaCodeConfig {
 }
 
 impl ProviderConfig {
+    /// Resolve api_key for runtime use: plaintext first, else secret_ref via secret store.
+    pub fn resolved_api_key(&self) -> String {
+        if !self.api_key.is_empty() {
+            return self.api_key.clone();
+        }
+        match self.secret_ref.as_ref() {
+            Some(r#ref) => sacode_runtime::identity::secret_store::resolve_secret_ref(r#ref, None)
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
     pub fn to_model_provider(&self) -> ModelProvider {
         let kind = detect_provider_kind(&self.base_url, &self.model);
         ModelProvider {
             kind,
             model: self.model.clone(),
             base_url: Some(normalize_base_url(&self.base_url)),
-            api_key: Some(self.api_key.clone()),
+            api_key: Some(self.resolved_api_key()),
             rule: None,
+            auth_header: self.auth_header.clone(),
+            auth_scheme: self.auth_scheme.clone(),
         }
     }
 }
@@ -463,6 +491,8 @@ pub fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) ->
         base_url: Some(normalize_base_url(&spec.base_url)),
         api_key: Some(spec.api_key.clone()),
         rule: spec.models.get(model_name).cloned(),
+        auth_header: spec.auth_header.clone(),
+        auth_scheme: spec.auth_scheme.clone(),
     }
 }
 
@@ -593,6 +623,9 @@ mod tests {
             base_url: "https://example.com/v1/".to_string(),
             api_key: "test-key".to_string(),
             model: "gpt-test".to_string(),
+            auth_header: None,
+            auth_scheme: None,
+            secret_ref: None,
         };
         store.save(&config).expect("save provider config");
 
@@ -623,6 +656,9 @@ mod tests {
                     base_url: "https://api.openai.com/v1".to_string(),
                     api_key: "openai-key".to_string(),
                     model: "gpt-5.4".to_string(),
+                    auth_header: None,
+                    auth_scheme: None,
+                    secret_ref: None,
                 },
                 true,
             )
@@ -634,6 +670,9 @@ mod tests {
                     base_url: OLLAMA_DEFAULT_BASE_URL.to_string(),
                     api_key: "local-key".to_string(),
                     model: "glm-4.7-flash".to_string(),
+                    auth_header: None,
+                    auth_scheme: None,
+                    secret_ref: None,
                 },
                 false,
             )
@@ -668,6 +707,9 @@ mod tests {
                     base_url: "https://api.openai.com/v1".to_string(),
                     api_key: "openai-key".to_string(),
                     model: "gpt-5.4".to_string(),
+                    auth_header: None,
+                    auth_scheme: None,
+                    secret_ref: None,
                 },
                 true,
             )
@@ -679,6 +721,9 @@ mod tests {
                     base_url: OLLAMA_DEFAULT_BASE_URL.to_string(),
                     api_key: "local-key".to_string(),
                     model: "qwen2.5-coder".to_string(),
+                    auth_header: None,
+                    auth_scheme: None,
+                    secret_ref: None,
                 },
                 false,
             )
