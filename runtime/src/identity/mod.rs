@@ -6,6 +6,7 @@
 pub mod callback;
 pub mod config;
 pub mod gateway;
+pub mod headless;
 pub mod oidc;
 pub mod pkce;
 pub mod provider_bridge;
@@ -14,11 +15,16 @@ pub mod service;
 pub mod session;
 
 pub use config::IdentityConfig;
+pub use headless::{
+    apply_gateway_api_key, headless_login_instructions, login_device_flow, login_headless_wait,
+    login_with_paste_callback, prepare_headless_login, store_secret_with_fallback, PendingLogin,
+};
 pub use secret_store::{resolve_secret_ref, MemorySecretStore, OsKeyringSecretStore, SecretStore};
 pub use service::{
-    complete_login_with_dyn_clients, login, login_with_dyn_clients, logout, select_secret_store,
-    status_summary, sync_models, GatewayHttpDyn, LoginOptions, LoginOutcome, OidcHttpDyn,
-    TypedClients,
+    access_token_expires_soon, complete_login_with_dyn_clients, ensure_fresh_session, login,
+    login_with_dyn_clients, logout, select_secret_store, status_summary, sync_models,
+    write_provider_entry_public, GatewayHttpDyn, LoginOptions, LoginOutcome, OidcHttpDyn,
+    SessionFreshness, TypedClients,
 };
 pub use session::{IdentitySession, ProviderWriteResult, SessionStatus};
 

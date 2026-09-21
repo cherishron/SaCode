@@ -3,7 +3,7 @@ feature: sacode-identity-i3
 status: delivered
 updated: 2026-09-20
 branch: dev
-commits: # working tree on E:\Project\sa\saai\SaCode (dev); not committed — user owns main worktree dirty state
+commits: 35bacb0 (feat(saai): I3 identity client, OpenCode ACP backend, client-core, desktop sidecar); 后续增量仍留在工作区未提交 — 见 docs/PROGRESS.md
 ---
 
 # SaCode 统一身份客户端（I3 · sa-idp OIDC）

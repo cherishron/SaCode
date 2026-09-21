@@ -5,7 +5,6 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,23 +22,28 @@ pub struct DaemonReadyInfo {
     pub auth_required: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// WebView-facing handle metadata. **Never includes bearer token.**
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarHandleDto {
     pub host: String,
     pub port: u16,
     pub base_url: String,
     pub pid: u32,
     pub auth_required: bool,
-    /// Token is returned to the WebView only via invoke (not file). Keep this
-    /// short-lived in UI memory; never write to disk.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonProxyResponse {
+    pub status: u16,
+    pub ok: bool,
+    pub body: String,
 }
 
 pub struct SacodeSidecar {
     pub child: Child,
     pub ready_path: PathBuf,
-    pub token: String,
+    token: String,
     pub info: DaemonReadyInfo,
 }
 
@@ -55,6 +59,27 @@ fn random_nonce() -> String {
     let mut buf = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut buf);
     buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Allow only relative daemon API paths (no scheme/host) to avoid SSRF via IPC.
+pub fn validate_proxy_path(path: &str) -> Result<String, String> {
+    let p = path.trim();
+    if p.is_empty() {
+        return Err("daemon path is empty".into());
+    }
+    if !p.starts_with('/') {
+        return Err("daemon path must start with /".into());
+    }
+    if p.contains("://") || p.contains('\\') || p.contains("..") {
+        return Err("daemon path must be a relative API path".into());
+    }
+    if let Some(host) = p.split('/').nth(1) {
+        if host.contains(':') && !host.contains('%') {
+            // reject /host:port/... style
+            return Err("daemon path must not embed host:port".into());
+        }
+    }
+    Ok(p.to_string())
 }
 
 pub async fn start_sidecar(
@@ -114,7 +139,6 @@ pub async fn start_sidecar(
         }
     }
 
-    // Health probe (token not required for /health).
     let client = reqwest::Client::new();
     let health: serde_json::Value = client
         .get(format!("{}/health", info.base_url))
@@ -143,8 +167,50 @@ impl SacodeSidecar {
             base_url: self.info.base_url.clone(),
             pid: self.info.pid,
             auth_required: self.info.auth_required,
-            token: Some(self.token.clone()),
+            version: self.info.version.clone(),
         }
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.info.base_url
+    }
+
+    /// HTTP call to local daemon; Authorization attached here, never in WebView.
+    pub async fn proxy(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<DaemonProxyResponse, String> {
+        let path = validate_proxy_path(path)?;
+        let method = match method.to_ascii_uppercase().as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            other => return Err(format!("unsupported method: {other}")),
+        };
+        let client = reqwest::Client::new();
+        let url = format!("{}{}", self.base_url(), path);
+        let mut req = client.request(method, url).timeout(Duration::from_secs(60));
+        if !self.token.is_empty() {
+            req = req.bearer_auth(&self.token);
+        }
+        if let Some(b) = body {
+            req = req
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(b);
+        }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(DaemonProxyResponse {
+            status,
+            ok: (200..300).contains(&status),
+            body: text,
+        })
     }
 
     pub async fn stop(&mut self) {
@@ -154,12 +220,44 @@ impl SacodeSidecar {
     }
 }
 
-pub async fn read_stderr_preview(child: &mut Child) -> String {
-    let mut buf = [0u8; 256];
-    if let Some(err) = child.stderr.as_mut() {
-        if let Ok(n) = err.read(&mut buf).await {
-            return String::from_utf8_lossy(&buf[..n]).to_string();
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_proxy_path_accepts_api_paths() {
+        assert_eq!(validate_proxy_path("/health").unwrap(), "/health");
+        assert_eq!(
+            validate_proxy_path("/task/abc/status").unwrap(),
+            "/task/abc/status"
+        );
+        assert_eq!(
+            validate_proxy_path("/api/stream?task_id=x").unwrap(),
+            "/api/stream?task_id=x"
+        );
     }
-    String::new()
+
+    #[test]
+    fn validate_proxy_path_rejects_absolute_and_traversal() {
+        assert!(validate_proxy_path("").is_err());
+        assert!(validate_proxy_path("health").is_err());
+        assert!(validate_proxy_path("http://evil/health").is_err());
+        assert!(validate_proxy_path("/../etc/passwd").is_err());
+        assert!(validate_proxy_path("/127.0.0.1:8090/v1").is_err());
+    }
+
+    #[test]
+    fn sidecar_dto_never_serializes_token() {
+        let dto = SidecarHandleDto {
+            host: "127.0.0.1".into(),
+            port: 1,
+            base_url: "http://127.0.0.1:1".into(),
+            pid: 2,
+            auth_required: true,
+            version: "1.1.1".into(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("token"));
+        assert!(json.contains("auth_required"));
+    }
 }

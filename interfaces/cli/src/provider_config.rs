@@ -831,6 +831,7 @@ mod live_gateway_provider_tests {
     use sacode_kernel::model::SecretRefKind;
 
     #[test]
+    #[ignore = "live: needs a running gateway on 127.0.0.1:8090 and an OS-keyring sa- key"]
     fn sa_gateway_provider_resolves_key_from_secret_ref() {
         std::env::set_var("SACODE_HOME", "E:/Project/sa/saai/SaCode");
         let workdir = std::path::Path::new("E:/Project/sa/saai/SaCode");
@@ -853,6 +854,7 @@ mod live_gateway_provider_tests {
     }
 
     #[tokio::test]
+    #[ignore = "live: needs a running gateway on 127.0.0.1:8090 and an OS-keyring sa- key"]
     async fn sa_gateway_chat_via_provider_client() {
         std::env::set_var("SACODE_HOME", "E:/Project/sa/saai/SaCode");
         use sacode_runtime::provider::client::ProviderClient;

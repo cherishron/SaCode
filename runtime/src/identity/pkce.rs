@@ -84,7 +84,9 @@ pub fn build_authorize_url(
     Ok(url.to_string())
 }
 
-pub const DEFAULT_SCOPE: &str = "openid profile email";
+/// OIDC scopes requested by SaCode CLI. `offline_access` is required so sa-idp
+/// issues refresh_token (product: stay-logged-in ~7 days via refresh TTL).
+pub const DEFAULT_SCOPE: &str = "openid profile email phone offline_access";
 
 #[cfg(test)]
 mod tests {

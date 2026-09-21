@@ -158,10 +158,15 @@ impl IdentitySession {
             GATEWAY_API_KEY_LOCATOR,
             gateway_key,
         ));
-        self.refresh_token_ref = Some(secret_ref_from_locator(
-            REFRESH_TOKEN_LOCATOR,
-            refresh_token,
-        ));
+        if refresh_token.trim().is_empty() {
+            // Provisioned cloud api-keys have no refresh token.
+            self.refresh_token_ref = None;
+        } else {
+            self.refresh_token_ref = Some(secret_ref_from_locator(
+                REFRESH_TOKEN_LOCATOR,
+                refresh_token,
+            ));
+        }
     }
 
     pub fn clear_key_refs(&mut self) {

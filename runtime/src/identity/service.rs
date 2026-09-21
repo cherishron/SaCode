@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use sacode_kernel::model::SecretRef;
 
@@ -378,8 +378,13 @@ pub async fn complete_login_with_dyn_clients(
         anyhow!("token response missing refresh_token; scope offline_access required")
     })?;
 
-    secret_store.set(GATEWAY_API_KEY_LOCATOR, &key_resp.api_key)?;
-    secret_store.set(REFRESH_TOKEN_LOCATOR, &refresh)?;
+    // Prefer provided store (usually OS keyring); auto-fallback to 0600 file on headless Linux.
+    super::headless::store_secret_with_fallback(
+        secret_store,
+        opts.user_root.as_deref(),
+        Some(&key_resp.api_key),
+        Some(&refresh),
+    )?;
 
     let models_url = config.gateway_models_url();
     let (models, models_error) = match clients.as_ref() {
@@ -451,6 +456,16 @@ fn token_sub_hint(token: &TokenResponse) -> Option<String> {
 }
 
 fn write_provider_entry(
+    workdir: &Path,
+    config: &IdentityConfig,
+    api_key: &str,
+    default_model: &Option<String>,
+) -> Result<()> {
+    write_provider_entry_public(workdir, config, api_key, default_model)
+}
+
+/// Public wrapper for headless `set-api-key` path.
+pub fn write_provider_entry_public(
     workdir: &Path,
     config: &IdentityConfig,
     api_key: &str,
@@ -556,9 +571,171 @@ pub async fn refresh_access_token(
         }
     };
     if let Some(new_rt) = token.refresh_token.as_deref() {
-        secret_store.set(REFRESH_TOKEN_LOCATOR, new_rt)?;
+        // Persist rotation; keyring may fail on headless Linux → file fallback.
+        super::headless::store_secret_with_fallback(secret_store, user_root, None, Some(new_rt))?;
     }
     Ok(token)
+}
+
+/// True when stored access_token expiry is missing or within `skew_secs`.
+///
+/// Product policy「一周免登录」: do **not** lengthen access tokens. Persist
+/// `refresh_token` and call this before IdP-dependent work; the client refreshes
+/// access automatically until the refresh token itself expires/revokes (IdP TTL).
+pub fn access_token_expires_soon(session: &IdentitySession, skew_secs: i64) -> bool {
+    let Some(raw) = session.access_token_expires_at.as_deref() else {
+        // Unknown expiry: refresh when possible, otherwise caller must decide
+        // (gateway api_key alone can still serve model calls).
+        return true;
+    };
+    let Ok(at) = chrono::DateTime::parse_from_rfc3339(raw) else {
+        return true;
+    };
+    let skew = chrono::Duration::seconds(skew_secs.max(0));
+    chrono::Utc::now() + skew >= at.with_timezone(&chrono::Utc)
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionFreshness {
+    pub refreshed: bool,
+    pub re_exchanged_gateway_key: bool,
+    pub gateway_api_key_present: bool,
+    pub secret_backend: Option<&'static str>,
+    pub note: String,
+}
+
+/// Ensure identity session is usable for cloud/headless "stay logged in".
+///
+/// Strategy:
+/// 1. Model calls use gateway `api_key` (data plane) — present check first.
+/// 2. If access_token expires soon/unknown **and** refresh_token exists → auto-refresh
+///    (client session policy; IdP refresh TTL defines how long no re-login lasts).
+/// 3. If gateway key missing but refresh worked → re-exchange key via `/api/auth/exchange`.
+/// 4. No refresh_token + no gateway key → clear error (re-login or set-api-key).
+pub async fn ensure_fresh_session(
+    config: &IdentityConfig,
+    user_root: Option<&Path>,
+    workdir: &Path,
+    secret_store: &dyn SecretStore,
+    oidc: Option<&dyn OidcHttpDyn>,
+    gateway: Option<&dyn GatewayHttpDyn>,
+    skew_secs: i64,
+) -> Result<SessionFreshness> {
+    let mut config = config.clone();
+    config.apply_env_overrides();
+    config.normalize();
+
+    let mut session = IdentitySession::load(user_root)?
+        .ok_or_else(|| anyhow!("not logged in; run `sacode account login` or `set-api-key`"))?;
+
+    let api_key = session
+        .gateway_key_ref
+        .as_ref()
+        .and_then(|r| resolve_secret_ref(r, Some(secret_store)).ok().flatten())
+        .filter(|k| !k.is_empty());
+    let gateway_api_key_present = api_key.is_some();
+    let has_refresh = session.refresh_token_ref.is_some();
+
+    if !access_token_expires_soon(&session, skew_secs) {
+        return Ok(SessionFreshness {
+            refreshed: false,
+            re_exchanged_gateway_key: false,
+            gateway_api_key_present,
+            secret_backend: None,
+            note: if gateway_api_key_present {
+                "ok: access_token still valid; gateway api_key present".into()
+            } else {
+                "ok: access_token valid".into()
+            },
+        });
+    }
+
+    if !has_refresh {
+        if gateway_api_key_present {
+            return Ok(SessionFreshness {
+                refreshed: false,
+                re_exchanged_gateway_key: false,
+                gateway_api_key_present: true,
+                secret_backend: None,
+                note: "access_token stale but gateway api_key present (set-api-key session); \
+                       no refresh_token — re-run set-api-key when key rotates"
+                    .into(),
+            });
+        }
+        bail!(
+            "session expired and no refresh_token/gateway key. \
+             Re-login (`sacode account login`) or provision (`sacode account set-api-key`). \
+             Tip: OIDC login with offline_access enables multi-day auto-refresh."
+        );
+    }
+
+    if config.idp_base_url.is_empty() {
+        bail!("cannot refresh session: idp_base_url empty");
+    }
+
+    let token = refresh_access_token(&config, user_root, secret_store, oidc).await?;
+    let previous_refresh_ref = session.refresh_token_ref.clone();
+    session.apply_token_metadata(token.expires_in, token.refresh_token.as_deref());
+    session.save(user_root)?;
+
+    let mut re_exchanged = false;
+    let mut backend = None;
+    let mut api_key_now = api_key;
+    if api_key_now.is_none() {
+        // Re-bind data-plane key using fresh access_token.
+        let exchange_url = config.gateway_exchange_url();
+        let key_resp = match gateway {
+            Some(c) => {
+                c.exchange_gateway_key_box(&exchange_url, &token.access_token)
+                    .await?
+            }
+            None => {
+                LiveGateway::new()
+                    .exchange_gateway_key_box(&exchange_url, &token.access_token)
+                    .await?
+            }
+        };
+        let refresh_for_store = token.refresh_token.clone().unwrap_or_default();
+        backend = Some(super::headless::store_secret_with_fallback(
+            secret_store,
+            user_root,
+            Some(&key_resp.api_key),
+            if refresh_for_store.is_empty() {
+                None
+            } else {
+                Some(refresh_for_store.as_str())
+            },
+        )?);
+        session.set_key_refs(
+            &key_resp.api_key,
+            if refresh_for_store.is_empty() {
+                ""
+            } else {
+                refresh_for_store.as_str()
+            },
+        );
+        // Keep prior refresh ref when IdP did not rotate a new refresh_token.
+        if session.refresh_token_ref.is_none() {
+            session.refresh_token_ref = previous_refresh_ref;
+        }
+        session.save(user_root)?;
+        let default_model = if session.default_model.is_empty() {
+            None
+        } else {
+            Some(session.default_model.clone())
+        };
+        write_provider_entry_public(workdir, &config, &key_resp.api_key, &default_model)?;
+        api_key_now = Some(key_resp.api_key);
+        re_exchanged = true;
+    }
+
+    Ok(SessionFreshness {
+        refreshed: true,
+        re_exchanged_gateway_key: re_exchanged,
+        gateway_api_key_present: api_key_now.is_some(),
+        secret_backend: backend,
+        note: "access_token refreshed via refresh_token (client session policy)".into(),
+    })
 }
 
 pub async fn sync_models(
@@ -600,7 +777,27 @@ pub fn select_secret_store(
     if insecure_file_secrets {
         return Box::new(FileSecretStore::new(user_root));
     }
-    Box::new(OsKeyringSecretStore::new())
+    // Headless Linux often lacks Secret Service / dbus keyring — probe once.
+    if std::env::var("SACODE_IDENTITY_SECRET_BACKEND")
+        .map(|v| v.eq_ignore_ascii_case("file"))
+        .unwrap_or(false)
+    {
+        return Box::new(FileSecretStore::new(user_root));
+    }
+    let keyring = OsKeyringSecretStore::new();
+    let probe = "os-keyring:sacode/identity/keyring-probe";
+    match keyring.set(probe, "ok") {
+        Ok(()) => {
+            let _ = keyring.delete(probe);
+            Box::new(keyring)
+        }
+        Err(_) => {
+            eprintln!(
+                "warn: OS keyring unavailable; using file secret store under ~/.sacode/identity (0600)."
+            );
+            Box::new(FileSecretStore::new(user_root))
+        }
+    }
 }
 
 /// File-backed store — only for `--insecure-file-secrets` / constrained envs.
@@ -639,7 +836,13 @@ impl FileSecretStore {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.path, serde_json::to_string_pretty(&*map)?)?;
+        let raw = serde_json::to_string_pretty(&*map)?;
+        std::fs::write(&self.path, raw)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+        }
         Ok(())
     }
 }
@@ -844,5 +1047,28 @@ mod tests {
         let out = login(config, opts, &store).await.unwrap();
         assert!(out.dry_run);
         assert!(store.get(GATEWAY_API_KEY_LOCATOR).unwrap().is_none());
+    }
+
+    #[test]
+    fn access_token_expires_soon_respects_skew_and_refresh_policy() {
+        let mut session = IdentitySession {
+            refresh_token_ref: Some(sacode_kernel::model::SecretRef::os_keyring(
+                REFRESH_TOKEN_LOCATOR,
+            )),
+            access_token_expires_at: Some(
+                (Utc::now() + chrono::Duration::seconds(3600)).to_rfc3339(),
+            ),
+            ..Default::default()
+        };
+        assert!(!access_token_expires_soon(&session, 300));
+        session.access_token_expires_at =
+            Some((Utc::now() + chrono::Duration::seconds(60)).to_rfc3339());
+        assert!(access_token_expires_soon(&session, 300));
+        // Unknown expiry + refresh present → treat as needing refresh (client policy).
+        session.access_token_expires_at = None;
+        assert!(access_token_expires_soon(&session, 300));
+        session.refresh_token_ref = None;
+        session.access_token_expires_at = None;
+        assert!(access_token_expires_soon(&session, 300));
     }
 }

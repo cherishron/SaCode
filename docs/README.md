@@ -16,6 +16,8 @@
 - [report.md](report.md)：SaCode 可行性评估报告（四维评估）
 - [report-plan.md](report-plan.md)：基于评估报告的 12 周改进规划方案
 
+**进度真源**：[PROGRESS.md](PROGRESS.md)（当前实际状态、验证记录、未提交工作区风险）
+
 相关入口详见根目录：[README.md](../README.md)、[AGENTS.md](../AGENTS.md)
 
 ## 推荐阅读顺序

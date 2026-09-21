@@ -239,6 +239,7 @@ SaCode 会在项目根目录维护运行数据：
 
 ## 文档导航
 
+- `docs/PROGRESS.md`：**当前实际进度真源**（已落地范围、验证状态、未提交工作区风险）
 - `docs/README.md`：文档总览
 - `docs/guides/getting-started.md`：快速上手与常见操作
 - `docs/guides/tutorials.md`：按真实任务组织的场景教程

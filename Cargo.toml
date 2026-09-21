@@ -6,6 +6,7 @@ members = [
   "interfaces/acp",
   "interfaces/lsp",
   "integrations/acp",
+  "interfaces/desktop/src-tauri",
 ]
 resolver = "2"
 

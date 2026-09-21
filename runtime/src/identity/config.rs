@@ -221,6 +221,11 @@ fn home_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
+/// Public alias for identity modules (headless pending-login path).
+pub fn home_dir_fallback() -> PathBuf {
+    home_dir()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
