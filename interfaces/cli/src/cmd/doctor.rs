@@ -112,6 +112,29 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
         }
     }
 
+    // Git 平台授权（登录真源：sa-idp）
+    {
+        let git_status = sacode_runtime::git_auth::git_auth_status(None);
+        let (idp_ok, idp_sub) = sacode_runtime::git_auth::identity_login_state(None);
+        let gh = git_status.iter().find(|s| s.host == "github");
+        let ge = git_status.iter().find(|s| s.host == "gitee");
+        let flag = |s: Option<&sacode_runtime::git_auth::GitAuthStatus>| match s {
+            Some(x) if x.token_present => "ok",
+            Some(_) => "unset",
+            None => "-",
+        };
+        lines.push(format!(
+            "- git auth: github={} gitee={} | idp={} subject={}",
+            flag(gh),
+            flag(ge),
+            if idp_ok { "ok" } else { "login required" },
+            idp_sub.as_deref().unwrap_or("-")
+        ));
+        if !idp_ok {
+            lines.push("- 登录走 sa-idp：sacode account login（git OAuth 前置）".to_string());
+        }
+    }
+
     if provider.is_none() {
         lines.push("- 先运行 /login 或 sacode init 配置 Provider。".to_string());
         lines.push(

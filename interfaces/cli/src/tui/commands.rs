@@ -130,6 +130,24 @@ pub(super) fn get_level1_commands() -> Vec<CommandDef> {
         CommandDef::simple("/hooks", "查看运行时 Hook 与生命周期"),
         CommandDef::simple("/ide", "查看 IDE 接入向导或配置"),
         CommandDef::simple("/config", "交互式管理用户级与项目级配置"),
+        CommandDef::with_subs(
+            "/audit",
+            "AI 代码审计",
+            vec![
+                SubCommandDef::new("run", "扫描当前工作区并生成报告"),
+                SubCommandDef::with_input("fix", "按报告生成修复任务"),
+            ],
+        ),
+        CommandDef::with_subs(
+            "/design",
+            "AIDesign TD 示例与变体",
+            vec![
+                SubCommandDef::new("list", "列出示例"),
+                SubCommandDef::with_input("show", "查看示例简报"),
+                SubCommandDef::with_input("variants", "AI 生成设计变体"),
+                SubCommandDef::with_input("apply", "应用示例或变体"),
+            ],
+        ),
         CommandDef::simple("/keybindings", "查看快捷键说明"),
         CommandDef::simple("/outstyle", "切换 AI 输出风格（默认用户级）"),
         CommandDef::simple("/vim", "切换 Vim 风格导航"),

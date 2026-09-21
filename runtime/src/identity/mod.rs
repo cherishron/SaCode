@@ -1,6 +1,6 @@
 //! saai unified identity client (I3): sa-idp OIDC + gateway api_key exchange.
 //!
-//! Design truth: saai/docs/unified-identity.md + sa-idp. Secrets never land in
+//! Design truth: saai/docs/identity/unified-identity.md + sa-idp. Secrets never land in
 //! provider.json; key material is stored via SecretStore (OS keyring in prod).
 
 pub mod callback;
@@ -31,7 +31,7 @@ pub const DEFAULT_CLIENT_ID: &str = "sacode";
 /// Default provider name written into `.sacode/provider.json`.
 pub const DEFAULT_PROVIDER_NAME: &str = "sa-ai";
 /// Gateway contract: exchange access_token for a data-plane api_key.
-/// 真源：gateway-rs `POST /api/auth/exchange`（docs/status-2026-09-20.md）
+/// 真源：gateway-rs `POST /api/auth/exchange`（docs/clients/status-2026-09-20.md）
 pub const GATEWAY_KEY_EXCHANGE_PATH: &str = "/api/auth/exchange";
 /// OpenAI-compatible model discovery path on the gateway.
 pub const GATEWAY_MODELS_PATH: &str = "/v1/models";

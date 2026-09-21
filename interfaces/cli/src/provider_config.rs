@@ -824,3 +824,57 @@ mod tests {
         assert!(written.contains("\"auto_failover\": false"));
     }
 }
+
+#[cfg(test)]
+mod live_gateway_provider_tests {
+    use super::*;
+    use sacode_kernel::model::SecretRefKind;
+
+    #[test]
+    fn sa_gateway_provider_resolves_key_from_secret_ref() {
+        std::env::set_var("SACODE_HOME", "E:/Project/sa/saai/SaCode");
+        let workdir = std::path::Path::new("E:/Project/sa/saai/SaCode");
+        let store = ProviderConfigStore::new(workdir);
+        let cur = store.load_current().expect("load").expect("current");
+        eprintln!("current={}", cur.name);
+        if cur.name != "sa-gateway" && cur.name != "sa-ai" {
+            eprintln!("skip current provider {}", cur.name);
+            return;
+        }
+        assert!(cur.config.api_key.is_empty());
+        assert_eq!(
+            cur.config.secret_ref.as_ref().map(|r| r.kind),
+            Some(SecretRefKind::OsKeyring)
+        );
+        let key = cur.config.resolved_api_key();
+        eprintln!("resolved_len={}", key.len());
+        assert!(!key.is_empty(), "secret_ref must resolve");
+        assert!(key.starts_with("sa-"));
+    }
+
+    #[tokio::test]
+    async fn sa_gateway_chat_via_provider_client() {
+        std::env::set_var("SACODE_HOME", "E:/Project/sa/saai/SaCode");
+        use sacode_runtime::provider::client::ProviderClient;
+        let workdir = std::path::Path::new("E:/Project/sa/saai/SaCode");
+        let store = ProviderConfigStore::new(workdir);
+        let cur = store.load_current().unwrap().unwrap();
+        let mut mp = cur.config.to_model_provider();
+        if mp.model.is_empty() {
+            mp.model = "sensenova-6.8-flash-lite".to_string();
+        }
+        eprintln!(
+            "base={:?} key_len={} model={}",
+            mp.base_url,
+            mp.api_key.as_ref().map(|k| k.len()).unwrap_or(0),
+            mp.model
+        );
+        let client = ProviderClient::with_timeout(std::time::Duration::from_secs(120));
+        let text = client
+            .simple_chat(&mp, "Reply with exactly: PONG")
+            .await
+            .expect("chat");
+        eprintln!("out={}", text.chars().take(100).collect::<String>());
+        assert!(!text.is_empty());
+    }
+}

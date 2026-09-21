@@ -1,6 +1,8 @@
 mod account;
 mod acp;
+mod ai_design;
 mod arg_parser;
+mod audit;
 mod bundle;
 mod checkpoint;
 #[cfg(test)]
@@ -8,6 +10,7 @@ mod command_tests;
 pub mod config;
 pub mod diff;
 pub mod doctor;
+mod git_auth;
 mod help_text;
 pub mod hooks;
 pub mod ide;
@@ -89,6 +92,9 @@ pub enum CliCommand {
     Mcp,
     Acp,
     Account,
+    Audit,
+    Design,
+    Git,
     Lsp,
     Memory,
     Insight,
@@ -122,6 +128,23 @@ pub struct CliOptions {
     pub sub_args: Vec<String>,
 }
 
+pub(crate) async fn run_fix_prompt(prompt: String, max_iterations: usize) -> Result<u8> {
+    let options = CliOptions {
+        command: CliCommand::Run,
+        prompt,
+        mode: ExecutionMode::Build,
+        max_iterations,
+        json: false,
+        json_stream: false,
+        approval: ApprovalPolicy::Prompt,
+        profile: None,
+        agent_loop: None,
+        remote_prefix: None,
+        sub_args: Vec::new(),
+    };
+    run_task(options).await
+}
+
 pub async fn run() -> Result<u8> {
     init_tracing();
     let options = parse_args(env::args().skip(1).collect());
@@ -147,6 +170,9 @@ pub async fn run() -> Result<u8> {
         CliCommand::Mcp => mcp::run(options.sub_args).await?,
         CliCommand::Acp => acp::run(options.sub_args).await?,
         CliCommand::Account => account::run(options.sub_args).await?,
+        CliCommand::Audit => audit::run(options.sub_args).await?,
+        CliCommand::Design => ai_design::run(options.sub_args)?,
+        CliCommand::Git => git_auth::run(options.sub_args).await?,
         CliCommand::Lsp => lsp::run(options.sub_args).await?,
         CliCommand::Memory => memory::run(options.sub_args)?,
         CliCommand::Insight => insight::run()?,
@@ -326,6 +352,20 @@ mod tests {
         let status = parse_args(vec!["account".to_string(), "status".to_string()]);
         assert_eq!(status.command, CliCommand::Account);
         assert_eq!(status.sub_args, vec!["status".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_parses_git_auth_subcommand() {
+        let options = parse_args(vec![
+            "git".to_string(),
+            "auth".to_string(),
+            "status".to_string(),
+        ]);
+        assert_eq!(options.command, CliCommand::Git);
+        assert_eq!(
+            options.sub_args,
+            vec!["auth".to_string(), "status".to_string()]
+        );
     }
 
     #[test]

@@ -150,6 +150,18 @@ impl App {
             return true;
         }
 
+        if trimmed.starts_with("/audit") {
+            self.audit_command(&input);
+            self.input.clear();
+            return true;
+        }
+
+        if trimmed.starts_with("/design") {
+            self.design_command(&input);
+            self.input.clear();
+            return true;
+        }
+
         if trimmed == "/keybindings" {
             self.keybindings_command();
             self.input.clear();

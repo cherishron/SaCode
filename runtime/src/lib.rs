@@ -1,10 +1,13 @@
 pub mod agent_backends;
 pub mod agents;
+pub mod ai_design;
 pub mod checkpoint;
+pub mod code_audit;
 pub mod config;
 pub mod daemon;
 pub mod executor;
 pub mod failure;
+pub mod git_auth;
 pub mod hook;
 pub mod identity;
 pub mod mcp;

@@ -42,11 +42,28 @@ impl SecretStore for MemorySecretStore {
 }
 
 /// OS keyring backend. Locator: `os-keyring:{service}/{account}`.
+///
+/// On Windows Credential Manager the target/username mapping can vary;
+/// we try a few stable shapes on read.
 pub struct OsKeyringSecretStore;
 
 impl OsKeyringSecretStore {
     pub fn new() -> Self {
         Self
+    }
+
+    fn entries(service: &str, account: &str) -> Vec<keyring::Entry> {
+        let mut out = Vec::new();
+        if let Ok(e) = keyring::Entry::new(service, account) {
+            out.push(e);
+        }
+        if let Ok(e) = keyring::Entry::new(service, &format!("{service}/{account}")) {
+            out.push(e);
+        }
+        if let Ok(e) = keyring::Entry::new(&format!("{service}/{account}"), service) {
+            out.push(e);
+        }
+        out
     }
 }
 
@@ -59,32 +76,49 @@ impl Default for OsKeyringSecretStore {
 impl SecretStore for OsKeyringSecretStore {
     fn get(&self, locator: &str) -> Result<Option<String>> {
         let (service, account) = parse_keyring_locator(locator)?;
-        let entry = keyring::Entry::new(service, account)
-            .map_err(|e| anyhow!("keyring entry for {locator}: {e}"))?;
-        match entry.get_password() {
-            Ok(v) => Ok(Some(v)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(anyhow!("keyring get {locator}: {e}")),
+        for entry in Self::entries(service, account) {
+            match entry.get_password() {
+                Ok(v) => return Ok(Some(v)),
+                Err(keyring::Error::NoEntry) => continue,
+                Err(e) => {
+                    tracing::warn!(error = %e, %locator, "keyring get failed; trying next target");
+                    continue;
+                }
+            }
         }
+        Ok(None)
     }
 
     fn set(&self, locator: &str, secret: &str) -> Result<()> {
         let (service, account) = parse_keyring_locator(locator)?;
-        let entry = keyring::Entry::new(service, account)
-            .map_err(|e| anyhow!("keyring entry for {locator}: {e}"))?;
-        entry
-            .set_password(secret)
-            .map_err(|e| anyhow!("keyring set {locator}: {e}"))
+        let mut last = None;
+        for entry in Self::entries(service, account) {
+            match entry.set_password(secret) {
+                Ok(()) => return Ok(()),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(anyhow!(
+            "keyring set failed for {locator}: {}",
+            last.map(|e| e.to_string())
+                .unwrap_or_else(|| "no entry backend".into())
+        ))
     }
 
     fn delete(&self, locator: &str) -> Result<()> {
         let (service, account) = parse_keyring_locator(locator)?;
-        let entry = keyring::Entry::new(service, account)
-            .map_err(|e| anyhow!("keyring entry for {locator}: {e}"))?;
-        match entry.delete_credential() {
-            Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(anyhow!("keyring delete {locator}: {e}")),
+        let mut last = None;
+        for entry in Self::entries(service, account) {
+            match entry.delete_credential() {
+                Ok(()) => return Ok(()),
+                Err(keyring::Error::NoEntry) => continue,
+                Err(e) => last = Some(e),
+            }
+        }
+        if let Some(e) = last {
+            Err(anyhow!("keyring delete failed for {locator}: {e}"))
+        } else {
+            Ok(())
         }
     }
 }
@@ -139,10 +173,11 @@ pub fn resolve_secret_ref(
                 return store.get(locator);
             }
             if locator.starts_with("os-keyring:") {
+                // Prefer OS keyring; fall back on Err/None (wrong credential layout,
+                // headless CI, or --insecure-file-secrets writes).
                 if let Ok(Some(v)) = OsKeyringSecretStore.get(locator) {
                     return Ok(Some(v));
                 }
-                // Fall back to file-backed store used by --insecure-file-secrets.
                 let file_store = crate::identity::service::FileSecretStore::new(None);
                 if let Ok(Some(v)) = file_store.get(locator) {
                     return Ok(Some(v));
@@ -215,5 +250,26 @@ mod tests {
         let r#ref = SecretRef::os_keyring("os-keyring:sacode/identity/refresh-token");
         let value = resolve_secret_ref(&r#ref, Some(&store)).unwrap().unwrap();
         assert_eq!(value, "rt-1");
+    }
+
+    /// Live Windows keyring probe via production OsKeyringSecretStore.
+    #[test]
+    fn live_keyring_gateway_key_resolves() {
+        let loc = "os-keyring:sacode/identity/gateway-api-key";
+        let store = OsKeyringSecretStore;
+        let marker = format!("idp-probe-{}", std::process::id());
+        // set then get — proves production path
+        store.set(loc, &marker).expect("keyring set");
+        let got = store.get(loc).expect("keyring get");
+        assert_eq!(got.as_deref(), Some(marker.as_str()));
+        // restore real key from file fallback if present
+        let file_store = crate::identity::service::FileSecretStore::new(None);
+        if let Ok(Some(real)) = file_store.get(loc) {
+            let _ = OsKeyringSecretStore.set(loc, &real);
+            eprintln!("restored real gateway key into keyring");
+        } else {
+            let _ = store.delete(loc);
+        }
+        eprintln!("live_keyring_identity_ok");
     }
 }

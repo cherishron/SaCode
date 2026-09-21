@@ -34,7 +34,7 @@ unicode-width = "0.1"
 tempfile = "3"
 base64 = "0.22"
 sha2 = "0.10"
-keyring = "3"
+keyring = { version = "3", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service"] }
 url = "2"
 webbrowser = "1"
 rand = "0.8"

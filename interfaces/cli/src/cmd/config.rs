@@ -68,6 +68,8 @@ pub struct EffectiveConfig {
     pub update_check_on_startup: bool,
     pub update_cache_duration_hours: usize,
     pub update_channel: String,
+    /// 代码审计是否启用 AI 二次扫描（`code_audit.ai`，默认 true）。
+    pub code_audit_ai: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -98,6 +100,8 @@ pub struct ConfigOverrides {
     pub update_cache_duration_hours: Option<usize>,
     #[serde(default)]
     pub update_channel: Option<String>,
+    #[serde(default)]
+    pub code_audit_ai: Option<bool>,
 }
 
 pub fn run(args: Vec<String>) -> Result<()> {
@@ -217,6 +221,13 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
             category: ConfigCategory::Execution,
         },
         ConfigItemMeta {
+            key: "code_audit.ai",
+            display_name: "代码审计 AI",
+            description: "代码审计是否调用大模型二次扫描（关闭后仅启发式）",
+            value_type: ConfigValueType::Bool,
+            category: ConfigCategory::Execution,
+        },
+        ConfigItemMeta {
             key: "vim_mode",
             display_name: "Vim 模式",
             description: "输入框启用 Vim 编辑模式",
@@ -304,6 +315,7 @@ pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String>
         "update.check_on_startup" => bool_text(config.update_check_on_startup),
         "update.cache_duration_hours" => config.update_cache_duration_hours.to_string(),
         "update.channel" => config.update_channel.clone(),
+        "code_audit.ai" => bool_text(config.code_audit_ai),
         _ => return None,
     })
 }
@@ -323,6 +335,7 @@ pub fn current_raw_value(config: &EffectiveConfig, key: &str) -> Option<String> 
         "update.check_on_startup" => config.update_check_on_startup.to_string(),
         "update.cache_duration_hours" => config.update_cache_duration_hours.to_string(),
         "update.channel" => config.update_channel.clone(),
+        "code_audit.ai" => config.code_audit_ai.to_string(),
         _ => return None,
     })
 }
@@ -486,6 +499,10 @@ fn scope_value_text(config: &ConfigOverrides, key: &str) -> String {
             .update_channel
             .clone()
             .unwrap_or_else(|| "未设置".to_string()),
+        "code_audit.ai" => config
+            .code_audit_ai
+            .map(bool_text)
+            .unwrap_or_else(|| "未设置".to_string()),
         _ => "未设置".to_string(),
     }
 }
@@ -510,6 +527,7 @@ fn set_override_value(config: &mut ConfigOverrides, key: &str, value: &str) -> R
             config.update_cache_duration_hours = Some(parse_number(value, 1, 168)?)
         }
         "update.channel" => config.update_channel = Some(normalize_update_channel(value)?),
+        "code_audit.ai" => config.code_audit_ai = Some(parse_bool(value)?),
         _ => bail!("未知配置项: {}", key),
     }
     Ok(())
@@ -530,6 +548,7 @@ fn clear_override_value(config: &mut ConfigOverrides, key: &str) -> Result<()> {
         "update.check_on_startup" => config.update_check_on_startup = None,
         "update.cache_duration_hours" => config.update_cache_duration_hours = None,
         "update.channel" => config.update_channel = None,
+        "code_audit.ai" => config.code_audit_ai = None,
         _ => bail!("未知配置项: {}", key),
     }
     Ok(())
@@ -604,7 +623,7 @@ fn bool_text(value: bool) -> String {
 
 fn display_value(key: &str, value: &str) -> String {
     match key {
-        "auto_compress" | "vim_mode" => parse_bool(value)
+        "auto_compress" | "vim_mode" | "code_audit.ai" => parse_bool(value)
             .map(bool_text)
             .unwrap_or_else(|_| value.to_string()),
         _ => value.to_string(),
@@ -711,6 +730,7 @@ fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> Effective
         update_check_on_startup: true,
         update_cache_duration_hours: 24,
         update_channel: "stable".to_string(),
+        code_audit_ai: true,
     };
 
     apply_overrides(&mut effective, &user);
@@ -757,6 +777,9 @@ fn apply_overrides(target: &mut EffectiveConfig, overrides: &ConfigOverrides) {
     }
     if let Some(value) = &overrides.update_channel {
         target.update_channel = value.clone();
+    }
+    if let Some(value) = overrides.code_audit_ai {
+        target.code_audit_ai = value;
     }
 }
 
@@ -811,6 +834,10 @@ fn extract_overrides(raw: &serde_json::Value) -> ConfigOverrides {
             .and_then(|value| value.get("channel"))
             .and_then(|value| value.as_str())
             .map(|value| value.to_string()),
+        code_audit_ai: raw
+            .get("code_audit")
+            .and_then(|value| value.get("ai"))
+            .and_then(|value| value.as_bool()),
     }
 }
 
@@ -831,6 +858,7 @@ fn write_overrides(raw: &mut serde_json::Value, overrides: &ConfigOverrides) -> 
     object.remove("output_style");
     set_optional_bool(object, "vim_mode", overrides.vim_mode);
     set_optional_update(object, overrides);
+    set_optional_code_audit(object, overrides);
     Ok(())
 }
 
@@ -863,6 +891,23 @@ fn set_optional_update(
     );
     set_optional_string(&mut update, "channel", overrides.update_channel.clone());
     map.insert("update".to_string(), serde_json::Value::Object(update));
+}
+
+fn set_optional_code_audit(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    overrides: &ConfigOverrides,
+) {
+    if overrides.code_audit_ai.is_none() {
+        map.remove("code_audit");
+        return;
+    }
+    let mut obj = map
+        .get("code_audit")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    set_optional_bool(&mut obj, "ai", overrides.code_audit_ai);
+    map.insert("code_audit".to_string(), serde_json::Value::Object(obj));
 }
 
 fn set_optional_string(
@@ -924,5 +969,97 @@ pub fn effective_approval_policy(workdir: &Path) -> ApprovalPolicy {
         "auto" => ApprovalPolicy::AutoApprove,
         "deny" => ApprovalPolicy::AutoDeny,
         _ => ApprovalPolicy::Prompt,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_items_include_code_audit_ai() {
+        let items = get_all_config_items();
+        let item = items
+            .iter()
+            .find(|i| i.key == "code_audit.ai")
+            .expect("code_audit.ai must be in get_all_config_items()");
+        assert_eq!(item.value_type, ConfigValueType::Bool);
+        assert_eq!(item.category, ConfigCategory::Execution);
+    }
+
+    #[test]
+    fn code_audit_ai_default_is_true() {
+        let cfg = merge_effective(ConfigOverrides::default(), ConfigOverrides::default());
+        assert!(cfg.code_audit_ai, "code_audit.ai default must be true");
+        let raw = current_raw_value(&cfg, "code_audit.ai").expect("raw value");
+        assert_eq!(raw, "true");
+        let text = current_value_text(&cfg, "code_audit.ai").expect("text value");
+        assert_eq!(text, "ON");
+    }
+
+    #[test]
+    fn code_audit_ai_set_get_roundtrip() {
+        let mut overrides = ConfigOverrides::default();
+        set_override_value(&mut overrides, "code_audit.ai", "false").expect("set false");
+        assert_eq!(overrides.code_audit_ai, Some(false));
+
+        let effective = merge_effective(ConfigOverrides::default(), overrides.clone());
+        assert!(!effective.code_audit_ai);
+        assert_eq!(
+            current_raw_value(&effective, "code_audit.ai"),
+            Some("false".to_string())
+        );
+
+        set_override_value(&mut overrides, "code_audit.ai", "true").expect("set true");
+        assert_eq!(overrides.code_audit_ai, Some(true));
+
+        clear_override_value(&mut overrides, "code_audit.ai").expect("clear");
+        assert_eq!(overrides.code_audit_ai, None);
+        // after clear, default is true again
+        let effective = merge_effective(ConfigOverrides::default(), overrides);
+        assert!(effective.code_audit_ai);
+    }
+
+    #[test]
+    fn code_audit_ai_json_nested_roundtrip() {
+        let mut overrides = ConfigOverrides::default();
+        set_override_value(&mut overrides, "code_audit.ai", "false").unwrap();
+        let mut raw = serde_json::json!({});
+        write_overrides(&mut raw, &overrides).unwrap();
+        assert_eq!(raw["code_audit"]["ai"], serde_json::json!(false));
+        let extracted = extract_overrides(&raw);
+        assert_eq!(extracted.code_audit_ai, Some(false));
+
+        // clear removes nested key
+        clear_override_value(&mut overrides, "code_audit.ai").unwrap();
+        let mut raw2 = serde_json::json!({"code_audit": {"ai": false}});
+        write_overrides(&mut raw2, &overrides).unwrap();
+        assert!(raw2.get("code_audit").is_none());
+    }
+
+    #[test]
+    fn code_audit_ai_project_overrides_user() {
+        let mut user = ConfigOverrides::default();
+        set_override_value(&mut user, "code_audit.ai", "true").unwrap();
+        let mut project = ConfigOverrides::default();
+        set_override_value(&mut project, "code_audit.ai", "false").unwrap();
+        let effective = merge_effective(user, project);
+        assert!(!effective.code_audit_ai, "project should win");
+    }
+
+    #[test]
+    fn code_audit_ai_scope_value_text() {
+        let unset = ConfigOverrides::default();
+        assert_eq!(scope_value_text(&unset, "code_audit.ai"), "未设置");
+        let mut set = ConfigOverrides::default();
+        set.code_audit_ai = Some(true);
+        assert_eq!(scope_value_text(&set, "code_audit.ai"), "ON");
+    }
+
+    #[test]
+    fn unknown_key_rejected() {
+        let mut overrides = ConfigOverrides::default();
+        assert!(set_override_value(&mut overrides, "code_audit.unknown", "true").is_err());
+        assert!(clear_override_value(&mut overrides, "not.a.key").is_err());
     }
 }
