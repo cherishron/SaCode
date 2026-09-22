@@ -1,0 +1,223 @@
+/* SaCode Desktop Base Reset + Fundamentals */
+
+@import 'tokens.css';
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-strong);
+  font: var(--text-14-regular);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* === 通用元素 === */
+
+input, select, textarea, button {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* === 滚动条 === */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-base);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-weak);
+}
+
+/* === 通用工具类 === */
+
+.muted {
+  color: var(--text-base);
+  font: var(--text-12-regular);
+}
+
+.weak {
+  color: var(--text-weak);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* === 通用按钮 === */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font: var(--text-13-regular);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+  user-select: none;
+}
+
+.btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: var(--border-base);
+  color: var(--text-strong);
+}
+
+.btn.ghost:hover {
+  background: var(--bg-raised);
+  border-color: var(--text-weak);
+}
+
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn.danger:hover {
+  opacity: 0.9;
+}
+
+.btn.ok {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.btn.ok:hover {
+  opacity: 0.9;
+}
+
+/* === 通用输入 === */
+
+.input, .select, .textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-strong);
+  font: var(--text-13-regular);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--accent);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 60px;
+  font-family: var(--font-sans);
+}
+
+/* === 通用徽章 === */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-base);
+  font: var(--text-12-regular);
+  white-space: nowrap;
+}
+
+.badge.ok {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.badge.warn {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.badge.bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.badge.accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* === 通用卡片 === */
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+.card h2 {
+  margin: 0 0 var(--space-2);
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+}
