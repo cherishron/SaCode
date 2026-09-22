@@ -75,5 +75,10 @@ clippy*.txt
 test_*.txt
 _test_out.txt
 
+# Media test artifacts (runtime/src/tools/media/video.rs 测试动态产物)
+*.mp4
+*.mov
+*.webm
+
 # OhMyAgent session settings (local only)
 .ohmyagent/
