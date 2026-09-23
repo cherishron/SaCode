@@ -3,6 +3,7 @@ pub mod cmd;
 pub mod learning;
 pub mod mistakes;
 pub mod plugin_config;
+pub mod product_path;
 pub mod project_profile;
 pub mod provider_config;
 pub mod provider_runtime;

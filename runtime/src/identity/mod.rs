@@ -16,8 +16,9 @@ pub mod session;
 
 pub use config::IdentityConfig;
 pub use headless::{
-    apply_gateway_api_key, headless_login_instructions, login_device_flow, login_headless_wait,
-    login_with_paste_callback, prepare_headless_login, store_secret_with_fallback, PendingLogin,
+    apply_gateway_api_key, headless_login_instructions, login_device_flow,
+    login_device_flow_with_prompt, login_headless_wait, login_with_paste_callback,
+    prepare_headless_login, store_secret_with_fallback, DeviceAuthPrompt, PendingLogin,
 };
 pub use secret_store::{resolve_secret_ref, MemorySecretStore, OsKeyringSecretStore, SecretStore};
 pub use service::{
@@ -36,6 +37,34 @@ pub const REFRESH_TOKEN_LOCATOR: &str = "os-keyring:sacode/identity/refresh-toke
 pub const DEFAULT_CLIENT_ID: &str = "sacode";
 /// Default provider name written into `.sacode/provider.json`.
 pub const DEFAULT_PROVIDER_NAME: &str = "sa-ai";
+/// Product-facing alias for the gateway-backed identity provider entry.
+pub const GATEWAY_PROVIDER_ALIAS: &str = "sa-gateway";
+
+pub fn is_identity_provider_name(name: &str) -> bool {
+    let name = name.trim();
+    name == DEFAULT_PROVIDER_NAME || name == GATEWAY_PROVIDER_ALIAS
+}
+
+pub fn provider_api_key_locator(provider_name: &str) -> String {
+    format!("os-keyring:sacode/providers/{}", provider_name.trim())
+}
+
+pub fn store_api_key_secret(
+    locator: &str,
+    api_key: &str,
+    insecure_file_secrets: bool,
+    user_root: Option<&std::path::Path>,
+) -> anyhow::Result<sacode_kernel::model::SecretRef> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        anyhow::bail!("api key is empty");
+    }
+    let store = select_secret_store(insecure_file_secrets, user_root);
+    store.set(locator, key)?;
+    let mut secret_ref = sacode_kernel::model::SecretRef::os_keyring(locator);
+    secret_ref.masked = sacode_kernel::model::SecretRef::mask_secret(key);
+    Ok(secret_ref)
+}
 /// Gateway contract: exchange access_token for a data-plane api_key.
 /// 真源：gateway-rs `POST /api/auth/exchange`（docs/clients/status-2026-09-20.md）
 pub const GATEWAY_KEY_EXCHANGE_PATH: &str = "/api/auth/exchange";

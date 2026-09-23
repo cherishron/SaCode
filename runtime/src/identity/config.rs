@@ -141,6 +141,16 @@ impl IdentityConfig {
         }
     }
 
+    /// Fill empty identity endpoints with the local saai development defaults.
+    pub fn fill_local_defaults_if_empty(&mut self) {
+        if self.idp_base_url.trim().is_empty() {
+            self.idp_base_url = "http://127.0.0.1:8080".to_string();
+        }
+        if self.gateway_base_url.trim().is_empty() {
+            self.gateway_base_url = "http://127.0.0.1:8090".to_string();
+        }
+    }
+
     pub fn ensure_ready_for_network(&self) -> Result<()> {
         if self.idp_base_url.is_empty() {
             anyhow::bail!(

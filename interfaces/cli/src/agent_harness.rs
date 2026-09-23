@@ -129,6 +129,90 @@ pub fn connect_provider(
     })
 }
 
+/// Mark an sa-idp identity provider ready after gateway exchange.
+pub fn mark_identity_provider_ready(
+    sacode_store: &SaCodeConfigStore,
+    provider_store: &ProviderConfigStore,
+    name: &str,
+    base_url: &str,
+    model: &str,
+    models: &[String],
+    secret_ref: SecretRef,
+) -> Result<NamedProviderConfig> {
+    let model = if model.trim().is_empty() {
+        models.first().cloned().unwrap_or_else(|| name.to_string())
+    } else {
+        model.trim().to_string()
+    };
+    let mut final_models = models.to_vec();
+    if !final_models.iter().any(|candidate| candidate == &model) {
+        final_models.insert(0, model.clone());
+    }
+
+    let validation = ProviderValidationSnapshot {
+        status: if final_models.len() > 1 || models.iter().any(|candidate| candidate == &model) {
+            ProviderValidationStatus::Available
+        } else {
+            ProviderValidationStatus::Unverified
+        },
+        checked_at: Some(chrono::Utc::now().to_rfc3339()),
+        model: Some(model.clone()),
+        failure: None,
+        available_models: final_models.clone(),
+        ..Default::default()
+    };
+    let config = ProviderConfig {
+        base_url: base_url.to_string(),
+        api_key: String::new(),
+        model: model.clone(),
+        auth_header: Some("Authorization".to_string()),
+        auth_scheme: Some("Bearer".to_string()),
+        secret_ref: Some(secret_ref.clone()),
+    };
+    let mut spec = sacode_kernel::model::ProviderSpec {
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        api_key: String::new(),
+        models: std::collections::BTreeMap::new(),
+        auth_header: Some("Authorization".to_string()),
+        auth_scheme: Some("Bearer".to_string()),
+    };
+    for candidate in &final_models {
+        spec.models
+            .entry(candidate.clone())
+            .or_insert_with(|| sacode_kernel::model::ModelRule {
+                name: candidate.clone(),
+                ..Default::default()
+            });
+    }
+
+    let mut sacode_config = sacode_store.load_or_default()?;
+    sacode_config.provider.insert(name.to_string(), spec);
+    sacode_config.provider_state.insert(
+        name.to_string(),
+        ProviderRuntimeState {
+            profile_type: ProviderProfileType::Custom,
+            credential_ref: Some(secret_ref),
+            validation: validation.clone(),
+            authorization: ProviderAuthorization {
+                allow_task_content: true,
+                allow_auto_failover: false,
+                source: ProviderAuthorizationSource::Explicit,
+                models: final_models,
+                updated_at: validation.checked_at.clone(),
+            },
+        },
+    );
+    sacode_config.model = format!("{name}/{model}");
+    sacode_store.save(&sacode_config)?;
+    provider_store.save_named(name, &config, true)?;
+
+    Ok(NamedProviderConfig {
+        name: name.to_string(),
+        config,
+    })
+}
+
 pub fn provider_failure_message(failure: &ProviderFailure) -> String {
     let (category, recovery) = match failure.category {
         ProviderFailureCategory::Authentication => {
