@@ -356,11 +356,47 @@ pub async fn poll_device_token(
     bail!("device code expired before authorization completed")
 }
 
+#[derive(Debug, Clone)]
+pub struct DeviceAuthPrompt {
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub user_code: String,
+    pub expires_in: u64,
+}
+
+impl DeviceAuthPrompt {
+    pub fn primary_uri(&self) -> String {
+        self.verification_uri_complete
+            .clone()
+            .unwrap_or_else(|| self.verification_uri.clone())
+    }
+}
+
 /// Full device-login orchestration.
 pub async fn login_device_flow(
     config: &IdentityConfig,
     opts: LoginOptions,
     secret_store: &dyn SecretStore,
+) -> Result<LoginOutcome> {
+    login_device_flow_with_prompt(config, opts, secret_store, |prompt| {
+        println!("Device login — open the following on any device and enter the code:\n");
+        if let Some(complete) = prompt.verification_uri_complete.as_deref() {
+            println!("  {complete}");
+        } else {
+            println!("  {}", prompt.verification_uri);
+            println!("  code: {}", prompt.user_code);
+        }
+        println!("\nExpires in {}s. Waiting...", prompt.expires_in);
+    })
+    .await
+}
+
+/// Device login with a callback so interactive clients can show the URL and code.
+pub async fn login_device_flow_with_prompt(
+    config: &IdentityConfig,
+    opts: LoginOptions,
+    secret_store: &dyn SecretStore,
+    on_prompt: impl FnOnce(DeviceAuthPrompt),
 ) -> Result<LoginOutcome> {
     let mut config = config.clone();
     config.normalize();
@@ -368,14 +404,12 @@ pub async fn login_device_flow(
         bail!("identity idp_base_url is empty; set SACODE_IDP_BASE_URL or --idp");
     }
     let device = request_device_code(&config.idp_base_url, &config.client_id).await?;
-    println!("Device login — open the following on any device and enter the code:\n");
-    if let Some(complete) = device.verification_uri_complete.as_deref() {
-        println!("  {complete}");
-    } else {
-        println!("  {}", device.verification_uri);
-        println!("  code: {}", device.user_code);
-    }
-    println!("\nExpires in {}s. Waiting...", device.expires_in);
+    on_prompt(DeviceAuthPrompt {
+        verification_uri: device.verification_uri.clone(),
+        verification_uri_complete: device.verification_uri_complete.clone(),
+        user_code: device.user_code.clone(),
+        expires_in: device.expires_in,
+    });
     let token = poll_device_token(
         &config.idp_base_url,
         &config.client_id,
