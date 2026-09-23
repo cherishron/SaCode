@@ -12,25 +12,29 @@ impl App {
             return None;
         }
 
+        let elapsed = self.active_task_elapsed_seconds();
+        let spinner = super::SPINNER_FRAMES[self.spinner_index % super::SPINNER_FRAMES.len()];
+        let label = if elapsed > 0 {
+            format!("{} Thinking {}s", spinner, elapsed)
+        } else {
+            format!("{} Thinking", spinner)
+        };
+
         Some(RenderedMessageLine {
             line: Line::from(vec![
                 ratatui::text::Span::styled(
-                    "● ",
-                    ratatui::style::Style::default().fg(self.theme.accent),
+                    "· ",
+                    ratatui::style::Style::default().fg(self.theme.subtle),
                 ),
                 ratatui::text::Span::styled(
-                    format!(
-                        "{} Thinking",
-                        super::SPINNER_FRAMES[self.spinner_index % super::SPINNER_FRAMES.len()]
-                    ),
+                    label,
                     ratatui::style::Style::default()
-                        .fg(self.theme.accent)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
+                        .fg(self.theme.subtle)
+                        .add_modifier(ratatui::style::Modifier::ITALIC),
                 ),
             ]),
         })
     }
-
     pub(super) fn total_rendered_message_line_count(&mut self) -> usize {
         self.rendered_message_lines().len() + usize::from(self.thinking_indicator_line().is_some())
     }

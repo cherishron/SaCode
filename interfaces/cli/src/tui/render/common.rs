@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    widgets::{Block, Borders, Clear},
+    widgets::{Block, BorderType, Borders, Clear},
     Frame,
 };
 
@@ -47,7 +47,9 @@ pub(crate) fn render_modal_block(
     let block = Block::default()
         .title(title.into())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent))
+        .style(Style::default().bg(theme.card_bg));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     inner

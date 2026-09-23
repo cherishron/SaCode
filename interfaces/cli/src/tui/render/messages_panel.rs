@@ -200,39 +200,41 @@ fn render_welcome_area(frame: &mut Frame, app: &App, area: Rect) {
 
     let welcome_lines = vec![
         Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "SaCode",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(theme.subtle),
+            ),
+        ]),
         Line::from(vec![Span::styled(
-            "SaCode",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
+            "AI 编码工作区 · 直接描述你要做的事",
+            Style::default().fg(theme.muted),
         )]),
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "开始一个任务",
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        )]),
         Line::from(vec![
-            Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("直接输入任务，回车发送。", Style::default().fg(theme.text)),
+            Span::styled("› ", Style::default().fg(theme.accent)),
+            Span::styled("输入任务，Enter 发送", Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("• ", Style::default().fg(theme.subtle)),
-            Span::styled("输入 / 打开命令列表。", Style::default().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("• ", Style::default().fg(theme.subtle)),
+            Span::styled("/ ", Style::default().fg(theme.tool)),
             Span::styled(
-                "Alt+M 切换模式，Ctrl+T 切换思考。",
+                "login 接入模型 · models 切换 · audit / design …",
                 Style::default().fg(theme.text),
             ),
         ]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "开始输入即可。",
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::ITALIC),
-        )]),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                "Alt+M 模式 · Ctrl+T 思考 · Ctrl+Q 退出",
+                Style::default().fg(theme.subtle),
+            ),
+        ]),
     ];
 
     frame.render_widget(

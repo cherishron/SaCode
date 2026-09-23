@@ -1,8 +1,25 @@
 use super::{
-    agent_harness, App, AsyncContext, AsyncResult, InputMode, ModelOptionEntry, NamedProviderConfig,
+    agent_harness, App, AsyncContext, AsyncResult, InputMode, LoginSource, ModelOptionEntry,
+    NamedProviderConfig,
 };
 use crate::provider_config::ProviderConfig;
+use sacode_kernel::model::SecretRef;
+use sacode_runtime::identity::{
+    login, login_device_flow_with_prompt, select_secret_store, IdentityConfig, LoginOptions,
+    GATEWAY_API_KEY_LOCATOR,
+};
+use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
+
+fn identity_user_root() -> Option<PathBuf> {
+    if let Ok(v) = std::env::var("SACODE_HOME") {
+        if !v.trim().is_empty() {
+            return Some(PathBuf::from(v.trim()));
+        }
+    }
+    None
+}
 
 impl App {
     pub(super) fn start_login(&mut self) {
@@ -17,7 +34,30 @@ impl App {
             .as_ref()
             .map(|provider| provider.config.base_url.clone())
             .unwrap_or_default();
-        self.push_system_message("请输入 provider 名称与 Base URL，格式为 name https://api.openai.com/v1；只输入 Base URL 时会复用当前 provider 名称。输入 /providers 可切换 provider。");
+        self.push_system_message(
+            "自定义 Provider（API Key）：请输入 name 与 Base URL，格式 name https://api.example.com/v1。主登录请用 /login（sa-idp）。",
+        );
+    }
+
+    /// sa-idp 统一身份登录（主路径）。`device` 为真时走 RFC 8628 手机确认。
+    pub(super) fn start_sa_idp_login(&mut self, device: bool) {
+        self.queue.processing = true;
+        self.queue.active_task_id = None;
+        self.active_task_started_at = Some(chrono::Local::now());
+        self.spinner_index = 0;
+        self.queue.busy_message = if device {
+            "正在发起 sa-idp 设备登录...".to_string()
+        } else {
+            "正在通过 sa-idp 登录（将尝试打开浏览器）...".to_string()
+        };
+        self.push_system_message(if device {
+            "登录走 sa-idp 设备流：请用手机打开确认链接并输入用户码（/login device）。"
+        } else {
+            "登录走 sa-idp：正在打开浏览器授权；若无法打开，可改用 /login device 手机确认。"
+        });
+        self.spawn_sa_idp_login_task(device);
+        self.input.clear();
+        self.input_mode = InputMode::Chat;
     }
 
     pub(super) fn finish_login_base_url(&mut self) {
@@ -211,10 +251,39 @@ impl App {
     }
 
     pub(super) fn open_model_picker(&mut self) {
+        // Product path: identity session already carries gateway /v1/models.
+        let identity_entries = crate::product_path::product_model_entries(&self.workdir);
+        if !identity_entries.is_empty() {
+            self.model_options = identity_entries
+                .into_iter()
+                .map(|(provider_name, model_name)| ModelOptionEntry {
+                    label: format!("{provider_name} / {model_name}"),
+                    provider_name,
+                    model_name,
+                })
+                .collect();
+            self.selected_model_index = self
+                .model_options
+                .iter()
+                .position(|m| {
+                    self.current_provider
+                        .as_ref()
+                        .map(|p| p.name == m.provider_name && p.config.model == m.model_name)
+                        .unwrap_or(false)
+                })
+                .unwrap_or(0);
+            self.input_mode = InputMode::ModelSelect;
+            self.push_system_message("已打开模型选择（SaAiApiGateway）。Enter 确认，Esc 取消。");
+            self.input.clear();
+            return;
+        }
+
         let catalog = match self.provider_store.load_catalog() {
             Ok(Some(catalog)) => catalog,
             Ok(None) => {
-                self.push_system_message("当前还没有 provider 配置，请先输入 /login 或 /connect。");
+                self.push_system_message(
+                    "请先 /login 接入 saai 网关模型；仅在使用本地/自定义 Provider 时才 /connect。",
+                );
                 self.input.clear();
                 return;
             }
@@ -226,7 +295,9 @@ impl App {
         };
 
         if catalog.providers.is_empty() {
-            self.push_system_message("当前还没有 provider 配置，请先输入 /login 或 /connect。");
+            self.push_system_message(
+                "请先 /login 接入 saai 网关模型；仅在使用本地/自定义 Provider 时才 /connect。",
+            );
             self.input.clear();
             return;
         }
@@ -250,7 +321,7 @@ impl App {
             .unwrap_or_default();
 
         if providers.is_empty() {
-            self.push_system_message("当前没有配置任何 Provider。请先使用 /login 添加。");
+            self.push_system_message("当前没有配置任何 Provider。请先使用 /login（sa-idp）。");
         } else {
             self.provider_options = providers;
             self.selected_provider_index = 0;
@@ -491,12 +562,120 @@ impl App {
                     let _ = sender.send(AsyncResult::LoginCompleted {
                         provider_name: result.current_provider.name,
                         config: result.current_provider.config,
+                        source: LoginSource::ApiKey,
                     });
                 }
                 Err(error) => {
                     let _ = sender.send(AsyncResult::Failed {
                         context: AsyncContext::Login,
                         message: error.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
+    fn spawn_sa_idp_login_task(&self, device: bool) {
+        let sender = self.task_tx.clone();
+        let workdir = self.workdir.clone();
+        let provider_store = self.provider_store.clone();
+        let sacode_store = self.sacode_store.clone();
+        thread::spawn(move || {
+            let user_root = identity_user_root();
+            let mut config = IdentityConfig::load(user_root.as_deref()).unwrap_or_default();
+            config.apply_env_overrides();
+            config.fill_local_defaults_if_empty();
+            let opts = LoginOptions {
+                workdir: workdir.clone(),
+                user_root: user_root.clone(),
+                dry_run: false,
+                open_browser: !device,
+                callback_timeout: Duration::from_secs(300),
+                insecure_file_secrets: false,
+            };
+            let store = select_secret_store(opts.insecure_file_secrets, opts.user_root.as_deref());
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Login,
+                        message: format!("初始化登录运行时失败: {error}"),
+                    });
+                    return;
+                }
+            };
+
+            let base_url = config.provider_base_url();
+            let outcome = if device {
+                let prompt_tx = sender.clone();
+                rt.block_on(login_device_flow_with_prompt(
+                    &config,
+                    opts,
+                    store.as_ref(),
+                    move |prompt| {
+                        let _ = prompt_tx.send(AsyncResult::DeviceAuthPrompt {
+                            verification_uri: prompt.primary_uri(),
+                            user_code: prompt.user_code,
+                            expires_in: prompt.expires_in,
+                        });
+                    },
+                ))
+            } else {
+                rt.block_on(login(config, opts, store.as_ref()))
+            };
+
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Login,
+                        message: format!("sa-idp 登录失败: {error}"),
+                    });
+                    return;
+                }
+            };
+
+            let secret_ref = provider_store
+                .get(&outcome.provider_name)
+                .ok()
+                .flatten()
+                .and_then(|c| c.secret_ref)
+                .unwrap_or_else(|| SecretRef::os_keyring(GATEWAY_API_KEY_LOCATOR));
+            let model = outcome
+                .default_model
+                .clone()
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or_else(|| {
+                    outcome
+                        .models
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "default".to_string())
+                });
+            match agent_harness::mark_identity_provider_ready(
+                &sacode_store,
+                &provider_store,
+                &outcome.provider_name,
+                &base_url,
+                &model,
+                &outcome.models,
+                secret_ref,
+            ) {
+                Ok(named) => {
+                    let _ = sender.send(AsyncResult::LoginCompleted {
+                        provider_name: named.name,
+                        config: named.config,
+                        source: LoginSource::SaIdp,
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(AsyncResult::Failed {
+                        context: AsyncContext::Login,
+                        message: format!("登录成功但写入 provider 状态失败: {error}"),
                     });
                 }
             }
@@ -622,16 +801,34 @@ impl App {
         });
     }
 
-    pub(super) fn handle_login_completed(&mut self, provider_name: String, config: ProviderConfig) {
+    pub(super) fn handle_login_completed(
+        &mut self,
+        provider_name: String,
+        config: ProviderConfig,
+        source: LoginSource,
+    ) {
         let model = config.model.clone();
         self.current_provider = Some(NamedProviderConfig {
             name: provider_name.clone(),
             config,
         });
         self.clear_busy_state();
-        self.push_success_message(&format!(
-            "Provider 已验证为 available：{} / {}。",
-            provider_name, model
+        let prefix = match source {
+            LoginSource::SaIdp => "sa-idp 登录成功",
+            LoginSource::ApiKey => "Provider 已验证为 available",
+        };
+        self.push_success_message(&format!("{}：{} / {}。", prefix, provider_name, model));
+    }
+
+    pub(super) fn handle_device_auth_prompt(
+        &mut self,
+        verification_uri: String,
+        user_code: String,
+        expires_in: u64,
+    ) {
+        self.push_system_message(&format!(
+            "请在手机或任意设备打开（{} 秒内有效）：\n{}\n用户码：{}\n确认后将自动继续。",
+            expires_in, verification_uri, user_code
         ));
     }
 
@@ -642,7 +839,7 @@ impl App {
     ) {
         self.clear_busy_state();
         if providers.is_empty() {
-            self.push_system_message("当前没有可用 provider，请先输入 /login。");
+            self.push_system_message("当前没有可用 provider，请先 /login（sa-idp）。");
             return;
         }
         self.selected_provider_index = providers

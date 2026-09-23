@@ -2,11 +2,25 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 
 use super::super::{input::clamp_cursor_col, App, ExecutionMode, InputMode};
+
+fn prompt_prefix(app: &App) -> &'static str {
+    if app.current_thinking_enabled() {
+        "❯ think "
+    } else {
+        "❯ "
+    }
+}
+
+pub(crate) fn input_content_width(app: &App, input_inner_width: usize) -> usize {
+    input_inner_width
+        .saturating_sub(prompt_prefix(app).chars().count())
+        .max(1)
+}
 
 fn mode_color(app: &App) -> Color {
     match app.execution_mode {
@@ -25,17 +39,20 @@ pub(crate) fn render_input_panel(
 ) {
     let theme = app.theme;
     let accent = mode_color(app);
-    let prompt_prefix = if app.current_thinking_enabled() {
-        "> [T] "
-    } else {
-        "> "
-    };
+    let prompt_prefix = prompt_prefix(app);
+    let content_width = input_content_width(app, input_inner_width);
     let input_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.border));
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(if input_is_editable {
+            theme.accent
+        } else {
+            theme.border
+        }))
+        .style(Style::default().bg(theme.card_bg));
     app.input_viewport = input_block.inner(area);
     let visible_input_height = app.input_viewport.height.max(1) as usize;
-    let cached_input_layout = app.cached_input_layout(input_inner_width).clone();
+    let cached_input_layout = app.cached_input_layout(content_width).clone();
     let max_scroll_offset = cached_input_layout
         .lines
         .len()
@@ -70,7 +87,7 @@ pub(crate) fn render_input_panel(
 
     let input_lines = if app.input_mode == InputMode::ProviderSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择 provider，Enter 切换，r 重命名，d 删除，Esc 取消",
+            "↑↓ 选择 provider · Enter 切换 · r 重命名 · d 删除 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ProviderRename {
@@ -81,52 +98,52 @@ pub(crate) fn render_input_panel(
             .collect()
     } else if app.input_mode == InputMode::ModelSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择模型，Enter 确认，Esc 取消",
+            "↑↓ 选择模型 · Enter 确认 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ThemeSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择主题，Enter 确认，Esc 取消",
+            "↑↓ 选择主题 · Enter 确认 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ConnectSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择预设 Provider，Enter 确认，Esc 取消",
+            "↑↓ 选择预设 Provider · Enter 确认 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::SkillsSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择 Skill，Enter 执行操作，Esc 取消",
+            "↑↓ 选择 Skill · Enter 执行 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::McpSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择 MCP 服务，Enter 执行操作，Esc 取消",
+            "↑↓ 选择 MCP 服务 · Enter 执行 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::CheckpointSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择检查点，Enter 执行操作，Esc 取消",
+            "↑↓ 选择检查点 · Enter 执行 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::TasksSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择任务，Enter 执行操作，Esc 取消",
+            "↑↓ 选择任务 · Enter 执行 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ModeSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择执行模式，Enter 切换，Esc 取消",
+            "↑↓ 选择执行模式 · Enter 切换 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ConfigSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择配置项，Enter 修改，Tab 切换用户/项目级，Esc 取消",
+            "↑↓ 选择配置项 · Enter 修改 · Tab 用户/项目级 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ConfigEnumSelect {
         vec![Line::from(Span::styled(
-            "使用上下方向键选择配置值，Enter 确认，Esc 取消",
+            "↑↓ 选择配置值 · Enter 确认 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::ConfigNumberInput {
@@ -137,12 +154,12 @@ pub(crate) fn render_input_panel(
             .collect()
     } else if app.input_mode == InputMode::InputOptimizePreview {
         vec![Line::from(Span::styled(
-            "查看输入优化预览，Enter 应用，Esc 取消",
+            "输入优化预览 · Enter 应用 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::TodoConfirm {
         vec![Line::from(Span::styled(
-            "待办计划等待确认，Enter 执行，Esc 退出确认态",
+            "待办计划等待确认 · Enter 执行 · Esc 退出",
             Style::default().fg(theme.accent),
         ))]
     } else if app.input_mode == InputMode::PendingQuestion {
@@ -214,31 +231,15 @@ pub(crate) fn render_input_panel(
     let mut decorated_lines = Vec::with_capacity(input_lines.len().max(2));
     for (index, line) in input_lines.into_iter().enumerate() {
         if index == 0 {
-            let mut spans = if app.current_thinking_enabled() {
-                vec![
-                    Span::styled(
-                        "> ",
-                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "[T]",
-                        Style::default()
-                            .fg(theme.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" ", Style::default()),
-                ]
-            } else {
-                vec![Span::styled(
-                    "> ",
-                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                )]
-            };
+            let mut spans = vec![Span::styled(
+                prompt_prefix,
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            )];
             spans.extend(line.spans);
             decorated_lines.push(Line::from(spans));
         } else {
             decorated_lines.push(Line::from(vec![
-                Span::raw("  "),
+                Span::raw(" ".repeat(prompt_prefix.chars().count())),
                 Span::styled(
                     line.spans
                         .into_iter()
@@ -249,11 +250,10 @@ pub(crate) fn render_input_panel(
             ]));
         }
     }
-
     frame.render_widget(
         Paragraph::new(decorated_lines)
             .block(input_block)
-            .style(Style::default().bg(theme.bg_primary))
+            .style(Style::default().bg(theme.card_bg))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -266,7 +266,7 @@ pub(crate) fn render_input_panel(
         let prompt_width = prompt_prefix.chars().count() as u16;
         let cursor_x = app.input_viewport.x
             + prompt_width
-            + clamp_cursor_col(cached_input_layout.cursor_col, input_inner_width) as u16;
+            + clamp_cursor_col(cached_input_layout.cursor_col, content_width) as u16;
         let cursor_y = app.input_viewport.y + visible_line as u16;
         frame.set_cursor_position((cursor_x, cursor_y));
     }

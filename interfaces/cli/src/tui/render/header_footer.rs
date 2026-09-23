@@ -8,7 +8,6 @@ use ratatui::{
 
 use super::super::{App, TodoStatus, SPINNER_FRAMES};
 
-const DEFAULT_CONTEXT_LIMIT_TOKENS: usize = 128_000;
 const CONTEXT_RING_STEPS: [&str; 9] = ["○", "◔", "◑", "◕", "◉", "◕", "◑", "◔", "○"];
 
 fn truncate_middle(text: &str, max_chars: usize) -> String {
@@ -98,17 +97,9 @@ fn queue_summary(app: &App) -> Option<String> {
     }
 }
 
-fn context_limit_tokens(_app: &App) -> usize {
-    DEFAULT_CONTEXT_LIMIT_TOKENS
-}
-
 fn context_ratio(app: &App) -> f32 {
-    let used = app
-        .build_session_compression_source()
-        .chars()
-        .count()
-        .div_ceil(4) as f32;
-    let limit = context_limit_tokens(app) as f32;
+    let used = app.current_context_used_tokens() as f32;
+    let limit = app.current_context_limit_tokens() as f32;
     if limit <= 0.0 {
         0.0
     } else {
@@ -123,68 +114,68 @@ fn context_ring(app: &App) -> &'static str {
 }
 
 fn status_separator(theme: super::super::ThemePalette) -> Span<'static> {
-    Span::styled(" | ", Style::default().fg(theme.subtle))
+    Span::styled("  ", Style::default().fg(theme.subtle))
 }
 
 pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme;
-    let visible_path = compact_path(&app.workdir.display().to_string(), 24);
-    let model_name = truncate_middle(&app.current_model_name(), 32);
-    let thinking_status = if app.current_thinking_enabled() {
-        Span::styled(
-            "think:on",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled("think:off", Style::default().fg(theme.subtle))
+    let (mode_icon, mode_label, mode_color) = match app.execution_mode {
+        sacode_kernel::ExecutionMode::Plan => ("●", "PLAN", theme.plan),
+        sacode_kernel::ExecutionMode::Build => ("●", "BUILD", theme.build),
+        sacode_kernel::ExecutionMode::Yolo => ("●", "AUTO", theme.yolo),
     };
 
     let mut spans = vec![
         Span::styled(
-            format!("SaCode v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        ),
-        status_separator(theme),
-        Span::styled(
-            format!("主模型 {}", model_name),
-            Style::default().fg(theme.info),
-        ),
-        status_separator(theme),
-        Span::styled("Ctrl+Q: quit", Style::default().fg(theme.subtle)),
-        status_separator(theme),
-        Span::styled(
-            format!(
-                "{} {} {}",
-                match app.execution_mode {
-                    sacode_kernel::ExecutionMode::Plan => "◉",
-                    sacode_kernel::ExecutionMode::Build => "⚙",
-                    sacode_kernel::ExecutionMode::Yolo => "▶",
-                },
-                match app.execution_mode {
-                    sacode_kernel::ExecutionMode::Plan => "PLAN",
-                    sacode_kernel::ExecutionMode::Build => "BUILD",
-                    sacode_kernel::ExecutionMode::Yolo => "AUTO",
-                },
-                model_name,
-            ),
+            "SaCode",
             Style::default()
-                .fg(match app.execution_mode {
-                    sacode_kernel::ExecutionMode::Plan => theme.plan,
-                    sacode_kernel::ExecutionMode::Build => theme.build,
-                    sacode_kernel::ExecutionMode::Yolo => theme.yolo,
-                })
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            format!(" v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme.subtle),
+        ),
         status_separator(theme),
-        thinking_status,
-        status_separator(theme),
-        Span::styled(visible_path, Style::default().fg(theme.muted)),
+        Span::styled(
+            format!("{mode_icon} {mode_label}"),
+            Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
+        ),
     ];
 
-    if area.width < 80 {
-        spans.truncate(7);
+    if area.width >= 52 {
+        spans.push(status_separator(theme));
+        spans.push(Span::styled(
+            truncate_middle(
+                &app.current_model_name(),
+                if area.width >= 96 { 28 } else { 16 },
+            ),
+            Style::default().fg(theme.info),
+        ));
+    }
+
+    if area.width >= 72 {
+        spans.push(status_separator(theme));
+        spans.push(thinking_status_span(app, theme, false));
+    }
+
+    if area.width >= 96 {
+        spans.push(status_separator(theme));
+        spans.push(Span::styled(
+            compact_path(
+                &app.workdir.display().to_string(),
+                if area.width >= 120 { 28 } else { 18 },
+            ),
+            Style::default().fg(theme.muted),
+        ));
+    }
+
+    if area.width >= 112 {
+        spans.push(status_separator(theme));
+        spans.push(Span::styled(
+            "Ctrl+Q quit",
+            Style::default().fg(theme.subtle),
+        ));
     }
 
     frame.render_widget(
@@ -213,7 +204,7 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     if let Some(queue) = queue_summary(app) {
-        spans.push(Span::styled(queue, Style::default().fg(theme.warning)));
+        spans.push(Span::styled(queue, Style::default().fg(theme.yolo)));
         spans.push(status_separator(theme));
     }
 
@@ -227,46 +218,26 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         format!("{} {:>3}%", context_ring(app), context_percent),
         Style::default().fg(theme.info),
     ));
-    spans.push(status_separator(theme));
 
-    if app.current_thinking_enabled() {
+    if area.width >= 48 {
+        spans.push(status_separator(theme));
+        let shortcut_hint = if area.width >= 96 {
+            "Alt+M mode  ·  / commands  ·  Ctrl+Q quit"
+        } else if area.width >= 68 {
+            "/ commands  ·  Ctrl+Q quit"
+        } else {
+            "/ commands"
+        };
         spans.push(Span::styled(
-            "Ctrl+T: think:on",
-            Style::default().fg(theme.accent),
-        ));
-    } else {
-        spans.push(Span::styled(
-            "Ctrl+T: think:off",
+            shortcut_hint,
             Style::default().fg(theme.subtle),
         ));
     }
-
-    spans.push(status_separator(theme));
-    let mode_color = match app.execution_mode {
-        sacode_kernel::ExecutionMode::Plan => theme.plan,
-        sacode_kernel::ExecutionMode::Build => theme.build,
-        sacode_kernel::ExecutionMode::Yolo => theme.yolo,
-    };
-    let (mode_icon, mode_label) = match app.execution_mode {
-        sacode_kernel::ExecutionMode::Plan => ("◉", "PLAN"),
-        sacode_kernel::ExecutionMode::Build => ("⚙", "BUILD"),
-        sacode_kernel::ExecutionMode::Yolo => ("▶", "AUTO"),
-    };
-    spans.push(Span::styled(
-        format!("{} {}", mode_icon, mode_label),
-        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
-    ));
-    spans.push(status_separator(theme));
-    spans.push(Span::styled(
-        "Alt+M: mode",
-        Style::default().fg(theme.subtle),
-    ));
 
     frame.render_widget(
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left),
         area,
     );
-    // Phase progress bar for multi-agent loop
     if let Some(phase_line) = phase_progress_bar(app) {
         let phase_area = Rect {
             x: area.x,
@@ -281,6 +252,28 @@ pub(crate) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+fn thinking_status_span(
+    app: &App,
+    theme: super::super::ThemePalette,
+    include_shortcut: bool,
+) -> Span<'static> {
+    let label = match (include_shortcut, app.current_thinking_enabled()) {
+        (true, true) => "Ctrl+T think:on",
+        (true, false) => "Ctrl+T think:off",
+        (false, true) => "think:on",
+        (false, false) => "think:off",
+    };
+    if app.current_thinking_enabled() {
+        Span::styled(
+            label,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(label, Style::default().fg(theme.subtle))
+    }
+}
 fn phase_progress_bar(app: &App) -> Option<Line<'_>> {
     let plan = app.loop_state.as_ref()?.plan.as_ref()?;
     let phases = &plan.phases;
@@ -295,16 +288,16 @@ fn phase_progress_bar(app: &App) -> Option<Line<'_>> {
             spans.push(Span::styled(" | ", Style::default().fg(theme.subtle)));
         }
         let (icon, style) = if i < current {
-            ("[OK]", Style::default().fg(theme.accent))
+            ("●", Style::default().fg(theme.build))
         } else if i == current {
             (
-                "[>>]",
+                "◐",
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            ("[  ]", Style::default().fg(theme.subtle))
+            ("○", Style::default().fg(theme.subtle))
         };
         spans.push(Span::styled(format!("{} {}", icon, phase.title), style));
     }

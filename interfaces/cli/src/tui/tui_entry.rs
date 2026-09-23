@@ -16,11 +16,12 @@ use super::{
     event_loop::run_app,
     input::is_editable_input_mode,
     render::{
-        render_checkpoint_selector, render_command_selector, render_config_enum_selector,
-        render_config_selector, render_connect_selector, render_footer, render_header,
-        render_input_optimization_preview, render_input_panel, render_mcp_selector,
-        render_messages_panel, render_mode_selector, render_pending_question_panel,
-        render_selector, render_session_selector, render_skills_selector, render_task_selector,
+        input_content_width, render_checkpoint_selector, render_command_selector,
+        render_config_enum_selector, render_config_selector, render_connect_selector,
+        render_footer, render_header, render_input_optimization_preview, render_input_panel,
+        render_mcp_selector, render_messages_panel, render_mode_selector,
+        render_pending_question_panel, render_selector, render_session_selector,
+        render_skills_selector, render_task_selector,
     },
     App, InputMode,
 };
@@ -98,23 +99,24 @@ impl Drop for TerminalFlowControlGuard {
 
 pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
     let input_is_editable = is_editable_input_mode(app.input_mode);
-    let available_height = frame.area().height.saturating_sub(4);
-    let input_height_guess = available_height.clamp(3, 6);
+    let inner_height = frame.area().height.saturating_sub(2);
+    let input_height_guess = inner_height.saturating_sub(5).clamp(3, 6);
 
     let first_pass = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2), // header
-            Constraint::Min(10),   // messages
+            Constraint::Length(1), // header
+            Constraint::Min(3),    // messages
             Constraint::Length(input_height_guess),
             Constraint::Length(1), // footer
         ])
         .split(frame.area());
 
     let input_inner_width = first_pass[2].width.saturating_sub(2).max(1) as usize;
+    let input_content_width = input_content_width(app, input_inner_width);
     let input_line_count = if input_is_editable && !app.input.is_empty() {
-        app.cached_input_layout(input_inner_width)
+        app.cached_input_layout(input_content_width)
             .lines
             .len()
             .max(1)
@@ -127,8 +129,8 @@ pub(super) fn ui(frame: &mut ratatui::Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(2),            // header
-            Constraint::Min(10),              // messages
+            Constraint::Length(1),            // header
+            Constraint::Min(3),               // messages
             Constraint::Length(input_height), // input
             Constraint::Length(1),            // footer
         ])

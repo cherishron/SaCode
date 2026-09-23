@@ -71,7 +71,8 @@ impl App {
     pub(super) fn scroll_input_down(&mut self) {
         self.input_scroll_follows_cursor = false;
         let visible_height = self.input_viewport.height.max(1) as usize;
-        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let inner_width = self.input_viewport.width.max(1) as usize;
+        let width = super::render::input_content_width(self, inner_width);
         let max_scroll = self
             .cached_input_layout(width)
             .lines
@@ -81,14 +82,16 @@ impl App {
     }
 
     pub(super) fn input_on_first_visible_line(&mut self) -> bool {
-        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let inner_width = self.input_viewport.width.max(1) as usize;
+        let width = super::render::input_content_width(self, inner_width);
         let cursor_line = self.cached_input_layout(width).cursor_line;
         cursor_line == self.input_scroll_offset
     }
 
     pub(super) fn input_on_last_visible_line(&mut self) -> bool {
         let visible_height = self.input_viewport.height.max(1) as usize;
-        let width = self.input_viewport.width.saturating_sub(2).max(1) as usize;
+        let inner_width = self.input_viewport.width.max(1) as usize;
+        let width = super::render::input_content_width(self, inner_width);
         let scroll_offset = self.input_scroll_offset;
         let layout = self.cached_input_layout(width);
         let last_visible_line = scroll_offset

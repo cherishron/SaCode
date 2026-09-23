@@ -120,8 +120,15 @@ pub(super) fn get_level1_commands() -> Vec<CommandDef> {
         ),
         CommandDef::simple("/providers", "管理 Provider"),
         CommandDef::simple("/models", "选择模型"),
-        CommandDef::simple("/login", "配置 Provider 登录"),
-        CommandDef::simple("/connect", "快速接入 Provider"),
+        CommandDef::with_subs(
+            "/login",
+            "sa-idp 统一身份登录",
+            vec![
+                SubCommandDef::new("device", "手机/设备码确认登录"),
+                SubCommandDef::new("api", "自定义 Provider（API Key）"),
+            ],
+        ),
+        CommandDef::simple("/connect", "快速接入 Provider（API Key）"),
         CommandDef::simple("/add-dir", "添加项目可访问目录"),
         CommandDef::simple("/status", "查看 MCP 与插件状态"),
         CommandDef::simple("/doctor", "诊断当前配置与可用性"),

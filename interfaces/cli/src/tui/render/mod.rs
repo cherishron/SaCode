@@ -7,12 +7,13 @@ mod markdown;
 mod messages_panel;
 pub(crate) mod modals;
 pub(crate) mod orchestration_panel;
+mod popup;
 mod selectors;
 
 pub(crate) use command_selector::render_command_selector;
 pub(crate) use common::relative_to_workdir;
 pub(crate) use header_footer::{render_footer, render_header};
-pub(crate) use input_panel::render_input_panel;
+pub(crate) use input_panel::{input_content_width, render_input_panel};
 pub(crate) use main_layout::render_message_lines;
 pub(crate) use messages_panel::render_messages_panel;
 pub(crate) use modals::{

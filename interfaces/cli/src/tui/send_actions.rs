@@ -7,11 +7,17 @@ impl App {
                 if self.input.is_empty() {
                     return;
                 }
-                if !crate::provider_runtime::has_authorized_provider(&self.workdir) {
-                    self.input_mode = InputMode::ConnectSelect;
-                    self.selected_connect_index = 0;
+                // Product path: refresh sa-idp session before model calls.
+                if let Err(err) =
+                    crate::product_path::ensure_product_session_best_effort(&self.workdir)
+                {
+                    self.push_system_message(&format!(
+                        "会话刷新提醒：{err}。若网关模型不可用，请重新 /login。"
+                    ));
+                }
+                if !crate::product_path::product_ready(&self.workdir) {
                     self.push_system_message(
-                        "当前没有可用且已授权的 Provider。请先选择 Provider 并完成凭据验证。",
+                        "尚未接入 saai 模型。请 /login 登录 sa-idp（主路径）；本地/自定义 Provider 用 /connect。",
                     );
                     return;
                 }
@@ -90,6 +96,16 @@ impl App {
         }
 
         if self.input == "/login" {
+            self.start_sa_idp_login(false);
+            return;
+        }
+
+        if self.input == "/login device" {
+            self.start_sa_idp_login(true);
+            return;
+        }
+
+        if self.input == "/login api" {
             self.start_login();
             return;
         }

@@ -58,7 +58,7 @@ impl App {
         let provider = ensure_audit_provider(provider);
         if opts.use_ai && provider.is_none() {
             self.push_system_message(
-                "无可用模型 provider，将仅运行启发式扫描（可用 /login 配置）。",
+                "无可用模型 provider，将仅运行启发式扫描（可用 /login 走 sa-idp）。",
             );
         }
         match block_on_cli_future(run_audit(&root, &opts, provider.as_ref())) {

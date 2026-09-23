@@ -60,7 +60,13 @@ impl App {
                 AsyncResult::LoginCompleted {
                     provider_name,
                     config,
-                } => self.handle_login_completed(provider_name, config),
+                    source,
+                } => self.handle_login_completed(provider_name, config, source),
+                AsyncResult::DeviceAuthPrompt {
+                    verification_uri,
+                    user_code,
+                    expires_in,
+                } => self.handle_device_auth_prompt(verification_uri, user_code, expires_in),
                 AsyncResult::ProvidersLoaded {
                     providers,
                     current_provider,

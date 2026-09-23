@@ -32,8 +32,8 @@ pub(crate) fn render_message_lines(
                     }
                     push_wrapped_text_lines(
                         &mut lines,
-                        "> ",
-                        "  ",
+                        "you › ",
+                        "      ",
                         content_line,
                         Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
                         body_style,
@@ -96,6 +96,14 @@ pub(crate) fn render_message_lines(
         }
     }
 
+    if lines
+        .last()
+        .map(|line| line.line.to_string().is_empty())
+        .unwrap_or(false)
+    {
+        lines.pop();
+    }
+
     lines
 }
 
@@ -117,15 +125,15 @@ fn render_system_block(
         }
 
         let (prefix, style) = if line.starts_with(PREFIX_WAITING) {
-            ("● ", Style::default().fg(theme.agent))
+            ("· ", Style::default().fg(theme.agent))
         } else if line.starts_with(PREFIX_QUEUE) {
-            ("● ", Style::default().fg(theme.info))
+            ("· ", Style::default().fg(theme.info))
         } else if line.starts_with(PREFIX_SUCCESS) {
-            ("● ", Style::default().fg(theme.build))
+            ("✓ ", Style::default().fg(theme.build))
         } else if line.starts_with(PREFIX_ERROR) {
-            ("● ", Style::default().fg(theme.warning))
+            ("✗ ", Style::default().fg(theme.warning))
         } else {
-            ("● ", Style::default().fg(theme.muted))
+            ("· ", Style::default().fg(theme.muted))
         };
 
         let text = line
@@ -186,15 +194,48 @@ fn render_tool_block(
     } else if status == "失败" || status == "失败 ✗" {
         ("✗", theme.warning, "失败".to_string())
     } else {
-        ("●", theme.info, status.clone())
+        ("·", theme.info, status.clone())
     };
 
-    // First line: icon ToolName
+    if summary.is_none() {
+        let compact_spans = vec![
+            Span::styled(
+                if first_in_message { "› " } else { "  " },
+                Style::default().fg(theme.tool),
+            ),
+            Span::styled(
+                tool_name,
+                Style::default().fg(theme.tool).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                icon,
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                status_label_owned,
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+        push_wrapped_line_spans(&mut lines, compact_spans, width);
+        return lines;
+    }
+
     let first_spans = vec![
         Span::styled(
-            if first_in_message { "● " } else { "  " },
-            Style::default().fg(theme.info),
+            if first_in_message { "› " } else { "  " },
+            Style::default().fg(theme.tool),
         ),
+        Span::styled(
+            tool_name,
+            Style::default().fg(theme.tool).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
         Span::styled(
             icon,
             Style::default()
@@ -203,36 +244,30 @@ fn render_tool_block(
         ),
         Span::raw(" "),
         Span::styled(
-            tool_name,
-            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+            status_label_owned,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
     push_wrapped_line_spans(&mut lines, first_spans, width);
 
-    // Second line: └─ status
-    let mut status_spans = vec![Span::styled(
-        "  └─ ",
-        Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
-    )];
-    status_spans.push(Span::styled(
-        status_label_owned,
-        Style::default()
-            .fg(status_color)
-            .add_modifier(Modifier::BOLD),
-    ));
     if let Some(ref summary) = summary {
+        let mut status_spans = vec![Span::styled("    ", Style::default().fg(theme.tool))];
         status_spans.push(Span::styled(
-            format!(": {}", summary),
+            summary.clone(),
             Style::default().fg(theme.text),
         ));
+        if status == "...running" || status == "开始执行" {
+            status_spans.push(Span::styled(
+                "  · Ctrl+B 后台",
+                Style::default()
+                    .fg(theme.subtle)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+        push_wrapped_line_spans(&mut lines, status_spans, width);
     }
-    if status == "...running" || status == "开始执行" {
-        status_spans.push(Span::styled(
-            " (ctrl+b to background execution)",
-            Style::default().fg(theme.muted).add_modifier(Modifier::DIM),
-        ));
-    }
-    push_wrapped_line_spans(&mut lines, status_spans, width);
 
     lines
 }
@@ -251,18 +286,18 @@ fn render_thinking_block(
         &mut lines,
         vec![
             Span::styled(
-                if first_in_message { "● " } else { "  " },
-                Style::default().fg(theme.accent),
+                if first_in_message { "  " } else { "  " },
+                Style::default().fg(theme.subtle),
             ),
             Span::styled(
                 if collapsed {
-                    "思考 [已折叠]"
+                    "· thinking [collapsed]"
                 } else {
-                    "思考"
+                    "· thinking"
                 },
                 Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
+                    .fg(theme.subtle)
+                    .add_modifier(Modifier::DIM),
             ),
         ],
         width,
@@ -271,13 +306,15 @@ fn render_thinking_block(
     if !collapsed && !text.is_empty() {
         push_wrapped_text_lines(
             &mut lines,
-            "   │ ",
-            "   │ ",
+            "    ",
+            "    ",
             text,
             Style::default()
-                .fg(theme.border)
+                .fg(theme.subtle)
                 .add_modifier(Modifier::DIM),
-            Style::default().fg(theme.text).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(theme.subtle)
+                .add_modifier(Modifier::DIM),
             width,
         );
     }

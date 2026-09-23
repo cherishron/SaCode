@@ -11,8 +11,8 @@ use sacode_kernel::ExecutionMode;
 use sacode_runtime::ProjectAccessConfigStore;
 
 use crate::cmd::config;
+use crate::product_path::{product_ready, resolve_product_named_provider};
 use crate::provider_config::{ProviderConfigStore, SaCodeConfigStore};
-use crate::provider_runtime::resolve_authorized_named_provider;
 use crate::task_store::TaskStore;
 
 use super::{
@@ -28,7 +28,7 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let access_store = ProjectAccessConfigStore::new(&workdir);
         let task_store = TaskStore::new(&workdir);
-        let current_provider = resolve_authorized_named_provider(&workdir);
+        let current_provider = resolve_product_named_provider(&workdir);
         let log_path = user_sacode_dir().join("logs/tui.log");
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();
@@ -155,11 +155,17 @@ impl App {
         self.refresh_git_changes();
         self.ensure_default_context7();
         self.spawn_version_check();
-        if self.current_provider.is_none() {
-            self.input_mode = InputMode::ConnectSelect;
-            self.selected_connect_index = 0;
+        // Product line: sa-idp → SaAiApiGateway is the default model path.
+        if let Some(named) = resolve_product_named_provider(&self.workdir) {
+            let model = named.config.model.clone();
+            let name = named.name.clone();
+            self.current_provider = Some(named);
+            self.push_system_message(&format!(
+                "已接入 saai 产品线：{name} / {model}（模型来自 SaAiApiGateway）。/models 可切换网关模型。"
+            ));
+        } else if !product_ready(&self.workdir) {
             self.push_system_message(
-                "未检测到可用且已授权的 Provider。请选择 Provider，随后输入凭据完成验证；Esc 可稍后通过 /connect 或 /login 再配置。",
+                "开始使用 saai：请先 /login 登录 sa-idp，自动换网关 api_key 并拉取模型。本地/自定义 Provider 可用 /connect（附属路径）。",
             );
         }
     }
@@ -172,7 +178,7 @@ impl App {
         let sacode_store = SaCodeConfigStore::new(&workdir);
         let access_store = ProjectAccessConfigStore::new(&workdir);
         let task_store = TaskStore::new(&workdir);
-        let current_provider = resolve_authorized_named_provider(&workdir);
+        let current_provider = resolve_product_named_provider(&workdir);
         let log_path = user_sacode_dir().join("logs/tui.log");
         let (task_tx, task_rx) = mpsc::channel();
         let level1_commands = get_level1_commands();

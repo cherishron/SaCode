@@ -5,6 +5,12 @@ use crate::cmd::init::InitMode;
 use crate::provider_config::{NamedProviderConfig, ProviderConfig};
 use crate::tui::ModelOptionEntry;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoginSource {
+    SaIdp,
+    ApiKey,
+}
+
 #[allow(clippy::large_enum_variant)]
 pub(super) enum AsyncResult {
     ChatStreamChunk {
@@ -40,6 +46,12 @@ pub(super) enum AsyncResult {
     LoginCompleted {
         provider_name: String,
         config: ProviderConfig,
+        source: LoginSource,
+    },
+    DeviceAuthPrompt {
+        verification_uri: String,
+        user_code: String,
+        expires_in: u64,
     },
     ProvidersLoaded {
         providers: Vec<String>,

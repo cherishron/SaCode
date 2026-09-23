@@ -59,7 +59,7 @@ mod tool_actions;
 mod tui_entry;
 mod utility_actions;
 
-use async_types::{AsyncContext, AsyncResult};
+use async_types::{AsyncContext, AsyncResult, LoginSource};
 use bootstrap::{encode_ppm, user_sacode_dir};
 use commands::{get_level1_commands, CommandDef, SubCommandDef};
 use formatting::{format_duration_ms, fuzzy_match};
@@ -228,6 +228,7 @@ struct UsageStats {
     prompt_tokens: u64,
     completion_tokens: u64,
     total_tokens: u64,
+    latest_prompt_tokens: u64,
     estimated_cost_usd: f64,
     models: BTreeMap<String, ModelUsageStats>,
 }
@@ -398,7 +399,8 @@ pub(in crate::tui) mod tests {
         PendingApprovalRequest, PendingQuestionItem, PendingQuestionOption,
     };
     use crate::tui::render::{
-        render_footer, render_header, render_input_panel, render_messages_panel,
+        render_command_selector, render_footer, render_header, render_input_panel,
+        render_messages_panel,
     };
     use crate::tui::InteractionState;
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
@@ -650,7 +652,7 @@ pub(in crate::tui) mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("hello world"));
-        assert!(rendered.contains("> "));
+        assert!(rendered.contains("❯ hello world"));
         assert!(app.input_viewport.width > 0);
         assert!(app.input_viewport.height > 0);
     }
@@ -780,11 +782,50 @@ pub(in crate::tui) mod tests {
         assert!(line_dump.contains("rustc"));
         assert!(line_dump.contains("822 passed"));
         // 思考折叠
-        assert!(line_dump.contains("思考"));
+        assert!(line_dump.contains("thinking"));
         assert!(line_dump.contains("分析调用链"));
         assert!(!line_dump.contains("[思考]"));
         // 系统状态消息
         assert!(line_dump.contains("已刷新模型列表"));
+    }
+
+    #[test]
+    fn render_message_lines_avoid_trailing_blank_and_compact_simple_tools() {
+        let messages = vec![
+            super::Message {
+                role: super::MessageRole::User,
+                content: "inspect this".to_string(),
+                thinking: String::new(),
+                timestamp: "12:00:00".to_string(),
+                collapsed: false,
+            },
+            super::Message {
+                role: super::MessageRole::Assistant,
+                content: "[工具] grep ...running".to_string(),
+                thinking: String::new(),
+                timestamp: "12:00:01".to_string(),
+                collapsed: false,
+            },
+        ];
+
+        let lines =
+            super::render::render_message_lines(&messages, super::ThemePalette::github(), 80);
+        let dump = lines
+            .iter()
+            .map(|line| line.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(dump.contains("you › inspect this"));
+        assert!(dump.contains("› grep"));
+        assert!(!dump.contains("╭─ grep"));
+        assert!(!dump.ends_with('\n'));
+        assert!(!lines
+            .last()
+            .expect("message line")
+            .line
+            .to_string()
+            .is_empty());
     }
 
     #[test]
@@ -812,7 +853,7 @@ pub(in crate::tui) mod tests {
             .map(|line| line.line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(line_dump.contains("思考 [已折叠]"));
+        assert!(line_dump.contains("thinking [collapsed]"));
         assert!(!line_dump.contains("分析调用链"));
     }
 
@@ -1106,7 +1147,7 @@ pub(in crate::tui) mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("SaCode"));
-        assert!(rendered.contains("Ctrl+Q: quit"));
+        assert!(rendered.contains("Ctrl+Q quit"));
     }
 
     #[test]
@@ -1157,7 +1198,7 @@ pub(in crate::tui) mod tests {
 
         let rendered = backend_text(&terminal);
         assert!(rendered.contains("think:on"));
-        assert!(rendered.contains("Ctrl+Q: quit"));
+        assert!(rendered.contains("Ctrl+Q quit"));
     }
 
     #[test]
@@ -1184,7 +1225,7 @@ pub(in crate::tui) mod tests {
         // compact_path uses "~/" on Unix and "~" on Windows (drive prefix)
         assert!(rendered.contains("~"));
         assert!(rendered.contains("SaCode v"));
-        assert!(rendered.contains("Ctrl+Q: quit"));
+        assert!(rendered.contains("Ctrl+Q quit"));
         assert!(rendered.contains("think:"));
     }
 
@@ -1227,11 +1268,11 @@ pub(in crate::tui) mod tests {
         assert!(!rendered.contains("ctx"));
         assert!(!rendered.contains("tok"));
         assert!(rendered.contains("%"));
-        assert!(rendered.contains("Alt+M: mode"));
+        assert!(rendered.contains("Alt+M mode"));
     }
 
     #[test]
-    fn render_footer_shows_thinking_shortcut_status() {
+    fn render_footer_avoids_repeating_header_status() {
         let app = App::new_for_test();
         let backend = TestBackend::new(120, 2);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -1243,7 +1284,145 @@ pub(in crate::tui) mod tests {
             .expect("draw footer");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("Ctrl+T: think:"));
+        assert!(rendered.contains("/ commands"));
+        assert!(!rendered.contains("think:"));
+    }
+
+    #[test]
+    fn full_ui_renders_across_supported_terminal_sizes() {
+        for (width, height) in [(40, 12), (72, 18), (120, 30)] {
+            let mut app = App::new_for_test();
+            app.messages.push(super::Message {
+                role: super::MessageRole::User,
+                content: "inspect the cli ui".to_string(),
+                thinking: String::new(),
+                timestamp: "12:00:00".to_string(),
+                collapsed: false,
+            });
+            app.messages.push(super::Message {
+                role: super::MessageRole::Assistant,
+                content: "[工具] cargo check 完成: build passed\n界面已更新。".to_string(),
+                thinking: "检查布局与状态栏".to_string(),
+                timestamp: "12:00:01".to_string(),
+                collapsed: false,
+            });
+            app.input = "continue".to_string();
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+
+            terminal
+                .draw(|frame| super::tui_entry::ui(frame, &mut app))
+                .expect("draw full ui");
+
+            let rendered = backend_text(&terminal);
+            assert!(
+                rendered.contains("SaCode"),
+                "missing header at {width}x{height}:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("continue"),
+                "missing input at {width}x{height}"
+            );
+            assert!(app.input_viewport.width > 0);
+            assert!(app.message_viewport.width > 0);
+        }
+    }
+
+    #[test]
+    fn full_ui_command_popup_renders_on_narrow_terminal() {
+        let mut app = App::new_for_test();
+        app.input_mode = super::InputMode::CommandLevel1;
+        app.input = "/".to_string();
+        app.filtered_level1 = app.level1_commands.clone();
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| super::tui_entry::ui(frame, &mut app))
+            .expect("draw full ui with command popup");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("commands"));
+        assert!(rendered.contains("❯ /init"));
+        assert!(rendered.contains("❯ /"));
+    }
+
+    #[test]
+    fn render_command_selector_hides_descriptions_on_narrow_terminals() {
+        let mut app = App::new_for_test();
+        app.input_mode = super::InputMode::CommandLevel1;
+        app.filtered_level1 = app.level1_commands.clone();
+        app.selected_level1_index = 0;
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_command_selector(frame, &app, Rect::new(0, 10, 40, 2));
+            })
+            .expect("draw narrow command selector");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("commands"));
+        assert!(rendered.contains("❯ /init"));
+        assert!(!rendered.contains("轻量初始化项目配置"));
+    }
+
+    #[test]
+    fn render_command_selector_shows_descriptions_on_wide_terminals() {
+        let mut app = App::new_for_test();
+        app.input_mode = super::InputMode::CommandLevel1;
+        app.filtered_level1 = app.level1_commands.clone();
+        app.selected_level1_index = 0;
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_command_selector(frame, &app, Rect::new(0, 10, 100, 2));
+            })
+            .expect("draw wide command selector");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("❯ /init"));
+        assert!(rendered.contains("轻 量 初 始 化 项 目 配 置"));
+    }
+
+    #[test]
+    fn render_header_keeps_narrow_layout_compact() {
+        let app = App::new_for_test();
+        let backend = TestBackend::new(48, 1);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_header(frame, &app, Rect::new(0, 0, 48, 1));
+            })
+            .expect("draw narrow header");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("SaCode v"));
+        assert!(rendered.contains("AUTO"));
+        assert!(!rendered.contains("think:"));
+        assert!(!rendered.contains("Ctrl+Q"));
+    }
+
+    #[test]
+    fn render_footer_keeps_narrow_layout_compact() {
+        let app = App::new_for_test();
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_footer(frame, &app, Rect::new(0, 0, 40, 1));
+            })
+            .expect("draw narrow footer");
+
+        let rendered = backend_text(&terminal);
+        assert!(rendered.contains("%"));
+        assert!(!rendered.contains("commands"));
+        assert!(!rendered.contains("Ctrl+Q"));
     }
 
     #[test]
@@ -1606,6 +1785,7 @@ pub(in crate::tui) mod tests {
             .expect("draw input panel");
 
         let rendered = backend_text(&terminal);
-        assert!(rendered.contains("[T]"));
+        assert!(rendered.contains("❯ think hello world"));
+        assert!(!rendered.contains("[T]"));
     }
 }

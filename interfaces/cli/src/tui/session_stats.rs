@@ -36,7 +36,7 @@ impl App {
     pub(super) fn toggle_thinking_feature(&mut self) {
         let Some(current_provider) = self.current_provider.clone() else {
             self.push_system_message(
-                "当前没有可切换的 provider。先使用 /login 或 /connect 配置模型。",
+                "当前没有可切换的 provider。先使用 /login（sa-idp）或 /connect 配置模型。",
             );
             return;
         };
@@ -81,6 +81,7 @@ impl App {
         let pricing_rule = self.current_pricing_rule();
         self.usage_stats.requests += 1;
         self.usage_stats.prompt_tokens += usage.prompt_tokens as u64;
+        self.usage_stats.latest_prompt_tokens = usage.prompt_tokens as u64;
         self.usage_stats.completion_tokens += usage.completion_tokens as u64;
         self.usage_stats.total_tokens += usage.total_tokens as u64;
         let model_stats = self.usage_stats.models.entry(model_key).or_default();
@@ -123,6 +124,32 @@ impl App {
         )
     }
 
+    pub(super) fn current_context_limit_tokens(&self) -> usize {
+        let Some(provider) = self.current_provider.as_ref() else {
+            return 128_000;
+        };
+        self.sacode_store
+            .provider(&provider.name)
+            .ok()
+            .flatten()
+            .and_then(|spec| spec.models.get(&provider.config.model).cloned())
+            .and_then(|rule| rule.limit)
+            .map(|limit| limit.context as usize)
+            .filter(|limit| *limit > 0)
+            .unwrap_or(128_000)
+    }
+
+    pub(super) fn current_context_used_tokens(&self) -> usize {
+        if self.usage_stats.latest_prompt_tokens > 0 {
+            self.usage_stats.latest_prompt_tokens as usize
+        } else {
+            self.build_session_compression_source()
+                .chars()
+                .count()
+                .div_ceil(4)
+        }
+    }
+
     pub(super) fn current_pricing_rule(&self) -> Option<PricingRule> {
         let provider = self.current_provider.as_ref()?;
         let provider_spec = self.sacode_store.provider(&provider.name).ok().flatten()?;
@@ -145,7 +172,7 @@ mod tests {
     use crate::provider_config::NamedProviderConfig;
     use crate::provider_config::ProviderConfig;
     use crate::tui::tests::test_app;
-    use sacode_kernel::model::{ModelPricing, ModelRule, ProviderSpec};
+    use sacode_kernel::model::{ModelLimit, ModelPricing, ModelRule, ProviderSpec};
     use std::collections::BTreeMap;
 
     #[test]
@@ -237,6 +264,57 @@ mod tests {
             1
         );
         assert!(app.usage_stats.estimated_cost_usd > 0.0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn context_budget_uses_model_limit_and_latest_prompt_usage() {
+        let mut ctx = test_app();
+        let app = &mut ctx.app;
+        let provider_name = "context-provider".to_string();
+        let model_name = "context-model".to_string();
+        let mut spec = ProviderSpec {
+            name: provider_name.clone(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: String::new(),
+            models: BTreeMap::new(),
+            auth_header: None,
+            auth_scheme: None,
+        };
+        spec.models.insert(
+            model_name.clone(),
+            ModelRule {
+                name: model_name.clone(),
+                limit: Some(ModelLimit {
+                    context: 32_000,
+                    output: 4_000,
+                }),
+                ..Default::default()
+            },
+        );
+        app.sacode_store
+            .upsert_provider(&provider_name, spec)
+            .expect("persist provider spec");
+        app.current_provider = Some(NamedProviderConfig {
+            name: provider_name,
+            config: ProviderConfig {
+                base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                model: model_name,
+                auth_header: None,
+                auth_scheme: None,
+                secret_ref: None,
+            },
+        });
+
+        app.record_usage(ChatUsage {
+            prompt_tokens: 8_000,
+            completion_tokens: 1_000,
+            total_tokens: 9_000,
+        });
+
+        assert_eq!(app.current_context_limit_tokens(), 32_000);
+        assert_eq!(app.current_context_used_tokens(), 8_000);
     }
 
     #[test]
