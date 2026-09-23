@@ -1,2 +1,0 @@
-{"input":{"add_all":true,"message":"feat: test commit"},"phase":"preflight_start","status":"pending","tool":"git.commit","ts":"2026-09-23T13:38:45.091376400+00:00"}
-{"input":{"add_all":true,"message":"feat: test commit"},"phase":"preflight_allowed","status":"allowed","tool":"git.commit","ts":"2026-09-23T13:38:45.093178900+00:00"}
