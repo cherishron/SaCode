@@ -15,6 +15,14 @@
   transition: grid-template-columns var(--dur-normal) var(--ease-out);
 }
 
+.app-shell.design-view {
+  grid-template-areas:
+    "topbar topbar topbar topbar"
+    "rail conversation conversation conversation"
+    "status status status status";
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) 0 0;
+}
+
 /* 侧栏折叠 */
 .app-shell.sidebar-closed {
   grid-template-columns: var(--rail-width) 0 1fr var(--context-width);

@@ -40,12 +40,30 @@ export function buildSaDesignWorkspace(
   state: SaDesignState,
   callbacks: SaDesignCallbacks,
 ) {
+  const templateForDetail = state.templateDetailId
+    ? state.catalog.templates.find((t) => t.id === state.templateDetailId)
+    : null;
   return el('main', { className: 'sadesign-workspace' }, [
     buildDesignHeader(state, callbacks.rerender),
     el('div', { className: 'sadesign-body' }, [
       buildDesignNavigation(state, callbacks.rerender),
       buildSection(app, state, callbacks),
     ]),
+    ...(templateForDetail
+      ? [buildTemplateDetailModal(
+          templateForDetail,
+          state.draft.primaryTemplateId === templateForDetail.id,
+          () => {
+            state.draft.primaryTemplateId = templateForDetail.id;
+            state.section = 'task';
+            callbacks.rerender();
+          },
+          () => {
+            state.templateDetailId = null;
+            callbacks.rerender();
+          },
+        )]
+      : []),
   ]);
 }
 
@@ -273,6 +291,9 @@ function buildTemplateGallery(state: SaDesignState, rerender: () => void) {
           buildTemplateCard(item, state.draft.primaryTemplateId === item.id, () => {
             state.draft.primaryTemplateId = item.id;
             state.section = 'task';
+            rerender();
+          }, () => {
+            state.templateDetailId = item.id;
             rerender();
           }),
         )),
@@ -660,6 +681,13 @@ function buildPreviewPanel(app: DesktopApp, state: SaDesignState, callbacks: SaD
           el('pre', {}, [prompt]),
         ]),
       ]),
+      buildViewportPreview(state, callbacks),
+      ...(state.sessions.length > 1
+        ? [buildVariantCompare(state, callbacks)]
+        : []),
+      ...(state.sessionLineage.length > 0 || session
+        ? [buildVersionLineage(state, session)]
+        : []),
     ]),
     el('div', { className: 'sadesign-preview-actions' }, [
       session?.status === 'planned'
@@ -704,6 +732,118 @@ function buildPreviewPanel(app: DesktopApp, state: SaDesignState, callbacks: SaD
     ...(draft.outputs.includes('images')
       ? [buildImageGenerationPanel(app, state, callbacks)]
       : []),
+  ]);
+}
+
+function buildViewportPreview(state: SaDesignState, callbacks: SaDesignCallbacks) {
+  const viewports: Array<{ id: 'desktop' | 'tablet' | 'mobile'; label: string; width: number }> = [
+    { id: 'desktop', label: 'Desktop', width: 1280 },
+    { id: 'tablet', label: 'Tablet', width: 768 },
+    { id: 'mobile', label: 'Mobile', width: 375 },
+  ];
+  const current = viewports.find((v) => v.id === state.previewViewport) ?? viewports[0];
+  return el('section', { className: 'sadesign-preview-section sadesign-viewport-section' }, [
+    el('h3', {}, ['多视口预览']),
+    el('div', { className: 'sadesign-viewport-tabs' }, viewports.map((v) =>
+      el('button', {
+        className: `sadesign-viewport-tab ${state.previewViewport === v.id ? 'active' : ''}`,
+        onclick: () => { state.previewViewport = v.id; callbacks.rerender(); },
+      }, [`${v.label} ${v.width}px`]),
+    )),
+    el('div', { className: 'sadesign-viewport-stage' }, [
+      (() => {
+        const frame = el('div', {
+          className: `sadesign-viewport-frame sadesign-viewport-${current.id}`,
+        }, [
+          el('div', { className: 'sadesign-viewport-toolbar' }, [
+            el('span', { className: 'sadesign-viewport-url-bar' }, [
+              `localhost:3000 · ${current.label}`,
+            ]),
+          ]),
+          el('div', { className: 'sadesign-viewport-canvas' }, [
+            el('div', { className: 'sadesign-viewport-placeholder' }, [
+              el('div', { className: `sadesign-template-preview ${templateAccent(state.draft.primaryTemplateId || 'default')}` }, [
+                el('div', { className: 'preview-browser' }, [
+                  el('span'), el('span'), el('span'),
+                ]),
+                el('div', { className: 'preview-layout' }, [
+                  el('div', { className: 'preview-hero' }),
+                  el('div', { className: 'preview-metrics' }, [el('i'), el('i'), el('i')]),
+                  el('div', { className: 'preview-content' }),
+                ]),
+              ]),
+              el('p', { className: 'muted' }, [
+                `${current.label} · ${current.width}px — 生成完成后此处展示实际页面截图`,
+              ]),
+            ]),
+          ]),
+        ]);
+        frame.style.width = `${current.width}px`;
+        return frame;
+      })(),
+    ]),
+  ]);
+}
+
+function buildVariantCompare(state: SaDesignState, callbacks: SaDesignCallbacks) {
+  const recentSessions = state.sessions.slice(0, 3);
+  return el('section', { className: 'sadesign-preview-section sadesign-variant-section' }, [
+    el('h3', {}, ['变体比较']),
+    el('p', { className: 'muted' }, ['最近生成结果并排对比（最多 3 个）。']),
+    el('div', { className: 'sadesign-variant-grid' }, recentSessions.map((session) =>
+      el('div', {
+        className: `sadesign-variant-card ${state.currentSession?.id === session.id ? 'selected' : ''}`,
+      }, [
+        el('div', { className: 'sadesign-variant-header' }, [
+          el('span', { className: 'mono' }, [session.id.slice(0, 8)]),
+          el('span', { className: `badge ${session.status === 'completed' ? 'ok' : session.status === 'failed' ? 'bad' : ''}` }, [session.status]),
+        ]),
+        el('div', { className: 'sadesign-variant-preview' }, [
+          el('div', { className: `sadesign-template-preview ${templateAccent(session.id)}` }, [
+            el('div', { className: 'preview-browser' }, [el('span'), el('span'), el('span')]),
+            el('div', { className: 'preview-layout' }, [
+              el('div', { className: 'preview-hero' }),
+              el('div', { className: 'preview-metrics' }, [el('i'), el('i')]),
+              el('div', { className: 'preview-content' }),
+            ]),
+          ]),
+        ]),
+        el('p', { className: 'muted' }, [session.goal || session.request.slice(0, 60)]),
+        el('button', {
+          className: 'btn ghost',
+          onclick: () => {
+            state.currentSession = session;
+            state.step = 'preview';
+            callbacks.rerender();
+          },
+        }, ['查看此变体']),
+      ]),
+    )),
+  ]);
+}
+
+function buildVersionLineage(state: SaDesignState, currentSession: DesignSession | null) {
+  const lineage = state.sessionLineage.length > 0
+    ? state.sessionLineage
+    : currentSession
+      ? [{ id: currentSession.id, status: currentSession.status, createdAt: currentSession.created_at, goal: currentSession.goal, request: currentSession.request }]
+      : [];
+  if (lineage.length === 0) return el('section', { className: 'sadesign-preview-section' }, []);
+  return el('section', { className: 'sadesign-preview-section sadesign-lineage-section' }, [
+    el('h3', {}, ['版本谱系']),
+    el('div', { className: 'sadesign-lineage-timeline' }, lineage.map((item, index) =>
+      el('div', { className: 'sadesign-lineage-node' }, [
+        el('div', { className: 'sadesign-lineage-dot' }, []),
+        index < lineage.length - 1
+          ? el('div', { className: 'sadesign-lineage-connector' }, [])
+          : '',
+        el('div', { className: 'sadesign-lineage-info' }, [
+          el('span', { className: 'mono' }, [item.id.slice(0, 8)]),
+          el('span', { className: `badge ${item.status === 'completed' ? 'ok' : item.status === 'failed' ? 'bad' : ''}` }, [item.status]),
+          el('span', { className: 'muted' }, [item.goal || item.request.slice(0, 50)]),
+        ].filter(Boolean) as Node[]),
+      ]),
+    )),
   ]);
 }
 
@@ -919,17 +1059,107 @@ function buildProjectContext(state: SaDesignState) {
   ].filter(Boolean) as Node[]);
 }
 
-function buildTemplateCard(item: DesignTemplateResource, selected: boolean, onSelect: () => void) {
+function buildTemplateDetailModal(
+  template: DesignTemplateResource,
+  selected: boolean,
+  onSelect: () => void,
+  onClose: () => void,
+) {
+  const accent = templateAccent(template.id);
+  return el('div', {
+    className: 'sadesign-modal-overlay',
+    onclick: (event: Event) => {
+      if (event.target === event.currentTarget) onClose();
+    },
+  }, [
+    el('div', { className: 'sadesign-modal' }, [
+      el('div', { className: 'sadesign-modal-header' }, [
+        el('h2', {}, [template.title]),
+        el('button', {
+          className: 'sadesign-modal-close',
+          onclick: onClose,
+          title: '关闭',
+        }, ['×']),
+      ]),
+      el('div', { className: 'sadesign-modal-body' }, [
+        el('div', { className: `sadesign-template-preview ${accent} large` }, [
+          el('div', { className: 'preview-browser' }, [
+            el('span'), el('span'), el('span'),
+          ]),
+          el('div', { className: 'preview-layout' }, [
+            el('div', { className: 'preview-hero' }),
+            el('div', { className: 'preview-metrics' }, [el('i'), el('i'), el('i')]),
+            el('div', { className: 'preview-content' }),
+          ]),
+        ]),
+        el('p', { className: 'muted' }, [template.summary]),
+        el('div', { className: 'sadesign-detail-section' }, [
+          el('h3', {}, ['页面结构']),
+          template.layout_notes.length > 0
+            ? el('ul', { className: 'sadesign-detail-list' },
+                template.layout_notes.map((note) =>
+                  el('li', {}, [note]),
+                ),
+              )
+            : el('p', { className: 'muted' }, ['暂无页面结构信息。']),
+        ]),
+        el('div', { className: 'sadesign-detail-section' }, [
+          el('h3', {}, ['组件清单']),
+          el('div', { className: 'sadesign-tags' },
+            template.components.map((component) =>
+              el('span', { className: 'badge accent' }, [component]),
+            ),
+          ),
+        ]),
+        el('div', { className: 'sadesign-detail-section' }, [
+          el('h3', {}, ['Token 摘要']),
+          el('div', { className: 'sadesign-token-grid' }, [
+            el('div', { className: 'sadesign-token-chip' }, [
+              el('span', { className: 'sadesign-token-swatch color-brand' }),
+              el('span', {}, ['--color-brand']),
+            ]),
+            el('div', { className: 'sadesign-token-chip' }, [
+              el('span', { className: 'sadesign-token-swatch color-text' }),
+              el('span', {}, ['--color-text']),
+            ]),
+            el('div', { className: 'sadesign-token-chip' }, [
+              el('span', { className: 'sadesign-token-swatch color-bg' }),
+              el('span', {}, ['--color-bg']),
+            ]),
+            el('div', { className: 'sadesign-token-chip' }, [
+              el('span', { className: 'sadesign-token-swatch radius-md' }),
+              el('span', {}, ['--radius-md']),
+            ]),
+          ]),
+        ]),
+      ]),
+      el('div', { className: 'sadesign-modal-footer' }, [
+        el('button', { className: 'btn ghost', onclick: onClose }, ['关闭']),
+        el('button', { className: 'btn', onclick: () => { onSelect(); onClose(); } }, [
+          selected ? '继续使用此模板' : '使用此模板',
+        ]),
+      ]),
+    ]),
+  ]);
+}
+
+function buildTemplateCard(item: DesignTemplateResource, selected: boolean, onSelect: () => void, onDetail: () => void) {
   const accent = templateAccent(item.id);
   return el('article', { className: `sadesign-template-card ${selected ? 'selected' : ''}` }, [
-    el('div', { className: `sadesign-template-preview ${accent}` }, [
-      el('div', { className: 'preview-browser' }, [
-        el('span'), el('span'), el('span'),
-      ]),
-      el('div', { className: 'preview-layout' }, [
-        el('div', { className: 'preview-hero' }),
-        el('div', { className: 'preview-metrics' }, [el('i'), el('i'), el('i')]),
-        el('div', { className: 'preview-content' }),
+    el('button', {
+      className: 'sadesign-template-preview-wrapper',
+      onclick: onDetail,
+      title: '点击查看详情',
+    }, [
+      el('div', { className: `sadesign-template-preview ${accent}` }, [
+        el('div', { className: 'preview-browser' }, [
+          el('span'), el('span'), el('span'),
+        ]),
+        el('div', { className: 'preview-layout' }, [
+          el('div', { className: 'preview-hero' }),
+          el('div', { className: 'preview-metrics' }, [el('i'), el('i'), el('i')]),
+          el('div', { className: 'preview-content' }),
+        ]),
       ]),
     ]),
     el('div', { className: 'sadesign-template-content' }, [
@@ -940,7 +1170,10 @@ function buildTemplateCard(item: DesignTemplateResource, selected: boolean, onSe
       el('p', { className: 'muted' }, [item.summary]),
       el('div', { className: 'sadesign-tags' }, item.components.slice(0, 4)
         .map((component) => el('span', { className: 'badge' }, [component]))),
-      el('button', { className: 'btn', onclick: onSelect }, [selected ? '继续使用' : '使用此模板']),
+      el('div', { className: 'sadesign-template-actions' }, [
+        el('button', { className: 'btn ghost', onclick: onDetail }, ['详情']),
+        el('button', { className: 'btn', onclick: onSelect }, [selected ? '继续使用' : '使用此模板']),
+      ]),
     ]),
   ]);
 }

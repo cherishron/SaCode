@@ -3,8 +3,8 @@
 ## 1. 文档信息
 
 - 产品名称：SaCode
-- 文档版本：v1.5
-- 更新时间：2026-09-20
+- 文档版本：v1.7
+- 更新时间：2026-09-22
 - 文档类型：产品需求文档（PRD）
 - 产品定位：面向国内开发者的终端 AI 编程工具
 - 核心叙事：**Claude Code 的体验，国内模型原生适配，企业级可审计。**
@@ -12,6 +12,10 @@
 > 定位调整说明（v1.2→v1.3）：基于《SaCode 可行性评估报告》（docs/report.md）四维评估，明确产品为"面向国内开发者的终端 AI 编程工具"，平台化是结果不是起点。配套规划方案见 `docs/report-plan.md`。MulanPSL-2.0 协议、国内搜索引擎适配、国产模型兼容已体现这一定位。
 >
 > 客户端化决策（v1.5）：在 CLI/TUI 主线稳定、VSCode 与 daemon 审批闭环完成后，新增独立 Desktop 与可插拔 Agent Backend。该决策只扩展支撑客户端和 ACP Agent 接入所需的 daemon/ACP 能力，不恢复 Scheduled Tasks、Agent Teams、Channels 等已延后平台功能。专项真源见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)。
+>
+> 阶段顺序修订（v1.6）：当前工作继续聚焦 **Desktop 本地闭环与发布收口**。SaCode 与手机端的 LAN、远程 daemon、跨设备控制及签名中继均不与 Desktop 并行实施；现阶段只保留 Task Protocol、HTTP/SSE、审批和恢复等可复用协议接缝。只有 Desktop 达到本 PRD 第 7.4 节的退出门禁后，才评审是否进入手机通信阶段。
+>
+> 仓库审查修订（v1.7）：以 `dev@9d8f9f8` 及 2026-09-22 的本地验证为基线，区分“正式发布基线”“已提交开发能力”“未提交工作区实现”和“规划能力”。Desktop Tauri sidecar、四面板 UI、client-core、OpenCode ACP Backend 已进入代码库，但首个 Desktop 正式版本仍为**部分验收**；未通过真实端到端、跨平台打包、进程清理和发布一致性门禁前，不得写成已发布或已验收。
 
 ## 2. 产品愿景
 
@@ -39,8 +43,9 @@ SaCode 面向国内重度终端开发者，提供从代码分析、任务规划�
 3. **Daemon**：保留现有 HTTP/SSE 主协议，并仅扩展 Agent Backend、sidecar 认证和客户端恢复所需端点。
 4. **客户端**：CLI/TUI 继续是核心入口；VSCode 与 Tauri Desktop 共用 client-core。
 5. Scheduled Tasks / Agent Teams / Channels 继续延后，不因本次客户端化恢复。
+6. **移动端通信延后**：不在当前 Desktop 阶段实现手机配对、LAN 直连、远程 daemon、跨设备会话或签名中继；只保证桌面端使用的协议具备后续复用可能，不提前为手机端扩张范围。
 
-平台化仍是结果不是起点；本次扩展的验收目标是桌面用户能安全完成 SaCode/OpenCode 编程任务，而不是建设通用 Agent 云平台。
+平台化仍是结果不是起点；本次扩展的验收目标是桌面用户能安全完成 SaCode/OpenCode 编程任务，而不是建设通用 Agent 云平台或跨设备控制平台。
 
 ## 3. 目标用户
 
@@ -143,20 +148,76 @@ sacode "重构用户认证模块并补齐测试" --mode build
 3. Desktop 提供独立 GUI，但首版不内置完整代码编辑器，以会话、工具、审批和 Diff 为核心。
 4. 当前阶段优先闭环高频编程任务，不追求一次性覆盖所有语言智能编辑能力。
 5. **定向平台扩展** — 只建设 Desktop、多客户端共享层和 ACP Agent 接入所需能力；Scheduled Tasks / Agent Teams / Channels 继续延后。
+6. **当前不做手机端通信** — 手机绑定、扫码配对、LAN 直连、远程 daemon、跨设备控制和 Redis/其他中继不属于当前交付；不得以“协议已有”标记为手机通信已完成。
+
+### 7.4 当前阶段与退出门禁
+
+当前唯一实施主线是 **Desktop 本地客户端**，按以下顺序循序推进：
+
+1. **桌面本地闭环**：Desktop 通过本机 loopback sidecar 完成工作区打开、会话、任务流式、工具卡、审批、取消、结果与恢复。
+2. **多 Agent 收口**：SaCode 与 OpenCode Backend 共用 Task Protocol、审批、失败和审计语义，不在客户端形成第二套运行时。
+3. **桌面发布收口**：完成 Windows/macOS/Linux 构建与安装门禁、OS keyring、日志脱敏、sidecar 进程清理和真实端到端回归。
+4. **阶段评审**：Desktop 退出门禁通过后，才决定下一阶段是否启动 SaApp/手机通信专项；启动时须另立 PRD/计划，不直接把远程能力追加进当前 Desktop 范围。
+
+Desktop 阶段退出门禁：
+
+- Desktop → sidecar → SaCode 原生 Backend 端到端通过；
+- Desktop → OpenCode ACP Backend 的真实版本 smoke 通过；
+- 会话、SSE 重连、审批恢复、取消、失败分类和 Diff 展示完成验收；
+- 长期账号/模型凭据仅进入 OS keyring；临时 daemon token 仅由 Rust sidecar 内存持有，WebView、日志和 ready-file 均不泄露 token；
+- 安装包、版本一致性和子进程清理门禁通过；
+- 主 PRD、专项 PRD、实施计划和进度文档状态一致。
+
+在上述门禁通过前，手机端工作仅允许进行不影响 Desktop 交付的文档澄清和协议兼容性检查，不进入实现、联调或发布门禁。
 
 ## 8. 当前产品现状
 
-截至 `1.1.1`，SaCode 已具备以下基础能力：
+### 8.1 审查口径
 
-1. Rust workspace 三层架构：`interfaces/* -> runtime -> kernel`
-2. CLI、TUI、REPL 主入口 + VSCode 扩展（interfaces/vscode/）接入
-3. 多角色编排与结构化总结输出，Loop 阶段进度条可视化
-4. 模型智能路由与 profile 配置，provider 零配置接入（DeepSeek/Qwen/GLM/Ollama 等预设）
-5. 项目级记忆（3 文件：project/experience/preferences）、wiki、checkpoint、队列与 daemon
-6. MCP、ACP Server、LSP 等扩展入口；ACP Client 与 Desktop 按专项 PRD 进入实施
-7. v1.0+ 产品就绪能力：自动修复闭环（test.fix）、Agent 协作协议、学习型记忆（AutoLearner）、多模态（media.vision/media.video）
+本节以 2026-09-22 仓库审查为准，使用以下四层证据：
 
-1.0 版本号已作为历史里程碑发布；当前正式版本为 1.1.1。产品就绪能力已进入验收收敛阶段，能力状态以 `docs/product/status.json` 及其关联证据为准。
+1. **正式发布基线**：Git tag、兼容矩阵和发布工作流共同证明的版本；
+2. **已提交开发能力**：已进入 `dev`，可由代码、测试或可重复 smoke 证明，但未必进入正式发行物；
+3. **未提交工作区实现**：仅说明正在开发，不计入产品验收和发布声明；
+4. **规划能力**：仅有 PRD、计划或接口草案，不得写成已实现。
+
+正式产品基线截至 `1.1.1`；本次开发树审查基线为 `dev@9d8f9f8`。审查时工作区存在 CLI/TUI、identity 和脚本未提交修改；这些修改只用于检查当前树能否编译，不纳入下表“已提交能力”的验收证据。
+
+### 8.2 当前版本矩阵
+
+| 组件 | 仓库版本 | 当前判断 | 说明 |
+|---|---:|---|---|
+| Rust workspace / CLI / daemon | `1.1.1` | 部分验收 | `v1.1.1` 为正式基线；`dev` 已包含 Task Protocol、Agent Backend、identity 与 Desktop 支撑的后续提交 |
+| VSCode 扩展 | `0.2.1` | 部分验收 | 最低 daemon `1.1.1`，Task Protocol `1`；已迁移复用 client-core，正式商店分发仍不在本期 |
+| `@cherishron/sacode-client-core` | `0.1.0` | 部分验收 | HTTP、SSE、Task Protocol、approval、Agent 类型已被 Desktop 与 VSCode 使用，尚未形成独立正式发布承诺 |
+| Tauri Desktop | `0.1.0` | 部分验收 | Tauri shell、loopback sidecar、IPC 代理和四面板 UI 已提交；安装包与跨平台发布门禁未通过 |
+| Task Protocol | `1` | 部分验收 | daemon、client-core、VSCode 和 Desktop 已使用；跨 Backend 全链路一致性仍待验收 |
+
+### 8.3 能力状态矩阵
+
+| 能力 | 状态 | 已有证据 | 仍需完成 |
+|---|---|---|---|
+| CLI/TUI/REPL 核心编程闭环 | 部分验收 | 统一 Rust workspace、provider/model、工具、审批、审计、checkpoint、队列和 daemon 已存在 | 当前脏工作区的产品路径改动须独立提交并补回归；四类核心场景仍需统一端到端证据 |
+| VSCode 客户端 | 部分验收 | 任务、SSE 重连、审批恢复、Diff 审批、兼容门禁；本次 compile 与 32 项测试通过 | 与 Desktop/CLI 的真实跨入口一致性及正式发行回归 |
+| client-core 共享层 | 部分验收 | Desktop 与 VSCode 均直接复用；本次 typecheck、build 与 7 项测试通过 | 增强契约 fixture、发布策略和多客户端版本兼容证据 |
+| Desktop 本地 MVP | 部分验收 | Tauri sidecar、动态端口、Rust 内存 token、IPC/SSE bridge、任务/审批/取消、工具卡、简易 Diff、四面板 UI；本次 typecheck、build、6 项前端测试和 3 项 Rust 测试通过 | Desktop→sidecar→SaCode 真实 E2E、持久会话恢复、规范 Diff 数据源、安装包、跨平台进程树清理和独立 CI |
+| OpenCode ACP Backend | 部分验收 | ACP stdio client、Backend registry、事件投影、失败分类已提交；仓库记录 OpenCode `1.18.31` 的 `PONG` smoke | 权限请求到 daemon 审批的真实闭环、cancel 先协议后杀进程、probe/restart 管理 API、兼容矩阵和正式版本 smoke |
+| I3 统一身份客户端 | 部分验收 | 已提交 OIDC/PKCE、secret store、网关换钥与模型同步，并有本机联调记录 | 当前未提交的 headless/device/TUI 增量不计入验收；仍需在独立提交和目标环境中回归 |
+| 手机端通信与远程 daemon | 延后 | 仅保留可复用协议接缝 | Desktop 退出门禁通过后另立专项；SaApp 不属于本仓库本期实施 |
+| Scheduled Tasks / Agent Teams / Channels | 延后 | 无本期实现承诺 | 平台化收敛后重新评审 |
+
+### 8.4 本次验证结果与边界
+
+2026-09-22 在当前工作区执行：
+
+- `cargo check --workspace`：通过；
+- `cargo test -p sacode-desktop`：3 项通过；
+- client-core：typecheck、build、7 项测试通过；
+- Desktop：typecheck、Vite build、6 项测试通过；
+- VSCode：compile、32 项测试通过；
+- `cargo test --workspace --lib --bins --tests`：编译阶段因 E 盘空间不足（`os error 112`）中止，不能据此判定代码测试失败，也不能据此宣称 Rust 全量测试通过。
+
+当前正式版本仍为 CLI/daemon `1.1.1` 与 VSCode `0.2.1`。Desktop、client-core 与 OpenCode Backend 属于已提交开发能力；只有第 7.4 节门禁全部通过后，Desktop 才可升级为“已验收”。`docs/product/status.json`、`docs/PROGRESS.md`、实施计划和专项 PRD 仍需在发布收口任务中同步，陈旧状态不得反向覆盖代码与测试事实。
 
 ## 9. 核心能力范围
 
@@ -336,6 +397,18 @@ CLI、TUI、Daemon 和未来 SDK 共享统一事件模型。当前与规划中�
 
 交付产品就绪能力：自动修复闭环、多模态、Agent 协作协议、学习型记忆。
 
+### 当前里程碑：Desktop 0.1 正式验收
+
+按以下顺序收口，不并行扩张到手机通信或通用平台能力：
+
+1. **P0 本地真实闭环**：完成 Desktop→sidecar→SaCode 的工作区、任务、SSE、审批、取消、结果、恢复与 Diff E2E；
+2. **P0 外部 Backend 对齐**：完成目标 OpenCode 版本的 probe、prompt、权限审批、cancel、失败和审计 smoke，明确实验性兼容矩阵；
+3. **P0 发布工程**：新增 Desktop/client-core 独立 CI，完成 Windows/macOS/Linux 构建、安装包内容、版本一致性和子进程树清理验证；
+4. **P1 协议补口**：仅实现首版确需的 Agent 探测/重启和持久会话查询，不为远程控制提前扩张 daemon；
+5. **P1 文档收口**：同步主 PRD、专项 PRD、实施计划、`status.json`、`PROGRESS.md` 和发布说明。
+
+里程碑完成标准沿用第 7.4 节退出门禁，任何单项代码落地都不能替代整体验收。
+
 ## 16. 成功指标
 
 ### 16.1 产品指标
@@ -353,10 +426,15 @@ CLI、TUI、Daemon 和未来 SDK 共享统一事件模型。当前与规划中�
 
 ## 17. 风险与待确认事项
 
-1. 统一运行时收口过程中，旧入口与新入口的兼容成本需要持续控制。
-2. AST 编辑、符号索引和多语言支持的投入需分阶段验证收益。
-3. Daemon、HTTP API 与权限模型的统一设计需要避免重复实现第二套状态机。
-4. TUI 复杂度增长较快，需要持续控制交互与渲染复杂度。
+1. **发布基线漂移**：`dev` 已明显领先 `v1.1.1`，必须区分已提交代码、正式发行物和本地未提交增量，避免错误对外承诺。
+2. **外部 Agent 安全语义未闭环**：OpenCode 事件映射已存在，但权限请求响应、审批恢复、cancel 协议与强制杀进程的顺序仍需真实联调。
+3. **Desktop 发布工程不足**：当前通用 Rust/VSCode workflow 未覆盖 Desktop 安装包、跨平台 sidecar 和进程树清理。
+4. **会话与 Diff 语义偏 UI 原型**：当前会话列表主要来自前端内存时间线，Diff 依赖事件 detail 解析，尚未等价于持久 session 与规范变更模型。
+5. **文档状态漂移**：`status.json` 与 `PROGRESS.md` 仍含“待 Tauri sidecar”等陈旧描述，发布前必须与代码和专项 PRD 对齐。
+6. **验证环境容量**：本次 Rust 全量测试被磁盘空间阻断；发布门禁必须在资源充足的干净环境重新执行，不得复用本次部分结果冒充全量通过。
+7. 统一运行时收口过程中，旧入口与新入口的兼容成本需要持续控制。
+8. AST 编辑、符号索引和多语言支持的投入需分阶段验证收益。
+9. TUI 复杂度增长较快，需要持续控制交互与渲染复杂度。
 
 ## 18. 结论
 
@@ -369,7 +447,8 @@ SaCode 当前的产品策略基于《可行性评估报告》（docs/report.md�
 2. **强化差异化**：
    - 三级执行模式（plan/build/auto）+ 沙箱审计 + checkpoint 恢复作为企业决策因子
 3. **控制平台化范围**：
-   - 只扩展 Desktop、多客户端共享层和 ACP Agent Backend 所需能力
+   - 当前先完成 Desktop 本地闭环、多客户端共享层和 ACP Agent Backend
+   - 手机端通信、远程 daemon、跨设备控制和签名中继待 Desktop 退出门禁通过后再单独立项
    - Scheduled Tasks / Agent Teams / Channels 继续延后
    - OpenCode 等外部 Agent 必须进入统一审批、审计与事件模型
 

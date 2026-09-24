@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Shared SaCode daemon client core for VSCode and Desktop (Task Protocol, SSE, approvals, agents)",
   "license": "MulanPSL-2.0",
+  "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -26,7 +27,7 @@
   "scripts": {
     "build": "npm run build:esm && npm run build:cjs",
     "build:esm": "tsc -p tsconfig.json",
-    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node -e \"require('node:fs').writeFileSync('dist/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n')\"",
     "typecheck": "tsc -p tsconfig.cjs.json --noEmit",
     "test": "node --import tsx --test test/**/*.test.ts"
   },

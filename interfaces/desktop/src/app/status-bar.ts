@@ -2,7 +2,9 @@
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 
-export function buildStatusBar(app: DesktopApp) {
+import type { WorkspaceView } from './rail.ts';
+
+export function buildStatusBar(app: DesktopApp, activeView: WorkspaceView = 'agent') {
   const health = app.health;
   const healthLabel = app.healthLabel();
   const isHealthy = health?.status === 'healthy';
@@ -29,16 +31,16 @@ export function buildStatusBar(app: DesktopApp) {
     el('span', { className: 'statusbar-sep' }, []),
 
     el('span', { className: 'statusbar-item' }, [
-      el('span', { className: 'muted' }, ['mode:']),
-      el('span', { className: 'mono' }, [app.mode]),
+      el('span', { className: 'muted' }, ['workspace:']),
+      el('span', { className: 'mono' }, [activeView === 'design' ? 'SaDesign' : 'Agent']),
     ]),
 
     // 右侧填充
     el('span', { className: 'statusbar-spacer' }, []),
 
     el('span', { className: 'statusbar-item' }, [
-      el('span', { className: 'muted' }, ['git:']),
-      el('span', { className: 'mono' }, ['dev']),
+      el('span', { className: 'muted' }, ['runtime:']),
+      el('span', { className: 'mono' }, [app.mode]),
     ]),
 
     app.currentTaskId

@@ -53,6 +53,9 @@ export interface SaDesignState {
   imageResults: ImageGenerationResult[];
   imagePrompt: string;
   imageLoading: boolean;
+  templateDetailId: string | null;
+  previewViewport: 'desktop' | 'tablet' | 'mobile';
+  sessionLineage: Array<{ id: string; status: string; createdAt: string; goal: string; request: string }>;
 }
 
 export const EMPTY_DESIGN_CATALOG: DesignResourceCatalog = {
@@ -100,6 +103,9 @@ export function createSaDesignState(defaultBackend = 'sacode'): SaDesignState {
     imageResults: [],
     imagePrompt: '',
     imageLoading: false,
+    templateDetailId: null,
+    previewViewport: 'desktop',
+    sessionLineage: [],
   };
 }
 

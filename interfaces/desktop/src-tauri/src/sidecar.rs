@@ -31,6 +31,7 @@ pub struct SidecarHandleDto {
     pub pid: u32,
     pub auth_required: bool,
     pub version: String,
+    pub workspace: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,6 +44,7 @@ pub struct DaemonProxyResponse {
 pub struct SacodeSidecar {
     pub child: Child,
     pub ready_path: PathBuf,
+    pub workspace: PathBuf,
     token: String,
     pub info: DaemonReadyInfo,
 }
@@ -89,6 +91,10 @@ pub async fn start_sidecar(
     open_code_executable: Option<String>,
     open_code_args: Option<String>,
 ) -> anyhow::Result<SacodeSidecar> {
+    if !workspace.is_dir() {
+        anyhow::bail!("workspace is not a directory: {}", workspace.display());
+    }
+    let workspace = std::fs::canonicalize(&workspace)?;
     std::fs::create_dir_all(&ready_dir)?;
     let ready_path = ready_dir.join("ready.json");
     let _ = std::fs::remove_file(&ready_path);
@@ -154,6 +160,7 @@ pub async fn start_sidecar(
     Ok(SacodeSidecar {
         child,
         ready_path,
+        workspace,
         token,
         info,
     })
@@ -168,6 +175,7 @@ impl SacodeSidecar {
             pid: self.info.pid,
             auth_required: self.info.auth_required,
             version: self.info.version.clone(),
+            workspace: self.workspace.to_string_lossy().to_string(),
         }
     }
 
@@ -255,6 +263,7 @@ mod tests {
             pid: 2,
             auth_required: true,
             version: "1.1.1".into(),
+            workspace: "C:\\workspace".into(),
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(!json.contains("token"));

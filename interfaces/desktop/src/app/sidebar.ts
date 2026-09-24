@@ -14,7 +14,12 @@ export function buildSidebar(
   state: { activeTaskFilter: string | null },
   rerender: () => void,
 ) {
-  const sessions = extractSessions(app);
+  const sessions = app.tasks.map((task) => ({
+    id: task.task_id,
+    title: task.prompt.slice(0, 60) || task.task_id.slice(0, 8),
+    status: sessionStatus(task.status),
+    updatedAt: formatTaskTime(task.created_at),
+  }));
 
   return el('aside', { className: 'sidebar' }, [
     // 项目信息区
@@ -73,7 +78,7 @@ export function buildSidebar(
             }, ['显示全部'])]
           : []),
       ]),
-      buildSessionListEl(sessions, state, rerender),
+      buildSessionListEl(app, sessions, state, rerender),
     ]),
 
     // 诊断区
@@ -90,6 +95,7 @@ export function buildSidebar(
 
 /** SessionList 包装：点击设置过滤器 */
 function buildSessionListEl(
+  app: DesktopApp,
   sessions: SessionItem[],
   state: { activeTaskFilter: string | null },
   rerender: () => void,
@@ -102,41 +108,27 @@ function buildSessionListEl(
     itemEl.addEventListener('click', () => {
       // 再次点击同一个 = 取消过滤
       state.activeTaskFilter = state.activeTaskFilter === session.id ? null : session.id;
+      if (state.activeTaskFilter) void app.selectTask(session.id);
       rerender();
     });
   });
   return list;
 }
 
-/** 从 timeline 提取会话列表 */
-function extractSessions(app: DesktopApp): SessionItem[] {
-  const taskMap = new Map<string, SessionItem>();
+function sessionStatus(status: string): SessionItem['status'] {
+  if (status === 'failed') return 'failed';
+  if (status === 'cancelled') return 'cancelled';
+  if (status === 'completed') return 'completed';
+  return 'active';
+}
 
-  for (const item of app.timeline) {
-    if (item.taskId && !taskMap.has(item.taskId)) {
-      const hasError = app.timeline.some(
-        (t) => t.taskId === item.taskId && t.kind === 'error',
-      );
-      const isRunning = app.currentTaskId === item.taskId &&
-        (app.timelineStatus === 'running' || app.timelineStatus === 'queued');
-
-      let status: SessionItem['status'] = 'completed';
-      if (isRunning) status = 'active';
-      else if (hasError) status = 'failed';
-
-      const firstUser = app.timeline.find(
-        (t) => t.taskId === item.taskId && t.kind === 'user',
-      );
-      const title = firstUser?.text?.slice(0, 60) || item.taskId.slice(0, 8);
-
-      taskMap.set(item.taskId, {
-        id: item.taskId,
-        title,
-        status,
-        updatedAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-      });
-    }
-  }
-
-  return Array.from(taskMap.values()).reverse();
+function formatTaskTime(createdAt: string): string {
+  const parsed = Date.parse(createdAt);
+  if (Number.isNaN(parsed)) return createdAt;
+  return new Date(parsed).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

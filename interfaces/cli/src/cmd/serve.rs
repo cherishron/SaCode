@@ -79,7 +79,15 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         i += 1;
     }
 
-    // Env fallback for token (preferred by Desktop shell so it never appears in argv logs)
+    // Env fallback for sidecar handshake secrets/correlation values. Desktop uses
+    // environment variables so neither value appears in argv or process listings.
+    if nonce.is_none() {
+        if let Ok(value) = std::env::var("SACODE_DAEMON_READY_NONCE") {
+            if !value.trim().is_empty() {
+                nonce = Some(value);
+            }
+        }
+    }
     if auth_token.is_none() {
         if let Ok(token) = std::env::var("SACODE_DAEMON_TOKEN") {
             if !token.trim().is_empty() {

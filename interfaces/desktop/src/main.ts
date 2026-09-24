@@ -10,6 +10,7 @@ import './app/sidebar.css';
 import './app/conversation.css';
 import './app/context-panel.css';
 import './app/status-bar.css';
+import './app/sadesign.css';
 import './app/splash.css';
 
 const root = document.querySelector<HTMLDivElement>('#app');

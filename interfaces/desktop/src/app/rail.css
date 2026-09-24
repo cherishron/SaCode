@@ -65,9 +65,14 @@
   flex-shrink: 0;
 }
 
-.rail-btn:hover {
+.rail-btn:hover,
+.rail-btn.active {
   background: var(--bg-raised);
   color: var(--text-strong);
+}
+
+.rail-btn.active {
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 .rail-btn.active {

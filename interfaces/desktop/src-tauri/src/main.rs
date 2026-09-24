@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 struct SidecarState {
     inner: Mutex<Option<SacodeSidecar>>,
+    event_bridge: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 fn repo_root_guess() -> PathBuf {
@@ -66,9 +67,6 @@ async fn start_daemon(
     workspace: Option<String>,
 ) -> Result<SidecarHandleDto, String> {
     let mut guard = state.inner.lock().await;
-    if let Some(existing) = guard.as_ref() {
-        return Ok(existing.handle_dto());
-    }
     let workspace_path = workspace
         .map(|w| {
             let p = PathBuf::from(w);
@@ -79,10 +77,28 @@ async fn start_daemon(
             }
         })
         .unwrap_or_else(default_workspace);
+    if !workspace_path.is_dir() {
+        return Err(format!(
+            "workspace is not a directory: {}",
+            workspace_path.display()
+        ));
+    }
+    let requested_workspace = std::fs::canonicalize(&workspace_path).map_err(|e| e.to_string())?;
+    if let Some(existing) = guard.as_ref() {
+        if existing.workspace == requested_workspace {
+            return Ok(existing.handle_dto());
+        }
+    }
+    if let Some(bridge) = state.event_bridge.lock().await.take() {
+        bridge.abort();
+    }
+    if let Some(mut existing) = guard.take() {
+        existing.stop().await;
+    }
     let ready_dir = std::env::temp_dir().join("sacode-desktop-sidecar");
     let handle = start_sidecar(
         default_sacode_binary(),
-        workspace_path,
+        requested_workspace,
         ready_dir,
         std::env::var("SACODE_OPENCODE_EXECUTABLE").ok(),
         std::env::var("SACODE_OPENCODE_ARGS").ok(),
@@ -97,6 +113,9 @@ async fn start_daemon(
 #[tauri::command]
 async fn stop_daemon(state: State<'_, Arc<SidecarState>>) -> Result<(), String> {
     let mut guard = state.inner.lock().await;
+    if let Some(bridge) = state.event_bridge.lock().await.take() {
+        bridge.abort();
+    }
     if let Some(mut handle) = guard.take() {
         handle.stop().await;
     }
@@ -134,18 +153,21 @@ async fn start_event_bridge(
     state: State<'_, Arc<SidecarState>>,
     task_id: Option<String>,
 ) -> Result<(), String> {
-    let (base_url, token) = {
-        let guard = state.inner.lock().await;
-        let Some(h) = guard.as_ref() else {
-            return Err("daemon not started".into());
-        };
-        (h.base_url().to_string(), h.token().to_string())
+    let sidecar = state.inner.lock().await;
+    let Some(handle) = sidecar.as_ref() else {
+        return Err("daemon not started".into());
     };
+    let base_url = handle.base_url().to_string();
+    let token = handle.token().to_string();
     let query = match task_id.as_deref() {
         Some(t) if !t.is_empty() => format!("?task_id={}", urlencoding_minimal(t)),
         _ => String::new(),
     };
-    tauri::async_runtime::spawn(async move {
+    let mut bridge_slot = state.event_bridge.lock().await;
+    if let Some(bridge) = bridge_slot.take() {
+        bridge.abort();
+    }
+    let bridge = tauri::async_runtime::spawn(async move {
         let client = reqwest::Client::new();
         let mut last_event_id: Option<String> = None;
         loop {
@@ -160,6 +182,7 @@ async fn start_event_bridge(
             }
         }
     });
+    *bridge_slot = Some(bridge);
     Ok(())
 }
 
@@ -270,6 +293,7 @@ fn parse_sse_frame(frame: &str) -> Option<DaemonEventPayload> {
 fn main() {
     let sidecar_state = Arc::new(SidecarState {
         inner: Mutex::new(None),
+        event_bridge: Mutex::new(None),
     });
     tauri::Builder::default()
         .manage(sidecar_state)
@@ -287,6 +311,9 @@ fn main() {
                 let state = state.inner().clone();
                 tauri::async_runtime::spawn(async move {
                     let mut guard = state.inner.lock().await;
+                    if let Some(bridge) = state.event_bridge.lock().await.take() {
+                        bridge.abort();
+                    }
                     if let Some(mut handle) = guard.take() {
                         handle.stop().await;
                     }

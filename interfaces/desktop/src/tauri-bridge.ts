@@ -7,6 +7,7 @@ export interface SidecarHandleDto {
   pid: number;
   auth_required: boolean;
   version?: string;
+  workspace: string;
 }
 
 export interface DaemonProxyResponse {

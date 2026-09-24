@@ -26,6 +26,23 @@ export function createTauriTransport(): (request: HttpRequest) => Promise<HttpRe
       ok: res.ok,
       text: async () => res.body,
       json: async () => JSON.parse(res.body) as unknown,
+      arrayBuffer: async () => {
+        // Tauri IPC returns strings; binary data arrives as base64 when
+        // Content-Type is non-text. Fall back to Latin-1 encoding for
+        // responses that arrive as raw strings.
+        try {
+          if (res.body.startsWith('base64:')) {
+            const b64 = res.body.slice(7);
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes.buffer as ArrayBuffer;
+          }
+        } catch {
+          // fall through
+        }
+        return new TextEncoder().encode(res.body).buffer as ArrayBuffer;
+      },
     };
   };
 }

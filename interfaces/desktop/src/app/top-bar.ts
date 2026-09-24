@@ -2,8 +2,9 @@
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 import type { AppShellState } from './app-shell.ts';
+import type { WorkspaceView } from './rail.ts';
 
-export function buildTopBar(app: DesktopApp, shell: AppShellState) {
+export function buildTopBar(app: DesktopApp, shell: AppShellState, activeView: WorkspaceView = 'agent') {
   const healthClass =
     shell.connection === 'healthy' ? 'ok' :
     shell.connection === 'checking' ? 'warn' : 'bad';
@@ -26,15 +27,15 @@ export function buildTopBar(app: DesktopApp, shell: AppShellState) {
     // 左：项目 + 分支
     el('div', { className: 'topbar-left' }, [
       el('span', { className: 'topbar-project truncate' }, [
-        app.workspace || 'No workspace',
+        activeView === 'design' ? 'SaDesign' : (app.workspace || 'No workspace'),
       ]),
       el('span', { className: 'topbar-sep' }, ['·']),
-      el('span', { className: 'topbar-branch mono' }, ['dev']),
+      el('span', { className: 'topbar-branch mono' }, [activeView === 'design' ? 'Design Workspace' : 'dev']),
     ]),
 
     // 中：Agent + 模式
     el('div', { className: 'topbar-center' }, [
-      el('span', { className: 'badge accent' }, [agentLabel]),
+      el('span', { className: 'badge accent' }, [activeView === 'design' ? 'SaDesign' : agentLabel]),
       el('span', { className: 'badge' }, [app.mode === 'tauri' ? 'Tauri' : 'Vite']),
     ]),
 

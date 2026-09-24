@@ -59,6 +59,7 @@ test('SidecarHandleDto contract has no token field in bridge types', async () =>
     pid: 2,
     auth_required: true,
     version: '1.1.1',
+    workspace: 'C:\\workspace',
   };
   assert.equal('token' in dto, false);
   assert.equal(typeof bridge.startDaemon, 'function');

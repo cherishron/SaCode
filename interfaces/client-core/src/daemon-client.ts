@@ -59,9 +59,244 @@ export interface TaskResultBody {
     learned_facts: string[];
 }
 
+export interface TaskListItem {
+    task_id: string;
+    prompt: string;
+    mode: string;
+    created_at: string;
+    status: string;
+    queue_status: string;
+    duration_ms?: number;
+    error?: string;
+    output?: string;
+    task?: TaskSnapshot;
+}
+
+export interface TaskListResponse {
+    protocol_version: number;
+    tasks: TaskListItem[];
+}
+
+export interface TaskFileChange {
+    path: string;
+    previous_path?: string;
+    kind: string;
+    additions: number;
+    deletions: number;
+    binary: boolean;
+    diff: string;
+}
+
+export interface TaskChangesResponse {
+    protocol_version: number;
+    task_id: string;
+    status: string;
+    baseline_tree?: string;
+    final_tree?: string;
+    message?: string;
+    changes: TaskFileChange[];
+}
+
+export interface AuditFinding {
+    schema_version?: number;
+    id: string;
+    severity: string;
+    category: string;
+    file: string;
+    line?: number;
+    title: string;
+    detail: string;
+    suggestion: string;
+    source: string;
+}
+
+export interface AuditSummary {
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+}
+
+export interface AuditReport {
+    schema_version: number;
+    created_at: string;
+    root: string;
+    findings: AuditFinding[];
+    summary: AuditSummary;
+    provider?: string;
+    ai_used: boolean;
+}
+
+export interface AuditResponse {
+    status: string;
+    audit_id: string;
+    report: AuditReport;
+    findings: AuditFinding[];
+    report_json_path?: string;
+    message?: string;
+}
+
+export interface AuditReportSummary {
+    audit_id: string;
+    created_at: string;
+    root: string;
+    ai_used: boolean;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+    finding_count: number;
+}
+
+export interface AuditListResponse {
+    reports: AuditReportSummary[];
+}
+
 export interface AgentsListResponse {
     agents: AgentDescriptor[];
     default_backend_id: string;
+}
+
+export interface DesignProjectContext {
+    workspace: string;
+    project_name: string;
+    summary: string;
+    technologies: string[];
+    source_roots: string[];
+    manifests: string[];
+}
+
+export interface DesignTemplateResource {
+    id: string;
+    title: string;
+    summary: string;
+    components: string[];
+    layout_notes: string[];
+}
+
+export interface DesignResourceItem {
+    id: string;
+    title: string;
+    summary: string;
+    tags: string[];
+}
+
+export interface DesignResourceCatalog {
+    templates: DesignTemplateResource[];
+    visual_styles: DesignResourceItem[];
+    design_systems: DesignResourceItem[];
+    baselines: DesignResourceItem[];
+}
+
+export interface ExtractionJob {
+    id: string;
+    source_type: string;
+    source_ref: string;
+    status: string;
+    progress: number;
+    result_id: string | null;
+    result_version: number | null;
+    result_size: number | null;
+    result_sha256: string | null;
+    result_expires_at: string | null;
+    manifest: Record<string, unknown> | null;
+    error: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CreateExtractionRequest {
+    source_type: string;
+    source_ref: string;
+    confirmed: boolean;
+    image_filename?: string;
+    image_content_type?: string;
+    image_size?: number;
+}
+
+export interface GenerationStage {
+    id: string;
+    label: string;
+    model_id: string | null;
+    status: string;
+    required: boolean;
+}
+
+export interface ModelAssignment {
+    stage: string;
+    backend_id: string;
+    capability: string;
+}
+
+export interface GenerationPlan {
+    stages: GenerationStage[];
+    models: ModelAssignment[];
+    estimated_outputs: string[];
+    target_files: string[];
+}
+
+export interface DesignSession {
+    id: string;
+    workspace: string;
+    goal: string;
+    request: string;
+    notes: string;
+    primary_template_id: string | null;
+    visual_style_id: string | null;
+    design_system_id: string | null;
+    baseline_ids: string[];
+    outputs: string[];
+    backend_id: string;
+    mode: string;
+    target_path: string;
+    status: string;
+    plan: GenerationPlan | null;
+    prompt_snapshot: string | null;
+    context_hash: string | null;
+    task_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CreateSessionRequest {
+    workspace?: string;
+    goal: string;
+    request: string;
+    backend_id?: string;
+}
+
+export interface UpdateSessionRequest {
+    goal?: string;
+    request?: string;
+    notes?: string;
+    primary_template_id?: string | null;
+    visual_style_id?: string | null;
+    design_system_id?: string | null;
+    baseline_ids?: string[];
+    outputs?: string[];
+    backend_id?: string;
+    mode?: string;
+    target_path?: string;
+}
+
+export interface ImageGenerationRequest {
+    prompt: string;
+    size?: string;
+    n?: number;
+    output_format?: string;
+    watermark?: boolean;
+}
+
+export interface GeneratedImage {
+    url: string;
+    size: string;
+    format: string;
+}
+
+export interface ImageGenerationResult {
+    images: GeneratedImage[];
+    model: string;
+    provider: string;
 }
 
 export interface PendingApproval {
@@ -77,6 +312,160 @@ export interface PendingApproval {
 
 /** Alias used by VSCode extension surface. */
 export type PendingApprovalEntry = PendingApproval;
+
+export function parseDesignProjectContext(body: unknown): DesignProjectContext {
+    if (!isRecord(body)) throw new Error('Design context returned an unexpected response body');
+    return {
+        workspace: typeof body.workspace === 'string' ? body.workspace : '',
+        project_name: typeof body.project_name === 'string' ? body.project_name : 'Project',
+        summary: typeof body.summary === 'string' ? body.summary : '',
+        technologies: stringArray(body.technologies),
+        source_roots: stringArray(body.source_roots),
+        manifests: stringArray(body.manifests),
+    };
+}
+
+export function parseDesignResourceCatalog(body: unknown): DesignResourceCatalog {
+    if (!isRecord(body)) throw new Error('Design resources returned an unexpected response body');
+    return {
+        templates: parseRecordArray(body.templates, (item) => ({
+            id: requiredString(item.id, 'Design template id'),
+            title: requiredString(item.title, 'Design template title'),
+            summary: typeof item.summary === 'string' ? item.summary : '',
+            components: stringArray(item.components),
+            layout_notes: stringArray(item.layout_notes),
+        })),
+        visual_styles: parseDesignResourceItems(body.visual_styles),
+        design_systems: parseDesignResourceItems(body.design_systems),
+        baselines: parseDesignResourceItems(body.baselines),
+    };
+}
+
+export function parseExtractionJob(body: unknown): ExtractionJob {
+    if (!isRecord(body)) throw new Error('Extraction job returned an unexpected response body');
+    return {
+        id: requiredString(body.id, 'Extraction job id'),
+        source_type: typeof body.source_type === 'string' ? body.source_type : 'url',
+        source_ref: typeof body.source_ref === 'string' ? body.source_ref : '',
+        status: typeof body.status === 'string' ? body.status : 'queued',
+        progress: typeof body.progress === 'number' ? body.progress : 0,
+        result_id: body.result_id != null && typeof body.result_id === 'string' ? body.result_id : null,
+        result_version: body.result_version != null && typeof body.result_version === 'number' ? body.result_version : null,
+        result_size: body.result_size != null && typeof body.result_size === 'number' ? body.result_size : null,
+        result_sha256: body.result_sha256 != null && typeof body.result_sha256 === 'string' ? body.result_sha256 : null,
+        result_expires_at: body.result_expires_at != null && typeof body.result_expires_at === 'string' ? body.result_expires_at : null,
+        manifest: body.manifest != null && isRecord(body.manifest) ? body.manifest as Record<string, unknown> : null,
+        error: body.error != null && typeof body.error === 'string' ? body.error : null,
+        created_at: typeof body.created_at === 'string' ? body.created_at : '',
+        updated_at: typeof body.updated_at === 'string' ? body.updated_at : '',
+    };
+}
+
+export function parseGenerationStage(body: unknown): GenerationStage {
+    if (!isRecord(body)) throw new Error('Generation stage returned an unexpected response body');
+    const id = requiredString(body.id, 'Generation stage id');
+    return {
+        id,
+        label: typeof body.label === 'string' ? body.label : id,
+        model_id: body.model_id != null && typeof body.model_id === 'string' ? body.model_id : null,
+        status: typeof body.status === 'string' ? body.status : 'pending',
+        required: typeof body.required === 'boolean' ? body.required : false,
+    };
+}
+
+export function parseGenerationPlan(body: unknown): GenerationPlan {
+    if (!isRecord(body)) throw new Error('Generation plan returned an unexpected response body');
+    return {
+        stages: parseRecordArray(body.stages, parseGenerationStage),
+        models: parseRecordArray(body.models, (item) => ({
+            stage: requiredString(item.stage, 'Model assignment stage'),
+            backend_id: requiredString(item.backend_id, 'Model assignment backend'),
+            capability: typeof item.capability === 'string' ? item.capability : 'text',
+        })),
+        estimated_outputs: stringArray(body.estimated_outputs),
+        target_files: stringArray(body.target_files),
+    };
+}
+
+export function parseDesignSession(body: unknown): DesignSession {
+    if (!isRecord(body)) throw new Error('Design session returned an unexpected response body');
+    return {
+        id: requiredString(body.id, 'Design session id'),
+        workspace: typeof body.workspace === 'string' ? body.workspace : '',
+        goal: typeof body.goal === 'string' ? body.goal : '',
+        request: typeof body.request === 'string' ? body.request : '',
+        notes: typeof body.notes === 'string' ? body.notes : '',
+        primary_template_id: body.primary_template_id != null && typeof body.primary_template_id === 'string' ? body.primary_template_id : null,
+        visual_style_id: body.visual_style_id != null && typeof body.visual_style_id === 'string' ? body.visual_style_id : null,
+        design_system_id: body.design_system_id != null && typeof body.design_system_id === 'string' ? body.design_system_id : null,
+        baseline_ids: stringArray(body.baseline_ids),
+        outputs: stringArray(body.outputs),
+        backend_id: typeof body.backend_id === 'string' ? body.backend_id : 'sacode',
+        mode: typeof body.mode === 'string' ? body.mode : 'build',
+        target_path: typeof body.target_path === 'string' ? body.target_path : '',
+        status: typeof body.status === 'string' ? body.status : 'draft',
+        plan: body.plan != null && isRecord(body.plan) ? parseGenerationPlan(body.plan) : null,
+        prompt_snapshot: body.prompt_snapshot != null && typeof body.prompt_snapshot === 'string' ? body.prompt_snapshot : null,
+        context_hash: body.context_hash != null && typeof body.context_hash === 'string' ? body.context_hash : null,
+        task_id: body.task_id != null && typeof body.task_id === 'string' ? body.task_id : null,
+        created_at: typeof body.created_at === 'string' ? body.created_at : '',
+        updated_at: typeof body.updated_at === 'string' ? body.updated_at : '',
+    };
+}
+
+export function parseImageGenerationResult(body: unknown): ImageGenerationResult {
+    if (!isRecord(body)) throw new Error('Image generation result returned an unexpected response body');
+    const images: GeneratedImage[] = [];
+    const rawImages = body.images;
+    if (Array.isArray(rawImages)) {
+        for (const item of rawImages) {
+            if (isRecord(item) && typeof item.url === 'string') {
+                images.push({
+                    url: item.url,
+                    size: typeof item.size === 'string' ? item.size : '1024x1024',
+                    format: typeof item.format === 'string' ? item.format : 'png',
+                });
+            }
+        }
+    }
+    return {
+        images,
+        model: typeof body.model === 'string' ? body.model : 'unknown',
+        provider: typeof body.provider === 'string' ? body.provider : 'unknown',
+    };
+}
+
+function parseDesignResourceItems(value: unknown): DesignResourceItem[] {
+    return parseRecordArray(value, (item) => ({
+        id: requiredString(item.id, 'Design resource id'),
+        title: requiredString(item.title, 'Design resource title'),
+        summary: typeof item.summary === 'string' ? item.summary : '',
+        tags: stringArray(item.tags),
+    }));
+}
+
+function parseRecordArray<T>(value: unknown, parser: (item: Record<string, unknown>) => T): T[] {
+    if (!Array.isArray(value)) return [];
+    const parsed: T[] = [];
+    for (const item of value) {
+        if (!isRecord(item)) continue;
+        try {
+            parsed.push(parser(item));
+        } catch {
+            // Skip malformed catalog items while keeping valid resources usable.
+        }
+    }
+    return parsed;
+}
+
+function stringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function requiredString(value: unknown, label: string): string {
+    if (typeof value !== 'string' || value.trim() === '') throw new Error(`${label} is missing`);
+    return value;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -140,20 +529,180 @@ export function parseTaskStatusBody(body: unknown): TaskStatusBody {
 }
 
 export function parseTaskResult(body: unknown): TaskResultBody {
+    if (!isRecord(body) || typeof body.task_id !== 'string' || typeof body.status !== 'string') {
+        throw new Error('Task result returned an unexpected response body');
+    }
+    const response = typeof body.response === 'string'
+        ? body.response
+        : typeof body.output === 'string'
+        ? body.output
+        : '';
+    const facts = body.learned_facts;
+    return {
+        task_id: body.task_id,
+        response,
+        status: body.status,
+        learned_facts: Array.isArray(facts) ? facts.filter((x): x is string => typeof x === 'string') : [],
+    };
+}
+
+function parseTaskListItem(value: unknown): TaskListItem | null {
+    if (!isRecord(value)) return null;
+    if (
+        typeof value.task_id !== 'string' ||
+        typeof value.prompt !== 'string' ||
+        typeof value.mode !== 'string' ||
+        typeof value.created_at !== 'string' ||
+        typeof value.status !== 'string'
+    ) {
+        return null;
+    }
+    const task = parseTaskSnapshot(value.task);
+    return {
+        task_id: value.task_id,
+        prompt: value.prompt,
+        mode: value.mode,
+        created_at: value.created_at,
+        status: value.status,
+        queue_status: typeof value.queue_status === 'string' ? value.queue_status : value.status,
+        duration_ms: typeof value.duration_ms === 'number' ? value.duration_ms : undefined,
+        error: typeof value.error === 'string' ? value.error : undefined,
+        output: typeof value.output === 'string' ? value.output : undefined,
+        ...(task ? { task } : {}),
+    };
+}
+
+export function parseTaskList(body: unknown): TaskListResponse {
+    if (!isRecord(body) || !Array.isArray(body.tasks)) {
+        throw new Error('Task list returned an unexpected response body');
+    }
+    const error = protocolVersionError(body.protocol_version);
+    if (error) throw new ProtocolCompatibilityError(error);
+    return {
+        protocol_version: body.protocol_version as number,
+        tasks: body.tasks
+            .map(parseTaskListItem)
+            .filter((item): item is TaskListItem => item !== null),
+    };
+}
+
+function parseTaskFileChange(value: unknown): TaskFileChange | null {
+    if (!isRecord(value) || typeof value.path !== 'string' || typeof value.kind !== 'string') {
+        return null;
+    }
+    return {
+        path: value.path,
+        previous_path: typeof value.previous_path === 'string' ? value.previous_path : undefined,
+        kind: value.kind,
+        additions: typeof value.additions === 'number' ? value.additions : 0,
+        deletions: typeof value.deletions === 'number' ? value.deletions : 0,
+        binary: value.binary === true,
+        diff: typeof value.diff === 'string' ? value.diff : '',
+    };
+}
+
+export function parseTaskChanges(body: unknown): TaskChangesResponse {
     if (
         !isRecord(body) ||
         typeof body.task_id !== 'string' ||
         typeof body.status !== 'string' ||
-        typeof body.response !== 'string'
+        !Array.isArray(body.changes)
     ) {
-        throw new Error('Task result returned an unexpected response body');
+        throw new Error('Task changes returned an unexpected response body');
     }
-    const facts = body.learned_facts;
+    const error = protocolVersionError(body.protocol_version);
+    if (error) throw new ProtocolCompatibilityError(error);
     return {
+        protocol_version: body.protocol_version as number,
         task_id: body.task_id,
-        response: body.response,
         status: body.status,
-        learned_facts: Array.isArray(facts) ? facts.filter((x): x is string => typeof x === 'string') : [],
+        baseline_tree: typeof body.baseline_tree === 'string' ? body.baseline_tree : undefined,
+        final_tree: typeof body.final_tree === 'string' ? body.final_tree : undefined,
+        message: typeof body.message === 'string' ? body.message : undefined,
+        changes: body.changes
+            .map(parseTaskFileChange)
+            .filter((change): change is TaskFileChange => change !== null),
+    };
+}
+
+function parseAuditFinding(value: unknown): AuditFinding | null {
+    if (!isRecord(value) || typeof value.id !== 'string' || typeof value.severity !== 'string') {
+        return null;
+    }
+    return {
+        schema_version: typeof value.schema_version === 'number' ? value.schema_version : undefined,
+        id: value.id,
+        severity: value.severity,
+        category: typeof value.category === 'string' ? value.category : '',
+        file: typeof value.file === 'string' ? value.file : '',
+        line: typeof value.line === 'number' ? value.line : undefined,
+        title: typeof value.title === 'string' ? value.title : '',
+        detail: typeof value.detail === 'string' ? value.detail : '',
+        suggestion: typeof value.suggestion === 'string' ? value.suggestion : '',
+        source: typeof value.source === 'string' ? value.source : '',
+    };
+}
+
+export function parseAuditResponse(body: unknown): AuditResponse {
+    if (!isRecord(body) || typeof body.status !== 'string') {
+        throw new Error('Audit response returned an unexpected body');
+    }
+    if (body.status === 'error') {
+        return {
+            status: 'error',
+            audit_id: typeof body.audit_id === 'string' ? body.audit_id : '',
+            report: { schema_version: 0, created_at: '', root: '', findings: [], summary: { high: 0, medium: 0, low: 0, info: 0 }, ai_used: false },
+            findings: [],
+            message: typeof body.message === 'string' ? body.message : 'unknown error',
+        };
+    }
+    if (!isRecord(body.report)) {
+        throw new Error('Audit response missing report object');
+    }
+    const report = body.report;
+    const findings: AuditFinding[] = Array.isArray(report.findings)
+        ? report.findings.map(parseAuditFinding).filter((f): f is AuditFinding => f !== null)
+        : [];
+    return {
+        status: body.status,
+        audit_id: typeof body.audit_id === 'string' ? body.audit_id : '',
+        report: {
+            schema_version: typeof report.schema_version === 'number' ? report.schema_version : 0,
+            created_at: typeof report.created_at === 'string' ? report.created_at : '',
+            root: typeof report.root === 'string' ? report.root : '',
+            findings,
+            summary: {
+                high: isRecord(report.summary) && typeof report.summary.high === 'number' ? report.summary.high : 0,
+                medium: isRecord(report.summary) && typeof report.summary.medium === 'number' ? report.summary.medium : 0,
+                low: isRecord(report.summary) && typeof report.summary.low === 'number' ? report.summary.low : 0,
+                info: isRecord(report.summary) && typeof report.summary.info === 'number' ? report.summary.info : 0,
+            },
+            provider: typeof report.provider === 'string' ? report.provider : undefined,
+            ai_used: report.ai_used === true,
+        },
+        findings,
+        report_json_path: typeof body.report_json_path === 'string' ? body.report_json_path : undefined,
+    };
+}
+
+export function parseAuditList(body: unknown): AuditListResponse {
+    if (!isRecord(body) || !Array.isArray(body.reports)) {
+        throw new Error('Audit list returned an unexpected body');
+    }
+    return {
+        reports: body.reports
+            .filter((v: unknown): v is Record<string, unknown> => isRecord(v) && typeof v.audit_id === 'string')
+            .map((v) => ({
+                audit_id: v.audit_id as string,
+                created_at: typeof v.created_at === 'string' ? v.created_at : '',
+                root: typeof v.root === 'string' ? v.root : '',
+                ai_used: v.ai_used === true,
+                high: typeof v.high === 'number' ? v.high : 0,
+                medium: typeof v.medium === 'number' ? v.medium : 0,
+                low: typeof v.low === 'number' ? v.low : 0,
+                info: typeof v.info === 'number' ? v.info : 0,
+                finding_count: typeof v.finding_count === 'number' ? v.finding_count : 0,
+            })),
     };
 }
 
@@ -278,6 +827,113 @@ export class DaemonClient {
         return parseAgentsList(await res.json());
     }
 
+    async getDesignContext(): Promise<DesignProjectContext> {
+        const res = await this.request('GET', '/api/design/context');
+        if (!res.ok) throw await responseError(res, 'Design context request');
+        return parseDesignProjectContext(await res.json());
+    }
+
+    async listDesignResources(): Promise<DesignResourceCatalog> {
+        const res = await this.request('GET', '/api/design/resources');
+        if (!res.ok) throw await responseError(res, 'Design resource request');
+        return parseDesignResourceCatalog(await res.json());
+    }
+
+    async createExtraction(req: CreateExtractionRequest): Promise<ExtractionJob> {
+        const res = await this.request('POST', '/api/design/extractions', req);
+        if (!res.ok) throw await responseError(res, 'Extraction creation');
+        return parseExtractionJob(await res.json());
+    }
+
+    async listExtractions(): Promise<ExtractionJob[]> {
+        const res = await this.request('GET', '/api/design/extractions');
+        if (!res.ok) throw await responseError(res, 'Extraction list');
+        const body = await res.json();
+        if (!Array.isArray(body)) return [];
+        const jobs: ExtractionJob[] = [];
+        for (const item of body) {
+            try { jobs.push(parseExtractionJob(item)); } catch { /* skip malformed */ }
+        }
+        return jobs;
+    }
+
+    async getExtraction(id: string): Promise<ExtractionJob> {
+        const res = await this.request('GET', `/api/design/extractions/${encodeURIComponent(id)}`);
+        if (!res.ok) throw await responseError(res, 'Extraction job query');
+        return parseExtractionJob(await res.json());
+    }
+
+    async cancelExtraction(id: string): Promise<void> {
+        const res = await this.request('POST', `/api/design/extractions/${encodeURIComponent(id)}/cancel`);
+        if (!res.ok) throw await responseError(res, 'Extraction cancellation');
+    }
+
+    async createSession(req: CreateSessionRequest): Promise<DesignSession> {
+        const res = await this.request('POST', '/api/design/sessions', req);
+        if (!res.ok) throw await responseError(res, 'Session creation');
+        return parseDesignSession(await res.json());
+    }
+
+    async listSessions(): Promise<DesignSession[]> {
+        const res = await this.request('GET', '/api/design/sessions');
+        if (!res.ok) throw await responseError(res, 'Session list');
+        const body = await res.json();
+        if (!Array.isArray(body)) return [];
+        const sessions: DesignSession[] = [];
+        for (const item of body) {
+            try { sessions.push(parseDesignSession(item)); } catch { /* skip malformed */ }
+        }
+        return sessions;
+    }
+
+    async getSession(id: string): Promise<DesignSession> {
+        const res = await this.request('GET', `/api/design/sessions/${encodeURIComponent(id)}`);
+        if (!res.ok) throw await responseError(res, 'Session query');
+        return parseDesignSession(await res.json());
+    }
+
+    async updateSession(id: string, req: UpdateSessionRequest): Promise<DesignSession> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}`, req);
+        if (!res.ok) throw await responseError(res, 'Session update');
+        return parseDesignSession(await res.json());
+    }
+
+    async planSession(id: string): Promise<DesignSession> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/plan`);
+        if (!res.ok) throw await responseError(res, 'Session planning');
+        return parseDesignSession(await res.json());
+    }
+
+    async generateSession(id: string): Promise<DesignSession> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/generate`);
+        if (!res.ok) throw await responseError(res, 'Session generation');
+        return parseDesignSession(await res.json());
+    }
+
+    async downloadDesignSystem(id: string): Promise<{ format: string; body: ArrayBuffer }> {
+        const res = await this.request('GET', `/api/design/systems/${encodeURIComponent(id)}/download`);
+        if (!res.ok) throw await responseError(res, 'Design system download');
+        const format = res.headers?.['x-package-format'] ?? 'json';
+        return { format, body: await res.arrayBuffer() };
+    }
+
+    async importDesignSystem(id: string): Promise<{ imported: boolean; project_path: string }> {
+        const res = await this.request('POST', `/api/design/systems/${encodeURIComponent(id)}/import`);
+        if (!res.ok) throw await responseError(res, 'Design system import');
+        const body = await res.json();
+        if (!isRecord(body)) throw new Error('Import returned unexpected body');
+        return {
+            imported: typeof body.imported === 'boolean' ? body.imported : false,
+            project_path: typeof body.project_path === 'string' ? body.project_path : '',
+        };
+    }
+
+    async generateImages(req: ImageGenerationRequest): Promise<ImageGenerationResult> {
+        const res = await this.request('POST', '/api/design/images/generate', req);
+        if (!res.ok) throw await responseError(res, 'Image generation');
+        return parseImageGenerationResult(await res.json());
+    }
+
     async createTask(options: {
         prompt: string;
         mode?: ExecutionModeInput;
@@ -300,6 +956,36 @@ export class DaemonClient {
         const res = await this.request('POST', '/task', body);
         if (!res.ok) throw await responseError(res, 'Task creation');
         return parseTaskResponse(await res.json());
+    }
+
+    async listTasks(): Promise<TaskListResponse> {
+        const res = await this.request('GET', '/tasks');
+        if (!res.ok) throw await responseError(res, 'Task list request');
+        return parseTaskList(await res.json());
+    }
+
+    async getTaskChanges(taskId: string): Promise<TaskChangesResponse> {
+        const res = await this.request('GET', `/task/${encodeURIComponent(taskId)}/changes`);
+        if (!res.ok) throw await responseError(res, 'Task changes request');
+        return parseTaskChanges(await res.json());
+    }
+
+    async runAudit(opts?: { use_ai?: boolean; max_files?: number }): Promise<AuditResponse> {
+        const res = await this.request('POST', '/audit', opts ? JSON.stringify(opts) : '{}');
+        if (!res.ok) throw await responseError(res, 'Audit scan request');
+        return parseAuditResponse(await res.json());
+    }
+
+    async getAuditReport(auditId: string): Promise<AuditResponse> {
+        const res = await this.request('GET', `/audit/${encodeURIComponent(auditId)}`);
+        if (!res.ok) throw await responseError(res, 'Audit report request');
+        return parseAuditResponse(await res.json());
+    }
+
+    async listAudits(): Promise<AuditListResponse> {
+        const res = await this.request('GET', '/audit');
+        if (!res.ok) throw await responseError(res, 'Audit list request');
+        return parseAuditList(await res.json());
     }
 
     async getTaskStatus(taskId: string): Promise<TaskStatusBody> {

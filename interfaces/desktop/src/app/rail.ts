@@ -1,22 +1,40 @@
-/** Rail — 64px 图标轨：项目、新建、Agent、设置、帮助 */
+/** Rail — 64px 图标轨：SaCode、SaDesign、设置、帮助 */
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 
-export function buildRail(app: DesktopApp) {
+export type WorkspaceView = 'agent' | 'design';
+
+export function buildRail(
+  app: DesktopApp,
+  activeView: WorkspaceView,
+  onViewChange: (view: WorkspaceView) => void,
+) {
   return el('nav', { className: 'rail' }, [
     el('div', { className: 'rail-logo' }, [
       el('span', { className: 'rail-logo-text' }, ['S']),
     ]),
     el('div', { className: 'rail-items' }, [
       el('button', {
-        className: 'rail-btn',
-        title: '新建任务',
-        onclick: () => { app.onChange?.(); },
-      }, ['+']),
+        className: `rail-btn ${activeView === 'agent' ? 'active' : ''}`,
+        title: 'SaCode Agent',
+        onclick: () => onViewChange('agent'),
+      }, ['A']),
+      el('button', {
+        className: `rail-btn ${activeView === 'design' ? 'active' : ''}`,
+        title: 'SaDesign',
+        onclick: () => {
+          onViewChange('design');
+          void app.refreshDesignData();
+        },
+      }, ['◇']),
       el('button', {
         className: 'rail-btn',
-        title: 'Agent 切换',
-      }, ['🤖']),
+        title: '新建任务',
+        onclick: () => {
+          if (activeView === 'design') onViewChange('design');
+          else app.onChange?.();
+        },
+      }, ['+']),
     ]),
     el('div', { className: 'rail-bottom' }, [
       el('button', {

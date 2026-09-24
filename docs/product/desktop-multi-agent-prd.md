@@ -1,10 +1,13 @@
 # SaCode Desktop 与多 Agent 客户端 PRD
 
-> 文档状态：待实施
-> 文档版本：v1.0
+> 文档状态：实施中（当前唯一客户端主线）
+> 文档版本：v1.2
 > 决策日期：2026-09-20
+> 阶段顺序更新：2026-09-22
+> 仓库审查基线：`dev@9d8f9f8`（2026-09-22）
 > 适用产品：SaCode CLI / Daemon / VSCode / Desktop / ACP 集成
 > 配套实施计划：[Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md)
+> 配套 UI 设计：[Desktop UI Design v1](../design/desktop-ui-design-v1.md)
 
 ## 1. 决策摘要
 
@@ -21,6 +24,7 @@ SaCode 将从“终端优先、IDE 延伸”的单一 Agent 产品，演进为�
 5. 当前 `interfaces/acp` 的 SaCode ACP Server 保留；新增独立 ACP 协议/Client 能力，避免混淆“SaCode 被 ACP 调用”和“SaCode 调用 ACP Agent”两个方向。
 6. VSCode 与 Desktop 共用 TypeScript 客户端核心，不各自维护一套 daemon/SSE/审批协议。
 7. 所有 Agent Backend 的事件、审批、结果和失败统一映射到 SaCode Task Protocol，客户端不直接依赖某个 Agent 的私有事件格式。
+8. 当前先完成 Desktop 本地闭环与发布收口；手机端通信、远程 daemon、跨设备控制和签名中继不并行实施，待 Desktop 退出门禁通过后另立专项。
 
 ## 2. 背景与问题
 
@@ -35,15 +39,15 @@ SaCode 当前已具备：
 - Provider、工具、沙箱、审计、checkpoint 和事件投影；
 - 可嵌入的 `SdkClient`。
 
-这些能力说明桌面客户端不需要重建执行引擎，但当前仍存在以下问题：
+这些能力说明桌面客户端不需要重建执行引擎。立项时的前三项缺口已取得实现进展：独立 Desktop 已落地、VSCode 与 Desktop 已复用 client-core、SaCode 已新增 ACP Client 调用 OpenCode；当前剩余问题如下：
 
-1. 非终端用户缺少独立图形客户端。
-2. VSCode 客户端逻辑与未来桌面端存在重复实现风险。
-3. 当前 ACP 仅支持“外部客户端调用 SaCode”，不能让 SaCode 调用 OpenCode。
-4. daemon 目前默认只执行 SaCode 原生任务，没有统一的 Agent Backend 抽象。
+1. Desktop 尚未通过首个正式版本的真实端到端、安装包和跨平台发布门禁。
+2. client-core 已复用，但版本发布、跨客户端 fixture 与兼容策略仍待收口。
+3. ACP Client 已能调用 OpenCode，但权限审批回传、取消、恢复和正式兼容矩阵尚未完成。
+4. daemon 已具备最小 Agent Backend registry、`backend_id` 分发与 ACP 适配，但仍缺正式的 probe/restart 管理 API、完整权限审批回传和会话生命周期验收。
 5. daemon 工作目录在进程启动时固定，不适合一个进程同时管理任意工作区。
-6. daemon 默认没有认证，适合本机开发，但桌面 sidecar 仍需降低端口劫持和误连接风险。
-7. 主 PRD 中“当前阶段不提供桌面 GUI、ACP/Daemon 不扩展”的旧声明已与新方向冲突。
+6. Desktop sidecar 已使用动态 loopback 端口、高熵 token、ready-file nonce 和 Rust IPC 代理；长期凭据 keyring、日志脱敏、安装包与跨平台进程清理仍需发布验收。
+7. Tauri shell 与四面板 UI 已落地，但当前会话列表主要是前端内存投影，Diff 仍依赖事件 detail 解析，不等价于持久会话和规范变更模型。
 
 ### 2.2 要解决的核心问题
 
@@ -165,10 +169,30 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 - 所有 Backend 事件投影为现有 Task Protocol/SSE 事件，禁止对客户端暴露第二套长期公开事件协议；
 - VSCode 和 Desktop 均使用同一包。
 
-### 5.2 后续版本
+### 5.2 当前实施状态（2026-09-22）
+
+状态词仅使用 `已验收 / 部分验收 / 未开始 / 延后 / 不在范围`。代码存在不等于正式验收。
+
+| 交付面 | 状态 | 已落地 | 未通过门禁 |
+|---|---|---|---|
+| Desktop shell 与 sidecar | 部分验收 | Tauri shell、动态 loopback 端口、ready-file nonce、Rust 内存 token、HTTP IPC 代理、SSE bridge、启动/停止 | 真实安装包 smoke、异常退出与跨平台进程树清理、完整日志脱敏 |
+| Desktop UI | 部分验收 | 四面板布局、Agent/模式选择、时间线、工具卡、审批卡、取消、状态、Changes/Approvals/Activity、简易 Diff | 持久会话恢复、规范 Diff 数据源、Retry/归档、可访问性与真实 E2E |
+| client-core | 部分验收 | daemon HTTP、SSE reconnect、`Last-Event-ID`、Task Protocol 校验、approval、Agent 类型；Desktop/VSCode 已复用 | 独立发布与版本策略、更多契约 fixture、跨客户端一致性验收 |
+| daemon Agent Backend | 部分验收 | `sacode` 默认 Backend、registry、`backend_id` 分发、`GET /api/agents`、ACP stdio 执行、事件投影与失败分类 | `/probe`、`/restart`、持久 session API、统一审计关联 |
+| OpenCode ACP | 部分验收 | initialize/session/prompt 和事件映射；仓库记录 OpenCode `1.18.31` 返回 `PONG` 的 smoke | 权限请求→daemon 审批→ACP response 的真实闭环；cancel 先 ACP 后强杀；正式兼容矩阵 |
+| Desktop 发布 | 未开始 | 已有前端/Rust 局部构建测试 | 独立 CI、三平台构建、NSIS/DMG/AppImage 或等价安装包、签名/升级策略、版本一致性 |
+| 手机/远程通信 | 延后 | 仅复用 Task Protocol、HTTP/SSE 等协议接缝 | Desktop 退出门禁后另立专项 |
+
+本次验证结果：client-core typecheck/build/7 tests、Desktop typecheck/build/6 tests、VSCode compile/32 tests、`cargo check --workspace`、Desktop Rust 3 tests 均通过。Rust workspace 全量测试因本机 E 盘空间不足（`os error 112`）在编译阶段中止，因此不计为通过或代码失败。验证基于存在其他未提交 CLI/identity 修改的工作区；这些未提交修改不计入本专项已验收范围。
+
+### 5.3 后续版本
+
+以下能力均不得与当前 Desktop 本地闭环并行扩张，应在首个正式桌面版本通过发布门禁后重新评审和排期：
 
 - 多窗口、多工作区并发；
 - 远程 daemon；
+- 手机端绑定、LAN 直连与跨设备控制；
+- 签名中继或其他异网通道；
 - 更多 ACP Agent；
 - 会话跨设备同步；
 - 团队策略、RBAC、集中审计；
@@ -176,7 +200,7 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 - 自动更新；
 - Agent 之间任务转交。
 
-### 5.3 明确不做
+### 5.4 明确不做
 
 首版不做：
 
@@ -188,7 +212,9 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 6. 公网开放 daemon；
 7. 一个 daemon 同时管理任意数量工作区；
 8. 云端账户、云同步和计费系统；
-9. 首版即支持所有 ACP 实现差异。
+9. 首版即支持所有 ACP 实现差异；
+10. 手机 App、扫码配对、LAN 手机控制、远程 daemon 和 Redis/其他签名中继；
+11. 为尚未立项的手机通信提前改变 Desktop 的本机 loopback 安全边界。
 
 ## 6. 信息架构与页面
 
@@ -240,6 +266,8 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 ## 7. 核心领域模型
 
 ### 7.1 Agent Backend
+
+以下为目标完整接口，用于描述最终职责边界；当前代码采用 registry + native/ACP 执行路径实现最小子集，尚未具备此处全部 session 生命周期方法。
 
 ```rust
 pub trait AgentBackend: Send + Sync {
@@ -488,15 +516,15 @@ interfaces/acp/src/
 
 ## 10. API 需求
 
-### 10.1 新增 daemon API
+### 10.1 daemon API 增量
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/agents` | 列出 Backend、状态与能力 |
-| POST | `/agents/:id/probe` | 主动探测 Backend |
-| POST | `/agents/:id/restart` | 重启外部 Backend 进程 |
-| GET | `/sessions` | 查询当前工作区会话 |
-| POST | `/sessions/:id/close` | 关闭 Backend 会话 |
+| 方法 | 路径 | 状态 | 说明 |
+|---|---|---|---|
+| GET | `/agents` | 已实现，部分验收 | 列出 Backend、状态与能力；当前实际路由前缀为 `/api` |
+| POST | `/agents/:id/probe` | 未开始 | 主动探测 Backend |
+| POST | `/agents/:id/restart` | 未开始 | 重启外部 Backend 进程 |
+| GET | `/sessions` | 未开始 | 查询当前工作区持久会话 |
+| POST | `/sessions/:id/close` | 未开始 | 关闭 Backend 会话 |
 
 `POST /task` 增加可选字段：
 
@@ -802,13 +830,14 @@ ACP Agent 发起的权限请求必须：
 7. 不立即移动 `interfaces/vscode`。
 8. 现有 ACP Server 保留。
 
-### 实施前必须验证
+### 正式发布前仍必须验证
 
-1. 目标 OpenCode 版本的实际 ACP 启动命令；
-2. initialize/session/prompt/cancel 的真实消息结构；
-3. OpenCode 权限请求是否覆盖其所有副作用；
-4. 支持的协议版本和 capability；
-5. Windows/macOS/Linux 上的进程退出行为。
+1. **已取得局部证据**：仓库记录 OpenCode `1.18.31` 通过 `bun x opencode-ai acp` 完成 initialize/session/prompt 并返回 `PONG`；该记录不替代固定版本、干净环境的发布 smoke。
+2. initialize/session/prompt/cancel 的真实消息结构、协议版本和 capability 需固化为 fixture 与兼容矩阵。
+3. OpenCode 权限请求是否覆盖其所有副作用，以及审批结果能否真实回传 ACP，仍未完成端到端验收。
+4. daemon task cancel 是否先触发 ACP `session/cancel`、超时后再清理完整子进程树，仍需集成测试。
+5. Windows/macOS/Linux 上 Desktop sidecar 与 OpenCode 子进程的退出行为必须实测。
+6. `/agents/:id/probe`、`/agents/:id/restart` 和首版持久 session API 是否确属必要最小面，需在实现前按当前 UI/E2E 缺口确认，不为手机通信扩张协议。
 
 ## 20. 与现有产品文档的关系
 
@@ -819,6 +848,9 @@ ACP Agent 发起的权限请求必须：
 
 新的边界是：
 
+- 当前结论是“本地 MVP 已落地、正式 Desktop 版本部分验收”，不是“待实施”，也不是“已发布”；
 - 不做完整 IDE；
 - 只扩展支撑 Desktop 和可插拔 Agent 所必需的 daemon/ACP 能力；
+- 当前 daemon 保持 Desktop sidecar 的本机 loopback 边界，不以手机通信为由开放 LAN/公网；
+- 手机端通信、远程 daemon、跨设备控制和签名中继待 Desktop 发布收口后另立专项；
 - 不恢复 Scheduled Tasks、Agent Teams、Channels 等已延后平台功能。

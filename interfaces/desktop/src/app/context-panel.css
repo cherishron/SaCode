@@ -164,6 +164,111 @@
 
 /* === Activity Tab === */
 
+/* === Audit Tab === */
+
+.audit-actions {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.audit-actions button {
+  width: 100%;
+}
+
+.audit-history {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.audit-history-title {
+  font: var(--text-11-medium);
+  margin-bottom: var(--space-1);
+}
+
+.audit-report-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: var(--text-11-regular);
+  color: var(--color-text-secondary);
+}
+
+.audit-report-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.audit-report-item.active {
+  background: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.audit-report-stats {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.audit-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+
+.audit-finding {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.audit-finding-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.audit-finding-path {
+  flex: 1;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.severity-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  font: var(--text-10-bold);
+  color: #fff;
+}
+
+.severity-high { background: var(--color-error, #dc2626); }
+.severity-medium { background: var(--color-warning, #d97706); }
+.severity-low { background: var(--color-info, #2563eb); }
+.severity-info { background: var(--color-success, #6b7280); }
+
+.audit-finding-title {
+  font: var(--text-12-medium);
+  margin-bottom: var(--space-1);
+}
+
+.audit-finding-detail {
+  font: var(--text-11-regular);
+  margin-bottom: var(--space-1);
+}
+
+.audit-finding-suggestion {
+  font: var(--text-11-regular);
+  color: var(--color-text-secondary);
+}
+
+/* === Activity Tab === */
+
 .activity-list {
   display: flex;
   flex-direction: column;
