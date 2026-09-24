@@ -8,8 +8,9 @@ pub use report::{
     Severity, REPORT_SCHEMA_VERSION,
 };
 pub use scan::{
-    count_findings_by_source, heuristic_scan_workspace, merge_findings, normalize_ai_findings,
-    run_audit, scan_files, AuditScanOptions, AuditScanOutcome,
+    count_findings_by_source, heuristic_scan_workspace, is_supported_code_path, merge_findings,
+    normalize_ai_findings, run_audit, run_diff_audit, scan_changed_lines, scan_files,
+    AuditScanOptions, AuditScanOutcome,
 };
 
 /// Default model used for gateway-style fallback when provider.model is empty

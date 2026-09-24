@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 
@@ -94,9 +97,15 @@ pub fn heuristic_scan_workspace(root: &Path, opts: &AuditScanOptions) -> Vec<Fin
     collect_files(root, root, &mut files, opts.max_files);
     let mut out = Vec::new();
     for file in files {
-        scan_file_heuristics(root, &file, &mut out, opts.max_findings_per_file);
+        scan_file_heuristics(root, &file, &mut out, opts.max_findings_per_file, None);
     }
     out
+}
+
+pub fn is_supported_code_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| CODE_EXTS.contains(&ext))
 }
 
 fn collect_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>, limit: usize) {
@@ -118,16 +127,20 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>, limit: usize) 
             }
             collect_files(root, &path, out, limit);
         } else if path.is_file() {
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if CODE_EXTS.contains(&ext) {
-                    out.push(path);
-                }
+            if is_supported_code_path(&path) {
+                out.push(path);
             }
         }
     }
 }
 
-fn scan_file_heuristics(root: &Path, file: &Path, out: &mut Vec<Finding>, max_per_file: usize) {
+fn scan_file_heuristics(
+    root: &Path,
+    file: &Path,
+    out: &mut Vec<Finding>,
+    max_per_file: usize,
+    allowed_lines: Option<&BTreeSet<u32>>,
+) {
     let Ok(content) = std::fs::read_to_string(file) else {
         return;
     };
@@ -136,13 +149,27 @@ fn scan_file_heuristics(root: &Path, file: &Path, out: &mut Vec<Finding>, max_pe
         .unwrap_or(file)
         .to_string_lossy()
         .replace('\\', "/");
+    scan_content_heuristics(&rel, &content, out, max_per_file, allowed_lines);
+}
+
+fn scan_content_heuristics(
+    rel: &str,
+    content: &str,
+    out: &mut Vec<Finding>,
+    max_per_file: usize,
+    allowed_lines: Option<&BTreeSet<u32>>,
+) {
     let mut added = 0;
     for (idx, line) in content.lines().enumerate() {
         if added >= max_per_file {
             break;
         }
-        let line_no = Some((idx + 1) as u32);
-        let path = rel.clone();
+        let current_line = (idx + 1) as u32;
+        if allowed_lines.is_some_and(|lines| !lines.contains(&current_line)) {
+            continue;
+        }
+        let line_no = Some(current_line);
+        let path = rel.to_string();
 
         // secrets
         if looks_like_secret_line(line) {
@@ -289,9 +316,76 @@ fn mask_line(line: &str) -> String {
 pub fn scan_files(root: &Path, files: &[PathBuf], max_per_file: usize) -> Vec<Finding> {
     let mut out = Vec::new();
     for f in files {
-        scan_file_heuristics(root, f, &mut out, max_per_file);
+        scan_file_heuristics(root, f, &mut out, max_per_file, None);
     }
     out
+}
+
+pub fn scan_changed_lines(
+    contents: &HashMap<String, String>,
+    changed_lines: &HashMap<String, BTreeSet<u32>>,
+    max_per_file: usize,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (relative, lines) in changed_lines {
+        if lines.is_empty() {
+            continue;
+        }
+        if let Some(content) = contents.get(relative) {
+            scan_content_heuristics(relative, content, &mut out, max_per_file, Some(lines));
+        }
+    }
+    out
+}
+
+/// Full audit: heuristics + optional AI pass via current ModelProvider.
+/// AI failure never fails the audit; heuristic results still write the report.
+pub async fn run_diff_audit(
+    root: &Path,
+    opts: &AuditScanOptions,
+    provider: Option<&ModelProvider>,
+    contents: &HashMap<String, String>,
+    changed_lines: &HashMap<String, BTreeSet<u32>>,
+    scan_kind: &str,
+    target: String,
+) -> Result<AuditScanOutcome> {
+    let mut findings = scan_changed_lines(contents, changed_lines, opts.max_findings_per_file);
+    let mut ai_used = false;
+    let mut provider_label = None;
+
+    if opts.use_ai {
+        if let Some(mp) = provider {
+            provider_label = Some(format!("{:?}", mp.kind));
+            match ai_diff_audit_pass(mp, contents, changed_lines, &findings).await {
+                Ok(ai_findings) => {
+                    ai_used = true;
+                    if !ai_findings.is_empty() {
+                        let (merged, _, _) =
+                            merge_findings(std::mem::take(&mut findings), ai_findings);
+                        findings = merged;
+                    }
+                }
+                Err(e) => tracing::warn!("AI diff audit pass failed: {e}"),
+            }
+        }
+    }
+
+    let heuristic_count = count_findings_by_source(&findings, "heuristic");
+    let ai_count = count_findings_by_source(&findings, "ai");
+    let mut report = AuditReport::new(root, findings);
+    report.ai_used = ai_used;
+    report.provider = provider_label;
+    report.scan_kind = scan_kind.to_string();
+    report.scan_target = Some(target);
+    report.files_scanned = changed_lines.len();
+    report.changed_lines = changed_lines.values().map(BTreeSet::len).sum();
+    let path = super::report::save_report(root, &report)?;
+    Ok(AuditScanOutcome {
+        report,
+        report_json_path: Some(path),
+        heuristic_count,
+        ai_count,
+    })
 }
 
 /// Full audit: heuristics + optional AI pass via current ModelProvider.
@@ -338,6 +432,83 @@ pub async fn run_audit(
         heuristic_count,
         ai_count,
     })
+}
+
+async fn ai_diff_audit_pass(
+    provider: &ModelProvider,
+    contents: &HashMap<String, String>,
+    changed_lines: &HashMap<String, BTreeSet<u32>>,
+    heuristics: &[Finding],
+) -> Result<Vec<Finding>> {
+    let client = ProviderClient::new();
+    let mut excerpts = String::new();
+    for (path, lines) in changed_lines.iter().take(20) {
+        let Some(content) = contents.get(path) else {
+            continue;
+        };
+        let all_lines: Vec<&str> = content.lines().collect();
+        let mut visible_lines = BTreeSet::new();
+        for line in lines.iter().take(200) {
+            let start = line.saturating_sub(3).max(1);
+            let end = line.saturating_add(3).min(all_lines.len() as u32);
+            visible_lines.extend(start..=end);
+        }
+        let rendered = visible_lines
+            .into_iter()
+            .filter_map(|line| {
+                all_lines
+                    .get((line as usize).saturating_sub(1))
+                    .map(|text| {
+                        let marker = if lines.contains(&line) { '+' } else { ' ' };
+                        format!("{marker}{line}: {}", mask_probable_secrets(text))
+                    })
+            })
+            .collect::<Vec<_>>();
+        if !rendered.is_empty() {
+            excerpts.push_str(&format!("### FILE {path}\n{}\n\n", rendered.join("\n")));
+        }
+    }
+    if excerpts.is_empty() {
+        return Ok(vec![]);
+    }
+    let heuristic_summary = heuristics
+        .iter()
+        .take(20)
+        .map(|f| {
+            format!(
+                "{}:{} {}",
+                mask_probable_secrets(&f.file),
+                f.line.unwrap_or(0),
+                mask_probable_secrets(&f.title)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        r#"你是本地代码差分审查助手。只审查下面列出的新增行，不要报告未列出的旧代码。请只输出 JSON 数组（不要 markdown），每个元素:
+{{"id":"CA-AI-n","severity":"high|medium|low|info","category":"security|correctness|maintainability","file":"path","line":1,"title":"...","detail":"...","suggestion":"...","source":"ai"}}
+重点找：本次改动引入的安全漏洞、明显逻辑缺陷、危险默认值。不要输出风格偏好。密钥类详情请打码。
+
+已有启发式命中：
+{}
+
+本次新增行：
+{}
+"#,
+        heuristic_summary, excerpts
+    );
+    let text = client.simple_chat(provider, &prompt).await?;
+    let parsed = normalize_ai_findings(parse_findings_json(&extract_json_payload(&text)));
+    Ok(parsed
+        .into_iter()
+        .filter(|f| {
+            f.line.is_some_and(|line| {
+                changed_lines
+                    .get(&f.file.replace('\\', "/"))
+                    .is_some_and(|lines| lines.contains(&line))
+            })
+        })
+        .collect())
 }
 
 async fn ai_audit_pass(
@@ -432,6 +603,18 @@ fn extract_json_payload(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diff_scan_only_reports_allowed_added_lines() {
+        let contents = HashMap::from([(
+            "src/a.rs".to_string(),
+            "fn old() { old.unwrap(); }\nfn new() { new.unwrap(); }\n".to_string(),
+        )]);
+        let changed = HashMap::from([("src/a.rs".to_string(), BTreeSet::from([2]))]);
+        let findings = scan_changed_lines(&contents, &changed, 50);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, Some(2));
+    }
 
     #[test]
     fn heuristic_finds_hardcoded_secret() {

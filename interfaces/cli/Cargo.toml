@@ -16,6 +16,7 @@ path = "src/bin/sacode-tui.rs"
 
 [dependencies]
 arboard.workspace = true
+base64.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 crossterm.workspace = true

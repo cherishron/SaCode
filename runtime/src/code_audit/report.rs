@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub const REPORT_SCHEMA_VERSION: u32 = 1;
 
+fn default_scan_kind() -> String {
+    "full".to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -101,6 +105,14 @@ pub struct AuditReport {
     pub provider: Option<String>,
     #[serde(default)]
     pub ai_used: bool,
+    #[serde(default = "default_scan_kind")]
+    pub scan_kind: String,
+    #[serde(default)]
+    pub scan_target: Option<String>,
+    #[serde(default)]
+    pub files_scanned: usize,
+    #[serde(default)]
+    pub changed_lines: usize,
 }
 
 impl AuditReport {
@@ -132,6 +144,10 @@ impl AuditReport {
             summary,
             provider: None,
             ai_used: false,
+            scan_kind: default_scan_kind(),
+            scan_target: None,
+            files_scanned: 0,
+            changed_lines: 0,
         }
     }
 
@@ -148,9 +164,20 @@ impl AuditReport {
             md.push_str(&format!("- Provider: {p}\n"));
         }
         md.push_str(&format!(
-            "- AI 审计: {}\n\n",
+            "- AI 审计: {}\n",
             if self.ai_used { "是" } else { "否" }
         ));
+        md.push_str(&format!("- 扫描类型: {}\n", self.scan_kind));
+        if let Some(target) = &self.scan_target {
+            md.push_str(&format!("- 扫描范围: {target}\n"));
+        }
+        if self.scan_kind == "diff" || self.scan_kind == "pr" {
+            md.push_str(&format!(
+                "- 变更文件: {}，新增行: {}\n",
+                self.files_scanned, self.changed_lines
+            ));
+        }
+        md.push('\n');
         if self.findings.is_empty() {
             md.push_str("未发现明显问题（启发式/AI 扫描范围有限，不等于绝对安全）。\n");
             return md;
@@ -264,17 +291,22 @@ pub fn mask_probable_secrets(s: &str) -> String {
         "AKIA",
         "xoxb-",
     ] {
-        while let Some(pos) = out.find(prefix) {
-            let rest = out[pos..].to_string();
+        let mut search_from = 0;
+        while let Some(relative) = out[search_from..].find(prefix) {
+            let pos = search_from + relative;
+            let rest = &out[pos..];
             let token_len = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .bytes()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == b'-' || *c == b'_')
                 .count();
             if token_len <= prefix.len() {
-                break;
+                search_from = pos + prefix.len();
+                continue;
             }
             let masked = sacode_kernel::model::SecretRef::mask_secret(&rest[..token_len]);
+            let masked_len = masked.len();
             out.replace_range(pos..pos + token_len, &masked);
+            search_from = pos + masked_len;
         }
     }
     out
@@ -297,6 +329,13 @@ mod tests {
             "remove hard-coded secret",
             "heuristic",
         )
+    }
+
+    #[test]
+    fn secret_masking_skips_bare_prefix_and_masks_later_token() {
+        let value = mask_probable_secrets("document sk- then sk-real-secret-token");
+        assert!(value.starts_with("document sk- then "));
+        assert!(!value.contains("sk-real-secret-token"));
     }
 
     #[test]

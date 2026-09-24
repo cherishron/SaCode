@@ -3,6 +3,8 @@ mod acp;
 mod ai_design;
 mod arg_parser;
 mod audit;
+mod audit_diff;
+mod audit_pr;
 mod bundle;
 mod checkpoint;
 #[cfg(test)]
