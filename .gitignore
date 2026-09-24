@@ -74,6 +74,7 @@ npm-package/*.tgz
 clippy*.txt
 test_*.txt
 _test_out.txt
+**/vite.config.ts.timestamp-*.mjs
 
 # Media test artifacts (runtime/src/tools/media/video.rs 测试动态产物)
 *.mp4

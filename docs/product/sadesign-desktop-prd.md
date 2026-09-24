@@ -1,8 +1,8 @@
 # SaDesign Desktop 产品需求文档
 
 > 文档状态：方案草案，待评审  
-> 文档版本：v0.1  
-> 日期：2026-09-23  
+> 文档版本：v0.4
+> 日期：2026-09-24
 > 适用产品：SaCode Desktop / Daemon / Runtime / CLI  
 > 前置能力：[AIDesign（TD 示例库 + AI 设计变体）](../compose/spec/ai-design-tdesign.md)  
 > 关联文档：[SaCode Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)
@@ -297,6 +297,7 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 4. WHEN 用户接受代码结果，系统 SHALL 复用 Changes 面板完成最终审批。
 5. WHEN 用户发起迭代，系统 SHALL 继承当前结果、Design Context 和用户批注，并创建新版本。
 6. 系统 SHALL 保留版本谱系，用户能够识别每个版本的父版本。
+7. WHERE 可视化拖拽编辑可用（见 18A），系统 SHALL 以框架无关的 `layout.json` 作为编辑模型；布局与样式操作 SHALL 即时更新预览且不依赖 AI，用户确认后 SHALL 由匹配 ProjectProfile 的 Code Adapter 输出项目原生代码并进入 Changes 审批链路。
 
 ### FR-13 任务记录
 
@@ -328,7 +329,7 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 │  S   │ 设计输入      │ Design Context           │ 生成设置          │
 │  +   │               │                          │                   │
 │  ◇   │ 目标          │ 项目摘要                 │ 模型组合          │
-│  ✦   │ ○ 整套系统    │ SaaS 管理后台 / React... │ 设计: Model A     │
+│  ✦   │ ○ 整套系统    │ Vite / TypeScript / DOM...│ 设计: Model A     │
 │  ⚙   │ ● 单个页面    │ [查看来源] [重新扫描]    │ 图片: Model B     │
 │      │ ○ 图片资产    │                          │ 代码: Model C     │
 │      │               │ 主模板                   │                   │
@@ -658,6 +659,11 @@ flowchart TB
 | `PATCH` | `/api/design/sessions/:id` | 更新目标和 Design Context |
 | `POST` | `/api/design/sessions/:id/plan` | 生成 brief、Prompt 与写入计划 |
 | `POST` | `/api/design/sessions/:id/generate` | 确认并开始生成 |
+| `GET` | `/api/design/sessions/:id/layout` | 获取当前 `sacode-layout/v1` 快照与版本号 |
+| `PATCH` | `/api/design/sessions/:id/layout` | 以乐观并发版本提交 DesignCommand 批次 |
+| `GET` | `/api/design/sessions/:id/components` | 获取项目组件注册表快照 |
+| `POST` | `/api/design/sessions/:id/apply` | 校验 layout 与 ProjectProfile，通过 Code Adapter 生成项目原生文件并创建 Changes |
+| `POST` | `/api/design/sessions/:id/refine` | 请求 AI 返回 JSON Patch / DesignCommand 草稿 |
 | `GET` | `/api/design/jobs/:id` | 获取生成任务状态 |
 | `POST` | `/api/design/jobs/:id/cancel` | 取消生成任务 |
 | `POST` | `/api/design/jobs/:id/retry` | 从失败阶段重试 |
@@ -669,6 +675,9 @@ SSE 继续复用现有事件流，新增可向后兼容的事件：
 - `design_plan_ready`
 - `design_generation_stage`
 - `design_preview_ready`
+- `design_layout_updated`
+- `design_layout_conflict`
+- `design_codegen_ready`
 - `design_artifact_ready`
 - `design_job_completed`
 - `design_job_failed`
@@ -682,7 +691,8 @@ draft → analyzing → ready → planning → planned → generating → review
   │         │          │         │          │            │
   └─────────┴──────────┴─────────┴──────────┴────────────┴→ failed
                                                        └──→ cancelled
-review → generating  （基于批注创建新版本）
+review → editing → applying → review  （DesignCommand → Code Adapter → Changes 审查）
+review → generating  （AI 语义修改，创建子版本）
 ```
 
 ### 14.2 Extraction Job
@@ -765,6 +775,412 @@ succeeded → expired → packaging
 
 指标不以“生成次数”单独衡量成功，重点关注结果是否被接受并进入项目。
 
+## 18A. 可视化拖拽编辑设计
+
+> 本节定义拖拽式调整 AI 生成结果的推荐方案。
+> **SaDesign 不预设 React、Vue 或其他框架。正式代码格式由当前工作区的项目扫描结果决定，`layout.json` 仅作为框架无关的可编辑设计模型。**
+> 拖拽修改语义模型，预览立即更新；用户应用变更时，由匹配当前项目的 Code Adapter 生成原生项目代码。
+
+### 18A.0 已核实事实与方案决策
+
+SaCode Desktop 当前是 **Vite + TypeScript + 原生 DOM API + CSS**：不依赖 React，界面通过 `document.createElement` 和 DOM helper 构建。
+现有 daemon 和 Desktop 计划代码中的 `src/pages/index.tsx` / `index.tsx` 是待修复的占位硬编码，不能作为项目技术栈依据。
+
+因此“TSX 还是 HTML”不是全局固定答案：
+
+| 项目扫描结果 | 正式代码产物示例 |
+|---|---|
+| React / Next.js | `.tsx`、CSS、框架路由文件 |
+| Vue | `.vue` SFC、CSS、路由文件 |
+| Svelte | `.svelte`、CSS |
+| Angular | component `.ts` / template `.html` / `.css` |
+| 原生 TypeScript DOM（当前 Desktop） | `.ts` DOM 构建代码、`.css`、必要的 `.html` shell |
+| 原生 JavaScript DOM | `.js`、`.css`、必要的 `.html` shell |
+| 静态站点 | `.html`、`.css`、可选 `.js` |
+| 无法可靠识别 | 不猜测；要求用户确认输出配置后再计划写入 |
+
+方案结论：
+
+1. **项目原生代码是正式产物**，格式由 `ProjectProfile` 和用户目标决定；
+2. **`layout.json` 是框架无关的编辑模型**，承载布局、组件、Token 和可序列化属性；
+3. **预览是派生运行结果**，通常在沙箱 iframe 中渲染，不反向解析为源码；
+4. **HTML 是否为正式产物取决于项目类型**：静态站点可以，当前 SaCode Desktop 不可以；
+5. **AI 只用于创建初稿、语义级重设计和不受结构化模型支持的源码修改**，不参与普通拖拽保存；
+6. **不得用文件扩展名硬编码替代项目识别**。
+
+### 18A.1 ProjectProfile：先识别项目，再选择生成器
+
+项目扫描产出结构化 `ProjectProfile`：
+
+```typescript
+interface ProjectProfile {
+  schemaVersion: 'sacode-project-profile/v1';
+  language: 'typescript' | 'javascript' | 'kotlin' | 'dart' | 'unknown';
+  framework:
+    | 'react'
+    | 'next'
+    | 'vue'
+    | 'svelte'
+    | 'angular'
+    | 'vanilla-dom'
+    | 'static-html'
+    | 'unknown';
+  rendering: 'jsx' | 'sfc' | 'template' | 'dom-api' | 'html' | 'unknown';
+  buildTool?: 'vite' | 'webpack' | 'rollup' | 'parcel' | 'other';
+  styling: Array<'css' | 'css-modules' | 'scss' | 'tailwind' | 'css-in-js' | 'unknown'>;
+  sourceRoots: string[];
+  entryPoints: string[];
+  componentRoots: string[];
+  routeRoots: string[];
+  testCommands: string[];
+  confidence: number;
+  evidence: Array<{ source: string; value: string }>;
+}
+```
+
+识别规则：
+
+- 读取 manifest、依赖、构建配置、源码扩展名、入口文件和目录结构；
+- 同时检查根目录与用户选择的目标子项目，支持 monorepo；
+- 每个结论保留 evidence 和 confidence，不仅返回技术名称字符串；
+- 多框架仓库必须绑定到用户选择的目标目录，不在仓库级别武断选择；
+- `confidence` 低于阈值或识别结果冲突时，计划页要求用户确认；
+- 写入计划中的文件路径和扩展名由 ProjectProfile 推导，禁止固定为 `index.tsx`。
+
+当前 SaCode Desktop 的预期识别结果为：
+
+```json
+{
+  "language": "typescript",
+  "framework": "vanilla-dom",
+  "rendering": "dom-api",
+  "buildTool": "vite",
+  "styling": ["css"]
+}
+```
+
+### 18A.2 框架无关页面模型
+
+首期 schema 建议为 `sacode-layout/v1`：
+
+```typescript
+interface DesignLayout {
+  schemaVersion: 'sacode-layout/v1';
+  id: string;
+  route?: string;
+  targetProfileHash: string;
+  componentRegistryVersion: string;
+  tokens: Record<string, string>;
+  root: LayoutNode;
+  source: {
+    sessionId: string;
+    parentLayoutId?: string;
+    generatedAt: string;
+  };
+}
+
+interface LayoutNode {
+  id: string;
+  name: string;
+  kind: 'container' | 'component' | 'text' | 'asset' | 'source-island';
+  component?: string;
+  props?: Record<string, string | number | boolean | null>;
+  layout?: {
+    display?: 'block' | 'flex' | 'grid';
+    direction?: 'row' | 'column';
+    columns?: number;
+    gap?: string;
+    width?: string;
+    height?: string;
+    align?: string;
+    justify?: string;
+  };
+  style?: Record<string, string>;
+  events?: Record<string, DesignAction>;
+  children?: LayoutNode[];
+  locked?: boolean;
+  sourceRef?: { file: string; symbol?: string };
+}
+
+interface DesignAction {
+  type: 'navigate' | 'submit' | 'toggle' | 'custom';
+  target?: string;
+  handlerRef?: string;
+}
+```
+
+约束：
+
+- `id` 使用稳定 UUID，不使用文案或数组索引；
+- 模型不保存 JSX、Vue template、DOM API 或其他框架语法；
+- props、layout 和 style 仅允许 schema 定义的可序列化值；
+- `custom` action 只引用已有 handler，不在 JSON 中内嵌代码；
+- `targetProfileHash` 用于发现项目配置变化，变化后必须重新验证适配器；
+- schema 支持版本迁移，未知字段在往返处理时保留。
+
+### 18A.3 组件注册表与目标绑定
+
+组件注册表描述设计组件，并为不同 Code Adapter 提供项目原生绑定：
+
+```typescript
+interface DesignComponentDefinition {
+  name: string;
+  category: 'layout' | 'navigation' | 'form' | 'data' | 'feedback' | 'custom';
+  propsSchema: Record<string, PropDefinition>;
+  allowedChildren: string[] | '*';
+  editable: boolean;
+  bindings: Partial<Record<AdapterId, ComponentBinding>>;
+}
+
+interface ComponentBinding {
+  sourceRef?: { file: string; symbol?: string };
+  importPath?: string;
+  tagName?: string;
+  previewRenderer: string;
+  propMappings: Record<string, string>;
+}
+```
+
+注册表来源按优先级合并：
+
+1. 项目扫描识别出的组件、DOM helper、样式约定和 props；
+2. 用户确认的自定义组件映射；
+3. 与当前适配器兼容的 SaDesign 基础组件；
+4. 无可靠绑定的源码区域进入 `source-island`，默认锁定内部编辑。
+
+对于当前 Desktop，注册表应优先识别 `el(...)`、原生 HTMLElement、现有 CSS class 和 app 目录中的 UI 组合函数，而不是伪造 React 组件 import。
+
+### 18A.4 Code Adapter
+
+Code Adapter 把同一 `layout.json` 转换为目标项目原生代码：
+
+```typescript
+interface CodeAdapter {
+  id: AdapterId;
+  supports(profile: ProjectProfile): AdapterMatch;
+  plan(layout: DesignLayout, profile: ProjectProfile): PlannedFile[];
+  generate(layout: DesignLayout, registry: ComponentRegistry): GeneratedFile[];
+  verify(files: GeneratedFile[], profile: ProjectProfile): VerificationPlan;
+}
+```
+
+首期适配器：
+
+| Adapter | 输出 |
+|---|---|
+| `vanilla-ts-dom` | TypeScript DOM 构建函数、CSS、必要的入口接线 |
+| `static-html` | HTML、CSS、可选 JavaScript |
+| `react-tsx` | TSX、CSS、组件与路由文件 |
+| `vue-sfc` | `.vue` SFC、CSS、路由文件 |
+
+适配器选择规则：
+
+1. ProjectProfile 高置信匹配唯一适配器时自动选择；
+2. 多适配器可用时在确认页展示推荐项及证据；
+3. 没有适配器时只允许设计预览或 AI 辅助源码修改，不宣称可确定性生成；
+4. 用户可以覆盖选择，但必须看到将创建或修改的实际文件清单；
+5. 适配器 ID、版本和 ProjectProfile hash 写入 session artifact。
+
+### 18A.5 架构与数据流
+
+```text
+Project Scanner ──► ProjectProfile ──► Adapter Resolver
+                                           │
+                                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Desktop                                                     │
+│  Outline / Drag UI ── DesignCommand ──► Layout Store        │
+│                                      ┌────────┴────────┐     │
+│                                      ▼                 ▼     │
+│                              Preview Renderer     Undo Stack  │
+│                                      │                       │
+│                                      ▼                       │
+│                         sandbox iframe / native preview       │
+└──────────────────────────────────────┬──────────────────────┘
+                                       │ 应用变更
+                                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Daemon / Runtime                                            │
+│  validate layout + profile + registry                       │
+│       ├─► selected Code Adapter                             │
+│       ├─► framework-native files                            │
+│       ├─► project-specific format / typecheck / build       │
+│       └─► Task Protocol: Diff → approval → write             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+命令而非 DOM mutation 是编辑基本单位：
+
+```typescript
+type DesignCommand =
+  | { type: 'move'; nodeId: string; parentId: string; index: number }
+  | { type: 'resize'; nodeId: string; width?: string; height?: string }
+  | { type: 'set-layout'; nodeId: string; patch: Partial<LayoutNode['layout']> }
+  | { type: 'set-prop'; nodeId: string; key: string; value: unknown }
+  | { type: 'set-token'; name: string; value: string }
+  | { type: 'duplicate'; nodeId: string; newNodeId: string }
+  | { type: 'delete'; nodeId: string }
+  | { type: 'toggle'; nodeId: string; visible: boolean };
+```
+
+每个命令必须通过 schema 和组件树约束校验、生成逆命令、支持 Undo/Redo，并在更新模型后触发预览。
+
+### 18A.6 预览渲染与 iframe 安全
+
+Preview Renderer 从 `layout.json` 与组件注册表生成运行时预览。预览格式不决定正式代码格式：React、Vue、原生 DOM 和静态 HTML 均可共享同一预览协议。
+
+需要 iframe 时使用：
+
+```html
+<iframe sandbox="allow-scripts" srcdoc="..."></iframe>
+```
+
+安全约束：
+
+| 约束 | 说明 |
+|---|---|
+| 不加 `allow-same-origin` | iframe 保持 opaque origin，不能访问父页面 Cookie、Storage 和 DOM |
+| 可信 Renderer | 文本和属性值转义，不把 AI 返回文本直接拼成可执行脚本 |
+| 脚本来源 | 仅运行 SaDesign 编辑桥接脚本，不执行项目或模型提供的任意脚本 |
+| CSP | `default-src 'none'`，资源按白名单开放，脚本使用 nonce |
+| 通信 | 仅 `postMessage`，校验 `event.source` 与消息 schema |
+| 网络 | 默认禁止网络，远程资源由 daemon 下载、校验并转为受控本地资源 |
+
+iframe 只负责显示、命中测试、选择覆盖层和手势采集；真正编辑由父页面把手势转为 DesignCommand 后更新 Layout Store。
+
+### 18A.7 即时编辑能力
+
+| 操作 | 模型变更 | 适配器职责 |
+|---|---|---|
+| 拖拽重排 | 更新父节点与 children 顺序 | 按目标语法调整节点或 DOM 构建顺序 |
+| 调整网格列数 | 更新 `layout.columns` | 映射为项目现有 class、CSS 或组件属性 |
+| resize | 更新 width/height | 映射为目标项目支持的布局表达 |
+| 删除/复制 | 删除或克隆 LayoutNode | 删除或生成目标语法结构 |
+| 显隐 | 更新 visible 状态 | 映射为条件、hidden 属性或样式 |
+| 修改 props | 更新 JSON props | 映射为组件 props、DOM 属性或文本 |
+| 修改 Token | 更新 `tokens` | 更新项目现有 Token/CSS 文件 |
+
+以上操作立即重渲染预览，不调用 AI。
+
+### 18A.8 当前 Desktop 的生成示例
+
+对 `vanilla-ts-dom` 项目，适配器生成原生 TypeScript，而不是 TSX：
+
+```typescript
+import { el } from '../../dom';
+
+export function buildDashboardPage(): HTMLElement {
+  return el('main', { className: 'dashboard-page' }, [
+    el('section', { className: 'dashboard-hero' }, [
+      el('h1', {}, ['项目概览']),
+    ]),
+    el('section', { className: 'dashboard-grid' }, [
+      buildMetricCard('任务', '12'),
+      buildMetricCard('变更', '4'),
+    ]),
+  ]);
+}
+```
+
+对应样式写入项目现有 CSS 组织方式，入口接线遵循当前 app/UI 架构。实际文件路径由目标目录、现有模块结构和用户确认决定，不固定为 `src/pages/index.tsx`。
+
+生成规则：
+
+1. 文件扩展名、import 方式和组件表达由 Code Adapter 决定；
+2. 优先复用项目现有 helper、组件、Token 和 CSS 命名方式；
+3. 输出附带 layout ID、adapter ID 和内容 hash；
+4. 运行项目对应的 formatter、typecheck、测试或最小构建；
+5. 文件写入走 SaCode Task Protocol，先展示真实源码 Diff；
+6. 检测到人工修改冲突时不得静默覆盖。
+
+### 18A.9 Source Island 与能力边界
+
+复杂状态、框架上下文、hooks/composables、第三方组件和自定义业务逻辑不一定能安全映射到通用布局模型。这类内容表示为 `source-island`：
+
+- 可整体移动、复制、显隐；
+- 不允许可视化编辑其内部结构；
+- 保留 `sourceRef` 指向文件和 symbol；
+- 需要内部修改时提供“交给 AI 修改”或“打开源码”；
+- 缺少预览适配器时显示占位块。
+
+首期明确不支持：
+
+- 将任意已有前端源码无损导入并完全可视化编辑；
+- 在 `layout.json` 中保存任意可执行表达式或函数；
+- 跨框架上下文边界随意移动依赖运行时上下文的组件；
+- 通过拖拽重写状态机、副作用、数据请求或生命周期逻辑。
+
+### 18A.10 AI 的正确职责
+
+AI 不参与普通拖拽保存，仅处理结构化模型难以表达的语义操作：
+
+1. 当前 ProjectProfile、layout、选中节点和用户指令作为输入；
+2. AI 优先返回 JSON Patch / DesignCommand；
+3. patch 通过 schema 与组件树约束后应用到草稿版本；
+4. 用户采用前查看布局差异；
+5. 无法表达为模型 patch 时，AI 才按当前 Code Adapter 修改 Source Island 或项目原生源码；
+6. 新版本保留 `parent_id`、ProjectProfile hash 和版本谱系。
+
+### 18A.11 Token 编辑
+
+Token 编辑更新 `layout.json.tokens`，再由适配器映射到项目现有样式体系：
+
+- CSS 变量项目更新现有 Token/CSS 文件；
+- Tailwind 项目更新允许的主题配置或 class；
+- CSS-in-JS 项目使用对应 Adapter；
+- 没有 Token 体系时，先在计划页展示拟创建方案，不擅自引入新技术栈；
+- Preview Renderer 立即应用，落盘经 Diff、审批和审计。
+
+### 18A.12 可访问性
+
+- `Tab` 聚焦节点，键盘提供移动、删除和复制操作；
+- 结构大纲提供上移、下移、移入、移出等价按钮；
+- 操作结果通过 `aria-live` 播报；
+- resize 提供数值输入；
+- 颜色编辑显示文本值和对比度。
+
+### 18A.13 持久化与版本控制
+
+```text
+.sacode/design/sessions/<session-id>/
+├── project-profile.snapshot.json
+├── layout.json
+├── commands.jsonl
+├── component-registry.snapshot.json
+├── adapter.json
+├── artifacts.json
+└── verification.json
+```
+
+ProjectProfile、layout、registry 和适配器版本共同参与内容 hash。项目扫描结果变化后，旧 layout 可继续预览，但重新应用前必须再次完成适配与验证。
+
+### 18A.14 实施分期
+
+| 阶段 | 前置依赖 | 交付物 |
+|---|---|---|
+| Phase 0 | 无 | ProjectProfile schema、项目识别证据、Adapter Resolver；移除 `index.tsx` 硬编码 |
+| Phase 1 | Phase 0 | `sacode-layout/v1`、组件注册表、框架无关 Preview Renderer |
+| Phase 2 | Phase 1 | DesignCommand、拖拽、结构大纲、Undo/Redo、键盘操作 |
+| Phase 3 | Phase 2 | `vanilla-ts-dom` Adapter，支持当前 SaCode Desktop 原生 TS/CSS 输出 |
+| Phase 4 | Phase 3 | static HTML、React、Vue 等增量 Adapter |
+| Phase 5 | Phase 3 | AI JSON Patch 与 Source Island 项目原生源码修改 |
+
+### 18A.15 验收条件
+
+1. SaDesign SHALL 从项目证据生成 ProjectProfile，不得因占位路径或扩展名硬编码认定项目框架；
+2. 当前 SaCode Desktop SHALL 被识别为 Vite + TypeScript + 原生 DOM API + CSS，而不是 React；
+3. `layout.json` SHALL 保持框架无关，不包含 JSX、Vue template 或可执行函数；
+4. Preview Renderer SHALL 从同一 layout 生成多视口预览；
+5. 拖拽、resize、删除、复制、显隐和 Token 修改 SHALL 立即更新预览，不依赖 AI；
+6. 所有命令 SHALL 支持 Undo/Redo、崩溃恢复和键盘等价操作；
+7. Adapter Resolver SHALL 根据 ProjectProfile 选择 Code Adapter，低置信度时要求用户确认；
+8. `vanilla-ts-dom` Adapter SHALL 为当前 Desktop 生成符合既有 DOM helper 和 CSS 组织方式的 TypeScript/CSS；
+9. 各适配器生成的项目原生文件 SHALL 通过对应 formatter、typecheck 和最小构建验证；
+10. 所有文件写入 SHALL 走 SaCode Task Protocol 的 Diff、审批和审计链路；
+11. HTML 仅在 static-html 项目中可作为正式产物；在其他项目中只作为预览或框架模板的一部分；
+12. Source Island SHALL 保留源码引用，内部不可视化编辑但可交给 AI 按项目原生技术栈修改；
+13. 目标文件存在人工修改时 SHALL 通过 hash 冲突检测阻止静默覆盖。
+
 ## 19. 实施阶段
 
 ### M0：协议和现有能力归并
@@ -804,6 +1220,14 @@ succeeded → expired → packaging
 - VSCode 入口和更完整 CLI；
 - 评估 Figma 导入/导出与团队资源库。
 
+### M5：可视化拖拽编辑
+
+- 定义 ProjectProfile、项目识别证据和 Adapter Resolver，移除 `index.tsx` 硬编码（Phase 0）；
+- 定义框架无关的 `sacode-layout/v1`、组件注册表和真实多视口预览（Phase 1）；
+- 实现 DesignCommand、拖拽、结构大纲、Undo/Redo 和键盘等价操作（Phase 2）；
+- 首先实现 `vanilla-ts-dom` Adapter，生成当前 Desktop 原生 TypeScript/CSS 并完成 Diff、审批和验证（Phase 3）；
+- 按需增加 static HTML、React、Vue Adapter，以及 AI Source Island 修改能力（Phase 4+）。
+
 ## 20. 首期验收门禁
 
 1. 用户可以从 Desktop 当前项目进入 SaDesign 并完成项目上下文扫描；
@@ -817,7 +1241,15 @@ succeeded → expired → packaging
 9. 用户可以预览、下载并保存设计系统到当前项目；
 10. Desktop 重启后能够恢复任务记录、未完成任务和已安装设计系统；
 11. 现有 `sacode design` CLI 和 TUI 行为不回退；
-12. URL 提取、ZIP 导入、敏感文件扫描和项目写入通过安全测试。
+12. URL 提取、ZIP 导入、敏感文件扫描和项目写入通过安全测试；
+13. SaDesign SHALL 从实际项目证据生成 ProjectProfile，当前 Desktop SHALL 被识别为 Vite + TypeScript + 原生 DOM API + CSS；
+14. `layout.json` SHALL 保持框架无关，并从同一模型派生预览和项目原生代码；
+15. 用户拖拽、resize、删除、复制、显隐和 Token 修改 SHALL 立即更新预览，无需等待 AI；
+16. 所有编辑命令 SHALL 支持 Undo/Redo、崩溃恢复，并可通过键盘与结构大纲面板等价完成；
+17. Adapter Resolver SHALL 选择匹配 ProjectProfile 的 Code Adapter，低置信度时要求用户确认；
+18. 当前 Desktop SHALL 通过 `vanilla-ts-dom` Adapter 生成原生 TypeScript/CSS，并通过格式化、类型检查、hash 冲突检测和 Task Protocol 审批；
+19. HTML 仅在静态站点项目中作为正式产物，其他项目不得用 HTML 替代项目原生代码；
+20. AI 语义修改 SHALL 优先返回可验证的 JSON Patch / DesignCommand，复杂源码 SHALL 作为 Source Island 保留。
 
 ## 21. 待产品评审项
 
@@ -825,7 +1257,7 @@ succeeded → expired → packaging
 
 1. 视觉风格 96、设计系统 74、方向基线 5 的目录是远程服务、内置快照还是混合来源；
 2. 设计系统包 `od-design-system-project/v1` 是否由 SaCode 直接长期采用，或增加 SaCode 自有兼容层；
-3. 可视化设计稿首期采用静态图片、HTML Preview，还是两者都支持；
+3. `sacode-layout/v1` 首期组件集合、ProjectProfile 置信度阈值与 Source Island 边界如何冻结；
 4. 图片生成 Provider 的首批支持范围、计费提示和内容安全策略；
 5. 远程提取服务的数据保留时间、下载有效期和删除机制；
 6. 项目上下文发送给远程模型时的默认文件范围和组织级策略。
