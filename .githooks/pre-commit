@@ -12,7 +12,19 @@
 
 set -e
 
+# Git exports repository-local variables (GIT_DIR, GIT_WORK_TREE,
+# GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES)
+# to hooks. If left set, cargo test inherits them and tests that run
+# `git init` / `git config` in temp directories accidentally target this
+# repository instead of the temp dir. Clear them so tests are isolated.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 echo "==> [pre-commit] SaCode 提交前验证开始"
+
+# Windows: disable debug info to avoid LNK1140 PDB size limit when
+# linking large binaries (sacode-tui, sacode-desktop) in debug mode.
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_PROFILE_TEST_DEBUG=0
 
 # 只对 Rust 相关变更做完整验证；纯文档变更跳过（提升体验）
 if git diff --cached --name-only | grep -qE '\.(rs|toml)$'; then

@@ -303,7 +303,19 @@ fn install_skill_from_git(
     let temp_dir = tempfile::tempdir()?;
     let repo_dir = temp_dir.path().join("repo");
 
-    let status = Command::new("git")
+    // Clear repository-local env vars exported by `git commit` so clone
+    // targets the temp repo instead of the outer repository.
+    let mut clone_cmd = Command::new("git");
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        clone_cmd.env_remove(var);
+    }
+    let status = clone_cmd
         .arg("clone")
         .arg("--depth")
         .arg("1")

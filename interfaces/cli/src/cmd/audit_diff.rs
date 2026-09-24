@@ -199,11 +199,19 @@ mod tests {
     use super::*;
 
     fn git(root: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .current_dir(root)
-            .args(args)
-            .status()
-            .expect("run git");
+        // Clear repository-local env vars exported by `git commit` so the
+        // command targets this temp repo instead of the outer repository.
+        let mut cmd = Command::new("git");
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ] {
+            cmd.env_remove(var);
+        }
+        let status = cmd.current_dir(root).args(args).status().expect("run git");
         assert!(status.success(), "git {}", args.join(" "));
     }
 

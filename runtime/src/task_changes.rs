@@ -210,10 +210,29 @@ fn git_bytes(workdir: &Path, args: &[&str], index: Option<&Path>) -> Result<Vec<
 mod tests {
     use super::*;
 
+    /// Build a `git` command isolated from repository-local env vars.
+    ///
+    /// Under `git commit`, Git exports GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+    /// etc. into the hook process and cargo test inherits them. Without
+    /// clearing them, `git init` would target the outer repository.
+    fn git_command() -> Command {
+        let mut cmd = Command::new("git");
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd
+    }
+
     #[test]
     fn captures_and_diffs_workspace_without_touching_real_index() {
         let temp = tempfile::tempdir().expect("temp repo");
-        assert!(Command::new("git")
+        assert!(git_command()
             .current_dir(temp.path())
             .args(["init", "--quiet"])
             .status()

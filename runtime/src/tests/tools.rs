@@ -1,6 +1,26 @@
 use super::*;
 use std::process::Command;
 
+/// Build a `git` command isolated from any repository-local env vars.
+///
+/// When tests run under `git commit`, Git exports GIT_DIR/GIT_WORK_TREE/
+/// GIT_INDEX_FILE etc. into the hook process, and cargo test inherits them.
+/// A `git init`/`config` launched with those set would target the outer
+/// repository instead of the temp dir, so strip them explicitly.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 #[test]
 fn test_tool_registry() {
     let registry = ToolRegistry::builtin();
@@ -526,10 +546,7 @@ fn test_git_commit_requires_staged_changes_without_add_all() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
+    git_command().args(["init"]).output().expect("git init");
     fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
 
     let result = crate::tools::git::commit::execute(serde_json::json!({
@@ -551,15 +568,12 @@ fn test_git_commit_add_all_creates_commit() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
-    Command::new("git")
+    git_command().args(["init"]).output().expect("git init");
+    git_command()
         .args(["config", "user.name", "SaCode Test"])
         .output()
         .expect("set git user.name");
-    Command::new("git")
+    git_command()
         .args(["config", "user.email", "test@example.com"])
         .output()
         .expect("set git user.email");
@@ -1801,15 +1815,12 @@ fn test_git_commit_returns_full_metadata() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
-    Command::new("git")
+    git_command().args(["init"]).output().expect("git init");
+    git_command()
         .args(["config", "user.name", "SaCode Test"])
         .output()
         .expect("set user.name");
-    Command::new("git")
+    git_command()
         .args(["config", "user.email", "test@example.com"])
         .output()
         .expect("set user.email");
@@ -1909,15 +1920,12 @@ fn test_git_commit_nothing_to_commit_returns_classified_error() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
-    Command::new("git")
+    git_command().args(["init"]).output().expect("git init");
+    git_command()
         .args(["config", "user.name", "SaCode Test"])
         .output()
         .expect("set user.name");
-    Command::new("git")
+    git_command()
         .args(["config", "user.email", "test@example.com"])
         .output()
         .expect("set user.email");
@@ -1948,15 +1956,12 @@ fn test_git_commit_path_not_found_returns_classified_error() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
-    Command::new("git")
+    git_command().args(["init"]).output().expect("git init");
+    git_command()
         .args(["config", "user.name", "SaCode Test"])
         .output()
         .expect("set user.name");
-    Command::new("git")
+    git_command()
         .args(["config", "user.email", "test@example.com"])
         .output()
         .expect("set user.email");
@@ -1997,21 +2002,18 @@ fn test_git_commit_dry_run_does_not_commit() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let _cwd = CurrentDirGuard::enter(temp_dir.path());
 
-    Command::new("git")
-        .args(["init"])
-        .output()
-        .expect("git init");
-    Command::new("git")
+    git_command().args(["init"]).output().expect("git init");
+    git_command()
         .args(["config", "user.name", "SaCode Test"])
         .output()
         .expect("set user.name");
-    Command::new("git")
+    git_command()
         .args(["config", "user.email", "test@example.com"])
         .output()
         .expect("set user.email");
     fs::write(temp_dir.path().join("file.txt"), "hello").expect("write file");
     // 手动 add，使 staged_files 非空
-    Command::new("git")
+    git_command()
         .args(["add", "file.txt"])
         .output()
         .expect("git add");
@@ -2059,7 +2061,7 @@ fn test_git_commit_dry_run_does_not_commit() {
     );
 
     // 验证确实没有产生 commit
-    let log_output = Command::new("git")
+    let log_output = git_command()
         .args(["log", "--oneline"])
         .output()
         .expect("git log");
