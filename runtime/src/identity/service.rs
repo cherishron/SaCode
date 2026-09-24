@@ -7,7 +7,7 @@ use sacode_kernel::model::SecretRef;
 
 use super::callback::{open_or_print_authorize_url, start_callback_server};
 use super::config::IdentityConfig;
-use super::gateway::{pick_default_model, GatewayKeyResponse, ReqwestGatewayHttp};
+use super::gateway::{pick_default_model, GatewayHttp, GatewayKeyResponse, ReqwestGatewayHttp};
 use super::oidc::{split_auth_code, ReqwestOidcHttp, TokenResponse};
 use super::pkce::{build_authorize_url, generate_browser_params, DEFAULT_SCOPE};
 use super::secret_store::{resolve_secret_ref, OsKeyringSecretStore, SecretStore};
@@ -798,6 +798,76 @@ pub fn select_secret_store(
             Box::new(FileSecretStore::new(user_root))
         }
     }
+}
+
+/// Store an API key in the secret store and return its `secret_ref`.
+/// Product line: never write plaintext keys into `provider.json`.
+pub fn store_api_key_secret(
+    locator: &str,
+    api_key: &str,
+    insecure_file_secrets: bool,
+    user_root: Option<&Path>,
+) -> Result<SecretRef> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        anyhow::bail!("api key is empty");
+    }
+    let store = select_secret_store(insecure_file_secrets, user_root);
+    store.set(locator, key)?;
+    let mut secret_ref = SecretRef::os_keyring(locator);
+    secret_ref.masked = SecretRef::mask_secret(key);
+    Ok(secret_ref)
+}
+
+/// Register a personal upstream into gateway data (product path: models live on the gateway).
+pub async fn register_model_connection(
+    config: &IdentityConfig,
+    user_root: Option<&Path>,
+    secret_store: &dyn SecretStore,
+    name: &str,
+    base_url: &str,
+    upstream_api_key: &str,
+    models: &[(String, String)],
+) -> Result<super::gateway::ModelConnectionResponse> {
+    let mut config = config.clone();
+    config.apply_env_overrides();
+    config.fill_local_defaults_if_empty();
+    config.normalize();
+    let session = super::session::IdentitySession::load(user_root)?.ok_or_else(|| {
+        anyhow!("not logged in; /login first so the connection can be written to the gateway")
+    })?;
+    let key_ref = session
+        .gateway_key_ref
+        .clone()
+        .ok_or_else(|| anyhow!("session missing gateway_key_ref; run /login"))?;
+    let gateway_api_key = resolve_secret_ref(&key_ref, Some(secret_store))?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| anyhow!("gateway api_key not found; re-login"))?;
+
+    let body = super::gateway::ModelConnectionRequest {
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        upstream_api_key: upstream_api_key.to_string(),
+        r#type: "openai".to_string(),
+        models: models
+            .iter()
+            .map(|(c, u)| super::gateway::ModelConnectionItem {
+                client_model: c.clone(),
+                upstream_model: if u.trim().is_empty() {
+                    c.clone()
+                } else {
+                    u.clone()
+                },
+            })
+            .collect(),
+    };
+    super::gateway::ReqwestGatewayHttp::new()
+        .register_model_connection(
+            &config.gateway_model_connections_url(),
+            &gateway_api_key,
+            &body,
+        )
+        .await
 }
 
 /// File-backed store — only for `--insecure-file-secrets` / constrained envs.

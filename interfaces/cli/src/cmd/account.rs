@@ -405,7 +405,8 @@ pub fn identity_provider_present(workdir: &std::path::Path) -> bool {
         .flatten()
         .map(|c| {
             c.providers
-                .contains_key(sacode_runtime::identity::DEFAULT_PROVIDER_NAME)
+                .keys()
+                .any(|name| sacode_runtime::identity::is_identity_provider_name(name))
                 || c.providers.values().any(|p| p.secret_ref.is_some())
         })
         .unwrap_or(false)

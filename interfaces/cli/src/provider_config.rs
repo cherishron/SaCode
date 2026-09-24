@@ -131,21 +131,32 @@ impl ProviderConfigStore {
             fs::create_dir_all(parent)?;
         }
 
-        let normalized = ProviderConfig {
+        let name = name.trim();
+        let mut normalized = ProviderConfig {
             base_url: normalize_base_url(&config.base_url),
-            api_key: config.api_key.clone(),
+            api_key: String::new(),
             model: config.model.clone(),
             auth_header: config.auth_header.clone(),
             auth_scheme: config.auth_scheme.clone(),
             secret_ref: config.secret_ref.clone(),
         };
 
+        // Product line: api_key never lands in provider.json — keyring/file secret store only.
+        if !config.api_key.trim().is_empty() {
+            let locator = sacode_runtime::identity::provider_api_key_locator(name);
+            let secret_ref = sacode_runtime::identity::store_api_key_secret(
+                &locator,
+                config.api_key.trim(),
+                false,
+                None,
+            )?;
+            normalized.secret_ref = Some(secret_ref);
+        }
+
         let mut catalog = self.load_catalog()?.unwrap_or_default();
-        catalog
-            .providers
-            .insert(name.trim().to_string(), normalized);
+        catalog.providers.insert(name.to_string(), normalized);
         if set_current || catalog.current.is_empty() {
-            catalog.current = name.trim().to_string();
+            catalog.current = name.to_string();
         }
         normalize_catalog(&mut catalog);
 
@@ -435,18 +446,18 @@ fn default_sacode_config() -> SaCodeConfig {
 }
 
 impl ProviderConfig {
-    /// Resolve api_key for runtime use: plaintext first, else secret_ref via secret store.
+    /// Resolve api_key for runtime use: prefer secret_ref (product line), legacy plaintext last.
     pub fn resolved_api_key(&self) -> String {
-        if !self.api_key.is_empty() {
-            return self.api_key.clone();
+        if let Some(r#ref) = self.secret_ref.as_ref() {
+            if let Ok(Some(v)) =
+                sacode_runtime::identity::secret_store::resolve_secret_ref(r#ref, None)
+            {
+                if !v.is_empty() {
+                    return v;
+                }
+            }
         }
-        match self.secret_ref.as_ref() {
-            Some(r#ref) => sacode_runtime::identity::secret_store::resolve_secret_ref(r#ref, None)
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            None => String::new(),
-        }
+        self.api_key.clone()
     }
 
     pub fn to_model_provider(&self) -> ModelProvider {
@@ -518,6 +529,10 @@ fn normalize_catalog(catalog: &mut ProviderCatalog) {
             continue;
         }
         config.base_url = normalize_base_url(&config.base_url);
+        // Migrate legacy plaintext keys out of the catalog shape on rewrite.
+        if config.secret_ref.is_some() {
+            config.api_key.clear();
+        }
         normalized.insert(trimmed_name.to_string(), config);
     }
     catalog.providers = normalized;
@@ -538,6 +553,35 @@ mod tests {
     };
 
     use super::{ProviderConfig, ProviderConfigStore};
+    use serial_test::serial;
+
+    struct EnvGuard {
+        values: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn set(values: &[(&'static str, &std::ffi::OsStr)]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect();
+            for (key, value) in values {
+                std::env::set_var(key, value);
+            }
+            Self { values: previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.values.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
     use sacode_kernel::model::ProviderKind;
     use sacode_kernel::model::{detect_provider_kind, normalize_base_url, OLLAMA_DEFAULT_BASE_URL};
 
@@ -610,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn provider_store_saves_and_loads_normalized_config() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -617,6 +662,13 @@ mod tests {
             .as_nanos();
         let workdir = std::env::temp_dir().join(format!("sacode-provider-config-{unique}"));
         fs::create_dir_all(&workdir).expect("create temp workdir");
+        let _env = EnvGuard::set(&[
+            ("SACODE_HOME", workdir.as_os_str()),
+            (
+                "SACODE_IDENTITY_SECRET_BACKEND",
+                std::ffi::OsStr::new("file"),
+            ),
+        ]);
 
         let store = ProviderConfigStore::new(&workdir);
         let config = ProviderConfig {
@@ -635,11 +687,17 @@ mod tests {
             .expect("provider config should exist");
         assert_eq!(loaded.name, "default");
         assert_eq!(loaded.config.base_url, "https://example.com/v1");
-        assert_eq!(loaded.config.api_key, "test-key");
         assert_eq!(loaded.config.model, "gpt-test");
+        // Product line: plaintext never persists in provider.json.
+        assert!(loaded.config.api_key.is_empty());
+        assert!(loaded.config.secret_ref.is_some());
+        assert_eq!(loaded.config.resolved_api_key(), "test-key");
+        let raw = fs::read_to_string(workdir.join(".sacode/provider.json")).expect("read raw");
+        assert!(!raw.contains("test-key"), "provider.json must not hold key");
     }
 
     #[test]
+    #[serial]
     fn provider_store_supports_multiple_providers() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -647,6 +705,13 @@ mod tests {
             .as_nanos();
         let workdir = std::env::temp_dir().join(format!("sacode-provider-catalog-{unique}"));
         fs::create_dir_all(&workdir).expect("create temp workdir");
+        let _env = EnvGuard::set(&[
+            ("SACODE_HOME", workdir.as_os_str()),
+            (
+                "SACODE_IDENTITY_SECRET_BACKEND",
+                std::ffi::OsStr::new("file"),
+            ),
+        ]);
 
         let store = ProviderConfigStore::new(&workdir);
         store
@@ -688,9 +753,12 @@ mod tests {
             .expect("current provider should exist");
         assert_eq!(loaded.name, "local");
         assert_eq!(loaded.config.model, "glm-4.7-flash");
+        assert!(loaded.config.api_key.is_empty());
+        assert_eq!(loaded.config.resolved_api_key(), "local-key");
     }
 
     #[test]
+    #[serial]
     fn provider_store_can_rename_and_remove_non_current_provider() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -698,6 +766,13 @@ mod tests {
             .as_nanos();
         let workdir = std::env::temp_dir().join(format!("sacode-provider-rename-remove-{unique}"));
         fs::create_dir_all(&workdir).expect("create temp workdir");
+        let _env = EnvGuard::set(&[
+            ("SACODE_HOME", workdir.as_os_str()),
+            (
+                "SACODE_IDENTITY_SECRET_BACKEND",
+                std::ffi::OsStr::new("file"),
+            ),
+        ]);
 
         let store = ProviderConfigStore::new(&workdir);
         store

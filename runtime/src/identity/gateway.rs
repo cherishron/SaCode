@@ -4,6 +4,37 @@ use serde::{Deserialize, Serialize};
 use super::{GATEWAY_KEY_EXCHANGE_PATH, GATEWAY_MODELS_PATH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConnectionRequest {
+    pub name: String,
+    pub base_url: String,
+    pub upstream_api_key: String,
+    #[serde(default)]
+    pub r#type: String,
+    pub models: Vec<ModelConnectionItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConnectionItem {
+    pub client_model: String,
+    #[serde(default)]
+    pub upstream_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConnectionResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub provider_id: u64,
+    #[serde(default)]
+    pub channel_id: u64,
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub client_models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayKeyResponse {
     pub api_key: String,
     /// gateway-rs exchange: true=新签发，false=幂等回发存量 key
@@ -41,6 +72,14 @@ pub trait GatewayHttp: Send + Sync {
         models_url: &str,
         api_key: &str,
     ) -> impl std::future::Future<Output = Result<Vec<String>>> + Send;
+
+    /// Register a personal upstream into gateway data (BYOK model-connection).
+    fn register_model_connection(
+        &self,
+        connections_url: &str,
+        gateway_api_key: &str,
+        body: &ModelConnectionRequest,
+    ) -> impl std::future::Future<Output = Result<ModelConnectionResponse>> + Send;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,6 +148,29 @@ impl GatewayHttp for ReqwestGatewayHttp {
             .map(|m| m.id)
             .filter(|id| !id.trim().is_empty())
             .collect())
+    }
+
+    async fn register_model_connection(
+        &self,
+        connections_url: &str,
+        gateway_api_key: &str,
+        body: &ModelConnectionRequest,
+    ) -> Result<ModelConnectionResponse> {
+        let resp = self
+            .client
+            .post(connections_url)
+            .bearer_auth(gateway_api_key)
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("POST {connections_url}"))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let snippet: String = text.chars().take(200).collect();
+            anyhow::bail!("gateway model-connection failed: HTTP {status}: {snippet}");
+        }
+        serde_json::from_str(&text).context("parse model-connection response")
     }
 }
 

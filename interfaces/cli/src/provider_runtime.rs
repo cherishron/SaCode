@@ -44,6 +44,10 @@ pub fn resolve_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
 }
 
 pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
+    // Product path first: sa-idp → SaAiApiGateway models.
+    if let Some(named) = crate::product_path::resolve_gateway_named_provider(workdir) {
+        return Some(named);
+    }
     let store = SaCodeConfigStore::new(workdir);
     let config = store.load_effective().ok()?;
     let (provider_name, model_name) = config.resolve_model(&config.model)?;
@@ -53,7 +57,7 @@ pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProvider
     }
     let spec = config.provider.get(&provider_name)?;
     // Prefer secret_ref persisted on provider.json identity entries.
-    let secret_ref = ProviderConfigStore::new(&PathBuf::from("."))
+    let secret_ref = ProviderConfigStore::new(workdir)
         .get(&provider_name)
         .ok()
         .flatten()
@@ -96,6 +100,15 @@ pub fn record_model_health(
 }
 
 pub fn resolve_provider(workdir: &Path) -> ModelProvider {
+    // Product line: gateway models via sa-idp identity first.
+    if let Some(provider) = crate::product_path::product_model_provider(workdir) {
+        tracing::debug!(
+            "resolve_provider: product path (sa-idp → SaAiApiGateway) model={}",
+            provider.model
+        );
+        return provider;
+    }
+
     let config_store = SaCodeConfigStore::new(workdir);
     if let Ok(Some(config)) = config_store.load() {
         if !config.model.trim().is_empty() {
@@ -176,7 +189,31 @@ pub fn resolve_provider(workdir: &Path) -> ModelProvider {
 }
 
 pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelProvider)> {
-    let mut candidates = resolve_config_model_candidates(workdir);
+    // Gateway product models first so failover stays on SaAiApiGateway when possible.
+    let mut candidates = Vec::new();
+    for (provider_name, model_name) in crate::product_path::product_model_entries(workdir) {
+        if let Some(named) = crate::product_path::resolve_product_named_provider(workdir) {
+            if named.name == provider_name {
+                let mut config = named.config.clone();
+                config.model = model_name.clone();
+                if config.api_key.is_empty() {
+                    config.api_key = config.resolved_api_key();
+                }
+                if !config.api_key.is_empty() {
+                    candidates.push((provider_name, model_name, config.to_model_provider()));
+                }
+            }
+        }
+    }
+
+    for entry in resolve_config_model_candidates(workdir) {
+        if !candidates
+            .iter()
+            .any(|(p, m, _)| p == &entry.0 && m == &entry.1)
+        {
+            candidates.push(entry);
+        }
+    }
 
     if candidates.is_empty() {
         if let Some(named) = resolve_named_provider(workdir) {
@@ -199,7 +236,7 @@ pub fn resolve_model_candidates(workdir: &Path) -> Vec<(String, String, ModelPro
 }
 
 pub fn has_authorized_provider(workdir: &Path) -> bool {
-    resolve_authorized_named_provider(workdir).is_some()
+    crate::product_path::product_ready(workdir)
 }
 
 pub fn build_route_plan(

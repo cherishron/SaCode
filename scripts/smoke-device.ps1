@@ -37,7 +37,9 @@ if (-not $cookie) { throw 'no idp_session cookie after password login' }
 Write-Host "user $uname logged in (idp_session present)"
 
 # --- device authorize ---
-$dev = Invoke-RestMethod -Method Post "$disc.device_authorization_endpoint" -ContentType 'application/x-www-form-urlencoded' -Body "client_id=sacode&scope=openid%20profile%20email%20phone%20offline_access"
+$devUrl = [string]$disc.device_authorization_endpoint
+if (-not $devUrl) { $devUrl = "$base/oauth/device_authorization" }
+$dev = Invoke-RestMethod -Method Post $devUrl -ContentType 'application/x-www-form-urlencoded' -Body "client_id=sacode&scope=openid%20profile%20email%20phone%20offline_access"
 Write-Host "device: user_code=$($dev.user_code) verification_uri=$($dev.verification_uri) expires_in=$($dev.expires_in) interval=$($dev.interval)"
 if (-not $dev.device_code -or -not $dev.user_code) { throw 'device_authorization missing device_code/user_code' }
 

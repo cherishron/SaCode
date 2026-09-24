@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::{DEFAULT_CLIENT_ID, DEFAULT_PROVIDER_NAME};
+use super::{
+    DEFAULT_CLIENT_ID, DEFAULT_GATEWAY_BASE_URL, DEFAULT_IDP_BASE_URL, DEFAULT_PROVIDER_NAME,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityConfig {
@@ -95,6 +97,12 @@ impl IdentityConfig {
                 self.client_id = v;
             }
         }
+        if let Ok(v) = std::env::var("SACODE_IDENTITY_PROVIDER_NAME") {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                self.provider_name = v;
+            }
+        }
     }
 
     pub fn with_overrides(
@@ -141,13 +149,13 @@ impl IdentityConfig {
         }
     }
 
-    /// Fill empty identity endpoints with the local saai development defaults.
+    /// Fill empty IdP/gateway URLs with local saai defaults (dev smoke / TUI first-run).
     pub fn fill_local_defaults_if_empty(&mut self) {
         if self.idp_base_url.trim().is_empty() {
-            self.idp_base_url = "http://127.0.0.1:8080".to_string();
+            self.idp_base_url = DEFAULT_IDP_BASE_URL.to_string();
         }
         if self.gateway_base_url.trim().is_empty() {
-            self.gateway_base_url = "http://127.0.0.1:8090".to_string();
+            self.gateway_base_url = DEFAULT_GATEWAY_BASE_URL.to_string();
         }
     }
 
@@ -191,6 +199,14 @@ impl IdentityConfig {
 
     pub fn gateway_models_url(&self) -> String {
         format!("{}{}", self.gateway_base_url, super::GATEWAY_MODELS_PATH)
+    }
+
+    pub fn gateway_model_connections_url(&self) -> String {
+        format!(
+            "{}{}",
+            self.gateway_base_url,
+            super::GATEWAY_MODEL_CONNECTIONS_PATH
+        )
     }
 
     pub fn provider_base_url(&self) -> String {
@@ -249,15 +265,18 @@ mod tests {
         std::env::set_var("SACODE_IDP_BASE_URL", "https://idp.test");
         std::env::set_var("SACODE_GATEWAY_BASE_URL", "https://gw.test/");
         std::env::set_var("SACODE_IDENTITY_CLIENT_ID", "sacode-cli");
+        std::env::set_var("SACODE_IDENTITY_PROVIDER_NAME", "sa-gateway");
         let mut cfg = IdentityConfig::default();
         cfg.apply_env_overrides();
         cfg.normalize();
         assert_eq!(cfg.idp_base_url, "https://idp.test");
         assert_eq!(cfg.gateway_base_url, "https://gw.test");
         assert_eq!(cfg.client_id, "sacode-cli");
+        assert_eq!(cfg.provider_name, "sa-gateway");
         std::env::remove_var("SACODE_IDP_BASE_URL");
         std::env::remove_var("SACODE_GATEWAY_BASE_URL");
         std::env::remove_var("SACODE_IDENTITY_CLIENT_ID");
+        std::env::remove_var("SACODE_IDENTITY_PROVIDER_NAME");
     }
 
     #[test]
@@ -273,5 +292,22 @@ mod tests {
             "https://gw.example.com/api/auth/exchange"
         );
         assert_eq!(cfg.provider_base_url(), "https://gw.example.com/v1");
+    }
+
+    #[test]
+    fn fill_local_defaults_only_when_empty() {
+        let mut cfg = IdentityConfig::default();
+        cfg.fill_local_defaults_if_empty();
+        assert_eq!(cfg.idp_base_url, DEFAULT_IDP_BASE_URL);
+        assert_eq!(cfg.gateway_base_url, DEFAULT_GATEWAY_BASE_URL);
+
+        let mut cfg = IdentityConfig {
+            idp_base_url: "https://idp.custom".into(),
+            gateway_base_url: String::new(),
+            ..Default::default()
+        };
+        cfg.fill_local_defaults_if_empty();
+        assert_eq!(cfg.idp_base_url, "https://idp.custom");
+        assert_eq!(cfg.gateway_base_url, DEFAULT_GATEWAY_BASE_URL);
     }
 }

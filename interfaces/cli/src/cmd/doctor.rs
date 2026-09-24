@@ -96,7 +96,7 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     if let Ok(status) = sacode_runtime::identity::status_summary(None) {
         if status.logged_in {
             lines.push(format!(
-                "- identity: logged_in | provider={} | models={} | gateway={}",
+                "- identity: logged_in | provider={} | models={} | gateway={}（模型列表 GET /v1/models）",
                 status.provider_name,
                 status.models_count,
                 if status.gateway_base_url.is_empty() {
@@ -136,7 +136,7 @@ pub async fn render_doctor(workdir: &Path) -> Result<String> {
     }
 
     if provider.is_none() {
-        lines.push("- 先运行 /login 或 sacode init 配置 Provider。".to_string());
+        lines.push("- 先运行 /login（sa-idp）或 sacode account login 配置身份。".to_string());
         lines.push(
             "- 或使用 saai 统一身份：sacode account login（sa-idp OIDC + 网关）。".to_string(),
         );

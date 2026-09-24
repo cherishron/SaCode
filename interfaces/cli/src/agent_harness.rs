@@ -31,7 +31,7 @@ pub fn connect_provider(
 ) -> Result<ConnectResult> {
     let mut config = ProviderConfig {
         base_url: base_url.to_string(),
-        api_key,
+        api_key: api_key.clone(),
         model: fallback_models(name)
             .into_iter()
             .next()
@@ -55,14 +55,24 @@ pub fn connect_provider(
     } else {
         validation.available_models.clone()
     };
+
+    // Product line: api_key goes to secret store only; provider.json keeps secret_ref.
+    let secret_ref = if validation.status == ProviderValidationStatus::Available {
+        let locator = sacode_runtime::identity::provider_api_key_locator(name);
+        let secret_ref =
+            sacode_runtime::identity::store_api_key_secret(&locator, &api_key, false, None)?;
+        config.api_key = String::new();
+        config.secret_ref = Some(secret_ref.clone());
+        Some(secret_ref)
+    } else {
+        config.api_key = String::new();
+        None
+    };
+
     let mut spec = sacode_kernel::model::ProviderSpec {
         name: name.to_string(),
         base_url: base_url.to_string(),
-        api_key: if validation.status == ProviderValidationStatus::Available {
-            config.api_key.clone()
-        } else {
-            String::new()
-        },
+        api_key: String::new(),
         models: std::collections::BTreeMap::new(),
         auth_header: None,
         auth_scheme: None,
@@ -91,7 +101,7 @@ pub fn connect_provider(
             } else {
                 ProviderProfileType::Custom
             },
-            credential_ref: SecretRef::legacy_inline(&config.api_key),
+            credential_ref: secret_ref.clone(),
             validation: validation.clone(),
             authorization: if validation.status == ProviderValidationStatus::Available {
                 ProviderAuthorization {
@@ -120,6 +130,11 @@ pub fn connect_provider(
     }
     provider_store.save_named(name, &config, true)?;
 
+    // Product line: personal imports are written into gateway data (BYOK model-connection).
+    if let Err(err) = try_register_to_gateway(name, base_url, &api_key, &final_models) {
+        tracing::warn!(error = %err, "model-connection not written to gateway (local only)");
+    }
+
     Ok(ConnectResult {
         current_provider: NamedProviderConfig {
             name: name.to_string(),
@@ -129,7 +144,37 @@ pub fn connect_provider(
     })
 }
 
-/// Mark an sa-idp identity provider ready after gateway exchange.
+fn try_register_to_gateway(
+    name: &str,
+    base_url: &str,
+    upstream_api_key: &str,
+    models: &[String],
+) -> anyhow::Result<()> {
+    use sacode_runtime::identity::{
+        register_model_connection, select_secret_store, IdentityConfig, IdentitySession,
+    };
+    if IdentitySession::load(None).ok().flatten().is_none() {
+        anyhow::bail!("no sa-idp session");
+    }
+    let config = IdentityConfig::load(None).unwrap_or_default();
+    let store = select_secret_store(false, None);
+    let pairs: Vec<(String, String)> = models.iter().map(|m| (m.clone(), m.clone())).collect();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(register_model_connection(
+        &config,
+        None,
+        store.as_ref(),
+        name,
+        base_url,
+        upstream_api_key,
+        &pairs,
+    ))?;
+    Ok(())
+}
+
+/// Mark an sa-idp identity provider ready after gateway exchange (no plaintext key).
 pub fn mark_identity_provider_ready(
     sacode_store: &SaCodeConfigStore,
     provider_store: &ProviderConfigStore,
@@ -145,12 +190,12 @@ pub fn mark_identity_provider_ready(
         model.trim().to_string()
     };
     let mut final_models = models.to_vec();
-    if !final_models.iter().any(|candidate| candidate == &model) {
+    if !final_models.iter().any(|m| m == &model) {
         final_models.insert(0, model.clone());
     }
 
     let validation = ProviderValidationSnapshot {
-        status: if final_models.len() > 1 || models.iter().any(|candidate| candidate == &model) {
+        status: if final_models.len() > 1 || models.iter().any(|m| m == &model) {
             ProviderValidationStatus::Available
         } else {
             ProviderValidationStatus::Unverified
@@ -161,6 +206,7 @@ pub fn mark_identity_provider_ready(
         available_models: final_models.clone(),
         ..Default::default()
     };
+
     let config = ProviderConfig {
         base_url: base_url.to_string(),
         api_key: String::new(),
@@ -169,6 +215,7 @@ pub fn mark_identity_provider_ready(
         auth_scheme: Some("Bearer".to_string()),
         secret_ref: Some(secret_ref.clone()),
     };
+
     let mut spec = sacode_kernel::model::ProviderSpec {
         name: name.to_string(),
         base_url: base_url.to_string(),
@@ -177,11 +224,11 @@ pub fn mark_identity_provider_ready(
         auth_header: Some("Authorization".to_string()),
         auth_scheme: Some("Bearer".to_string()),
     };
-    for candidate in &final_models {
+    for m in &final_models {
         spec.models
-            .entry(candidate.clone())
+            .entry(m.clone())
             .or_insert_with(|| sacode_kernel::model::ModelRule {
-                name: candidate.clone(),
+                name: m.clone(),
                 ..Default::default()
             });
     }
@@ -198,12 +245,12 @@ pub fn mark_identity_provider_ready(
                 allow_task_content: true,
                 allow_auto_failover: false,
                 source: ProviderAuthorizationSource::Explicit,
-                models: final_models,
+                models: final_models.clone(),
                 updated_at: validation.checked_at.clone(),
             },
         },
     );
-    sacode_config.model = format!("{name}/{model}");
+    sacode_config.model = format!("{}/{}", name, model);
     sacode_store.save(&sacode_config)?;
     provider_store.save_named(name, &config, true)?;
 
@@ -372,6 +419,8 @@ mod tests {
         let sandbox = unique_workdir(tag);
         std::env::set_var("USERPROFILE", &sandbox);
         std::env::set_var("HOME", &sandbox);
+        std::env::set_var("SACODE_HOME", &sandbox);
+        std::env::set_var("SACODE_IDENTITY_SECRET_BACKEND", "file");
         sandbox
     }
 
@@ -515,6 +564,23 @@ mod tests {
         assert_eq!(state["authorization"]["allow_auto_failover"], false);
         assert_eq!(state["authorization"]["models"][0], "mockok");
         assert_eq!(config["model"], "mockok/mockok");
+
+        // Product line: provider.json must never hold plaintext api_key.
+        if let Ok(provider_raw) = fs::read_to_string(workdir.join(".sacode/provider.json")) {
+            assert!(
+                !provider_raw.contains(secret),
+                "provider.json must not contain full key"
+            );
+            assert!(
+                provider_raw.contains("secret_ref"),
+                "provider.json must keep secret_ref"
+            );
+        }
+        assert!(
+            result.current_provider.config.api_key.is_empty(),
+            "returned config must not carry plaintext key"
+        );
+        assert!(result.current_provider.config.secret_ref.is_some());
 
         let switched = switch_model(&provider_store, &sacode_store, "mockok", "mockok");
         assert!(switched.is_ok(), "authorized model must be switchable");

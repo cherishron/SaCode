@@ -5,7 +5,7 @@
 > 更新时间：2026-09-20
 > 适用范围：sa-idp（身份提供方）/ SaAiApiGateway（资源服务器）/ SaCode CLI·Desktop / SaApp / 微信小程序
 >
-> **真源**：产品线设计以 `E:\Project\sa\saai\docs\unified-identity.md` 与 sa-idp 为准。
+> **真源**：产品线设计以 `E:\Project\sa\saai\docs\identity\unified-identity.md` 与 sa-idp 为准。
 > **I3 实现真源**：[docs/compose/spec/sacode-identity-i3.md](../compose/spec/sacode-identity-i3.md)
 >
 > v1.x 曾描述「网关内嵌身份 + `POST /api/auth/login/*` 直接返回 api_key」。**该路径已废弃**，身份统一由 **sa-idp** 承载，SaCode 作为 OIDC 公开客户端接入。
@@ -57,7 +57,7 @@ sacode account login
 
 ## 4. 验收（产品线 P0 · 与 SaCode 相关）
 
-1. 同一账号在多端登录归一到同一 `users.id`（依赖 sa-idp）。
+1. 同一账号在多端登录归一到同一 `idp_users.id`（依赖 sa-idp）。
 2. **SaCode 登录后无需手动配置 Provider 即可用网关模型；api_key 在 keyring，provider.json 无明文。**
 3. `logout-all` 后 refresh 失效（session_epoch，依赖 sa-idp）。
 4. 网关现有 `/api/admin/*` 与 `/v1/*` 行为零回归。

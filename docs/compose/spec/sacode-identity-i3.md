@@ -47,7 +47,7 @@ SaCode 目前只有手动 Provider 配置（`/login` 写入 `base_url` + 明文 
 
 | 项 | 结论 |
 |---|---|
-| 身份真源 | `E:\Project\sa\saai\docs\unified-identity.md` + `sa-idp`（独立 IdP） |
+| 身份真源 | `E:\Project\sa\saai\docs\identity\unified-identity.md` + `sa-idp`（独立 IdP） |
 | 废弃 | SaCode 旧 PRD 中「网关 `POST /api/auth/login/*` 直接返回 api_key」路径 |
 | SaCode 角色 | OAuth2/OIDC **公开客户端**（PKCE，`token_endpoint_auth_method=none`） |
 | 网关角色 | 资源服务器：签发/绑定数据面 api_key，提供 `/v1/*` |

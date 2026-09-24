@@ -356,6 +356,7 @@ pub async fn poll_device_token(
     bail!("device code expired before authorization completed")
 }
 
+/// Device authorization prompt (RFC 8628) shown while waiting for phone confirm.
 #[derive(Debug, Clone)]
 pub struct DeviceAuthPrompt {
     pub verification_uri: String,
@@ -391,7 +392,7 @@ pub async fn login_device_flow(
     .await
 }
 
-/// Device login with a callback so interactive clients can show the URL and code.
+/// Device login with a side-channel prompt (TUI can surface the URL/code without stdout).
 pub async fn login_device_flow_with_prompt(
     config: &IdentityConfig,
     opts: LoginOptions,
@@ -404,12 +405,13 @@ pub async fn login_device_flow_with_prompt(
         bail!("identity idp_base_url is empty; set SACODE_IDP_BASE_URL or --idp");
     }
     let device = request_device_code(&config.idp_base_url, &config.client_id).await?;
-    on_prompt(DeviceAuthPrompt {
+    let prompt = DeviceAuthPrompt {
         verification_uri: device.verification_uri.clone(),
         verification_uri_complete: device.verification_uri_complete.clone(),
         user_code: device.user_code.clone(),
         expires_in: device.expires_in,
-    });
+    };
+    on_prompt(prompt);
     let token = poll_device_token(
         &config.idp_base_url,
         &config.client_id,
@@ -559,6 +561,27 @@ mod tests {
         assert!(text.contains("--paste-callback"));
         assert!(text.contains("set-api-key"));
         assert!(text.contains("oauth/authorize"));
+    }
+
+    #[test]
+    fn device_auth_prompt_prefers_complete_uri() {
+        let prompt = DeviceAuthPrompt {
+            verification_uri: "http://127.0.0.1:8080/device".into(),
+            verification_uri_complete: Some("http://127.0.0.1:8080/device?code=ABCD".into()),
+            user_code: "ABCD-1234".into(),
+            expires_in: 300,
+        };
+        assert_eq!(
+            prompt.primary_uri(),
+            "http://127.0.0.1:8080/device?code=ABCD"
+        );
+        let bare = DeviceAuthPrompt {
+            verification_uri: "http://127.0.0.1:8080/device".into(),
+            verification_uri_complete: None,
+            user_code: "ABCD-1234".into(),
+            expires_in: 300,
+        };
+        assert_eq!(bare.primary_uri(), "http://127.0.0.1:8080/device");
     }
 
     #[test]
