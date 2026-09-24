@@ -101,6 +101,14 @@ impl StoreDb {
 
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
+            CREATE TABLE IF NOT EXISTS task_changes (
+                task_id TEXT PRIMARY KEY,
+                baseline_tree TEXT NOT NULL,
+                final_tree TEXT,
+                changes_json TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
@@ -268,6 +276,100 @@ impl TaskStore for StoreDb {
 }
 
 impl StoreDb {
+    pub fn save_task_change_baseline(&self, task_id: &str, baseline_tree: &str) -> Result<()> {
+        let connection = self.acquire_lock("save_task_change_baseline")?;
+        connection.execute(
+            "
+            INSERT INTO task_changes(task_id, baseline_tree, final_tree, changes_json, updated_at)
+            VALUES (?1, ?2, NULL, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(task_id) DO UPDATE SET
+                baseline_tree = excluded.baseline_tree,
+                final_tree = NULL,
+                changes_json = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            ",
+            params![task_id, baseline_tree],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_task_changes(
+        &self,
+        task_id: &str,
+        snapshot: &crate::task_changes::TaskChangesSnapshot,
+    ) -> Result<()> {
+        let changes_json =
+            serde_json::to_string(&snapshot.changes).context("failed to serialize task changes")?;
+        let connection = self.acquire_lock("save_task_changes")?;
+        connection.execute(
+            "
+            INSERT INTO task_changes(task_id, baseline_tree, final_tree, changes_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(task_id) DO UPDATE SET
+                baseline_tree = excluded.baseline_tree,
+                final_tree = excluded.final_tree,
+                changes_json = excluded.changes_json,
+                updated_at = CURRENT_TIMESTAMP
+            ",
+            params![
+                task_id,
+                snapshot.baseline_tree,
+                snapshot.final_tree,
+                changes_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_task_changes(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<crate::task_changes::TaskChangesSnapshot>> {
+        let connection = self.acquire_lock("load_task_changes")?;
+        let row = connection
+            .query_row(
+                "SELECT baseline_tree, final_tree, changes_json FROM task_changes WHERE task_id = ?1",
+                params![task_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((baseline_tree, final_tree, changes_json)) = row else {
+            return Ok(None);
+        };
+        let Some(final_tree) = final_tree else {
+            return Ok(None);
+        };
+        let changes = match changes_json {
+            Some(raw) => {
+                serde_json::from_str(&raw).context("failed to deserialize task changes")?
+            }
+            None => Vec::new(),
+        };
+        Ok(Some(crate::task_changes::TaskChangesSnapshot {
+            baseline_tree,
+            final_tree,
+            changes,
+        }))
+    }
+
+    pub fn load_task_change_baseline(&self, task_id: &str) -> Result<Option<String>> {
+        let connection = self.acquire_lock("load_task_change_baseline")?;
+        connection
+            .query_row(
+                "SELECT baseline_tree FROM task_changes WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub async fn load_result(&self, task_id: &str) -> Result<Option<TaskResult>> {
         let connection = self.acquire_lock("load_result")?;
         let raw = connection

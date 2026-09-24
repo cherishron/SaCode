@@ -13,8 +13,8 @@ use crate::{
     queue::TaskQueue, retry::RetryHandler, tools::ToolRegistry, StoreDb, TaskSnapshotProjection,
 };
 use sacode_kernel::{
-    BackendTaskMeta, EntrySource, TaskQueueStatus, TaskResult, TaskRun, TaskSnapshot,
-    TASK_PROTOCOL_VERSION,
+    AgentBackendId, BackendTaskMeta, EntrySource, TaskQueueStatus, TaskResult, TaskRun,
+    TaskSnapshot, TASK_PROTOCOL_VERSION,
 };
 
 use super::{
@@ -165,6 +165,7 @@ pub struct TaskStatus {
     pub task_id: String,
     pub prompt: String,
     pub mode: String,
+    pub created_at: String,
     pub status: String,
     pub queue_status: String,
     pub priority: String,
@@ -190,6 +191,7 @@ impl TaskStatus {
         mode: String,
         priority: String,
         max_attempts: u32,
+        created_at: String,
     ) -> Self {
         let task_run = task_run_for_queue_status(
             Some(task_id.clone()),
@@ -203,6 +205,7 @@ impl TaskStatus {
             task_id,
             prompt,
             mode,
+            created_at,
             status: String::new(),
             queue_status: String::new(),
             priority,
@@ -254,6 +257,7 @@ impl TaskStatus {
             task_id: task.id.clone(),
             prompt: task.task.prompt.clone(),
             mode: task.task.mode.to_string(),
+            created_at: task.created_at.to_rfc3339(),
             status: queue_status.to_string(),
             queue_status: queue_status.to_string(),
             priority: task.priority.to_string(),
@@ -266,7 +270,7 @@ impl TaskStatus {
             error: None,
             output: None,
             task_run: None,
-            backend: None,
+            backend: Some(restored_backend_meta(task)),
         }
     }
 
@@ -278,6 +282,7 @@ impl TaskStatus {
             task_id: result.task_id.clone(),
             prompt: task.task.prompt.clone(),
             mode: task.task.mode.to_string(),
+            created_at: task.created_at.to_rfc3339(),
             status: result.status.to_string(),
             queue_status: result.status.to_string(),
             priority: task.priority.to_string(),
@@ -290,8 +295,16 @@ impl TaskStatus {
             error: result.error.clone(),
             output: result.output.clone(),
             task_run: None,
-            backend: None,
+            backend: Some(restored_backend_meta(task)),
         }
+    }
+}
+
+fn restored_backend_meta(task: &sacode_kernel::ScheduledTask) -> BackendTaskMeta {
+    BackendTaskMeta {
+        backend_id: AgentBackendId::new(task.effective_backend_id()),
+        backend_kind: None,
+        agent_session_id: None,
     }
 }
 
@@ -306,6 +319,16 @@ pub struct StreamEvent {
     pub seq: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditRequest {
+    #[serde(default)]
+    pub use_ai: Option<bool>,
+    #[serde(default)]
+    pub max_files: Option<usize>,
+    #[serde(default)]
+    pub model_provider: Option<sacode_kernel::model::ModelProvider>,
+}
+
 pub struct DaemonState {
     pub event_bus: broadcast::Sender<StreamEvent>,
     /// 事件历史缓冲：供 SSE 客户端断线重连时通过 Last-Event-ID 续传，
@@ -313,6 +336,7 @@ pub struct DaemonState {
     pub event_history: Arc<EventHistory>,
     pub tasks: RwLock<HashMap<String, TaskStatus>>,
     pub queue: Arc<TaskQueue>,
+    pub store: Option<Arc<StoreDb>>,
     pub executor: Mutex<TaskExecutor>,
     pub retry_handler: RetryHandler,
     /// 工作目录（用于 CheckpointStorage 按 task_id 恢复 checkpoint）
@@ -320,6 +344,8 @@ pub struct DaemonState {
     /// daemon 启动时从 current_dir 获取，用于跨进程 checkpoint 查询。
     /// None 表示工作目录不可用（极端情况），checkpoint 相关端点将返回 not_found。
     pub workdir: Option<std::path::PathBuf>,
+    /// 代码审计报告缓存：audit_id → AuditReportSummary
+    pub audit_reports: RwLock<HashMap<String, AuditReportSummary>>,
     /// 待审批请求映射：approval_id → PendingApproval
     ///
     /// 当 task_runner 返回 `pending_question`（含 tool_approval）时，
@@ -333,6 +359,10 @@ pub struct DaemonState {
     pub metrics: Arc<DaemonMetrics>,
     /// Agent Backend registry (M0/M2). Default registers native `sacode` only.
     pub agent_backends: Arc<BackendRegistry>,
+    /// 设计系统提取任务存储：extraction_id → ExtractionJob
+    pub extraction_jobs: tokio::sync::RwLock<HashMap<String, crate::daemon::design::ExtractionJob>>,
+    /// 设计会话存储：session_id → DesignSession
+    pub design_sessions: tokio::sync::RwLock<HashMap<String, crate::daemon::design::DesignSession>>,
 }
 
 /// 审批回传结果
@@ -470,6 +500,20 @@ impl SseMetrics {
     }
 }
 
+/// 代码审计报告摘要（内存缓存，daemon 重启后从磁盘恢复）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditReportSummary {
+    pub audit_id: String,
+    pub created_at: String,
+    pub root: String,
+    pub ai_used: bool,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+    pub info: usize,
+    pub finding_count: usize,
+}
+
 /// daemon 级指标聚合。
 #[derive(Debug, Default)]
 pub struct DaemonMetrics {
@@ -499,10 +543,13 @@ impl DaemonState {
     pub async fn new_with_workdir(base_dir: Option<std::path::PathBuf>) -> Self {
         let (tx, _) = broadcast::channel(DAEMON_EVENT_BUS_CAPACITY);
         let mut queue_builder = TaskQueue::new(10);
+        let mut store = None;
         if let Some(dir) = base_dir.clone().or_else(|| std::env::current_dir().ok()) {
             match StoreDb::from_workspace(&dir) {
-                Ok(store) => {
-                    queue_builder = queue_builder.with_store(Arc::new(store));
+                Ok(db) => {
+                    let db = Arc::new(db);
+                    queue_builder = queue_builder.with_store(db.clone());
+                    store = Some(db);
                 }
                 Err(error) => {
                     warn!(?error, "failed to open task store; persistence disabled");
@@ -580,12 +627,16 @@ impl DaemonState {
             event_history: Arc::new(EventHistory::new(EVENT_HISTORY_CAPACITY)),
             tasks,
             queue,
+            store,
             executor: Mutex::new(executor),
             retry_handler,
             workdir: base_dir.clone().or_else(|| std::env::current_dir().ok()),
+            audit_reports: RwLock::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             metrics: Arc::new(DaemonMetrics::default()),
             agent_backends: Arc::new(BackendRegistry::new()),
+            extraction_jobs: tokio::sync::RwLock::new(HashMap::new()),
+            design_sessions: tokio::sync::RwLock::new(HashMap::new()),
         }
     }
 

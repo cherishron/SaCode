@@ -131,6 +131,141 @@ async fn test_daemon_task_lifecycle() {
 }
 
 #[tokio::test]
+async fn test_daemon_lists_tasks_for_client_recovery() {
+    let tempdir = tempfile::tempdir().expect("create temp dir for daemon recovery");
+    let workdir = tempdir.keep();
+    let app = create_daemon_in(workdir.clone()).await;
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/task")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"prompt":"恢复历史任务","mode":"plan"}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should create task");
+    assert_eq!(created.status(), StatusCode::OK);
+
+    let created_body = to_bytes(created.into_body(), usize::MAX)
+        .await
+        .expect("read created task");
+    let created_payload: serde_json::Value =
+        serde_json::from_slice(&created_body).expect("valid created task json");
+    let task_id = created_payload["task_id"]
+        .as_str()
+        .expect("created task id")
+        .to_string();
+
+    drop(app);
+    let restored_app = create_daemon_in(workdir).await;
+    let response = restored_app
+        .oneshot(
+            Request::builder()
+                .uri("/tasks")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("restored daemon should list tasks");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    assert_eq!(payload["protocol_version"], TASK_PROTOCOL_VERSION);
+    let tasks = payload["tasks"].as_array().expect("tasks array");
+    let task = tasks
+        .iter()
+        .find(|task| task["task_id"] == task_id)
+        .expect("persisted task in restored list");
+    assert_eq!(task["prompt"], "恢复历史任务");
+    assert_eq!(task["mode"], "plan");
+    assert!(task["created_at"].as_str().is_some());
+    assert_eq!(task["task"]["task_id"], task["task_id"]);
+    assert_eq!(task["task"]["backend"]["backend_id"], "sacode");
+}
+
+#[tokio::test]
+async fn test_daemon_runs_audit_and_lists_report() {
+    let tempdir = tempfile::tempdir().expect("create temp dir for audit");
+    let workdir = tempdir.keep();
+    let src = workdir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("bad.rs"),
+        "let api_key = \"sk-abcdef1234567890\";\nfn main() { foo.unwrap(); }\n",
+    )
+    .unwrap();
+
+    let app = create_daemon_in(workdir.clone()).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/audit")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"use_ai":false}"#))
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should run audit");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("valid json");
+    assert_eq!(payload["status"], "completed");
+    let audit_id = payload["audit_id"].as_str().expect("audit_id");
+    assert!(!audit_id.is_empty());
+    assert!(payload["report"]["findings"].as_array().unwrap().len() >= 1);
+    assert!(payload["report"]["summary"]["high"].as_u64().unwrap() >= 1);
+
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/audit")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should list audits");
+    let list_body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("read list body");
+    let list_payload: serde_json::Value =
+        serde_json::from_slice(&list_body).expect("valid list json");
+    let reports = list_payload["reports"].as_array().expect("reports array");
+    assert!(reports.iter().any(|r| r["audit_id"] == audit_id));
+
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/audit/{}", audit_id))
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("daemon should return audit report");
+    assert_eq!(get_response.status(), StatusCode::OK);
+    let get_body = to_bytes(get_response.into_body(), usize::MAX)
+        .await
+        .expect("read get body");
+    let get_payload: serde_json::Value = serde_json::from_slice(&get_body).expect("valid get json");
+    assert_eq!(get_payload["status"], "found");
+    assert_eq!(get_payload["audit_id"], audit_id);
+    assert!(get_payload["report"]["findings"].as_array().unwrap().len() >= 1);
+}
+
+#[tokio::test]
 async fn test_daemon_events_endpoint_streams_sse() {
     let app = create_isolated_daemon().await;
 

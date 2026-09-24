@@ -52,7 +52,9 @@ daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、
 |------|------|------|
 | GET | `/health` | 健康检查与版本 |
 | POST | `/task` | 创建任务 |
+| GET | `/tasks` | 按创建时间倒序列出 SQLite 恢复后的任务历史 |
 | GET | `/task/:id/status` | 查询任务状态 |
+| GET | `/task/:id/changes` | 查询任务文件变更（运行中返回 live diff，终态返回 frozen diff） |
 | GET | `/task/:id/result` | 查询任务结果 |
 | GET | `/task/:id/checkpoint` | 按任务查询 checkpoint |
 | POST | `/task/:id/retry` | 重试失败任务 |
@@ -61,6 +63,9 @@ daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、
 | GET | `/task/:id/approvals` | 查询任务当前待审批列表，用于客户端恢复 |
 | GET | `/metrics` | 查询 daemon 审批与 SSE 指标快照 |
 | GET | `/agents` | **M2 草案**：列出已注册 Agent Backend（默认仅 `sacode`） |
+| POST | `/audit` | 触发代码安全扫描（启发式 + 可选 AI），返回报告和发现 |
+| GET | `/audit` | 列出历史审计报告摘要 |
+| GET | `/audit/:id` | 查询指定审计报告的完整发现 |
 
 > **M4 草案**：设置环境变量 `SACODE_OPENCODE_EXECUTABLE` 时，daemon 启动会注册 `opencode` Backend，并在 `POST /task` 的 `backend_id=opencode` 时走 ACP 执行。
 >
@@ -137,7 +142,59 @@ curl http://127.0.0.1:8080/task/task-1717670400000/status
 curl http://127.0.0.1:8080/task/task-1717670400000/result
 ```
 
+### GET /tasks
+
+客户端启动或切换工作区后可恢复该工作区 SQLite 中的任务历史：
+
+```bash
+curl http://127.0.0.1:8080/tasks
+```
+
+响应包含当前 `protocol_version` 和按 `created_at` 倒序排列的 `tasks`。每项稳定提供 `task_id`、`prompt`、`mode`、`created_at`、`status`、`queue_status`，并可包含 `duration_ms`、`error`、`output` 与统一 `task` snapshot。已恢复任务的 snapshot 会保留其有效 `backend_id`；旧记录缺少显式 backend 时按默认 `sacode` 解释。
+
+该接口复用现有任务存储，不创建第二套 Session 数据库。它用于客户端恢复和导航，不替代 SSE；运行中任务仍应通过 `/api/stream?task_id=<ID>` 或状态轮询跟踪。
+
 除审批端点外，部分 daemon 路由当前会用 JSON 字段表达业务错误而不是切换 HTTP 状态码；调用方应同时检查 HTTP 状态与响应体中的 `status`、`error`、`message`。
+
+### GET /task/:id/changes
+
+查询任务产生的文件变更。任务创建时 daemon 以临时 Git index 捕获工作区 tree 作为 baseline（不触碰仓库真实 index）；任务进入终态（completed/failed/cancelled）时冻结 final tree 并将结构化 diff 持久化到 SQLite `task_changes` 表。
+
+```bash
+curl http://127.0.0.1:8080/task/task-1717670400000/changes
+```
+
+响应 `status` 含义：
+
+- `final`：终态冻结的变更快照，跨 daemon 重启仍可恢复。
+- `live`：任务仍在运行，实时计算 baseline → 当前工作区的 diff。
+- `unavailable`：缺少 store 或 workdir，无法计算（返回空 `changes`）。
+- `not_found`：任务不存在且无 baseline 记录。
+- `error`：Git 操作失败，`message` 描述原因。
+
+每条 change 包含 `path`、`kind`（added/modified/deleted/renamed/copied/type_changed）、`previous_path`（重命名时）、`additions`、`deletions`、`binary` 和原始 `diff` 文本。diff 超过 256 KB 会被截断。该接口复用任务级 Git tree diff，不依赖实时 tool 事件，因此历史任务的 Changes 在恢复后仍可查看。
+
+### POST /audit
+
+触发代码安全扫描，复用 `code_audit` 模块的启发式 + 可选 AI 扫描。
+
+```bash
+curl -X POST http://127.0.0.1:8080/audit \
+  -H "content-type: application/json" \
+  -d '{"use_ai":false}'
+```
+
+请求体可选字段：`use_ai`（bool，默认 true）、`max_files`（usize，默认 400）、`model_provider`（对象，透传 kernel ModelProvider）。
+
+响应包含 `audit_id`、完整 `report`（含 `findings`、`summary`）、以及 `report_json_path`。报告同时持久化到 `.sacode/code-audit/<stamp>/report.json`。密钥在报告和发现中自动打码。
+
+### GET /audit
+
+列出历史审计报告摘要，按 `created_at` 倒序。
+
+### GET /audit/:id
+
+按 `audit_id` 查询完整审计报告，从磁盘 `report.json` 恢复，daemon 重启后仍可访问。
 
 ## SSE 协议
 

@@ -25,6 +25,7 @@ pub mod session;
 pub mod skills;
 pub mod store;
 pub mod streaming;
+pub mod task_changes;
 pub mod task_protocol;
 pub mod tools;
 pub mod wiki;

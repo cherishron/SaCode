@@ -193,10 +193,38 @@ fn parse_last_event_id(headers: &axum::http::HeaderMap) -> Option<u64> {
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+fn freeze_task_changes(state: &DaemonState, task_id: &str) {
+    let (Some(workdir), Some(store)) = (state.workdir.as_deref(), state.store.as_ref()) else {
+        return;
+    };
+    let baseline = match store.load_task_change_baseline(task_id) {
+        Ok(Some(value)) => value,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(?error, ?task_id, "failed to load task change baseline");
+            return;
+        }
+    };
+    let snapshot = crate::task_changes::capture_workspace_tree(workdir).and_then(|final_tree| {
+        crate::task_changes::diff_workspace_trees(workdir, &baseline, &final_tree)
+    });
+    match snapshot {
+        Ok(snapshot) => {
+            if let Err(error) = store.save_task_changes(task_id, &snapshot) {
+                tracing::warn!(?error, ?task_id, "failed to persist final task changes");
+            }
+        }
+        Err(error) => tracing::warn!(?error, ?task_id, "failed to freeze final task changes"),
+    }
+}
+
 async fn update_task_status_from_executor_event(
     state: &Arc<DaemonState>,
     evt: &crate::executor::ExecutorEvent,
 ) {
+    if matches!(evt.event_type.as_str(), "task_completed" | "task_failed") {
+        freeze_task_changes(state, &evt.task_id);
+    }
     let mut tasks = state.tasks.write().await;
     let Some(status) = tasks.get_mut(&evt.task_id) else {
         return;

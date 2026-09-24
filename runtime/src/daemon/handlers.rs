@@ -11,7 +11,12 @@ use sacode_kernel::{
     ExecutionMode, ScheduledTask, Task, TaskQueueStatus, TASK_PROTOCOL_VERSION,
 };
 
-use crate::{assemble_checkpoint_snapshot, assemble_task_snapshot, TaskSnapshotProjection};
+use crate::{
+    assemble_checkpoint_snapshot, assemble_task_snapshot,
+    code_audit::{run_audit, AuditScanOptions},
+    task_changes::{capture_workspace_tree, diff_workspace_trees, TaskChangesSnapshot},
+    TaskSnapshotProjection,
+};
 
 use super::{
     events::emit_event,
@@ -63,6 +68,19 @@ pub async fn create_task(
         }
     };
 
+    if let (Some(workdir), Some(store)) = (state.workdir.as_deref(), state.store.as_ref()) {
+        match capture_workspace_tree(workdir) {
+            Ok(baseline) => {
+                if let Err(error) = store.save_task_change_baseline(&task_id, &baseline) {
+                    tracing::warn!(?error, ?task_id, "failed to persist task change baseline");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(?error, ?task_id, "failed to capture task change baseline");
+            }
+        }
+    }
+
     let scheduled_task = ScheduledTask::new(task_id.clone(), task)
         .with_priority(priority)
         .with_dependencies(req.dependencies.clone())
@@ -79,6 +97,7 @@ pub async fn create_task(
                 req.mode.clone(),
                 priority.to_string(),
                 scheduled_task.retry_policy.max_attempts,
+                scheduled_task.created_at.to_rfc3339(),
             )
             .with_backend(Some(backend.clone())),
         );
@@ -139,6 +158,122 @@ pub async fn list_agents(State(state): State<Arc<DaemonState>>) -> Json<serde_js
     }))
 }
 
+pub async fn list_tasks(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let tasks = state.tasks.read().await;
+    let mut items: Vec<serde_json::Value> = tasks
+        .values()
+        .map(|status| {
+            let derived_status = status.derived_queue_status();
+            serde_json::json!({
+                "task_id": status.task_id,
+                "prompt": status.prompt,
+                "mode": status.mode,
+                "created_at": status.created_at,
+                "status": derived_status,
+                "queue_status": derived_status,
+                "duration_ms": status.duration_ms,
+                "error": status.error,
+                "output": status.output,
+                "task": status.snapshot(),
+            })
+        })
+        .collect();
+    items.sort_by(|left, right| {
+        right["created_at"]
+            .as_str()
+            .cmp(&left["created_at"].as_str())
+            .then_with(|| right["task_id"].as_str().cmp(&left["task_id"].as_str()))
+    });
+
+    Json(serde_json::json!({
+        "protocol_version": TASK_PROTOCOL_VERSION,
+        "tasks": items,
+    }))
+}
+
+pub async fn get_task_changes(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let task_exists = state.tasks.read().await.contains_key(&task_id)
+        || state.queue.get_task(&task_id).await.is_some();
+    let Some(store) = state.store.as_ref() else {
+        return Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
+            "task_id": task_id,
+            "status": "unavailable",
+            "message": "task store unavailable",
+            "changes": [],
+        }));
+    };
+
+    match store.load_task_changes(&task_id) {
+        Ok(Some(snapshot)) => task_changes_response(&task_id, "final", snapshot),
+        Ok(None) if task_exists => {
+            let baseline = match store.load_task_change_baseline(&task_id) {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    return Json(serde_json::json!({
+                        "protocol_version": TASK_PROTOCOL_VERSION,
+                        "task_id": task_id,
+                        "status": "unavailable",
+                        "message": "task change baseline unavailable",
+                        "changes": [],
+                    }));
+                }
+                Err(error) => return task_changes_error(&task_id, error),
+            };
+            let Some(workdir) = state.workdir.as_deref() else {
+                return Json(serde_json::json!({
+                    "protocol_version": TASK_PROTOCOL_VERSION,
+                    "task_id": task_id,
+                    "status": "unavailable",
+                    "message": "workdir unavailable",
+                    "changes": [],
+                }));
+            };
+            match capture_workspace_tree(workdir)
+                .and_then(|final_tree| diff_workspace_trees(workdir, &baseline, &final_tree))
+            {
+                Ok(snapshot) => task_changes_response(&task_id, "live", snapshot),
+                Err(error) => task_changes_error(&task_id, error),
+            }
+        }
+        Ok(None) => Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
+            "task_id": task_id,
+            "status": "not_found",
+            "changes": [],
+        })),
+        Err(error) => task_changes_error(&task_id, error),
+    }
+}
+
+fn task_changes_response(
+    task_id: &str,
+    status: &str,
+    snapshot: TaskChangesSnapshot,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "protocol_version": TASK_PROTOCOL_VERSION,
+        "task_id": task_id,
+        "status": status,
+        "baseline_tree": snapshot.baseline_tree,
+        "final_tree": snapshot.final_tree,
+        "changes": snapshot.changes,
+    }))
+}
+
+fn task_changes_error(task_id: &str, error: anyhow::Error) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "protocol_version": TASK_PROTOCOL_VERSION,
+        "task_id": task_id,
+        "status": "error",
+        "message": error.to_string(),
+        "changes": [],
+    }))
+}
+
 pub async fn get_task_status(
     State(state): State<Arc<DaemonState>>,
     Path(task_id): Path<String>,
@@ -162,6 +297,7 @@ pub async fn get_task_status(
             "task_id": status.task_id,
             "prompt": status.prompt,
             "mode": status.mode,
+            "created_at": status.created_at,
             "status": derived_status,
             "queue_status": derived_status,
             "priority": status.priority,
@@ -419,6 +555,26 @@ pub async fn cancel_task(
     let cancelled = state.queue.cancel(&task_id).await;
 
     if cancelled {
+        if let (Some(workdir), Some(store)) = (state.workdir.as_deref(), state.store.as_ref()) {
+            if let Ok(Some(baseline)) = store.load_task_change_baseline(&task_id) {
+                match capture_workspace_tree(workdir)
+                    .and_then(|final_tree| diff_workspace_trees(workdir, &baseline, &final_tree))
+                {
+                    Ok(snapshot) => {
+                        if let Err(error) = store.save_task_changes(&task_id, &snapshot) {
+                            tracing::warn!(
+                                ?error,
+                                ?task_id,
+                                "failed to persist cancelled task changes"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, ?task_id, "failed to freeze cancelled task changes");
+                    }
+                }
+            }
+        }
         // 中止 executor 中正在运行的 JoinHandle，使 LLM 调用和工具操作真正停止
         {
             let executor = state.executor.lock().await;
@@ -552,6 +708,129 @@ pub async fn get_task_checkpoint(
             "message": format!("failed to load checkpoint: {error}"),
         })),
     }
+}
+
+pub async fn run_audit_scan(
+    State(state): State<Arc<DaemonState>>,
+    Json(req): Json<super::types::AuditRequest>,
+) -> Json<serde_json::Value> {
+    let Some(workdir) = state.workdir.as_ref() else {
+        return Json(serde_json::json!({
+            "status": "error",
+            "message": "workdir unavailable",
+        }));
+    };
+    let mut opts = AuditScanOptions::default();
+    opts.use_ai = req.use_ai.unwrap_or(true);
+    if let Some(max_files) = req.max_files {
+        opts.max_files = max_files;
+    }
+    let provider = req.model_provider;
+    match run_audit(workdir, &opts, provider.as_ref()).await {
+        Ok(outcome) => {
+            let audit_id = outcome
+                .report
+                .created_at
+                .replace(':', "-")
+                .replace('+', "p");
+            let summary = super::types::AuditReportSummary {
+                audit_id: audit_id.clone(),
+                created_at: outcome.report.created_at.clone(),
+                root: outcome.report.root.clone(),
+                ai_used: outcome.report.ai_used,
+                high: outcome.report.summary.high,
+                medium: outcome.report.summary.medium,
+                low: outcome.report.summary.low,
+                info: outcome.report.summary.info,
+                finding_count: outcome.report.findings.len(),
+            };
+            state
+                .audit_reports
+                .write()
+                .await
+                .insert(audit_id.clone(), summary);
+            let findings: Vec<serde_json::Value> = outcome
+                .report
+                .findings
+                .iter()
+                .map(|f| serde_json::to_value(f).unwrap_or(serde_json::json!({})))
+                .collect();
+            Json(serde_json::json!({
+                "status": "completed",
+                "audit_id": audit_id,
+                "report": outcome.report,
+                "findings": findings,
+                "report_json_path": outcome.report_json_path.map(|p| p.display().to_string()),
+            }))
+        }
+        Err(error) => Json(serde_json::json!({
+            "status": "error",
+            "message": error.to_string(),
+        })),
+    }
+}
+
+pub async fn get_audit_report(
+    State(state): State<Arc<DaemonState>>,
+    Path(audit_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let Some(workdir) = state.workdir.as_ref() else {
+        return Json(serde_json::json!({
+            "status": "error",
+            "message": "workdir unavailable",
+        }));
+    };
+    let report_dir = crate::code_audit::report::audit_report_path(workdir, &audit_id);
+    let report_path = report_dir.join("report.json");
+    if !report_path.exists() {
+        return Json(serde_json::json!({
+            "status": "not_found",
+            "audit_id": audit_id,
+        }));
+    }
+    match crate::code_audit::report::load_report(&report_path) {
+        Ok(report) => {
+            let summary = state
+                .audit_reports
+                .read()
+                .await
+                .get(&audit_id)
+                .map(|s| serde_json::to_value(s).unwrap_or(serde_json::json!({})));
+            let findings: Vec<serde_json::Value> = report
+                .findings
+                .iter()
+                .map(|f| serde_json::to_value(f).unwrap_or(serde_json::json!({})))
+                .collect();
+            Json(serde_json::json!({
+                "status": "found",
+                "audit_id": audit_id,
+                "report": report,
+                "findings": findings,
+                "summary_cached": summary,
+            }))
+        }
+        Err(error) => Json(serde_json::json!({
+            "status": "error",
+            "audit_id": audit_id,
+            "message": error.to_string(),
+        })),
+    }
+}
+
+pub async fn list_audit_reports(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let reports = state.audit_reports.read().await;
+    let mut items: Vec<serde_json::Value> = reports
+        .values()
+        .map(|s| serde_json::to_value(s).unwrap_or(serde_json::json!({})))
+        .collect();
+    items.sort_by(|a, b| {
+        b.get("created_at")
+            .and_then(|v| v.as_str())
+            .cmp(&a.get("created_at").and_then(|v| v.as_str()))
+    });
+    Json(serde_json::json!({
+        "reports": items,
+    }))
 }
 
 pub async fn run_daemon(addr: SocketAddr) {
