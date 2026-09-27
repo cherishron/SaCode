@@ -88,10 +88,14 @@ export function buildTimelineNavigation(
   const ticks = anchors.map((anchor) =>
     el('button', {
       className: 'timeline-rail-tick',
+      type: 'button',
       dataset: { msgIndex: String(anchor.msgIndex) },
       title: anchor.label,
       'aria-label': `跳转到: ${anchor.label}`,
-      onclick: () => scrollToMessage(anchor.msgIndex),
+      onclick: (event: MouseEvent) => {
+        event.stopPropagation();
+        scrollToMessage(anchor.msgIndex);
+      },
     }),
   );
 
@@ -99,9 +103,11 @@ export function buildTimelineNavigation(
 
   const jumpButton = el('button', {
     className: 'timeline-jump-latest',
+    type: 'button',
     title: '滚动到最新消息',
     'aria-label': '回到最新消息',
-    onclick: () => {
+    onclick: (event: MouseEvent) => {
+      event.stopPropagation();
       timelineEl.scrollTo({ top: timelineEl.scrollHeight, behavior: 'smooth' });
     },
   }, ['↓ 回到最新']);
@@ -122,7 +128,9 @@ export function buildTimelineNavigation(
   const refresh = () => {
     const distanceFromBottom =
       timelineEl.scrollHeight - timelineEl.scrollTop - timelineEl.clientHeight;
-    jumpButton.classList.toggle('visible', distanceFromBottom > JUMP_VISIBLE_THRESHOLD);
+    const visible = distanceFromBottom > JUMP_VISIBLE_THRESHOLD;
+    jumpButton.classList.toggle('visible', visible);
+    jumpButton.tabIndex = visible ? 0 : -1;
     const active = activeAnchorIndex();
     ticks.forEach((tick, index) => tick.classList.toggle('active', index === active));
   };

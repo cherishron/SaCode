@@ -55,6 +55,21 @@ test('selectDesktopConversation restores latest task and previous turns', async 
   assert.equal(app.conversationTurns?.turns.length, 2);
 });
 
+test('loading another pane conversation preserves the active selection', async () => {
+  const app = new DesktopApp();
+  const detail = { id: 'conversation-other', turns: [
+    { task_id: 'task-other', prompt: 'other pane', status: 'completed', output: 'answer', created_at: 'today' },
+  ] };
+  app.client = {
+    getDesktopConversation: async () => detail,
+  } as unknown as DaemonClient;
+  app.currentConversationId = 'conversation-current';
+  await app.loadDesktopConversationDetail('conversation-other');
+  assert.equal(app.conversationDetails.get('conversation-other'), detail);
+  assert.equal(app.currentConversationId, 'conversation-current');
+  assert.equal(app.conversationTurns, null);
+});
+
 test('failed task shows provider error without an empty assistant response', async () => {
   const app = new DesktopApp();
   app.client = {

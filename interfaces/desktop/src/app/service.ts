@@ -81,6 +81,9 @@ export class DesktopApp {
   tasks: TaskListItem[] = [];
   desktopConversations: DesktopConversation[] = [];
   conversationTurns: DesktopConversationDetail | null = null;
+  conversationDetails = new Map<string, DesktopConversationDetail>();
+  private pendingConversationDetails = new Set<string>();
+  private failedConversationDetails = new Set<string>();
   currentConversationId: string | null = null;
   timeline: TimelineItem[] = [];
   changes: ChangeItem[] = [];
@@ -175,6 +178,9 @@ export class DesktopApp {
     this.currentTaskId = null;
     this.currentConversationId = null;
     this.conversationTurns = null;
+    this.conversationDetails.clear();
+    this.pendingConversationDetails.clear();
+    this.failedConversationDetails.clear();
     this.desktopConversations = [];
     this.tasks = [];
     this.timeline = [];
@@ -205,6 +211,9 @@ export class DesktopApp {
     this.currentTaskId = null;
     this.currentConversationId = null;
     this.conversationTurns = null;
+    this.conversationDetails.clear();
+    this.pendingConversationDetails.clear();
+    this.failedConversationDetails.clear();
     this.desktopConversations = [];
     this.tasks = [];
     this.timeline = [];
@@ -344,9 +353,17 @@ export class DesktopApp {
         if (taskId === this.currentTaskId) void this.refreshStatus(taskId, true);
         void this.refreshTasks();
         void this.refreshDesktopConversations();
-        if (this.currentConversationId && this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)) {
-          void this.client?.getDesktopConversation(this.currentConversationId).then((detail) => {
-            if (this.currentConversationId === detail.id) { this.conversationTurns = detail; this.emit(); }
+        const affected = [...this.conversationDetails.values()]
+          .find((detail) => detail.turns.some((turn) => turn.task_id === taskId));
+        const conversationId = affected?.id ?? (this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)
+          ? this.currentConversationId : null);
+        if (conversationId) {
+          const client = this.client;
+          void client?.getDesktopConversation(conversationId).then((detail) => {
+            if (this.client !== client) return;
+            this.conversationDetails.set(detail.id, detail);
+            if (this.currentConversationId === detail.id) this.conversationTurns = detail;
+            this.emit();
           });
         }
         void this.refreshChanges(taskId);
@@ -578,9 +595,30 @@ export class DesktopApp {
     } catch (e) { this.error(`conversations: ${e}`); }
   }
 
+  async loadDesktopConversationDetail(id: string): Promise<void> {
+    if (!this.client || this.conversationDetails.has(id) || this.pendingConversationDetails.has(id) || this.failedConversationDetails.has(id)) return;
+    const client = this.client;
+    this.pendingConversationDetails.add(id);
+    try {
+      const detail = await client.getDesktopConversation(id);
+      if (this.client !== client) return;
+      this.conversationDetails.set(id, detail);
+      this.emit();
+    } catch (error) {
+      this.failedConversationDetails.add(id);
+      throw error;
+    } finally {
+      this.pendingConversationDetails.delete(id);
+    }
+  }
+
   async selectDesktopConversation(id: string) {
     if (!this.client) return;
-    const detail = await this.client.getDesktopConversation(id);
+    const client = this.client;
+    const detail = await client.getDesktopConversation(id);
+    if (this.client !== client) return;
+    this.failedConversationDetails.delete(id);
+    this.conversationDetails.set(id, detail);
     this.conversationTurns = detail;
     this.currentConversationId = id;
     const latest = detail.turns.at(-1);
@@ -592,8 +630,11 @@ export class DesktopApp {
 
   async deleteDesktopConversation(id: string) {
     if (!this.client) return;
-    const taskIds = this.conversationTurns?.id === id ? this.conversationTurns.turns.map((t) => t.task_id) : [];
+    const detail = this.conversationTurns?.id === id ? this.conversationTurns : this.conversationDetails.get(id);
+    const taskIds = detail?.turns.map((t) => t.task_id) ?? [];
     await this.client.deleteDesktopConversation(id);
+    this.conversationDetails.delete(id);
+    this.failedConversationDetails.delete(id);
     this.desktopConversations = this.desktopConversations.filter((item) => item.id !== id);
     this.tasks = this.tasks.filter((item) => !taskIds.includes(item.task_id));
     this.timeline = this.timeline.filter((item) => !item.taskId || !taskIds.includes(item.taskId));
@@ -728,6 +769,7 @@ export class DesktopApp {
         await this.refreshTasks();
         await this.refreshDesktopConversations();
         this.conversationTurns = await this.client.getDesktopConversation(created.conversation_id);
+        this.conversationDetails.set(created.conversation_id, this.conversationTurns);
       } catch (e) {
         this.error(`conversation refresh: ${e}`);
       }

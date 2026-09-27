@@ -69,8 +69,18 @@
   flex-shrink: 0;
 }
 
+/* 会话滚动列及浮层共享定位上下文 */
+.timeline-region {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
 /* 消息流：居中阅读列 */
 .timeline {
+  position: relative;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
@@ -107,6 +117,66 @@
   font-size: 28px;
   line-height: 1;
   opacity: 0.85;
+}
+
+/* 每轮消息一个刻度，浮在会话右缘，不占阅读列宽度 */
+.timeline-rail {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-6);
+  bottom: var(--space-6);
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  width: 18px;
+  opacity: 0.35;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.timeline-rail:hover,
+.timeline-rail:focus-within { opacity: 1; }
+
+.timeline-rail-tick {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--text-weak);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.timeline-rail-tick:hover,
+.timeline-rail-tick:focus-visible { background: var(--accent-hover); transform: scale(1.6); }
+.timeline-rail-tick.active { background: var(--accent); transform: scale(1.6); }
+
+.timeline-jump-latest {
+  position: absolute;
+  z-index: 3;
+  right: var(--space-5);
+  bottom: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  background: var(--bg-raised);
+  color: var(--text-strong);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-normal) var(--ease-out), visibility var(--dur-normal) var(--ease-out);
+}
+
+.timeline-jump-latest.visible { opacity: 1; visibility: visible; }
+.timeline-jump-latest:hover { border-color: var(--accent); }
+
+@media (max-width: 900px) {
+  .timeline-rail { right: 0; width: 12px; }
+  .timeline-rail-tick { width: 4px; height: 4px; }
 }
 
 /* 输入坞容器：阅读列同宽 */

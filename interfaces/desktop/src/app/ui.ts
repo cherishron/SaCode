@@ -15,6 +15,7 @@ import { findUiNode, findUiNodeLocation } from './ui-document-editor.ts';
 import { createSaNativeState, buildSaNativeWorkspace, refreshSaNative, type SaNativeState } from './sanative.ts';
 import { createAutomationState, buildAutomationWorkspace, loadAutomationData, type AutomationState } from './automation.ts';
 import { createInputAreaState, type InputAreaState } from '../components/input-area.ts';
+import { AT_BOTTOM_THRESHOLD, JUMP_VISIBLE_THRESHOLD } from '../components/timeline-rail.ts';
 import { closePane, closeSessionView, openTaskInActivePane, showNewTaskPage } from './new-task-page.ts';
 import {
   buildNewTaskDialog,
@@ -419,7 +420,23 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     state.shell.contextOpen ? 'context-open' : '',
     `splits-${Math.min(3, Math.max(1, state.panes.length))}`,
   ].filter(Boolean).join(' ');
-  const scrollTimeline = root.querySelector('#timeline')?.scrollTop ?? 0;
+  const scrollStates = new Map<string, { conversation: string; top: number; atBottom: boolean }>();
+  root.querySelectorAll<HTMLElement>('.timeline[data-pane]').forEach((timeline) => {
+    const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    scrollStates.set(timeline.dataset.pane!, {
+      conversation: timeline.dataset.conversation ?? '',
+      top: timeline.scrollTop,
+      atBottom: distance < AT_BOTTOM_THRESHOLD,
+    });
+  });
+  if (state.activeView === 'agent') {
+    const visibleConversationIds = new Set(state.panes.map((pane) => pane.taskId).filter((id): id is string => !!id));
+    for (const id of visibleConversationIds) {
+      if (!app.conversationDetails.has(id) && app.conversationTurns?.id !== id) {
+        void app.loadDesktopConversationDetail(id).catch((error) => app.error(`打开会话失败: ${error}`));
+      }
+    }
+  }
 
   const changeView = (view: WorkspaceView) => {
     state.activeView = view;
@@ -636,7 +653,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
           state.activeTaskFilter = state.panes[index].taskId;
         }
         render(root, app, state);
-      }),
+      }, index),
       ...(pane.contextOpen && state.activePane === index
         ? [buildContextPanel(app, pane.activeTab, {
             onTabChange: (tab) => {
@@ -934,8 +951,19 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     root.querySelector('.app-shell')?.appendChild(menu);
   }
 
-  const timeline = root.querySelector('#timeline');
-  if (timeline) timeline.scrollTop = scrollTimeline;
+  root.querySelectorAll<HTMLElement>('.timeline[data-pane]').forEach((timeline) => {
+    const previous = scrollStates.get(timeline.dataset.pane!);
+    if (previous && previous.conversation === (timeline.dataset.conversation ?? '')) {
+      timeline.scrollTop = previous.atBottom ? timeline.scrollHeight : previous.top;
+    } else {
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+    const navigation = timeline.parentElement?.querySelector<HTMLElement>('.timeline-jump-latest');
+    const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    navigation?.classList.toggle('visible', distance > JUMP_VISIBLE_THRESHOLD);
+    if (navigation) navigation.tabIndex = distance > JUMP_VISIBLE_THRESHOLD ? 0 : -1;
+    timeline.dispatchEvent(new Event('scroll'));
+  });
 }
 
 function setupKeyboard(root: HTMLElement, app: DesktopApp, state: UiState) {
