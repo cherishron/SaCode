@@ -43,6 +43,8 @@ export interface SidebarActions {
   onOpenModal?: (modal: 'knowledge' | 'automation') => void;
   onRemoveProject?: (path: string) => void;
   onRenameProject?: (path: string, name: string) => void;
+  onCloseSession?: (sessionId: string) => void;
+  canCloseSession?: (sessionId: string) => boolean;
   onRemoveSession?: (sessionId: string) => void;
   onSelectSession?: (sessionId: string) => void;
   onReorderSessions?: (projectPath: string, fromId: string, toId: string) => void;
@@ -256,14 +258,14 @@ function buildSidebarContextMenu(sidebar: SidebarState, actions: SidebarActions)
         }, ['移除项目']),
       ]
     : [
-        el('button', {
+        ...(menu.sessionId && actions.canCloseSession?.(menu.sessionId) ? [el('button', {
           className: 'sidebar-menu-item',
           onclick: () => {
-            if (menu.sessionId) actions.onRemoveSession?.(menu.sessionId);
             sidebar.contextMenu = null;
+            actions.onCloseSession?.(menu.sessionId!);
             actions.rerender();
           },
-        }, ['关闭会话']),
+        }, ['关闭会话'])] : []),
         el('button', {
           className: 'sidebar-menu-item danger',
           onclick: () => {

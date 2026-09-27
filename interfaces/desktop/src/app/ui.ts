@@ -15,7 +15,7 @@ import { findUiNode, findUiNodeLocation } from './ui-document-editor.ts';
 import { createSaNativeState, buildSaNativeWorkspace, refreshSaNative, type SaNativeState } from './sanative.ts';
 import { createAutomationState, buildAutomationWorkspace, loadAutomationData, type AutomationState } from './automation.ts';
 import { createInputAreaState, type InputAreaState } from '../components/input-area.ts';
-import { closePane, openTaskInActivePane, showNewTaskPage } from './new-task-page.ts';
+import { closePane, closeSessionView, openTaskInActivePane, showNewTaskPage } from './new-task-page.ts';
 import {
   buildNewTaskDialog,
   createNewTaskDialogState,
@@ -167,6 +167,15 @@ function validModelId(app: DesktopApp, preferred: string): string {
     : app.workspaceCapabilities.models[0]?.id || '';
 }
 
+function finishClosingView(root: HTMLElement, app: DesktopApp, state: UiState, nextId: string | null) {
+  if (nextId && app.currentConversationId !== nextId) {
+    void app.selectDesktopConversation(nextId)
+      .then(() => render(root, app, state))
+      .catch((error) => app.error(`打开会话失败: ${error}`));
+  }
+  render(root, app, state);
+}
+
 function buildPaneMoreMenu(
   state: UiState,
   app: DesktopApp,
@@ -244,8 +253,11 @@ function buildPaneMoreMenu(
     {
       label: '关闭此分屏',
       onclick: () => {
-        closePane(state, app, index);
+        const nextId = closePane(state, app, index);
         state.moreMenuOpen = false;
+        if (nextId && app.currentConversationId !== nextId) {
+          void app.selectDesktopConversation(nextId).then(rerender).catch((error) => app.error(`打开会话失败: ${error}`));
+        }
         rerender();
       },
     },
@@ -493,8 +505,13 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
       },
       onSelectSession: (sessionId: string) => {
         state.panes[state.activePane].taskId = sessionId;
+        state.sidebar.activeSessionId = sessionId;
         state.activeTaskFilter = sessionId;
         void app.selectDesktopConversation(sessionId).then(() => render(root, app, state)).catch((e) => app.error(`打开会话失败: ${e}`));
+      },
+      canCloseSession: (sessionId: string) => state.panes.some((pane) => pane.taskId === sessionId),
+      onCloseSession: (sessionId: string) => {
+        finishClosingView(root, app, state, closeSessionView(state, app, sessionId));
       },
       onRemoveSession: (sessionId: string) => {
         void (async () => {
@@ -598,9 +615,9 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
         el('button', {
           className: 'pane-close',
           title: state.panes.length > 1 ? '关闭此分屏' : '关闭会话',
-          onclick: () => {
-            closePane(state, app, index);
-            render(root, app, state);
+          onclick: (event: Event) => {
+            event.stopPropagation();
+            finishClosingView(root, app, state, closePane(state, app, index));
           },
         }, ['×']),
       ]),

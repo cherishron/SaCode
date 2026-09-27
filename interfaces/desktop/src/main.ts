@@ -1,5 +1,6 @@
 import { DesktopApp } from './app/service.ts';
 import { mountApp } from './app/ui.ts';
+import { isTauri } from './tauri-bridge.ts';
 
 import './styles/base.css';
 import './components/components.css';
@@ -15,6 +16,12 @@ import './app/sadesign.css';
 import './app/splash.css';
 import './app/sanative.css';
 import './app/automation.css';
+
+// Tauri WebView 不显示浏览器自带的「检查/调试」右键菜单；
+// 现有侧栏自定义右键菜单仍会收到 contextmenu 事件。
+if (isTauri()) {
+  window.addEventListener('contextmenu', (event) => event.preventDefault());
+}
 
 // Global error trap — if anything throws during mount, show it on screen
 // instead of leaving the user with a blank white window.
