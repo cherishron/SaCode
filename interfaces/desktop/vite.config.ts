@@ -111,7 +111,8 @@ function sacodeSidecarPlugin(): Plugin {
           url.startsWith('/queue') ||
           url.startsWith('/events') ||
           url.startsWith('/api/stream') ||
-          url.startsWith('/api/design');
+          url.startsWith('/api/design') ||
+          url.startsWith('/api/desktop/conversations');
         if (!proxied) return next();
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(req.headers)) {

@@ -77,6 +77,28 @@ export interface TaskListResponse {
     tasks: TaskListItem[];
 }
 
+export interface DesktopConversation {
+    id: string;
+    title: string;
+    created_at: string;
+    latest_task_id: string;
+    status: string;
+}
+
+export interface DesktopConversationTurn {
+    task_id: string;
+    prompt: string;
+    created_at: string;
+    status: string;
+    output?: string | null;
+    error?: string | null;
+}
+
+export interface DesktopConversationDetail {
+    id: string;
+    turns: DesktopConversationTurn[];
+}
+
 export interface TaskFileChange {
     path: string;
     previous_path?: string;
@@ -157,6 +179,46 @@ export interface AgentsListResponse {
     default_backend_id: string;
 }
 
+export interface WorkspaceModelOption {
+    id: string;
+    provider: string;
+    model: string;
+    thinking: boolean;
+    reasoning_effort?: string | null;
+}
+
+export interface WorkspaceSkillOption {
+    name: string;
+    description: string;
+    source: 'user' | 'project' | 'workspace' | 'builtin' | string;
+}
+
+export interface WorkspaceFileOption {
+    path: string;
+    size: number;
+    language: string;
+    is_dir: boolean;
+}
+
+export interface AccountStatus {
+    logged_in: boolean;
+    subject?: string | null;
+    provider_name: string;
+    models_count: number;
+    default_model?: string | null;
+    gateway_base_url: string;
+    logged_in_at?: string | null;
+}
+
+export interface WorkspaceCapabilities {
+    workspace: string;
+    models: WorkspaceModelOption[];
+    model_status?: 'ready' | 'not_logged_in' | 'no_gateway_models' | 'credential_unavailable' | 'no_authorized_provider';
+    account?: AccountStatus;
+    skills: WorkspaceSkillOption[];
+    files: WorkspaceFileOption[];
+}
+
 export interface DesignProjectContext {
     workspace: string;
     project_name: string;
@@ -235,6 +297,142 @@ export interface GenerationPlan {
     target_files: string[];
 }
 
+export interface UiViewport {
+    id: string;
+    name: string;
+    width: number;
+    height: number;
+}
+
+export interface TargetSurface {
+    platform: string;
+    input_modes: string[];
+    viewports: UiViewport[];
+    density: string;
+    orientation: string;
+    capabilities: string[];
+}
+
+export interface UiNode {
+    id: string;
+    name: string;
+    type: string;
+    content: Record<string, unknown>;
+    props: Record<string, unknown>;
+    layout: Record<string, unknown>;
+    appearance: Record<string, unknown>;
+    responsive: unknown[];
+    states: Record<string, unknown>;
+    interactions: unknown[];
+    children: UiNode[];
+    locked: boolean;
+}
+
+export interface UiPage {
+    id: string;
+    name: string;
+    route_intent: string | null;
+    root: UiNode;
+}
+
+export interface UiDocument {
+    schema_version: 'sacode-ui/v1';
+    id: string;
+    name: string;
+    target: TargetSurface;
+    pages: UiPage[];
+    reusable_components: unknown[];
+    tokens: Record<string, unknown>;
+    assets: unknown[];
+    flows: unknown[];
+    version: number;
+    status: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UiPatchOperation {
+    type: string;
+    node_id?: string;
+    parent_id?: string;
+    index?: number;
+    new_node_id?: string;
+    width?: string;
+    height?: string;
+    patch?: Record<string, unknown>;
+    interactions?: unknown[];
+    name?: string;
+    value?: string;
+    locked?: boolean;
+    node?: UiNode;
+}
+
+export interface UiDocumentPatch {
+    schema_version: 'sacode-ui-patch/v1';
+    base_version: number;
+    summary: string;
+    operations: UiPatchOperation[];
+}
+
+export interface UiPatchChange {
+    operation: string;
+    node_id: string | null;
+    description: string;
+}
+
+export interface UiPatchProposal {
+    patch: UiDocumentPatch;
+    changes: UiPatchChange[];
+    source: string;
+}
+
+export interface UiCheckFinding {
+    id: string;
+    severity: string;
+    message: string;
+    node_id: string | null;
+}
+
+export interface UiCheckReport {
+    checked_version: number;
+    passed: boolean;
+    findings: UiCheckFinding[];
+    checked_at: string;
+}
+
+export interface UiDocumentVersion {
+    version: number;
+    document: UiDocument;
+    confirmed_at: string;
+    summary: string;
+}
+
+export interface ImplementationProfile {
+    schema_version: 'sacode-implementation/v1';
+    project_mode: 'existing' | 'new';
+    target_platform: string;
+    distribution: string | null;
+    operating_systems: string[];
+    language: string;
+    framework: string;
+    runtime: string | null;
+    desktop_shell: string | null;
+    build_tool: string | null;
+    package_manager: string | null;
+    ui_library: string | null;
+    styling: string | null;
+    router: string | null;
+    state_management: string | null;
+    network_layer: string | null;
+    test_framework: string | null;
+    source: 'detected' | 'user-selected' | 'ai-recommended';
+    confidence: number | null;
+    evidence: unknown[];
+    decisions: unknown[];
+    confirmed: boolean;
+    confirmed_at: string | null;
+}
+
 export interface DesignSession {
     id: string;
     workspace: string;
@@ -249,6 +447,11 @@ export interface DesignSession {
     backend_id: string;
     mode: string;
     target_path: string;
+    target_surface: TargetSurface;
+    ui_document: UiDocument | null;
+    implementation_profile: ImplementationProfile | null;
+    ui_versions: UiDocumentVersion[];
+    ui_check_report: UiCheckReport | null;
     status: string;
     plan: GenerationPlan | null;
     prompt_snapshot: string | null;
@@ -263,6 +466,7 @@ export interface CreateSessionRequest {
     goal: string;
     request: string;
     backend_id?: string;
+    target_surface?: TargetSurface;
 }
 
 export interface UpdateSessionRequest {
@@ -277,6 +481,30 @@ export interface UpdateSessionRequest {
     backend_id?: string;
     mode?: string;
     target_path?: string;
+    target_surface?: TargetSurface;
+}
+
+export interface UpdateUiDocumentRequest {
+    document: UiDocument;
+    expected_version?: number;
+}
+
+export interface ConfirmUiDocumentRequest {
+    expected_version?: number;
+    summary?: string;
+}
+
+export interface GenerateUiPatchRequest {
+    instruction: string;
+    expected_version?: number;
+}
+
+export interface ApplyUiPatchRequest {
+    patch: UiDocumentPatch;
+}
+
+export interface UpdateImplementationProfileRequest {
+    profile: ImplementationProfile;
 }
 
 export interface ImageGenerationRequest {
@@ -387,6 +615,176 @@ export function parseGenerationPlan(body: unknown): GenerationPlan {
     };
 }
 
+const DEFAULT_TARGET_SURFACE: TargetSurface = {
+    platform: 'responsive-web',
+    input_modes: ['mouse', 'keyboard', 'touch'],
+    viewports: [
+        { id: 'desktop', name: 'Desktop', width: 1440, height: 900 },
+        { id: 'tablet', name: 'Tablet', width: 768, height: 1024 },
+        { id: 'mobile', name: 'Mobile', width: 390, height: 844 },
+    ],
+    density: 'comfortable',
+    orientation: 'adaptive',
+    capabilities: [],
+};
+
+export function parseTargetSurface(body: unknown): TargetSurface {
+    if (!isRecord(body)) return { ...DEFAULT_TARGET_SURFACE, viewports: [...DEFAULT_TARGET_SURFACE.viewports] };
+    return {
+        platform: typeof body.platform === 'string' ? body.platform : 'responsive-web',
+        input_modes: stringArray(body.input_modes),
+        viewports: parseRecordArray(body.viewports, (item) => ({
+            id: requiredString(item.id, 'UI viewport id'),
+            name: typeof item.name === 'string' ? item.name : String(item.id),
+            width: typeof item.width === 'number' ? item.width : 0,
+            height: typeof item.height === 'number' ? item.height : 0,
+        })),
+        density: typeof body.density === 'string' ? body.density : 'comfortable',
+        orientation: typeof body.orientation === 'string' ? body.orientation : 'adaptive',
+        capabilities: stringArray(body.capabilities),
+    };
+}
+
+export function parseUiNode(body: unknown): UiNode {
+    if (!isRecord(body)) throw new Error('UI node returned an unexpected response body');
+    return {
+        id: requiredString(body.id, 'UI node id'),
+        name: typeof body.name === 'string' ? body.name : '',
+        type: typeof body.type === 'string' ? body.type : 'container',
+        content: isRecord(body.content) ? body.content : {},
+        props: isRecord(body.props) ? body.props : {},
+        layout: isRecord(body.layout) ? body.layout : {},
+        appearance: isRecord(body.appearance) ? body.appearance : {},
+        responsive: Array.isArray(body.responsive) ? body.responsive : [],
+        states: isRecord(body.states) ? body.states : {},
+        interactions: Array.isArray(body.interactions) ? body.interactions : [],
+        children: Array.isArray(body.children) ? body.children.map(parseUiNode) : [],
+        locked: typeof body.locked === 'boolean' ? body.locked : false,
+    };
+}
+
+export function parseUiDocument(body: unknown): UiDocument {
+    if (!isRecord(body)) throw new Error('UI document returned an unexpected response body');
+    const schemaVersion = requiredString(body.schema_version, 'UI document schema version');
+    if (schemaVersion !== 'sacode-ui/v1') throw new Error(`Unsupported UI document schema: ${schemaVersion}`);
+    return {
+        schema_version: schemaVersion,
+        id: requiredString(body.id, 'UI document id'),
+        name: requiredString(body.name, 'UI document name'),
+        target: parseTargetSurface(body.target),
+        pages: parseRecordArray(body.pages, (item) => ({
+            id: requiredString(item.id, 'UI page id'),
+            name: typeof item.name === 'string' ? item.name : '',
+            route_intent: typeof item.route_intent === 'string' ? item.route_intent : null,
+            root: parseUiNode(item.root),
+        })),
+        reusable_components: Array.isArray(body.reusable_components) ? body.reusable_components : [],
+        tokens: isRecord(body.tokens) ? body.tokens : {},
+        assets: Array.isArray(body.assets) ? body.assets : [],
+        flows: Array.isArray(body.flows) ? body.flows : [],
+        version: typeof body.version === 'number' ? body.version : 0,
+        status: typeof body.status === 'string' ? body.status : 'draft',
+        created_at: typeof body.created_at === 'string' ? body.created_at : '',
+        updated_at: typeof body.updated_at === 'string' ? body.updated_at : '',
+    };
+}
+
+export function parseUiDocumentPatch(body: unknown): UiDocumentPatch {
+    if (!isRecord(body)) throw new Error('UI patch returned an unexpected response body');
+    const schemaVersion = requiredString(body.schema_version, 'UI patch schema version');
+    if (schemaVersion !== 'sacode-ui-patch/v1') throw new Error(`Unsupported UI patch schema: ${schemaVersion}`);
+    return {
+        schema_version: schemaVersion,
+        base_version: typeof body.base_version === 'number' ? body.base_version : 0,
+        summary: typeof body.summary === 'string' ? body.summary : '',
+        operations: parseRecordArray(body.operations, (item) => ({
+            type: requiredString(item.type, 'UI patch operation type'),
+            ...(typeof item.node_id === 'string' ? { node_id: item.node_id } : {}),
+            ...(typeof item.parent_id === 'string' ? { parent_id: item.parent_id } : {}),
+            ...(typeof item.index === 'number' ? { index: item.index } : {}),
+            ...(typeof item.new_node_id === 'string' ? { new_node_id: item.new_node_id } : {}),
+            ...(typeof item.width === 'string' ? { width: item.width } : {}),
+            ...(typeof item.height === 'string' ? { height: item.height } : {}),
+            ...(isRecord(item.patch) ? { patch: item.patch } : {}),
+            ...(Array.isArray(item.interactions) ? { interactions: item.interactions } : {}),
+            ...(typeof item.name === 'string' ? { name: item.name } : {}),
+            ...(typeof item.value === 'string' ? { value: item.value } : {}),
+            ...(typeof item.locked === 'boolean' ? { locked: item.locked } : {}),
+            ...(isRecord(item.node) ? { node: parseUiNode(item.node) } : {}),
+        })),
+    };
+}
+
+export function parseUiPatchProposal(body: unknown): UiPatchProposal {
+    if (!isRecord(body)) throw new Error('UI patch proposal returned an unexpected response body');
+    return {
+        patch: parseUiDocumentPatch(body.patch),
+        changes: parseRecordArray(body.changes, (item) => ({
+            operation: requiredString(item.operation, 'UI patch change operation'),
+            node_id: typeof item.node_id === 'string' ? item.node_id : null,
+            description: typeof item.description === 'string' ? item.description : '',
+        })),
+        source: typeof body.source === 'string' ? body.source : 'ai',
+    };
+}
+
+export function parseUiCheckReport(body: unknown): UiCheckReport {
+    if (!isRecord(body)) throw new Error('UI check returned an unexpected response body');
+    return {
+        checked_version: typeof body.checked_version === 'number' ? body.checked_version : 0,
+        passed: body.passed === true,
+        findings: parseRecordArray(body.findings, (item) => ({
+            id: requiredString(item.id, 'UI check finding id'),
+            severity: typeof item.severity === 'string' ? item.severity : 'warning',
+            message: typeof item.message === 'string' ? item.message : '',
+            node_id: typeof item.node_id === 'string' ? item.node_id : null,
+        })),
+        checked_at: typeof body.checked_at === 'string' ? body.checked_at : '',
+    };
+}
+
+function parseUiDocumentVersion(body: Record<string, unknown>): UiDocumentVersion {
+    return {
+        version: typeof body.version === 'number' ? body.version : 0,
+        document: parseUiDocument(body.document),
+        confirmed_at: typeof body.confirmed_at === 'string' ? body.confirmed_at : '',
+        summary: typeof body.summary === 'string' ? body.summary : '',
+    };
+}
+
+export function parseImplementationProfile(body: unknown): ImplementationProfile {
+    if (!isRecord(body)) throw new Error('Implementation profile returned an unexpected response body');
+    const schemaVersion = requiredString(body.schema_version, 'Implementation profile schema version');
+    if (schemaVersion !== 'sacode-implementation/v1') throw new Error(`Unsupported implementation profile schema: ${schemaVersion}`);
+    const projectMode = body.project_mode === 'new' ? 'new' : 'existing';
+    const source = body.source === 'user-selected' || body.source === 'ai-recommended' ? body.source : 'detected';
+    return {
+        schema_version: schemaVersion,
+        project_mode: projectMode,
+        target_platform: typeof body.target_platform === 'string' ? body.target_platform : '',
+        distribution: typeof body.distribution === 'string' ? body.distribution : null,
+        operating_systems: stringArray(body.operating_systems),
+        language: typeof body.language === 'string' ? body.language : '',
+        framework: typeof body.framework === 'string' ? body.framework : '',
+        runtime: typeof body.runtime === 'string' ? body.runtime : null,
+        desktop_shell: typeof body.desktop_shell === 'string' ? body.desktop_shell : null,
+        build_tool: typeof body.build_tool === 'string' ? body.build_tool : null,
+        package_manager: typeof body.package_manager === 'string' ? body.package_manager : null,
+        ui_library: typeof body.ui_library === 'string' ? body.ui_library : null,
+        styling: typeof body.styling === 'string' ? body.styling : null,
+        router: typeof body.router === 'string' ? body.router : null,
+        state_management: typeof body.state_management === 'string' ? body.state_management : null,
+        network_layer: typeof body.network_layer === 'string' ? body.network_layer : null,
+        test_framework: typeof body.test_framework === 'string' ? body.test_framework : null,
+        source,
+        confidence: typeof body.confidence === 'number' ? body.confidence : null,
+        evidence: Array.isArray(body.evidence) ? body.evidence : [],
+        decisions: Array.isArray(body.decisions) ? body.decisions : [],
+        confirmed: typeof body.confirmed === 'boolean' ? body.confirmed : false,
+        confirmed_at: typeof body.confirmed_at === 'string' ? body.confirmed_at : null,
+    };
+}
+
 export function parseDesignSession(body: unknown): DesignSession {
     if (!isRecord(body)) throw new Error('Design session returned an unexpected response body');
     return {
@@ -403,6 +801,11 @@ export function parseDesignSession(body: unknown): DesignSession {
         backend_id: typeof body.backend_id === 'string' ? body.backend_id : 'sacode',
         mode: typeof body.mode === 'string' ? body.mode : 'build',
         target_path: typeof body.target_path === 'string' ? body.target_path : '',
+        target_surface: parseTargetSurface(body.target_surface),
+        ui_document: body.ui_document != null ? parseUiDocument(body.ui_document) : null,
+        implementation_profile: body.implementation_profile != null ? parseImplementationProfile(body.implementation_profile) : null,
+        ui_versions: parseRecordArray(body.ui_versions, parseUiDocumentVersion),
+        ui_check_report: body.ui_check_report != null ? parseUiCheckReport(body.ui_check_report) : null,
         status: typeof body.status === 'string' ? body.status : 'draft',
         plan: body.plan != null && isRecord(body.plan) ? parseGenerationPlan(body.plan) : null,
         prompt_snapshot: body.prompt_snapshot != null && typeof body.prompt_snapshot === 'string' ? body.prompt_snapshot : null,
@@ -764,6 +1167,113 @@ export function parseAgentsList(body: unknown): AgentsListResponse {
  * Daemon HTTP client shared by VSCode and Desktop.
  * Desktop must inject a Tauri IPC transport so the WebView never holds the bearer token.
  */
+export interface KnowledgeNote {
+    id: string; title: string; scope: 'user' | 'project'; readonly: boolean;
+    created_at?: string | null; updated_at?: string | null; content?: string;
+}
+export interface KnowledgeHit {
+    id: string; title: string; scope: 'user' | 'project'; readonly: boolean; score: number; snippet: string;
+}
+export interface AutomationRule {
+    id: string; name: string; cron_expr: string; prompt: string;
+    backend_id: string | null; enabled: boolean; last_fired_at: string | null; next_run: string | null;
+}
+export interface AutomationRun {
+    id: string; rule_id: string; task_id: string; triggered_at: string; status: string;
+}
+export interface AutomationRuleInput {
+    name: string; cron_expr: string; prompt: string; backend_id?: string | null; enabled: boolean;
+}
+export interface GitAuthPlatformStatus {
+    host: string; configured: boolean; token_present: boolean; mode: string | null;
+    login: string | null; updated_at: string | null;
+}
+export interface GitAuthStatus {
+    platforms: GitAuthPlatformStatus[];
+}
+export interface GithubDeviceFlow {
+    device_code: string; user_code: string; verification_uri: string;
+    verification_uri_complete?: string | null; expires_in: number; interval: number;
+}
+export interface GiteeAuthorizeFlow {
+    authorize_url: string; state: string;
+}
+export interface HookConfig {
+    name: string; event: string; command: string; enabled: boolean;
+}
+export interface HookListView {
+    hooks: HookConfig[]; config_path: string; executed: false;
+}
+export interface DetectedTool {
+    id: string; label: string; config_path: string; provider_count: number;
+}
+export interface ImportedProvider {
+    name: string; base_url: string; model: string;
+    auth_header?: string | null; auth_scheme?: string | null;
+    has_api_key: boolean;
+}
+export type AuditScanTier = 'static' | 'lightweight' | 'deep';
+
+function parseWrappedList<T>(body: unknown, key: string, valid: (value: unknown) => value is T): T[] {
+    if (!isRecord(body) || !Array.isArray(body[key]) || !body[key].every(valid)) throw new Error(`Invalid ${key} response`);
+    return body[key] as T[];
+}
+function isKnowledgeNote(value: unknown): value is KnowledgeNote {
+    return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
+        && (value.scope === 'user' || value.scope === 'project') && typeof value.readonly === 'boolean';
+}
+function isKnowledgeHit(value: unknown): value is KnowledgeHit {
+    return isKnowledgeNote(value) && isRecord(value) && typeof value.score === 'number' && typeof value.snippet === 'string';
+}
+function isAutomationRule(value: unknown): value is AutomationRule {
+    return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string'
+        && typeof value.cron_expr === 'string' && typeof value.prompt === 'string' && typeof value.enabled === 'boolean';
+}
+function isAutomationRun(value: unknown): value is AutomationRun {
+    return isRecord(value) && typeof value.id === 'string' && typeof value.rule_id === 'string'
+        && typeof value.task_id === 'string' && typeof value.triggered_at === 'string' && typeof value.status === 'string';
+}
+function isGitAuthPlatformStatus(value: unknown): value is GitAuthPlatformStatus {
+    return isRecord(value) && typeof value.host === 'string' && typeof value.configured === 'boolean'
+        && typeof value.token_present === 'boolean' && typeof value.login === 'string'
+        && typeof value.updated_at === 'string' && typeof value.mode === 'string';
+}
+function isGithubDeviceFlow(value: unknown): value is GithubDeviceFlow {
+    return isRecord(value) && typeof value.device_code === 'string' && typeof value.user_code === 'string'
+        && typeof value.verification_uri === 'string' && typeof value.expires_in === 'number'
+        && typeof value.interval === 'number';
+}
+function isGiteeAuthorizeFlow(value: unknown): value is GiteeAuthorizeFlow {
+    return isRecord(value) && typeof value.authorize_url === 'string' && typeof value.state === 'string';
+}
+function isHookConfig(value: unknown): value is HookConfig {
+    return isRecord(value) && typeof value.name === 'string' && typeof value.event === 'string'
+        && typeof value.command === 'string' && typeof value.enabled === 'boolean';
+}
+function isHookListView(value: unknown): value is HookListView {
+    return isRecord(value) && Array.isArray(value.hooks) && value.hooks.every(isHookConfig)
+        && typeof value.config_path === 'string' && value.executed === false;
+}
+function isDetectedTool(value: unknown): value is DetectedTool {
+    return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string'
+        && typeof value.config_path === 'string' && typeof value.provider_count === 'number';
+}
+function isGitAuthStatus(value: unknown): value is GitAuthStatus {
+    return isRecord(value) && Array.isArray(value.platforms) && value.platforms.every(isGitAuthPlatformStatus);
+}
+function parseGitAuthStatus(body: unknown): GitAuthStatus {
+    if (!isGitAuthStatus(body)) throw new Error('Invalid git auth status response');
+    return body;
+}
+function isImportedProvider(value: unknown): value is ImportedProvider {
+    return isRecord(value) && typeof value.name === 'string' && typeof value.base_url === 'string'
+        && typeof value.model === 'string' && typeof value.has_api_key === 'boolean';
+}
+function parseWrappedItem<T>(body: unknown, key: string, valid: (value: unknown) => value is T): T {
+    if (!isRecord(body) || !valid(body[key])) throw new Error(`Invalid ${key} response`);
+    return body[key];
+}
+
 export class DaemonClient {
     private readonly config: DaemonConfig;
     private readonly transport: HttpTransport;
@@ -785,7 +1295,7 @@ export class DaemonClient {
     }
 
     private async request(
-        method: 'GET' | 'POST',
+        method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
         path: string,
         body?: unknown,
         signal?: AbortSignal,
@@ -825,6 +1335,63 @@ export class DaemonClient {
         const res = await this.request('GET', '/agents');
         if (!res.ok) throw await responseError(res, 'Agent list');
         return parseAgentsList(await res.json());
+    }
+
+    async accountStatus(): Promise<{ account: AccountStatus; login_state?: string | null }> {
+        const res = await this.request('GET', '/account/status');
+        if (!res.ok) throw await responseError(res, 'Account status');
+        return await res.json() as { account: AccountStatus; login_state?: string | null };
+    }
+
+    async accountLogin(): Promise<void> {
+        const res = await this.request('POST', '/account/login');
+        if (!res.ok) throw await responseError(res, 'Account login');
+    }
+
+    async accountLogout(): Promise<void> {
+        const res = await this.request('POST', '/account/logout');
+        if (!res.ok) throw await responseError(res, 'Account logout');
+    }
+
+    async accountSyncModels(): Promise<string[]> {
+        const res = await this.request('POST', '/account/sync-models');
+        if (!res.ok) throw await responseError(res, 'Account model sync');
+        return ((await res.json()) as { models: string[] }).models;
+    }
+
+    async registerModelConnection(input: { name: string; base_url: string; upstream_api_key: string; models: { client_model: string; upstream_model: string }[] }): Promise<void> {
+        const res = await this.request('POST', '/account/connections', input);
+        if (!res.ok) throw await responseError(res, 'Gateway model registration');
+    }
+
+    async listLocalProviders(): Promise<{ providers: { name: string; base_url: string; models: string[]; has_credential: boolean }[] }> {
+        const res = await this.request('GET', '/providers/local');
+        if (!res.ok) throw await responseError(res, 'Local providers');
+        return await res.json() as { providers: { name: string; base_url: string; models: string[]; has_credential: boolean }[] };
+    }
+
+    async createLocalProvider(input: { name: string; base_url: string; api_key: string; models: string[]; thinking: boolean; reasoning_effort?: string }): Promise<void> {
+        const res = await this.request('POST', '/providers/local', input);
+        if (!res.ok) throw await responseError(res, 'Create local provider');
+    }
+
+    async deleteLocalProvider(name: string): Promise<void> {
+        const res = await this.request('DELETE', `/providers/local/${encodeURIComponent(name)}`);
+        if (!res.ok) throw await responseError(res, 'Delete local provider');
+    }
+
+    async getWorkspaceCapabilities(): Promise<WorkspaceCapabilities> {
+        const res = await this.request('GET', '/workspace/capabilities');
+        if (!res.ok) throw await responseError(res, 'Workspace capabilities request');
+        const body = await res.json() as Partial<WorkspaceCapabilities>;
+        return {
+            workspace: typeof body.workspace === 'string' ? body.workspace : '',
+            models: Array.isArray(body.models) ? body.models : [],
+            model_status: body.model_status,
+            account: body.account,
+            skills: Array.isArray(body.skills) ? body.skills : [],
+            files: Array.isArray(body.files) ? body.files : [],
+        };
     }
 
     async getDesignContext(): Promise<DesignProjectContext> {
@@ -898,6 +1465,48 @@ export class DaemonClient {
         return parseDesignSession(await res.json());
     }
 
+    async getUiDocument(id: string): Promise<UiDocument> {
+        const res = await this.request('GET', `/api/design/sessions/${encodeURIComponent(id)}/ui`);
+        if (!res.ok) throw await responseError(res, 'UI document query');
+        return parseUiDocument(await res.json());
+    }
+
+    async updateUiDocument(id: string, req: UpdateUiDocumentRequest): Promise<UiDocument> {
+        const res = await this.request('PATCH', `/api/design/sessions/${encodeURIComponent(id)}/ui`, req);
+        if (!res.ok) throw await responseError(res, 'UI document update');
+        return parseUiDocument(await res.json());
+    }
+
+    async proposeUiPatch(id: string, req: GenerateUiPatchRequest): Promise<UiPatchProposal> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/ui/patch/propose`, req);
+        if (!res.ok) throw await responseError(res, 'UI patch proposal');
+        return parseUiPatchProposal(await res.json());
+    }
+
+    async applyUiPatch(id: string, req: ApplyUiPatchRequest): Promise<UiDocument> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/ui/patch/apply`, req);
+        if (!res.ok) throw await responseError(res, 'UI patch application');
+        return parseUiDocument(await res.json());
+    }
+
+    async checkUiDocument(id: string): Promise<UiCheckReport> {
+        const res = await this.request('GET', `/api/design/sessions/${encodeURIComponent(id)}/ui/check`);
+        if (!res.ok) throw await responseError(res, 'UI document check');
+        return parseUiCheckReport(await res.json());
+    }
+
+    async confirmUiDocument(id: string, req: ConfirmUiDocumentRequest = {}): Promise<DesignSession> {
+        const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/ui/confirm`, req);
+        if (!res.ok) throw await responseError(res, 'UI document confirmation');
+        return parseDesignSession(await res.json());
+    }
+
+    async updateImplementationProfile(id: string, req: UpdateImplementationProfileRequest): Promise<DesignSession> {
+        const res = await this.request('PUT', `/api/design/sessions/${encodeURIComponent(id)}/implementation`, req);
+        if (!res.ok) throw await responseError(res, 'Implementation profile update');
+        return parseDesignSession(await res.json());
+    }
+
     async planSession(id: string): Promise<DesignSession> {
         const res = await this.request('POST', `/api/design/sessions/${encodeURIComponent(id)}/plan`);
         if (!res.ok) throw await responseError(res, 'Session planning');
@@ -934,6 +1543,154 @@ export class DaemonClient {
         return parseImageGenerationResult(await res.json());
     }
 
+    async knowledgeEntries(scope: 'user' | 'project'): Promise<KnowledgeNote[]> {
+        const res = await this.request('GET', `/api/knowledge/entries?scope=${scope}`);
+        if (!res.ok) throw await responseError(res, 'Knowledge entries');
+        return parseWrappedList(await res.json(), 'entries', isKnowledgeNote);
+    }
+    async createKnowledgeNote(input: { scope: 'user' | 'project'; title: string; content: string }): Promise<KnowledgeNote> {
+        const res = await this.request('POST', '/api/knowledge/notes', input);
+        if (!res.ok) throw await responseError(res, 'Knowledge note creation');
+        return parseWrappedItem(await res.json(), 'note', isKnowledgeNote);
+    }
+    async getKnowledgeNote(id: string, scope: 'user' | 'project'): Promise<KnowledgeNote> {
+        const res = await this.request('GET', `/api/knowledge/notes/${encodeURIComponent(id)}?scope=${scope}`);
+        if (!res.ok) throw await responseError(res, 'Knowledge note');
+        return parseWrappedItem(await res.json(), 'note', isKnowledgeNote);
+    }
+    async updateKnowledgeNote(id: string, input: { scope: 'user' | 'project'; title: string; content: string; updated_at?: string | null }): Promise<KnowledgeNote> {
+        const res = await this.request('PUT', `/api/knowledge/notes/${encodeURIComponent(id)}`, input);
+        if (!res.ok) throw await responseError(res, 'Knowledge note update');
+        return parseWrappedItem(await res.json(), 'note', isKnowledgeNote);
+    }
+    async deleteKnowledgeNote(id: string, scope: 'user' | 'project'): Promise<void> {
+        const res = await this.request('DELETE', `/api/knowledge/notes/${encodeURIComponent(id)}?scope=${scope}`);
+        if (!res.ok) throw await responseError(res, 'Knowledge note delete');
+    }
+    async searchKnowledge(q: string, scope: 'user' | 'project'): Promise<KnowledgeHit[]> {
+        const res = await this.request('GET', `/api/knowledge/search?scope=${scope}&q=${encodeURIComponent(q)}`);
+        if (!res.ok) throw await responseError(res, 'Knowledge search');
+        return parseWrappedList(await res.json(), 'results', isKnowledgeHit);
+    }
+    async listAutomationRules(): Promise<AutomationRule[]> {
+        const res = await this.request('GET', '/api/automation/rules');
+        if (!res.ok) throw await responseError(res, 'Automation rules');
+        return parseWrappedList(await res.json(), 'rules', isAutomationRule);
+    }
+    async createAutomationRule(input: AutomationRuleInput): Promise<AutomationRule> {
+        const res = await this.request('POST', '/api/automation/rules', input);
+        if (!res.ok) throw await responseError(res, 'Automation rule creation');
+        return parseWrappedItem(await res.json(), 'rule', isAutomationRule);
+    }
+    async updateAutomationRule(id: string, input: AutomationRuleInput): Promise<AutomationRule> {
+        const res = await this.request('PUT', `/api/automation/rules/${encodeURIComponent(id)}`, input);
+        if (!res.ok) throw await responseError(res, 'Automation rule update');
+        return parseWrappedItem(await res.json(), 'rule', isAutomationRule);
+    }
+    async deleteAutomationRule(id: string): Promise<void> {
+        const res = await this.request('DELETE', `/api/automation/rules/${encodeURIComponent(id)}`);
+        if (!res.ok) throw await responseError(res, 'Automation rule delete');
+    }
+    async toggleAutomationRule(id: string): Promise<AutomationRule> {
+        const res = await this.request('POST', `/api/automation/rules/${encodeURIComponent(id)}/toggle`);
+        if (!res.ok) throw await responseError(res, 'Automation rule toggle');
+        return parseWrappedItem(await res.json(), 'rule', isAutomationRule);
+    }
+    async runAutomationRule(id: string): Promise<AutomationRun> {
+        const res = await this.request('POST', `/api/automation/rules/${encodeURIComponent(id)}/run`);
+        if (!res.ok) throw await responseError(res, 'Automation rule run');
+        return parseWrappedItem(await res.json(), 'run', isAutomationRun);
+    }
+    async listAutomationHistory(ruleId?: string): Promise<AutomationRun[]> {
+        const res = await this.request('GET', `/api/automation/history${ruleId ? `?rule_id=${encodeURIComponent(ruleId)}` : ''}`);
+        if (!res.ok) throw await responseError(res, 'Automation history');
+        return parseWrappedList(await res.json(), 'runs', isAutomationRun);
+    }
+
+    async gitAuthStatus(): Promise<GitAuthStatus> {
+        const res = await this.request('GET', '/api/git-auth/status');
+        if (!res.ok) throw await responseError(res, 'Git auth status');
+        return parseGitAuthStatus(await res.json());
+    }
+    async startGithubDeviceFlow(clientId?: string): Promise<GithubDeviceFlow> {
+        const res = await this.request('POST', '/api/git-auth/github/device', { ...(clientId ? { client_id: clientId } : {}) });
+        if (!res.ok) throw await responseError(res, 'GitHub device flow');
+        return parseWrappedItem(await res.json(), 'device_flow', isGithubDeviceFlow);
+    }
+    async pollGithubDeviceFlow(deviceCode: string, timeoutSeconds?: number, clientId?: string): Promise<{ status: string; login?: string }> {
+        const res = await this.request('POST', '/api/git-auth/github/poll', {
+            device_code: deviceCode,
+            ...(timeoutSeconds ? { timeout_seconds: timeoutSeconds } : {}),
+            ...(clientId ? { client_id: clientId } : {}),
+        });
+        if (!res.ok) throw await responseError(res, 'GitHub device flow poll');
+        const body = await res.json() as { status: string; login?: string };
+        return { status: body.status, ...(body.login ? { login: body.login } : {}) };
+    }
+    async authorizeGitee(redirectUri?: string): Promise<GiteeAuthorizeFlow> {
+        const res = await this.request('POST', '/api/git-auth/gitee/authorize', { ...(redirectUri ? { redirect_uri: redirectUri } : {}) });
+        if (!res.ok) throw await responseError(res, 'Gitee authorize');
+        return parseWrappedItem(await res.json(), 'authorize', isGiteeAuthorizeFlow);
+    }
+    async completeGiteeAuth(code: string, redirectUri?: string): Promise<{ status: string }> {
+        const res = await this.request('POST', '/api/git-auth/gitee/callback', {
+            code,
+            ...(redirectUri ? { redirect_uri: redirectUri } : {}),
+        });
+        if (!res.ok) throw await responseError(res, 'Gitee callback');
+        return { status: 'ok' };
+    }
+    async gitAuthLogout(host: 'github' | 'gitee'): Promise<void> {
+        const res = await this.request('POST', '/api/git-auth/logout', { host });
+        if (!res.ok) throw await responseError(res, 'Git auth logout');
+    }
+
+    async listHooks(): Promise<HookListView> {
+        const res = await this.request('GET', '/api/hooks');
+        if (!res.ok) throw await responseError(res, 'Hooks list');
+        const body = await res.json();
+        if (!isHookListView(body)) throw new Error('Invalid hooks response');
+        return body;
+    }
+
+    async listImportTools(): Promise<DetectedTool[]> {
+        const res = await this.request('GET', '/api/import/tools');
+        if (!res.ok) throw await responseError(res, 'Import tools');
+        return parseWrappedList(await res.json(), 'tools', isDetectedTool);
+    }
+    async listImportProviders(toolId: string): Promise<ImportedProvider[]> {
+        const res = await this.request('GET', `/api/import/tools/${encodeURIComponent(toolId)}/providers`);
+        if (!res.ok) throw await responseError(res, 'Import providers');
+        return parseWrappedList(await res.json(), 'providers', isImportedProvider);
+    }
+    async applyImport(toolId: string, providerNames: string[], apiKeys?: Record<string, string>): Promise<{ providers: string[] }> {
+        const res = await this.request('POST', '/api/import/apply', {
+            tool: toolId,
+            providers: providerNames,
+            ...(apiKeys ? { api_keys: apiKeys } : {}),
+        });
+        if (!res.ok) throw await responseError(res, 'Import apply');
+        const body = await res.json() as { providers: string[] };
+        return { providers: body.providers };
+    }
+
+    async runAuditScan(options: {
+        scanTier?: AuditScanTier;
+        useAi?: boolean;
+        maxFiles?: number;
+        modelProvider?: string;
+    }): Promise<AuditResponse> {
+        const body = {
+            ...(options.scanTier ? { scan_tier: options.scanTier } : {}),
+            ...(options.useAi !== undefined ? { use_ai: options.useAi } : {}),
+            ...(options.maxFiles !== undefined ? { max_files: options.maxFiles } : {}),
+            ...(options.modelProvider ? { model_provider: options.modelProvider } : {}),
+        };
+        const res = await this.request('POST', '/audit', body);
+        if (!res.ok) throw await responseError(res, 'Audit scan');
+        return parseAuditResponse(await res.json());
+    }
+
     async createTask(options: {
         prompt: string;
         mode?: ExecutionModeInput;
@@ -941,6 +1698,10 @@ export class DaemonClient {
         backendId?: string;
         sessionId?: string;
         source?: EntrySource;
+        modelProvider?: string;
+        modelName?: string;
+        skill?: string;
+        contextPaths?: string[];
     }): Promise<CreateTaskResponse> {
         const body = {
             // Daemon TaskRequest (HTTP) is prompt/mode-first; protocol fields optional for clients.
@@ -952,16 +1713,56 @@ export class DaemonClient {
             explicit_contexts: [],
             backend_id: normalizeBackendId(options.backendId),
             ...(options.sessionId ? { session_id: options.sessionId } : {}),
+            ...(options.modelProvider ? { model_provider: options.modelProvider } : {}),
+            ...(options.modelName ? { model_name: options.modelName } : {}),
+            ...(options.skill ? { skill: options.skill } : {}),
+            context_paths: options.contextPaths ?? [],
         };
         const res = await this.request('POST', '/task', body);
         if (!res.ok) throw await responseError(res, 'Task creation');
         return parseTaskResponse(await res.json());
     }
 
+    async listDesktopConversations(): Promise<DesktopConversation[]> {
+        const res = await this.request('GET', '/api/desktop/conversations');
+        if (!res.ok) throw await responseError(res, 'Conversation list');
+        return (await res.json() as { conversations: DesktopConversation[] }).conversations;
+    }
+
+    async getDesktopConversation(id: string): Promise<DesktopConversationDetail> {
+        const res = await this.request('GET', `/api/desktop/conversations/${encodeURIComponent(id)}`);
+        if (!res.ok) throw await responseError(res, 'Conversation');
+        return await res.json() as DesktopConversationDetail;
+    }
+
+    async sendDesktopMessage(options: {
+        prompt: string; mode: ExecutionModeInput; backendId: string; conversationId?: string;
+        modelProvider?: string; modelName?: string; skill?: string; contextPaths?: string[];
+    }): Promise<CreateTaskResponse & { conversation_id: string }> {
+        const res = await this.request('POST', options.conversationId
+            ? `/api/desktop/conversations/${encodeURIComponent(options.conversationId)}`
+            : '/api/desktop/conversations', {
+            prompt: options.prompt, mode: normalizeExecutionMode(options.mode), backend_id: normalizeBackendId(options.backendId),
+            model_provider: options.modelProvider, model_name: options.modelName, skill: options.skill, context_paths: options.contextPaths ?? [],
+        });
+        if (!res.ok) throw await responseError(res, 'Conversation message');
+        return await res.json() as CreateTaskResponse & { conversation_id: string };
+    }
+
+    async deleteDesktopConversation(id: string): Promise<void> {
+        const res = await this.request('DELETE', `/api/desktop/conversations/${encodeURIComponent(id)}`);
+        if (!res.ok) throw await responseError(res, 'Conversation deletion');
+    }
+
     async listTasks(): Promise<TaskListResponse> {
         const res = await this.request('GET', '/tasks');
         if (!res.ok) throw await responseError(res, 'Task list request');
         return parseTaskList(await res.json());
+    }
+
+    async deleteTask(taskId: string): Promise<void> {
+        const res = await this.request('DELETE', `/task/${encodeURIComponent(taskId)}`);
+        if (!res.ok) throw await responseError(res, 'Task delete request');
     }
 
     async getTaskChanges(taskId: string): Promise<TaskChangesResponse> {

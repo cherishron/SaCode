@@ -4,12 +4,25 @@ import {
   daemonHealthError,
   openEventStream,
   parseSseFrame,
+  type AccountStatus,
   type AuditFinding,
   type AuditReportSummary,
   type AuditResponse,
   type CreateExtractionRequest,
   type CreateSessionRequest,
   type DaemonHealth,
+  type KnowledgeNote,
+  type KnowledgeHit,
+  type AutomationRule,
+  type AutomationRun,
+  type AutomationRuleInput,
+  type AuditScanTier,
+  type DetectedTool,
+  type GitAuthStatus,
+  type GithubDeviceFlow,
+  type GiteeAuthorizeFlow,
+  type HookListView,
+  type ImportedProvider,
   type DesignProjectContext,
   type DesignResourceCatalog,
   type DesignSession,
@@ -17,11 +30,20 @@ import {
   type ExtractionJob,
   type ImageGenerationRequest,
   type ImageGenerationResult,
+  type ImplementationProfile,
   type PendingApproval,
+  type UiCheckReport,
+  type UiDocumentPatch,
+  type UiPatchProposal,
+  type TargetSurface,
   type TaskFileChange,
   type TaskListItem,
+  type DesktopConversation,
+  type DesktopConversationDetail,
   type TaskSnapshot,
+  type UiDocument,
   type UpdateSessionRequest,
+  type WorkspaceCapabilities,
 } from '@cherishron/sacode-client-core';
 import { createTauriTransport } from '../ipc-transport.ts';
 import {
@@ -47,20 +69,32 @@ export type ChangeItem = TaskFileChange;
 
 export class DesktopApp {
   mode: RuntimeMode = isTauri() ? 'tauri' : 'vite';
-  handle: SidecarHandleDto | null = null;
+  /** Diagnostics surface for the splash screen. */
+  bootDiagnostics: string[] = [];
+  private bootLog(msg: string) {
+    this.bootDiagnostics.push(msg);
+    this.emit();
+  }  handle: SidecarHandleDto | null = null;
   client: DaemonClient | null = null;
   currentTaskId: string | null = null;
+  lastTaskCreateError: string | null = null;
   tasks: TaskListItem[] = [];
+  desktopConversations: DesktopConversation[] = [];
+  conversationTurns: DesktopConversationDetail | null = null;
+  currentConversationId: string | null = null;
   timeline: TimelineItem[] = [];
   changes: ChangeItem[] = [];
   approvals: PendingApproval[] = [];
   agents: { id: string; display_name: string; health?: string }[] = [];
+  workspaceCapabilities: WorkspaceCapabilities = { workspace: '', models: [], skills: [], files: [] };
   defaultBackend = 'sacode';
   health: DaemonHealth | null = null;
   auditFindings: AuditFinding[] = [];
   auditReports: AuditReportSummary[] = [];
   currentAuditId: string | null = null;
   auditRunning = false;
+  /** 当前安全扫描档位：static / lightweight / deep。 */
+  auditTier: AuditScanTier = 'static';
   designContext: DesignProjectContext | null = null;
   designResources: DesignResourceCatalog | null = null;
   designLoading = false;
@@ -121,45 +155,119 @@ export class DesktopApp {
     this.stopStream = null;
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
+
+    // Build a transport-only client immediately. In Tauri mode, all daemon
+    // HTTP calls are proxied through the Rust shell via daemon_proxy; the
+    // client doesn't need a live port. This lets the main UI render right
+    // away while the sidecar starts in the background.
+    this.buildClient(this.handle);
+
     if (this.mode === 'tauri') {
-      try {
-        this.handle = await startDaemon(workspace || undefined);
-        this.workspace = this.handle.workspace;
-        this.buildClient(this.handle);
-        this.log(
-          `Tauri sidecar ready ${this.handle.base_url} pid=${this.handle.pid} v${this.handle.version ?? '?'}`,
-        );
-        try {
-          await startEventBridge();
-          const off = await listenDaemonEvents((payload) => this.onDaemonEvent(payload));
-          this.stopStream = off;
-          this.log('event bridge attached (daemon-event)');
-        } catch (e) {
-          this.error(`event bridge failed: ${e}`);
-        }
-      } catch (e) {
-        this.error(`start_daemon failed: ${e}`);
-        this.buildClient(null);
-      }
+      this.bootLog('mode=tauri, starting daemon…');
+      // Fire start_daemon without awaiting — the UI must not stall on IPC.
+      void this.startSidecar(workspace);
     } else {
-      this.buildClient(null);
+      this.bootLog('mode=vite (browser proxy)');
       this.log('Vite mode: using same-origin proxy (token not in WebView)');
       this.startViteStream();
     }
+
     this.currentTaskId = null;
+    this.currentConversationId = null;
+    this.conversationTurns = null;
+    this.desktopConversations = [];
     this.tasks = [];
     this.timeline = [];
     this.changes = [];
     this.approvals = [];
-    await this.refreshHealth();
-    await this.refreshAgents();
-    await this.refreshDesignData();
-    await this.refreshTasks();
-    await this.refreshAuditList();
-    if (this.tasks[0]) {
-      await this.selectTask(this.tasks[0].task_id);
+
+    // In Vite mode, do a health check to verify the proxy works. In Tauri
+    // mode, health is checked after the sidecar starts.
+    if (this.mode !== 'tauri') {
+      await this.refreshHealth();
     }
+
+    // Supplemental data must never hold the application on its splash screen.
+    void this.refreshAgents();
+    void this.refreshWorkspaceCapabilities();
+    void this.refreshDesignData();
+    void this.refreshTasks();
+    void this.refreshDesktopConversations();
+    void this.refreshAuditList();
+  }
+
+  async changeWorkspace(workspace: string): Promise<void> {
+    const next = workspace.trim();
+    if (!next || next === this.workspace) return;
+    localStorage.setItem('sacode.workspace', next);
+    this.stopStream?.();
+    this.stopStream = null;
+    this.currentTaskId = null;
+    this.currentConversationId = null;
+    this.conversationTurns = null;
+    this.desktopConversations = [];
+    this.tasks = [];
+    this.timeline = [];
+    this.changes = [];
+    this.approvals = [];
+    this.workspace = next;
+    this.health = null;
     this.emit();
+
+    if (this.mode === 'tauri') {
+      await this.startSidecar(next);
+      return;
+    }
+
+    this.log(`浏览器开发模式无法切换 daemon 工作区：${next}`);
+  }
+
+  /**
+   * Start the Tauri sidecar without blocking the UI. Updates health and
+   * state as the sidecar comes online.
+   */
+  private async startSidecar(workspace?: string) {
+    try {
+      this.handle = await this.withTimeout(
+        startDaemon(workspace || undefined),
+        30000,
+      );
+      this.bootLog(`sidecar ready port=${this.handle.port}`);
+      this.workspace = this.handle.workspace;
+      this.health = { status: 'healthy', version: this.handle.version ?? '' };
+      // Rebuild client with the real handle so transport has correct metadata.
+      this.buildClient(this.handle);
+      this.emit();
+      this.log(
+        `Tauri sidecar ready ${this.handle.base_url} pid=${this.handle.pid} v${this.handle.version ?? '?'}`,
+      );
+
+      // SSE is supplemental and must not block health checks or the main UI.
+      void (async () => {
+        try {
+          const off = await listenDaemonEvents((payload) => this.onDaemonEvent(payload));
+          this.stopStream = off;
+          await startEventBridge();
+          this.log('event bridge attached (daemon-event)');
+        } catch (e) {
+          this.error(`event bridge failed: ${e}`);
+        }
+      })();
+
+      // Now that the sidecar is up, do a health check and load supplemental data.
+      void this.refreshHealth();
+      void this.refreshAgents();
+      void this.refreshWorkspaceCapabilities();
+      void this.refreshDesignData();
+      void this.refreshTasks();
+      void this.refreshDesktopConversations();
+      void this.refreshAuditList();
+    } catch (e) {
+      this.bootLog(`start_daemon FAILED: ${e}`);
+      this.error(`start_daemon failed: ${e}`);
+      this.health = { status: 'degraded', version: '' };
+      this.emit();
+    }
   }
 
   private startViteStream(taskId?: string) {
@@ -233,8 +341,14 @@ export class DesktopApp {
       payload.event === 'task_cancelled'
     ) {
       if (taskId) {
-        void this.refreshStatus(taskId, true);
+        if (taskId === this.currentTaskId) void this.refreshStatus(taskId, true);
         void this.refreshTasks();
+        void this.refreshDesktopConversations();
+        if (this.currentConversationId && this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)) {
+          void this.client?.getDesktopConversation(this.currentConversationId).then((detail) => {
+            if (this.currentConversationId === detail.id) { this.conversationTurns = detail; this.emit(); }
+          });
+        }
         void this.refreshChanges(taskId);
       }
     }
@@ -247,8 +361,22 @@ export class DesktopApp {
 
   async refreshHealth() {
     if (!this.client) return;
-    this.health = await this.client.health();
+    try {
+      this.health = await this.withTimeout(this.client.health(), 5000);
+    } catch (e) {
+      this.error(`health check failed: ${e}`);
+    }
     this.emit();
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms);
+      promise.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
   }
 
   async refreshAgents() {
@@ -263,6 +391,62 @@ export class DesktopApp {
       this.defaultBackend = list.default_backend_id || 'sacode';
     } catch (e) {
       this.error(`agents: ${e}`);
+    }
+    this.emit();
+  }
+
+  async accountStatus(): Promise<{ account: AccountStatus; login_state?: string | null }> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.accountStatus();
+  }
+
+  async accountLogin(): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.accountLogin();
+  }
+
+  async accountLogout(): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.accountLogout();
+    await this.refreshWorkspaceCapabilities();
+  }
+
+  async accountSyncModels(): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.accountSyncModels();
+    await this.refreshWorkspaceCapabilities();
+  }
+
+  async createLocalProvider(input: { name: string; base_url: string; api_key: string; models: string[]; thinking: boolean; reasoning_effort?: string }): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.createLocalProvider(input);
+    await this.refreshWorkspaceCapabilities();
+  }
+
+  async listLocalProviders() {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.listLocalProviders();
+  }
+
+  async deleteLocalProvider(name: string): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.deleteLocalProvider(name);
+    await this.refreshWorkspaceCapabilities();
+  }
+
+  async registerModelConnection(input: { name: string; base_url: string; upstream_api_key: string; models: { client_model: string; upstream_model: string }[] }): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.registerModelConnection(input);
+    await this.accountSyncModels();
+  }
+
+  async refreshWorkspaceCapabilities() {
+    if (!this.client) return;
+    try {
+      this.workspaceCapabilities = await this.client.getWorkspaceCapabilities();
+    } catch (e) {
+      this.workspaceCapabilities = { workspace: this.workspace, models: [], skills: [], files: [] };
+      this.error(`workspace capabilities: ${e}`);
     }
     this.emit();
   }
@@ -290,6 +474,91 @@ export class DesktopApp {
     }
   }
 
+  async refreshKnowledge(scope: 'user' | 'project'): Promise<KnowledgeNote[]> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.knowledgeEntries(scope);
+  }
+  async searchKnowledge(q: string, scope: 'user' | 'project'): Promise<KnowledgeHit[]> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.searchKnowledge(q, scope);
+  }
+  async getKnowledgeNote(id: string, scope: 'user' | 'project'): Promise<KnowledgeNote> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.getKnowledgeNote(id, scope);
+  }
+  async saveKnowledgeNote(input: { scope: 'user' | 'project'; title: string; content: string; id?: string; updated_at?: string | null }): Promise<KnowledgeNote> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return input.id ? this.client.updateKnowledgeNote(input.id, input) : this.client.createKnowledgeNote(input);
+  }
+  async deleteKnowledgeNote(id: string, scope: 'user' | 'project'): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.deleteKnowledgeNote(id, scope);
+  }
+  async refreshAutomation(): Promise<{ rules: AutomationRule[]; history: AutomationRun[] }> {
+    if (!this.client) throw new Error('daemon 未连接');
+    const [rules, history] = await Promise.all([this.client.listAutomationRules(), this.client.listAutomationHistory()]);
+    return { rules, history };
+  }
+  async saveAutomationRule(input: AutomationRuleInput, id?: string): Promise<AutomationRule> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return id ? this.client.updateAutomationRule(id, input) : this.client.createAutomationRule(input);
+  }
+  async deleteAutomationRule(id: string): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.deleteAutomationRule(id);
+  }
+  async toggleAutomationRule(id: string): Promise<AutomationRule> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.toggleAutomationRule(id);
+  }
+  async runAutomationRule(id: string): Promise<AutomationRun> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.runAutomationRule(id);
+  }
+
+  async refreshGitAuth(): Promise<GitAuthStatus> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.gitAuthStatus();
+  }
+  async startGithubDeviceFlow(clientId?: string): Promise<GithubDeviceFlow> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.startGithubDeviceFlow(clientId);
+  }
+  async pollGithubDeviceFlow(deviceCode: string, timeoutSeconds?: number, clientId?: string): Promise<{ status: string; login?: string }> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.pollGithubDeviceFlow(deviceCode, timeoutSeconds, clientId);
+  }
+  async authorizeGitee(redirectUri?: string): Promise<GiteeAuthorizeFlow> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.authorizeGitee(redirectUri);
+  }
+  async completeGiteeAuth(code: string, redirectUri?: string): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.completeGiteeAuth(code, redirectUri);
+  }
+  async gitAuthLogout(host: 'github' | 'gitee'): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.gitAuthLogout(host);
+  }
+
+  async listHooks(): Promise<HookListView> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.listHooks();
+  }
+
+  async listImportTools(): Promise<DetectedTool[]> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.listImportTools();
+  }
+  async listImportProviders(toolId: string): Promise<ImportedProvider[]> {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.listImportProviders(toolId);
+  }
+  async applyImport(toolId: string, providerNames: string[], apiKeys?: Record<string, string>): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.applyImport(toolId, providerNames, apiKeys);
+  }
+
   async refreshTasks() {
     if (!this.client) return;
     try {
@@ -301,10 +570,59 @@ export class DesktopApp {
     this.emit();
   }
 
+  async refreshDesktopConversations() {
+    if (!this.client) return;
+    try {
+      this.desktopConversations = await this.client.listDesktopConversations();
+      this.emit();
+    } catch (e) { this.error(`conversations: ${e}`); }
+  }
+
+  async selectDesktopConversation(id: string) {
+    if (!this.client) return;
+    const detail = await this.client.getDesktopConversation(id);
+    this.conversationTurns = detail;
+    this.currentConversationId = id;
+    const latest = detail.turns.at(-1);
+    this.currentTaskId = latest?.task_id || null;
+    if (latest) await this.selectTask(latest.task_id);
+    if (this.mode === 'vite' && latest && typeof window !== 'undefined') this.startViteStream(latest.task_id);
+    this.emit();
+  }
+
+  async deleteDesktopConversation(id: string) {
+    if (!this.client) return;
+    const taskIds = this.conversationTurns?.id === id ? this.conversationTurns.turns.map((t) => t.task_id) : [];
+    await this.client.deleteDesktopConversation(id);
+    this.desktopConversations = this.desktopConversations.filter((item) => item.id !== id);
+    this.tasks = this.tasks.filter((item) => !taskIds.includes(item.task_id));
+    this.timeline = this.timeline.filter((item) => !item.taskId || !taskIds.includes(item.taskId));
+    if (this.currentConversationId === id) {
+      this.currentConversationId = null;
+      this.currentTaskId = null;
+      this.conversationTurns = null;
+    }
+    this.emit();
+  }
+
+  /** 删除独立任务（不用于 Desktop 会话删除）。 */
+  async deleteTask(taskId: string) {
+    if (!this.client) return;
+    await this.client.deleteTask(taskId);
+    this.tasks = this.tasks.filter((item) => item.task_id !== taskId);
+    if (this.currentTaskId === taskId) this.currentTaskId = null;
+    this.timeline = this.timeline.filter((item) => item.taskId !== taskId);
+    this.emit();
+  }
+
   async selectTask(taskId: string) {
     if (!this.client || !taskId) return;
     const task = this.tasks.find((item) => item.task_id === taskId);
     this.currentTaskId = taskId;
+    if (!this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)) {
+      this.currentConversationId = null;
+      this.conversationTurns = null;
+    }
     if (task && !this.timeline.some((item) => item.taskId === taskId && item.kind === 'user')) {
       this.push({ kind: 'user', text: task.prompt, taskId });
     }
@@ -331,16 +649,17 @@ export class DesktopApp {
     this.emit();
   }
 
-  async runAudit() {
+  async runAudit(scanTier: AuditScanTier = 'static') {
     if (!this.client || this.auditRunning) return;
     this.auditRunning = true;
+    this.auditTier = scanTier;
     this.emit();
     try {
-      const response: AuditResponse = await this.client.runAudit({ use_ai: false });
+      const response: AuditResponse = await this.client.runAuditScan({ scanTier, useAi: scanTier !== 'static' });
       this.currentAuditId = response.audit_id;
       this.auditFindings = response.findings;
       await this.refreshAuditList();
-      this.log(`audit completed: ${response.audit_id} findings=${response.findings.length}`);
+      this.log(`audit completed (${scanTier}): ${response.audit_id} findings=${response.findings.length}`);
     } catch (e) {
       this.error(`audit: ${e}`);
     }
@@ -376,24 +695,42 @@ export class DesktopApp {
     prompt: string;
     mode: ExecutionModeInput;
     backendId: string;
+    modelProvider?: string;
+    modelName?: string;
+    skill?: string;
+    contextPaths?: string[];
+    conversationId?: string | null;
   }) {
     if (!this.client) {
-      this.error('daemon client not ready');
+      this.lastTaskCreateError = 'daemon client not ready';
+      this.error(this.lastTaskCreateError);
       return false;
     }
+    this.lastTaskCreateError = null;
     try {
-      const created = await this.client.createTask({
+      const created = await this.client.sendDesktopMessage({
         prompt: opts.prompt,
         mode: opts.mode,
         backendId: opts.backendId,
-        workspaceRoot: this.workspace || '.',
-        source: 'desktop',
+        conversationId: opts.conversationId || undefined,
+        modelProvider: opts.modelProvider,
+        modelName: opts.modelName,
+        skill: opts.skill,
+        contextPaths: opts.contextPaths,
       });
+      if (created.status === 'error') throw new Error(created.message || '任务创建失败');
       this.currentTaskId = created.task_id;
+      this.currentConversationId = created.conversation_id;
       this.changes = [];
       this.push({ kind: 'user', text: opts.prompt, taskId: created.task_id });
       this.log(`task created ${created.task_id} status=${created.status}`);
-      await this.refreshTasks();
+      try {
+        await this.refreshTasks();
+        await this.refreshDesktopConversations();
+        this.conversationTurns = await this.client.getDesktopConversation(created.conversation_id);
+      } catch (e) {
+        this.error(`conversation refresh: ${e}`);
+      }
       if (this.mode === 'tauri') {
         try {
           await startEventBridge(created.task_id);
@@ -407,6 +744,7 @@ export class DesktopApp {
       this.emit();
       return true;
     } catch (e) {
+      this.lastTaskCreateError = String(e);
       this.error(`createTask: ${e}`);
       return false;
     }
@@ -538,6 +876,7 @@ export class DesktopApp {
     goal: string,
     request: string,
     backendId?: string,
+    targetSurface?: TargetSurface,
   ): Promise<DesignSession | null> {
     if (!this.client) {
       this.error('daemon client not ready');
@@ -551,6 +890,7 @@ export class DesktopApp {
         goal,
         request,
         backend_id: backendId,
+        target_surface: targetSurface,
       };
       const session = await this.client.createSession(req);
       this.currentSession = session;
@@ -577,6 +917,103 @@ export class DesktopApp {
     } catch (e) {
       this.error(`updateSession: ${e}`);
     }
+  }
+
+  async updateUiDocument(id: string, document: UiDocument): Promise<UiDocument | null> {
+    if (!this.client) return null;
+    try {
+      const updated = await this.client.updateUiDocument(id, { document, expected_version: document.version });
+      if (this.currentSession?.id === id) {
+        this.currentSession = {
+          ...this.currentSession,
+          ui_document: updated,
+          ui_check_report: null,
+          implementation_profile: null,
+          plan: null,
+          status: 'ui_editing',
+        };
+      }
+      this.emit();
+      return updated;
+    } catch (e) {
+      this.error(`updateUiDocument: ${e}`);
+      return null;
+    }
+  }
+
+  async proposeUiPatch(id: string, instruction: string, expectedVersion: number): Promise<UiPatchProposal | null> {
+    if (!this.client) return null;
+    try {
+      return await this.client.proposeUiPatch(id, { instruction, expected_version: expectedVersion });
+    } catch (e) {
+      this.error(`proposeUiPatch: ${e}`);
+      return null;
+    }
+  }
+
+  async applyUiPatch(id: string, patch: UiDocumentPatch): Promise<UiDocument | null> {
+    if (!this.client) return null;
+    try {
+      const document = await this.client.applyUiPatch(id, { patch });
+      if (this.currentSession?.id === id) {
+        this.currentSession = { ...this.currentSession, ui_document: document, ui_check_report: null };
+      }
+      this.emit();
+      return document;
+    } catch (e) {
+      this.error(`applyUiPatch: ${e}`);
+      return null;
+    }
+  }
+
+  async checkUiDocument(id: string): Promise<UiCheckReport | null> {
+    if (!this.client) return null;
+    try {
+      const report = await this.client.checkUiDocument(id);
+      if (this.currentSession?.id === id) {
+        this.currentSession = { ...this.currentSession, ui_check_report: report };
+      }
+      this.emit();
+      return report;
+    } catch (e) {
+      this.error(`checkUiDocument: ${e}`);
+      return null;
+    }
+  }
+
+  async confirmUiDocument(id: string, expectedVersion: number): Promise<DesignSession | null> {
+    if (!this.client) return null;
+    try {
+      const session = await this.client.confirmUiDocument(id, {
+        expected_version: expectedVersion,
+        summary: '用户确认 UI 版本',
+      });
+      this.replaceSession(session);
+      return session;
+    } catch (e) {
+      this.error(`confirmUiDocument: ${e}`);
+      return null;
+    }
+  }
+
+  async updateImplementationProfile(id: string, profile: ImplementationProfile): Promise<DesignSession | null> {
+    if (!this.client) return null;
+    try {
+      const session = await this.client.updateImplementationProfile(id, { profile });
+      this.replaceSession(session);
+      return session;
+    } catch (e) {
+      this.error(`updateImplementationProfile: ${e}`);
+      return null;
+    }
+  }
+
+  private replaceSession(session: DesignSession) {
+    this.currentSession = session;
+    const idx = this.sessions.findIndex((item) => item.id === session.id);
+    if (idx >= 0) this.sessions[idx] = session;
+    else this.sessions.unshift(session);
+    this.emit();
   }
 
   async planSession(id: string): Promise<DesignSession | null> {
@@ -714,10 +1151,20 @@ export class DesktopApp {
         try {
           await this.refreshStatus(taskId, false);
           await this.refreshApprovals(taskId);
+          if (this.currentTaskId !== taskId) {
+            if (this.pollTimer) clearInterval(this.pollTimer);
+            this.pollTimer = null;
+            return;
+          }
           const st = this.timelineStatus;
           if (st === 'completed' || st === 'failed' || st === 'cancelled' || st === 'error') {
             await this.refreshStatus(taskId, true);
             await this.refreshChanges(taskId);
+            if (this.currentConversationId && this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)) {
+              this.conversationTurns = await this.client?.getDesktopConversation(this.currentConversationId) ?? null;
+            }
+            await this.refreshDesktopConversations();
+            this.emit();
             if (this.pollTimer) clearInterval(this.pollTimer);
             this.pollTimer = null;
           }
@@ -739,7 +1186,7 @@ export class DesktopApp {
   async refreshStatus(taskId: string, fetchResult: boolean) {
     if (!this.client || !taskId) return;
     const st = await this.client.getTaskStatus(taskId);
-    this.timelineStatus = st.status;
+    if (taskId === this.currentTaskId) this.timelineStatus = st.status;
     if (
       st.output &&
       !this.timeline.some((item) => item.taskId === taskId && item.kind === 'assistant' && item.text === st.output)
@@ -755,8 +1202,8 @@ export class DesktopApp {
     if (fetchResult && (st.status === 'completed' || st.status === 'failed')) {
       try {
         const result = await this.client.getTaskResult(taskId);
-        const text = result.response || '(empty response)';
-        if (!this.timeline.some((item) => item.taskId === taskId && item.kind === 'assistant' && item.text === text)) {
+        const text = result.response?.trim();
+        if (text && !this.timeline.some((item) => item.taskId === taskId && item.kind === 'assistant' && item.text === text)) {
           this.push({ kind: 'assistant', text, taskId });
         }
         if (result.learned_facts.length) {
@@ -780,8 +1227,8 @@ export class DesktopApp {
   async refreshApprovals(taskId: string) {
     if (!this.client || !taskId) return;
     try {
-      this.approvals = await this.client.listApprovals(taskId);
-      this.emit();
+      const approvals = await this.client.listApprovals(taskId);
+      if (taskId === this.currentTaskId) { this.approvals = approvals; this.emit(); }
     } catch {
       /* approvals endpoint optional while idle */
     }
@@ -825,7 +1272,11 @@ export class DesktopApp {
   }
 
   healthLabel(): string {
-    if (!this.health) return 'offline';
+    if (!this.health) {
+      if (this.mode === 'tauri' && !this.handle) return 'starting…';
+      return 'offline';
+    }
+    if (this.health.status === 'degraded') return 'degraded';
     const err = daemonHealthError(this.health);
     if (err) return err;
     return `healthy · v${this.health.version}`;

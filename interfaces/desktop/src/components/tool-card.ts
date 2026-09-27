@@ -1,6 +1,4 @@
-/** ToolCard — 工具调用卡片
- * 展示工具名称、参数、状态、耗时和输出。
- */
+/** ToolCard — 紧凑工具调用行 */
 import { el } from '../dom.ts';
 
 export type ToolStatus = 'running' | 'pending' | 'approved' | 'denied' | 'completed' | 'failed';
@@ -16,54 +14,46 @@ export interface ToolCardData {
 
 export function buildToolCard(data: ToolCardData) {
   const statusLabel = getStatusLabel(data.status);
-  const statusClass = `tool-card-status-${data.status}`;
   const showOutputToggle = !!data.output;
 
-  const card = el('div', { className: `tool-card ${statusClass}` }, [
-    // 头部：图标 + 工具名 + 耗时 + 状态
-    el('div', { className: 'tool-card-header' }, [
-      el('span', { className: 'tool-card-icon' }, ['🔧']),
-      el('span', { className: 'tool-card-name mono' }, [data.tool]),
-      ...(data.durationMs != null
-        ? [el('span', { className: 'tool-card-duration muted' }, [
-            `${(data.durationMs / 1000).toFixed(1)}s`,
-          ])]
-        : []),
-      el('span', { className: `badge ${getBadgeVariant(data.status)}` }, [
-        statusLabel,
-      ]),
-    ]),
-
-    // 参数区
-    data.args
-      ? el('pre', { className: 'tool-card-args mono' }, [
-          JSON.stringify(data.args, null, 2).slice(0, 400),
-        ])
-      : '',
-
-    // 输出区（可折叠）
-    showOutputToggle
-      ? el('div', { className: 'tool-card-output-wrapper' }, [
-          el('button', {
-            className: 'tool-card-output-toggle',
+  return el('div', { className: `tool-row tool-status-${data.status}` }, [
+    el('div', { className: 'tool-row-head' }, [
+      el('span', { className: 'tool-row-dot' }, []),
+      el('span', { className: 'tool-row-name' }, [data.tool]),
+      data.args
+        ? el('span', { className: 'tool-row-args mono' }, [
+            summarizeArgs(data.args),
+          ])
+        : '',
+      data.durationMs != null
+        ? el('span', { className: 'tool-row-duration' }, [`${(data.durationMs / 1000).toFixed(1)}s`])
+        : '',
+      el('span', { className: 'tool-row-status' }, [statusLabel]),
+      showOutputToggle
+        ? el('button', {
+            className: 'tool-row-toggle',
             onclick: (e: Event) => {
               const btn = e.currentTarget as HTMLButtonElement;
-              const out = btn.nextElementSibling as HTMLElement | null;
+              const out = btn.closest('.tool-row')?.querySelector('.tool-row-output') as HTMLElement | null;
               if (out) {
                 const hidden = out.classList.contains('hidden');
                 out.classList.toggle('hidden');
-                btn.textContent = hidden ? '▾ 输出' : '▸ 输出';
+                btn.textContent = hidden ? '收起' : '输出';
               }
             },
-          }, ['▸ 输出']),
-          el('pre', { className: 'tool-card-output mono hidden' }, [
-            data.output!.slice(0, 800),
-          ]),
-        ])
+          }, ['输出'])
+        : '',
+    ]),
+    showOutputToggle
+      ? el('pre', { className: 'tool-row-output mono hidden' }, [data.output!.slice(0, 800)])
       : '',
-  ].filter(Boolean) as Node[]);
+  ]);
+}
 
-  return card;
+function summarizeArgs(args: Record<string, unknown>): string {
+  const first = Object.values(args)[0];
+  if (typeof first === 'string') return first.length > 60 ? `${first.slice(0, 60)}…` : first;
+  return JSON.stringify(args).slice(0, 60);
 }
 
 function getStatusLabel(status: ToolStatus): string {
@@ -72,7 +62,7 @@ function getStatusLabel(status: ToolStatus): string {
     case 'pending':   return '待审批';
     case 'approved':  return '已批准';
     case 'denied':    return '已拒绝';
-    case 'completed': return '已完成';
+    case 'completed': return '完成';
     case 'failed':    return '失败';
     default:          return status;
   }
@@ -80,11 +70,11 @@ function getStatusLabel(status: ToolStatus): string {
 
 function getBadgeVariant(status: ToolStatus): string {
   switch (status) {
-    case 'running':   return 'accent';
+    case 'running':
     case 'pending':   return 'warn';
-    case 'approved':  return 'ok';
-    case 'denied':    return 'bad';
+    case 'approved':
     case 'completed': return 'ok';
+    case 'denied':
     case 'failed':    return 'bad';
     default:          return '';
   }

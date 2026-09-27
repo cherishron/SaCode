@@ -1,15 +1,15 @@
-/** AppShell — 四段式布局容器：TopBar + Rail+Sidebar+Conversation+ContextPanel + StatusBar */
+/** AppShell — 布局状态 */
 
 export interface AppShellState {
   sidebarOpen: boolean;
   contextOpen: boolean;
-  connection: 'checking' | 'healthy' | 'error';
+  connection: 'starting' | 'healthy' | 'error';
 }
 
 export function createAppShellState(): AppShellState {
   return {
     sidebarOpen: true,
     contextOpen: true,
-    connection: 'checking',
+    connection: 'starting',
   };
 }

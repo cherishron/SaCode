@@ -13,12 +13,82 @@ import {
     parseDesignResourceCatalog,
     parseExtractionJob,
     parseDesignSession,
+    parseImplementationProfile,
+    parseUiCheckReport,
+    parseUiDocument,
+    parseUiDocumentPatch,
+    parseUiPatchProposal,
     parseImageGenerationResult,
     parseTaskChanges,
     parseTaskList,
     parseTaskResponse,
 } from '../src/daemon-client';
 import { parseSseFrame } from '../src/event-stream';
+import { DaemonClient } from '../src/daemon-client';
+import type { HttpTransport } from '../src/transport';
+
+test('knowledge and automation contracts validate responses and request paths', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const responses: unknown[] = [
+        { entries: [{ id: 'note-1', title: '笔记', scope: 'project', readonly: false }] },
+        { results: [{ id: 'docs/a.md', title: '文档', scope: 'project', readonly: true, score: 2, snippet: '正文' }] },
+        { rule: { id: 'rule-1', name: '检查', cron_expr: '0 0 9 * * *', prompt: '检查', enabled: true } },
+        { runs: [{ id: 'run-1', rule_id: 'rule-1', task_id: 'task-1', triggered_at: '2026-01-01T00:00:00Z', status: 'completed' }] },
+    ];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = responses.shift();
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, token: 'test', transport });
+    assert.equal((await client.knowledgeEntries('project'))[0].id, 'note-1');
+    assert.equal((await client.searchKnowledge('汉 字', 'project'))[0].readonly, true);
+    assert.equal((await client.createAutomationRule({ name: '检查', cron_expr: '0 0 9 * * *', prompt: '检查', enabled: true })).id, 'rule-1');
+    assert.equal((await client.listAutomationHistory('rule-1'))[0].status, 'completed');
+    assert.match(requests[1].url, /q=%E6%B1%89%20%E5%AD%97/);
+    assert.equal(requests[2].method, 'POST');
+    assert.equal(JSON.parse(requests[2].body!).cron_expr, '0 0 9 * * *');
+    assert.match(requests[3].url, /rule_id=rule-1/);
+});
+
+test('task creation surfaces unavailable skill from HTTP 400', async () => {
+    const transport: HttpTransport = async () => ({
+        status: 400, statusText: 'Bad Request', ok: false,
+        text: async () => JSON.stringify({ message: 'skill not available: missing-skill' }),
+        json: async () => ({ message: 'skill not available: missing-skill' }),
+        arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+    await assert.rejects(() => client.createTask({ prompt: 'hello', skill: 'missing-skill' }),
+        /400 Bad Request.*skill not available: missing-skill/);
+});
+
+test('Desktop conversation requests preserve one id across messages', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = { task_id: `task-${requests.length}`, status: 'queued', conversation_id: 'conversation-1' };
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+    const first = await client.sendDesktopMessage({ prompt: 'first', mode: 'build', backendId: 'sacode' });
+    const second = await client.sendDesktopMessage({ prompt: 'second', mode: 'build', backendId: 'sacode', conversationId: first.conversation_id });
+    assert.equal(first.conversation_id, second.conversation_id);
+    assert.notEqual(first.task_id, second.task_id);
+    assert.match(requests[0].url, /\/api\/desktop\/conversations$/);
+    assert.match(requests[1].url, /\/api\/desktop\/conversations\/conversation-1$/);
+    assert.equal(JSON.parse(requests[1].body!).prompt, 'second');
+});
+
+test('knowledge response rejects malformed entries', async () => {
+    const transport: HttpTransport = async () => ({ status: 200, statusText: 'OK', ok: true,
+        text: async () => '{}', json: async () => ({ entries: [{ id: 123 }] }),
+        arrayBuffer: async () => new ArrayBuffer(0) });
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+    await assert.rejects(() => client.knowledgeEntries('user'), /Invalid entries response/);
+});
 
 test('legacy task snapshot without backend meta parses', () => {
     const snapshot = parseTaskSnapshot({
@@ -170,6 +240,13 @@ test('parseDesignSession normalizes fields and tolerates missing optionals', () 
         backend_id: 'sacode',
         mode: 'build',
         target_path: 'src/pages',
+        target_surface: {
+            platform: 'web-desktop', input_modes: ['mouse', 'keyboard'], density: 'compact',
+            orientation: 'landscape', capabilities: [],
+            viewports: [{ id: 'desktop', name: 'Desktop', width: 1440, height: 900 }],
+        },
+        ui_document: null,
+        implementation_profile: null,
         status: 'planned',
         plan: {
             stages: [
@@ -194,7 +271,66 @@ test('parseDesignSession normalizes fields and tolerates missing optionals', () 
     const partial = parseDesignSession({ id: 'sess-2' });
     assert.equal(partial.goal, '');
     assert.equal(partial.backend_id, 'sacode');
+    assert.equal(partial.target_surface.platform, 'responsive-web');
     assert.equal(partial.plan, null);
+});
+
+test('parseUiDocument and implementation profile enforce schema boundaries', () => {
+    const document = parseUiDocument({
+        schema_version: 'sacode-ui/v1',
+        id: 'ui-1',
+        name: 'Dashboard',
+        target: { platform: 'desktop-app', viewports: [] },
+        pages: [{
+            id: 'home', name: 'Home',
+            root: { id: 'root', name: 'Root', type: 'container', children: [] },
+        }],
+        version: 2,
+        status: 'confirmed',
+    });
+    assert.equal(document.target.platform, 'desktop-app');
+    assert.equal(document.pages[0].root.type, 'container');
+
+    const profile = parseImplementationProfile({
+        schema_version: 'sacode-implementation/v1',
+        project_mode: 'new',
+        target_platform: 'desktop',
+        language: 'TypeScript',
+        framework: 'Vue 3',
+        source: 'ai-recommended',
+        confirmed: true,
+    });
+    assert.equal(profile.project_mode, 'new');
+    assert.equal(profile.framework, 'Vue 3');
+    assert.equal(profile.confirmed, true);
+});
+
+test('parseUiDocumentPatch and proposal enforce patch schema', () => {
+    const patch = parseUiDocumentPatch({
+        schema_version: 'sacode-ui-patch/v1', base_version: 3, summary: 'Edit title',
+        operations: [{ type: 'set-content', node_id: 'title', patch: { text: 'Changed' } }],
+    });
+    assert.equal(patch.base_version, 3);
+    assert.equal(patch.operations[0].node_id, 'title');
+    assert.throws(() => parseUiDocumentPatch({ schema_version: 'bad', operations: [] }), /Unsupported UI patch schema/);
+
+    const proposal = parseUiPatchProposal({
+        patch,
+        changes: [{ operation: 'set-content', node_id: 'title', description: '修改标题' }],
+        source: 'ai',
+    });
+    assert.equal(proposal.changes[0].description, '修改标题');
+});
+
+test('parseUiCheckReport normalizes confirmation findings', () => {
+    const report = parseUiCheckReport({
+        checked_version: 2,
+        passed: false,
+        findings: [{ id: 'unsafe-style', severity: 'blocker', message: 'unsafe', node_id: 'hero' }],
+        checked_at: '2026-01-01T00:00:00Z',
+    });
+    assert.equal(report.passed, false);
+    assert.equal(report.findings[0].node_id, 'hero');
 });
 
 test('parseImageGenerationResult extracts images and model info', () => {

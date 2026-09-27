@@ -1,15 +1,24 @@
 /** Splash — 启动品牌动画 */
 import { el } from '../dom.ts';
+import { brandLogo } from '../brand.ts';
 
-export function buildSplash() {
-  return el('div', { className: 'splash' }, [
+export function buildSplash(diagnostics?: string[]) {
+  const children: HTMLElement[] = [
+    brandLogo({ className: 'splash-logo-img rounded', size: 72 }),
     el('div', { className: 'splash-logo' }, [
       el('span', { className: 'splash-logo-text' }, ['SaCode']),
     ]),
     el('div', { className: 'splash-subtitle muted' }, ['正在启动…']),
-  ]);
+  ];
+  if (diagnostics && diagnostics.length > 0) {
+    const log = el('div', { className: 'splash-diagnostics muted' });
+    for (const line of diagnostics) {
+      log.appendChild(el('div', {}, [line]));
+    }
+    children.push(log);
+  }
+  return el('div', { className: 'splash' }, children);
 }
-
 export function buildConnectionError(app: { healthLabel: () => string }) {
   return el('div', { className: 'connection-error' }, [
     el('div', { className: 'connection-error-icon' }, ['⚠']),

@@ -1,7 +1,7 @@
 /** Transport abstraction so Desktop can inject Tauri IPC while Node uses fetch. */
 
 export interface HttpRequest {
-    method: 'GET' | 'POST';
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
     url: string;
     headers?: Record<string, string>;
     body?: string;

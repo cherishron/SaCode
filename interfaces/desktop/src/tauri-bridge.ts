@@ -32,6 +32,9 @@ type ListenFn = (
 
 interface TauriGlobal {
   __TAURI__?: {
+    // Tauri v2 exposes invoke under `core`; keep the top-level fallback for
+    // compatibility with older global API shapes.
+    core?: { invoke?: InvokeFn };
     invoke?: InvokeFn;
     event?: { listen?: ListenFn };
   };
@@ -42,7 +45,8 @@ function tauriApi(): TauriGlobal['__TAURI__'] | null {
 }
 
 function getInvoke(): InvokeFn | null {
-  return tauriApi()?.invoke ?? null;
+  const api = tauriApi();
+  return api?.core?.invoke ?? api?.invoke ?? null;
 }
 
 export function isTauri(): boolean {
@@ -53,6 +57,12 @@ export async function startDaemon(workspace?: string): Promise<SidecarHandleDto>
   const invoke = getInvoke();
   if (!invoke) throw new Error('not running under Tauri');
   return (await invoke('start_daemon', workspace ? { workspace } : {})) as SidecarHandleDto;
+}
+
+export async function selectWorkspaceFolder(): Promise<string | null> {
+  const invoke = getInvoke();
+  if (!invoke) return window.prompt('输入项目文件夹绝对路径')?.trim() || null;
+  return (await invoke('select_workspace_folder')) as string | null;
 }
 
 export async function stopDaemon(): Promise<void> {
@@ -67,8 +77,22 @@ export async function daemonInfo(): Promise<SidecarHandleDto | null> {
   return (await invoke('daemon_info')) as SidecarHandleDto | null;
 }
 
+/** 切换系统托盘（关闭窗口时隐藏到托盘而非退出）。非 Tauri 环境返回 false。 */
+export async function setTrayEnabled(enabled: boolean): Promise<boolean> {
+  const invoke = getInvoke();
+  if (!invoke) return false;
+  return (await invoke('set_tray_enabled', { enabled })) as boolean;
+}
+
+/** 切换开机自启动。非 Tauri 环境为静默 no-op。 */
+export async function setAutostart(enabled: boolean): Promise<void> {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  await invoke('set_autostart', { enabled });
+}
+
 export async function daemonProxy(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: string,
 ): Promise<DaemonProxyResponse> {

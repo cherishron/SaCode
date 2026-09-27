@@ -1,0 +1,520 @@
+/* Automation — 自动化调度视图 */
+
+.automation {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+  grid-area: conversation;
+}
+
+/* 顶部标题栏 */
+.automation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-3);
+  height: 40px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-weak);
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+
+.automation-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.automation-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.automation-title {
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+}
+
+/* Tab 切换 */
+.automation-scope-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-weak);
+  flex-shrink: 0;
+}
+
+.automation-scope-tab {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-base);
+  font: var(--text-13-regular);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+
+.automation-scope-tab:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.automation-scope-tab.active {
+  color: var(--text-strong);
+  border-bottom-color: var(--accent);
+}
+
+/* 内容区 */
+.automation-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 筛选栏 */
+.automation-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-weak);
+  flex-shrink: 0;
+}
+
+.automation-filter-group {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.automation-filter-btn {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: var(--text-12-regular);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.automation-filter-btn:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.automation-filter-btn.active {
+  background: var(--accent-weak);
+  color: var(--accent);
+  border-color: var(--border-accent);
+}
+
+.automation-search-input {
+  flex: 1;
+  min-width: 100px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-strong);
+  font: var(--text-13-regular);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.automation-search-input:focus {
+  border-color: var(--accent);
+}
+
+.automation-search-input::placeholder {
+  color: var(--text-weak);
+}
+
+/* 空状态 */
+.automation-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--text-weak);
+  font: var(--text-13-regular);
+  flex: 1;
+}
+
+.automation-empty-icon {
+  font-size: 28px;
+}
+
+/* === 规则卡片 === */
+
+.automation-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.automation-rule-card {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.automation-rule-card:hover {
+  border-color: var(--border-base);
+}
+
+.automation-rule-card.disabled {
+  opacity: 0.55;
+}
+
+/* 开关 */
+.automation-toggle {
+  width: 40px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--border-base);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  align-self: center;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.automation-toggle.on {
+  background: var(--success);
+}
+
+.automation-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--text-on-accent);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.automation-toggle.on .automation-toggle-knob {
+  transform: translateX(18px);
+}
+
+/* 规则内容 */
+.automation-rule-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.automation-rule-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.automation-rule-name {
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+}
+
+.automation-rule-freq {
+  font: var(--text-12-regular);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-base);
+}
+
+.automation-rule-freq.daily {
+  color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.automation-rule-freq.weekly {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.automation-rule-freq.monthly {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.automation-rule-prompt {
+  font: var(--text-13-regular);
+  color: var(--text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-rule-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font: var(--text-12-regular);
+}
+
+.automation-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+}
+
+.automation-status-dot.success {
+  background: var(--success);
+}
+
+.automation-status-dot.failed {
+  background: var(--danger);
+}
+
+.automation-status-dot.running {
+  background: var(--warning);
+  box-shadow: 0 0 4px var(--warning);
+}
+
+.automation-status-dot.pending {
+  background: var(--text-weak);
+}
+
+/* 右侧操作 */
+.automation-rule-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* === 历史时间线 === */
+
+.automation-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.automation-timeline-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.automation-timeline-date {
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-weak);
+}
+
+.automation-history-entry {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--border-base);
+}
+
+.automation-history-entry.success {
+  border-left-color: var(--success);
+}
+
+.automation-history-entry.failed {
+  border-left-color: var(--danger);
+}
+
+.automation-history-entry.running {
+  border-left-color: var(--warning);
+}
+
+.automation-history-entry.timeout {
+  border-left-color: var(--text-weak);
+}
+
+.automation-history-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.automation-history-entry.success .automation-history-icon {
+  color: var(--success);
+}
+
+.automation-history-entry.failed .automation-history-icon {
+  color: var(--danger);
+}
+
+.automation-history-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.automation-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.automation-history-name {
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+}
+
+.automation-history-time {
+  font: var(--text-mono-sm);
+  color: var(--text-weak);
+  font-size: 11px;
+}
+
+.automation-history-summary {
+  font: var(--text-13-regular);
+  color: var(--text-base);
+  margin-top: 2px;
+}
+
+.automation-history-error {
+  font: var(--text-12-regular);
+  color: var(--danger);
+  margin-top: 2px;
+}
+
+.automation-history-duration {
+  margin-top: 2px;
+}
+
+/* === 表单 === */
+
+.automation-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  max-width: 600px;
+}
+
+.automation-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.automation-form-title {
+  font: var(--text-16-medium);
+  color: var(--text-strong);
+}
+
+.automation-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.automation-form-label {
+  font: var(--text-12-regular);
+  color: var(--text-base);
+  font-weight: 600;
+}
+
+.automation-form-input {
+  padding: var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-strong);
+  font: var(--text-13-regular);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.automation-form-input:focus {
+  border-color: var(--accent);
+}
+
+.automation-form-textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-strong);
+  font: var(--text-13-regular);
+  outline: none;
+  min-height: 80px;
+  resize: vertical;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.automation-form-textarea:focus {
+  border-color: var(--accent);
+}
+
+.automation-form-row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.automation-form-row > .automation-form-field {
+  flex: 1;
+}
+
+.automation-form-frequency {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.freq-option {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: var(--text-13-regular);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.freq-option:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.freq-option.active {
+  background: var(--accent-weak);
+  color: var(--accent);
+  border-color: var(--border-accent);
+}
+
+.automation-form-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}

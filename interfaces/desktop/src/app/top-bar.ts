@@ -1,55 +1,130 @@
-/** TopBar — 顶部信息条：项目名 · 分支 · Agent · 模式 · 运行状态 · 设置 */
+/** 会话标题栏 — 会话标题 + 右侧工具按钮 + 更多菜单 */
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
-import type { AppShellState } from './app-shell.ts';
-import type { WorkspaceView } from './rail.ts';
+import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
 
-export function buildTopBar(app: DesktopApp, shell: AppShellState, activeView: WorkspaceView = 'agent') {
-  const healthClass =
-    shell.connection === 'healthy' ? 'ok' :
-    shell.connection === 'checking' ? 'warn' : 'bad';
+export type ConversationMode = 'plan' | 'build' | 'yolo';
 
-  const statusDot = el('span', {
-    className: `status-dot ${healthClass}`,
-  });
+export interface MoreMenuItem {
+  label?: string;
+  icon?: string;
+  danger?: boolean;
+  separator?: boolean;
+  onclick?: () => void;
+}
 
-  const statusText = shell.connection === 'healthy'
-    ? 'Running'
-    : shell.connection === 'checking'
-    ? 'Starting…'
-    : 'Disconnected';
+export function buildConversationHeader(
+  app: DesktopApp,
+  shell: { contextOpen: boolean },
+  _currentMode: ConversationMode,
+  _onModeChange: (mode: ConversationMode) => void,
+  actions: {
+    onToggleContext: () => void;
+    onCloseSession: () => void;
+    onMore: () => void;
+  },
+) {
+  const title = app.currentConversationId
+    ? app.desktopConversations.find((item) => item.id === app.currentConversationId)?.title.slice(0, 40)
+      || app.currentConversationId.slice(0, 8)
+    : '新会话';
 
-  const agentLabel = app.agents.length > 0
-    ? (app.agents.find(a => a.id === app.defaultBackend)?.display_name || app.defaultBackend)
-    : 'No agent';
-
-  return el('header', { className: 'topbar' }, [
-    // 左：项目 + 分支
-    el('div', { className: 'topbar-left' }, [
-      el('span', { className: 'topbar-project truncate' }, [
-        activeView === 'design' ? 'SaDesign' : (app.workspace || 'No workspace'),
-      ]),
-      el('span', { className: 'topbar-sep' }, ['·']),
-      el('span', { className: 'topbar-branch mono' }, [activeView === 'design' ? 'Design Workspace' : 'dev']),
+  return el('div', { className: 'conversation-header' }, [
+    el('div', { className: 'conversation-header-left' }, [
+      el('span', { className: 'conversation-title' }, [String(title)]),
     ]),
 
-    // 中：Agent + 模式
-    el('div', { className: 'topbar-center' }, [
-      el('span', { className: 'badge accent' }, [activeView === 'design' ? 'SaDesign' : agentLabel]),
-      el('span', { className: 'badge' }, [app.mode === 'tauri' ? 'Tauri' : 'Vite']),
-    ]),
-
-    // 右：运行状态 + 设置
-    el('div', { className: 'topbar-right' }, [
-      el('span', { className: 'topbar-status' }, [
-        statusDot,
-        el('span', { className: 'muted' }, [statusText]),
-      ]),
+    el('div', { className: 'conversation-header-right' }, [
       el('button', {
-        className: 'btn ghost topbar-btn-icon',
-        title: '设置',
-        onclick: () => { shell.sidebarOpen = !shell.sidebarOpen; app.onChange?.(); },
-      }, ['⚙']),
+        className: `header-btn ${shell.contextOpen ? 'active' : ''}`,
+        title: '右侧工具栏',
+        onclick: actions.onToggleContext,
+      }, ['▦']),
+      el('button', {
+        className: 'header-btn',
+        title: '更多',
+        onclick: actions.onMore,
+      }, ['⋯']),
+      el('button', {
+        className: 'header-btn',
+        title: '关闭会话',
+        onclick: actions.onCloseSession,
+      }, ['×']),
     ]),
   ]);
+}
+
+export function buildMoreMenu(
+  items: MoreMenuItem[],
+  position: { x: number; y: number },
+  onClose: () => void,
+) {
+  const overlay = el('div', {
+    className: 'more-menu-overlay',
+    onclick: onClose,
+  });
+
+  const menu = el('div', {
+    className: 'more-menu',
+    style: `left:${position.x}px;top:${position.y}px`,
+  }, items.map((item) => {
+    if (item.separator) {
+      return el('div', { className: 'more-menu-separator' });
+    }
+    return el('div', {
+      className: `more-menu-item ${item.danger ? 'danger' : ''}`,
+      onclick: () => {
+        item.onclick?.();
+        onClose();
+      },
+    }, [
+      item.icon ? el('span', {}, [item.icon]) : '',
+      el('span', {}, [item.label || '']),
+    ].filter(Boolean) as Node[]);
+  }));
+
+  // 把 overlay 和 menu 放在一起返回
+  const container = document.createDocumentFragment();
+  container.append(overlay, menu);
+  return container;
+}
+
+export function defaultMoreMenuItems(): MoreMenuItem[] {
+  return [
+    { label: '向右分屏', onclick: () => {} },
+    { label: '打开右侧工具栏', onclick: () => {} },
+    { label: '关闭右侧工具栏', onclick: () => {} },
+    { separator: true },
+    { label: '关闭会话', onclick: () => {} },
+    { label: '删除会话', danger: true, onclick: () => {} },
+  ];
+}
+
+const MODE_ORDER: ConversationMode[] = ['plan', 'build', 'yolo'];
+
+const MODE_META: Record<ConversationMode, { label: string; title: string }> = {
+  plan: { label: '规划', title: '规划模式：只分析不修改代码（点击切换为构建）' },
+  build: { label: '构建', title: '构建模式：规划+执行，关键步骤需确认（点击切换为 YOLO）' },
+  yolo: { label: 'YOLO', title: 'YOLO 模式：全自动执行，无需确认（点击切换为规划）' },
+};
+
+export function nextMode(current: ConversationMode): ConversationMode {
+  const idx = MODE_ORDER.indexOf(current);
+  return MODE_ORDER[(idx + 1) % MODE_ORDER.length];
+}
+
+export function buildModeButton(
+  current: ConversationMode,
+  onChange: (mode: ConversationMode) => void,
+): Node {
+  const meta = MODE_META[current];
+  return el('button', {
+    className: `mode-cycle-btn mode-${current}`,
+    title: meta.title,
+    onclick: () => onChange(nextMode(current)),
+  }, [meta.label]);
+}
+
+export function modeLabel(mode: ConversationMode): string {
+  return mode === 'plan' ? '规划' : mode === 'build' ? '构建' : 'YOLO';
 }

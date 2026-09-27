@@ -1,50 +1,51 @@
-/** Rail — 64px 图标轨：SaCode、SaDesign、设置、帮助 */
+/** Rail — 左侧 48px 图标轨：SaCode、SaDesign、SaNative、设置 */
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
+import { brandLogo } from '../brand.ts';
 
-export type WorkspaceView = 'agent' | 'design';
+export type WorkspaceView = 'agent' | 'design' | 'native' | 'automation';
 
 export function buildRail(
   app: DesktopApp,
   activeView: WorkspaceView,
   onViewChange: (view: WorkspaceView) => void,
+  onOpenSettings?: () => void,
 ) {
   return el('nav', { className: 'rail' }, [
     el('div', { className: 'rail-logo' }, [
-      el('span', { className: 'rail-logo-text' }, ['S']),
+      brandLogo({ className: 'rounded', size: 28 }),
     ]),
     el('div', { className: 'rail-items' }, [
       el('button', {
         className: `rail-btn ${activeView === 'agent' ? 'active' : ''}`,
-        title: 'SaCode Agent',
+        title: 'SaCode 会话',
         onclick: () => onViewChange('agent'),
-      }, ['A']),
+      }, ['💬']),
       el('button', {
         className: `rail-btn ${activeView === 'design' ? 'active' : ''}`,
-        title: 'SaDesign',
+        title: 'SaDesign 设计',
         onclick: () => {
           onViewChange('design');
           void app.refreshDesignData();
         },
       }, ['◇']),
       el('button', {
-        className: 'rail-btn',
-        title: '新建任务',
-        onclick: () => {
-          if (activeView === 'design') onViewChange('design');
-          else app.onChange?.();
-        },
-      }, ['+']),
+        className: `rail-btn ${activeView === 'native' ? 'active' : ''}`,
+        title: 'SaNative 知识库',
+        onclick: () => onViewChange('native'),
+      }, ['📚']),
+      el('button', {
+        className: `rail-btn ${activeView === 'automation' ? 'active' : ''}`,
+        title: '自动化',
+        onclick: () => onViewChange('automation'),
+      }, ['⏰']),
     ]),
     el('div', { className: 'rail-bottom' }, [
       el('button', {
-        className: 'rail-btn',
+        className: 'rail-btn-icon',
         title: '设置',
+        onclick: () => onOpenSettings?.(),
       }, ['⚙']),
-      el('button', {
-        className: 'rail-btn',
-        title: '帮助',
-      }, ['?']),
     ]),
   ]);
 }

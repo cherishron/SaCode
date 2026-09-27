@@ -26,6 +26,54 @@ function sampleChange(): TaskFileChange {
   };
 }
 
+test('task creation rejects server error without selecting a phantom task', async () => {
+  const app = new DesktopApp();
+  app.client = {
+    sendDesktopMessage: async () => ({ task_id: 'rejected-id', status: 'error', message: 'skill not available: gone' }),
+  } as unknown as DaemonClient;
+  const created = await app.runTask({ prompt: 'hello', mode: 'build', backendId: 'sacode', skill: 'gone' });
+  assert.equal(created, false);
+  assert.equal(app.currentTaskId, null);
+  assert.match(app.lastTaskCreateError || '', /skill not available: gone/);
+});
+
+test('selectDesktopConversation restores latest task and previous turns', async () => {
+  const app = new DesktopApp();
+  app.client = {
+    getDesktopConversation: async () => ({ id: 'conversation-1', turns: [
+      { task_id: 'task-1', prompt: 'first', status: 'completed', output: 'answer', created_at: 'today' },
+      { task_id: 'task-2', prompt: 'second', status: 'completed', output: 'next', created_at: 'today' },
+    ] }),
+    getTaskStatus: async () => ({ task_id: 'task-2', status: 'completed', queue_status: 'completed' }),
+    getTaskResult: async () => ({ task_id: 'task-2', status: 'completed', response: 'next', learned_facts: [] }),
+    listApprovals: async () => [],
+    getTaskChanges: async () => ({ changes: [] }),
+  } as unknown as DaemonClient;
+  await app.selectDesktopConversation('conversation-1');
+  assert.equal(app.currentConversationId, 'conversation-1');
+  assert.equal(app.currentTaskId, 'task-2');
+  assert.equal(app.conversationTurns?.turns.length, 2);
+});
+
+test('failed task shows provider error without an empty assistant response', async () => {
+  const app = new DesktopApp();
+  app.client = {
+    getTaskStatus: async () => ({
+      task_id: 'task-failed',
+      status: 'failed',
+      queue_status: 'failed',
+      error: 'provider/service: The provider returned HTTP 404 Not Found.',
+    }),
+    getTaskResult: async () => ({
+      task_id: 'task-failed', status: 'failed', response: '', learned_facts: [],
+    }),
+  } as unknown as DaemonClient;
+
+  await app.refreshStatus('task-failed', true);
+  assert.equal(app.timeline.filter((item) => item.taskId === 'task-failed' && item.kind === 'error').length, 1);
+  assert.equal(app.timeline.filter((item) => item.taskId === 'task-failed' && item.kind === 'assistant').length, 0);
+});
+
 test('selectTask restores persisted prompt, output and current task', async () => {
   const app = new DesktopApp();
   app.tasks = [completedTask()];

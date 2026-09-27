@@ -1,4 +1,4 @@
-/* Rail */
+/* Rail — 左侧 48px 图标轨 */
 
 .rail {
   display: flex;
@@ -14,8 +14,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   margin-bottom: var(--space-3);
   border-radius: var(--radius-md);
   background: var(--accent);
@@ -23,7 +23,7 @@
 }
 
 .rail-logo-text {
-  font: var(--text-16-medium);
+  font: var(--text-14-medium);
   color: var(--text-on-accent);
 }
 
@@ -31,20 +31,19 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   width: 100%;
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-1);
 }
 
 .rail-bottom {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-2) var(--space-3);
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-1) var(--space-2);
   flex-shrink: 0;
 }
 
@@ -52,30 +51,48 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-base);
-  font-size: 18px;
+  font-size: 15px;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out),
               color var(--dur-fast) var(--ease-out);
   flex-shrink: 0;
 }
 
-.rail-btn:hover,
-.rail-btn.active {
+.rail-btn:hover {
   background: var(--bg-raised);
   color: var(--text-strong);
 }
 
 .rail-btn.active {
+  background: var(--accent-weak);
+  color: var(--accent);
   box-shadow: inset 2px 0 var(--accent);
 }
 
-.rail-btn.active {
-  background: var(--accent-weak);
-  color: var(--accent);
+.rail-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-base);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.rail-btn-icon:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
 }

@@ -44,7 +44,7 @@
 }
 
 .icon-btn-danger:hover {
-  background: rgba(248, 81, 73, 0.12);
+  background: var(--danger-soft);
 }
 
 .icon-btn-ok {
@@ -53,5 +53,5 @@
 }
 
 .icon-btn-ok:hover {
-  background: rgba(63, 185, 80, 0.12);
+  background: var(--success-soft);
 }
