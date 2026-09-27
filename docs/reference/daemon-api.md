@@ -46,6 +46,47 @@ daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、
 
 > 规划说明（2026-09-20）：Desktop 专项将新增可选 bearer token、`--port 0`/ready-file sidecar 握手以及 Agent Backend 路由。在这些能力落地前，本页以下内容仍是当前实现真源；不得把专项 PRD 中的规划端点当作已发布 API。详见 [Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)。
 
+`POST /task` 可选传 `skill`（来自 `/workspace/capabilities` 的 `skills`）。指定技能在任务分发时不可读取或不存在，则返回 HTTP 400，响应仍为任务协议结构（`status: "error"`、`message: "skill not available: <名称>"`），不会创建/入队任务；不再静默改用原始提示词。不传或传空技能则使用原有无技能流程。
+
+## Desktop 多轮会话
+
+Desktop 对话存储在工作目录 `.sacode/task-store.sqlite3` 的 `desktop_turns` 中，与现有 Agent Backend `session_id` 和 `SessionService` 的 sessions 表独立。一个会话含多个任务轮次；侧栏只显示一个会话，每轮仍独立走队列、结果、审批和文件变更流程。后续发送需等上一轮结束（否则 409），服务端注入最近 12 轮用户消息与助手最终输出；历史超过 32000 字符时拒绝继续，要求新建会话。已有旧版任务不会自动转换为 Desktop 会话。
+
+| 方法 | 路径 | 请求/结果 |
+|---|---|---|
+| POST | `/api/desktop/conversations` | 使用与 `/task` 相同的 `{prompt,mode,backend_id?,model_provider?,model_name?,skill?,context_paths?}`，返回任务协议响应及 `conversation_id`；技能无效为 400，不建会话 |
+| POST | `/api/desktop/conversations/:id` | 同上，在会话内创建后续任务轮次；不存在为 404，上一轮未结束为 409 |
+| GET | `/api/desktop/conversations` | `{conversations:[{id,title,created_at,latest_task_id,status}]}` |
+| GET | `/api/desktop/conversations/:id` | `{id,turns:[{task_id,prompt,created_at,status,output,error}]}`，按发送先后排序 |
+| DELETE | `/api/desktop/conversations/:id` | 取消并删除所有关联任务轮次及会话记录 |
+
+## 知识库与自动化（Desktop）
+
+这些接口位于 `/api/` 下，依赖本机访问边界；配置 `SACODE_DAEMON_TOKEN` 后同样需要 bearer token。未配置时并无路由级认证，勿将 daemon 暴露给不可信调用方。
+
+知识库 `scope` 必填，只接受 `user`、`project`：用户笔记位于 `~/.sacode/knowledge/*.md`，项目笔记位于工作目录 `.sacode/knowledge/*.md`；项目 `docs/**/*.md` 以 `docs/<相对路径>` ID 汇总展示，**只读**。所有笔记写入均为 Markdown，创建与删除不经任务审批；不允许目录遍历或符号链接越界。搜索读取最新磁盘文件，返回按 BM25 分数降序的片段（当前中文按单字分词）。
+
+| 方法 | 路径 | 请求/结果 |
+|---|---|---|
+| GET | `/api/knowledge/entries?scope=project` | `{entries:[{id,title,scope,readonly,created_at,updated_at}]}`；不含正文 |
+| POST | `/api/knowledge/notes` | `{scope,title,content}` → `{note}`；空标题/超长正文为 400 |
+| GET | `/api/knowledge/notes/:id?scope=project` | `{note:{id,title,content,readonly,...}}`；`docs/` 路径仅可读取 |
+| PUT | `/api/knowledge/notes/:id` | `{scope,title,content,updated_at}` → `{note}`；版本冲突为 409 |
+| DELETE | `/api/knowledge/notes/:id?scope=project` | `{deleted:true,id}`；不允许删除 docs |
+| GET | `/api/knowledge/search?scope=project&q=关键词` | `{results:[{id,title,scope,readonly,snippet,score}],query}` |
+
+自动化规则存储于工作目录 `.sacode/task-store.sqlite3` 的 `automation_rules`，运行历史存于 `automation_runs`。cron **严格 6 段**（秒、分、时、日、月、周），在 **UTC** 计算；`next_run` 与时间戳是 RFC3339，Desktop 换算本地时间显示。调度器每 30 秒检查一次，只触发过去 60 秒内的计划时刻，过期不重放；触发前原子认领持久化水位，避免并发/重启重复补跑；若认领后派发失败会记录警告并跳过该时刻，不自动重试。手动运行不推进 cron 水位。派发经 `dispatch_task`，沿用原任务的审批、审计及 Changes 管线；终态回填历史。接口错误使用实际 HTTP 400/404/500/503 状态，响应含 `error`。
+
+| 方法 | 路径 | 请求/结果 |
+|---|---|---|
+| GET | `/api/automation/rules` | `{rules:[{id,name,cron_expr,prompt,backend_id,enabled,last_fired_at,next_run}]}` |
+| POST | `/api/automation/rules` | `{name,cron_expr,prompt,backend_id?,enabled?}` → `{rule}` |
+| PUT | `/api/automation/rules/:id` | 可选规则字段 → `{rule}` |
+| DELETE | `/api/automation/rules/:id` | `{deleted:true,id}` |
+| POST | `/api/automation/rules/:id/toggle` | 切换 enabled → `{rule}` |
+| POST | `/api/automation/rules/:id/run` | 创建任务 → `{run:{id,rule_id,task_id,triggered_at,status},task_id}` |
+| GET | `/api/automation/history?rule_id=&limit=50` | `{runs:[{id,rule_id,task_id,triggered_at,status}]}`，最大 500 条 |
+
 ## 路由概览
 
 | 方法 | 路径 | 说明 |

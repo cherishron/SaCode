@@ -1,7 +1,7 @@
 # SaDesign Desktop 产品需求文档
 
 > 文档状态：方案草案，待评审  
-> 文档版本：v0.4
+> 文档版本：v0.5
 > 日期：2026-09-24
 > 适用产品：SaCode Desktop / Daemon / Runtime / CLI  
 > 前置能力：[AIDesign（TD 示例库 + AI 设计变体）](../compose/spec/ai-design-tdesign.md)  
@@ -10,12 +10,12 @@
 ## 1. 决策摘要
 
 1. **SaDesign 是 AIDesign 的产品化升级名称**。现有 AIDesign 的模板、简报、Prompt 与变体能力保留，作为 SaDesign 的基础能力和兼容入口。
-2. SaDesign 是绑定当前工作区的项目级设计工作台，不是独立图片生成器。SaDesign 读取用户授权的项目背景，整理设计简报，组合模板、视觉风格、设计系统和方向基线，再交给用户选择的模型生成前端、设计稿或图片资产。
+2. SaDesign 是端类型感知、实现框架无关的 AI 可视化 UI 设计工作台。它先通过提示词、模板或导入来源形成可编辑 UIDocument；用户确认 UI 后，再结合已确认的 ImplementationProfile 由大模型生成新项目或已有项目实现。
 3. SaDesign 在 Desktop 增加一级入口，包含五个页面：`设计任务`、`模板`、`设计资源`、`设计系统提取`、`任务记录`。
-4. 生成操作分成“预览计划”和“确认生成”两步。SaDesign 在用户确认前展示将使用的上下文、设计资源、模型、预计产物和目标路径。
+4. 产品流程分成“UI 设计与确认”和“技术栈确认与实现生成”两道门。技术栈未知时由 AI 追问并推荐，但未经用户确认不得生成项目代码。
 5. 前端代码和项目文件修改继续走 SaCode Task Protocol、审批、Diff 和审计链路。SaDesign 不创建第二套不受控的文件写入机制。
 6. 设计系统提取支持网页 URL、图片、代码目录和设计文件，输出可版本化、可预览、可下载、可复用的设计系统包。
-7. 首期先实现项目理解、模板/资源选择、URL/图片提取、模型选择、设计简报与前端/图片生成闭环；Figma 双向同步和像素级自动还原延后。
+7. 首期先实现目标端选择、模板/AI 初始化 UI、可视化编辑、UI 确认、ImplementationProfile 确认和模型实现生成闭环；Figma 双向同步和像素级自动还原延后。
 
 ## 2. 背景与问题
 
@@ -35,7 +35,7 @@ SaDesign 解决的是“项目上下文如何转化为可执行设计任务”�
 
 ### 3.1 一句话定义
 
-> SaDesign 是 SaCode 内面向当前项目的 AI 设计工作台，负责理解项目、组织设计上下文、选择视觉基线、编排模型，并生成可审查的设计稿、图片和前端实现。
+> SaDesign 是端类型感知、实现框架无关的 AI 可视化 UI 设计工作台：先帮助用户确定 UI，再基于用户确认的技术栈生成可运行的新项目或已有项目实现。
 
 ### 3.2 SaDesign 与 AIDesign 的关系
 
@@ -48,12 +48,12 @@ SaDesign 解决的是“项目上下文如何转化为可执行设计任务”�
 
 ### 3.3 产品原则
 
-1. **项目优先**：每个设计任务必须关联一个工作区和一份可确认的项目上下文摘要。
-2. **选择优先**：模型生成前，用户能够选择或移除模板、视觉风格、设计系统和方向基线。
+1. **UI 与实现分离**：UIDocument 只描述端类型、页面、组件、布局、视觉、状态与交互意图，不包含具体实现框架代码。
+2. **目标端优先**：先确定 PC、Web、Tablet、Mobile 或小程序等目标端，再生成符合该端习惯的 UI。
 3. **来源可追踪**：每个生成结果记录上下文快照、资源版本、模型、Prompt 版本和目标路径。
 4. **修改可审查**：代码和文件写入复用 SaCode 审批、Diff、审计与回滚能力。
 5. **设计可复用**：提取和生成的设计系统能够在同一项目后续任务中再次使用。
-6. **能力可降级**：只有文本模型时仍可生成 brief/prompt；缺少视觉或生图模型时禁用对应产物并解释原因。
+6. **实现须确认**：技术栈可以检测、选择或由 AI 推荐，但 ImplementationProfile 未确认时不得生成项目代码。
 7. **版权可感知**：复制风格不等于复制品牌标识或受版权保护内容，产品必须提示用户确认使用授权。
 
 ## 4. 目标与非目标
@@ -129,29 +129,29 @@ Desktop 左侧图标轨增加 `SaDesign` 一级入口。进入后，顶部保留
 
 ```mermaid
 flowchart LR
-    A[打开项目 SaDesign] --> B[分析项目上下文]
-    B --> C[确认设计目标]
-    C --> D{选择设计来源}
-    D --> D1[模板]
-    D --> D2[视觉风格]
-    D --> D3[设计系统]
-    D --> D4[方向基线]
-    D --> D5[URL/截图提取]
-    D1 --> E[组合 Design Context]
-    D2 --> E
-    D3 --> E
-    D4 --> E
-    D5 --> E
-    E --> F[选择模型与产物]
-    F --> G[预览 brief / prompt / 写入计划]
-    G --> H{用户确认}
-    H -->|返回修改| C
-    H -->|确认生成| I[创建 SaCode 设计任务]
-    I --> J[生成设计稿/图片/前端]
-    J --> K[预览与 Diff]
-    K --> L{接受结果}
-    L -->|接受| M[写入项目并保存版本]
-    L -->|迭代| E
+    A[新建或打开 SaDesign] --> B[选择目标端]
+    B --> C{初始化 UI}
+    C --> C1[AI 提示词生成]
+    C --> C2[选择 UI 模板]
+    C --> C3[截图/网页/设计导入]
+    C1 --> D[UIDocument]
+    C2 --> D
+    C3 --> D
+    D --> E[可视化拖拽与属性编辑]
+    E --> F{确认 UI}
+    F -->|继续编辑| E
+    F -->|确认| G{项目模式}
+    G -->|已有项目| H[扫描并推荐技术栈]
+    G -->|新项目/未知| I[AI 追问并推荐技术栈]
+    H --> J[确认 ImplementationProfile]
+    I --> J
+    J --> K[预览实现计划与文件范围]
+    K --> L{确认生成}
+    L -->|返回修改| J
+    L -->|确认| M[大模型生成项目实现]
+    M --> N[构建验证与自动修复]
+    N --> O[Diff 与审批]
+    O --> P[写入项目并保存版本]
 ```
 
 ### 7.1 从普通 SaCode 会话进入
@@ -179,22 +179,23 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 
 ### FR-2 设计目标与输出类型
 
-**用户故事：** 作为开发者，我希望明确要生成的内容，以便 SaDesign 选择正确模型和任务链路。
+**用户故事：** 作为开发者，我希望明确 UI 面向的端和最终产物，以便 SaDesign 选择正确任务链路。
 
 1. 系统 SHALL 支持 `整套系统`、`单个页面`、`组件`、`设计稿`、`图片资产`、`设计系统` 六种目标类型。
-2. 系统 SHALL 支持多选 `设计简报`、`Prompt`、`可视化设计稿`、`前端代码`、`图片文件`、`设计系统包` 六种输出。
-3. WHEN 用户选择前端代码，系统 SHALL 要求确认目标框架、目标目录和允许修改范围。
-4. WHEN 用户选择图片文件，系统 SHALL 要求确认用途、比例、尺寸、数量、格式和候选目标目录。
-5. IF 当前模型不支持某种输出，系统 SHALL 禁用该输出并显示可用模型。
+2. 系统 SHALL 要求选择 PC 应用、Web Desktop、响应式 Web、Tablet、Mobile、小程序或自定义 TargetSurface。
+3. 系统 SHALL 支持多选 `设计简报`、`Prompt`、`可视化设计稿`、`项目实现`、`图片文件`、`设计系统包` 六种输出。
+4. WHEN 用户选择项目实现，系统 SHALL 先完成 UI 确认，再确认 ImplementationProfile、目标目录和允许修改范围。
+5. WHEN 用户选择图片文件，系统 SHALL 要求确认用途、比例、尺寸、数量、格式和候选目标目录。
+6. IF 当前模型不支持某种输出，系统 SHALL 禁用该输出并显示可用模型。
 
 ### FR-3 模板浏览与选择
 
-**用户故事：** 作为开发者，我希望通过视觉模板选择页面方向，以便减少纯文字沟通成本。
+**用户故事：** 作为开发者，我希望通过视觉模板初始化 UI，以便减少纯文字沟通成本。
 
-1. 系统 SHALL 以预览图、标题、适用场景、布局标签和技术适配信息展示模板。
-2. 系统 SHALL 支持按关键词、页面类型、行业、布局、主题、颜色和技术栈筛选模板。
-3. WHEN 用户打开模板，系统 SHALL 显示大图预览、模板描述、页面结构、主要组件、设计 Token 摘要和适配当前项目的说明。
-4. WHEN 用户点击“使用此模板”，系统 SHALL 将模板版本加入当前 Design Context，并返回设计任务页。
+1. 系统 SHALL 以预览图、标题、目标端、适用场景、布局和主题信息展示模板。
+2. 系统 SHALL 支持按关键词、目标端、页面类型、行业、布局、主题和颜色筛选模板，不把实现技术栈作为 UI 模板的必要属性。
+3. WHEN 用户打开模板，系统 SHALL 显示大图预览、TargetSurface、页面结构、主要组件、设计 Token 和交互摘要。
+4. WHEN 用户点击“使用此模板”，系统 SHALL 将模板 UIDocument 复制为当前可编辑草稿，并返回可视化编辑器。
 5. 系统 SHALL 支持选择一个主模板和最多三个参考模板。
 6. IF 多个模板包含冲突约束，系统 SHALL 要求用户选择主模板或手工解决冲突。
 
@@ -277,15 +278,16 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 
 ### FR-11 生成任务
 
-**用户故事：** 作为开发者，我希望在一个任务中生成设计稿、图片和代码，以便完成可运行的前端设计。
+**用户故事：** 作为开发者，我希望先确认 UI，再让模型按已确认技术栈生成可运行的新项目或已有项目实现。
 
-1. WHEN 用户确认生成，系统 SHALL 创建关联当前工作区的 SaDesign 任务。
-2. 系统 SHALL 将任务拆分为 `context`、`brief`、`design`、`assets`、`code`、`verify` 阶段，并仅运行目标产物所需阶段。
+1. WHEN 用户确认生成，系统 SHALL 创建关联当前工作区或新项目目标目录的 SaDesign 任务。
+2. 系统 SHALL 将任务拆分为 `context`、`ui-design`、`ui-review`、`implementation-profile`、`implementation-plan`、`code`、`verify` 阶段，并仅运行目标产物所需阶段。
 3. WHEN 任务写入项目文件，系统 SHALL 通过 SaCode Task Protocol 触发审批和审计。
 4. 系统 SHALL 将生成中的文本、工具调用、预览和错误实时投影到 Desktop。
 5. WHEN 图片生成完成，系统 SHALL 先保存候选结果，再由用户选择写入项目的图片。
-6. WHEN 前端生成完成，系统 SHALL 提供文件列表、Diff、运行验证结果和设计约束检查结果。
+6. WHEN 项目实现生成完成，系统 SHALL 提供文件列表、Diff、运行验证结果，以及与已确认 UIDocument 和 ImplementationProfile 的一致性检查结果。
 7. IF 任一阶段失败，系统 SHALL 保留已成功的阶段产物，并提供从失败阶段重试的动作。
+8. IF ImplementationProfile 未确认，系统 SHALL 阻止 `code` 阶段启动。
 
 ### FR-12 结果审查与迭代
 
@@ -297,7 +299,7 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 4. WHEN 用户接受代码结果，系统 SHALL 复用 Changes 面板完成最终审批。
 5. WHEN 用户发起迭代，系统 SHALL 继承当前结果、Design Context 和用户批注，并创建新版本。
 6. 系统 SHALL 保留版本谱系，用户能够识别每个版本的父版本。
-7. WHERE 可视化拖拽编辑可用（见 18A），系统 SHALL 以框架无关的 `layout.json` 作为编辑模型；布局与样式操作 SHALL 即时更新预览且不依赖 AI，用户确认后 SHALL 由匹配 ProjectProfile 的 Code Adapter 输出项目原生代码并进入 Changes 审批链路。
+7. WHERE 可视化编辑可用（见 18A），系统 SHALL 以框架无关的 UIDocument 作为 UI 设计源；用户确认 UI 和 ImplementationProfile 后，SHALL 由大模型生成项目实现并进入 Changes 审批链路。
 
 ### FR-13 任务记录
 
@@ -381,7 +383,7 @@ SaDesign 默认打开最近草稿；没有草稿时显示“新建设计任务�
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-详情右栏还需显示版本、来源、适用技术栈、设计 Token 摘要、许可说明以及“设为主模板/加入参考”的差异。
+详情右栏还需显示版本、来源、适用目标端、设计 Token、页面与交互摘要、许可说明以及“设为主模板/加入参考”的差异。
 
 ### 9.3 设计资源页
 
@@ -450,6 +452,8 @@ classDiagram
       int version
       string parent_session_id
       DesignContext context
+      UIDocument ui_document
+      ImplementationProfile implementation_profile
       GenerationPlan plan
     }
     class DesignContext {
@@ -461,6 +465,24 @@ classDiagram
       ResourceRef[] baselines
       ConstraintSet overrides
       string prompt_hash
+    }
+    class UIDocument {
+      string id
+      string schema_version
+      TargetSurface target
+      UIPage[] pages
+      DesignTokens tokens
+      string version_hash
+      string status
+    }
+    class ImplementationProfile {
+      string project_mode
+      string target_platform
+      string language
+      string framework
+      string source
+      float confidence
+      bool confirmed
     }
     class ExtractionJob {
       string id
@@ -498,6 +520,8 @@ classDiagram
 
     DesignProject "1" --> "*" DesignSession
     DesignSession "1" --> "1" DesignContext
+    DesignSession "1" --> "1" UIDocument
+    DesignSession "1" --> "0..1" ImplementationProfile
     DesignSession "1" --> "*" GenerationJob
     DesignContext "0..1" --> "1" DesignSystemPackage
     ExtractionJob "0..1" --> "1" DesignSystemPackage
@@ -513,6 +537,11 @@ classDiagram
 ├── manifest.json
 ├── brief.md
 ├── prompt.md
+├── ui-document.json
+├── ui-commands.jsonl
+├── ui-versions/
+├── implementation-profile.json
+├── implementation-plan.json
 ├── context/
 │   ├── project-summary.md
 │   ├── context.json
@@ -657,13 +686,15 @@ flowchart TB
 | `GET` | `/api/design/systems/:id/versions/:version/download` | 下载不可变 ZIP |
 | `POST` | `/api/design/sessions` | 创建设计草稿 |
 | `PATCH` | `/api/design/sessions/:id` | 更新目标和 Design Context |
-| `POST` | `/api/design/sessions/:id/plan` | 生成 brief、Prompt 与写入计划 |
-| `POST` | `/api/design/sessions/:id/generate` | 确认并开始生成 |
-| `GET` | `/api/design/sessions/:id/layout` | 获取当前 `sacode-layout/v1` 快照与版本号 |
-| `PATCH` | `/api/design/sessions/:id/layout` | 以乐观并发版本提交 DesignCommand 批次 |
-| `GET` | `/api/design/sessions/:id/components` | 获取项目组件注册表快照 |
-| `POST` | `/api/design/sessions/:id/apply` | 校验 layout 与 ProjectProfile，通过 Code Adapter 生成项目原生文件并创建 Changes |
-| `POST` | `/api/design/sessions/:id/refine` | 请求 AI 返回 JSON Patch / DesignCommand 草稿 |
+| `POST` | `/api/design/sessions/:id/ui/generate` | 根据提示词和 TargetSurface 生成 UIDocument 草稿 |
+| `GET` | `/api/design/sessions/:id/ui` | 获取当前 UIDocument 与版本 |
+| `PATCH` | `/api/design/sessions/:id/ui` | 以乐观并发版本提交 UICommand 或 UIDocument Patch |
+| `POST` | `/api/design/sessions/:id/ui/confirm` | 校验并冻结当前 UI 版本 |
+| `POST` | `/api/design/sessions/:id/implementation/detect` | 扫描已有项目并生成 ImplementationProfile 候选 |
+| `POST` | `/api/design/sessions/:id/implementation/recommend` | 对新项目或未知技术栈生成追问与推荐候选 |
+| `PUT` | `/api/design/sessions/:id/implementation` | 保存并确认 ImplementationProfile |
+| `POST` | `/api/design/sessions/:id/plan` | 基于已确认 UI 与技术栈生成实现计划 |
+| `POST` | `/api/design/sessions/:id/generate` | 确认后启动大模型实现生成与验证 |
 | `GET` | `/api/design/jobs/:id` | 获取生成任务状态 |
 | `POST` | `/api/design/jobs/:id/cancel` | 取消生成任务 |
 | `POST` | `/api/design/jobs/:id/retry` | 从失败阶段重试 |
@@ -675,9 +706,12 @@ SSE 继续复用现有事件流，新增可向后兼容的事件：
 - `design_plan_ready`
 - `design_generation_stage`
 - `design_preview_ready`
-- `design_layout_updated`
-- `design_layout_conflict`
-- `design_codegen_ready`
+- `design_ui_updated`
+- `design_ui_conflict`
+- `design_ui_confirmed`
+- `design_implementation_profile_ready`
+- `design_implementation_profile_confirmed`
+- `design_implementation_plan_ready`
 - `design_artifact_ready`
 - `design_job_completed`
 - `design_job_failed`
@@ -687,12 +721,17 @@ SSE 继续复用现有事件流，新增可向后兼容的事件：
 ### 14.1 Design Session
 
 ```text
-draft → analyzing → ready → planning → planned → generating → review → accepted
-  │         │          │         │          │            │
-  └─────────┴──────────┴─────────┴──────────┴────────────┴→ failed
-                                                       └──→ cancelled
-review → editing → applying → review  （DesignCommand → Code Adapter → Changes 审查）
-review → generating  （AI 语义修改，创建子版本）
+draft → ui_generating → ui_editing → ui_confirmed
+  │           │             │             │
+  └───────────┴─────────────┴─────────────┴→ failed / cancelled
+
+ui_confirmed → stack_discovery → stack_confirmation → implementation_planned
+implementation_planned → generating → verifying → review → accepted
+                           │           │          │
+                           └───────────┴──────────┴→ failed / cancelled
+
+ui_confirmed → ui_editing  （修改 UI，旧实现计划失效）
+stack_confirmation → ui_editing  （返回修改 UI）
 ```
 
 ### 14.2 Extraction Job
@@ -775,411 +814,389 @@ succeeded → expired → packaging
 
 指标不以“生成次数”单独衡量成功，重点关注结果是否被接受并进入项目。
 
-## 18A. 可视化拖拽编辑设计
+## 18A. 端类型感知的可视化 UI 设计与实现生成
 
-> 本节定义拖拽式调整 AI 生成结果的推荐方案。
-> **SaDesign 不预设 React、Vue 或其他框架。正式代码格式由当前工作区的项目扫描结果决定，`layout.json` 仅作为框架无关的可编辑设计模型。**
-> 拖拽修改语义模型，预览立即更新；用户应用变更时，由匹配当前项目的 Code Adapter 生成原生项目代码。
+> SaDesign 的第一职责是帮助用户确定“界面是什么样、有哪些页面与组件、如何布局和交互”，而不是提前决定 React、Vue 或其他实现技术。
+> 用户确认 UI 后，系统再结合已确认的 `ImplementationProfile`，由大模型生成符合用户技术栈的初始工程或已有项目实现。
 
-### 18A.0 已核实事实与方案决策
-
-SaCode Desktop 当前是 **Vite + TypeScript + 原生 DOM API + CSS**：不依赖 React，界面通过 `document.createElement` 和 DOM helper 构建。
-现有 daemon 和 Desktop 计划代码中的 `src/pages/index.tsx` / `index.tsx` 是待修复的占位硬编码，不能作为项目技术栈依据。
-
-因此“TSX 还是 HTML”不是全局固定答案：
-
-| 项目扫描结果 | 正式代码产物示例 |
-|---|---|
-| React / Next.js | `.tsx`、CSS、框架路由文件 |
-| Vue | `.vue` SFC、CSS、路由文件 |
-| Svelte | `.svelte`、CSS |
-| Angular | component `.ts` / template `.html` / `.css` |
-| 原生 TypeScript DOM（当前 Desktop） | `.ts` DOM 构建代码、`.css`、必要的 `.html` shell |
-| 原生 JavaScript DOM | `.js`、`.css`、必要的 `.html` shell |
-| 静态站点 | `.html`、`.css`、可选 `.js` |
-| 无法可靠识别 | 不猜测；要求用户确认输出配置后再计划写入 |
-
-方案结论：
-
-1. **项目原生代码是正式产物**，格式由 `ProjectProfile` 和用户目标决定；
-2. **`layout.json` 是框架无关的编辑模型**，承载布局、组件、Token 和可序列化属性；
-3. **预览是派生运行结果**，通常在沙箱 iframe 中渲染，不反向解析为源码；
-4. **HTML 是否为正式产物取决于项目类型**：静态站点可以，当前 SaCode Desktop 不可以；
-5. **AI 只用于创建初稿、语义级重设计和不受结构化模型支持的源码修改**，不参与普通拖拽保存；
-6. **不得用文件扩展名硬编码替代项目识别**。
-
-### 18A.1 ProjectProfile：先识别项目，再选择生成器
-
-项目扫描产出结构化 `ProjectProfile`：
-
-```typescript
-interface ProjectProfile {
-  schemaVersion: 'sacode-project-profile/v1';
-  language: 'typescript' | 'javascript' | 'kotlin' | 'dart' | 'unknown';
-  framework:
-    | 'react'
-    | 'next'
-    | 'vue'
-    | 'svelte'
-    | 'angular'
-    | 'vanilla-dom'
-    | 'static-html'
-    | 'unknown';
-  rendering: 'jsx' | 'sfc' | 'template' | 'dom-api' | 'html' | 'unknown';
-  buildTool?: 'vite' | 'webpack' | 'rollup' | 'parcel' | 'other';
-  styling: Array<'css' | 'css-modules' | 'scss' | 'tailwind' | 'css-in-js' | 'unknown'>;
-  sourceRoots: string[];
-  entryPoints: string[];
-  componentRoots: string[];
-  routeRoots: string[];
-  testCommands: string[];
-  confidence: number;
-  evidence: Array<{ source: string; value: string }>;
-}
-```
-
-识别规则：
-
-- 读取 manifest、依赖、构建配置、源码扩展名、入口文件和目录结构；
-- 同时检查根目录与用户选择的目标子项目，支持 monorepo；
-- 每个结论保留 evidence 和 confidence，不仅返回技术名称字符串；
-- 多框架仓库必须绑定到用户选择的目标目录，不在仓库级别武断选择；
-- `confidence` 低于阈值或识别结果冲突时，计划页要求用户确认；
-- 写入计划中的文件路径和扩展名由 ProjectProfile 推导，禁止固定为 `index.tsx`。
-
-当前 SaCode Desktop 的预期识别结果为：
-
-```json
-{
-  "language": "typescript",
-  "framework": "vanilla-dom",
-  "rendering": "dom-api",
-  "buildTool": "vite",
-  "styling": ["css"]
-}
-```
-
-### 18A.2 框架无关页面模型
-
-首期 schema 建议为 `sacode-layout/v1`：
-
-```typescript
-interface DesignLayout {
-  schemaVersion: 'sacode-layout/v1';
-  id: string;
-  route?: string;
-  targetProfileHash: string;
-  componentRegistryVersion: string;
-  tokens: Record<string, string>;
-  root: LayoutNode;
-  source: {
-    sessionId: string;
-    parentLayoutId?: string;
-    generatedAt: string;
-  };
-}
-
-interface LayoutNode {
-  id: string;
-  name: string;
-  kind: 'container' | 'component' | 'text' | 'asset' | 'source-island';
-  component?: string;
-  props?: Record<string, string | number | boolean | null>;
-  layout?: {
-    display?: 'block' | 'flex' | 'grid';
-    direction?: 'row' | 'column';
-    columns?: number;
-    gap?: string;
-    width?: string;
-    height?: string;
-    align?: string;
-    justify?: string;
-  };
-  style?: Record<string, string>;
-  events?: Record<string, DesignAction>;
-  children?: LayoutNode[];
-  locked?: boolean;
-  sourceRef?: { file: string; symbol?: string };
-}
-
-interface DesignAction {
-  type: 'navigate' | 'submit' | 'toggle' | 'custom';
-  target?: string;
-  handlerRef?: string;
-}
-```
-
-约束：
-
-- `id` 使用稳定 UUID，不使用文案或数组索引；
-- 模型不保存 JSX、Vue template、DOM API 或其他框架语法；
-- props、layout 和 style 仅允许 schema 定义的可序列化值；
-- `custom` action 只引用已有 handler，不在 JSON 中内嵌代码；
-- `targetProfileHash` 用于发现项目配置变化，变化后必须重新验证适配器；
-- schema 支持版本迁移，未知字段在往返处理时保留。
-
-### 18A.3 组件注册表与目标绑定
-
-组件注册表描述设计组件，并为不同 Code Adapter 提供项目原生绑定：
-
-```typescript
-interface DesignComponentDefinition {
-  name: string;
-  category: 'layout' | 'navigation' | 'form' | 'data' | 'feedback' | 'custom';
-  propsSchema: Record<string, PropDefinition>;
-  allowedChildren: string[] | '*';
-  editable: boolean;
-  bindings: Partial<Record<AdapterId, ComponentBinding>>;
-}
-
-interface ComponentBinding {
-  sourceRef?: { file: string; symbol?: string };
-  importPath?: string;
-  tagName?: string;
-  previewRenderer: string;
-  propMappings: Record<string, string>;
-}
-```
-
-注册表来源按优先级合并：
-
-1. 项目扫描识别出的组件、DOM helper、样式约定和 props；
-2. 用户确认的自定义组件映射；
-3. 与当前适配器兼容的 SaDesign 基础组件；
-4. 无可靠绑定的源码区域进入 `source-island`，默认锁定内部编辑。
-
-对于当前 Desktop，注册表应优先识别 `el(...)`、原生 HTMLElement、现有 CSS class 和 app 目录中的 UI 组合函数，而不是伪造 React 组件 import。
-
-### 18A.4 Code Adapter
-
-Code Adapter 把同一 `layout.json` 转换为目标项目原生代码：
-
-```typescript
-interface CodeAdapter {
-  id: AdapterId;
-  supports(profile: ProjectProfile): AdapterMatch;
-  plan(layout: DesignLayout, profile: ProjectProfile): PlannedFile[];
-  generate(layout: DesignLayout, registry: ComponentRegistry): GeneratedFile[];
-  verify(files: GeneratedFile[], profile: ProjectProfile): VerificationPlan;
-}
-```
-
-首期适配器：
-
-| Adapter | 输出 |
-|---|---|
-| `vanilla-ts-dom` | TypeScript DOM 构建函数、CSS、必要的入口接线 |
-| `static-html` | HTML、CSS、可选 JavaScript |
-| `react-tsx` | TSX、CSS、组件与路由文件 |
-| `vue-sfc` | `.vue` SFC、CSS、路由文件 |
-
-适配器选择规则：
-
-1. ProjectProfile 高置信匹配唯一适配器时自动选择；
-2. 多适配器可用时在确认页展示推荐项及证据；
-3. 没有适配器时只允许设计预览或 AI 辅助源码修改，不宣称可确定性生成；
-4. 用户可以覆盖选择，但必须看到将创建或修改的实际文件清单；
-5. 适配器 ID、版本和 ProjectProfile hash 写入 session artifact。
-
-### 18A.5 架构与数据流
+### 18A.0 核心分层
 
 ```text
-Project Scanner ──► ProjectProfile ──► Adapter Resolver
-                                           │
-                                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Desktop                                                     │
-│  Outline / Drag UI ── DesignCommand ──► Layout Store        │
-│                                      ┌────────┴────────┐     │
-│                                      ▼                 ▼     │
-│                              Preview Renderer     Undo Stack  │
-│                                      │                       │
-│                                      ▼                       │
-│                         sandbox iframe / native preview       │
-└──────────────────────────────────────┬──────────────────────┘
-                                       │ 应用变更
-                                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Daemon / Runtime                                            │
-│  validate layout + profile + registry                       │
-│       ├─► selected Code Adapter                             │
-│       ├─► framework-native files                            │
-│       ├─► project-specific format / typecheck / build       │
-│       └─► Task Protocol: Diff → approval → write             │
-└─────────────────────────────────────────────────────────────┘
+产品需求 / 用户提示词 / UI 模板
+                │
+                ▼
+        TargetSurface（目标端）
+                │
+                ▼
+     UIDocument（框架无关 UI 设计）
+                │
+     ┌──────────┴──────────┐
+     ▼                     ▼
+Preview Renderer       Visual Editor
+内部预览实现            拖拽 / 属性 / 交互
+     └──────────┬──────────┘
+                ▼
+          用户确认 UI
+                │
+                ▼
+ ImplementationProfile（必须确认）
+  ├─ 已有项目：扫描并推荐
+  ├─ 新项目：用户选择
+  └─ 不清楚：AI 追问并推荐
+                │
+                ▼
+     大模型实现生成 Agent
+  ├─ 新项目：脚手架 + 页面 + 基础能力
+  └─ 已有项目：复用现有栈并生成变更
+                │
+                ▼
+   验证 → Diff → 审批 → 写入
 ```
 
-命令而非 DOM mutation 是编辑基本单位：
+必须坚持以下边界：
+
+1. **目标端不等于技术栈**：PC、Web、移动端决定 UI 形态；React、Vue、Tauri 等决定实现方式；
+2. **UIDocument 不包含实现框架语法**：不保存 JSX、Vue Template、DOM API、Flutter Widget 或 Kuikly DSL；
+3. **预览技术不等于交付技术**：编辑器可以用 HTML/iframe 预览，但不能据此认定用户项目应生成 HTML；
+4. **最终实现由大模型生成**：基于已确认 UI、技术栈和项目上下文生成，不使用机械模板转换冒充完整项目实现；
+5. **技术栈未确认不得生成项目代码**：AI 可以询问和推荐，但不得静默猜测；
+6. **新项目和已有项目走不同实现策略**：新项目可创建初始框架，已有项目必须优先复用现有架构。
+
+### 18A.1 TargetSurface：先确定设计面向哪个端
 
 ```typescript
-type DesignCommand =
-  | { type: 'move'; nodeId: string; parentId: string; index: number }
-  | { type: 'resize'; nodeId: string; width?: string; height?: string }
-  | { type: 'set-layout'; nodeId: string; patch: Partial<LayoutNode['layout']> }
-  | { type: 'set-prop'; nodeId: string; key: string; value: unknown }
-  | { type: 'set-token'; name: string; value: string }
-  | { type: 'duplicate'; nodeId: string; newNodeId: string }
-  | { type: 'delete'; nodeId: string }
-  | { type: 'toggle'; nodeId: string; visible: boolean };
-```
-
-每个命令必须通过 schema 和组件树约束校验、生成逆命令、支持 Undo/Redo，并在更新模型后触发预览。
-
-### 18A.6 预览渲染与 iframe 安全
-
-Preview Renderer 从 `layout.json` 与组件注册表生成运行时预览。预览格式不决定正式代码格式：React、Vue、原生 DOM 和静态 HTML 均可共享同一预览协议。
-
-需要 iframe 时使用：
-
-```html
-<iframe sandbox="allow-scripts" srcdoc="..."></iframe>
-```
-
-安全约束：
-
-| 约束 | 说明 |
-|---|---|
-| 不加 `allow-same-origin` | iframe 保持 opaque origin，不能访问父页面 Cookie、Storage 和 DOM |
-| 可信 Renderer | 文本和属性值转义，不把 AI 返回文本直接拼成可执行脚本 |
-| 脚本来源 | 仅运行 SaDesign 编辑桥接脚本，不执行项目或模型提供的任意脚本 |
-| CSP | `default-src 'none'`，资源按白名单开放，脚本使用 nonce |
-| 通信 | 仅 `postMessage`，校验 `event.source` 与消息 schema |
-| 网络 | 默认禁止网络，远程资源由 daemon 下载、校验并转为受控本地资源 |
-
-iframe 只负责显示、命中测试、选择覆盖层和手势采集；真正编辑由父页面把手势转为 DesignCommand 后更新 Layout Store。
-
-### 18A.7 即时编辑能力
-
-| 操作 | 模型变更 | 适配器职责 |
-|---|---|---|
-| 拖拽重排 | 更新父节点与 children 顺序 | 按目标语法调整节点或 DOM 构建顺序 |
-| 调整网格列数 | 更新 `layout.columns` | 映射为项目现有 class、CSS 或组件属性 |
-| resize | 更新 width/height | 映射为目标项目支持的布局表达 |
-| 删除/复制 | 删除或克隆 LayoutNode | 删除或生成目标语法结构 |
-| 显隐 | 更新 visible 状态 | 映射为条件、hidden 属性或样式 |
-| 修改 props | 更新 JSON props | 映射为组件 props、DOM 属性或文本 |
-| 修改 Token | 更新 `tokens` | 更新项目现有 Token/CSS 文件 |
-
-以上操作立即重渲染预览，不调用 AI。
-
-### 18A.8 当前 Desktop 的生成示例
-
-对 `vanilla-ts-dom` 项目，适配器生成原生 TypeScript，而不是 TSX：
-
-```typescript
-import { el } from '../../dom';
-
-export function buildDashboardPage(): HTMLElement {
-  return el('main', { className: 'dashboard-page' }, [
-    el('section', { className: 'dashboard-hero' }, [
-      el('h1', {}, ['项目概览']),
-    ]),
-    el('section', { className: 'dashboard-grid' }, [
-      buildMetricCard('任务', '12'),
-      buildMetricCard('变更', '4'),
-    ]),
-  ]);
+interface TargetSurface {
+  platform:
+    | 'desktop-app'
+    | 'web-desktop'
+    | 'responsive-web'
+    | 'tablet'
+    | 'mobile-app'
+    | 'mini-program'
+    | 'custom';
+  inputModes: Array<'mouse' | 'keyboard' | 'touch' | 'pen'>;
+  viewports: Array<{
+    id: string;
+    name: string;
+    width: number;
+    height: number;
+    minWidth?: number;
+    maxWidth?: number;
+  }>;
+  density: 'compact' | 'comfortable' | 'spacious';
+  orientation?: 'landscape' | 'portrait' | 'adaptive';
+  capabilities?: string[];
 }
 ```
 
-对应样式写入项目现有 CSS 组织方式，入口接线遵循当前 app/UI 架构。实际文件路径由目标目录、现有模块结构和用户确认决定，不固定为 `src/pages/index.tsx`。
+TargetSurface 决定设计约束：
 
-生成规则：
+| 目标端 | UI 设计重点 |
+|---|---|
+| PC 可安装应用 | 宽屏、窗口缩放、鼠标键盘、快捷键、菜单、分栏、高信息密度 |
+| Web Desktop | 浏览器视口、响应式宽度、URL 导航、鼠标键盘 |
+| Responsive Web | Desktop/Tablet/Mobile 断点和内容重排 |
+| Mobile App | 触摸目标、安全区、底部导航、手势、竖屏优先 |
+| Tablet | 触摸与键盘混合、横竖屏、主从布局 |
+| 小程序 | 平台导航、安全区、受限运行能力和平台组件规范 |
 
-1. 文件扩展名、import 方式和组件表达由 Code Adapter 决定；
-2. 优先复用项目现有 helper、组件、Token 和 CSS 命名方式；
-3. 输出附带 layout ID、adapter ID 和内容 hash；
-4. 运行项目对应的 formatter、typecheck、测试或最小构建；
-5. 文件写入走 SaCode Task Protocol，先展示真实源码 Diff；
-6. 检测到人工修改冲突时不得静默覆盖。
+用户输入“做一个 PC 应用”时，AI 应先生成符合 PC 使用习惯的 UI，不应先假设 Electron、Tauri、React 或 Vue。
 
-### 18A.9 Source Island 与能力边界
+### 18A.2 UI 初始化来源
 
-复杂状态、框架上下文、hooks/composables、第三方组件和自定义业务逻辑不一定能安全映射到通用布局模型。这类内容表示为 `source-island`：
+所有来源最终都必须转换为同一个 UIDocument，进入同一可视化编辑器。
 
-- 可整体移动、复制、显隐；
-- 不允许可视化编辑其内部结构；
-- 保留 `sourceRef` 指向文件和 symbol；
-- 需要内部修改时提供“交给 AI 修改”或“打开源码”；
-- 缺少预览适配器时显示占位块。
+#### 来源 A：AI 提示词生成
 
-首期明确不支持：
+用户描述产品和目标端，AI 生成：页面清单与导航关系、组件树、布局、视觉 Token、资源建议、常见状态、交互意图，以及对应目标端的视口和响应式规则。
 
-- 将任意已有前端源码无损导入并完全可视化编辑；
-- 在 `layout.json` 中保存任意可执行表达式或函数；
-- 跨框架上下文边界随意移动依赖运行时上下文的组件；
-- 通过拖拽重写状态机、副作用、数据请求或生命周期逻辑。
+#### 来源 B：用户选择模板
 
-### 18A.10 AI 的正确职责
+模板本质上是可版本化 UIDocument，而不是某个框架的源码。用户点击“使用此模板”后，可以像 AI 生成结果一样拖拽、删除、复制和编辑。
 
-AI 不参与普通拖拽保存，仅处理结构化模型难以表达的语义操作：
+#### 来源 C：导入或提取
 
-1. 当前 ProjectProfile、layout、选中节点和用户指令作为输入；
-2. AI 优先返回 JSON Patch / DesignCommand；
-3. patch 通过 schema 与组件树约束后应用到草稿版本；
-4. 用户采用前查看布局差异；
-5. 无法表达为模型 patch 时，AI 才按当前 Code Adapter 修改 Source Island 或项目原生源码；
-6. 新版本保留 `parent_id`、ProjectProfile hash 和版本谱系。
+截图、网页和设计文件可提取为 UIDocument 草稿。推断内容必须标记置信度，不能假装所有组件和交互都已准确恢复。
 
-### 18A.11 Token 编辑
+### 18A.3 UIDocument
 
-Token 编辑更新 `layout.json.tokens`，再由适配器映射到项目现有样式体系：
+建议 schema 为 `sacode-ui/v1`：
 
-- CSS 变量项目更新现有 Token/CSS 文件；
-- Tailwind 项目更新允许的主题配置或 class；
-- CSS-in-JS 项目使用对应 Adapter；
-- 没有 Token 体系时，先在计划页展示拟创建方案，不擅自引入新技术栈；
-- Preview Renderer 立即应用，落盘经 Diff、审批和审计。
+```typescript
+interface UIDocument {
+  schemaVersion: 'sacode-ui/v1';
+  id: string;
+  name: string;
+  target: TargetSurface;
+  pages: UIPage[];
+  reusableComponents: UIComponentDefinition[];
+  tokens: DesignTokens;
+  assets: UIAsset[];
+  flows: UIFlow[];
+  metadata: {
+    sessionId: string;
+    parentVersionId?: string;
+    source: 'ai' | 'template' | 'import' | 'mixed';
+    createdAt: string;
+    updatedAt: string;
+  };
+}
 
-### 18A.12 可访问性
+interface UIPage {
+  id: string;
+  name: string;
+  routeIntent?: string;
+  root: UINode;
+}
 
-- `Tab` 聚焦节点，键盘提供移动、删除和复制操作；
-- 结构大纲提供上移、下移、移入、移出等价按钮；
-- 操作结果通过 `aria-live` 播报；
-- resize 提供数值输入；
-- 颜色编辑显示文本值和对比度。
+interface UINode {
+  id: string;
+  name: string;
+  type: string;
+  content?: { text?: string; assetId?: string; icon?: string };
+  props?: Record<string, string | number | boolean | null>;
+  layout?: UILayout;
+  appearance?: UIAppearance;
+  responsive?: ResponsiveRule[];
+  states?: Record<string, UIState>;
+  interactions?: UIInteraction[];
+  children?: UINode[];
+  locked?: boolean;
+}
 
-### 18A.13 持久化与版本控制
+interface UIInteraction {
+  trigger: 'click' | 'double-click' | 'change' | 'submit' | 'hover' | 'shortcut';
+  action:
+    | 'navigate'
+    | 'open-dialog'
+    | 'close-dialog'
+    | 'toggle'
+    | 'submit-form'
+    | 'select-item'
+    | 'custom-intent';
+  targetId?: string;
+  intent?: string;
+}
+```
+
+UIDocument 描述页面内容、布局、视觉、状态和交互意图；不描述框架 API、状态管理、网络封装、函数、hooks、生命周期或平台插件代码。
+
+### 18A.4 可视化编辑器
+
+#### 画布
+
+- 拖拽移动和容器内排序；
+- 调整宽高和分栏比例；
+- 多选、对齐和分布；
+- 复制、删除、显隐、锁定；
+- 组合与取消组合；
+- 缩放、平移、吸附和参考线；
+- Undo/Redo；
+- Desktop、Tablet、Mobile 或自定义视口切换。
+
+#### 结构大纲
+
+```text
+WorkspacePage
+├── TitleBar
+├── ActivityBar
+├── Sidebar
+└── MainArea
+    ├── ChatPanel
+    └── ChangesPanel
+```
+
+用户可在结构树中完成与画布拖拽等价的移动、移入、移出、复制和删除操作。
+
+#### 属性面板
+
+允许编辑文案、图片、图标、布局、视觉样式、不同视口规则、组件状态，以及点击、跳转、提交、弹窗等交互意图。
+
+#### AI 辅助编辑
+
+AI 优先返回 UIDocument Patch，例如“将右侧面板改成可折叠”“给表格增加空状态”“整体改成深色紧凑风格”。Patch 必须通过 schema 校验，并在用户采用前显示 UI 差异。
+
+### 18A.5 预览渲染
+
+Preview Renderer 只负责把 UIDocument 渲染成可交互预览，不决定最终项目技术栈：
+
+```text
+UIDocument → Preview Renderer → HTML/iframe 或其他受控预览表面
+```
+
+iframe 使用 `sandbox="allow-scripts"`，不启用 `allow-same-origin`；仅运行可信编辑桥接脚本，通过 `postMessage` 通信并验证 `event.source` 和消息 schema。预览默认禁止任意项目脚本和不受控网络请求。
+
+拖拽发生时，画布采集手势，父页面生成 UICommand 并更新 UIDocument，Preview Renderer 再从新文档重渲染；命令同时生成逆操作并进入 Undo/Redo 栈。
+
+```typescript
+type UICommand =
+  | { type: 'move-node'; nodeId: string; parentId: string; index: number }
+  | { type: 'resize-node'; nodeId: string; width?: string; height?: string }
+  | { type: 'set-layout'; nodeId: string; patch: Partial<UILayout> }
+  | { type: 'set-content'; nodeId: string; patch: Record<string, unknown> }
+  | { type: 'set-appearance'; nodeId: string; patch: Partial<UIAppearance> }
+  | { type: 'set-interactions'; nodeId: string; interactions: UIInteraction[] }
+  | { type: 'set-token'; name: string; value: string }
+  | { type: 'duplicate-node'; nodeId: string; newNodeId: string }
+  | { type: 'delete-node'; nodeId: string };
+```
+
+### 18A.6 UI 确认门
+
+用户点击“确认 UI”前，系统至少检查页面流程、必需视口、基础可访问性、资源来源、关键 loading/empty/error 状态，以及自定义交互意图是否清晰。
+
+确认后生成不可变 UI 版本快照。后续修改会创建新的 UI 版本，并使旧 Implementation Plan 失效。
+
+### 18A.7 ImplementationProfile
+
+技术栈只在实现阶段冻结：
+
+```typescript
+interface ImplementationProfile {
+  schemaVersion: 'sacode-implementation/v1';
+  projectMode: 'existing' | 'new';
+  target: {
+    platform: 'web' | 'desktop' | 'mobile' | 'mini-program' | 'other';
+    distribution?: 'browser' | 'installable' | 'app-store' | 'internal';
+    operatingSystems?: string[];
+  };
+  language: string;
+  framework: string;
+  runtime?: string;
+  desktopShell?: string;
+  buildTool?: string;
+  packageManager?: string;
+  uiLibrary?: string;
+  styling?: string;
+  router?: string;
+  stateManagement?: string;
+  networkLayer?: string;
+  testFramework?: string;
+  source: 'detected' | 'user-selected' | 'ai-recommended';
+  confidence?: number;
+  evidence?: Array<{ source: string; value: string }>;
+  decisions: Array<{ question: string; answer: string; reason?: string }>;
+  confirmed: boolean;
+  confirmedAt?: string;
+}
+```
+
+代码生成硬门禁为 `implementationProfile.confirmed === true`。
+
+### 18A.8 已有项目的技术栈处理
+
+系统扫描用户选择的目标项目或 monorepo 子目录，识别语言、框架、构建工具、包管理器、路由、状态管理、网络层、组件库、样式、目录和测试约定，并在确认页展示结论、置信度和证据。
+
+规则：
+
+- 高置信度可以默认选中，但生成前仍需用户确认；
+- 多框架仓库必须先确定目标子项目；
+- 不得因为占位路径、单个扩展名或 SaDesign 自身技术栈推断用户技术栈；
+- 已有项目不擅自替换框架、路由、状态管理或样式方案；
+- 用户修改配置后保存为 `user-selected` 来源。
+
+### 18A.9 新项目或技术栈未知时的 AI 交互
+
+允许在大模型对话中补齐技术栈，但遵循“最少必要问题”：
+
+1. 先询问影响架构的关键问题；
+2. 根据答案给出一套推荐方案和理由；
+3. 提供“使用推荐方案”“调整技术栈”“重新推荐”；
+4. 用户确认后冻结 ImplementationProfile；
+5. 未确认前可以继续设计 UI，但不能生成项目代码。
+
+用户只说“做一个 PC 应用”时，应先询问它是浏览器应用还是可安装应用，以及是否需要本地文件、系统托盘、自动更新等桌面能力。AI 推荐必须是结构化候选，不是后台静默决定。
+
+### 18A.10 大模型实现生成
+
+最终代码由代码生成 Agent 综合以下输入生成：
+
+1. 已确认 UIDocument 及版本 hash；
+2. 已确认 ImplementationProfile；
+3. Design Context、Token、图片和字体资产；
+4. 已有项目上下文或新项目目标目录；
+5. 仓库规则、允许修改范围和安全约束；
+6. 验收要求和运行验证命令。
+
+#### 新项目模式
+
+生成可直接使用的初始工程，包括 manifest、依赖与构建配置、应用入口、页面、组件、样式、路由、基础状态管理、资源、基础交互、README、运行命令和必要测试。生成前必须展示拟创建目录、技术栈摘要和关键依赖。
+
+#### 已有项目模式
+
+模型必须复用现有组件、Token、路由、状态和网络封装；只修改必要文件；不重复安装依赖；不未经确认引入新框架或项目级基础设施；对 UI 无法确定的业务逻辑使用清晰占位或再次询问；输出文件清单、Diff 和验证结果。
+
+### 18A.11 模型生成后的验证与修复循环
+
+```text
+生成草稿
+  → formatter / typecheck / lint
+  → 最小构建或平台编译
+  → 页面/组件测试
+  → UI 约束检查
+  → 失败时让模型基于错误修复
+  → Diff / 审批
+```
+
+系统检查工程可构建、UI 与 UIDocument 一致、目标端约束得到实现、不出现与 ImplementationProfile 冲突的依赖、不越过允许范围；写入继续走 SaCode Task Protocol。
+
+### 18A.12 版本与持久化
 
 ```text
 .sacode/design/sessions/<session-id>/
-├── project-profile.snapshot.json
-├── layout.json
-├── commands.jsonl
-├── component-registry.snapshot.json
-├── adapter.json
-├── artifacts.json
-└── verification.json
+├── ui-document.json
+├── ui-commands.jsonl
+├── ui-versions/
+│   └── <version>.json
+├── design-context.json
+├── implementation-profile.json
+├── implementation-plan.json
+├── generation/
+│   ├── prompt-snapshot.md
+│   ├── artifacts.json
+│   └── verification.json
+└── lineage.json
 ```
 
-ProjectProfile、layout、registry 和适配器版本共同参与内容 hash。项目扫描结果变化后，旧 layout 可继续预览，但重新应用前必须再次完成适配与验证。
+UIDocument、ImplementationProfile 和生成 Prompt 分别版本化。UI 版本变化后旧实现计划标记 stale；技术栈变化后重新生成计划；每次生成记录模型、上下文 hash、UI hash 和 ImplementationProfile hash。
+
+### 18A.13 可访问性
+
+- 拖拽有结构树和键盘等价操作；
+- 操作结果通过 `aria-live` 播报；
+- resize 同时提供数值输入；
+- 颜色编辑显示文本值和对比度；
+- TargetSurface 决定检查项，例如 PC 检查键盘与焦点，移动端检查触摸目标和安全区。
 
 ### 18A.14 实施分期
 
-| 阶段 | 前置依赖 | 交付物 |
-|---|---|---|
-| Phase 0 | 无 | ProjectProfile schema、项目识别证据、Adapter Resolver；移除 `index.tsx` 硬编码 |
-| Phase 1 | Phase 0 | `sacode-layout/v1`、组件注册表、框架无关 Preview Renderer |
-| Phase 2 | Phase 1 | DesignCommand、拖拽、结构大纲、Undo/Redo、键盘操作 |
-| Phase 3 | Phase 2 | `vanilla-ts-dom` Adapter，支持当前 SaCode Desktop 原生 TS/CSS 输出 |
-| Phase 4 | Phase 3 | static HTML、React、Vue 等增量 Adapter |
-| Phase 5 | Phase 3 | AI JSON Patch 与 Source Island 项目原生源码修改 |
+| 阶段 | 交付物 |
+|---|---|
+| Phase 0 | `sacode-ui/v1`、TargetSurface、模板统一为 UIDocument |
+| Phase 1 | UIDocument Preview Renderer、真实多视口预览 |
+| Phase 2 | 拖拽、结构树、属性面板、UICommand、Undo/Redo |
+| Phase 3 | AI 生成与修改 UIDocument Patch，UI 确认和版本冻结 |
+| Phase 4 | ImplementationProfile：已有项目扫描、AI 追问/推荐、用户确认 |
+| Phase 5 | 大模型根据 UI + ImplementationProfile 生成新项目或已有项目实现 |
+| Phase 6 | 构建验证、自动修复、UI 一致性检查、Diff 与审批 |
 
 ### 18A.15 验收条件
 
-1. SaDesign SHALL 从项目证据生成 ProjectProfile，不得因占位路径或扩展名硬编码认定项目框架；
-2. 当前 SaCode Desktop SHALL 被识别为 Vite + TypeScript + 原生 DOM API + CSS，而不是 React；
-3. `layout.json` SHALL 保持框架无关，不包含 JSX、Vue template 或可执行函数；
-4. Preview Renderer SHALL 从同一 layout 生成多视口预览；
-5. 拖拽、resize、删除、复制、显隐和 Token 修改 SHALL 立即更新预览，不依赖 AI；
-6. 所有命令 SHALL 支持 Undo/Redo、崩溃恢复和键盘等价操作；
-7. Adapter Resolver SHALL 根据 ProjectProfile 选择 Code Adapter，低置信度时要求用户确认；
-8. `vanilla-ts-dom` Adapter SHALL 为当前 Desktop 生成符合既有 DOM helper 和 CSS 组织方式的 TypeScript/CSS；
-9. 各适配器生成的项目原生文件 SHALL 通过对应 formatter、typecheck 和最小构建验证；
-10. 所有文件写入 SHALL 走 SaCode Task Protocol 的 Diff、审批和审计链路；
-11. HTML 仅在 static-html 项目中可作为正式产物；在其他项目中只作为预览或框架模板的一部分；
-12. Source Island SHALL 保留源码引用，内部不可视化编辑但可交给 AI 按项目原生技术栈修改；
-13. 目标文件存在人工修改时 SHALL 通过 hash 冲突检测阻止静默覆盖。
+1. 用户 SHALL 能先选择目标端，再通过 AI 提示词或模板获得初始 UIDocument；
+2. AI 生成 UI、模板 UI 和导入 UI SHALL 使用同一可视化编辑器；
+3. 用户 SHALL 能拖拽、调整尺寸、增删复制、编辑文案/样式/状态/交互并立即看到预览；
+4. UIDocument SHALL 保持框架无关，不包含具体实现框架代码；
+5. PC、Web、Tablet、Mobile 等 TargetSurface SHALL 具有不同默认视口和设计约束；
+6. 用户确认 UI 后 SHALL 生成不可变 UI 版本快照；
+7. 已有项目 SHALL 扫描技术栈并展示置信度与证据；
+8. 新项目或技术栈未知时，AI SHALL 询问最少必要问题并给出可修改的结构化推荐；
+9. 未经用户确认 ImplementationProfile，系统 SHALL NOT 生成项目代码；
+10. 新项目生成 SHALL 包含可运行的初始工程、页面、组件、样式、基础配置和运行说明；
+11. 已有项目生成 SHALL 优先复用现有技术栈和组件，不擅自迁移框架；
+12. 大模型生成结果 SHALL 通过项目对应的格式化、类型检查、构建和必要测试；
+13. 代码与文件写入 SHALL 进入 Diff、审批和审计链路；
+14. 预览所用 HTML/iframe SHALL NOT 被视为用户项目的默认交付格式；
+15. UIDocument 或 ImplementationProfile 变化后，旧实现计划 SHALL 标记失效并重新确认。
 
 ## 19. 实施阶段
 
@@ -1198,58 +1215,59 @@ ProjectProfile、layout、registry 和适配器版本共同参与内容 hash。�
 - 复用现有 AIDesign 生成 brief/prompt；
 - Design Session 与任务记录持久化。
 
-### M2：设计资源与模型生成
+### M2：UIDocument 与可视化设计
 
-- 视觉风格、设计系统、方向基线目录；
-- Design Context 合并与冲突处理；
-- 模型能力选择和阶段计划；
-- 设计稿、前端代码和图片生成；
-- 结果比较、Diff、审批和版本迭代。
+- TargetSurface 与 `sacode-ui/v1` schema；
+- AI 提示词、模板和导入结果统一为 UIDocument；
+- 多视口 Preview Renderer；
+- 拖拽、结构树、属性面板、UICommand 与 Undo/Redo；
+- AI UIDocument Patch、UI 差异和 UI 版本确认。
 
 ### M3：设计系统提取
 
 - URL 和图片提取；
 - 代码目录和设计文件导入；
+- 提取结果映射到 Design Context、Token 和 UIDocument 草稿；
 - 包预览、校验、下载和保存到项目；
 - 来源证据、置信度、版权确认和安全门禁。
 
-### M4：质量与生态
+### M4：ImplementationProfile 与实现生成
 
-- 多视口视觉验证和可访问性检查；
+- 已有项目技术栈扫描、证据和置信度；
+- 新项目技术栈 AI 追问、推荐和用户确认；
+- 基于已确认 UI 与技术栈生成实现计划；
+- 大模型生成新项目脚手架或已有项目变更；
+- 构建验证、自动修复、UI 一致性检查、Diff 与审批。
+
+### M5：质量与生态
+
+- 多端视觉验证和可访问性检查；
 - 模板与资源版本更新策略；
 - VSCode 入口和更完整 CLI；
 - 评估 Figma 导入/导出与团队资源库。
 
-### M5：可视化拖拽编辑
-
-- 定义 ProjectProfile、项目识别证据和 Adapter Resolver，移除 `index.tsx` 硬编码（Phase 0）；
-- 定义框架无关的 `sacode-layout/v1`、组件注册表和真实多视口预览（Phase 1）；
-- 实现 DesignCommand、拖拽、结构大纲、Undo/Redo 和键盘等价操作（Phase 2）；
-- 首先实现 `vanilla-ts-dom` Adapter，生成当前 Desktop 原生 TypeScript/CSS 并完成 Diff、审批和验证（Phase 3）；
-- 按需增加 static HTML、React、Vue Adapter，以及 AI Source Island 修改能力（Phase 4+）。
-
 ## 20. 首期验收门禁
 
-1. 用户可以从 Desktop 当前项目进入 SaDesign 并完成项目上下文扫描；
-2. 用户可以浏览模板、打开详情并将一个模板加入当前设计任务；
-3. 用户可以分别选择视觉风格、设计系统和方向基线，并看到冲突提示；
-4. 用户可以选择模型和输出类型，并在确认前查看 brief、Prompt 摘要和写入计划；
-5. 用户可以生成至少一种前端结果和一种图片结果；
-6. 前端写入经过现有审批、Diff 和审计链路；
-7. 用户可以从公开 URL 或截图创建提取任务，并获得符合 schema 的设计系统包；
-8. 提取详情展示结果 ID、版本、包大小、到期时间、SHA-256 和清单；
-9. 用户可以预览、下载并保存设计系统到当前项目；
-10. Desktop 重启后能够恢复任务记录、未完成任务和已安装设计系统；
-11. 现有 `sacode design` CLI 和 TUI 行为不回退；
-12. URL 提取、ZIP 导入、敏感文件扫描和项目写入通过安全测试；
-13. SaDesign SHALL 从实际项目证据生成 ProjectProfile，当前 Desktop SHALL 被识别为 Vite + TypeScript + 原生 DOM API + CSS；
-14. `layout.json` SHALL 保持框架无关，并从同一模型派生预览和项目原生代码；
-15. 用户拖拽、resize、删除、复制、显隐和 Token 修改 SHALL 立即更新预览，无需等待 AI；
-16. 所有编辑命令 SHALL 支持 Undo/Redo、崩溃恢复，并可通过键盘与结构大纲面板等价完成；
-17. Adapter Resolver SHALL 选择匹配 ProjectProfile 的 Code Adapter，低置信度时要求用户确认；
-18. 当前 Desktop SHALL 通过 `vanilla-ts-dom` Adapter 生成原生 TypeScript/CSS，并通过格式化、类型检查、hash 冲突检测和 Task Protocol 审批；
-19. HTML 仅在静态站点项目中作为正式产物，其他项目不得用 HTML 替代项目原生代码；
-20. AI 语义修改 SHALL 优先返回可验证的 JSON Patch / DesignCommand，复杂源码 SHALL 作为 Source Island 保留。
+1. 用户可以选择 PC、Web、Tablet、Mobile、小程序等 TargetSurface；
+2. 用户可以通过提示词或模板获得初始 UIDocument；
+3. AI 生成 UI、模板 UI 和导入 UI 使用同一可视化编辑器；
+4. 用户可以拖拽、调整尺寸、增删复制，并编辑文案、样式、状态和交互；
+5. UIDocument 不包含 React、Vue、DOM API 或其他具体实现代码；
+6. 用户确认 UI 后生成不可变 UI 版本快照；
+7. 已有项目能够扫描技术栈并展示置信度和证据；
+8. 新项目或技术栈未知时，AI 能询问最少必要问题并给出结构化推荐；
+9. ImplementationProfile 未经用户确认时，代码生成被阻止；
+10. 新项目模式可以生成可运行的初始工程、页面、组件、样式和基础配置；
+11. 已有项目模式优先复用现有框架、组件、Token、路由和状态管理；
+12. 模型生成结果经过格式化、类型检查、构建和必要测试；
+13. 项目文件写入经过现有审批、Diff 和审计链路；
+14. 用户可以生成图片资产，并在确认后写入目标目录；
+15. 用户可以从公开 URL 或截图创建提取任务，并获得符合 schema 的设计系统包；
+16. Desktop 重启后能够恢复 UIDocument、UI 命令、ImplementationProfile 和任务状态；
+17. 预览所用 HTML/iframe 不会被误当作用户项目的默认实现技术；
+18. UIDocument 或 ImplementationProfile 变化后，旧实现计划会失效并要求重新确认；
+19. 现有 `sacode design` CLI 和 TUI 行为不回退；
+20. URL 提取、ZIP 导入、敏感文件扫描和项目写入通过安全测试。
 
 ## 21. 待产品评审项
 
@@ -1257,7 +1275,7 @@ ProjectProfile、layout、registry 和适配器版本共同参与内容 hash。�
 
 1. 视觉风格 96、设计系统 74、方向基线 5 的目录是远程服务、内置快照还是混合来源；
 2. 设计系统包 `od-design-system-project/v1` 是否由 SaCode 直接长期采用，或增加 SaCode 自有兼容层；
-3. `sacode-layout/v1` 首期组件集合、ProjectProfile 置信度阈值与 Source Island 边界如何冻结；
+3. `sacode-ui/v1` 首期节点与交互集合、ImplementationProfile 推荐策略和确认体验如何冻结；
 4. 图片生成 Provider 的首批支持范围、计费提示和内容安全策略；
 5. 远程提取服务的数据保留时间、下载有效期和删除机制；
 6. 项目上下文发送给远程模型时的默认文件范围和组织级策略。

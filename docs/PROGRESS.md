@@ -1,13 +1,15 @@
 # SaCode 进度（当前实际状态）
 
-> 更新：2026-09-21 · 分支 `dev`
+> 更新：2026-09-27 · 分支 `dev`
+>
+> **本轮增量（Desktop 多轮会话，工作区尚未提交）**：Desktop 会话持久化与多轮上下文已落地。后端新增 `desktop_turns` SQLite 表和 `/api/desktop/conversations` CRUD 路由（list/get/create/append/delete），会话内续发注入最近 12 轮用户消息与助手输出（超 32000 字符拒绝），上一轮未结束时续发返回 409。派发失败时事务化回滚 `desktop_turns`/`tasks`/`task_changes`，不残留孤儿记录。删除会话级联取消队列与执行器任务、清理审批、移除内存与 SQLite 记录，重启后不复活。前端侧栏显示会话列表（localStorage 自定义排序），分屏切换同步 `currentConversationId`/`conversationTurns`，输入框按会话最后一轮状态禁用，新建任务后自动打开分屏。**本轮实测**：daemon 定向测试 41/41（含两轮持久化+重启恢复+删除级联+技能拒绝四项端到端）；Rust 库测试排除外部 `live_opencode_acp_probe_and_prompt` 后 **788 通过、1 忽略**；client-core **24/24**、Desktop **29/29**，两处 TS typecheck、Vite Web 构建（输出 `D:\temp\SaCode\desktop-web-build`）均通过。已用隔离 `create_daemon_in(tempdir)` 做路由层 HTTP 端到端测试；**未验证**真实监听端口与认证请求、交互式 Desktop GUI 和 Tauri 打包。以下历史记录不代表本轮验证结论。
 > 本文件是该仓的**进度单一真源**；产品线级总览见 [`../../docs/STATUS.md`](../../docs/STATUS.md)。
 > 状态词汇遵循 [`../../docs/README.md`](../../docs/README.md)。
 > 与 [`README.md`](../README.md)（是什么 / 怎么用）分工：本文件只回答**已经做到哪、验证到什么程度**。
 
 ## 一句话状态
 
-**离线 CLI/TUI 编码助手与统一身份客户端（I3）已落地；Tauri Desktop M2 已交付但尚未提交。** 本次**未在本机构建或复跑测试**（仓库无 `target/`，构建成本高），下表中「□ 未复跑」的验证结论来自仓库内 spec 的原始记录，**尚未独立复核**。
+**离线 CLI/TUI 编码助手与统一身份客户端（I3）已落地；Tauri Desktop M2 和知识库/自动化增量仍有未提交改动。** 本轮知识库/自动化验证见上方实测摘要；下表保留旧版 I3/M2 专项 spec 的历史记录，**这些旧结论本轮未独立复核**。
 
 ## workspace 结构
 
