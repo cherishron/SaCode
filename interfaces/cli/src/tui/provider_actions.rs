@@ -22,6 +22,9 @@ fn identity_user_root() -> Option<PathBuf> {
 }
 
 impl App {
+    /// Legacy custom-provider login flow (name + base URL + API key).
+    /// Currently unused; kept for potential re-enablement via /connect.
+    #[allow(dead_code)]
     pub(super) fn start_login(&mut self) {
         self.input_mode = InputMode::LoginBaseUrl;
         self.pending_base_url = None;
@@ -35,7 +38,7 @@ impl App {
             .map(|provider| provider.config.base_url.clone())
             .unwrap_or_default();
         self.push_system_message(
-            "自定义 Provider（API Key）：请输入 name 与 Base URL，格式 name https://api.example.com/v1。主登录请用 /login（sa-idp）。",
+            "自定义 Provider（API Key）：请输入 name 与 Base URL，格式 name https://api.example.com/v1。sa-idp 登录请用 /login。",
         );
     }
 
@@ -212,11 +215,100 @@ impl App {
                 self.input_mode = InputMode::ProviderSelect;
             }
             Err(error) => {
-                self.push_system_message(&format!("重命名 provider 失败: {}", error));
+                self.push_error_message(&format!("重命名 provider 失败: {}", error));
             }
         }
 
         self.pending_provider_name = None;
+        self.input.clear();
+    }
+
+    // ── /providers add: interactive custom provider creation ──
+
+    pub(super) fn start_provider_add(&mut self) {
+        self.pending_provider_name = None;
+        self.pending_base_url = None;
+        self.input.clear();
+        self.input_mode = InputMode::ProviderAddName;
+        self.push_system_message(
+            "添加自定义 Provider — 步骤 1/4: 请输入 Provider 名称（回车确认，Esc 取消）",
+        );
+    }
+
+    pub(super) fn finish_provider_add_name(&mut self) {
+        let name = self.input.trim().to_string();
+        if name.is_empty() {
+            self.push_system_message("名称不能为空，请重新输入。");
+            return;
+        }
+        self.pending_provider_name = Some(name);
+        self.input.clear();
+        self.input_mode = InputMode::ProviderAddBaseUrl;
+        self.push_system_message("步骤 2/4: 请输入 Base URL（例如 https://api.example.com/v1）");
+    }
+
+    pub(super) fn finish_provider_add_base_url(&mut self) {
+        let url = self.input.trim().to_string();
+        if url.is_empty() || !(url.starts_with("http://") || url.starts_with("https://")) {
+            self.push_system_message("URL 必须以 http:// 或 https:// 开头，请重新输入。");
+            return;
+        }
+        self.pending_base_url = Some(url);
+        self.input.clear();
+        self.input_mode = InputMode::ProviderAddModel;
+        self.push_system_message("步骤 3/4: 请输入默认模型名称（例如 gpt-4o，回车确认）");
+    }
+
+    pub(super) fn finish_provider_add_model(&mut self) {
+        let model = self.input.trim().to_string();
+        if model.is_empty() {
+            self.push_system_message("模型名称不能为空，请重新输入。");
+            return;
+        }
+        self.pending_model = Some(model);
+        self.input.clear();
+        self.input_mode = InputMode::ProviderAddApiKey;
+        self.push_system_message("步骤 4/4: 请输入 API Key（回车确认，留空则跳过）");
+    }
+
+    pub(super) fn finish_provider_add_api_key(&mut self) {
+        let api_key = self.input.trim().to_string();
+        let name = self.pending_provider_name.clone().unwrap_or_default();
+        let base_url = self.pending_base_url.clone().unwrap_or_default();
+        let model = self.pending_model.clone().unwrap_or_default();
+
+        if name.is_empty() || base_url.is_empty() || model.is_empty() {
+            self.push_system_message("Provider 信息不完整，已取消。");
+            self.input_mode = InputMode::Chat;
+            self.input.clear();
+            return;
+        }
+
+        let config = crate::provider_config::ProviderConfig {
+            base_url,
+            api_key,
+            model,
+            auth_header: Some("Authorization".to_string()),
+            auth_scheme: Some("Bearer".to_string()),
+            secret_ref: None,
+        };
+
+        match self.provider_store.save_named(&name, &config, true) {
+            Ok(()) => {
+                self.push_system_message(&format!(
+                    "Provider {} 已添加并设为当前。使用 /models 选择模型。",
+                    name
+                ));
+            }
+            Err(e) => {
+                self.push_system_message(&format!("保存 Provider 失败: {}", e));
+            }
+        }
+
+        self.pending_provider_name = None;
+        self.pending_base_url = None;
+        self.pending_model = None;
+        self.input_mode = InputMode::Chat;
         self.input.clear();
     }
 
@@ -245,69 +337,74 @@ impl App {
                 self.push_system_message(&format!("Provider {} 已删除。", provider_name));
             }
             Err(error) => {
-                self.push_system_message(&format!("删除 provider 失败: {}", error));
+                self.push_error_message(&format!("删除 provider 失败: {}", error));
             }
         }
     }
 
     pub(super) fn open_model_picker(&mut self) {
-        // Product path: identity session already carries gateway /v1/models.
+        // Merge identity (account-bound) models and custom provider models.
         let identity_entries = crate::product_path::product_model_entries(&self.workdir);
-        if !identity_entries.is_empty() {
-            self.model_options = identity_entries
-                .into_iter()
-                .map(|(provider_name, model_name)| ModelOptionEntry {
-                    label: format!("{provider_name} / {model_name}"),
-                    provider_name,
-                    model_name,
-                })
-                .collect();
-            self.selected_model_index = self
-                .model_options
-                .iter()
-                .position(|m| {
-                    self.current_provider
-                        .as_ref()
-                        .map(|p| p.name == m.provider_name && p.config.model == m.model_name)
-                        .unwrap_or(false)
-                })
-                .unwrap_or(0);
-            self.input_mode = InputMode::ModelSelect;
-            self.push_system_message("已打开模型选择（SaAiApiGateway）。Enter 确认，Esc 取消。");
-            self.input.clear();
-            return;
+        let mut entries: Vec<ModelOptionEntry> = identity_entries
+            .into_iter()
+            .map(|(provider_name, model_name)| ModelOptionEntry {
+                label: format!("[账号] {provider_name} / {model_name}"),
+                provider_name,
+                model_name,
+            })
+            .collect();
+
+        // Add custom provider models from providers.json
+        if let Ok(Some(catalog)) = self.provider_store.load_catalog() {
+            for (name, config) in &catalog.providers {
+                if !config.model.is_empty() && !entries.iter().any(|e| e.provider_name == *name) {
+                    entries.push(ModelOptionEntry {
+                        label: format!("[自定义] {name} / {}", config.model),
+                        provider_name: name.clone(),
+                        model_name: config.model.clone(),
+                    });
+                }
+            }
         }
 
-        let catalog = match self.provider_store.load_catalog() {
-            Ok(Some(catalog)) => catalog,
-            Ok(None) => {
-                self.push_system_message(
-                    "请先 /login 接入 saai 网关模型；仅在使用本地/自定义 Provider 时才 /connect。",
-                );
-                self.input.clear();
-                return;
-            }
-            Err(error) => {
-                self.push_error_message(&format!("读取 provider 配置失败: {}", error));
-                self.input.clear();
-                return;
-            }
-        };
-
-        if catalog.providers.is_empty() {
+        if entries.is_empty() {
             self.push_system_message(
-                "请先 /login 接入 saai 网关模型；仅在使用本地/自定义 Provider 时才 /connect。",
+                "当前没有可用模型。请先 /login 接入 saai 网关，或 /providers add 添加自定义 Provider。",
             );
             self.input.clear();
             return;
         }
 
-        self.queue.processing = true;
-        self.queue.active_task_id = None;
-        self.active_task_started_at = Some(chrono::Local::now());
-        self.spinner_index = 0;
-        self.queue.busy_message = "正在加载所有 provider 的模型列表...".to_string();
-        self.spawn_load_models_task();
+        self.model_options = entries;
+        self.selected_model_index = self
+            .model_options
+            .iter()
+            .position(|m| {
+                self.current_provider
+                    .as_ref()
+                    .map(|p| p.name == m.provider_name && p.config.model == m.model_name)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(0);
+        self.input_mode = InputMode::ModelSelect;
+        self.push_system_message("已打开模型选择。Enter 确认，Esc 取消。");
+        self.input.clear();
+    }
+
+    pub(super) fn do_logout(&mut self) {
+        let store = sacode_runtime::identity::select_secret_store(false, None);
+        let config = sacode_runtime::identity::IdentityConfig::load(None).ok();
+        match sacode_runtime::identity::logout(None, store.as_ref(), false, config) {
+            Ok(()) => {
+                self.push_system_message("已退出 sa-idp 登录，本地凭证已清除。");
+                // Clear in-memory provider state so product_ready reflects logout.
+                self.current_provider = None;
+                self.model_options.clear();
+            }
+            Err(e) => {
+                self.push_error_message(&format!("退出登录失败: {}", e));
+            }
+        }
         self.input.clear();
     }
 
@@ -625,6 +722,9 @@ impl App {
                     },
                 ))
             } else {
+                let _ = sender.send(AsyncResult::LoginProgress {
+                    message: "浏览器授权成功，正在交换令牌...".to_string(),
+                });
                 rt.block_on(login(config, opts, store.as_ref()))
             };
 
@@ -645,17 +745,29 @@ impl App {
                 .flatten()
                 .and_then(|c| c.secret_ref)
                 .unwrap_or_else(|| SecretRef::os_keyring(GATEWAY_API_KEY_LOCATOR));
-            let model = outcome
+            let Some(model) = outcome
                 .default_model
                 .clone()
                 .filter(|m| !m.trim().is_empty())
-                .unwrap_or_else(|| {
-                    outcome
-                        .models
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "default".to_string())
+            else {
+                let blocked = outcome
+                    .probe
+                    .unavailable
+                    .iter()
+                    .map(|model| model.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、");
+                let detail = if blocked.is_empty() {
+                    "网关没有返回可用模型".to_string()
+                } else {
+                    format!("网关列出的模型均未通过连通性探测：{blocked}")
+                };
+                let _ = sender.send(AsyncResult::Failed {
+                    context: AsyncContext::Login,
+                    message: format!("sa-idp 登录成功，但{detail}。请修复网关路由后执行 /models。"),
                 });
+                return;
+            };
             match agent_harness::mark_identity_provider_ready(
                 &sacode_store,
                 &provider_store,
@@ -671,6 +783,23 @@ impl App {
                         config: named.config,
                         source: LoginSource::SaIdp,
                     });
+                    if !outcome.probe.unavailable.is_empty() {
+                        let blocked: Vec<String> = outcome
+                            .probe
+                            .unavailable
+                            .iter()
+                            .map(|m| match &m.reason {
+                                Some(reason) => format!("{}（{}）", m.id, reason),
+                                None => m.id.clone(),
+                            })
+                            .collect();
+                        let _ = sender.send(AsyncResult::LoginProgress {
+                            message: format!(
+                                "以下模型已列出但未通过网关连通性探测，已从 /models 中排除：{}。",
+                                blocked.join("、")
+                            ),
+                        });
+                    }
                 }
                 Err(error) => {
                     let _ = sender.send(AsyncResult::Failed {
@@ -727,6 +856,7 @@ impl App {
         });
     }
 
+    #[allow(dead_code)]
     pub(super) fn spawn_load_models_task(&self) {
         let sender = self.task_tx.clone();
         let provider_store = self.provider_store.clone();

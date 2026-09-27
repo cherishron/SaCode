@@ -146,7 +146,10 @@ pub(crate) fn render_input_panel(
             "↑↓ 选择配置值 · Enter 确认 · Esc 取消",
             Style::default().fg(theme.accent),
         ))]
-    } else if app.input_mode == InputMode::ConfigNumberInput {
+    } else if matches!(
+        app.input_mode,
+        InputMode::ConfigNumberInput | InputMode::ConfigTextInput
+    ) {
         editable_visible_lines
             .clone()
             .into_iter()
@@ -196,6 +199,10 @@ pub(crate) fn render_input_panel(
             InputMode::LoginApiKey => "输入 API Key...",
             InputMode::ProviderSelect => "使用方向键选择 provider...",
             InputMode::ProviderRename => "输入新的 provider 名称...",
+            InputMode::ProviderAddName => "输入 Provider 名称...",
+            InputMode::ProviderAddBaseUrl => "输入 Base URL（如 https://api.example.com/v1）...",
+            InputMode::ProviderAddModel => "输入默认模型名称...",
+            InputMode::ProviderAddApiKey => "输入 API Key（留空跳过）...",
             InputMode::ModelSelect => "使用方向键选择模型...",
             InputMode::ThemeSelect => "使用方向键选择主题...",
             InputMode::ConnectSelect => "使用方向键选择预设 provider...",
@@ -210,6 +217,7 @@ pub(crate) fn render_input_panel(
             InputMode::ConfigSelect => "使用方向键选择配置项...",
             InputMode::ConfigEnumSelect => "使用方向键选择配置值...",
             InputMode::ConfigNumberInput => "输入新的数字配置值...",
+            InputMode::ConfigTextInput => "输入新的服务地址...",
             InputMode::TaskInput => "输入任务描述...",
             InputMode::SessionSelect => "使用方向键选择历史会话...",
             InputMode::InputOptimizePreview => "查看输入优化预览...",

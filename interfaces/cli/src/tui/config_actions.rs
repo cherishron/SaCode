@@ -44,6 +44,7 @@ impl App {
                 description: item.description.to_string(),
                 category: match item.category {
                     config::ConfigCategory::General => "通用",
+                    config::ConfigCategory::Identity => "身份",
                     config::ConfigCategory::Context => "上下文",
                     config::ConfigCategory::Execution => "执行",
                     config::ConfigCategory::Editor => "编辑器",
@@ -51,7 +52,11 @@ impl App {
                 }
                 .to_string(),
                 value: config::current_value_text(&effective, item.key).unwrap_or_default(),
-                scope_value: Self::config_scope_value_text(&scoped, item.key),
+                scope_value: if item.category == config::ConfigCategory::Identity {
+                    config::identity_scope_value_text(item.key)
+                } else {
+                    Self::config_scope_value_text(&scoped, item.key)
+                },
             })
             .collect();
         if self.selected_config_index >= self.config_items.len() {
@@ -133,6 +138,15 @@ impl App {
     }
 
     pub(super) fn toggle_config_scope(&mut self) {
+        if self
+            .config_items
+            .get(self.selected_config_index)
+            .is_some_and(|entry| entry.key.starts_with("identity."))
+        {
+            self.config_scope = config::ConfigScope::User;
+            self.push_system_message("身份服务地址仅支持用户级配置");
+            return;
+        }
         self.config_scope = match self.config_scope {
             config::ConfigScope::User => config::ConfigScope::Project,
             config::ConfigScope::Project => config::ConfigScope::User,
@@ -149,6 +163,9 @@ impl App {
         let Some(meta) = config::config_item(&entry.key) else {
             return;
         };
+        if entry.key.starts_with("identity.") {
+            self.config_scope = config::ConfigScope::User;
+        }
         self.pending_config_key = Some(entry.key.clone());
         match meta.value_type {
             config::ConfigValueType::Bool => {
@@ -189,6 +206,13 @@ impl App {
                     .unwrap_or_default();
                 self.input_mode = InputMode::ConfigNumberInput;
             }
+            config::ConfigValueType::Text => {
+                self.input = config::effective_config(&self.workdir)
+                    .ok()
+                    .and_then(|effective| config::current_raw_value(&effective, &entry.key))
+                    .unwrap_or_default();
+                self.input_mode = InputMode::ConfigTextInput;
+            }
         }
     }
 
@@ -218,6 +242,10 @@ impl App {
     }
 
     pub(super) fn finish_config_number_input(&mut self) {
+        self.finish_config_text_input();
+    }
+
+    pub(super) fn finish_config_text_input(&mut self) {
         let Some(key) = self.pending_config_key.clone() else {
             self.input_mode = InputMode::ConfigSelect;
             return;

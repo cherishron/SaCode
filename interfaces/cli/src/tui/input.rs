@@ -43,11 +43,16 @@ pub fn is_editable_input_mode(input_mode: InputMode) -> bool {
         input_mode,
         InputMode::Chat
             | InputMode::ProviderRename
+            | InputMode::ProviderAddName
+            | InputMode::ProviderAddBaseUrl
+            | InputMode::ProviderAddModel
+            | InputMode::ProviderAddApiKey
             | InputMode::LoginBaseUrl
             | InputMode::LoginApiKey
             | InputMode::ConnectApiKey
             | InputMode::TaskInput
             | InputMode::ConfigNumberInput
+            | InputMode::ConfigTextInput
             | InputMode::PendingQuestion
             | InputMode::CommandLevel1
             | InputMode::CommandLevel2

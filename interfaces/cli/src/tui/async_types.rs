@@ -53,6 +53,9 @@ pub(super) enum AsyncResult {
         user_code: String,
         expires_in: u64,
     },
+    LoginProgress {
+        message: String,
+    },
     ProvidersLoaded {
         providers: Vec<String>,
         current_provider: String,
@@ -60,6 +63,7 @@ pub(super) enum AsyncResult {
     ProviderSwitched {
         current_provider: NamedProviderConfig,
     },
+    #[allow(dead_code)]
     ModelsLoaded {
         models: Vec<ModelOptionEntry>,
         current_provider: String,
@@ -93,6 +97,7 @@ pub(super) enum AsyncContext {
     Login,
     LoadProviders,
     SaveProvider,
+    #[allow(dead_code)]
     LoadModels,
     SaveModel,
     Init,

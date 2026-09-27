@@ -49,6 +49,16 @@ pub struct TaskRequest {
     /// Optional client session correlation id.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Optional native SaCode model selection from the effective project configuration.
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    #[serde(default)]
+    pub model_name: Option<String>,
+    /// Optional installed skill and workspace context paths.
+    #[serde(default)]
+    pub skill: Option<String>,
+    #[serde(default)]
+    pub context_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,6 +337,11 @@ pub struct AuditRequest {
     pub max_files: Option<usize>,
     #[serde(default)]
     pub model_provider: Option<sacode_kernel::model::ModelProvider>,
+    /// Scan tier selector: "static" | "lightweight" | "deep".
+    /// Missing or unrecognized values default to "deep" for backward
+    /// compatibility.
+    #[serde(default)]
+    pub scan_tier: Option<String>,
 }
 
 pub struct DaemonState {
@@ -337,6 +352,7 @@ pub struct DaemonState {
     pub tasks: RwLock<HashMap<String, TaskStatus>>,
     pub queue: Arc<TaskQueue>,
     pub store: Option<Arc<StoreDb>>,
+    pub desktop_conversation_lock: Mutex<()>,
     pub executor: Mutex<TaskExecutor>,
     pub retry_handler: RetryHandler,
     /// 工作目录（用于 CheckpointStorage 按 task_id 恢复 checkpoint）
@@ -628,6 +644,7 @@ impl DaemonState {
             tasks,
             queue,
             store,
+            desktop_conversation_lock: Mutex::new(()),
             executor: Mutex::new(executor),
             retry_handler,
             workdir: base_dir.clone().or_else(|| std::env::current_dir().ok()),

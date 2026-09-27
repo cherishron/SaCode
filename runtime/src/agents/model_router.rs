@@ -15,12 +15,13 @@ use std::{
 };
 
 use sacode_kernel::model::{
-    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider, ProviderSpec,
-    SaCodeConfig,
+    detect_provider_kind, normalize_base_url, preset_providers, ModelProvider,
+    ProviderRuntimeState, ProviderSpec, SaCodeConfig,
 };
 use sacode_kernel::{AgentRole, RoleModelPolicy};
 use serde::{Deserialize, Serialize};
 
+use crate::identity::{resolve_secret_ref, IdentitySession};
 use crate::model_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
 
 const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
@@ -46,7 +47,8 @@ pub fn build_route_plan_from_candidates(
         return None;
     }
 
-    let config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    let mut config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    merge_identity_session(&mut config);
     let effective_policy = policy.cloned().unwrap_or_default();
     let health_store = load_model_health_store(workdir).unwrap_or_default();
     let mut routed = candidates
@@ -81,15 +83,56 @@ pub fn build_route_plan_from_candidates(
 }
 
 pub fn resolve_config_model_candidates(workdir: &Path) -> Vec<(String, String, ModelProvider)> {
-    let config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    let mut config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    merge_identity_session(&mut config);
     resolve_model_candidates_from_config(&config)
         .into_iter()
+        .filter(|candidate| {
+            candidate
+                .provider
+                .api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty())
+        })
         .map(|candidate| {
             (
                 candidate.provider_name,
                 candidate.model_name,
                 candidate.provider,
             )
+        })
+        .collect()
+}
+
+/// User-selected models are separate from automatic failover candidates.
+pub fn resolve_selectable_model_candidates(workdir: &Path) -> Vec<(String, String, ModelProvider)> {
+    let mut config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    merge_identity_session(&mut config);
+    resolve_selectable_models_from_config(&config)
+}
+
+fn resolve_selectable_models_from_config(
+    config: &SaCodeConfig,
+) -> Vec<(String, String, ModelProvider)> {
+    config
+        .provider
+        .iter()
+        .flat_map(|(name, spec)| {
+            spec.models.keys().filter_map(|model| {
+                if !config.provider_is_authorized(name, model) {
+                    return None;
+                }
+                let candidate =
+                    provider_spec_to_model_provider(spec, config.provider_state.get(name), model);
+                if candidate
+                    .api_key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty())
+                {
+                    return None;
+                }
+                Some((name.clone(), model.clone(), candidate))
+            })
         })
         .collect()
 }
@@ -144,6 +187,90 @@ pub fn resolve_role_route(
     Some(ResolvedRoleRoute { plan, summary })
 }
 
+fn merge_identity_session(config: &mut SaCodeConfig) {
+    let Ok(Some(session)) = IdentitySession::load(None) else {
+        return;
+    };
+    merge_identity_session_data(config, &session);
+}
+
+fn merge_identity_session_data(config: &mut SaCodeConfig, session: &IdentitySession) {
+    let Some(key_ref) = session.gateway_key_ref.as_ref() else {
+        return;
+    };
+    if session.models.is_empty() {
+        return;
+    }
+    let name = session.provider_name.trim();
+    if name.is_empty() || session.gateway_base_url.trim().is_empty() {
+        return;
+    }
+    if config.provider.contains_key(name) && !crate::identity::is_identity_provider_name(name) {
+        return;
+    }
+    let entry = config
+        .provider
+        .entry(name.to_string())
+        .or_insert_with(|| ProviderSpec {
+            name: name.to_string(),
+            base_url: session.gateway_base_url.clone(),
+            api_key: String::new(),
+            models: BTreeMap::new(),
+            auth_header: None,
+            auth_scheme: None,
+        });
+    entry.base_url = session.gateway_base_url.clone();
+    entry.api_key.clear();
+    entry
+        .models
+        .retain(|model, _| session.models.iter().any(|available| available == model));
+    for model in &session.models {
+        entry
+            .models
+            .entry(model.clone())
+            .or_insert_with(|| sacode_kernel::model::ModelRule {
+                name: model.clone(),
+                ..Default::default()
+            });
+    }
+    let state = config
+        .provider_state
+        .entry(name.to_string())
+        .or_insert_with(ProviderRuntimeState::default);
+    state.credential_ref = Some(key_ref.clone());
+    state.authorization.allow_task_content = true;
+    state.authorization.models = session.models.clone();
+    state.authorization.source = sacode_kernel::model::ProviderAuthorizationSource::Explicit;
+    if !config.model.trim().is_empty()
+        && config.model.starts_with(&format!("{name}/"))
+        && !session
+            .models
+            .iter()
+            .any(|m| config.model == format!("{name}/{m}"))
+    {
+        config.model.clear();
+    }
+    let configured_model_available = !config.model.trim().is_empty()
+        && config
+            .resolve_model(&config.model)
+            .is_some_and(|(provider, model)| {
+                config.provider_is_authorized(&provider, &model)
+                    && config.provider.get(&provider).is_some_and(|spec| {
+                        provider_spec_to_model_provider(
+                            spec,
+                            config.provider_state.get(&provider),
+                            &model,
+                        )
+                        .api_key
+                        .as_deref()
+                        .is_some_and(|key| !key.trim().is_empty())
+                    })
+            });
+    if !configured_model_available && session.models.iter().any(|m| m == &session.default_model) {
+        config.model = format!("{name}/{}", session.default_model);
+    }
+}
+
 fn resolve_model_candidates_from_config(config: &SaCodeConfig) -> Vec<RouteCandidate> {
     let mut candidates = Vec::new();
 
@@ -156,7 +283,11 @@ fn resolve_model_candidates_from_config(config: &SaCodeConfig) -> Vec<RouteCandi
                     candidates.push(RouteCandidate {
                         provider_name: provider_name.clone(),
                         model_name: model_name.clone(),
-                        provider: provider_spec_to_model_provider(provider, &model_name),
+                        provider: provider_spec_to_model_provider(
+                            provider,
+                            config.provider_state.get(&provider_name),
+                            &model_name,
+                        ),
                     });
                 }
             }
@@ -179,7 +310,11 @@ fn resolve_model_candidates_from_config(config: &SaCodeConfig) -> Vec<RouteCandi
             candidates.push(RouteCandidate {
                 provider_name: provider_name.clone(),
                 model_name: model_name.clone(),
-                provider: provider_spec_to_model_provider(provider, model_name),
+                provider: provider_spec_to_model_provider(
+                    provider,
+                    config.provider_state.get(provider_name),
+                    model_name,
+                ),
             });
         }
     }
@@ -206,7 +341,8 @@ fn failover_permitted(config: &SaCodeConfig, provider_name: &str, model_name: &s
 /// 且该 Provider 同时具备 `allow_task_content` 与 `allow_auto_failover` 授权，
 /// 模型还必须落在授权范围内。
 pub fn failover_is_authorized(workdir: &Path, provider_name: &str, model_name: &str) -> bool {
-    let config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    let mut config = load_effective_sacode_config(workdir).unwrap_or_else(default_sacode_config);
+    merge_identity_session(&mut config);
     failover_permitted(&config, provider_name, model_name)
 }
 
@@ -404,7 +540,9 @@ fn format_route_summary(role: &AgentRole, primary: &RoutedModel, fallback_count:
 fn load_effective_sacode_config(workdir: &Path) -> Option<SaCodeConfig> {
     // 用户级配置目录：Windows 上 USERPROFILE 指向 C:\Users\<name>，
     // Unix 上 HOME 指向 /home/<name>。二者都缺失时退化为当前目录。
-    let user_home = env::var_os("USERPROFILE")
+    let user_home = env::var_os("SACODE_HOME")
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+        .or_else(|| env::var_os("USERPROFILE"))
         .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -570,13 +708,36 @@ fn default_sacode_config() -> SaCodeConfig {
     }
 }
 
-fn provider_spec_to_model_provider(spec: &ProviderSpec, model_name: &str) -> ModelProvider {
+fn provider_spec_to_model_provider(
+    spec: &ProviderSpec,
+    state: Option<&ProviderRuntimeState>,
+    model_name: &str,
+) -> ModelProvider {
     let kind = detect_provider_kind(&spec.base_url, model_name);
+    let key = match state.and_then(|state| state.credential_ref.as_ref()) {
+        Some(reference) => {
+            let secret = if reference
+                .locator
+                .as_deref()
+                .is_some_and(|locator| locator.starts_with("os-keyring:sacode/provider-"))
+            {
+                let store = crate::identity::OsKeyringSecretStore::new();
+                resolve_secret_ref(reference, Some(&store))
+            } else {
+                resolve_secret_ref(reference, None)
+            };
+            secret
+                .ok()
+                .flatten()
+                .filter(|value| !value.trim().is_empty())
+        }
+        None => (!spec.api_key.trim().is_empty()).then(|| spec.api_key.clone()),
+    };
     ModelProvider {
         kind,
         model: model_name.to_string(),
         base_url: Some(normalize_base_url(&spec.base_url)),
-        api_key: Some(spec.api_key.clone()),
+        api_key: key,
         rule: spec.models.get(model_name).cloned(),
         auth_header: spec.auth_header.clone(),
         auth_scheme: spec.auth_scheme.clone(),
@@ -640,6 +801,85 @@ mod tests {
             ),
         );
         config
+    }
+
+    #[test]
+    fn selectable_models_require_authorization_and_usable_credentials() {
+        let mut config = base_config();
+        config.provider.get_mut("primary").unwrap().api_key.clear();
+        config.provider_state.insert(
+            "primary".to_string(),
+            ProviderRuntimeState {
+                authorization: ProviderAuthorization::legacy_current(),
+                ..Default::default()
+            },
+        );
+        assert!(resolve_selectable_models_from_config(&config).is_empty());
+        config.provider.get_mut("primary").unwrap().api_key = "sk-test".into();
+        let names = resolve_selectable_models_from_config(&config)
+            .into_iter()
+            .map(|(provider, model, _)| (provider, model))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                ("primary".into(), "model-a".into()),
+                ("primary".into(), "model-b".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_secret_ref_never_falls_back_to_plaintext_key() {
+        let provider = spec(
+            "https://primary.example/v1",
+            "stale-plaintext",
+            &["model-a"],
+        );
+        let state = ProviderRuntimeState {
+            credential_ref: sacode_kernel::model::SecretRef::legacy_inline("stale-secret"),
+            ..Default::default()
+        };
+        assert!(
+            provider_spec_to_model_provider(&provider, Some(&state), "model-a")
+                .api_key
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn identity_models_merge_without_granting_automatic_failover() {
+        let mut config = base_config();
+        config.provider_state.insert(
+            "primary".to_string(),
+            ProviderRuntimeState {
+                authorization: ProviderAuthorization::legacy_current(),
+                ..Default::default()
+            },
+        );
+        let session = IdentitySession {
+            provider_name: "gateway".into(),
+            gateway_base_url: "https://gateway.example/v1".into(),
+            models: vec!["model-1".into(), "model-2".into()],
+            default_model: "model-1".into(),
+            gateway_key_ref: sacode_kernel::model::SecretRef::legacy_inline("unavailable"),
+            ..Default::default()
+        };
+        // No process-global environment mutation: a missing session credential cannot
+        // silently promote gateway models to the selectable list.
+        merge_identity_session_data(&mut config, &session);
+        assert!(resolve_selectable_models_from_config(&config)
+            .iter()
+            .all(|(provider, _, _)| provider != "gateway"));
+        assert!(candidate_pairs(&config)
+            .iter()
+            .all(|(provider, _)| provider != "gateway"));
+        assert_eq!(config.provider["gateway"].models.len(), 2);
+        assert!(
+            !config.provider_state["gateway"]
+                .authorization
+                .allow_auto_failover
+        );
     }
 
     fn candidate_pairs(config: &SaCodeConfig) -> Vec<(String, String)> {

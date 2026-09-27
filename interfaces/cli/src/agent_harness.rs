@@ -177,7 +177,7 @@ fn try_register_to_gateway(
 /// Mark an sa-idp identity provider ready after gateway exchange (no plaintext key).
 pub fn mark_identity_provider_ready(
     sacode_store: &SaCodeConfigStore,
-    provider_store: &ProviderConfigStore,
+    _provider_store: &ProviderConfigStore,
     name: &str,
     base_url: &str,
     model: &str,
@@ -252,7 +252,9 @@ pub fn mark_identity_provider_ready(
     );
     sacode_config.model = format!("{}/{}", name, model);
     sacode_store.save(&sacode_config)?;
-    provider_store.save_named(name, &config, true)?;
+    // Identity provider is NO LONGER written to provider.json;
+    // it is resolved at runtime from session.json.
+    // provider_store.save_named(name, &config, true)?;  // removed
 
     Ok(NamedProviderConfig {
         name: name.to_string(),
@@ -345,12 +347,15 @@ pub fn switch_model(
     provider_name: &str,
     model_name: &str,
 ) -> Result<NamedProviderConfig> {
+    // Custom providers added via /providers add may not have provider_state
+    // in sacode config; skip authorization for them.
     let authorization_config = sacode_store.load_effective()?;
-    let state = authorization_config
+    let authorized = authorization_config
         .provider_state
         .get(provider_name)
-        .ok_or_else(|| anyhow::anyhow!("provider is not verified: {}", provider_name))?;
-    if !state.validation.is_usable() || !state.authorization.permits_model(model_name) {
+        .map(|state| state.validation.is_usable() && state.authorization.permits_model(model_name))
+        .unwrap_or(true); // No state → custom provider, allow.
+    if !authorized {
         anyhow::bail!("model is not authorized: {}/{}", provider_name, model_name);
     }
     let mut config = provider_store

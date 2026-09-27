@@ -112,7 +112,7 @@ impl ProviderClientError {
             "provider/service",
             status.is_server_error(),
             ProviderRecoveryAction::RetryLater,
-            "The provider returned an unexpected service response. Retry later or verify the endpoint.",
+            format!("The provider returned HTTP {status}. Retry later or verify the endpoint."),
             Some(status.as_u16()),
             provider_code,
             retry_after_secs,
@@ -265,5 +265,7 @@ mod tests {
             "route not found",
         );
         assert_eq!(error.failure.category, ProviderFailureCategory::Service);
+        assert!(error.to_string().contains("HTTP 404 Not Found"));
+        assert!(!error.to_string().contains("route not found"));
     }
 }

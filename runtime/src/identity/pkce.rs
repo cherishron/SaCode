@@ -84,6 +84,16 @@ pub fn build_authorize_url(
     Ok(url.to_string())
 }
 
+/// Build the interactive browser entry. sa-idp's authorize endpoint requires an
+/// existing `idp_session`, while `/login` creates it and then follows `return`.
+pub fn build_interactive_login_url(idp_base_url: &str, authorize_url: &str) -> Result<String> {
+    let login_endpoint = format!("{}/login", idp_base_url.trim_end_matches('/'));
+    let mut url = url::Url::parse(&login_endpoint)
+        .map_err(|e| anyhow!("invalid login endpoint {login_endpoint}: {e}"))?;
+    url.query_pairs_mut().append_pair("return", authorize_url);
+    Ok(url.to_string())
+}
+
 /// OIDC scopes requested by SaCode CLI. `offline_access` is required so sa-idp
 /// issues refresh_token (product: stay-logged-in ~7 days via refresh TTL).
 pub const DEFAULT_SCOPE: &str = "openid profile email phone offline_access";
@@ -130,5 +140,21 @@ mod tests {
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("state=state-abc"));
         assert!(url.contains("response_type=code"));
+    }
+
+    #[test]
+    fn interactive_login_returns_to_authorize_url() {
+        let authorize_url = "http://127.0.0.1:8080/oauth/authorize?client_id=sacode&state=a+b";
+        let login_url =
+            build_interactive_login_url("http://127.0.0.1:8080/", authorize_url).unwrap();
+        let parsed = url::Url::parse(&login_url).unwrap();
+        assert_eq!(parsed.path(), "/login");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "return")
+                .map(|(_, value)| value.into_owned()),
+            Some(authorize_url.to_string())
+        );
     }
 }

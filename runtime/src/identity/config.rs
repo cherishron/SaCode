@@ -49,20 +49,25 @@ impl IdentityConfig {
     }
 
     pub fn load(user_root: Option<&Path>) -> Result<Self> {
+        let mut cfg = Self::load_stored(user_root)?;
+        cfg.apply_env_overrides();
+        Ok(cfg)
+    }
+
+    /// Load only the persisted identity settings, without temporary env overrides.
+    pub fn load_stored(user_root: Option<&Path>) -> Result<Self> {
         let path = match user_root {
             Some(root) => root.join(".sacode").join("identity").join("config.json"),
             None => Self::user_config_path(),
         };
-        let mut cfg = if path.exists() {
+        if path.exists() {
             let raw = std::fs::read_to_string(&path)
                 .with_context(|| format!("read identity config {}", path.display()))?;
             serde_json::from_str(&raw)
-                .with_context(|| format!("parse identity config {}", path.display()))?
+                .with_context(|| format!("parse identity config {}", path.display()))
         } else {
-            Self::default()
-        };
-        cfg.apply_env_overrides();
-        Ok(cfg)
+            Ok(Self::default())
+        }
     }
 
     pub fn save(&self, user_root: Option<&Path>) -> Result<()> {

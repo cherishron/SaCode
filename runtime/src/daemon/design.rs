@@ -8,7 +8,14 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use super::types::DaemonState;
+use super::{
+    design_patch::{
+        apply_patch, check_ui_document, extract_json_payload, summarize_patch, UiCheckReport,
+        UiDocumentPatch, UiDocumentVersion, UiPatchProposal,
+    },
+    types::DaemonState,
+};
+use crate::{provider::ProviderClient, resolve_config_model_candidates};
 
 const README_LIMIT: usize = 4_000;
 
@@ -466,6 +473,146 @@ fn generate_id() -> String {
 // Design Session CRUD
 // ---------------------------------------------------------------------------
 
+/// UI 设计面向的终端类型与默认视口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetSurface {
+    pub platform: String,
+    pub input_modes: Vec<String>,
+    pub viewports: Vec<UiViewport>,
+    pub density: String,
+    pub orientation: String,
+    pub capabilities: Vec<String>,
+}
+
+impl Default for TargetSurface {
+    fn default() -> Self {
+        Self {
+            platform: "responsive-web".to_string(),
+            input_modes: vec![
+                "mouse".to_string(),
+                "keyboard".to_string(),
+                "touch".to_string(),
+            ],
+            viewports: vec![
+                UiViewport {
+                    id: "desktop".to_string(),
+                    name: "Desktop".to_string(),
+                    width: 1440,
+                    height: 900,
+                },
+                UiViewport {
+                    id: "tablet".to_string(),
+                    name: "Tablet".to_string(),
+                    width: 768,
+                    height: 1024,
+                },
+                UiViewport {
+                    id: "mobile".to_string(),
+                    name: "Mobile".to_string(),
+                    width: 390,
+                    height: 844,
+                },
+            ],
+            density: "comfortable".to_string(),
+            orientation: "adaptive".to_string(),
+            capabilities: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiViewport {
+    pub id: String,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 框架无关的 UI 节点。框架语法和可执行代码不得写入此模型。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNode {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    #[serde(default)]
+    pub content: serde_json::Value,
+    #[serde(default)]
+    pub props: serde_json::Value,
+    #[serde(default)]
+    pub layout: serde_json::Value,
+    #[serde(default)]
+    pub appearance: serde_json::Value,
+    #[serde(default)]
+    pub responsive: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub states: serde_json::Value,
+    #[serde(default)]
+    pub interactions: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub children: Vec<UiNode>,
+    #[serde(default)]
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPage {
+    pub id: String,
+    pub name: String,
+    pub route_intent: Option<String>,
+    pub root: UiNode,
+}
+
+/// SaDesign 可视化编辑的单一 UI 设计文档。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDocument {
+    pub schema_version: String,
+    pub id: String,
+    pub name: String,
+    pub target: TargetSurface,
+    pub pages: Vec<UiPage>,
+    #[serde(default)]
+    pub reusable_components: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub tokens: serde_json::Value,
+    #[serde(default)]
+    pub assets: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub flows: Vec<serde_json::Value>,
+    pub version: u64,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 用户确认后的项目实现技术栈。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplementationProfile {
+    pub schema_version: String,
+    pub project_mode: String,
+    pub target_platform: String,
+    pub distribution: Option<String>,
+    pub operating_systems: Vec<String>,
+    pub language: String,
+    pub framework: String,
+    pub runtime: Option<String>,
+    pub desktop_shell: Option<String>,
+    pub build_tool: Option<String>,
+    pub package_manager: Option<String>,
+    pub ui_library: Option<String>,
+    pub styling: Option<String>,
+    pub router: Option<String>,
+    pub state_management: Option<String>,
+    pub network_layer: Option<String>,
+    pub test_framework: Option<String>,
+    pub source: String,
+    pub confidence: Option<f64>,
+    pub evidence: Vec<serde_json::Value>,
+    pub decisions: Vec<serde_json::Value>,
+    pub confirmed: bool,
+    pub confirmed_at: Option<String>,
+}
+
 /// 设计会话：一次完整设计任务的草稿/计划/生成状态机载体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesignSession {
@@ -482,7 +629,15 @@ pub struct DesignSession {
     pub backend_id: String,
     pub mode: String,
     pub target_path: String,
-    /// "draft" | "planning" | "planned" | "generating" | "completed" | "failed"
+    #[serde(default)]
+    pub target_surface: TargetSurface,
+    pub ui_document: Option<UiDocument>,
+    pub implementation_profile: Option<ImplementationProfile>,
+    #[serde(default)]
+    pub ui_versions: Vec<UiDocumentVersion>,
+    #[serde(default)]
+    pub ui_check_report: Option<UiCheckReport>,
+    /// "draft" | "ui_editing" | "ui_confirmed" | "stack_confirmation" | "planned" | "generating" | "completed" | "failed"
     pub status: String,
     pub plan: Option<GenerationPlan>,
     pub prompt_snapshot: Option<String>,
@@ -527,6 +682,7 @@ pub struct CreateSessionRequest {
     pub goal: String,
     pub request: String,
     pub backend_id: Option<String>,
+    pub target_surface: Option<TargetSurface>,
 }
 
 /// 更新设计会话请求：None = 不变，Some(val) = 更新
@@ -543,6 +699,36 @@ pub struct UpdateSessionRequest {
     pub backend_id: Option<String>,
     pub mode: Option<String>,
     pub target_path: Option<String>,
+    pub target_surface: Option<TargetSurface>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUiDocumentRequest {
+    pub document: UiDocument,
+    pub expected_version: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmUiDocumentRequest {
+    pub expected_version: Option<u64>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateUiPatchRequest {
+    pub instruction: String,
+    pub expected_version: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyUiPatchRequest {
+    pub patch: UiDocumentPatch,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateImplementationProfileRequest {
+    pub profile: ImplementationProfile,
 }
 
 /// 创建设计会话
@@ -580,6 +766,11 @@ pub async fn create_session(
             .unwrap_or_else(|| "sacode".to_string()),
         mode: "build".to_string(),
         target_path: String::new(),
+        target_surface: req.target_surface.unwrap_or_default(),
+        ui_document: None,
+        implementation_profile: None,
+        ui_versions: Vec::new(),
+        ui_check_report: None,
         status: "draft".to_string(),
         plan: None,
         prompt_snapshot: None,
@@ -659,10 +850,407 @@ pub async fn update_session(
             if let Some(target_path) = req.target_path {
                 session.target_path = target_path;
             }
+            if let Some(target_surface) = req.target_surface {
+                session.target_surface = target_surface;
+                session.plan = None;
+            }
             session.updated_at = now_iso8601();
             (axum::http::StatusCode::OK, Json(session.clone())).into_response()
         }
         None => (axum::http::StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+fn build_ui_patch_prompt(version: u64, instruction: &str, document_json: &str) -> String {
+    format!(
+        r#"你是 SaCode UIDocument Patch 生成器。根据用户指令生成框架无关的 UI 修改命令。
+
+约束：
+1. 只输出一个 JSON 对象，不要 Markdown，不要解释。
+2. schema_version 必须为 sacode-ui-patch/v1，base_version 必须为 {version}。
+3. operations 只能使用 move-node、resize-node、set-layout、set-content、set-appearance、set-props、set-interactions、set-token、set-node-meta、insert-node、duplicate-node、delete-node。
+4. 不得输出 HTML、JS、TS、框架代码、脚本、url(...)、javascript:、expression(...) 或 @import。
+5. 只修改完成指令所需的最少节点，不得删除根节点或制造重复 ID。
+6. patch 字段必须是 JSON 对象。空字符串表示删除该属性。
+
+输出示例：
+{{"schema_version":"sacode-ui-patch/v1","base_version":{version},"summary":"修改摘要","operations":[{{"type":"set-content","node_id":"title","patch":{{"text":"新标题"}}}}]}}
+
+用户指令：
+{instruction}
+
+当前 UIDocument：
+{document_json}"#
+    )
+}
+
+fn validate_ui_document(document: &UiDocument) -> Result<(), String> {
+    if document.schema_version != "sacode-ui/v1" {
+        return Err("ui document schema_version must be sacode-ui/v1".to_string());
+    }
+    if document.id.trim().is_empty() || document.name.trim().is_empty() {
+        return Err("ui document id and name are required".to_string());
+    }
+    if document.target.platform.trim().is_empty() {
+        return Err("ui document target platform is required".to_string());
+    }
+    Ok(())
+}
+
+fn validate_implementation_profile(profile: &ImplementationProfile) -> Result<(), String> {
+    if profile.schema_version != "sacode-implementation/v1" {
+        return Err(
+            "implementation profile schema_version must be sacode-implementation/v1".to_string(),
+        );
+    }
+    if !matches!(profile.project_mode.as_str(), "existing" | "new") {
+        return Err("implementation profile project_mode must be existing or new".to_string());
+    }
+    if profile.target_platform.trim().is_empty()
+        || profile.language.trim().is_empty()
+        || profile.framework.trim().is_empty()
+    {
+        return Err(
+            "implementation profile target_platform, language and framework are required"
+                .to_string(),
+        );
+    }
+    if !profile.confirmed {
+        return Err("implementation profile must be explicitly confirmed".to_string());
+    }
+    Ok(())
+}
+
+pub async fn get_ui_document(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    let sessions = state.design_sessions.read().await;
+    match sessions.get(&id) {
+        Some(session) => match &session.ui_document {
+            Some(document) => Json(document.clone()).into_response(),
+            None => (axum::http::StatusCode::NOT_FOUND, "ui document not found").into_response(),
+        },
+        None => (axum::http::StatusCode::NOT_FOUND, "session not found").into_response(),
+    }
+}
+
+pub async fn update_ui_document(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<UpdateUiDocumentRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = validate_ui_document(&req.document) {
+        return (axum::http::StatusCode::BAD_REQUEST, error).into_response();
+    }
+
+    let mut sessions = state.design_sessions.write().await;
+    match sessions.get_mut(&id) {
+        Some(session) => {
+            if session
+                .ui_document
+                .as_ref()
+                .is_some_and(|document| document.status == "confirmed")
+            {
+                return (
+                    axum::http::StatusCode::CONFLICT,
+                    "confirmed UI document is immutable; create a new draft session",
+                )
+                    .into_response();
+            }
+            let current_version = session
+                .ui_document
+                .as_ref()
+                .map_or(0, |document| document.version);
+            if let Some(expected_version) = req.expected_version {
+                if expected_version != current_version {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        format!("ui document version conflict: expected {expected_version}, current {current_version}"),
+                    )
+                        .into_response();
+                }
+            }
+
+            let now = now_iso8601();
+            let mut document = req.document;
+            document.version = current_version + 1;
+            document.status = "draft".to_string();
+            if document.created_at.trim().is_empty() {
+                document.created_at = now.clone();
+            }
+            document.updated_at = now.clone();
+            session.target_surface = document.target.clone();
+            session.ui_document = Some(document.clone());
+            session.implementation_profile = None;
+            session.ui_check_report = None;
+            session.plan = None;
+            session.status = "ui_editing".to_string();
+            session.updated_at = now;
+            (axum::http::StatusCode::OK, Json(document)).into_response()
+        }
+        None => (axum::http::StatusCode::NOT_FOUND, "session not found").into_response(),
+    }
+}
+
+pub async fn propose_ui_patch(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<GenerateUiPatchRequest>,
+) -> impl IntoResponse {
+    if req.instruction.trim().is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "instruction is required",
+        )
+            .into_response();
+    }
+    let session = {
+        let sessions = state.design_sessions.read().await;
+        let Some(session) = sessions.get(&id) else {
+            return (axum::http::StatusCode::NOT_FOUND, "not found").into_response();
+        };
+        session.clone()
+    };
+    let Some(document) = session.ui_document.as_ref() else {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "UI document must exist before patch generation",
+        )
+            .into_response();
+    };
+    if document.status == "confirmed" {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "confirmed UI document is immutable; create a new draft first",
+        )
+            .into_response();
+    }
+    if let Some(expected) = req.expected_version {
+        if expected != document.version {
+            return (
+                axum::http::StatusCode::CONFLICT,
+                format!(
+                    "ui version conflict: expected {expected}, current {}",
+                    document.version
+                ),
+            )
+                .into_response();
+        }
+    }
+    let Some(workdir) = state.workdir.as_ref() else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "workspace is unavailable",
+        )
+            .into_response();
+    };
+    let Some((_, _, provider)) = resolve_config_model_candidates(workdir).into_iter().next() else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "no model provider configured for UI patch generation",
+        )
+            .into_response();
+    };
+    let document_json = match serde_json::to_string(document) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize UI document: {error}"),
+            )
+                .into_response()
+        }
+    };
+    let prompt = build_ui_patch_prompt(document.version, &req.instruction, &document_json);
+    let text = match ProviderClient::new().simple_chat(&provider, &prompt).await {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                format!("UI patch model request failed: {error}"),
+            )
+                .into_response()
+        }
+    };
+    let payload = match extract_json_payload(&text) {
+        Ok(value) => value,
+        Err(error) => return (axum::http::StatusCode::BAD_GATEWAY, error).into_response(),
+    };
+    let patch: UiDocumentPatch = match serde_json::from_str(payload) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                format!("model returned invalid UI patch JSON: {error}"),
+            )
+                .into_response()
+        }
+    };
+    if patch.base_version != document.version {
+        return (
+            axum::http::StatusCode::BAD_GATEWAY,
+            "model returned a patch for the wrong document version",
+        )
+            .into_response();
+    }
+    match apply_patch(document, &patch) {
+        Ok(_) => Json(UiPatchProposal {
+            changes: summarize_patch(&patch),
+            patch,
+            source: "ai".to_string(),
+        })
+        .into_response(),
+        Err(error) => (axum::http::StatusCode::BAD_GATEWAY, error).into_response(),
+    }
+}
+
+pub async fn apply_ui_patch(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<ApplyUiPatchRequest>,
+) -> impl IntoResponse {
+    let mut sessions = state.design_sessions.write().await;
+    let Some(session) = sessions.get_mut(&id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let Some(document) = session.ui_document.as_ref() else {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "UI document must exist before patch application",
+        )
+            .into_response();
+    };
+    match apply_patch(document, &req.patch) {
+        Ok(next) => {
+            session.ui_document = Some(next.clone());
+            session.ui_check_report = None;
+            session.implementation_profile = None;
+            session.plan = None;
+            session.prompt_snapshot = None;
+            session.context_hash = None;
+            session.status = "ui_editing".to_string();
+            session.updated_at = now_iso8601();
+            Json(next).into_response()
+        }
+        Err(error) if error.contains("version conflict") => {
+            (axum::http::StatusCode::CONFLICT, error).into_response()
+        }
+        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error).into_response(),
+    }
+}
+
+pub async fn check_session_ui(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut sessions = state.design_sessions.write().await;
+    let Some(session) = sessions.get_mut(&id) else {
+        return (axum::http::StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let Some(document) = session.ui_document.as_ref() else {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "UI document must exist before checking",
+        )
+            .into_response();
+    };
+    let report = check_ui_document(document);
+    session.ui_check_report = Some(report.clone());
+    Json(report).into_response()
+}
+
+pub async fn confirm_ui_document(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<ConfirmUiDocumentRequest>,
+) -> impl IntoResponse {
+    let mut sessions = state.design_sessions.write().await;
+    match sessions.get_mut(&id) {
+        Some(session) => {
+            let Some(document) = session.ui_document.as_mut() else {
+                return (
+                    axum::http::StatusCode::CONFLICT,
+                    "ui document must be created before confirmation",
+                )
+                    .into_response();
+            };
+            if let Some(expected_version) = req.expected_version {
+                if expected_version != document.version {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        format!(
+                            "ui document version conflict: expected {expected_version}, current {}",
+                            document.version
+                        ),
+                    )
+                        .into_response();
+                }
+            }
+            if document.status == "confirmed" {
+                return (axum::http::StatusCode::OK, Json(session.clone())).into_response();
+            }
+            let report = check_ui_document(document);
+            if !report.passed {
+                session.ui_check_report = Some(report.clone());
+                return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, Json(report))
+                    .into_response();
+            }
+            document.status = "confirmed".to_string();
+            document.updated_at = now_iso8601();
+            session.ui_versions.push(UiDocumentVersion {
+                version: document.version,
+                document: document.clone(),
+                confirmed_at: document.updated_at.clone(),
+                summary: req
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| "用户确认 UI 版本".to_string()),
+            });
+            session.ui_check_report = Some(report);
+            session.plan = None;
+            session.status = "ui_confirmed".to_string();
+            session.updated_at = document.updated_at.clone();
+            (axum::http::StatusCode::OK, Json(session.clone())).into_response()
+        }
+        None => (axum::http::StatusCode::NOT_FOUND, "session not found").into_response(),
+    }
+}
+
+pub async fn update_implementation_profile(
+    State(state): State<Arc<DaemonState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<UpdateImplementationProfileRequest>,
+) -> impl IntoResponse {
+    if let Err(error) = validate_implementation_profile(&req.profile) {
+        return (axum::http::StatusCode::BAD_REQUEST, error).into_response();
+    }
+
+    let mut sessions = state.design_sessions.write().await;
+    match sessions.get_mut(&id) {
+        Some(session) => {
+            if session
+                .ui_document
+                .as_ref()
+                .map(|document| document.status.as_str())
+                != Some("confirmed")
+            {
+                return (
+                    axum::http::StatusCode::CONFLICT,
+                    "ui document must be confirmed before implementation profile",
+                )
+                    .into_response();
+            }
+            let now = now_iso8601();
+            let mut profile = req.profile;
+            profile.confirmed_at = Some(now.clone());
+            session.implementation_profile = Some(profile);
+            session.plan = None;
+            session.status = "stack_confirmation".to_string();
+            session.updated_at = now;
+            (axum::http::StatusCode::OK, Json(session.clone())).into_response()
+        }
+        None => (axum::http::StatusCode::NOT_FOUND, "session not found").into_response(),
     }
 }
 
@@ -706,7 +1294,7 @@ fn stages_for_outputs(outputs: &[String]) -> Vec<(String, String, bool)> {
     result
 }
 
-/// 预估目标文件：结合 target_path 与 outputs 生成文件清单
+/// 预估目标文件：设计资产可以确定，项目实现路径由已确认技术栈和模型计划决定。
 fn estimated_target_files(session: &DesignSession) -> Vec<String> {
     let root = session.target_path.trim();
     let root = root.trim_end_matches('/').trim_end_matches('\\');
@@ -732,14 +1320,20 @@ fn estimated_target_files(session: &DesignSession) -> Vec<String> {
                 files.push(join("assets/images"));
             }
             "code" => {
-                files.push(join("src/pages/index.tsx"));
-                files.push(join("src/components/"));
+                if session
+                    .implementation_profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.confirmed)
+                {
+                    files.push(join("[由模型根据已确认 ImplementationProfile 生成]"));
+                } else {
+                    files.push("[待确认 ImplementationProfile 后生成项目文件清单]".to_string());
+                }
             }
             _ => {}
         }
     }
     if files.is_empty() {
-        files.push(join("src/pages/index.tsx"));
         files.push(join("DESIGN.md"));
     }
     files.sort();
@@ -786,6 +1380,7 @@ fn build_prompt_snapshot(session: &DesignSession) -> String {
         format!("- 用户需求：{}", session.request),
         format!("- 目标产物：{}", session.outputs.join("、")),
         format!("- 目标路径：{}", session.target_path),
+        format!("- 目标端：{}", session.target_surface.platform),
     ];
 
     let basis = vec![
@@ -824,6 +1419,19 @@ fn build_prompt_snapshot(session: &DesignSession) -> String {
     lines.extend(basis);
     if !session.notes.trim().is_empty() {
         lines.push(format!("- 用户补充：{}", session.notes.trim()));
+    }
+
+    if let Some(profile) = &session.implementation_profile {
+        lines.push(String::new());
+        lines.push("## 已确认 ImplementationProfile".to_string());
+        lines.push(format!("- 项目模式：{}", profile.project_mode));
+        lines.push(format!("- 目标平台：{}", profile.target_platform));
+        lines.push(format!("- 语言：{}", profile.language));
+        lines.push(format!("- 框架：{}", profile.framework));
+        if let Some(build_tool) = &profile.build_tool {
+            lines.push(format!("- 构建工具：{build_tool}"));
+        }
+        lines.push(format!("- 来源：{}", profile.source));
     }
 
     lines.push(String::new());
@@ -866,6 +1474,32 @@ pub async fn plan_session(
                     capability: stage_capability(&stage.id),
                 })
                 .collect();
+
+            if session.outputs.iter().any(|output| output == "code") {
+                if session
+                    .ui_document
+                    .as_ref()
+                    .map(|document| document.status.as_str())
+                    != Some("confirmed")
+                {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        "ui document must be confirmed before planning code generation",
+                    )
+                        .into_response();
+                }
+                if !session
+                    .implementation_profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.confirmed)
+                {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        "implementation profile must be confirmed before planning code generation",
+                    )
+                        .into_response();
+                }
+            }
 
             let prompt = build_prompt_snapshot(session);
             let plan = GenerationPlan {
@@ -1558,6 +2192,90 @@ fn parse_sensenova_response(
 mod tests {
     use super::*;
 
+    fn test_ui_document() -> UiDocument {
+        let now = now_iso8601();
+        UiDocument {
+            schema_version: "sacode-ui/v1".to_string(),
+            id: "ui-dashboard".to_string(),
+            name: "Dashboard".to_string(),
+            target: TargetSurface::default(),
+            pages: vec![UiPage {
+                id: "page-home".to_string(),
+                name: "Home".to_string(),
+                route_intent: Some("/".to_string()),
+                root: UiNode {
+                    id: "root".to_string(),
+                    name: "Root".to_string(),
+                    node_type: "container".to_string(),
+                    content: serde_json::json!({}),
+                    props: serde_json::json!({}),
+                    layout: serde_json::json!({ "display": "grid" }),
+                    appearance: serde_json::json!({}),
+                    responsive: Vec::new(),
+                    states: serde_json::json!({}),
+                    interactions: Vec::new(),
+                    children: Vec::new(),
+                    locked: false,
+                },
+            }],
+            reusable_components: Vec::new(),
+            tokens: serde_json::json!({}),
+            assets: Vec::new(),
+            flows: Vec::new(),
+            version: 0,
+            status: "draft".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    async fn create_test_session(state: Arc<DaemonState>) -> DesignSession {
+        let response = create_session(
+            State(state),
+            Json(CreateSessionRequest {
+                workspace: None,
+                goal: "page".to_string(),
+                request: "测试 UI 版本".to_string(),
+                backend_id: None,
+                target_surface: None,
+            }),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    fn test_implementation_profile() -> ImplementationProfile {
+        ImplementationProfile {
+            schema_version: "sacode-implementation/v1".to_string(),
+            project_mode: "existing".to_string(),
+            target_platform: "web".to_string(),
+            distribution: Some("browser".to_string()),
+            operating_systems: Vec::new(),
+            language: "TypeScript".to_string(),
+            framework: "Vue 3".to_string(),
+            runtime: None,
+            desktop_shell: None,
+            build_tool: Some("Vite".to_string()),
+            package_manager: Some("npm".to_string()),
+            ui_library: None,
+            styling: Some("CSS".to_string()),
+            router: None,
+            state_management: None,
+            network_layer: None,
+            test_framework: Some("Vitest".to_string()),
+            source: "user-selected".to_string(),
+            confidence: None,
+            evidence: Vec::new(),
+            decisions: Vec::new(),
+            confirmed: true,
+            confirmed_at: None,
+        }
+    }
+
     #[test]
     fn scans_manifest_technology_and_source_roots() {
         let temp = tempfile::tempdir().unwrap();
@@ -1687,6 +2405,7 @@ mod tests {
             goal: "page".to_string(),
             request: "为仪表盘页面设计首页".to_string(),
             backend_id: None,
+            target_surface: None,
         };
         let response = create_session(State(state.clone()), Json(req)).await;
         let response = response.into_response();
@@ -1716,6 +2435,7 @@ mod tests {
             backend_id: None,
             mode: None,
             target_path: Some("src/app".to_string()),
+            target_surface: None,
         };
         let response = update_session(
             State(state.clone()),
@@ -1746,6 +2466,41 @@ mod tests {
             ]
         );
         assert_eq!(updated.target_path, "src/app");
+
+        let response = update_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateUiDocumentRequest {
+                document: test_ui_document(),
+                expected_version: Some(0),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let response = confirm_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(ConfirmUiDocumentRequest {
+                expected_version: Some(1),
+                summary: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let response = update_implementation_profile(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateImplementationProfileRequest {
+                profile: test_implementation_profile(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
 
         // plan
         let response = plan_session(State(state.clone()), AxumPath(session.id.clone())).await;
@@ -1788,6 +2543,160 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn confirmation_creates_immutable_ui_version_snapshot() {
+        let state = Arc::new(DaemonState::new().await);
+        let session = create_test_session(state.clone()).await;
+        update_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateUiDocumentRequest {
+                document: test_ui_document(),
+                expected_version: Some(0),
+            }),
+        )
+        .await;
+        let response = confirm_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(ConfirmUiDocumentRequest {
+                expected_version: Some(1),
+                summary: Some("approved layout".to_string()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let sessions = state.design_sessions.read().await;
+        let confirmed = sessions.get(&session.id).unwrap();
+        assert_eq!(confirmed.ui_versions.len(), 1);
+        assert_eq!(confirmed.ui_versions[0].version, 1);
+        assert_eq!(confirmed.ui_versions[0].summary, "approved layout");
+        assert_eq!(confirmed.ui_versions[0].document.status, "confirmed");
+        drop(sessions);
+
+        let response = confirm_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(ConfirmUiDocumentRequest {
+                expected_version: Some(1),
+                summary: Some("duplicate retry".to_string()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            state
+                .design_sessions
+                .read()
+                .await
+                .get(&session.id)
+                .unwrap()
+                .ui_versions
+                .len(),
+            1
+        );
+
+        let response = update_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateUiDocumentRequest {
+                document: test_ui_document(),
+                expected_version: Some(1),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn code_planning_requires_confirmed_ui_and_implementation_profile() {
+        let state = Arc::new(DaemonState::new().await);
+        let response = create_session(
+            State(state.clone()),
+            Json(CreateSessionRequest {
+                workspace: None,
+                goal: "page".to_string(),
+                request: "create page".to_string(),
+                backend_id: None,
+                target_surface: None,
+            }),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let session: DesignSession = serde_json::from_slice(&body).unwrap();
+
+        let response = update_session(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateSessionRequest {
+                goal: None,
+                request: None,
+                notes: None,
+                primary_template_id: None,
+                visual_style_id: None,
+                design_system_id: None,
+                baseline_ids: None,
+                outputs: Some(vec!["code".to_string()]),
+                backend_id: None,
+                mode: None,
+                target_path: Some("src".to_string()),
+                target_surface: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let response = plan_session(State(state.clone()), AxumPath(session.id.clone()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+
+        update_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateUiDocumentRequest {
+                document: test_ui_document(),
+                expected_version: Some(0),
+            }),
+        )
+        .await;
+        confirm_ui_document(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(ConfirmUiDocumentRequest {
+                expected_version: Some(1),
+                summary: None,
+            }),
+        )
+        .await;
+
+        let response = plan_session(State(state.clone()), AxumPath(session.id.clone()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+
+        update_implementation_profile(
+            State(state.clone()),
+            AxumPath(session.id.clone()),
+            Json(UpdateImplementationProfileRequest {
+                profile: test_implementation_profile(),
+            }),
+        )
+        .await;
+        let response = plan_session(State(state.clone()), AxumPath(session.id.clone()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn list_sessions_returns_descending() {
         let state = Arc::new(DaemonState::new().await);
 
@@ -1796,6 +2705,7 @@ mod tests {
             goal: "page".to_string(),
             request: "first".to_string(),
             backend_id: None,
+            target_surface: None,
         };
         let r1 = create_session(State(state.clone()), Json(req1))
             .await
@@ -1813,6 +2723,7 @@ mod tests {
             goal: "dashboard".to_string(),
             request: "second".to_string(),
             backend_id: None,
+            target_surface: None,
         };
         let r2 = create_session(State(state.clone()), Json(req2))
             .await

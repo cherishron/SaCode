@@ -13,6 +13,7 @@ async-trait = "0.1"
 axum = "0.7"
 base64.workspace = true
 chrono = "0.4"
+cron = "0.12"
 extism = "1.0"
 ignore.workspace = true
 futures = "0.3"

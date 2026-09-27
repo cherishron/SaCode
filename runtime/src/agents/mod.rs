@@ -15,7 +15,7 @@ pub use message_bus::{
 };
 pub use model_router::{
     build_route_plan_from_candidates, failover_is_authorized, resolve_config_model_candidates,
-    resolve_role_route, ResolvedRoleRoute,
+    resolve_role_route, resolve_selectable_model_candidates, ResolvedRoleRoute,
 };
 pub use orchestrator::{execute_role_driven_orchestration, execute_role_driven_task_run};
 pub use planner::{

@@ -49,6 +49,23 @@ pub struct SacodeSidecar {
     pub info: DaemonReadyInfo,
 }
 
+/// Canonicalize workspaces consistently for comparison and display.
+/// Keep the extended-length path separately when launching the daemon.
+pub fn pretty_canonicalize(path: &std::path::Path) -> std::io::Result<PathBuf> {
+    let resolved = std::fs::canonicalize(path)?;
+    #[cfg(windows)]
+    {
+        let text = resolved.to_string_lossy();
+        if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+            return Ok(PathBuf::from(format!(r"\\{unc}")));
+        }
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            return Ok(PathBuf::from(stripped));
+        }
+    }
+    Ok(resolved)
+}
+
 fn random_token() -> String {
     use rand::RngCore;
     let mut buf = [0u8; 24];
@@ -94,7 +111,8 @@ pub async fn start_sidecar(
     if !workspace.is_dir() {
         anyhow::bail!("workspace is not a directory: {}", workspace.display());
     }
-    let workspace = std::fs::canonicalize(&workspace)?;
+    let daemon_workspace = std::fs::canonicalize(&workspace)?;
+    let workspace = pretty_canonicalize(&workspace)?;
     std::fs::create_dir_all(&ready_dir)?;
     let ready_path = ready_dir.join("ready.json");
     let _ = std::fs::remove_file(&ready_path);
@@ -109,12 +127,15 @@ pub async fn start_sidecar(
         .arg(&ready_path)
         .arg("--nonce")
         .arg(&nonce)
-        .current_dir(&workspace)
+        .current_dir(&daemon_workspace)
         .env("SACODE_DAEMON_TOKEN", &token)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    // Windows: prevent CMD/PowerShell window from flashing.
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     if let Some(exe) = open_code_executable.filter(|s| !s.trim().is_empty()) {
         cmd.env("SACODE_OPENCODE_EXECUTABLE", exe);
         cmd.env(
@@ -187,6 +208,29 @@ impl SacodeSidecar {
         &self.info.base_url
     }
 
+    /// Connection snapshot for proxying without holding the Mutex.
+    pub fn proxy_snapshot(&self) -> ProxySnapshot {
+        ProxySnapshot {
+            base_url: self.base_url().to_string(),
+            token: self.token().to_string(),
+        }
+    }
+
+    pub async fn stop(&mut self) {
+        let _ = std::fs::remove_file(&self.ready_path);
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+    }
+}
+
+/// Connection snapshot so IPC handlers never hold the Mutex during HTTP.
+#[derive(Clone)]
+pub struct ProxySnapshot {
+    pub base_url: String,
+    pub token: String,
+}
+
+impl ProxySnapshot {
     /// HTTP call to local daemon; Authorization attached here, never in WebView.
     pub async fn proxy(
         &self,
@@ -198,10 +242,17 @@ impl SacodeSidecar {
         let method = match method.to_ascii_uppercase().as_str() {
             "GET" => reqwest::Method::GET,
             "POST" => reqwest::Method::POST,
+            "PATCH" => reqwest::Method::PATCH,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
             other => return Err(format!("unsupported method: {other}")),
         };
-        let client = reqwest::Client::new();
-        let url = format!("{}{}", self.base_url(), path);
+        // Localhost-only with keep-alive; a fresh client per request would leak sockets.
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?;
+        let url = format!("{}{}", self.base_url, path);
         let mut req = client.request(method, url).timeout(Duration::from_secs(60));
         if !self.token.is_empty() {
             req = req.bearer_auth(&self.token);
@@ -219,12 +270,6 @@ impl SacodeSidecar {
             ok: (200..300).contains(&status),
             body: text,
         })
-    }
-
-    pub async fn stop(&mut self) {
-        let _ = std::fs::remove_file(&self.ready_path);
-        let _ = self.child.start_kill();
-        let _ = self.child.wait().await;
     }
 }
 
@@ -252,6 +297,16 @@ mod tests {
         assert!(validate_proxy_path("http://evil/health").is_err());
         assert!(validate_proxy_path("/../etc/passwd").is_err());
         assert!(validate_proxy_path("/127.0.0.1:8090/v1").is_err());
+    }
+
+    #[test]
+    fn canonical_workspace_is_stable_for_repeated_starts() {
+        let path = std::env::current_dir().unwrap();
+        let first = pretty_canonicalize(&path).unwrap();
+        let repeated = pretty_canonicalize(&first).unwrap();
+        assert_eq!(first, repeated);
+        #[cfg(windows)]
+        assert!(!first.to_string_lossy().starts_with(r"\\?\"));
     }
 
     #[test]

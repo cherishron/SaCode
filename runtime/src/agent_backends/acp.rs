@@ -424,9 +424,13 @@ mod tests {
         assert!(err.contains("spawn") || err.contains("not found") || err.contains("failed"));
     }
 
-    /// Live OpenCode ACP probe — skipped unless bun + package are available.
+    /// Live OpenCode ACP probe — explicitly opt in; requires a configured model and credentials.
     #[tokio::test]
     async fn live_opencode_acp_probe_and_prompt() {
+        if std::env::var_os("SACODE_RUN_LIVE_OPENCODE_TEST").is_none() {
+            eprintln!("skip live opencode probe: set SACODE_RUN_LIVE_OPENCODE_TEST to opt in");
+            return;
+        }
         let bun = std::env::var("SACODE_OPENCODE_EXECUTABLE").unwrap_or_else(|_| {
             "C:\\Users\\jingg\\.version-fox\\cache\\nodejs\\v-24.14.1\\nodejs-24.14.1\\node_modules\\bun\\bin\\bun.exe"
                 .to_string()

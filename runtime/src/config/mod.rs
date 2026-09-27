@@ -9,7 +9,13 @@ use crate::{mcp::McpConfig, skills::SkillSpec};
 use sacode_kernel::ExecutionMode;
 use std::sync::Arc;
 
+pub mod importer;
 pub mod profile;
+
+pub use importer::{
+    apply_imported_providers, detect_external_tools, read_tool_providers, tool_from_id,
+    DetectedTool, ExternalTool, ImportedProvider,
+};
 
 const USER_ROOT_DIR: &str = ".sacode";
 const PROJECT_ROOT_DIR: &str = ".sacode";

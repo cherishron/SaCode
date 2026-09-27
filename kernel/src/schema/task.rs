@@ -27,6 +27,10 @@ pub struct Task {
     pub prompt: String,
     pub mode: ExecutionMode,
     pub stdin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
 }
 
 impl Task {
@@ -35,6 +39,14 @@ impl Task {
             prompt: prompt.into(),
             mode,
             stdin,
+            model_provider: None,
+            model_name: None,
         }
+    }
+
+    pub fn with_model(mut self, provider: Option<String>, model: Option<String>) -> Self {
+        self.model_provider = provider.filter(|value| !value.trim().is_empty());
+        self.model_name = model.filter(|value| !value.trim().is_empty());
+        self
     }
 }

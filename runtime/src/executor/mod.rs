@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 
 use std::collections::HashMap;
 
+use crate::agents::resolve_selectable_model_candidates;
 use crate::executor::task_runner::{
     execute_task_with_provider, ApprovalDecider, AutoApproveDecider, LoggingErrorRecorder,
     TaskRunConfig,
@@ -459,7 +460,17 @@ async fn execute_via_task_runner(
     cancellation: Option<Arc<AtomicBool>>,
 ) -> (TaskResult, TaskRun, Vec<Event>) {
     let candidates = resolve_config_model_candidates(workdir);
-    let provider = candidates.first().map(|(_, _, p)| p.clone());
+    let provider = match (&task.model_provider, &task.model_name) {
+        (Some(selected_provider), Some(selected_model)) => {
+            resolve_selectable_model_candidates(workdir)
+                .iter()
+                .find(|(provider_name, model_name, _)| {
+                    provider_name == selected_provider && model_name == selected_model
+                })
+                .map(|(_, _, provider)| provider.clone())
+        }
+        _ => candidates.first().map(|(_, _, provider)| provider.clone()),
+    };
 
     let Some(provider) = provider else {
         // 无可用 provider → 失败
@@ -478,6 +489,31 @@ async fn execute_via_task_runner(
         }];
         return (result, task_run, events);
     };
+
+    if provider
+        .api_key
+        .as_deref()
+        .is_none_or(|key| key.trim().is_empty())
+    {
+        let error_msg =
+            "provider/authentication: 未找到模型凭据，请登录或在设置中更新 Provider API Key";
+        let duration_ms = started_at.elapsed().as_millis() as u64;
+        let result = TaskResult::failure(task_id.clone(), error_msg.to_string(), duration_ms);
+        let task_run = task_run_snapshot(
+            Some(task_id.clone()),
+            task.mode,
+            task.prompt.clone(),
+            TaskRunState::Failed,
+            Some(error_msg.to_string()),
+        );
+        return (
+            result,
+            task_run,
+            vec![Event::Error {
+                message: error_msg.to_string(),
+            }],
+        );
+    }
 
     // 构建 TaskRunConfig：使用外部传入的 ApprovalDecider（daemon 可注入 HTTP 审批器）
     let config = TaskRunConfig {

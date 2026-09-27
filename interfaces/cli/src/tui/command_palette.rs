@@ -51,6 +51,7 @@ impl App {
                 self.input_mode = InputMode::Chat;
                 self.filtered_level1.clear();
                 self.selected_level1_index = 0;
+                self.send_message();
             } else {
                 self.current_level1 = Some(cmd.clone());
                 self.filtered_sub_commands = cmd.sub_commands.clone();
@@ -69,11 +70,14 @@ impl App {
             self.input = format!("{} {}", level1.name, sub.name);
             if sub.needs_input {
                 self.input.push(' ');
+                self.input_mode = InputMode::Chat;
+            } else {
+                self.input_mode = InputMode::Chat;
+                self.filtered_sub_commands.clear();
+                self.selected_sub_index = 0;
+                self.current_level1 = None;
+                self.send_message();
             }
-            self.input_mode = InputMode::Chat;
-            self.filtered_sub_commands.clear();
-            self.selected_sub_index = 0;
-            self.current_level1 = None;
         }
     }
 }

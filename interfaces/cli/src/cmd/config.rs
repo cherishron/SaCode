@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{bail, Result};
 use sacode_kernel::ApprovalPolicy;
+use sacode_runtime::identity::IdentityConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::provider_config::SaCodeConfigStore;
@@ -24,6 +25,7 @@ pub enum ConfigScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigCategory {
     General,
+    Identity,
     Context,
     Execution,
     Editor,
@@ -37,6 +39,7 @@ pub enum ConfigValueType {
         labels: Vec<&'static str>,
     },
     Bool,
+    Text,
     Number {
         min: usize,
         max: usize,
@@ -56,6 +59,8 @@ pub struct ConfigItemMeta {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EffectiveConfig {
     pub language: String,
+    pub identity_idp_base_url: String,
+    pub identity_gateway_base_url: String,
     pub auto_compress: bool,
     pub compress_threshold: usize,
     pub compress_tail_turns: usize,
@@ -148,6 +153,20 @@ pub fn get_all_config_items() -> Vec<ConfigItemMeta> {
                 labels: vec!["简洁", "解释", "教学"],
             },
             category: ConfigCategory::General,
+        },
+        ConfigItemMeta {
+            key: "identity.idp_base_url",
+            display_name: "sa-idp 地址",
+            description: "统一身份登录服务地址；默认可直接使用，也可自定义",
+            value_type: ConfigValueType::Text,
+            category: ConfigCategory::Identity,
+        },
+        ConfigItemMeta {
+            key: "identity.gateway_base_url",
+            display_name: "Gateway 地址",
+            description: "登录后交换 API Key 和读取模型的网关地址",
+            value_type: ConfigValueType::Text,
+            category: ConfigCategory::Identity,
         },
         ConfigItemMeta {
             key: "auto_compress",
@@ -272,14 +291,38 @@ pub fn config_item(key: &str) -> Option<ConfigItemMeta> {
 }
 
 pub fn effective_config(workdir: &Path) -> Result<EffectiveConfig> {
-    ConfigStore::new(workdir).load_effective()
+    let mut effective = ConfigStore::new(workdir).load_effective()?;
+    let mut identity = IdentityConfig::load(None).unwrap_or_default();
+    identity.fill_local_defaults_if_empty();
+    identity.normalize();
+    effective.identity_idp_base_url = identity.idp_base_url;
+    effective.identity_gateway_base_url = identity.gateway_base_url;
+    Ok(effective)
 }
 
 pub fn scope_config(workdir: &Path, scope: ConfigScope) -> Result<ConfigOverrides> {
     ConfigStore::new(workdir).load_scope(scope)
 }
 
+pub fn identity_scope_value_text(key: &str) -> String {
+    let config = IdentityConfig::load_stored(None).unwrap_or_default();
+    let value = match key {
+        "identity.idp_base_url" => config.idp_base_url,
+        "identity.gateway_base_url" => config.gateway_base_url,
+        _ => return "未设置".to_string(),
+    };
+    if value.trim().is_empty() {
+        "默认".to_string()
+    } else {
+        value
+    }
+}
+
 pub fn set_value(workdir: &Path, scope: ConfigScope, key: &str, value: &str) -> Result<String> {
+    if is_identity_key(key) {
+        ensure_identity_user_scope(scope)?;
+        return set_identity_value(key, value);
+    }
     let store = ConfigStore::new(workdir);
     let mut config = store.load_scope(scope)?;
     set_override_value(&mut config, key, value)?;
@@ -293,6 +336,10 @@ pub fn set_value(workdir: &Path, scope: ConfigScope, key: &str, value: &str) -> 
 }
 
 pub fn clear_value(workdir: &Path, scope: ConfigScope, key: &str) -> Result<String> {
+    if is_identity_key(key) {
+        ensure_identity_user_scope(scope)?;
+        return clear_identity_value(key);
+    }
     let store = ConfigStore::new(workdir);
     let mut config = store.load_scope(scope)?;
     clear_override_value(&mut config, key)?;
@@ -303,6 +350,8 @@ pub fn clear_value(workdir: &Path, scope: ConfigScope, key: &str) -> Result<Stri
 pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String> {
     Some(match key {
         "language" => config.language.clone(),
+        "identity.idp_base_url" => config.identity_idp_base_url.clone(),
+        "identity.gateway_base_url" => config.identity_gateway_base_url.clone(),
         "auto_compress" => bool_text(config.auto_compress),
         "compress_threshold" => config.compress_threshold.to_string(),
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
@@ -323,6 +372,8 @@ pub fn current_value_text(config: &EffectiveConfig, key: &str) -> Option<String>
 pub fn current_raw_value(config: &EffectiveConfig, key: &str) -> Option<String> {
     Some(match key {
         "language" => config.language.clone(),
+        "identity.idp_base_url" => config.identity_idp_base_url.clone(),
+        "identity.gateway_base_url" => config.identity_gateway_base_url.clone(),
         "auto_compress" => config.auto_compress.to_string(),
         "compress_threshold" => config.compress_threshold.to_string(),
         "compress_tail_turns" => config.compress_tail_turns.to_string(),
@@ -402,6 +453,10 @@ fn apply_set_args(store: &ConfigStore, scope: ConfigScope, args: &[String]) -> R
             scope_name(scope)
         ));
     };
+    if is_identity_key(key) {
+        ensure_identity_user_scope(scope)?;
+        return set_identity_value(key, value);
+    }
     let mut config = store.load_scope(scope)?;
     set_override_value(&mut config, key, value)?;
     store.save_scope(scope, &config)?;
@@ -417,6 +472,10 @@ fn clear_key_args(store: &ConfigStore, scope: ConfigScope, args: &[String]) -> R
     let Some(key) = args.first() else {
         return Ok(format!("用法: /config {} clear <key>", scope_name(scope)));
     };
+    if is_identity_key(key) {
+        ensure_identity_user_scope(scope)?;
+        return clear_identity_value(key);
+    }
     let mut config = store.load_scope(scope)?;
     clear_override_value(&mut config, key)?;
     store.save_scope(scope, &config)?;
@@ -552,6 +611,54 @@ fn clear_override_value(config: &mut ConfigOverrides, key: &str) -> Result<()> {
         _ => bail!("未知配置项: {}", key),
     }
     Ok(())
+}
+
+fn ensure_identity_user_scope(scope: ConfigScope) -> Result<()> {
+    if scope == ConfigScope::Project {
+        bail!("身份服务地址仅支持用户级配置")
+    }
+    Ok(())
+}
+
+fn is_identity_key(key: &str) -> bool {
+    matches!(key, "identity.idp_base_url" | "identity.gateway_base_url")
+}
+
+fn set_identity_value(key: &str, value: &str) -> Result<String> {
+    let value = normalize_base_url(value)?;
+    let mut config = IdentityConfig::load_stored(None).unwrap_or_default();
+    config.fill_local_defaults_if_empty();
+    match key {
+        "identity.idp_base_url" => config.idp_base_url = value.clone(),
+        "identity.gateway_base_url" => config.gateway_base_url = value.clone(),
+        _ => bail!("未知配置项: {}", key),
+    }
+    config.normalize();
+    config.save(None)?;
+    Ok(format!("用户级配置已更新: {} = {}", key, value))
+}
+
+fn clear_identity_value(key: &str) -> Result<String> {
+    let mut config = IdentityConfig::load_stored(None).unwrap_or_default();
+    match key {
+        "identity.idp_base_url" => config.idp_base_url.clear(),
+        "identity.gateway_base_url" => config.gateway_base_url.clear(),
+        _ => bail!("未知配置项: {}", key),
+    }
+    config.save(None)?;
+    Ok(format!("用户级配置已恢复默认: {}", key))
+}
+
+fn normalize_base_url(value: &str) -> Result<String> {
+    let value = value.trim().trim_end_matches('/').to_string();
+    if value.is_empty() {
+        bail!("服务地址不能为空；如需恢复默认值，请使用 clear")
+    }
+    let parsed = url::Url::parse(&value)?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        bail!("服务地址必须是有效的 http/https URL")
+    }
+    Ok(value)
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
@@ -718,6 +825,8 @@ impl ConfigStore {
 fn merge_effective(user: ConfigOverrides, project: ConfigOverrides) -> EffectiveConfig {
     let mut effective = EffectiveConfig {
         language: "zh-CN".to_string(),
+        identity_idp_base_url: String::new(),
+        identity_gateway_base_url: String::new(),
         auto_compress: true,
         compress_threshold: 15,
         compress_tail_turns: 15,
@@ -975,6 +1084,35 @@ pub fn effective_approval_policy(workdir: &Path) -> ApprovalPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_items_include_identity_urls_as_text() {
+        let items = get_all_config_items();
+        for key in ["identity.idp_base_url", "identity.gateway_base_url"] {
+            let item = items
+                .iter()
+                .find(|item| item.key == key)
+                .expect("identity URL must be configurable");
+            assert_eq!(item.value_type, ConfigValueType::Text);
+            assert_eq!(item.category, ConfigCategory::Identity);
+        }
+    }
+
+    #[test]
+    fn identity_urls_reject_project_scope() {
+        assert!(ensure_identity_user_scope(ConfigScope::User).is_ok());
+        assert!(ensure_identity_user_scope(ConfigScope::Project).is_err());
+    }
+
+    #[test]
+    fn normalize_base_url_requires_http_url() {
+        assert_eq!(
+            normalize_base_url(" http://127.0.0.1:8080/ ").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert!(normalize_base_url("localhost:8080").is_err());
+        assert!(normalize_base_url("file:///tmp/idp").is_err());
+    }
 
     #[test]
     fn config_items_include_code_audit_ai() {

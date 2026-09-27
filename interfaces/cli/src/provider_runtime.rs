@@ -44,7 +44,29 @@ pub fn resolve_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
 }
 
 pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
-    // Product path first: sa-idp → SaAiApiGateway models.
+    // Check the provider store's current selection first.
+    // If the user switched to a custom provider, use that instead of the
+    // identity (sa-ai) provider from session.json.
+    let provider_store = ProviderConfigStore::new(workdir);
+    if let Ok(Some(catalog)) = provider_store.load_catalog() {
+        if !catalog.current.is_empty() && catalog.providers.contains_key(&catalog.current) {
+            // A custom provider is current. Use it.
+            if let Some(config) = catalog.providers.get(&catalog.current).cloned() {
+                let mut config = config;
+                if config.api_key.is_empty() {
+                    config.api_key = config.resolved_api_key();
+                }
+                if !config.base_url.is_empty() {
+                    return Some(NamedProviderConfig {
+                        name: catalog.current,
+                        config,
+                    });
+                }
+            }
+        }
+    }
+
+    // Product path: sa-idp → SaAiApiGateway models.
     if let Some(named) = crate::product_path::resolve_gateway_named_provider(workdir) {
         return Some(named);
     }
@@ -56,8 +78,7 @@ pub fn resolve_authorized_named_provider(workdir: &Path) -> Option<NamedProvider
         return None;
     }
     let spec = config.provider.get(&provider_name)?;
-    // Prefer secret_ref persisted on provider.json identity entries.
-    let secret_ref = ProviderConfigStore::new(workdir)
+    let secret_ref = provider_store
         .get(&provider_name)
         .ok()
         .flatten()
@@ -461,6 +482,7 @@ mod tests {
         std::fs::create_dir_all(workdir.join(".sacode")).expect("create workdir");
         let user_sandbox = std::env::temp_dir().join(format!("sacode-authz-home-{unique}"));
         std::fs::create_dir_all(&user_sandbox).expect("create user sandbox");
+        std::env::set_var("SACODE_HOME", &user_sandbox);
         std::env::set_var("USERPROFILE", &user_sandbox);
         std::env::set_var("HOME", &user_sandbox);
 

@@ -63,7 +63,10 @@ impl StoreDb {
     ///
     /// 满足项目硬约束：所有 Mutex 获取必须用 timeout 包装，禁止直接 .lock()。
     /// 中毒时恢复而非 panic，避免其他线程 panic 导致整个存储不可用。
-    fn acquire_lock(&self, operation: &str) -> Result<std::sync::MutexGuard<'_, Connection>> {
+    pub(crate) fn acquire_lock(
+        &self,
+        operation: &str,
+    ) -> Result<std::sync::MutexGuard<'_, Connection>> {
         let start = Instant::now();
         loop {
             match self.connection.try_lock() {
@@ -117,6 +120,14 @@ impl StoreDb {
 
             CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
 
+            CREATE TABLE IF NOT EXISTS desktop_turns (
+                task_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_turns_conversation ON desktop_turns(conversation_id, created_at, task_id);
+
             CREATE TABLE IF NOT EXISTS memory_entries (
                 entry_id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -145,6 +156,32 @@ impl StoreDb {
                 created_at TEXT NOT NULL,
                 UNIQUE(summary, scope)
             );
+
+            CREATE TABLE IF NOT EXISTS automation_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                cron_expr TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                backend_id TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_fired_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_automation_rules_enabled ON automation_rules(enabled);
+
+            CREATE TABLE IF NOT EXISTS automation_runs (
+                id TEXT PRIMARY KEY,
+                rule_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                triggered_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_automation_runs_rule ON automation_runs(rule_id, triggered_at);
+            CREATE INDEX IF NOT EXISTS idx_automation_runs_task ON automation_runs(task_id);
             ",
         )?;
         Ok(())

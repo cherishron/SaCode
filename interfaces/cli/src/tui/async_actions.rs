@@ -67,6 +67,9 @@ impl App {
                     user_code,
                     expires_in,
                 } => self.handle_device_auth_prompt(verification_uri, user_code, expires_in),
+                AsyncResult::LoginProgress { message } => {
+                    self.push_system_message(&message);
+                }
                 AsyncResult::ProvidersLoaded {
                     providers,
                     current_provider,
@@ -493,7 +496,8 @@ impl App {
         ) {
             self.input_mode = InputMode::Chat;
         }
-        self.push_system_message(&message);
+        // All failure messages render in red via the [错误] prefix.
+        self.push_error_message(&message);
         if self.interaction.state == InteractionState::Idle {
             self.start_next_queued_message();
         }

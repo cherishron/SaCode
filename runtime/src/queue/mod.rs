@@ -422,6 +422,17 @@ impl TaskQueue {
         None
     }
 
+    /// Drop a deleted Desktop conversation turn from in-memory queue history.
+    pub async fn forget_desktop_turn(&self, task_id: &str) {
+        self.completed.write().await.remove(task_id);
+        self.completed_runs.write().await.remove(task_id);
+        self.failed.write().await.remove(task_id);
+        self.failed_tasks.write().await.remove(task_id);
+        self.failed_runs.write().await.remove(task_id);
+        self.cancelled.write().await.remove(task_id);
+        self.retrying.write().await.remove(task_id);
+    }
+
     /// 从 failed 表中移除任务（手动重试前调用）
     pub async fn remove_failed_task(&self, task_id: &str) {
         self.failed.write().await.remove(task_id);

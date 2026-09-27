@@ -63,6 +63,26 @@ impl OsKeyringSecretStore {
         if let Ok(e) = keyring::Entry::new(&format!("{service}/{account}"), service) {
             out.push(e);
         }
+        // Compatibility with locators written before service/account parsing used
+        // the final path separator (service="sacode", account="identity/...").
+        if let Some((legacy_service, service_suffix)) = service.split_once('/') {
+            let legacy_account = format!("{service_suffix}/{account}");
+            if let Ok(e) = keyring::Entry::new(legacy_service, &legacy_account) {
+                out.push(e);
+            }
+            if let Ok(e) = keyring::Entry::new(
+                legacy_service,
+                &format!("{legacy_service}/{legacy_account}"),
+            ) {
+                out.push(e);
+            }
+            if let Ok(e) = keyring::Entry::new(
+                &format!("{legacy_service}/{legacy_account}"),
+                legacy_service,
+            ) {
+                out.push(e);
+            }
+        }
         out
     }
 }
@@ -128,7 +148,7 @@ pub fn parse_keyring_locator(locator: &str) -> Result<(&str, &str)> {
         anyhow!("invalid keyring locator (expected os-keyring:service/account): {locator}")
     })?;
     let (service, account) = rest
-        .split_once('/')
+        .rsplit_once('/')
         .ok_or_else(|| anyhow!("invalid keyring locator (missing account): {locator}"))?;
     if service.is_empty() || account.is_empty() {
         anyhow::bail!("invalid keyring locator (empty service/account): {locator}");
@@ -236,7 +256,10 @@ mod tests {
 
     #[test]
     fn parse_locator_requires_shape() {
-        assert!(parse_keyring_locator("os-keyring:sacode/identity/gateway-api-key").is_ok());
+        assert_eq!(
+            parse_keyring_locator("os-keyring:sacode/identity/gateway-api-key").unwrap(),
+            ("sacode/identity", "gateway-api-key")
+        );
         assert!(parse_keyring_locator("keyring:foo").is_err());
         assert!(parse_keyring_locator("os-keyring:noslash").is_err());
     }
@@ -252,24 +275,19 @@ mod tests {
         assert_eq!(value, "rt-1");
     }
 
-    /// Live Windows keyring probe via production OsKeyringSecretStore.
+    /// Live Windows keyring probe via an isolated, process-specific locator.
+    /// Never touch the production gateway/refresh-token locators from a test.
     #[test]
-    fn live_keyring_gateway_key_resolves() {
-        let loc = "os-keyring:sacode/identity/gateway-api-key";
+    fn live_keyring_isolated_locator_roundtrip() {
+        let loc = format!(
+            "os-keyring:sacode-test-{}/identity/keyring-probe",
+            std::process::id()
+        );
         let store = OsKeyringSecretStore;
         let marker = format!("idp-probe-{}", std::process::id());
-        // set then get — proves production path
-        store.set(loc, &marker).expect("keyring set");
-        let got = store.get(loc).expect("keyring get");
+        store.set(&loc, &marker).expect("keyring set");
+        let got = store.get(&loc).expect("keyring get");
         assert_eq!(got.as_deref(), Some(marker.as_str()));
-        // restore real key from file fallback if present
-        let file_store = crate::identity::service::FileSecretStore::new(None);
-        if let Ok(Some(real)) = file_store.get(loc) {
-            let _ = OsKeyringSecretStore.set(loc, &real);
-            eprintln!("restored real gateway key into keyring");
-        } else {
-            let _ = store.delete(loc);
-        }
-        eprintln!("live_keyring_identity_ok");
+        store.delete(&loc).expect("keyring cleanup");
     }
 }

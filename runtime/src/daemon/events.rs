@@ -222,8 +222,17 @@ async fn update_task_status_from_executor_event(
     state: &Arc<DaemonState>,
     evt: &crate::executor::ExecutorEvent,
 ) {
-    if matches!(evt.event_type.as_str(), "task_completed" | "task_failed") {
+    if matches!(
+        evt.event_type.as_str(),
+        "task_completed" | "task_failed" | "task_cancelled"
+    ) {
         freeze_task_changes(state, &evt.task_id);
+        let status = match evt.event_type.as_str() {
+            "task_completed" => "completed",
+            "task_cancelled" => "cancelled",
+            _ => "failed",
+        };
+        super::automation::sync_automation_run_status(state, &evt.task_id, status);
     }
     let mut tasks = state.tasks.write().await;
     let Some(status) = tasks.get_mut(&evt.task_id) else {

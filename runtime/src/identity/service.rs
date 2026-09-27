@@ -7,9 +7,14 @@ use sacode_kernel::model::SecretRef;
 
 use super::callback::{open_or_print_authorize_url, start_callback_server};
 use super::config::IdentityConfig;
-use super::gateway::{pick_default_model, GatewayHttp, GatewayKeyResponse, ReqwestGatewayHttp};
+use super::gateway::{
+    build_chat_completions_url, pick_default_model_probed, GatewayHttp, GatewayKeyResponse,
+    ModelAvailability, ModelProbeReport, ReqwestGatewayHttp,
+};
 use super::oidc::{split_auth_code, ReqwestOidcHttp, TokenResponse};
-use super::pkce::{build_authorize_url, generate_browser_params, DEFAULT_SCOPE};
+use super::pkce::{
+    build_authorize_url, build_interactive_login_url, generate_browser_params, DEFAULT_SCOPE,
+};
 use super::secret_store::{resolve_secret_ref, OsKeyringSecretStore, SecretStore};
 use super::session::{IdentitySession, SessionStatus};
 use super::{DEFAULT_PROVIDER_NAME, GATEWAY_API_KEY_LOCATOR, REFRESH_TOKEN_LOCATOR};
@@ -46,6 +51,8 @@ pub struct LoginOutcome {
     pub dry_run: bool,
     /// Non-fatal models fetch error (keys may still be stored).
     pub models_error: Option<String>,
+    /// Result of probing each listed model for actual usability.
+    pub probe: ModelProbeReport,
 }
 
 /// Object-safe OIDC surface used by login orchestration and tests.
@@ -80,6 +87,13 @@ pub trait GatewayHttpDyn: Send + Sync {
         models_url: &'a str,
         api_key: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>>;
+
+    fn probe_model_box<'a>(
+        &'a self,
+        chat_completions_url: &'a str,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ModelAvailability>> + Send + 'a>>;
 }
 
 pub struct TypedClients<'a> {
@@ -246,6 +260,63 @@ impl GatewayHttpDyn for LiveGateway {
                 .collect())
         })
     }
+
+    fn probe_model_box<'a>(
+        &'a self,
+        chat_completions_url: &'a str,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ModelAvailability>> + Send + 'a>>
+    {
+        let url = chat_completions_url.to_string();
+        let key = api_key.to_string();
+        let model_owned = model.to_string();
+        let client = self.0.client.clone();
+        Box::pin(async move {
+            let body = serde_json::json!({
+                "model": model_owned,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            });
+            let resp = client.post(&url).bearer_auth(&key).json(&body).send().await;
+            let resp = match resp {
+                Ok(r) => r,
+                Err(e) => {
+                    let mut reason = e.to_string();
+                    if reason.len() > 120 {
+                        reason.truncate(120);
+                    }
+                    return Ok(ModelAvailability {
+                        id: model_owned,
+                        usable: false,
+                        reason: Some(reason),
+                    });
+                }
+            };
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(ModelAvailability {
+                    id: model_owned,
+                    usable: true,
+                    reason: None,
+                });
+            }
+            let code = status.as_u16();
+            let snippet = resp.text().await.unwrap_or_default();
+            let snippet: String = snippet.chars().take(120).collect();
+            let usable = !matches!(code, 404 | 501 | 502);
+            let reason = if snippet.trim().is_empty() {
+                format!("HTTP {code}")
+            } else {
+                format!("HTTP {code}: {snippet}")
+            };
+            Ok(ModelAvailability {
+                id: model_owned,
+                usable,
+                reason: Some(reason),
+            })
+        })
+    }
 }
 
 pub async fn login(
@@ -279,6 +350,7 @@ pub async fn login_with_dyn_clients(
             default_model: None,
             dry_run: true,
             models_error: None,
+            probe: ModelProbeReport::default(),
         });
     }
 
@@ -296,10 +368,11 @@ pub async fn login_with_dyn_clients(
         &params.pkce.challenge,
         DEFAULT_SCOPE,
     )?;
+    let login_url = build_interactive_login_url(&config.idp_base_url, &authorize_url)?;
     if opts.open_browser {
-        open_or_print_authorize_url(&authorize_url);
+        open_or_print_authorize_url(&login_url);
     } else {
-        println!("Authorize URL:\n{authorize_url}");
+        println!("Sign-in URL:\n{login_url}");
     }
 
     let callback_url = callback.wait_for_callback(opts.callback_timeout)?;
@@ -410,7 +483,10 @@ pub async fn complete_login_with_dyn_clients(
             }
         },
     };
-    let default_model = pick_default_model(&models);
+    let gateway = clients.as_ref().map(|clients| clients.gateway);
+    let probe = probe_gateway_models(gateway, config, &key_resp.api_key, &models).await;
+    let usable_models = probe.available.clone();
+    let default_model = pick_default_model_probed(&models, &probe);
 
     let mut session = IdentitySession {
         schema_version: 1,
@@ -419,7 +495,7 @@ pub async fn complete_login_with_dyn_clients(
         gateway_base_url: config.gateway_base_url.clone(),
         client_id: config.client_id.clone(),
         provider_name: config.provider_name.clone(),
-        models: models.clone(),
+        models: usable_models.clone(),
         default_model: default_model.clone().unwrap_or_default(),
         logged_in_at: Some(Utc::now().to_rfc3339()),
         ..Default::default()
@@ -433,11 +509,54 @@ pub async fn complete_login_with_dyn_clients(
     Ok(LoginOutcome {
         session,
         provider_name: config.provider_name.clone(),
-        models,
+        models: usable_models,
         default_model,
         dry_run: false,
         models_error,
+        probe,
     })
+}
+
+/// Probe every gateway model with a minimal chat completion.
+/// `/v1/models` only reflects what the account may access, not what is routed,
+/// so an unrouted model would otherwise be picked and fail on the first message.
+async fn probe_gateway_models(
+    gateway: Option<&dyn GatewayHttpDyn>,
+    config: &IdentityConfig,
+    api_key: &str,
+    models: &[String],
+) -> ModelProbeReport {
+    let mut report = ModelProbeReport::default();
+    if models.is_empty() {
+        return report;
+    }
+    let url = build_chat_completions_url(&config.gateway_base_url);
+    for model in models {
+        let result = match gateway {
+            Some(gateway) => gateway.probe_model_box(&url, api_key, model).await,
+            None => {
+                LiveGateway::new()
+                    .probe_model_box(&url, api_key, model)
+                    .await
+            }
+        };
+        match result {
+            Ok(avail) if avail.usable => report.available.push(avail.id),
+            Ok(avail) => {
+                tracing::warn!("gateway model {} not usable: {:?}", avail.id, avail.reason);
+                report.unavailable.push(avail);
+            }
+            Err(e) => {
+                tracing::warn!("gateway model {model} probe failed: {e}");
+                report.unavailable.push(ModelAvailability {
+                    id: model.clone(),
+                    usable: false,
+                    reason: Some(e.to_string()),
+                });
+            }
+        }
+    }
+    report
 }
 
 fn token_sub_hint(token: &TokenResponse) -> Option<String> {
@@ -465,24 +584,19 @@ fn write_provider_entry(
 }
 
 /// Public wrapper for headless `set-api-key` path.
+///
+/// Identity provider entries (sa-ai/sa-gateway) are NO LONGER written to
+/// `provider.json`. They are resolved at runtime from `session.json`.
+/// This function is kept as a no-op for backward compatibility with callers
+/// that still invoke it (ensure_fresh_session, sync_models, set-api-key).
 pub fn write_provider_entry_public(
-    workdir: &Path,
-    config: &IdentityConfig,
-    api_key: &str,
-    default_model: &Option<String>,
+    _workdir: &Path,
+    _config: &IdentityConfig,
+    _api_key: &str,
+    _default_model: &Option<String>,
 ) -> Result<()> {
-    let mut store = super::provider_bridge::ProviderCatalogBridge::new(workdir);
-    let mut secret_ref = SecretRef::os_keyring(GATEWAY_API_KEY_LOCATOR);
-    secret_ref.masked = SecretRef::mask_secret(api_key);
-    store.upsert_identity_provider(
-        &config.provider_name,
-        &config.provider_base_url(),
-        secret_ref,
-        default_model.as_deref().unwrap_or(""),
-        Some("Authorization"),
-        Some("Bearer"),
-    )?;
-    store.set_current(&config.provider_name)?;
+    // Session is already saved by complete_login_with_dyn_clients.
+    // Identity provider is injected at runtime via resolve_gateway_named_provider.
     Ok(())
 }
 
@@ -636,17 +750,13 @@ pub async fn ensure_fresh_session(
     let gateway_api_key_present = api_key.is_some();
     let has_refresh = session.refresh_token_ref.is_some();
 
-    if !access_token_expires_soon(&session, skew_secs) {
+    if !access_token_expires_soon(&session, skew_secs) && gateway_api_key_present {
         return Ok(SessionFreshness {
             refreshed: false,
             re_exchanged_gateway_key: false,
-            gateway_api_key_present,
+            gateway_api_key_present: true,
             secret_backend: None,
-            note: if gateway_api_key_present {
-                "ok: access_token still valid; gateway api_key present".into()
-            } else {
-                "ok: access_token valid".into()
-            },
+            note: "ok: access_token still valid; gateway api_key present".into(),
         });
     }
 
@@ -762,12 +872,14 @@ pub async fn sync_models(
                 .await?
         }
     };
-    let default_model = pick_default_model(&models);
-    session.models = models.clone();
+    let probe = probe_gateway_models(gateway, config, &api_key, &models).await;
+    let usable_models = probe.available.clone();
+    let default_model = pick_default_model_probed(&models, &probe);
+    session.models = usable_models.clone();
     session.default_model = default_model.clone().unwrap_or_default();
     session.save(user_root)?;
     write_provider_entry(workdir, config, &api_key, &default_model)?;
-    Ok(models)
+    Ok(usable_models)
 }
 
 pub fn select_secret_store(
@@ -784,20 +896,10 @@ pub fn select_secret_store(
     {
         return Box::new(FileSecretStore::new(user_root));
     }
-    let keyring = OsKeyringSecretStore::new();
-    let probe = "os-keyring:sacode/identity/keyring-probe";
-    match keyring.set(probe, "ok") {
-        Ok(()) => {
-            let _ = keyring.delete(probe);
-            Box::new(keyring)
-        }
-        Err(_) => {
-            eprintln!(
-                "warn: OS keyring unavailable; using file secret store under ~/.sacode/identity (0600)."
-            );
-            Box::new(FileSecretStore::new(user_root))
-        }
-    }
+    // Do not probe the production keyring service with a write: historical
+    // Windows target mappings can alias credentials and overwrite real secrets.
+    // Actual set operations already fall back to FileSecretStore on failure.
+    Box::new(OsKeyringSecretStore::new())
 }
 
 /// Store an API key in the secret store and return its `secret_ref`.
@@ -813,7 +915,13 @@ pub fn store_api_key_secret(
         anyhow::bail!("api key is empty");
     }
     let store = select_secret_store(insecure_file_secrets, user_root);
-    store.set(locator, key)?;
+    // Try the selected store; if it fails, fall back to file secret store
+    // so the user can still save their provider configuration.
+    if let Err(e) = store.set(locator, key) {
+        tracing::warn!(error = %e, %locator, "primary secret store failed; falling back to file store");
+        let fallback = FileSecretStore::new(user_root);
+        fallback.set(locator, key)?;
+    }
     let mut secret_ref = SecretRef::os_keyring(locator);
     secret_ref.masked = SecretRef::mask_secret(key);
     Ok(secret_ref)
@@ -994,7 +1102,10 @@ mod tests {
             Box<dyn std::future::Future<Output = Result<GatewayKeyResponse>> + Send + 'a>,
         > {
             Box::pin(async move {
-                assert_eq!(access_token, "access-token-test");
+                assert!(matches!(
+                    access_token,
+                    "access-token-test" | "access-token-refreshed"
+                ));
                 Ok(GatewayKeyResponse {
                     api_key: "sa-mock-key-42".into(),
                     issued: Some(true),
@@ -1014,6 +1125,23 @@ mod tests {
             Box::pin(async move {
                 assert_eq!(api_key, "sa-mock-key-42");
                 Ok(vec!["deepseek-chat".to_string(), "qwen-plus".to_string()])
+            })
+        }
+
+        fn probe_model_box<'a>(
+            &'a self,
+            _chat_completions_url: &'a str,
+            _api_key: &'a str,
+            model: &'a str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ModelAvailability>> + Send + 'a>,
+        > {
+            Box::pin(async move {
+                Ok(ModelAvailability {
+                    id: model.to_string(),
+                    usable: true,
+                    reason: None,
+                })
             })
         }
     }
@@ -1070,21 +1198,15 @@ mod tests {
             Some("refresh-token-test")
         );
 
+        // Identity provider is NO LONGER written to provider.json;
+        // it is resolved at runtime from session.json.
+        // Verify session contains all needed identity data instead.
         let session_raw =
             std::fs::read_to_string(IdentitySession::session_path(Some(&user_root))).unwrap();
         assert!(!session_raw.contains("sa-mock-key-42"));
         assert!(!session_raw.contains("refresh-token-test"));
-
-        let provider_raw = std::fs::read_to_string(workdir.join(".sacode/provider.json")).unwrap();
-        assert!(provider_raw.contains("sa-ai"));
-        let parsed: serde_json::Value = serde_json::from_str(&provider_raw).unwrap();
-        let sa = &parsed["providers"]["sa-ai"];
-        assert_eq!(sa["api_key"].as_str().unwrap_or("MISSING"), "");
-        assert_eq!(
-            sa["secret_ref"]["kind"].as_str().unwrap_or(""),
-            "os_keyring"
-        );
-        assert_eq!(sa["base_url"].as_str().unwrap_or(""), "https://gw.test/v1");
+        assert!(session_raw.contains("sa-ai"));
+        assert!(session_raw.contains("deepseek-chat"));
 
         let status = status_summary(Some(&user_root)).unwrap();
         assert!(status.logged_in);
@@ -1103,6 +1225,135 @@ mod tests {
         logout(Some(&user_root), &store, false, None).unwrap();
         assert!(store.get(GATEWAY_API_KEY_LOCATOR).unwrap().is_none());
         assert!(IdentitySession::load(Some(&user_root)).unwrap().is_none());
+    }
+
+    struct SelectiveGateway;
+    impl GatewayHttpDyn for SelectiveGateway {
+        fn exchange_gateway_key_box<'a>(
+            &'a self,
+            _exchange_url: &'a str,
+            _access_token: &'a str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<GatewayKeyResponse>> + Send + 'a>,
+        > {
+            Box::pin(async { unreachable!("sync does not exchange keys") })
+        }
+
+        fn list_models_box<'a>(
+            &'a self,
+            _models_url: &'a str,
+            _api_key: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>>
+        {
+            Box::pin(async { Ok(vec!["usable-model".into(), "broken-model".into()]) })
+        }
+
+        fn probe_model_box<'a>(
+            &'a self,
+            _chat_completions_url: &'a str,
+            _api_key: &'a str,
+            model: &'a str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ModelAvailability>> + Send + 'a>,
+        > {
+            Box::pin(async move {
+                Ok(ModelAvailability {
+                    id: model.to_string(),
+                    usable: model == "usable-model",
+                    reason: (model != "usable-model").then(|| "HTTP 404".into()),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_models_persists_only_probe_usable_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = tmp.path().join("project");
+        let user_root = tmp.path().join("home");
+        std::fs::create_dir_all(&workdir).unwrap();
+        std::fs::create_dir_all(&user_root).unwrap();
+        let store = MemorySecretStore::new();
+        store.set(GATEWAY_API_KEY_LOCATOR, "sa-sync-key").unwrap();
+        IdentitySession {
+            gateway_key_ref: Some(sacode_kernel::model::SecretRef::os_keyring(
+                GATEWAY_API_KEY_LOCATOR,
+            )),
+            ..Default::default()
+        }
+        .save(Some(&user_root))
+        .unwrap();
+        let config = IdentityConfig {
+            gateway_base_url: "https://gw.test".into(),
+            ..Default::default()
+        };
+
+        let models = sync_models(
+            &config,
+            Some(&user_root),
+            &workdir,
+            &store,
+            Some(&SelectiveGateway),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(models, vec!["usable-model"]);
+        let session = IdentitySession::load(Some(&user_root)).unwrap().unwrap();
+        assert_eq!(session.models, vec!["usable-model"]);
+        assert_eq!(session.default_model, "usable-model");
+    }
+
+    #[tokio::test]
+    async fn missing_gateway_key_forces_refresh_and_reexchange() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = tmp.path().join("project");
+        let user_root = tmp.path().join("home");
+        std::fs::create_dir_all(&workdir).unwrap();
+        std::fs::create_dir_all(&user_root).unwrap();
+        let store = MemorySecretStore::new();
+        store
+            .set(REFRESH_TOKEN_LOCATOR, "refresh-token-test")
+            .unwrap();
+        IdentitySession {
+            gateway_key_ref: Some(sacode_kernel::model::SecretRef::os_keyring(
+                GATEWAY_API_KEY_LOCATOR,
+            )),
+            refresh_token_ref: Some(sacode_kernel::model::SecretRef::os_keyring(
+                REFRESH_TOKEN_LOCATOR,
+            )),
+            access_token_expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+            ..Default::default()
+        }
+        .save(Some(&user_root))
+        .unwrap();
+        let config = IdentityConfig {
+            idp_base_url: "https://idp.test".into(),
+            gateway_base_url: "https://gw.test".into(),
+            client_id: "sacode".into(),
+            provider_name: "sa-ai".into(),
+            ..Default::default()
+        };
+
+        let freshness = ensure_fresh_session(
+            &config,
+            Some(&user_root),
+            &workdir,
+            &store,
+            Some(&MockOidc),
+            Some(&MockGateway),
+            120,
+        )
+        .await
+        .unwrap();
+
+        assert!(freshness.refreshed);
+        assert!(freshness.re_exchanged_gateway_key);
+        assert!(freshness.gateway_api_key_present);
+        assert_eq!(
+            store.get(GATEWAY_API_KEY_LOCATOR).unwrap().as_deref(),
+            Some("sa-mock-key-42")
+        );
     }
 
     #[tokio::test]

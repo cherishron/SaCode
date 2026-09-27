@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 
@@ -13,9 +14,9 @@ use sacode_kernel::{
 
 use crate::{
     assemble_checkpoint_snapshot, assemble_task_snapshot,
-    code_audit::{run_audit, AuditScanOptions},
+    code_audit::{heuristic_scan_workspace, run_audit, AuditScanOptions},
     task_changes::{capture_workspace_tree, diff_workspace_trees, TaskChangesSnapshot},
-    TaskSnapshotProjection,
+    SkillRegistry, TaskSnapshotProjection, WorkspaceScanner,
 };
 
 use super::{
@@ -35,15 +36,79 @@ pub async fn health_check() -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn create_task(
-    State(state): State<Arc<DaemonState>>,
-    Json(req): Json<TaskRequest>,
-) -> Json<TaskResponse> {
-    let task_id = generate_task_id();
+/// 任务分发结果（HTTP handler 与 scheduler 共用）
+pub enum TaskDispatchError {
+    /// 指定的技能不可用，请求直接被拒（不入队）
+    SkillUnavailable {
+        task_id: String,
+        mode: ExecutionMode,
+        skill: String,
+    },
+    /// backend 解析失败，请求直接被拒（不入队）
+    BackendUnavailable {
+        task_id: String,
+        mode: ExecutionMode,
+        backend_id: String,
+        code: String,
+        message: String,
+    },
+    /// 入队失败
+    QueueRejected {
+        task_id: String,
+        mode: ExecutionMode,
+        message: String,
+    },
+}
+
+/// 从 create_task 提取的共享分发链路：
+/// prompt 组装 → backend 分发 → baseline 捕获 → queue.submit。
+///
+/// scheduler 的定时/手动触发必须走这里，确保不绕过审批/审计/Changes 链路。
+pub async fn dispatch_task(
+    state: &Arc<DaemonState>,
+    req: &TaskRequest,
+) -> Result<(String, TaskQueueStatus, BackendTaskMeta), TaskDispatchError> {
+    dispatch_task_with_turn(state, req, None).await
+}
+
+pub async fn dispatch_task_with_turn(
+    state: &Arc<DaemonState>,
+    req: &TaskRequest,
+    conversation_turn: Option<(&str, &str)>,
+) -> Result<(String, TaskQueueStatus, BackendTaskMeta), TaskDispatchError> {
+    let task_id = format!("{}-{:016x}", generate_task_id(), rand::random::<u64>());
     let mode = parse_mode(&req.mode);
     let priority = parse_priority(&req.priority);
     let retry_policy = parse_retry_policy(&req.retry_policy);
-    let task = Task::new(req.prompt.clone(), mode, None);
+    let workdir = state.workdir.as_deref();
+    let mut effective_prompt = req.prompt.clone();
+    if let Some(skill) = req
+        .skill
+        .as_deref()
+        .filter(|skill| !skill.trim().is_empty())
+    {
+        let dir = workdir.ok_or_else(|| TaskDispatchError::SkillUnavailable {
+            task_id: task_id.clone(),
+            mode,
+            skill: skill.to_string(),
+        })?;
+        effective_prompt = SkillRegistry::new(dir)
+            .render_prompt(skill, &req.prompt, dir)
+            .map_err(|error| {
+                tracing::warn!(?error, skill, "task skill unavailable");
+                TaskDispatchError::SkillUnavailable {
+                    task_id: task_id.clone(),
+                    mode,
+                    skill: skill.to_string(),
+                }
+            })?;
+    }
+    if !req.context_paths.is_empty() {
+        effective_prompt.push_str("\n\n[Selected workspace context]\n");
+        effective_prompt.push_str(&req.context_paths.join("\n"));
+    }
+    let task = Task::new(effective_prompt, mode, None)
+        .with_model(req.model_provider.clone(), req.model_name.clone());
 
     let backend_id = normalize_backend_id(
         req.backend_id
@@ -58,13 +123,13 @@ pub async fn create_task(
             agent_session_id: req.session_id.clone(),
         },
         Err(err) => {
-            return Json(TaskResponse::backend_dispatch_error(
+            return Err(TaskDispatchError::BackendUnavailable {
                 task_id,
                 mode,
-                backend_id.as_str(),
-                err.code.as_str(),
-                &err.safe_message,
-            ));
+                backend_id: backend_id.as_str().to_string(),
+                code: err.code.as_str().to_string(),
+                message: err.safe_message.clone(),
+            });
         }
     };
 
@@ -125,29 +190,94 @@ pub async fn create_task(
         }),
     );
 
-    match state.queue.submit(scheduled_task).await {
-        Ok(_) => {
-            let mut executor = state.executor.lock().await;
-            let spawned = executor.run_once().await;
-
-            Json(TaskResponse::queued(
-                task_id,
-                mode,
-                if spawned > 0 {
-                    TaskQueueStatus::Running
-                } else {
-                    TaskQueueStatus::Pending
-                },
-                "Task created and submitted to queue".to_string(),
-                Some(backend),
-            ))
+    if let Err(e) = state.queue.submit(scheduled_task).await {
+        state.tasks.write().await.remove(&task_id);
+        if let (Some(store), Some(_)) = (state.store.as_ref(), conversation_turn) {
+            if let Err(error) = store.delete_desktop_task(&task_id) {
+                tracing::warn!(?error, ?task_id, "failed to remove rejected desktop task");
+            }
         }
-        Err(e) => Json(TaskResponse::error(
+        return Err(TaskDispatchError::QueueRejected {
             task_id,
             mode,
-            format!("Failed to submit task: {}", e),
-        )),
+            message: format!("Failed to submit task: {}", e),
+        });
     }
+    if let Some((conversation_id, original_prompt)) = conversation_turn {
+        if let Some(store) = state.store.as_ref() {
+            if let Err(error) = store.save_desktop_turn(conversation_id, &task_id, original_prompt)
+            {
+                tracing::error!(?error, ?task_id, "conversation persistence failed");
+                state.queue.cancel(&task_id).await;
+                state.queue.forget_desktop_turn(&task_id).await;
+                state.tasks.write().await.remove(&task_id);
+                if let Err(cleanup_error) = store.delete_desktop_task(&task_id) {
+                    tracing::warn!(
+                        ?cleanup_error,
+                        ?task_id,
+                        "failed to remove orphan desktop task"
+                    );
+                }
+                return Err(TaskDispatchError::QueueRejected {
+                    task_id,
+                    mode,
+                    message: "conversation persistence failed".to_string(),
+                });
+            }
+        }
+    }
+
+    let mut executor = state.executor.lock().await;
+    let spawned = executor.run_once().await;
+    let queue_status = if spawned > 0 {
+        TaskQueueStatus::Running
+    } else {
+        TaskQueueStatus::Pending
+    };
+
+    Ok((task_id, queue_status, backend))
+}
+
+pub async fn create_task(
+    State(state): State<Arc<DaemonState>>,
+    Json(req): Json<TaskRequest>,
+) -> (StatusCode, Json<TaskResponse>) {
+    let (status, response) = match dispatch_task(&state, &req).await {
+        Ok((task_id, queue_status, backend)) => (
+            StatusCode::OK,
+            TaskResponse::queued(
+                task_id,
+                parse_mode(&req.mode),
+                queue_status,
+                "Task created and submitted to queue".to_string(),
+                Some(backend),
+            ),
+        ),
+        Err(TaskDispatchError::SkillUnavailable {
+            task_id,
+            mode,
+            skill,
+        }) => (
+            StatusCode::BAD_REQUEST,
+            TaskResponse::error(task_id, mode, format!("skill not available: {skill}")),
+        ),
+        Err(TaskDispatchError::BackendUnavailable {
+            task_id,
+            mode,
+            backend_id,
+            code,
+            message,
+        }) => (
+            StatusCode::OK,
+            TaskResponse::backend_dispatch_error(task_id, mode, &backend_id, &code, &message),
+        ),
+        Err(TaskDispatchError::QueueRejected {
+            task_id,
+            mode,
+            message,
+        }) => (StatusCode::OK, TaskResponse::error(task_id, mode, message)),
+    };
+    (status, Json(response))
 }
 
 pub async fn list_agents(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
@@ -155,6 +285,108 @@ pub async fn list_agents(State(state): State<Arc<DaemonState>>) -> Json<serde_js
     Json(serde_json::json!({
         "agents": agents,
         "default_backend_id": sacode_kernel::DEFAULT_AGENT_BACKEND_ID,
+    }))
+}
+
+pub async fn get_workspace_capabilities(
+    State(state): State<Arc<DaemonState>>,
+) -> Json<serde_json::Value> {
+    let Some(workdir) = state.workdir.as_deref() else {
+        return Json(serde_json::json!({
+            "workspace": "",
+            "models": [],
+            "skills": [],
+            "files": [],
+        }));
+    };
+
+    let session = crate::identity::IdentitySession::load(None).ok().flatten();
+    let account = crate::identity::status_summary(None).ok().map(|summary| {
+        serde_json::json!({
+            "logged_in": summary.logged_in,
+            "subject": summary.subject,
+            "provider_name": summary.provider_name,
+            "models_count": summary.models_count,
+            "default_model": summary.default_model,
+            "gateway_base_url": summary.gateway_base_url,
+            "logged_in_at": summary.logged_in_at,
+        })
+    });
+    let models = crate::agents::resolve_selectable_model_candidates(workdir)
+        .into_iter()
+        .map(|(provider, model, runtime)| {
+            let rule = runtime.rule.as_ref();
+            serde_json::json!({
+                "id": format!("{provider}/{model}"),
+                "provider": provider,
+                "model": model,
+                "thinking": rule.is_some_and(|value| value.thinking),
+                "reasoning_effort": rule.and_then(|value| value.reasoning_effort.clone()),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let skills = SkillRegistry::new(workdir)
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|skill| {
+            serde_json::json!({
+                "name": skill.name,
+                "description": skill.description,
+                "source": skill.source.label(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let workspace = WorkspaceScanner::new().scan(workdir);
+    let files = workspace
+        .files
+        .into_iter()
+        .filter_map(|file| {
+            let path = std::path::Path::new(&file.path)
+                .strip_prefix(workdir)
+                .ok()?;
+            Some(serde_json::json!({
+                "path": path.to_string_lossy().replace('\\', "/"),
+                "size": file.size,
+                "language": file.language,
+                "is_dir": file.is_dir,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let model_status = if !models.is_empty() {
+        "ready"
+    } else if session
+        .as_ref()
+        .is_none_or(|value| !value.status().logged_in)
+    {
+        "not_logged_in"
+    } else if session
+        .as_ref()
+        .is_some_and(|value| value.models.is_empty())
+    {
+        "no_gateway_models"
+    } else if session.as_ref().is_some_and(|value| {
+        value.gateway_key_ref.as_ref().is_none_or(|reference| {
+            crate::identity::resolve_secret_ref(reference, None)
+                .ok()
+                .flatten()
+                .is_none_or(|secret| secret.trim().is_empty())
+        })
+    }) {
+        "credential_unavailable"
+    } else {
+        "no_authorized_provider"
+    };
+    Json(serde_json::json!({
+        "workspace": workdir.to_string_lossy(),
+        "models": models,
+        "model_status": model_status,
+        "account": account,
+        "skills": skills,
+        "files": files,
     }))
 }
 
@@ -600,6 +832,7 @@ pub async fn cancel_task(
             .await
             .get(&task_id)
             .map(TaskStatus::snapshot);
+        super::automation::sync_automation_run_status(&state, &task_id, "cancelled");
         emit_event(
             &state,
             &task_id,
@@ -644,6 +877,46 @@ pub async fn cancel_task(
             "message": "Task cannot be cancelled (not in pending/ready/running state)",
         }))
     }
+}
+
+/// 删除会话：从内存任务表中移除任务，并从队列与执行器取消它。
+/// 会话是用户可见的上下文单元，删除不可恢复。
+pub async fn delete_task(
+    State(state): State<Arc<DaemonState>>,
+    Path(task_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut tasks = state.tasks.write().await;
+    if tasks.remove(&task_id).is_none() {
+        return Json(serde_json::json!({
+            "protocol_version": TASK_PROTOCOL_VERSION,
+            "task_id": task_id,
+            "status": "error",
+            "message": "Task not found",
+        }));
+    }
+    drop(tasks);
+
+    let cancelled = state.queue.cancel(&task_id).await;
+    {
+        let executor = state.executor.lock().await;
+        executor.abort_task(&task_id).await;
+    }
+    if cancelled {
+        super::automation::sync_automation_run_status(&state, &task_id, "cancelled");
+    }
+    state.clear_pending_approvals_for_task(&task_id).await;
+    emit_event(
+        &state,
+        &task_id,
+        "task_deleted",
+        serde_json::json!({ "task_id": task_id }),
+    );
+
+    Json(serde_json::json!({
+        "protocol_version": TASK_PROTOCOL_VERSION,
+        "task_id": task_id,
+        "status": "deleted",
+    }))
 }
 
 pub async fn get_queue_status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
@@ -720,12 +993,71 @@ pub async fn run_audit_scan(
             "message": "workdir unavailable",
         }));
     };
+    let tier = req
+        .scan_tier
+        .as_deref()
+        .unwrap_or("deep")
+        .to_ascii_lowercase();
     let mut opts = AuditScanOptions::default();
-    opts.use_ai = req.use_ai.unwrap_or(true);
-    if let Some(max_files) = req.max_files {
-        opts.max_files = max_files;
-    }
     let provider = req.model_provider;
+    match tier.as_str() {
+        "static" => {
+            opts.use_ai = false;
+            if let Some(max_files) = req.max_files {
+                opts.max_files = max_files;
+            }
+            let report = crate::code_audit::AuditReport::new(
+                workdir,
+                heuristic_scan_workspace(workdir, &opts),
+            );
+            let audit_id = report.created_at.replace(':', "-").replace('+', "p");
+            let report_json_path = match crate::code_audit::report::save_report(workdir, &report) {
+                Ok(path) => path,
+                Err(error) => {
+                    return Json(serde_json::json!({
+                        "status": "error", "message": error.to_string(),
+                    }))
+                }
+            };
+            let summary = super::types::AuditReportSummary {
+                audit_id: audit_id.clone(),
+                created_at: report.created_at.clone(),
+                root: report.root.clone(),
+                ai_used: false,
+                high: report.summary.high,
+                medium: report.summary.medium,
+                low: report.summary.low,
+                info: report.summary.info,
+                finding_count: report.findings.len(),
+            };
+            state
+                .audit_reports
+                .write()
+                .await
+                .insert(audit_id.clone(), summary);
+            let findings: Vec<serde_json::Value> = report
+                .findings
+                .iter()
+                .map(|f| serde_json::to_value(f).unwrap_or(serde_json::json!({})))
+                .collect();
+            return Json(serde_json::json!({
+                "status": "completed",
+                "audit_id": audit_id,
+                "report": report,
+                "findings": findings,
+                "report_json_path": report_json_path.display().to_string(),
+                "scan_tier": "static",
+            }));
+        }
+        // "lightweight" 与缺省值均走完整审计路径：后端不再区分轻量档的
+        // 预算差异（depth 只影响 UI 侧调用频率），这里统一交给 run_audit。
+        _ => {
+            opts.use_ai = req.use_ai.unwrap_or(true);
+            if let Some(max_files) = req.max_files {
+                opts.max_files = max_files;
+            }
+        }
+    }
     match run_audit(workdir, &opts, provider.as_ref()).await {
         Ok(outcome) => {
             let audit_id = outcome
@@ -761,6 +1093,7 @@ pub async fn run_audit_scan(
                 "report": outcome.report,
                 "findings": findings,
                 "report_json_path": outcome.report_json_path.map(|p| p.display().to_string()),
+                "scan_tier": if tier == "lightweight" { "lightweight" } else { "deep" },
             }))
         }
         Err(error) => Json(serde_json::json!({

@@ -4,37 +4,62 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::provider_config::{NamedProviderConfig, ProviderConfigStore};
+use crate::provider_config::NamedProviderConfig;
 use crate::provider_runtime::{resolve_authorized_named_provider, resolve_named_provider};
 use sacode_runtime::identity::{
     ensure_fresh_session, is_identity_provider_name, select_secret_store, IdentityConfig,
     IdentitySession, LoginOptions,
 };
 
-/// Resolve the saai product provider (gateway-backed identity entry).
-pub fn resolve_gateway_named_provider(workdir: &Path) -> Option<NamedProviderConfig> {
-    let store = ProviderConfigStore::new(workdir);
-    let catalog = store.load_catalog().ok().flatten()?;
-    for (name, config) in catalog.providers {
-        if !is_identity_provider_name(&name) && config.secret_ref.is_none() {
-            continue;
-        }
-        if !is_identity_provider_name(&name) {
-            continue;
-        }
-        let mut config = config;
-        if config.api_key.is_empty() {
-            config.api_key = config.resolved_api_key();
-        }
-        if config.api_key.is_empty() || config.base_url.is_empty() {
-            continue;
-        }
-        if config.model.is_empty() {
-            config.model = identity_default_model().unwrap_or_else(|| "default".to_string());
-        }
-        return Some(NamedProviderConfig { name, config });
+/// Resolve the saai product provider from session.json (runtime injection).
+/// Identity providers are NO LONGER stored in provider.json;
+/// they are constructed on-the-fly from the identity session.
+pub fn resolve_gateway_named_provider(_workdir: &Path) -> Option<NamedProviderConfig> {
+    let session = IdentitySession::load(None).ok().flatten()?;
+    if session.gateway_key_ref.is_none() {
+        return None;
     }
-    None
+    let mut config = IdentityConfig::load(None).unwrap_or_default();
+    config.apply_env_overrides();
+    config.fill_local_defaults_if_empty();
+    let base_url = config.provider_base_url();
+    if base_url.is_empty() {
+        return None;
+    }
+    let model = if !session.default_model.trim().is_empty() {
+        session.default_model.clone()
+    } else {
+        session.models.first().cloned().unwrap_or_default()
+    };
+    if model.is_empty() {
+        return None;
+    }
+    // Resolve api_key from keyring/file secret store.
+    let secret_ref = session.gateway_key_ref.clone()?;
+    let mut provider_config = crate::provider_config::ProviderConfig {
+        base_url,
+        api_key: String::new(),
+        model,
+        auth_header: Some("Authorization".to_string()),
+        auth_scheme: Some("Bearer".to_string()),
+        secret_ref: Some(secret_ref),
+    };
+    // Resolve secret_ref to plaintext for runtime use.
+    if provider_config.api_key.is_empty() {
+        provider_config.api_key = provider_config.resolved_api_key();
+    }
+    if provider_config.api_key.is_empty() {
+        return None;
+    }
+    let name = if !session.provider_name.is_empty() {
+        session.provider_name
+    } else {
+        "sa-ai".to_string()
+    };
+    Some(NamedProviderConfig {
+        name,
+        config: provider_config,
+    })
 }
 
 /// Identity session models / default model (already synced from gateway `/v1/models`).
@@ -46,6 +71,7 @@ pub fn identity_session_models() -> Option<(Vec<String>, String)> {
     Some((session.models, session.default_model))
 }
 
+#[allow(dead_code)]
 fn identity_default_model() -> Option<String> {
     let (_, default_model) = identity_session_models()?;
     if default_model.trim().is_empty() {
@@ -172,8 +198,6 @@ pub fn product_model_entries(workdir: &Path) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider_config::ProviderConfig;
-    use sacode_kernel::model::{SecretRef, SecretRefKind};
     use serial_test::serial;
 
     struct EnvGuard {
@@ -215,12 +239,19 @@ mod tests {
     #[serial]
     fn product_ready_false_without_providers() {
         let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set(&[
+            ("SACODE_HOME", tmp.path().as_os_str()),
+            ("USERPROFILE", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
+        ]);
         assert!(!product_ready(tmp.path()));
     }
 
     #[test]
     #[serial]
     fn resolve_gateway_requires_usable_key() {
+        // resolve_gateway_named_provider now reads from session.json, not provider.json.
+        // Without a session, it returns None.
         let tmp = tempfile::tempdir().unwrap();
         let _env = EnvGuard::set(&[
             ("SACODE_HOME", tmp.path().as_os_str()),
@@ -229,53 +260,8 @@ mod tests {
                 std::ffi::OsStr::new("file"),
             ),
         ]);
-        let store = ProviderConfigStore::new(tmp.path());
-        store
-            .save_named(
-                "sa-ai",
-                &ProviderConfig {
-                    base_url: "http://127.0.0.1:8090/v1".into(),
-                    api_key: String::new(),
-                    model: "chat".into(),
-                    auth_header: Some("Authorization".into()),
-                    auth_scheme: Some("Bearer".into()),
-                    secret_ref: Some(SecretRef {
-                        kind: SecretRefKind::OsKeyring,
-                        locator: Some("os-keyring:sacode/providers/missing".into()),
-                        masked: "****".into(),
-                    }),
-                },
-                true,
-            )
-            .unwrap();
-        // Unresolvable secret → not ready as gateway product path
-        assert!(resolve_gateway_named_provider(tmp.path()).is_none());
 
-        let locator = sacode_runtime::identity::provider_api_key_locator("sa-ai");
-        sacode_runtime::identity::store_api_key_secret(
-            &locator,
-            "sa-test-key",
-            true,
-            Some(tmp.path()),
-        )
-        .unwrap();
-        store
-            .save_named(
-                "sa-ai",
-                &ProviderConfig {
-                    base_url: "http://127.0.0.1:8090/v1".into(),
-                    api_key: "sa-test-key".into(),
-                    model: "chat".into(),
-                    auth_header: Some("Authorization".into()),
-                    auth_scheme: Some("Bearer".into()),
-                    secret_ref: None,
-                },
-                true,
-            )
-            .unwrap();
-        let named = resolve_gateway_named_provider(tmp.path()).expect("gateway provider");
-        assert_eq!(named.name, "sa-ai");
-        assert_eq!(named.config.model, "chat");
-        assert!(!named.config.api_key.is_empty());
+        // No session → no gateway provider.
+        assert!(resolve_gateway_named_provider(tmp.path()).is_none());
     }
 }

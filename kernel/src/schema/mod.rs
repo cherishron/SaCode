@@ -1,5 +1,6 @@
 mod acceptance;
 mod agent_backend;
+mod agent_profile;
 mod checkpoint;
 mod choice;
 mod plan;
@@ -17,6 +18,10 @@ pub use acceptance::{
 pub use agent_backend::{
     normalize_backend_id, AgentBackendHealth, AgentBackendId, AgentBackendKind, AgentCapabilities,
     AgentDescriptor, AgentEvent, BackendFailureCode, BackendTaskMeta, DEFAULT_AGENT_BACKEND_ID,
+};
+pub use agent_profile::{
+    preset_agent_profiles, AgentProfile, AgentProfileScope, PresetAgentProfile, SkillId,
+    DEFAULT_AGENT_PROFILE_ID, PROFILE_MODEL_TIERS, PROFILE_MODES,
 };
 pub use checkpoint::{Checkpoint, ToolRecord};
 pub use choice::Choice;

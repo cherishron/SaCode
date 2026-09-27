@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use super::config::IdentityConfig;
 use super::gateway::GatewayHttp as _;
 use super::oidc::{split_auth_code, OidcHttp as _, TokenResponse};
-use super::pkce::{build_authorize_url, generate_browser_params, DEFAULT_SCOPE};
+use super::pkce::{
+    build_authorize_url, build_interactive_login_url, generate_browser_params, DEFAULT_SCOPE,
+};
 use super::secret_store::SecretStore;
 use super::service::{
     complete_login_with_dyn_clients, FileSecretStore, LoginOptions, LoginOutcome,
@@ -132,7 +134,7 @@ pub fn headless_login_instructions(authorize_url: &str, redirect_uri: &str) -> S
     )
 }
 
-/// Build authorize URL + persist pending PKCE for later paste-callback.
+/// Build the interactive sign-in URL and persist pending PKCE for later paste-callback.
 pub fn prepare_headless_login(
     config: &IdentityConfig,
     user_root: Option<&Path>,
@@ -176,7 +178,8 @@ pub fn prepare_headless_login(
         authorize_url: authorize_url.clone(),
     };
     pending.save(user_root)?;
-    Ok((pending, authorize_url))
+    let login_url = build_interactive_login_url(&config.idp_base_url, &authorize_url)?;
+    Ok((pending, login_url))
 }
 
 /// Finish login using a callback URL pasted by the operator.
@@ -222,8 +225,8 @@ pub async fn login_headless_wait(
     opts: LoginOptions,
     secret_store: &dyn SecretStore,
 ) -> Result<LoginOutcome> {
-    let (pending, authorize_url) = prepare_headless_login(config, opts.user_root.as_deref())?;
-    let instructions = headless_login_instructions(&authorize_url, &pending.redirect_uri);
+    let (pending, login_url) = prepare_headless_login(config, opts.user_root.as_deref())?;
+    let instructions = headless_login_instructions(&login_url, &pending.redirect_uri);
     println!("{instructions}");
     println!(
         "Waiting up to {}s for callback (or Ctrl+C then use --paste-callback)...",
@@ -471,6 +474,7 @@ pub fn apply_gateway_api_key(
         default_model,
         dry_run: false,
         models_error: models.1,
+        probe: super::gateway::ModelProbeReport::default(),
     })
 }
 

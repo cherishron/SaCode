@@ -125,6 +125,7 @@ fn parse_flags(args: &[String]) -> (IdentityConfig, LoginOptions, CliLoginMode) 
     let mut config = IdentityConfig::load(user_root().as_deref()).unwrap_or_default();
     config.apply_env_overrides();
     config = config.with_overrides(idp, gateway, client_id, redirect, provider);
+    config.fill_local_defaults_if_empty();
     config.normalize();
 
     let mode = if let Some(url) = paste_callback {
@@ -297,6 +298,7 @@ fn cmd_set_api_key(args: Vec<String>) -> Result<()> {
     let mut config = IdentityConfig::load(user_root().as_deref()).unwrap_or_default();
     config.apply_env_overrides();
     config = config.with_overrides(idp, gateway, None, None, provider);
+    config.fill_local_defaults_if_empty();
     config.normalize();
     let _ = config.save(user_root().as_deref());
 
@@ -335,6 +337,7 @@ fn cmd_logout(args: Vec<String>) -> Result<()> {
 async fn cmd_models() -> Result<()> {
     let mut config = IdentityConfig::load(user_root().as_deref()).unwrap_or_default();
     config.apply_env_overrides();
+    config.fill_local_defaults_if_empty();
     config.normalize();
     config.ensure_ready_for_network()?;
     let insecure = std::env::var("SACODE_IDENTITY_INSECURE_FILE_SECRETS").is_ok()

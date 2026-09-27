@@ -12,7 +12,21 @@ use sacode_kernel::model::{
 use serde::{Deserialize, Serialize};
 
 const PROVIDER_CONFIG_FILE: &str = ".sacode/provider.json";
+const USER_PROVIDERS_FILE: &str = ".sacode/providers.json";
 const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
+
+/// Resolve user-level home directory (`~/.sacode/providers.json`).
+fn user_providers_path() -> PathBuf {
+    std::env::var_os("SACODE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(USER_PROVIDERS_FILE)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfig {
@@ -47,7 +61,10 @@ pub struct NamedProviderConfig {
 
 #[derive(Debug, Clone)]
 pub struct ProviderConfigStore {
-    path: PathBuf,
+    /// User-level path (`~/.sacode/providers.json`) — primary write target.
+    user_path: PathBuf,
+    /// Project-level path (`.sacode/provider.json`) — read-only override.
+    project_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -59,8 +76,126 @@ pub struct SaCodeConfigStore {
 impl ProviderConfigStore {
     pub fn new(workdir: &Path) -> Self {
         Self {
-            path: workdir.join(PROVIDER_CONFIG_FILE),
+            user_path: user_providers_path(),
+            project_path: workdir.join(PROVIDER_CONFIG_FILE),
         }
+    }
+
+    /// Load a catalog from a single file path (user or project).
+    fn load_from_file(path: &Path) -> Result<Option<ProviderCatalog>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(path)?;
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
+        let value: serde_json::Value = serde_json::from_str(&content)?;
+        if value.get("providers").is_some() {
+            // Try standard catalog format first.
+            if let Ok(mut catalog) = serde_json::from_value::<ProviderCatalog>(value.clone()) {
+                normalize_catalog(&mut catalog);
+                return Ok(Some(catalog));
+            }
+            // Fallback: desktop camelCase format (apiKey/baseUrl/defaultModel/activeProvider).
+            return Self::parse_desktop_catalog(&value);
+        }
+        // legacy single-provider shape
+        let mut config: ProviderConfig = serde_json::from_value(value)?;
+        config.base_url = normalize_base_url(&config.base_url);
+        let mut providers = BTreeMap::new();
+        providers.insert("default".to_string(), config);
+        Ok(Some(ProviderCatalog {
+            current: "default".to_string(),
+            providers,
+        }))
+    }
+
+    /// Parse desktop app's camelCase provider format into standard catalog.
+    fn parse_desktop_catalog(value: &serde_json::Value) -> Result<Option<ProviderCatalog>> {
+        let providers_val = value.get("providers");
+        let Some(providers_obj) = providers_val.and_then(|v| v.as_object()) else {
+            return Ok(None);
+        };
+        let mut providers = BTreeMap::new();
+        for (name, entry) in providers_obj {
+            // Convert camelCase to snake_case fields.
+            let config = ProviderConfig {
+                base_url: entry
+                    .get("baseUrl")
+                    .or_else(|| entry.get("base_url"))
+                    .and_then(|v| v.as_str())
+                    .map(normalize_base_url)
+                    .unwrap_or_default(),
+                api_key: entry
+                    .get("apiKey")
+                    .or_else(|| entry.get("api_key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                model: entry
+                    .get("defaultModel")
+                    .or_else(|| entry.get("model"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                auth_header: entry
+                    .get("auth_header")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                auth_scheme: entry
+                    .get("auth_scheme")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                secret_ref: entry
+                    .get("secret_ref")
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()
+                    .ok()
+                    .flatten(),
+            };
+            providers.insert(name.clone(), config);
+        }
+        let current = value
+            .get("activeProvider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut catalog = ProviderCatalog { current, providers };
+        normalize_catalog(&mut catalog);
+        Ok(Some(catalog))
+    }
+
+    /// Merge user-level and project-level catalogs.
+    /// Project-level entries override user-level same-name entries.
+    fn load_effective_catalog(&self) -> Result<Option<ProviderCatalog>> {
+        let user = Self::load_from_file(&self.user_path)?;
+        let project = Self::load_from_file(&self.project_path)?;
+        match (user, project) {
+            (None, None) => Ok(None),
+            (Some(u), None) => Ok(Some(u)),
+            (None, Some(p)) => Ok(Some(p)),
+            (Some(mut u), Some(p)) => {
+                // Project overrides user for same-name entries.
+                for (name, entry) in p.providers {
+                    u.providers.insert(name, entry);
+                }
+                if !p.current.is_empty() {
+                    u.current = p.current;
+                }
+                normalize_catalog(&mut u);
+                Ok(Some(u))
+            }
+        }
+    }
+
+    /// Save catalog to user-level path.
+    fn save_catalog_to_user(&self, catalog: &ProviderCatalog) -> Result<()> {
+        if let Some(parent) = self.user_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.user_path, serde_json::to_string_pretty(catalog)?)?;
+        Ok(())
     }
 
     pub fn load(&self) -> Result<Option<ProviderConfig>> {
@@ -68,7 +203,7 @@ impl ProviderConfigStore {
     }
 
     pub fn load_current(&self) -> Result<Option<NamedProviderConfig>> {
-        let catalog = match self.load_catalog()? {
+        let catalog = match self.load_effective_catalog()? {
             Some(value) => value,
             None => return Ok(None),
         };
@@ -95,31 +230,7 @@ impl ProviderConfigStore {
     }
 
     pub fn load_catalog(&self) -> Result<Option<ProviderCatalog>> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
-
-        let content = fs::read_to_string(&self.path)?;
-        // 空文件或纯空白文件视为未配置，避免 serde 解析失败
-        if content.trim().is_empty() {
-            return Ok(None);
-        }
-        let value: serde_json::Value = serde_json::from_str(&content)?;
-
-        if value.get("providers").is_some() {
-            let mut catalog: ProviderCatalog = serde_json::from_value(value)?;
-            normalize_catalog(&mut catalog);
-            return Ok(Some(catalog));
-        }
-
-        let mut config: ProviderConfig = serde_json::from_value(value)?;
-        config.base_url = normalize_base_url(&config.base_url);
-        let mut providers = BTreeMap::new();
-        providers.insert("default".to_string(), config);
-        Ok(Some(ProviderCatalog {
-            current: "default".to_string(),
-            providers,
-        }))
+        self.load_effective_catalog()
     }
 
     pub fn save(&self, config: &ProviderConfig) -> Result<()> {
@@ -127,10 +238,6 @@ impl ProviderConfigStore {
     }
 
     pub fn save_named(&self, name: &str, config: &ProviderConfig, set_current: bool) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
         let name = name.trim();
         let mut normalized = ProviderConfig {
             base_url: normalize_base_url(&config.base_url),
@@ -141,7 +248,7 @@ impl ProviderConfigStore {
             secret_ref: config.secret_ref.clone(),
         };
 
-        // Product line: api_key never lands in provider.json — keyring/file secret store only.
+        // api_key never lands in providers.json — secret store only.
         if !config.api_key.trim().is_empty() {
             let locator = sacode_runtime::identity::provider_api_key_locator(name);
             let secret_ref = sacode_runtime::identity::store_api_key_secret(
@@ -153,31 +260,31 @@ impl ProviderConfigStore {
             normalized.secret_ref = Some(secret_ref);
         }
 
-        let mut catalog = self.load_catalog()?.unwrap_or_default();
+        // Load only user-level catalog for writing (don't modify project file).
+        let mut catalog = Self::load_from_file(&self.user_path)?.unwrap_or_default();
         catalog.providers.insert(name.to_string(), normalized);
         if set_current || catalog.current.is_empty() {
             catalog.current = name.to_string();
         }
         normalize_catalog(&mut catalog);
-
-        fs::write(&self.path, serde_json::to_string_pretty(&catalog)?)?;
+        self.save_catalog_to_user(&catalog)?;
         Ok(())
     }
 
     pub fn set_current(&self, name: &str) -> Result<()> {
-        let mut catalog = self.load_catalog()?.unwrap_or_default();
+        let mut catalog = self.load_effective_catalog()?.unwrap_or_default();
         if !catalog.providers.contains_key(name) {
             anyhow::bail!("provider not found: {}", name);
         }
         catalog.current = name.to_string();
         normalize_catalog(&mut catalog);
-        fs::write(&self.path, serde_json::to_string_pretty(&catalog)?)?;
+        self.save_catalog_to_user(&catalog)?;
         Ok(())
     }
 
     pub fn get(&self, name: &str) -> Result<Option<ProviderConfig>> {
         Ok(self
-            .load_catalog()?
+            .load_effective_catalog()?
             .and_then(|catalog| catalog.providers.get(name).cloned()))
     }
 
@@ -188,7 +295,7 @@ impl ProviderConfigStore {
             anyhow::bail!("provider name cannot be empty");
         }
 
-        let mut catalog = self.load_catalog()?.unwrap_or_default();
+        let mut catalog = Self::load_from_file(&self.user_path)?.unwrap_or_default();
         let Some(config) = catalog.providers.remove(from) else {
             anyhow::bail!("provider not found: {}", from);
         };
@@ -200,16 +307,13 @@ impl ProviderConfigStore {
             catalog.current = to.to_string();
         }
         normalize_catalog(&mut catalog);
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&self.path, serde_json::to_string_pretty(&catalog)?)?;
+        self.save_catalog_to_user(&catalog)?;
         Ok(())
     }
 
     pub fn remove(&self, name: &str) -> Result<()> {
         let name = name.trim();
-        let mut catalog = self.load_catalog()?.unwrap_or_default();
+        let mut catalog = Self::load_from_file(&self.user_path)?.unwrap_or_default();
         if catalog.current == name {
             anyhow::bail!("cannot remove current provider: {}", name);
         }
@@ -217,10 +321,7 @@ impl ProviderConfigStore {
             anyhow::bail!("provider not found: {}", name);
         }
         normalize_catalog(&mut catalog);
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&self.path, serde_json::to_string_pretty(&catalog)?)?;
+        self.save_catalog_to_user(&catalog)?;
         Ok(())
     }
 
@@ -552,7 +653,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{ProviderConfig, ProviderConfigStore};
+    use super::{user_providers_path, ProviderConfig, ProviderConfigStore};
     use serial_test::serial;
 
     struct EnvGuard {
@@ -692,8 +793,17 @@ mod tests {
         assert!(loaded.config.api_key.is_empty());
         assert!(loaded.config.secret_ref.is_some());
         assert_eq!(loaded.config.resolved_api_key(), "test-key");
-        let raw = fs::read_to_string(workdir.join(".sacode/provider.json")).expect("read raw");
-        assert!(!raw.contains("test-key"), "provider.json must not hold key");
+        // Provider is now saved to user-level ~/.sacode/providers.json, not project-level.
+        let user_providers = user_providers_path();
+        assert!(
+            user_providers.exists(),
+            "providers.json should exist at user level"
+        );
+        let raw = fs::read_to_string(&user_providers).expect("read raw user providers.json");
+        assert!(
+            !raw.contains("test-key"),
+            "providers.json must not hold key"
+        );
     }
 
     #[test]

@@ -145,6 +145,7 @@ struct App {
     current_provider: Option<NamedProviderConfig>,
     pending_base_url: Option<String>,
     pending_provider_name: Option<String>,
+    pending_model: Option<String>,
     provider_options: Vec<String>,
     selected_provider_index: usize,
     model_options: Vec<ModelOptionEntry>,
@@ -332,12 +333,17 @@ enum TodoStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum InputMode {
     Chat,
     LoginBaseUrl,
     LoginApiKey,
     ProviderSelect,
     ProviderRename,
+    ProviderAddName,
+    ProviderAddBaseUrl,
+    ProviderAddModel,
+    ProviderAddApiKey,
     ModelSelect,
     ThemeSelect,
     ConnectSelect,
@@ -357,6 +363,7 @@ enum InputMode {
     ConfigSelect,
     ConfigEnumSelect,
     ConfigNumberInput,
+    ConfigTextInput,
 }
 
 #[derive(Debug, Clone)]

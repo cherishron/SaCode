@@ -59,6 +59,23 @@ pub struct ModelObject {
     pub id: String,
 }
 
+/// Availability of a single gateway model as observed by a probe call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelAvailability {
+    pub id: String,
+    pub usable: bool,
+    /// Short reason when `usable` is false (e.g. HTTP status).
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Probe result for one or more gateway models.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelProbeReport {
+    pub available: Vec<String>,
+    pub unavailable: Vec<ModelAvailability>,
+}
+
 /// HTTP surface for gateway data-plane calls. Injectable for mock tests.
 pub trait GatewayHttp: Send + Sync {
     fn exchange_gateway_key(
@@ -80,6 +97,15 @@ pub trait GatewayHttp: Send + Sync {
         gateway_api_key: &str,
         body: &ModelConnectionRequest,
     ) -> impl std::future::Future<Output = Result<ModelConnectionResponse>> + Send;
+
+    /// Probe whether a model can actually serve a chat completion.
+    /// Gateway /v1/models may list models whose upstream is not routed yet.
+    fn probe_model(
+        &self,
+        chat_completions_url: &str,
+        gateway_api_key: &str,
+        model: &str,
+    ) -> impl std::future::Future<Output = Result<ModelAvailability>> + Send;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -172,6 +198,90 @@ impl GatewayHttp for ReqwestGatewayHttp {
         }
         serde_json::from_str(&text).context("parse model-connection response")
     }
+
+    async fn probe_model(
+        &self,
+        chat_completions_url: &str,
+        gateway_api_key: &str,
+        model: &str,
+    ) -> Result<ModelAvailability> {
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+        });
+        let resp = self
+            .client
+            .post(chat_completions_url)
+            .bearer_auth(gateway_api_key)
+            .json(&body)
+            .send()
+            .await;
+        let id = model.to_string();
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ModelAvailability {
+                    id,
+                    usable: false,
+                    reason: Some(Self::short_reason(&e)),
+                });
+            }
+        };
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            let valid_choices = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("choices")
+                        .and_then(|choices| choices.as_array())
+                        .cloned()
+                })
+                .map(|choices| !choices.is_empty())
+                .unwrap_or(false);
+            if valid_choices {
+                return Ok(ModelAvailability {
+                    id,
+                    usable: true,
+                    reason: None,
+                });
+            }
+            let snippet: String = text.chars().take(120).collect();
+            return Ok(ModelAvailability {
+                id,
+                usable: false,
+                reason: Some(if snippet.trim().is_empty() {
+                    "HTTP 2xx response missing choices".to_string()
+                } else {
+                    format!("HTTP 2xx response missing choices: {snippet}")
+                }),
+            });
+        }
+        let code = status.as_u16();
+        let snippet: String = text.chars().take(120).collect();
+        let reason = if snippet.trim().is_empty() {
+            format!("HTTP {code}")
+        } else {
+            format!("HTTP {code}: {snippet}")
+        };
+        Ok(ModelAvailability {
+            id,
+            usable: false,
+            reason: Some(reason),
+        })
+    }
+}
+
+impl ReqwestGatewayHttp {
+    fn short_reason(err: &reqwest::Error) -> String {
+        let mut out = err.to_string();
+        if out.len() > 120 {
+            out.truncate(120);
+        }
+        out
+    }
 }
 
 pub fn build_exchange_url(gateway_base: &str) -> String {
@@ -190,6 +300,13 @@ pub fn build_models_url(gateway_base: &str) -> String {
     )
 }
 
+/// OpenAI-compatible chat completions path on the gateway data plane.
+pub fn build_chat_completions_url(gateway_base: &str) -> String {
+    format!("{}/v1/chat/completions", gateway_base.trim_end_matches('/'))
+}
+
+/// Pick the default model, preferring chat-like entries, then the first entry.
+/// When a probe report is supplied, only models that are actually usable are considered.
 pub fn pick_default_model(models: &[String]) -> Option<String> {
     if models.is_empty() {
         return None;
@@ -200,6 +317,31 @@ pub fn pick_default_model(models: &[String]) -> Option<String> {
         lower.contains("chat") || lower.contains("instruct") || lower.starts_with("gpt")
     });
     Some(preferred.cloned().unwrap_or_else(|| models[0].clone()))
+}
+
+/// Same preference ordering, restricted to models confirmed usable by a probe.
+/// Returns no default when the probe found nothing usable.
+pub fn pick_default_model_probed(models: &[String], probe: &ModelProbeReport) -> Option<String> {
+    if models.is_empty() {
+        return None;
+    }
+    let usable: Vec<&String> = models
+        .iter()
+        .filter(|m| probe.available.iter().any(|a| a == *m))
+        .collect();
+    if usable.is_empty() {
+        return None;
+    }
+    let preferred = usable.iter().find(|m| {
+        let lower = m.to_lowercase();
+        lower.contains("chat") || lower.contains("instruct") || lower.starts_with("gpt")
+    });
+    Some(
+        preferred
+            .cloned()
+            .cloned()
+            .unwrap_or_else(|| usable[0].clone()),
+    )
 }
 
 pub fn validate_gateway_key(api_key: &str) -> Result<()> {
@@ -238,5 +380,38 @@ mod tests {
         );
         assert_eq!(pick_default_model(&["a".into()]).as_deref(), Some("a"));
         assert_eq!(pick_default_model(&[]), None);
+    }
+
+    #[test]
+    fn default_model_prefers_probed_usable_model() {
+        let models = vec![
+            "glm-4.7-flash".to_string(),
+            "gpt-mock-test".to_string(),
+            "sensenova-6.8-flash-lite".to_string(),
+        ];
+        // Nothing probed usable: do not expose an unroutable default.
+        let empty = ModelProbeReport::default();
+        assert_eq!(pick_default_model_probed(&models, &empty), None);
+        // Only sensenova is actually reachable on the gateway.
+        let probe = ModelProbeReport {
+            available: vec!["sensenova-6.8-flash-lite".to_string()],
+            unavailable: vec![ModelAvailability {
+                id: "glm-4.7-flash".to_string(),
+                usable: false,
+                reason: Some("HTTP 404".into()),
+            }],
+        };
+        assert_eq!(
+            pick_default_model_probed(&models, &probe).as_deref(),
+            Some("sensenova-6.8-flash-lite")
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_uses_v1_prefix() {
+        assert_eq!(
+            build_chat_completions_url("https://gw.example.com/"),
+            "https://gw.example.com/v1/chat/completions"
+        );
     }
 }

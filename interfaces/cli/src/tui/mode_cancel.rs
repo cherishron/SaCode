@@ -5,6 +5,7 @@ impl App {
         self.input.clear();
         self.pending_base_url = None;
         self.pending_provider_name = None;
+        self.pending_model = None;
         self.pending_skill_action = None;
         self.pending_mcp_action = None;
         self.pending_checkpoint_action = None;
@@ -13,6 +14,15 @@ impl App {
         }
         if self.input_mode == InputMode::ProviderRename {
             self.push_system_message("已取消 provider 重命名");
+        }
+        if matches!(
+            self.input_mode,
+            InputMode::ProviderAddName
+                | InputMode::ProviderAddBaseUrl
+                | InputMode::ProviderAddModel
+                | InputMode::ProviderAddApiKey
+        ) {
+            self.push_system_message("已取消 provider 添加");
         }
         if self.input_mode == InputMode::ModelSelect {
             self.push_system_message("已取消模型选择");
@@ -62,7 +72,10 @@ impl App {
         if self.input_mode == InputMode::ConfigEnumSelect {
             self.config_enum_options.clear();
         }
-        if self.input_mode == InputMode::ConfigNumberInput {
+        if matches!(
+            self.input_mode,
+            InputMode::ConfigNumberInput | InputMode::ConfigTextInput
+        ) {
             self.input.clear();
         }
         if self.input_mode == InputMode::InputOptimizePreview {
