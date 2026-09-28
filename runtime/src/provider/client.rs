@@ -1,17 +1,61 @@
 use anyhow::Result;
-use reqwest::Client;
+use reqwest::{header::RETRY_AFTER, Client, RequestBuilder, Response, StatusCode};
 use sacode_kernel::model::{
     ChatMessage, ChatRequest, ChatResponse, ChatUsage, ModelProvider, ProviderKind, ThinkingConfig,
     ToolDefinition, MIMO_TOKEN_PLAN_BASE_URL,
 };
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::time::Duration;
 
 use super::ProviderClientError;
 
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TOOL_ROUNDS: usize = 12;
 const TOOL_SUMMARY_MAX_CHARS: usize = 500;
+const TRANSIENT_RETRY_DELAYS_MS: [u64; 2] = [350, 1000];
+
+/// Retry only responses that arrived before any model output was consumed.
+/// A transport error may mean the provider processed the request, so it is
+/// deliberately left to the caller rather than replayed automatically.
+async fn send_with_transient_retry(builder: RequestBuilder) -> Result<Response> {
+    let mut request = builder;
+    for delay_ms in TRANSIENT_RETRY_DELAYS_MS {
+        let retry = request.try_clone();
+        let response = request
+            .send()
+            .await
+            .map_err(ProviderClientError::from_transport)?;
+        if !matches!(
+            response.status(),
+            StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT
+        ) {
+            return Ok(response);
+        }
+        let Some(next_request) = retry else {
+            return Ok(response);
+        };
+        let retry_after = response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        if retry_after.is_some_and(|seconds| seconds > 5) {
+            return Ok(response);
+        }
+        let delay = retry_after
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_millis(delay_ms));
+        tracing::warn!(status = %response.status(), delay_ms = delay.as_millis(), "retrying transient provider response");
+        tokio::time::sleep(delay).await;
+        request = next_request;
+    }
+    request
+        .send()
+        .await
+        .map_err(ProviderClientError::from_transport)
+        .map_err(Into::into)
+}
 
 #[derive(Debug)]
 pub struct ProviderClient {
@@ -81,10 +125,7 @@ impl ProviderClient {
             builder = builder.header(name, value);
         }
 
-        let response = builder
-            .send()
-            .await
-            .map_err(ProviderClientError::from_transport)?;
+        let response = send_with_transient_retry(builder).await?;
         let status = response.status();
 
         if !status.is_success() {
@@ -456,10 +497,7 @@ impl ProviderClient {
             builder = builder.header(name, value);
         }
 
-        let mut response = builder
-            .send()
-            .await
-            .map_err(ProviderClientError::from_transport)?;
+        let mut response = send_with_transient_retry(builder).await?;
         let status = response.status();
 
         if !status.is_success() {
@@ -514,10 +552,7 @@ impl ProviderClient {
             builder = builder.header(name, value);
         }
 
-        let mut response = builder
-            .send()
-            .await
-            .map_err(ProviderClientError::from_transport)?;
+        let mut response = send_with_transient_retry(builder).await?;
         let status = response.status();
 
         if !status.is_success() {
@@ -1009,6 +1044,73 @@ mod tests {
         summarize_tool_outputs, StreamChunkKind, StreamRoundState, ToolChatResult,
     };
     use sacode_kernel::model::{ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn transient_provider_error_retries_before_returning_output() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = attempts.clone();
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move || {
+                let counted = counted.clone();
+                async move {
+                    if counted.fetch_add(1, Ordering::SeqCst) < 2 {
+                        (axum::http::StatusCode::SERVICE_UNAVAILABLE, "busy")
+                    } else {
+                        (axum::http::StatusCode::OK, "ready")
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = super::send_with_transient_retry(
+            reqwest::Client::new()
+                .post(format!("http://{address}/chat/completions"))
+                .json(&serde_json::json!({"messages": []})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_retry_respects_long_retry_after() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = attempts.clone();
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move || {
+                let counted = counted.clone();
+                async move {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        [("retry-after", "60")],
+                        "busy",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = super::send_with_transient_retry(
+            reqwest::Client::new().post(format!("http://{address}/chat/completions")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
 
     #[test]
     fn default_base_url_matches_provider_kinds() {
