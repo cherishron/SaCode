@@ -2,12 +2,30 @@
  * Phase 4: 支持 taskId 过滤（点击侧栏会话时只显示该会话消息）
  */
 import { el } from '../dom.ts';
-import type { DesktopApp } from './service.ts';
+import type { DesktopApp, TimelineItem } from './service.ts';
 import { buildProgressBar, type ProgressState } from '../components/progress-bar.ts';
 import { buildMessage } from '../components/message-bubble.ts';
 import { buildInputArea, createInputAreaState, type InputAreaState } from '../components/input-area.ts';
 import { buildTimelineNavigation, collectTimelineAnchors } from '../components/timeline-rail.ts';
 import { buildApprovalCard } from '../components/approval-card.ts';
+
+export function conversationMessages(app: DesktopApp, taskFilter: string | null): TimelineItem[] {
+  if (!taskFilter) return [];
+  const detail = app.conversationTurns?.id === taskFilter
+    ? app.conversationTurns : app.conversationDetails.get(taskFilter);
+  if (!detail) return [];
+  return detail.turns.flatMap((turn) => {
+    const live = app.timeline.filter((item) => item.taskId === turn.task_id && item.kind !== 'user');
+    const assistant = turn.output || [...live].reverse().find((item) => item.kind === 'assistant')?.text;
+    const errors = turn.error ? [{ kind: 'error' as const, text: turn.error, taskId: turn.task_id }] : live.filter((item) => item.kind === 'error');
+    return [
+      { kind: 'user' as const, text: turn.prompt, taskId: turn.task_id },
+      ...live.filter((item) => item.kind !== 'assistant' && item.kind !== 'error'),
+      ...(assistant ? [{ kind: 'assistant' as const, text: assistant, taskId: turn.task_id }] : []),
+      ...errors,
+    ];
+  });
+}
 
 export function buildConversation(
   app: DesktopApp,
@@ -32,19 +50,7 @@ export function buildConversation(
     ? 'running'
     : 'done';
 
-  const filtered = detail
-    ? detail.turns.flatMap((turn) => {
-        const live = app.timeline.filter((item) => item.taskId === turn.task_id && item.kind !== 'user');
-        const assistant = turn.output || [...live].reverse().find((item) => item.kind === 'assistant')?.text;
-        const errors = turn.error ? [{ kind: 'error' as const, text: turn.error, taskId: turn.task_id }] : live.filter((item) => item.kind === 'error');
-        return [
-          { kind: 'user' as const, text: turn.prompt, taskId: turn.task_id },
-          ...live.filter((item) => item.kind !== 'assistant' && item.kind !== 'error'),
-          ...(assistant ? [{ kind: 'assistant' as const, text: assistant, taskId: turn.task_id }] : []),
-          ...errors,
-        ];
-      })
-    : taskFilter ? [] : app.timeline;
+  const filtered = taskFilter ? conversationMessages(app, taskFilter) : app.timeline;
 
   const messageNodes = filtered.map((item, index) => {
     const node = buildMessage(item) as HTMLElement;
