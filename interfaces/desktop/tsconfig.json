@@ -10,7 +10,9 @@
     "types": ["node"],
     "noEmit": true,
     "isolatedModules": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "jsx": "preserve",
+    "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "src/**/*.vue"]
 }

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -121,6 +122,9 @@ function sacodeSidecarPlugin(): Plugin {
           url.startsWith('/api/git-auth') ||
           url.startsWith('/api/hooks') ||
           url.startsWith('/api/import') ||
+          url.startsWith('/api/mcp') ||
+          url.startsWith('/api/skills') ||
+          url.startsWith('/api/workspace') ||
           url.startsWith('/api/desktop/conversations');
         if (!proxied) return next();
         const headers: Record<string, string> = {};
@@ -176,7 +180,7 @@ function sacodeSidecarPlugin(): Plugin {
 
 export default defineConfig({
   root: '.',
-  plugins: [sacodeSidecarPlugin()],
+  plugins: [vue(), sacodeSidecarPlugin()],
   server: {
     port: 5173,
     strictPort: true,

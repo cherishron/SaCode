@@ -21,6 +21,9 @@ reqwest.workspace = true
 tauri-plugin-autostart = "2"
 portable-pty = "0.9"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

@@ -309,6 +309,64 @@ mod tests {
         assert!(!first.to_string_lossy().starts_with(r"\\?\"));
     }
 
+    #[tokio::test]
+    #[ignore = "requires SACODE_TEST_BINARY and a local TCP listener"]
+    async fn native_sidecar_proxies_authenticated_requests() {
+        let binary = std::env::var_os("SACODE_TEST_BINARY").expect("set SACODE_TEST_BINARY");
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let mut sidecar = start_sidecar(
+            binary.into(),
+            workspace,
+            temp.path().join("ready"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let dto = serde_json::to_string(&sidecar.handle_dto()).unwrap();
+        assert!(sidecar.info.auth_required);
+        assert!(!dto.contains("token"));
+        assert!(!std::fs::read_to_string(&sidecar.ready_path)
+            .unwrap()
+            .contains(sidecar.token()));
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let unauthorized = http
+            .get(format!("{}/api/desktop/conversations", sidecar.base_url()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let proxy = sidecar.proxy_snapshot();
+        let list = proxy
+            .proxy("GET", "/api/desktop/conversations", None)
+            .await
+            .unwrap();
+        assert_eq!(list.status, 200);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&list.body).unwrap()["conversations"],
+            serde_json::json!([])
+        );
+        let rejected = proxy
+            .proxy(
+                "POST",
+                "/api/desktop/conversations",
+                Some(
+                    serde_json::json!({"prompt":"smoke", "mode":"build", "skill":"missing-skill"})
+                        .to_string(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.status, 400);
+        assert!(proxy
+            .proxy("GET", "http://example.invalid/", None)
+            .await
+            .is_err());
+        sidecar.stop().await;
+    }
+
     #[test]
     fn sidecar_dto_never_serializes_token() {
         let dto = SidecarHandleDto {
