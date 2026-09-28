@@ -1119,12 +1119,24 @@ textarea {
   margin: 0 auto 8px;
 }
 
+.file-pick-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 120px;
+}
+
 .file-pick-menu {
-  width: 320px;
+  width: min(420px, 92vw);
   background: #2a2a28;
   background: var(--td-bg-color-popup, #2a2a28);
   border-radius: 12px;
-  padding: 6px;
+  padding: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme='light'] .file-pick-menu,

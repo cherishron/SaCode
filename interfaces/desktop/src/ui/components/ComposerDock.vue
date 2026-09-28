@@ -349,34 +349,30 @@ function onPaste(event: ClipboardEvent) {
       </template>
     </t-chat-sender>
 
-    <!-- @ 项目文件选择 -->
-    <t-popup
-      :visible="pickerOpen"
-      trigger="click"
-      placement="top-start"
-      :overlay-style="{ zIndex: 320, padding: '6px' }"
-      @visible-change="(v: boolean) => (pickerOpen = v)"
+    <!-- @ 项目文件：固定浮层，不随 popup 自动关 -->
+    <div
+      v-if="pickerOpen"
+      class="file-pick-overlay"
+      @click.self="pickerOpen = false"
     >
-      <span style="display: none" />
-      <template #content>
-        <div class="file-pick-menu" @click.stop>
-          <input v-model="pickerFilter" class="plus-search" placeholder="搜索项目文件" />
-          <div class="file-pick-list">
-            <button
-              v-for="p in workspaceFiles"
-              :key="p"
-              type="button"
-              class="plus-sub-item"
-              @click="addProjectFile(p)"
-            >
-              <FileIcon size="12" />
-              <span class="plus-sub-name">{{ p }}</span>
-            </button>
-            <div v-if="!workspaceFiles.length" class="plus-sub-empty">无匹配文件</div>
-          </div>
+      <div class="file-pick-menu" @click.stop>
+        <input v-model="pickerFilter" class="plus-search" placeholder="搜索项目文件" autofocus />
+        <div class="file-pick-list">
+          <button
+            v-for="p in workspaceFiles"
+            :key="p"
+            type="button"
+            class="plus-sub-item"
+            @click="addProjectFile(p)"
+          >
+            <FileIcon size="12" />
+            <span class="plus-sub-name">{{ p }}</span>
+          </button>
+          <div v-if="!workspaceFiles.length" class="plus-sub-empty">无匹配文件</div>
         </div>
-      </template>
-    </t-popup>
+        <button type="button" class="plus-item" @click="pickerOpen = false">关闭</button>
+      </div>
+    </div>
 
     <div v-if="sendError" class="composer-error">{{ sendError }}</div>
   </div>
