@@ -95,6 +95,91 @@ pub async fn get_file(
     preview_file(&root, &query.path).map(Json)
 }
 
+/// P2-5：按目录一层懒加载（path 空串 = 根）
+pub async fn list_dir(
+    State(state): State<Arc<DaemonState>>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let root: PathBuf = state
+        .workdir
+        .clone()
+        .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "工作区不可用"))?;
+    list_dir_inner(&root, &query.path).map(Json)
+}
+
+fn list_dir_inner(root: &Path, relative: &str) -> Result<Value, ApiError> {
+    if relative.len() > 4096 {
+        return Err(error(StatusCode::BAD_REQUEST, "路径过长"));
+    }
+    let rel_path = Path::new(relative);
+    if rel_path
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+        && !relative.is_empty()
+    {
+        return Err(error(StatusCode::BAD_REQUEST, "路径必须位于工作区内"));
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "工作区不可用"))?;
+    let dir = if relative.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel_path)
+    };
+    let canonical_dir = dir
+        .canonicalize()
+        .map_err(|_| error(StatusCode::NOT_FOUND, "目录不存在"))?;
+    if !canonical_dir.starts_with(&canonical_root) || !canonical_dir.is_dir() {
+        return Err(error(StatusCode::FORBIDDEN, "路径越界或不是目录"));
+    }
+
+    let mut entries = Vec::new();
+    let read = std::fs::read_dir(&canonical_dir)
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "目录读取失败"))?;
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') && name != ".sacode" {
+            // 跳过隐藏项（保留 .sacode 以便看 uploads）
+            if name != ".sacode" {
+                continue;
+            }
+        }
+        let meta = entry.metadata().ok();
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let child_rel = if relative.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative}/{name}")
+        };
+        entries.push(json!({
+            "path": child_rel,
+            "name": name,
+            "is_dir": is_dir,
+            "size": size,
+            "language": "",
+        }));
+    }
+    // 目录优先，再按名称
+    entries.sort_by(|a, b| {
+        let ad = a["is_dir"].as_bool().unwrap_or(false);
+        let bd = b["is_dir"].as_bool().unwrap_or(false);
+        bd.cmp(&ad)
+            .then_with(|| {
+                a["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["name"].as_str().unwrap_or(""))
+            })
+    });
+    // 单层上限 500
+    if entries.len() > 500 {
+        entries.truncate(500);
+    }
+    Ok(json!({ "path": relative, "entries": entries }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

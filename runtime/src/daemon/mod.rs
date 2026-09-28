@@ -10,6 +10,7 @@ use axum::{
 use sacode_kernel::{ExecutionMode, TaskPriority};
 
 mod account;
+mod audit_export;
 mod approval;
 mod automation;
 mod design;
@@ -26,6 +27,10 @@ mod sidecar;
 mod status;
 mod types;
 mod workspace_file;
+mod question;
+mod mcp_admin;
+mod skills_admin;
+mod uploads;
 
 pub use approval::{get_metrics, list_task_approvals, resolve_approval, HttpApprovalDecider};
 pub use handlers::run_daemon;
@@ -210,6 +215,21 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                 .route("/task/:id", delete(delete_task))
                 .route("/task/:id/approve", post(approval::resolve_approval))
                 .route("/task/:id/approvals", get(approval::list_task_approvals))
+                .route("/task/:id/answer", post(question::answer_task_question))
+                .route("/api/mcp/servers", get(mcp_admin::list_servers))
+                .route(
+                    "/api/mcp/servers/:name",
+                    put(mcp_admin::upsert_server)
+                        .delete(mcp_admin::delete_server),
+                )
+                .route("/api/mcp/servers/:name/toggle", post(mcp_admin::toggle_server))
+                .route("/api/mcp/servers/:name/test", post(mcp_admin::test_server))
+                .route("/api/skills", get(skills_admin::list_skills))
+                .route("/api/workspace/uploads", post(uploads::upload_attachment))
+                .route(
+                    "/api/skills/:name",
+                    put(skills_admin::upsert_skill).delete(skills_admin::delete_skill),
+                )
                 .route("/events", get(stream_events))
                 .route("/events/:id", get(stream_task_events))
                 .route("/api/stream", get(stream_api_events))
@@ -217,11 +237,17 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                 .route("/agents", get(list_agents))
                 .route("/workspace/capabilities", get(get_workspace_capabilities))
                 .route("/workspace/file", get(workspace_file::get_file))
+                .route("/workspace/list", get(workspace_file::list_dir))
                 .route("/account/status", get(account::status))
                 .route("/account/login", post(account::login))
                 .route("/account/logout", post(account::logout))
                 .route("/account/sync-models", post(account::sync_models))
                 .route("/account/connections", post(account::register_connection))
+                .route("/account/entitlements", get(account::entitlements))
+                .route("/account/entitlement-login", post(account::entitlement_login))
+                .route("/account/license", get(account::license_status).post(account::license_import))
+                .route("/account/activation-request", post(account::activation_request))
+                .route("/api/audit/export", post(audit_export::export_audit))
                 .route(
                     "/providers/local",
                     get(providers::list).post(providers::create),
