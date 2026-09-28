@@ -1,0 +1,61 @@
+/* SaCode Desktop Layout Contract — 唯一度量来源
+ * 对齐 MonkeyCode LAYOUT.md 的结构度量（不抄其视觉资产）。
+ * 组件 CSS 禁止再写第二套高度/列宽/列表密度常量。
+ * 契约文档：docs/plans/desktop-layout-contract.md
+ */
+
+:root {
+  /* === 壳高度（四档贯通） === */
+  --chrome-h: 28px;          /* 窗框条（Windows/Linux 自绘；mac 由原生灯占位） */
+  --chrome-row: 40px;        /* 任务列顶行 / 列收起顶条 / 设置页头 */
+  --pane-head-h: 48px;       /* 分格细头（主头） */
+  --header-h: 52px;          /* 覆盖视图头（设置等，与 chrome-row 同族） */
+
+  /* === 任务列 === */
+  --w-side: 232px;           /* 缺省宽度 */
+  --w-side-min: 184px;
+  --w-side-max: 420px;
+
+  /* === 会话中线（消息流与 composer 必须共用） === */
+  --chat-measure: min(64rem, max(48rem, 92%));
+  --chat-measure-pane: min(64rem, 92%); /* 分格内：无 48rem 地板 */
+
+  /* === 列表密度（menu-sm 档） === */
+  --list-font: 12px;
+  --list-line: 1.45;
+  --list-gap: 4px;
+  --list-row-min: 28px;
+  --list-indent: 20px;       /* 每级缩进：图标 12 + gap 8 */
+  --list-icon: 12px;
+  --list-icon-slot: 12px;
+
+  /* === 结构线 === */
+  --divider: 1px;
+  --handle-hit: 8px;         /* 分隔线透明把手命中区 */
+  --border-structure: var(--border-weak);
+
+  /* === 字阶（与列表/正文/标题对齐） === */
+  --fs-list: 12px;
+  --fs-body: 14px;
+  --fs-title: 14px;
+
+  /* 兼容别名（迁移期指向契约值，旧引用不断） */
+  --topbar-height: var(--chrome-row);
+  --sidebar-width: var(--w-side);
+  --sidebar-width-collapsed: 56px;
+  --content-max-width: var(--chat-measure);
+  --composer-max-width: var(--chat-measure);
+  --statusbar-height: 0px;
+}
+
+/* 任务列宽度可拖时由 JS 写入 --w-side（钳制 min/max） */
+.app-shell {
+  --task-col: var(--w-side);
+}
+
+/* 滚动纪律：纵滚容器 */
+.scroll-y {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}

@@ -473,6 +473,31 @@ export class DesktopApp {
     await this.refreshWorkspaceCapabilities();
   }
 
+  async accountEntitlements(product?: string) {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.accountEntitlements(product);
+  }
+
+  async accountEntitlementLogin(): Promise<void> {
+    if (!this.client) throw new Error('daemon 未连接');
+    await this.client.accountEntitlementLogin();
+  }
+
+  async accountLicenseStatus() {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.accountLicenseStatus();
+  }
+
+  async accountLicenseImport(license: string) {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.accountLicenseImport(license);
+  }
+
+  async accountActivationRequest(input?: { device_name?: string; product?: string; platform?: string }) {
+    if (!this.client) throw new Error('daemon 未连接');
+    return this.client.accountActivationRequest(input);
+  }
+
   async createLocalProvider(input: { name: string; base_url: string; api_key: string; models: string[]; thinking: boolean; reasoning_effort?: string }): Promise<void> {
     if (!this.client) throw new Error('daemon 未连接');
     await this.client.createLocalProvider(input);

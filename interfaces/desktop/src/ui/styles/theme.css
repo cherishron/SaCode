@@ -1,0 +1,71 @@
+/* Shell 令牌桥接 — 全部派生自 TDesign 自定义主题（tdesign-theme.css）
+ * 不要在业务 CSS 里写死品牌色；改主题只动 tdesign-theme.css。
+ */
+
+:root {
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  --bg-base: var(--td-bg-color-page, #17202a);
+  --bg-surface: var(--td-bg-color-secondarycontainer, #222c36);
+  --bg-raised: var(--td-bg-color-container, #fff);
+  --bg-overlay: var(--td-bg-color-specialcomponent, #fff);
+  --bg-inset: var(--td-bg-color-component, #e0eaf8);
+  --bg-scrim: var(--td-mask-active, rgba(0, 0, 0, 0.8));
+
+  --text-strong: var(--td-text-color-primary, rgba(0, 0, 0, 0.9));
+  --text-base: var(--td-text-color-secondary, rgba(0, 0, 0, 0.6));
+  --text-weak: var(--td-text-color-placeholder, rgba(0, 0, 0, 0.4));
+  --text-on-accent: var(--td-text-color-anti, #fff);
+
+  --accent: var(--td-brand-color, #0052d9);
+  --accent-hover: var(--td-brand-color-hover, #366ef4);
+  --accent-soft: var(--td-brand-color-light, #f2f3ff);
+  --accent-weaker: var(--td-brand-color-focus, #d9e1ff);
+  --accent-fg: var(--td-text-color-brand, #0052d9);
+
+  --success: var(--td-success-color, #0abf5b);
+  --success-soft: var(--td-success-color-light, #d6f4e4);
+  --warning: var(--td-warning-color, #ff7200);
+  --warning-soft: var(--td-warning-color-light, #ffe8d5);
+  --danger: var(--td-error-color, #e54545);
+  --danger-soft: var(--td-error-color-light, #fbe0e0);
+  --info: var(--td-brand-color-6, #366ef4);
+  --info-soft: var(--td-brand-color-light, #f2f3ff);
+
+  --border-base: var(--td-border-level-1-color, #e0eaf8);
+  --border-weak: var(--td-component-border, #d0dae7);
+  --border-accent: var(--td-brand-color, #0052d9);
+
+  --shadow-sm: var(--td-shadow-1);
+  --shadow-md: var(--td-shadow-2);
+
+  --code-bg: var(--td-bg-color-component, #e0eaf8);
+  --code-border: var(--td-component-border, #d0dae7);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  --text-12-regular: 400 12px/1.5 var(--font-sans);
+  --text-12-medium: 500 12px/1.5 var(--font-sans);
+  --text-13-regular: 400 13px/1.55 var(--font-sans);
+  --text-14-regular: 400 14px/1.6 var(--font-sans);
+  --text-14-medium: 500 14px/1.55 var(--font-sans);
+  --text-mono-sm: 400 12px/1.6 var(--font-mono);
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-normal: 200ms;
+}
