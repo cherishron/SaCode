@@ -19,6 +19,7 @@ tracing.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 tauri-plugin-autostart = "2"
+portable-pty = "0.9"
 
 [features]
 default = ["custom-protocol"]

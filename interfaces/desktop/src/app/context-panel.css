@@ -66,6 +66,136 @@
   font-size: 28px;
 }
 
+/* Workspace tree and task diff panel */
+.context-files,
+.context-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 100%;
+}
+
+.context-section-heading,
+.context-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.context-section-title {
+  color: var(--text-strong);
+  font: var(--text-13-medium);
+}
+
+.context-icon-button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-base);
+  cursor: pointer;
+}
+
+.context-icon-button:hover:not(:disabled) { color: var(--text-strong); }
+.context-icon-button:disabled { opacity: .55; cursor: default; }
+
+.context-file-search {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  outline: none;
+  background: var(--bg-raised);
+  color: var(--text-strong);
+  font: var(--text-12-regular);
+}
+
+.context-file-search:focus { border-color: var(--accent); }
+
+.context-file-tree,
+.context-change-list {
+  flex: 0 1 260px;
+  min-height: 90px;
+  overflow: auto;
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+
+.context-tree-row,
+.context-change-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  cursor: pointer;
+  text-align: left;
+  font: var(--text-12-regular);
+}
+
+.context-tree-row:hover,
+.context-change-row:hover { background: var(--bg-raised); }
+.context-tree-row.selected,
+.context-change-row.selected { background: var(--accent-soft); color: var(--accent-fg); }
+.context-tree-row.directory { font: var(--text-12-medium); }
+.context-tree-row:focus-visible,
+.context-change-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.context-tree-icon {
+  width: 15px;
+  flex: none;
+  color: var(--text-weak);
+  text-align: center;
+}
+
+.context-tree-name,
+.context-change-path,
+.context-preview-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-tree-name,
+.context-change-path { flex: 1; min-width: 0; }
+.context-tree-size { flex: none; padding: 0 var(--space-2); color: var(--text-weak); font: var(--text-11-regular); }
+.context-tree-empty { padding: var(--space-4); color: var(--text-weak); text-align: center; font: var(--text-12-regular); }
+
+.context-file-preview,
+.context-change-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.context-preview-heading { padding: var(--space-2); border-bottom: 1px solid var(--border-weak); }
+.context-preview-path { min-width: 0; flex: 1; color: var(--text-strong); font: var(--text-mono-sm); }
+.context-preview-meta { flex: none; color: var(--text-weak); font: var(--text-11-regular); }
+.context-preview-message,
+.context-preview-empty { padding: var(--space-3); color: var(--text-weak); font: var(--text-12-regular); }
+.context-preview-empty { text-align: center; }
+.context-inline-error { padding: var(--space-2); color: var(--danger); font: var(--text-12-regular); overflow-wrap: anywhere; }
+.context-file-content { margin: 0; padding: var(--space-2); flex: 1; overflow: auto; white-space: pre; tab-size: 2; color: var(--text-strong); font: var(--text-mono-sm); }
+
+.context-change-row { gap: var(--space-2); padding: 0 var(--space-2); }
+.context-change-kind { flex: none; color: var(--text-weak); font: var(--text-12-medium); }
+.context-change-stats { flex: none; color: var(--text-weak); font: var(--text-mono-sm); }
+.context-change-preview .diff-view { min-height: 0; flex: 1; overflow: auto; border: 0; border-radius: 0; }
+
 /* 会话级 SaDesign 入口 */
 .context-design {
   display: flex;
@@ -248,6 +378,11 @@
   font: var(--text-mono-sm);
 }
 
+.terminal-history:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .terminal-line {
   padding: 2px 0;
   color: var(--text-strong);
@@ -322,6 +457,8 @@
   border-radius: var(--radius-md);
   background: var(--bg-base);
 }
+
+.preview-frame.empty { display: none; }
 
 .preview-hint {
   font: var(--text-12-regular);

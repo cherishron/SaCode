@@ -46,6 +46,7 @@ import {
   type WorkspaceCapabilities,
 } from '@cherishron/sacode-client-core';
 import { createTauriTransport } from '../ipc-transport.ts';
+import { moveQueuedMessage, restoreQueuedMessages, type QueuedMessage } from './conversation-queue.ts';
 import {
   isTauri,
   listenDaemonEvents,
@@ -80,6 +81,8 @@ export class DesktopApp {
   lastTaskCreateError: string | null = null;
   tasks: TaskListItem[] = [];
   desktopConversations: DesktopConversation[] = [];
+  queuedMessages = new Map<string, QueuedMessage[]>();
+  private flushingConversations = new Set<string>();
   conversationTurns: DesktopConversationDetail | null = null;
   conversationDetails = new Map<string, DesktopConversationDetail>();
   private pendingConversationDetails = new Set<string>();
@@ -88,6 +91,9 @@ export class DesktopApp {
   timeline: TimelineItem[] = [];
   changes: ChangeItem[] = [];
   approvals: PendingApproval[] = [];
+  approvalsByTask = new Map<string, PendingApproval[]>();
+  resolvingApprovals = new Set<string>();
+  approvalErrors = new Map<string, string>();
   agents: { id: string; display_name: string; health?: string }[] = [];
   workspaceCapabilities: WorkspaceCapabilities = { workspace: '', models: [], skills: [], files: [] };
   defaultBackend = 'sacode';
@@ -118,6 +124,28 @@ export class DesktopApp {
     this.onChange?.();
   }
 
+  private queueStorageKey(workspace = this.workspace): string {
+    return `sacode.desktop.queue.v1.${encodeURIComponent(workspace)}`;
+  }
+
+  private saveQueuedMessages(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const key = this.queueStorageKey();
+      if (this.queuedMessages.size) localStorage.setItem(key, JSON.stringify([...this.queuedMessages]));
+      else localStorage.removeItem(key);
+    } catch { /* Storage may be disabled or full; the queue still works for this window. */ }
+  }
+
+  private loadQueuedMessages(): void {
+    try {
+      this.queuedMessages = restoreQueuedMessages(
+        typeof localStorage === 'undefined' ? null : localStorage.getItem(this.queueStorageKey()),
+      );
+      this.saveQueuedMessages();
+    } catch { this.queuedMessages = new Map(); }
+  }
+
   private push(item: TimelineItem) {
     this.timeline.push(item);
     if (this.timeline.length > 400) this.timeline.splice(0, this.timeline.length - 400);
@@ -146,7 +174,7 @@ export class DesktopApp {
     }
     // Vite: same-origin proxy injects Authorization server-side.
     this.client = new DaemonClient({
-      host: '127.0.0.1',
+      host: window.location.hostname,
       port: window.location.port ? Number(window.location.port) : 5173,
       entrySource: 'desktop',
     });
@@ -154,6 +182,7 @@ export class DesktopApp {
 
   async init(workspace?: string) {
     this.workspace = workspace ?? '';
+    this.loadQueuedMessages();
     this.stopStream?.();
     this.stopStream = null;
     if (this.pollTimer) clearInterval(this.pollTimer);
@@ -186,6 +215,9 @@ export class DesktopApp {
     this.timeline = [];
     this.changes = [];
     this.approvals = [];
+    this.approvalsByTask.clear();
+    this.resolvingApprovals.clear();
+    this.approvalErrors.clear();
 
     // In Vite mode, do a health check to verify the proxy works. In Tauri
     // mode, health is checked after the sidecar starts.
@@ -205,6 +237,7 @@ export class DesktopApp {
   async changeWorkspace(workspace: string): Promise<void> {
     const next = workspace.trim();
     if (!next || next === this.workspace) return;
+    this.saveQueuedMessages();
     localStorage.setItem('sacode.workspace', next);
     this.stopStream?.();
     this.stopStream = null;
@@ -219,7 +252,11 @@ export class DesktopApp {
     this.timeline = [];
     this.changes = [];
     this.approvals = [];
+    this.approvalsByTask.clear();
+    this.resolvingApprovals.clear();
+    this.approvalErrors.clear();
     this.workspace = next;
+    this.loadQueuedMessages();
     this.health = null;
     this.emit();
 
@@ -279,14 +316,13 @@ export class DesktopApp {
     }
   }
 
-  private startViteStream(taskId?: string) {
+  private startViteStream() {
     if (!this.client) return;
     this.stopStream?.();
     // Vite proxy: browser talks to same origin; token lives in dev server.
     const base = `${window.location.protocol}//${window.location.host}`;
     this.stopStream = openEventStream({
       baseUrl: base,
-      ...(taskId ? { taskId } : {}),
       onEvent: (evt) => {
         this.onDaemonEvent({
           event: evt.event,
@@ -337,6 +373,9 @@ export class DesktopApp {
       });
       void this.refreshApprovals(taskId || this.currentTaskId || '');
       if (approvalId) this.emit();
+    }
+    if (payload.event === 'approval_resolved' && taskId) {
+      void this.refreshApprovals(taskId);
     }
 
     if (payload.event === 'agent_message' || payload.event === 'message' || rec.type === 'assistant') {
@@ -461,6 +500,9 @@ export class DesktopApp {
     if (!this.client) return;
     try {
       this.workspaceCapabilities = await this.client.getWorkspaceCapabilities();
+      if (!this.workspace && this.workspaceCapabilities.workspace) {
+        this.workspace = this.workspaceCapabilities.workspace;
+      }
     } catch (e) {
       this.workspaceCapabilities = { workspace: this.workspace, models: [], skills: [], files: [] };
       this.error(`workspace capabilities: ${e}`);
@@ -592,6 +634,7 @@ export class DesktopApp {
     try {
       this.desktopConversations = await this.client.listDesktopConversations();
       this.emit();
+      void this.flushQueuedMessages();
     } catch (e) { this.error(`conversations: ${e}`); }
   }
 
@@ -604,6 +647,8 @@ export class DesktopApp {
       if (this.client !== client) return;
       this.conversationDetails.set(id, detail);
       this.emit();
+      const latestTaskId = detail.turns.at(-1)?.task_id;
+      if (latestTaskId) void this.refreshApprovals(latestTaskId);
     } catch (error) {
       this.failedConversationDetails.add(id);
       throw error;
@@ -624,7 +669,7 @@ export class DesktopApp {
     const latest = detail.turns.at(-1);
     this.currentTaskId = latest?.task_id || null;
     if (latest) await this.selectTask(latest.task_id);
-    if (this.mode === 'vite' && latest && typeof window !== 'undefined') this.startViteStream(latest.task_id);
+    if (this.mode === 'vite' && latest && typeof window !== 'undefined') this.startViteStream();
     this.emit();
   }
 
@@ -633,6 +678,9 @@ export class DesktopApp {
     const detail = this.conversationTurns?.id === id ? this.conversationTurns : this.conversationDetails.get(id);
     const taskIds = detail?.turns.map((t) => t.task_id) ?? [];
     await this.client.deleteDesktopConversation(id);
+    this.queuedMessages.delete(id);
+    this.saveQueuedMessages();
+    for (const taskId of taskIds) this.approvalsByTask.delete(taskId);
     this.conversationDetails.delete(id);
     this.failedConversationDetails.delete(id);
     this.desktopConversations = this.desktopConversations.filter((item) => item.id !== id);
@@ -780,7 +828,7 @@ export class DesktopApp {
           /* already bridged globally */
         }
       } else {
-        this.startViteStream(created.task_id);
+        this.startViteStream();
       }
       this.startPoll(created.task_id);
       this.emit();
@@ -789,6 +837,117 @@ export class DesktopApp {
       this.lastTaskCreateError = String(e);
       this.error(`createTask: ${e}`);
       return false;
+    }
+  }
+
+  queueDesktopMessage(conversationId: string, message: Omit<QueuedMessage, 'id' | 'error' | 'sending'>): void {
+    const queue = this.queuedMessages.get(conversationId) || [];
+    queue.push({ ...message, contextPaths: [...message.contextPaths], id: crypto.randomUUID() });
+    this.queuedMessages.set(conversationId, queue);
+    this.saveQueuedMessages();
+    this.emit();
+    void this.refreshDesktopConversations();
+  }
+
+  editQueuedMessage(conversationId: string, id: string, prompt: string): void {
+    const item = this.queuedMessages.get(conversationId)?.find((entry) => entry.id === id);
+    if (!item || item.sending || !prompt.trim()) return;
+    item.prompt = prompt.trim();
+    item.error = undefined;
+    this.saveQueuedMessages();
+    this.emit();
+    void this.flushQueuedMessages();
+  }
+
+  moveQueuedMessage(conversationId: string, id: string, direction: -1 | 1): void {
+    const queue = this.queuedMessages.get(conversationId);
+    if (!queue) return;
+    const position = queue.findIndex((item) => item.id === id);
+    if (position < 0 || queue[position]?.sending || queue[position + direction]?.sending) return;
+    this.queuedMessages.set(conversationId, moveQueuedMessage(queue, id, direction));
+    this.saveQueuedMessages();
+    this.emit();
+  }
+
+  removeQueuedMessage(conversationId: string, id: string): void {
+    const current = this.queuedMessages.get(conversationId) || [];
+    if (current.some((item) => item.id === id && item.sending)) return;
+    const queue = current.filter((item) => item.id !== id);
+    if (queue.length) this.queuedMessages.set(conversationId, queue);
+    else this.queuedMessages.delete(conversationId);
+    this.saveQueuedMessages();
+    this.emit();
+  }
+
+  retryQueuedMessage(conversationId: string, id: string): void {
+    const item = this.queuedMessages.get(conversationId)?.find((entry) => entry.id === id);
+    if (!item || item.sending) return;
+    item.error = undefined;
+    this.saveQueuedMessages();
+    this.emit();
+    void this.flushQueuedMessages();
+  }
+
+  async flushQueuedMessages(): Promise<void> {
+    if (!this.client) return;
+    for (const [conversationId, queue] of this.queuedMessages) {
+      const first = queue[0];
+      if (!first || first.error || this.flushingConversations.has(conversationId)) continue;
+      const conversation = this.desktopConversations.find((entry) => entry.id === conversationId);
+      if (!conversation || !['completed', 'failed', 'cancelled'].includes(conversation.status)) continue;
+      this.flushingConversations.add(conversationId);
+      const client: DaemonClient = this.client;
+      first.sending = true;
+      this.saveQueuedMessages();
+      this.emit();
+      let submitted = false;
+      try {
+        const created = await client.sendDesktopMessage({
+          prompt: first.prompt,
+          mode: first.mode,
+          backendId: first.backendId,
+          conversationId,
+          modelProvider: first.modelProvider,
+          modelName: first.modelName,
+          skill: first.skill,
+          contextPaths: first.contextPaths,
+        });
+        if (created.status === 'error') throw new Error(created.message || '提交排队消息失败');
+        submitted = true;
+        const sentIndex = queue.findIndex((item) => item.id === first.id);
+        if (sentIndex >= 0) queue.splice(sentIndex, 1);
+        if (!queue.length) this.queuedMessages.delete(conversationId);
+        this.saveQueuedMessages();
+        if (this.client !== client) {
+          this.emit();
+          continue;
+        }
+        if (this.currentConversationId === conversationId) {
+          this.currentTaskId = created.task_id;
+          this.changes = [];
+          this.push({ kind: 'user', text: first.prompt, taskId: created.task_id });
+        }
+        await this.refreshTasks();
+        await this.refreshDesktopConversations();
+        const detail = await client.getDesktopConversation(conversationId);
+        if (this.client === client) {
+          this.conversationDetails.set(conversationId, detail);
+          if (this.currentConversationId === conversationId) this.conversationTurns = detail;
+          if (this.mode === 'tauri') {
+            try { await startEventBridge(created.task_id); } catch { /* global bridge may already be active */ }
+          } else this.startViteStream();
+          if (this.currentConversationId === conversationId) this.startPoll(created.task_id);
+          this.emit();
+        }
+      } catch (error) {
+        if (!submitted) first.error = String(error);
+        this.error(`${submitted ? '排队消息已提交但刷新失败' : '排队消息提交失败'}: ${error}`);
+        this.emit();
+      } finally {
+        first.sending = false;
+        this.saveQueuedMessages();
+        this.flushingConversations.delete(conversationId);
+      }
     }
   }
 
@@ -1100,7 +1259,7 @@ export class DesktopApp {
         if (this.mode === 'tauri') {
           try { await startEventBridge(session.task_id); } catch { /* bridged globally */ }
         } else {
-          this.startViteStream(session.task_id);
+          this.startViteStream();
         }
         this.startPoll(session.task_id);
       }
@@ -1270,29 +1429,39 @@ export class DesktopApp {
     if (!this.client || !taskId) return;
     try {
       const approvals = await this.client.listApprovals(taskId);
+      this.approvalsByTask.set(taskId, approvals);
       if (taskId === this.currentTaskId) { this.approvals = approvals; this.emit(); }
+      else this.emit();
     } catch {
       /* approvals endpoint optional while idle */
     }
   }
 
-  async resolveApproval(approvalId: string, approved: boolean, reason?: string) {
-    if (!this.client || !this.currentTaskId) return;
-    await this.client.resolveApproval(
-      this.currentTaskId,
-      approvalId,
-      approved,
-      reason,
-    );
-    this.log(`approval ${approvalId} → ${approved ? 'allow' : 'deny'}`);
-    await this.refreshApprovals(this.currentTaskId);
+  async resolveApproval(taskId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean> {
+    if (!this.client || !taskId || this.resolvingApprovals.has(approvalId)) return false;
+    this.resolvingApprovals.add(approvalId);
+    this.approvalErrors.delete(approvalId);
+    this.emit();
+    try {
+      await this.client.resolveApproval(taskId, approvalId, approved, reason);
+      this.log(`approval ${approvalId} → ${approved ? 'allow' : 'deny'}`);
+      await this.refreshApprovals(taskId);
+      return true;
+    } catch (error) {
+      this.approvalErrors.set(approvalId, String(error));
+      this.error(`审批提交失败: ${error}`);
+      return false;
+    } finally {
+      this.resolvingApprovals.delete(approvalId);
+      this.emit();
+    }
   }
 
-  async stopTask() {
-    if (!this.client || !this.currentTaskId) return;
+  async stopTask(taskId = this.currentTaskId) {
+    if (!this.client || !taskId) return;
     try {
-      await this.client.cancelTask(this.currentTaskId);
-      this.log(`cancel sent for ${this.currentTaskId}`);
+      await this.client.cancelTask(taskId);
+      this.log(`cancel sent for ${taskId}`);
     } catch (e) {
       this.error(`cancel: ${e}`);
     }

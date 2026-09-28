@@ -37,6 +37,59 @@ test('task creation rejects server error without selecting a phantom task', asyn
   assert.match(app.lastTaskCreateError || '', /skill not available: gone/);
 });
 
+test('queued message waits for the previous turn and sends once after completion', async () => {
+  const app = new DesktopApp();
+  app.mode = 'vite';
+  Object.defineProperty(app, 'startViteStream', { value: () => {} });
+  app.refreshTasks = async () => {};
+  let sends = 0;
+  let status = 'running';
+  app.client = {
+    sendDesktopMessage: async () => { sends += 1; status = 'running'; return { task_id: 'next', status: 'pending', conversation_id: 'conversation' }; },
+    listDesktopConversations: async () => [{ id: 'conversation', title: 'task', created_at: 'today', latest_task_id: 'next', status }],
+    getDesktopConversation: async () => ({ id: 'conversation', turns: [{ task_id: 'next', prompt: 'queued', created_at: 'today', status: 'running' }] }),
+  } as unknown as DaemonClient;
+  app.desktopConversations = [{ id: 'conversation', title: 'task', created_at: 'today', latest_task_id: 'previous', status: 'running' }];
+  app.queuedMessages.set('conversation', [{ id: 'queued-1', prompt: 'queued', mode: 'build', backendId: 'sacode', contextPaths: [] }]);
+  await app.flushQueuedMessages();
+  assert.equal(sends, 0);
+  app.desktopConversations[0]!.status = 'completed';
+  await app.flushQueuedMessages();
+  assert.equal(sends, 1);
+  assert.equal(app.queuedMessages.has('conversation'), false);
+});
+
+test('failed queued send keeps the message for explicit retry', async () => {
+  const app = new DesktopApp();
+  app.client = { sendDesktopMessage: async () => { throw new Error('network unavailable'); } } as unknown as DaemonClient;
+  app.desktopConversations = [{ id: 'conversation', title: 'task', created_at: 'today', latest_task_id: 'previous', status: 'completed' }];
+  app.queuedMessages.set('conversation', [{ id: 'queued-1', prompt: 'queued', mode: 'build', backendId: 'sacode', contextPaths: [] }]);
+  await app.flushQueuedMessages();
+  assert.match(app.queuedMessages.get('conversation')?.[0]?.error || '', /network unavailable/);
+});
+
+test('approvals stay associated with their task and resolve through that task', async () => {
+  const app = new DesktopApp();
+  app.currentTaskId = 'task-a';
+  const approval = {
+    approval_id: 'approval-b', task_id: 'task-b', tool_name: 'fs.write',
+    side_effect_level: 'medium', args: { path: 'demo.txt' }, waited_secs: 0,
+    timeout_secs: 60, expires_in_secs: 60,
+  };
+  let resolvedTask = '';
+  let pending = [approval];
+  app.client = {
+    listApprovals: async () => pending,
+    resolveApproval: async (taskId: string) => { resolvedTask = taskId; pending = []; return {}; },
+  } as unknown as DaemonClient;
+  await app.refreshApprovals('task-b');
+  assert.deepEqual(app.approvalsByTask.get('task-b'), [approval]);
+  assert.deepEqual(app.approvals, []);
+  assert.equal(await app.resolveApproval('task-b', 'approval-b', true), true);
+  assert.equal(resolvedTask, 'task-b');
+  assert.deepEqual(app.approvalsByTask.get('task-b'), []);
+});
+
 test('selectDesktopConversation restores latest task and previous turns', async () => {
   const app = new DesktopApp();
   app.client = {

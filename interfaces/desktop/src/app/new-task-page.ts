@@ -1,5 +1,6 @@
 import type { DesktopApp } from './service.ts';
 import type { UiState } from './ui.ts';
+import { closePaneLayout } from './split-layout.ts';
 
 export function showNewTaskPage(state: UiState): boolean {
   return state.activeView === 'agent' && state.panes.every((pane) => !pane.taskId);
@@ -17,8 +18,13 @@ export function openTaskInActivePane(state: UiState, app: DesktopApp, taskId: st
 
 export function closePane(state: UiState, app: DesktopApp, index: number): string | null {
   if (state.panes.length > 1) {
+    state.layout = closePaneLayout(state.layout, index);
     state.panes.splice(index, 1);
     state.activePane = Math.min(state.activePane > index ? state.activePane - 1 : state.activePane, state.panes.length - 1);
+    if (state.maximizedPane !== null) {
+      state.maximizedPane = state.maximizedPane === index ? null
+        : state.maximizedPane > index ? state.maximizedPane - 1 : state.maximizedPane;
+    }
   } else {
     state.panes[index].taskId = null;
   }

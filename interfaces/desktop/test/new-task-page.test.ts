@@ -8,6 +8,8 @@ function uiState(): UiState {
   return {
     activeView: 'agent', activePane: 0, activeTaskFilter: 'task-a',
     panes: [{ taskId: 'task-a' }, { taskId: 'task-b' }],
+    layout: { axis: 'column', ratio: 0.5, first: { pane: 0 }, second: { pane: 1 } },
+    maximizedPane: null,
     sidebar: { activeSessionId: 'task-a' },
     newTaskDialog: { open: true },
   } as UiState;

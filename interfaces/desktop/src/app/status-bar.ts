@@ -18,7 +18,7 @@ export function buildStatusBar(app: DesktopApp, activeView: WorkspaceView = 'age
       el('span', { className: 'mono' }, [
         app.handle
           ? `${app.handle.host}:${app.handle.port}`
-          : isStarting ? '启动中…' : '未连接',
+          : isStarting ? '启动中…' : app.mode === 'vite' && isHealthy ? '本地开发代理' : '未连接',
       ]),
     ]),
 

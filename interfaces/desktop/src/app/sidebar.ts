@@ -5,12 +5,17 @@
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 import { brandLogo } from '../brand.ts';
+import { readArchivedSessions, updateUnreadSessions } from './session-visibility.ts';
 
 export type WorkspaceView = 'agent' | 'design' | 'native' | 'automation';
 
 export interface SidebarState {
   expandedProjects: Set<string>;
   searchQuery: string;
+  showArchived: boolean;
+  unreadSessions: Set<string>;
+  previousSessionStatuses: Map<string, string>;
+  visibleSessionIds: Set<string>;
   activeSessionId: string | null;
   contextMenu: {
     x: number;
@@ -46,6 +51,8 @@ export interface SidebarActions {
   onCloseSession?: (sessionId: string) => void;
   canCloseSession?: (sessionId: string) => boolean;
   onRemoveSession?: (sessionId: string) => void;
+  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onRenameSession?: (sessionId: string) => void;
   onSelectSession?: (sessionId: string) => void;
   onReorderSessions?: (projectPath: string, fromId: string, toId: string) => void;
   rerender: () => void;
@@ -55,6 +62,10 @@ export function createSidebarState(): SidebarState {
   return {
     expandedProjects: new Set(),
     searchQuery: '',
+    showArchived: false,
+    unreadSessions: new Set(),
+    previousSessionStatuses: new Map(),
+    visibleSessionIds: new Set(),
     activeSessionId: null,
     contextMenu: null,
     renamingPath: null,
@@ -73,6 +84,8 @@ export function buildSidebar(
   actions: SidebarActions,
 ) {
   const projectGroups = groupSessionsByProject(app);
+  const archived = readArchivedSessions(localStorage, app.workspace || '');
+  updateUnreadSessions(sidebar.previousSessionStatuses, sidebar.unreadSessions, app.desktopConversations, sidebar.visibleSessionIds);
 
   return el('aside', { className: `sidebar ${collapsed ? 'collapsed' : ''}` }, [
     // 顶部品牌
@@ -97,13 +110,18 @@ export function buildSidebar(
     // 项目树只在展开时显示
     ...(!collapsed ? [
       el('div', { className: 'sidebar-header' }, [
-        el('span', { className: 'sidebar-header-title' }, ['项目']),
+        el('span', { className: 'sidebar-header-title' }, [sidebar.showArchived ? '归档' : '项目']),
         el('div', { className: 'sidebar-header-actions' }, [
           el('button', {
             className: 'sidebar-icon-btn',
             title: '新建会话',
             onclick: () => actions.onNewSession(app.workspace),
           }, ['+']),
+          el('button', {
+            className: `sidebar-icon-btn ${sidebar.showArchived ? 'active' : ''}`,
+            title: sidebar.showArchived ? '显示当前会话' : '显示归档会话',
+            onclick: () => { sidebar.showArchived = !sidebar.showArchived; actions.rerender(); },
+          }, [sidebar.showArchived ? '↩' : '▤']),
         ]),
       ]),
       el('div', { className: 'sidebar-search' }, [
@@ -119,8 +137,8 @@ export function buildSidebar(
       ]),
       el('div', { className: 'sidebar-tree' },
         projectGroups.length === 0
-          ? [el('div', { className: 'sidebar-empty' }, ['暂无会话'])]
-          : projectGroups.map((group) => buildProjectGroup(group, sidebar, actions)),
+          ? [el('div', { className: 'sidebar-empty' }, [sidebar.showArchived ? '暂无归档会话' : '暂无会话'])]
+          : projectGroups.map((group) => buildProjectGroup(group, sidebar, actions, archived)),
       ),
     ] : [el('div', { className: 'sidebar-collapsed-spacer' })]),
 
@@ -258,6 +276,20 @@ function buildSidebarContextMenu(sidebar: SidebarState, actions: SidebarActions)
         }, ['移除项目']),
       ]
     : [
+        el('button', {
+          className: 'sidebar-menu-item',
+          onclick: () => {
+            sidebar.contextMenu = null;
+            if (menu.sessionId) actions.onRenameSession?.(menu.sessionId);
+          },
+        }, ['重命名会话']),
+        el('button', {
+          className: 'sidebar-menu-item',
+          onclick: () => {
+            sidebar.contextMenu = null;
+            if (menu.sessionId) actions.onArchiveSession?.(menu.sessionId, !sidebar.showArchived);
+          },
+        }, [sidebar.showArchived ? '移出归档' : '归档会话']),
         ...(menu.sessionId && actions.canCloseSession?.(menu.sessionId) ? [el('button', {
           className: 'sidebar-menu-item',
           onclick: () => {
@@ -400,13 +432,13 @@ function buildProjectGroup(
   group: ProjectGroup,
   sidebar: SidebarState,
   actions: SidebarActions,
+  archived: ReadonlySet<string>,
 ) {
   // expandedProjects 只在用户显式折叠时删除，未折叠的项目保持展开。
   const isExpanded = !sidebar.expandedProjects.has(group.path);
   const search = sidebar.searchQuery.trim().toLowerCase();
-  const sessions = search
-    ? group.sessions.filter((session) => session.title.toLowerCase().includes(search))
-    : group.sessions;
+  const sessions = group.sessions.filter((session) => archived.has(session.id) === sidebar.showArchived
+    && (!search || session.title.toLowerCase().includes(search)));
 
   const openMenu = (event: MouseEvent) => {
     event.preventDefault();
@@ -473,7 +505,7 @@ function buildProjectGroup(
     ...(isExpanded
       ? [el('div', { className: 'session-list-children' },
           sessions.length === 0
-            ? [el('div', { className: 'sidebar-session-empty' }, ['暂无会话'])]
+            ? [el('div', { className: 'sidebar-session-empty' }, [sidebar.showArchived ? '暂无归档会话' : '暂无会话'])]
             : sessions.map((session) => buildSessionItem(session, sidebar, actions, group.path)),
         )]
       : []),
@@ -568,12 +600,13 @@ function buildSessionItem(
   };
 
   return el('div', {
-    className: `session-item ${isActive ? 'active' : ''}`,
+    className: `session-item ${isActive ? 'active' : ''} ${sidebar.unreadSessions.has(session.id) ? 'unread' : ''}`,
     dataset: { sessionId: session.id },
     onpointerdown: startDrag,
     onclick: () => {
       if (sidebar.dragSessionId) return;
       sidebar.activeSessionId = session.id;
+      sidebar.unreadSessions.delete(session.id);
       actions.onSelectSession?.(session.id);
       actions.onViewChange('agent');
       void actions.rerender();
@@ -593,5 +626,6 @@ function buildSessionItem(
   }, [
     el('span', { className: `session-dot ${dotClass}` }),
     el('span', { className: 'session-title' }, [session.title]),
+    ...(sidebar.unreadSessions.has(session.id) ? [el('span', { className: 'session-unread', title: '有未读结果' }, ['●'])] : []),
   ]);
 }

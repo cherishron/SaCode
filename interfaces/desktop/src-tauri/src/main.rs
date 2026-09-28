@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sidecar;
+mod terminal;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use sidecar::{
 };
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use terminal::{TerminalStartDto, TerminalState};
 use tokio::sync::Mutex;
 
 struct SidecarState {
@@ -83,6 +85,7 @@ fn default_workspace() -> PathBuf {
 #[tauri::command]
 async fn start_daemon(
     state: State<'_, Arc<SidecarState>>,
+    terminal_state: State<'_, Arc<TerminalState>>,
     workspace: Option<String>,
 ) -> Result<SidecarHandleDto, String> {
     let mut guard = state.inner.lock().await;
@@ -110,6 +113,12 @@ async fn start_daemon(
             return Ok(existing.handle_dto());
         }
     }
+    // A terminal belongs to the workspace that launched it. End it before
+    // replacing the sidecar so shell commands cannot run in a stale folder.
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || terminals.close_all())
+        .await
+        .map_err(|error| error.to_string())?;
     if let Some(bridge) = state.event_bridge.lock().await.take() {
         bridge.abort();
     }
@@ -166,8 +175,15 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 }
 
 #[tauri::command]
-async fn stop_daemon(state: State<'_, Arc<SidecarState>>) -> Result<(), String> {
+async fn stop_daemon(
+    state: State<'_, Arc<SidecarState>>,
+    terminal_state: State<'_, Arc<TerminalState>>,
+) -> Result<(), String> {
     let mut guard = state.inner.lock().await;
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || terminals.close_all())
+        .await
+        .map_err(|error| error.to_string())?;
     if let Some(bridge) = state.event_bridge.lock().await.take() {
         bridge.abort();
     }
@@ -175,6 +191,65 @@ async fn stop_daemon(state: State<'_, Arc<SidecarState>>) -> Result<(), String> 
         handle.stop().await;
     }
     Ok(())
+}
+
+/// Start or reuse an interactive PTY shell in the current daemon workspace.
+/// The renderer cannot supply an arbitrary working directory or shell command.
+#[tauri::command]
+async fn terminal_start(
+    app: AppHandle,
+    state: State<'_, Arc<SidecarState>>,
+    terminal_state: State<'_, Arc<TerminalState>>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+) -> Result<TerminalStartDto, String> {
+    let sidecar = state.inner.lock().await;
+    let workspace = sidecar
+        .as_ref()
+        .map(|handle| handle.workspace.clone())
+        .ok_or_else(|| "daemon not started".to_string())?;
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        terminals.start(app, workspace, rows.unwrap_or(24), cols.unwrap_or(80))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn terminal_write(
+    terminal_state: State<'_, Arc<TerminalState>>,
+    terminal_id: String,
+    data: String,
+) -> Result<(), String> {
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || terminals.write(&terminal_id, data))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn terminal_resize(
+    terminal_state: State<'_, Arc<TerminalState>>,
+    terminal_id: String,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || terminals.resize(&terminal_id, rows, cols))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn terminal_close(
+    terminal_state: State<'_, Arc<TerminalState>>,
+    terminal_id: String,
+) -> Result<(), String> {
+    let terminals = terminal_state.inner().clone();
+    tokio::task::spawn_blocking(move || terminals.close(&terminal_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -431,8 +506,10 @@ async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 
 fn main() {
     let sidecar_state = Arc::new(SidecarState::new());
+    let terminal_state = Arc::new(TerminalState::new());
     tauri::Builder::default()
         .manage(sidecar_state)
+        .manage(terminal_state)
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -459,6 +536,10 @@ fn main() {
             daemon_info,
             daemon_proxy,
             start_event_bridge,
+            terminal_start,
+            terminal_write,
+            terminal_resize,
+            terminal_close,
             set_tray_enabled,
             set_autostart
         ])
@@ -477,6 +558,10 @@ fn main() {
                 }
             }
             if let tauri::WindowEvent::Destroyed = event {
+                if let Some(terminal_state) = window.app_handle().try_state::<Arc<TerminalState>>()
+                {
+                    terminal_state.close_all();
+                }
                 let app: AppHandle = window.app_handle().clone();
                 let state = app.state::<Arc<SidecarState>>();
                 let state = state.inner().clone();

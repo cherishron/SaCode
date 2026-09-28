@@ -7,6 +7,7 @@ import { buildProgressBar, type ProgressState } from '../components/progress-bar
 import { buildMessage } from '../components/message-bubble.ts';
 import { buildInputArea, createInputAreaState, type InputAreaState } from '../components/input-area.ts';
 import { buildTimelineNavigation, collectTimelineAnchors } from '../components/timeline-rail.ts';
+import { buildApprovalCard } from '../components/approval-card.ts';
 
 export function buildConversation(
   app: DesktopApp,
@@ -50,6 +51,11 @@ export function buildConversation(
     node.dataset.msgIndex = String(index);
     return node;
   });
+  const taskIds = new Set(taskFilter
+    ? detail?.turns.map((turn) => turn.task_id) ?? []
+    : app.currentTaskId ? [app.currentTaskId] : []);
+  const pendingApprovals = [...taskIds].flatMap((id) => app.approvalsByTask.get(id) ?? []);
+  const approvalNodes = pendingApprovals.map((approval) => buildApprovalCard(app, approval));
   const timeline = el('div', { id: 'timeline', className: 'timeline', dataset: { pane: String(paneIndex), conversation: taskFilter ?? '' } },
     filtered.length === 0
       ? [el('div', { className: 'timeline-empty' }, [
@@ -58,8 +64,8 @@ export function buildConversation(
           el('div', { className: 'muted' }, [
             taskFilter ? '在下方输入框发送后续消息' : '描述你要构建或修复的内容，Enter 发送',
           ]),
-        ])]
-      : messageNodes,
+        ]), ...approvalNodes]
+      : [...messageNodes, ...approvalNodes],
   );
   const anchors = collectTimelineAnchors(filtered);
   const navigation = anchors.length ? buildTimelineNavigation(timeline, anchors) : null;

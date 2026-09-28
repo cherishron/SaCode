@@ -200,6 +200,12 @@ export interface WorkspaceFileOption {
     is_dir: boolean;
 }
 
+export interface WorkspaceFilePreview {
+    path: string;
+    size: number;
+    content: string;
+}
+
 export interface AccountStatus {
     logged_in: boolean;
     subject?: string | null;
@@ -1392,6 +1398,16 @@ export class DaemonClient {
             skills: Array.isArray(body.skills) ? body.skills : [],
             files: Array.isArray(body.files) ? body.files : [],
         };
+    }
+
+    async getWorkspaceFile(path: string): Promise<WorkspaceFilePreview> {
+        const res = await this.request('GET', `/workspace/file?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw await responseError(res, 'Workspace file preview');
+        const body: unknown = await res.json();
+        if (!isRecord(body) || typeof body.path !== 'string' || typeof body.size !== 'number' || typeof body.content !== 'string') {
+            throw new Error('Invalid workspace file preview response');
+        }
+        return { path: body.path, size: body.size, content: body.content };
     }
 
     async getDesignContext(): Promise<DesignProjectContext> {

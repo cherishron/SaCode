@@ -1,7 +1,10 @@
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 import { brandLogo } from '../brand.ts';
-import { setAutostart, setTrayEnabled } from '../tauri-bridge.ts';
+import {
+  closeTerminal, isNativeTerminalAvailable, listenTerminalExit, listenTerminalOutput,
+  resizeTerminal, setAutostart, setTrayEnabled, startTerminal, writeTerminal,
+} from '../tauri-bridge.ts';
 import { buildConnectionError } from './splash.ts';
 import { buildConfirmDialog, buildSidebar, createSidebarState, type SidebarState, type WorkspaceView } from './sidebar.ts';
 import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
@@ -17,6 +20,9 @@ import { createAutomationState, buildAutomationWorkspace, loadAutomationData, ty
 import { createInputAreaState, type InputAreaState } from '../components/input-area.ts';
 import { AT_BOTTOM_THRESHOLD, JUMP_VISIBLE_THRESHOLD } from '../components/timeline-rail.ts';
 import { closePane, closeSessionView, openTaskInActivePane, showNewTaskPage } from './new-task-page.ts';
+import { layoutPanes, resizeSplit, restoreWorkbenchLayout, splitPane, swapPanePositions, type SplitLayout } from './split-layout.ts';
+import { setSessionArchived } from './session-visibility.ts';
+import { terminalDimensions } from './terminal-input.ts';
 import {
   buildNewTaskDialog,
   createNewTaskDialogState,
@@ -59,15 +65,20 @@ export interface UiState {
   moreMenuOpen: boolean;
   moreMenuPosition: { x: number; y: number };
   moreMenuItems: MoreMenuItem[];
+  sessionDialog: null | { kind: 'open' | 'rename'; paneIndex: number };
   conversationMode: ConversationMode;
-  /** 分屏面板：独立会话 + 独立工具栏，最多 3 */
+  /** 分屏面板：独立会话 + 独立工具栏，最多 4 */
   panes: PaneState[];
   activePane: number;
+  layout: SplitLayout;
+  maximizedPane: number | null;
   /** 弹窗：知识库 / 自动化 / 个人信息 */
   modal: null | 'knowledge' | 'automation' | 'profile';
   /** 当前面板的多终端 */
   terminals: TerminalSession[];
   activeTerminalId: string | null;
+  terminalNotice: string | null;
+  createTerminal?: () => Promise<void>;
 }
 
 export interface TerminalSession {
@@ -76,6 +87,7 @@ export interface TerminalSession {
   lines: { text: string; tone: 'out' | 'ok' | 'err' | 'muted' }[];
   cwd: string;
   shell: string;
+  exited?: boolean;
 }
 
 function readRecentProjects(): string[] {
@@ -145,6 +157,17 @@ function profileRow(label: string, value: string) {
   ]);
 }
 
+function appendTerminalOutput(terminal: TerminalSession, chunk: string) {
+  // The panel is a readable transcript, not a full VT emulator. Strip styling
+  // sequences while retaining line boundaries and commands from the PTY.
+  const plain = chunk.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r(?!\n)/g, '\n').replace(/\r\n/g, '\n');
+  const parts = plain.split('\n');
+  if (!terminal.lines.length) terminal.lines.push({ text: '', tone: 'out' });
+  terminal.lines[terminal.lines.length - 1]!.text += parts[0] || '';
+  for (const part of parts.slice(1)) terminal.lines.push({ text: part, tone: 'out' });
+  if (terminal.lines.length > 2000) terminal.lines.splice(0, terminal.lines.length - 2000);
+}
+
 function createPaneState(prefs: ReturnType<typeof loadDesktopPreferences>): PaneState {
   return {
     taskId: null,
@@ -198,27 +221,15 @@ function buildPaneMoreMenu(
     {
       label: '打开其他会话…',
       onclick: () => {
-        const options = app.desktopConversations.map((item) => `${item.id.slice(0, 20)}  ${item.title.slice(0, 40)}`).join('\n');
-        const pick = window.prompt(`选择要打开的会话（输入 ID 前缀）\n${options || '（暂无会话）'}`, '');
-        if (!pick?.trim()) return;
-        const hit = app.desktopConversations.find((item) => item.id.startsWith(pick.trim()) || item.id.includes(pick.trim()));
-        if (!hit) {
-          window.alert('未找到该会话');
-          return;
-        }
-        pane.taskId = hit.id;
-        state.activePane = index;
+        state.sessionDialog = { kind: 'open', paneIndex: index };
         state.moreMenuOpen = false;
-        void app.selectDesktopConversation(hit.id).then(rerender).catch((e) => app.error(`打开会话失败: ${e}`));
+        rerender();
       },
     },
     {
       label: '重命名会话',
       onclick: () => {
-        const title = window.prompt('会话标题', '');
-        if (title && pane.taskId) {
-          localStorage.setItem(`sacode.session.title.${pane.taskId}`, title.trim());
-        }
+        if (pane.taskId) state.sessionDialog = { kind: 'rename', paneIndex: index };
         state.moreMenuOpen = false;
         rerender();
       },
@@ -226,9 +237,45 @@ function buildPaneMoreMenu(
     {
       label: '向右分屏',
       onclick: () => {
-        if (state.panes.length >= 3) return;
-        state.panes.splice(index + 1, 0, createPaneState(loadDesktopPreferences(app)));
-        state.activePane = index + 1;
+        if (state.panes.length >= 4) return;
+        const next = state.panes.length;
+        state.panes.push(createPaneState(loadDesktopPreferences(app)));
+        state.layout = splitPane(state.layout, index, next, 'column');
+        state.activePane = next;
+        state.maximizedPane = null;
+        state.moreMenuOpen = false;
+        rerender();
+      },
+    },
+    {
+      label: '向下分屏',
+      onclick: () => {
+        if (state.panes.length >= 4) return;
+        const next = state.panes.length;
+        state.panes.push(createPaneState(loadDesktopPreferences(app)));
+        state.layout = splitPane(state.layout, index, next, 'row');
+        state.activePane = next;
+        state.maximizedPane = null;
+        state.moreMenuOpen = false;
+        rerender();
+      },
+    },
+    {
+      label: '与下一分屏交换位置',
+      onclick: () => {
+        const order = layoutPanes(state.layout);
+        if (order.length < 2) return;
+        const position = order.indexOf(index);
+        const next = order[(position + 1) % order.length]!;
+        state.layout = swapPanePositions(state.layout, index, next);
+        state.moreMenuOpen = false;
+        rerender();
+      },
+    },
+    {
+      label: state.maximizedPane === index ? '还原分屏' : '放大此分屏',
+      onclick: () => {
+        state.maximizedPane = state.maximizedPane === index ? null : index;
         state.moreMenuOpen = false;
         rerender();
       },
@@ -267,20 +314,90 @@ function buildPaneMoreMenu(
       danger: true,
       onclick: () => {
         const conversationId = pane.taskId;
-        if (conversationId && window.confirm('确定删除该会话？')) {
-          void app.deleteDesktopConversation(conversationId).then(() => {
-            for (const item of state.panes) if (item.taskId === conversationId) item.taskId = null;
-            if (state.sidebar.activeSessionId === conversationId) state.sidebar.activeSessionId = null;
-            state.moreMenuOpen = false;
-            rerender();
-          }).catch((e) => app.error(`删除会话失败: ${e}`));
-        } else {
-          state.moreMenuOpen = false;
-          rerender();
-        }
+        state.moreMenuOpen = false;
+        if (conversationId) state.sidebar.confirmDialog = {
+          title: '删除会话',
+          message: '删除该会话？此操作不可撤销。',
+          confirmLabel: '删除',
+          danger: true,
+          onConfirm: () => {
+            void app.deleteDesktopConversation(conversationId).then(() => {
+              for (const item of state.panes) if (item.taskId === conversationId) item.taskId = null;
+              if (state.sidebar.activeSessionId === conversationId) state.sidebar.activeSessionId = null;
+              rerender();
+            }).catch((e) => app.error(`删除会话失败: ${e}`));
+          },
+        };
+        rerender();
       },
     },
   ];
+}
+
+function buildSessionDialog(app: DesktopApp, state: UiState, rerender: () => void): HTMLElement {
+  const dialog = state.sessionDialog!;
+  const pane = state.panes[dialog.paneIndex];
+  const close = () => { state.sessionDialog = null; rerender(); };
+  const overlay = el('div', {
+    className: 'session-dialog-overlay',
+    onclick: (event: Event) => { if (event.target === overlay) close(); },
+  });
+  const panel = el('div', { className: 'session-dialog', role: 'dialog', 'aria-label': dialog.kind === 'open' ? '打开会话' : '重命名会话' });
+  panel.append(el('div', { className: 'session-dialog-header' }, [
+    el('strong', {}, [dialog.kind === 'open' ? '在此分屏打开会话' : '重命名会话']),
+    el('button', { className: 'session-dialog-close', title: '关闭', onclick: close }, ['×']),
+  ]));
+  if (dialog.kind === 'rename') {
+    const id = pane?.taskId;
+    const current = id ? localStorage.getItem(`sacode.session.title.${id}`)
+      || app.desktopConversations.find((item) => item.id === id)?.title || '' : '';
+    const input = el('input', { className: 'session-dialog-input', value: current, placeholder: '会话标题' });
+    const save = () => {
+      const title = input.value.trim();
+      if (id && title) localStorage.setItem(`sacode.session.title.${id}`, title);
+      close();
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') save();
+      if (event.key === 'Escape') close();
+    });
+    panel.append(input, el('div', { className: 'session-dialog-actions' }, [
+      el('button', { className: 'btn ghost', onclick: close }, ['取消']),
+      el('button', { className: 'btn primary', onclick: save }, ['保存']),
+    ]));
+    queueMicrotask(() => { input.focus(); input.select(); });
+  } else {
+    const input = el('input', { className: 'session-dialog-input', placeholder: '搜索标题或会话 ID…' });
+    const list = el('div', { className: 'session-dialog-list' });
+    const update = () => {
+      const query = input.value.trim().toLocaleLowerCase();
+      const matches = app.desktopConversations.filter((item) =>
+        !query || item.title.toLocaleLowerCase().includes(query) || item.id.toLocaleLowerCase().includes(query));
+      list.replaceChildren(...(matches.length ? matches.map((item) =>
+        el('button', {
+          className: 'session-dialog-item',
+          onclick: () => {
+            pane.taskId = item.id;
+            state.activePane = dialog.paneIndex;
+            state.sidebar.activeSessionId = item.id;
+            state.activeTaskFilter = item.id;
+            state.sessionDialog = null;
+            rerender();
+            void app.selectDesktopConversation(item.id).then(rerender).catch((error) => app.error(`打开会话失败: ${error}`));
+          },
+        }, [
+          el('span', { className: 'session-dialog-item-title' }, [localStorage.getItem(`sacode.session.title.${item.id}`) || item.title]),
+          el('span', { className: 'session-dialog-item-id mono' }, [item.id.slice(0, 10)]),
+        ])) : [el('div', { className: 'session-dialog-empty' }, ['没有匹配的会话'])]));
+    };
+    input.addEventListener('input', update);
+    input.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+    update();
+    panel.append(input, list);
+    queueMicrotask(() => input.focus());
+  }
+  overlay.append(panel);
+  return overlay;
 }
 
 function validSkillName(app: DesktopApp, preferred: string): string {
@@ -326,24 +443,87 @@ export function mountApp(root: HTMLElement, app: DesktopApp) {
     moreMenuOpen: false,
     moreMenuPosition: { x: 0, y: 0 },
     moreMenuItems: defaultMoreMenuItems(),
+    sessionDialog: null,
     conversationMode: preferences.defaultMode,
     /** 深色多面板工作台：默认双分屏 + 右栏 */
     panes: [createPaneState(preferences), createPaneState(preferences)],
     activePane: 0,
+    layout: { axis: 'column', ratio: 0.5, first: { pane: 0 }, second: { pane: 1 } },
+    maximizedPane: null,
     modal: null,
-    terminals: [{
-      id: 'term-1',
-      name: '终端 1',
-      lines: [{ text: `workspace: 就绪`, tone: 'muted' }],
-      cwd: '',
-      shell: preferences.defaultTerminal || 'powershell',
-    }],
-    activeTerminalId: 'term-1',
+    terminals: [],
+    activeTerminalId: null,
+    terminalNotice: null,
   };
 
   const rerender = () => render(root, app, state);
+  const pendingTerminalOutput = new Map<string, string>();
+  let terminalRenderQueued = false;
+  const scheduleTerminalRender = () => {
+    if (terminalRenderQueued) return;
+    terminalRenderQueued = true;
+    requestAnimationFrame(() => {
+      terminalRenderQueued = false;
+      rerender();
+    });
+  };
+  const terminalListenersReady = Promise.all([
+    listenTerminalOutput(({ terminal_id, data }) => {
+      const term = state.terminals.find((item) => item.id === terminal_id);
+      if (term) {
+        appendTerminalOutput(term, data);
+        scheduleTerminalRender();
+      } else {
+        pendingTerminalOutput.set(terminal_id, (pendingTerminalOutput.get(terminal_id) || '') + data);
+      }
+    }),
+    listenTerminalExit(({ terminal_id, code, reason }) => {
+      const term = state.terminals.find((item) => item.id === terminal_id);
+      if (!term) return;
+      term.exited = true;
+      term.lines.push({ text: `终端已结束${code === null ? '' : ` · exit ${code}`} (${reason})`, tone: 'muted' });
+      scheduleTerminalRender();
+    }),
+  ]);
+  state.createTerminal = async () => {
+    if (!isNativeTerminalAvailable()) {
+      state.terminalNotice = '终端仅在 SaCode Desktop 客户端中可用';
+      rerender();
+      return;
+    }
+    try {
+      await terminalListenersReady;
+      const info = await startTerminal();
+      if (!info) throw new Error('无法启动原生终端');
+      const term: TerminalSession = {
+        id: info.terminal_id,
+        name: `终端 ${state.terminals.length + 1}`,
+        lines: [],
+        cwd: info.workspace,
+        shell: info.shell,
+      };
+      const buffered = pendingTerminalOutput.get(info.terminal_id);
+      if (buffered) appendTerminalOutput(term, buffered);
+      pendingTerminalOutput.delete(info.terminal_id);
+      state.terminals.push(term);
+      state.activeTerminalId = term.id;
+      state.terminalNotice = null;
+      rerender();
+    } catch (error) {
+      state.terminalNotice = `终端启动失败：${String(error)}`;
+      rerender();
+    }
+  };
+  let terminalWorkspace = app.workspace;
 
   app.onChange = () => {
+    if (terminalWorkspace !== app.workspace) {
+      terminalWorkspace = app.workspace;
+      state.terminals = [];
+      state.activeTerminalId = null;
+      state.terminalNotice = null;
+      pendingTerminalOutput.clear();
+    }
     if (state.shell.connection === 'starting' && app.mode === 'tauri' && app.handle) {
       state.shell.connection = 'healthy';
     }
@@ -403,7 +583,71 @@ export function mountApp(root: HTMLElement, app: DesktopApp) {
   }, 30000);
 }
 
+const terminalObservers = new WeakMap<HTMLElement, ResizeObserver>();
+const terminalSizes = new Map<string, string>();
+const renderedWorkspaces = new WeakMap<HTMLElement, string>();
+const savedLayouts = new WeakMap<HTMLElement, string>();
+
+function syncWorkbenchWorkspace(root: HTMLElement, app: DesktopApp, state: UiState) {
+  if (renderedWorkspaces.get(root) === app.workspace) return;
+  renderedWorkspaces.set(root, app.workspace);
+  const prefs = loadDesktopPreferences(app);
+  let saved = null;
+  try {
+    if (app.workspace) saved = restoreWorkbenchLayout(localStorage.getItem(`sacode.desktop.layout.v1.${encodeURIComponent(app.workspace)}`));
+  } catch { /* Storage can be unavailable. */ }
+  state.panes = (saved?.taskIds ?? [null, null]).map((taskId) => ({ ...createPaneState(prefs), taskId }));
+  state.layout = saved?.layout ?? { axis: 'column', ratio: 0.5, first: { pane: 0 }, second: { pane: 1 } };
+  state.activePane = saved?.activePane ?? 0;
+  state.maximizedPane = null;
+  const activeId = state.panes[state.activePane]?.taskId ?? null;
+  state.sidebar.activeSessionId = activeId;
+  state.activeTaskFilter = activeId;
+  if (activeId && app.client) {
+    void app.selectDesktopConversation(activeId).catch((error) => app.error(`恢复会话失败: ${error}`));
+  }
+}
+
+function saveWorkbenchLayout(root: HTMLElement, app: DesktopApp, state: UiState) {
+  if (!app.workspace) return;
+  const raw = JSON.stringify({ layout: state.layout, taskIds: state.panes.map((pane) => pane.taskId), activePane: state.activePane });
+  const cacheKey = `${app.workspace}\0${raw}`;
+  if (savedLayouts.get(root) === cacheKey) return;
+  try {
+    localStorage.setItem(`sacode.desktop.layout.v1.${encodeURIComponent(app.workspace)}`, raw);
+    savedLayouts.set(root, cacheKey);
+  } catch { /* Keep the active layout when storage is unavailable. */ }
+}
+
+function syncTerminalSize(root: HTMLElement) {
+  terminalObservers.get(root)?.disconnect();
+  const history = root.querySelector<HTMLElement>('.terminal-history[data-terminal-id]');
+  if (!history || typeof ResizeObserver === 'undefined') return;
+  const measure = () => {
+    if (!history.isConnected) return;
+    const terminalId = history.dataset.terminalId;
+    if (!terminalId || !history.clientWidth || !history.clientHeight) return;
+    const style = getComputedStyle(history);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.font = style.font;
+    const charWidth = context.measureText('M').width || 8;
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 16;
+    const { rows, cols } = terminalDimensions(history.clientWidth, history.clientHeight, charWidth, lineHeight);
+    const size = `${rows}:${cols}`;
+    if (terminalSizes.get(terminalId) === size) return;
+    terminalSizes.set(terminalId, size);
+    void resizeTerminal(terminalId, rows, cols).catch(() => terminalSizes.delete(terminalId));
+  };
+  const observer = new ResizeObserver(measure);
+  terminalObservers.set(root, observer);
+  observer.observe(history);
+  measure();
+}
+
 function render(root: HTMLElement, app: DesktopApp, state: UiState) {
+  syncWorkbenchWorkspace(root, app, state);
   if (state.shell.connection === 'error' && !app.handle) {
     root.replaceChildren(buildConnectionError(app));
     return;
@@ -418,9 +662,28 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     state.activeView === 'design' ? 'design-view' : state.activeView === 'native' ? 'native-view' : state.activeView === 'automation' ? 'automation-view' : '',
     !state.shell.sidebarOpen ? 'sidebar-closed' : '',
     state.shell.contextOpen ? 'context-open' : '',
-    `splits-${Math.min(3, Math.max(1, state.panes.length))}`,
+    `splits-${Math.min(4, Math.max(1, state.panes.length))}`,
   ].filter(Boolean).join(' ');
   const scrollStates = new Map<string, { conversation: string; top: number; atBottom: boolean }>();
+  const oldTerminalHistory = root.querySelector<HTMLElement>('.terminal-history');
+  const terminalScroll = oldTerminalHistory ? {
+    top: oldTerminalHistory.scrollTop,
+    atBottom: oldTerminalHistory.scrollHeight - oldTerminalHistory.scrollTop - oldTerminalHistory.clientHeight < 40,
+  } : null;
+  // SSE and polling rebuild the shell frequently. Keep an in-progress edit in
+  // the same pane focused, including its caret, across those redraws.
+  const focused = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+  const focusSelector = focused?.matches('.input-prompt') ? '.input-prompt'
+    : focused?.matches('.sidebar-search-input') ? '.sidebar-search-input'
+    : focused?.matches('.terminal-input') ? '.terminal-input'
+    : focused?.matches('.terminal-history[data-terminal-id]') ? '.terminal-history[data-terminal-id]'
+    : null;
+  const focusedPane = focused?.closest('.pane');
+  const focusPaneIndex = focusedPane ? Number((focusedPane as HTMLElement).dataset.paneIndex) : -1;
+  const focusConversation = focusedPane?.querySelector<HTMLElement>('.timeline')?.dataset.conversation ?? null;
+  const focusStart = focusSelector === '.terminal-history[data-terminal-id]' ? null : focused?.selectionStart ?? null;
+  const focusEnd = focusSelector === '.terminal-history[data-terminal-id]' ? null : focused?.selectionEnd ?? null;
+  const terminalDraft = focusSelector === '.terminal-input' ? (focused?.value ?? '') : null;
   root.querySelectorAll<HTMLElement>('.timeline[data-pane]').forEach((timeline) => {
     const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
     scrollStates.set(timeline.dataset.pane!, {
@@ -456,6 +719,9 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     render(root, app, state);
   };
 
+  state.sidebar.visibleSessionIds = new Set(state.activeView === 'agent'
+    ? state.panes.map((pane) => pane.taskId).filter((id): id is string => !!id)
+    : []);
   const sidebar = buildSidebar(
     app,
     state.sidebar,
@@ -526,6 +792,20 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
         state.activeTaskFilter = sessionId;
         void app.selectDesktopConversation(sessionId).then(() => render(root, app, state)).catch((e) => app.error(`打开会话失败: ${e}`));
       },
+      onRenameSession: (sessionId: string) => {
+        const paneIndex = state.panes.findIndex((pane) => pane.taskId === sessionId);
+        const target = paneIndex < 0 ? state.activePane : paneIndex;
+        state.panes[target].taskId = sessionId;
+        state.activePane = target;
+        state.sidebar.activeSessionId = sessionId;
+        state.sessionDialog = { kind: 'rename', paneIndex: target };
+        render(root, app, state);
+      },
+      onArchiveSession: (sessionId: string, archived: boolean) => {
+        setSessionArchived(localStorage, app.workspace || '', sessionId, archived);
+        state.sidebar.unreadSessions.delete(sessionId);
+        render(root, app, state);
+      },
       canCloseSession: (sessionId: string) => state.panes.some((pane) => pane.taskId === sessionId),
       onCloseSession: (sessionId: string) => {
         finishClosingView(root, app, state, closeSessionView(state, app, sessionId));
@@ -541,6 +821,8 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
           for (const pane of state.panes) {
             if (pane.taskId === sessionId) pane.taskId = null;
           }
+          setSessionArchived(localStorage, app.workspace || '', sessionId, false);
+          state.sidebar.unreadSessions.delete(sessionId);
           if (state.sidebar.activeSessionId === sessionId) {
             state.sidebar.activeSessionId = null;
             state.activeTaskFilter = null;
@@ -588,6 +870,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
 
     return el('div', {
       className: `pane ${state.activePane === index ? 'pane-active' : ''} mode-${pane.conversationMode}`,
+      dataset: { paneIndex: String(index) },
       onclick: () => {
         if (state.activePane !== index) {
           state.activePane = index;
@@ -606,7 +889,15 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
       },
     }, [
       el('div', { className: 'pane-header' }, [
-        el('div', { className: 'pane-header-title' }, [title]),
+        el('div', {
+          className: 'pane-header-title',
+          title: taskId ? '双击重命名会话' : '新会话',
+          ondblclick: () => {
+            if (!taskId) return;
+            state.sessionDialog = { kind: 'rename', paneIndex: index };
+            render(root, app, state);
+          },
+        }, [title]),
         el('button', {
           className: `header-btn ${pane.contextOpen ? 'active' : ''}`,
           title: '本分屏工具栏',
@@ -656,9 +947,14 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
       }, index),
       ...(pane.contextOpen && state.activePane === index
         ? [buildContextPanel(app, pane.activeTab, {
+            taskId: (taskId && (app.conversationTurns?.id === taskId
+              ? app.conversationTurns
+              : app.conversationDetails.get(taskId))?.turns.at(-1)?.task_id)
+              || (taskId === app.currentConversationId ? app.currentTaskId : null),
             onTabChange: (tab) => {
               pane.activeTab = tab;
               render(root, app, state);
+              if (tab === 'terminal' && state.terminals.length === 0) void state.createTerminal?.();
             },
             onOpenDesign: () => {
               pane.activeTab = 'design';
@@ -667,24 +963,17 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
             },
             terminals: state.terminals,
             activeTerminalId: state.activeTerminalId,
+            terminalNotice: state.terminalNotice,
+            terminalAvailable: isNativeTerminalAvailable(),
             onTerminalSelect: (id) => {
               state.activeTerminalId = id;
               render(root, app, state);
             },
             onTerminalCreate: () => {
-              const id = `term-${Date.now()}`;
-              const prefs = loadDesktopPreferences(app);
-              state.terminals.push({
-                id,
-                name: `终端 ${state.terminals.length + 1}`,
-                lines: [{ text: '已创建终端', tone: 'muted' }],
-                cwd: app.workspace || '',
-                shell: prefs.defaultTerminal === 'system-default' ? 'powershell' : prefs.defaultTerminal,
-              });
-              state.activeTerminalId = id;
-              render(root, app, state);
+              void state.createTerminal?.();
             },
             onTerminalClose: (id) => {
+              void closeTerminal(id).catch((error) => { state.terminalNotice = `关闭终端失败：${String(error)}`; render(root, app, state); });
               state.terminals = state.terminals.filter((term) => term.id !== id);
               if (state.activeTerminalId === id) {
                 state.activeTerminalId = state.terminals[0]?.id || null;
@@ -693,18 +982,19 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
             },
             onTerminalRun: (id, cmd) => {
               const term = state.terminals.find((item) => item.id === id);
-              if (!term) return;
-              term.lines.push({ text: `$ ${cmd}`, tone: 'out' }, { text: '执行中…', tone: 'muted' });
-              render(root, app, state);
-              void app.runTask({
-                prompt: `在 ${term.shell} 终端执行命令: ${cmd}`,
-                mode: 'yolo',
-                backendId: app.defaultBackend || 'sacode',
-                conversationId: taskId,
-              }).then((created) => {
-                if (created && !taskId && app.currentTaskId) openTaskInActivePane(state, app, app.currentTaskId);
-                term.lines.push({ text: created ? '✓ 已提交到会话' : `! ${app.lastTaskCreateError || '提交失败'}`, tone: created ? 'ok' : 'err' });
+              if (!term || term.exited) return;
+              void writeTerminal(id, `${cmd}\r`).then((written) => {
+                if (!written) throw new Error('原生终端不可用');
+              }).catch((error: unknown) => {
+                term.lines.push({ text: `! ${String(error)}`, tone: 'err' });
                 app.onChange?.();
+              });
+            },
+            onTerminalWrite: (id, data) => {
+              const term = state.terminals.find((item) => item.id === id);
+              if (!term || term.exited) return;
+              void writeTerminal(id, data).then((written) => {
+                if (!written) throw new Error('原生终端不可用');
               }).catch((error: unknown) => {
                 term.lines.push({ text: `! ${String(error)}`, tone: 'err' });
                 app.onChange?.();
@@ -726,6 +1016,38 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
             },
           })]
         : []),
+    ]);
+  };
+
+  const buildSplitLayout = (node: SplitLayout, path = ''): HTMLElement => {
+    if ('pane' in node) return el('div', { className: 'split-leaf' }, [buildAgentPane(node.pane)]);
+    const divider = el('div', {
+      className: `split-divider ${node.axis}`,
+      role: 'separator',
+      title: '拖动调整分屏比例；双击平分',
+      ondblclick: () => { state.layout = resizeSplit(state.layout, path, 0.5); render(root, app, state); },
+      onpointerdown: (event: PointerEvent) => {
+        event.preventDefault();
+        const box = (event.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();
+        const move = (next: PointerEvent) => {
+          const ratio = node.axis === 'column'
+            ? (next.clientX - box.left) / box.width
+            : (next.clientY - box.top) / box.height;
+          state.layout = resizeSplit(state.layout, path, ratio);
+          render(root, app, state);
+        };
+        const stop = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', stop);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', stop, { once: true });
+      },
+    });
+    return el('div', { className: `split-node axis-${node.axis}` }, [
+      el('div', { className: 'split-child first', style: `flex-basis:${node.ratio * 100}%` }, [buildSplitLayout(node.first, `${path}a`)]),
+      divider,
+      el('div', { className: 'split-child second' }, [buildSplitLayout(node.second, `${path}b`)]),
     ]);
   };
 
@@ -755,7 +1077,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     ? [buildTaskCreator('page')]
     : [
         el('div', { className: 'work-area' }, [
-          ...state.panes.map((_, index) => buildAgentPane(index)),
+          state.maximizedPane === null ? buildSplitLayout(state.layout) : buildAgentPane(state.maximizedPane),
         ]),
       ];
 
@@ -951,6 +1273,10 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     root.querySelector('.app-shell')?.appendChild(menu);
   }
 
+  if (state.sessionDialog) {
+    root.querySelector('.app-shell')?.appendChild(buildSessionDialog(app, state, () => render(root, app, state)));
+  }
+
   root.querySelectorAll<HTMLElement>('.timeline[data-pane]').forEach((timeline) => {
     const previous = scrollStates.get(timeline.dataset.pane!);
     if (previous && previous.conversation === (timeline.dataset.conversation ?? '')) {
@@ -964,6 +1290,22 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     if (navigation) navigation.tabIndex = distance > JUMP_VISIBLE_THRESHOLD ? 0 : -1;
     timeline.dispatchEvent(new Event('scroll'));
   });
+  const terminalHistory = root.querySelector<HTMLElement>('.terminal-history');
+  if (terminalHistory) terminalHistory.scrollTop = terminalScroll && !terminalScroll.atBottom
+    ? terminalScroll.top : terminalHistory.scrollHeight;
+  syncTerminalSize(root);
+  if (focusSelector) {
+    const pane = focusPaneIndex >= 0 ? root.querySelector<HTMLElement>(`.pane[data-pane-index="${focusPaneIndex}"]`) : root;
+    const sameConversation = focusPaneIndex < 0
+      || (pane?.querySelector<HTMLElement>('.timeline')?.dataset.conversation ?? null) === focusConversation;
+    const replacement = sameConversation ? pane?.querySelector<HTMLInputElement | HTMLTextAreaElement>(focusSelector) : null;
+    if (replacement) {
+      if (terminalDraft !== null) replacement.value = terminalDraft;
+      replacement.focus();
+      if (focusStart !== null && focusEnd !== null) replacement.setSelectionRange(focusStart, focusEnd);
+    }
+  }
+  saveWorkbenchLayout(root, app, state);
 }
 
 function setupKeyboard(root: HTMLElement, app: DesktopApp, state: UiState) {

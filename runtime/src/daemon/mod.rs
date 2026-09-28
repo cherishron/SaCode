@@ -25,6 +25,7 @@ mod scheduler;
 mod sidecar;
 mod status;
 mod types;
+mod workspace_file;
 
 pub use approval::{get_metrics, list_task_approvals, resolve_approval, HttpApprovalDecider};
 pub use handlers::run_daemon;
@@ -113,12 +114,14 @@ async fn optional_auth_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_string();
-    let sensitive = path.starts_with("/account/") || path.starts_with("/providers/");
+    let sensitive = path.starts_with("/account/")
+        || path.starts_with("/providers/")
+        || path == "/workspace/file";
     let Ok(token) = std::env::var("SACODE_DAEMON_TOKEN") else {
         if sensitive {
             return (
                 axum::http::StatusCode::FORBIDDEN,
-                "desktop account management requires daemon authentication",
+                "this desktop endpoint requires daemon authentication",
             )
                 .into_response();
         }
@@ -129,7 +132,7 @@ async fn optional_auth_middleware(
         if sensitive {
             return (
                 axum::http::StatusCode::FORBIDDEN,
-                "desktop account management requires daemon authentication",
+                "this desktop endpoint requires daemon authentication",
             )
                 .into_response();
         }
@@ -213,6 +216,7 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                 .route("/tools", get(list_tools))
                 .route("/agents", get(list_agents))
                 .route("/workspace/capabilities", get(get_workspace_capabilities))
+                .route("/workspace/file", get(workspace_file::get_file))
                 .route("/account/status", get(account::status))
                 .route("/account/login", post(account::login))
                 .route("/account/logout", post(account::logout))

@@ -23,6 +23,25 @@ export interface DaemonEventPayload {
   data: unknown;
 }
 
+export interface TerminalStartDto {
+  terminal_id: string;
+  shell: string;
+  workspace: string;
+  pid: number | null;
+}
+
+export interface TerminalOutputPayload {
+  terminal_id: string;
+  data: string;
+}
+
+export interface TerminalExitPayload {
+  terminal_id: string;
+  code: number | null;
+  signal: string | null;
+  reason: 'exited' | 'closed' | 'error';
+}
+
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 type ListenFn = (
@@ -51,6 +70,58 @@ function getInvoke(): InvokeFn | null {
 
 export function isTauri(): boolean {
   return getInvoke() !== null;
+}
+
+/** Native PTY requires both IPC commands and the Tauri event stream. */
+export function isNativeTerminalAvailable(): boolean {
+  return getInvoke() !== null && typeof tauriApi()?.event?.listen === 'function';
+}
+
+/** Returns null in browser-only development, where no native PTY exists. */
+export async function startTerminal(rows = 24, cols = 80): Promise<TerminalStartDto | null> {
+  if (!isNativeTerminalAvailable()) return null;
+  return (await getInvoke()!('terminal_start', { rows, cols })) as TerminalStartDto;
+}
+
+export async function writeTerminal(terminalId: string, data: string): Promise<boolean> {
+  const invoke = getInvoke();
+  if (!invoke) return false;
+  await invoke('terminal_write', { terminalId, data });
+  return true;
+}
+
+export async function resizeTerminal(
+  terminalId: string,
+  rows: number,
+  cols: number,
+): Promise<boolean> {
+  const invoke = getInvoke();
+  if (!invoke) return false;
+  await invoke('terminal_resize', { terminalId, rows, cols });
+  return true;
+}
+
+export async function closeTerminal(terminalId: string): Promise<boolean> {
+  const invoke = getInvoke();
+  if (!invoke) return false;
+  await invoke('terminal_close', { terminalId });
+  return true;
+}
+
+export async function listenTerminalOutput(
+  handler: (payload: TerminalOutputPayload) => void,
+): Promise<() => void> {
+  const listen = tauriApi()?.event?.listen;
+  if (!listen) return () => {};
+  return listen('terminal-output', (event) => handler(event.payload as TerminalOutputPayload));
+}
+
+export async function listenTerminalExit(
+  handler: (payload: TerminalExitPayload) => void,
+): Promise<() => void> {
+  const listen = tauriApi()?.event?.listen;
+  if (!listen) return () => {};
+  return listen('terminal-exit', (event) => handler(event.payload as TerminalExitPayload));
 }
 
 export async function startDaemon(workspace?: string): Promise<SidecarHandleDto> {

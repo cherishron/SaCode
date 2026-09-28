@@ -9,6 +9,8 @@ export function buildApprovalCard(app: DesktopApp, approval: PendingApproval) {
   const level = approval.side_effect_level as string;
   const levelClass = level === 'high' ? 'bad' : level === 'medium' ? 'warn' : '';
   const argsSummary = JSON.stringify(approval.args, null, 2).slice(0, 600);
+  const resolving = app.resolvingApprovals.has(approval.approval_id);
+  const error = app.approvalErrors.get(approval.approval_id);
 
   return el('div', { className: 'approval-card' }, [
     // 头部
@@ -27,12 +29,15 @@ export function buildApprovalCard(app: DesktopApp, approval: PendingApproval) {
     el('div', { className: 'approval-actions' }, [
       el('button', {
         className: 'btn ok',
-        onclick: () => void app.resolveApproval(approval.approval_id, true),
+        disabled: resolving,
+        onclick: () => void app.resolveApproval(approval.task_id, approval.approval_id, true),
       }, ['批准']),
       el('button', {
         className: 'btn danger',
-        onclick: () => void app.resolveApproval(approval.approval_id, false, 'denied from desktop'),
+        disabled: resolving,
+        onclick: () => void app.resolveApproval(approval.task_id, approval.approval_id, false, 'denied from desktop'),
       }, ['拒绝']),
     ]),
+    ...(error ? [el('div', { className: 'approval-error', role: 'alert' }, [`提交失败：${error}`])] : []),
   ]);
 }

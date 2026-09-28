@@ -47,11 +47,34 @@
   border-right: 0;
 }
 
-/* 多分屏：均分 */
+/* Nested splits: each divider changes only its own two child regions. */
 .work-area {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  display: flex;
+}
+
+.split-node,
+.split-leaf,
+.split-child {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.split-node { display: flex; }
+.split-node.axis-column { flex-direction: row; }
+.split-node.axis-row { flex-direction: column; }
+.split-child.first { flex: 0 0 auto; }
+.split-child.second { flex: 1 1 0; }
+.split-leaf { display: flex; }
+.split-divider { flex: 0 0 6px; background: var(--border-weak); z-index: 3; }
+.split-divider.column { cursor: col-resize; }
+.split-divider.row { cursor: row-resize; }
+.split-divider:hover { background: var(--border-accent); }
+.split-leaf > .pane { width: 100%; height: 100%; }
+.split-node.axis-row > .split-child > .split-node,
+.split-node.axis-row > .split-child > .split-leaf {
+  height: 100%;
 }
 
 /* 浮层工具栏：可放大缩小、可拖拽 */
@@ -400,3 +423,71 @@
   gap: var(--space-2);
   justify-content: flex-end;
 }
+
+.session-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 185;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--bg-scrim);
+}
+
+.session-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(480px, 100%);
+  max-height: min(560px, 80vh);
+  padding: var(--space-4);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.session-dialog-header,
+.session-dialog-actions,
+.session-dialog-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.session-dialog-header { color: var(--text-strong); }
+.session-dialog-actions { justify-content: flex-end; }
+.session-dialog-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.session-dialog-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-strong);
+  font: var(--text-14-regular);
+}
+
+.session-dialog-list { overflow: auto; min-height: 80px; }
+.session-dialog-item {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-strong);
+  cursor: pointer;
+  text-align: left;
+}
+.session-dialog-item:hover { background: var(--bg-raised); }
+.session-dialog-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-dialog-item-id { flex-shrink: 0; color: var(--text-weak); font-size: 11px; }
+.session-dialog-empty { padding: var(--space-4); color: var(--text-weak); text-align: center; }

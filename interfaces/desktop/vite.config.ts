@@ -109,9 +109,18 @@ function sacodeSidecarPlugin(): Plugin {
           url.startsWith('/tools') ||
           url.startsWith('/metrics') ||
           url.startsWith('/queue') ||
+          url.startsWith('/workspace/') ||
+          url.startsWith('/account') ||
+          url.startsWith('/providers') ||
+          url.startsWith('/audit') ||
           url.startsWith('/events') ||
           url.startsWith('/api/stream') ||
           url.startsWith('/api/design') ||
+          url.startsWith('/api/knowledge') ||
+          url.startsWith('/api/automation') ||
+          url.startsWith('/api/git-auth') ||
+          url.startsWith('/api/hooks') ||
+          url.startsWith('/api/import') ||
           url.startsWith('/api/desktop/conversations');
         if (!proxied) return next();
         const headers: Record<string, string> = {};
