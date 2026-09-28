@@ -50,6 +50,18 @@ export interface TaskStatusBody {
     duration_ms?: number | null;
     protocol_version?: number;
     task?: TaskSnapshot | null;
+    /** interaction.ask 挂起问题 */
+    pending_question?: {
+        question?: string;
+        options?: Array<{ label?: string; value?: string; description?: string }>;
+        allow_multiple?: boolean;
+    } | null;
+    /** Token 用量 */
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+    } | null;
 }
 
 export interface TaskResultBody {
@@ -92,6 +104,8 @@ export interface DesktopConversationTurn {
     status: string;
     output?: string | null;
     error?: string | null;
+    /** P0-3 回放帧 */
+    frames?: Array<{ seq: number; kind: string; text: string; detail?: string | null }>;
 }
 
 export interface DesktopConversationDetail {
@@ -214,6 +228,17 @@ export interface AccountStatus {
     default_model?: string | null;
     gateway_base_url: string;
     logged_in_at?: string | null;
+}
+
+export interface EntitlementItem {
+    id: string;
+    product?: string | null;
+    subject_type?: string | null;
+    subject_id?: string | null;
+    valid_from?: string | null;
+    valid_until?: string | null;
+    capabilities: string[];
+    status?: string | null;
 }
 
 export interface WorkspaceCapabilities {
@@ -934,6 +959,27 @@ export function parseTaskStatusBody(body: unknown): TaskStatusBody {
         duration_ms: typeof body.duration_ms === 'number' ? body.duration_ms : undefined,
         protocol_version: typeof body.protocol_version === 'number' ? body.protocol_version : undefined,
         task: parseTaskSnapshot(body.task),
+        pending_question: isRecord(body.pending_question)
+            ? {
+                question: typeof body.pending_question.question === 'string'
+                    ? body.pending_question.question : undefined,
+                options: Array.isArray(body.pending_question.options)
+                    ? body.pending_question.options.filter(isRecord).map((o) => ({
+                        label: typeof o.label === 'string' ? o.label : undefined,
+                        value: typeof o.value === 'string' ? o.value : undefined,
+                        description: typeof o.description === 'string' ? o.description : undefined,
+                    }))
+                    : undefined,
+                allow_multiple: body.pending_question.allow_multiple === true,
+            }
+            : null,
+        usage: isRecord(body.usage)
+            ? {
+                prompt_tokens: typeof body.usage.prompt_tokens === 'number' ? body.usage.prompt_tokens : undefined,
+                completion_tokens: typeof body.usage.completion_tokens === 'number' ? body.usage.completion_tokens : undefined,
+                total_tokens: typeof body.usage.total_tokens === 'number' ? body.usage.total_tokens : undefined,
+            }
+            : null,
     };
 }
 
@@ -1315,6 +1361,15 @@ export class DaemonClient {
         });
     }
 
+    /** HTML/空响应时不要 SyntaxError，给可识别错误 */
+    private async parseJsonSafe(res: HttpResponse, label: string): Promise<unknown> {
+        const text = await res.text();
+        if (!text || text.trimStart().startsWith('<')) {
+            throw new Error(`${label} returned non-JSON (HTTP ${res.status})`);
+        }
+        return JSON.parse(text) as unknown;
+    }
+
     async health(): Promise<DaemonHealth | null> {
         try {
             const res = await this.request('GET', '/health');
@@ -1365,6 +1420,80 @@ export class DaemonClient {
         return ((await res.json()) as { models: string[] }).models;
     }
 
+    async accountEntitlements(product?: string): Promise<{
+        items: EntitlementItem[];
+        entitlement_base_url?: string;
+        needs_entitlement_auth?: boolean;
+    }> {
+        const qs = product ? `?product=${encodeURIComponent(product)}` : '';
+        const res = await this.request('GET', `/account/entitlements${qs}`);
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        if (res.status === 401 && body.needs_entitlement_auth) {
+            return { items: [], needs_entitlement_auth: true };
+        }
+        if (!res.ok) throw await responseError(res, 'Account entitlements');
+        return {
+            items: Array.isArray(body.items) ? (body.items as EntitlementItem[]) : [],
+            entitlement_base_url: typeof body.entitlement_base_url === 'string' ? body.entitlement_base_url : undefined,
+        };
+    }
+
+    async accountEntitlementLogin(): Promise<void> {
+        const res = await this.request('POST', '/account/entitlement-login');
+        if (!res.ok) throw await responseError(res, 'Entitlement login');
+    }
+
+    async accountLicenseStatus(): Promise<{
+        present: boolean;
+        status: string;
+        kid?: string;
+        product?: string;
+        capabilities?: string[];
+        expires_at?: string;
+        license_id?: string;
+        error?: string;
+    }> {
+        const res = await this.request('GET', '/account/license');
+        if (!res.ok) throw await responseError(res, 'License status');
+        return await res.json() as {
+            present: boolean;
+            status: string;
+            kid?: string;
+            product?: string;
+            capabilities?: string[];
+            expires_at?: string;
+            license_id?: string;
+            error?: string;
+        };
+    }
+
+    async accountLicenseImport(license: string): Promise<{
+        ok: boolean;
+        kid?: string;
+        product?: string;
+        capabilities?: string[];
+        expires_at?: string;
+    }> {
+        const res = await this.request('POST', '/account/license', { license });
+        if (!res.ok) throw await responseError(res, 'License import');
+        return await res.json() as {
+            ok: boolean;
+            kid?: string;
+            product?: string;
+            capabilities?: string[];
+            expires_at?: string;
+        };
+    }
+
+    async accountActivationRequest(input?: { device_name?: string; product?: string; platform?: string }): Promise<{
+        ok: boolean;
+        request: Record<string, unknown>;
+    }> {
+        const res = await this.request('POST', '/account/activation-request', input ?? {});
+        if (!res.ok) throw await responseError(res, 'Activation request');
+        return await res.json() as { ok: boolean; request: Record<string, unknown> };
+    }
+
     async registerModelConnection(input: { name: string; base_url: string; upstream_api_key: string; models: { client_model: string; upstream_model: string }[] }): Promise<void> {
         const res = await this.request('POST', '/account/connections', input);
         if (!res.ok) throw await responseError(res, 'Gateway model registration');
@@ -1408,6 +1537,19 @@ export class DaemonClient {
             throw new Error('Invalid workspace file preview response');
         }
         return { path: body.path, size: body.size, content: body.content };
+    }
+
+    /** P2-5：按目录一层列表（path 空串 = 根） */
+    async listWorkspaceDir(path: string): Promise<{
+        path: string;
+        entries: Array<{ path: string; name: string; is_dir: boolean; size: number; language?: string }>;
+    }> {
+        const res = await this.request('GET', `/workspace/list?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw await responseError(res, 'Workspace list');
+        return await res.json() as {
+            path: string;
+            entries: Array<{ path: string; name: string; is_dir: boolean; size: number; language?: string }>;
+        };
     }
 
     async getDesignContext(): Promise<DesignProjectContext> {
@@ -1809,6 +1951,135 @@ export class DaemonClient {
         const res = await this.request('GET', `/task/${encodeURIComponent(taskId)}/status`);
         if (!res.ok) throw await responseError(res, 'Task status request');
         return parseTaskStatusBody(await res.json());
+    }
+
+    /** P2-1：上传附件到工作区 .sacode/uploads，返回可入 context_paths 的相对路径 */
+    async uploadWorkspaceAttachment(options: {
+        filename: string;
+        contentBase64: string;
+        kind?: string;
+    }): Promise<{ status: string; path: string; size: number; message?: string }> {
+        const res = await this.request('POST', '/api/workspace/uploads', JSON.stringify({
+            filename: options.filename,
+            content_base64: options.contentBase64,
+            kind: options.kind ?? '',
+        }));
+        if (!res.ok) throw await responseError(res, 'Upload attachment');
+        return await res.json() as { status: string; path: string; size: number; message?: string };
+    }
+
+    /** P1-2：技能管理 */
+    async listSkills(): Promise<{
+        skills: Array<{
+            name: string;
+            description: string;
+            source: string;
+            path?: string;
+            version?: string;
+            author?: string;
+            tags?: string[];
+        }>;
+        error?: string;
+    }> {
+        const res = await this.request('GET', '/api/skills');
+        if (!res.ok) throw await responseError(res, 'Skills list');
+        return await this.parseJsonSafe(res, 'Skills list') as Awaited<ReturnType<DaemonClient['listSkills']>>;
+    }
+
+    async upsertSkill(
+        name: string,
+        body: {
+            description?: string;
+            prompt: string;
+            source?: 'user' | 'project' | 'workspace';
+            version?: string;
+            author?: string;
+            tags?: string[];
+        },
+    ): Promise<{ status: string; name?: string; path?: string; message?: string }> {
+        const res = await this.request('PUT', `/api/skills/${encodeURIComponent(name)}`, JSON.stringify(body));
+        if (!res.ok) throw await responseError(res, 'Skill upsert');
+        return await res.json() as { status: string; name?: string; path?: string; message?: string };
+    }
+
+    async deleteSkill(name: string, source?: 'user' | 'project' | 'workspace'): Promise<void> {
+        const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+        const res = await this.request('DELETE', `/api/skills/${encodeURIComponent(name)}${qs}`);
+        if (!res.ok) throw await responseError(res, 'Skill delete');
+    }
+
+    /** P1-1：MCP 服务器管理 */
+    async listMcpServers(): Promise<{
+        servers: Array<{
+            name: string;
+            type: string;
+            url?: string;
+            command?: string;
+            args?: string[];
+            env?: Record<string, string>;
+            enabled: boolean;
+            source: string;
+        }>;
+        error?: string;
+    }> {
+        const res = await this.request('GET', '/api/mcp/servers');
+        if (!res.ok) throw await responseError(res, 'MCP list');
+        return await this.parseJsonSafe(res, 'MCP list') as Awaited<ReturnType<DaemonClient['listMcpServers']>>;
+    }
+
+    async upsertMcpServer(
+        name: string,
+        body: {
+            type: 'remote' | 'stdio';
+            url?: string;
+            command?: string;
+            args?: string[];
+            env?: Record<string, string>;
+            enabled?: boolean;
+            source?: 'user' | 'project';
+        },
+    ): Promise<{ status: string; name?: string; message?: string }> {
+        const res = await this.request('PUT', `/api/mcp/servers/${encodeURIComponent(name)}`, JSON.stringify(body));
+        if (!res.ok) throw await responseError(res, 'MCP upsert');
+        return await res.json() as { status: string; name?: string; message?: string };
+    }
+
+    async deleteMcpServer(name: string): Promise<void> {
+        const res = await this.request('DELETE', `/api/mcp/servers/${encodeURIComponent(name)}`);
+        if (!res.ok) throw await responseError(res, 'MCP delete');
+    }
+
+    async toggleMcpServer(name: string, enabled: boolean, source?: 'user' | 'project'): Promise<void> {
+        const res = await this.request(
+            'POST',
+            `/api/mcp/servers/${encodeURIComponent(name)}/toggle`,
+            JSON.stringify({ enabled, source: source ?? 'project' }),
+        );
+        if (!res.ok) throw await responseError(res, 'MCP toggle');
+    }
+
+    async testMcpServer(name: string): Promise<{
+        status: string;
+        tools?: Array<{ name: string; description?: string }>;
+        message?: string;
+    }> {
+        const res = await this.request('POST', `/api/mcp/servers/${encodeURIComponent(name)}/test`);
+        if (!res.ok) throw await responseError(res, 'MCP test');
+        return await res.json() as { status: string; tools?: Array<{ name: string; description?: string }>; message?: string };
+    }
+
+    /** P0-1：回答 interaction.ask 挂起问题，续写会话 */
+    async answerTaskQuestion(
+        taskId: string,
+        body: { answer?: string; selected?: string[]; cancelled?: boolean },
+    ): Promise<{ task_id?: string; conversation_id?: string; status?: string; message?: string }> {
+        const res = await this.request(
+            'POST',
+            `/task/${encodeURIComponent(taskId)}/answer`,
+            JSON.stringify(body),
+        );
+        if (!res.ok) throw await responseError(res, 'Answer question');
+        return await res.json() as { task_id?: string; conversation_id?: string; status?: string; message?: string };
     }
 
     async getTaskResult(taskId: string): Promise<TaskResultBody> {
