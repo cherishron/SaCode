@@ -518,3 +518,58 @@
   gap: var(--space-2);
   justify-content: flex-end;
 }
+
+.automation-list-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.automation-header-right { flex: 0 0 auto; }
+.automation-content { min-height: 0; }
+.automation-content .automation-search-input {
+  flex: 0 0 auto;
+  height: 34px;
+  box-sizing: border-box;
+  margin: var(--space-2);
+}
+
+.automation-rule-list { padding: 0 var(--space-2) var(--space-2); gap: 2px; }
+.automation-list-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.automation-list-item:hover { background: var(--bg-raised); }
+.automation-list-item.active { background: var(--accent-weak); color: var(--text-strong); }
+.automation-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-list-meta { color: var(--text-weak); font: var(--text-12-regular); }
+.automation-inline-error { padding: var(--space-2); color: var(--danger); }
+
+.automation-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-5);
+  overflow: auto;
+}
+.automation-detail-heading { display: flex; align-items: center; gap: var(--space-3); }
+.automation-detail-heading h3 { flex: 1; min-width: 0; margin: 0; font: var(--text-16-medium); }
+.automation-detail-status { color: var(--text-weak); }
+.automation-detail-status.enabled { color: var(--success); }
+.automation-detail-meta { display: flex; flex-direction: column; gap: var(--space-2); color: var(--text-base); }
+.automation-detail-label { font: var(--text-13-medium); color: var(--text-strong); }
+.automation-detail-prompt { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-base); }
+.automation-detail-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.workspace-split-detail > .automation-form { width: 100%; max-width: none; padding: var(--space-5); }

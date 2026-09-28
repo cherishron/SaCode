@@ -187,3 +187,57 @@
   border-top: 1px solid var(--border-weak);
   flex-shrink: 0;
 }
+
+.sanative-list-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.sanative-header-right { flex: 0 0 auto; }
+
+.sanative-search-input { box-sizing: border-box; height: 34px; }
+
+.sanative-content { padding: var(--space-2); }
+
+.sanative-entry-list { display: flex; flex-direction: column; gap: 2px; }
+
+.sanative-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+}
+
+.sanative-entry.active { background: var(--accent-weak); }
+.sanative-entry-name { width: 100%; color: inherit; }
+.sanative-entry-snippet {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-weak);
+  font: var(--text-12-regular);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sanative-reader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+.sanative-reader h3 { margin: 0; font: var(--text-16-medium); }
+.sanative-reader pre { margin: 0; color: var(--text-base); overflow-wrap: anywhere; }
+.sanative-reader > div:last-child { display: flex; gap: var(--space-2); }
+.sanative-reader textarea { flex: 1; min-height: 250px; }
+.sanative-error { padding: var(--space-2); color: var(--danger); }

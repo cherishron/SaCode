@@ -676,6 +676,8 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
   const focusSelector = focused?.matches('.input-prompt') ? '.input-prompt'
     : focused?.matches('.sidebar-search-input') ? '.sidebar-search-input'
     : focused?.matches('.terminal-input') ? '.terminal-input'
+    : focused?.matches('.sanative-search-input') ? '.sanative-search-input'
+    : focused?.matches('.automation-search-input') ? '.automation-search-input'
     : focused?.matches('.terminal-history[data-terminal-id]') ? '.terminal-history[data-terminal-id]'
     : null;
   const focusedPane = focused?.closest('.pane');

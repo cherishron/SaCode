@@ -1,6 +1,7 @@
 import { el } from '../dom.ts';
 import type { DesktopApp } from './service.ts';
 import type { KnowledgeHit, KnowledgeNote } from '@cherishron/sacode-client-core';
+import { buildResizableWorkspace } from './resizable-workspace.ts';
 
 export interface SaNativeState {
   userEntries: KnowledgeNote[];
@@ -15,11 +16,12 @@ export interface SaNativeState {
   hits: KnowledgeHit[] | null;
   searchVersion: number;
   draft: { title: string; content: string } | null;
+  splitRatio: number;
 }
 export function createSaNativeState(): SaNativeState {
   return { userEntries: [], projectEntries: [], loading: false, error: null,
     activeScope: 'project', selectedEntry: null, selectedNote: null, editing: false,
-    searchText: '', hits: null, searchVersion: 0, draft: null };
+    searchText: '', hits: null, searchVersion: 0, draft: null, splitRatio: 0.36 };
 }
 export async function refreshSaNative(app: DesktopApp, state: SaNativeState, rerender: () => void) {
   const scope = state.activeScope;
@@ -53,40 +55,52 @@ export function buildSaNativeWorkspace(app: DesktopApp, state: SaNativeState, re
   const visible = state.hits
     ? state.hits.map(hit => ({ ...entries.find(note => note.id === hit.id), ...hit }))
     : entries;
-  return el('section', { className: 'sanative' }, [
-    el('div', { className: 'sanative-header' }, [
-      el('span', { className: 'sanative-title' }, ['知识库']),
-      el('button', { className: 'header-btn', title: '刷新', onclick: () => void refreshSaNative(app, state, rerender) }, ['刷新']),
-      el('button', { className: 'header-btn', title: '新建笔记', onclick: () => {
-        state.selectedEntry = null; state.selectedNote = null; state.draft = { title: '', content: '' }; state.editing = true; rerender();
-      } }, ['+ 新建']),
-    ]),
+  const list = el('div', { className: 'sanative-list-pane' }, [
     el('div', { className: 'sanative-scope-tabs' }, (['project', 'user'] as const).map(scope =>
       el('button', { className: `sanative-scope-tab ${state.activeScope === scope ? 'active' : ''}`,
         onclick: () => { state.activeScope = scope; state.selectedEntry = null; state.selectedNote = null;
           state.editing = false; state.draft = null; state.hits = null; state.searchVersion++; void refreshSaNative(app, state, rerender); },
-      }, [scope === 'project' ? '项目知识库' : '用户知识库']))),
+      }, [scope === 'project' ? '项目' : '用户']))),
     el('div', { className: 'sanative-search' }, [el('input', {
-      className: 'sanative-search-input', placeholder: '搜索笔记正文…', value: state.searchText,
+      className: 'sanative-search-input', placeholder: '搜索笔记…', value: state.searchText,
       oninput: (event: Event) => { state.searchText = (event.target as HTMLInputElement).value; const version = ++state.searchVersion;
         if (!state.searchText.trim()) { state.hits = null; rerender(); }
         else setTimeout(() => { if (state.searchVersion === version) void searchNow(app, state, rerender); }, 300); },
     })]),
-    state.error ? el('div', { className: 'sanative-empty', style: 'color:var(--danger)' }, [state.error]) : '',
-    state.loading ? el('div', { className: 'sanative-empty' }, ['正在加载…']) :
-      el('div', { className: 'sanative-content' }, [
+    state.error ? el('div', { className: 'sanative-error' }, [state.error]) : '',
+    el('div', { className: 'sanative-content' }, [
+      state.loading ? el('div', { className: 'sanative-empty' }, ['正在加载…']) :
         el('div', { className: 'sanative-entry-list' }, visible.length ? visible.map(note =>
           el('button', { className: `sanative-entry ${state.selectedEntry === note.id ? 'active' : ''}`,
             onclick: () => withError(state, rerender, async () => {
               state.selectedNote = await app.getKnowledgeNote(note.id, state.activeScope);
               state.selectedEntry = note.id; state.editing = false; state.draft = null; rerender();
-            }) }, [note.readonly ? '锁定 · ' : '', note.title, ...( 'snippet' in note && note.snippet ? [` — ${note.snippet}`] : [])]))
-          : [el('div', { className: 'sanative-empty' }, [state.searchText ? '没有匹配结果' : '暂无笔记'])]),
-        state.editing ? editor(app, state, rerender) : state.selectedNote ? reader(app, state, rerender) : '',
+            }) }, [
+              el('span', { className: 'sanative-entry-name' }, [`${note.readonly ? '🔒 ' : ''}${note.title}`]),
+              ...('snippet' in note && note.snippet ? [el('span', { className: 'sanative-entry-snippet' }, [String(note.snippet)])] : []),
+            ])) : [el('div', { className: 'sanative-empty' }, [state.searchText ? '没有匹配结果' : '暂无笔记'])]),
+    ]),
+  ]);
+  const detail = state.editing ? editor(app, state, rerender)
+    : state.selectedNote ? reader(app, state, rerender)
+      : el('div', { className: 'workspace-detail-empty' }, [
+          el('strong', {}, ['选择左侧笔记']),
+          el('span', {}, ['这里会显示笔记正文，也可以新建笔记。']),
+        ]);
+  return el('section', { className: 'sanative' }, [
+    el('div', { className: 'sanative-header' }, [
+      el('span', { className: 'sanative-title' }, ['笔记']),
+      el('div', { className: 'sanative-header-right' }, [
+        el('button', { className: 'header-btn', title: '刷新', onclick: () => void refreshSaNative(app, state, rerender) }, ['刷新']),
+        el('button', { className: 'header-btn', title: '新建笔记', onclick: () => {
+          state.selectedEntry = null; state.selectedNote = null; state.draft = { title: '', content: '' }; state.editing = true; rerender();
+        } }, ['+ 新建笔记']),
       ]),
+    ]),
+    buildResizableWorkspace(state.splitRatio, ratio => { state.splitRatio = ratio; }, list, detail),
     el('div', { className: 'sanative-footer' }, [state.activeScope === 'project'
       ? `项目 .sacode/knowledge/ · docs/ 只读 · ${app.workspace || '未指定项目'}` : '用户 ~/.sacode/knowledge/']),
-  ].filter(Boolean) as Node[]);
+  ]);
 }
 function reader(app: DesktopApp, state: SaNativeState, rerender: () => void): Node {
   const note = state.selectedNote!;
