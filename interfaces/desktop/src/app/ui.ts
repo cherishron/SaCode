@@ -45,9 +45,7 @@ export interface PaneState {
   conversationMode: ConversationMode;
   activeTab: ContextTab;
   contextOpen: boolean;
-  panelSize: 'sm' | 'md' | 'lg';
-  /** 浮层工具栏位置（相对 pane） */
-  panelPos: { x: number; y: number };
+  panelWidth: number;
 }
 
 export interface UiState {
@@ -179,9 +177,8 @@ function createPaneState(prefs: ReturnType<typeof loadDesktopPreferences>): Pane
     },
     conversationMode: prefs.defaultMode,
     activeTab: 'changes',
-    contextOpen: true,
-    panelSize: 'md',
-    panelPos: { x: -1, y: 12 },
+    contextOpen: prefs.contextOpen,
+    panelWidth: 500,
   };
 }
 
@@ -661,7 +658,6 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
     'app-shell',
     state.activeView === 'design' ? 'design-view' : state.activeView === 'native' ? 'native-view' : state.activeView === 'automation' ? 'automation-view' : '',
     !state.shell.sidebarOpen ? 'sidebar-closed' : '',
-    state.shell.contextOpen ? 'context-open' : '',
     `splits-${Math.min(4, Math.max(1, state.panes.length))}`,
   ].filter(Boolean).join(' ');
   const scrollStates = new Map<string, { conversation: string; top: number; atBottom: boolean }>();
@@ -903,6 +899,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
         el('button', {
           className: `header-btn ${pane.contextOpen ? 'active' : ''}`,
           title: '本分屏工具栏',
+          'aria-label': pane.contextOpen ? '关闭右侧工具栏' : '打开右侧工具栏',
           onclick: () => {
             pane.contextOpen = !pane.contextOpen;
             state.activePane = index;
@@ -931,6 +928,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
           },
         }, ['×']),
       ]),
+      el('div', { className: 'pane-body' }, [
       buildConversation(app, taskId, pane.inputArea, (mode) => {
         pane.conversationMode = mode as ConversationMode;
         pane.inputArea.executionMode = mode as ExecutionModeInput;
@@ -947,7 +945,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
         }
         render(root, app, state);
       }, index),
-      ...(pane.contextOpen && state.activePane === index
+      ...(pane.contextOpen
         ? [buildContextPanel(app, pane.activeTab, {
             taskId: (taskId && (app.conversationTurns?.id === taskId
               ? app.conversationTurns
@@ -1002,22 +1000,16 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
                 app.onChange?.();
               });
             },
-            panelSize: pane.panelSize,
-            panelPos: pane.panelPos,
-            onPanelSize: (size) => {
-              pane.panelSize = size;
-              render(root, app, state);
-            },
-            onPanelMove: (pos) => {
-              pane.panelPos = pos;
-              render(root, app, state);
-            },
             onClosePanel: () => {
               pane.contextOpen = false;
               render(root, app, state);
             },
+          }, pane.panelWidth, (width) => {
+            pane.panelWidth = width;
+            render(root, app, state);
           })]
         : []),
+      ]),
     ]);
   };
 
@@ -1189,6 +1181,7 @@ function render(root: HTMLElement, app: DesktopApp, state: UiState) {
         app.defaultBackend = next.defaultBackend;
         state.shell.sidebarOpen = next.sidebarOpen;
         state.shell.contextOpen = next.contextOpen;
+        state.panes.forEach((pane) => { pane.contextOpen = next.contextOpen; });
         // 托盘与自启动是 Tauri 壳层能力，保存时同步到原生侧；Web 环境忽略。
         void setTrayEnabled(next.trayEnabled).catch(() => {});
         void setAutostart(next.autostart).catch(() => {});
@@ -1353,7 +1346,7 @@ function setupKeyboard(root: HTMLElement, app: DesktopApp, state: UiState) {
       render(root, app, state);
     } else if (state.activeView === 'agent' && event.ctrlKey && event.key.toLowerCase() === 'j') {
       event.preventDefault();
-      state.shell.contextOpen = !state.shell.contextOpen;
+      state.panes[state.activePane]!.contextOpen = !state.panes[state.activePane]!.contextOpen;
       render(root, app, state);
     } else if (event.key === 'Escape' && state.activeTaskFilter) {
       state.activeTaskFilter = null;
@@ -1373,10 +1366,10 @@ function setupResponsive(root: HTMLElement, app: DesktopApp, state: UiState) {
     // 窄屏强制收起侧栏/右栏；宽屏不覆盖用户偏好（右栏默认保持关闭）
     if (breakpoint === 'xs') {
       state.shell.sidebarOpen = false;
-      state.shell.contextOpen = false;
+      state.panes.forEach((pane) => { pane.contextOpen = false; });
     } else if (breakpoint === 'sm' || breakpoint === 'md') {
       state.shell.sidebarOpen = true;
-      state.shell.contextOpen = false;
+      state.panes.forEach((pane) => { pane.contextOpen = false; });
     }
     render(root, app, state);
   };

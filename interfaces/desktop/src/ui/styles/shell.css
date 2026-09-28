@@ -1111,6 +1111,33 @@ textarea {
   padding: 4px;
 }
 
+.project-file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: min(720px, 100%);
+  margin: 0 auto 8px;
+}
+
+.file-pick-menu {
+  width: 320px;
+  background: #2a2a28;
+  background: var(--td-bg-color-popup, #2a2a28);
+  border-radius: 12px;
+  padding: 6px;
+}
+
+:root[data-theme='light'] .file-pick-menu,
+:root:not(.dark) .file-pick-menu {
+  background: #fff;
+}
+
+.file-pick-list {
+  max-height: 280px;
+  overflow: auto;
+  margin-top: 4px;
+}
+
 .think-depth {
   padding: 6px 8px 2px;
 }

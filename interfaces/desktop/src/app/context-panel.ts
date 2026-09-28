@@ -282,6 +282,9 @@ export function buildContextPanel(
   app: DesktopApp,
   activeTab: ContextTab = 'files',
   actions: ContextPanelActions,
+  /** 旧调用点兼容：浮层宽度与变化回调 */
+  _panelWidth?: number,
+  onPanelWidth?: (width: number) => void,
 ) {
   const taskId = actions.taskId ?? null;
   syncPanelData(app, taskId);

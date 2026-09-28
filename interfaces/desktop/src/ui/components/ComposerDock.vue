@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { ChatSender, type TdAttachmentItem } from '@tdesign-vue-next/chat';
+import { FileIcon, FolderIcon } from 'tdesign-icons-vue-next';
 import BotIcon from './BotIcon.vue';
 import MicIcon from './MicIcon.vue';
 import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
@@ -88,6 +89,50 @@ const skillList = computed(() =>
   (app.workspaceCapabilities.skills ?? []).map((s) => ({ name: s.name })),
 );
 
+/** 项目文件引用（@ 进 context_paths / 输入框） */
+const projectFiles = ref<string[]>([]);
+const pickerOpen = ref(false);
+const pickerFilter = ref('');
+const fileInput = ref<HTMLInputElement | null>(null);
+
+const workspaceFiles = computed(() => {
+  const q = pickerFilter.value.trim().toLowerCase();
+  return (app.workspaceCapabilities.files ?? [])
+    .map((f) => f.path)
+    .filter((p) => !q || p.toLowerCase().includes(q))
+    .slice(0, 80);
+});
+
+function handleAttachClick() {
+  fileInput.value?.click();
+}
+
+async function onPickFiles(event: Event) {
+  const el = event.target as HTMLInputElement;
+  for (const file of Array.from(el.files ?? [])) {
+    void uploadAttachment(file);
+  }
+  el.value = '';
+}
+
+function openProjectPicker() {
+  pickerOpen.value = true;
+  pickerFilter.value = '';
+  void app.refreshWorkspaceCapabilities();
+}
+
+function addProjectFile(path: string) {
+  if (!projectFiles.value.includes(path)) {
+    projectFiles.value = [...projectFiles.value, path];
+  }
+  inputValue.value = (inputValue.value ? inputValue.value + ' ' : '') + `@${path}`;
+  pickerOpen.value = false;
+}
+
+function removeProjectFile(path: string) {
+  projectFiles.value = projectFiles.value.filter((p) => p !== path);
+}
+
 function enhance() {
   const raw = inputValue.value.trim();
   if (!raw || enhancing.value) return;
@@ -142,11 +187,15 @@ async function handleSend(text: string) {
     conversationId: props.conversationId,
     modelName: modelName.value || undefined,
     skill: skill.value || undefined,
-    contextPaths: attachments.value.map((a) => a.path),
+    contextPaths: [
+      ...attachments.value.map((a) => a.path),
+      ...projectFiles.value,
+    ],
   });
   if (result) {
     inputValue.value = '';
     files.value = [];
+    projectFiles.value = [];
     emit('sent', result);
   }
 }
@@ -189,6 +238,14 @@ function onPaste(event: ClipboardEvent) {
       overflow="scrollY"
       @remove="handleFileRemove"
     />
+    <input ref="fileInput" type="file" multiple hidden @change="onPickFiles" />
+
+    <div v-if="projectFiles.length" class="project-file-chips">
+      <span v-for="p in projectFiles" :key="p" class="attachment-chip">
+        <span class="attachment-name" :title="p">@{{ p.split(/[\\/]/).pop() }}</span>
+        <button type="button" class="attachment-remove" @click="removeProjectFile(p)">×</button>
+      </span>
+    </div>
 
     <t-chat-sender
       v-model="inputValue"
@@ -208,6 +265,14 @@ function onPaste(event: ClipboardEvent) {
             <button class="ghost-btn" type="button" title="添加">+</button>
             <template #content>
               <div class="plus-menu plus-menu--static">
+                <button type="button" class="plus-item" @click="handleAttachClick">
+                  <FileIcon size="14" />
+                  <span>添加照片和文件</span>
+                </button>
+                <button type="button" class="plus-item" @click="openProjectPicker">
+                  <FolderIcon size="14" />
+                  <span>@ 项目文件<span class="plus-desc">引用工作区文件到任务</span></span>
+                </button>
                 <button type="button" class="plus-item" @click="mode = 'plan'">
                   <BotIcon size="14" />
                   <span>编排模式<span class="plus-desc">澄清需求、规格、实现与评审</span></span>
@@ -283,6 +348,35 @@ function onPaste(event: ClipboardEvent) {
         </div>
       </template>
     </t-chat-sender>
+
+    <!-- @ 项目文件选择 -->
+    <t-popup
+      :visible="pickerOpen"
+      trigger="click"
+      placement="top-start"
+      :overlay-style="{ zIndex: 320, padding: '6px' }"
+      @visible-change="(v: boolean) => (pickerOpen = v)"
+    >
+      <span style="display: none" />
+      <template #content>
+        <div class="file-pick-menu" @click.stop>
+          <input v-model="pickerFilter" class="plus-search" placeholder="搜索项目文件" />
+          <div class="file-pick-list">
+            <button
+              v-for="p in workspaceFiles"
+              :key="p"
+              type="button"
+              class="plus-sub-item"
+              @click="addProjectFile(p)"
+            >
+              <FileIcon size="12" />
+              <span class="plus-sub-name">{{ p }}</span>
+            </button>
+            <div v-if="!workspaceFiles.length" class="plus-sub-empty">无匹配文件</div>
+          </div>
+        </div>
+      </template>
+    </t-popup>
 
     <div v-if="sendError" class="composer-error">{{ sendError }}</div>
   </div>

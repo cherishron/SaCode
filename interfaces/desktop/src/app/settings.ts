@@ -17,6 +17,7 @@ export type SettingsSection =
   | 'hooks'
   | 'import'
   | 'services'
+  | 'skills'
   | 'about';
 export type InterfaceDensity = 'comfortable' | 'compact';
 export type ThemePreference = 'system' | 'dark' | 'light';
@@ -74,7 +75,7 @@ export function loadDesktopPreferences(app?: DesktopApp): DesktopPreferences {
     defaultModel: app?.workspaceCapabilities.models[0]?.id || '',
     defaultSkill: '',
     density: 'comfortable',
-    theme: 'dark',
+    theme: 'system',
     sidebarOpen: true,
     contextOpen: true,
     restoreLastProject: true,
@@ -116,20 +117,32 @@ function refreshBrandAssets() {
   if (favicon) favicon.href = logo;
 }
 
+/** 将主题写到 html：TDesign 走 theme-mode + .dark，壳走 data-theme */
+export function applyTDesignTheme(mode: 'light' | 'dark') {
+  const root = document.documentElement;
+  root.setAttribute('theme-mode', mode);
+  root.classList.toggle('dark', mode === 'dark');
+  root.dataset.theme = mode;
+}
+
+export function resolveThemeMode(preference: ThemePreference): 'light' | 'dark' {
+  if (preference === 'dark' || preference === 'light') return preference;
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  return 'light';
+}
+
 export function applyInterfacePreferences(preferences: DesktopPreferences) {
   document.documentElement.dataset.density = preferences.density;
-  if (preferences.theme === 'system') {
-    delete document.documentElement.dataset.theme;
-  } else {
-    document.documentElement.dataset.theme = preferences.theme;
-  }
-  // 开发工作台默认深色；未显式跟随系统时确保 data-theme 存在
-  if (!document.documentElement.dataset.theme && preferences.theme !== 'system') {
-    document.documentElement.dataset.theme = 'dark';
-  }
+  applyTDesignTheme(resolveThemeMode(preferences.theme));
   refreshBrandAssets();
   if (!systemThemeListenerRegistered && typeof window.matchMedia === 'function') {
-    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', refreshBrandAssets);
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      const saved = loadDesktopPreferences();
+      if (saved.theme === 'system') applyTDesignTheme(resolveThemeMode('system'));
+      refreshBrandAssets();
+    });
     systemThemeListenerRegistered = true;
   }
 }
@@ -342,6 +355,7 @@ function buildSectionContent(app: DesktopApp, state: SettingsState, actions: Set
     case 'hooks': return buildHooksSection(app, state, actions.rerender);
     case 'import': return buildImportSection(app, state, actions.rerender);
     case 'services': return buildServicesSection(app);
+    case 'skills': return settingsSection('技能', '用户 / 项目目录技能管理见 Vue 设置页', []);
     case 'about': return buildAboutSection(app);
   }
 }
