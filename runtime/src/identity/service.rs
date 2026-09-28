@@ -1160,6 +1160,7 @@ mod tests {
             client_id: "sacode".into(),
             redirect_uri: None,
             provider_name: "sa-ai".into(),
+            ..Default::default()
         };
         let store = MemorySecretStore::new();
         let oidc = MockOidc;

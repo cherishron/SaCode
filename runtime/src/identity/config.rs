@@ -4,15 +4,22 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    DEFAULT_CLIENT_ID, DEFAULT_GATEWAY_BASE_URL, DEFAULT_IDP_BASE_URL, DEFAULT_PROVIDER_NAME,
+    DEFAULT_CLIENT_ID, DEFAULT_ENTITLEMENT_BASE_URL, DEFAULT_ENTITLEMENT_CLIENT_ID,
+    DEFAULT_GATEWAY_BASE_URL, DEFAULT_IDP_BASE_URL, DEFAULT_PROVIDER_NAME,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityConfig {
     pub idp_base_url: String,
     pub gateway_base_url: String,
+    /// sa-entitlement 基址（权益查询 / License 状态）。
+    #[serde(default)]
+    pub entitlement_base_url: String,
     #[serde(default = "default_client_id")]
     pub client_id: String,
+    /// OAuth client for entitlement tokens (aud=saai-entitlement).
+    #[serde(default = "default_entitlement_client_id")]
+    pub entitlement_client_id: String,
     /// Loopback redirect. When empty, CLI binds an ephemeral port.
     #[serde(default)]
     pub redirect_uri: Option<String>,
@@ -24,6 +31,10 @@ fn default_client_id() -> String {
     DEFAULT_CLIENT_ID.to_string()
 }
 
+fn default_entitlement_client_id() -> String {
+    DEFAULT_ENTITLEMENT_CLIENT_ID.to_string()
+}
+
 fn default_provider_name() -> String {
     DEFAULT_PROVIDER_NAME.to_string()
 }
@@ -33,7 +44,9 @@ impl Default for IdentityConfig {
         Self {
             idp_base_url: String::new(),
             gateway_base_url: String::new(),
+            entitlement_base_url: String::new(),
             client_id: default_client_id(),
+            entitlement_client_id: default_entitlement_client_id(),
             redirect_uri: None,
             provider_name: default_provider_name(),
         }
@@ -102,6 +115,18 @@ impl IdentityConfig {
                 self.client_id = v;
             }
         }
+        if let Ok(v) = std::env::var("SACODE_ENTITLEMENT_BASE_URL") {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                self.entitlement_base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("SACODE_ENTITLEMENT_CLIENT_ID") {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                self.entitlement_client_id = v;
+            }
+        }
         if let Ok(v) = std::env::var("SACODE_IDENTITY_PROVIDER_NAME") {
             let v = v.trim().to_string();
             if !v.is_empty() {
@@ -143,9 +168,18 @@ impl IdentityConfig {
             .trim()
             .trim_end_matches('/')
             .to_string();
+        self.entitlement_base_url = self
+            .entitlement_base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         self.client_id = self.client_id.trim().to_string();
         if self.client_id.is_empty() {
             self.client_id = DEFAULT_CLIENT_ID.to_string();
+        }
+        self.entitlement_client_id = self.entitlement_client_id.trim().to_string();
+        if self.entitlement_client_id.is_empty() {
+            self.entitlement_client_id = DEFAULT_ENTITLEMENT_CLIENT_ID.to_string();
         }
         if self.provider_name.trim().is_empty() {
             self.provider_name = DEFAULT_PROVIDER_NAME.to_string();
@@ -161,6 +195,9 @@ impl IdentityConfig {
         }
         if self.gateway_base_url.trim().is_empty() {
             self.gateway_base_url = DEFAULT_GATEWAY_BASE_URL.to_string();
+        }
+        if self.entitlement_base_url.trim().is_empty() {
+            self.entitlement_base_url = DEFAULT_ENTITLEMENT_BASE_URL.to_string();
         }
     }
 
@@ -218,17 +255,28 @@ impl IdentityConfig {
         format!("{}/v1", self.gateway_base_url.trim_end_matches('/'))
     }
 
+    pub fn entitlement_me_url(&self) -> String {
+        format!(
+            "{}{}",
+            self.entitlement_base_url.trim_end_matches('/'),
+            super::ENTITLEMENT_ME_PATH
+        )
+    }
+
     pub fn dry_run_summary(&self) -> String {
         format!(
-            "idp_base_url={}\ngateway_base_url={}\nclient_id={}\nredirect_uri={}\nprovider_name={}\ntoken_endpoint={}\nexchange_url={}\nmodels_url={}",
+            "idp_base_url={}\ngateway_base_url={}\nentitlement_base_url={}\nclient_id={}\nentitlement_client_id={}\nredirect_uri={}\nprovider_name={}\ntoken_endpoint={}\nexchange_url={}\nmodels_url={}\nentitlement_me_url={}",
             self.idp_base_url,
             self.gateway_base_url,
+            self.entitlement_base_url,
             self.client_id,
+            self.entitlement_client_id,
             self.redirect_uri.as_deref().unwrap_or("(loopback ephemeral)"),
             self.provider_name,
             self.token_endpoint(),
             self.gateway_exchange_url(),
             self.gateway_models_url(),
+            self.entitlement_me_url(),
         )
     }
 }
@@ -266,7 +314,7 @@ mod tests {
 
     #[test]
     fn env_overrides_file_values() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("SACODE_IDP_BASE_URL", "https://idp.test");
         std::env::set_var("SACODE_GATEWAY_BASE_URL", "https://gw.test/");
         std::env::set_var("SACODE_IDENTITY_CLIENT_ID", "sacode-cli");
@@ -305,14 +353,49 @@ mod tests {
         cfg.fill_local_defaults_if_empty();
         assert_eq!(cfg.idp_base_url, DEFAULT_IDP_BASE_URL);
         assert_eq!(cfg.gateway_base_url, DEFAULT_GATEWAY_BASE_URL);
+        assert_eq!(cfg.entitlement_base_url, DEFAULT_ENTITLEMENT_BASE_URL);
 
         let mut cfg = IdentityConfig {
             idp_base_url: "https://idp.custom".into(),
             gateway_base_url: String::new(),
+            entitlement_base_url: "https://ent.custom".into(),
             ..Default::default()
         };
         cfg.fill_local_defaults_if_empty();
         assert_eq!(cfg.idp_base_url, "https://idp.custom");
         assert_eq!(cfg.gateway_base_url, DEFAULT_GATEWAY_BASE_URL);
+        assert_eq!(cfg.entitlement_base_url, "https://ent.custom");
+    }
+
+    #[test]
+    fn entitlement_client_defaults_and_env_override() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cfg = IdentityConfig::default();
+        cfg.fill_local_defaults_if_empty();
+        cfg.normalize();
+        assert_eq!(cfg.entitlement_client_id, DEFAULT_ENTITLEMENT_CLIENT_ID);
+        assert_eq!(
+            cfg.entitlement_me_url(),
+            format!("{}/v1/entitlements/me", DEFAULT_ENTITLEMENT_BASE_URL)
+        );
+
+        std::env::set_var("SACODE_ENTITLEMENT_BASE_URL", "https://ent.test/");
+        std::env::set_var("SACODE_ENTITLEMENT_CLIENT_ID", "sacode-ent-dev");
+        let mut cfg = IdentityConfig::default();
+        cfg.apply_env_overrides();
+        cfg.normalize();
+        assert_eq!(cfg.entitlement_base_url, "https://ent.test");
+        assert_eq!(cfg.entitlement_client_id, "sacode-ent-dev");
+        assert_eq!(cfg.entitlement_me_url(), "https://ent.test/v1/entitlements/me");
+        std::env::remove_var("SACODE_ENTITLEMENT_BASE_URL");
+        std::env::remove_var("SACODE_ENTITLEMENT_CLIENT_ID");
+    }
+
+    #[test]
+    fn legacy_config_json_without_entitlement_fields_still_loads() {
+        let json = r#"{"idp_base_url":"https://idp.test","gateway_base_url":"https://gw.test","client_id":"sacode","provider_name":"sa-ai"}"#;
+        let cfg: IdentityConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.entitlement_client_id, DEFAULT_ENTITLEMENT_CLIENT_ID);
+        assert_eq!(cfg.entitlement_base_url, "");
     }
 }

@@ -96,6 +96,7 @@ impl PendingLogin {
             client_id: self.client_id.clone(),
             redirect_uri: Some(self.redirect_uri.clone()),
             provider_name: self.provider_name.clone(),
+            ..Default::default()
         }
     }
 }
@@ -662,6 +663,7 @@ mod tests {
             client_id: "sacode".into(),
             redirect_uri: None,
             provider_name: "sa-ai".into(),
+            ..Default::default()
         };
         let store = MemorySecretStore::new();
         let opts = LoginOptions {

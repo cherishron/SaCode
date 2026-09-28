@@ -5,8 +5,12 @@
 
 pub mod callback;
 pub mod config;
+pub mod device_fingerprint;
+pub mod entitlement_client;
+pub mod entitlement_token;
 pub mod gateway;
 pub mod headless;
+pub mod license;
 pub mod oidc;
 pub mod pkce;
 pub mod provider_bridge;
@@ -15,6 +19,25 @@ pub mod service;
 pub mod session;
 
 pub use config::IdentityConfig;
+pub use device_fingerprint::{
+    activation_request_json, build_activation_request, device_fingerprint, ensure_device_secret,
+    ActivationRequest, ClientInfo,
+};
+pub use entitlement_client::{
+    entitlement_is_effective, grants_capability, grants_capability_effective, EntitlementHttp,
+    EntitlementItem, EntitlementsMeResponse, ReqwestEntitlementHttp, CAPABILITY_AUDIT_EXPORT,
+    PRODUCT_SACODE,
+};
+pub use entitlement_token::{
+    clear_entitlement_tokens, ensure_entitlement_access_token, exchange_entitlement_code,
+    login_entitlement_interactive, refresh_entitlement_token, store_entitlement_tokens,
+    EntitlementTokenMeta,
+};
+pub use license::{
+    license_grants, parse_license, verify_license, LicenseFile, PublicKeyRegistry,
+    PRODUCT_SACODE as LICENSE_PRODUCT_SACODE,
+};
+
 pub use gateway::{
     GatewayKeyResponse, ModelConnectionItem, ModelConnectionRequest, ModelConnectionResponse,
     ModelsListResponse, ReqwestGatewayHttp,
@@ -59,6 +82,17 @@ pub fn is_identity_provider_name(name: &str) -> bool {
 pub const DEFAULT_IDP_BASE_URL: &str = "http://127.0.0.1:8080";
 /// Local/dev SaAiApiGateway base URL.
 pub const DEFAULT_GATEWAY_BASE_URL: &str = "http://127.0.0.1:8090";
+/// Local/dev sa-entitlement base URL（local-dev 建议 8091，避开 gateway-rs 8090）。
+pub const DEFAULT_ENTITLEMENT_BASE_URL: &str = "http://127.0.0.1:8091";
+/// SaCode 权益只读 OAuth client（aud=saai-entitlement）。
+pub const DEFAULT_ENTITLEMENT_CLIENT_ID: &str = "sacode-ent";
+/// Entitlement resource API: current user entitlements.
+pub const ENTITLEMENT_ME_PATH: &str = "/v1/entitlements/me";
+/// Secret locator for the entitlement-scoped access_token.
+pub const ENTITLEMENT_ACCESS_TOKEN_LOCATOR: &str = "os-keyring:sacode/identity/entitlement-access-token";
+/// Secret locator for the entitlement-scoped refresh_token.
+pub const ENTITLEMENT_REFRESH_TOKEN_LOCATOR: &str = "os-keyring:sacode/identity/entitlement-refresh-token";
+
 /// Gateway contract: exchange access_token for a data-plane api_key.
 /// 真源：gateway-rs `POST /api/auth/exchange`（docs/clients/status-2026-09-20.md）
 pub const GATEWAY_KEY_EXCHANGE_PATH: &str = "/api/auth/exchange";
