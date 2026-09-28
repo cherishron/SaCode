@@ -128,6 +128,17 @@ impl StoreDb {
             );
             CREATE INDEX IF NOT EXISTS idx_desktop_turns_conversation ON desktop_turns(conversation_id, created_at, task_id);
 
+            CREATE TABLE IF NOT EXISTS desktop_frames (
+                task_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                text TEXT NOT NULL,
+                detail TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (task_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_frames_task ON desktop_frames(task_id, seq);
+
             CREATE TABLE IF NOT EXISTS memory_entries (
                 entry_id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,

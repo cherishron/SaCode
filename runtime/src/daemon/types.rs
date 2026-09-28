@@ -187,6 +187,12 @@ pub struct TaskStatus {
     pub duration_ms: Option<u64>,
     pub error: Option<String>,
     pub output: Option<String>,
+    /// `interaction.ask` 挂起问题（含 question/options）；任务等待用户回答时非空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_question: Option<serde_json::Value>,
+    /// Token 用量（D3）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_run: Option<TaskRun>,
     /// Agent Backend routing metadata (M0/M2). None → native sacode.
@@ -227,6 +233,8 @@ impl TaskStatus {
             duration_ms: None,
             error: None,
             output: None,
+            pending_question: None,
+            usage: None,
             task_run: Some(task_run),
             backend: None,
         };
@@ -279,6 +287,8 @@ impl TaskStatus {
             duration_ms: None,
             error: None,
             output: None,
+            pending_question: None,
+            usage: None,
             task_run: None,
             backend: Some(restored_backend_meta(task)),
         }
@@ -304,6 +314,8 @@ impl TaskStatus {
             duration_ms: Some(result.duration_ms),
             error: result.error.clone(),
             output: result.output.clone(),
+            pending_question: None,
+            usage: None,
             task_run: None,
             backend: Some(restored_backend_meta(task)),
         }

@@ -44,6 +44,8 @@ pub fn spawn_executor_event_forwarder(state: Arc<DaemonState>) {
             match receiver.recv().await {
                 Ok(evt) => {
                     update_task_status_from_executor_event(&state, &evt).await;
+                    // P0-3：可回放帧落盘（工具/助手/错误），重启后按卡片重建
+                    persist_desktop_frame(&state, &evt).await;
                     let mut data = evt.data;
                     if let Some(task) = state
                         .tasks
@@ -218,6 +220,67 @@ fn freeze_task_changes(state: &DaemonState, task_id: &str) {
     }
 }
 
+/// P0-3：把 executor 事件里可展示的部分写成回放帧
+async fn persist_desktop_frame(state: &Arc<DaemonState>, evt: &crate::executor::ExecutorEvent) {
+    let Some(store) = state.store.as_ref() else {
+        return;
+    };
+    let (kind, text, detail) = match evt.event_type.as_str() {
+        "message" => {
+            let text = evt
+                .data
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if text.trim().is_empty() {
+                return;
+            }
+            ("assistant", text, None)
+        }
+        "thinking" => {
+            let text = evt
+                .data
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if text.trim().is_empty() {
+                return;
+            }
+            ("tool", text, Some("thinking".to_string()))
+        }
+        "tool_call" | "tool_started" => {
+            let tool = evt
+                .data
+                .get("tool")
+                .or_else(|| evt.data.get("tool_name"))
+                .or_else(|| evt.data.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool");
+            let args = evt.data.get("args").or_else(|| evt.data.get("input"));
+            let detail = args.map(|a| serde_json::to_string(a).unwrap_or_default());
+            ("tool", tool.to_string(), detail)
+        }
+        "tool_call_finished" | "tool_finished" => {
+            let tool = evt
+                .data
+                .get("tool")
+                .or_else(|| evt.data.get("tool_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool");
+            let ok = evt
+                .data
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            ("tool", format!("{tool} {}", if ok { "✓" } else { "✗" }), None)
+        }
+        _ => return,
+    };
+    let _ = store.append_desktop_frame(&evt.task_id, kind, &text, detail.as_deref());
+}
+
 async fn update_task_status_from_executor_event(
     state: &Arc<DaemonState>,
     evt: &crate::executor::ExecutorEvent,
@@ -266,6 +329,15 @@ async fn update_task_status_from_executor_event(
                 if let Ok(task_run) = serde_json::from_value::<TaskRun>(task_run_value.clone()) {
                     status.task_run = Some(task_run);
                 }
+            }
+            // interaction.ask 挂起问题：写入 TaskStatus，供 GET /task/:id/status 与应答端点使用
+            match evt.data.get("pending_question") {
+                Some(serde_json::Value::Null) | None => {}
+                Some(q) => status.pending_question = Some(q.clone()),
+            }
+            match evt.data.get("usage") {
+                Some(serde_json::Value::Null) | None => {}
+                Some(u) => status.usage = Some(u.clone()),
             }
             sync_task_status_from_task_run(status);
         }

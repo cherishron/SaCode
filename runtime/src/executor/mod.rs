@@ -61,6 +61,10 @@ struct ExecutorTaskResult {
     task_id: String,
     result: TaskResult,
     task_run: TaskRun,
+    /// `interaction.ask` / 审批类挂起问题（无则 None）
+    pending_question: Option<serde_json::Value>,
+    /// Token 用量（D3）
+    usage: Option<sacode_kernel::model::ChatUsage>,
 }
 
 impl TaskExecutor {
@@ -175,7 +179,7 @@ impl TaskExecutor {
             let abort_handle = self.active_tasks.spawn(async move {
                 let started_at = Instant::now();
 
-                let (result, task_run, intermediate_events) =
+                let (result, task_run, intermediate_events, pending_question, usage) =
                     if dispatch_backend != sacode_kernel::DEFAULT_AGENT_BACKEND_ID {
                         let acp_config = acp_backends
                             .lock()
@@ -220,7 +224,7 @@ impl TaskExecutor {
                                         outcome.duration_ms,
                                     )
                                 };
-                                (result, task_run, Vec::new())
+                                (result, task_run, Vec::new(), None, None)
                             }
                             None => {
                                 let task_run = crate::task_run_snapshot(
@@ -248,6 +252,8 @@ impl TaskExecutor {
                                     TaskResult::failure(task_id.clone(), message, 0),
                                     task_run,
                                     Vec::new(),
+                                    None,
+                                    None,
                                 )
                             }
                         }
@@ -287,6 +293,8 @@ impl TaskExecutor {
                     task_id,
                     result,
                     task_run,
+                    pending_question,
+                    usage,
                 }
             });
 
@@ -316,6 +324,8 @@ impl TaskExecutor {
             match result {
                 Ok(exec_result) => {
                     let task_id = &exec_result.task_id;
+                    let pending_question = exec_result.pending_question.clone();
+                    let usage = exec_result.usage.clone();
 
                     // 任务完成后清理 abort_handle 映射
                     {
@@ -340,6 +350,8 @@ impl TaskExecutor {
                                     serde_json::json!({
                                         "result": exec_result.result,
                                         "task_run": exec_result.task_run,
+                                        "pending_question": pending_question,
+                                        "usage": usage,
                                     }),
                                 );
                             }
@@ -362,6 +374,8 @@ impl TaskExecutor {
                                     serde_json::json!({
                                         "result": exec_result.result,
                                         "task_run": exec_result.task_run,
+                                        "pending_question": pending_question,
+                                        "usage": usage,
                                     }),
                                 );
                             }
@@ -458,7 +472,13 @@ async fn execute_via_task_runner(
     event_bus: Option<&broadcast::Sender<ExecutorEvent>>,
     approval: Arc<dyn ApprovalDecider>,
     cancellation: Option<Arc<AtomicBool>>,
-) -> (TaskResult, TaskRun, Vec<Event>) {
+) -> (
+    TaskResult,
+    TaskRun,
+    Vec<Event>,
+    Option<serde_json::Value>,
+    Option<sacode_kernel::model::ChatUsage>,
+) {
     let candidates = resolve_config_model_candidates(workdir);
     let provider = match (&task.model_provider, &task.model_name) {
         (Some(selected_provider), Some(selected_model)) => {
@@ -487,7 +507,7 @@ async fn execute_via_task_runner(
         let events = vec![Event::Error {
             message: error_msg.to_string(),
         }];
-        return (result, task_run, events);
+        return (result, task_run, events, None, None);
     };
 
     if provider
@@ -512,6 +532,8 @@ async fn execute_via_task_runner(
             vec![Event::Error {
                 message: error_msg.to_string(),
             }],
+            None,
+            None,
         );
     }
 
@@ -577,7 +599,7 @@ async fn execute_via_task_runner(
         }
     }];
 
-    (result, task_run, events)
+    (result, task_run, events, run_result.pending_question, run_result.usage)
 }
 
 /// 测试占位执行路径：不调用 LLM，直接返回占位消息
@@ -590,7 +612,13 @@ fn execute_test_placeholder(
     task: &sacode_kernel::Task,
     task_id: String,
     started_at: Instant,
-) -> (TaskResult, TaskRun, Vec<Event>) {
+) -> (
+    TaskResult,
+    TaskRun,
+    Vec<Event>,
+    Option<serde_json::Value>,
+    Option<sacode_kernel::model::ChatUsage>,
+) {
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
     // 生成简化的静态事件（不依赖 deprecated 结构）
@@ -622,5 +650,5 @@ fn execute_test_placeholder(
         Some(result.output.clone().unwrap_or_default()),
     );
 
-    (result, task_run, events)
+    (result, task_run, events, None, None)
 }

@@ -105,12 +105,34 @@ pub async fn get(
     match store.desktop_turns(&id) {
         Ok(turns) if !turns.is_empty() => {
             let tasks = state.tasks.read().await;
-            let turns: Vec<_> = turns.iter().map(|turn| {
-                let task = tasks.get(&turn.task_id);
-                serde_json::json!({"task_id": turn.task_id, "prompt": turn.prompt, "created_at": turn.created_at,
-                    "status": task.map(|task| task.derived_queue_status().to_string()).unwrap_or_else(|| "unknown".into()),
-                    "output": task.and_then(|task| task.output.as_deref()), "error": task.and_then(|task| task.error.as_deref())})
-            }).collect();
+            let turns: Vec<_> = turns
+                .iter()
+                .map(|turn| {
+                    let task = tasks.get(&turn.task_id);
+                    let frames = store
+                        .desktop_frames(&turn.task_id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|f| {
+                            serde_json::json!({
+                                "seq": f.seq,
+                                "kind": f.kind,
+                                "text": f.text,
+                                "detail": f.detail,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    serde_json::json!({
+                        "task_id": turn.task_id,
+                        "prompt": turn.prompt,
+                        "created_at": turn.created_at,
+                        "status": task.map(|task| task.derived_queue_status().to_string()).unwrap_or_else(|| "unknown".into()),
+                        "output": task.and_then(|task| task.output.as_deref()),
+                        "error": task.and_then(|task| task.error.as_deref()),
+                        "frames": frames,
+                    })
+                })
+                .collect();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({"id": id, "turns": turns})),

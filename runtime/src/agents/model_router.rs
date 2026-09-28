@@ -194,6 +194,15 @@ fn merge_identity_session(config: &mut SaCodeConfig) {
     merge_identity_session_data(config, &session);
 }
 
+fn identity_provider_base_url(gateway_base_url: &str) -> String {
+    let base = gateway_base_url.trim().trim_end_matches('/');
+    if base.ends_with("/v1") {
+        base.to_string()
+    } else {
+        format!("{base}/v1")
+    }
+}
+
 fn merge_identity_session_data(config: &mut SaCodeConfig, session: &IdentitySession) {
     let Some(key_ref) = session.gateway_key_ref.as_ref() else {
         return;
@@ -213,13 +222,13 @@ fn merge_identity_session_data(config: &mut SaCodeConfig, session: &IdentitySess
         .entry(name.to_string())
         .or_insert_with(|| ProviderSpec {
             name: name.to_string(),
-            base_url: session.gateway_base_url.clone(),
+            base_url: identity_provider_base_url(&session.gateway_base_url),
             api_key: String::new(),
             models: BTreeMap::new(),
             auth_header: None,
             auth_scheme: None,
         });
-    entry.base_url = session.gateway_base_url.clone();
+    entry.base_url = identity_provider_base_url(&session.gateway_base_url);
     entry.api_key.clear();
     entry
         .models
@@ -875,11 +884,34 @@ mod tests {
             .iter()
             .all(|(provider, _)| provider != "gateway"));
         assert_eq!(config.provider["gateway"].models.len(), 2);
+        assert_eq!(
+            config.provider["gateway"].base_url,
+            "https://gateway.example/v1"
+        );
         assert!(
             !config.provider_state["gateway"]
                 .authorization
                 .allow_auto_failover
         );
+    }
+
+    #[test]
+    fn identity_gateway_root_routes_model_requests_to_v1() {
+        let mut config = base_config();
+        let session = IdentitySession {
+            provider_name: "sa-ai".into(),
+            gateway_base_url: "http://127.0.0.1:8090/".into(),
+            models: vec!["deepseek-v4.1-flash".into()],
+            default_model: "deepseek-v4.1-flash".into(),
+            gateway_key_ref: sacode_kernel::model::SecretRef::legacy_inline("test-key"),
+            ..Default::default()
+        };
+        merge_identity_session_data(&mut config, &session);
+        assert_eq!(
+            config.provider["sa-ai"].base_url,
+            "http://127.0.0.1:8090/v1"
+        );
+        assert_eq!(config.provider["sa-ai"].models.len(), 1);
     }
 
     fn candidate_pairs(config: &SaCodeConfig) -> Vec<(String, String)> {
