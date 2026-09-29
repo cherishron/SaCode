@@ -1,0 +1,211 @@
+/* SaCode Desktop Design Tokens — v2
+ * 暖中性对话产品气质（Claude / ChatGPT 锚点），深浅双主题。
+ * 所有颜色/字号/圆角/阴影必须走这里；组件 CSS 禁止散落 hex/rgba 色值。
+ */
+
+:root {
+  /* === 间距 === */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  32px;
+  --space-8:  40px;
+
+  /* === 圆角 === */
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --radius-xl:   18px;
+  --radius-full: 999px;
+
+  /* === 字体 === */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+
+  --text-12-regular: 400 12px/1.5 var(--font-sans);
+  --text-12-medium:  500 12px/1.5 var(--font-sans);
+  --text-11-regular: 400 11px/1.5 var(--font-sans);
+  --text-13-regular: 400 13px/1.55 var(--font-sans);
+  --text-13-medium:  500 13px/1.55 var(--font-sans);
+  --text-14-regular: 400 14px/1.6 var(--font-sans);
+  --text-14-medium:  600 14px/1.55 var(--font-sans);
+  --text-15-regular: 400 15px/1.65 var(--font-sans);
+  --text-15-medium:  500 15px/1.65 var(--font-sans);
+  --text-16-medium:  600 16px/1.45 var(--font-sans);
+  --text-20-semibold: 600 20px/1.3 var(--font-sans);
+  --text-mono-sm:   400 12px/1.6 var(--font-mono);
+  --text-mono-md:   400 13px/1.6 var(--font-mono);
+
+  /* === 动画 === */
+  --ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast:    120ms;
+  --dur-normal:  200ms;
+  --dur-slow:    320ms;
+
+  /* === 布局尺寸 === */
+  --sidebar-width: 260px;
+  --sidebar-width-collapsed: 56px;
+  --context-width: 360px;
+  --topbar-height: 44px;
+  --statusbar-height: 28px;
+  --content-max-width: 760px;
+  --composer-max-width: 780px;
+
+  /* 占位：主题色块由下方主题选择器填充 */
+  color-scheme: dark;
+}
+
+/* ============ 深色：暖石墨 ============ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-base:       #1b1a18;
+  --bg-surface:    #242321;
+  --bg-raised:     #2e2d2a;
+  --bg-overlay:    #353431;
+  --bg-inset:      #151413;
+  --bg-scrim:      rgba(20, 19, 18, 0.55);
+
+  --text-strong:   #f0eee8;
+  --text-base:     #b4b0a7;
+  --text-weak:     #7a766c;
+  --text-on-accent:#1b1a18;
+
+  --accent:        #d97757;
+  --accent-hover:  #e08a6c;
+  --accent-soft:   rgba(217, 119, 87, 0.14);
+  --accent-weaker: rgba(217, 119, 87, 0.08);
+  --accent-fg:     #f3c4b2;
+
+  --success:       #6fbf73;
+  --success-soft:  rgba(111, 191, 115, 0.14);
+  --warning:       #d4a24c;
+  --warning-soft:  rgba(212, 162, 76, 0.14);
+  --danger:        #e57373;
+  --danger-soft:   rgba(229, 115, 115, 0.14);
+  --info:          #6aa3d9;
+  --info-soft:     rgba(106, 163, 217, 0.14);
+
+  --border-base:   #3c3a36;
+  --border-weak:   #2c2b28;
+  --border-accent: rgba(217, 119, 87, 0.45);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.38);
+
+  --user-bubble:   #2e2d2a;
+  --assistant-bg:  transparent;
+  --code-bg:       #151413;
+  --code-border:   #2c2b28;
+
+  /* 旧名兼容 */
+  --accent-weak: var(--accent-soft);
+}
+
+/* ============ 浅色：暖纸白 ============ */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-base:       #f5f4ef;
+  --bg-surface:    #faf9f6;
+  --bg-raised:     #ffffff;
+  --bg-overlay:    #ffffff;
+  --bg-inset:      #efece4;
+  --bg-scrim:      rgba(44, 42, 39, 0.28);
+
+  --text-strong:   #2c2a27;
+  --text-base:     #6b6760;
+  --text-weak:     #9c9890;
+  --text-on-accent:#ffffff;
+
+  --accent:        #c45c26;
+  --accent-hover:  #b34f1f;
+  --accent-soft:   rgba(196, 92, 38, 0.12);
+  --accent-weaker: rgba(196, 92, 38, 0.06);
+  --accent-fg:     #8c3d14;
+
+  --success:       #2f7d32;
+  --success-soft:  rgba(47, 125, 50, 0.12);
+  --warning:       #9a6b12;
+  --warning-soft:  rgba(154, 107, 18, 0.12);
+  --danger:        #c13c3c;
+  --danger-soft:   rgba(193, 60, 60, 0.12);
+  --info:          #2b6cb0;
+  --info-soft:     rgba(43, 108, 176, 0.12);
+
+  --border-base:   #e4e1d8;
+  --border-weak:   #ebe8e0;
+  --border-accent: rgba(196, 92, 38, 0.4);
+
+  --shadow-sm: 0 1px 2px rgba(44, 42, 39, 0.08);
+  --shadow-md: 0 10px 30px rgba(44, 42, 39, 0.12);
+
+  --user-bubble:   #ffffff;
+  --assistant-bg:  transparent;
+  --code-bg:       #efece4;
+  --code-border:   #e4e1d8;
+
+  /* 旧名兼容 */
+  --accent-weak: var(--accent-soft);
+}
+
+/* 系统主题（未显式覆盖时） */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    color-scheme: light;
+
+    --bg-base:       #f5f4ef;
+    --bg-surface:    #faf9f6;
+    --bg-raised:     #ffffff;
+    --bg-overlay:    #ffffff;
+    --bg-inset:      #efece4;
+    --bg-scrim:      rgba(44, 42, 39, 0.28);
+
+    --text-strong:   #2c2a27;
+    --text-base:     #6b6760;
+    --text-weak:     #9c9890;
+    --text-on-accent:#ffffff;
+
+    --accent:        #c45c26;
+    --accent-hover:  #b34f1f;
+    --accent-soft:   rgba(196, 92, 38, 0.12);
+    --accent-weaker: rgba(196, 92, 38, 0.06);
+    --accent-fg:     #8c3d14;
+
+    --success:       #2f7d32;
+    --success-soft:  rgba(47, 125, 50, 0.12);
+    --warning:       #9a6b12;
+    --warning-soft:  rgba(154, 107, 18, 0.12);
+    --danger:        #c13c3c;
+    --danger-soft:   rgba(193, 60, 60, 0.12);
+    --info:          #2b6cb0;
+    --info-soft:     rgba(43, 108, 176, 0.12);
+
+    --border-base:   #e4e1d8;
+    --border-weak:   #ebe8e0;
+    --border-accent: rgba(196, 92, 38, 0.4);
+
+    --shadow-sm: 0 1px 2px rgba(44, 42, 39, 0.08);
+    --shadow-md: 0 10px 30px rgba(44, 42, 39, 0.12);
+
+    --user-bubble:   #ffffff;
+    --assistant-bg:  transparent;
+    --code-bg:       #efece4;
+    --code-border:   #e4e1d8;
+  }
+}
+
+/* 密度 */
+:root[data-density="compact"] {
+  --space-3: 10px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+}

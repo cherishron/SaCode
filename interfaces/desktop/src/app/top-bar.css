@@ -1,0 +1,161 @@
+/* TopBar — 会话标题栏 */
+
+.conversation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  height: var(--topbar-height);
+  background: transparent;
+  border-bottom: 1px solid var(--border-weak);
+  flex-shrink: 0;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+.conversation-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-title {
+  font: var(--text-14-medium);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  letter-spacing: -0.01em;
+}
+
+.conversation-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-base);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+
+.header-btn:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.header-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+/* 更多菜单 */
+.more-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.more-menu {
+  position: fixed;
+  z-index: 101;
+  min-width: 180px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  padding: var(--space-1);
+}
+
+.more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  font: var(--text-13-regular);
+  color: var(--text-base);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+
+.more-menu-item:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.more-menu-item.danger {
+  color: var(--danger);
+}
+
+.more-menu-item.danger:hover {
+  background: var(--danger-soft);
+}
+
+.more-menu-separator {
+  height: 1px;
+  background: var(--border-weak);
+  margin: var(--space-1) 0;
+}
+
+/* 模式循环按钮：单击按 规划 → 构建 → YOLO → 规划 轮换 */
+.mode-cycle-btn {
+  height: 24px;
+  min-width: 52px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--text-base);
+  font: var(--text-12-medium);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+
+.mode-cycle-btn:hover {
+  color: var(--text-strong);
+  border-color: var(--border-accent);
+}
+
+.mode-cycle-btn.mode-plan {
+  background: var(--info-soft);
+  color: var(--info);
+  border-color: var(--info);
+}
+
+.mode-cycle-btn.mode-build {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.mode-cycle-btn.mode-yolo {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: var(--danger);
+}
