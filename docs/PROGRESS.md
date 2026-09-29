@@ -1,6 +1,6 @@
 # SaCode 进度（当前实际状态）
 
-> 更新：2026-09-28 · 分支 `dev`（当前核对：`6cc8fb5`，修改本文档前工作区仅剩 `.probe.txt` 未跟踪）
+> 更新：2026-09-28 · 分支 `dev`（当前核对：`5c6bdf9`）
 >
 > 本文件是该仓的**进度单一真源**；产品线级总览见 [`../../docs/STATUS.md`](../../docs/STATUS.md)。
 > 状态词汇遵循 [`../../docs/README.md`](../../docs/README.md)。
@@ -8,7 +8,7 @@
 
 ## 一句话状态
 
-**统一身份双客户端（sa-idp + saaiapigateway + sa-entitlement）、Vue 工作台账号/权益/License/设备激活、文件抽屉增强均已纳入 `dev` 并推送到 Gitee。** 桌面 release 二进制已可构建运行；交互式 GUI 与真实后端三件套联调仍是验收重点。
+**统一身份双客户端、Vue 账号/权益/License/设备激活、文件抽屉、SaDesign/SaNative/自动化后端均已落地。** 本地三件套（sa-idp:8080 / gateway-rs:8090 / sa-entitlement:8091）已可启动就绪；**Vue 新壳仍缺 SaDesign/知识库/自动化入口与设置四页**，GUI 真机登录验收未完成。
 
 ## workspace 结构
 
@@ -36,7 +36,25 @@ members = [
 | Vue Settings 账号页（登录/同步/退出/权益/License/激活） | `interfaces/desktop/src/ui/components/SettingsView.vue` | 已落地 |
 | 文件抽屉：文件夹优先排序、彩色图标、代码高亮 / Markdown 预览 | `FilesSidePanel` + `file-kind` + `FileGlyph` | 已落地 |
 | Desktop 会话持久化 / 分屏 / sidecar 代理 | `desktop_conversations` + `src-tauri` | 已落地 |
+| **SaDesign 设计工作台后端** | `daemon/design.rs` + `design_patch.rs` → `/api/design/*` | 已落地 |
+| **SaNative 知识库后端** | `daemon/knowledge.rs` → `/api/knowledge/*` | 已落地 |
+| **自动化规则/调度后端** | `daemon/automation.rs` + `scheduler.rs` + SQLite | 已落地 |
 | CLI 账号命令 / Device grant / keyring | I3 既有 | 已落地 |
+
+## 前后端对照（Desktop）
+
+| 能力 | 后端 | 旧 UI (`src/app`) | Vue (`src/ui`) |
+|---|---|---|---|
+| 会话 / 任务 / 提问 / 附件 | `/api/desktop/*` `/task/*` | 有 | **有** |
+| 文件树 / 预览 | `/workspace/*` | 有 | **有**（排序/图标/代码/MD） |
+| 终端 PTY | Tauri invoke | 有 | **有** |
+| 账号 / 模型同步 | `/account/*` | 有 | **有** |
+| 权益 / License / 激活 / 审计导出 | `/account/*` `/api/audit/export` | 部分 | **账号页有**（审计导出按钮未挂） |
+| MCP / 技能 | `/api/mcp/*` `/api/skills*` | 有 | **有** |
+| 模型与执行 / Git / 安全扫描 / 配置导入 | providers · git-auth · audit · import | 有 | **占位** |
+| SaDesign | `/api/design/*` | 有 | **无** |
+| SaNative 知识库 | `/api/knowledge/*` | 有 | **无** |
+| 自动化 | `/api/automation/*` | 有 | **无** |
 
 ### 新增 daemon 端点
 
@@ -56,23 +74,23 @@ members = [
 
 ## 验证状态
 
-### 2026-09-28 desktop-backend-wiring
+### 2026-09-28 desktop-backend-wiring + 三件套冒烟
 
 | 检查 | 结果 |
 |---|---|
 | `cargo test -p sacode-runtime identity` | 49 passed |
 | `cargo test -p sacode-runtime daemon` | 81 passed |
-| client-core `npm run typecheck` / `build` | PASS |
-| desktop `npm run typecheck` | PASS |
-| desktop `npm test` | 80 passed |
-| desktop `npm run build`（Vite） | PASS |
-| `cargo build --manifest-path interfaces/desktop/src-tauri/Cargo.toml --release` | PASS → `target/release/sacode-desktop.exe` |
-
-审查修复：设备绑定 License 导出改为带本地 fingerprint；在线权益按 status + 有效期过滤后再授予权限。
+| client-core typecheck / build | PASS |
+| desktop typecheck / test / vite build | 80 tests PASS |
+| Tauri `cargo build --release` | `target/release/sacode-desktop.exe` |
+| 本地三件套 readyz | sa-idp ready · gateway-rs ok（`.env.local`）· sa-entitlement ready |
+| `apply_sacode_ent_client` | 入库成功：aud=`saai-entitlement` |
+| `GET /v1/entitlements/me` 无 token | 401（预期） |
+| `smoke-oauth.ps1 -ClientId sacode-ent` | 注册 PASS；登录 **429 限流** 未跑通 PKCE |
 
 ### 2026-09-27 历史定向复测（沿用）
 
-见 git 历史与 `docs/compose/spec/desktop-backend-wiring.md`、`sacode-identity-i3.md`。真实端口 client-core ↔ daemon 与 Tauri sidecar 代理曾通过；**模型生成与交互式 GUI 未测**。
+真实端口 client-core ↔ daemon 与 Tauri sidecar 代理曾通过；**模型生成与交互式 GUI 未测**。
 
 ### 服务端依赖
 
@@ -100,14 +118,14 @@ $env:SACODE_BINARY_PATH = "D:\Project\sa\saai\sa-code\target\debug\sacode.exe"
 
 | 优先级 | 项 |
 |---|---|
-| **高** | **真机联调**：sa-idp `:8080` + gateway-rs `:8090` + sa-entitlement `:8091` 跑通 login → models → entitlements/me；应用 `sacode-ent` / audience 迁移 |
-| **高** | Desktop 交互式 GUI 验收（账号页登录、License 导入、激活请求、审计导出） |
-| 高 | I3 keyring 真机读写验收 |
-| 中 | License 公钥注册正式化（目前 env 注入；生产内置公钥集 + kid 轮换） |
-| 中 | `sacode-ent` 主登录后自动串联二次授权（当前需点「授权权益」） |
-| 中 | 两套 provider catalog 收敛；Vite/esbuild 依赖告警 |
-| 中 | Tauri NSIS 打包、多 workspace 多 sidecar、Diff 渲染完善 |
-| 低 | 完整 workspace 级 `cargo test --workspace` 与发布门禁 |
+| **高** | **GUI 真机验收**：账号登录 → 同步模型 → 授权权益 → 权益列表；License 导入 / 激活请求 |
+| **高** | 绕过或放宽登录限流后跑 `smoke-oauth.ps1`（sacode / sacode-ent）PKCE 全链路 |
+| **高** | **Vue 迁入 SaDesign / SaNative / 自动化**（后端已齐，UI 在旧壳） |
+| 中 | Vue 设置四页：模型与执行 / Git / 安全扫描 / 配置导入（API 已有） |
+| 中 | 账号页挂上「企业审计导出」按钮（`POST /api/audit/export`） |
+| 中 | 主登录后自动串 `sacode-ent`；License 公钥内置 + kid 轮换 |
+| 中 | keyring 真机；provider catalog 收敛；Vite/esbuild 告警 |
+| 低 | Tauri NSIS 打包；完整 workspace 测试与发布门禁 |
 
 ## 相关文档
 

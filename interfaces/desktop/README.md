@@ -53,18 +53,28 @@ interfaces/desktop/
 
 ## 功能一览（当前）
 
-| 能力 | 入口 |
-| --- | --- |
-| 会话列表 / 选格 / 同会话禁双格 | 任务列 |
-| 新建任务 / 发送 / 草稿 | 创建页、Composer |
-| 附件上传 | Composer 📎 |
-| 卡片流 / 提问卡 / plan / 用量 | 会话格 |
-| 历史回放 frames | 重开会话 |
-| 文件树懒加载 / 预览 | 细头 文件 |
-| 终端 PTY | 细头 终端 |
-| 预览 URL | 细头 预览 |
-| MCP / 技能管理 | 设置 · 服务 / 技能 |
-| 分格拆分/拖宽/独占/更换/改名 | 细头 ⋯ |
+| 能力 | 入口 | 后端 |
+| --- | --- | --- |
+| 会话列表 / 选格 / 同会话禁双格 | 任务列 | `/api/desktop/conversations*` |
+| 新建任务 / 发送 / 草稿 | 创建页、Composer | `/task` · `sendDesktopMessage` |
+| 附件上传 | Composer 📎 | `/api/workspace/uploads` |
+| 卡片流 / 提问卡 / plan / 用量 | 会话格 | `/task/:id/answer` 等 |
+| 文件树懒加载 / 代码与 MD 预览 | 细头 文件 | `/workspace/list` `/workspace/file` |
+| 终端 PTY | 细头 终端 | Tauri invoke（非 daemon） |
+| 预览 URL | 细头 预览 | 前端 iframe |
+| 账号登录 / 模型同步 / 权益 / License / 激活 | 设置 · 账号 | `/account/*` |
+| MCP / 技能管理 | 设置 · 服务 / 技能 | `/api/mcp/*` `/api/skills*` |
+| 分格拆分/拖宽/独占/更换/改名 | 细头 ⋯ | 本地状态 |
+
+### 后端已备、Vue 尚未接
+
+| 能力 | 后端 | 旧 UI | Vue |
+| --- | --- | --- | --- |
+| SaDesign | `/api/design/*` | `src/app/sadesign.ts` | 待迁 |
+| SaNative 知识库 | `/api/knowledge/*` | `src/app/sanative.ts` | 待迁 |
+| 自动化 | `/api/automation/*` | `src/app/automation.ts` | 待迁 |
+| 模型与执行 / Git / 安全 / 导入 | providers · git-auth · audit · import | `src/app/settings.ts` | 设置页占位 |
+| 企业审计导出 | `POST /api/audit/export` | — | 按钮未挂 |
 
 ## 开发
 
@@ -109,6 +119,11 @@ npx tauri dev
 | `GET/PUT/DELETE /api/mcp/servers…` | MCP 管理 |
 | `GET/PUT/DELETE /api/skills…` | 技能管理 |
 | `POST /task/:id/answer` | 提问应答 |
+| `GET/POST /account/entitlements` · `entitlement-login` | 权益 / 二次授权 |
+| `GET/POST /account/license` | License 状态 / 导入 |
+| `POST /account/activation-request` | 设备激活请求 v1 |
+| `POST /api/audit/export` | 企业审计导出（capability 门禁） |
+| `/api/design/*` `/api/knowledge/*` `/api/automation/*` | SaDesign / 知识库 / 自动化 |
 
 ## 相关文档
 
