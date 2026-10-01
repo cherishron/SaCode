@@ -19,6 +19,28 @@ fn test_sandbox_policy_for_plan_mode_is_read_only() {
     assert_eq!(policy.timeout_ms(), Some(15_000));
 }
 
+/// D10 L2（审计 P0⑦ 回归）：Plan readonly 策略写路径必须 fail-closed。
+/// 空 write_paths 下 check_path(Write) 不得放行，check_path(Read) 保持放行。
+#[test]
+fn test_plan_mode_write_is_fail_closed_not_fail_open() {
+    let _guard = sandbox_test_lock();
+    let workdir = tempfile::tempdir().expect("create workdir");
+    let _cwd = CurrentDirGuard::enter(workdir.path());
+    crate::sandbox::install_current_mode(ExecutionMode::Plan);
+    let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Plan);
+
+    let file = workdir.path().join("some-file.txt");
+    assert!(
+        !policy.check_path(&file, crate::sandbox::FsAccess::Write),
+        "Plan 模式写入工作区文件必须被拒绝（fail-closed）"
+    );
+    assert!(
+        policy.check_path(&file, crate::sandbox::FsAccess::Read),
+        "Plan 模式读取工作区文件保持放行"
+    );
+    crate::sandbox::reset_global_policy();
+}
+
 #[test]
 fn test_sandbox_policy_for_build_mode_allows_network_without_command_whitelist() {
     let policy = crate::sandbox::SandboxPolicy::for_mode(ExecutionMode::Build);

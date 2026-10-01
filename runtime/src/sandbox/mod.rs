@@ -208,7 +208,12 @@ impl SandboxPolicy {
         };
 
         if allowed_paths.is_empty() {
-            return true;
+            // D10 L2（审计 P0⑦ 修复）：写路径白名单为空时 fail-closed，
+            // 杜绝「readonly 策略下任意写入被放行」的绕过。
+            // Yolo 模式已在函数顶部短路放行，不受影响；Build 模式经 allow_path(".")
+            // 恒有写路径，不受影响；只有显式未授权写路径的策略（如 Plan readonly）
+            // 会被正确拒绝。读路径为空保持放行（读限制缺省 = 工作区可读）。
+            return access == FsAccess::Read;
         }
 
         if allowed_paths
