@@ -72,6 +72,7 @@ fn simple_subcommand(name: &str) -> Option<CliCommand> {
         "automation" => CliCommand::Automation,
         "agent-backends" => CliCommand::AgentBackends,
         "knowledge" => CliCommand::Knowledge,
+        "completions" => CliCommand::Completions,
         _ => return None,
     })
 }

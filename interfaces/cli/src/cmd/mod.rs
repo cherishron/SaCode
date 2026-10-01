@@ -10,6 +10,7 @@ mod checkpoint;
 #[cfg(test)]
 mod command_tests;
 pub mod config;
+pub mod completions;
 pub mod daemon_admin;
 pub mod diff;
 pub mod doctor;
@@ -117,6 +118,7 @@ pub enum CliCommand {
     Automation,
     AgentBackends,
     Knowledge,
+    Completions,
     Help,
     Version,
 }
@@ -206,6 +208,7 @@ pub async fn run() -> Result<u8> {
         CliCommand::Automation => daemon_admin::automation(options.sub_args).await?,
         CliCommand::AgentBackends => daemon_admin::agent_backends(options.sub_args).await?,
         CliCommand::Knowledge => daemon_admin::knowledge(options.sub_args).await?,
+        CliCommand::Completions => completions::run(options.sub_args)?,
         CliCommand::DumpConfig => {
             let workdir = PathBuf::from(".");
             let runtime_config = sacode_runtime::config::SaCodeConfig::new(&workdir);

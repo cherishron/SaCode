@@ -37,6 +37,7 @@ pub(super) const HELP_LINES: &[&str] = &[
     "  sacode automation [list|create|run|delete|history]         # 定时自动化规则",
     "  sacode agent-backends [list|set|probe]                     # Agent 后端管理",
     "  sacode knowledge [list|search <关键词>] [--scope user|project]  # 知识库检索",
+    "  sacode completions [bash|zsh|powershell|fish]              # 生成 shell 补全脚本",
     "  sacode update [--check|--force|--rollback]",
     "  sacode repl",
     "  sacode tui",

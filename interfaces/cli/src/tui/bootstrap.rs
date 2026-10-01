@@ -72,6 +72,7 @@ impl App {
                 "github".to_string(),
                 "vscode".to_string(),
                 "idea".to_string(),
+                "light".to_string(),
             ],
             selected_theme_index: 0,
             connect_options: {
@@ -223,6 +224,7 @@ impl App {
                 "github".to_string(),
                 "vscode".to_string(),
                 "idea".to_string(),
+                "light".to_string(),
             ],
             selected_theme_index: 0,
             connect_options: {
