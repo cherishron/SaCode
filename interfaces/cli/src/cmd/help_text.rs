@@ -27,7 +27,7 @@ pub(super) const HELP_LINES: &[&str] = &[
     "  sacode audit [path] | diff [--staged|--base REF] | pr [NUMBER] [--publish] | fix --from report.json  # 全量/差分/PR 审计",
     "  sacode git auth [login github|gitee|status|logout|credential|set-token]  # Git 平台 OAuth/token",
     "  sacode lsp [serve|status] [--tcp] [--host HOST] [--port PORT]",
-    "  sacode serve [--acp] [--lsp] [--host HOST] [--port PORT|--port0] [--ready-file PATH] [--auth-token TOKEN]",
+    "  sacode serve [--acp] [--lsp] [--host HOST] [--port PORT|--port0] [--ready-file PATH] [--auth-token TOKEN] [--open-access]",
     "  sacode init       # 轻量初始化，识别技术栈和基础项目信息",
     "  sacode init-deep  # 深度初始化，生成严格协作配置和工作流",
     "  sacode mistakes [list|show <index>|learn <index>]",

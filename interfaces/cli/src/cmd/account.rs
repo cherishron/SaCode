@@ -352,6 +352,7 @@ async fn cmd_models() -> Result<()> {
         user_root().as_deref(),
         &workdir,
         store.as_ref(),
+        insecure,
         None,
         None,
         300,

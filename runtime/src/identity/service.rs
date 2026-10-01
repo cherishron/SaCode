@@ -457,6 +457,7 @@ pub async fn complete_login_with_dyn_clients(
         opts.user_root.as_deref(),
         Some(&key_resp.api_key),
         Some(&refresh),
+        opts.insecure_file_secrets,
     )?;
 
     let models_url = config.gateway_models_url();
@@ -662,6 +663,7 @@ pub async fn refresh_access_token(
     config: &IdentityConfig,
     user_root: Option<&Path>,
     secret_store: &dyn SecretStore,
+    insecure_file_secrets: bool,
     oidc: Option<&dyn OidcHttpDyn>,
 ) -> Result<TokenResponse> {
     let session = IdentitySession::load(user_root)?
@@ -686,7 +688,13 @@ pub async fn refresh_access_token(
     };
     if let Some(new_rt) = token.refresh_token.as_deref() {
         // Persist rotation; keyring may fail on headless Linux → file fallback.
-        super::headless::store_secret_with_fallback(secret_store, user_root, None, Some(new_rt))?;
+        super::headless::store_secret_with_fallback(
+            secret_store,
+            user_root,
+            None,
+            Some(new_rt),
+            insecure_file_secrets,
+        )?;
     }
     Ok(token)
 }
@@ -731,6 +739,7 @@ pub async fn ensure_fresh_session(
     user_root: Option<&Path>,
     workdir: &Path,
     secret_store: &dyn SecretStore,
+    insecure_file_secrets: bool,
     oidc: Option<&dyn OidcHttpDyn>,
     gateway: Option<&dyn GatewayHttpDyn>,
     skew_secs: i64,
@@ -783,7 +792,7 @@ pub async fn ensure_fresh_session(
         bail!("cannot refresh session: idp_base_url empty");
     }
 
-    let token = refresh_access_token(&config, user_root, secret_store, oidc).await?;
+    let token = refresh_access_token(&config, user_root, secret_store, insecure_file_secrets, oidc).await?;
     let previous_refresh_ref = session.refresh_token_ref.clone();
     session.apply_token_metadata(token.expires_in, token.refresh_token.as_deref());
     session.save(user_root)?;
@@ -815,6 +824,7 @@ pub async fn ensure_fresh_session(
             } else {
                 Some(refresh_for_store.as_str())
             },
+            insecure_file_secrets,
         )?);
         session.set_key_refs(
             &key_resp.api_key,
@@ -918,9 +928,18 @@ pub fn store_api_key_secret(
     // Try the selected store; if it fails, fall back to file secret store
     // so the user can still save their provider configuration.
     if let Err(e) = store.set(locator, key) {
-        tracing::warn!(error = %e, %locator, "primary secret store failed; falling back to file store");
-        let fallback = FileSecretStore::new(user_root);
-        fallback.set(locator, key)?;
+        if insecure_file_secrets {
+            tracing::warn!(error = %e, %locator, "primary secret store failed; falling back to file store (--insecure-file-secrets)");
+            let fallback = FileSecretStore::new(user_root);
+            fallback.set(locator, key)?;
+        } else {
+            anyhow::bail!(
+                "secret store write failed for {locator}: {e}; \
+                 plaintext file fallback is disabled. Re-run with --insecure-file-secrets \
+                 (or set SACODE_IDENTITY_SECRET_BACKEND=file) to allow file-backed secrets, \
+                 or run on a host with an OS keyring / Secret Service"
+            );
+        }
     }
     let mut secret_ref = SecretRef::os_keyring(locator);
     secret_ref.masked = SecretRef::mask_secret(key);
@@ -1214,7 +1233,7 @@ mod tests {
         assert_eq!(status.models_count, 2);
 
         // refresh rotates refresh_token in store
-        let refreshed = refresh_access_token(&config, Some(&user_root), &store, Some(&oidc))
+        let refreshed = refresh_access_token(&config, Some(&user_root), &store, false, Some(&oidc))
             .await
             .unwrap();
         assert_eq!(refreshed.access_token, "access-token-refreshed");
@@ -1341,6 +1360,7 @@ mod tests {
             Some(&user_root),
             &workdir,
             &store,
+            false,
             Some(&MockOidc),
             Some(&MockGateway),
             120,

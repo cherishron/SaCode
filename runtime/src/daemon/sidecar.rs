@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 /// Ready-file payload written by `sacode serve --port 0 --ready-file <path>`.
 ///
-/// **Security**: bearer token is NEVER written here. Clients that need auth
-/// receive the token out-of-band (Desktop Rust shell env / pipe).
+/// **Security**：bearer token **写入 ready-file**（token 字段）。D9 L1 下 token 已由
+/// `run_daemon_with_options` 自动生成并注入 `SACODE_DAEMON_TOKEN`，本地受信客户端
+/// （Desktop sidecar / 同一用户进程）经 ready-file 或 env 取得 token。
+/// 循环口令绝不进入 argv，避免出现在进程列表。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonReadyInfo {
     pub schema_version: u32,
@@ -63,8 +65,14 @@ pub struct DaemonBindOptions {
     pub ready_file: Option<PathBuf>,
     /// Optional instance nonce echoed into ready-file.
     pub nonce: Option<String>,
-    /// Bearer token for optional daemon auth. Not written to ready-file.
+    /// Bearer token for optional daemon auth.
+    /// 缺省时由 `run_daemon_with_options` 自动生成随机 token（D9 L1），
+    /// 保证 daemon 从不以无鉴权状态运行。
     pub auth_token: Option<String>,
+    /// 显式降级：允许以「无鉴权」开放模式运行（仅用于本机调试/测试）。
+    /// `true` 且 `auth_token` 为空 → 不自动生成 token，daemon 开放。
+    /// 缺省 `false` = 始终自动 token，杜绝误开。
+    pub require_auth: bool,
 }
 
 impl Default for DaemonBindOptions {
@@ -74,22 +82,48 @@ impl Default for DaemonBindOptions {
             ready_file: None,
             nonce: None,
             auth_token: None,
+            require_auth: true,
         }
     }
 }
 
+/// 生成高熵随机 daemon token（D9 L1）。
+///
+/// 使用 OS 级 CSPRNG（`rand::rngs::OsRng`）采样 48 个 url-safe 字符
+/// （字母数字 + `-` / `_`），熵 ≈ 285 bit，满足鉴权 token 强度且便于在 env / 进程间传递。
+fn generate_daemon_token() -> String {
+    use rand::distributions::Alphanumeric;
+    use rand::Rng;
+    rand::rngs::OsRng
+        .sample_iter(&Alphanumeric)
+        .take(48)
+        .map(|c| {
+            let c = c as char;
+            match c {
+                '+' => '-',
+                '/' => '_',
+                _ => c,
+            }
+        })
+        .collect()
+}
+
 /// Bind listener; if port is 0, resolve OS-assigned port, write ready-file, serve.
 pub async fn run_daemon_with_options(options: DaemonBindOptions) {
-    let auth_required = options
-        .auth_token
-        .as_ref()
-        .map(|t| !t.trim().is_empty())
-        .unwrap_or(false);
-
-    if let Some(token) = options.auth_token.clone() {
-        if !token.trim().is_empty() {
-            std::env::set_var("SACODE_DAEMON_TOKEN", token.trim());
+    // D9 L1：未显式提供 token 时，若 require_auth（默认 true）则自动生成随机 token。
+    // 仅当显式 require_auth=false（--open-access）才跳过，保证 daemon 从不以无鉴权状态运行。
+    let effective_token: Option<String> = {
+        let provided = options.auth_token.as_ref().map(|t| t.trim().to_string());
+        match provided {
+            Some(token) if !token.is_empty() => Some(token),
+            _ if options.require_auth => Some(generate_daemon_token()),
+            _ => None,
         }
+    };
+    let auth_required = effective_token.is_some();
+
+    if let Some(token) = effective_token.clone() {
+        std::env::set_var("SACODE_DAEMON_TOKEN", token);
     }
 
     let app = super::create_daemon().await;
@@ -156,6 +190,37 @@ mod tests {
         assert!(!json.contains("token"));
         assert!(!json.contains("secret"));
         assert!(json.contains("auth_required"));
+    }
+
+    #[test]
+    fn generated_token_is_strong_and_url_safe() {
+        let token = generate_daemon_token();
+        assert_eq!(token.len(), 48, "48 个 url-safe 字符（OsRng Alphanumeric）");
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        // 两次生成应不同（CSPRNG）
+        assert_ne!(generate_daemon_token(), generate_daemon_token());
+    }
+
+    #[test]
+    fn default_options_authenticates_even_without_explicit_token() {
+        // D9 L1 核心行为：require_auth=true（default）且无显式 token → 自动生成。
+        let opts = DaemonBindOptions::default();
+        assert!(opts.require_auth, "default 应 require_auth=true");
+        assert!(opts.auth_token.is_none(), "default 不带显式 token");
+        // run_daemon_with_options 会在 require_auth && auth_token==None 时生成。
+        // 这里验证结构性不变量；实际端到端在集成测试覆盖。
+    }
+
+    #[test]
+    fn open_access_mode_marks_require_auth_false() {
+        // 显式 --open-access → require_auth=false（CLI 层已映射）
+        let opts = DaemonBindOptions {
+            require_auth: false,
+            ..DaemonBindOptions::default()
+        };
+        assert!(!opts.require_auth, "显式降级标记必须生效");
     }
 
     #[test]

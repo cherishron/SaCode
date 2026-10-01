@@ -447,7 +447,7 @@ pub fn apply_gateway_api_key(
         bail!("gateway_base_url is empty; set SACODE_GATEWAY_BASE_URL or --gateway");
     }
 
-    store_secret_with_fallback(secret_store, opts.user_root.as_deref(), Some(key), None)?;
+    store_secret_with_fallback(secret_store, opts.user_root.as_deref(), Some(key), None, opts.insecure_file_secrets)?;
 
     let models = fetch_models_best_effort(&config, key);
     let default_model = super::gateway::pick_default_model(&models.0);
@@ -520,6 +520,7 @@ pub fn store_secret_with_fallback(
     user_root: Option<&Path>,
     api_key: Option<&str>,
     refresh: Option<&str>,
+    insecure_file_secrets: bool,
 ) -> Result<&'static str> {
     let try_store = |s: &dyn SecretStore| -> Result<()> {
         if let Some(k) = api_key {
@@ -539,6 +540,18 @@ pub fn store_secret_with_fallback(
     };
     if try_store(store).is_ok() {
         return Ok("secret-store");
+    }
+    // 默认 fail-closed：绝不静默把明文密钥落盘文件。
+    let allow_file_fallback = insecure_file_secrets
+        || std::env::var("SACODE_IDENTITY_SECRET_BACKEND")
+            .map(|v| v.eq_ignore_ascii_case("file"))
+            .unwrap_or(false);
+    if !allow_file_fallback {
+        bail!(
+            "primary secret store failed and plaintext file fallback is disabled; \
+             pass --insecure-file-secrets (or set SACODE_IDENTITY_SECRET_BACKEND=file) to allow \
+             file-backed secrets, or run on a host with an OS keyring / Secret Service"
+        );
     }
     let file = FileSecretStore::new(user_root);
     try_store(&file)?;
@@ -685,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn store_fallback_writes_file_when_primary_fails() {
+    fn store_fallback_is_disabled_by_default_fail_closed() {
         struct Failing;
         impl SecretStore for Failing {
             fn get(&self, _: &str) -> Result<Option<String>> {
@@ -699,11 +712,42 @@ mod tests {
             }
         }
         let tmp = tempfile::tempdir().unwrap();
+        // 默认（insecure_file_secrets=false）必须报错，且不落盘明文。
+        let err = store_secret_with_fallback(
+            &Failing,
+            Some(tmp.path()),
+            Some("sa-fallback-key"),
+            Some("refresh-x"),
+            false,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("fallback is disabled"));
+        let path = tmp.path().join(".sacode/identity/secrets.local.json");
+        assert!(!path.exists(), "plaintext secret must NOT be written without opt-in");
+    }
+
+    #[test]
+    fn store_fallback_writes_file_when_opt_in() {
+        struct Failing;
+        impl SecretStore for Failing {
+            fn get(&self, _: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            fn set(&self, _: &str, _: &str) -> Result<()> {
+                Err(anyhow!("keyring unavailable"))
+            }
+            fn delete(&self, _: &str) -> Result<()> {
+                Ok(())
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        // 显式 opt-in 时才回退明文文件。
         let backend = store_secret_with_fallback(
             &Failing,
             Some(tmp.path()),
             Some("sa-fallback-key"),
             Some("refresh-x"),
+            true,
         )
         .unwrap();
         assert_eq!(backend, "file");

@@ -139,6 +139,7 @@ pub fn ensure_product_session_best_effort(workdir: &Path) -> Result<(), String> 
         user_root.as_deref(),
         workdir,
         store.as_ref(),
+        false,
         None,
         None,
         120,

@@ -81,8 +81,8 @@ pub fn execute(input: serde_json::Value) -> anyhow::Result<ToolOutput> {
         return Ok(ToolOutput::failure("command is required"));
     }
 
-    if is_dangerous_command(command_str) {
-        return Ok(ToolOutput::failure("dangerous command blocked"));
+    if let CommandRisk::Dangerous(reason) = classify_command_risk(command_str) {
+        return Ok(ToolOutput::failure(format!("dangerous command blocked: {reason}")));
     }
 
     ShellSandbox::validate(command_str, cwd)?;
@@ -259,39 +259,141 @@ fn needs_cmd_wrapper(command: &str) -> bool {
     false
 }
 
-fn is_dangerous_command(cmd: &str) -> bool {
-    let dangerous_patterns = [
-        "rm -rf /",
-        "rm -rf ~",
-        "rm -rf *",
-        ":(){ :|:& };:",
-        "mkfs",
-        "dd if=",
-        "> /dev/sda",
-        "chmod 777 /",
-        "shutdown",
-        "reboot",
-        "init 0",
-        "init 6",
-    ];
+/// 命令风险分类结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandRisk {
+    /// 安全（未命中已知危险操作）。
+    Safe,
+    /// 危险，附带原因（用于日志与报错信息）。
+    Dangerous(&'static str),
+}
 
-    let cmd_lower = cmd.to_lowercase();
-    for pattern in dangerous_patterns {
-        if cmd_lower.contains(pattern) {
-            return true;
+impl CommandRisk {
+    #[cfg(test)]
+    pub(crate) fn is_dangerous(self) -> bool {
+        matches!(self, CommandRisk::Dangerous(_))
+    }
+    pub(crate) fn reason(self) -> Option<&'static str> {
+        match self {
+            CommandRisk::Safe => None,
+            CommandRisk::Dangerous(r) => Some(r),
         }
     }
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        for pattern in WINDOWS_DANGEROUS_PATTERNS {
-            if cmd_lower.contains(pattern) {
-                return true;
+/// 危险程序名：单独作为命令首词即判危险（不依赖具体参数），因为这些操作具有不可逆破坏性。
+const DANGEROUS_PROGRAMS: &[&str] = &[
+    "mkfs", "dd", "shutdown", "reboot", "halt", "poweroff", "format", "diskpart", "bcdedit",
+    "takeown", "icacls", "wmic",
+];
+
+/// 危险参数模式（对归一化后的命令做子串匹配，抗 `${IFS}`/反斜杠转义混淆）。
+const DANGEROUS_PATTERNS: &[(&str, &'static str)] = &[
+    ("rm -rf", "recursive force delete"),
+    ("rm -fr", "recursive force delete"),
+    ("rm -r", "recursive delete"),
+    ("rm -f", "force delete"),
+    (":(){", "fork bomb"),
+    ("> /dev/sda", "overwrite raw disk"),
+    ("chmod 777", "world-writable chmod"),
+    ("chmod -r 777", "world-writable chmod"),
+    ("dd if=", "raw disk write"),
+    ("shutdown", "system shutdown"),
+    ("reboot", "system reboot"),
+    ("init 0", "power off"),
+    ("init 6", "reboot"),
+    ("reg delete", "registry delete"),
+    ("del /f /s", "forced recursive delete (windows)"),
+    ("rmdir /s", "recursive dir delete (windows)"),
+    ("rd /s", "recursive dir delete (windows)"),
+];
+
+/// 归一化命令以便扫描：剥离 `${IFS}`/`$IFS`、反斜杠转义，并折叠连续空白。
+/// 目的：抵抗 `rm -rf${IFS}/` 这类简易混淆，同时不改变真实执行语义。
+fn normalize_for_scan(cmd: &str) -> String {
+    let s = cmd.replace("${IFS}", " ").replace("$IFS", " ");
+    let s = s.replace('\\', "");
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+            }
+            prev_space = true;
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+/// 若命令是 `sh -c "..."` / `bash -c` / `cmd /C "..."` / `powershell -c "..."` 包装，
+/// 返回内部命令字符串，否则 `None`。用于深入检查被 shell 包裹的危险命令。
+fn shell_inner(cmd: &str) -> Option<String> {
+    let tokens = split_command(cmd).ok()?;
+    if tokens.len() >= 3 {
+        let prog = tokens[0].to_ascii_lowercase();
+        let flag = tokens[1].to_ascii_lowercase();
+        let is_wrapper = (prog == "sh" && (flag == "-c" || flag == "-e"))
+            || (prog == "bash" && (flag == "-c" || flag == "-e"))
+            || ((prog == "cmd" || prog == "cmd.exe") && flag == "/c")
+            || ((prog == "powershell" || prog == "pwsh")
+                && (flag == "-c" || flag == "-command"));
+        if is_wrapper {
+            return Some(tokens[2..].join(" "));
+        }
+    }
+    None
+}
+
+/// 对原始 shell 命令做风险分类（D10 L1：稳健解析黑名单）。
+///
+/// 相比旧版纯子串匹配，本实现：
+/// 1. 解包 `sh -c "..."` / `cmd /C "..."` 深入检查内部命令；
+/// 2. 归一化命令（剥离 `${IFS}`、反斜杠转义、折叠空白）抵抗简易混淆；
+/// 3. 既按危险程序名（首词）也按危险参数模式判定，降低误放与误拦。
+pub(crate) fn classify_command_risk(cmd: &str) -> CommandRisk {
+    // 同时检查原始命令与被 shell 包裹的内部命令。
+    let inner = shell_inner(cmd).unwrap_or_default();
+    let candidates = [cmd, inner.as_str()];
+    for raw in candidates {
+        if raw.is_empty() {
+            continue;
+        }
+        let normalized = normalize_for_scan(raw);
+        let lower = normalized.to_lowercase();
+
+        // 1) 危险程序名（首词）
+        if let Some(first) = lower.split_whitespace().next() {
+            let prog = first.trim_start_matches(['.', '/', '-']);
+            if DANGEROUS_PROGRAMS.iter().any(|p| prog == *p) {
+                return CommandRisk::Dangerous("destructive program");
+            }
+        }
+
+        // 2) 危险参数模式
+        for (pat, reason) in DANGEROUS_PATTERNS {
+            if lower.contains(pat) {
+                return CommandRisk::Dangerous(reason);
+            }
+        }
+
+        // 3) Windows 专属危险模式
+        #[cfg(target_os = "windows")]
+        for pat in WINDOWS_DANGEROUS_PATTERNS {
+            if lower.contains(pat) {
+                return CommandRisk::Dangerous("windows destructive pattern");
             }
         }
     }
+    CommandRisk::Safe
+}
 
-    false
+#[cfg(test)]
+fn is_dangerous_command(cmd: &str) -> bool {
+    classify_command_risk(cmd).is_dangerous()
 }
 
 fn truncate_output(output: String) -> String {
@@ -396,6 +498,32 @@ mod tests {
         assert!(is_dangerous_command("diskpart"));
         assert!(is_dangerous_command("reg delete HKLM\\Software"));
         assert!(!is_dangerous_command("dir"));
+    }
+
+    #[test]
+    fn classify_resists_obfuscation_and_wrappers() {
+        // 旧版纯子串匹配会放过的混淆手法
+        assert!(is_dangerous_command("rm -rf${IFS}/"));
+        assert!(is_dangerous_command("r\\m -rf /"));
+        assert!(is_dangerous_command("sh -c \"rm -rf /\""));
+        assert!(is_dangerous_command("bash -c 'mkfs /dev/sda1'"));
+        assert!(is_dangerous_command("cmd /C \"del /f /s C:\\temp\""));
+        // 安全命令仍放行
+        assert!(!is_dangerous_command("git status"));
+        assert!(!is_dangerous_command("cargo build --release"));
+        assert!(!is_dangerous_command("ls -la ./src"));
+        // 危险程序名直接命中
+        assert!(is_dangerous_command("dd if=/dev/zero of=/dev/sda"));
+        assert!(is_dangerous_command("shutdown -h now"));
+    }
+
+    #[test]
+    fn classify_returns_reason() {
+        assert_eq!(
+            classify_command_risk("rm -rf /").reason(),
+            Some("recursive force delete")
+        );
+        assert_eq!(classify_command_risk("ls -la").reason(), None);
     }
 
     #[cfg(target_os = "windows")]

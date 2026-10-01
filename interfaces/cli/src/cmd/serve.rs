@@ -31,6 +31,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     let mut ready_file: Option<PathBuf> = None;
     let mut nonce: Option<String> = None;
     let mut auth_token: Option<String> = None;
+    let mut open_access = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -49,6 +50,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("无效端口 {value}: {e}"))?;
         } else if arg == "--port0" {
             port = 0;
+        } else if arg == "--open-access" {
+            // 显式降级：D9 L1 自动 token 机制关闭，daemon 开放（仅本机调试用）
+            open_access = true;
         } else if let Some(value) = arg.strip_prefix("--host=") {
             host = value.to_string();
         } else if arg == "--host" {
@@ -106,6 +110,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         ready_file,
         nonce,
         auth_token,
+        require_auth: !open_access,
     })
     .await;
     Ok(())
