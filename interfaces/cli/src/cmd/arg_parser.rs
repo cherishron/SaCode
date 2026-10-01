@@ -30,6 +30,13 @@ pub(super) fn parse_args(args: Vec<String>) -> CliOptions {
         return options;
     }
 
+    // A1: 顶层 --acp 全局标志，兼容 CodeBuddy/Qoder 的 args: ["--acp"] 约定。
+    // `sacode --acp` -> 空 sub_args -> acp::run 启动 stdio 服务端；
+    // `sacode --acp serve` -> sub_args=["serve"] -> acp::run 启动 TCP 服务端。
+    if first == "--acp" {
+        return with_sub_args(CliCommand::Acp, args[1..].to_vec());
+    }
+
     parse_run_args(args)
 }
 

@@ -504,6 +504,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_parses_top_level_acp_flag() {
+        // A1: `sacode --acp` 应路由到 ACP 服务端，且无 sub_args（stdio 模式）
+        let stdio = parse_args(vec!["--acp".to_string()]);
+        assert_eq!(stdio.command, CliCommand::Acp);
+        assert!(stdio.sub_args.is_empty());
+
+        // `sacode --acp serve` 应保留 sub_args（TCP 模式）
+        let served = parse_args(vec!["--acp".to_string(), "serve".to_string()]);
+        assert_eq!(served.command, CliCommand::Acp);
+        assert_eq!(served.sub_args, vec!["serve".to_string()]);
+    }
+
+    #[test]
     fn parse_args_parses_serve_subcommand() {
         let options = parse_args(vec![
             "serve".to_string(),
