@@ -1,14 +1,15 @@
 use anyhow::Result;
-use sacode_kernel::ApprovalPolicy;
+use sacode_kernel::{ApprovalPolicy, Event, ExecutionMode};
 use sacode_runtime::{SessionPrompt, SessionService};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     net::TcpListener,
 };
 
 use crate::config::AcpConfig;
+use crate::protocol::*;
 
 /// 启动 ACP server（TCP 模式）
 pub async fn run_server(config: &AcpConfig) -> Result<()> {
@@ -26,449 +27,587 @@ pub async fn run_server(config: &AcpConfig) -> Result<()> {
     loop {
         let (stream, addr) = listener.accept().await?;
         if active_connections.load(Ordering::Relaxed) >= max_connections {
-            tracing::warn!(%addr, active_connections = active_connections.load(Ordering::Relaxed), max_connections, "ACP connection rejected: max connections reached");
+            tracing::warn!(%addr, "ACP connection rejected: max connections reached");
             continue;
         }
         active_connections.fetch_add(1, Ordering::Relaxed);
-        tracing::debug!(%addr, active_connections = active_connections.load(Ordering::Relaxed), "accepted ACP connection");
         let service = service.clone();
         let conn_counter = active_connections.clone();
         tokio::spawn(async move {
-            if let Err(error) = serve_tcp_connection(stream, service).await {
+            if let Err(error) = serve_connection_tcp(stream, service).await {
                 tracing::warn!(%addr, %error, "ACP connection failed");
             }
             conn_counter.fetch_sub(1, Ordering::Relaxed);
-            tracing::debug!(%addr, "ACP connection closed");
         });
     }
 }
 
-/// 启动 ACP server（stdio 子进程模式）
+/// 启动 ACP server（stdio 子进程模式）—— 编辑器以 `sacode acp` 接入。
 ///
-/// 从 stdin 读取 JSON-RPC 请求，写入 stdout 响应。
-/// 每行一个 JSON 对象，支持流式推送事件通知。
+/// 从 stdin 逐行读取 JSON-RPC 请求，向 stdout 写入 JSON-RPC 响应与
+/// `session/update` 流式通知（均与 CodeBuddy / OpenCode 一致：newline-delimited
+/// JSON-RPC，无 SSE 前缀）。
 pub async fn run_stdio_server() -> Result<()> {
     let service = SessionService::new();
     let stdin = tokio::io::stdin();
-    let lines = BufReader::new(stdin).lines();
+    let reader = BufReader::new(stdin);
     let writer = std::sync::Arc::new(tokio::sync::Mutex::new(tokio::io::BufWriter::new(
         tokio::io::stdout(),
     )));
-    run_stdio_loop(service, lines, writer).await
+    serve_lines(reader.lines(), writer, service).await
 }
 
-async fn run_stdio_loop<R, W>(
+// ============================================================================
+// 通用连接处理（TCP / stdio 共用）
+// ============================================================================
+
+async fn serve_connection_tcp(
+    stream: tokio::net::TcpStream,
     service: SessionService,
-    mut lines: tokio::io::Lines<BufReader<R>>,
+) -> Result<()> {
+    let (reader, writer) = stream.into_split();
+    let writer = std::sync::Arc::new(tokio::sync::Mutex::new(tokio::io::BufWriter::new(writer)));
+    serve_lines(BufReader::new(reader).lines(), writer, service).await
+}
+
+/// 逐行读取 JSON-RPC 请求并分发；流式通知与响应写入同一 writer。
+async fn serve_lines<R, W>(
+    mut lines: Lines<BufReader<R>>,
     writer: std::sync::Arc<tokio::sync::Mutex<W>>,
+    service: SessionService,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let mut requests = tokio::task::JoinSet::new();
     while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
+        let line = line.trim();
+        if line.is_empty() {
             continue;
         }
 
-        let request: JsonRpcRequest = match serde_json::from_str(&line) {
+        let request: JsonRpcRequest = match serde_json::from_str(line) {
             Ok(req) => req,
             Err(e) => {
-                let error_resp = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id: serde_json::Value::Null,
-                    result: None,
-                    error: Some(serde_json::json!({
-                        "code": -32700,
-                        "message": format!("parse error: {}", e)
-                    })),
-                };
-                let mut writer = writer.lock().await;
-                writer
-                    .write_all(format!("{}\n", serde_json::to_string(&error_resp)?).as_bytes())
-                    .await?;
-                writer.flush().await?;
-                continue;
-            }
-        };
-
-        let service = service.clone();
-        let writer = writer.clone();
-        requests.spawn(async move {
-            let mut notifications = Vec::new();
-            let response = handle_request_streaming(&service, &request, &mut notifications).await?;
-            let mut writer = writer.lock().await;
-            writer.write_all(&notifications).await?;
-            writer
-                .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
+                write_json(
+                    &writer,
+                    &JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: serde_json::Value::Null,
+                        result: None,
+                        error: Some(JsonRpcError::invalid_params(format!(
+                            "parse error: {}",
+                            e
+                        ))),
+                    },
+                )
                 .await?;
-            writer.flush().await?;
-            Ok::<(), anyhow::Error>(())
-        });
-    }
-
-    while let Some(result) = requests.join_next().await {
-        result??;
-    }
-    Ok(())
-}
-
-// ============================================================================
-// TCP 连接处理
-// ============================================================================
-
-async fn serve_tcp_connection(
-    stream: tokio::net::TcpStream,
-    service: SessionService,
-) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let request: JsonRpcRequest = match serde_json::from_str(&line) {
-            Ok(req) => req,
-            Err(e) => {
-                let error_resp = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id: serde_json::Value::Null,
-                    result: None,
-                    error: Some(serde_json::json!({
-                        "code": -32700,
-                        "message": format!("parse error: {}", e)
-                    })),
-                };
-                let _ = writer
-                    .write_all(format!("{}\n", serde_json::to_string(&error_resp)?).as_bytes())
-                    .await;
-                let _ = writer.flush().await;
                 continue;
             }
         };
-        let response = handle_request(&service, request).await?;
-        writer
-            .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
-            .await?;
-    }
 
+        if let Err(error) = handle_one(&service, &request, &writer).await {
+            tracing::warn!(%error, method = %request.method, "ACP request failed");
+            write_json(
+                &writer,
+                &JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(JsonRpcError::internal(error.to_string())),
+                },
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
-// ============================================================================
-// 请求处理（含流式版本）
-// ============================================================================
-
-/// 标准请求处理 — 返回最终响应（无流式推送）
-async fn handle_request(
-    service: &SessionService,
-    request: JsonRpcRequest,
-) -> Result<JsonRpcResponse> {
-    match dispatch_request(service, &request).await {
-        Ok(result) => Ok(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            id: request.id,
-            result: Some(result),
-            error: None,
-        }),
-        Err(error) => Ok(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            id: request.id,
-            result: None,
-            error: Some(serde_json::json!({
-                "code": -32601,
-                "message": format!("{}", error)
-            })),
-        }),
-    }
-}
-
-/// 流式请求处理 — 对 session/prompt 先推送事件通知，再返回最终响应
-async fn handle_request_streaming(
+/// 处理单条请求：响应与流式通知都写回 writer。
+/// 顺序为「先响应（含首帧 PromptResponse），后流式 session/update」，保证客户端按序重组。
+async fn handle_one<W>(
     service: &SessionService,
     request: &JsonRpcRequest,
-    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
-) -> Result<JsonRpcResponse> {
-    let is_streaming_method =
-        request.method == "session/prompt" || request.method == "session/update";
+    writer: &std::sync::Arc<tokio::sync::Mutex<W>>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+        if request.method == "session/prompt" {
+            let (response, streamed) = handle_session_prompt(service, request).await?;
+            write_json(
+                writer,
+                &JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: Some(serde_json::to_value(&response)?),
+                    error: None,
+                },
+            )
+            .await?;
+            for update in &streamed {
+                write_json(
+                    writer,
+                    &JsonRpcNotification::session_update(&response.session_id, update),
+                )
+                .await?;
+            }
+            return Ok(());
+        }
 
-    if !is_streaming_method {
-        // 非流式方法，直接返回
-        return handle_request(service, request.clone()).await;
+    let value = dispatch_request(service, request).await?;
+    write_json(
+        writer,
+        &JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id.clone(),
+            result: Some(value),
+            error: None,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+// ============================================================================
+// 请求分发（非流式方法）
+// ============================================================================
+
+async fn dispatch_request(service: &SessionService, request: &JsonRpcRequest) -> Result<serde_json::Value> {
+    match request.method.as_str() {
+        "initialize" => Ok(serde_json::to_value(InitializeResult {
+            protocol_version: PROTOCOL_VERSION,
+            agent_capabilities: AgentCapabilities {
+                load_session: true,
+                prompt_capabilities: PromptCapabilities {
+                    image: false,
+                    audio: false,
+                    embedded_context: false,
+                },
+                mcp_capabilities: McpCapabilities {
+                    http: false,
+                    sse: false,
+                },
+                session_capabilities: None,
+                auth: None,
+            },
+            agent_info: Some(AgentInfo {
+                name: "SaCode".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            }),
+            auth_methods: Vec::new(),
+            _meta: None,
+        })?),
+        "authenticate" => Ok(serde_json::json!({
+            "authenticated": true,
+            "_meta": { "sacode.auth": "passthrough" }
+        })),
+        "getConfigOptions" => Ok(serde_json::to_value(ConfigOptionsResponse::default())?),
+        "setSessionConfigOption" => Ok(serde_json::to_value(ConfigOptionsResponse::default())?),
+        "session/new" => {
+            let cwd = request
+                .params
+                .as_ref()
+                .and_then(|v| v.get("cwd"))
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+            let handle = service.create_session(cwd)?;
+            Ok(serde_json::to_value(NewSessionResponse {
+                session_id: handle.id.clone(),
+                session: session_to_acp(&handle),
+                checkpoint: handle.last_checkpoint.clone(),
+            })?)
+        }
+        "session/load" => {
+            let cwd = request
+                .params
+                .as_ref()
+                .and_then(|v| v.get("cwd"))
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+            let checkpoint = request
+                .required_string("checkpoint")?;
+            let handle = service.load_session(&cwd, &checkpoint)?;
+            Ok(serde_json::to_value(LoadSessionResponse {
+                session: session_to_acp(&handle),
+                checkpoint: handle.last_checkpoint.clone(),
+            })?)
+        }
+        "session/list" => {
+            let sessions = service
+                .list_sessions()
+                .into_iter()
+                .map(|handle| session_to_acp(&handle))
+                .collect();
+            Ok(serde_json::to_value(ListSessionsResponse { sessions })?)
+        }
+        "session/get" => {
+            let session_id = request.required_string("sessionId")?;
+            let handle = service.get_session(&session_id)?;
+            Ok(serde_json::to_value(session_to_acp(&handle))?)
+        }
+        "session/cancel" => {
+            let session_id = request.required_string("sessionId")?;
+            service.cancel_session(&session_id)?;
+            Ok(serde_json::json!({ "cancelled": true }))
+        }
+        "session/close" => {
+            let session_id = request.required_string("sessionId")?;
+            service.close_session(&session_id)?;
+            Ok(serde_json::json!({ "closed": true }))
+        }
+        "tools/list" => {
+            let registry = sacode_runtime::ToolRegistry::builtin();
+            let tools: Vec<Tool> = registry
+                .specs()
+                .iter()
+                .map(|spec| Tool {
+                    name: spec.name.clone(),
+                    description: if spec.description.is_empty() {
+                        None
+                    } else {
+                        Some(spec.description.clone())
+                    },
+                    input_schema: Some(spec.input_schema.clone()),
+                })
+                .collect();
+            Ok(serde_json::to_value(ToolsListResponse { tools })?)
+        }
+        "tools/call" => {
+            let tool_name = request.required_string("name")?;
+            let arguments = request
+                .params
+                .as_ref()
+                .and_then(|v| v.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let registry = sacode_runtime::ToolRegistry::builtin();
+            if registry.get(&tool_name).is_none() {
+                anyhow::bail!("unknown tool: {}", tool_name);
+            }
+            match registry.execute(&tool_name, arguments) {
+                Ok(output) => Ok(serde_json::json!({
+                    "success": output.success,
+                    "data": output.data,
+                    "message": output.message,
+                })),
+                Err(error) => Ok(serde_json::json!({
+                    "success": false,
+                    "error": error.to_string(),
+                })),
+            }
+        }
+        other => Err(anyhow::anyhow!("{}", JsonRpcError::method_not_found(other).message)),
     }
+}
 
-    // 执行 prompt 获取事件
-    let session_id = required_string(request, "sessionId")?;
-    let content = required_string(request, "prompt")?;
-    let mode = request
-        .params
-        .as_ref()
-        .and_then(|value| value.get("mode"))
-        .and_then(|value| value.as_str())
-        .map(parse_mode)
-        .unwrap_or(sacode_kernel::ExecutionMode::Build);
+// ============================================================================
+// session/prompt（含流式 SessionUpdate 映射）
+// ============================================================================
+
+async fn handle_session_prompt(
+    service: &SessionService,
+    request: &JsonRpcRequest,
+) -> Result<(PromptResponse, Vec<SessionUpdate>)> {
+    let session_id = request.required_string("sessionId")?;
+    let content = request.required_string("prompt")?;
+    let (mode, approval) = resolve_mode(request.string("mode").as_deref());
     let events = service
         .prompt(
             &session_id,
             SessionPrompt {
                 content,
                 mode,
-                approval: ApprovalPolicy::AutoDeny,
+                approval,
             },
         )
         .await?;
 
-    // 流式推送事件通知（无 id 的 JSON-RPC notification）
+    // 将 SessionEvent 序列映射为 ACP SessionUpdate（保持顺序）。
+    let mut updates: Vec<SessionUpdate> = Vec::new();
+    let mut had_error = false;
     for event in &events {
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session/event",
-            "params": {
-                "sessionId": session_id,
-                "event": event,
-            }
-        });
-        let line = serde_json::to_string(&notification)?;
-        // notification 用 "event: " 前缀，便于客户端区分
-        writer
-            .write_all(format!("event: {}\n", line).as_bytes())
-            .await?;
-        writer.flush().await?;
+        let produced = event_to_updates(event, &session_id, &mut had_error);
+        updates.extend(produced);
     }
 
-    Ok(JsonRpcResponse {
-        jsonrpc: "2.0".to_string(),
-        id: request.id.clone(),
-        result: Some(serde_json::json!({
-            "eventCount": events.len(),
-            "sessionId": session_id,
-        })),
-        error: None,
-    })
-}
-
-/// 请求分发 — 执行具体方法
-async fn dispatch_request(
-    service: &SessionService,
-    request: &JsonRpcRequest,
-) -> Result<serde_json::Value> {
-    let result = match request.method.as_str() {
-        "initialize" => serde_json::json!({
-            "capabilities": {
-                "session": true,
-                "loadSession": true,
-                "tools": true,
-                "streaming": true,
-            }
-        }),
-        "session/new" => {
-            let cwd = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("cwd"))
-                .and_then(|value| value.as_str())
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-            serde_json::to_value(service.create_session(cwd)?)?
-        }
-        "session/load" => {
-            let cwd = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("cwd"))
-                .and_then(|value| value.as_str())
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-            let checkpoint = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("checkpoint"))
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow::anyhow!("missing checkpoint"))?;
-            serde_json::to_value(service.load_session(&cwd, checkpoint)?)?
-        }
-        "session/prompt" => {
-            // 非流式路径 — 直接返回事件（兼容旧客户端）
-            let session_id = required_string(request, "sessionId")?;
-            let content = required_string(request, "prompt")?;
-            let mode = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("mode"))
-                .and_then(|value| value.as_str())
-                .map(parse_mode)
-                .unwrap_or(sacode_kernel::ExecutionMode::Build);
-            let events = service
-                .prompt(
-                    &session_id,
-                    SessionPrompt {
-                        content,
-                        mode,
-                        approval: ApprovalPolicy::AutoDeny,
-                    },
-                )
-                .await?;
-            serde_json::to_value(events)?
-        }
-        "session/cancel" => {
-            let session_id = required_string(request, "sessionId")?;
-            service.cancel_session(&session_id)?;
-            serde_json::json!({ "cancelled": true })
-        }
-        "session/close" => {
-            let session_id = required_string(request, "sessionId")?;
-            service.close_session(&session_id)?;
-            serde_json::json!({ "closed": true })
-        }
-        "session/get" => {
-            let session_id = required_string(request, "sessionId")?;
-            serde_json::to_value(service.get_session(&session_id)?)?
-        }
-        "session/list" => serde_json::to_value(service.list_sessions())?,
-        "tools/list" => {
-            let registry = sacode_runtime::ToolRegistry::builtin();
-            let tools: Vec<serde_json::Value> = registry
-                .specs()
-                .iter()
-                .map(|spec| {
-                    serde_json::json!({
-                        "name": spec.name,
-                        "description": spec.description,
-                        "inputSchema": spec.input_schema,
-                    })
-                })
-                .collect();
-            serde_json::json!({ "tools": tools })
-        }
-        "tools/call" => {
-            let tool_name = required_string(request, "name")?;
-            let arguments = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("arguments"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            let registry = sacode_runtime::ToolRegistry::builtin();
-            let spec = registry
-                .get(&tool_name)
-                .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", tool_name))?;
-            if spec.needs_approval() {
-                serde_json::json!({
-                    "success": false,
-                    "error": "tool requires approval; invoke it through session/prompt",
-                })
-            } else {
-                match registry.execute(&tool_name, arguments) {
-                    Ok(output) => serde_json::json!({
-                        "success": output.success,
-                        "data": output.data,
-                        "message": output.message,
-                    }),
-                    Err(error) => serde_json::json!({
-                        "success": false,
-                        "error": error.to_string(),
-                    }),
-                }
-            }
-        }
-        other => anyhow::bail!("method not found: {}", other),
+    let prompt_response = updates.first().cloned();
+    let streamed = if updates.len() > 1 {
+        updates[1..].to_vec()
+    } else {
+        Vec::new()
     };
 
-    Ok(result)
+    // 透传客户端 _meta（如 conversationRequestId）。
+    let meta = request.meta().cloned();
+
+    Ok((
+        PromptResponse {
+            session_id,
+            prompt_response,
+            _meta: meta,
+        },
+        streamed,
+    ))
 }
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-fn required_string(request: &JsonRpcRequest, key: &str) -> Result<String> {
-    request
-        .params
-        .as_ref()
-        .and_then(|value| value.get(key))
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow::anyhow!("missing {}", key))
+/// 单个 SessionEvent 可映射为 0..n 个 SessionUpdate（错误事件额外追加 session_end）。
+fn event_to_updates(
+    event: &sacode_runtime::SessionEvent,
+    session_id: &str,
+    had_error: &mut bool,
+) -> Vec<SessionUpdate> {
+    let mut out = Vec::new();
+    match event {
+        sacode_runtime::SessionEvent::Started { .. } => {
+            out.push(SessionUpdate::SessionInfo(SessionInfoUpdate {
+                session_id: Some(session_id.to_string()),
+                ..Default::default()
+            }));
+        }
+        sacode_runtime::SessionEvent::KernelEvent(inner) => match inner {
+            Event::Message { content } => out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                content: ContentBlock::text(content.clone()),
+            })),
+            Event::Thinking { content } => out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                content: ContentBlock::text(content.clone()),
+            })),
+            Event::PlanGenerated { steps } => {
+                out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                    content: ContentBlock::text(steps.join("\n")),
+                }))
+            }
+            Event::CommandOutput { command, output } => {
+                out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                    content: ContentBlock::text(format!("${}\n{}", command, output)),
+                }))
+            }
+            Event::ToolCallStarted { name, input } => out.push(SessionUpdate::ToolCall(ToolCall {
+                tool_call_id: format!("tc-{}", name),
+                name: name.clone(),
+                status: Some("in_progress".to_string()),
+                title: None,
+                content: None,
+                raw_input: Some(input.clone()),
+            })),
+            Event::ToolCallFinished { name, output, success } => {
+                out.push(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
+                    tool_call_id: format!("tc-{}", name),
+                    status: Some(if *success { "completed" } else { "failed" }.to_string()),
+                    title: None,
+                    content: Some(vec![ContentBlock::text(output.to_string())]),
+                }))
+            }
+            Event::Error { message } => {
+                *had_error = true;
+                out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                    content: ContentBlock::text(message.clone()),
+                }));
+            }
+            Event::Done { .. } | Event::ApprovalRequested { .. } | Event::ApprovalResolved { .. }
+            | Event::FileChanged { .. } => {}
+        },
+        sacode_runtime::SessionEvent::ToolCallStarted { step_id, name, input } => {
+            out.push(SessionUpdate::ToolCall(ToolCall {
+                tool_call_id: format!("tc-{}-{}", step_id, name),
+                name: name.clone(),
+                status: Some("in_progress".to_string()),
+                title: None,
+                content: None,
+                raw_input: Some(input.clone()),
+            }))
+        }
+        sacode_runtime::SessionEvent::ToolCallFinished { step_id, name, output, success } => {
+            out.push(SessionUpdate::ToolCallUpdate(ToolCallUpdate {
+                tool_call_id: format!("tc-{}-{}", step_id, name),
+                status: Some(if *success { "completed" } else { "failed" }.to_string()),
+                title: None,
+                content: Some(vec![ContentBlock::text(output.to_string())]),
+            }))
+        }
+        sacode_runtime::SessionEvent::Done { .. } => out.push(SessionUpdate::SessionEnd(SessionEnd {
+            end_reason: Some(if *had_error { "error" } else { "completed" }.to_string()),
+        })),
+        sacode_runtime::SessionEvent::Error { message } => {
+            *had_error = true;
+            out.push(SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+                content: ContentBlock::text(message.clone()),
+            }));
+            out.push(SessionUpdate::SessionEnd(SessionEnd {
+                end_reason: Some("error".to_string()),
+            }));
+        }
+    }
+    out
 }
 
-fn parse_mode(value: &str) -> sacode_kernel::ExecutionMode {
-    match value {
-        "plan" => sacode_kernel::ExecutionMode::Plan,
-        "auto" | "yolo" => sacode_kernel::ExecutionMode::Yolo,
-        _ => sacode_kernel::ExecutionMode::Build,
+/// 解析执行模式 + 审批策略。ACP 无交互用户，`yolo`/`auto` 显式请求时自动放行工具。
+fn resolve_mode(mode: Option<&str>) -> (ExecutionMode, ApprovalPolicy) {
+    match mode {
+        Some("plan") => (ExecutionMode::Plan, ApprovalPolicy::AutoDeny),
+        Some("auto") | Some("yolo") => (ExecutionMode::Yolo, ApprovalPolicy::AutoApprove),
+        _ => (ExecutionMode::Build, ApprovalPolicy::AutoDeny),
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-struct JsonRpcRequest {
-    #[allow(dead_code)]
-    jsonrpc: String,
-    id: serde_json::Value,
-    method: String,
-    params: Option<serde_json::Value>,
+// ============================================================================
+// 辅助
+// ============================================================================
+
+fn session_to_acp(handle: &sacode_runtime::SessionHandle) -> Session {
+    Session {
+        session_id: handle.id.clone(),
+        cwd: handle.cwd.to_string_lossy().to_string(),
+        status: Some(session_status_to_string(&handle.status)),
+        tools: Some(handle.tools.clone()),
+        checkpoint: handle.last_checkpoint.clone(),
+    }
 }
 
-#[derive(Debug, serde::Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
-    id: serde_json::Value,
-    result: Option<serde_json::Value>,
-    error: Option<serde_json::Value>,
+fn session_status_to_string(status: &sacode_runtime::SessionStatus) -> String {
+    match status {
+        sacode_runtime::SessionStatus::Idle => "idle",
+        sacode_runtime::SessionStatus::Running => "running",
+        sacode_runtime::SessionStatus::Cancelling => "cancelling",
+        sacode_runtime::SessionStatus::Cancelled => "cancelled",
+        sacode_runtime::SessionStatus::Closed => "closed",
+        sacode_runtime::SessionStatus::Failed(_) => "failed",
+    }
+    .to_string()
 }
+
+async fn write_json<W>(
+    writer: &std::sync::Arc<tokio::sync::Mutex<W>>,
+    value: &impl serde::Serialize,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let mut guard = writer.lock().await;
+    let line = serde_json::to_string(value)?;
+    guard.write_all(line.as_bytes()).await?;
+    guard.write_all(b"\n").await?;
+    guard.flush().await?;
+    Ok(())
+}
+
+// ============================================================================
+// 测试
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_mode_recognizes_values() {
-        assert_eq!(parse_mode("plan"), sacode_kernel::ExecutionMode::Plan);
-        assert_eq!(parse_mode("yolo"), sacode_kernel::ExecutionMode::Yolo);
-        assert_eq!(parse_mode("auto"), sacode_kernel::ExecutionMode::Yolo);
-        assert_eq!(parse_mode("build"), sacode_kernel::ExecutionMode::Build);
-        assert_eq!(parse_mode("unknown"), sacode_kernel::ExecutionMode::Build);
+    fn resolve_mode_recognizes_values() {
+        assert_eq!(
+            resolve_mode(Some("plan")),
+            (ExecutionMode::Plan, ApprovalPolicy::AutoDeny)
+        );
+        assert_eq!(
+            resolve_mode(Some("yolo")),
+            (ExecutionMode::Yolo, ApprovalPolicy::AutoApprove)
+        );
+        assert_eq!(
+            resolve_mode(Some("auto")),
+            (ExecutionMode::Yolo, ApprovalPolicy::AutoApprove)
+        );
+        assert_eq!(
+            resolve_mode(Some("build")),
+            (ExecutionMode::Build, ApprovalPolicy::AutoDeny)
+        );
+        assert_eq!(
+            resolve_mode(None),
+            (ExecutionMode::Build, ApprovalPolicy::AutoDeny)
+        );
     }
 
     #[test]
-    fn required_string_extracts_field() {
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: serde_json::json!(1),
-            method: "test".to_string(),
-            params: Some(serde_json::json!({
-                "name": "hello",
-                "count": 42,
-            })),
+    fn initialize_response_is_well_formed() {
+        let result = InitializeResult {
+            protocol_version: PROTOCOL_VERSION,
+            agent_capabilities: AgentCapabilities {
+                load_session: true,
+                ..Default::default()
+            },
+            agent_info: Some(AgentInfo {
+                name: "SaCode".to_string(),
+                version: "1.1.1".to_string(),
+            }),
+            auth_methods: Vec::new(),
+            _meta: None,
         };
-
-        assert_eq!(required_string(&request, "name").unwrap(), "hello");
-        assert!(required_string(&request, "count").is_err());
-        assert!(required_string(&request, "missing").is_err());
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["protocolVersion"], 1);
+        assert_eq!(json["agentCapabilities"]["loadSession"], true);
+        assert_eq!(json["agentCapabilities"]["promptCapabilities"]["image"], false);
     }
 
     #[test]
-    fn required_string_missing_params_returns_error() {
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: serde_json::json!(1),
-            method: "test".to_string(),
-            params: None,
-        };
-        assert!(required_string(&request, "anything").is_err());
-    }
-
-    #[test]
-    fn initialize_response_includes_streaming_capability() {
-        // 验证 initialize 响应包含 streaming 能力声明
-        let capabilities = serde_json::json!({
-            "session": true,
-            "loadSession": true,
-            "tools": true,
-            "streaming": true,
+    fn session_update_serializes_with_snake_type_and_camel_fields() {
+        let update = SessionUpdate::AgentMessageChunk(AgentMessageChunk {
+            content: ContentBlock::text("hello"),
         });
-        assert!(capabilities.get("streaming").unwrap().as_bool().unwrap());
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["type"], "agent_message_chunk");
+        assert_eq!(json["content"]["type"], "text");
+        assert_eq!(json["content"]["text"], "hello");
+    }
+
+    #[test]
+    fn tool_call_update_serializes_camel_fields() {
+        let update = SessionUpdate::ToolCallUpdate(ToolCallUpdate {
+            tool_call_id: "tc-bash".to_string(),
+            status: Some("completed".to_string()),
+            title: None,
+            content: Some(vec![ContentBlock::text("out")]),
+        });
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["type"], "tool_call_update");
+        assert_eq!(json["toolCallId"], "tc-bash");
+        assert_eq!(json["status"], "completed");
+    }
+
+    #[test]
+    fn event_message_maps_to_agent_message_chunk() {
+        let mut had_error = false;
+        let event = sacode_runtime::SessionEvent::KernelEvent(Event::message("hi"));
+        let updates = event_to_updates(&event, "s1", &mut had_error);
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::AgentMessageChunk(c) => {
+                assert_eq!(c.content, ContentBlock::text("hi"));
+            }
+            _ => panic!("expected agent_message_chunk"),
+        }
+    }
+
+    #[test]
+    fn done_without_error_maps_to_completed() {
+        let mut had_error = false;
+        let event = sacode_runtime::SessionEvent::Done {
+            summary: "ok".to_string(),
+        };
+        let updates = event_to_updates(&event, "s1", &mut had_error);
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::SessionEnd(e) => assert_eq!(e.end_reason.as_deref(), Some("completed")),
+            _ => panic!("expected session_end"),
+        }
+    }
+
+    #[test]
+    fn error_event_appends_session_end_with_error_reason() {
+        let mut had_error = false;
+        let event = sacode_runtime::SessionEvent::Error {
+            message: "boom".to_string(),
+        };
+        let updates = event_to_updates(&event, "s1", &mut had_error);
+        assert!(had_error);
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(updates[1], SessionUpdate::SessionEnd(_)));
     }
 }

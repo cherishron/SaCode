@@ -6,17 +6,16 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     apply_args(&mut config, &args);
 
     match args.first().map(|value| value.as_str()) {
+        // `sacode acp`（无参数）默认进入 stdio 服务端 —— 编辑器以 agent_server 接入
+        // （Zed 等配置 `args: ["acp"]`，对齐 opencode acp 约定）。
+        Some("stdio") | None => run_stdio_server().await,
+        Some("serve") => run_server(&config).await,
         Some("status") => {
             println!(
-                "ACP server configured on {}:{}",
+                "ACP server configured on {}:{} (use `sacode acp` for stdio agent mode)",
                 config.server.host, config.server.port
             );
             Ok(())
-        }
-        Some("serve") | None => run_server(&config).await,
-        Some("stdio") => {
-            println!("ACP stdio server ready");
-            run_stdio_server().await
         }
         Some(other) => anyhow::bail!("unknown acp command: {}", other),
     }
