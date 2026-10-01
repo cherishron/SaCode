@@ -24,6 +24,10 @@ logs/
 # CodeBuddy workspace data (local AI/IDE memory & plans)
 .codebuddy/
 
+# Tauri updater private key (SECRET — never commit; kept in CI secrets)
+interfaces/desktop/src-tauri/updater-secret.key
+interfaces/desktop/src-tauri/updater-secret.key.pub
+
 # OS
 .DS_Store
 Thumbs.db

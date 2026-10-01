@@ -1,11 +1,19 @@
 name: Desktop Release
 
-# Builds the SaCode Desktop (Tauri 2 + Vue 3) Windows NSIS installer.
-# - Triggers on `v*` tags and manual dispatch.
-# - Code signing is OPTIONAL: if the SACODE_CODESIGN_CERT_BASE64 secret is set,
-#   the binary + installer are Authenticode-signed (D5); otherwise an unsigned
-#   build is produced (identical to local `tauri build`).
-# - On a tag push, the installer is attached to the GitHub Release.
+# Builds the SaCode Desktop (Tauri 2 + Vue 3) Windows NSIS installer and publishes
+# it together with the Tauri updater artifacts (latest.json + .sig) to the GitHub
+# Release for the pushed tag. On a manual dispatch the same bundle is produced and
+# released under the supplied version.
+#
+# Signing (all optional, via repository secrets):
+#   - TAURI_UPDATER_PRIVATE_KEY            ed25519 updater private key (updater-secret.key)
+#   - TAURI_UPDATER_PRIVATE_KEY_PASSWORD   key password (empty for the generated key)
+#   - SACODE_CODESIGN_CERT_BASE64          Windows Authenticode PFX (base64)  — D5
+#   - SACODE_CODESIGN_CERT_PASSWORD        PFX password
+# The Authenticode signCommand lives in src-tauri/tauri.conf.json and is a no-op
+# when SACODE_CODESIGN_CERT_BASE64 is absent.
+#
+# Updater endpoint + pubkey are configured in src-tauri/tauri.conf.json.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -21,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version override (e.g. 1.1.1). Leave empty to use Cargo workspace version."
+        description: "Version override (e.g. 1.1.1). Leave empty to use the Cargo workspace version."
         required: false
         default: ""
 
@@ -29,7 +37,7 @@ permissions:
   contents: write
 
 jobs:
-  build-desktop:
+  release-desktop:
     runs-on: windows-latest
 
     steps:
@@ -61,37 +69,18 @@ jobs:
       - name: Sync project version
         run: node scripts/sync-version.js ${{ steps.get_version.outputs.VERSION }}
 
-      - name: Install desktop dependencies
-        working-directory: interfaces/desktop
-        run: npm ci
-
-      - name: Build frontend + Tauri (NSIS)
-        working-directory: interfaces/desktop
-        env:
-          SACODE_CODESIGN_CERT_BASE64: ${{ secrets.SACODE_CODESIGN_CERT_BASE64 }}
-          SACODE_CODESIGN_CERT_PASSWORD: ${{ secrets.SACODE_CODESIGN_CERT_PASSWORD }}
-        run: npm run tauri -- build
-
-      - name: Locate installer
-        id: installer
-        shell: bash
-        working-directory: interfaces/desktop
-        run: |
-          INSTALLER=$(ls target/release/bundle/nsis/*.exe | head -n1)
-          echo "PATH=$INSTALLER" >> "$GITHUB_OUTPUT"
-          echo "NAME=$(basename "$INSTALLER")" >> "$GITHUB_OUTPUT"
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sacode-desktop-windows-x64
-          path: interfaces/desktop/${{ steps.installer.outputs.PATH }}
-
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: interfaces/desktop/${{ steps.installer.outputs.PATH }}
-          append_body: true
+      - name: Build, sign and publish (tauri-action)
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
+          SACODE_CODESIGN_CERT_BASE64: ${{ secrets.SACODE_CODESIGN_CERT_BASE64 }}
+          SACODE_CODESIGN_CERT_PASSWORD: ${{ secrets.SACODE_CODESIGN_CERT_PASSWORD }}
+        with:
+          projectPath: interfaces/desktop
+          tagName: 'v__VERSION__'
+          releaseName: 'SaCode Desktop v__VERSION__'
+          releaseBody: 'See CHANGELOG for details.'
+          includeUpdater: true
+          args: ''
