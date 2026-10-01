@@ -3,6 +3,9 @@
 //! This crate has **no** UI and **no** daemon dependency. SaCode ACP Server
 //! (`interfaces/acp`) remains the inbound path; this crate is the outbound
 //! client used by daemon Agent Backends (e.g. OpenCode).
+//!
+//! JSON-RPC envelope types and method constants are shared via
+//! `sacode-acp-protocol` — see `protocol.rs` for re-exports.
 
 pub mod client;
 pub mod framing;
@@ -15,5 +18,6 @@ pub use process::{AcpProcess, ProcessConfig, SpawnError};
 pub use protocol::{
     initialize_params, permission_response, prompt_params, JsonRpcError, JsonRpcId, JsonRpcMessage,
     JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, METHOD_INITIALIZE, METHOD_SESSION_CANCEL,
-    METHOD_SESSION_EVENT, METHOD_SESSION_NEW, METHOD_SESSION_PERMISSION, METHOD_SESSION_PROMPT,
+    METHOD_SESSION_EVENT, METHOD_SESSION_NEW, METHOD_SESSION_PERMISSION,
+    METHOD_SESSION_PERMISSION_RESOLVED, METHOD_SESSION_PROMPT, PROTOCOL_VERSION,
 };

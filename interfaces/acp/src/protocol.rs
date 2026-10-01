@@ -1,11 +1,12 @@
-//! ACP (Agent Client Protocol) v1 — JSON-RPC envelope & message types.
+//! ACP (Agent Client Protocol) v1 — payload message types.
+//!
+//! JSON-RPC 2.0 envelope types (`JsonRpcRequest`, `JsonRpcResponse`,
+//! `JsonRpcError`, `JsonRpcNotification`) and method constants now live in
+//! `sacode-acp-protocol` (the shared crate). This module re-exports them and
+//! defines the ACP v1 **payload** types specific to the server side:
+//! `InitializeResult`, `Session`, `SessionUpdate`, `Tool`, etc.
 //!
 //! Transport: newline-delimited JSON-RPC 2.0 over stdio (or a TCP line stream).
-//! Requests and streaming notifications are both written as one JSON object per
-//! line. Notifications carry no `id`; streamed session updates are delivered as
-//! `session/update` notifications and the first update is also returned inline in
-//! the `session/prompt` `PromptResponse`.
-//!
 //! Field naming follows the ACP v1 schema: camelCase for normal fields and the
 //! literal `_meta` extension bag.
 //!
@@ -14,114 +15,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Wire protocol version negotiated via `initialize`.
-pub const PROTOCOL_VERSION: u64 = 1;
-
-// ============================================================================
-// JSON-RPC 2.0 envelope
-// ============================================================================
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JsonRpcRequest {
-    #[allow(dead_code)]
-    pub jsonrpc: String,
-    pub id: Value,
-    pub method: String,
-    #[serde(default)]
-    pub params: Option<Value>,
-}
-
-impl JsonRpcRequest {
-    /// Extract the `_meta` object from the request params (used for
-    /// `conversationRequestId` and other per-call extensions).
-    pub fn meta(&self) -> Option<&Value> {
-        self.params.as_ref().and_then(|p| p.get("_meta"))
-    }
-
-    /// Required string param from the params object.
-    pub fn required_string(&self, key: &str) -> anyhow::Result<String> {
-        self.params
-            .as_ref()
-            .and_then(|p| p.get(key))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("missing string param: {}", key))
-    }
-
-    /// Optional string param from the params object.
-    pub fn string(&self, key: &str) -> Option<String> {
-        self.params
-            .as_ref()
-            .and_then(|p| p.get(key))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: String,
-    pub id: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcError>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcError {
-    pub code: i64,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
-}
-
-impl JsonRpcError {
-    pub fn method_not_found(method: &str) -> Self {
-        Self {
-            code: -32601,
-            message: format!("method not found: {}", method),
-            data: None,
-        }
-    }
-
-    pub fn invalid_params(msg: impl Into<String>) -> Self {
-        Self {
-            code: -32602,
-            message: msg.into(),
-            data: None,
-        }
-    }
-
-    pub fn internal(msg: impl Into<String>) -> Self {
-        Self {
-            code: -32603,
-            message: msg.into(),
-            data: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: String,
-    pub method: String,
-    pub params: Value,
-}
-
-impl JsonRpcNotification {
-    /// Build a `session/update` notification carrying one `SessionUpdate`.
-    pub fn session_update(session_id: &str, update: &SessionUpdate) -> Self {
-        Self {
-            jsonrpc: "2.0".to_string(),
-            method: "session/update".to_string(),
-            params: serde_json::json!({
-                "sessionId": session_id,
-                "sessionUpdate": update,
-            }),
-        }
-    }
-}
+// Re-export the shared JSON-RPC envelope so `use crate::protocol::*` works.
+pub use sacode_acp_protocol::{
+    JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    METHOD_INITIALIZE, METHOD_SESSION_CANCEL, METHOD_SESSION_EVENT, METHOD_SESSION_NEW,
+    METHOD_SESSION_PERMISSION, METHOD_SESSION_PERMISSION_RESOLVED, METHOD_SESSION_PROMPT,
+    PROTOCOL_VERSION,
+};
 
 // ============================================================================
 // initialize
@@ -143,7 +43,6 @@ pub struct InitializeResult {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    /// Whether `session/load` is supported.
     #[serde(default)]
     pub load_session: bool,
     #[serde(default)]
@@ -379,4 +278,22 @@ pub struct Tool {
 #[serde(rename_all = "camelCase")]
 pub struct ToolsListResponse {
     pub tools: Vec<Tool>,
+}
+
+// ============================================================================
+// Notification builder (server-specific — references SessionUpdate)
+// ============================================================================
+
+/// Build a `session/update` notification carrying one `SessionUpdate`.
+/// (Free function, not an impl method — avoids a dependency from the shared
+/// `sacode-acp-protocol` crate back to server-side types.)
+pub fn session_update_notification(session_id: &str, update: &SessionUpdate) -> JsonRpcNotification {
+    JsonRpcNotification {
+        jsonrpc: "2.0".to_string(),
+        method: "session/update".to_string(),
+        params: Some(serde_json::json!({
+            "sessionId": session_id,
+            "sessionUpdate": update,
+        })),
+    }
 }

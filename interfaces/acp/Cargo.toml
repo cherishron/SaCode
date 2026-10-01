@@ -10,6 +10,7 @@ description = "SaCode ACP server"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sacode-acp-protocol = { path = "../../integrations/acp-protocol" }
 tokio = { workspace = true, features = ["net", "sync", "time", "rt-multi-thread", "macros"] }
 tracing.workspace = true
 sacode-kernel = { path = "../../kernel" }

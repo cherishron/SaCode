@@ -93,7 +93,7 @@ where
                     &writer,
                     &JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
-                        id: serde_json::Value::Null,
+                        id: JsonRpcId::Number(0),
                         result: None,
                         error: Some(JsonRpcError::invalid_params(format!(
                             "parse error: {}",
@@ -148,7 +148,7 @@ where
             for update in &streamed {
                 write_json(
                     writer,
-                    &JsonRpcNotification::session_update(&response.session_id, update),
+                    &session_update_notification(&response.session_id, update),
                 )
                 .await?;
             }

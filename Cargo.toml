@@ -2,10 +2,11 @@
 members = [
   "kernel",
   "runtime",
+  "integrations/acp-protocol",
+  "integrations/acp",
   "interfaces/cli",
   "interfaces/acp",
   "interfaces/lsp",
-  "integrations/acp",
   "interfaces/desktop/src-tauri",
 ]
 resolver = "2"

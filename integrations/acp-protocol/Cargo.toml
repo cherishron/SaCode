@@ -1,0 +1,15 @@
+[package]
+name = "sacode-acp-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared JSON-RPC 2.0 envelope and ACP method constants for SaCode ACP server and client"
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
