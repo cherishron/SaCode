@@ -10,7 +10,8 @@
     "build": "vue-tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "vue-tsc -p tsconfig.json --noEmit",
     "sidecar": "node scripts/desktop-sidecar.mjs --workdir ../..",
-    "test": "node --import tsx --test test/**/*.test.ts"
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@cherishron/sacode-client-core": "file:../client-core",
@@ -23,6 +24,7 @@
     "vue": "^3.5.43"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
     "@types/node": "^20.14.0",
     "@vitejs/plugin-vue": "^6.0.9",
     "tsx": "^4.19.0",
