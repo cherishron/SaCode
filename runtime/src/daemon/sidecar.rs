@@ -150,6 +150,20 @@ pub async fn run_daemon_with_options(options: DaemonBindOptions) {
     println!("{}", info.base_url);
     if auth_required {
         println!("auth_required=true");
+        // D9 L1 衔接：token 为自动生成时，向 owner 终端 stdout 打印
+        //（owner-only out-of-band；ready-file 与 argv 不含 token）。
+        // 另一终端的 CLI 管理命令（sacode task list 等）需要
+        // export SACODE_DAEMON_TOKEN=<token> 才能通过鉴权。
+        if options.auth_token.is_none() {
+            if let Some(token) = effective_token.as_ref() {
+                println!("daemon_token={}", token);
+                println!("# 提示：另一终端执行 sacode task/queue/automation 等管理命令前，");
+                println!(
+                    "# 请 export SACODE_DAEMON_URL={} SACODE_DAEMON_TOKEN=<上方 token>",
+                    info.base_url
+                );
+            }
+        }
     }
 
     if let Some(path) = &options.ready_file {

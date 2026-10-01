@@ -10,6 +10,7 @@ mod checkpoint;
 #[cfg(test)]
 mod command_tests;
 pub mod config;
+pub mod daemon_admin;
 pub mod diff;
 pub mod doctor;
 mod git_auth;
@@ -111,6 +112,11 @@ pub enum CliCommand {
     Session,
     DumpConfig,
     Bundle,
+    Task,
+    Queue,
+    Automation,
+    AgentBackends,
+    Knowledge,
     Help,
     Version,
 }
@@ -195,6 +201,11 @@ pub async fn run() -> Result<u8> {
         CliCommand::Update => update::run(options.sub_args)?,
         CliCommand::Bundle => bundle::run(options.sub_args)?,
         CliCommand::Session => session::run(options.sub_args)?,
+        CliCommand::Task => daemon_admin::task(options.sub_args).await?,
+        CliCommand::Queue => daemon_admin::queue(options.sub_args).await?,
+        CliCommand::Automation => daemon_admin::automation(options.sub_args).await?,
+        CliCommand::AgentBackends => daemon_admin::agent_backends(options.sub_args).await?,
+        CliCommand::Knowledge => daemon_admin::knowledge(options.sub_args).await?,
         CliCommand::DumpConfig => {
             let workdir = PathBuf::from(".");
             let runtime_config = sacode_runtime::config::SaCodeConfig::new(&workdir);
@@ -454,6 +465,23 @@ mod tests {
 
         assert_eq!(options.command, CliCommand::Insight);
         assert!(options.sub_args.is_empty());
+    }
+
+    #[test]
+    fn parse_args_parses_daemon_admin_subcommands() {
+        // 矩阵 §3：task / queue / automation / agent-backends / knowledge
+        let cases: &[(&str, CliCommand)] = &[
+            ("task", CliCommand::Task),
+            ("queue", CliCommand::Queue),
+            ("automation", CliCommand::Automation),
+            ("agent-backends", CliCommand::AgentBackends),
+            ("knowledge", CliCommand::Knowledge),
+        ];
+        for (name, expected) in cases {
+            let options = parse_args(vec![name.to_string(), "list".to_string()]);
+            assert_eq!(options.command, *expected, "subcommand {name}");
+            assert_eq!(options.sub_args, vec!["list".to_string()], "subcommand {name}");
+        }
     }
 
     #[test]

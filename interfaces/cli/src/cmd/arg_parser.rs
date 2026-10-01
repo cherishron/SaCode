@@ -67,6 +67,11 @@ fn simple_subcommand(name: &str) -> Option<CliCommand> {
         "session" => CliCommand::Session,
         "dump-config" => CliCommand::DumpConfig,
         "bundle" => CliCommand::Bundle,
+        "task" => CliCommand::Task,
+        "queue" => CliCommand::Queue,
+        "automation" => CliCommand::Automation,
+        "agent-backends" => CliCommand::AgentBackends,
+        "knowledge" => CliCommand::Knowledge,
         _ => return None,
     })
 }
