@@ -7,6 +7,19 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "start_daemon",
+    "select_workspace_folder",
+    "stop_daemon",
+    "daemon_info",
+    "daemon_proxy",
+    "start_event_bridge",
+    "terminal_start",
+    "terminal_write",
+    "terminal_resize",
+    "terminal_close",
+    "set_tray_enabled",
+    "set_autostart",
+    "system_integration_status"
   ]
 }
