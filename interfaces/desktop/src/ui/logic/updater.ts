@@ -62,10 +62,6 @@ export async function downloadAndInstall(
   }
 }
 
-/** 安装完成后重启应用以应用更新。 */
-export async function relaunchApp(): Promise<void> {
-  const { relaunch } = await import('@tauri-apps/plugin-process')
-  await relaunch()
-}
-
+/** 安装完成后需重启应用方可生效；重启由调用方决定时机。
+ *  可调用 @tauri-apps/plugin-process 的 relaunch()，该包需另行安装。 */
 export { installUpdate }
