@@ -1,7 +1,7 @@
 # SaCode 速查手册（Cheat Sheet）
 
 > 更新时间：2026-08-18
-> 改进说明：原 tutorials.md 为长篇场景教程（步骤 1-6 每步多子步骤），基于评估报告维度四建议改为 cheat sheet 风格快速参考。详细场景仍可参考 [examples.md](examples.md)。
+> 改进说明：原 tutorials.md 为长篇场景教程（步骤 1-6 每步多子步骤），基于评估报告维度四建议改为 cheat sheet 风格快速参考。详细场景仍可参考 [examples.md](guide-examples.md)。
 
 本文档提供按场景分类的命令与提示词速查，复制即用。
 
@@ -238,7 +238,7 @@ git diff | sacode "根据改动生成一条简洁准确的 commit message"
 
 **记忆类型**：`memory`（通用）、`preference`（偏好）、`workflow`（工作流程）、`decision`（决策）
 
-> 改进说明：规划方案步骤 4.2 将知识系统 9 文件分类合并为 3 文件（project.md / experience.md / preferences.md），详见 [report-plan.md](../report-plan.md)。
+> 改进说明：规划方案步骤 4.2 将知识系统 9 文件分类合并为 3 文件（project.md / experience.md / preferences.md），详见 [report-plan.md](../product/reports/report-improvement-plan.md)。
 
 ---
 
@@ -296,7 +296,7 @@ git commit -m "chore: 初始化 SaCode 项目配置"
 /cancel
 ```
 
-> 改进说明：规划方案步骤 4.1 将 Loop 四层自治架构轻量化为 `/goal <完成条件>`，对齐 Claude Code，详见 [report-plan.md](../report-plan.md)。
+> 改进说明：规划方案步骤 4.1 将 Loop 四层自治架构轻量化为 `/goal <完成条件>`，对齐 Claude Code，详见 [report-plan.md](../product/reports/report-improvement-plan.md)。
 >
 > 用法：`/goal 所有测试通过` → 每当任务执行完毕自动检查是否满足完成条件（关键词匹配），满足则标记任务完成。
 
@@ -342,11 +342,11 @@ git commit -m "chore: 初始化 SaCode 项目配置"
 
 ## 相关文档
 
-- [快速上手](getting-started.md) — 30 秒到 5 分钟渐进路径
-- [示例集](examples.md) — 可复制命令组合
-- [命令参考](../reference/command-reference.md) — 完整命令速查
-- [API 文档](../reference/API.md) — 工具系统、Daemon、MCP 接口
-- [架构说明](../reference/architecture.md) — 分层与执行链路
-- [PRD](../product/PRD.md) — 产品定位与能力全景
+- [快速上手](guide-getting-started.md) — 30 秒到 5 分钟渐进路径
+- [示例集](guide-examples.md) — 可复制命令组合
+- [命令参考](../architecture/ref-command-reference.md) — 完整命令速查
+- [API 文档](../architecture/ref-api.md) — 工具系统、Daemon、MCP 接口
+- [架构说明](../architecture/architecture.md) — 分层与执行链路
+- [PRD](../product/prd-main.md) — 产品定位与能力全景
 - [路线图](../product/roadmap.md) — 版本阶段与交付计划
-- [可行性评估报告](../report.md) → [改进规划方案](../report-plan.md)
+- [可行性评估报告](../product/reports/report-feasibility.md) → [改进规划方案](../product/reports/report-improvement-plan.md)

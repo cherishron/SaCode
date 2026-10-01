@@ -44,7 +44,7 @@ daemon 当前不提供内建认证、授权或 TLS，并且能够创建任务、
 
 不建议使用 `--host=0.0.0.0` 直接对外提供服务。审批端点不是认证机制，能够访问 daemon 的调用方也能够提交审批结果。
 
-> 规划说明（2026-09-20）：Desktop 专项将新增可选 bearer token、`--port 0`/ready-file sidecar 握手以及 Agent Backend 路由。在这些能力落地前，本页以下内容仍是当前实现真源；不得把专项 PRD 中的规划端点当作已发布 API。详见 [Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)。
+> 规划说明（2026-09-20）：Desktop 专项将新增可选 bearer token、`--port 0`/ready-file sidecar 握手以及 Agent Backend 路由。在这些能力落地前，本页以下内容仍是当前实现真源；不得把专项 PRD 中的规划端点当作已发布 API。详见 [Desktop 与多 Agent 客户端 PRD](../product/prd-desktop-multi-agent.md)。
 
 `POST /task` 可选传 `skill`（来自 `/workspace/capabilities` 的 `skills`）。指定技能在任务分发时不可读取或不存在，则返回 HTTP 400，响应仍为任务协议结构（`status: "error"`、`message: "skill not available: <名称>"`），不会创建/入队任务；不再静默改用原始提示词。不传或传空技能则使用原有无技能流程。
 
@@ -524,4 +524,4 @@ SSE 字段：
 - 未识别的事件类型应被忽略或记录，不应导致 SSE 连接整体失败。
 - 单任务消费者应同时处理 SSE 终结事件和 HTTP 状态查询，不能把网络断开直接等同于任务完成。
 
-VSCode 扩展的安装、daemon 自动管理和审批排障参见 [VSCode 扩展使用与排障](../guides/vscode-extension.md)。
+VSCode 扩展的安装、daemon 自动管理和审批排障参见 [VSCode 扩展使用与排障](../guides/guide-vscode-extension.md)。

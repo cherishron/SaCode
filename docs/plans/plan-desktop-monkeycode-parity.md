@@ -3,16 +3,16 @@
 > 参考：MonkeyCode desktop（`chaitin/MonkeyCode`，commit 以 `desktop/` + `ui-next/` 为准）。
 > 本文按 **交互粒度** 对齐，不抄其 AGPL 代码与视觉资产。
 > 基线：本仓 `interfaces/desktop`（Vue 3 + TDesign + Tauri 2）+ `runtime` daemon。
-> 日期：2026-09-29
+> 日期：2026-09-30
 
-## 状态速览（2026-09-29 收尾）
+## 状态速览（2026-09-30 更新）
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| UI 契约 | 工作台壳、度量、信息安放 | ✅ 见 [layout-contract](./desktop-layout-contract.md) |
+| UI 契约 | 工作台壳、度量、信息安放 | ✅ 见 [layout-contract](plan-desktop-layout-contract.md) |
 | P0-1 | 提问应答（AskCard + `/task/:id/answer`） | ✅ |
-| P0-2 | 审批卡挂点（旧 UI；新壳以 frames 重建） | ✅ |
-| P0-3 | 历史回放 `desktop_frames` | ✅ |
+| P0-2 | 审批卡挂点（ApprovalCard.vue 已补齐，按 pane/会话过滤） | ✅（2026-09-30 修复） |
+| P0-3 | 历史回放 `desktop_frames`（事件名 tool_call_started 已修正，error/plan_generated 帧已补） | ✅（2026-09-30 修复） |
 | P1-1 | MCP 管理 | ✅ |
 | P1-2 | 技能管理（用户/项目目录） | ✅ |
 | P2-1 | 外部附件 | ✅ |
@@ -22,7 +22,7 @@
 | 面板 | 文件 / 终端 / 预览格内侧板 | ✅ |
 | P3 | 自动更新 / 下载坞 / VT / 预览发现 | 未做 |
 
-验收步骤见 [desktop-integration-acceptance](./desktop-integration-acceptance.md)。
+验收步骤见 [desktop-integration-acceptance](plan-desktop-integration-acceptance.md)。
 壳开发说明见 [interfaces/desktop/README.md](../../interfaces/desktop/README.md)。
 
 ---
@@ -33,11 +33,24 @@
 
 | 旧结论 | 当前事实 | 依据 |
 | --- | --- | --- |
-| 「审批卡只在空会话渲染」 | **已部分修复**：`conversation.ts` 在有消息时也会追加 `approvalNodes`（`[...messageNodes, ...approvalNodes]`）。剩余问题是卡片**堆在消息流末尾**，未按 `task_id` 插入对应轮次；提问卡无挂点；审批历史不回放 | `interfaces/desktop/src/app/conversation.ts:65-74` |
+| 「审批卡只在空会话渲染」 | **已修复（2026-09-30）**：新增 `ApprovalCard.vue`，在 `App.vue` 的 chat-column 内按 `paneConversationId(index)` 过滤渲染；`services.ts` 事件名已修正为 `tool_call_started`，移除无条件回落 `currentTaskId`；`useDesktopApp.ts` 新增 `approvalGroupsForConversation()` 按会话归属审批组 | `interfaces/desktop/src/ui/components/ApprovalCard.vue`、`interfaces/desktop/src/ui/App.vue:537-546` |
 | 「全仓无 MCP」 | **runtime 已有完整 MCP 栈**：`McpConfigStore`（`.sacode/mcp.json` 合并读写）、stdio/http client、`list_tools`/`inspect`/`call_tool`。缺的是 **daemon HTTP CRUD + 设置页管理分区** | `runtime/src/mcp/mod.rs`、`runtime/src/lib.rs` 导出 |
 | 「技能只有选择器」 | **runtime 已有 `SkillRegistry`**（Builtin/User/Project/Workspace 四源、list/save/delete）+ Skill Hub（搜索/下载/上传）。缺的是 **管理 UI、导入、默认启用、按会话启用集** | `runtime/src/skills/mod.rs`、`skills/hub.rs` |
 
 另外：Codex 提到的隔离工作树 `C:\Users\jingg\.codex\worktrees\desktop-monkeycode-parity` **当前为空目录**（仅剩 `.codex-worktree-name`）。主仓已有对应提交（`a92f968` 对齐工作台、`349462a` 设置左导航等），未合入部分需按本清单重做或从 git 历史找回，不要假设工作树仍在。
+
+### 0.1 后端 daemon 修复（2026-09-30）
+
+| 文件 | 缺陷 | 修复 |
+| --- | --- | --- |
+| `runtime/src/daemon/events.rs` | `persist_desktop_frame` 匹配 `tool_call`/`tool_started`（实际事件名为 `tool_call_started`/`tool_call_finished`），工具帧从不落盘 | 修正事件名；新增 `error`、`plan_generated` 帧分支 |
+| `runtime/src/daemon/question.rs` | `answer_task_question` 先清除 `pending_question` 再校验空答案，失败后无法重试 | 改为先校验答案、成功后才清除 |
+| `runtime/src/daemon/mcp_admin.rs` | `list_servers` 直接返回 `env` 值，密钥外泄 | 改为只返回 `env_keys`（键名列表） |
+
+### 0.2 剩余局限（2026-09-30）
+
+- **网关 E2E 阻断**：sa-idp 测试账户无 `CREATE DATABASE` 权限，`mysql` 客户端不在 PATH，`SAAG_IDP_ENABLED=false`，无法搭建独立 MySQL 库完成网关 IdP 换钥 E2E。需用户授予建库权限或提供独立数据库实例。
+- **GUI 端到端未验收**：审批→批准/拒绝→继续执行、跨 pane 提问隔离、重启回放、SSE 事件流端到端、审批超时/过期等场景仅通过单元测试和静态代码检查验证，未在真实 Tauri 桌面环境中端到端验收。
 
 ---
 

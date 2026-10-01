@@ -63,4 +63,4 @@
 
 ## 四、实施路径
 
-详见 [`docs/report-plan.md`](./report-plan.md)（12 周 / 8 步骤）与 [`docs/plans/improvement-execution-plan.md`](./plans/improvement-execution-plan.md)（文件级细化）。
+详见 [`docs/report-plan.md`](report-improvement-plan.md)（12 周 / 8 步骤）与 [`docs/plans/improvement-execution-plan.md`](../../plans/plan-improvement-execution.md)（文件级细化）。

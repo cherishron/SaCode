@@ -71,7 +71,7 @@ npm install -g @cherishron/sacode
 ## 1 分钟：配置 Provider
 
 > 改进说明（2026-08-18）：`/login` 已重构为交互式选择流程 —— 选择预设 provider → 输入 API Key，2 步完成配置。
-> 详见 [report-plan.md](../report-plan.md) 与 [improvement-execution-plan.md](../plans/improvement-execution-plan.md)。
+> 详见 [report-plan.md](../product/reports/report-improvement-plan.md) 与 [improvement-execution-plan.md](../plans/plan-improvement-execution.md)。
 >
 > 内置预设：DeepSeek、通义千问（Qwen）、智谱 GLM、MiMo、LongCat、OpenAI、Ollama（本地，无需 Key），另可自定义 Base URL。
 >
@@ -274,7 +274,7 @@ git diff | sacode "根据改动生成一条简洁准确的 commit message"
 | `/connect` | 快速接入预设 Provider |
 | `/providers` | Provider 管理 |
 
-> 改进说明：规划方案步骤 6.3 将命令体系分层：一级 5 个 + 二级按需 + 三级归 CLI 不暴露在 TUI。详见 [report-plan.md](../report-plan.md)。
+> 改进说明：规划方案步骤 6.3 将命令体系分层：一级 5 个 + 二级按需 + 三级归 CLI 不暴露在 TUI。详见 [report-plan.md](../product/reports/report-improvement-plan.md)。
 
 ### 常用快捷键
 
@@ -348,7 +348,7 @@ git diff | sacode "根据改动生成 commit message"
 └── logs/              # 运行日志
 ```
 
-> **企业级可审计**：`audit.log` 记录所有副作用操作，支持企业 SIEM 接入。这是 SaCode 相对 Claude Code 的差异化能力，详见 [PRD](../product/PRD.md) §5 产品原则。
+> **企业级可审计**：`audit.log` 记录所有副作用操作，支持企业 SIEM 接入。这是 SaCode 相对 Claude Code 的差异化能力，详见 [PRD](../product/prd-main.md) §5 产品原则。
 
 ---
 
@@ -356,13 +356,13 @@ git diff | sacode "根据改动生成 commit message"
 
 | 目的 | 文档 |
 |------|------|
-| 查看所有命令 | [命令参考](../reference/command-reference.md) |
-| 场景教程 | [场景教程](tutorials.md) |
-| 可复制示例 | [示例集](examples.md) |
-| 架构理解 | [架构说明](../reference/architecture.md) |
-| 产品定位 | [PRD](../product/PRD.md) |
+| 查看所有命令 | [命令参考](../architecture/ref-command-reference.md) |
+| 场景教程 | [场景教程](guide-tutorials.md) |
+| 可复制示例 | [示例集](guide-examples.md) |
+| 架构理解 | [架构说明](../architecture/architecture.md) |
+| 产品定位 | [PRD](../product/prd-main.md) |
 | 版本规划 | [路线图](../product/roadmap.md) |
-| 评估与规划 | [可行性评估报告](../report.md) → [改进规划方案](../report-plan.md) |
+| 评估与规划 | [可行性评估报告](../product/reports/report-feasibility.md) → [改进规划方案](../product/reports/report-improvement-plan.md) |
 
 ---
 

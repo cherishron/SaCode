@@ -81,6 +81,7 @@
 | 图标 | `tdesign-icons-vue-next`，12 / 13 / 20 |
 | **文件面板** | **格内** `.files-scrim` + `.files-side-panel`（absolute 贴右、可拖宽），**禁止**整页 `t-drawer` 作文件区 |
 | **终端 / 预览** | 同文件：格内 scrim + 侧板（`TerminalDrawer` / `PreviewDrawer`） |
+| **右侧工具栏** | 格内 `.tools-scrim`（`pointer-events: none`，**非模态**）+ `.workspace-tools` 单面板；顶部标签 文件 / 变更 / 终端 / 预览；每格独立 open/tab/width（`--w-tools*` 令牌） |
 | 分格操作 | 细头 ⋯ 菜单：向右/向下拆分、独占、更换、重命名；关闭仅多格时渲染 |
 
 > 形态铁律：与 MonkeyCode LAYOUT 不一致的交互形态（整页抽屉、第三列、底栏信息位）不得合入。拿不准先对 LAYOUT.md 再写组件。

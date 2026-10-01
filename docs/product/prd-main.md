@@ -11,7 +11,7 @@
 
 > 定位调整说明（v1.2→v1.3）：基于《SaCode 可行性评估报告》（docs/report.md）四维评估，明确产品为"面向国内开发者的终端 AI 编程工具"，平台化是结果不是起点。配套规划方案见 `docs/report-plan.md`。MulanPSL-2.0 协议、国内搜索引擎适配、国产模型兼容已体现这一定位。
 >
-> 客户端化决策（v1.5）：在 CLI/TUI 主线稳定、VSCode 与 daemon 审批闭环完成后，新增独立 Desktop 与可插拔 Agent Backend。该决策只扩展支撑客户端和 ACP Agent 接入所需的 daemon/ACP 能力，不恢复 Scheduled Tasks、Agent Teams、Channels 等已延后平台功能。专项真源见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)。
+> 客户端化决策（v1.5）：在 CLI/TUI 主线稳定、VSCode 与 daemon 审批闭环完成后，新增独立 Desktop 与可插拔 Agent Backend。该决策只扩展支撑客户端和 ACP Agent 接入所需的 daemon/ACP 能力，不恢复 Scheduled Tasks、Agent Teams、Channels 等已延后平台功能。专项真源见 [Desktop 与多 Agent 客户端 PRD](prd-desktop-multi-agent.md)。
 >
 > 阶段顺序修订（v1.6）：当前工作继续聚焦 **Desktop 本地闭环与发布收口**。SaCode 与手机端的 LAN、远程 daemon、跨设备控制及签名中继均不与 Desktop 并行实施；现阶段只保留 Task Protocol、HTTP/SSE、审批和恢复等可复用协议接缝。只有 Desktop 达到本 PRD 第 7.4 节的退出门禁后，才评审是否进入手机通信阶段。
 >
@@ -452,15 +452,15 @@ SaCode 当前的产品策略基于《可行性评估报告》（docs/report.md�
    - Scheduled Tasks / Agent Teams / Channels 继续延后
    - OpenCode 等外部 Agent 必须进入统一审批、审计与事件模型
 
-专项方案见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)，详细实施见 [Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
+专项方案见 [Desktop 与多 Agent 客户端 PRD](prd-desktop-multi-agent.md)，详细实施见 [Desktop 与多 Agent 客户端实施计划](../plans/plan-desktop-multi-agent.md)。
 
 ## 19. 相关文档
 
-- [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md) — 桌面端、Agent Backend 与 OpenCode ACP 接入专项真源
-- [Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md) — 目录调整、版本切片、任务依赖和发布门禁
-- [可行性评估报告](../report.md) — 四维评估（竞争差距/规则审查/方向/UI）
-- [改进规划方案](../report-plan.md) — 基于评估报告的 12 周实施方案
+- [Desktop 与多 Agent 客户端 PRD](prd-desktop-multi-agent.md) — 桌面端、Agent Backend 与 OpenCode ACP 接入专项真源
+- [Desktop 与多 Agent 客户端实施计划](../plans/plan-desktop-multi-agent.md) — 目录调整、版本切片、任务依赖和发布门禁
+- [可行性评估报告](reports/report-feasibility.md) — 四维评估（竞争差距/规则审查/方向/UI）
+- [改进规划方案](reports/report-improvement-plan.md) — 基于评估报告的 12 周实施方案
 - [产品路线图](roadmap.md) — 版本阶段与交付计划
-- [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
-- [架构说明](../reference/architecture.md) — 分层与执行链路
-- [开发指南](../reference/development.md) — 本地开发与贡献
+- [功能升级方案](../plans/plan-capability-upgrade.md) — 基于竞品对比的能力补齐
+- [架构说明](../architecture/architecture.md) — 分层与执行链路
+- [开发指南](../architecture/ref-development.md) — 本地开发与贡献

@@ -3,7 +3,7 @@
 > 目标：把 SaCode 桌面端从「功能可用」对齐到 MonkeyCode 的 **页面结构 / 组件语汇 / 密度** 颗粒度。
 > **技术栈（2026-09-29 定案）：Vue 3 + TypeScript + Vite + TDesign（`tdesign-vue-next` + `tdesign-icons-vue-next`），壳仍为 Tauri 2。**
 > 不引入 React / Tailwind / daisyUI；不拷 MonkeyCode 源码与视觉资产。TDesign 负责控件皮相，布局契约负责格子与密度。
-> 功能清单见 [desktop-monkeycode-parity.md](./desktop-monkeycode-parity.md)；本文只管 **长什么样、格子怎么切、用什么组件栈长出来**。
+> 功能清单见 [desktop-monkeycode-parity.md](plan-desktop-monkeycode-parity.md)；本文只管 **长什么样、格子怎么切、用什么组件栈长出来**。
 > 权威参考：MonkeyCode `desktop/ui-next/LAYOUT.md`（仅作度量与信息架构权威）。
 > 日期：2026-09-29
 

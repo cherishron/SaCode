@@ -97,7 +97,7 @@ Windows 绝对路径示例：
 - 必须远程使用时，在网络层增加 TLS、认证、访问控制与防火墙规则；
 - 审批弹窗只能降低误操作风险，不能替代 daemon 的网络访问控制。
 
-完整协议见 [Daemon HTTP、SSE 与审批 API](../reference/daemon-api.md)。
+完整协议见 [Daemon HTTP、SSE 与审批 API](../architecture/ref-daemon-api.md)。
 
 ## 审批交互
 

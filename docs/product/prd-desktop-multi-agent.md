@@ -1,13 +1,14 @@
 # SaCode Desktop 与多 Agent 客户端 PRD
 
-> 文档状态：实施中（当前唯一客户端主线）
-> 文档版本：v1.2
+> 文档状态：实施中（Desktop 唯一主线：Vue 3 + TypeScript + Vite + TDesign + Tauri 2；尚未正式发布）
+> 文档版本：v1.3
 > 决策日期：2026-09-20
 > 阶段顺序更新：2026-09-22
-> 仓库审查基线：`dev@9d8f9f8`（2026-09-22）
+> 桌面主线核对：2026-09-29（基于当前工作区；未提交改动不计为验收）
+> 原仓库审查基线：`dev@9d8f9f8`（2026-09-22，仅作历史记录）
 > 适用产品：SaCode CLI / Daemon / VSCode / Desktop / ACP 集成
-> 配套实施计划：[Desktop 与多 Agent 客户端实施计划](../plans/desktop-multi-agent-implementation-plan.md)
-> 配套 UI 设计：[Desktop UI Design v1](../design/desktop-ui-design-v1.md)
+> 配套实施计划：[Desktop 与多 Agent 客户端实施计划](../plans/plan-desktop-multi-agent.md)
+> 当前桌面布局契约：[Desktop 布局契约](../plans/plan-desktop-layout-contract.md)；[Desktop UI Design v1](../specs/spec-desktop-ui-refresh.md) 仅供历史设计参考
 
 ## 1. 决策摘要
 
@@ -17,7 +18,7 @@ SaCode 将从“终端优先、IDE 延伸”的单一 Agent 产品，演进为�
 
 1. CLI/TUI 继续作为轻量、脚本友好的核心入口。
 2. `sacode serve` 作为本地统一 Agent Host，对客户端提供 HTTP、SSE、审批和任务恢复能力。
-3. 新增 Tauri Desktop 客户端，通过 daemon 使用 SaCode 原生 Agent。
+3. Desktop 唯一正式前端主线是 `interfaces/desktop/src/ui/main.ts` → Vue 3 + TypeScript + Vite + TDesign，配合 Tauri 2 Rust shell 和 `interfaces/client-core`；不再以旧 `src/main.ts`、`src/app/`、`src/components/` 手写 DOM 前端作为开发或验收目标。
 4. daemon 新增可插拔 `AgentBackend`，首批支持：
    - `sacode`：SaCode 原生运行时；
    - `opencode`：通过 ACP stdio 启动和调用 OpenCode。
@@ -47,7 +48,7 @@ SaCode 当前已具备：
 4. daemon 已具备最小 Agent Backend registry、`backend_id` 分发与 ACP 适配，但仍缺正式的 probe/restart 管理 API、完整权限审批回传和会话生命周期验收。
 5. daemon 工作目录在进程启动时固定，不适合一个进程同时管理任意工作区。
 6. Desktop sidecar 已使用动态 loopback 端口、高熵 token、ready-file nonce 和 Rust IPC 代理；长期凭据 keyring、日志脱敏、安装包与跨平台进程清理仍需发布验收。
-7. Tauri shell 与四面板 UI 已落地，但当前会话列表主要是前端内存投影，Diff 仍依赖事件 detail 解析，不等价于持久会话和规范变更模型。
+7. Tauri shell 和 Vue/TDesign 工作台已落地，当前布局为左侧任务列 + 可平铺会话分格，文件/终端/预览为格内侧板；会话使用 `/api/desktop/conversations*`，但持久回放、规范 Diff 数据源及真实退出重开等仍需逐项手工验收。旧四面板/Changes/Approvals/Activity 固定栏描述不再代表当前桌面入口。
 
 ### 2.2 要解决的核心问题
 
@@ -169,21 +170,21 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 - 所有 Backend 事件投影为现有 Task Protocol/SSE 事件，禁止对客户端暴露第二套长期公开事件协议；
 - VSCode 和 Desktop 均使用同一包。
 
-### 5.2 当前实施状态（2026-09-22）
+### 5.2 当前实施状态（2026-09-29 工作区核对；验收证据沿用 2026-09-22 基线）
 
-状态词仅使用 `已验收 / 部分验收 / 未开始 / 延后 / 不在范围`。代码存在不等于正式验收。
+状态词仅使用 `已验收 / 部分验收 / 未开始 / 延后 / 不在范围`。当前工作区中的 Vue 功能/测试迁移与既有未提交改动，不自动构成正式验收；本节区分代码可见与通过门禁。
 
-| 交付面 | 状态 | 已落地 | 未通过门禁 |
+| 交付面 | 状态 | 当前可见实现或已有证据 | 未通过门禁 |
 |---|---|---|---|
 | Desktop shell 与 sidecar | 部分验收 | Tauri shell、动态 loopback 端口、ready-file nonce、Rust 内存 token、HTTP IPC 代理、SSE bridge、启动/停止 | 真实安装包 smoke、异常退出与跨平台进程树清理、完整日志脱敏 |
-| Desktop UI | 部分验收 | 四面板布局、Agent/模式选择、时间线、工具卡、审批卡、取消、状态、Changes/Approvals/Activity、简易 Diff | 持久会话恢复、规范 Diff 数据源、Retry/归档、可访问性与真实 E2E |
+| Desktop Vue/TDesign UI（唯一主线） | 部分验收 | `src/ui/main.ts` 入口；任务列 + 平铺分格、格内文件/终端/预览侧板、会话发送与卡片流、提问卡、设置与知识库/自动化 Vue 组件在当前工作区可见；会话由 `/api/desktop/conversations*` 提供 | 当前 Vue 入口的真实交互与退出重开手工验收、持久回放对账、规范 Diff、审批/取消真实 E2E、可访问性及跨平台 smoke；未提交组件不算验收通过 |
 | client-core | 部分验收 | daemon HTTP、SSE reconnect、`Last-Event-ID`、Task Protocol 校验、approval、Agent 类型；Desktop/VSCode 已复用 | 独立发布与版本策略、更多契约 fixture、跨客户端一致性验收 |
-| daemon Agent Backend | 部分验收 | `sacode` 默认 Backend、registry、`backend_id` 分发、`GET /api/agents`、ACP stdio 执行、事件投影与失败分类 | `/probe`、`/restart`、持久 session API、统一审计关联 |
+| daemon Agent Backend | 部分验收 | `sacode` 默认 Backend、registry、`backend_id` 分发、`GET /api/agents`、ACP stdio 执行、事件投影与失败分类 | `/probe`、`/restart`、持久 session API 的首版必要性及统一审计关联需复核 |
 | OpenCode ACP | 部分验收 | initialize/session/prompt 和事件映射；仓库记录 OpenCode `1.18.31` 返回 `PONG` 的 smoke | 权限请求→daemon 审批→ACP response 的真实闭环；cancel 先 ACP 后强杀；正式兼容矩阵 |
-| Desktop 发布 | 未开始 | 已有前端/Rust 局部构建测试 | 独立 CI、三平台构建、NSIS/DMG/AppImage 或等价安装包、签名/升级策略、版本一致性 |
+| Desktop 发布 | 未开始 | 已有前端/Rust 局部构建测试记录，不等于发布验收 | 独立 CI、三平台构建、NSIS/DMG/AppImage 或等价安装包、签名/升级策略、版本一致性 |
 | 手机/远程通信 | 延后 | 仅复用 Task Protocol、HTTP/SSE 等协议接缝 | Desktop 退出门禁后另立专项 |
 
-本次验证结果：client-core typecheck/build/7 tests、Desktop typecheck/build/6 tests、VSCode compile/32 tests、`cargo check --workspace`、Desktop Rust 3 tests 均通过。Rust workspace 全量测试因本机 E 盘空间不足（`os error 112`）在编译阶段中止，因此不计为通过或代码失败。验证基于存在其他未提交 CLI/identity 修改的工作区；这些未提交修改不计入本专项已验收范围。
+2026-09-22 历史验证记录：client-core typecheck/build/7 tests、Desktop typecheck/build/6 tests、VSCode compile/32 tests、`cargo check --workspace`、Desktop Rust 3 tests 均通过；这是旧 UI 阶段的验证，**不得用作当前 Vue/TDesign 主线验收结果**。当时 Rust workspace 全量测试因本机 E 盘空间不足（`os error 112`）在编译阶段中止，不计为通过或代码失败。当前工作区另有文档、client-core、Vue 组件和旧前端迁移等未提交改动，须针对最终版本重新运行对应检查及手工/E2E，并保留验收证据后更新状态。
 
 ### 5.3 后续版本
 
@@ -218,7 +219,11 @@ SaCode 是一个面向开发者的本地 AI 编程工作台：
 
 ## 6. 信息架构与页面
 
-### 6.1 主导航
+### 6.1 当前 Vue 工作台与目标能力
+
+当前桌面入口按 [布局契约](../plans/plan-desktop-layout-contract.md) 组织为左侧任务列 + 可平铺会话分格，不设固定第三列或全局 status-bar；格内侧板承载文件、终端、预览。设置为覆盖工作台的独立视图；知识库与自动化组件在当前工作区可见，功能验收仍以真实手工/E2E 为准。SaDesign 保留后端/逻辑接缝，不能因为旧 `src/app/sadesign.ts` 曾有 UI 就宣称 Vue 已集成。
+
+以下为跨版本目标能力，不是当前 Vue 导航项或验收结论：
 
 1. **Workspace**：当前工作区、Git 分支和状态。
 2. **Sessions**：会话列表、新建、恢复、归档。
@@ -444,8 +449,9 @@ Desktop / VSCode
 │   └── acp/                    # 通用 ACP 类型、JSON-RPC framing、stdio client
 ├── interfaces/
 │   ├── client-core/            # VSCode/Desktop 共用 TypeScript 客户端 SDK
-│   └── desktop/                # Tauri Desktop
-│       ├── src/                # Vue 3 + TypeScript UI
+│   └── desktop/                # 唯一桌面客户端：Vue 3 + TDesign + Tauri 2
+│       ├── index.html          # 正式入口：src/ui/main.ts
+│       ├── src/ui/             # Vue 3 + TypeScript + TDesign UI
 │       └── src-tauri/          # Tauri shell 与 sidecar 管理
 └── runtime/src/
     └── agent_backends/
@@ -821,7 +827,7 @@ ACP Agent 发起的权限请求必须：
 
 ### 已决定
 
-1. 使用 Tauri，而非 Electron。
+1. 桌面端唯一实现主线为 Vue 3 + TypeScript + Vite + TDesign + Tauri 2；`index.html` 加载 `src/ui/main.ts`。旧 `src/main.ts` / `src/app/` / `src/components/` 手写 DOM 前端不是并行产品线，迁移/删除期间不得作为当前 UI 验收依据。
 2. Desktop 通过 daemon 使用所有 Backend。
 3. OpenCode 通过 ACP Client 接入，不作为 Provider。
 4. 一工作区一 daemon，首版不做多工作区 daemon。

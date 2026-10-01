@@ -173,7 +173,7 @@ ls ~/.sacode/logs
 ## 10. 相关文档
 
 - [架构说明](architecture.md) — 分层与执行链路
-- [API 文档](API.md) — 工具系统与接口
-- [命令参考](command-reference.md) — CLI / TUI 命令速查
+- [API 文档](ref-api.md) — 工具系统与接口
+- [命令参考](ref-command-reference.md) — CLI / TUI 命令速查
 - [发布流程](../release/RELEASE.md) — 版本发布链路
 - [交叉编译指南](../build/CROSS_COMPILE.md) — 跨平台构建

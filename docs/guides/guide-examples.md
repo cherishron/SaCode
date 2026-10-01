@@ -244,7 +244,7 @@ sacode update
 
 ## 12. 相关文档
 
-- [快速上手](getting-started.md) — 安装与基本配置
-- [场景教程](tutorials.md) — 按真实任务组织
-- [命令参考](../reference/command-reference.md) — 完整 CLI / TUI 命令
-- [API 文档](../reference/API.md) — 工具系统与接口说明
+- [快速上手](guide-getting-started.md) — 安装与基本配置
+- [场景教程](guide-tutorials.md) — 按真实任务组织
+- [命令参考](../architecture/ref-command-reference.md) — 完整 CLI / TUI 命令
+- [API 文档](../architecture/ref-api.md) — 工具系统与接口说明

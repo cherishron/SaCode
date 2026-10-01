@@ -614,5 +614,5 @@ SaCode 与 deepseek-harness 代表了 Agent 运行底座的两种范式：
 
 - [deepseek-harness GitHub](https://github.com/deepseek-ai/deepseek-harness)
 - [SaCode 架构说明](architecture.md)
-- [SaCode 工具系统与分层注入](API.md)
+- [SaCode 工具系统与分层注入](ref-api.md)
 - [SaCode 路线图](../product/roadmap.md)

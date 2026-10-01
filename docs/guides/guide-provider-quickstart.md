@@ -1,7 +1,7 @@
 # 国内 Provider 快速接入指南
 
 > 目标：5 分钟内完成任一国内模型服务的配置，运行第一个任务。
-> 配合 [getting-started.md](./getting-started.md) 的 `/login` 交互式流程使用。
+> 配合 [getting-started.md](guide-getting-started.md) 的 `/login` 交互式流程使用。
 
 ---
 

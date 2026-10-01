@@ -4,8 +4,8 @@
 > 文档版本：v0.5
 > 日期：2026-09-24
 > 适用产品：SaCode Desktop / Daemon / Runtime / CLI  
-> 前置能力：[AIDesign（TD 示例库 + AI 设计变体）](../compose/spec/ai-design-tdesign.md)  
-> 关联文档：[SaCode Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md)
+> 前置能力：[AIDesign（TD 示例库 + AI 设计变体）](../specs/spec-ai-design-tdesign.md)  
+> 关联文档：[SaCode Desktop 与多 Agent 客户端 PRD](prd-desktop-multi-agent.md)
 
 ## 1. 决策摘要
 

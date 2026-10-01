@@ -16,7 +16,7 @@
 4. ACP Client 和 OpenCode 接入；
 5. 统一审批、事件、取消和审计。
 
-LSP 继续维持现状，Scheduled Tasks / Agent Teams / Channels 继续延后。详细范围和执行顺序见 [Desktop 与多 Agent 客户端 PRD](desktop-multi-agent-prd.md) 与 [实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
+LSP 继续维持现状，Scheduled Tasks / Agent Teams / Channels 继续延后。详细范围和执行顺序见 [Desktop 与多 Agent 客户端 PRD](prd-desktop-multi-agent.md) 与 [实施计划](../plans/plan-desktop-multi-agent.md)。
 
 ## 原平台化收敛声明（2026-08-18，已被定向扩展修订）
 
@@ -197,7 +197,7 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 | VSCode Backend 选择 | 可选使用外部 Agent Backend | P1 |
 | 发布门禁 | sidecar/ACP/Desktop 确定性检查 | P1 |
 
-专项里程碑的详细依赖和验收见 [实施计划](../plans/desktop-multi-agent-implementation-plan.md)。
+专项里程碑的详细依赖和验收见 [实施计划](../plans/plan-desktop-multi-agent.md)。
 
 ## 并行推进主线
 
@@ -228,9 +228,9 @@ v1.0+ 四大瓶颈的实施顺序（推荐方案 B，调整为 1→3→4→2）�
 
 ## 参考关系
 
-1. [产品 PRD](PRD.md) — 产品定位、能力范围、当前现状、优先级总表
-2. [可行性评估报告](../report.md) — 四维评估（竞争差距/规则审查/方向/UI）
-3. [改进规划方案](../report-plan.md) — 基于评估报告的 12 周实施方案
-4. [功能升级方案](../plans/capability-upgrade-plan.md) — 基于竞品对比的能力补齐
+1. [产品 PRD](prd-main.md) — 产品定位、能力范围、当前现状、优先级总表
+2. [可行性评估报告](reports/report-feasibility.md) — 四维评估（竞争差距/规则审查/方向/UI）
+3. [改进规划方案](reports/report-improvement-plan.md) — 基于评估报告的 12 周实施方案
+4. [功能升级方案](../plans/plan-capability-upgrade.md) — 基于竞品对比的能力补齐
 5. [项目优化计划](../plans/plan-optimization.md) — 当前问题修复与优化计划
 6. [历史方案归档](../plans/archive/README.md) — 统一运行时与平台演进的历史完整方案

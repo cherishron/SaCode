@@ -36,7 +36,7 @@ interfaces/* -> runtime -> kernel
                     └──> integrations/acp
 ```
 
-`integrations/acp` 是协议与 transport 层，不承载 UI、daemon 或 SaCode 工具逻辑。现有 `interfaces/acp` 保持 SaCode ACP Server 职责；调用 OpenCode 使用新增 ACP Client。daemon 保持单一 `TaskQueue` 消费与生命周期所有权，在出队后按 `backend_id` 路由，禁止各 Backend 竞争消费队列。详细决策见 [Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)。
+`integrations/acp` 是协议与 transport 层，不承载 UI、daemon 或 SaCode 工具逻辑。现有 `interfaces/acp` 保持 SaCode ACP Server 职责；调用 OpenCode 使用新增 ACP Client。daemon 保持单一 `TaskQueue` 消费与生命周期所有权，在出队后按 `backend_id` 路由，禁止各 Backend 竞争消费队列。详细决策见 [Desktop 与多 Agent 客户端 PRD](../product/prd-desktop-multi-agent.md)。
 
 ## 2. 各层职责
 
@@ -1218,8 +1218,8 @@ SaCode 当前的工程重点主要集中在：
 
 ## 9. 相关文档
 
-- [API 文档](API.md) — 工具系统、Daemon、MCP 接口说明
-- [开发指南](development.md) — 本地开发与贡献
-- [命令参考](command-reference.md) — CLI / TUI 命令速查
-- [产品 PRD](../product/PRD.md) — 产品定位与能力全景
-- [功能升级方案](../plans/capability-upgrade-plan.md) — 当前工具与架构补齐计划
+- [API 文档](ref-api.md) — 工具系统、Daemon、MCP 接口说明
+- [开发指南](ref-development.md) — 本地开发与贡献
+- [命令参考](ref-command-reference.md) — CLI / TUI 命令速查
+- [产品 PRD](../product/prd-main.md) — 产品定位与能力全景
+- [功能升级方案](../plans/plan-capability-upgrade.md) — 当前工具与架构补齐计划

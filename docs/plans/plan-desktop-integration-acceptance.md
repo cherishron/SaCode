@@ -1,19 +1,19 @@
 # Desktop 集成验收清单
 
-> 范围：MonkeyCode 对齐（UI 契约 + P0–P2 主项）。技术栈：Vue 3 + TS + Vite + TDesign + Tauri 2。
-> 日期：2026-09-29。自动化：桌面 75 测试、runtime 805 测试全绿。
+> 范围：MonkeyCode 对齐（UI 契约 + P0–P2 主项）+ 产品线后端接入。技术栈：Vue 3 + TS + Vite + TDesign + Tauri 2。
+> 更新：2026-09-28。详见 `docs/PROGRESS.md` 与 `compose/spec/desktop-backend-wiring.md`。
 
 ---
 
-## A. 自动化验证（本轮已跑）
+## A. 自动化验证（已跑）
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 桌面类型 | `npm run typecheck`（`interfaces/desktop`） | ✅ |
-| 桌面测试 | `npm test` | ✅ 75/75 |
-| 桌面构建 | `npm run build` | ✅ |
+| 桌面类型 / 测试 / 构建 | `npm run typecheck` · `npm test` · `npm run build` | ✅ |
 | client-core | `npm run build` | ✅ |
-| runtime | `cargo test -p sacode-runtime --lib` | ✅ 805 passed |
+| runtime identity / daemon | `cargo test -p sacode-runtime identity|daemon` | ✅ 49 + 81 |
+| Tauri release | `cargo build --manifest-path interfaces/desktop/src-tauri/Cargo.toml --release` | ✅ |
+| 三件套 ready | sa-idp:8080 · gateway-rs:8090 · sa-entitlement:8091 | ✅ ready/ok |
 
 ---
 
@@ -70,25 +70,42 @@
 
 ---
 
-## D. 回归注意
+## D. 后端 / 账号权益（手工）
 
-- 旧 `src/app` 手写 UI 仍在测试中；入口已切 `src/ui/main.ts`。迁移完成后可删旧实现。
-- client-core 变更后需 `npm run build` 再编 desktop。
-- runtime 新端点：`/task/:id/answer`、`/api/mcp/*`、`/api/skills*`、`/api/workspace/uploads`、`/workspace/list`。
-- 格内侧板三件套：FilesDrawer / TerminalDrawer / PreviewDrawer，均 `scrim + absolute`，禁止整页 drawer。
+- [ ] 设置→账号：登录 sa-idp → 状态显示 subject / 模型数
+- [ ] 同步模型后 Composer 模型列表更新
+- [ ] 授权权益 → 列表出现 capabilities / 有效期
+- [ ] License 导入 → 状态展示 kid/过期时间
+- [ ] 生成设备激活请求 JSON
+- [ ] 无 `sacode_audit_export` 时审计导出 403；有权限可导出
+- [ ] 退出登录后权益/模型 UI 清空
+
+依赖：三件套就绪 + `apply_sacode_ent_client` 已执行。
 
 ---
 
-## E. 未做（按定位）
+## E. 回归注意
+
+- 旧 `src/app` 手写 UI 仍在测试中；入口已切 `src/ui/main.ts`。迁移完成后可删旧实现。
+- client-core 变更后需 `npm run build` 再编 desktop。
+- runtime 新端点：`/task/:id/answer`、`/api/mcp/*`、`/api/skills*`、`/api/workspace/uploads`、`/workspace/list`、`/account/entitlements*`、`/account/license`、`/account/activation-request`、`/api/audit/export`。
+- 格内侧板三件套：FilesDrawer / TerminalDrawer / PreviewDrawer，均 `scrim + absolute`，禁止整页 drawer。
+- SaDesign / 知识库 / 自动化 API 在 `/api/design|knowledge|automation`，Vue 尚未迁 UI。
+
+---
+
+## F. 未做（按定位）
 
 - P3：自动更新、下载坞、终端 VT（xterm）、预览 dev-server 自动发现
 - 云端任务 / 浏览器桥 / WSL / 桌宠
 - 回放大字段分页与折叠优化
+- Vue 迁入 SaDesign / SaNative / 自动化；设置四页；审计导出按钮
 - 删除旧 `src/app` / `src/components`（待测试迁移）
 
 ---
 
 ## 文档索引
 
-- [布局契约](./desktop-layout-contract.md) · [颗粒度审计](./desktop-layout-audit.md)
-- [对齐差距](./desktop-monkeycode-parity.md) · [桌面 README](../../interfaces/desktop/README.md)
+- [布局契约](plan-desktop-layout-contract.md) · [颗粒度审计](plan-desktop-layout-audit.md)
+- [对齐差距](plan-desktop-monkeycode-parity.md) · [桌面 README](../../interfaces/desktop/README.md)
+- [后端接入 spec](../specs/spec-desktop-backend-wiring.md) · [进度](../STATUS.md)

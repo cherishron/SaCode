@@ -2,7 +2,7 @@
 
 > 状态：待执行
 > 日期：2026-09-20
-> 对应 PRD：[SaCode Desktop 与多 Agent 客户端 PRD](../product/desktop-multi-agent-prd.md)
+> 对应 PRD：[SaCode Desktop 与多 Agent 客户端 PRD](../product/prd-desktop-multi-agent.md)
 
 ## 1. 实施目标
 

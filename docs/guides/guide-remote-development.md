@@ -8,7 +8,7 @@ SaCode 支持在远程环境（SSH 服务器、云 VM、容器）中使用。本
 
 ### 前置条件
 
-- 远程服务器已安装 SaCode（见 [安装指南](../reference/API.md)）
+- 远程服务器已安装 SaCode（见 [安装指南](../architecture/ref-api.md)）
 - 本地拥有 SSH 客户端
 - 远程服务器支持 UTF-8 终端
 

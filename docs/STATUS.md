@@ -129,11 +129,11 @@ $env:SACODE_BINARY_PATH = "D:\Project\sa\saai\sa-code\target\debug\sacode.exe"
 
 ## 相关文档
 
-- 本仓：[README.md](../README.md) · [AGENTS.md](../AGENTS.md) · [docs/README.md](./README.md)
-- 本轮 spec：[compose/spec/desktop-backend-wiring.md](./compose/spec/desktop-backend-wiring.md)
-- 既有：[compose/spec/sacode-identity-i3.md](./compose/spec/sacode-identity-i3.md) · [compose/spec/tauri-desktop-m2.md](./compose/spec/tauri-desktop-m2.md)
-- 布局：[plans/desktop-layout-contract.md](./plans/desktop-layout-contract.md)
-- 产品线：[STATUS.md](../../docs/STATUS.md) · [local-dev.md](../../docs/guides/local-dev.md) · [licensing/](../../docs/licensing/)
+- 本仓：[README.md](../README.md) · [AGENTS.md](../AGENTS.md) · [docs/README.md](README.md)
+- 本轮 spec：[compose/spec/desktop-backend-wiring.md](specs/spec-desktop-backend-wiring.md)
+- 既有：[compose/spec/sacode-identity-i3.md](specs/spec-sacode-identity-i3.md) · [compose/spec/tauri-desktop-m2.md](specs/spec-tauri-desktop-m2.md)
+- 布局：[plans/desktop-layout-contract.md](plans/plan-desktop-layout-contract.md)
+- 产品线：[STATUS.md](../../docs/STATUS.md) · [local-dev.md](../../docs/guides/local-dev.md) · [licensing/](../../docs/licensing)
 
 ## 维护约定
 

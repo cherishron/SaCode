@@ -6,7 +6,7 @@
 > 适用范围：sa-idp（身份提供方）/ SaAiApiGateway（资源服务器）/ SaCode CLI·Desktop / SaApp / 微信小程序
 >
 > **真源**：产品线设计以 `E:\Project\sa\saai\docs\identity\unified-identity.md` 与 sa-idp 为准。
-> **I3 实现真源**：[docs/compose/spec/sacode-identity-i3.md](../compose/spec/sacode-identity-i3.md)
+> **I3 实现真源**：[docs/compose/spec/sacode-identity-i3.md](../specs/spec-sacode-identity-i3.md)
 >
 > v1.x 曾描述「网关内嵌身份 + `POST /api/auth/login/*` 直接返回 api_key」。**该路径已废弃**，身份统一由 **sa-idp** 承载，SaCode 作为 OIDC 公开客户端接入。
 
