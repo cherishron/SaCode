@@ -25,8 +25,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    // --port=0 / --port 0 → OS-assigned loopback port (Desktop sidecar)
-    let mut port: u16 = 8080;
+    // D9 L2: 默认 port=0（OS 分配），避免多用户/多实例端口冲突。
+    // 显式 --port N 可覆盖。
+    let mut port: u16 = 0;
     let mut host = "127.0.0.1".to_string();
     let mut ready_file: Option<PathBuf> = None;
     let mut nonce: Option<String> = None;
