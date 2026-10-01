@@ -202,8 +202,8 @@ async fn dispatch_request(service: &SessionService, request: &JsonRpcRequest) ->
             "authenticated": true,
             "_meta": { "sacode.auth": "passthrough" }
         })),
-        "getConfigOptions" => Ok(serde_json::to_value(ConfigOptionsResponse::default())?),
-        "setSessionConfigOption" => Ok(serde_json::to_value(ConfigOptionsResponse::default())?),
+        "getConfigOptions" => Ok(serde_json::to_value(build_config_options())?),
+        "setSessionConfigOption" => Ok(serde_json::to_value(build_config_options())?),
         "session/new" => {
             let cwd = request
                 .params
@@ -452,6 +452,22 @@ fn resolve_mode(mode: Option<&str>) -> (ExecutionMode, ApprovalPolicy) {
     }
 }
 
+/// 真实生效的会话配置项（ACP `getConfigOptions` / `setSessionConfigOption`）。
+/// 当前唯一真正影响 `session/prompt` 行为的是执行模式 `mode`
+/// （经 `resolve_mode` 映射为 (ExecutionMode, ApprovalPolicy)）。
+fn build_config_options() -> ConfigOptionsResponse {
+    ConfigOptionsResponse {
+        config_options: vec![ConfigOption {
+            id: "mode".to_string(),
+            name: "执行模式".to_string(),
+            option_type: "string".to_string(),
+            description: "build=自动构建并执行（工具调用需人工确认）；plan=仅规划不执行；auto/yolo=自动执行并自动批准工具调用".to_string(),
+            category: Some("execution".to_string()),
+            current_value: Some(serde_json::json!("build")),
+        }],
+    }
+}
+
 // ============================================================================
 // 辅助
 // ============================================================================
@@ -609,5 +625,21 @@ mod tests {
         assert!(had_error);
         assert_eq!(updates.len(), 2);
         assert!(matches!(updates[1], SessionUpdate::SessionEnd(_)));
+    }
+
+    #[test]
+    fn config_options_include_real_mode_option() {
+        let options = build_config_options();
+        assert_eq!(options.config_options.len(), 1);
+        let mode = &options.config_options[0];
+        assert_eq!(mode.id, "mode");
+        assert_eq!(mode.option_type, "string");
+        assert_eq!(mode.category.as_deref(), Some("execution"));
+        assert_eq!(mode.current_value, Some(serde_json::json!("build")));
+        // 序列化后字段名符合 ACP camelCase：configOptions / type / currentValue
+        let json = serde_json::to_value(&options).unwrap();
+        assert_eq!(json["configOptions"][0]["id"], "mode");
+        assert_eq!(json["configOptions"][0]["type"], "string");
+        assert_eq!(json["configOptions"][0]["currentValue"], "build");
     }
 }
