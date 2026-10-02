@@ -2,6 +2,7 @@ package cli
 import core.*
 import std.fs.*
 import std.collection.ArrayList
+import std.env.*
 
 var failures: Int64 = 0
 
@@ -16,6 +17,11 @@ func expect(label: String, got: Bool) {
 
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
+
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "projection" && mode != "seed") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool]")
+        return 64
+    }
 
     if (mode == "projection") {
         let sl = SessionLog("session.log")
