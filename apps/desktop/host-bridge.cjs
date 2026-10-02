@@ -63,8 +63,24 @@ class HostBridge {
     });
   }
 
-  stop() {
-    if (this.proc && !this.proc.killed) this.proc.stdin.end(), this.proc.kill();
+  // 优雅退出：关闭 stdin 触发 Host 的 EOF 结算路径（未 flush 的写入在此落盘并归还租约），
+  // 等到进程真正退出；超时才强杀，并把强杀结果如实报出来。
+  async stop(timeoutMs = 3000) {
+    const p = this.proc;
+    if (!p) return { code: null, signal: null, forced: false };
+    const exited = new Promise((res) => p.once("exit", (code, signal) => res({ code, signal })));
+    if (p.exitCode !== null || p.signalCode !== null) return { code: p.exitCode, signal: p.signalCode, forced: false };
+    p.stdin.end();
+    const win = await Promise.race([exited, new Promise((res) => setTimeout(() => res(null), timeoutMs))]);
+    if (win !== null) return { ...win, forced: false };
+    p.kill();
+    const late = await exited;
+    return { ...late, forced: true };
+  }
+
+  // 只给同步兜底用（process "exit" 里没法 await）：宁可强杀也不留孤儿宿主
+  killNow() {
+    if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill();
   }
 }
 

@@ -33,7 +33,7 @@ async function smoke() {
   await bridge.start(SESSION_DIR);
   const out = [];
   let bad = 0;
-  for (const m of ["initialize", "session/projection"]) {
+  for (const m of ["initialize", "session/projection", "session/subscribe"]) {
     try {
       out.push(`${m}=${JSON.stringify(await bridge.request(m))}`);
     } catch (e) {
@@ -48,7 +48,28 @@ async function smoke() {
   } catch (e) {
     out.push(`未知方法按预期报错: ${e.message}`);
   }
-  bridge.stop();
+  // 未 flush 的写入不得被当作已提交：submit 后订阅读不到，flush 后才读到
+  try {
+    const s = await bridge.request("session/submit", { eventType: "assistant/message", data: "smoke pending" });
+    const before = await bridge.request("session/subscribe", { cursor: s.durable });
+    const f = await bridge.request("session/flush");
+    const after = await bridge.request("session/subscribe", { cursor: s.durable });
+    if (before.events.length !== 0 || after.events.length !== 1 || f.durable !== s.events) {
+      bad += 1;
+      out.push(`durability 屏障不符预期: before=${before.events.length} after=${after.events.length} durable=${f.durable}/${s.events}`);
+    } else {
+      out.push(`durability 屏障: submit(durable=${s.durable}) → flush(durable=${f.durable})`);
+    }
+  } catch (e) {
+    bad += 1;
+    out.push(`durability 屏障失败: ${e.message}`);
+  }
+  const st = await bridge.stop();
+  if (st.forced) {
+    bad += 1;
+    out.push("宿主被强杀，没有走 EOF 结算路径");
+  }
+  out.push(`stop forced=${st.forced} code=${st.code} signal=${st.signal}`);
   out.forEach((l) => console.log("SMOKE", l));
   console.log(bad === 0 ? "SMOKE PASS" : "SMOKE FAIL");
   app.exit(bad === 0 ? 0 : 1);
@@ -94,11 +115,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("window-all-closed", () => {
-  bridge.stop();
+app.on("window-all-closed", async () => {
+  // 先让宿主走完 EOF 结算（落盘未 flush 的写入并归还写租约），再退出
+  await bridge.stop();
   app.quit();
 });
 
 // 兜底：无论以何种方式退出，都不要把宿主留成孤儿进程
-app.on("before-quit", () => bridge.stop());
-process.on("exit", () => bridge.stop());
+app.on("before-quit", () => bridge.killNow());
+process.on("exit", () => bridge.killNow());

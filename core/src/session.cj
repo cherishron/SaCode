@@ -5,9 +5,9 @@ import std.fs.*
 import std.io.*
 
 public class SessionEvent {
-    let seq: Int64
-    let eventType: String
-    let data: String
+    public let seq: Int64
+    public let eventType: String
+    public let data: String
 
     public init(seq: Int64, eventType: String, data: String) {
         this.seq = seq
