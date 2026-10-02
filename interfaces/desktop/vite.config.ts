@@ -41,14 +41,14 @@ async function ensureSidecar(): Promise<SidecarEnv> {
   fs.rmSync(readyFile, { force: true });
   const nonce = crypto.randomBytes(8).toString('hex');
   sidecarToken = crypto.randomBytes(24).toString('hex');
+  // P2-3：移除指向不存在的 `../SaCode` 死路径（原主路径永不命中，靠 fallback 兜底）。
+  // 统一解析链：SACODE_BINARY_PATH → workspace target/debug/sacode.exe。
+  const isWindows = process.platform === 'win32';
+  const builtName = isWindows ? 'sacode.exe' : 'sacode';
   const binary =
-    process.env.SACODE_BINARY_PATH || path.join(saaiRoot, 'SaCode', 'target', 'debug', 'sacode.exe');
-  const fallbackBin = path.join(repoRoot, '..', 'target', 'debug', 'sacode.exe');
-  const exe = fs.existsSync(binary)
-    ? binary
-    : fs.existsSync(fallbackBin)
-      ? fallbackBin
-      : binary;
+    process.env.SACODE_BINARY_PATH ||
+    path.join(repoRoot, '..', 'target', 'debug', builtName);
+  const exe = binary;
   const procEnv: NodeJS.ProcessEnv = {
     ...process.env,
     SACODE_DAEMON_TOKEN: sidecarToken,
@@ -182,11 +182,25 @@ export default defineConfig({
   root: '.',
   plugins: [vue(), sacodeSidecarPlugin()],
   server: {
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // 主 bundle 6MB 瘦身（审计遗留项）：把稳定大依赖拆为独立 vendor chunk。
+    // 目的：①单 chunk 超 500KB 告警收敛 ②浏览器缓存命中率（vendor 不随业务代码变动失效）。
+    // 不改动加载行为：全部仍为入口同步依赖，不做懒加载。
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue'],
+          'vendor-tdesign': ['tdesign-vue-next', 'tdesign-icons-vue-next'],
+          'vendor-tdesign-chat': ['@tdesign-vue-next/chat'],
+          'vendor-markdown': ['marked', 'dompurify', 'highlight.js'],
+        },
+      },
+    },
   },
 });

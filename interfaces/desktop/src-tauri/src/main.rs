@@ -55,7 +55,25 @@ fn repo_root_guess() -> PathBuf {
 fn default_sacode_binary() -> PathBuf {
     if let Ok(p) = std::env::var("SACODE_BINARY_PATH") {
         if !p.trim().is_empty() {
+            eprintln!("[sidecar] using SACODE_BINARY_PATH={p}");
             return PathBuf::from(p);
+        }
+    }
+    // 打包产物（NSIS 安装/便携运行）：externalBin 解包后与主 exe 同目录。
+    // Tauri 侧车文件名保留 target triple 后缀，两个命名都探测以兼容。
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in [
+                "sacode.exe",
+                "sacode-x86_64-pc-windows-msvc.exe",
+                "sacode-aarch64-pc-windows-msvc.exe",
+            ] {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    eprintln!("[sidecar] found binary next to exe: {}", candidate.display());
+                    return candidate;
+                }
+            }
         }
     }
     let root = repo_root_guess();
@@ -69,9 +87,11 @@ fn default_sacode_binary() -> PathBuf {
     ];
     for c in candidates {
         if c.exists() {
+            eprintln!("[sidecar] found binary via repo_root: {}", c.display());
             return c;
         }
     }
+    eprintln!("[sidecar] WARNING: no sacode binary found, falling back to 'sacode' on PATH");
     PathBuf::from("sacode")
 }
 
@@ -125,7 +145,15 @@ async fn start_daemon(
     if let Some(mut existing) = guard.take() {
         existing.stop().await;
     }
-    let ready_dir = std::env::temp_dir().join("sacode-desktop-sidecar");
+    // D9 L2: ready-dir 加入用户标识，避免多用户共享同一 temp 路径冲突。
+    // 用户名缺失时回退到 PID，保证至少同机多实例不碰撞。
+    let user_tag = std::env::var("USERNAME")
+        .ok()
+        .or_else(|| std::env::var("USER").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    let ready_dir = std::env::temp_dir().join(format!("sacode-desktop-sidecar-{}", user_tag));
     let handle = start_sidecar(
         default_sacode_binary(),
         requested_workspace.clone(),
@@ -428,6 +456,7 @@ fn parse_sse_frame(frame: &str) -> Option<DaemonEventPayload> {
 }
 
 /// 切换系统托盘：开启后关闭窗口时隐藏到托盘而不是退出。
+/// 关闭时移除托盘图标；返回壳侧真实生效状态。
 #[tauri::command]
 async fn set_tray_enabled(
     app: AppHandle,
@@ -450,7 +479,7 @@ async fn set_tray_enabled(
             let menu = Menu::with_items(&app, &[&show, &quit])
                 .map_err(|e| format!("build tray menu: {e}"))?;
             let handle = app.clone();
-            TrayIconBuilder::with_id("main")
+            let mut builder = TrayIconBuilder::with_id("main")
                 .tooltip("SaCode Desktop")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -480,28 +509,149 @@ async fn set_tray_enabled(
                             let _ = win.set_focus();
                         }
                     }
-                })
+                });
+            // 托盘必须有图标，否则 Windows 通知区看不到入口
+            if let Some(icon) = app.default_window_icon() {
+                builder = builder.icon(icon.clone());
+            }
+            builder
                 .build(&app)
                 .map_err(|e| format!("build tray: {e}"))?;
             let _ = (show, quit);
         }
+        Ok(true)
+    } else {
+        // 关闭托盘：移除图标，避免“开关关了但图标还在”
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_visible(false);
+        }
+        app.remove_tray_by_id("main");
+        Ok(false)
     }
-    Ok(enabled)
 }
 
-/// 保存托盘/自启动偏好，返回是否真正生效（仅 Tauri 环境可切换）。
+/// 开机自启：调用 tauri-plugin-autostart（Windows 写 HKCU Run key）。
+/// 返回注册表/启动项侧的真实结果；失败向上抛错，不假装已开启。
 #[tauri::command]
-async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
     if enabled {
-        app.autolaunch()
+        launcher
             .enable()
-            .map_err(|e| format!("enable autostart: {e}"))
+            .map_err(|e| format!("enable autostart: {e}"))?;
     } else {
-        app.autolaunch()
+        launcher
             .disable()
-            .map_err(|e| format!("disable autostart: {e}"))
+            .map_err(|e| format!("disable autostart: {e}"))?;
     }
+    launcher
+        .is_enabled()
+        .map_err(|e| format!("query autostart: {e}"))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SystemIntegrationStatus {
+    tray_enabled: bool,
+    autostart_enabled: bool,
+}
+
+/// 查询托盘 / 自启的壳侧真实状态（用于设置页对账，避免假开关）。
+#[tauri::command]
+async fn system_integration_status(
+    app: AppHandle,
+    state: State<'_, Arc<SidecarState>>,
+) -> Result<SystemIntegrationStatus, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart_enabled = app
+        .autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("query autostart: {e}"))?;
+    Ok(SystemIntegrationStatus {
+        tray_enabled: state.tray_enabled(),
+        autostart_enabled,
+    })
+}
+
+/// `git_workspace_status` — 在 sidecar 工作目录执行 `git status --porcelain=v1 -z --branch`。
+///
+/// 返回 `{ branch: Option<String>, porcelain: String }`，porcelain 为原始 NUL 分隔字节
+/// （前端用 `parseGitStatusPorcelainZ` 解析）。branch 为当前分支名或 null（detached/无 git）。
+#[tauri::command]
+async fn git_workspace_status(
+    state: State<'_, Arc<SidecarState>>,
+) -> Result<GitWorkspaceStatus, String> {
+    let workspace = {
+        let guard = state.inner.lock().await;
+        guard
+            .as_ref()
+            .map(|h| h.workspace.clone())
+            .ok_or_else(|| "daemon not started".to_string())?
+    };
+    // git 可能不存在或工作目录非 git 仓库 — 返回结构化错误而非 panic
+    let output = tokio::process::Command::new("git")
+        .args(["status", "--porcelain=v1", "-z", "--branch"])
+        .current_dir(&workspace)
+        .output()
+        .await
+        .map_err(|e| format!("git status failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git status error: {stderr}"));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
+    // 从 ## branch... 行提取分支名
+    let branch = raw
+        .split('\0')
+        .next()
+        .and_then(|first| first.strip_prefix("## "))
+        .and_then(|s| s.split("...").next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Ok(GitWorkspaceStatus { branch, porcelain: raw })
+}
+
+/// `git_workspace_diff` — 在工作目录执行 `git diff`（工作区 vs 暂存区）或
+/// `git diff --cached`（暂存区 vs HEAD）。返回原始 unified diff 文本。
+#[tauri::command]
+async fn git_workspace_diff(
+    state: State<'_, Arc<SidecarState>>,
+    cached: Option<bool>,
+    path: Option<String>,
+) -> Result<String, String> {
+    let workspace = {
+        let guard = state.inner.lock().await;
+        guard
+            .as_ref()
+            .map(|h| h.workspace.clone())
+            .ok_or_else(|| "daemon not started".to_string())?
+    };
+    let mut args = vec!["diff".to_string()];
+    if cached.unwrap_or(false) {
+        args.push("--cached".to_string());
+    }
+    if let Some(p) = &path {
+        args.push("--".to_string());
+        args.push(p.clone());
+    }
+    let output = tokio::process::Command::new("git")
+        .args(&args)
+        .current_dir(&workspace)
+        .output()
+        .await
+        .map_err(|e| format!("git diff failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git diff error: {stderr}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// 返回类型（需 pub 以便 Tauri 自动生成 JS 绑定）
+#[derive(serde::Serialize)]
+pub struct GitWorkspaceStatus {
+    pub branch: Option<String>,
+    pub porcelain: String,
 }
 
 fn main() {
@@ -512,19 +662,132 @@ fn main() {
         .manage(terminal_state)
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec![]),
+            Some(vec!["--hide"]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            // Log that the window was created — helps diagnose WebView2 init issues.
+            // 后台静默启动模式：自启动时传 --hide，或用户从命令行传 --hide。
+            // 隐藏模式下窗口保持隐藏（tauri.conf.json visible:false），
+            // 用户通过托盘菜单「显示主窗口」手动打开界面。
+            let hide_mode = std::env::args().any(|a| a == "--hide" || a == "--background");
+
             let win = app.get_webview_window("main");
             match win {
                 Some(w) => {
                     let _ = w.set_title("SaCode Desktop");
-                    // Force the window to show in case it's hidden.
-                    let _ = w.show();
+                    // 非隐藏模式才显示窗口；隐藏模式保持不可见。
+                    if !hide_mode {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
                 }
                 None => {
                     eprintln!("[tauri] ERROR: main window not found after setup");
+                }
+            }
+
+            // 预启动 daemon：不等前端 IPC 调用（前端渲染慢/异常时 daemon 也能就绪）。
+            // 失败不阻塞窗口创建，前端 start_daemon 失败时会展示真实错误。
+            {
+                let sidecar_state = app.state::<Arc<SidecarState>>().inner().clone();
+                let binary = default_sacode_binary();
+                let workspace = default_workspace();
+                let user_tag = std::env::var("USERNAME")
+                    .ok()
+                    .or_else(|| std::env::var("USER").ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+                let ready_dir = std::env::temp_dir().join(format!("sacode-desktop-sidecar-{}", user_tag));
+                tauri::async_runtime::spawn(async move {
+                    let mut guard = sidecar_state.inner.lock().await;
+                    // 已有 sidecar（同工作区）则跳过
+                    if let Some(existing) = guard.as_ref() {
+                        if existing.workspace == workspace {
+                            return;
+                        }
+                    }
+                    eprintln!(
+                        "[sidecar] pre-spawn daemon binary={} workspace={}",
+                        binary.display(),
+                        workspace.display()
+                    );
+                    match start_sidecar(
+                        binary,
+                        workspace.clone(),
+                        ready_dir,
+                        std::env::var("SACODE_OPENCODE_EXECUTABLE").ok(),
+                        std::env::var("SACODE_OPENCODE_ARGS").ok(),
+                    )
+                    .await
+                    {
+                        Ok(handle) => {
+                            eprintln!(
+                                "[sidecar] daemon pre-started port={} pid={}",
+                                handle.info.port, handle.info.pid
+                            );
+                            *guard = Some(handle);
+                        }
+                        Err(e) => {
+                            eprintln!("[sidecar] daemon pre-start FAILED: {e}");
+                        }
+                    }
+                });
+            }
+
+            // 后台静默启动时自动启用托盘，确保用户有入口重新打开界面。
+            if hide_mode {
+                let state = app.state::<Arc<SidecarState>>();
+                state
+                    .tray
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                if app.tray_by_id("main").is_none() {
+                    use tauri::menu::{Menu, MenuEvent, MenuItem};
+                    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+                    use tauri::Manager;
+                    let handle = app.handle().clone();
+                    let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)
+                        .map_err(|e| format!("build tray menu: {e}"))?;
+                    let quit = MenuItem::with_id(app, "quit", "退出 SaCode", true, None::<&str>)
+                        .map_err(|e| format!("build tray menu: {e}"))?;
+                    let menu = Menu::with_items(app, &[&show, &quit])
+                        .map_err(|e| format!("build tray menu: {e}"))?;
+                    let mut builder = TrayIconBuilder::with_id("main")
+                        .tooltip("SaCode Desktop")
+                        .menu(&menu)
+                        .show_menu_on_left_click(false)
+                        .on_menu_event(move |tray, menu_event: MenuEvent| match menu_event.id().as_ref() {
+                            "show" => {
+                                if let Some(win) = tray.app_handle().get_webview_window("main") {
+                                    let _ = win.show();
+                                    let _ = win.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                tray.app_handle().exit(0);
+                            }
+                            _ => {}
+                        })
+                        .on_tray_icon_event(move |_tray, event: TrayIconEvent| {
+                            if let TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                button_state: MouseButtonState::Up,
+                                ..
+                            } = event
+                            {
+                                if let Some(win) = handle.get_webview_window("main") {
+                                    let _ = win.show();
+                                    let _ = win.set_focus();
+                                }
+                            }
+                        });
+                    if let Some(icon) = app.default_window_icon() {
+                        builder = builder.icon(icon.clone());
+                    }
+                    builder
+                        .build(app)
+                        .map_err(|e| format!("build tray: {e}"))?;
+                    let _ = (show, quit);
                 }
             }
             Ok(())
@@ -541,7 +804,10 @@ fn main() {
             terminal_resize,
             terminal_close,
             set_tray_enabled,
-            set_autostart
+            set_autostart,
+            system_integration_status,
+            git_workspace_status,
+            git_workspace_diff
         ])
         .on_window_event(|window, event| {
             // 关闭请求先隐藏到托盘（若托盘启用），真正退出走 Destroyed。

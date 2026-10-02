@@ -131,7 +131,9 @@ pub async fn start_sidecar(
         .env("SACODE_DAEMON_TOKEN", &token)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // stderr 保留管道：daemon 启动失败（bind 失败/健康检查失败）时
+        // 前端能看到真实错误，而不是裸的 "ready-file timeout"。
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     // Windows: prevent CMD/PowerShell window from flashing.
     #[cfg(windows)]
@@ -144,7 +146,21 @@ pub async fn start_sidecar(
         );
     }
 
-    let child = cmd.spawn()?;
+    eprintln!("[sidecar] spawning: {} serve (workspace={})", binary.display(), daemon_workspace.display());
+    let mut child = cmd.spawn().map_err(|e| {
+        anyhow::anyhow!("failed to spawn {}: {e}", binary.display())
+    })?;
+    // 把 daemon stderr 转发到 stderr（诊断用；Tauri 下进 WebView 控制台）
+    if let Some(stderr) = child.stderr.take() {
+        let bin_name = binary.display().to_string();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[daemon:{bin_name}] {line}");
+            }
+        });
+    }
 
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut info = None;
@@ -159,7 +175,22 @@ pub async fn start_sidecar(
             }
         }
     }
-    let info = info.ok_or_else(|| anyhow::anyhow!("ready-file timeout: {:?}", ready_path))?;
+    let info = match info {
+        Some(i) => i,
+        None => {
+            // 区分：daemon 提前退出 vs 还在启动
+            let exit_status = match child.try_wait() {
+                Ok(Some(status)) => format!("daemon exited early with {status}"),
+                Ok(None) => "daemon still running (slow startup?)".to_string(),
+                Err(e) => format!("wait check failed: {e}"),
+            };
+            anyhow::bail!(
+                "ready-file timeout after 20s ({}): {}",
+                exit_status,
+                ready_path.display()
+            );
+        }
+    };
     if let Some(n) = info.nonce.as_deref() {
         if n != nonce {
             anyhow::bail!("ready-file nonce mismatch");

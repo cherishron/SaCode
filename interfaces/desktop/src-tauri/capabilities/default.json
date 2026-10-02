@@ -7,6 +7,9 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "autostart:default",
+    "updater:default",
+    "app-commands"
   ]
 }

@@ -1,45 +1,291 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import TaskColumn from './components/TaskColumn.vue';
 import PaneFrame from './components/PaneFrame.vue';
+import SplitNode from './components/SplitNode.vue';
 import ChatPane from './components/ChatPane.vue';
 import NewTaskForm from './components/NewTaskForm.vue';
-import FilesSidePanel from './components/FilesSidePanel.vue';
-import TerminalSidePanel from './components/TerminalSidePanel.vue';
-import PreviewSidePanel from './components/PreviewSidePanel.vue';
+import WorkspaceTools from './components/WorkspaceTools.vue';
 import PlanPanel from './components/PlanPanel.vue';
 import SettingsView from './components/SettingsView.vue';
+import KnowledgeView from './components/KnowledgeView.vue';
+import AutomationView from './components/AutomationView.vue';
 import AskCard from './components/AskCard.vue';
-import { ChatIcon, TerminalIcon, BrowseIcon } from 'tdesign-icons-vue-next';
+import ApprovalCard from './components/ApprovalCard.vue';
+import ContextMenu from './components/ContextMenu.vue';
+import { ChatIcon, TerminalIcon, BrowseIcon, FileEditIcon } from 'tdesign-icons-vue-next';
 import FolderOpenIcon from './components/FolderOpenIcon.vue';
 import { useDesktopApp } from './composables/useDesktopApp';
-import { assign as assignSlot } from '../app/split-slots.ts';
+import { useContextMenu, copySelection, hasSelection } from './composables/useContextMenu.ts';
+import { assign as assignSlot, LOAD_MIME, SWAP_MIME } from './logic/split-slots.ts';
+import {
+  PRESETS,
+  leaves as treeLeaves,
+  paneCount,
+  removeLeaf,
+  setRatio,
+  splitLeaf,
+  swapLeaves,
+  equalizeAt,
+  type SplitDir,
+  type SplitNode as SplitNodeModel,
+} from './logic/split-tree.ts';
+import {
+  loadWorkbench,
+  saveWorkbench,
+  TASK_COL_WIDTH_DEFAULT,
+  TOOLS_TREE_DEFAULT,
+  TOOLS_WIDTH_DEFAULT,
+  type PaneMode,
+  type SavedWorkbench,
+  type ToolsTabId,
+} from './logic/split-persist.ts';
 
 const {
   selectedId,
-  chatItems,
   planItems,
   pendingQuestions,
+  pendingQuestionsFor,
   refreshPendingQuestions,
   answerQuestion,
+  approvalGroupsForConversation,
+  resolvingApprovalIds,
+  approvalErrorMap,
+  resolveApproval,
   projectGroup,
   connection,
   bootError,
-  sending,
+  loading,
   selectConversation,
   workspace,
+  detail,
+  refreshConversationDetail,
 } = useDesktopApp();
 
 const settingsOpen = ref(false);
-const focusPane = ref(0);
-const panes = ref([
-  { id: 1, title: '会话', conversationId: null as string | null, filesOpen: false, termOpen: false, previewOpen: false, mode: 'empty' as 'empty' | 'create' | 'chat' },
-  { id: 2, title: '空格', conversationId: null as string | null, filesOpen: false, termOpen: false, previewOpen: false, mode: 'empty' as 'empty' | 'create' | 'chat' },
-]);
+/** 知识库 / 自动化 = 覆盖式主视图（像设置一样从左栏底部打开），不再整页切换中间工作区 */
+const overlayView = ref<'knowledge' | 'automation' | null>(null);
+const workspaceView = computed(() => overlayView.value ?? 'sessions');
 
-const activeConversationId = computed(
-  () => panes.value[focusPane.value]?.conversationId ?? selectedId.value,
+/* ── 分格树：叶 = 槽位，内部节点 = 一次切分（上下/左右可嵌套） ── */
+interface PaneToolsState {
+  open: boolean;
+  tab: ToolsTabId;
+  width: number;
+  treeWidth: number;
+}
+interface PaneState {
+  conversationId: string | null;
+  title: string;
+  mode: PaneMode;
+  tools: PaneToolsState;
+}
+
+function emptyTools(): PaneToolsState {
+  return { open: false, tab: 'files', width: TOOLS_WIDTH_DEFAULT, treeWidth: TOOLS_TREE_DEFAULT };
+}
+function emptyPane(title = '空格', mode: PaneMode = 'empty'): PaneState {
+  return { conversationId: null, title, mode, tools: emptyTools() };
+}
+
+const tree = ref<SplitNodeModel>(PRESETS['2col']);
+const panes = ref<PaneState[]>([emptyPane('会话'), emptyPane()]);
+const focusSlot = ref(0);
+const maximizedSlot = ref<number | null>(null);
+
+function ensureSlot(slot: number): PaneState {
+  while (panes.value.length <= slot) panes.value.push(emptyPane());
+  const existing = panes.value[slot];
+  if (!existing) panes.value[slot] = emptyPane();
+  return panes.value[slot]!;
+}
+
+function paneOf(slot: number): PaneState {
+  return panes.value[slot] ?? emptyPane();
+}
+
+const visibleSlots = computed(() => treeLeaves(tree.value));
+const taskColEpoch = ref(0);
+
+const activeConversationId = computed(() => paneOf(focusSlot.value).conversationId);
+
+function resetWorkbench() {
+  tree.value = PRESETS['2col'];
+  panes.value = [emptyPane('会话'), emptyPane()];
+  focusSlot.value = 0;
+  maximizedSlot.value = null;
+}
+
+/* ── 布局存档：sacode.layout.<workspace>（契约 §6） ── */
+const TASK_COL_KEY = 'sacode.workbench.listWidth';
+
+function readTaskColWidth(): number {
+  try {
+    const raw = Number(localStorage.getItem(TASK_COL_KEY));
+    return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : TASK_COL_WIDTH_DEFAULT;
+  } catch {
+    return TASK_COL_WIDTH_DEFAULT;
+  }
+}
+
+function snapshot(): SavedWorkbench {
+  return {
+    version: 1,
+    tree: tree.value,
+    slots: panes.value.map((pane) => pane
+      ? {
+          conversationId: pane.conversationId,
+          title: pane.title,
+          mode: pane.mode,
+          tools: { ...pane.tools },
+        }
+      : null),
+    focusSlot: focusSlot.value,
+    taskColWidth: readTaskColWidth(),
+  };
+}
+
+function persistLayout() {
+  if (!workspace.value) return;
+  saveWorkbench(workspace.value, snapshot());
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePersist() {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persistLayout();
+  }, 200);
+}
+
+function applySavedLayout(saved: SavedWorkbench) {
+  tree.value = saved.tree;
+  panes.value = saved.slots.map((slot) => slot
+    ? {
+        conversationId: slot.conversationId,
+        title: slot.title,
+        mode: slot.mode,
+        tools: { ...slot.tools },
+      }
+    : emptyPane());
+  for (const slot of treeLeaves(saved.tree)) ensureSlot(slot);
+  focusSlot.value = saved.focusSlot;
+  maximizedSlot.value = null;
+  if (typeof saved.taskColWidth === 'number') {
+    try {
+      if (localStorage.getItem(TASK_COL_KEY) !== String(saved.taskColWidth)) {
+        localStorage.setItem(TASK_COL_KEY, String(saved.taskColWidth));
+        taskColEpoch.value += 1;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+let restoredWorkspace = '';
+
+watch(
+  workspace,
+  (next, previous) => {
+    if (!next || next === restoredWorkspace) return;
+    if (previous && previous !== next) {
+      // 切走前先落盘上一个工作区
+      saveWorkbench(previous, snapshot());
+    }
+    restoredWorkspace = next;
+    const saved = loadWorkbench(next);
+    if (saved) {
+      applySavedLayout(saved);
+    } else {
+      resetWorkbench();
+    }
+    pendingQuestions.value = [];
+  },
+  { immediate: true },
 );
+
+watch([tree, panes, focusSlot], () => schedulePersist(), { deep: true });
+
+function onBeforeUnload() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (workspace.value) saveWorkbench(workspace.value, snapshot());
+}
+/* ── 全局右键菜单 + 文本复制 ── */
+const { register: registerCtx, unregister: unregisterCtx, trigger: triggerCtx, disableBrowserContextMenu } = useContextMenu();
+
+let cleanupBrowserCtx: (() => void) | null = null;
+
+onMounted(() => {
+  // 全局屏蔽浏览器默认右键菜单
+  cleanupBrowserCtx = disableBrowserContextMenu();
+
+  // 会话工作区右键菜单（在会话消息区域：复制选中文本 + 关闭格位）
+  registerCtx('workspace', () => {
+    const items = [
+      {
+        label: '复制选中文本',
+        shortcut: 'Ctrl+C',
+        action: () => { void copySelection(); },
+        disabled: !hasSelection(),
+      },
+      { separator: true, label: '', action: () => {} },
+      {
+        label: '关闭当前格',
+        action: () => {
+          if (paneCount(tree.value) > 1) closePane(focusSlot.value);
+        },
+        disabled: paneCount(tree.value) <= 1,
+      },
+      {
+        label: '分屏（左右）',
+        action: () => splitPane(focusSlot.value, 'row'),
+      },
+      {
+        label: '分屏（上下）',
+        action: () => splitPane(focusSlot.value, 'column'),
+      },
+    ];
+    return items;
+  });
+
+  // 设置页右键菜单
+  registerCtx('settings', () => [
+    {
+      label: '复制选中文本',
+      shortcut: 'Ctrl+C',
+      action: () => { void copySelection(); },
+      disabled: !hasSelection(),
+    },
+  ]);
+
+  // 知识库 / 自动化页
+  registerCtx('overlay', () => [
+    {
+      label: '复制选中文本',
+      shortcut: 'Ctrl+C',
+      action: () => { void copySelection(); },
+      disabled: !hasSelection(),
+    },
+  ]);
+});
+
+onBeforeUnmount(() => {
+  unregisterCtx('workspace');
+  unregisterCtx('settings');
+  unregisterCtx('overlay');
+  if (cleanupBrowserCtx) cleanupBrowserCtx();
+});
+
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload);
+  if (persistTimer) clearTimeout(persistTimer);
+});
 
 const activeStatus = computed(() => {
   const id = activeConversationId.value;
@@ -52,36 +298,82 @@ const activeRunning = computed(() => {
   return projectGroup.value.sessions.find((s) => s.id === id)?.tone === 'running';
 });
 
-function onOpenConversation(id: string) {
-  const index = focusPane.value;
+const connectionMessage = computed(() => {
+  if (connection.value === 'error') return '守护进程未连接，请检查服务状态后重试。';
+  if (connection.value === 'starting') return '正在连接守护进程…';
+  return '';
+});
+
+function onSessionKeydown(event: KeyboardEvent, slot: number, id: string) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  focusSlot.value = slot;
+  openConversationInPane(slot, id);
+}
+
+function openConversationInPane(slot: number, id: string) {
   // 契约 C6：同一会话禁双格 — assign 为 move 语义
   const slots = assignSlot(
-    panes.value.map((p) => p.conversationId),
-    index,
+    panes.value.map((p) => p?.conversationId ?? null),
+    slot,
     id,
   );
-  panes.value = panes.value.map((pane, i) => ({
-    ...pane,
-    conversationId: slots[i] ?? null,
-    mode: (slots[i] ? 'chat' : pane.mode === 'create' ? 'create' : 'empty') as 'empty' | 'create' | 'chat',
-    title: slots[i]
-      ? (projectGroup.value.sessions.find((s) => s.id === slots[i])?.title || '会话')
-      : (pane.mode === 'create' ? '新建任务' : '空格'),
-    filesOpen: pane.filesOpen,
-  }));
+  applyConversations(slots, slot);
   void selectConversation(id).then(() => {
-    const detail = useDesktopApp().detail.value;
-    void refreshPendingQuestions((detail?.turns ?? []).map((t) => t.task_id));
+    if (selectedId.value !== id || detail.value?.id !== id) return;
+    void refreshPendingQuestions(id, detail.value.turns.map((t) => t.task_id));
   });
 }
 
-function paneHasConversation(id: string): boolean {
-  return panes.value.some((p) => p.conversationId === id);
+function applyConversations(slots: readonly (string | null)[], focus: number) {
+  for (let i = 0; i < slots.length; i++) {
+    const pane = ensureSlot(i);
+    pane.conversationId = slots[i] ?? null;
+    pane.mode = pane.conversationId
+      ? 'chat'
+      : pane.mode === 'create'
+        ? 'create'
+        : 'empty';
+    pane.title = pane.conversationId
+      ? (projectGroup.value.sessions.find((s) => s.id === pane.conversationId)?.title || '会话')
+      : (pane.mode === 'create' ? '新建任务' : '空格');
+  }
+  focusSlot.value = focus;
 }
 
-function paneTitle(index: number): string {
-  const pane = panes.value[index];
-  if (!pane) return '空格';
+function onOpenConversation(id: string) {
+  overlayView.value = null;
+  openConversationInPane(focusSlot.value, id);
+}
+
+/* === 拖拽换位：SWAP_MIME 交换格位 / LOAD_MIME 装载会话 === */
+function onPaneDragStart(slot: number, ev: DragEvent) {
+  ev.dataTransfer?.setData(SWAP_MIME, String(slot));
+  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+}
+
+/** 会话行 → 格位（左侧列表与格内装载卡共用） */
+function onSessionDragStart(id: string, ev: DragEvent) {
+  ev.dataTransfer?.setData(LOAD_MIME, id);
+  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+}
+
+function onSplitSwap(from: number, to: number) {
+  tree.value = swapLeaves(tree.value, from, to);
+  focusSlot.value = to;
+}
+
+function onSplitLoad(slot: number, id: string) {
+  focusSlot.value = slot;
+  openConversationInPane(slot, id);
+}
+
+function paneHasConversation(id: string): boolean {
+  return panes.value.some((p) => p?.conversationId === id);
+}
+
+function paneTitle(slot: number): string {
+  const pane = paneOf(slot);
   if (pane.conversationId) {
     return (
       projectGroup.value.sessions.find((s) => s.id === pane.conversationId)?.title || pane.title
@@ -90,169 +382,103 @@ function paneTitle(index: number): string {
   return pane.title;
 }
 
-function paneConversationId(index: number): string | null {
-  return panes.value[index]?.conversationId ?? null;
+function paneConversationId(slot: number): string | null {
+  return paneOf(slot).conversationId;
 }
 
-function hasConversation(index: number): boolean {
-  return !!paneConversationId(index);
+function hasConversation(slot: number): boolean {
+  return !!paneConversationId(slot);
 }
 
-function onSent(index: number, payload: { conversationId: string; taskId: string }) {
+function paneMode(slot: number): PaneMode {
+  return paneOf(slot).mode;
+}
+
+function leafOrdinal(slot: number): number {
+  const index = visibleSlots.value.indexOf(slot);
+  return index >= 0 ? index + 1 : slot + 1;
+}
+
+function onSent(slot: number, payload: { conversationId: string; taskId: string }) {
   const slots = assignSlot(
-    panes.value.map((p) => p.conversationId),
-    index,
+    panes.value.map((p) => p?.conversationId ?? null),
+    slot,
     payload.conversationId,
   );
-  panes.value = panes.value.map((pane, i) => ({
-    ...pane,
-    conversationId: slots[i] ?? null,
-    mode: (slots[i] ? 'chat' : pane.mode === 'create' ? 'create' : 'empty') as 'empty' | 'create' | 'chat',
-    title: slots[i]
-      ? (projectGroup.value.sessions.find((s) => s.id === slots[i])?.title || '会话')
-      : (pane.mode === 'create' ? '新建任务' : '空格'),
-    filesOpen: pane.filesOpen,
-  }));
+  applyConversations(slots, slot);
+  void refreshConversationDetail(payload.conversationId);
 }
 
-function setFilesOpen(index: number, open: boolean) {
-  panes.value[index] = { ...panes.value[index], filesOpen: open, termOpen: panes.value[index]?.termOpen ?? false };
+/* ── 右侧工具栏：每格独立 open / tab / width ── */
+function openToolsTab(slot: number, tab: ToolsTabId) {
+  const pane = ensureSlot(slot);
+  pane.tools.tab = tab;
+  pane.tools.open = true;
+  focusSlot.value = slot;
 }
 
-function setTermOpen(index: number, open: boolean) {
-  panes.value[index] = {
-    ...panes.value[index],
-    termOpen: open,
-    filesOpen: panes.value[index]?.filesOpen ?? false,
-    previewOpen: panes.value[index]?.previewOpen ?? false,
-  };
+function setToolsOpen(slot: number, open: boolean) {
+  ensureSlot(slot).tools.open = open;
 }
 
-function setPreviewOpen(index: number, open: boolean) {
-  panes.value[index] = {
-    ...panes.value[index],
-    previewOpen: open,
-    filesOpen: panes.value[index]?.filesOpen ?? false,
-    termOpen: panes.value[index]?.termOpen ?? false,
-  };
+function setToolsTab(slot: number, tab: ToolsTabId) {
+  ensureSlot(slot).tools.tab = tab;
 }
 
-function closePane(index: number) {
-  if (panes.value.length <= 1) return;
-  panes.value.splice(index, 1);
-  ratios.value.splice(Math.max(0, index - 1), 1);
-  normalizeRatios();
-  if (focusPane.value >= panes.value.length) focusPane.value = panes.value.length - 1;
+function setToolsWidth(slot: number, width: number) {
+  ensureSlot(slot).tools.width = width;
 }
 
-/** 相邻分格之间的比例（第 i 项 = 第 i 与 i+1 格的分界） */
-const ratios = ref<number[]>([0.5]);
-const splitAxis = ref<'row' | 'column'>('row');
-
-function normalizeRatios() {
-  const need = Math.max(0, panes.value.length - 1);
-  while (ratios.value.length < need) ratios.value.push(0.5);
-  while (ratios.value.length > need) ratios.value.pop();
-  ratios.value = ratios.value.map((r) => Math.min(0.85, Math.max(0.15, r)));
+function setToolsTreeWidth(slot: number, width: number) {
+  ensureSlot(slot).tools.treeWidth = width;
 }
 
-function splitPane(axis: 'row' | 'column') {
-  const id = Math.max(0, ...panes.value.map((p) => p.id)) + 1;
-  panes.value.splice(focusPane.value + 1, 0, {
-    id,
-    title: '空格',
-    conversationId: null as string | null,
-    filesOpen: false,
-    termOpen: false,
-    previewOpen: false,
-    mode: 'empty' as const,
-  });
-  splitAxis.value = axis;
-  ratios.value.splice(focusPane.value, 0, 0.5);
-  normalizeRatios();
-  focusPane.value = focusPane.value + 1;
+/* ── 分格操作 ── */
+function closePane(slot: number) {
+  if (paneCount(tree.value) <= 1) return;
+  tree.value = removeLeaf(tree.value, slot);
+  panes.value[slot] = emptyPane();
+  if (maximizedSlot.value === slot) maximizedSlot.value = null;
+  const next = treeLeaves(tree.value)[0]!;
+  if (focusSlot.value === slot || !treeLeaves(tree.value).includes(focusSlot.value)) {
+    focusSlot.value = next;
+  }
 }
 
-function onDividerDown(index: number, event: PointerEvent) {
-  if (event.button !== 0) return;
-  const axis = splitAxis.value;
-  const startPos = axis === 'row' ? event.clientX : event.clientY;
-  const startRatio = ratios.value[index] ?? 0.5;
-  const grid = (event.currentTarget as HTMLElement).parentElement;
-  const total = axis === 'row' ? grid?.clientWidth || 1 : grid?.clientHeight || 1;
-  const move = (ev: PointerEvent) => {
-    const now = axis === 'row' ? ev.clientX : ev.clientY;
-    // ratios[i] = 右侧叶的份额：分隔线右移时左侧变宽 → 右侧份额应减小
-    const delta = (now - startPos) / Math.max(1, total);
-    const next = Math.min(0.85, Math.max(0.15, startRatio - delta));
-    ratios.value[index] = next;
-  };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
+/** PaneFrame：'row' = 向右 / 'column' = 向下 → split-tree：col / row */
+function splitPane(slot: number, axis: 'row' | 'column') {
+  const dir: SplitDir = axis === 'row' ? 'col' : 'row';
+  const result = splitLeaf(tree.value, slot, dir);
+  if (!result) return;
+  tree.value = result.tree;
+  ensureSlot(result.newSlot);
+  maximizedSlot.value = null;
+  focusSlot.value = result.newSlot;
 }
 
-function leafStyle(index: number) {
-  if (maximizedPane.value !== null) return { flex: '1 1 0' };
-  if (panes.value.length === 1) return { flex: '1 1 0' };
-  let share = 1;
-  if (index > 0) share *= ratios.value[index - 1] ?? 0.5;
-  if (index < panes.value.length - 1) share *= 1 - (ratios.value[index] ?? 0.5);
-  return { flex: `${Math.max(0.15, share)} 1 0` };
+function onSplitResize(path: string, ratio: number) {
+  tree.value = setRatio(tree.value, path, ratio);
 }
 
-function itemsFor(index: number) {
-  const id = paneConversationId(index);
-  if (!id || id !== activeConversationId.value) return [];
-  return chatItems.value;
+function onSplitEqualize(path: string) {
+  tree.value = equalizeAt(tree.value, path);
 }
 
-function focusEmptyOrSplit() {
-  // 新建即创建页：优先空格，否则当前格切入 create
-  const empty = panes.value.findIndex((pane) => !pane.conversationId && pane.mode !== 'create');
-  const index = empty >= 0 ? empty : focusPane.value;
-  focusPane.value = index;
-  panes.value[index] = {
-    ...panes.value[index],
-    conversationId: null,
-    mode: 'create',
-    title: '新建任务',
-    filesOpen: panes.value[index]?.filesOpen ?? false,
-  };
+function onMaximize(slot: number) {
+  maximizedSlot.value = maximizedSlot.value === slot ? null : slot;
 }
 
-function paneMode(index: number) {
-  return panes.value[index]?.mode ?? 'empty';
+function onReplace(slot: number) {
+  const pane = ensureSlot(slot);
+  pane.conversationId = null;
+  pane.mode = 'empty';
+  pane.title = '空格';
 }
 
-const maximizedPane = ref<number | null>(null);
-
-function onMaximize(index: number) {
-  maximizedPane.value = maximizedPane.value === index ? null : index;
-}
-
-function onReplace(index: number) {
-  panes.value[index] = {
-    ...panes.value[index],
-    conversationId: null,
-    mode: 'empty',
-    title: '空格',
-    filesOpen: panes.value[index]?.filesOpen ?? false,
-  };
-}
-
-function onRename(index: number, title: string) {
-  panes.value[index] = {
-    ...panes.value[index],
-    title,
-    conversationId: panes.value[index]?.conversationId ?? null,
-    mode: panes.value[index]?.mode ?? 'empty',
-    filesOpen: panes.value[index]?.filesOpen ?? false,
-  };
-  const id = paneConversationId(index);
+function onRename(slot: number, title: string) {
+  const pane = ensureSlot(slot);
+  pane.title = title;
+  const id = pane.conversationId;
   if (id) {
     try {
       localStorage.setItem(`sacode.session.title.${id}`, title);
@@ -260,6 +486,21 @@ function onRename(index: number, title: string) {
       /* ignore */
     }
   }
+}
+
+function focusEmptyOrSplit() {
+  overlayView.value = null;
+  // 新建即创建页：优先空格，否则当前格切入 create
+  const empty = visibleSlots.value.find((slot) => {
+    const pane = paneOf(slot);
+    return !pane.conversationId && pane.mode !== 'create';
+  });
+  const slot = empty ?? focusSlot.value;
+  focusSlot.value = slot;
+  const pane = ensureSlot(slot);
+  pane.conversationId = null;
+  pane.mode = 'create';
+  pane.title = '新建任务';
 }
 
 function onNewInProject() {
@@ -270,55 +511,80 @@ function onNewInProject() {
 <template>
   <div class="app-shell">
     <TaskColumn
-      :loaded-ids="panes.map((p) => p.conversationId).filter((id): id is string => !!id)"
+      :key="taskColEpoch"
+      :loaded-ids="panes.map((p) => p?.conversationId).filter((id): id is string => !!id)"
+      :active-view="workspaceView"
+      @change-view="(v) => { overlayView = v === 'sessions' ? null : v; }"
       @open-settings="settingsOpen = true"
       @new-task="focusEmptyOrSplit"
       @new-in-project="onNewInProject"
       @select="onOpenConversation"
     />
     <div class="shell-divider" aria-hidden="true" />
-    <main class="work-area">
-      <div class="split-grid" :class="`axis-${splitAxis}`">
-        <template v-for="(pane, index) in panes" :key="pane.id">
-          <div
-            v-if="index > 0 && maximizedPane === null"
-            class="split-divider"
-            :class="splitAxis === 'column' ? 'row' : 'column'"
-            @pointerdown.prevent="onDividerDown(index - 1, $event)"
-          />
-          <div
-            v-if="maximizedPane === null || maximizedPane === index"
-            class="split-leaf pane-anchor"
-            :style="leafStyle(index)"
-            @pointerdown="focusPane = index"
-          >
+    <main class="work-area" id="main-workspace" aria-label="会话工作区" @contextmenu="triggerCtx('workspace', $event)">
+      <div
+        v-if="connectionMessage"
+        class="workspace-notice"
+        :class="{ 'is-error': connection === 'error' }"
+        :role="connection === 'error' ? 'alert' : 'status'"
+      >
+        <span class="status-dot" :class="{ failed: connection === 'error', running: connection === 'starting' }" aria-hidden="true" />
+        <span>{{ connectionMessage }}</span>
+        <span v-if="connection === 'error' && bootError" class="workspace-notice-detail" :title="bootError">{{ bootError }}</span>
+      </div>
+      <KnowledgeView v-if="overlayView === 'knowledge'" :active="true" @close="overlayView = null" @contextmenu="triggerCtx('overlay', $event)" />
+      <AutomationView v-if="overlayView === 'automation'" :active="true" @close="overlayView = null" @contextmenu="triggerCtx('overlay', $event)" />
+      <div class="split-grid" aria-label="会话分格">
+        <SplitNode
+          :node="tree"
+          path=""
+          :maximized="maximizedSlot"
+          @focus="focusSlot = $event"
+          @resize="onSplitResize"
+          @equalize="onSplitEqualize"
+          @swap="onSplitSwap"
+          @load="onSplitLoad"
+        >
+          <template #leaf="{ slot }">
             <PaneFrame
-              :title="paneTitle(index)"
-              :focus="focusPane === index"
-              :closable="panes.length > 1"
-              @close="closePane(index)"
-              @split="(axis) => { maximizedPane = null; splitPane(axis) }"
-              @rename="(t) => onRename(index, t)"
-              @maximize="onMaximize(index)"
-              @replace="onReplace(index)"
+              :title="paneTitle(slot)"
+              :focus="focusSlot === slot"
+              :closable="paneCount(tree) > 1"
+              @close="closePane(slot)"
+              @split="(axis) => splitPane(slot, axis)"
+              @rename="(t) => onRename(slot, t)"
+              @maximize="onMaximize(slot)"
+              @replace="onReplace(slot)"
+              @dragstart="(e) => onPaneDragStart(slot, e)"
             >
               <template #status>
-                <ChatIcon size="12" style="opacity: 0.45" />
+                <ChatIcon size="12" aria-hidden="true" />
               </template>
               <template #actions>
                 <button
                   class="ghost-btn"
                   type="button"
                   title="文件"
-                  @click="setFilesOpen(index, true)"
+                  aria-label="打开文件工具栏"
+                  @click="openToolsTab(slot, 'files')"
                 >
                   <FolderOpenIcon size="13" />
                 </button>
                 <button
                   class="ghost-btn"
                   type="button"
+                  title="变更"
+                  aria-label="打开变更工具栏"
+                  @click="openToolsTab(slot, 'changes')"
+                >
+                  <FileEditIcon size="13" />
+                </button>
+                <button
+                  class="ghost-btn"
+                  type="button"
                   title="终端"
-                  @click="setTermOpen(index, true)"
+                  aria-label="打开终端工具栏"
+                  @click="openToolsTab(slot, 'terminal')"
                 >
                   <TerminalIcon size="13" />
                 </button>
@@ -326,33 +592,44 @@ function onNewInProject() {
                   class="ghost-btn"
                   type="button"
                   title="预览"
-                  @click="setPreviewOpen(index, true)"
+                  aria-label="打开预览工具栏"
+                  @click="openToolsTab(slot, 'preview')"
                 >
                   <BrowseIcon size="13" />
                 </button>
               </template>
 
               <!-- 空格 = 装载卡（契约：横向 tab + 任务列表） -->
-              <div v-if="!hasConversation(index) && paneMode(index) !== 'create'" class="load-card">
+              <div v-if="!hasConversation(slot) && paneMode(slot) !== 'create'" class="load-card">
+                <div class="load-card-intro">
+                  <span class="load-card-kicker">工作区 / {{ leafOrdinal(slot) }}</span>
+                  <h2 class="load-card-title">从已有会话继续</h2>
+                  <p>选择一条会话装入当前分格，或创建新任务开始工作。</p>
+                  <button type="button" class="load-card-create" @click="focusSlot = slot; focusEmptyOrSplit()">新建任务</button>
+                </div>
                 <div class="load-card-tabs">
-                  <span class="task-col-tab-label">本地项目</span>
+                  <span class="task-col-tab-label">本地项目 · {{ projectGroup.sessions.length }} 个会话</span>
                 </div>
                 <div class="load-card-list">
                   <div
                     v-if="projectGroup.sessions.length === 0"
-                    class="list-row"
-                    style="cursor: default; opacity: 0.55"
+                    class="load-card-empty"
+                    :role="connection === 'error' ? 'alert' : 'status'"
                   >
-                    <span class="list-row-label">
-                      {{ connection === 'error' ? '守护进程未连接' : '暂无会话' }}
-                    </span>
+                    {{ connection === 'error' ? '守护进程未连接，暂时无法载入会话。' : loading || connection === 'starting' ? '正在加载会话…' : '还没有会话。可以从新建任务开始。' }}
                   </div>
                   <div
                     v-for="session in projectGroup.sessions"
                     :key="session.id"
                     class="list-row"
                     :class="{ loaded: paneHasConversation(session.id) }"
-                    @click="onOpenConversation(session.id)"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`在当前分格打开会话：${session.title}${session.tone === 'running' ? '，执行中' : session.tone === 'failed' ? '，执行失败' : ''}`"
+                    draggable="true"
+                    @dragstart="(e) => onSessionDragStart(session.id, e)"
+                    @keydown="onSessionKeydown($event, slot, session.id)"
+                    @click="focusSlot = slot; onOpenConversation(session.id)"
                   >
                     <span class="list-row-label">{{ session.title }}</span>
                     <span class="list-row-status">
@@ -375,26 +652,36 @@ function onNewInProject() {
 
               <!-- 创建页：格内 h-40 页头 + 表单 -->
               <NewTaskForm
-                v-else-if="!hasConversation(index) && paneMode(index) === 'create'"
-                @created="(payload) => onSent(index, payload)"
+                v-else-if="!hasConversation(slot) && paneMode(slot) === 'create'"
+                @created="(payload) => onSent(slot, payload)"
               />
 
               <div v-else class="chat-column">
                 <PlanPanel
-                  v-if="index === focusPane && planItems.length"
+                  v-if="slot === focusSlot && planItems.length"
                   :items="planItems"
                 />
-                <div v-if="activeRunning && index === focusPane" class="chat-running">
-                  <span class="status-dot running" />
+                <div v-if="activeRunning && slot === focusSlot" class="chat-running" role="status" aria-live="polite">
+                  <span class="status-dot running" aria-hidden="true" />
                   执行中 · {{ activeStatus }}
                 </div>
                 <ChatPane
-                  :conversation-id="paneConversationId(index)"
-                  @sent="(p) => onSent(index, p)"
-                  @open-terminal="setTermOpen(index, true)"
+                  :conversation-id="paneConversationId(slot)"
+                  @sent="(p) => onSent(slot, p)"
+                  @open-terminal="openToolsTab(slot, 'terminal')"
+                />
+                <ApprovalCard
+                  v-for="group in approvalGroupsForConversation(paneConversationId(slot) || '')"
+                  :key="group.taskId"
+                  :task-id="group.taskId"
+                  :approvals="group.approvals"
+                  :resolving-ids="resolvingApprovalIds(group.approvals)"
+                  :errors="approvalErrorMap(group.approvals)"
+                  class="ask-float"
+                  @resolve="(p) => resolveApproval(p.taskId, p.approvalId, p.approved)"
                 />
                 <AskCard
-                  v-for="q in pendingQuestions"
+                  v-for="q in pendingQuestionsFor(paneConversationId(slot) || '')"
                   :key="q.taskId"
                   :task-id="q.taskId"
                   :question="q.question"
@@ -406,23 +693,25 @@ function onNewInProject() {
                 />
               </div>
             </PaneFrame>
-            <FilesSidePanel
-              :open="!!pane.filesOpen"
-              @update:open="(v) => setFilesOpen(index, v)"
-            />
-            <TerminalSidePanel
-              :open="!!pane.termOpen"
-              @update:open="(v) => setTermOpen(index, v)"
-            />
-            <PreviewSidePanel
-              :open="!!pane.previewOpen"
+
+            <!-- 统一右侧工具栏（每格独立；非模态） -->
+            <WorkspaceTools
+              :open="paneOf(slot).tools.open"
+              :tab="paneOf(slot).tools.tab"
+              :width="paneOf(slot).tools.width"
+              :tree-width="paneOf(slot).tools.treeWidth"
+              :conversation-id="paneConversationId(slot)"
               :workspace-key="workspace"
-              @update:open="(v) => setPreviewOpen(index, v)"
+              @close="setToolsOpen(slot, false)"
+              @update:tab="(t) => setToolsTab(slot, t)"
+              @update:width="(w) => setToolsWidth(slot, w)"
+              @update:treeWidth="(w) => setToolsTreeWidth(slot, w)"
             />
-          </div>
-        </template>
+          </template>
+        </SplitNode>
       </div>
     </main>
-    <SettingsView v-model:open="settingsOpen" />
+    <SettingsView v-model:open="settingsOpen" @contextmenu="triggerCtx('settings', $event)" />
+    <ContextMenu />
   </div>
 </template>

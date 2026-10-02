@@ -1,6 +1,6 @@
 # SaCode Desktop
 
-Vue 3 + TypeScript + Vite + **TDesign** + Tauri 2 桌面壳。对齐 MonkeyCode 的**布局契约与交互形态**，不抄其源码/视觉资产。
+**当前唯一桌面主线：Vue 3 + TypeScript + Vite + TDesign + Tauri 2。** `index.html` 加载 `src/ui/main.ts`；Vue 工作台经 `@cherishron/sacode-client-core` 与 daemon 通信，Tauri Rust shell 承担 sidecar/PTY 与本机能力。旧 `src/main.ts`、`src/app/`、`src/components/` 手写 DOM 前端不是第二套可交付 UI；已有删除/迁移中的代码与测试不得作为当前 Vue UI 的验收证据。对齐 MonkeyCode 的**布局契约与交互形态**，不抄其源码/视觉资产。
 
 ## 技术栈（定案）
 
@@ -19,16 +19,16 @@ Vue 3 + TypeScript + Vite + **TDesign** + Tauri 2 桌面壳。对齐 MonkeyCode 
 ```text
 interfaces/desktop/
   index.html              # 入口 → src/ui/main.ts
-  src/ui/                 # 新壳（当前正式 UI）
+  src/ui/                 # 唯一正式 Vue UI
     main.ts               # Vue + TDesign 挂载
-    App.vue               # 工作台：任务列 + 分格
+    App.vue               # 工作台：任务列 + 平铺分格
     composables/useDesktopApp.ts
-    components/           # TaskColumn / PaneFrame / ChatCard / Composer …
+    components/           # TaskColumn / PaneFrame / ChatCard / Composer / KnowledgeView / AutomationView …
+    logic/                # Vue 主线复用的非视图逻辑
     styles/
       layout-contract.css # 度量令牌（唯一来源）
       theme.css           # TDesign ← SaCode 暖色
       shell.css           # 壳与组件皮相
-  src/app|components/     # 旧 el() 实现（测试仍在用，迁移完可删）
   src/tauri-bridge.ts     # Tauri invoke / PTY / SSE
   src-tauri/              # Rust 壳
 ```
@@ -51,7 +51,9 @@ interfaces/desktop/
 
 完整度量与信息安放见 `docs/plans/desktop-layout-contract.md`。
 
-## 功能一览（当前）
+### 当前接入与待验收边界（2026-09-29 工作区核对）
+
+下表列的是当前 Vue 主线可见的接入，不表示真实交互、安装包或发布验收已经完成；工作区内未提交组件及迁移中的测试只计作实现线索。
 
 | 能力 | 入口 | 后端 |
 | --- | --- | --- |
@@ -65,16 +67,19 @@ interfaces/desktop/
 | 账号登录 / 模型同步 / 权益 / License / 激活 | 设置 · 账号 | `/account/*` |
 | MCP / 技能管理 | 设置 · 服务 / 技能 | `/api/mcp/*` `/api/skills*` |
 | 分格拆分/拖宽/独占/更换/改名 | 细头 ⋯ | 本地状态 |
+| 知识库笔记/检索 | 任务列 → `KnowledgeView.vue`（工作区内可见） | `/api/knowledge/*` |
+| 自动化规则/运行历史 | 任务列 → `AutomationView.vue`（工作区内可见） | `/api/automation/*` |
 
-### 后端已备、Vue 尚未接
+**验收状态：部分验收，未正式发布。** 2026-09-22 的 Desktop 6 tests/build 等记录属于旧 UI 阶段，不能证明 Vue/TDesign 主线验收。当前仍需针对 Vue 入口重新跑 typecheck/test/build、真实手工交互（含退出重开回放、审批/取消、Diff）、Tauri sidecar/安装包及跨平台 E2E；完成后按[集成验收清单](../../docs/plans/desktop-integration-acceptance.md)逐项记录，不以代码存在或旧 UI 测试替代。
 
-| 能力 | 后端 | 旧 UI | Vue |
-| --- | --- | --- | --- |
-| SaDesign | `/api/design/*` | `src/app/sadesign.ts` | 待迁 |
-| SaNative 知识库 | `/api/knowledge/*` | `src/app/sanative.ts` | 待迁 |
-| 自动化 | `/api/automation/*` | `src/app/automation.ts` | 待迁 |
-| 模型与执行 / Git / 安全 / 导入 | providers · git-auth · audit · import | `src/app/settings.ts` | 设置页占位 |
-| 企业审计导出 | `POST /api/audit/export` | — | 按钮未挂 |
+### 尚未在 Vue 主线完成接入或验收
+
+| 能力 | 后端/逻辑 | Vue 主线状态 |
+| --- | --- | --- |
+| SaDesign | `/api/design/*`、`src/ui/logic/sadesign-state.ts` | 尚无当前 Vue 视图，不能引用已迁移的旧 `src/app/sadesign.ts` |
+| 企业审计导出 | `POST /api/audit/export` | 按钮/真实权限链路待验收 |
+
+知识库、自动化与设置各页均已在 `src/ui/components/` 中有 Vue 实现（其中部分为当前工作区未提交改动），不能再写作“Vue 尚未接”；模型与执行、Git、安全、导入等设置项以当前 `SettingsView.vue` 和真实交互验收为准，不从旧 `src/app/settings.ts` 推断完成度。
 
 ## 开发
 
