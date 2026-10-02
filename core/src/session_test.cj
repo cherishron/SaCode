@@ -153,6 +153,86 @@ func leaseIsMutuallyExclusive() {
 }
 
 @Test
+func releaseByNonHolderDoesNotDeleteTheHoldersLease() {
+    // 第二个写者拿不到租约，就更没有权力把持有者的租约清掉——
+    // 原实现无条件 removeIfExists，等于让抢写失败的一方决定谁可以写。
+    let p = tmpPath("own")
+    clean("own")
+    let holder = WriteLease(p)
+    let loser = WriteLease(p)
+    @Expect(holder.acquire(), true)
+    @Expect(loser.acquire(), false)
+    @Expect(loser.release(), false)
+    // 非持有者的 release 不得动到持有者的租约
+    @Expect(holder.held(), true)
+    @Expect(holder.release(), true)
+    clean("own")
+}
+
+@Test
+func leaseStampedWithAnOwnerTokenInsteadOfABareFlag() {
+    // 租约要能回答「现在归谁」，否则失败方无从判断该不该收尾。
+    let p = tmpPath("stamp")
+    clean("stamp")
+    let a = WriteLease(p)
+    @Expect(a.acquire(), true)
+    @Expect(a.currentOwner() == a.ownerToken(), true)
+    @Expect(a.ownerToken().size > 0, true)
+    let b = WriteLease(p)
+    @Expect(b.acquire(), false)
+    // 抢写失败不得改写盘上的归属
+    @Expect(b.currentOwner() == a.ownerToken(), true)
+    a.release()
+    clean("stamp")
+}
+
+@Test
+func holderThatLostItsLeaseDoesNotDeleteTheNewOwnersFile() {
+    // 这一条是变异探针逼出来的：前面几条都在「空凭据」那关就返回了，
+    // 只有拿到过、之后归属已易主，才真正走到底下那次归属核对。
+    let p = tmpPath("stolen")
+    clean("stolen")
+    let a = WriteLease(p)
+    @Expect(a.acquire(), true)
+    // 模拟租约被接管或清理后由别人重建
+    File.writeTo("${p}.lease", "writer=someone-else".toArray())
+    @Expect(a.release(), false)
+    @Expect(a.currentOwner() == "writer=someone-else", true)
+    removeIfExists("${p}.lease", recursive: false)
+    clean("stolen")
+}
+
+@Test
+func failedAcquireLeavesNoStagingGarbage() {
+    let p = tmpPath("stage")
+    clean("stage")
+    let a = WriteLease(p)
+    a.acquire()
+    let b = WriteLease(p)
+    @Expect(b.acquire(), false)
+    // 原子获取靠「独占临时文件 + rename(overwrite:false)」，失败的那一步必须自己清干净
+    @Expect(b.stagingArtifact() == "" || !exists(b.stagingArtifact()), true)
+    a.release()
+    clean("stage")
+}
+
+@Test
+func foreignLeaseIsRespectedNotSilentlyTakenOver() {
+    // 崩溃持有者的租约自动接管还没做（Windows 下取不到自身 pid，见方案 §8 决策 16）。
+    // 在接管落地前，行为必须是「明确拒绝」而不是「悄悄抢走」。
+    let p = tmpPath("foreign")
+    clean("foreign")
+    File.writeTo("${p}.lease", "writer=some-other-process".toArray())
+    let a = WriteLease(p)
+    @Expect(a.acquire(), false)
+    @Expect(a.currentOwner() == "writer=some-other-process", true)
+    // 不是自己拿到的租约，release 必须失败
+    @Expect(a.release(), false)
+    removeIfExists("${p}.lease", recursive: false)
+    clean("foreign")
+}
+
+@Test
 func assemblyDropsChunksAfterFinish() {
     let a = Assembly()
     a.push(Chunk("text", "hel", ""))
