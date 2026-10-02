@@ -3549,3 +3549,22 @@ pre.files-preview-body code.hljs {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ========== 设置页排版辅助类 ==========
+ * 取代 62 处内联 style。内联样式优先级最高，令牌层与密度档都改不动它，
+ * 故全部收为类；间距一律走 --space-*，不写裸 px。 */
+.settings-meta { font-size: 11px; }
+.settings-section { margin-top: var(--space-6); }
+.settings-field-gap { margin-bottom: var(--space-2); }
+.settings-gap-mb { margin-bottom: var(--space-3); }
+.settings-gap-mt { margin-top: var(--space-3); }
+.settings-mt-sm { margin-top: var(--space-2); }
+.settings-lede { margin: 0 0 var(--space-2); }
+.settings-fill { flex: 1; min-width: 0; }
+.settings-row { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
+.settings-log {
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+}
+.settings-hidden { display: none; }

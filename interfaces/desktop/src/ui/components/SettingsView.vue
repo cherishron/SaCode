@@ -1261,7 +1261,7 @@ function onClose() {
       <header class="settings-head">
         <span class="settings-title">偏好设置</span>
         <span class="muted">{{ workspaceLabel }}</span>
-        <span style="flex: 1" />
+        <span class="settings-fill" />
         <button class="ghost-btn" type="button" title="关闭" @click="onClose">
           <CloseIcon size="13" />
         </button>
@@ -1297,8 +1297,8 @@ function onClose() {
                <div class="muted mono">{{ provider.base_url }} · {{ provider.has_credential ? '已配置凭据' : '无凭据' }}</div>
              </div>
              <!-- C5 添加本地模型向导 -->
-             <h3 class="settings-section-title" style="margin-top: 24px">添加本地模型</h3>
-             <p class="muted" style="margin-bottom: 8px">
+             <h3 class="settings-section-title settings-section">添加本地模型</h3>
+             <p class="muted settings-field-gap">
                一步配通：名称 → 接口地址 → API Key → models（每行一个）→ 思考能力。密钥仅提交给 daemon，界面不回显。
              </p>
              <div class="mcp-form provider-wizard">
@@ -1308,7 +1308,7 @@ function onClose() {
                       {{ opt.label }}
                     </t-radio-button>
                   </t-radio-group>
-                  <span class="muted" style="font-size: 11px">{{ API_TYPE_OPTIONS.find(o => o.value === providerForm.api_type)?.hint }}</span>
+                  <span class="muted settings-meta">{{ API_TYPE_OPTIONS.find(o => o.value === providerForm.api_type)?.hint }}</span>
                 </label>
                <label class="settings-field"><span>2 · 名称</span><t-input v-model="providerForm.name" placeholder="例如 ollama-local（字母数字-_）" /></label>
                <label class="settings-field"><span>3 · 接口地址</span><t-input v-model="providerForm.base_url" placeholder="https://api.example.com/v1 或 http://127.0.0.1:11434/v1" /></label>
@@ -1325,7 +1325,7 @@ function onClose() {
                    >
                      {{ providerModels.length ? '重新拉取模型列表' : '拉取模型列表' }}
                    </t-button>
-                   <span v-if="providerModels.length" class="muted" style="font-size: 11px">
+                   <span v-if="providerModels.length" class="muted settings-meta">
                      共 {{ providerModels.length }} 个，已勾选 {{ providerForm.selected_models.length }} 个
                    </span>
                  </div>
@@ -1348,7 +1348,7 @@ function onClose() {
                      <span v-if="m.owned_by" class="muted provider-model-owner">{{ m.owned_by }}</span>
                    </label>
                  </div>
-                 <span v-else-if="!providerModelsBusy" class="muted" style="font-size: 11px">
+                 <span v-else-if="!providerModelsBusy" class="muted settings-meta">
                    填好接口地址（与密钥）后点击「拉取模型列表」，勾选需要加入 SaCode 的模型
                  </span>
                </label>
@@ -1374,8 +1374,8 @@ function onClose() {
                  添加到本地模型
                </t-button>
              </div>
-             <h3 class="settings-section-title" style="margin-top: 24px">网关模型连接</h3>
-             <p class="muted" style="margin-bottom: 8px">
+             <h3 class="settings-section-title settings-section">网关模型连接</h3>
+             <p class="muted settings-field-gap">
                为具名网关连接注册 client_model → upstream_model 映射；密钥仅提交给 daemon，界面不回显。
              </p>
              <div v-if="gwConnError" class="composer-error" role="alert">{{ gwConnError }}</div>
@@ -1486,7 +1486,7 @@ function onClose() {
                 <t-radio-button value="comfortable">舒适</t-radio-button>
                 <t-radio-button value="compact">紧凑</t-radio-button>
               </t-radio-group>
-              <span class="muted" style="font-size: 11px">立即生效：紧凑收紧列表间距与行高（layout-contract 令牌），并随「保存设置」持久化</span>
+              <span class="muted settings-meta">立即生效：紧凑收紧列表间距与行高（layout-contract 令牌），并随「保存设置」持久化</span>
             </label>
             <label class="settings-field">
               <span>语言</span>
@@ -1495,7 +1495,7 @@ function onClose() {
                 <t-radio-button value="en-US">English</t-radio-button>
               </t-radio-group>
               <!-- 无完整 i18n：切换仅记录偏好 + 写 html[lang]，不假装翻译界面 -->
-              <span class="muted" style="font-size: 11px">
+              <span class="muted settings-meta">
                 仅记录偏好（当前界面文案仍为中文）：完整英文界面需接入 i18n，暂不支持即时翻译；选择会写入 html[lang] 并保存
               </span>
             </label>
@@ -1530,7 +1530,7 @@ function onClose() {
                 :disabled="!systemIntegrationsSupported || systemBusy"
                 @change="(v: boolean) => void applySystemIntegration('tray', v)"
               />
-              <span class="muted" style="font-size: 11px">
+              <span class="muted settings-meta">
                 {{ systemIntegrationsSupported
                   ? '关闭窗口时隐藏到托盘；立即调用桌面壳，失败会回滚'
                   : '暂不支持：需桌面壳（Tauri）' }}
@@ -1543,15 +1543,15 @@ function onClose() {
                 :disabled="!systemIntegrationsSupported || systemBusy"
                 @change="(v: boolean) => void applySystemIntegration('autostart', v)"
               />
-              <span class="muted" style="font-size: 11px">
+              <span class="muted settings-meta">
                 {{ systemIntegrationsSupported
                   ? '注册系统启动项（Windows Run key / 启动文件夹）；失败会回滚'
                   : '暂不支持：需桌面壳（Tauri）' }}
               </span>
             </label>
-            <p v-if="systemStatusNote" class="muted" role="status" style="font-size: 11px">{{ systemStatusNote }}</p>
+            <p v-if="systemStatusNote" class="muted settings-meta" role="status">{{ systemStatusNote }}</p>
             <p v-if="systemError" class="composer-error" role="alert">{{ systemError }}</p>
-            <h3 class="settings-section-title" style="margin-top: 24px">MCP 服务器</h3>
+            <h3 class="settings-section-title settings-section">MCP 服务器</h3>
             <div class="mcp-list">
               <div v-if="mcpLoading" class="muted">加载中…</div>
               <div v-else-if="mcpError" class="composer-error">{{ mcpError }}</div>
@@ -1566,13 +1566,13 @@ function onClose() {
                     @change="(v: boolean) => void toggleMcp(s, v)"
                   />
                 </div>
-                <div class="muted mono" style="font-size: 11px">
+                <div class="muted mono settings-meta">
                   {{ s.url || [s.command, ...(s.args || [])].join(' ') }}
                 </div>
-                <div v-if="s.env && Object.keys(s.env).length" class="muted mono" style="font-size: 11px">
+                <div v-if="s.env && Object.keys(s.env).length" class="muted mono settings-meta">
                   env: {{ Object.keys(s.env).join('、') }}
                 </div>
-                <div v-if="s.headers && Object.keys(s.headers).length" class="muted mono" style="font-size: 11px">
+                <div v-if="s.headers && Object.keys(s.headers).length" class="muted mono settings-meta">
                   headers: {{ Object.keys(s.headers).join('、') }}
                 </div>
                 <div class="mcp-row-actions">
@@ -1582,16 +1582,16 @@ function onClose() {
                     删除
                   </t-button>
                 </div>
-                <div v-if="s.testResult" class="muted" style="font-size: 11px">
+                <div v-if="s.testResult" class="muted settings-meta">
                   {{ s.testResult }}
                 </div>
               </div>
             </div>
-            <t-button size="small" style="margin-top: 12px" @click="mcpFormOpen ? cancelMcpEdit() : openMcpCreate()">
+            <t-button class="settings-gap-mt" size="small" @click="mcpFormOpen ? cancelMcpEdit() : openMcpCreate()">
               {{ mcpFormOpen ? '收起' : '添加服务器' }}
             </t-button>
             <div v-if="mcpFormOpen" class="mcp-form">
-              <h4 class="settings-section-title" style="margin: 0 0 8px">
+              <h4 class="settings-section-title settings-lede">
                 {{ mcpEditingName ? `编辑「${mcpEditingName}」` : '添加服务器' }}
               </h4>
               <label class="settings-field"><span>名称</span>
@@ -1639,7 +1639,7 @@ function onClose() {
                 <t-button size="small" variant="outline" @click="mcpHeaderRows = appendKvRow(mcpHeaderRows)">添加 header</t-button>
               </div>
 
-              <label class="settings-field" style="flex-direction: row; align-items: center; gap: 8px">
+              <label class="settings-field settings-row">
                 <t-switch v-model="mcpDraft.enabled" size="small" />
                 <span>启用</span>
               </label>
@@ -1674,14 +1674,14 @@ function onClose() {
                       : '本地模式已就绪；登录是可选增强，用于同步网关模型' }}
                   </span>
                 </div>
-                <div class="muted mono" style="font-size: 11px">
+                <div class="muted mono settings-meta">
                   {{ account?.gateway_base_url || '—' }}
                 </div>
               </div>
             </div>
             <!-- 云侧问题不刷红错：一行原因即可（P7 云件套可缺席） -->
             <p v-if="accountError" class="muted" role="status">{{ accountError }}</p>
-            <div class="mcp-row-actions" style="margin-top: 12px">
+            <div class="mcp-row-actions settings-gap-mt">
               <!-- P2 登录永非门槛 / P3 云能力显式可选：登录是 outline 可选入口，非主 CTA -->
               <t-button
                 v-if="!account?.logged_in"
@@ -1724,7 +1724,7 @@ function onClose() {
                 <span class="muted">{{ advancedOpen ? '收起' : '展开' }}</span>
               </button>
               <div v-if="advancedOpen" class="advanced-body">
-                <p class="muted" style="margin-bottom: 8px">
+                <p class="muted settings-field-gap">
                   配置 sa-idp / 网关 / 权益服务地址；仅展示地址，收不到也不回填任何 token 或密钥。
                 </p>
                 <div v-if="identityError" class="composer-error" role="alert">{{ identityError }}</div>
@@ -1735,21 +1735,21 @@ function onClose() {
                     <span>IdP 基础地址</span>
                     <t-input v-model="identityDraft.idp_base_url" placeholder="https://…" />
                   </label>
-                  <p v-if="identityConfig?.env_overrides.idp_base_url" class="muted" style="font-size: 11px">
+                  <p v-if="identityConfig?.env_overrides.idp_base_url" class="muted settings-meta">
                     环境变量覆盖中，修改需清除 SACODE_* 环境变量
                   </p>
                   <label class="settings-field">
                     <span>网关基础地址</span>
                     <t-input v-model="identityDraft.gateway_base_url" placeholder="https://…" />
                   </label>
-                  <p v-if="identityConfig?.env_overrides.gateway_base_url" class="muted" style="font-size: 11px">
+                  <p v-if="identityConfig?.env_overrides.gateway_base_url" class="muted settings-meta">
                     环境变量覆盖中，修改需清除 SACODE_* 环境变量
                   </p>
                   <label class="settings-field">
                     <span>权益基础地址</span>
                     <t-input v-model="identityDraft.entitlement_base_url" placeholder="https://…" />
                   </label>
-                  <p v-if="identityConfig?.env_overrides.entitlement_base_url" class="muted" style="font-size: 11px">
+                  <p v-if="identityConfig?.env_overrides.entitlement_base_url" class="muted settings-meta">
                     环境变量覆盖中，修改需清除 SACODE_* 环境变量
                   </p>
                   <label class="settings-field">
@@ -1768,13 +1768,13 @@ function onClose() {
               </div>
             </div>
 
-            <h3 class="settings-section-title" style="margin-top: 24px">
+            <h3 class="settings-section-title settings-section">
               权益（sa-entitlement）
             </h3>
             <!-- C4 权益列表：未登录 / 不可用时置灰 + 一行原因，不弹错 -->
             <div v-if="cloudFeaturesOff" class="cloud-disabled-block" aria-disabled="true">
               <p class="muted cloud-reason">{{ cloudDisableReason }}</p>
-              <p v-if="entError" class="muted" style="font-size: 11px">{{ entError }}</p>
+              <p v-if="entError" class="muted settings-meta">{{ entError }}</p>
               <div class="mcp-row cloud-disabled-row">
                 <div class="mcp-row-main">
                   <strong class="muted">权益列表</strong>
@@ -1783,9 +1783,9 @@ function onClose() {
               </div>
             </div>
             <template v-else>
-              <p class="muted" style="margin-bottom: 8px">
+              <p class="muted settings-field-gap">
                 产品 sacode · 能力按 capability 门禁，未知能力不会扩权。
-                <span v-if="entBaseUrl" class="mono" style="font-size: 11px">{{ entBaseUrl }}</span>
+                <span v-if="entBaseUrl" class="mono settings-meta">{{ entBaseUrl }}</span>
               </p>
               <div v-if="entLoading" class="muted">加载中…</div>
               <div v-else-if="entError" class="muted" role="status">{{ entError }}</div>
@@ -1807,17 +1807,17 @@ function onClose() {
                     <strong>{{ e.product || e.id }}</strong>
                     <span class="muted">{{ e.status || 'active' }}</span>
                   </div>
-                  <div class="muted" style="font-size: 11px">
+                  <div class="muted settings-meta">
                     {{ e.valid_from || '—' }} → {{ e.valid_until || '—' }}
                   </div>
-                  <div class="muted mono" style="font-size: 11px">
+                  <div class="muted mono settings-meta">
                     {{ (e.capabilities || []).join('、') || '（无能力）' }}
                   </div>
                 </div>
               </div>
             </template>
 
-            <h3 class="settings-section-title" style="margin-top: 24px">License（离线）</h3>
+            <h3 class="settings-section-title settings-section">License（离线）</h3>
             <div v-if="licenseError" class="composer-error">{{ licenseError }}</div>
             <div v-if="licenseStatus" class="mcp-list">
               <div class="mcp-row">
@@ -1829,16 +1829,16 @@ function onClose() {
                     {{ licenseStatus.kid ? `kid ${licenseStatus.kid}` : '导入 .saai-license.json 后可在离线环境门禁能力' }}
                   </span>
                 </div>
-                <div class="muted mono" style="font-size: 11px">
+                <div class="muted mono settings-meta">
                   {{ licenseStatus.product || '' }}
                   {{ licenseStatus.expires_at ? `· 有效至 ${licenseStatus.expires_at}` : '' }}
                 </div>
-                <div class="muted mono" style="font-size: 11px">
+                <div class="muted mono settings-meta">
                   {{ (licenseStatus.capabilities || []).join('、') }}
                 </div>
               </div>
             </div>
-            <div class="mcp-row-actions" style="margin-top: 8px">
+            <div class="mcp-row-actions settings-mt-sm">
               <t-button size="small" variant="outline" @click="licenseImportOpen = !licenseImportOpen">
                 {{ licenseImportOpen ? '收起' : '导入 License' }}
               </t-button>
@@ -1854,8 +1854,8 @@ function onClose() {
               </t-button>
             </div>
 
-            <h3 class="settings-section-title" style="margin-top: 24px">设备激活请求</h3>
-            <p class="muted" style="margin-bottom: 8px">
+            <h3 class="settings-section-title settings-section">设备激活请求</h3>
+            <p class="muted settings-field-gap">
               企业内网/离线：导出激活请求交给管理员关联 entitlement 签发设备绑定 License。
             </p>
             <div class="mcp-form">
@@ -1866,10 +1866,8 @@ function onClose() {
             </div>
             <pre
               v-if="activationResult"
-              class="muted mono"
-              style="font-size: 11px; white-space: pre-wrap; max-height: 220px; overflow: auto"
-            >{{ activationResult }}</pre>
-             <h3 class="settings-section-title" style="margin-top: 24px">企业审计导出</h3>
+              class="muted mono settings-meta settings-log" >{{ activationResult }}</pre>
+             <h3 class="settings-section-title settings-section">企业审计导出</h3>
              <!-- C4 审计导出：云增强置灰 + 一行原因，不弹错 -->
              <p class="muted">需要 sacode_audit_export 权益或有效离线 License；最多导出 5000 行当前项目审计日志。</p>
              <p v-if="cloudDisableReason" class="muted cloud-reason" role="status">{{ cloudDisableReason }} · 审计导出暂不可用</p>
@@ -1912,10 +1910,10 @@ function onClose() {
                      :disabled="!isBackendEditable(row) || backendSaveBusy[row.id]"
                      @change="(v: boolean) => void toggleAgentBackend(row, v)"
                    />
-                   <span class="muted" style="font-size: 11px">
+                   <span class="muted settings-meta">
                      {{ isBackendEditable(row) ? (row.enabled ? '已启用' : '已禁用') : '内置 · 始终启用' }}
                    </span>
-                   <span style="flex: 1" />
+                   <span class="settings-fill" />
                    <t-button
                      size="small"
                      variant="outline"
@@ -1926,7 +1924,7 @@ function onClose() {
                    </t-button>
                  </div>
                  <!-- 路径行 -->
-                 <div class="muted mono" style="font-size: 11px">{{ backendPathText(row) }}</div>
+                 <div class="muted mono settings-meta">{{ backendPathText(row) }}</div>
                  <!-- O5 额度：一行小字；exhausted → warning -->
                  <div
                    v-if="formatQuotaLine(row.quota)"
@@ -1938,7 +1936,7 @@ function onClose() {
                  <!-- O2 未安装/不可用：置灰 + 一行安装指引，不刷红怒 -->
                  <div v-if="isBackendUnavailable(row)" class="agent-install-hint" role="status">
                    {{ installHintFor(row) }}
-                   <span v-if="row.diagnostic" class="muted" style="font-size: 11px"> · {{ row.diagnostic }}</span>
+                   <span v-if="row.diagnostic" class="muted settings-meta"> · {{ row.diagnostic }}</span>
                  </div>
                  <!-- 路径/参数编辑（可折叠高级） -->
                  <div v-if="isBackendEditable(row)" class="advanced-block agent-backend-advanced">
@@ -1992,31 +1990,29 @@ function onClose() {
           <!-- 技能管理（P1-2） -->
           <template v-else-if="section === 'skills'">
             <h3 class="settings-section-title">技能</h3>
-            <p class="muted" style="margin-bottom: 12px">用户 / 项目目录技能；同名项目覆盖用户。</p>
+            <p class="muted settings-gap-mb">用户 / 项目目录技能；同名项目覆盖用户。</p>
 
             <!-- ZIP / 目录导入（契约 §7.2） -->
-            <div class="mcp-row-actions" style="margin-bottom: 12px">
+            <div class="mcp-row-actions settings-gap-mb">
               <t-button size="small" variant="outline" :disabled="skillImportBusy" @click="skillZipInput?.click()">
                 导入 ZIP
               </t-button>
               <t-button size="small" variant="outline" :disabled="skillImportBusy" @click="skillDirInput?.click()">
                 导入目录
               </t-button>
-              <input
+              <input class="settings-hidden"
                 ref="skillZipInput"
                 type="file"
                 accept=".zip"
                 multiple
-                style="display: none"
-                @change="void importSkillsFrom(($event.target as HTMLInputElement).files, 'zip')"
-              />
-              <input
+               
+                @change="void importSkillsFrom(($event.target as HTMLInputElement).files, 'zip')" />
+              <input class="settings-hidden"
                 ref="skillDirInput"
                 type="file"
                 webkitdirectory
-                style="display: none"
-                @change="void importSkillsFrom(($event.target as HTMLInputElement).files, 'dir')"
-              />
+               
+                @change="void importSkillsFrom(($event.target as HTMLInputElement).files, 'dir')" />
             </div>
             <p v-if="skillImportBusy" class="muted">导入中…</p>
             <p v-if="skillImportError" class="composer-error">{{ skillImportError }}</p>
@@ -2036,17 +2032,17 @@ function onClose() {
                     size="small"
                     @change="(v: boolean) => void toggleSkillEnabled(s, v)"
                   />
-                  <span class="muted" style="font-size: 11px">{{ s.enabled ?? true ? '默认启用' : '默认关闭' }}</span>
-                  <span style="flex: 1" />
+                  <span class="muted settings-meta">{{ s.enabled ?? true ? '默认启用' : '默认关闭' }}</span>
+                  <span class="settings-fill" />
                   <t-button size="small" variant="outline" @click="editSkill(s)">编辑</t-button>
                   <t-button size="small" variant="outline" theme="danger" @click="void removeSkill(s)">
                     删除
                   </t-button>
                 </div>
-                <div class="muted" style="font-size: 11px">{{ s.description || '（无描述）' }}</div>
+                <div class="muted settings-meta">{{ s.description || '（无描述）' }}</div>
               </div>
             </div>
-            <t-button size="small" style="margin-top: 12px" @click="skillFormOpen ? (skillFormOpen = false) : openSkillForm()">
+            <t-button class="settings-gap-mt" size="small" @click="skillFormOpen ? (skillFormOpen = false) : openSkillForm()">
               {{ skillFormOpen ? '收起' : '新建技能' }}
             </t-button>
             <div v-if="skillFormOpen" class="mcp-form">
@@ -2056,7 +2052,7 @@ function onClose() {
                 <t-radio-button value="project">项目</t-radio-button>
                 <t-radio-button value="user">用户</t-radio-button>
               </t-radio-group>
-              <label class="settings-field" style="flex-direction: row; align-items: center; gap: 8px">
+              <label class="settings-field settings-row">
                 <t-switch v-model="skillDraft.enabled" size="small" />
                 <span>默认启用</span>
               </label>
@@ -2076,17 +2072,17 @@ function onClose() {
             <template v-else-if="!hooksSupported">
               <!-- 旧 daemon 无 /api/hooks：明确暂不支持，不摆假列表 -->
               <p class="muted" role="status">暂不支持：当前 daemon 未提供 <span class="mono">GET /api/hooks</span>，请升级 daemon 或直接编辑配置文件。</p>
-              <p class="muted mono" style="font-size: 11px">配置路径（约定）：~/.sacode/settings.json 的 hooks 数组</p>
-              <p class="muted" style="font-size: 11px">TODO：daemon 升级后此页将自动展示配置路径与只读列表。</p>
+              <p class="muted mono settings-meta">配置路径（约定）：~/.sacode/settings.json 的 hooks 数组</p>
+              <p class="muted settings-meta">TODO：daemon 升级后此页将自动展示配置路径与只读列表。</p>
             </template>
             <template v-else>
               <p v-if="hooksError" class="composer-error" role="alert">{{ hooksError }}</p>
-              <div v-if="hooksConfigPath" class="mcp-row" style="margin-bottom: 8px">
+              <div v-if="hooksConfigPath" class="mcp-row settings-field-gap">
                 <div class="mcp-row-main">
                   <strong>配置文件</strong>
                   <span class="muted">仅反映磁盘配置，不代表 CLI 已加载或执行</span>
                 </div>
-                <div class="muted mono" style="font-size: 11px">{{ hooksConfigPath }}</div>
+                <div class="muted mono settings-meta">{{ hooksConfigPath }}</div>
               </div>
               <div class="mcp-list">
                 <div v-if="!hooks.length" class="muted">尚未配置用户级 Hooks</div>
@@ -2094,12 +2090,12 @@ function onClose() {
                   <div class="mcp-row-main">
                     <strong>{{ h.name }}</strong>
                     <span class="muted">{{ h.event }}</span>
-                    <span class="muted" style="font-size: 11px">{{ h.enabled ? '启用' : '停用' }}</span>
+                    <span class="muted settings-meta">{{ h.enabled ? '启用' : '停用' }}</span>
                   </div>
-                  <div class="muted mono" style="font-size: 11px">{{ h.command }}</div>
+                  <div class="muted mono settings-meta">{{ h.command }}</div>
                 </div>
               </div>
-              <p class="muted" style="font-size: 11px; margin-top: 8px">
+              <p class="muted settings-meta settings-mt-sm">
                 触发说明：由 CLI 在对应生命周期事件（如 pre_task / post_task）加载并执行；桌面设置页不做启停写入，避免与 CLI 配置双写冲突。
               </p>
             </template>
@@ -2114,7 +2110,7 @@ function onClose() {
         <span class="settings-save-status" :class="{ dirty }">
           {{ feedback || (dirty ? '有未保存的更改' : '设置已保存') }}
         </span>
-        <span style="flex: 1" />
+        <span class="settings-fill" />
         <t-button variant="outline" size="small" @click="onClose">取消</t-button>
         <t-button theme="primary" size="small" :disabled="!dirty" @click="onSave">
           保存设置
