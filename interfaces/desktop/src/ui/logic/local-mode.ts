@@ -72,14 +72,6 @@ export function cloudFeatureDisableReason(mode: LocalMode): string | null {
   }
 }
 
-/** 向导「models 每行一个」→ 模型 ID 列表。 */
-export function parseModelsText(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 /** 合法协议类型集合（与 daemon 校验口径一致）。 */
 export const API_TYPES: readonly ApiType[] = ['openai_compatible', 'openai_responses', 'anthropic'] as const;
 
@@ -171,7 +163,7 @@ export function validateLocalProviderForm(form: LocalProviderForm): string | nul
 
 /** C5 空状态引导文案。 */
 export const LOCAL_PROVIDER_EMPTY_HINT =
-  '3 分钟配通本地模型：选接口协议、填名称、接口地址、API Key，models 每行一个即可开跑。';
+  '3 分钟配通本地模型：选接口协议、填名称、接口地址、API Key，拉取远端模型列表并勾选即可开跑。';
 
 /** C5 向导表单默认值（reasoning_effort 默认 medium 档）。 */
 export function emptyLocalProviderForm(): LocalProviderForm {

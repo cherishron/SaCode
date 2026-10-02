@@ -8,8 +8,8 @@ import {
   LOCAL_PROVIDER_EMPTY_HINT,
   localModeBannerHint,
   localModeBannerText,
-  parseModelsText,
   validateLocalProviderForm,
+  type ApiType,
 } from '../src/ui/logic/local-mode.ts';
 
 // ---- inferLocalMode（C1 状态推断） ----
@@ -77,36 +77,39 @@ test('cloudFeatureDisableReason：online 可用，其余置灰有原因', () => 
   assert.ok(cloudFeatureDisableReason('cloud_degraded')?.includes('不可用'));
 });
 
-// ---- 向导 models 解析（C5） ----
-
-test('parseModelsText 每行一个，忽略空行与空白', () => {
-  assert.deepEqual(parseModelsText('qwen3:8b\n\n  qwen3:32b  \r\nllama3'), [
-    'qwen3:8b',
-    'qwen3:32b',
-    'llama3',
-  ]);
-  assert.deepEqual(parseModelsText(''), []);
-});
+// ---- 向导提交载荷（C5） ----
 
 test('buildLocalProviderPayload 组装 createLocalProvider 入参', () => {
   const payload = buildLocalProviderPayload({
+    ...emptyLocalProviderForm(),
     name: ' ollama-local ',
-    api_type: 'yapi',
+    api_type: 'openai_compatible',
     base_url: ' http://127.0.0.1:11434/v1 ',
     api_key: ' sk-test ',
-    models_text: 'qwen3:8b\nqwen3:32b',
+    selected_models: ['qwen3:8b', ' qwen3:32b ', 'qwen3:8b', ''],
     thinking: true,
     reasoning_effort: 'high',
   });
   assert.deepEqual(payload, {
     name: 'ollama-local',
-    api_type: 'yapi',
+    api_type: 'openai_compatible',
     base_url: 'http://127.0.0.1:11434/v1',
     api_key: 'sk-test',
     models: ['qwen3:8b', 'qwen3:32b'],
     thinking: true,
     reasoning_effort: 'high',
   });
+});
+
+test('buildLocalProviderPayload 把非法协议归一为 openai_compatible', () => {
+  const payload = buildLocalProviderPayload({
+    ...emptyLocalProviderForm(),
+    name: 'legacy',
+    api_type: 'yapi' as unknown as ApiType,
+    base_url: 'https://x.test/v1',
+    selected_models: ['m1'],
+  });
+  assert.equal(payload?.api_type, 'openai_compatible');
 });
 
 test('buildLocalProviderPayload 缺必填返回 null', () => {
@@ -132,16 +135,16 @@ test('validateLocalProviderForm 给出可读原因', () => {
       name: 'ok-name',
       base_url: 'https://api.example.com/v1',
     }) ?? '',
-    /模型 ID/,
+    /勾选至少一个模型/,
   );
   assert.equal(
     validateLocalProviderForm({
       ...base,
       name: 'deepseek',
-      api_type: 'openai',
+      api_type: 'openai_compatible',
       base_url: 'https://api.example.com/v1',
       api_key: 'sk-x',
-      models_text: 'deepseek/deepseek-v4-flash',
+      selected_models: ['deepseek/deepseek-v4-flash'],
     }),
     null,
   );
@@ -150,6 +153,6 @@ test('validateLocalProviderForm 给出可读原因', () => {
 test('emptyLocalProviderForm 默认 medium 档且空状态文案就绪', () => {
   assert.equal(emptyLocalProviderForm().reasoning_effort, 'medium');
   assert.equal(emptyLocalProviderForm().thinking, false);
-  assert.equal(emptyLocalProviderForm().api_type, 'openai');
+  assert.equal(emptyLocalProviderForm().api_type, 'openai_compatible');
   assert.ok(LOCAL_PROVIDER_EMPTY_HINT.includes('3 分钟'));
 });
