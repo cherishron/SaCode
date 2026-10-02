@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join as jj, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,7 +16,10 @@ const HOST = resolve(process.env.DSH_HOST || jj(REPO, "apps", "desktop", "dist",
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
 
 async function boot() {
-  const dir = mkdtempSync(jj(REPO, "dualtest", "dst-"));
+  // 不依赖仓库里预先存在某个临时目录：自己把它建出来
+  const root = jj(REPO, "dualtest");
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(jj(root, "dst-"));
   writeFileSync(join(dir, "session.log"), SEED);
   if (!existsSync(HOST)) {
     throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
