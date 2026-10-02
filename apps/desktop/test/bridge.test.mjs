@@ -128,3 +128,36 @@ test("宿主退出前结算未 flush 的写入并归还租约", async () => {
   assert.equal(a.events, 6, "结算后下一个写者能拿到租约");
   await b2.stop();
 });
+
+// C5：扩展注册表是 CLI 与桌面共用的唯一真源 —— 桌面入口必须看到同一内置工具集
+test("桌面入口的 extension/list 与 CLI 内置注册表一致", async () => {
+  const { b } = await boot();
+  const l = await b.request("extension/list", {});
+  assert.deepEqual(l.tools.map((t) => t.name), ["write"]);
+  assert.equal(l.tools[0].needsApproval, true, "内置写文件工具必须默认要审批");
+  await b.stop();
+});
+
+// 反向：未登记工具与无应答审批都必须走 JSON-RPC 错误，不得静默放行
+test("extension/call 未登记工具与 fail-closed 审批都被拒", async () => {
+  const { b } = await boot();
+  await assert.rejects(() => b.request("extension/call", { name: "no.such", args: "a b", approval: "allowed-once" }), /unregistered-tool:no.such/);
+  await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "none" }), /approval-not-allowed-once/);
+  const ok = await b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "allowed-once" });
+  assert.equal(ok.result, "ok:probe.txt");
+  const l = await b.request("extension/list", {});
+  assert.equal(l.misses, 1, "未登记拒绝必须计数");
+  await b.stop();
+});
+
+test("extension/dispose 后注册表清空且二次卸载失败", async () => {
+  const { b, dir } = await boot();
+  const d = await b.request("extension/dispose", { name: "write" });
+  assert.equal(d.disposed, true);
+  assert.deepEqual((await b.request("extension/list", {})).tools, []);
+  const again = await b.request("extension/dispose", { name: "write" });
+  assert.equal(again.disposed, false, "句柄一次性，不得重复撤销凑数");
+  await assert.rejects(() => b.request("extension/call", { name: "write", args: "x.txt y", approval: "allowed-once" }), /unregistered-tool:write/);
+  await b.stop();
+  assert.equal(existsSync(join(dir, "session.log.lease")), false, "工具事件写入后退出仍须归还租约");
+});

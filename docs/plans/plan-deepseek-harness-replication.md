@@ -263,7 +263,7 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 | 会话与回放 | PASS | `core` `cjpm test` 13/13（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、装配终态、尾帧截断三例）；durability 屏障与分页由 bridge 9/9 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
 | 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
-| 扩展生命周期 | BLOCKED | JS 扩展宿主（`extjs/`）尚未落地；已达成子项：宿主退出前结算 pending 写入并归还租约（bridge 用例「宿主退出前结算未 flush 的写入并归还租约」）；**前提**：Node 侧宿主协议实现 |
+| 扩展生命周期 | PARTIAL | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主已落地：core `cjpm test` **24/24**（含重名拒绝、未登记即拒、监听 handle 一次性）；`extjs` `node --test` **10/10**（含坏扩展不污染注册表、宿主退出结算在途调用 `-32002 host-exiting`）；桌面入口 `bridge.test.mjs` **12/12**（`extension/list` 与 CLI 同一内置集、`extension/call` 未登记/无应答均走 JSON-RPC 错误、`extension/dispose` 后残留 0 且归还租约）；CLI 分发产物裸 PATH 跑 `dsh ext` 8 项断言 rc=0，变异探针（把未登记改名成已登记）rc=1 证明门禁真在执行。**缺口**：仓颉侧尚未 spawn `extjs` 进程（需 `std.sync` 并发读子进程 stdout），JS 动态工具目前由独立宿主验收而非由 core 驱动 |
 | 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；**缺口**：进程崩溃后的残留租约无接管路径，且 `WriteLease` 存在 TOCTOU（std.fs 无 O_EXCL，待 CFFI/原子 rename） |
 | 取消与背压 | FAIL | 未实现 Ctrl+C / 桌面 stop / 慢消费者三条路径；需先引入线程或字节级流 |
 | UI/Next SDK | FAIL | `renderer/` 仍是占位页，Vue 3/TinyVue/TinyRobot/Next SDK 未接入 |
@@ -311,6 +311,8 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 6 | Cordis 语义照搬度 | 原样复刻语义（服务定位、依赖激活、owner 作用域、五模式派发、层级 patch），实现与命名自定；不简化 |
 | 7 | 动态扩展 | 内置仓颉模块 + 独立 Node JS 宿主 + Vue UI 贡献三类并存；DSH 原有插件直接兼容为独立桥接目标，不混同 |
 | 8 | 学习与实现顺序 | 先 P0 纵向切片（模型流 + 一个工具 + 日志回放 + 一个动态扩展 + 双入口打包），失败改设计而非删范围 |
+| 9 | Electron 二进制来源 | **只用官方 GitHub Releases**，不用 `ELECTRON_MIRROR` 等第三方镜像；`node_modules/electron/dist/` 缺失期间 C10 固定记 **BLOCKED**，不得为凑绿把桌面包从验收范围里删掉 |
+| 10 | 扩展注册表归属 | `core` 的 `ToolRegistry`/`ListenerRegistry` 是 CLI 与桌面**唯一真源**；内置仓颉工具在 core 登记，JS 动态工具经 `extension/*` 与独立 `extjs/` 宿主接入同一语义（未登记即拒、审批 fail-closed、卸载残留归 0） |
 
 ## 9. 历史参照与文档取代关系
 

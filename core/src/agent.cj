@@ -80,16 +80,25 @@ public class ApprovalOutcome {
 
 public class ToolRuntime {
     let log: SessionLog
+    let registry: ToolRegistry
     public var guardDenials: Int64 = 0
+    public var registryMisses: Int64 = 0
 
-    public init(log: SessionLog) {
+    public init(log: SessionLog, registry: ToolRegistry) {
         this.log = log
+        this.registry = registry
     }
 
-    // 固定序：pre-execute → 审批 → guard → execute → tool/result 落盘
-    public func execute(name: String, args: String, needsApproval: Bool, answer: String, allowedByGuard: Bool): ApprovalOutcome {
+    // 固定序：注册表查询 → 审批 → guard → execute → tool/result 落盘
+    public func execute(name: String, args: String, answer: String, allowedByGuard: Bool): ApprovalOutcome {
         log.append("tool/call", "${name} ${args}")
-        if (needsApproval) {
+        if (!registry.has(name)) {
+            // 未登记的工具不走审批：拒绝并计数，审批应答再正确也无效
+            registryMisses += 1
+            log.append("tool/result", "unregistered:${name}")
+            return ApprovalOutcome(false, "unregistered-tool:${name}")
+        }
+        if (registry.requiresApproval(name)) {
             // fail-closed：只有 allowed-once 放行，无应答者/非法应答一律拒
             if (answer != "allowed-once") {
                 log.append("tool/result", "denied:${name}:${answer}")

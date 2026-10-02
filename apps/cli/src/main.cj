@@ -18,8 +18,8 @@ func expect(label: String, got: Bool) {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "projection" && mode != "seed") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "projection" && mode != "seed") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext]")
         return 64
     }
 
@@ -80,15 +80,43 @@ main(args: Array<String>) {
         expect("缺 finish 时保持 interrupted", a4.interrupted)
     }
 
+    if (mode == "ext") {
+        // 注册表是 CLI 与桌面两个入口的唯一真源：这里跑完整生命周期并断言残留为 0
+        let reg = ToolRegistry()
+        let lst = ListenerRegistry()
+        reg.register(ToolSpec("write", "写临时文件", "path content", true))
+        reg.register(ToolSpec("read", "读文件", "path", false))
+        expect("重名注册被拒", !reg.register(ToolSpec("write", "覆盖", "x", false)))
+        let h1 = lst.on("tool/call")
+        let h2 = lst.on("turn/start")
+        let rt = ToolRuntime(SessionLog("ext-session.log"), reg)
+        let called = rt.execute("write", "probe-ext.txt hi", "allowed-once", true)
+        expect("内置工具经审批后执行", called.allowed)
+        removeIfExists("probe-ext.txt", recursive: false)
+        let ghost = rt.execute("no.such.tool", "x", "allowed-once", true)
+        expect("未登记工具被拒", !ghost.allowed && ghost.why == "unregistered-tool:no.such.tool")
+        expect("未登记计数为 1", rt.registryMisses == Int64(1))
+        expect("卸载已注册工具", reg.unregister("write"))
+        expect("重复卸载同一 name 失败", !reg.unregister("write"))
+        reg.unregister("read")
+        expect("注册残留为 0", reg.count() == Int64(0))
+        lst.off(h1)
+        lst.off(h2)
+        expect("监听残留为 0", lst.count() == Int64(0))
+        println("ext\ttools=${reg.count()}\tlisteners=${lst.count()}\tmisses=${rt.registryMisses}")
+    }
+
     if (mode == "all" || mode == "tool") {
         let p = "tool-session.log"
         let log = SessionLog(p)
-        let rt = ToolRuntime(log)
-        let allow = rt.execute("write", "probe-tool.txt hello", true, "allowed-once", true)
+        let reg = ToolRegistry()
+        reg.register(ToolSpec("write", "写临时文件", "path content", true))
+        let rt = ToolRuntime(log, reg)
+        let allow = rt.execute("write", "probe-tool.txt hello", "allowed-once", true)
         expect("allowed-once 放行并执行", allow.allowed && allow.why == "ok:probe-tool.txt")
-        let noAnswer = rt.execute("write", "x.txt y", true, "none", true)
+        let noAnswer = rt.execute("write", "x.txt y", "none", true)
         expect("无应答者 fail-closed 拒绝", !noAnswer.allowed && noAnswer.why == "approval-not-allowed-once")
-        let guard = rt.execute("write", "z.txt w", true, "allowed-once", false)
+        let guard = rt.execute("write", "z.txt w", "allowed-once", false)
         expect("guard 终局拒绝", !guard.allowed && guard.why == "guard-denied")
         expect("审批拒绝未产生副作用", !exists("x.txt"))
         log.flush()

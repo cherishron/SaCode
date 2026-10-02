@@ -156,6 +156,11 @@ main(args: Array<String>) {
     let lease = WriteLease(p)
     let shared = SessionLog(p)
     var leaseHeld = false
+    // 内置仓颉工具在此登记；extension/* 全部走同一个注册表与同一个 ToolRuntime，
+    // 保证 CLI 与桌面看到的工具集与审批语义一致。
+    let extReg = ToolRegistry()
+    extReg.register(ToolSpec("write", "写临时文件", "path content", true))
+    let extRt = ToolRuntime(shared, extReg)
     while (true) {
         var body = ""
         var eof = false
@@ -184,7 +189,7 @@ main(args: Array<String>) {
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -296,6 +301,50 @@ main(args: Array<String>) {
             }
             arr += "]"
             emit(okFrame(idText, "{\"events\":${arr},\"nextCursor\":${next},\"durable\":${fresh.flushedCount},\"more\":${more}}"))
+            continue
+        }
+        if (method == "extension/list") {
+            var arr = "["
+            var idx: Int64 = 0
+            for (n in extReg.list()) {
+                if (idx > 0) {
+                    arr += ","
+                }
+                let flag = if (extReg.requiresApproval(n)) { "true" } else { "false" }
+                arr += "{\"name\":\"${n}\",\"description\":\"${extReg.describe(n)}\",\"needsApproval\":${flag}}"
+                idx += 1
+            }
+            arr += "]"
+            emit(okFrame(idText, "{\"tools\":${arr},\"misses\":${extRt.registryMisses},\"guardDenials\":${extRt.guardDenials}}"))
+            continue
+        }
+        if (method == "extension/call") {
+            // 工具事件与 session/submit 同一持久化档位：租约内内存可见，退出结算时落盘
+            if (!leaseHeld) {
+                if (!lease.acquire()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            // 审批应答由调用方显式给出；未登记/无应答/guard 拒绝都在 core 内 fail-closed
+            let out = extRt.execute(jsonStr(body, "name"), jsonStr(body, "args"), jsonStr(body, "approval"), true)
+            if (!out.allowed) {
+                emit(errFrame(idText, -32010, out.why))
+                continue
+            }
+            emit(okFrame(idText, "{\"result\":\"${out.why}\"}"))
+            continue
+        }
+        if (method == "extension/dispose") {
+            let gone = extReg.unregister(jsonStr(body, "name"))
+            let flag = if (gone) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"disposed\":${flag},\"tools\":${extReg.count()}}"))
             continue
         }
         emit(errFrame(idText, -32601, "method not found"))
