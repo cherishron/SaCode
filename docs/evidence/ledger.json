@@ -1,0 +1,20 @@
+{
+  "snapshot": {"source": "deepseek-ai/deepseek-harness@639ed015397290b3745d163aafe02ffee4aa3f84", "fetched_on": "2026-10-02"},
+  "denominator": {"declared_unique_pages": 8, "completeness": "proven", "via": "S0 冻结与许可取证（非 64 模块逐篇直读；后者记于 docs/plans/dsh-capability-matrix.md，上游已核列全为未勾选）"},
+  "entries": [
+    {"key":"repo-meta","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"commits-master","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness/commits?sha=master&per_page=1","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"docs-dir","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness/contents/docs?ref=master","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"docs-subsystems","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness/contents/docs/subsystems?ref=master","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"license","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness/contents/LICENSE?ref=master","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"third-party-notices","url":"https://api.github.com/repos/deepseek-ai/deepseek-harness/contents/THIRD_PARTY_NOTICES.md?ref=master","channel":"repo-contents","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"site-subsystems-index","url":"https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/","channel":"site","status":200,"transport_error":null,"identity_source":"user-provided","body":"full","list_complete":true,"secondhand":false},
+    {"key":"raw-github-try","url":"https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/LICENSE","channel":"repo-contents","status":null,"transport_error":"curl HTTP 000：连接层失败，整条 raw 通道在本环境不可用（仅作通道记录，不支撑任何断言）","identity_source":"user-provided","body":"empty","list_complete":false,"secondhand":false}
+  ],
+  "claims": [
+    {"id":"C1","polarity":"positive","refs":["docs-subsystems"]},
+    {"id":"C2","polarity":"coverage","refs":["site-subsystems-index","docs-subsystems"]},
+    {"id":"C3","polarity":"positive","refs":["license","repo-meta"]},
+    {"id":"C4","polarity":"positive","refs":["third-party-notices"]}
+  ]
+}

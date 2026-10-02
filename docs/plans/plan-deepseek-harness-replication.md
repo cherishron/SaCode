@@ -307,6 +307,7 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 
 ## 10. 证据与可信度
 
+- **本机环境已实测（2026-10-02）**：`cjc 1.1.3 (cjnative)`，target `x86_64-w64-mingw32`；`cjpm 1.1.3`（装于 `D:\Program Files\HuaWei\Cangjie`）；`node v22.23.2`、`npm 10.9.8`。因此 S0/P0 的仓颉编译前提在本机成立；但 stdx（HTTP/TLS/JSON 等）是否随该版本安装、Windows 上的运行库分发方式仍未验证，属 P0 待测项。
 - 已通读：文档站 `/reference/**`（19）、会话与持久化（15）、执行与工具（19）、平台与配置（5）、前端与指南（22）、插件开发与 Cordis 教程（21），合计约 101 页；仓库侧 `docs/subsystems/*.md` 16 页 + `docs/config-catalog.md`。
 - **自行复核过的二手结论**：agent-lifecycle 页的持久/瞬时事件区分与 compaction 四步顺序，已与原文逐条对上；「文档站有 /zh 双语」经实测**推翻**（`/zh/` 与 `/zh/reference/...` 均 404）。
 - **文档自身未覆盖 / 自相矛盾，复刻需自行裁决**：
