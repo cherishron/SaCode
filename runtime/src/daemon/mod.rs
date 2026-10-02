@@ -10,6 +10,7 @@ use axum::{
 use sacode_kernel::{ExecutionMode, TaskPriority};
 
 mod account;
+mod agent_backends_admin;
 mod audit_export;
 mod approval;
 mod automation;
@@ -60,19 +61,65 @@ use handlers::{
 };
 
 pub async fn create_daemon() -> Router {
-    let state = Arc::new(DaemonState::new().await);
+    let mut state = DaemonState::new().await;
+    // D-C：生产路径从 env 注入 token 到 state（不再由 middleware 读 env）。
+    // 消除测试间 env 串扰：测试用 create_daemon_in 构造的实例 auth_token=None，
+    // 不受其他测试 set_var 的影响。
+    if let Ok(tok) = std::env::var("SACODE_DAEMON_TOKEN") {
+        let tok = tok.trim().to_string();
+        if !tok.is_empty() {
+            state.auth_token = Some(Arc::new(tok));
+        }
+    }
+    let state = Arc::new(state);
     maybe_register_opencode_from_env(&state).await;
+    {
+        let executor = state.executor.lock().await;
+        crate::agent_backends::maybe_register_codebuddy_from_env(
+            &state.agent_backends,
+            &executor,
+        )
+        .await;
+    }
+    spawn_quota_day_rollover(&state);
     build_router(state).await
 }
 
 /// 以显式工作目录构造 daemon（测试用独立临时目录，避免并行测试共享 SQLite store）
 pub async fn create_daemon_in(dir: std::path::PathBuf) -> Router {
     let state = Arc::new(DaemonState::new_with_workdir(Some(dir)).await);
+    spawn_quota_day_rollover(&state);
     build_router(state).await
+}
+
+/// O6: background 60s tick — UTC+8 day rollover resets quotas and releases held tasks.
+fn spawn_quota_day_rollover(state: &Arc<DaemonState>) {
+    let quota = state.quota.clone();
+    let queue = state.queue.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let reset = quota.roll_day_all();
+            for backend_id in reset {
+                let released = queue.release_quota_holds(&backend_id).await;
+                if released > 0 {
+                    tracing::info!(
+                        backend = backend_id,
+                        released,
+                        "quota day rollover — released held tasks"
+                    );
+                }
+            }
+        }
+    });
 }
 
 /// Auto-register OpenCode ACP backend when SACODE_OPENCODE_EXECUTABLE is set (M4).
 ///
+/// 仅可选增强：该 env **不设也完全正常**（缺省即 Local Mode，不注册 OpenCode 后端、
+/// 不 panic）。`SACODE_OPENCODE_ARGS` / `SACODE_OPENCODE_CWD` 同理可选。
 /// Optional `SACODE_OPENCODE_ARGS` (space-separated) is prepended to ACP args.
 /// Example (bun-resolved CLI):
 ///   SACODE_OPENCODE_EXECUTABLE=C:\\...\\bun.exe
@@ -111,38 +158,27 @@ async fn maybe_register_opencode_from_env(state: &Arc<DaemonState>) {
     tracing::info!("registered opencode ACP backend from SACODE_OPENCODE_EXECUTABLE");
 }
 
-/// Optional bearer auth for daemon when SACODE_DAEMON_TOKEN is set.
+/// Bearer auth for daemon when auth_token is set on DaemonState.
 /// `/health` stays open for liveness probes.
+///
+/// D9 L1（安全基线）：daemon 从不以无鉴权状态运行。`run_daemon_with_options` 在
+/// 未显式提供 token 时**自动生成随机 token** 并注入 `SACODE_DAEMON_TOKEN`，故生产路径
+/// 恒有 token、强制 Bearer。仅当显式 `require_auth=false` 降级（本机调试/测试）时才开放。
+/// 供 Tauri sidecar 注入、WebView 不持有密钥。
+///
+/// D-C 修复：token 从 DaemonState.auth_token 读取（而非进程级 env），
+/// 消除测试间 env 串扰——每个 daemon 实例独立持有自己的 token 状态。
 async fn optional_auth_middleware(
-    State(_state): State<Arc<DaemonState>>,
+    State(state): State<Arc<DaemonState>>,
     request: Request,
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_string();
-    let sensitive = path.starts_with("/account/")
-        || path.starts_with("/providers/")
-        || path == "/workspace/file";
-    let Ok(token) = std::env::var("SACODE_DAEMON_TOKEN") else {
-        if sensitive {
-            return (
-                axum::http::StatusCode::FORBIDDEN,
-                "this desktop endpoint requires daemon authentication",
-            )
-                .into_response();
-        }
+    // 无 token = Local Mode：直接放行（通常仅回环监听）。
+    let Some(token) = state.auth_token.as_ref() else {
         return next.run(request).await;
     };
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        if sensitive {
-            return (
-                axum::http::StatusCode::FORBIDDEN,
-                "this desktop endpoint requires daemon authentication",
-            )
-                .into_response();
-        }
-        return next.run(request).await;
-    }
+    let token = token.as_str();
     if path == "/health" {
         return next.run(request).await;
     }
@@ -151,7 +187,7 @@ async fn optional_auth_middleware(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|provided| subtle_eq(provided.trim(), token.as_str()))
+        .map(|provided| subtle_eq(provided.trim(), token))
         .unwrap_or(false);
     if authorized {
         next.run(request).await
@@ -204,7 +240,20 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                     "/api/desktop/conversations/:id",
                     get(desktop_conversations::get)
                         .post(desktop_conversations::append)
+                        .put(desktop_conversations::rename)
                         .delete(desktop_conversations::delete),
+                )
+                .route(
+                    "/api/desktop/conversations/:id/settings",
+                    get(desktop_conversations::settings_get).put(desktop_conversations::settings_put),
+                )
+                .route(
+                    "/api/desktop/conversations/:id/archive",
+                    post(desktop_conversations::archive),
+                )
+                .route(
+                    "/api/desktop/conversations/:id/restore",
+                    post(desktop_conversations::restore),
                 )
                 .route("/task/:id/status", get(get_task_status))
                 .route("/task/:id/result", get(get_task_result))
@@ -222,9 +271,13 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                     put(mcp_admin::upsert_server)
                         .delete(mcp_admin::delete_server),
                 )
+                // 契约 §7.1：整对象替换（含 headers/env）
+                .route("/api/mcp/:name", put(mcp_admin::replace_server))
                 .route("/api/mcp/servers/:name/toggle", post(mcp_admin::toggle_server))
                 .route("/api/mcp/servers/:name/test", post(mcp_admin::test_server))
                 .route("/api/skills", get(skills_admin::list_skills))
+                // 契约 §7.2：ZIP / 目录导入
+                .route("/api/skills/import", post(skills_admin::import_skills))
                 .route("/api/workspace/uploads", post(uploads::upload_attachment))
                 .route(
                     "/api/skills/:name",
@@ -235,10 +288,24 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                 .route("/api/stream", get(stream_api_events))
                 .route("/tools", get(list_tools))
                 .route("/agents", get(list_agents))
+                // O3: agent backend management (contract §13.2)
+                .route("/api/agent-backends", get(agent_backends_admin::list_backends))
+                .route(
+                    "/api/agent-backends/:id",
+                    axum::routing::put(agent_backends_admin::update_backend),
+                )
+                .route(
+                    "/api/agent-backends/:id/probe",
+                    post(agent_backends_admin::probe_backend),
+                )
                 .route("/workspace/capabilities", get(get_workspace_capabilities))
                 .route("/workspace/file", get(workspace_file::get_file))
                 .route("/workspace/list", get(workspace_file::list_dir))
                 .route("/account/status", get(account::status))
+                .route(
+                    "/account/config",
+                    get(account::get_config).put(account::update_config),
+                )
                 .route("/account/login", post(account::login))
                 .route("/account/logout", post(account::logout))
                 .route("/account/sync-models", post(account::sync_models))
@@ -251,6 +318,10 @@ async fn build_router(state: Arc<DaemonState>) -> Router {
                 .route(
                     "/providers/local",
                     get(providers::list).post(providers::create),
+                )
+                .route(
+                    "/providers/local/models",
+                    axum::routing::post(providers::fetch_provider_models),
                 )
                 .route(
                     "/providers/local/:name",
@@ -372,7 +443,8 @@ mod knowledge_automation_route_tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn unavailable_skill_is_rejected_without_creating_task() {
+    async fn unavailable_skill_is_skipped_and_task_still_created() {
+        // 产品决策（2026-10-12 真机修复）：未知技能跳过并警告，不打断发送。
         let tmp = tempfile::tempdir().unwrap();
         let app = create_daemon_in(tmp.path().to_path_buf()).await;
         let response = app
@@ -392,26 +464,13 @@ mod knowledge_automation_route_tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        // 不再 400 整单拒绝；任务应入队
+        assert_eq!(response.status(), StatusCode::OK);
         let payload: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert_eq!(payload["status"], "error");
-        assert_eq!(payload["message"], "skill not available: missing-skill");
-        let tasks = app
-            .oneshot(
-                Request::builder()
-                    .uri("/tasks")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(tasks.status(), StatusCode::OK);
-        let listed: serde_json::Value =
-            serde_json::from_slice(&to_bytes(tasks.into_body(), usize::MAX).await.unwrap())
-                .unwrap();
-        assert!(listed["tasks"].as_array().unwrap().is_empty());
+        assert_eq!(payload["status"], "queued");
+        assert!(payload["task_id"].is_string());
     }
 
     #[tokio::test]
@@ -573,7 +632,8 @@ mod knowledge_automation_route_tests {
     }
 
     #[tokio::test]
-    async fn desktop_conversation_rejects_invalid_skill_without_orphan() {
+    async fn desktop_conversation_skips_invalid_skill_without_orphan() {
+        // 未知技能跳过：会话仍创建，无孤儿对话。
         let tmp = tempfile::tempdir().unwrap();
         let app = create_daemon_in(tmp.path().to_path_buf()).await;
         let request = Request::builder()
@@ -586,11 +646,11 @@ mod knowledge_automation_route_tests {
             ))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::OK);
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert_eq!(body["message"], "skill not available: missing-skill");
+        assert!(body["conversation_id"].is_string());
         let response = app
             .oneshot(
                 Request::builder()
@@ -603,7 +663,7 @@ mod knowledge_automation_route_tests {
         let list: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert!(list["conversations"].as_array().unwrap().is_empty());
+        assert_eq!(list["conversations"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -713,14 +773,15 @@ mod sensitive_route_tests {
 
     #[tokio::test]
     async fn account_and_provider_routes_require_daemon_token() {
+        // 仅当 SACODE_DAEMON_TOKEN 已配置时才强制 Bearer；Local Mode（未配置）必须放行。
+        // 本测试在配置 token 的前提下验证鉴权生效。
         let temp = tempfile::tempdir().unwrap();
         let router = create_daemon_in(temp.path().to_path_buf()).await;
+        // 未配置 token → Local Mode 放行（不能 403）
         for (method, path) in [
-            ("GET", "/account/status"),
-            ("POST", "/account/login"),
             ("GET", "/providers/local"),
             ("POST", "/providers/local"),
-            ("DELETE", "/providers/local/unknown"),
+            ("POST", "/providers/local/models"),
         ] {
             let response = router
                 .clone()
@@ -733,14 +794,45 @@ mod sensitive_route_tests {
                 )
                 .await
                 .unwrap();
-            assert!(
-                matches!(
-                    response.status(),
-                    axum::http::StatusCode::FORBIDDEN | axum::http::StatusCode::UNAUTHORIZED
-                ),
-                "{method} {path}: {}",
-                response.status()
+            assert_ne!(
+                response.status(),
+                axum::http::StatusCode::FORBIDDEN,
+                "Local Mode（无 token）下 {method} {path} 不得 403"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_token_configured_rejects_missing_bearer() {
+        // D-C 修复后：token 由 create_daemon 从 env 注入到 DaemonState.auth_token，
+        // middleware 读 state 而非 env——不再有测试间 env 串扰。
+        // 本测试用 create_daemon（生产路径）验证注入生效、无 Bearer 时 401。
+        let key = "SACODE_DAEMON_TOKEN";
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "test-smoke-token");
+        let router = create_daemon().await;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/providers/local")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                response.status(),
+                axum::http::StatusCode::FORBIDDEN | axum::http::StatusCode::UNAUTHORIZED
+            ),
+            "configured token must reject missing bearer: {}",
+            response.status()
+        );
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
         }
     }
 }

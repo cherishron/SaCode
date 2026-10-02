@@ -166,6 +166,35 @@ impl SandboxBackend for LocalSandboxBackend {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
+        // 孤儿进程兜底（架构边界评估缺口-2）：std::process::Command 无 kill_on_drop，
+        // 用 Option<Child> guard 实现同一语义（零 unsafe）——agent 任务 panic/drop
+        // 时子进程一并终止。into_inner 后 guard 变空壳，Drop 为 no-op，不 double-kill。
+        struct KillOnDrop(Option<std::process::Child>);
+        impl KillOnDrop {
+            fn into_inner(&mut self) -> Option<std::process::Child> {
+                self.0.take()
+            }
+        }
+        impl std::ops::Deref for KillOnDrop {
+            type Target = std::process::Child;
+            fn deref(&self) -> &Self::Target {
+                self.0.as_ref().expect("KillOnDrop already taken")
+            }
+        }
+        impl std::ops::DerefMut for KillOnDrop {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                self.0.as_mut().expect("KillOnDrop already taken")
+            }
+        }
+        impl Drop for KillOnDrop {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
         if let Some(cwd) = &command.cwd {
             child.current_dir(cwd);
         } else {
@@ -174,7 +203,7 @@ impl SandboxBackend for LocalSandboxBackend {
 
         configure_process_isolation(&mut child);
 
-        let mut child = child.spawn()?;
+        let mut child = KillOnDrop(Some(child.spawn()?));
 
         let pid = child.id();
         info!(
@@ -204,6 +233,10 @@ impl SandboxBackend for LocalSandboxBackend {
 
         match status {
             Some(exit_status) => {
+                // 进程已退出：取出 Child 结束 guard 生命周期，收集输出。
+                let child = child
+                    .into_inner()
+                    .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
                 let output = child.wait_with_output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -243,6 +276,9 @@ impl SandboxBackend for LocalSandboxBackend {
                 terminate_process_tree(&mut child)?;
 
                 // 尝试收集已产生的输出（超时前进程可能已有部分输出）
+                let mut child = child
+                    .into_inner()
+                    .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
                 let output = match child.try_wait() {
                     Ok(Some(_)) => match child.wait_with_output() {
                         Ok(out) => {

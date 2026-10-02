@@ -59,6 +59,15 @@ pub struct TaskRequest {
     pub skill: Option<String>,
     #[serde(default)]
     pub context_paths: Vec<String>,
+    /// 契约 §1.2：思考深度；`null`/缺省 = 跟随 provider 默认
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// 契约 §1.2：技能多选；非空时优先于 `skill`，空数组 = 不注入技能
+    #[serde(default)]
+    pub skills: Vec<String>,
+    /// 契约 §1.2：幂等去重（草稿重发）；同会话内重发直接回既有 task
+    #[serde(default)]
+    pub client_msg_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,10 +396,16 @@ pub struct DaemonState {
     pub metrics: Arc<DaemonMetrics>,
     /// Agent Backend registry (M0/M2). Default registers native `sacode` only.
     pub agent_backends: Arc<BackendRegistry>,
+    /// O5/O6: per-backend quota state machine.
+    pub quota: Arc<crate::agent_backends::QuotaStore>,
     /// 设计系统提取任务存储：extraction_id → ExtractionJob
     pub extraction_jobs: tokio::sync::RwLock<HashMap<String, crate::daemon::design::ExtractionJob>>,
     /// 设计会话存储：session_id → DesignSession
     pub design_sessions: tokio::sync::RwLock<HashMap<String, crate::daemon::design::DesignSession>>,
+    /// 鉴权 token（D-C 修复：从进程级 env 改为 state 持有，消除测试间 env 竞态）。
+    /// 生产路径由 `create_daemon` 从 `SACODE_DAEMON_TOKEN` 读取并注入；
+    /// 测试路径 `create_daemon_in` 默认 None（Local Mode 放行）。
+    pub auth_token: Option<Arc<String>>,
 }
 
 /// 审批回传结果
@@ -610,7 +625,7 @@ impl DaemonState {
         // 路径分发：
         // - cfg(test)：不设 workdir，走 execute_test_placeholder（避免发起真实 LLM 调用）
         // - 生产：强制设 workdir，current_dir 失败则 panic（启动期致命错误，不应继续）
-        let executor = if cfg!(test) {
+        let mut executor = if cfg!(test) {
             TaskExecutor::new(queue.clone(), tools.clone())
         } else {
             let dir = base_dir
@@ -622,6 +637,15 @@ impl DaemonState {
             TaskExecutor::new(queue.clone(), tools.clone()).with_workdir(dir)
         };
         let executor_event_bus = executor.event_bus();
+
+        // O5: share quota store between DaemonState and executor
+        let quota_store = Arc::new(crate::agent_backends::QuotaStore::new(
+            base_dir
+                .clone()
+                .or_else(|| std::env::current_dir().ok())
+                .map(|dir| dir.join(".sacode").join("agent_backends.json")),
+        ));
+        executor.set_quota_store(quota_store.clone());
 
         let retry_handler = RetryHandler::new(queue.clone(), executor_event_bus);
 
@@ -664,8 +688,12 @@ impl DaemonState {
             pending_approvals: Mutex::new(HashMap::new()),
             metrics: Arc::new(DaemonMetrics::default()),
             agent_backends: Arc::new(BackendRegistry::new()),
+            quota: quota_store,
             extraction_jobs: tokio::sync::RwLock::new(HashMap::new()),
             design_sessions: tokio::sync::RwLock::new(HashMap::new()),
+            // D-C：默认无 token（Local Mode 放行）。
+            // 生产路径由 create_daemon 从 env 注入；测试路径保持 None 避免串扰。
+            auth_token: None,
         }
     }
 

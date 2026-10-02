@@ -198,6 +198,7 @@ fn test_mcp_store_prefers_project_over_user() {
                         command: None,
                         args: None,
                         env: None,
+                        headers: None,
                         enabled: true,
                     },
                 )]),
@@ -217,6 +218,7 @@ fn test_mcp_store_prefers_project_over_user() {
                         command: None,
                         args: None,
                         env: None,
+                        headers: None,
                         enabled: false,
                     },
                 )]),
@@ -252,6 +254,7 @@ fn test_register_enabled_mcp_tools_sync_keeps_registry_stable_without_servers() 
                         command: None,
                         args: None,
                         env: None,
+                        headers: None,
                         enabled: true,
                     },
                 )]
