@@ -91,6 +91,10 @@ public class ExtProcess {
     let writeLock = Mutex()
     let idGen = AtomicInt64(0)
     let recv = AtomicInt64(0)
+    // 在途收帧线程：主循环把「等这一帧」交出去，自己回去读 stdin。
+    // 列表只由主线程增删，工作线程只减计数，所以计数用原子、列表不加锁。
+    var waiters = ArrayList<Future<Int64>>()
+    let waiterLive = AtomicInt64(0)
     var proc: Option<SubProcess> = None
     var reader: Option<Future<Int64>> = None
     var running = false
@@ -198,25 +202,49 @@ public class ExtProcess {
     // 按 id 配对，允许多条请求同时在途；超时只回 None，绝不编一个终态出来。
     // 收手之后这条 id 不再登记：它后来的帧只能记成迟到账，不会冒充别的请求的应答。
     public func request(id: Int64, method: String, params: String, timeoutMs!: Int64 = 4000): Option<String> {
-        if (!alive()) {
+        if (!sendRequest(id, method, params)) {
             return None
+        }
+        return awaitReply(id, timeoutMs)
+    }
+
+    // 调用方自带的 id 发生冲突时不能静默复用：两条在途同 id 会让应答配错人。
+    public func nextRequestId(): Int64 {
+        return nextId()
+    }
+
+    // 只登记 + 写出，不等应答：转调方要能在「调用还在途」时继续读自己的 stdin，
+    // 否则桌面的 stop 追不上在途调用，取消就无从联动。
+    public func sendRequest(id: Int64, method: String, params: String): Bool {
+        if (!alive()) {
+            return false
         }
         // 先登记再写：应答可能比这次 write 返回得还快
         table.track(id)
         if (let Some(p) <- proc) {
             let frame = "{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"${method}\",\"params\":${params}}"
             writeLock.lock()
+            var failed = false
             try {
                 p.stdInPipe.write((frame + "\n").toArray())
                 p.stdInPipe.flush()
             } catch (e: Exception) {
                 why = "write-failed: ${e}"
+                failed = true
             }
             writeLock.unlock()
+            if (failed) {
+                table.untrack(id)
+                return false
+            }
+            return true
         } else {
             table.untrack(id)
-            return None
+            return false
         }
+    }
+
+    public func awaitReply(id: Int64, timeoutMs: Int64): Option<String> {
         let out = table.take(id, timeoutMs)
         table.untrack(id)
         return out
@@ -237,6 +265,63 @@ public class ExtProcess {
     public func call(name: String, text: String, timeoutMs!: Int64 = 4000): Option<String> {
         let params = "{\"name\":\"${jsonEscapeText(name)}\",\"args\":{\"text\":\"${jsonEscapeText(text)}\"}}"
         return request(nextId(), "extension/call", params, timeoutMs: timeoutMs)
+    }
+
+    // 带 callId 的调用：callId 是「取消哪一笔」的键，配对仍走 JSON-RPC 的 id。
+    // 超时给得宽松些也没关系——取消是另一条独立请求，不占这条的等待窗口。
+    public func callCancelable(callId: Int64, name: String, text: String, timeoutMs!: Int64 = 4000): Option<String> {
+        let params = "{\"name\":\"${jsonEscapeText(name)}\",\"args\":{\"text\":\"${jsonEscapeText(text)}\"},\"callId\":${callId}}"
+        return request(nextId(), "extension/call", params, timeoutMs: timeoutMs)
+    }
+
+    public func cancelCall(callId: Int64, timeoutMs!: Int64 = 1500): Option<String> {
+        return request(nextId(), "extension/cancel", "{\"callId\":${callId}}", timeoutMs: timeoutMs)
+    }
+
+    // 发一笔可取消的调用，并把「等这一帧」交给独立线程：调用方的主循环因此不被转调挡住，
+    // 桌面的 stop 才追得上在途调用。回 false = 这帧根本没写出去（子进程已不在）。
+    public func callAsync(callId: Int64, name: String, text: String, sink: ThreadSafeDeliveryQueue, timeoutMs!: Int64 = 8000): Bool {
+        let params = "{\"name\":\"${jsonEscapeText(name)}\",\"args\":{\"text\":\"${jsonEscapeText(text)}\"},\"callId\":${callId}}"
+        let id = nextId()
+        if (!sendRequest(id, "extension/call", params)) {
+            return false
+        }
+        waiterLive.fetchAdd(1)
+        waiters.add(spawn { => this.settleCall(id, callId, sink, timeoutMs) })
+        return true
+    }
+
+    // 收帧线程只做一件事：把结果塞进线程安全的 sink。它不 emit，也不碰登记表。
+    private func settleCall(id: Int64, callId: Int64, sink: ThreadSafeDeliveryQueue, timeoutMs: Int64): Int64 {
+        var payload = "{\"callId\":${callId},\"frame\":null,\"noReply\":true}"
+        if (let Some(f) <- awaitReply(id, timeoutMs)) {
+            payload = "{\"callId\":${callId},\"frame\":${f}}"
+        }
+        let ok = sink.offer(payload)
+        waiterLive.fetchAdd(-1)
+        if (ok) {
+            return Int64(1)
+        }
+        return Int64(0)
+    }
+
+    // 还有几笔调用没拿到帧（写出去但没收束）
+    public func inflightWaiters(): Int64 {
+        return waiterLive.load()
+    }
+
+    // 有界地收束收帧线程，返回真拿到帧的笔数；超时不算成功，只把原因记下来。
+    public func joinWaiters(timeoutMs: Int64): Int64 {
+        var got = Int64(0)
+        for (f in waiters) {
+            try {
+                got += f.get(timeoutMs * Duration.millisecond)
+            } catch (e: Exception) {
+                why = "waiter-not-settled: ${e}"
+            }
+        }
+        waiters = ArrayList<Future<Int64>>()
+        return got
     }
 
     public func dispose(name: String): Option<String> {

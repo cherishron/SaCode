@@ -255,20 +255,20 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 
 结果用 PASS/FAIL/BLOCKED；失败调整对应设计，阻塞列前提，不能删动态扩展或 CLI 来宣布通过。测试命令、版本与容量/时间阈值在 P0 实施计划冻结。模型调用、依赖安装与打包依实际权限执行，签名和实际发布另行授权。
 
-#### 6.1.1 P0 逐项结果登记（2026-10-02 实测，HEAD `74ef886`）
+#### 6.1.1 P0 逐项结果登记（2026-10-03 实测，HEAD `8c79275` 之后的本批）
 
 | 项 | 结论 | 证据与缺口 |
 | --- | --- | --- |
 | 构建 | PASS | `cjc/cjpm 1.1.3` + stdx 1.1.3.1（动态链接 5 包）；host/cli `cjpm build success`；`scripts/pack-host.mjs` 出 89 文件自包含目录，运行不拼 PATH |
-| 会话与回放 | PASS | `core` `cjpm test` 13/13（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、装配终态、尾帧截断三例）；durability 屏障与分页由 bridge 9/9 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
+| 会话与回放 | PASS | `core` `cjpm test` **71/71**（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、装配终态、尾帧截断三例、会话日志锁下的并发读快照）；durability 屏障与分页由 bridge 28/28 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
 | 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
-| 扩展生命周期 | PARTIAL | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj`（仓颉核心直接驱动 JS 宿主子进程）已落地：core `cjpm test` **50/50**（新增 8 条 `ExtProcess`：握手帧必须来自子进程真实应答、`load→list→call→dispose` 全生命周期走真管道、未知方法回 `-32601`、优雅退出 `exit=0` 且 `forcedExit=false`、子进程收束后不得再有应答、永不应答的调用超时返回 `None` 而不编终态、强杀后读线程照样收束、命令不存在时 fail-closed 不起线程）；`extjs` `node --test` **11/11**（新增 `host/shutdown`：先应答、再结算在途调用 `-32002`、最后干净退出 0）；CLI `dsh extjs` **8 项断言 ALL PASS**，npm 平台包（49 文件）剥离 PATH 后跑同一模式 rc=0；桌面入口 `bridge.test.mjs` **20/20**（新增 4 条：`extension/host/*` 经 core 子进程走真管道、未 spawn 与无应答分开失败、重复 spawn 被拒且原宿主不丢、父宿主退出后 JS 子进程不得存活）。**缺口**：并发在途已按 id 配对收口（`core/src/reply.cj` `ReplyTable`，core `cjpm test` **56/56**，其中 3 条是直接对登记表下针的白盒用例）；仍欠 turn 取消联动到在途 `extension/call`，以及 `apps/host` 读 stdin 是单线程串行——桌面同一时刻只有一条转调在途，并发能力目前只在 core 层成立 |
-| 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；**缺口**：进程崩溃后的残留租约无接管路径，且 `WriteLease` 存在 TOCTOU（std.fs 无 O_EXCL，待 CFFI/原子 rename） |
-| 取消与背压 | PARTIAL | 桌面 stop 与慢消费者两条已实测：`TurnToken` 协作式取消跑在 `spawn` 出的仓颉线程上，`ThreadSafeDeliveryQueue`（Mutex+Condition）投不满只报 `overflow`、`dropped` 恒 0；已独立发布的 `detached()` 令牌不被父取消连带杀死（`futureCancelIsCooperativeNotForced` 钉住「`Future.cancel()` 只发请求」）。计数：core 42/42、CLI `dsh cancel` 9 项断言裸 PATH rc=0、bridge 16/16。**剩余**：Ctrl+C/SIGINT 仍未接（std 无信号 API，需 CFFI `sigaction`），流式期间日志的并发读尚未收进锁 |
-| UI/Next SDK | FAIL | `renderer/` 仍是占位页，Vue 3/TinyVue/TinyRobot/Next SDK 未接入 |
+| 扩展生命周期 | PASS | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj`（仓颉核心直接驱动 JS 宿主子进程）已落地：core `cjpm test` **71/71**（13 条 `ExtProcess`：握手帧必须来自子进程真实应答、`load→list→call→dispose` 全生命周期走真管道、未知方法回 `-32601`、优雅退出 `exit=0` 且 `forcedExit=false`、子进程收束后不得再有应答、永不应答的调用超时返回 `None` 而不编终态、强杀后读线程照样收束、命令不存在时 fail-closed 不起线程）；`extjs` `node --test` **14/14**（新增按 callId 取消只结算一帧、迟到的 handler 结果不补第二帧、重复 callId 回 `-32022`、取消不存在或已结算的 callId 回 `false`）；CLI `dsh extjs` **12 项断言 ALL PASS**；桌面入口 `bridge.test.mjs` **28/28**（新增 8 条：`extension/host/*` 经 core 子进程走真管道、未 spawn 与无应答分开失败、重复 spawn 被拒且原宿主不丢、父宿主退出后 JS 子进程不得存活、`extension/host/call` 立刻回执且转调期间读侧不排队、`extension/host/cancel` 只按 callId 结算一帧、`turn/cancel` 联动取消在途调用、宿主退出前主动取消并交 `host/settled` 账）。并发在途已按 id 配对收口（`core/src/reply.cj` `ReplyTable`）；**转调不再占住 Host 的 stdin 读侧**（`extension/host/call` 发出即回执，收帧交给独立线程 + `ThreadSafeDeliveryQueue`），turn 取消联动在途 `extension/call` 已实测。反证：把 `ExtHost.cancel()` 改成「不真正结算、直接返回 true」→ extjs 2 条与 bridge 2 条同时转红；去掉 EOF 的主动取消 → `extensionCancelled` 由 1 变 0，那条转红。**剩余**：在途调用与 turn 的归属仍建立在「同一时刻只有一个 turn」上，callId 集合未按 turn 粒度隔离 |
+| 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；`WriteLease` 的 TOCTOU 已用 `File.createTemp` + `rename(overwrite:false)` 原子获取收口，`release()` 只认自己那份 owner 凭据（非持有者释放不得删掉别人的租约）。**缺口**：进程崩溃后留下的租约无自动接管路径（Windows 上取自身 pid 与判活需 CFFI） |
+| 取消与背压 | PARTIAL | 桌面 stop 与慢消费者两条已实测：`TurnToken` 协作式取消跑在 `spawn` 出的仓颉线程上，`ThreadSafeDeliveryQueue`（Mutex+Condition）投不满只报 `overflow`、`dropped` 恒 0；已独立发布的 `detached()` 令牌不被父取消连带杀死（`futureCancelIsCooperativeNotForced` 钉住「`Future.cancel()` 只发请求」）。计数：core **71/71**、CLI `dsh cancel` 9 项断言裸 PATH rc=0、bridge **28/28**（含 turn 在途期间读侧照常应答、`extension/host/call` 在 turn 在途时进得去）。**剩余**：Ctrl+C/SIGINT 仍未接（std 无信号 API，需 CFFI `sigaction`） |
+| UI/Next SDK | PARTIAL | 最小投影面已在真窗口验收：`electron . --ui-smoke` 8 条断言全 `UI OK`（初始投影、渲染层拿不到 `require`、点击经 IPC 落到核心会话日志、`durable==events`、投影增量 1）。**缺口**：Vue 3/TinyVue/TinyRobot/Next SDK 与设计系统未接入，流式与审批的界面呈现仍是占位页 |
 | npm CLI 本地包 | PASS | `npm pack` → 隔离目录 `npm i -g` 运行；argv/cwd/stdio/退出码正确；主包不含 Electron；无编译器依赖 |
-| 桌面本地包 | BLOCKED | Electron 二进制在当前网络不可达（详见 `docs/evidence/desktop-electron-blocker.md`）；解锁命令 `npx electron . --smoke` 期望 `SMOKE PASS` 且退出无孤儿 `dsh-host` |
+| 桌面本地包 | PARTIAL | Electron 官方二进制已到位（`registry.npmjs.org` 与 `github.com` 双双可达，按决策 9 只用官方源）；`electron-builder --win portable nsis` 出便携包与安装向导，宿主经 `extraResources` 落在 `process.resourcesPath/host/bin`（`paths.cjs` 在 packaged 分支拒绝回改进 asar）；打包后应用 `--smoke` 与 `--ui-smoke` 均 PASS；产物实测 `NotSigned`。**缺口**：签名与实际发布另行授权 |
 
 ### 6.2 长期阶段
 
@@ -320,6 +320,7 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 15 | 并发在途的配对规则 | 子进程应答必须按 `"id"` 认领，`ReplyTable` 三条硬约束：表满回压不丢帧（丢帧计数结构性为 0）、等待方收手（`untrack`）之后到达的帧记**迟到账**、从来没人登记过的帧（如 `id: null` 的 parse-error）记**无主账**——两类都不许被任何在途请求认领。写侧整帧互斥（并发写 stdin 会交错出坏帧）。方法层面的一条实测教训：把配对改成「按到达顺序」的变异探针只让 3 条白盒登记表用例变红，子进程集成用例照样全绿——时序类黑盒用例钉不住这条不变量，据此把异步入账的断言改成有界轮询 |
 | 16 | 租约的原子获取与归属凭据 | 用 `File.createTemp` 独占落盘 + `rename(..., overwrite:false)`（目标存在即抛）做原子获取，取代 `exists`+`writeTo` 的 TOCTOU；盘上写归属凭据而非裸标志，`release()` 只认自己那份，抢写失败方与「归属已易主的原持有者」都删不掉别人的租约（fail-closed）。崩溃持有者的自动接管**推迟到有自身 pid 与判活 API 时**：Windows 下 std 无此能力（`std.process` 只有 `findProcess(pid)`，`std.posix` 非跨平台），需 CFFI 绑 `GetCurrentProcessId`+`OpenProcess`；在那之前对外行为是明确拒绝，绝不悄悄抢走 |
 | 17 | 会话日志的并发口径 | 跨进程仍然只认写租约（一个写者）+ `flush` 才跨进程可见；但**同进程内** turn 线程写、主线程读投影是常态，所以 `SessionLog` 的每个访问过 `Mutex`，生产路径只准用守护访问器（`eventCount/durableCount/pendingCount/snapshotEvents/isTruncatedTail`），不允许拿着内部列表边遍历边拼帧。Host 的 `-32001 turn-in-flight` 因此收窄成只拒**写**：桌面可以边流式边读状态，`pending` 如实报「内存可见但未落盘」。锁的收益只到「读写不撕裂」——摘锁变异体下 `concurrentAppenders` 测不出来（本运行时纯 CPU 循环无抢占点，写者不真交错），并发写安全仍需更强的证据 |
+| 18 | 在途工具调用的取消联动 | 转调不得占住 Host 的 stdin 读侧：`extension/host/call` **发出即回执**（`ExtProcess.sendRequest` 只登记 + 写出，收帧交给独立线程经 `ThreadSafeDeliveryQueue` 交回），结果由 `extension/host/poll` 按 callId 取。取消的键是 `callId`，配对的键仍是 JSON-RPC `id`——两套 id 不混用，否则取消无法指名「哪一次调用」。`turn/cancel` 必须顺带取消它这一 turn 发起的在途调用；宿主退出前**由本端主动取消**、再收帧线程、最后才关子进程：顺序反了终态会混成子进程 shutdown 兜底的 `-32002 host-exiting`，分不出「本端取消」与「宿主没了」（去掉主动取消的变异体实测把 `extensionCancelled` 从 1 打到 0，用例转红） |
 
 ## 9. 历史参照与文档取代关系
 

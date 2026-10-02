@@ -4,7 +4,7 @@ const { ExtHost } = require("./host.cjs");
 
 const host = new ExtHost();
 const out = process.stdout;
-const CAPABILITIES = ["extension/load", "extension/list", "extension/call", "extension/dispose", "host/shutdown"];
+const CAPABILITIES = ["extension/load", "extension/list", "extension/call", "extension/cancel", "extension/dispose", "host/shutdown"];
 
 function send(obj) {
   out.write(JSON.stringify(obj) + "\n");
@@ -29,13 +29,20 @@ async function dispatch(req) {
       return send({ jsonrpc: "2.0", id, result: { ok, names: host.list() } });
     }
     case "extension/call": {
+      const callId = req.params.callId;
       try {
-        const result = await host.call(req.params.name, req.params.args || {});
+        const result = await host.call(req.params.name, req.params.args || {}, callId);
+        // 应答仍只按 RPC id 配对：callId 是「取消哪一笔」的键，不是第二套相关 id
         return send({ jsonrpc: "2.0", id, result });
       } catch (e) {
+        if (/duplicate-callId/.test(e.message)) return replyError(id, -32022, e.message);
+        if (/cancelled/.test(e.message)) return replyError(id, -32021, e.message);
         return replyError(id, /host-exiting/.test(e.message) ? -32002 : -32010, e.message);
       }
     }
+    case "extension/cancel":
+      // 只回「有没有真结算到一笔在途调用」，不替调用方编结果；结果帧仍由那条 call 写出
+      return send({ jsonrpc: "2.0", id, result: { cancelled: host.cancel(req.params.callId) } });
     case "extension/dispose":
       return send({ jsonrpc: "2.0", id, result: { disposed: host.dispose(req.params.name) } });
     case "host/shutdown":

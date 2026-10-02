@@ -7,6 +7,8 @@ class ExtHost {
   #listeners = new Map();
   #handles = new Map();
   #pending = new Map();
+  // 外部 callId → 结算函数：取消要落在「那一次调用」上，所以按调用方给的键另建一张表。
+  #byExt = new Map();
   #nextListener = 1;
   #nextCall = 1;
   #closed = false;
@@ -53,21 +55,38 @@ class ExtHost {
     return { name: t.name, description: t.description, params: t.params };
   }
 
-  async call(name, args) {
+  async call(name, args, callId) {
     const t = this.#tools.get(name);
     if (!t) throw new Error(`unknown-tool: ${name}`);
     if (this.#closed) throw new Error("host-exiting");
+    const key = callId === undefined || callId === null ? null : String(callId);
+    // 同一 callId 两笔在途 = 调用方配对逻辑已经错了，明确拒绝，不把两笔混成一笔
+    if (key !== null && this.#byExt.has(key)) throw new Error(`duplicate-callId: ${callId}`);
     const id = this.#nextCall++;
     let rejectExiting;
     const exiting = new Promise((_, rej) => {
       rejectExiting = rej;
     });
     this.#pending.set(id, rejectExiting);
+    if (key !== null) this.#byExt.set(key, rejectExiting);
     try {
       return await Promise.race([Promise.resolve(t.handler(args || {})), exiting]);
     } finally {
       this.#pending.delete(id);
+      if (key !== null) this.#byExt.delete(key);
     }
+  }
+
+  // 只结算仍在这条 callId 上的在途调用；已经结算或从来没登记过都回 false，
+  // 绝不假装「取消成功了」。迟到的 handler 结果因为 race 已定而不会再补一帧。
+  cancel(callId) {
+    const key = callId === undefined || callId === null ? null : String(callId);
+    if (key === null) return false;
+    const rej = this.#byExt.get(key);
+    if (!rej) return false;
+    this.#byExt.delete(key);
+    rej(new Error(`cancelled: ${callId}`));
+    return true;
   }
 
   dispose(name) {
@@ -82,6 +101,7 @@ class ExtHost {
     this.#closed = true;
     for (const reject of this.#pending.values()) reject(new Error("host-exiting"));
     this.#pending.clear();
+    this.#byExt.clear();
     this.#listeners.clear();
     this.#handles.clear();
   }

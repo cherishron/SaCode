@@ -224,3 +224,117 @@ func unattributedFrameIsFlaggedAndPairingSurvives() {
     @Expect(xp.late(), Int64(0))
     xp.close()
 }
+
+// 取消联动的底层落点：调用还在途时，同一条管道必须还能读出取消请求，
+// 且被取消的那笔要按自己的 id 拿到 -32021，而不是等到超时或被本端编一个终态。
+@Test
+func cancellingAnInflightCallSettlesItWithACancelledFrame() {
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    xp.load("example/delayed.cjs")
+    let inflight = spawn { => xp.callCancelable(Int64(7), "example.delayed", "never", timeoutMs: Int64(4000)) }
+    // 两个线程各写一帧，先后次序不由本端决定：重试到子进程真看见那笔在途调用为止
+    var ack = ""
+    var tries: Int64 = 0
+    while (tries < 40) {
+        if (let Some(f) <- xp.cancelCall(Int64(7))) {
+            ack = f
+        }
+        if (ack.contains("\"cancelled\":true")) {
+            break
+        }
+        sleep(25 * Duration.millisecond)
+        tries += 1
+    }
+    @Expect(ack.contains("\"cancelled\":true"), true)
+    var res = ""
+    try {
+        if (let Some(f) <- inflight.get(4000 * Duration.millisecond)) {
+            res = f
+        }
+    } catch (e: Exception) {
+        res = "join-timeout"
+    }
+    @Expect(res.contains("-32021"), true)
+    @Expect(res.contains("cancelled"), true)
+    // 迟到 300ms 的 handler 结果不得再补一帧：这里只承认「无人认领的帧」计数
+    sleep(500 * Duration.millisecond)
+    @Expect(xp.unsolicited(), Int64(0))
+    xp.close()
+}
+
+// 没有这条在途调用就说「取消成功」，等于给桌面编一个没发生过的结算。
+@Test
+func cancellingAnUnknownOrSettledCallIdDoesNotPretend() {
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    xp.load("example/delayed.cjs")
+    var miss = ""
+    if (let Some(f) <- xp.cancelCall(Int64(999))) {
+        miss = f
+    }
+    @Expect(miss.contains("\"cancelled\":false"), true)
+    // 正常一笔必须照旧落地
+    var ok = ""
+    if (let Some(f) <- xp.callCancelable(Int64(8), "example.delayed", "fine", timeoutMs: Int64(4000))) {
+        ok = f
+    }
+    @Expect(ok.contains("echoed"), true)
+    // 已结算之后再取消同一 callId：还是 false
+    var after = ""
+    if (let Some(f) <- xp.cancelCall(Int64(8))) {
+        after = f
+    }
+    @Expect(after.contains("\"cancelled\":false"), true)
+    xp.close()
+}
+
+// 转调不再占住调用方：这一条走的是「发出去 + 独立线程收帧」，
+// 在途期间同一条管道还要能完成别的请求（Host 的读侧并发就建在这上面）。
+@Test
+func callAsyncOffloadsTheReplyAndSettlesExactlyOneFrame() {
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    xp.load("example/delayed.cjs")
+    let sink = ThreadSafeDeliveryQueue(8)
+    @Expect(xp.callAsync(Int64(31), "example.delayed", "async", sink), true)
+    // 调用还在途，另一条请求必须照样完成
+    var listed = ""
+    if (let Some(f) <- xp.list()) {
+        listed = f
+    }
+    @Expect(listed.contains("example.delayed"), true)
+    var frame = ""
+    var waits: Int64 = 0
+    while (frame.size == 0 && waits < 200) {
+        let got = sink.take(Int64(8))
+        if (got.size > 0) {
+            frame = got[0]
+        } else {
+            sleep(20 * Duration.millisecond)
+            waits += 1
+        }
+    }
+    @Expect(frame.contains("\"callId\":31"), true)
+    @Expect(frame.contains("echoed"), true)
+    @Expect(xp.joinWaiters(Int64(1000)), Int64(1))
+    @Expect(xp.inflightWaiters(), Int64(0))
+    // 交过账的线程不得重复 join，否则退出计数会虚高
+    @Expect(xp.joinWaiters(Int64(1000)), Int64(0))
+    xp.close()
+}
+
+// 子进程已经不在的时候，callAsync 必须当场回 false：
+// 登记一条永远等不到帧的在途调用，等于给桌面留一个悬空的 pending。
+@Test
+func callAsyncOnDeadChildFailsImmediately() {
+    let xp = ExtProcess("node-not-at-all", ["server.cjs"], workingDirectory: extHostDir())
+    @Expect(xp.start(), false)
+    let sink = ThreadSafeDeliveryQueue(8)
+    @Expect(xp.callAsync(Int64(1), "example.delayed", "x", sink), false)
+    @Expect(xp.inflightWaiters(), Int64(0))
+    @Expect(sink.size(), Int64(0))
+}

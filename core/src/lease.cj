@@ -1,7 +1,6 @@
 package core
 import std.collection.ArrayList
 import std.fs.*
-import std.io.*
 
 // 会话写者租约：同一会话同时只允许一个写者；读侧（投影/回放）不受限。
 //

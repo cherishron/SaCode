@@ -175,6 +175,17 @@ async function bootFresh() {
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 在途工具调用的结果靠 poll 收：轮询到指定 callId 的那一帧为止。
+async function pollCall(b, callId, tries = 120) {
+  for (let i = 0; i < tries; i++) {
+    const p = await b.request("extension/host/poll", {});
+    const hit = p.results.find((r) => r.callId === callId);
+    if (hit) return hit;
+    await nap(10);
+  }
+  assert.fail(`callId=${callId} 在 ${tries} 次轮询后没有结果帧`);
+}
+
 async function pollUntilSettled(b, tries = 40) {
   for (let i = 0; i < tries; i++) {
     const p = await b.request("turn/poll", {});
@@ -187,7 +198,7 @@ async function pollUntilSettled(b, tries = 40) {
 test("turn 控制方法在握手能力里声明", async () => {
   const { b } = await boot();
   const r = await b.request("initialize");
-  for (const m of ["turn/start", "turn/cancel", "turn/poll"]) {
+  for (const m of ["turn/start", "turn/cancel", "turn/poll", "extension/host/poll", "extension/host/cancel"]) {
     assert.ok(r.capabilities.includes(m), `能力表缺 ${m}`);
   }
   await b.stop();
@@ -300,8 +311,10 @@ test("桌面入口经 core 拉起 JS 宿主并完成 load/list/call/dispose", as
   assert.equal(ld.forwarded.result.ok, true);
   const ls = await b.request("extension/host/list", {});
   assert.deepEqual(ls.forwarded.result.names, ["example.echo"]);
-  const cl = await b.request("extension/host/call", { name: "example.echo", text: "from-desktop" });
-  assert.deepEqual(cl.forwarded.result, { echoed: "from-desktop" });
+  const cl = await b.request("extension/host/call", { name: "example.echo", text: "from-desktop", callId: 1 });
+  assert.equal(cl.accepted, true, "工具调用须立刻回执，结果另走 poll");
+  const cl2 = await pollCall(b, 1);
+  assert.deepEqual(cl2.frame.result, { echoed: "from-desktop" });
   const dp = await b.request("extension/host/dispose", { name: "example.echo" });
   assert.equal(dp.forwarded.result.disposed, true);
   const after = await b.request("extension/host/list", {});
@@ -353,3 +366,85 @@ test("桌面宿主退出前结算 JS 子进程，不留孤儿", async () => {
   assert.equal(alive, false, "父宿主退出后 JS 子进程不得存活");
 });
 
+
+// 取消要能在「调用还在途」时落到桌面上，前提是 Host 的读侧不能因为一次转调就整条排队。
+test("extension/host/call 立刻回执，在途调用不挡读侧", async () => {
+  const { b } = await boot();
+  await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  await b.request("extension/host/load", { path: "example/delayed.cjs" });
+  const t0 = Date.now();
+  const cl = await b.request("extension/host/call", { name: "example.delayed", text: "slow-one", callId: 11 });
+  assert.equal(cl.accepted, true);
+  assert.equal(cl.callId, 11);
+  assert.ok(Date.now() - t0 < 250, "300ms 的 handler 不该吊住回执");
+  // 在途期间读侧照常应答：这条是「边转调边能收到 stop」的前提
+  const pr = await b.request("session/projection", {});
+  assert.ok(pr.events >= 4, "投影须答得出来");
+  const hit = await pollCall(b, 11);
+  assert.deepEqual(hit.frame.result, { echoed: "slow-one" });
+  const after = await b.request("extension/host/poll", {});
+  assert.equal(after.inflight, 0);
+  assert.equal(after.results.length, 0, "结算过的调用不得再冒第二帧");
+  await b.stop();
+});
+
+test("extension/host/cancel 取消在途调用，只按 callId 结算一帧", async () => {
+  const { b } = await boot();
+  await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  await b.request("extension/host/load", { path: "example/delayed.cjs" });
+  const cl = await b.request("extension/host/call", { name: "example.delayed", text: "never", callId: 12 });
+  assert.equal(cl.accepted, true);
+  const cancel = await b.request("extension/host/cancel", { callId: 12 });
+  assert.equal(cancel.cancelled, true, "在途调用必须真被结算，不能回 false 就算完");
+  const hit = await pollCall(b, 12);
+  assert.equal(hit.frame.error.code, -32021);
+  // handler 300ms 之后才 resolve：那之后不该再有帧冒出来
+  await nap(500);
+  const later = await b.request("extension/host/poll", {});
+  assert.equal(later.results.length, 0, "取消后迟到的 handler 结果不得补帧");
+  assert.equal(later.inflight, 0);
+  const cs = await b.request("extension/host/close", {});
+  assert.equal(cs.forced, false, "取消不该把子进程逼成强杀退出");
+  await b.stop();
+});
+
+test("turn/cancel 联动取消在途的 extension/call", async () => {
+  const { b } = await bootFresh();
+  await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  await b.request("extension/host/load", { path: "example/delayed.cjs" });
+  const st = await b.request("turn/start", { limit: 2 });
+  assert.equal(st.started, true);
+  let p = { frames: [] };
+  for (let i = 0; i < 40 && p.frames.length < 2; i++) {
+    p = await b.request("turn/poll", {});
+    if (p.frames.length < 2) await nap(10);
+  }
+  assert.equal(p.running, true, "turn 得还在途，才有东西可联动取消");
+  const cl = await b.request("extension/host/call", { name: "example.delayed", text: "x", callId: 13 });
+  assert.equal(cl.accepted, true, "turn 在途期间工具调用必须进得去，否则取消无从联动");
+  const cx = await b.request("turn/cancel", {});
+  assert.equal(cx.cancelRequested, true);
+  assert.equal(cx.extensionCallsCancelled, 1, "取消 turn 要顺带结算它发起的在途调用");
+  const hit = await pollCall(b, 13);
+  assert.equal(hit.frame.error.code, -32021);
+  const t = await pollUntilSettled(b);
+  assert.equal(t.cancelled, true);
+  await b.stop();
+});
+
+// 在途调用没被 poll 走就退出，也不能留一个「没人收的在途请求」：退出帧要把账交清。
+test("宿主退出前收束在途 extension/call 并交账", async () => {
+  const { b } = await bootFresh();
+  await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  await b.request("extension/host/load", { path: "example/delayed.cjs" });
+  const cl = await b.request("extension/host/call", { name: "example.delayed", text: "x", callId: 14 });
+  assert.equal(cl.accepted, true);
+  const st = await b.stop();
+  assert.equal(st.forced, false, "退出须走 EOF 结算，不能被强杀");
+  const s = b.notifications.find((n) => n.method === "host/settled");
+  assert.ok(s, "退出前必须交一份结算账");
+  assert.equal(s.params.extensionCalls, 1);
+  assert.equal(s.params.extensionFrames, 1, "在途调用要真拿到结果帧，不是被丢掉");
+  assert.equal(s.params.extensionCancelled, 1, "终态须是「本端取消」(-32021)，不能混成子进程 shutdown 的兜底结算");
+  assert.equal(s.params.jsChildForced, false);
+});

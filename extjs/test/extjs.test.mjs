@@ -13,6 +13,34 @@ const { ExtHost } = require("../host.cjs");
 const ECHO = jj(ROOT, "example", "echo.cjs");
 const BROKEN = jj(ROOT, "example", "broken.cjs");
 const SLOW = jj(ROOT, "example", "slow.cjs");
+const DELAYED = jj(ROOT, "example", "delayed.cjs");
+
+// 一条 stdio NDJSON 客户端：next() 按到达顺序取帧，extra() 数「没人取的多余帧」。
+function stdio(p) {
+  const lines = [];
+  const waiters = [];
+  p.stdout.on("data", (d) => {
+    for (const l of d.toString("utf8").split("\n")) {
+      if (!l.trim()) continue;
+      lines.push(JSON.parse(l));
+      waiters.shift()?.();
+    }
+  });
+  return {
+    send: (o) => p.stdin.write(JSON.stringify(o) + "\n"),
+    next: () =>
+      new Promise((res, rej) => {
+        if (lines.length > 0) return res(lines.shift());
+        const timer = setTimeout(() => rej(new Error("server 无响应")), 5000);
+        timer.unref();
+        waiters.push(() => {
+          clearTimeout(timer);
+          res(lines.shift());
+        });
+      }),
+    extra: () => lines.length,
+  };
+}
 
 test("加载扩展后可列出描述符", async () => {
   const h = new ExtHost();
@@ -129,6 +157,103 @@ test("server.cjs 走 NDJSON JSON-RPC 往返并支持 dispose", async () => {
 
   p.stdin.end();
   await new Promise((r) => p.once("exit", r));
+});
+
+// 取消必须落在「在途那一次调用」上，而不是只把 handler 的 promise 丢掉：
+// 每个 callId 只允许有一帧结算，迟到的 handler 结果不得再补一帧。
+test("extension/cancel 按 callId 结算在途调用，只回一帧且迟到结果不再补帧", async () => {
+  const p = spawn(process.execPath, [jj(ROOT, "server.cjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((r) => p.once("exit", r));
+  const c = stdio(p);
+  try {
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const init = await c.next();
+    assert.ok(init.result.capabilities.includes("extension/cancel"), "能力表须声明可取消");
+
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    assert.equal((await c.next()).result.ok, true);
+
+    c.send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.delayed", args: { text: "never" }, callId: 77 } });
+    await new Promise((r) => setImmediate(r));
+
+    c.send({ jsonrpc: "2.0", id: 4, method: "extension/cancel", params: { callId: 77 } });
+    const ack = await c.next();
+    assert.equal(ack.id, 4);
+    assert.equal(ack.result.cancelled, true, "取消在途调用须回 true");
+
+    const settled = await c.next();
+    assert.equal(settled.id, 3, "被取消的那次调用须按自己的 id 结算");
+    assert.equal(settled.error.code, -32021);
+    assert.match(settled.error.message, /cancelled/);
+
+    // handler 是 300ms 后才 resolve 的：等到那之后再确认没有第二帧
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(c.extra(), 0, "取消后不得再为同一调用写出应答帧");
+  } finally {
+    p.stdin.end();
+    p.kill();
+    await exited;
+  }
+});
+
+test("取消不存在或已结算的 callId 明确回 false，二次取消不重复结算", async () => {
+  const p = spawn(process.execPath, [jj(ROOT, "server.cjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((r) => p.once("exit", r));
+  const c = stdio(p);
+  try {
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    await c.next();
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    await c.next();
+
+    c.send({ jsonrpc: "2.0", id: 3, method: "extension/cancel", params: { callId: 999 } });
+    const miss = await c.next();
+    assert.equal(miss.result.cancelled, false, "没有这条在途调用时不得假装取消成功");
+
+    c.send({ jsonrpc: "2.0", id: 4, method: "extension/call", params: { name: "example.delayed", args: { text: "ok" }, callId: 88 } });
+    c.send({ jsonrpc: "2.0", id: 5, method: "extension/cancel", params: { callId: 88 } });
+    const ack = await c.next();
+    assert.equal(ack.id, 5);
+    assert.equal(ack.result.cancelled, true);
+    const settled = await c.next();
+    assert.equal(settled.id, 4);
+
+    c.send({ jsonrpc: "2.0", id: 6, method: "extension/cancel", params: { callId: 88 } });
+    const again = await c.next();
+    assert.equal(again.result.cancelled, false, "已结算的调用二次取消须回 false");
+    assert.equal(c.extra(), 0);
+  } finally {
+    p.stdin.end();
+    p.kill();
+    await exited;
+  }
+});
+
+// 同一 callId 同时在途两次 = 调用方配对逻辑已经出错，宁可明确拒绝也不能把两笔混成一笔
+test("重复的在途 callId 被明确拒绝，不与第一笔混账", async () => {
+  const p = spawn(process.execPath, [jj(ROOT, "server.cjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((r) => p.once("exit", r));
+  const c = stdio(p);
+  try {
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    await c.next();
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    await c.next();
+    c.send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.delayed", args: { text: "a" }, callId: 50 } });
+    c.send({ jsonrpc: "2.0", id: 4, method: "extension/call", params: { name: "example.delayed", args: { text: "b" }, callId: 50 } });
+    const dup = await c.next();
+    assert.equal(dup.id, 4, "重复 callId 须按自己的 id 立刻报错");
+    assert.equal(dup.error.code, -32022);
+    assert.match(dup.error.message, /duplicate-callId/);
+    const first = await c.next();
+    assert.equal(first.id, 3, "第一笔仍须正常结算");
+    assert.deepEqual(first.result, { echoed: "a" });
+    assert.equal(c.extra(), 0);
+  } finally {
+    p.stdin.end();
+    p.kill();
+    await exited;
+  }
 });
 
 // 父进程侧只用 std.io 的 OutputStream 接口（没有文档化的 close()），

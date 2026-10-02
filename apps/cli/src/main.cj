@@ -201,6 +201,29 @@ main(args: Array<String>) {
             }
             // 未登记工具必须由宿主明确拒绝，而不是本端替它编一个终态
             expect("未登记工具由宿主明确拒绝", ur.contains("unknown-tool"))
+            // 两入口共用同一条「发出 + 独立线程收帧 + 按 callId 取消」的路径：
+            // CLI 也走一遍，不能只有桌面入口验过。
+            xp.load("example/delayed.cjs")
+            let sink = ThreadSafeDeliveryQueue(8)
+            expect("可取消的调用能异步发出", xp.callAsync(Int64(4242), "example.delayed", "cli-async", sink))
+            var ack = ""
+            if (let Some(f) <- xp.cancelCall(Int64(4242))) {
+                ack = f
+            }
+            expect("在途调用按 callId 取消成功", ack.contains("\"cancelled\":true"))
+            var fr = ""
+            var spins: Int64 = 0
+            while (fr.size == 0 && spins < 200) {
+                let got = sink.take(Int64(8))
+                if (got.size > 0) {
+                    fr = got[0]
+                } else {
+                    sleep(20 * Duration.millisecond)
+                    spins += 1
+                }
+            }
+            expect("取消的终态帧由 sink 交出", fr.contains("-32021"))
+            expect("收帧线程全部收束", xp.joinWaiters(Int64(2000)) == Int64(1) && xp.inflightWaiters() == Int64(0))
             let rc = xp.close()
             expect("宿主优雅退出而非被强杀", rc == Int64(0) && !xp.forcedExit())
             var after = true
