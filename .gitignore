@@ -28,6 +28,9 @@ logs/
 interfaces/desktop/src-tauri/updater-secret.key
 interfaces/desktop/src-tauri/updater-secret.key.pub
 
+# Tauri externalBin sidecar（由 bundle-sidecar.mjs 自动生成）
+interfaces/desktop/src-tauri/binaries/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -87,3 +90,9 @@ _test_out.txt
 
 # OhMyAgent session settings (local only)
 .ohmyagent/
+
+# AI 工具本地工作区数据（结构审查 P3：gitignore 缺口）
+.workbuddy/
+.resultverify/
+.opencode/
+.codeartsdoer/
