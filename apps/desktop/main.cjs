@@ -94,8 +94,76 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, "renderer", "index.html"));
-  win.once("ready-to-show", () => win.show());
+  // UI 冒烟不需要把窗口摆到用户桌面上
+  win.once("ready-to-show", () => {
+    if (!UI_SMOKE) win.show();
+  });
   win.on("closed", () => (win = null));
+}
+
+const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 桌面黄金路径的运行时验收：渲染层 → preload → IPC → 仓颉宿主 → 会话日志 → 再投影。
+// 只看 DOM 里有 JSON 不算数——必须证明那次点击真的被核心落盘，且投影计数随之增长。
+async function uiSmoke() {
+  let bad = 0;
+  // 逐行标明成败：措辞固定打印会让人把通过读成失败（本文件第一版就这么错过一次）
+  const note = (ok, line) => {
+    if (!ok) bad += 1;
+    console.log(`UI ${ok ? "OK  " : "FAIL"} ${line}`);
+  };
+  if (!existsSync(HOST)) {
+    console.log(`UI_SMOKE FAIL 缺少自包含宿主: ${HOST}`);
+    app.exit(2);
+    return;
+  }
+  seedIfNeeded();
+  createWindow();
+  let before = null;
+  for (let i = 0; i < 60 && !before; i++) {
+    const text = await win.webContents.executeJavaScript("document.getElementById('out').textContent", true);
+    if (text && text.includes("projection")) {
+      try {
+        before = JSON.parse(text);
+      } catch (e) {
+        note(false, `初始投影不是 JSON: ${text.slice(0, 60)}`);
+        break;
+      }
+    } else if (text && text.startsWith("失败")) {
+      note(false, `渲染层报错: ${text}`);
+      break;
+    } else {
+      await nap(200);
+    }
+  }
+  note(!!before && before.events >= 3 && before.projection >= 2, `初始投影=${JSON.stringify(before)}`);
+  // 沙箱与隔离必须是真生效的，不是配置里写着好看
+  const leaked = await win.webContents.executeJavaScript("typeof window.require", true);
+  note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
+  const hasBridge = await win.webContents.executeJavaScript("typeof window.dsh && typeof window.dsh.projection", true);
+  note(hasBridge === "function", `preload 暴露的 dsh.projection 类型=${hasBridge}`);
+
+  await win.webContents.executeJavaScript("document.getElementById('go').click()", true);
+  let after = null;
+  for (let i = 0; i < 60 && !after; i++) {
+    await nap(200);
+    const text = await win.webContents.executeJavaScript("document.getElementById('out').textContent", true);
+    if (text && text.includes("projection")) {
+      const p = JSON.parse(text);
+      if (before && p.events > before.events) after = p;
+    }
+  }
+  note(!!after, `点击后投影=${JSON.stringify(after)}`);
+  if (after) {
+    note(after.events === before.events + 1, `事件增量=${after.events - before.events}（应为 1）`);
+    note(after.durable === after.events, `durable=${after.durable}/${after.events}（append 即落盘）`);
+    const log = require("node:fs").readFileSync(SESSION_LOG, "utf8");
+    note(/user\/message\tclicked at /.test(log), "点击那条 user/message 已由核心写进会话日志");
+    note(after.projection === before.projection + 1, `模型可见投影增量=${after.projection - before.projection}`);
+  }
+  await bridge.stop();
+  console.log(bad === 0 ? "UI_SMOKE PASS" : `UI_SMOKE FAIL（${bad} 项不符）`);
+  app.exit(bad === 0 ? 0 : 1);
 }
 
 ipcMain.handle("dsh:projection", async () => {
@@ -113,8 +181,11 @@ ipcMain.handle("dsh:append", async (_e, args) => {
   return bridge.request("session/append", { eventType: args.eventType, data: args.data });
 });
 
+const UI_SMOKE = process.argv.includes("--ui-smoke");
+
 app.whenReady().then(() => {
   if (process.argv.includes("--smoke")) return smoke();
+  if (UI_SMOKE) return uiSmoke();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

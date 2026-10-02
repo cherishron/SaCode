@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "smoke": "electron . --smoke",
+    "ui-smoke": "electron . --ui-smoke",
     "test": "node --test"
   },
   "build": {
