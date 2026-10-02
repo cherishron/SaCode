@@ -11,6 +11,7 @@
   --bg-base: var(--td-bg-color-page);
   --bg-surface: var(--td-bg-color-secondarycontainer);
   --bg-raised: var(--td-bg-color-container);
+  --bg-raised-hover: var(--td-bg-color-container-hover);
   --bg-overlay: var(--td-bg-color-specialcomponent);
   --bg-popup: var(--td-bg-color-popup);
   --bg-inset: var(--td-bg-color-component);
@@ -37,6 +38,7 @@
   --info-soft: var(--td-brand-color-light);
 
   --border-base: var(--td-border-level-1-color);
+  --border-strong: var(--td-border-level-2-color);
   --border-weak: var(--td-component-border);
   --border-accent: var(--td-brand-color);
 

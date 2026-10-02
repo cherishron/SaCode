@@ -75,8 +75,8 @@ onBeforeUnmount(() => {
   min-width: 160px;
   max-width: 240px;
   padding: 4px;
-  background: var(--bg-raised, #161b22);
-  border: 1px solid var(--border-weak, #30363d);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-weak);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
   display: flex;
@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-strong, #e6edf3);
+  color: var(--text-strong);
   cursor: pointer;
   text-align: left;
   width: 100%;
@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
 }
 
 .ctx-item.danger {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 
 .ctx-item.danger:hover:not(.disabled) {
@@ -139,14 +139,14 @@ onBeforeUnmount(() => {
 }
 
 .ctx-shortcut {
-  color: var(--text-weak, #8b949e);
+  color: var(--text-weak);
   font-size: 11px;
   flex-shrink: 0;
 }
 
 .ctx-separator {
   height: 1px;
-  background: var(--border-weak, #30363d);
+  background: var(--border-weak);
   margin: 3px 6px;
 }
 </style>

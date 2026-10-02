@@ -27,7 +27,7 @@ body,
 body {
   font-family: var(--font-sans);
   font-size: var(--fs-body, 14px);
-  color: var(--text-strong, #e6edf3);
+  color: var(--text-strong);
   background: var(--bg-base, #0d1117);
   -webkit-font-smoothing: antialiased;
   /* 允许全局文本选择（用户可拖拽选中并复制）；UI 控件通过自身 user-select:none 覆盖 */
@@ -756,7 +756,7 @@ button,
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
   font: var(--text-12-medium);
   cursor: pointer;
   transition: filter 120ms ease;
@@ -902,7 +902,7 @@ button,
 }
 
 .status-dot.failed {
-  background: var(--td-error-color-6, var(--danger, #c65c5d));
+  background: var(--td-error-color-6, var(--danger));
   opacity: 0.75;
 }
 
@@ -913,33 +913,33 @@ button,
 
 /* 选中：品牌左条 + 淡填充（对齐 TDesign brand） */
 .list-row.selected {
-  background: var(--td-brand-color-light, var(--accent-weaker));
-  color: var(--td-text-color-primary, var(--text-strong));
+  background: var(--accent-soft, var(--accent-weaker));
+  color: var(--text-strong);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .mode-btn.active {
   background: var(--accent);
-  color: var(--td-text-color-anti, #fff);
+  color: var(--text-on-accent);
 }
 
 .ghost-btn:hover {
-  background: var(--td-brand-color-light, var(--bg-raised));
+  background: var(--accent-soft, var(--bg-raised));
   color: var(--td-brand-color-9, var(--text-strong));
 }
 
 .task-col-avatar {
   background: var(--accent);
-  color: var(--td-text-color-anti, #fff);
+  color: var(--text-on-accent);
   border-color: transparent;
 }
 
 .load-card-title {
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 .load-card-tabs .task-col-tab-label {
-  color: var(--td-brand-color-9, var(--td-text-color-secondary));
+  color: var(--td-brand-color-9, var(--text-base));
 }
 
 /* attention：2px 竖条，不占位、不与选中填充抢通道 */
@@ -1171,7 +1171,7 @@ button,
 .usage-ring .t-progress__label {
   font-size: 7px !important;
   line-height: 1 !important;
-  color: var(--td-text-color-secondary) !important;
+  color: var(--text-base) !important;
   transform: scale(0.9);
 }
 
@@ -1182,7 +1182,7 @@ button,
 }
 
 .ghost-btn.listening {
-  color: var(--td-error-color, var(--danger));
+  color: var(--danger);
 }
 
 /* TDesign Chat 壳 */
@@ -1225,7 +1225,7 @@ button,
   border: 0;
   border-radius: var(--radius-full);
   font: var(--text-12-medium);
-  color: var(--td-text-color-anti, #fff);
+  color: var(--text-on-accent);
   cursor: pointer;
   white-space: nowrap;
   transition: filter 120ms ease;
@@ -1236,12 +1236,12 @@ button,
 }
 
 .mode-cycle.mode-build {
-  background: var(--td-success-color, #34ad6c);
+  background: var(--success);
 }
 
 .mode-cycle.mode-yolo {
-  background: var(--td-warning-color, #dfbc57);
-  color: var(--td-font-gray-1, #17202a);
+  background: var(--warning);
+  color: var(--text-strong);
 }
 
 .mode-cycle:hover {
@@ -1256,8 +1256,8 @@ button,
 
 .composer-model .t-input {
   border-radius: 999px !important;
-  background: var(--td-bg-color-container, var(--bg-raised)) !important;
-  border-color: var(--td-component-border, var(--border-weak)) !important;
+  background: var(--bg-raised) !important;
+  border-color: var(--border-weak) !important;
   padding-left: 12px;
 }
 
@@ -1269,21 +1269,21 @@ button,
 
 .composer-model .t-input.t-is-focused {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 2px var(--td-brand-color-focus, var(--accent-weaker));
+  box-shadow: 0 0 0 2px var(--accent-weaker);
 }
 
 .mode-group {
   display: inline-flex;
-  border: 1px solid var(--td-component-border, var(--border-weak));
+  border: 1px solid var(--border-weak);
   border-radius: var(--radius-full);
   overflow: hidden;
-  background: var(--td-bg-color-secondarycontainer, var(--bg-surface));
+  background: var(--bg-surface);
 }
 
 .mode-btn {
   border: 0;
   background: transparent;
-  color: var(--td-text-color-secondary, var(--text-base));
+  color: var(--text-base);
   font: var(--text-12-medium);
   padding: 4px 12px;
   cursor: pointer;
@@ -1291,8 +1291,8 @@ button,
 }
 
 .mode-btn.active {
-  background: var(--td-brand-color, var(--accent));
-  color: var(--td-text-color-anti, #fff);
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
 .enhance-btn {
@@ -1342,7 +1342,7 @@ button,
 .plus-skill-panel {
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid var(--td-border-level-1-color, var(--border-weak));
+  border-top: 1px solid var(--border-base, var(--border-weak));
   max-height: 240px;
   overflow: auto;
 }
@@ -1393,18 +1393,18 @@ button,
 
 .think-label {
   font-size: 11px;
-  color: var(--td-text-color-secondary, var(--text-weak));
+  color: var(--text-base, var(--text-weak));
   margin-bottom: 6px;
 }
 
 .think-group {
   display: flex;
   gap: 4px;
-  border: 1px solid var(--td-component-border, var(--border-weak));
+  border: 1px solid var(--border-weak);
   border-radius: 999px;
   overflow: hidden;
   padding: 2px;
-  background: var(--td-bg-color-component, var(--bg-inset));
+  background: var(--bg-inset);
 }
 
 .think-btn {
@@ -1413,18 +1413,18 @@ button,
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--td-text-color-secondary, var(--text-base));
+  color: var(--text-base);
   font: var(--text-12-medium);
   cursor: pointer;
 }
 
 .think-btn.on {
   background: var(--accent);
-  color: var(--td-text-color-anti, #fff);
+  color: var(--text-on-accent);
 }
 
 .think-btn:hover:not(.on) {
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 /* 技能右侧浮层 / 模型点选 */
@@ -1467,10 +1467,10 @@ button,
   height: 28px;
   max-width: 110px;
   padding: 0 12px;
-  border: 1px solid var(--td-component-border, var(--border-weak));
+  border: 1px solid var(--border-weak);
   border-radius: 999px;
-  background: var(--td-bg-color-container, var(--bg-raised));
-  color: var(--td-text-color-primary, var(--text-strong));
+  background: var(--bg-raised);
+  color: var(--text-strong);
   font: var(--text-12-medium);
   cursor: pointer;
   overflow: hidden;
@@ -1484,8 +1484,8 @@ button,
 }
 
 .plus-sub-item.on {
-  background: var(--td-brand-color-light, var(--accent-weaker));
-  color: var(--td-brand-color, var(--accent));
+  background: var(--accent-soft, var(--accent-weaker));
+  color: var(--accent);
 }
 
 .plus-sub-item {
@@ -1497,14 +1497,14 @@ button,
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   font: var(--text-12-regular);
   text-align: left;
   cursor: pointer;
 }
 
 .plus-sub-item:hover {
-  background: var(--td-bg-color-container-hover, var(--bg-surface));
+  background: var(--bg-raised-hover, var(--bg-surface));
 }
 
 .plus-sub-name {
@@ -1528,7 +1528,7 @@ button,
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   font: var(--text-13-regular);
   cursor: pointer;
   text-align: left;
@@ -1537,7 +1537,7 @@ button,
 
 .plus-item:hover,
 .plus-item.active {
-  background: var(--td-bg-color-container-hover, var(--bg-surface));
+  background: var(--bg-raised-hover, var(--bg-surface));
 }
 
 .plus-desc {
@@ -1550,7 +1550,7 @@ button,
 .plus-sep {
   height: 1px;
   margin: 6px 8px;
-  background: var(--td-border-level-1-color, var(--border-weak));
+  background: var(--border-base, var(--border-weak));
 }
 
 .plus-arrow {
@@ -1577,9 +1577,9 @@ button,
   margin-bottom: 6px;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid var(--td-component-border, var(--border-weak));
-  background: var(--td-bg-color-component, var(--bg-inset));
-  color: var(--td-text-color-primary);
+  border: 1px solid var(--border-weak);
+  background: var(--bg-inset);
+  color: var(--text-strong);
   font: var(--text-12-regular);
   outline: 0;
 }
@@ -1591,14 +1591,14 @@ button,
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   font: var(--text-12-regular);
   text-align: left;
   cursor: pointer;
 }
 
 .plus-sub-item:hover {
-  background: var(--td-bg-color-container-hover, var(--bg-surface));
+  background: var(--bg-raised-hover, var(--bg-surface));
 }
 
 .plus-sub-name {
@@ -1901,15 +1901,15 @@ button,
 
 .td-chat-sender .t-chat-sender__textarea {
   padding: 16px 18px 12px;
-  border: 1px solid var(--td-border-level-2-color, var(--border-weak));
+  border: 1px solid var(--border-strong, var(--border-weak));
   border-radius: 18px;
-  background: var(--td-bg-color-container, var(--bg-raised));
+  background: var(--bg-raised);
   box-shadow: 0 8px 28px -20px rgba(21, 35, 49, 0.35);
   transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
 }
 
 .td-chat-sender .t-chat-sender__textarea:hover {
-  border-color: var(--td-border-level-2-color, var(--border-weak));
+  border-color: var(--border-strong, var(--border-weak));
   box-shadow: 0 10px 28px -20px rgba(21, 35, 49, 0.45);
 }
 
@@ -2342,10 +2342,10 @@ button,
   max-width: min(420px, 55vw);
   height: 26px;
   padding: 0 10px;
-  border: 1px solid var(--td-component-border, var(--border-weak));
+  border: 1px solid var(--border-weak);
   border-radius: 999px;
-  background: var(--td-bg-color-component, var(--bg-inset));
-  color: var(--td-text-color-secondary, var(--text-base));
+  background: var(--bg-inset);
+  color: var(--text-base);
   font: var(--text-12-regular);
   cursor: pointer;
   min-width: 0;
@@ -2353,7 +2353,7 @@ button,
 
 .workspace-pick:hover {
   border-color: var(--accent);
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 .workspace-pick-path {
@@ -2484,8 +2484,8 @@ button,
 
 /* 文件侧板美化 */
 .files-panel--pretty {
-  background: var(--td-bg-color-container, var(--bg-raised));
-  border-left: 1px solid var(--td-border-level-1-color, var(--border-base));
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border-base);
 }
 
 .files-panel--pretty .files-head {
@@ -2515,8 +2515,8 @@ button,
   padding: 0 10px;
   height: 30px;
   border-radius: 999px;
-  background: var(--td-bg-color-component, var(--bg-inset));
-  color: var(--td-text-color-placeholder, var(--text-weak));
+  background: var(--bg-inset);
+  color: var(--text-weak);
   flex-shrink: 0;
 }
 
@@ -2526,12 +2526,12 @@ button,
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   font: var(--text-12-regular);
 }
 
 .files-search-input::placeholder {
-  color: var(--td-text-color-placeholder, var(--text-weak));
+  color: var(--text-weak);
 }
 
 .files-tree {
@@ -2552,7 +2552,7 @@ button,
 
 .file-row.dir .list-row-label {
   font-weight: 500;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 .file-size {
@@ -2563,14 +2563,14 @@ button,
 
 .files-preview-head {
   gap: var(--space-2);
-  background: var(--td-bg-color-secondarycontainer, var(--bg-surface));
+  background: var(--bg-surface);
 }
 
 .files-preview-body {
-  background: var(--td-bg-color-secondarycontainer, var(--bg-surface));
+  background: var(--bg-surface);
   border-radius: 0;
   margin: 0 12px 12px;
-  border: 1px solid var(--td-border-level-1-color, var(--border-weak));
+  border: 1px solid var(--border-base, var(--border-weak));
   border-radius: 8px;
 }
 
@@ -2593,8 +2593,8 @@ button,
   margin: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border-radius: 8px;
-  background: var(--td-error-color-light, var(--danger-soft));
-  color: var(--td-error-color, var(--danger));
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: var(--fs-list);
 }
 
@@ -2697,7 +2697,7 @@ button,
   min-width: 0;
   max-width: none;
   border-radius: 999px !important;
-  background: var(--td-bg-color-component, var(--bg-inset)) !important;
+  background: var(--bg-inset) !important;
 }
 
 .preview-panel .preview-url .t-input__inner {
@@ -2708,7 +2708,7 @@ button,
 .preview-frame {
   border-radius: 8px;
   margin: 0 12px 12px;
-  border: 1px solid var(--td-border-level-1-color, var(--border-weak));
+  border: 1px solid var(--border-base, var(--border-weak));
   height: calc(100% - 64px);
   width: calc(100% - 24px);
 }
@@ -2964,7 +2964,7 @@ button,
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--td-bg-color-secondarycontainer, var(--bg-surface));
+  background: var(--bg-surface);
 }
 
 .tools-diff-preview .files-head {
@@ -3034,7 +3034,7 @@ button,
   font-family: var(--font-mono);
   letter-spacing: -0.02em;
   color: currentColor;
-  background: var(--td-bg-color-container, var(--bg-raised));
+  background: var(--bg-raised);
   border-radius: 3px;
   padding: 0 1px;
   line-height: 1.1;
@@ -3064,7 +3064,7 @@ button,
 .file-glyph.tone-config { color: #8a8fa3; }
 .file-glyph.tone-image { color: #3da86a; }
 .file-glyph.tone-shell { color: #6a9a4a; }
-.file-glyph.tone-text { color: var(--td-text-color-secondary, var(--text-base)); }
+.file-glyph.tone-text { color: var(--text-base); }
 
 .file-glyph.tone-config .glyph-stroke,
 .file-glyph.tone-text .glyph-stroke {
@@ -3078,12 +3078,12 @@ pre.files-preview-body code.hljs {
   overflow-x: auto;
   padding: 0;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 .hljs-comment,
 .hljs-quote {
-  color: var(--td-text-color-placeholder, var(--text-weak));
+  color: var(--text-weak);
   font-style: italic;
 }
 
@@ -3101,7 +3101,7 @@ pre.files-preview-body code.hljs {
 .hljs-addition,
 .hljs-attribute,
 .hljs-meta .hljs-string {
-  color: var(--td-success-color, #0abf5b);
+  color: var(--success);
 }
 
 .hljs-number,
@@ -3112,7 +3112,7 @@ pre.files-preview-body code.hljs {
 .hljs-selector-pseudo,
 .hljs-template-variable,
 .hljs-variable {
-  color: var(--td-warning-color, #ff7200);
+  color: var(--warning);
 }
 
 .hljs-title,
@@ -3135,7 +3135,7 @@ pre.files-preview-body code.hljs {
 }
 
 .hljs-tag {
-  color: var(--td-text-color-secondary, var(--text-base));
+  color: var(--text-base);
 }
 
 .hljs-meta,
@@ -3152,7 +3152,7 @@ pre.files-preview-body code.hljs {
 }
 
 .hljs-deletion {
-  color: var(--td-error-color, #e54545);
+  color: var(--danger);
 }
 
 /* ========== Markdown 预览 ========== */
@@ -3162,7 +3162,7 @@ pre.files-preview-body code.hljs {
 
 .files-preview-md.md-body {
   font: var(--text-13-regular);
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   line-height: 1.7;
 }
 
@@ -3183,7 +3183,7 @@ pre.files-preview-body code.hljs {
   margin: 1.2em 0 0.55em;
   font-weight: 600;
   line-height: 1.35;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
 }
 
 .files-preview-md.md-body h1 { font-size: 1.45em; }
@@ -3222,22 +3222,22 @@ pre.files-preview-body code.hljs {
   font-size: 0.92em;
   padding: 0.12em 0.38em;
   border-radius: 4px;
-  background: var(--td-bg-color-component, var(--code-bg));
+  background: var(--bg-inset, var(--code-bg));
   color: var(--td-error-color-7, #c45c5c);
 }
 
 .files-preview-md.md-body pre {
   padding: 12px 14px;
   border-radius: 8px;
-  background: var(--td-bg-color-component, var(--code-bg));
-  border: 1px solid var(--td-border-level-1-color, var(--code-border));
+  background: var(--bg-inset, var(--code-bg));
+  border: 1px solid var(--border-base, var(--code-border));
   overflow-x: auto;
 }
 
 .files-preview-md.md-body pre code {
   padding: 0;
   background: transparent;
-  color: var(--td-text-color-primary, var(--text-strong));
+  color: var(--text-strong);
   font-size: 0.92em;
   line-height: 1.6;
 }
@@ -3246,14 +3246,14 @@ pre.files-preview-body code.hljs {
   margin-left: 0;
   padding: 0.2em 0.9em;
   border-left: 3px solid var(--td-brand-color-5, var(--accent));
-  color: var(--td-text-color-secondary, var(--text-base));
-  background: var(--td-brand-color-light, var(--accent-soft));
+  color: var(--text-base);
+  background: var(--accent-soft);
   border-radius: 0 6px 6px 0;
 }
 
 .files-preview-md.md-body hr {
   border: 0;
-  border-top: 1px solid var(--td-border-level-1-color, var(--border-weak));
+  border-top: 1px solid var(--border-base, var(--border-weak));
   margin: 1.1em 0;
 }
 
@@ -3265,13 +3265,13 @@ pre.files-preview-body code.hljs {
 
 .files-preview-md.md-body th,
 .files-preview-md.md-body td {
-  border: 1px solid var(--td-border-level-1-color, var(--border-weak));
+  border: 1px solid var(--border-base, var(--border-weak));
   padding: 0.4em 0.7em;
   text-align: left;
 }
 
 .files-preview-md.md-body th {
-  background: var(--td-bg-color-secondarycontainer, var(--bg-surface));
+  background: var(--bg-surface);
   font-weight: 600;
 }
 
@@ -3289,5 +3289,5 @@ pre.files-preview-body code.hljs {
   font-family: var(--font-mono);
   letter-spacing: 0.02em;
   color: var(--accent);
-  background: var(--td-brand-color-light, var(--accent-soft));
+  background: var(--accent-soft);
 }
