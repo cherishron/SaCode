@@ -15,6 +15,23 @@ func clean(tag: String) {
 }
 
 @Test
+func missingLogFileIsAnEmptySessionNotARejection() {
+    // 全新会话还没有日志文件：零事件是合法回放。
+    // 宿主若在第一次写入/第一次 turn 上判 replay-rejected，桌面新会话根本进不去。
+    let log = SessionLog(tmpPath("fresh"))
+    @Expect(log.load(), true)
+    @Expect(log.events.size, Int64(0))
+    @Expect(log.flushedCount, Int64(0))
+    log.append("turn/start", "")
+    @Expect(log.events.size, Int64(1))
+    @Expect(log.flush(), true)
+    let r = SessionLog(tmpPath("fresh"))
+    @Expect(r.load(), true)
+    @Expect(r.events.size, Int64(1))
+    clean("fresh")
+}
+
+@Test
 func seqStartsAtZeroAndIncrements() {
     let log = SessionLog(tmpPath("seq"))
     let a = log.append("user/message", "one")

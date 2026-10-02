@@ -161,3 +161,97 @@ test("extension/dispose 后注册表清空且二次卸载失败", async () => {
   await b.stop();
   assert.equal(existsSync(join(dir, "session.log.lease")), false, "工具事件写入后退出仍须归还租约");
 });
+
+// 全新会话（还没有 session.log 文件）是桌面的第一条黄金路径：
+// 第一次写入与第一个 turn 都必须能进去，不能被当成损坏回放。
+async function bootFresh() {
+  const root = jj(REPO, "dualtest");
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(jj(root, "fresh-"));
+  const b = new HostBridge(HOST, process.env);
+  await b.start(dir);
+  return { b, dir };
+}
+
+const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function pollUntilSettled(b, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    const p = await b.request("turn/poll", {});
+    if (p.settled) return p;
+    await nap(10);
+  }
+  assert.fail(`turn 在 ${tries} 次轮询后仍未结算`);
+}
+
+test("turn 控制方法在握手能力里声明", async () => {
+  const { b } = await boot();
+  const r = await b.request("initialize");
+  for (const m of ["turn/start", "turn/cancel", "turn/poll"]) {
+    assert.ok(r.capabilities.includes(m), `能力表缺 ${m}`);
+  }
+  await b.stop();
+});
+
+test("全新会话第一个 turn 能在流中被取消并结算", async () => {
+  const { b, dir } = await bootFresh();
+  const s = await b.request("turn/start", { limit: 2 });
+  assert.equal(s.started, true);
+  let p = { frames: [] };
+  for (let i = 0; i < 40 && p.frames.length < 2; i++) {
+    p = await b.request("turn/poll", {});
+    if (p.frames.length < 2) await nap(10);
+  }
+  assert.deepEqual(p.frames, ["text:你好，", "text:world"], "帧必须来自独立线程的投递");
+  assert.equal(p.running, true);
+  await assert.rejects(
+    () => b.request("session/submit", { eventType: "user/message", data: "during turn" }),
+    /turn-in-flight/,
+    "turn 在途时不得出现第二个写者"
+  );
+  const c = await b.request("turn/cancel", {});
+  assert.equal(c.cancelRequested, true);
+  assert.equal(c.wasRunning, true);
+  const done = await pollUntilSettled(b);
+  assert.equal(done.cancelled, true);
+  assert.equal(done.delivered, 2);
+  assert.equal(done.text, "你好，world", "已产出的部分文本不得丢");
+  assert.equal(done.finishReason, "", "被取消的 turn 没有终态原因");
+  assert.equal(done.interrupted, true);
+  assert.equal(done.pendingToolCalls, 0, "不留悬挂 tool call");
+  assert.equal(done.dropped, 0, "背压只报信号，不丢帧");
+  const proj = await b.request("session/projection");
+  assert.equal(proj.events, 4, "turn/start + 2 帧 + turn/cancelled");
+  assert.equal(proj.durable, 4);
+  assert.equal(proj.pending, 0);
+  await b.stop();
+  assert.equal(existsSync(join(dir, "session.log.lease")), false, "结算后必须归还写租约");
+  assert.ok(readFileSync(join(dir, "session.log"), "utf8").includes("turn/cancelled"));
+});
+
+test("没有在途 turn 时取消与轮询都不得编造终态", async () => {
+  const { b } = await boot();
+  const c = await b.request("turn/cancel", {});
+  assert.equal(c.cancelRequested, false);
+  assert.equal(c.wasRunning, false, "不得假装取消了一个不存在的 turn");
+  const p = await b.request("turn/poll", {});
+  assert.equal(p.turn, false);
+  assert.equal(p.running, false);
+  assert.equal(p.settled, false);
+  assert.deepEqual(p.frames, []);
+  await b.stop();
+});
+
+test("宿主退出前取消并结算在途 turn，不丢日志不留租约", async () => {
+  const { b, dir } = await bootFresh();
+  const s = await b.request("turn/start", { limit: 2 });
+  assert.equal(s.started, true);
+  await nap(60);
+  // 直接关 stdin：在途 turn 必须被取消并 join，然后落盘、归还租约
+  await b.stop();
+  assert.equal(existsSync(join(dir, "session.log.lease")), false, "退出后不得留下写租约");
+  const text = readFileSync(join(dir, "session.log"), "utf8");
+  assert.ok(text.includes("turn/start"), "turn/start 必须已落盘");
+  assert.ok(text.includes("turn/cancelled"), "退出结算必须写下取消终态");
+});
+

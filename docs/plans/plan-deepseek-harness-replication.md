@@ -265,7 +265,7 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
 | 扩展生命周期 | PARTIAL | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主已落地：core `cjpm test` **24/24**（含重名拒绝、未登记即拒、监听 handle 一次性）；`extjs` `node --test` **10/10**（含坏扩展不污染注册表、宿主退出结算在途调用 `-32002 host-exiting`）；桌面入口 `bridge.test.mjs` **12/12**（`extension/list` 与 CLI 同一内置集、`extension/call` 未登记/无应答均走 JSON-RPC 错误、`extension/dispose` 后残留 0 且归还租约）；CLI 分发产物裸 PATH 跑 `dsh ext` 8 项断言 rc=0，变异探针（把未登记改名成已登记）rc=1 证明门禁真在执行。**缺口**：仓颉侧尚未 spawn `extjs` 进程（需 `std.sync` 并发读子进程 stdout），JS 动态工具目前由独立宿主验收而非由 core 驱动 |
 | 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；**缺口**：进程崩溃后的残留租约无接管路径，且 `WriteLease` 存在 TOCTOU（std.fs 无 O_EXCL，待 CFFI/原子 rename） |
-| 取消与背压 | FAIL | 未实现 Ctrl+C / 桌面 stop / 慢消费者三条路径；需先引入线程或字节级流 |
+| 取消与背压 | PARTIAL | 桌面 stop 与慢消费者两条已实测：`TurnToken` 协作式取消跑在 `spawn` 出的仓颉线程上，`ThreadSafeDeliveryQueue`（Mutex+Condition）投不满只报 `overflow`、`dropped` 恒 0；已独立发布的 `detached()` 令牌不被父取消连带杀死（`futureCancelIsCooperativeNotForced` 钉住「`Future.cancel()` 只发请求」）。计数：core 42/42、CLI `dsh cancel` 9 项断言裸 PATH rc=0、bridge 16/16。**剩余**：Ctrl+C/SIGINT 仍未接（std 无信号 API，需 CFFI `sigaction`），流式期间日志的并发读尚未收进锁 |
 | UI/Next SDK | FAIL | `renderer/` 仍是占位页，Vue 3/TinyVue/TinyRobot/Next SDK 未接入 |
 | npm CLI 本地包 | PASS | `npm pack` → 隔离目录 `npm i -g` 运行；argv/cwd/stdio/退出码正确；主包不含 Electron；无编译器依赖 |
 | 桌面本地包 | BLOCKED | Electron 二进制在当前网络不可达（详见 `docs/evidence/desktop-electron-blocker.md`）；解锁命令 `npx electron . --smoke` 期望 `SMOKE PASS` 且退出无孤儿 `dsh-host` |
@@ -313,6 +313,9 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 8 | 学习与实现顺序 | 先 P0 纵向切片（模型流 + 一个工具 + 日志回放 + 一个动态扩展 + 双入口打包），失败改设计而非删范围 |
 | 9 | Electron 二进制来源 | **只用官方 GitHub Releases**，不用 `ELECTRON_MIRROR` 等第三方镜像；`node_modules/electron/dist/` 缺失期间 C10 固定记 **BLOCKED**，不得为凑绿把桌面包从验收范围里删掉 |
 | 10 | 扩展注册表归属 | `core` 的 `ToolRegistry`/`ListenerRegistry` 是 CLI 与桌面**唯一真源**；内置仓颉工具在 core 登记，JS 动态工具经 `extension/*` 与独立 `extjs/` 宿主接入同一语义（未登记即拒、审批 fail-closed、卸载残留归 0） |
+| 11 | 取消的载体 | 取消只认 `TurnToken`（协作式，检查点在帧间），**不认 `Future.cancel()`**——实测后者仅发请求、不停线程（`futureCancelIsCooperativeNotForced`）。turn 跑在 `spawn` 出的仓颉线程上，桌面 stop 才能在流式期间从同一条 stdin 读到；`detached()` 令牌代表已独立发布的后台任务，父取消不得连带杀死它 |
+| 12 | 流式期间的写者 | 一个 session 同时只有一个写者：turn 在途时 Host 对其余读写日志的方法回 `-32001 turn-in-flight`，结算（join）后才落盘并归还租约。**这是串行化而非并发安全**——把 `SessionLog` 的并发读写收进锁是后续项，不假装已经做到 |
+| 13 | 新会话的空日志 | `SessionLog.load()` 遇「文件不存在」= 零事件的合法回放（返回 true）；损坏只针对「已有内容但序号断裂/尾帧坏掉」。实测原实现把全新会话的第一次写入与第一个 turn 都判成 `replay-rejected`，桌面新会话进不去 |
 
 ## 9. 历史参照与文档取代关系
 

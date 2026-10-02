@@ -161,6 +161,12 @@ main(args: Array<String>) {
     let extReg = ToolRegistry()
     extReg.register(ToolSpec("write", "写临时文件", "path content", true))
     let extRt = ToolRuntime(shared, extReg)
+    // 流式 turn 跑在独立仓颉线程上：这样 stdin 上的 turn/cancel 能在「流中间」被读到，
+    // 桌面 stop 才有落点。代价是并发写同一份日志不安全，所以在 turn 在途期间，
+    // 所有会动日志（含读日志）的方法一律被拒；turn 线程是当时的唯一写者。
+    var turnHandle: Option<TurnHandle> = None
+    var turnBusy = false
+    let turnSink = ThreadSafeDeliveryQueue(64)
     while (true) {
         var body = ""
         var eof = false
@@ -188,8 +194,14 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        // turn 在途期间日志只有那一个写者：其余读写都拒绝，结算后再来（下一步才把
+        // SessionLog 的并发读写收进锁，这里不假装已经线程安全）。
+        if (turnBusy && method != "turn/poll" && method != "turn/cancel" && method != "initialize") {
+            emit(errFrame(idText, -32001, "turn-in-flight"))
+            continue
+        }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -347,7 +359,98 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"disposed\":${flag},\"tools\":${extReg.count()}}"))
             continue
         }
+        if (method == "turn/start") {
+            if (turnBusy) {
+                emit(errFrame(idText, -32001, "turn-in-flight"))
+                continue
+            }
+            // 与 session/submit 同一持久化档位：租约内内存可见，结算时落盘
+            if (!leaseHeld) {
+                if (!lease.acquire()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            let limitN = jsonNum(body, "limit")
+            let limit = if (limitN < 0) { Int64(2) } else { limitN }
+            let tk = TurnToken()
+            turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
+            turnBusy = true
+            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit}}"))
+            continue
+        }
+        if (method == "turn/cancel") {
+            // 只是发出取消请求；终态由 turn/poll 结算，绝不在这里编一个结果
+            var requested = "false"
+            var wasRunning = "false"
+            if (let Some(h) <- turnHandle) {
+                if (h.isRunning()) {
+                    wasRunning = "true"
+                    h.cancel()
+                    requested = "true"
+                }
+            }
+            emit(okFrame(idText, "{\"cancelRequested\":${requested},\"wasRunning\":${wasRunning}}"))
+            continue
+        }
+        if (method == "turn/poll") {
+            let frames = turnSink.take(64)
+            var arr = "["
+            for (i2 in 0..frames.size) {
+                if (i2 > 0) {
+                    arr += ","
+                }
+                arr += "\"${frames[i2]}\""
+            }
+            arr += "]"
+            var turnText = "false"
+            var runningText = "false"
+            var settledText = "false"
+            var tail = ""
+            if (let Some(h) <- turnHandle) {
+                turnText = "true"
+                if (h.isRunning()) {
+                    runningText = "true"
+                    tail = ",\"overflow\":${turnSink.overflow()}"
+                } else {
+                    // 线程已收束：join 之后才有终态可报，也才允许主线程动日志
+                    let r = h.result()
+                    runningText = "false"
+                    settledText = "true"
+                    let cFlag = if (r.cancelled) { "true" } else { "false" }
+                    let iFlag = if (r.interrupted) { "true" } else { "false" }
+                    tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${r.text}\",\"finishReason\":\"${r.finishReason}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()}"
+                    turnHandle = None
+                    turnBusy = false
+                    if (leaseHeld) {
+                        if (shared.flush()) {
+                            leaseHeld = false
+                            lease.release()
+                        } else {
+                            getStdErr().writeln("turn-settle-flush-failed: lease retained")
+                        }
+                    }
+                }
+            }
+            emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
         emit(errFrame(idText, -32601, "method not found"))
+    }
+    // stdin 关闭时若仍有在途 turn：先取消再 join，绝不留一个「没人回答的在途请求」，
+    // 且必须在线程收束之后才落盘与归还租约。
+    if (let Some(h) <- turnHandle) {
+        h.cancel()
+        let r = h.result()
+        getStdErr().writeln("host-exit-settled-turn: cancelled=${r.cancelled} delivered=${r.delivered}")
+        turnHandle = None
+        turnBusy = false
     }
     // 干净退出前结算未 flush 的写入：落盘成功才归还租约；失败则保留租约并报警，
     // 绝不在内存态丢失后假装写提交过（fail-closed）。

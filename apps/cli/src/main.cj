@@ -18,8 +18,8 @@ func expect(label: String, got: Bool) {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "projection" && mode != "seed") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "projection" && mode != "seed") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel]")
         return 64
     }
 
@@ -78,6 +78,42 @@ main(args: Array<String>) {
         let a4 = Assembly()
         a4.push(Chunk("usage", "9", ""))
         expect("缺 finish 时保持 interrupted", a4.interrupted)
+    }
+
+    if (mode == "all" || mode == "cancel") {
+        // turn 跑在独立线程上，主线程从另一个线程发起取消：
+        // 桌面 stop 与 CLI 中断走的就是同一条协作式路径。
+        let p = "cancel-session.log"
+        removeIfExists(p, recursive: false)
+        let tk = TurnToken()
+        let log = SessionLog(p)
+        let q = ThreadSafeDeliveryQueue(2)
+        let h = TurnRunner().start(CancellableStreamProvider(tk, 2), tk, log, q)
+        // 「已在流中」要有可观察证据：生产线程投出过帧才算，isRunning 只说明还没结束
+        var spins: Int64 = 0
+        while (q.size() == 0 && spins < 3000) {
+            sleep(1 * Duration.millisecond)
+            spins += 1
+        }
+        expect("turn 在独立线程上产出过帧", q.size() > 0)
+        h.cancel()
+        let r = h.result()
+        expect("取消在流中生效", r.cancelled && r.delivered == Int64(2))
+        expect("已产出的部分文本保留", r.text == "你好，world")
+        expect("取消的 turn 没有终态原因", r.interrupted && r.finishReason == "")
+        expect("不留悬挂 tool call", r.pendingToolCalls == Int64(0))
+        var hasCancelled = false
+        for (ev in log.events) {
+            if (ev.eventType == "turn/cancelled") { hasCancelled = true }
+        }
+        expect("日志留下 turn/cancelled", hasCancelled)
+        expect("背压只报信号不丢帧", q.dropped() == Int64(0) && q.size() <= Int64(2))
+        expect("结算后线程退出", !h.isRunning())
+        let handed = tk.detached()
+        expect("已独立发布的后台任务不被连带取消", !handed.cancelled())
+        log.flush()
+        removeIfExists(p, recursive: false)
+        println("cancel\tcancelled=${r.cancelled}\tdelivered=${r.delivered}\tsettled=${r.settledToolCalls}")
     }
 
     if (mode == "ext") {

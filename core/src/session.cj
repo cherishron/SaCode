@@ -53,6 +53,13 @@ public class SessionLog {
     // （truncatedTail 置真，由上层把未结算流标 interrupted）；中段缺帧是逻辑损坏，
     // 整份拒绝，绝不静默前滚。
     public func load(): Bool {
+        if (!exists(path)) {
+            // 还没有日志文件 = 零事件，合法回放；损坏只针对「已有内容但序号断裂/尾帧坏掉」
+            events.clear()
+            truncatedTail = false
+            flushedCount = Int64(0)
+            return true
+        }
         try {
             let text = String.fromUtf8(File.readFrom(path))
             events.clear()
