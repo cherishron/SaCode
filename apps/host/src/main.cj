@@ -216,7 +216,9 @@ main(args: Array<String>) {
         let idText = jsonId(body)
         // turn 在途期间日志只有那一个写者：其余读写都拒绝，结算后再来（下一步才把
         // SessionLog 的并发读写收进锁，这里不假装已经线程安全）。
-        if (turnBusy && method != "turn/poll" && method != "turn/cancel" && method != "initialize") {
+        // turn 在途期间只拦「会动日志的写」；读侧（投影/订阅）走 core 的守护访问器与
+        // 磁盘副本，因此桌面可以边流式边看状态，不再被一律 -32001 挡掉。
+        if (turnBusy && method != "turn/poll" && method != "turn/cancel" && method != "initialize" && method != "session/projection" && method != "session/subscribe") {
             emit(errFrame(idText, -32001, "turn-in-flight"))
             continue
         }
@@ -227,17 +229,19 @@ main(args: Array<String>) {
         if (method == "session/projection") {
             // 实例内可见性：持有租约时投影未 flush 的内存态（DSH 中 append 即可见，
             // flush 只决定崩溃持久与跨进程可见），否则从磁盘重建。
-            let log = SessionLog(p)
-            if (leaseHeld) {
-                for (ev in shared.events) {
-                    log.events.add(ev)
+            // 一律走守护访问器：turn 线程可能正在写，这里必须拿到一次自洽的快照，
+            // 而不是边遍历共享列表边拼帧。
+            var target = shared
+            if (!leaseHeld) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) {
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
                 }
-                log.flushedCount = shared.flushedCount
-            } else if (!log.load()) {
-                emit(errFrame(idText, -32002, "replay-rejected"))
-                continue
+                target = fresh
             }
-            emit(okFrame(idText, "{\"projection\":${log.deriveMessages().size},\"events\":${log.events.size},\"durable\":${log.flushedCount},\"pending\":${log.events.size - log.flushedCount},\"truncatedTail\":${log.truncatedTail}}"))
+            let tailFlag = if (target.isTruncatedTail()) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"projection\":${target.deriveMessages().size},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag}}"))
             continue
         }
         if (method == "session/append") {
@@ -261,7 +265,7 @@ main(args: Array<String>) {
             }
             leaseHeld = false
             lease.release()
-            emit(okFrame(idText, "{\"events\":${shared.events.size},\"durable\":${shared.flushedCount}}"))
+            emit(okFrame(idText, "{\"events\":${shared.eventCount()},\"durable\":${shared.durableCount()}}"))
             continue
         }
         // 显式 durability 屏障：submit 只在内存可见，flush 才跨进程可见
@@ -279,7 +283,7 @@ main(args: Array<String>) {
                 leaseHeld = true
             }
             shared.append(jsonStr(body, "eventType"), jsonStr(body, "data"))
-            emit(okFrame(idText, "{\"events\":${shared.events.size},\"durable\":${shared.flushedCount}}"))
+            emit(okFrame(idText, "{\"events\":${shared.eventCount()},\"durable\":${shared.durableCount()}}"))
             continue
         }
         if (method == "session/flush") {
@@ -293,7 +297,7 @@ main(args: Array<String>) {
             }
             leaseHeld = false
             lease.release()
-            emit(okFrame(idText, "{\"events\":${shared.events.size},\"durable\":${shared.flushedCount}}"))
+            emit(okFrame(idText, "{\"events\":${shared.eventCount()},\"durable\":${shared.durableCount()}}"))
             continue
         }
         // 只回放**已落盘**事件：cursor 之后、limit 之内，more 表示还有
@@ -314,7 +318,7 @@ main(args: Array<String>) {
             let picked = ArrayList<String>()
             var next = cursor
             var more = false
-            for (ev in fresh.events) {
+            for (ev in fresh.snapshotEvents()) {
                 if (ev.seq >= cursor) {
                     if (Int64(picked.size) < limit) {
                         picked.add("{\"seq\":${ev.seq},\"type\":\"${ev.eventType}\"}")
@@ -332,7 +336,7 @@ main(args: Array<String>) {
                 arr += picked[i2]
             }
             arr += "]"
-            emit(okFrame(idText, "{\"events\":${arr},\"nextCursor\":${next},\"durable\":${fresh.flushedCount},\"more\":${more}}"))
+            emit(okFrame(idText, "{\"events\":${arr},\"nextCursor\":${next},\"durable\":${fresh.durableCount()},\"more\":${more}}"))
             continue
         }
         if (method == "extension/list") {

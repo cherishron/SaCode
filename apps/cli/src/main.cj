@@ -29,7 +29,7 @@ main(args: Array<String>) {
             println("err\treplay-rejected")
             return 1
         }
-        println("ok\t${sl.deriveMessages().size}\t${sl.events.size}")
+        println("ok\t${sl.deriveMessages().size}\t${sl.eventCount()}")
         for (s in sl.deriveMessages()) {
             println("msg\t${s}")
         }
@@ -55,7 +55,7 @@ main(args: Array<String>) {
             return 1
         }
         lease.release()
-        println("ok\tseeded\t${sl.events.size}")
+        println("ok\tseeded\t${sl.eventCount()}")
         return 0
     }
 
@@ -103,7 +103,7 @@ main(args: Array<String>) {
         expect("取消的 turn 没有终态原因", r.interrupted && r.finishReason == "")
         expect("不留悬挂 tool call", r.pendingToolCalls == Int64(0))
         var hasCancelled = false
-        for (ev in log.events) {
+        for (ev in log.snapshotEvents()) {
             if (ev.eventType == "turn/cancelled") { hasCancelled = true }
         }
         expect("日志留下 turn/cancelled", hasCancelled)
@@ -163,7 +163,7 @@ main(args: Array<String>) {
         for (s in proj) {
             if (s.contains("tool/call")) { projHasToolCall = true }
         }
-        expect("tool/call 持久但不进模型历史", !projHasToolCall && r.events.size >= 6)
+        expect("tool/call 持久但不进模型历史", !projHasToolCall && r.eventCount() >= Int64(6))
     }
 
     if (mode == "extjs") {

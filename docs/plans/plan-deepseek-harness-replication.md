@@ -319,6 +319,7 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 14 | JS 宿主的优雅退出口 | core 侧只拿得到 `std.io.OutputStream` 接口（std 未文档化 `close()`），无法靠「关掉写端」给子进程造 EOF。故优雅退出走协议层 `host/shutdown`（宿主先应答 → 结算在途调用回 `-32002` → `process.exit(0)`），stdin EOF 只作崩溃兜底；`wait` 有界超时后才 `terminate(force: true)` 并如实记 `forcedExit`，「没被强杀」必须是断言而不是假设 |
 | 15 | 并发在途的配对规则 | 子进程应答必须按 `"id"` 认领，`ReplyTable` 三条硬约束：表满回压不丢帧（丢帧计数结构性为 0）、等待方收手（`untrack`）之后到达的帧记**迟到账**、从来没人登记过的帧（如 `id: null` 的 parse-error）记**无主账**——两类都不许被任何在途请求认领。写侧整帧互斥（并发写 stdin 会交错出坏帧）。方法层面的一条实测教训：把配对改成「按到达顺序」的变异探针只让 3 条白盒登记表用例变红，子进程集成用例照样全绿——时序类黑盒用例钉不住这条不变量，据此把异步入账的断言改成有界轮询 |
 | 16 | 租约的原子获取与归属凭据 | 用 `File.createTemp` 独占落盘 + `rename(..., overwrite:false)`（目标存在即抛）做原子获取，取代 `exists`+`writeTo` 的 TOCTOU；盘上写归属凭据而非裸标志，`release()` 只认自己那份，抢写失败方与「归属已易主的原持有者」都删不掉别人的租约（fail-closed）。崩溃持有者的自动接管**推迟到有自身 pid 与判活 API 时**：Windows 下 std 无此能力（`std.process` 只有 `findProcess(pid)`，`std.posix` 非跨平台），需 CFFI 绑 `GetCurrentProcessId`+`OpenProcess`；在那之前对外行为是明确拒绝，绝不悄悄抢走 |
+| 17 | 会话日志的并发口径 | 跨进程仍然只认写租约（一个写者）+ `flush` 才跨进程可见；但**同进程内** turn 线程写、主线程读投影是常态，所以 `SessionLog` 的每个访问过 `Mutex`，生产路径只准用守护访问器（`eventCount/durableCount/pendingCount/snapshotEvents/isTruncatedTail`），不允许拿着内部列表边遍历边拼帧。Host 的 `-32001 turn-in-flight` 因此收窄成只拒**写**：桌面可以边流式边读状态，`pending` 如实报「内存可见但未落盘」。锁的收益只到「读写不撕裂」——摘锁变异体下 `concurrentAppenders` 测不出来（本运行时纯 CPU 循环无抢占点，写者不真交错），并发写安全仍需更强的证据 |
 
 ## 9. 历史参照与文档取代关系
 

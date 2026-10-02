@@ -255,6 +255,35 @@ test("宿主退出前取消并结算在途 turn，不丢日志不留租约", asy
   assert.ok(text.includes("turn/cancelled"), "退出结算必须写下取消终态");
 });
 
+// 流式期读侧不再被一律串行挡掉：桌面要能边流式边看状态。
+// 依据是 core 的 SessionLog 访问已全部加锁（loglock_test 钉住），读的是自洽快照。
+test("turn 在途时读投影与订阅不再被拒，写侧仍串行", async () => {
+  const { b } = await bootFresh();
+  const s = await b.request("turn/start", { limit: 2 });
+  assert.equal(s.started, true);
+  await nap(150);
+  const p = await b.request("session/projection", {});
+  assert.ok(p.events >= 3, `流式期读不到状态：${JSON.stringify(p)}`);
+  assert.equal(p.durable, 0, "turn 在途尚未 flush，跨进程不可见");
+  assert.equal(p.pending, p.events, "内存态与已落盘的差额必须如实报 pending");
+  const sub = await b.request("session/subscribe", { cursor: 0 });
+  assert.deepEqual(sub.events, [], "订阅只回放已落盘事件");
+  await assert.rejects(
+    () => b.request("session/submit", { eventType: "user/message", data: "mid-turn" }),
+    /turn-in-flight/,
+    "写侧仍是单一写者"
+  );
+  // 读侧验完再收：provider 停在帧间等取消，不发起取消就永远结算不了
+  const c = await b.request("turn/cancel", {});
+  assert.equal(c.cancelRequested, true);
+  const done = await pollUntilSettled(b);
+  assert.equal(done.settled, true);
+  const after = await b.request("session/projection", {});
+  assert.equal(after.durable, after.events, "结算后应全部落盘");
+  assert.ok(after.events >= p.events, "结算后读数不得回退");
+  await b.stop();
+});
+
 // C5 桌面入口：JS 动态扩展必须由仓颉核心驱动的子进程提供，桌面看到的应答只能来自子进程。
 // 注：宿主侧 jsonStr 不做反斜杠解转义，所以路径参数一律用正斜杠形式。
 const fwd = (p) => p.replace(/\\/g, "/");
