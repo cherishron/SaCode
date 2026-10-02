@@ -3,6 +3,7 @@ import core.*
 import stdx.encoding.json.*
 import std.collection.ArrayList
 import std.env.*
+import std.fs.*
 
 // 帧：NDJSON，一行一条 JSON-RPC 2.0 报文（读侧用 readln，写侧补 LF）。
 // stdout 只走协议帧，诊断走 stderr。只用已证实的 API：String.split / toArray() /
@@ -151,6 +152,21 @@ func jsonNum(body: String, key: String): Int64 {
     return -1
 }
 
+// 把请求原样转给 JS 子进程，并把子进程的真实应答嵌进 forwarded 字段：
+// 桌面看到的能力表与工具结果只可能来自子进程，本端一律不替它编。
+// 未 spawn 与「发了但没回」是两种失败，必须分开报，不能都糊成空表。
+func forward(idText: String, spawned: Bool, frame: Option<String>) {
+    if (!spawned) {
+        emit(errFrame(idText, -32011, "js-host-not-spawned"))
+        return
+    }
+    if (let Some(f) <- frame) {
+        emit(okFrame(idText, "{\"forwarded\":${f}}"))
+    } else {
+        emit(errFrame(idText, -32013, "js-host-no-reply"))
+    }
+}
+
 main(args: Array<String>) {
     let p = "session.log"
     let lease = WriteLease(p)
@@ -161,6 +177,10 @@ main(args: Array<String>) {
     let extReg = ToolRegistry()
     extReg.register(ToolSpec("write", "写临时文件", "path content", true))
     let extRt = ToolRuntime(shared, extReg)
+    // JS 动态扩展宿主：由 core 的 ExtProcess 直接驱动的子进程，与内置仓颉工具共用
+    // 同一套语义（未登记即拒、卸载残留归 0、退出必须结算）。
+    var jsHost: Option<ExtProcess> = None
+    var jsAlive = false
     // 流式 turn 跑在独立仓颉线程上：这样 stdin 上的 turn/cancel 能在「流中间」被读到，
     // 桌面 stop 才有落点。代价是并发写同一份日志不安全，所以在 turn 在途期间，
     // 所有会动日志（含读日志）的方法一律被拒；turn 线程是当时的唯一写者。
@@ -201,7 +221,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/close\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -441,6 +461,77 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
             continue
         }
+        if (method == "extension/host/spawn") {
+            if (jsAlive) {
+                emit(errFrame(idText, -32012, "js-host-already-running"))
+                continue
+            }
+            let xp = ExtProcess(jsonStr(body, "node"), ["server.cjs"], workingDirectory: Path(jsonStr(body, "dir")))
+            if (!xp.start()) {
+                getStdErr().writeln("js-host-spawn-failed: ${xp.startFailure()}")
+                emit(errFrame(idText, -32011, "js-host-spawn-failed"))
+                continue
+            }
+            var hs = ""
+            if (let Some(f) <- xp.initialize()) {
+                hs = f
+            }
+            if (hs.size == 0) {
+                // 握手拿不到应答：立刻强杀结算，绝不留一个没人管的子进程
+                xp.kill()
+                getStdErr().writeln("js-host-handshake-timeout: received=${xp.received()}")
+                emit(errFrame(idText, -32011, "js-host-handshake-timeout"))
+                continue
+            }
+            jsHost = Some(xp)
+            jsAlive = true
+            emit(okFrame(idText, "{\"spawned\":true,\"handshake\":${hs}}"))
+            continue
+        }
+        if (method == "extension/host/list") {
+            var f: Option<String> = None
+            if (let Some(xp) <- jsHost) {
+                f = xp.list()
+            }
+            forward(idText, jsAlive, f)
+            continue
+        }
+        if (method == "extension/host/load") {
+            var f: Option<String> = None
+            if (let Some(xp) <- jsHost) {
+                f = xp.load(jsonStr(body, "path"))
+            }
+            forward(idText, jsAlive, f)
+            continue
+        }
+        if (method == "extension/host/call") {
+            var f: Option<String> = None
+            if (let Some(xp) <- jsHost) {
+                f = xp.call(jsonStr(body, "name"), jsonStr(body, "text"))
+            }
+            forward(idText, jsAlive, f)
+            continue
+        }
+        if (method == "extension/host/dispose") {
+            var f: Option<String> = None
+            if (let Some(xp) <- jsHost) {
+                f = xp.dispose(jsonStr(body, "name"))
+            }
+            forward(idText, jsAlive, f)
+            continue
+        }
+        if (method == "extension/host/close") {
+            if (let Some(xp) <- jsHost) {
+                let rc = xp.close()
+                let flag = if (xp.forcedExit()) { "true" } else { "false" }
+                jsHost = None
+                jsAlive = false
+                emit(okFrame(idText, "{\"exit\":${rc},\"forced\":${flag},\"received\":${xp.received()},\"mismatched\":${xp.mismatched()}}"))
+            } else {
+                emit(errFrame(idText, -32011, "js-host-not-spawned"))
+            }
+            continue
+        }
         emit(errFrame(idText, -32601, "method not found"))
     }
     // stdin 关闭时若仍有在途 turn：先取消再 join，绝不留一个「没人回答的在途请求」，
@@ -451,6 +542,14 @@ main(args: Array<String>) {
         getStdErr().writeln("host-exit-settled-turn: cancelled=${r.cancelled} delivered=${r.delivered}")
         turnHandle = None
         turnBusy = false
+    }
+    // 父宿主退出前必须结算 JS 子进程：先发 host/shutdown 走优雅路径，超时才强杀——
+    // 否则桌面关掉时机器上会留一个没人管的 node。
+    if (let Some(xp) <- jsHost) {
+        let rc = xp.close()
+        getStdErr().writeln("host-exit-settled-js-host: exit=${rc} forced=${xp.forcedExit()}")
+        jsHost = None
+        jsAlive = false
     }
     // 干净退出前结算未 flush 的写入：落盘成功才归还租约；失败则保留租约并报警，
     // 绝不在内存态丢失后假装写提交过（fail-closed）。

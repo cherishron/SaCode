@@ -255,3 +255,72 @@ test("宿主退出前取消并结算在途 turn，不丢日志不留租约", asy
   assert.ok(text.includes("turn/cancelled"), "退出结算必须写下取消终态");
 });
 
+// C5 桌面入口：JS 动态扩展必须由仓颉核心驱动的子进程提供，桌面看到的应答只能来自子进程。
+// 注：宿主侧 jsonStr 不做反斜杠解转义，所以路径参数一律用正斜杠形式。
+const fwd = (p) => p.replace(/\\/g, "/");
+const NODE_CMD = fwd(process.execPath);
+const EXTJS_DIR = fwd(jj(REPO, "extjs"));
+
+test("桌面入口经 core 拉起 JS 宿主并完成 load/list/call/dispose", async () => {
+  const { b } = await boot();
+  const sp = await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  assert.equal(sp.spawned, true);
+  assert.ok(sp.handshake.result.capabilities.includes("host/shutdown"), "能力表必须来自子进程真实应答");
+  const pid = sp.handshake.result.process.pid;
+  const ld = await b.request("extension/host/load", { path: "example/echo.cjs" });
+  assert.equal(ld.forwarded.result.ok, true);
+  const ls = await b.request("extension/host/list", {});
+  assert.deepEqual(ls.forwarded.result.names, ["example.echo"]);
+  const cl = await b.request("extension/host/call", { name: "example.echo", text: "from-desktop" });
+  assert.deepEqual(cl.forwarded.result, { echoed: "from-desktop" });
+  const dp = await b.request("extension/host/dispose", { name: "example.echo" });
+  assert.equal(dp.forwarded.result.disposed, true);
+  const after = await b.request("extension/host/list", {});
+  assert.deepEqual(after.forwarded.result.names, [], "卸载残留必须为 0");
+  const cs = await b.request("extension/host/close", {});
+  assert.equal(cs.exit, 0, "JS 宿主须自己结算退出");
+  assert.equal(cs.forced, false, "不得靠强杀收场");
+  let alive = true;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    alive = false;
+  }
+  assert.equal(alive, false, "close 后子进程不得存活");
+  await b.stop();
+});
+
+test("未 spawn 时转调与结算都明确失败，不得静默返回空表", async () => {
+  const { b } = await boot();
+  await assert.rejects(() => b.request("extension/host/list", {}), /js-host-not-spawned/);
+  await assert.rejects(() => b.request("extension/host/call", { name: "example.echo", text: "x" }), /js-host-not-spawned/);
+  await assert.rejects(() => b.request("extension/host/close", {}), /js-host-not-spawned/);
+  await b.stop();
+});
+
+test("重复 spawn 被拒且不得把已运行的宿主弄丢", async () => {
+  const { b } = await boot();
+  const sp = await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  assert.equal(sp.spawned, true);
+  await assert.rejects(() => b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR }), /js-host-already-running/);
+  const ls = await b.request("extension/host/list", {});
+  assert.ok(Array.isArray(ls.forwarded.result.names), "第二次 spawn 失败后原宿主必须还可用");
+  const cs = await b.request("extension/host/close", {});
+  assert.equal(cs.forced, false);
+  await b.stop();
+});
+
+test("桌面宿主退出前结算 JS 子进程，不留孤儿", async () => {
+  const { b } = await boot();
+  const sp = await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  const pid = sp.handshake.result.process.pid;
+  await b.stop();
+  let alive = true;
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    alive = false;
+  }
+  assert.equal(alive, false, "父宿主退出后 JS 子进程不得存活");
+});
+
