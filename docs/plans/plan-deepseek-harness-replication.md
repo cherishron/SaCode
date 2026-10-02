@@ -311,7 +311,7 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 6 | Cordis 语义照搬度 | 原样复刻语义（服务定位、依赖激活、owner 作用域、五模式派发、层级 patch），实现与命名自定；不简化 |
 | 7 | 动态扩展 | 内置仓颉模块 + 独立 Node JS 宿主 + Vue UI 贡献三类并存；DSH 原有插件直接兼容为独立桥接目标，不混同 |
 | 8 | 学习与实现顺序 | 先 P0 纵向切片（模型流 + 一个工具 + 日志回放 + 一个动态扩展 + 双入口打包），失败改设计而非删范围 |
-| 9 | Electron 二进制来源 | **只用官方 GitHub Releases**，不用 `ELECTRON_MIRROR` 等第三方镜像；`node_modules/electron/dist/` 缺失期间 C10 固定记 **BLOCKED**，不得为凑绿把桌面包从验收范围里删掉 |
+| 9 | Electron 二进制来源 | **只用官方 GitHub Releases**，不用 `ELECTRON_MIRROR` 等第三方镜像；`node_modules/electron/dist/` 缺失期间 C10 固定记 **BLOCKED**，不得为凑绿把桌面包从验收范围里删掉。**2026-10-02 解除**：`github.com` 恢复 200，按本决策直接用官方 `install.js` 重装（未设任何镜像变量），`dist/` 就位 269 MB，`npx electron . --smoke` 输出 `SMOKE PASS`、rc=0，退出后无孤儿 `dsh-host.exe`；安装包本身仍未打——`electron-builder` 属新增第三方依赖，需另行授权 |
 | 10 | 扩展注册表归属 | `core` 的 `ToolRegistry`/`ListenerRegistry` 是 CLI 与桌面**唯一真源**；内置仓颉工具在 core 登记，JS 动态工具经 `extension/*` 与独立 `extjs/` 宿主接入同一语义（未登记即拒、审批 fail-closed、卸载残留归 0） |
 | 11 | 取消的载体 | 取消只认 `TurnToken`（协作式，检查点在帧间），**不认 `Future.cancel()`**——实测后者仅发请求、不停线程（`futureCancelIsCooperativeNotForced`）。turn 跑在 `spawn` 出的仓颉线程上，桌面 stop 才能在流式期间从同一条 stdin 读到；`detached()` 令牌代表已独立发布的后台任务，父取消不得连带杀死它 |
 | 12 | 流式期间的写者 | 一个 session 同时只有一个写者：turn 在途时 Host 对其余读写日志的方法回 `-32001 turn-in-flight`，结算（join）后才落盘并归还租约。**这是串行化而非并发安全**——把 `SessionLog` 的并发读写收进锁是后续项，不假装已经做到 |
