@@ -260,7 +260,7 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 | 项 | 结论 | 证据与缺口 |
 | --- | --- | --- |
 | 构建 | PASS | `cjc/cjpm 1.1.3` + stdx 1.1.3.1（动态链接 5 包）；host/cli `cjpm build success`；`scripts/pack-host.mjs` 出 89 文件自包含目录，运行不拼 PATH |
-| 会话与回放 | PARTIAL | `core` `cjpm test` 10/10（seq 编号、flush/load 往返、seq 断裂拒绝、投影过滤与纯度、租约互斥、装配终态）；**缺口**：物理尾帧截断当前是整份 `load()` 判失败，未按 DSH「丢弃该帧、保留前缀」处理 |
+| 会话与回放 | PASS | `core` `cjpm test` 13/13（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、装配终态、尾帧截断三例）；durability 屏障与分页由 bridge 9/9 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
 | 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
 | 扩展生命周期 | BLOCKED | JS 扩展宿主（`extjs/`）尚未落地；已达成子项：宿主退出前结算 pending 写入并归还租约（bridge 用例「宿主退出前结算未 flush 的写入并归还租约」）；**前提**：Node 侧宿主协议实现 |

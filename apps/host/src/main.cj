@@ -200,7 +200,7 @@ main(args: Array<String>) {
                 emit(errFrame(idText, -32002, "replay-rejected"))
                 continue
             }
-            emit(okFrame(idText, "{\"projection\":${log.deriveMessages().size},\"events\":${log.events.size},\"durable\":${log.flushedCount},\"pending\":${log.events.size - log.flushedCount}}"))
+            emit(okFrame(idText, "{\"projection\":${log.deriveMessages().size},\"events\":${log.events.size},\"durable\":${log.flushedCount},\"pending\":${log.events.size - log.flushedCount},\"truncatedTail\":${log.truncatedTail}}"))
             continue
         }
         if (method == "session/append") {

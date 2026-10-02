@@ -59,13 +59,55 @@ func onlySurfaceEventsEnterModelHistory() {
 }
 
 @Test
-func loadRejectsGapInSeq() {
+func loadRejectsGapInMidLog() {
     let p = tmpPath("gap")
     clean("gap")
-    File.writeTo(p, "0\tuser/message\ta\n1\tuser/message\tb\n3\tuser/message\tc\n".toArray())
+    // 中段缺 1 号帧：逻辑损坏，整份拒绝，不能静默前滚
+    File.writeTo(p, "0\tuser/message\ta\n2\tuser/message\tb\n3\tuser/message\tc\n".toArray())
     let r = SessionLog(p)
     @Expect(r.load(), false)
     clean("gap")
+}
+
+@Test
+func loadDropsHalfWrittenTailFrame() {
+    let p = tmpPath("half")
+    clean("half")
+    // 末字节不是 LF：崩溃时写了一半的尾帧，丢弃该帧并保留已提交前缀
+    File.writeTo(p, "0\tuser/message\ta\n1\tuser/message\tb\n2\tuser/mess".toArray())
+    let r = SessionLog(p)
+    @Expect(r.load(), true)
+    @Expect(Int64(r.events.size), Int64(2))
+    @Expect(r.truncatedTail, true)
+    @Expect(r.flushedCount, Int64(2))
+    clean("half")
+}
+
+@Test
+func loadDropsMalformedTailLine() {
+    let p = tmpPath("malformed")
+    clean("malformed")
+    File.writeTo(p, "0\tuser/message\ta\n1\tuser\n".toArray())
+    let r = SessionLog(p)
+    @Expect(r.load(), true)
+    @Expect(Int64(r.events.size), Int64(1))
+    @Expect(r.truncatedTail, true)
+    clean("malformed")
+}
+
+@Test
+func loadClearsPreviousTruncatedFlag() {
+    let p = tmpPath("flag")
+    clean("flag")
+    File.writeTo(p, "0\tuser/message\ta\n1\tuser/mess".toArray())
+    let r = SessionLog(p)
+    @Expect(r.load(), true)
+    @Expect(r.truncatedTail, true)
+    File.writeTo(p, "0\tuser/message\ta\n1\tuser/message\tb\n".toArray())
+    @Expect(r.load(), true)
+    @Expect(r.truncatedTail, false)
+    @Expect(Int64(r.events.size), Int64(2))
+    clean("flag")
 }
 
 @Test

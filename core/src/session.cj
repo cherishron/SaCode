@@ -21,6 +21,7 @@ public class SessionLog {
     let path: String
     public let events = ArrayList<SessionEvent>()
     public var flushedCount: Int64 = 0
+    public var truncatedTail: Bool = false
 
     public init(path: String) {
         this.path = path
@@ -48,26 +49,41 @@ public class SessionLog {
         }
     }
 
-    // 回放：只信任已落盘内容，逐行重建 seq/eventType/data；物理尾帧不完整则丢弃该帧。
+    // 回放：只信任已落盘内容。物理截断/不合法的**尾帧**丢弃并保留已提交前缀
+    // （truncatedTail 置真，由上层把未结算流标 interrupted）；中段缺帧是逻辑损坏，
+    // 整份拒绝，绝不静默前滚。
     public func load(): Bool {
         try {
             let text = String.fromUtf8(File.readFrom(path))
             events.clear()
+            truncatedTail = false
+            let lines = ArrayList<String>()
             for (line in text.split("\n")) {
-                if (line.size == 0) {
-                    continue
+                if (line.size > 0) {
+                    lines.add(line)
                 }
-                let parts = line.split("\t")
-                if (parts.size < 3) {
-                    return false
-                }
-                // 不做数字解析：把落盘顺序当作期望 seq，与行内声明 seq 按字符串比对，
-                // 等价于校验「next seq == 事件数」，同时避开解析异常分支。
+            }
+            let bs = text.toArray()
+            var lastValid = Int64(lines.size)
+            if (lastValid > 0 && (bs.size == 0 || bs[bs.size - 1] != 10)) {
+                // 末字节不是 LF：最后一行只写了一半
+                lastValid = lastValid - 1
+                truncatedTail = true
+            }
+            var i: Int64 = 0
+            while (i < lastValid) {
+                let parts = lines[i].split("\t")
                 let idx = Int64(events.size)
-                if (parts[0] != "${idx}") {
+                if (parts.size < 3 || parts[0] != "${idx}") {
+                    if (i == lastValid - 1) {
+                        truncatedTail = true
+                        lastValid = i
+                        break
+                    }
                     return false
                 }
                 events.add(SessionEvent(idx, parts[1], parts[2]))
+                i += 1
             }
             flushedCount = Int64(events.size)
             return verifySeqContiguous()
