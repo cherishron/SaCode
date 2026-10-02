@@ -255,6 +255,21 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 
 结果用 PASS/FAIL/BLOCKED；失败调整对应设计，阻塞列前提，不能删动态扩展或 CLI 来宣布通过。测试命令、版本与容量/时间阈值在 P0 实施计划冻结。模型调用、依赖安装与打包依实际权限执行，签名和实际发布另行授权。
 
+#### 6.1.1 P0 逐项结果登记（2026-10-02 实测，HEAD `74ef886`）
+
+| 项 | 结论 | 证据与缺口 |
+| --- | --- | --- |
+| 构建 | PASS | `cjc/cjpm 1.1.3` + stdx 1.1.3.1（动态链接 5 包）；host/cli `cjpm build success`；`scripts/pack-host.mjs` 出 89 文件自包含目录，运行不拼 PATH |
+| 会话与回放 | PARTIAL | `core` `cjpm test` 10/10（seq 编号、flush/load 往返、seq 断裂拒绝、投影过滤与纯度、租约互斥、装配终态）；**缺口**：物理尾帧截断当前是整份 `load()` 判失败，未按 DSH「丢弃该帧、保留前缀」处理 |
+| 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
+| 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
+| 扩展生命周期 | BLOCKED | JS 扩展宿主（`extjs/`）尚未落地；已达成子项：宿主退出前结算 pending 写入并归还租约（bridge 用例「宿主退出前结算未 flush 的写入并归还租约」）；**前提**：Node 侧宿主协议实现 |
+| 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；**缺口**：进程崩溃后的残留租约无接管路径，且 `WriteLease` 存在 TOCTOU（std.fs 无 O_EXCL，待 CFFI/原子 rename） |
+| 取消与背压 | FAIL | 未实现 Ctrl+C / 桌面 stop / 慢消费者三条路径；需先引入线程或字节级流 |
+| UI/Next SDK | FAIL | `renderer/` 仍是占位页，Vue 3/TinyVue/TinyRobot/Next SDK 未接入 |
+| npm CLI 本地包 | PASS | `npm pack` → 隔离目录 `npm i -g` 运行；argv/cwd/stdio/退出码正确；主包不含 Electron；无编译器依赖 |
+| 桌面本地包 | BLOCKED | Electron 二进制在当前网络不可达（详见 `docs/evidence/desktop-electron-blocker.md`）；解锁命令 `npx electron . --smoke` 期望 `SMOKE PASS` 且退出无孤儿 `dsh-host` |
+
 ### 6.2 长期阶段
 
 | 阶段 | 内容 | 门禁与学习主题 |
