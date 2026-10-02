@@ -1,4 +1,4 @@
-package cli
+package core
 import std.collection.ArrayList
 import std.fs.*
 import std.io.*
@@ -6,9 +6,9 @@ import std.io.*
 // 一次 provider attempt 产出的 chunk 序列（假 provider，真实 SSE 后续接入）
 public class Chunk {
     let kind: String    // text | tool-call-delta | usage | finish
-    let text: String
+    public let text: String
     let reason: String
-    init(kind: String, text: String, reason: String) {
+    public init(kind: String, text: String, reason: String) {
         this.kind = kind
         this.text = text
         this.reason = reason
@@ -29,11 +29,11 @@ public class FakeProvider {
 }
 
 public class Assembly {
-    let text = ArrayList<String>()
-    let toolCalls = ArrayList<String>()
-    var usage: String = ""
-    var finishReason: String = ""
-    var interrupted: Bool = true
+    public let text = ArrayList<String>()
+    public let toolCalls = ArrayList<String>()
+    public var usage: String = ""
+    public var finishReason: String = ""
+    public var interrupted: Bool = true
 
     // 规则：usage 必须先于 finish；finish 后不再接收 chunk；
     // max-tokens 结束时全部 tool calls 作废。
@@ -70,9 +70,9 @@ public class Assembly {
 }
 
 public class ApprovalOutcome {
-    let allowed: Bool
-    let why: String
-    init(allowed: Bool, why: String) {
+    public let allowed: Bool
+    public let why: String
+    public init(allowed: Bool, why: String) {
         this.allowed = allowed
         this.why = why
     }
@@ -80,7 +80,7 @@ public class ApprovalOutcome {
 
 public class ToolRuntime {
     let log: SessionLog
-    var guardDenials: Int64 = 0
+    public var guardDenials: Int64 = 0
 
     public init(log: SessionLog) {
         this.log = log

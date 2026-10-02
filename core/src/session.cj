@@ -1,4 +1,4 @@
-package cli
+package core
 
 import std.collection.ArrayList
 import std.fs.*
@@ -9,7 +9,7 @@ public class SessionEvent {
     let eventType: String
     let data: String
 
-    init(seq: Int64, eventType: String, data: String) {
+    public init(seq: Int64, eventType: String, data: String) {
         this.seq = seq
         this.eventType = eventType
         this.data = data
@@ -19,8 +19,8 @@ public class SessionEvent {
 // 会话即事件日志：events 是唯一真相源，模型可见历史由 deriveMessages 投影得到。
 public class SessionLog {
     let path: String
-    let events = ArrayList<SessionEvent>()
-    var flushedCount: Int64 = 0
+    public let events = ArrayList<SessionEvent>()
+    public var flushedCount: Int64 = 0
 
     public init(path: String) {
         this.path = path

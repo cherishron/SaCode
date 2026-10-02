@@ -1,4 +1,5 @@
 package cli
+import core.*
 import std.fs.*
 import std.collection.ArrayList
 
@@ -15,6 +16,35 @@ func expect(label: String, got: Bool) {
 
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
+
+    if (mode == "projection") {
+        let sl = SessionLog("session.log")
+        if (!sl.load()) {
+            println("err\treplay-rejected")
+            return 1
+        }
+        println("ok\t${sl.deriveMessages().size}\t${sl.events.size}")
+        for (s in sl.deriveMessages()) {
+            println("msg\t${s}")
+        }
+        return 0
+    }
+
+    if (mode == "seed") {
+        let sl = SessionLog("session.log")
+        sl.append("turn/start", "t1")
+        sl.append("system/message", "you are dsh")
+        sl.append("user/message", "hello")
+        sl.append("tool/call", "read a.txt")
+        sl.append("assistant/message", "hi there")
+        sl.append("turn/end", "completed")
+        if (!sl.flush()) {
+            println("err\tflush-failed")
+            return 1
+        }
+        println("ok\tseeded\t${sl.events.size}")
+        return 0
+    }
 
     if (mode == "all" || mode == "stream") {
         let asm = Assembly()
