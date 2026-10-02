@@ -3,5 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "main": "main.cjs",
-  "scripts": { "start": "electron .", "test": "node --test test/" }
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "node --test test/"
+  },
+  "devDependencies": { "electron": "^33.0.0" }
 }
