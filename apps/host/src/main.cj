@@ -232,6 +232,9 @@ main(args: Array<String>) {
     let callSink = ThreadSafeDeliveryQueue(64)
     let inflight = InflightCalls()
     var callSeq: Int64 = 0
+    // 每次 turn/start 递增：调用登记时记下自己属于哪一轮，
+    // 取消一轮只结算它自己发起的那些（epoch 0 = 不在任何 turn 里）。
+    var turnEpoch: Int64 = 0
     while (true) {
         var body = ""
         var eof = false
@@ -462,9 +465,10 @@ main(args: Array<String>) {
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
             let tk = TurnToken()
+            turnEpoch += 1
             turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
             turnBusy = true
-            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit}}"))
+            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit},\"epoch\":${turnEpoch}}"))
             continue
         }
         if (method == "turn/cancel") {
@@ -481,7 +485,7 @@ main(args: Array<String>) {
             // 取消一个 turn 必须顺带结算它发起的在途工具调用，否则桌面上会留下
             // 「turn 已停、工具还在跑」的悬空状态。结果帧仍由 poll 交出，这里不编。
             var killed = Int64(0)
-            for (cid in inflight.list()) {
+            for (cid in inflight.idsForEpoch(turnEpoch)) {
                 var done = false
                 if (let Some(xp) <- jsHost) {
                     if (let Some(fr) <- xp.cancelCall(cid)) {
@@ -590,7 +594,9 @@ main(args: Array<String>) {
                 callSeq += 1
                 cid = callSeq
             }
-            if (!inflight.add(cid)) {
+            // 归属在发起这一刻定死：turn 在途就记当前轮次，否则记 0（不属于任何轮）
+            let owner = if (turnBusy) { turnEpoch } else { Int64(0) }
+            if (!inflight.add(cid, epoch: owner)) {
                 emit(errFrame(idText, -32022, "duplicate-callId"))
                 continue
             }
@@ -604,7 +610,7 @@ main(args: Array<String>) {
                 emit(errFrame(idText, -32013, "js-host-no-reply"))
                 continue
             }
-            emit(okFrame(idText, "{\"accepted\":true,\"callId\":${cid},\"inflight\":${inflight.count()}}"))
+            emit(okFrame(idText, "{\"accepted\":true,\"callId\":${cid},\"epoch\":${owner},\"inflight\":${inflight.count()}}"))
             continue
         }
         if (method == "extension/host/poll") {

@@ -121,3 +121,75 @@ func durabilityCountersAreVisiblePerSnapshot() {
     @Expect(log.pendingCount(), Int64(0))
     lockClean("count")
 }
+
+// 更强的并发写证据：上一版四个写者只做纯内存 append，本运行时的 spawn 在纯 CPU
+// 循环里没有抢占点，摘掉锁也测不出来（已在方案 §8 决策 17 记为「守卫断言不是证据」）。
+// 这条让每个写者真的落盘——flush 走文件系统调用，那里才有真交错；同时另开一条
+// 线程不停从磁盘重放，任何一次重放都必须自洽：要么拿到整行，要么什么都没拿到。
+@Test
+func appendFlushAndReplayInterleaveWithoutTearing() {
+    let p = lockPath("flush")
+    lockClean("flush")
+    let log = SessionLog(p)
+    let gate = SyncCounter(3)
+    let hs = ArrayList<Future<Int64>>()
+    var t: Int64 = 0
+    while (t < 3) {
+        let id = t
+        hs.add(spawn { =>
+            gate.dec()
+            gate.waitUntilZero()
+            var i: Int64 = 0
+            while (i < 40) {
+                log.append("user/message", "f${id}-${i}")
+                log.flush()
+                i += 1
+            }
+            Int64(40)
+        })
+        t += 1
+    }
+    var selfConsistent = true
+    var rounds: Int64 = 0
+    while (rounds < 60) {
+        let r = SessionLog(p)
+        if (!r.load()) {
+            selfConsistent = false
+        }
+        if (r.events.size > Int64(0) && !r.verifySeqContiguous()) {
+            selfConsistent = false
+        }
+        sleep(5 * Duration.millisecond)
+        rounds += 1
+    }
+    var k: Int64 = 0
+    while (k < hs.size) {
+        try {
+            hs[k].get(4000 * Duration.millisecond)
+        } catch (e: Exception) {
+            selfConsistent = false
+        }
+        k += 1
+    }
+    @Expect(selfConsistent, true)
+    @Expect(log.eventCount(), Int64(120))
+    @Expect(log.verifySeqContiguous(), true)
+    let fin = SessionLog(p)
+    @Expect(fin.load(), true)
+    @Expect(fin.eventCount(), Int64(120))
+    // 撕裂的行（半行落盘）在这里现形：每行必须是三字段
+    let txt = String.fromUtf8(File.readFrom(p))
+    var lines: Int64 = 0
+    var bad: Int64 = 0
+    for (line in txt.split("\n")) {
+        if (line.size > 0) {
+            lines += 1
+            if (line.split("\t").size != 3) {
+                bad += 1
+            }
+        }
+    }
+    @Expect(lines, Int64(120))
+    @Expect(bad, Int64(0))
+    lockClean("flush")
+}

@@ -38,3 +38,23 @@ func inflightListIsSnapshot() {
     @Expect(f.count(), Int64(2))
     @Expect(f.has(Int64(3)), true)
 }
+
+// 取消一个 turn 只能结算它自己那一轮发起的调用：跨轮误伤会把上一轮仍在途的
+// 工具调用变成 cancelled，而桌面上那一轮早已结束、没人再等这个结果。
+@Test
+func inflightTracksWhichTurnEpochOwnsEachCall() {
+    let f = InflightCalls()
+    @Expect(f.add(Int64(11), epoch: Int64(1)), true)
+    @Expect(f.add(Int64(12), epoch: Int64(2)), true)
+    @Expect(f.add(Int64(13), epoch: Int64(0)), true)
+    @Expect(f.idsForEpoch(Int64(1)).size, Int64(1))
+    @Expect(f.idsForEpoch(Int64(1))[0], Int64(11))
+    @Expect(f.idsForEpoch(Int64(2)).size, Int64(1))
+    @Expect(f.idsForEpoch(Int64(0)).size, Int64(1))
+    @Expect(f.idsForEpoch(Int64(9)).size, Int64(0))
+    @Expect(f.count(), Int64(3))
+    // callId 仍然全局唯一，即使分属不同轮次
+    @Expect(f.add(Int64(11), epoch: Int64(2)), false)
+    @Expect(f.settle(Int64(12)), true)
+    @Expect(f.idsForEpoch(Int64(2)).size, Int64(0))
+}

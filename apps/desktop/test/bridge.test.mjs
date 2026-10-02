@@ -175,10 +175,17 @@ async function bootFresh() {
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 在途工具调用的结果靠 poll 收：轮询到指定 callId 的那一帧为止。
+// poll 是「一次取空全部」的：等某一条 callId 时顺手拿到的别的帧必须先存起来，
+// 否则那些帧就被丢在地板上，后面的等待方永远等不到（本文件第一版就是这么挂的）。
+const frameCache = new Map();
+
 async function pollCall(b, callId, tries = 120) {
+  if (frameCache.has(callId)) return { callId, frame: frameCache.get(callId) };
   for (let i = 0; i < tries; i++) {
     const p = await b.request("extension/host/poll", {});
+    for (const r of p.results) {
+      if (r.callId !== callId) frameCache.set(r.callId, r.frame);
+    }
     const hit = p.results.find((r) => r.callId === callId);
     if (hit) return hit;
     await nap(10);
@@ -467,5 +474,46 @@ test("session/projection 交出逐条消息且只含 surface 事件", async () =
   assert.equal(m2.messages[m2.messages.length - 1], "user/message: " + tricky, "入口 JSON 转义与落盘转义须逐字符往返");
   assert.equal(m2.events, evBefore + 1, "多行正文仍须是一行事件，不能被裸换行劈成两行");
   assert.equal(m2.truncatedTail, false);
+  await b.stop();
+});
+
+// 取消一轮不该波及别的轮次（或不属于任何轮次）手动发起的调用：
+// 误伤会把一个已经没人在等的在途调用标成 cancelled，界面上看不出是谁干的。
+test("turn/cancel 只结算它自己那一轮发起的在途调用", async () => {
+  const { b } = await bootFresh();
+  await b.request("extension/host/spawn", { node: NODE_CMD, dir: EXTJS_DIR });
+  await b.request("extension/host/load", { path: "example/delayed.cjs" });
+
+  const a = await b.request("turn/start", { limit: 5 });
+  assert.equal(a.started, true);
+  const ca = await b.request("extension/host/call", { name: "example.delayed", text: "属于A", callId: 21 });
+  assert.equal(ca.accepted, true);
+  assert.equal(ca.epoch, a.epoch, "A 轮在途期间的调用须记在 A 的轮次上");
+  await pollUntilSettled(b);
+
+  const bb = await b.request("turn/start", { limit: 2 });
+  assert.notEqual(bb.epoch, a.epoch, "每一轮须有新的归属号");
+  const cb = await b.request("extension/host/call", { name: "example.delayed", text: "属于B", callId: 22 });
+  assert.equal(cb.epoch, bb.epoch);
+  const cx = await b.request("turn/cancel", {});
+  assert.equal(cx.extensionCallsCancelled, 1, "只该结算 B 自己发起的那一条");
+
+  const hitA = await pollCall(b, 21);
+  assert.deepEqual(hitA.frame.result, { echoed: "属于A" }, "A 的调用不得被 B 的取消误伤");
+  const hitB = await pollCall(b, 22);
+  assert.equal(hitB.frame.error.code, -32021);
+
+  // 不在任何 turn 里手动发起的调用（epoch 0），也不该被下一轮的 stop 带走。
+  // 注意：取消只是发请求，turn 要等 poll 结算后 turnBusy 才落下——没结算就发调用，
+  // 归属仍是上一轮的，这是产品语义不是缺陷。
+  await pollUntilSettled(b);
+  const cc = await b.request("extension/host/call", { name: "example.delayed", text: "手动", callId: 23 });
+  assert.equal(cc.epoch, 0, "turn 之外发起的调用记 epoch 0");
+  const c3 = await b.request("turn/start", { limit: 2 });
+  assert.equal(c3.started, true);
+  await b.request("turn/cancel", {});
+  const hitC = await pollCall(b, 23);
+  assert.deepEqual(hitC.frame.result, { echoed: "手动" }, "epoch 0 的调用不受后续 turn 取消影响");
+  await pollUntilSettled(b);
   await b.stop();
 });
