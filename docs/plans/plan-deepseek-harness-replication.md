@@ -1,10 +1,14 @@
-# DeepSeek Harness 全系统复刻蓝图（研究篇）
+# DeepSeek Harness 全系统复刻总体方案草案
 
-本文是把 deepseek-harness（下称 **DSH**）官方文档站约 90 页 + 仓库侧 16 页长尾子系统文档读完之后的合成产物，目标是给「由前端到后端完整复刻 DSH」这件事提供**系统地图、硬规格、依赖顺序与每层验收口径**。
+- 状态：v0.2，供架构评审；尚未开始实现。
+- 已确定目标：仓颉共享运行时 + Vue 3/TypeScript + TinyVue/TinyRobot + Electron + Next SDK，独立交付桌面端与可通过 npm 安装的 CLI。
+- 本次范围：总体方案、接口与动态扩展边界、首个可行性验证；不安装依赖、不替换实现、不发布。
+- 复刻口径：功能、架构约束、格式兼容与插件源码兼容分开验收；不把其中一种等价宣称为全部兼容。完整能力保留在路线图中，分批交付不等于删项。
 
-- 性质：研究/规划文档，不含实现代码。
-- 证据来源：`https://deepseek-harness.github.io/deepseek-harness/en/**`（文档站，仅英文）与仓库 `docs/subsystems/*.md`（16 个长尾页只存在于仓库）。各结论页脚注见 §10。
-- 标注约定：`[待确认]` = 需要用户拍板的分叉；`文档未覆盖` = DSH 文档本身没说，复刻时必须自己裁决。
+此前 DSH 文档研究用于整理系统地图和候选约束，不替代逐项源码与测试核验。实施前冻结上游 commit、依赖版本、许可证与证据路径，建立「能力 → 上游证据 → 本项目模块 → 入口 → 测试 → 差异」矩阵。研究代理有重复读取，页数相加不是覆盖完整性的证明。
+
+- 本文 §1–§4 保留 DSH 研究背景；§5–§9 为本项目设计提案，接口名称不是已确认的上游 API。
+- 证据入口为用户提供的 DSH 仓库与文档，以及 §10 所列研究限制。
 
 ---
 
@@ -143,73 +147,161 @@ DSH 把「事件」严格分成两类，复刻时必须从类型系统就分开�
 
 ---
 
-## 5. Rust 移植决策表
+## 5. 新架构与仓颉实现边界
 
-结论先行：**DSH 真正的价值在 L0 的机制（按名服务定位 + inject 依赖驱动状态机 + 注册即 effect 自动回滚 + 五模式派发 + 层级 patch 合成），这一层全部可以照搬为 Rust trait 设计。不可照搬的只有「运行时任意装载 TS 模块」。**
+### 5.1 共享核心、双入口
 
-| TS 依赖点 | 为什么依赖 TS | Rust 替代 | 风险 |
-| --- | --- | --- | --- |
-| `cordis.yml` 里写字符串路径/包名 → 运行时 `import` | 动态模块装载 | `inventory`/`linkme` 分布式注册 + 名称→工厂 map；yml 只决定**启用**不决定**链接** | 失去「装新代码不重编译」；真正的动态扩展边界要下移到 WASM |
-| declaration merging（`Context`/`Events`/`SessionEventMap`/`ChatNodeDataMap`/`ResourceProtocolMap`/`TypertRemoteNamespaceMap`） | 跨包拼接类型全景 | build.rs/proc-macro **codegen 聚合**各 crate 声明 + `TypeId → Box<dyn Any>` typemap 兜底 | 开闭性下降：新增服务键要过 codegen，不再是「任意包可加一行」 |
-| `StreamChunk` async generator | `async function*` | `Stream<Item=Chunk>` / mpsc 通道 | 低 |
-| `Volatile<T>` + `!!js <expr>` | 类型级标记 + 任意 JS 表达式 | `tokio::sync::watch` + 表单投影；表达式降级为 env 插值或嵌 `rhai` | 语义等价但表达力下降 |
-| `Branded<'X'>` / exact-one union / `StandardSchema` | 结构化类型 | newtype + `schemars`/`serde` 校验 | 低（Rust 更强） |
-| HMR（模块缓存重置） | Node loader | 进程内可换 dyn 图（卸 fiber → 重跑注册）；换**代码本体**需 `dylib`（不稳定 ABI）或 WASM | WASM 要跨序列化边界，丢掉「注册借用同一对象」的零成本 |
-| `Drop` vs async disposer | TS  disposer 可 await | 不能用 `Drop`（非 async），要显式 `async fn dispose()` + 注册序栈 | 忘记 dispose 就是资源泄漏，需在 invariants 层设检测 |
-| React + `useSyncExternalStore` + tsx + zod + picomatch + `node:http` | 纯实现细节 | Leptos/Dioxus/Tauri 任一 + `serde` + `globset` + `axum` | 低 |
+```text
+npm 启动包装 → 仓颉 CLI ──────────────┐
+                                      │
+Electron 主进程 → 仓颉 Host ───────────┼→ 共享仓颉核心
+  │                                   │  插件/会话/agent/模型/工具/审批
+preload                               └→ 独立 Node 扩展宿主
+  │                                       CLI 与桌面都可启动
+Vue 客户端模型/视图装配/槽位
+  TinyVue + TinyRobot
+  Next SDK 页面工具适配
+```
 
-扩展边界的现实取舍：**核心服务图编译期组合（crate 集合），窄接口数据驱动的（`LlmAdapter`、`Tool` 定义、provider）适合做 WASM 缝。** `[待确认]`
+CLI 在进程内调用公共服务，Host 把同一服务暴露给桌面；是否合并成带子命令的单个程序由 P0 构建实测决定。核心不依赖 Electron、Vue、TinyRobot 或 Next SDK。CLI 不需要浏览器或桌面安装包，桌面不调用全局安装 CLI。
 
----
-
-## 6. 里程碑与依赖顺序
-
-顺序不可打乱：M0/M1 是 L0/事件溯源，**后三层的每条不变量都押在它上面**；先做 UI 会返工。
-
-| 里程碑 | 内容 | 验收口径（可证伪） |
+| 模块 | 职责 | 不允许承担的职责 |
 | --- | --- | --- |
-| **M0 基座** | Cordis 等价物（Context/Service/Registry/Fiber 状态机 `PENDING→LOADING→ACTIVE→FAILED/UNLOADING→DISPOSED`/Events 五模式/effect LIFO）+ loader + profile/bundle/patch 合成 + `--dump-config` | ① 插件按 `inject` 就绪才激活，服务消失依赖者自动卸载、回来自动重载；② 卸载后注册表全空（断言残留为 0）；③ patch 整行替换语义有专测；④ invariants 注册表可拒绝「检查方法存在」型断言 |
-| **M1 会话真相源** | `SessionEvent` 目录 + `seq` + JSONL 持久化 + `deriveMessages` + projections + storage domain + spill | ① 任意会话 kill -9 后重启，模型可见历史与崩溃前逐字节一致（缺失 closer 由 `interruptedTurnClosers` 合成）；② 未知非 `ignorable` 事件使重建失败（反向测试）；③ 投影对无关事件返回同一引用；④ checkpoint 不超前未落盘事件 |
-| **M2 模型层** | `LlmAdapter` 契约 + StreamChunk 装配 + `ReplayEnvelope` + token-meter + retry + system-prompt 装配 | ① 一次 adapter 调用 = 一次 provider attempt（库内 retry 关闭）；② `max-tokens` 后 tool calls 全消；③ prompt 作为 `system/message` surface 节点**进历史**（模型经消息历史而非请求属性看到 prompt）；④ token 测量所有字段同一 `logRevision` |
-| **M3 agent loop** | turn/step 边界 + `agent/*` + inbox 四投递（`send`/`followup`/`steer`/`inject`）+ cancel cause + `pre-step`/`request`/`request-error` 瀑布 + compaction 接线 | ① headless profile 能自主跑完「多轮工具调用 + 一次压缩」；② 重复 `MessageId` 被拒；③ `whenIdle()` 语义可测；④ 压缩未闭合 `start` 阻断所有入口 |
-| **M4 工具与执行世界** | 9 段流水线 + `guard`/`restrict` + fs 观察策略 + shell/subprocess/jobs/PTY + sandbox + approval + permission presets + plan mode + 核心工具集（read/write/edit/glob/grep/bash/present） | ① 三层裁决（preset 只写事件、plan 咨询、pre-execute+approval 终局）有集成测试；② 无 approval provider 时任何 `ask` 操作被拒；③ 未观察文件写入必 `NOT_OBSERVED`；④ 沙箱不可用报 `SANDBOX_UNAVAILABLE` 而非裸跑；⑤ 非 `isConcurrencySafe` 字面 true 走 exclusive |
-| **M5 前端最小闭环** | web-server + typert 网关（in-process + WS 双 carrier）+ 编译期资产嵌入 + slots 注册表 + conversation 装配 + 输入/审批/工具卡 | ① 单向链有静态断言：组件 props 类型里不出现 `ctx`/transport；② 卸载 slot owner 后其声明的子槽递归消失；③ conversation 满足文档 6 条重放等价测试；④ 断线重连从 baseline 整体替换窗口，无通用 `resync` |
-| **M6 前端完整** | right sidebar/资源协议/settings 表单/credentials/workspaces/快捷键/文档预览 | ① secret 字段永不出现在响应；② `expectedRevision` 冲突返回权威当前值；③ 未知资源地址即 404/`none` 态 |
-| **M7 委托与编排** | subagents(+fork/acp)/agent-team/workflow+PTC/skills/mcp/commands/goal/schedule/todo/deliverables/attachments | ① subagent 深度用「非递减下限 + 绝对帽」；② MCP 工具名 `mcp__<server>__<tool>` 且 serverName 约束 `[A-Za-z0-9_-]{1,32}`；③ schedule at-least-once 有显式测试 |
-| **M8 外部集成** | ssh/browser-use/computer-use/voice-input/office-to-pdf/webhook/otel/feedback/extensions(动态插件) | 按需要逐个进；`extensions` 若要「插件市场」则提前 |
+| 仓颉核心 | 生命周期、会话事实、loop、模型、工具、策略、凭证 | 不依赖 GUI，不复制桌面业务 |
+| CLI/Host | 终端交互与退出码 / 协议与身份适配 | 不复制 agent loop 或存储真源 |
+| Electron | 窗口、托盘、更新、进程启动关闭、系统桥接 | 不执行核心 agent 业务，不成为 JS 插件默认宿主 |
+| preload | 有限、类型化 IPC | 不暴露 raw ipcRenderer、fs、child_process 或任意 channel |
+| Vue/OpenTiny | 投影、输入草稿、槽位、组件呈现 | TinyRobot 消息数组不替代日志，不另开模型对话链路 |
+| Next SDK | 页面发现、路由、handler 适配 | 不绕过核心工具权限与审计 |
+| 独立 Node 宿主 | 动态 JS 工具/provider、workflow/PTC 桥接 | 不依赖 Electron，也不把 worker/vm 当安全沙箱 |
 
-**最小可跑通全链路 = M0 + M1 + M2 + M3 + M4 的核心工具**——到 M3 结束就应该有一个能用的 headless agent，别等到前端。
+Electron 开启 contextIsolation、关闭 nodeIntegration，采用沙箱化渲染设置；校验 IPC sender/参数，对外部内容另设策略，固定版本后实测。
 
----
+### 5.2 路线比较
 
-## 7. 明确后置 / 可砍清单
+推荐「仓颉核心 + 独立 Node 扩展宿主」，保留 JS 动态能力并让 CLI/桌面共享，代价是双运行时分发与跨进程生命周期。纯仓颉扩展不能直接兼容 TS/npm；保留 TS/Cordis 核心虽然更易兼容，但不满足仓颉重写核心目标。
 
-文档自己标注为可选或主干外的，复刻时不必第一批做：
+npm CLI 的 JS 宿主可使用满足版本要求的系统 Node；桌面携带其运行环境的方式须实测。不能因为 Electron 内有 Node，就宣称已解决独立宿主或隔离问题。
 
-- `workspace`：文档明写「可选子系统，不在 agent-loop 主干」，模型看不到任何 workspace 工具/事件。
-- `web` 取回默认**免逐次确认**（需确认要自己加 `tools/pre-execute`）——复刻时若默认要确认会明显更难用，这条是产品决策不是 bug。
-- `schedule`/`voice-input`/`office-to-pdf`/`computer-use`/`browser-use`/`ssh`/`webhook`/`otel`/`product-telemetry`/`feedback`：外部集成或实验 bundle（`dsh-experimental-*`）。
-- `sdk-minimal` profile 明示无 compaction/settings/credentials/OTel/web tools/subagents/filesystem tools，且 pin `danger-full-access`——说明 DSH 自己也接受「裁剪 profile」作为交付形态，复刻时不必一上来全量。
-- HMR / Electron：开发体验层，可最后。
+### 5.3 仓颉映射
 
----
-
-## 8. 与 SaCode 现有文档的关系
-
-- `docs/architecture/ref-comparison-deepseek-harness.md` 的基线是 **DSH 开发者预览 v0.1**，只覆盖 5 个借鉴点（§3.1 事件投影 / §3.2 工具流水线 / §3.3 执行世界 / §3.4 Profile-Bundle-Patch / §3.5 Agent Loop），且 §5 已记录这些点在 SaCode 内**均已落地**。
-- 该文档 §4「坚决不借鉴」的全盘插件化 / Cordis 范式 / TypeScript 技术栈三条，前提是「SaCode 保留稳定内核」。在「复刻 DSH」这个新目标下这三条结论**不再成立**，需要重写而不是沿用。
-- 该文档缺失的部分（本次读到的）：Typert 网关、Client Slots/Resources/Conversation、extensions 动态插件、subagent/agent-team、workflow/PTC、compaction、invariants、spill、token-meter、sandbox 四平台、SSH、skills、jobs/PTY/LSP、web 交付形态（web/headless/sdk/acp + Python SDK + Electron）。
-- 因此本文与它是**取代关系而非补充关系**。 `[待确认]` 是否把它移到 `docs/plans/archive/`。
-
----
-
-## 9. 待用户拍板的三个分叉
-
-| # | 分叉 | 我的默认推荐 |
+| 机制 | 候选实现 | 必须验证 |
 | --- | --- | --- |
-| 1 | **落点**：新开独立仓库从零复刻，还是在 SaCode workspace 内新增 crate 渐进替换内核？ | 独立新仓库。SaCode 的 `kernel/runtime/interfaces` 静态分层与「一切皆插件」的 L0 语义冲突（见 §8），在旧壳里改会两头不讨好 |
-| 2 | **前端栈**：Rust 全栈（Leptos/Dioxus over WASM）还是 Rust 内核 + TS 前端？ | Rust 内核 + **Tauri 或 Leptos**。依据：`TypertGateway.wireStream` 是「WebSocket 与 in-process transport 共用」的 carrier adapter，且 `InvokeRemoteRequest.peer` 缺省即 in-process carrier——换 IPC 载体是**架构内置许可**，有官方先例 |
-| 3 | **Cordis 语义照搬度**：原样复刻五模式派发 + fiber 状态机 + effect 回滚，还是只借概念做简化版？ | 原样复刻语义、重写实现、命名可换。§2 的 18 条不变量里 8 条押在 L0，简化版会让上层返工 |
+| 服务与依赖 | interface/class、工厂、命名注册、owner/scope | 依赖消失、循环、隔离、重激活与清理 |
+| 事件总线 | 类型事件域 + 五派发模式 | 重入、错误、瀑布和并发顺序 |
+| 并发/取消 | spawn/Future、同步原语、取消上下文 | 阻塞 FFI、取消延迟、流式背压 |
+| 模型通信 | stdx HTTP/TLS、增量读取与 SSE 解析 | 半帧、UTF-8 分片、异常流、超时 |
+| schema/JSON | 共享契约、CJ 校验、生成 TS 类型 | 缺失/null、安全整数、未知事件、一致性 |
+| 系统能力 | std 能力，必要 CFFI/helper | SQLite、fsync、原子替换、写锁、PTY、进程树、沙箱 |
+| 动态配置 | 版本快照和变化通知 | secret、CAS、重新挂载、回滚 |
+| 分发 | 固定 cjpm/cjc 与运行库清单 | 平台支持、运行库路径、干净环境安装 |
+
+不机械搬用 Rust 的 crate/trait/Drop/tokio/serde；资源回收不依赖 GC/终结器时间。不预先承诺仓颉动态库 ABI、WASM 或任意原生热替换。
+
+### 5.4 接口契约初稿
+
+| 域 | 提案操作 | 契约关注点 |
+| --- | --- | --- |
+| Runtime | handshake/health/shutdown | 版本、能力集、生命周期 |
+| Session | create/open/submit/follow/page/flush/close | 入箱回执不等于完成；cursor/generation/seq |
+| Agent | start/cancel/status/inbox | 输入身份、父子关系、终态 |
+| Approval/Question | followPending/answer | 授权者、单次应答、过期拒绝 |
+| Tool | catalog/execute/result | scope、冻结输入、pipeline、领域错误 |
+| Plugin | catalog/activate/deactivate/inspect | manifest、依赖、授权、清理 |
+| Settings/Credentials | describe/mutate/setSecret | revision CAS、脱敏、来源与审计 |
+
+最终签名与 schema 在后续契约设计冻结，保持 CJ/TS 生成与校验测试，不仅靠手写接口约定。
+
+首轮推荐父子进程 stdio + JSON-RPC 2.0，按 UTF-8 字节长度加帧头，stdout 仅协议、stderr 诊断。限制帧大小和队列；握手有 protocolVersion/capabilities；可能超 JS 安全整数的 seq 线上为十进制字符串，附件另限大小。
+
+取消为独立 request-ID 控制消息；请求/turn/job/进程终止区别对待。持久流有 cursor/baseline/generation/gap 修复，瞬时流明确标记并由 settled 事件确认。慢消费者用暂停或关闭后重放，不静默丢持久事件、不无限堆积。协议、业务、工具失败、取消和进程死亡分别表达。未知结果的变更不自动重试。
+
+会话写者互斥，第二写者明确拒绝；首轮无透明多写者。stdio 不需浏览器 token，但必须校验 IPC/连接身份与会话归属。后续 HTTP/WebSocket 入口单独加入认证、Origin、网络绑定/TLS。
+
+CLI 有交互/headless/结构化模式；stdout JSON 与 stderr 诊断分离，透传 argv/cwd/stdio/退出码，Windows/POSIX 单测 Ctrl+C。非交互无审批应答者则拒绝，不等 GUI。GUI 页面工具 CLI 不可用，同业务有 headless provider 可另提供。
+
+### 5.5 动态扩展契约
+
+三类扩展：内置仓颉工厂/profile；独立 JS 宿主已授权 bundle；Vue 生命周期化 UI 贡献。manifest 有 id/version/契约版本/依赖/贡献/权限/摘要；下载、安装构建脚本、激活分别授权，不自动跑未知 npm 安装脚本。
+
+生命周期：prepare → authorize → activate → drain/cancel → dispose；宿主死亡结算 pending，撤销工具代理。句柄与 JSON/schema 跨进程，不声称保持原始 ctx 引用或同步对象身份。
+
+兼容等级：自有协议 → 生命周期等价 → 选定未修改 DSH 插件桥接 → 扩大复杂对象/同步中间件/动态 UI 兼容。兼容层留在完整路线图，不把仅有工具 RPC 标成全部兼容。
+
+同进程 Vue 插件视为已授权可信代码；API 白名单不是恶意 JS 隔离。非可信 UI 另用 sandbox iframe/独立环境，非可信 JS 需 OS 限制或拒绝执行。进程/worker/vm 不是安全沙箱。插件默认无凭证、父环境、任意 fs/命令权限。
+
+Next SDK 路径：发现 → 核心注册 → 校验/审批/guard → 授权票据 → 页面路由/handler → 校验结果 → 核心记录。票据绑定 call/session/page generation/有效期，不可复用。卸载撤销描述和 handler，关闭/取消明确结算。SDK 是否有足够外部执行钩子需实测，缺钩子加适配或只保留发现，不能放宽授权。WebMCP 页面 API 不等于 MCP stdio 服务。
+
+---
+
+## 6. 首轮验证与分阶段路线
+
+### 6.1 P0：双入口、持久化、动态扩展纵向切片
+
+P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布。缺工具链先报告，不静默安装。
+
+| 验证项 | 正向与反向验收 |
+| --- | --- |
+| 仓颉构建 | 固定 cjpm/cjc/运行库版本，列依赖，干净环境不需用户安装编译器 |
+| 日志与恢复 | create/submit/follow/flush；重启恢复已 flush 前缀，测试尾帧截断与未知 required 事件；未结算流明确 interrupted |
+| 流式模型 | 假 provider 测半帧、UTF-8、错误、取消；授权凭证另做真模型烟测，不能把假响应标真接入 |
+| 工具与审批 | temp workspace 文件工具；CLI/桌面批准和拒绝；无应答者拒绝，旧审批 ID 不可重用 |
+| 插件 | 一个内置模块、一个 JS 动态工具；卸载注册/监听残留为零，宿主死亡结算 pending |
+| 跨端 | 顺序打开同会话投影相同，同时写第二写者拒绝 |
+| 取消与背压 | Ctrl+C/桌面 stop/慢客户端；不误杀已独立发布后台任务，不无限积压 |
+| UI/Next SDK | TinyRobot 显示核心流，一个无副作用页面工具经核心授权；页面卸载撤销描述/handler |
+| npm 本地包 | npm pack 后隔离安装；argv/cwd/stdio/退出码/取消正确；包不含 Electron，不需编译器 |
+| 桌面本地包 | Electron 包携带程序/运行库，无仓库绝对路径/全局 CLI 依赖；退出无孤儿进程 |
+
+结果用 PASS/FAIL/BLOCKED；失败调整对应设计，阻塞列前提，不能删动态扩展或 CLI 来宣布通过。测试命令、版本与容量/时间阈值在 P0 实施计划冻结。模型调用、依赖安装与打包依实际权限执行，签名和实际发布另行授权。
+
+### 6.2 长期阶段
+
+| 阶段 | 内容 | 门禁与学习主题 |
+| --- | --- | --- |
+| S0 | 冻结上游/能力矩阵/schema 初稿/环境清单 | 事实、提案与兼容目标区分，评审 |
+| P0 | 上表纵向实验 | 验证技术假设，不替代完整产品 |
+| M0/M1 | lifecycle/scope/五模式事件/profile/log/recovery/projection/storage | Cordis 依赖与清理、append vs flush、确定性重放 |
+| M2/M3 | adapters/流装配/token/prompt/loop/inbox/cancel/compaction | attempt/turn/step 边界、重试与回放 |
+| M4 | tools/guard/approval/fs/shell/PTY/jobs/LSP/sandbox/完整 CLI | 权限归核心，npm 安装回归 |
+| M5/M6 | Vue/OpenTiny/modules/slots/resources/conversation/sidebar/settings/Next SDK/Electron | 组件非第二真源，IPC 信任，桌面安装回归 |
+| M7 | JS host/dynamic packages/PTC/workflow/subagent/team/skills/MCP/goals/schedule | CLI/桌面动态能力一致，DSH 插件兼容分级 |
+| M8 | SSH/browser/computer/voice/office/webhook/telemetry/feedback/Web/ACP/SDK/迁移发布 | 完整能力矩阵无隐性删项，平台实测与发布授权 |
+
+P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可并行设计。每批循序：问题/失败示例 → DSH 文档/源码/测试 → 仓颉/TS 映射 → 实验 → 正反测试 → 学习回顾。每个子项目单独设计、计划、实施，避免一份巨型计划掩盖接口风险。
+
+---
+
+## 7. 交付形态与后置项
+
+两个一等入口不是可选功能：**独立 CLI（npm 分发）与 Electron 桌面端**。Electron 属于交付层而非开发体验层，不能后置到「可最后」。
+
+首批不实现但保留在矩阵中的项：
+
+- `workspace`：DSH 文档明写为可选、不在 agent-loop 主干，模型看不到其工具/事件；复刻时仍归入完整范围，排在 M5/M6。
+- `schedule`/`voice-input`/`office-to-pdf`/`computer-use`/`browser-use`/`ssh`/`webhook`/`otel`/`product-telemetry`/`feedback`：外部集成或上游实验 bundle，排在 M8。
+- DSH `sdk-minimal` profile 证明上游自己也用「裁剪 profile」交付（无 compaction/settings/credentials/web tools 等，并 pin `danger-full-access`）；因此分阶段裁剪是合法手段，但裁剪组合必须显式命名，不能当作「完整」验收。
+- `web` 取回在上游 shipped 预设下**免逐次确认**；是否照此默认属于产品决策，复刻时单独确认而非默认为 bug。
+- HMR 与编译期资产之外的原生动态库/WASM 通道：待 P0/§8 实测后再定，不作为已具备能力。
+
+## 8. 已定架构决策
+
+| # | 决策 | 结论 |
+| --- | --- | --- |
+| 1 | 核心语言 | 仓颉实现共享运行时与核心业务；Electron/Node 侧只做桌面与 JS 扩展宿主 |
+| 2 | 交付入口 | CLI 与桌面端双一等入口，共享同一核心与协议；CLI 包不含 Electron，桌面包不依赖全局 CLI |
+| 3 | 前端栈 | Vue 3 + TypeScript + TinyVue + TinyRobot + Next SDK 页面工具接入 |
+| 4 | 桌面壳 | Electron（contextIsolation、无 nodeIntegration、sandbox 渲染） |
+| 5 | 落点 | 本分支删除既有 SaCode 代码与文档，重新开始；历史留在基线提交 |
+| 6 | Cordis 语义照搬度 | 原样复刻语义（服务定位、依赖激活、owner 作用域、五模式派发、层级 patch），实现与命名自定；不简化 |
+| 7 | 动态扩展 | 内置仓颉模块 + 独立 Node JS 宿主 + Vue UI 贡献三类并存；DSH 原有插件直接兼容为独立桥接目标，不混同 |
+| 8 | 学习与实现顺序 | 先 P0 纵向切片（模型流 + 一个工具 + 日志回放 + 一个动态扩展 + 双入口打包），失败改设计而非删范围 |
+
+## 9. 历史参照与文档取代关系
+
+- 既有 SaCode 实现、文档与设计资料已完整保存在基线提交 `428f030`，本分支瘦身后不再包含它们；需要对照时用 `git show 428f030:<路径>` 或从该提交建只读工作副本，不在本分支继续演进。
+- `docs/architecture/ref-comparison-deepseek-harness.md` 的基线是 DSH 开发者预览 v0.1，只覆盖 5 个借鉴点，且其「坚决不借鉴」结论以「SaCode 保留稳定内核」为前提；本目标（完整复刻 + 仓颉重写）下该前提不成立，故其结论不再作为决策依据。
+- 该文档未覆盖的部分已在 §7 能力地图补齐线索：Typert 网关、Client Slots/Resources/Conversation、extensions 动态插件、subagent/agent-team、workflow/PTC、compaction、invariants、spill、token-meter、sandbox 多平台、SSH、skills、jobs/PTY/LSP、多形态交付。
 
 ---
 
