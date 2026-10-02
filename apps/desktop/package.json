@@ -6,7 +6,41 @@
   "scripts": {
     "start": "electron .",
     "smoke": "electron . --smoke",
-    "test": "node --test test/"
+    "test": "node --test"
   },
-  "devDependencies": { "electron": "^33.0.0" }
+  "build": {
+    "appId": "cn.dsh.desktop",
+    "productName": "DSH Desktop",
+    "directories": {
+      "output": "dist/electron"
+    },
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "host-bridge.cjs",
+      "paths.cjs",
+      "package.json",
+      "renderer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/host/bin",
+        "to": "host/bin"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "dsh-desktop-portable.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3"
+  }
 }

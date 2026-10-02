@@ -67,6 +67,8 @@ npm-package/platforms/
 
 # Node modules
 node_modules/
+# electron-builder 的一次失败输出（输出目录已改到 dist/electron，这个残留被系统句柄占住删不掉）
+apps/desktop/dist_electron/
 
 # Build / distribution output
 dist/

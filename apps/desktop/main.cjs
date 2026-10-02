@@ -5,9 +5,15 @@ const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync } = require("node:fs");
 const { HostBridge } = require("./host-bridge.cjs");
+const { hostExePath } = require("./paths.cjs");
 
 // 自包含宿主：exe 与全部依赖 DLL 同目录，因此不需要设置 PATH。
-const HOST = join(__dirname, "dist", "host", "bin", "dsh-host.exe");
+// 打包态下必须从 resourcesPath 取（extraResources 落点），__dirname 那时在 asar 里。
+const HOST = hostExePath({
+  packaged: app.isPackaged,
+  appRoot: __dirname,
+  resourcesPath: process.resourcesPath,
+});
 const SESSION_DIR = app.getPath("sessionData");
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 
