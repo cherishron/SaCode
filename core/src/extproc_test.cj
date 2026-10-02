@@ -148,3 +148,79 @@ func badCommandFailsClosedInsteadOfPanicking() {
     @Expect(xp.startFailure().size > 0, true)
     @Expect(xp.close(), Int64(-1))
 }
+
+@Test
+func twoConcurrentRequestsTakeTheirOwnFrames() {
+    // 两条请求同时在途：各自的帧必须只给自己的等待方。
+    // 顺序实现下这里会互相吃掉对方的帧，表现为某一条拿不到应答。
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    let other = spawn { => xp.load("example/echo.cjs") }
+    var listed = ""
+    if (let Some(f) <- xp.list()) {
+        listed = f
+    }
+    var loaded = ""
+    if (let Some(f) <- other.get()) {
+        loaded = f
+    }
+    @Expect(listed.contains("names"), true)
+    @Expect(loaded.contains("ok"), true)
+    // 配对了就不该被算成无主帧
+    @Expect(xp.unsolicited(), Int64(0))
+    xp.close()
+}
+
+@Test
+func lateReplyIsBookedSeparatelyAfterTheWaiterGivesUp() {
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    xp.load("example/delayed.cjs")
+    var got = true
+    if (let Some(_) <- xp.call("example.delayed", "slow", timeoutMs: 60)) {
+        got = false
+    }
+    // 放弃等待时不能编结果
+    @Expect(got, true)
+    @Expect(xp.late(), Int64(0))
+    // 迟到帧什么时候落地是异步的：有界轮询到它归账，而不是睡一个「看起来够用」的定值
+    var tries: Int64 = 0
+    while (xp.late() == Int64(0) && tries < 60) {
+        sleep(50 * Duration.millisecond)
+        tries += 1
+    }
+    @Expect(xp.late() >= Int64(1), true)
+    @Expect(xp.unsolicited(), Int64(0))
+    var listed = ""
+    if (let Some(f) <- xp.list()) {
+        listed = f
+    }
+    @Expect(listed.contains("names"), true)
+    xp.close()
+}
+
+@Test
+func unattributedFrameIsFlaggedAndPairingSurvives() {
+    let xp = newExtHost()
+    @Expect(xp.start(), true)
+    xp.initialize()
+    // params 写成坏 JSON：宿主会回一条 id 为 null 的 parse-error，没人能认领它
+    xp.request(900, "extension/list", "{oops", timeoutMs: 600)
+    // 无主帧同样是异步入账：轮询到有记录为止
+    var waits: Int64 = 0
+    while (xp.unsolicited() == Int64(0) && waits < 60) {
+        sleep(50 * Duration.millisecond)
+        waits += 1
+    }
+    @Expect(xp.unsolicited() >= Int64(1), true)
+    // 无主帧被明确标记后，正常请求的配对必须照旧
+    var listed = ""
+    if (let Some(f) <- xp.list()) {
+        listed = f
+    }
+    @Expect(listed.contains("names"), true)
+    @Expect(xp.late(), Int64(0))
+    xp.close()
+}

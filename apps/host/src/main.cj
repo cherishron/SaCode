@@ -526,7 +526,7 @@ main(args: Array<String>) {
                 let flag = if (xp.forcedExit()) { "true" } else { "false" }
                 jsHost = None
                 jsAlive = false
-                emit(okFrame(idText, "{\"exit\":${rc},\"forced\":${flag},\"received\":${xp.received()},\"mismatched\":${xp.mismatched()}}"))
+                emit(okFrame(idText, "{\"exit\":${rc},\"forced\":${flag},\"received\":${xp.received()},\"unsolicited\":${xp.unsolicited()},\"late\":${xp.late()}}"))
             } else {
                 emit(errFrame(idText, -32011, "js-host-not-spawned"))
             }

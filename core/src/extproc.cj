@@ -85,11 +85,12 @@ public class ExtProcess {
     let command: String
     let arguments: Array<String>
     let wd: Path
-    let sink = ThreadSafeDeliveryQueue(256)
+    // 应答按 id 配对：可以有多条请求在途；表满时回压而不是丢帧
+    let table = ReplyTable(256)
+    // 两个线程同时往子进程 stdin 写帧会交错出坏帧，写侧必须整帧互斥
+    let writeLock = Mutex()
     let idGen = AtomicInt64(0)
     let recv = AtomicInt64(0)
-    let miss = AtomicInt64(0)
-    let stopReading = AtomicBool(false)
     var proc: Option<SubProcess> = None
     var reader: Option<Future<Int64>> = None
     var running = false
@@ -137,10 +138,23 @@ public class ExtProcess {
         return recv.load()
     }
 
-    // 读到了但不是本次要配对的 id：如实计数。顺序一问一答下本不该出现，
-    // 一旦非 0 就说明对端多发了帧，不能被当成正常。
-    public func mismatched(): Int64 {
-        return miss.load()
+    // 从来没人登记过的帧（id 为 null 或乱发）：如实计数，不能被任何请求认领。
+    public func unsolicited(): Int64 {
+        return table.unsolicited()
+    }
+
+    // 等待方已放弃后才到的帧：单独记迟到账，既不吞掉也不冒充本轮应答。
+    public func late(): Int64 {
+        return table.late()
+    }
+
+    // 表满导致的回压次数：非 0 说明消费方慢了，但帧一条没丢。
+    public func overflow(): Int64 {
+        return table.overflow()
+    }
+
+    public func dropped(): Int64 {
+        return table.dropped()
     }
 
     public func exitCode(): Int64 {
@@ -151,8 +165,8 @@ public class ExtProcess {
         return forced
     }
 
-    // 读线程体：队列满时回压式重试而不是丢帧（应答帧丢了就再也配不上对了）。
-    // 收束阶段放弃等待的帧不计入已收——宁可少报，不谎报。
+    // 读线程体：把每一帧按 id 交给登记表。表满时 put 内部回压等待，绝不丢帧——
+    // 应答帧一旦被丢，对应的请求就永远配不上对了。
     private func drainStdout(pipe: InputStream): Int64 {
         let rd: StringReader<InputStream> = StringReader(pipe)
         var n: Int64 = 0
@@ -162,24 +176,15 @@ public class ExtProcess {
                 let line = rd.readln()
                 if (let Some(s) <- line) {
                     if (s.size > 0) {
-                        var accepted = sink.offer(s)
-                        while (!accepted && !stopReading.load()) {
-                            sleep(2 * Duration.millisecond)
-                            accepted = sink.offer(s)
-                        }
-                        if (accepted) {
-                            n += 1
-                            recv.fetchAdd(1)
-                        }
+                        table.put(frameIdOf(s), s)
+                        n += 1
+                        recv.fetchAdd(1)
                     }
                 } else {
                     done = true
                 }
             } catch (e: Exception) {
                 // 管道断开/EOF：子进程已经不再写了，读线程自然收束
-                done = true
-            }
-            if (stopReading.load()) {
                 done = true
             }
         }
@@ -190,36 +195,31 @@ public class ExtProcess {
         return idGen.fetchAdd(1) + 1
     }
 
-    // 一问一答按 id 配对；超时返回 None，绝不编一个终态出来。
-    // 并发在途（同一时刻多条请求）需要按 id 建应答表，本批只做顺序语义并如实登记。
+    // 按 id 配对，允许多条请求同时在途；超时只回 None，绝不编一个终态出来。
+    // 收手之后这条 id 不再登记：它后来的帧只能记成迟到账，不会冒充别的请求的应答。
     public func request(id: Int64, method: String, params: String, timeoutMs!: Int64 = 4000): Option<String> {
         if (!alive()) {
             return None
         }
+        // 先登记再写：应答可能比这次 write 返回得还快
+        table.track(id)
         if (let Some(p) <- proc) {
             let frame = "{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"${method}\",\"params\":${params}}"
+            writeLock.lock()
             try {
                 p.stdInPipe.write((frame + "\n").toArray())
                 p.stdInPipe.flush()
             } catch (e: Exception) {
                 why = "write-failed: ${e}"
-                return None
             }
+            writeLock.unlock()
         } else {
+            table.untrack(id)
             return None
         }
-        var waited: Int64 = 0
-        while (waited <= timeoutMs) {
-            let got = sink.await(50)
-            for (f in got) {
-                if (frameIdOf(f) == id) {
-                    return Some(f)
-                }
-                miss.fetchAdd(1)
-            }
-            waited += 50
-        }
-        return None
+        let out = table.take(id, timeoutMs)
+        table.untrack(id)
+        return out
     }
 
     public func initialize(): Option<String> {
@@ -269,11 +269,12 @@ public class ExtProcess {
             }
         }
         running = false
+        // 登记表可能正把读线程压在回压里：先放行再 join，否则这里只能等到超时
+        table.stop()
         if (let Some(f) <- reader) {
             try {
                 f.get(2000 * Duration.millisecond)
             } catch (e: Exception) {
-                stopReading.store(true)
                 why = "reader-not-settled: ${e}"
             }
             reader = None

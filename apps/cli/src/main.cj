@@ -212,7 +212,7 @@ main(args: Array<String>) {
             println("FAIL 宿主起不来：${xp.startFailure()}")
             failures += 1
         }
-        println("extjs\treceived=${xp.received()}\tmismatched=${xp.mismatched()}\texit=${xp.exitCode()}")
+        println("extjs\treceived=${xp.received()}\tunsolicited=${xp.unsolicited()}\tlate=${xp.late()}\texit=${xp.exitCode()}")
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }
