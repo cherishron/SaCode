@@ -1,47 +1,50 @@
 /* Shell 令牌桥接 — 全部派生自 TDesign 自定义主题（tdesign-theme.css）
- * 不要在业务 CSS 里写死品牌色；改主题只动 tdesign-theme.css。
+ * 这里是别名层，不给数值、不给 fallback：缺 token 应当暴露为 unset，
+ * 而不是静默降级成一份和真源漂移的第二数值。
+ * 改数值只动 tdesign-theme.css；业务 CSS 只允许引用本文件的别名。
  */
 
 :root {
   --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 
-  --bg-base: var(--td-bg-color-page, #17202a);
-  --bg-surface: var(--td-bg-color-secondarycontainer, #222c36);
-  --bg-raised: var(--td-bg-color-container, #fff);
-  --bg-overlay: var(--td-bg-color-specialcomponent, #fff);
-  --bg-inset: var(--td-bg-color-component, #e0eaf8);
-  --bg-scrim: var(--td-mask-active, rgba(0, 0, 0, 0.8));
+  --bg-base: var(--td-bg-color-page);
+  --bg-surface: var(--td-bg-color-secondarycontainer);
+  --bg-raised: var(--td-bg-color-container);
+  --bg-overlay: var(--td-bg-color-specialcomponent);
+  --bg-popup: var(--td-bg-color-popup);
+  --bg-inset: var(--td-bg-color-component);
+  --bg-scrim: var(--td-mask-active);
 
-  --text-strong: var(--td-text-color-primary, rgba(0, 0, 0, 0.9));
-  --text-base: var(--td-text-color-secondary, rgba(0, 0, 0, 0.6));
-  --text-weak: var(--td-text-color-placeholder, rgba(0, 0, 0, 0.4));
-  --text-on-accent: var(--td-text-color-anti, #fff);
+  --text-strong: var(--td-text-color-primary);
+  --text-base: var(--td-text-color-secondary);
+  --text-weak: var(--td-text-color-placeholder);
+  --text-on-accent: var(--td-text-color-anti);
 
-  --accent: var(--td-brand-color, #0052d9);
-  --accent-hover: var(--td-brand-color-hover, #366ef4);
-  --accent-soft: var(--td-brand-color-light, #f2f3ff);
-  --accent-weaker: var(--td-brand-color-focus, #d9e1ff);
-  --accent-fg: var(--td-text-color-brand, #0052d9);
+  --accent: var(--td-brand-color);
+  --accent-hover: var(--td-brand-color-hover);
+  --accent-soft: var(--td-brand-color-light);
+  --accent-weaker: var(--td-brand-color-focus);
+  --accent-fg: var(--td-text-color-brand);
 
-  --success: var(--td-success-color, #0abf5b);
-  --success-soft: var(--td-success-color-light, #d6f4e4);
-  --warning: var(--td-warning-color, #ff7200);
-  --warning-soft: var(--td-warning-color-light, #ffe8d5);
-  --danger: var(--td-error-color, #e54545);
-  --danger-soft: var(--td-error-color-light, #fbe0e0);
-  --info: var(--td-brand-color-6, #366ef4);
-  --info-soft: var(--td-brand-color-light, #f2f3ff);
+  --success: var(--td-success-color);
+  --success-soft: var(--td-success-color-light);
+  --warning: var(--td-warning-color);
+  --warning-soft: var(--td-warning-color-light);
+  --danger: var(--td-error-color);
+  --danger-soft: var(--td-error-color-light);
+  --info: var(--td-brand-color);
+  --info-soft: var(--td-brand-color-light);
 
-  --border-base: var(--td-border-level-1-color, #e0eaf8);
-  --border-weak: var(--td-component-border, #d0dae7);
-  --border-accent: var(--td-brand-color, #0052d9);
+  --border-base: var(--td-border-level-1-color);
+  --border-weak: var(--td-component-border);
+  --border-accent: var(--td-brand-color);
 
   --shadow-sm: var(--td-shadow-1);
   --shadow-md: var(--td-shadow-2);
 
-  --code-bg: var(--td-bg-color-component, #e0eaf8);
-  --code-border: var(--td-component-border, #d0dae7);
+  --code-bg: var(--td-bg-color-component);
+  --code-border: var(--td-component-border);
 
   --radius-sm: 6px;
   --radius-md: 10px;

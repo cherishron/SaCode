@@ -103,6 +103,7 @@
     --td-bg-color-secondarycomponent-hover: var(--td-gray-color-4);
     --td-bg-color-secondarycomponent-active: var(--td-gray-color-5);
     --td-bg-color-specialcomponent: #fff;
+    --td-bg-color-popup: #fff;
     --td-text-color-primary: var(--td-font-gray-1);
     --td-text-color-secondary: var(--td-font-gray-2);
     --td-text-color-placeholder: var(--td-font-gray-3);
@@ -123,7 +124,7 @@
     --td-table-shadow-color: rgba(0, 0, 0, .08);
     --td-scrollbar-color: rgba(0, 0, 0, .1);
     --td-scrollbar-hover-color: rgba(0, 0, 0, .3);
-    --td-scroll-track-color: #d3b3b3;
+    --td-scroll-track-color: var(--td-gray-color-2);
 }
 
 :root.dark, :root[theme-mode="dark"] {
@@ -235,6 +236,7 @@
     --td-bg-color-secondarycomponent-active: var(--td-gray-color-8);
     --td-bg-color-component-disabled: var(--td-gray-color-12);
     --td-bg-color-specialcomponent: transparent;
+    --td-bg-color-popup: var(--td-gray-color-12);
     --td-text-color-primary: var(--td-font-white-1);
     --td-text-color-secondary: var(--td-font-white-2);
     --td-text-color-placeholder: var(--td-font-white-3);
@@ -255,19 +257,19 @@
     --td-table-shadow-color: rgba(0, 0, 0, .55);
     --td-scrollbar-color: rgba(255, 255, 255, .1);
     --td-scrollbar-hover-color: rgba(255, 255, 255, .3);
-    --td-scroll-track-color: #333;
+    --td-scroll-track-color: var(--td-gray-color-12);
 }
 
 :root {
-    --td-radius-small: 0px;
-    --td-radius-default: 0px;
-    --td-radius-medium: 0px;
-    --td-radius-large: 0px;
-    --td-radius-extraLarge: 12px;
+    --td-radius-small: 6px;
+    --td-radius-default: 6px;
+    --td-radius-medium: 10px;
+    --td-radius-large: 14px;
+    --td-radius-extraLarge: 18px;
     --td-radius-round: 999px;
     --td-radius-circle: 50%;
-    --td-font-family: PingFang SC, Microsoft YaHei, Arial Regular;
-    --td-font-family-medium: PingFang SC, Microsoft YaHei, Arial Medium;
+    --td-font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --td-font-family-medium: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     --td-font-size-link-small: 12px;
     --td-font-size-link-medium: 12px;
     --td-font-size-link-large: 14px;

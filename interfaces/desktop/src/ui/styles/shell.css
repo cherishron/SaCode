@@ -896,7 +896,7 @@ button,
 }
 
 .status-dot.running {
-  background: var(--td-brand-color-8, var(--accent, #4582e6));
+  background: var(--td-brand-color-8, var(--accent));
   opacity: 1;
   box-shadow: 0 0 0 2px var(--td-brand-color-1, var(--accent-weaker));
 }
@@ -915,11 +915,11 @@ button,
 .list-row.selected {
   background: var(--td-brand-color-light, var(--accent-weaker));
   color: var(--td-text-color-primary, var(--text-strong));
-  box-shadow: inset 2px 0 0 var(--td-brand-color, #4582e6);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .mode-btn.active {
-  background: var(--td-brand-color, #4582e6);
+  background: var(--accent);
   color: var(--td-text-color-anti, #fff);
 }
 
@@ -929,7 +929,7 @@ button,
 }
 
 .task-col-avatar {
-  background: var(--td-brand-color, #4582e6);
+  background: var(--accent);
   color: var(--td-text-color-anti, #fff);
   border-color: transparent;
 }
@@ -1232,7 +1232,7 @@ button,
 }
 
 .mode-cycle.mode-plan {
-  background: var(--td-brand-color, #4582e6);
+  background: var(--accent);
 }
 
 .mode-cycle.mode-build {
@@ -1268,7 +1268,7 @@ button,
 }
 
 .composer-model .t-input.t-is-focused {
-  border-color: var(--td-brand-color, #4582e6) !important;
+  border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px var(--td-brand-color-focus, var(--accent-weaker));
 }
 
@@ -1324,16 +1324,9 @@ button,
   padding: 6px;
   border-radius: 12px;
   /* 不透明，避免看穿 */
-  background: #2a2a28;
-  background: var(--td-bg-color-popup, #2a2a28);
-  border: 1px solid var(--td-border-level-1-color, var(--border-weak));
-  box-shadow: var(--td-shadow-2, 0 8px 24px rgba(0, 0, 0, 0.45));
-}
-
-:root[data-theme='light'] .plus-menu,
-:root:not(.dark) .plus-menu {
-  background: #fff;
-  background: var(--td-bg-color-popup, #fff);
+  background: var(--bg-popup);
+  border: 1px solid var(--border-base);
+  box-shadow: var(--shadow-md);
 }
 
 /* t-popup 内静态弹层（交给 TDesign 定位） */
@@ -1341,15 +1334,9 @@ button,
   position: static !important;
   transform: none !important;
   min-width: 220px;
-  background: #2a2a28;
-  background: var(--td-bg-color-popup, #2a2a28);
+  background: var(--bg-popup);
   opacity: 1 !important;
   box-shadow: none;
-}
-
-:root[data-theme='light'] .plus-menu--static,
-:root:not(.dark) .plus-menu--static {
-  background: #fff;
 }
 
 .plus-skill-panel {
@@ -1388,16 +1375,10 @@ button,
 
 .file-pick-menu {
   width: min(420px, 92vw);
-  background: #2a2a28;
-  background: var(--td-bg-color-popup, #2a2a28);
+  background: var(--bg-popup);
   border-radius: 12px;
   padding: 8px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-}
-
-:root[data-theme='light'] .file-pick-menu,
-:root:not(.dark) .file-pick-menu {
-  background: #fff;
 }
 
 .file-pick-list {
@@ -1438,7 +1419,7 @@ button,
 }
 
 .think-btn.on {
-  background: var(--td-brand-color, #4582e6);
+  background: var(--accent);
   color: var(--td-text-color-anti, #fff);
 }
 
@@ -1453,7 +1434,7 @@ button,
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #2a2a28 !important;
+  background: var(--bg-popup) !important;
   opacity: 1 !important;
   box-sizing: border-box;
 }
@@ -1462,11 +1443,6 @@ button,
   flex: 1;
   min-height: 0;
   overflow: auto;
-}
-
-:root[data-theme='light'] .plus-sub-panel,
-:root:not(.dark) .plus-sub-panel {
-  background: #fff !important;
 }
 
 .plus-sub-head {
@@ -1483,13 +1459,8 @@ button,
   min-width: 200px;
   max-height: 280px;
   overflow: auto;
-  background: #2a2a28 !important;
+  background: var(--bg-popup) !important;
   opacity: 1 !important;
-}
-
-:root[data-theme='light'] .model-menu,
-:root:not(.dark) .model-menu {
-  background: #fff !important;
 }
 
 .model-btn {
@@ -1509,7 +1480,7 @@ button,
 }
 
 .model-btn:hover {
-  border-color: var(--td-brand-color, #4582e6);
+  border-color: var(--accent);
 }
 
 .plus-sub-item.on {
@@ -1546,11 +1517,6 @@ button,
   padding: 8px;
   font-size: 11px;
   opacity: 0.6;
-}
-
-:root[data-theme='light'] .plus-menu--teleport,
-:root:not(.dark) .plus-menu--teleport {
-  background-color: #fff !important;
 }
 
 .plus-item {
@@ -1603,7 +1569,7 @@ button,
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--td-bg-color-popup, #2a2a28);
+  background: var(--bg-popup);
 }
 
 .plus-search {
@@ -2386,7 +2352,7 @@ button,
 }
 
 .workspace-pick:hover {
-  border-color: var(--td-brand-color, #4582e6);
+  border-color: var(--accent);
   color: var(--td-text-color-primary, var(--text-strong));
 }
 
@@ -3127,7 +3093,7 @@ pre.files-preview-body code.hljs {
 .hljs-section,
 .hljs-doctag,
 .hljs-formula {
-  color: var(--td-brand-color, #4582e6);
+  color: var(--accent);
 }
 
 .hljs-string,
@@ -3246,7 +3212,7 @@ pre.files-preview-body code.hljs {
 }
 
 .files-preview-md.md-body a {
-  color: var(--td-brand-color, #4582e6);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -3322,6 +3288,6 @@ pre.files-preview-body code.hljs {
   font-size: 10px;
   font-family: var(--font-mono);
   letter-spacing: 0.02em;
-  color: var(--td-brand-color, #4582e6);
+  color: var(--accent);
   background: var(--td-brand-color-light, var(--accent-soft));
 }
