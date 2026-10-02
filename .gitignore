@@ -97,3 +97,8 @@ _test_out.txt
 .opencode/
 .codeartsdoer/
 .qoder/
+# 仓颉与验收产物
+**/target/
+**/session.log
+**/b.log
+apps/cli/out/
