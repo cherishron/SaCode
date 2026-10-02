@@ -56,3 +56,13 @@
 - 二手已复核：无（本轮结论均来自一手抓取与本机执行）。
 - 矛盾或未覆盖：§4.3 三项；另有 `docs/user`、`cookbook`、`cordis-api`、`postmortem` 等目录未逐篇阅读。
 - 未读取或未核实：64 模块逐篇内容、`docs/architecture.md` 全文、各 package README、Agent Notes（`.agents/notes`）。
+
+## 8. stdx 落地实测（2026-10-02，B 段结论）
+
+- 枚举通道：`https://gitcode.com/api/v5/repos/Cangjie/cangjie_stdx/releases` 200 可用（`releases.atom` 与 `api.github.com` 同路径均不可用；SPA 网页返回 200 但正文 5.8 KB、0 条链接，属「正文空」，不可据以判断没有发行版）。
+- 标签共 15 个，与本机 `cjc 1.1.3` 对应的是 **`v1.1.3.1`**（同批还有 v1.2.0.1 等，未采用）。
+- Windows 资产直链：`.../releases/download/v1.1.3.1/cangjie-stdx-windows-x64-1.1.3.1.zip`（6.7 MB，已下载解压到 `C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/{dynamic,static}/stdx`，仓库外，不入库）。
+- **动态链接验证通过**：`cjpm.toml` 用 `[target.x86_64-w64-mingw32.bin-dependencies] path-option` 指向 `dynamic/stdx`，`cjpm build` 退出码 0；`stdx.encoding.json`、`stdx.net.http`、`stdx.net.tls`、`stdx.log`、`stdx.compress` 五个包全部解析并链接成功 —— 原「stdx 缺失是 P0 唯一硬阻塞」已解除。
+- 分发约束实测：裸运行失败 `libstdx.compress.dll: cannot open shared object file`（退出码 127）；把 `dynamic/stdx`（**41 个 DLL**）加入 `PATH` 后运行成功。→ CLI 平台包与 Electron 安装包都必须携带这些 DLL。
+- 静态路径未通过：`static/stdx` 配置后 `ld.lld` 链接失败（crypto/net 依赖系统符号；官方文档只给了 Linux 的 `compile-option = "-ldl"`，Windows 等价写法待补）。且该次链接命令仍包含 `-l:libcangjie-runtime.dll`，说明**静态 stdx 也不等于单文件交付**，仓颉运行时 DLL 仍需随包发布。
+- cjpm 工程规范实测：`cjpm.toml` 的 `[package]` 必须写 `cjc-version`；目录名、`name`、源码 `package` 三者必须一致；`path-option` 用正斜杠路径可避开源码转义坑。
