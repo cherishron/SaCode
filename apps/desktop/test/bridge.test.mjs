@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join as jj } from "node:path";
+import { dirname, join as jj, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -10,14 +10,18 @@ const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
 const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const HOST = process.env.DSH_HOST || join(REPO, "apps/host/target/release/bin/main.exe");
-const STDX = process.env.DSH_STDX_BIN || "C:\\Users\\jingg\\stdx-work\\stdx-1.1.3.1\\windows_x86_64_cjnative\\dynamic\\stdx";
+// 自包含 host（exe + 全部依赖 DLL 同目录，由 scripts/pack-host.mjs 生成），
+// 因此测试不再拼 PATH，也不出现任何字面 Windows 路径。
+const HOST = resolve(process.env.DSH_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "dsh-host.exe"));
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
 
 async function boot() {
-  const dir = mkdtempSync(join(tmpdir(), "dsh-desktop-"));
+  const dir = mkdtempSync(jj(REPO, "dualtest", "dst-"));
   writeFileSync(join(dir, "session.log"), SEED);
-  const b = new HostBridge(HOST, { ...process.env, PATH: `${process.env.PATH};${STDX}` });
+  if (!existsSync(HOST)) {
+    throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
+  }
+  const b = new HostBridge(HOST, process.env);
   await b.start(dir);
   return { b, dir };
 }

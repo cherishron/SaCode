@@ -3,6 +3,7 @@ import core.*
 import stdx.encoding.json.*
 import std.collection.ArrayList
 import std.io.*
+import std.env.*
 
 // 帧：Content-Length: <字节数>\r\n\r\n<JSON-RPC 2.0 报文>
 // stdout 只走协议帧，诊断走 stderr。只用已证实的 API：String.split / toArray() /
@@ -12,8 +13,7 @@ func count(body: String): Int64 {
 }
 
 func emit(body: String) {
-    print(body)
-    print("\n")
+    getStdOut().write((body + String.fromUtf8(Array<Byte>(1, { _ => 10 }))).toArray())
 }
 
 func errFrame(id: String, code: Int64, message: String): String {
