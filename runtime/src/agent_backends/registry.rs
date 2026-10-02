@@ -163,9 +163,13 @@ mod tests {
             kind: AgentBackendKind::Acp,
             health: AgentBackendHealth::Unknown,
             capabilities: AgentCapabilities::default(),
+            enabled: true,
             executable: Some("bun".into()),
+            args: None,
             version: None,
             diagnostic: None,
+            install_hint: None,
+            quota: None,
         });
         let (id, _) = reg
             .resolve(Some(AgentBackendId::new("opencode")))
@@ -182,9 +186,13 @@ mod tests {
             kind: AgentBackendKind::Acp,
             health: AgentBackendHealth::Unavailable,
             capabilities: AgentCapabilities::default(),
+            enabled: true,
             executable: None,
+            args: None,
             version: None,
             diagnostic: Some("binary missing".into()),
+            install_hint: None,
+            quota: None,
         });
         let err = reg
             .resolve(Some(AgentBackendId::new("broken")))
@@ -218,9 +226,13 @@ mod tests {
                 modes: vec!["build".into()],
                 notes: None,
             },
+            enabled: true,
             executable: Some("opencode".into()),
+            args: None,
             version: None,
             diagnostic: None,
+            install_hint: None,
+            quota: None,
         });
         let (id, desc) = reg.resolve(Some(AgentBackendId::new("opencode"))).unwrap();
         assert_eq!(id.as_str(), "opencode");

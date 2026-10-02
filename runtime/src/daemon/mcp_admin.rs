@@ -38,6 +38,9 @@ pub struct UpsertMcpRequest {
     pub args: Option<Vec<String>>,
     #[serde(default)]
     pub env: Option<BTreeMap<String, String>>,
+    /// 契约 §7.1：remote 类型的 HTTP 请求头
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// user | project，默认 project（随工作区）
@@ -68,10 +71,13 @@ pub async fn list_servers(State(state): State<Arc<DaemonState>>) -> Json<serde_j
             "servers": entries.iter().map(|e| serde_json::json!({
                 "name": e.name,
                 "type": e.server.server_type,
+                // 契约 §7.1：transport 归一化（stdio → stdio；remote → http）
+                "transport": if e.server.server_type == "stdio" { "stdio" } else { "http" },
                 "url": e.server.url,
                 "command": e.server.command,
                 "args": e.server.args,
                 "env": e.server.env,
+                "headers": e.server.headers,
                 "enabled": e.server.enabled,
                 "source": e.source.label(),
             })).collect::<Vec<_>>(),
@@ -132,6 +138,108 @@ pub async fn upsert_server(
             command: req.command,
             args: req.args,
             env: req.env,
+            headers: req.headers,
+            enabled: req.enabled,
+        },
+    );
+    match store.save_to_source(&config, source) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "ok", "name": name })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "message": err.to_string() })),
+        ),
+    }
+}
+
+/// 契约 §7.1：`PUT /api/mcp/:name` 整对象替换（含 headers/env）。
+/// wire 形态：`transport: 'stdio'|'http'|'sse'`，`command?: string[]`（首元素为可执行文件，其余为 args）。
+#[derive(Debug, serde::Deserialize)]
+pub struct ReplaceMcpRequest {
+    /// stdio | http | sse
+    pub transport: String,
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// user | project，默认 project
+    #[serde(default = "default_source")]
+    pub source: String,
+}
+
+pub async fn replace_server(
+    State(state): State<Arc<DaemonState>>,
+    Path(name): Path<String>,
+    Json(req): Json<ReplaceMcpRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if name.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": "name is required" })),
+        );
+    }
+    if !matches!(req.transport.as_str(), "stdio" | "http" | "sse") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": "transport must be stdio|http|sse" })),
+        );
+    }
+    // command: [exe, ...args] → 内部 command + args 拆分
+    let (command, args) = match req.command {
+        Some(mut parts) if !parts.is_empty() => {
+            let exe = parts.remove(0);
+            let args = if parts.is_empty() { None } else { Some(parts) };
+            (Some(exe), args)
+        }
+        Some(_) | None => (None, None),
+    };
+    let url = req.url.unwrap_or_default();
+    if req.transport == "stdio" && command.as_deref().unwrap_or("").trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": "command is required for stdio" })),
+        );
+    }
+    if req.transport != "stdio" && url.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": "url is required for http/sse" })),
+        );
+    }
+
+    let store = store_for(&state);
+    let source = parse_source(&req.source);
+    let mut config = match store.load_from_source(source) {
+        Ok(c) => c,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "status": "error", "message": err.to_string() })),
+            );
+        }
+    };
+    // 整对象替换：不合并旧值
+    config.mcp.insert(
+        name.clone(),
+        McpServerConfig {
+            server_type: if req.transport == "stdio" {
+                "stdio".to_string()
+            } else {
+                "remote".to_string()
+            },
+            url,
+            command,
+            args,
+            env: req.env,
+            headers: req.headers,
             enabled: req.enabled,
         },
     );

@@ -248,9 +248,10 @@ async fn persist_desktop_frame(state: &Arc<DaemonState>, evt: &crate::executor::
             if text.trim().is_empty() {
                 return;
             }
-            ("tool", text, Some("thinking".to_string()))
+            // 契约 §12.4：thinking 独立 kind，不再折进 tool
+            ("thinking", text, None)
         }
-        "tool_call" | "tool_started" => {
+        "tool_call_started" => {
             let tool = evt
                 .data
                 .get("tool")
@@ -276,9 +277,147 @@ async fn persist_desktop_frame(state: &Arc<DaemonState>, evt: &crate::executor::
                 .unwrap_or(true);
             ("tool", format!("{tool} {}", if ok { "✓" } else { "✗" }), None)
         }
+        "error" => {
+            let text = evt
+                .data
+                .get("message")
+                .or_else(|| evt.data.get("error"))
+                .or_else(|| evt.data.get("content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if text.trim().is_empty() {
+                return;
+            }
+            ("error", text, None)
+        }
+        "plan_generated" => {
+            let text = evt
+                .data
+                .get("summary")
+                .or_else(|| evt.data.get("title"))
+                .or_else(|| evt.data.get("content"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "计划已生成".to_string());
+            ("tool", text, Some("plan".to_string()))
+        }
         _ => return,
     };
     let _ = store.append_desktop_frame(&evt.task_id, kind, &text, detail.as_deref());
+}
+
+/// 契约 §2.4：灵枢特色事件投影 —— `ExecutionReport` → desktop_frames
+///
+/// 数据源（`kernel/src/execution/report.rs`）：
+/// - `plan` / RoleScore → `role_assignment`
+/// - `conflict_records` → `conflict`
+/// - `route_records` → `model_route`（failover 后 route_reason 带 "failover" → `failed_over`）
+/// - `summary_record` → `summary`
+///
+/// 同 task_id 按投影顺序编号 seq（由 `append_desktop_frame` 的 MAX(seq)+1 保证）；
+/// 记忆/学习型（mistakes / preferences）不进消息流。
+fn persist_ling_shu_frames(
+    store: &crate::StoreDb,
+    task_id: &str,
+    report: &sacode_kernel::ExecutionReport,
+) {
+    // role_assignment：plan 里的角色分工（谁接活）
+    if let Some(plan) = report.plan.as_ref() {
+        // schema::Plan 只有 task/steps/mode；角色分工在 plan 摘要里以 steps 形式存在，
+        // 有 steps 时投影为一条 role_assignment（steps = 分工）。
+        if !plan.steps.is_empty() {
+            let roles: Vec<serde_json::Value> = plan
+                .steps
+                .iter()
+                .map(|step| {
+                    serde_json::json!({
+                        "role_id": format!("step-{}", step.id),
+                        "role_name": step.description,
+                        "reason": step.expected_output,
+                    })
+                })
+                .collect();
+            let detail = serde_json::json!({ "roles": roles }).to_string();
+            let _ = store.append_desktop_frame(
+                task_id,
+                "role_assignment",
+                &format!("角色编排：{} 个分工", roles.len()),
+                Some(&detail),
+            );
+        }
+    }
+
+    // model_route：路由记录（自愈合）；route_reason 含 failover → failed_over
+    for route in &report.route_records {
+        let failed_over = route.route_reason.to_lowercase().contains("failover")
+            || route.route_reason.contains("切换");
+        let detail = serde_json::json!({
+            "role_id": route.role_id,
+            "primary": {
+                "provider": route.primary.provider_name,
+                "model": route.primary.model_name,
+                "score": route.primary.route_score,
+                "needs_thinking": route.primary.needs_thinking,
+            },
+            "fallbacks": route.fallbacks.iter().map(|f| serde_json::json!({
+                "provider": f.provider_name,
+                "model": f.model_name,
+                "score": f.route_score,
+            })).collect::<Vec<_>>(),
+            "reason": route.route_reason,
+            "failed_over": failed_over,
+        })
+        .to_string();
+        let _ = store.append_desktop_frame(
+            task_id,
+            "model_route",
+            &format!(
+                "{}/{}{}",
+                route.primary.provider_name,
+                route.primary.model_name,
+                if failed_over { "（已故障切换）" } else { "" }
+            ),
+            Some(&detail),
+        );
+    }
+
+    // conflict：冲突记录（自防护）。检测一条；带 intervention 时 status=intervening
+    for conflict in &report.conflict_records {
+        let is_validation = conflict.kind == "validation_conflict";
+        let detail = serde_json::json!({
+            "kind": conflict.kind,
+            "summary": conflict.summary,
+            "details": conflict.details,
+            "status": if is_validation { "intervening" } else { "detected" },
+            "intervention": if is_validation {
+                serde_json::json!({ "target_role": "test-engineer", "action": "dispatch_fix_loop" })
+            } else {
+                serde_json::Value::Null
+            },
+        })
+        .to_string();
+        let _ = store.append_desktop_frame(task_id, "conflict", &conflict.summary, Some(&detail));
+    }
+
+    // summary：结构化收尾摘要
+    if let Some(summary) = report.summary_record.as_ref() {
+        let detail = serde_json::json!({
+            "task": summary.task,
+            "roles": summary.roles,
+            "conclusion": summary.overall_conclusion,
+            "key_risks": summary.key_risks,
+            "next_action": summary.recommended_next_action,
+            "conflicts": summary.conflicts,
+        })
+        .to_string();
+        let _ = store.append_desktop_frame(
+            task_id,
+            "summary",
+            summary.overall_conclusion.as_deref().unwrap_or("任务摘要"),
+            Some(&detail),
+        );
+    }
 }
 
 async fn update_task_status_from_executor_event(
@@ -327,17 +466,46 @@ async fn update_task_status_from_executor_event(
             }
             if let Some(task_run_value) = evt.data.get("task_run") {
                 if let Ok(task_run) = serde_json::from_value::<TaskRun>(task_run_value.clone()) {
+                    // 契约 §2.4：灵枢特色事件（role_assignment/conflict/model_route/summary）
+                    // 从 ExecutionReport 投影为回放帧，重启后可合成 TurnEvent
+                    if let (Some(store), Some(report)) =
+                        (state.store.as_ref(), task_run.report.as_ref())
+                    {
+                        persist_ling_shu_frames(store, &evt.task_id, report);
+                    }
                     status.task_run = Some(task_run);
                 }
             }
             // interaction.ask 挂起问题：写入 TaskStatus，供 GET /task/:id/status 与应答端点使用
             match evt.data.get("pending_question") {
                 Some(serde_json::Value::Null) | None => {}
-                Some(q) => status.pending_question = Some(q.clone()),
+                Some(q) => {
+                    status.pending_question = Some(q.clone());
+                    // 契约 §12.6：挂起提问落盘，重启后可恢复
+                    if let Some(store) = state.store.as_ref() {
+                        if let Ok(json) = serde_json::to_string(q) {
+                            let _ = store.save_pending_question(&evt.task_id, &json);
+                        }
+                    }
+                }
             }
             match evt.data.get("usage") {
                 Some(serde_json::Value::Null) | None => {}
-                Some(u) => status.usage = Some(u.clone()),
+                Some(u) => {
+                    status.usage = Some(u.clone());
+                    // 契约 §12.6：usage 随 turn meta 落盘，重启后 turns 仍带 usage
+                    if let Some(store) = state.store.as_ref() {
+                        if let Ok(json) = serde_json::to_string(u) {
+                            let _ = store.save_desktop_turn_meta(
+                                &evt.task_id,
+                                &crate::store::desktop_conversations::DesktopTurnMeta {
+                                    usage_json: Some(json),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                }
             }
             sync_task_status_from_task_run(status);
         }

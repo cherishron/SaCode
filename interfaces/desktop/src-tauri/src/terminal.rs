@@ -13,6 +13,33 @@ use rand::RngCore;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+/// Restricts the initial shell directory, not subsequent interactive shell access.
+pub fn resolve_terminal_cwd(
+    workspace: &std::path::Path,
+    cwd: Option<&str>,
+) -> Result<PathBuf, String> {
+    let root = crate::sidecar::pretty_canonicalize(workspace).map_err(|error| error.to_string())?;
+    let candidate = cwd
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        })
+        .unwrap_or_else(|| root.clone());
+    let resolved =
+        crate::sidecar::pretty_canonicalize(&candidate).map_err(|error| error.to_string())?;
+    if !root.is_dir() || !resolved.is_dir() {
+        return Err("terminal cwd and workspace must be existing directories".into());
+    }
+    if !resolved.starts_with(&root) {
+        return Err("terminal cwd must be inside the active workspace".into());
+    }
+    Ok(resolved)
+}
+
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_INPUT_BYTES: usize = 256 * 1024;
 
@@ -39,6 +66,13 @@ struct TerminalExit {
     signal: Option<String>,
     reason: &'static str,
 }
+
+enum TerminalEvent {
+    Output(TerminalOutput),
+    Exit(TerminalExit),
+}
+
+type TerminalEmitter = Arc<dyn Fn(TerminalEvent) + Send + Sync>;
 
 enum TerminalControl {
     Write(Vec<u8>, mpsc::Sender<Result<(), String>>),
@@ -93,8 +127,26 @@ impl TerminalState {
         rows: u16,
         cols: u16,
     ) -> Result<TerminalStartDto, String> {
+        let emitter: TerminalEmitter = Arc::new(move |event| match event {
+            TerminalEvent::Output(payload) => {
+                let _ = app.emit("terminal-output", payload);
+            }
+            TerminalEvent::Exit(payload) => {
+                let _ = app.emit("terminal-exit", payload);
+            }
+        });
+        self.start_with_emitter(emitter, workspace, rows, cols)
+    }
+
+    fn start_with_emitter(
+        &self,
+        emitter: TerminalEmitter,
+        workspace: PathBuf,
+        rows: u16,
+        cols: u16,
+    ) -> Result<TerminalStartDto, String> {
         let size = validated_size(rows, cols)?;
-        let session = spawn_session(app, workspace, size)?;
+        let session = spawn_session(emitter, workspace, size)?;
         let info = session.info.clone();
         self.sessions
             .lock()
@@ -193,7 +245,7 @@ fn random_terminal_id() -> String {
 }
 
 fn spawn_session(
-    app: AppHandle,
+    emitter: TerminalEmitter,
     workspace: PathBuf,
     size: PtySize,
 ) -> Result<TerminalSession, String> {
@@ -239,7 +291,7 @@ fn spawn_session(
         pid: child.process_id(),
     };
     let mut killer = child.clone_killer();
-    let output_app = app.clone();
+    let output_emitter = Arc::clone(&emitter);
     let output_id = terminal_id.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("sacode-terminal-output".into())
@@ -252,25 +304,19 @@ fn spawn_session(
                     Ok(length) => {
                         let data = decode_utf8_chunk(&mut pending, &buffer[..length]);
                         if !data.is_empty() {
-                            let _ = output_app.emit(
-                                "terminal-output",
-                                TerminalOutput {
-                                    terminal_id: output_id.clone(),
-                                    data,
-                                },
-                            );
+                            output_emitter(TerminalEvent::Output(TerminalOutput {
+                                terminal_id: output_id.clone(),
+                                data,
+                            }));
                         }
                     }
                 }
             }
             if !pending.is_empty() {
-                let _ = output_app.emit(
-                    "terminal-output",
-                    TerminalOutput {
-                        terminal_id: output_id,
-                        data: String::from_utf8_lossy(&pending).into_owned(),
-                    },
-                );
+                output_emitter(TerminalEvent::Output(TerminalOutput {
+                    terminal_id: output_id,
+                    data: String::from_utf8_lossy(&pending).into_owned(),
+                }));
             }
         })
     {
@@ -286,7 +332,7 @@ fn spawn_session(
         .name("sacode-terminal-control".into())
         .spawn(move || {
             run_terminal(
-                app,
+                emitter,
                 worker_id,
                 child,
                 pair.master,
@@ -308,7 +354,7 @@ fn spawn_session(
 }
 
 fn run_terminal(
-    app: AppHandle,
+    emitter: TerminalEmitter,
     terminal_id: String,
     mut child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
@@ -350,15 +396,12 @@ fn run_terminal(
     alive.store(false, Ordering::Release);
     drop(writer);
     drop(master);
-    let _ = app.emit(
-        "terminal-exit",
-        TerminalExit {
-            terminal_id,
-            code: status.as_ref().map(|value| value.exit_code()),
-            signal: status.and_then(|value| value.signal().map(str::to_owned)),
-            reason,
-        },
-    );
+    emitter(TerminalEvent::Exit(TerminalExit {
+        terminal_id,
+        code: status.as_ref().map(|value| value.exit_code()),
+        signal: status.and_then(|value| value.signal().map(str::to_owned)),
+        reason,
+    }));
 }
 
 /// Preserve UTF-8 sequences split across PTY reads without delaying completed
@@ -393,8 +436,143 @@ fn decode_utf8_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn cwd_resolves_existing_directories_inside_canonical_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let expected_root = crate::sidecar::pretty_canonicalize(&root).unwrap();
+        let expected_sub = expected_root.join("sub");
+        for cwd in [None, Some("."), Some("sub/.."), Some("")] {
+            assert_eq!(resolve_terminal_cwd(&root, cwd).unwrap(), expected_root);
+        }
+        assert_eq!(
+            resolve_terminal_cwd(&root, Some("sub")).unwrap(),
+            expected_sub
+        );
+        assert_eq!(
+            resolve_terminal_cwd(&root, sub.to_str()).unwrap(),
+            expected_sub
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            resolve_terminal_cwd(&std::fs::canonicalize(&root).unwrap(), sub.to_str()).unwrap(),
+            expected_sub
+        );
+    }
+
+    #[test]
+    fn cwd_rejects_escape_prefix_collision_files_and_missing_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        let sibling = temp.path().join("workspace-other");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        std::fs::write(root.join("file"), "test").unwrap();
+        for cwd in [
+            Some(".."),
+            Some("../workspace-other"),
+            sibling.to_str(),
+            Some("file"),
+            Some("missing"),
+        ] {
+            assert!(
+                resolve_terminal_cwd(&root, cwd).is_err(),
+                "accepted {cwd:?}"
+            );
+        }
+        assert!(resolve_terminal_cwd(&root.join("missing"), None).is_err());
+    }
+
+    #[test]
+    fn cwd_rejects_external_directory_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let link = root.join("escape");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        {
+            // Junctions do not require Windows developer-mode symlink privileges.
+            let status = std::process::Command::new("cmd.exe")
+                .args(["/C", "mklink", "/J"])
+                .arg(&link)
+                .arg(&outside)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        assert!(resolve_terminal_cwd(&root, Some("escape")).is_err());
+        #[cfg(windows)]
+        std::fs::remove_dir(&link).unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(&link).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a native PTY and the platform shell; starts only an owned shell"]
+    fn native_cwd_shell_io_resize_and_close() {
+        let temp = tempfile::tempdir().unwrap();
+        let sub = temp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let terminals = TerminalState::new();
+        let (tx, rx) = mpsc::channel();
+        let emitter: TerminalEmitter = Arc::new(move |event| {
+            let _ = tx.send(event);
+        });
+        let cwd = resolve_terminal_cwd(temp.path(), Some("sub")).unwrap();
+        let info = terminals
+            .start_with_emitter(emitter, cwd.clone(), 24, 80)
+            .unwrap();
+        assert_eq!(info.workspace, cwd.to_string_lossy());
+        terminals.resize(&info.terminal_id, 30, 100).unwrap();
+        #[cfg(windows)]
+        let command = "Write-Output ('CWD_PROBE:' + (Get-Location).Path)\r";
+        #[cfg(not(windows))]
+        let command = "printf 'CWD_PROBE:%s\\n' \"$PWD\"\r";
+        terminals.write(&info.terminal_id, command.into()).unwrap();
+        let expected = format!("CWD_PROBE:{}", cwd.display());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut output = String::new();
+        while !output.contains(&expected) {
+            match rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap_or_else(|error| {
+                    panic!("cwd probe {expected:?}: {error}; output={output:?}")
+                }) {
+                TerminalEvent::Output(payload) => {
+                    // ConPTY asks the terminal renderer for its cursor position.
+                    // This headless harness must answer just as the renderer does.
+                    if payload.data.contains("\x1b[6n") {
+                        terminals
+                            .write(&info.terminal_id, "\x1b[1;1R".into())
+                            .unwrap();
+                        terminals.write(&info.terminal_id, command.into()).unwrap();
+                    }
+                    output.push_str(&payload.data);
+                }
+                TerminalEvent::Exit(_) => panic!("shell exited before cwd probe"),
+            }
+        }
+        terminals.close(&info.terminal_id).unwrap();
+        assert!(terminals.control_for(&info.terminal_id).is_err());
+    }
+
+    pub(crate) fn owned_native_terminal(
+        state: &TerminalState,
+        workspace: PathBuf,
+    ) -> TerminalStartDto {
+        state
+            .start_with_emitter(Arc::new(|_| {}), workspace, 24, 80)
+            .unwrap()
+    }
 
     #[test]
     fn validates_terminal_size() {

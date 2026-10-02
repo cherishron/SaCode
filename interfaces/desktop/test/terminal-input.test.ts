@@ -1,6 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { terminalDimensions, terminalKeyData } from '../src/ui/logic/terminal-input.ts';
+import { startTerminal } from '../src/ui/platform/tauri-bridge.ts';
+
+test('terminal IPC omits absent cwd and forwards an explicit cwd without changing dimensions', async () => {
+  const calls: unknown[] = [];
+  const globals = globalThis as typeof globalThis & { __TAURI__?: unknown };
+  const previous = globals.__TAURI__;
+  globals.__TAURI__ = {
+    core: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); return null; } },
+    event: { listen: async () => () => {} },
+  };
+  try {
+    await startTerminal();
+    await startTerminal(30, 100, 'src');
+    await startTerminal(24, 80, '');
+    assert.deepEqual(calls, [
+      { command: 'terminal_start', args: { rows: 24, cols: 80 } },
+      { command: 'terminal_start', args: { rows: 30, cols: 100, cwd: 'src' } },
+      { command: 'terminal_start', args: { rows: 24, cols: 80, cwd: '' } },
+    ]);
+    delete globals.__TAURI__;
+    assert.equal(await startTerminal(30, 100, 'src'), null);
+  } finally {
+    if (previous === undefined) delete globals.__TAURI__;
+    else globals.__TAURI__ = previous;
+  }
+});
 
 const key = (key: string, overrides: Partial<KeyboardEvent> = {}) => ({
   key, ctrlKey: false, altKey: false, metaKey: false, isComposing: false, ...overrides,

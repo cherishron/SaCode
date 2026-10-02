@@ -255,6 +255,45 @@ impl TaskQueue {
         }
     }
 
+    /// O6: release quota-held tasks for a backend (day rollover).
+    /// Removes the `__quota_hold__:<backend_id>` sentinel dependency and
+    /// promotes tasks to ready when they have no remaining dependencies.
+    pub async fn release_quota_holds(&self, backend_id: &str) -> usize {
+        let hold_dep = crate::agent_backends::quota::quota_hold_dep(backend_id);
+        let mut released = 0;
+        let mut to_ready: Vec<ScheduledTask> = Vec::new();
+        {
+            let mut pending = self.pending.write().await;
+            for (_priority, queue) in pending.iter_mut() {
+                let mut keep = VecDeque::new();
+                for mut task in queue.drain(..) {
+                    if task.dependencies.contains(&hold_dep) {
+                        task.dependencies.retain(|d| d != &hold_dep);
+                        if task.dependencies.is_empty() {
+                            to_ready.push(task);
+                            released += 1;
+                            continue;
+                        }
+                    }
+                    keep.push_back(task);
+                }
+                *queue = keep;
+            }
+        }
+        // Promote released tasks to ready.
+        if !to_ready.is_empty() {
+            let mut ready = self.ready.write().await;
+            for task in to_ready {
+                let task_id = task.id.clone();
+                ready.push_back(task);
+                if let Some(store) = self.store.as_ref() {
+                    let _ = store.update_status(&task_id, TaskQueueStatus::Ready).await;
+                }
+            }
+        }
+        released
+    }
+
     pub async fn cancel(&self, task_id: &str) -> bool {
         let mut running = self.running.write().await;
         if let Some(task) = running.remove(task_id) {

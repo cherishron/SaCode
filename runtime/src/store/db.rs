@@ -139,6 +139,52 @@ impl StoreDb {
             );
             CREATE INDEX IF NOT EXISTS idx_desktop_frames_task ON desktop_frames(task_id, seq);
 
+            -- 契约 §3.2：会话标题 / 归档 / 未读（落盘，不再只写 localStorage）
+            CREATE TABLE IF NOT EXISTS desktop_conversation_meta (
+                conversation_id TEXT PRIMARY KEY,
+                title TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                unread INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 契约 §1.4：会话级设置（含输入草稿 draft）
+            CREATE TABLE IF NOT EXISTS desktop_conversation_settings (
+                conversation_id TEXT PRIMARY KEY,
+                settings_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 契约 §1.2/§2.2：turn 级 settings_snapshot / usage / client_msg_id 幂等
+            CREATE TABLE IF NOT EXISTS desktop_turn_meta (
+                task_id TEXT PRIMARY KEY,
+                client_msg_id TEXT,
+                settings_json TEXT,
+                usage_json TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_turn_meta_client_msg
+                ON desktop_turn_meta(client_msg_id);
+
+            -- 契约 §12.6：挂起提问跨重启恢复
+            CREATE TABLE IF NOT EXISTS desktop_pending_questions (
+                task_id TEXT PRIMARY KEY,
+                question_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- 契约 §12.6：挂起审批跨重启恢复
+            CREATE TABLE IF NOT EXISTS desktop_pending_approvals (
+                approval_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                args_json TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_pending_approvals_task
+                ON desktop_pending_approvals(task_id);
+
             CREATE TABLE IF NOT EXISTS memory_entries (
                 entry_id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,

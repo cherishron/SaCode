@@ -493,6 +493,9 @@ pub(crate) async fn trigger_rule(
         model_name: None,
         skill: None,
         context_paths: Vec::new(),
+        reasoning_effort: None,
+        skills: Vec::new(),
+        client_msg_id: None,
     };
     let task_id = super::handlers::dispatch_task(state, &request)
         .await

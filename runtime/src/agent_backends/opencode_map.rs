@@ -509,4 +509,45 @@ mod tests {
             ]
         );
     }
+
+    /// CodeBuddy uses the same standard ACP notification shapes; `_meta`
+    /// (`codebuddy.ai/*`) extensions must not panic or be invented as fields.
+    #[test]
+    fn codebuddy_acp_notifications_project_without_panic() {
+        let cb = AgentBackendId::new("codebuddy");
+
+        let projected = project_acp_client_event(
+            &AcpClientEvent::Notification {
+                method: "session/update".into(),
+                params: Some(json!({
+                    "sessionId": "cb-1",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "hi" }
+                    },
+                    "_meta": { "codebuddy.ai/session": { "multitask": true } }
+                })),
+            },
+            "t-cb",
+            &cb,
+        );
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].sse_event, "message");
+        match &projected[0].agent_event {
+            AgentEvent::TextDelta { text } => assert_eq!(text, "hi"),
+            other => panic!("{other:?}"),
+        }
+
+        // Unknown vendor extension method → unmapped projection, never a panic.
+        let projected = project_acp_client_event(
+            &AcpClientEvent::Notification {
+                method: "codebuddy.ai/progress".into(),
+                params: Some(json!({ "percent": 10, "_meta": { "codebuddy.ai/*": 1 } })),
+            },
+            "t-cb",
+            &cb,
+        );
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].sse_event, "backend_event_unmapped");
+    }
 }

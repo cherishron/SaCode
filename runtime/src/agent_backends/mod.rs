@@ -8,11 +8,16 @@
 pub mod acp;
 pub mod native;
 pub mod opencode_map;
+pub mod quota;
 pub mod registry;
 
-pub use acp::{AcpBackendConfig, AcpExecutionOutcome, AcpProcessBackend, SharedAcpBackend};
+pub use acp::{
+    codebuddy_config_from_env, maybe_register_codebuddy_from_env, AcpBackendConfig,
+    AcpExecutionOutcome, AcpProcessBackend, SharedAcpBackend,
+};
 pub use native::NativeBackend;
 pub use opencode_map::{project_acp_client_event, sse_event_name};
+pub use quota::{is_quota_exhausted_message, quota_reason_from_message, QuotaStore};
 pub use registry::{BackendDispatchError, BackendRegistry};
 
 use sacode_kernel::AgentBackendId;

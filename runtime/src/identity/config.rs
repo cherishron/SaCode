@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use super::{
     DEFAULT_CLIENT_ID, DEFAULT_ENTITLEMENT_BASE_URL, DEFAULT_ENTITLEMENT_CLIENT_ID,
@@ -96,6 +97,12 @@ impl IdentityConfig {
         Ok(())
     }
 
+    /// 应用环境变量覆盖。全部可选——**不设也完全正常（缺省即 Local Mode）**，
+    /// 不会 panic，也不要求任何云地址可达。
+    ///
+    /// 仅云增强用：`SACODE_IDP_BASE_URL` / `SACODE_GATEWAY_BASE_URL` /
+    /// `SACODE_ENTITLEMENT_BASE_URL` / `SACODE_IDENTITY_CLIENT_ID` /
+    /// `SACODE_ENTITLEMENT_CLIENT_ID` / `SACODE_IDENTITY_PROVIDER_NAME`。
     pub fn apply_env_overrides(&mut self) {
         if let Ok(v) = std::env::var("SACODE_IDP_BASE_URL") {
             let v = v.trim().to_string();
@@ -189,6 +196,10 @@ impl IdentityConfig {
     }
 
     /// Fill empty IdP/gateway URLs with local saai defaults (dev smoke / TUI first-run).
+    ///
+    /// 这些 localhost 缺省**仅云增强用**（登录/权益/同步模型），不是启动门槛：
+    /// Local Mode 不设任何云 env、三件套全停也完全正常，任务路径不读它们的可达性。
+    /// 已显式配置的地址不受影响；空值才填缺省。
     pub fn fill_local_defaults_if_empty(&mut self) {
         if self.idp_base_url.trim().is_empty() {
             self.idp_base_url = DEFAULT_IDP_BASE_URL.to_string();
@@ -305,6 +316,39 @@ pub fn home_dir_fallback() -> PathBuf {
     home_dir()
 }
 
+/// 校验并规范化 IdP/网关/权益服务的 base URL。
+///
+/// 规则：trim 后去掉尾部 `/`；拒绝空值、非 http/https 协议、缺少 host、
+/// 带 userinfo（账号密码）、带 query、带 fragment 以及包含控制字符的输入。
+/// 返回规范化后的值；失败时给出含字段语义的中文错误。
+pub fn validate_base_url(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("地址不能为空，需为 http:// 或 https:// 开头的服务地址");
+    }
+    if trimmed.chars().any(char::is_control) {
+        anyhow::bail!("地址不能包含控制字符");
+    }
+    let url = Url::parse(trimmed).with_context(|| format!("URL 解析失败：{trimmed}"))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        other => anyhow::bail!("协议「{other}」不被支持，仅允许 http/https"),
+    }
+    if url.host_str().is_none() {
+        anyhow::bail!("地址缺少主机名，例如 https://idp.example.com");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("地址不允许携带账号或密码");
+    }
+    if url.query().is_some() {
+        anyhow::bail!("地址不允许携带查询参数（?…）");
+    }
+    if url.fragment().is_some() {
+        anyhow::bail!("地址不允许携带片段标识（#…）");
+    }
+    Ok(trimmed.trim_end_matches('/').to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +441,42 @@ mod tests {
         let cfg: IdentityConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.entitlement_client_id, DEFAULT_ENTITLEMENT_CLIENT_ID);
         assert_eq!(cfg.entitlement_base_url, "");
+    }
+
+    #[test]
+    fn validate_base_url_accepts_and_normalizes() {
+        assert_eq!(
+            validate_base_url("https://idp.example.com").unwrap(),
+            "https://idp.example.com"
+        );
+        assert_eq!(
+            validate_base_url("http://127.0.0.1:8080/").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            validate_base_url("  https://gw.example.com/  ").unwrap(),
+            "https://gw.example.com"
+        );
+    }
+
+    #[test]
+    fn validate_base_url_rejects_unsafe_values() {
+        let cases: [(&str, &str); 9] = [
+            ("javascript:alert(1)", "javascript 协议"),
+            ("data:text/html;base64,AAAA", "data 协议"),
+            ("https://idp.example.com/?a=b", "查询参数"),
+            ("https://idp.example.com/#frag", "片段标识"),
+            ("https://user:pass@idp.example.com", "账号密码"),
+            ("https://", "缺少主机名"),
+            ("ftp://files.example.com", "ftp 协议"),
+            ("", "空串"),
+            ("   ", "纯空白"),
+        ];
+        for (bad, why) in cases {
+            let err = validate_base_url(bad)
+                .expect_err(&format!("应拒绝 {why}：{bad:?}"));
+            let msg = format!("{err:#}");
+            assert!(!msg.is_empty(), "应拒绝 {why} 并给出中文错误：{bad:?}");
+        }
     }
 }

@@ -82,26 +82,50 @@ pub async fn dispatch_task_with_turn(
     let retry_policy = parse_retry_policy(&req.retry_policy);
     let workdir = state.workdir.as_deref();
     let mut effective_prompt = req.prompt.clone();
-    if let Some(skill) = req
-        .skill
-        .as_deref()
-        .filter(|skill| !skill.trim().is_empty())
-    {
-        let dir = workdir.ok_or_else(|| TaskDispatchError::SkillUnavailable {
-            task_id: task_id.clone(),
-            mode,
-            skill: skill.to_string(),
-        })?;
-        effective_prompt = SkillRegistry::new(dir)
-            .render_prompt(skill, &req.prompt, dir)
-            .map_err(|error| {
-                tracing::warn!(?error, skill, "task skill unavailable");
-                TaskDispatchError::SkillUnavailable {
-                    task_id: task_id.clone(),
-                    mode,
-                    skill: skill.to_string(),
+    // 契约 §1.2：`skills` 多选优先于 legacy `skill`；空数组 = 不注入技能。
+    // 未知/不可用技能**跳过并记警告**，不打断发送（真机曾因残留 skill 名 400 整单失败）。
+    let selected_skills: Vec<String> = if !req.skills.is_empty() {
+        req.skills.clone()
+    } else {
+        req.skill
+            .as_deref()
+            .filter(|skill| !skill.trim().is_empty())
+            .map(|skill| vec![skill.to_string()])
+            .unwrap_or_default()
+    };
+    let mut skill_warnings: Vec<String> = Vec::new();
+    if !selected_skills.is_empty() {
+        if let Some(dir) = workdir {
+            let mut applied: Vec<(String, String)> = Vec::new();
+            for skill in &selected_skills {
+                match SkillRegistry::new(dir).render_prompt(skill, &req.prompt, dir) {
+                    Ok(rendered) => applied.push((skill.clone(), rendered)),
+                    Err(error) => {
+                        tracing::warn!(?error, skill, "task skill unavailable; skipping");
+                        skill_warnings.push(format!("skill not available: {skill}"));
+                    }
                 }
-            })?;
+            }
+            if !applied.is_empty() {
+                let multi = applied.len() > 1;
+                for (skill, rendered) in &applied {
+                    effective_prompt = if !multi && applied.len() == 1 {
+                        rendered.clone()
+                    } else {
+                        format!("{effective_prompt}\n\n[Skill: {skill}]\n{rendered}")
+                    };
+                }
+                if multi {
+                    // 多技能时保留原 prompt 作为任务主体，技能作为补充指令
+                    effective_prompt = format!("[Task]\n{}\n{effective_prompt}", req.prompt);
+                }
+            }
+        } else {
+            skill_warnings.push(format!(
+                "skill not available: {} (no workspace)",
+                selected_skills[0]
+            ));
+        }
     }
     if !req.context_paths.is_empty() {
         effective_prompt.push_str("\n\n[Selected workspace context]\n");
@@ -133,6 +157,23 @@ pub async fn dispatch_task_with_turn(
         }
     };
 
+    // O5/O6: quota check — exhausted ACP backends get a hold dependency so the
+    // task sits in pending (queued) instead of failing. Day rollover releases it.
+    let mut dependencies = req.dependencies.clone();
+    if backend.backend_id.as_str() != sacode_kernel::DEFAULT_AGENT_BACKEND_ID
+        && state.quota.is_exhausted(backend.backend_id.as_str())
+    {
+        let hold = crate::agent_backends::quota::quota_hold_dep(backend.backend_id.as_str());
+        if !dependencies.contains(&hold) {
+            dependencies.push(hold);
+        }
+        tracing::info!(
+            backend = backend.backend_id.as_str(),
+            task_id,
+            "quota exhausted — task queued for next day"
+        );
+    }
+
     if let (Some(workdir), Some(store)) = (state.workdir.as_deref(), state.store.as_ref()) {
         match capture_workspace_tree(workdir) {
             Ok(baseline) => {
@@ -148,7 +189,7 @@ pub async fn dispatch_task_with_turn(
 
     let scheduled_task = ScheduledTask::new(task_id.clone(), task)
         .with_priority(priority)
-        .with_dependencies(req.dependencies.clone())
+        .with_dependencies(dependencies)
         .with_retry_policy(retry_policy)
         .with_backend_id(backend.backend_id.as_str());
 

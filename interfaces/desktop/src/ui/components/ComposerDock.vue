@@ -7,6 +7,7 @@ import MicIcon from './MicIcon.vue';
 import OutboxPanel from './OutboxPanel.vue';
 import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
 import { useDesktopApp } from '../composables/useDesktopApp';
+import { loadDesktopPreferences } from '../logic/preferences.ts';
 import {
   loadDraft,
   saveDraft,
@@ -45,16 +46,19 @@ const {
   attachments,
   uploadAttachment,
   removeAttachment,
+  clearAttachments,
   enhancePromptText,
   workspace,
   app,
+  appVersion,
 } = useDesktopApp();
 
+const defaults = loadDesktopPreferences(app);
 const inputValue = ref('');
-const mode = ref<Mode>('build');
-const modelName = ref('');
+const mode = ref<Mode>(defaults.defaultMode);
+const modelName = ref(defaults.defaultModel);
 /** 契约 §1.2：技能多选 */
-const selectedSkills = ref<string[]>([]);
+const selectedSkills = ref<string[]>(defaults.defaultSkill ? [defaults.defaultSkill] : []);
 const thinkLevel = ref<'off' | 'low' | 'medium' | 'high'>('medium');
 const enhancing = ref(false);
 const listening = ref(false);
@@ -78,6 +82,11 @@ function scheduleDraftSave() {
 watch(() => props.conversationId, (id, prevId) => {
   if (prevId) saveDraft(prevId, inputValue.value);
   inputValue.value = loadDraft(id);
+  // 仅切换会话时应用最新默认值，设置保存不覆盖本会话的手动选择。
+  const preferences = loadDesktopPreferences(app);
+  mode.value = preferences.defaultMode;
+  modelName.value = preferences.defaultModel;
+  selectedSkills.value = preferences.defaultSkill ? [preferences.defaultSkill] : [];
 }, { immediate: true });
 
 // 输入变化 → 草稿
@@ -102,12 +111,13 @@ function cycleMode() {
   mode.value = order[(order.indexOf(mode.value) + 1) % 3]!;
 }
 
-const models = computed(() =>
-  (app.workspaceCapabilities.models ?? []).map((m) => ({
+const models = computed(() => {
+  void appVersion.value;
+  return (app.workspaceCapabilities.models ?? []).map((m) => ({
     value: m.id,
     label: m.model ? `${m.provider}/${m.model}` : m.id,
-  })),
-);
+  }));
+});
 
 const modelLabel = computed(() => {
   if (!modelName.value) return '模型';
@@ -128,9 +138,10 @@ const reasoningEffort = computed<ReasoningEffort | null>(() =>
 
 // ---- 技能多选 ----
 
-const skillList = computed(() =>
-  (app.workspaceCapabilities.skills ?? []).map((s) => ({ name: s.name })),
-);
+const skillList = computed(() => {
+  void appVersion.value;
+  return (app.workspaceCapabilities.skills ?? []).map((s) => ({ name: s.name }));
+});
 
 function toggleSkill(name: string) {
   const idx = selectedSkills.value.indexOf(name);
@@ -184,7 +195,16 @@ const pickerOpen = ref(false);
 const pickerFilter = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 
+watch(workspace, () => {
+  projectFiles.value = [];
+  files.value = [];
+  clearAttachments();
+  pickerOpen.value = false;
+  pickerFilter.value = '';
+}, { flush: 'sync' });
+
 const workspaceFiles = computed(() => {
+  void appVersion.value;
   const q = pickerFilter.value.trim().toLowerCase();
   return (app.workspaceCapabilities.files ?? [])
     .map((f) => f.path)

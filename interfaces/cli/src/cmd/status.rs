@@ -38,6 +38,7 @@ pub async fn ensure_default_context7(workdir: &Path) -> Result<bool> {
             command: None,
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         },
     );

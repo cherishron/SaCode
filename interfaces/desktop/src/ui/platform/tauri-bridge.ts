@@ -81,9 +81,11 @@ export function isNativeTerminalAvailable(): boolean {
 }
 
 /** Returns null in browser-only development, where no native PTY exists. */
-export async function startTerminal(rows = 24, cols = 80): Promise<TerminalStartDto | null> {
+export async function startTerminal(rows = 24, cols = 80, cwd?: string): Promise<TerminalStartDto | null> {
   if (!isNativeTerminalAvailable()) return null;
-  return (await getInvoke()!('terminal_start', { rows, cols })) as TerminalStartDto;
+  return (await getInvoke()!('terminal_start', {
+    rows, cols, ...(cwd !== undefined ? { cwd } : {}),
+  })) as TerminalStartDto;
 }
 
 export async function writeTerminal(terminalId: string, data: string): Promise<boolean> {

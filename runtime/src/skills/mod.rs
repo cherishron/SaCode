@@ -31,6 +31,13 @@ pub struct SkillSpec {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// 契约 §7.2：默认启用标记；缺省 = true
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +168,7 @@ impl SkillRegistry {
         author: &str,
         tags: Vec<String>,
         source: SkillSource,
+        enabled: bool,
     ) -> Result<PathBuf> {
         let dir = match source {
             SkillSource::User => self.config.user_skills_dir(),
@@ -177,9 +185,10 @@ impl SkillRegistry {
             tags.join(", ")
         };
         let body = format!(
-            "# {}\n\nDescription: {}\n\nVersion: {}\n\nAuthor: {}\n\nTags: {}\n\nCreated: {}\n\nUpdated: {}\n\n## Prompt\n\n{}\n",
+            "# {}\n\nDescription: {}\n\nEnabled: {}\n\nVersion: {}\n\nAuthor: {}\n\nTags: {}\n\nCreated: {}\n\nUpdated: {}\n\n## Prompt\n\n{}\n",
             name.trim(),
             description.trim(),
+            if enabled { "true" } else { "false" },
             version.trim(),
             author.trim(),
             tags_str,
@@ -269,6 +278,7 @@ pub(crate) fn parse_skill_file(path: &Path, content: &str, source: SkillSource) 
     let mut tags = Vec::new();
     let mut created_at = None;
     let mut updated_at = None;
+    let mut enabled = true;
 
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("# ") {
@@ -278,6 +288,11 @@ pub(crate) fn parse_skill_file(path: &Path, content: &str, source: SkillSource) 
 
         if let Some(rest) = line.strip_prefix("Description: ") {
             description = rest.trim().to_string();
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Enabled: ") {
+            enabled = !matches!(rest.trim().to_lowercase().as_str(), "false" | "0" | "no");
             continue;
         }
 
@@ -332,6 +347,7 @@ pub(crate) fn parse_skill_file(path: &Path, content: &str, source: SkillSource) 
         tags,
         created_at,
         updated_at,
+        enabled,
     }
 }
 

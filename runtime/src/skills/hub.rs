@@ -221,6 +221,7 @@ impl SkillHubClient {
                 command: None,
                 args: None,
                 env: None,
+                headers: None,
                 enabled: true,
             },
         );

@@ -98,6 +98,7 @@
 - `plans/plan-desktop-layout-contract.md` / `plan-desktop-interface-contract.md`：布局/接口契约
 - `plans/plan-desktop-layout-parity.md` / `plan-desktop-layout-audit.md` / `plan-desktop-monkeycode-parity.md`：布局对齐/审计/与 MonkeyCode 对齐
 - `plans/plan-desktop-integration-acceptance.md` / `plan-desktop-native-acceptance.md`：集成验收/原生验收
+- `plans/plan-deepseek-harness-replication.md`：DeepSeek Harness 全系统（前端到后端）复刻蓝图 —— 架构不变量表、子系统地图、Rust 移植决策、M0–M8 里程碑与验收口径
 
 历史归档：
 - `plans/archive/README.md`：历史阶段方案导航

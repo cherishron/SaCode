@@ -278,6 +278,27 @@ impl HttpApprovalDecider {
             data["reason"] = serde_json::Value::String(reason.to_string());
         }
         emit_event(&self.state, &self.task_id, "approval_resolved", data);
+
+        // P0-3：审批结果落盘到 desktop_frames，重启后审批卡可回放
+        if let Some(store) = self.state.store.as_ref() {
+            let text = format!(
+                "审批{}: {}",
+                if approved { "通过" } else { "拒绝" },
+                approval_id
+            );
+            let detail = serde_json::json!({
+                "approval_id": approval_id,
+                "approved": approved,
+                "reason": reason,
+            })
+            .to_string();
+            let _ = store.append_desktop_frame(
+                &self.task_id,
+                "approval",
+                &text,
+                Some(&detail),
+            );
+        }
     }
 }
 
@@ -329,6 +350,23 @@ impl ApprovalDecider for HttpApprovalDecider {
                 "args": args,
             }),
         );
+
+        // P0-3：审批请求落盘到 desktop_frames，重启后审批卡可回放
+        if let Some(store) = self.state.store.as_ref() {
+            let detail = serde_json::json!({
+                "approval_id": approval_id,
+                "tool_name": tool_name,
+                "side_effect_level": format!("{:?}", side_effect_level),
+                "args": args,
+            })
+            .to_string();
+            let _ = store.append_desktop_frame(
+                &self.task_id,
+                "approval",
+                tool_name,
+                Some(&detail),
+            );
+        }
 
         // 统一的指标记录：审批一旦解决（批准/拒绝/超时/取消）即累加对应计数与等待时间
         let approval_metrics = &self.state.metrics.approval;

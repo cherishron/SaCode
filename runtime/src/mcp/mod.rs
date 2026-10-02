@@ -55,6 +55,9 @@ pub struct McpServerConfig {
     /// stdio 类型的环境变量
     #[serde(default)]
     pub env: Option<BTreeMap<String, String>>,
+    /// remote 类型的 HTTP 请求头（契约 §7.1）
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
     pub enabled: bool,
 }
 
@@ -157,6 +160,7 @@ impl McpConfigStore {
                 command: None,
                 args: None,
                 env: None,
+                headers: None,
                 enabled: true,
             },
         );
@@ -183,6 +187,7 @@ impl McpConfigStore {
                 command: Some(command.to_string()),
                 args: Some(args.to_vec()),
                 env: Some(env.clone()),
+                headers: None,
                 enabled: true,
             },
         );
@@ -935,6 +940,7 @@ mod tests {
             command: Some("echo".to_string()),
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         };
         assert!(stdio_server.is_stdio());
@@ -945,6 +951,7 @@ mod tests {
             command: None,
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         };
         assert!(!remote_server.is_stdio());
@@ -961,6 +968,7 @@ mod tests {
                 "@modelcontextprotocol/server-filesystem".to_string(),
             ]),
             env: Some(BTreeMap::from([("DEBUG".to_string(), "true".to_string())])),
+            headers: None,
             enabled: true,
         };
 
@@ -983,6 +991,7 @@ mod tests {
             command: None, // 缺失 command 字段
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         };
         let result = StdioMcpClient::new(&config);
@@ -998,6 +1007,7 @@ mod tests {
             command: Some("sacode-mcp-nonexistent-command-xyz".to_string()),
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         };
         let result = StdioMcpClient::new(&config);
@@ -1047,6 +1057,7 @@ mod tests {
             command: Some("sacode-nonexistent-xyz".to_string()),
             args: None,
             env: None,
+            headers: None,
             enabled: true,
         };
         // 调用 async 函数会尝试创建 StdioMcpClient，因命令不存在而失败

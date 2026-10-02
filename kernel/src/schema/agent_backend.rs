@@ -112,6 +112,98 @@ impl Default for AgentBackendHealth {
     }
 }
 
+/// Per-backend daily quota state machine (契约 §13.4 / O5).
+/// Reset by UTC+8 calendar day change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentBackendQuota {
+    /// 'YYYY-MM-DD' in UTC+8.
+    pub date: String,
+    /// Calls used today.
+    pub used: u32,
+    /// Optional upper bound; absent = unknown/unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// true = stop calling this backend for the rest of the day.
+    pub exhausted: bool,
+    /// Human-readable reason (rate-limit text summary, sanitized).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AgentBackendQuota {
+    pub fn fresh(date: impl Into<String>) -> Self {
+        Self {
+            date: date.into(),
+            used: 0,
+            limit: None,
+            exhausted: false,
+            reason: None,
+        }
+    }
+
+    /// UTC+8 calendar date as 'YYYY-MM-DD'.
+    pub fn today_utc8() -> String {
+        // Compute from Unix epoch + 8h offset without a tz crate.
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let utc8 = now_unix + 8 * 3600;
+        let days = utc8.div_euclid(86_400);
+        // 1970-01-01 is Thursday (day 0). Civil date from days since epoch.
+        let (y, m, d) = civil_from_days(days);
+        format!("{y:04}-{m:02}-{d:02}")
+    }
+
+    /// True when stored date differs from current UTC+8 day (needs reset).
+    pub fn needs_day_reset(&self) -> bool {
+        self.date != Self::today_utc8()
+    }
+
+    /// Reset counters for a new UTC+8 day. Returns true when a reset occurred.
+    pub fn roll_day(&mut self) -> bool {
+        if !self.needs_day_reset() {
+            return false;
+        }
+        self.date = Self::today_utc8();
+        self.used = 0;
+        self.exhausted = false;
+        self.reason = None;
+        true
+    }
+
+    pub fn record_use(&mut self) {
+        self.used = self.used.saturating_add(1);
+        if let Some(limit) = self.limit {
+            if self.used >= limit {
+                self.exhausted = true;
+                if self.reason.is_none() {
+                    self.reason = Some(format!("daily limit {limit} reached"));
+                }
+            }
+        }
+    }
+
+    pub fn mark_exhausted(&mut self, reason: impl Into<String>) {
+        self.exhausted = true;
+        self.reason = Some(reason.into());
+    }
+}
+
+/// Howard Hinnant civil_from_days (days since 1970-01-01 → y/m/d).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097); // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 /// Static + runtime descriptor for an Agent Backend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentDescriptor {
@@ -123,12 +215,28 @@ pub struct AgentDescriptor {
     pub health: AgentBackendHealth,
     #[serde(default)]
     pub capabilities: AgentCapabilities,
+    /// O3 enable/disable switch. Native `sacode` is always true and cannot be disabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
+    /// Args separate from executable; never shell-string concatenated (§13.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<String>,
+    /// O2 install guidance string. Never auto-download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_hint: Option<String>,
+    /// O5 quota state (ACP backends only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<AgentBackendQuota>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl AgentDescriptor {
@@ -139,9 +247,13 @@ impl AgentDescriptor {
             kind: AgentBackendKind::Native,
             health: AgentBackendHealth::Ready,
             capabilities: AgentCapabilities::sacode_native(),
+            enabled: true,
             executable: None,
+            args: None,
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             diagnostic: None,
+            install_hint: None,
+            quota: None,
         }
     }
 }

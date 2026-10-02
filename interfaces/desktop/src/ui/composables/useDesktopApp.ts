@@ -160,22 +160,26 @@ export function useDesktopApp() {
 
   async function uploadAttachment(file: File): Promise<{ name: string; path: string; size: number } | null> {
     if (!app.client) return null;
+    const generation = workspaceGeneration;
+    const client = app.client;
     try {
       const buf = await file.arrayBuffer();
+      if (generation !== workspaceGeneration) return null;
       let binary = '';
       const bytes = new Uint8Array(buf);
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
       const contentBase64 = btoa(binary);
-      const result = await app.client.uploadWorkspaceAttachment({
+      const result = await client.uploadWorkspaceAttachment({
         filename: file.name,
         contentBase64,
         kind: file.type,
       });
+      if (generation !== workspaceGeneration) return null;
       const item = { name: file.name, path: result.path, size: result.size };
       attachments.value = [...attachments.value, item];
       return item;
     } catch (error) {
-      sendError.value = String(error);
+      if (generation === workspaceGeneration) sendError.value = String(error);
       return null;
     }
   }
@@ -668,6 +672,7 @@ export function useDesktopApp() {
 
   return {
     app,
+    appVersion,
     start,
     refreshConversations,
     selectConversation,

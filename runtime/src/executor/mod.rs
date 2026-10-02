@@ -45,6 +45,8 @@ pub struct TaskExecutor {
     abort_handles: Arc<tokio::sync::Mutex<HashMap<String, TaskCancelHandle>>>,
     /// Optional ACP backends (OpenCode) keyed by backend_id (M4).
     acp_backends: Arc<tokio::sync::Mutex<HashMap<String, crate::agent_backends::AcpBackendConfig>>>,
+    /// O5/O6: quota store for ACP backends.
+    quota: Arc<crate::agent_backends::QuotaStore>,
 }
 
 /// 任务取消句柄：AbortHandle + 协作式取消标记，取消时同时通知工具执行进程
@@ -80,7 +82,19 @@ impl TaskExecutor {
             approval_factory: None,
             abort_handles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             acp_backends: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            quota: Arc::new(crate::agent_backends::QuotaStore::in_memory()),
         }
+    }
+
+    /// O5: inject a persistent quota store (daemon wiring).
+    pub fn with_quota_store(mut self, quota: Arc<crate::agent_backends::QuotaStore>) -> Self {
+        self.quota = quota;
+        self
+    }
+
+    /// O5/O6: set the quota store after construction.
+    pub fn set_quota_store(&mut self, quota: Arc<crate::agent_backends::QuotaStore>) {
+        self.quota = quota;
     }
 
     /// Register an ACP backend config for executor dispatch (M4).
@@ -173,6 +187,7 @@ impl TaskExecutor {
             // running the native LLM path.
             let dispatch_backend = backend_id.clone();
             let acp_backends = self.acp_backends.clone();
+            let quota = self.quota.clone();
 
             let cancellation = Arc::new(AtomicBool::new(false));
             let task_cancellation = cancellation.clone();
@@ -188,6 +203,8 @@ impl TaskExecutor {
                             .cloned();
                         match acp_config {
                             Some(config) => {
+                                // O5: record quota use before dispatch
+                                quota.record_use(&dispatch_backend);
                                 let backend =
                                     crate::agent_backends::AcpProcessBackend::new(config);
                                 let outcome = backend
@@ -198,6 +215,29 @@ impl TaskExecutor {
                                         Some(&event_bus),
                                     )
                                     .await;
+                                // O5: detect quota exhaustion from error text
+                                if !outcome.success {
+                                    if let Some(err) = outcome.error.as_deref() {
+                                        if crate::agent_backends::is_quota_exhausted_message(err) {
+                                            let reason =
+                                                crate::agent_backends::quota_reason_from_message(err);
+                                            quota.mark_exhausted(&dispatch_backend, &reason);
+                                            // O4: emit agent_backend TurnEvent frame
+                                            emit_executor_event(
+                                                &event_bus,
+                                                &task_id,
+                                                "agent_backend_frame",
+                                                serde_json::json!({
+                                                    "kind": "agent_backend",
+                                                    "backend_id": dispatch_backend,
+                                                    "title": task.task.prompt.chars().take(80).collect::<String>(),
+                                                    "status": "quota_exhausted",
+                                                    "quota": quota.get_or_create(&dispatch_backend),
+                                                }),
+                                            );
+                                        }
+                                    }
+                                }
                                 let task_run = crate::task_run_snapshot(
                                     Some(task_id.clone()),
                                     task.task.mode,

@@ -57,13 +57,6 @@ pub async fn answer_task_question(
         );
     }
 
-    {
-        let mut tasks = state.tasks.write().await;
-        if let Some(task) = tasks.get_mut(&task_id) {
-            task.pending_question = None;
-        }
-    }
-
     let answer_text = if req.cancelled {
         "（用户取消了提问）".to_string()
     } else {
@@ -91,9 +84,18 @@ pub async fn answer_task_question(
         .as_ref()
         .and_then(|store| store.find_conversation_for_task(&task_id).ok().flatten());
 
+    // 保留原任务的执行模式，避免续写时降级为 build
+    let orig_mode = {
+        let tasks = state.tasks.read().await;
+        tasks
+            .get(&task_id)
+            .map(|t| t.mode.clone())
+            .unwrap_or_else(|| "build".to_string())
+    };
+
     let request = TaskRequest {
         prompt: answer_text,
-        mode: "build".to_string(),
+        mode: orig_mode,
         priority: "normal".to_string(),
         dependencies: vec![],
         retry_policy: None,
@@ -105,11 +107,23 @@ pub async fn answer_task_question(
         model_name: None,
         skill: None,
         context_paths: vec![],
+        reasoning_effort: None,
+        skills: Vec::new(),
+        client_msg_id: None,
     };
 
-    if let Some(conversation_id) = conversation_id {
-        super::desktop_conversations::append(State(state), Path(conversation_id), Json(request)).await
+    let response = if let Some(conversation_id) = conversation_id {
+        super::desktop_conversations::append(State(state.clone()), Path(conversation_id), Json(request)).await
     } else {
-        super::desktop_conversations::create(State(state), Json(request)).await
+        super::desktop_conversations::create(State(state.clone()), Json(request)).await
+    };
+
+    if response.0.is_success() {
+        let mut tasks = state.tasks.write().await;
+        if let Some(task) = tasks.get_mut(&task_id) {
+            task.pending_question = None;
+        }
     }
+
+    response
 }

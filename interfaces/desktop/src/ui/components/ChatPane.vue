@@ -182,7 +182,7 @@ function onCancelAsk(taskId: string) {
 
       <!-- 事件卡片流 -->
       <template v-for="item in windowedItems" :key="item.id">
-        <ChatCard :item="item as any" />
+        <ChatCard :item="item" />
       </template>
 
       <!-- 流内 pending 审批 / 提问（与 App.vue 浮层并存，Agent4 events 就绪后可去重） -->
@@ -242,6 +242,10 @@ function onCancelAsk(taskId: string) {
   padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
+}
+
+.chat-stream > :deep(*) {
+  flex-shrink: 0;
 }
 
 .chat-load-older {

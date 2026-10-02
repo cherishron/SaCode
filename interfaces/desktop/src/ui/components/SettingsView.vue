@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { activateSettingsFocus } from '../logic/settings-focus.ts';
 import { CloseIcon } from 'tdesign-icons-vue-next';
 import type { AccountStatus, IdentityConfigView, EntitlementItem, DetectedTool, ImportedProvider, GitAuthPlatformStatus, AuditReportSummary, AgentBackendDescriptor, HookConfig } from '@cherishron/sacode-client-core';
 import {
@@ -62,17 +63,29 @@ const section = ref<SettingsSection>('general');
 const draft = ref<DesktopPreferences>(loadDesktopPreferences(app));
 const dirty = ref(false);
 const feedback = ref('');
+const settingsWindow = ref<HTMLElement | null>(null);
+let releaseSettingsFocus: (() => void) | undefined;
 
 watch(
   () => props.open,
-  (open) => {
+  async (open, _previous, onCleanup) => {
+    let cancelled = false;
+    onCleanup(() => { cancelled = true; });
+    releaseSettingsFocus?.();
+    releaseSettingsFocus = undefined;
     if (open) {
       draft.value = loadDesktopPreferences(app);
       dirty.value = false;
       feedback.value = '';
+      await nextTick();
+      if (!cancelled && props.open && settingsWindow.value) {
+        releaseSettingsFocus = activateSettingsFocus(settingsWindow.value, onClose);
+      }
     }
   },
+  { immediate: true },
 );
+onBeforeUnmount(() => { releaseSettingsFocus?.(); });
 
 watch(
   draft,
@@ -118,7 +131,7 @@ const mcpError = ref('');
 const mcpFormOpen = ref(false);
 /** 非空 = 编辑既有服务器（整对象替换）；空 = 新建 */
 const mcpEditingName = ref('');
-const mcpArgsText = ref('');
+const mcpArgsText = ref('[]');
 const mcpEnvRows = ref<KvRow[]>([{ key: '', value: '' }]);
 const mcpHeaderRows = ref<KvRow[]>([{ key: '', value: '' }]);
 const mcpDraft = ref({
@@ -132,7 +145,7 @@ const mcpDraft = ref({
 function resetMcpDraft() {
   mcpEditingName.value = '';
   mcpDraft.value = { name: '', type: 'stdio', url: '', command: '', enabled: true };
-  mcpArgsText.value = '';
+  mcpArgsText.value = '[]';
   mcpEnvRows.value = [{ key: '', value: '' }];
   mcpHeaderRows.value = [{ key: '', value: '' }];
 }
@@ -152,7 +165,7 @@ function editMcp(row: McpRow) {
     command: row.command ?? '',
     enabled: row.enabled,
   };
-  mcpArgsText.value = (row.args ?? []).join(' ');
+  mcpArgsText.value = JSON.stringify(row.args ?? []);
   mcpEnvRows.value = recordToKv(row.env);
   mcpHeaderRows.value = recordToKv(row.headers);
   mcpFormOpen.value = true;
@@ -464,6 +477,20 @@ async function saveMcp() {
   const name = mcpDraft.value.name.trim();
   if (!name || !app.client) return;
   const isRemote = mcpDraft.value.type !== 'stdio';
+  mcpError.value = '';
+  let args: string[] | undefined;
+  if (!isRemote) {
+    try {
+      const parsed: unknown = JSON.parse(mcpArgsText.value);
+      if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === 'string')) {
+        throw new Error('invalid args');
+      }
+      args = parsed;
+    } catch {
+      mcpError.value = '参数必须是有效的 JSON 字符串数组，例如 ["--path", "含空格的路径"]；无参数请填 []。';
+      return;
+    }
+  }
   const env = kvToRecord(mcpEnvRows.value);
   const headers = kvToRecord(mcpHeaderRows.value);
   const body = {
@@ -471,9 +498,7 @@ async function saveMcp() {
     type: (isRemote ? 'remote' : 'stdio') as 'remote' | 'stdio',
     url: isRemote ? mcpDraft.value.url.trim() : undefined,
     command: isRemote ? undefined : mcpDraft.value.command.trim(),
-    args: isRemote
-      ? undefined
-      : mcpArgsText.value.split(/\s+/).filter(Boolean),
+    args,
     env: Object.keys(env).length ? env : undefined,
     // 契约字段；当前 daemon-client 类型未含 headers，扩展提交
     headers: Object.keys(headers).length ? headers : undefined,
@@ -1256,13 +1281,13 @@ function onClose() {
 
 <template>
   <div v-if="open" class="settings-overlay" @click.self="onClose">
-    <section class="settings-window" role="dialog" aria-modal="true">
+    <section ref="settingsWindow" class="settings-window" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
       <!-- 契约：视图级页头 chrome-row -->
       <header class="settings-head">
-        <span class="settings-title">偏好设置</span>
+        <span id="settings-title" class="settings-title">偏好设置</span>
         <span class="muted">{{ workspaceLabel }}</span>
         <span class="settings-fill" />
-        <button class="ghost-btn" type="button" title="关闭" @click="onClose">
+        <button class="ghost-btn" type="button" title="关闭" aria-label="关闭偏好设置" @click="onClose">
           <CloseIcon size="13" />
         </button>
       </header>
@@ -1554,7 +1579,7 @@ function onClose() {
             <h3 class="settings-section-title settings-section">MCP 服务器</h3>
             <div class="mcp-list">
               <div v-if="mcpLoading" class="muted">加载中…</div>
-              <div v-else-if="mcpError" class="composer-error">{{ mcpError }}</div>
+              <div v-else-if="mcpError" class="composer-error" role="alert">{{ mcpError }}</div>
               <div v-else-if="!mcpServers.length" class="muted">暂无 MCP 服务器</div>
               <div v-for="s in mcpServers" :key="s.name" class="mcp-row">
                 <div class="mcp-row-main">
@@ -1612,8 +1637,9 @@ function onClose() {
                 <label class="settings-field"><span>命令</span>
                   <t-input v-model="mcpDraft.command" placeholder="command" size="small" />
                 </label>
-                <label class="settings-field"><span>参数</span>
-                  <t-input v-model="mcpArgsText" placeholder="args（空格分隔）" size="small" />
+                <label class="settings-field"><span>参数（JSON 字符串数组）</span>
+                  <t-input v-model="mcpArgsText" placeholder='["--path", "含空格的路径"]' size="small" />
+                  <span class="muted settings-meta">每个字符串为一个参数，保留空格和空字符串；无参数填 []，反斜杠按 JSON 规则转义。</span>
                 </label>
               </template>
 

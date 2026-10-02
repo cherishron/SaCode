@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import vue from '@vitejs/plugin-vue';
+import { createSSRApp, type Component } from 'vue';
+import { renderToString } from 'vue/server-renderer';
 import {
   framesToEvents,
   turnsToDisplayItems,
@@ -17,7 +22,76 @@ import {
   conflictTone,
   conflictToneClass,
   type LegacyFrame,
+  type TurnEvent,
 } from '../src/ui/logic/turn-events.ts';
+
+// Exercise the actual Vue card with the items produced by the event mapper.
+// Renaming its bindings to camelCase must lose these values and fail this test.
+test('ChatCard renders canonical DisplayItem fields from structured and legacy events', async (t) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL('..', import.meta.url)),
+    configFile: false,
+    plugins: [vue()],
+    server: { middlewareMode: true },
+    appType: 'custom',
+  });
+  try {
+    const { default: ChatCard } = await server.ssrLoadModule('/src/ui/components/ChatCard.vue');
+    const cases: Array<{ name: string; event: TurnEvent; expected: string[] }> = [
+      {
+        name: 'tool duration including zero',
+        event: { type: 'tool', seq: 1, tool: 'fs.read', status: 'ok', duration_ms: 0 },
+        expected: ['fs.read', '0ms'],
+      },
+      {
+        name: 'model failover indicator',
+        event: {
+          type: 'model_route', seq: 2,
+          primary: { provider: 'primary', model: 'model-a', needs_thinking: true },
+          fallbacks: [{ provider: 'backup', model: 'model-b' }],
+          failed_over: true, reason: '主模型超时',
+        },
+        expected: ['发生过故障切换', 'primary / model-a', 'backup / model-b', '需思考', '主模型超时'],
+      },
+      {
+        name: 'summary risks and next action',
+        event: {
+          type: 'summary', seq: 3, task: '修复任务', conclusion: '已完成',
+          key_risks: ['并发风险'], next_action: '补测试',
+        },
+        expected: ['修复任务', '已完成', '并发风险', '下一步：补测试'],
+      },
+      {
+        name: 'subagent summary',
+        event: {
+          type: 'subagent', seq: 4, agent_id: 'worker', title: '编码代理', status: 'done',
+          summary: '完成实现摘要', result: '验证通过',
+        },
+        expected: ['编码代理', '完成实现摘要', '验证通过'],
+      },
+    ];
+    for (const { name, event, expected } of cases) {
+      await t.test(name, async () => {
+        const item = turnsToDisplayItems([{ task_id: 'task-regression', events: [event] }])[1]!;
+        const html = await renderToString(createSSRApp(ChatCard as Component, { item, forceOpen: true }));
+        for (const text of expected) assert.ok(html.includes(text), `missing ${text} in ${html}`);
+      });
+    }
+    await t.test('legacy summary preserves canonical fields through rendering', async () => {
+      const item = turnsToDisplayItems([{
+        task_id: 'legacy-task',
+        frames: [{ seq: 1, kind: 'summary', text: '旧任务', detail: JSON.stringify({
+          key_risks: ['回放风险'], next_action: '验证回放',
+        }) }],
+      }])[1]!;
+      const html = await renderToString(createSSRApp(ChatCard as Component, { item }));
+      assert.ok(html.includes('回放风险'));
+      assert.ok(html.includes('下一步：验证回放'));
+    });
+  } finally {
+    await server.close();
+  }
+});
 
 // ---- framesToEvents ----
 

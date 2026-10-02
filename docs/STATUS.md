@@ -122,10 +122,23 @@ $env:SACODE_BINARY_PATH = "D:\Project\sa\saai\sa-code\target\debug\sacode.exe"
 | **高** | 绕过或放宽登录限流后跑 `smoke-oauth.ps1`（sacode / sacode-ent）PKCE 全链路 |
 | **高** | **Vue 迁入 SaDesign / SaNative / 自动化**（后端已齐，UI 在旧壳） |
 | 中 | Vue 设置四页：模型与执行 / Git / 安全扫描 / 配置导入（API 已有） |
-| 中 | 账号页挂上「企业审计导出」按钮（`POST /api/audit/export`） |
+| ~~中~~ | ~~账号页挂上「企业审计导出」按钮~~ → **已完成**（`exportEnterpriseAudit` + 设置页按钮 + 云增强置灰，2026-10-02 核对确认） |
 | 中 | 主登录后自动串 `sacode-ent`；License 公钥内置 + kid 轮换 |
-| 中 | keyring 真机；provider catalog 收敛；Vite/esbuild 告警 |
-| 低 | Tauri NSIS 打包；完整 workspace 测试与发布门禁 |
+| 中 | keyring 真机；provider catalog 收敛 |
+| 低 | 完整 workspace 测试与发布门禁 |
+
+## 2026-10-02 进度更新
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| **E3 CSP 启用**（PRD E3 AC5） | ✅ 已启用 | `tauri.conf.json` `security.csp` 最小必要来源；Tauri 构建 + 实机运行验证无违规 |
+| **主 bundle 瘦身**（审计遗留） | ✅ 完成 | `vite.config.ts` manualChunks：主 chunk 6.1M→288K（↓95%），vendor-tdesign-chat 3.28M / vendor-tdesign 1.4M / vendor-markdown 1.0M / vendor-vue 82K |
+| **CLI/Desktop 架构边界评估** | ✅ 已产出 | `docs/audits/cli-desktop-架构边界评估报告.md`：结论"现状与方案高度吻合，无需大重构"；发现 2 缺口 |
+| **孤儿进程兜底**（缺口-2） | ✅ 已修 | `sandbox/executor.rs` `KillOnDrop(Option<Child>)` guard（零 unsafe）；sandbox 19/19 + tools::fs 26/26 过 |
+| **GUI 耦合门禁** | ✅ 已加 | `scripts/audit-gui-coupling.sh`（grep + cargo tree 双重断言），当前 PASS |
+| 企业审计导出按钮 | ✅ 已挂（本条为过期项核对） | client-core `exportEnterpriseAudit` + SettingsView 按钮 |
+| daemon 预启动（启动即就绪） | ✅ 已实现 | `main.rs` setup 预 spawn；实机验证 `daemon pre-started port=…` |
+| providers.json 单一事实源 / model_routing→task_routing / 协议 3 种 + 远端模型列表 | 🟡 已完成待提交 | 见 `.workbuddy/memory/2026-10-02.md`；提交范围待用户决策（与桌面 WIP 混文件） |
 
 ## 相关文档
 

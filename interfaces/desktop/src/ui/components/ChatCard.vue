@@ -4,65 +4,12 @@ import {
   isCollapsibleCard,
   defaultCollapsed,
   conflictToneClass,
-  type RoleAssignmentRole,
-  type ModelRouteTarget,
+  type DisplayItem,
 } from '../logic/turn-events.ts';
-
-/** 与 turn-events.ts 的 DisplayItem 对齐的卡片 item。 */
-export interface ChatCardItem {
-  id: string;
-  type: 'user' | 'text' | 'thinking' | 'tool' | 'approval' | 'ask' | 'subagent' | 'error' | 'system'
-    | 'role_assignment' | 'conflict' | 'model_route' | 'summary';
-  taskId?: string;
-  // text / user / error / system
-  text?: string;
-  // thinking
-  collapsed?: boolean;
-  // tool
-  tool?: string;
-  input?: unknown;
-  output?: string;
-  status?: string;
-  durationMs?: number;
-  // approval
-  approvalId?: string;
-  summary?: string;
-  diff?: string;
-  // ask
-  questionId?: string;
-  question?: string;
-  options?: string[];
-  allowMultiple?: boolean;
-  answer?: string | string[];
-  // subagent
-  agentId?: string;
-  title?: string;
-  result?: string;
-  summaryText?: string;
-  // role_assignment（灵枢 · 自组织）
-  roles?: RoleAssignmentRole[] | string[];
-  // conflict（灵枢 · 自防护）
-  conflictId?: string;
-  kind?: string;
-  details?: string[];
-  intervention?: { target_role?: string; action?: string };
-  // model_route（灵枢 · 自愈合）
-  roleId?: string;
-  primary?: ModelRouteTarget;
-  fallbacks?: Array<{ provider: string; model: string; score?: number }>;
-  reason?: string;
-  failedOver?: boolean;
-  // summary（灵枢 · 收尾）
-  task?: string;
-  conclusion?: string;
-  keyRisks?: string[];
-  nextAction?: string;
-  conflicts?: string[];
-}
 
 const props = withDefaults(
   defineProps<{
-    item: ChatCardItem;
+    item: DisplayItem;
     /** 强制展开（历史回放时可外部控制） */
     forceOpen?: boolean;
   }>(),
@@ -97,8 +44,10 @@ const headerLabel = computed(() => {
   }
 });
 
+const status = computed(() => 'status' in props.item ? props.item.status : '');
+
 const statusLabel = computed(() => {
-  const s = props.item.status;
+  const s = status.value;
   if (!s) return '';
   const map: Record<string, string> = {
     running: '运行中',
@@ -120,6 +69,7 @@ const statusLabel = computed(() => {
 });
 
 const toolInputText = computed(() => {
+  if (props.item.type !== 'tool') return '';
   const input = props.item.input;
   if (input == null) return '';
   if (typeof input === 'string') return input;
@@ -131,6 +81,7 @@ const toolInputText = computed(() => {
 });
 
 const answerText = computed(() => {
+  if (props.item.type !== 'ask') return '';
   const a = props.item.answer;
   if (a == null) return '';
   return Array.isArray(a) ? a.join('、') : a;
@@ -141,10 +92,7 @@ const answerText = computed(() => {
 /** role_assignment 展开行：角色名 + 打分/原因 + 模型 */
 const roleRows = computed(() => {
   if (props.item.type !== 'role_assignment') return [];
-  const roles = props.item.roles;
-  if (!Array.isArray(roles)) return [];
-  return roles.map((r) => {
-    if (typeof r === 'string') return { name: r, scoreText: '', reason: '', model: '' };
+  return props.item.roles.map((r) => {
     const name = r.role_name || r.role_id;
     const scoreText = r.score != null ? String(r.score) : '';
     const model = [r.model_provider, r.model_name].filter(Boolean).join(' / ');
@@ -174,7 +122,7 @@ const routeHeadline = computed(() => {
 /** summary 风险列表；缺字段时不渲染 */
 const riskList = computed(() => {
   if (props.item.type !== 'summary') return [];
-  return props.item.keyRisks ?? [];
+  return props.item.key_risks ?? [];
 });
 </script>
 
@@ -194,9 +142,9 @@ const riskList = computed(() => {
         <span class="chat-card__label">{{ headerLabel }}</span>
         <!-- model_route 细条：折叠态直接露出主 → 备 -->
         <span v-if="item.type === 'model_route' && routeHeadline" class="chat-card__route">{{ routeHeadline }}</span>
-        <span v-if="item.type === 'model_route' && item.failedOver" class="chat-card__dot" title="发生过故障切换"></span>
-        <span v-if="statusLabel" class="chat-card__status" :class="`st-${item.status}`">{{ statusLabel }}</span>
-        <span v-if="item.durationMs != null" class="chat-card__meta">{{ item.durationMs }}ms</span>
+        <span v-if="item.type === 'model_route' && item.failed_over" class="chat-card__dot" title="发生过故障切换"></span>
+        <span v-if="statusLabel" class="chat-card__status" :class="`st-${status}`">{{ statusLabel }}</span>
+        <span v-if="item.type === 'tool' && item.duration_ms != null" class="chat-card__meta">{{ item.duration_ms }}ms</span>
       </button>
       <div v-if="isOpen" class="chat-card__body">
         <!-- thinking -->
@@ -216,7 +164,7 @@ const riskList = computed(() => {
 
         <!-- subagent -->
         <template v-else-if="item.type === 'subagent'">
-          <p v-if="item.summaryText" class="chat-card__text">{{ item.summaryText }}</p>
+          <p v-if="item.summary" class="chat-card__text">{{ item.summary }}</p>
           <pre v-if="item.result" class="chat-card__pre">{{ item.result }}</pre>
         </template>
 
@@ -271,7 +219,7 @@ const riskList = computed(() => {
       <header class="chat-card__head">
         <span class="chat-card__label">{{ headerLabel }}</span>
         <span v-if="item.kind" class="chat-card__meta-inline">{{ item.kind }}</span>
-        <span v-if="statusLabel" class="chat-card__status" :class="`st-${item.status}`">{{ statusLabel }}</span>
+        <span v-if="statusLabel" class="chat-card__status" :class="`st-${status}`">{{ statusLabel }}</span>
       </header>
       <div class="chat-card__body">
         <p class="chat-card__text"><strong>{{ item.summary }}</strong></p>
@@ -301,7 +249,7 @@ const riskList = computed(() => {
             <li v-for="(r, i) in riskList" :key="i" class="chat-card__role-row">{{ r }}</li>
           </ul>
         </div>
-        <p v-if="item.nextAction" class="chat-card__reason">下一步：{{ item.nextAction }}</p>
+        <p v-if="item.next_action" class="chat-card__reason">下一步：{{ item.next_action }}</p>
       </div>
     </template>
 
@@ -309,7 +257,7 @@ const riskList = computed(() => {
     <template v-else-if="item.type === 'approval'">
       <header class="chat-card__head">
         <span class="chat-card__label">审批</span>
-        <span v-if="statusLabel" class="chat-card__status" :class="`st-${item.status}`">{{ statusLabel }}</span>
+        <span v-if="statusLabel" class="chat-card__status" :class="`st-${status}`">{{ statusLabel }}</span>
       </header>
       <div class="chat-card__body">
         <p class="chat-card__text"><strong>{{ item.tool }}</strong> — {{ item.summary }}</p>
@@ -322,7 +270,7 @@ const riskList = computed(() => {
     <template v-else-if="item.type === 'ask'">
       <header class="chat-card__head">
         <span class="chat-card__label">提问</span>
-        <span v-if="statusLabel" class="chat-card__status" :class="`st-${item.status}`">{{ statusLabel }}</span>
+        <span v-if="statusLabel" class="chat-card__status" :class="`st-${status}`">{{ statusLabel }}</span>
       </header>
       <div class="chat-card__body">
         <p class="chat-card__text">{{ item.question }}</p>

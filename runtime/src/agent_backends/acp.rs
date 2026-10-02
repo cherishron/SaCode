@@ -15,6 +15,9 @@ use sacode_kernel::{
 use super::BackendTaskContext;
 
 /// Configuration for an ACP-backed Agent (user-level trusted config only).
+///
+/// O1: fully generic — any id / display_name / executable / args.
+/// `command` and `args` are stored separately; never shell-string concatenated.
 #[derive(Debug, Clone)]
 pub struct AcpBackendConfig {
     pub id: AgentBackendId,
@@ -22,9 +25,35 @@ pub struct AcpBackendConfig {
     pub executable: PathBuf,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
+    /// O3 enable/disable switch.
+    pub enabled: bool,
+    /// O2 install guidance (human-readable; never auto-download).
+    pub install_hint: Option<String>,
+    /// O5 quota state (in-memory; persisted via registry file).
+    pub quota: Option<sacode_kernel::AgentBackendQuota>,
 }
 
 impl AcpBackendConfig {
+    /// Generic constructor (O1) — any backend id / display name / command / args.
+    pub fn new(
+        id: impl Into<String>,
+        display_name: impl Into<String>,
+        executable: impl Into<PathBuf>,
+        args: Vec<String>,
+    ) -> Self {
+        Self {
+            id: AgentBackendId::new(id),
+            display_name: display_name.into(),
+            executable: executable.into(),
+            args,
+            cwd: None,
+            enabled: true,
+            install_hint: None,
+            quota: None,
+        }
+    }
+
+    /// Convenience: OpenCode defaults (kept for backward compatibility).
     pub fn opencode(executable: impl Into<PathBuf>) -> Self {
         Self {
             id: AgentBackendId::new("opencode"),
@@ -32,7 +61,42 @@ impl AcpBackendConfig {
             executable: executable.into(),
             args: Vec::new(),
             cwd: None,
+            enabled: true,
+            install_hint: Some("npm i -g opencode-ai".to_string()),
+            quota: None,
         }
+    }
+
+    /// Convenience: Tencent CodeBuddy Code ACP defaults.
+    ///
+    /// Launch is `codebuddy --acp` (flag, not subcommand). Multitask is not a
+    /// launch flag — enable it via `session/set_config_option` (`configId=multitask`).
+    pub fn codebuddy(executable: impl Into<PathBuf>) -> Self {
+        Self {
+            id: AgentBackendId::new("codebuddy"),
+            display_name: "CodeBuddy".to_string(),
+            executable: executable.into(),
+            args: vec!["--acp".to_string()],
+            cwd: None,
+            enabled: true,
+            install_hint: Some("npm i -g @tencent-ai/codebuddy-code".to_string()),
+            quota: None,
+        }
+    }
+
+    pub fn with_install_hint(mut self, hint: impl Into<String>) -> Self {
+        self.install_hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn descriptor(&self, health: AgentBackendHealth) -> AgentDescriptor {
@@ -50,9 +114,17 @@ impl AcpBackendConfig {
                 modes: vec!["build".into()],
                 notes: Some("ACP stdio backend".into()),
             },
+            enabled: self.enabled,
             executable: Some(self.executable.display().to_string()),
+            args: if self.args.is_empty() {
+                None
+            } else {
+                Some(self.args.clone())
+            },
             version: None,
             diagnostic: None,
+            install_hint: self.install_hint.clone(),
+            quota: self.quota.clone(),
         }
     }
 
@@ -64,6 +136,57 @@ impl AcpBackendConfig {
         cfg.client = ClientConfig::default();
         cfg
     }
+}
+
+/// Build CodeBuddy ACP config from env (mirror of the OpenCode env hook).
+///
+/// - `SACODE_CODEBUDDY_EXECUTABLE` — required; absolute path or bare command name.
+/// - `SACODE_CODEBUDDY_ARGS` — optional space-separated full arg list (replaces
+///   the default `--acp`; include `--acp` yourself if you override).
+/// - `SACODE_CODEBUDDY_CWD` — optional working directory.
+///
+/// Returns `None` when the executable env var is unset or blank.
+pub fn codebuddy_config_from_env() -> Option<AcpBackendConfig> {
+    let path = std::env::var("SACODE_CODEBUDDY_EXECUTABLE").ok()?;
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let mut cfg = AcpBackendConfig::codebuddy(path);
+    if let Ok(args) = std::env::var("SACODE_CODEBUDDY_ARGS") {
+        let args: Vec<String> = args
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !args.is_empty() {
+            cfg.args = args;
+        }
+    }
+    if let Ok(cwd) = std::env::var("SACODE_CODEBUDDY_CWD") {
+        if !cwd.trim().is_empty() {
+            cfg.cwd = Some(PathBuf::from(cwd.trim()));
+        }
+    }
+    Some(cfg)
+}
+
+/// Register the CodeBuddy ACP backend when `SACODE_CODEBUDDY_EXECUTABLE` is set.
+///
+/// Mirrors `daemon::maybe_register_opencode_from_env` without touching
+/// `DaemonState`: the caller passes registry + executor explicitly.
+/// Returns `true` when a backend was registered.
+pub async fn maybe_register_codebuddy_from_env(
+    registry: &super::BackendRegistry,
+    executor: &crate::executor::TaskExecutor,
+) -> bool {
+    let Some(cfg) = codebuddy_config_from_env() else {
+        return false;
+    };
+    registry.register(cfg.descriptor(AgentBackendHealth::Unknown));
+    executor.set_acp_backend(cfg).await;
+    tracing::info!("registered codebuddy ACP backend from SACODE_CODEBUDDY_EXECUTABLE");
+    true
 }
 
 /// ACP process-backed Agent handle.
@@ -84,22 +207,57 @@ impl AcpProcessBackend {
         ctx.backend_id == self.config.id && !ctx.prompt.trim().is_empty()
     }
 
-    /// Probe: spawn process and run initialize handshake.
+    /// Probe: check executable presence first (O2), then ACP handshake.
+    ///
+    /// Missing executable → `health: Unavailable` + `diagnostic` + `install_hint`.
+    /// Never silently downloads. Handshake failure → `Degraded` or `Unavailable`.
     pub async fn probe(&self) -> Result<AgentDescriptor, BackendFailureCode> {
+        // O2: executable existence check — no spawn if missing.
+        let exe_str = self.config.executable.display().to_string();
+        if !self.config.executable.exists() {
+            // Also try PATH lookup for bare command names.
+            let found_in_path = which_exists(&self.config.executable);
+            if !found_in_path {
+                let diagnostic = format!("executable not found: {exe_str}");
+                let mut desc = self.config.descriptor(AgentBackendHealth::Unavailable);
+                desc.diagnostic = Some(diagnostic);
+                if desc.install_hint.is_none() {
+                    desc.install_hint = Some(format!(
+                        "install {} and ensure it is on PATH",
+                        self.config.display_name
+                    ));
+                }
+                return Ok(desc);
+            }
+        }
+
         let proc_cfg = self.config.process_config();
-        let mut process = AcpProcess::spawn(proc_cfg, None)
-            .await
-            .map_err(|_| BackendFailureCode::BackendUnavailable)?;
+        let mut process = match AcpProcess::spawn(proc_cfg, None).await {
+            Ok(p) => p,
+            Err(err) => {
+                let mut desc = self.config.descriptor(AgentBackendHealth::Unavailable);
+                desc.diagnostic = Some(format!("failed to spawn ACP process: {err}"));
+                return Ok(desc);
+            }
+        };
         let client = process.client();
         let result =
             tokio::time::timeout(std::time::Duration::from_secs(10), client.initialize()).await;
-        let health = match result {
-            Ok(Ok(_caps)) => AgentBackendHealth::Ready,
-            Ok(Err(_)) => AgentBackendHealth::Degraded,
-            Err(_) => AgentBackendHealth::Degraded,
+        let (health, diagnostic) = match result {
+            Ok(Ok(_caps)) => (AgentBackendHealth::Ready, None),
+            Ok(Err(err)) => (
+                AgentBackendHealth::Degraded,
+                Some(format!("ACP handshake failed: {err}")),
+            ),
+            Err(_) => (
+                AgentBackendHealth::Degraded,
+                Some("ACP handshake timed out after 10s".to_string()),
+            ),
         };
         let _ = process.kill().await;
-        Ok(self.config.descriptor(health))
+        let mut desc = self.config.descriptor(health);
+        desc.diagnostic = diagnostic;
+        Ok(desc)
     }
 
     /// Execute one ACP prompt under daemon executor ownership.
@@ -342,6 +500,33 @@ fn emit_named(
     }
 }
 
+/// Check if a bare command name exists on PATH (for probe without full path).
+fn which_exists(executable: &std::path::Path) -> bool {
+    if executable.is_absolute() || executable.components().count() > 1 {
+        return executable.exists();
+    }
+    let name = executable.to_string_lossy().to_string();
+    let Ok(path_var) = std::env::var("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| {
+        let candidate = dir.join(&name);
+        if candidate.exists() {
+            return true;
+        }
+        // Windows: try with .exe / .cmd / .bat suffixes
+        #[cfg(windows)]
+        {
+            for ext in [".exe", ".cmd", ".bat"] {
+                if dir.join(format!("{name}{ext}")).exists() {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+}
+
 /// Result of one ACP backend execution for TaskExecutor to persist.
 #[derive(Debug, Clone)]
 pub struct AcpExecutionOutcome {
@@ -386,10 +571,93 @@ mod tests {
     fn opencode_config_defaults() {
         let cfg = AcpBackendConfig::opencode("opencode");
         assert_eq!(cfg.id.as_str(), "opencode");
+        assert!(cfg.enabled);
+        assert!(cfg.install_hint.is_some());
         let desc = cfg.descriptor(AgentBackendHealth::Ready);
         assert_eq!(desc.kind, AgentBackendKind::Acp);
         assert!(desc.capabilities.approvals);
         assert!(desc.executable.as_deref().unwrap().contains("opencode"));
+    }
+
+    #[test]
+    fn codebuddy_config_defaults() {
+        let cfg = AcpBackendConfig::codebuddy("codebuddy");
+        assert_eq!(cfg.id.as_str(), "codebuddy");
+        assert_eq!(cfg.display_name, "CodeBuddy");
+        assert_eq!(cfg.args, vec!["--acp".to_string()]);
+        assert_eq!(
+            cfg.install_hint.as_deref(),
+            Some("npm i -g @tencent-ai/codebuddy-code")
+        );
+        assert!(cfg.enabled);
+        let desc = cfg.descriptor(AgentBackendHealth::Ready);
+        assert_eq!(desc.kind, AgentBackendKind::Acp);
+        assert!(desc.capabilities.streaming);
+        assert!(desc.capabilities.sessions);
+        assert!(desc
+            .executable
+            .as_deref()
+            .unwrap()
+            .contains("codebuddy"));
+    }
+
+    /// Serialize env-mutating tests so they don't race other parallel tests.
+    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn codebuddy_config_from_env_unset_is_none() {
+        let _lock = env_test_lock();
+        std::env::remove_var("SACODE_CODEBUDDY_EXECUTABLE");
+        std::env::remove_var("SACODE_CODEBUDDY_ARGS");
+        std::env::remove_var("SACODE_CODEBUDDY_CWD");
+        assert!(codebuddy_config_from_env().is_none());
+
+        std::env::set_var("SACODE_CODEBUDDY_EXECUTABLE", "   ");
+        assert!(codebuddy_config_from_env().is_none());
+        std::env::remove_var("SACODE_CODEBUDDY_EXECUTABLE");
+    }
+
+    #[test]
+    fn codebuddy_config_from_env_applies_defaults_and_overrides() {
+        let _lock = env_test_lock();
+        std::env::remove_var("SACODE_CODEBUDDY_ARGS");
+        std::env::remove_var("SACODE_CODEBUDDY_CWD");
+        std::env::set_var("SACODE_CODEBUDDY_EXECUTABLE", "codebuddy");
+        let cfg = codebuddy_config_from_env().expect("config");
+        assert_eq!(cfg.id.as_str(), "codebuddy");
+        assert_eq!(cfg.args, vec!["--acp".to_string()]);
+        assert!(cfg.cwd.is_none());
+
+        std::env::set_var("SACODE_CODEBUDDY_ARGS", "--acp --acp-transport stdio");
+        std::env::set_var("SACODE_CODEBUDDY_CWD", "/tmp/cb");
+        let cfg = codebuddy_config_from_env().expect("config");
+        assert_eq!(cfg.args, vec!["--acp", "--acp-transport", "stdio"]);
+        assert_eq!(cfg.cwd.as_deref(), Some(std::path::Path::new("/tmp/cb")));
+
+        std::env::remove_var("SACODE_CODEBUDDY_EXECUTABLE");
+        std::env::remove_var("SACODE_CODEBUDDY_ARGS");
+        std::env::remove_var("SACODE_CODEBUDDY_CWD");
+    }
+
+    #[test]
+    fn generic_config_o1() {
+        let cfg = AcpBackendConfig::new("codebuddy", "CodeBuddy", "codebuddy", vec!["acp".into()])
+            .with_install_hint("install codebuddy from vendor");
+        assert_eq!(cfg.id.as_str(), "codebuddy");
+        assert_eq!(cfg.display_name, "CodeBuddy");
+        assert_eq!(cfg.args, vec!["acp".to_string()]);
+        assert_eq!(
+            cfg.install_hint.as_deref(),
+            Some("install codebuddy from vendor")
+        );
+        let desc = cfg.descriptor(AgentBackendHealth::Unknown);
+        assert_eq!(desc.install_hint.as_deref(), Some("install codebuddy from vendor"));
     }
 
     #[test]
@@ -409,6 +677,31 @@ mod tests {
             ..ok
         };
         assert!(!backend.accepts(&wrong));
+    }
+
+    #[tokio::test]
+    async fn probe_missing_binary_returns_unavailable_with_hint() {
+        let cfg = AcpBackendConfig::new("ghost", "Ghost", "definitely-not-a-real-binary-xyz", vec![])
+            .with_install_hint("npm i -g ghost");
+        let backend = AcpProcessBackend::new(cfg);
+        let desc = backend.probe().await.expect("probe");
+        assert_eq!(desc.health, AgentBackendHealth::Unavailable);
+        assert!(desc.diagnostic.is_some());
+        assert_eq!(desc.install_hint.as_deref(), Some("npm i -g ghost"));
+    }
+
+    #[tokio::test]
+    async fn codebuddy_probe_missing_binary_returns_unavailable_with_hint() {
+        let cfg = AcpBackendConfig::codebuddy("definitely-not-codebuddy-binary-xyz");
+        let backend = AcpProcessBackend::new(cfg);
+        let desc = backend.probe().await.expect("probe");
+        assert_eq!(desc.id.as_str(), "codebuddy");
+        assert_eq!(desc.health, AgentBackendHealth::Unavailable);
+        assert!(desc.diagnostic.as_deref().unwrap().contains("executable not found"));
+        assert_eq!(
+            desc.install_hint.as_deref(),
+            Some("npm i -g @tencent-ai/codebuddy-code")
+        );
     }
 
     #[tokio::test]

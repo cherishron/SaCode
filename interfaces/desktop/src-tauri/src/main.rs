@@ -70,7 +70,10 @@ fn default_sacode_binary() -> PathBuf {
             ] {
                 let candidate = dir.join(name);
                 if candidate.exists() {
-                    eprintln!("[sidecar] found binary next to exe: {}", candidate.display());
+                    eprintln!(
+                        "[sidecar] found binary next to exe: {}",
+                        candidate.display()
+                    );
                     return candidate;
                 }
             }
@@ -102,32 +105,98 @@ fn default_workspace() -> PathBuf {
     repo_root_guess()
 }
 
+fn resolve_workspace(
+    workspace: Option<&str>,
+    repo_root: &std::path::Path,
+    default: &std::path::Path,
+) -> Result<PathBuf, String> {
+    let path = workspace
+        .map(|w| {
+            let p = PathBuf::from(w);
+            if p.is_absolute() {
+                p
+            } else {
+                repo_root.join(p)
+            }
+        })
+        .unwrap_or_else(|| default.to_path_buf());
+    if !path.is_dir() {
+        return Err(format!("workspace is not a directory: {}", path.display()));
+    }
+    pretty_canonicalize(&path).map_err(|e| e.to_string())
+}
+
+fn default_ready_dir() -> PathBuf {
+    let user_tag = std::env::var("USERNAME")
+        .ok()
+        .or_else(|| std::env::var("USER").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    std::env::temp_dir().join(format!("sacode-desktop-sidecar-{}", user_tag))
+}
+
+async fn launch_workspace(
+    binary: PathBuf,
+    workspace: PathBuf,
+    ready_dir: PathBuf,
+) -> Result<SacodeSidecar, String> {
+    start_sidecar(
+        binary,
+        workspace,
+        ready_dir,
+        std::env::var("SACODE_OPENCODE_EXECUTABLE").ok(),
+        std::env::var("SACODE_OPENCODE_ARGS").ok(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn prestart_workspace(
+    state: &SidecarState,
+    workspace: PathBuf,
+    binary: PathBuf,
+    ready_dir: PathBuf,
+) -> Result<(), String> {
+    let mut guard = state.inner.lock().await;
+    if guard.is_some() {
+        return Ok(());
+    }
+    let workspace = resolve_workspace(None, &repo_root_guess(), &workspace)?;
+    let handle = launch_workspace(binary, workspace, ready_dir).await?;
+    *guard = Some(handle);
+    Ok(())
+}
+
 #[tauri::command]
 async fn start_daemon(
     state: State<'_, Arc<SidecarState>>,
     terminal_state: State<'_, Arc<TerminalState>>,
     workspace: Option<String>,
 ) -> Result<SidecarHandleDto, String> {
+    let requested_workspace = resolve_workspace(
+        workspace.as_deref(),
+        &repo_root_guess(),
+        &default_workspace(),
+    )?;
+    start_workspace(
+        state.inner(),
+        terminal_state.inner(),
+        requested_workspace,
+        default_sacode_binary(),
+        default_ready_dir(),
+    )
+    .await
+}
+
+async fn start_workspace(
+    state: &SidecarState,
+    terminal_state: &Arc<TerminalState>,
+    requested_workspace: PathBuf,
+    binary: PathBuf,
+    ready_dir: PathBuf,
+) -> Result<SidecarHandleDto, String> {
     let mut guard = state.inner.lock().await;
-    let workspace_path = workspace
-        .map(|w| {
-            let p = PathBuf::from(w);
-            if p.is_absolute() {
-                p
-            } else {
-                repo_root_guess().join(p)
-            }
-        })
-        .unwrap_or_else(default_workspace);
-    if !workspace_path.is_dir() {
-        return Err(format!(
-            "workspace is not a directory: {}",
-            workspace_path.display()
-        ));
-    }
-    // std::fs::canonicalize emits \\?\ prefixed paths on Windows, which are
-    // meaningless to users and break child processes that echo them back.
-    let requested_workspace = pretty_canonicalize(&workspace_path).map_err(|e| e.to_string())?;
     if let Some(existing) = guard.as_ref() {
         if existing.workspace == requested_workspace {
             return Ok(existing.handle_dto());
@@ -135,7 +204,7 @@ async fn start_daemon(
     }
     // A terminal belongs to the workspace that launched it. End it before
     // replacing the sidecar so shell commands cannot run in a stale folder.
-    let terminals = terminal_state.inner().clone();
+    let terminals = terminal_state.clone();
     tokio::task::spawn_blocking(move || terminals.close_all())
         .await
         .map_err(|error| error.to_string())?;
@@ -145,24 +214,7 @@ async fn start_daemon(
     if let Some(mut existing) = guard.take() {
         existing.stop().await;
     }
-    // D9 L2: ready-dir 加入用户标识，避免多用户共享同一 temp 路径冲突。
-    // 用户名缺失时回退到 PID，保证至少同机多实例不碰撞。
-    let user_tag = std::env::var("USERNAME")
-        .ok()
-        .or_else(|| std::env::var("USER").ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
-    let ready_dir = std::env::temp_dir().join(format!("sacode-desktop-sidecar-{}", user_tag));
-    let handle = start_sidecar(
-        default_sacode_binary(),
-        requested_workspace.clone(),
-        ready_dir,
-        std::env::var("SACODE_OPENCODE_EXECUTABLE").ok(),
-        std::env::var("SACODE_OPENCODE_ARGS").ok(),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let handle = launch_workspace(binary, requested_workspace, ready_dir).await?;
     let dto = handle.handle_dto();
     *guard = Some(handle);
     Ok(dto)
@@ -221,8 +273,7 @@ async fn stop_daemon(
     Ok(())
 }
 
-/// Start or reuse an interactive PTY shell in the current daemon workspace.
-/// The renderer cannot supply an arbitrary working directory or shell command.
+/// Start an interactive PTY shell with an optional workspace-contained cwd.
 #[tauri::command]
 async fn terminal_start(
     app: AppHandle,
@@ -230,6 +281,7 @@ async fn terminal_start(
     terminal_state: State<'_, Arc<TerminalState>>,
     rows: Option<u16>,
     cols: Option<u16>,
+    cwd: Option<String>,
 ) -> Result<TerminalStartDto, String> {
     let sidecar = state.inner.lock().await;
     let workspace = sidecar
@@ -237,11 +289,15 @@ async fn terminal_start(
         .map(|handle| handle.workspace.clone())
         .ok_or_else(|| "daemon not started".to_string())?;
     let terminals = terminal_state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        terminals.start(app, workspace, rows.unwrap_or(24), cols.unwrap_or(80))
+    let result = tokio::task::spawn_blocking(move || {
+        let directory = terminal::resolve_terminal_cwd(&workspace, cwd.as_deref())?;
+        terminals.start(app, directory, rows.unwrap_or(24), cols.unwrap_or(80))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+    // Keep workspace switching serialized until the PTY has been registered.
+    drop(sidecar);
+    result
 }
 
 #[tauri::command]
@@ -608,7 +664,10 @@ async fn git_workspace_status(
         .and_then(|s| s.split("...").next())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    Ok(GitWorkspaceStatus { branch, porcelain: raw })
+    Ok(GitWorkspaceStatus {
+        branch,
+        porcelain: raw,
+    })
 }
 
 /// `git_workspace_diff` — 在工作目录执行 `git diff`（工作区 vs 暂存区）或
@@ -692,45 +751,12 @@ fn main() {
                 let sidecar_state = app.state::<Arc<SidecarState>>().inner().clone();
                 let binary = default_sacode_binary();
                 let workspace = default_workspace();
-                let user_tag = std::env::var("USERNAME")
-                    .ok()
-                    .or_else(|| std::env::var("USER").ok())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| format!("pid-{}", std::process::id()));
-                let ready_dir = std::env::temp_dir().join(format!("sacode-desktop-sidecar-{}", user_tag));
+                let ready_dir = default_ready_dir();
                 tauri::async_runtime::spawn(async move {
-                    let mut guard = sidecar_state.inner.lock().await;
-                    // 已有 sidecar（同工作区）则跳过
-                    if let Some(existing) = guard.as_ref() {
-                        if existing.workspace == workspace {
-                            return;
-                        }
-                    }
-                    eprintln!(
-                        "[sidecar] pre-spawn daemon binary={} workspace={}",
-                        binary.display(),
-                        workspace.display()
-                    );
-                    match start_sidecar(
-                        binary,
-                        workspace.clone(),
-                        ready_dir,
-                        std::env::var("SACODE_OPENCODE_EXECUTABLE").ok(),
-                        std::env::var("SACODE_OPENCODE_ARGS").ok(),
-                    )
-                    .await
+                    if let Err(error) =
+                        prestart_workspace(&sidecar_state, workspace, binary, ready_dir).await
                     {
-                        Ok(handle) => {
-                            eprintln!(
-                                "[sidecar] daemon pre-started port={} pid={}",
-                                handle.info.port, handle.info.pid
-                            );
-                            *guard = Some(handle);
-                        }
-                        Err(e) => {
-                            eprintln!("[sidecar] daemon pre-start FAILED: {e}");
-                        }
+                        eprintln!("[sidecar] daemon pre-start FAILED: {error}");
                     }
                 });
             }
@@ -738,9 +764,7 @@ fn main() {
             // 后台静默启动时自动启用托盘，确保用户有入口重新打开界面。
             if hide_mode {
                 let state = app.state::<Arc<SidecarState>>();
-                state
-                    .tray
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                state.tray.store(true, std::sync::atomic::Ordering::Relaxed);
                 if app.tray_by_id("main").is_none() {
                     use tauri::menu::{Menu, MenuEvent, MenuItem};
                     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -756,17 +780,20 @@ fn main() {
                         .tooltip("SaCode Desktop")
                         .menu(&menu)
                         .show_menu_on_left_click(false)
-                        .on_menu_event(move |tray, menu_event: MenuEvent| match menu_event.id().as_ref() {
-                            "show" => {
-                                if let Some(win) = tray.app_handle().get_webview_window("main") {
-                                    let _ = win.show();
-                                    let _ = win.set_focus();
+                        .on_menu_event(move |tray, menu_event: MenuEvent| {
+                            match menu_event.id().as_ref() {
+                                "show" => {
+                                    if let Some(win) = tray.app_handle().get_webview_window("main")
+                                    {
+                                        let _ = win.show();
+                                        let _ = win.set_focus();
+                                    }
                                 }
+                                "quit" => {
+                                    tray.app_handle().exit(0);
+                                }
+                                _ => {}
                             }
-                            "quit" => {
-                                tray.app_handle().exit(0);
-                            }
-                            _ => {}
                         })
                         .on_tray_icon_event(move |_tray, event: TrayIconEvent| {
                             if let TrayIconEvent::Click {
@@ -784,9 +811,7 @@ fn main() {
                     if let Some(icon) = app.default_window_icon() {
                         builder = builder.icon(icon.clone());
                     }
-                    builder
-                        .build(app)
-                        .map_err(|e| format!("build tray: {e}"))?;
+                    builder.build(app).map_err(|e| format!("build tray: {e}"))?;
                     let _ = (show, quit);
                 }
             }
@@ -848,5 +873,152 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    // path validation lives in sidecar::tests
+    use super::*;
+
+    #[test]
+    fn workspace_resolution_preserves_explicit_relative_base_and_canonicalizes_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let default = temp.path().join("default");
+        std::fs::create_dir_all(root.join("project")).unwrap();
+        std::fs::create_dir(&default).unwrap();
+        assert_eq!(
+            resolve_workspace(Some("project/.."), &root, &default).unwrap(),
+            pretty_canonicalize(&root).unwrap()
+        );
+        assert_eq!(
+            resolve_workspace(None, &root, &default.join(".")).unwrap(),
+            pretty_canonicalize(&default).unwrap()
+        );
+        assert_eq!(
+            resolve_workspace(default.to_str(), &root, &root).unwrap(),
+            pretty_canonicalize(&default).unwrap()
+        );
+        assert!(resolve_workspace(Some("missing"), &root, &default).is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_prestart_leaves_empty_slot_and_existing_bridge_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = SidecarState::new();
+        let bridge = tauri::async_runtime::spawn(std::future::pending::<()>());
+        *state.event_bridge.lock().await = Some(bridge);
+        assert!(prestart_workspace(
+            &state,
+            temp.path().join("missing"),
+            temp.path().join("no-binary"),
+            temp.path().join("ready")
+        )
+        .await
+        .is_err());
+        assert!(state.inner.lock().await.is_none());
+        state.event_bridge.lock().await.take().unwrap().abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SACODE_TEST_BINARY; starts only owned daemons in isolated temporary workspaces"]
+    async fn native_workspace_start_orders_preserve_explicit_choice_and_cleanup() {
+        let binary =
+            PathBuf::from(std::env::var_os("SACODE_TEST_BINARY").expect("set SACODE_TEST_BINARY"));
+        let temp = tempfile::tempdir().unwrap();
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let state = SidecarState::new();
+        let terminals = Arc::new(TerminalState::new());
+        let b_canonical = pretty_canonicalize(&b).unwrap();
+        let first = start_workspace(
+            &state,
+            &terminals,
+            b_canonical.clone(),
+            binary.clone(),
+            temp.path().join("ready-b"),
+        )
+        .await
+        .unwrap();
+        let terminal = terminal::tests::owned_native_terminal(&terminals, b_canonical.clone());
+        let bridge = tauri::async_runtime::spawn(std::future::pending::<()>());
+        *state.event_bridge.lock().await = Some(bridge);
+        // An invalid binary makes any accidental late prestart observable immediately.
+        prestart_workspace(
+            &state,
+            a.clone(),
+            temp.path().join("no-binary"),
+            temp.path().join("late-ready"),
+        )
+        .await
+        .unwrap();
+        {
+            let mut guard = state.inner.lock().await;
+            let current = guard.as_mut().unwrap();
+            assert_eq!(current.info.pid, first.pid);
+            assert_eq!(current.workspace, b_canonical);
+            assert!(current.child.try_wait().unwrap().is_none());
+        }
+        assert!(state.event_bridge.lock().await.is_some());
+        terminals.resize(&terminal.terminal_id, 25, 81).unwrap();
+        let reused = start_workspace(
+            &state,
+            &terminals,
+            resolve_workspace(b.join(".").to_str(), &a, &a).unwrap(),
+            binary.clone(),
+            temp.path().join("unused-ready"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reused.pid, first.pid);
+        terminals.close_all();
+        state.event_bridge.lock().await.take().unwrap().abort();
+        state.inner.lock().await.take().unwrap().stop().await;
+
+        prestart_workspace(
+            &state,
+            a.clone(),
+            binary.clone(),
+            temp.path().join("ready-a"),
+        )
+        .await
+        .unwrap();
+        let (old_pid, old_ready) = {
+            let guard = state.inner.lock().await;
+            let old = guard.as_ref().unwrap();
+            (old.info.pid, old.ready_path.clone())
+        };
+        let terminal_a =
+            terminal::tests::owned_native_terminal(&terminals, pretty_canonicalize(&a).unwrap());
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        struct NotifyDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for NotifyDrop {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+        let notify = NotifyDrop(Some(dropped_tx));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        *state.event_bridge.lock().await = Some(tauri::async_runtime::spawn(async move {
+            let _notify = notify;
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        }));
+        started_rx.await.unwrap();
+        let switched = start_workspace(
+            &state,
+            &terminals,
+            b_canonical,
+            binary,
+            temp.path().join("ready-b2"),
+        )
+        .await
+        .unwrap();
+        assert_ne!(switched.pid, old_pid);
+        assert!(terminals.resize(&terminal_a.terminal_id, 25, 81).is_err());
+        assert!(!old_ready.exists());
+        assert!(state.event_bridge.lock().await.is_none());
+        tokio::time::timeout(std::time::Duration::from_secs(5), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        state.inner.lock().await.take().unwrap().stop().await;
+    }
 }

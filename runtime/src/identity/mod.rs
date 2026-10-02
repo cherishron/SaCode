@@ -79,10 +79,12 @@ pub fn is_identity_provider_name(name: &str) -> bool {
     n == DEFAULT_PROVIDER_NAME || n == GATEWAY_PROVIDER_ALIAS
 }
 /// Local/dev sa-idp base URL (must match JWT `iss` / smoke scripts).
+/// 仅云增强用：Local Mode 不设云 env 时不被访问，可达性不是启动门槛（P1/P7）。
 pub const DEFAULT_IDP_BASE_URL: &str = "http://127.0.0.1:8080";
-/// Local/dev SaAiApiGateway base URL.
+/// Local/dev SaAiApiGateway base URL. 仅云增强用，见 DEFAULT_IDP_BASE_URL。
 pub const DEFAULT_GATEWAY_BASE_URL: &str = "http://127.0.0.1:8090";
 /// Local/dev sa-entitlement base URL（local-dev 建议 8091，避开 gateway-rs 8090）。
+/// 仅云增强用，见 DEFAULT_IDP_BASE_URL。
 pub const DEFAULT_ENTITLEMENT_BASE_URL: &str = "http://127.0.0.1:8091";
 /// SaCode 权益只读 OAuth client（aud=saai-entitlement）。
 pub const DEFAULT_ENTITLEMENT_CLIENT_ID: &str = "sacode-ent";
