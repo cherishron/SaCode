@@ -18,8 +18,8 @@ func expect(label: String, got: Bool) {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "projection" && mode != "seed") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs]")
         return 64
     }
 
@@ -164,6 +164,55 @@ main(args: Array<String>) {
             if (s.contains("tool/call")) { projHasToolCall = true }
         }
         expect("tool/call 持久但不进模型历史", !projHasToolCall && r.events.size >= 6)
+    }
+
+    if (mode == "extjs") {
+        // 第二个入口：CLI 用同一份 core 把 JS 扩展宿主作为子进程拉起来跑完整生命周期。
+        // 用法：dsh extjs [node 命令] [extjs 目录]
+        let nodeCmd = if (args.size > 1) { args[1] } else { "node" }
+        let hostDir = if (args.size > 2) { args[2] } else { "extjs" }
+        let xp = ExtProcess(nodeCmd, ["server.cjs"], workingDirectory: Path(hostDir))
+        expect("仓颉核心能拉起 JS 扩展宿主", xp.start())
+        if (xp.alive()) {
+            var hand = ""
+            if (let Some(f) <- xp.initialize()) {
+                hand = f
+            }
+            expect("握手帧来自子进程真实应答", hand.contains("protocolVersion"))
+            var ld = ""
+            if (let Some(f) <- xp.load("example/echo.cjs")) {
+                ld = f
+            }
+            expect("JS 工具注册后可列出", ld.contains("example.echo"))
+            var cl = ""
+            if (let Some(f) <- xp.call("example.echo", "from-cli")) {
+                cl = f
+            }
+            expect("JS 工具经管道调用回传结果", cl.contains("from-cli"))
+            xp.dispose("example.echo")
+            var af = ""
+            if (let Some(f) <- xp.list()) {
+                af = f
+            }
+            expect("卸载后注册残留为 0", !af.contains("example.echo"))
+            var ur = ""
+            if (let Some(f) <- xp.call("no.such.tool", "x")) {
+                ur = f
+            }
+            // 未登记工具必须由宿主明确拒绝，而不是本端替它编一个终态
+            expect("未登记工具由宿主明确拒绝", ur.contains("unknown-tool"))
+            let rc = xp.close()
+            expect("宿主优雅退出而非被强杀", rc == Int64(0) && !xp.forcedExit())
+            var after = true
+            if (let Some(_) <- xp.initialize()) {
+                after = false
+            }
+            expect("子进程收束后不得再有应答", after)
+        } else {
+            println("FAIL 宿主起不来：${xp.startFailure()}")
+            failures += 1
+        }
+        println("extjs\treceived=${xp.received()}\tmismatched=${xp.mismatched()}\texit=${xp.exitCode()}")
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }

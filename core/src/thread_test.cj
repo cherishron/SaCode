@@ -66,7 +66,7 @@ func futureCancelIsCooperativeNotForced() {
     // 免得以后有人以为 Future.cancel() 能强行掐断线程。
     let seen = AtomicInt64(0)
     let f = spawn { =>
-        for (i in 0..4) {
+        for (_ in 0..4) {
             seen.fetchAdd(1)
         }
         Int64(7)

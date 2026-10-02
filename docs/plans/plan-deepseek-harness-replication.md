@@ -263,7 +263,7 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 | 会话与回放 | PASS | `core` `cjpm test` 13/13（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、装配终态、尾帧截断三例）；durability 屏障与分页由 bridge 9/9 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
 | 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数 |
-| 扩展生命周期 | PARTIAL | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主已落地：core `cjpm test` **24/24**（含重名拒绝、未登记即拒、监听 handle 一次性）；`extjs` `node --test` **10/10**（含坏扩展不污染注册表、宿主退出结算在途调用 `-32002 host-exiting`）；桌面入口 `bridge.test.mjs` **12/12**（`extension/list` 与 CLI 同一内置集、`extension/call` 未登记/无应答均走 JSON-RPC 错误、`extension/dispose` 后残留 0 且归还租约）；CLI 分发产物裸 PATH 跑 `dsh ext` 8 项断言 rc=0，变异探针（把未登记改名成已登记）rc=1 证明门禁真在执行。**缺口**：仓颉侧尚未 spawn `extjs` 进程（需 `std.sync` 并发读子进程 stdout），JS 动态工具目前由独立宿主验收而非由 core 驱动 |
+| 扩展生命周期 | PARTIAL | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj`（仓颉核心直接驱动 JS 宿主子进程）已落地：core `cjpm test` **50/50**（新增 8 条 `ExtProcess`：握手帧必须来自子进程真实应答、`load→list→call→dispose` 全生命周期走真管道、未知方法回 `-32601`、优雅退出 `exit=0` 且 `forcedExit=false`、子进程收束后不得再有应答、永不应答的调用超时返回 `None` 而不编终态、强杀后读线程照样收束、命令不存在时 fail-closed 不起线程）；`extjs` `node --test` **11/11**（新增 `host/shutdown`：先应答、再结算在途调用 `-32002`、最后干净退出 0）；CLI `dsh extjs` **8 项断言 ALL PASS**，npm 平台包（49 文件）剥离 PATH 后跑同一模式 rc=0；桌面入口 `bridge.test.mjs` **16/16** 无回归。**缺口**：`apps/host` 尚未暴露 JS 宿主方法（桌面入口还不能驱动 `extjs`）；`ExtProcess` 为顺序一问一答，并发在途需按 id 建应答表 |
 | 跨端一致 | PARTIAL | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；**缺口**：进程崩溃后的残留租约无接管路径，且 `WriteLease` 存在 TOCTOU（std.fs 无 O_EXCL，待 CFFI/原子 rename） |
 | 取消与背压 | PARTIAL | 桌面 stop 与慢消费者两条已实测：`TurnToken` 协作式取消跑在 `spawn` 出的仓颉线程上，`ThreadSafeDeliveryQueue`（Mutex+Condition）投不满只报 `overflow`、`dropped` 恒 0；已独立发布的 `detached()` 令牌不被父取消连带杀死（`futureCancelIsCooperativeNotForced` 钉住「`Future.cancel()` 只发请求」）。计数：core 42/42、CLI `dsh cancel` 9 项断言裸 PATH rc=0、bridge 16/16。**剩余**：Ctrl+C/SIGINT 仍未接（std 无信号 API，需 CFFI `sigaction`），流式期间日志的并发读尚未收进锁 |
 | UI/Next SDK | FAIL | `renderer/` 仍是占位页，Vue 3/TinyVue/TinyRobot/Next SDK 未接入 |
@@ -316,6 +316,7 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 11 | 取消的载体 | 取消只认 `TurnToken`（协作式，检查点在帧间），**不认 `Future.cancel()`**——实测后者仅发请求、不停线程（`futureCancelIsCooperativeNotForced`）。turn 跑在 `spawn` 出的仓颉线程上，桌面 stop 才能在流式期间从同一条 stdin 读到；`detached()` 令牌代表已独立发布的后台任务，父取消不得连带杀死它 |
 | 12 | 流式期间的写者 | 一个 session 同时只有一个写者：turn 在途时 Host 对其余读写日志的方法回 `-32001 turn-in-flight`，结算（join）后才落盘并归还租约。**这是串行化而非并发安全**——把 `SessionLog` 的并发读写收进锁是后续项，不假装已经做到 |
 | 13 | 新会话的空日志 | `SessionLog.load()` 遇「文件不存在」= 零事件的合法回放（返回 true）；损坏只针对「已有内容但序号断裂/尾帧坏掉」。实测原实现把全新会话的第一次写入与第一个 turn 都判成 `replay-rejected`，桌面新会话进不去 |
+| 14 | JS 宿主的优雅退出口 | core 侧只拿得到 `std.io.OutputStream` 接口（std 未文档化 `close()`），无法靠「关掉写端」给子进程造 EOF。故优雅退出走协议层 `host/shutdown`（宿主先应答 → 结算在途调用回 `-32002` → `process.exit(0)`），stdin EOF 只作崩溃兜底；`wait` 有界超时后才 `terminate(force: true)` 并如实记 `forcedExit`，「没被强杀」必须是断言而不是假设 |
 
 ## 9. 历史参照与文档取代关系
 

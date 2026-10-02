@@ -130,3 +130,58 @@ test("server.cjs 走 NDJSON JSON-RPC 往返并支持 dispose", async () => {
   p.stdin.end();
   await new Promise((r) => p.once("exit", r));
 });
+
+// 父进程侧只用 std.io 的 OutputStream 接口（没有文档化的 close()），
+// 所以温和退出必须有协议层的落点，不能只靠 stdin EOF。
+test("host/shutdown 先应答、再结算在途调用、最后干净退出", async () => {
+  const p = spawn(process.execPath, [jj(ROOT, "server.cjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((r) => p.once("exit", r));
+  // 断言失败也要收掉子进程，否则测试进程会一直被管道吊住（红灯变悬挂）
+  try {
+  const lines = [];
+  const waiters = [];
+  p.stdout.on("data", (d) => {
+    for (const l of d.toString("utf8").split("\n")) {
+      if (!l.trim()) continue;
+      lines.push(JSON.parse(l));
+      waiters.shift()?.();
+    }
+  });
+  const next = () =>
+    new Promise((res, rej) => {
+      if (lines.length > 0) return res(lines.shift());
+      const timer = setTimeout(() => rej(new Error("server 无响应")), 5000);
+      timer.unref();
+      waiters.push(() => {
+        clearTimeout(timer);
+        res(lines.shift());
+      });
+    });
+  const send = (o) => p.stdin.write(JSON.stringify(o) + "\n");
+
+  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  const init = await next();
+  assert.ok(init.result.capabilities.includes("host/shutdown"), "能力表须声明优雅退出");
+
+  send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: SLOW } });
+  assert.equal((await next()).result.ok, true);
+  // 永不 resolve 的 handler：这一条请求按约定不会有应答，只能由 shutdown 结算
+  send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.slow", args: {} } });
+  await new Promise((r) => setImmediate(r));
+
+  send({ jsonrpc: "2.0", id: 4, method: "host/shutdown", params: {} });
+  const bye = await next();
+  assert.equal(bye.result.ok, true);
+  assert.equal(bye.result.inflight, 1, "必须如实报在途条数，而不是假装没有");
+
+  const settled = await next();
+  assert.equal(settled.id, 3);
+  assert.equal(settled.error.code, -32002);
+  assert.match(settled.error.message, /host-exiting/);
+
+  assert.equal(await exited, 0, "优雅退出必须是 0，不能靠强杀");
+  } finally {
+    p.stdin.end();
+    p.kill();
+  }
+});

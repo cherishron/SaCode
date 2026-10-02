@@ -4,7 +4,7 @@ const { ExtHost } = require("./host.cjs");
 
 const host = new ExtHost();
 const out = process.stdout;
-const CAPABILITIES = ["extension/load", "extension/list", "extension/call", "extension/dispose"];
+const CAPABILITIES = ["extension/load", "extension/list", "extension/call", "extension/dispose", "host/shutdown"];
 
 function send(obj) {
   out.write(JSON.stringify(obj) + "\n");
@@ -38,6 +38,11 @@ async function dispatch(req) {
     }
     case "extension/dispose":
       return send({ jsonrpc: "2.0", id, result: { disposed: host.dispose(req.params.name) } });
+    case "host/shutdown":
+      // 先应答再结算：父进程要拿到确认才去等退出；在途调用的 -32002 应答随后写出。
+      send({ jsonrpc: "2.0", id, result: { ok: true, inflight: host.pendingCount() } });
+      shutdown();
+      return;
     default:
       return replyError(id, -32601, `method-not-found: ${req.method}`);
   }
@@ -64,9 +69,14 @@ process.stdin.on("data", (d) => {
 });
 
 // 退出前必须结算在途调用，否则客户端会永远等一个不会再有回答的 id。
+let shuttingDown = false;
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   const pending = host.pendingCount();
   host.close();
+  // host.close() 里 reject 的应答要真写出去，就得先让微任务跑一轮再收尾 stdout
+  if (pending > 0) await new Promise((r) => setImmediate(r));
   if (pending > 0) process.stderr.write(`settled-inflight=${pending}\n`);
   out.end(() => process.exit(0));
 }
