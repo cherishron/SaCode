@@ -448,3 +448,24 @@ test("宿主退出前收束在途 extension/call 并交账", async () => {
   assert.equal(s.params.extensionCancelled, 1, "终态须是「本端取消」(-32021)，不能混成子进程 shutdown 的兜底结算");
   assert.equal(s.params.jsChildForced, false);
 });
+
+// 渲染层的消息流只能来自核心投影，不能由前端自己拼一份第二真源：
+// 所以投影帧必须把逐条消息一起交出来，且只含 surface 事件。
+test("session/projection 交出逐条消息且只含 surface 事件", async () => {
+  const { b } = await boot();
+  const r = await b.request("session/projection", {});
+  assert.ok(Array.isArray(r.messages), "投影须带 messages 数组");
+  assert.ok(r.messages.length > 0);
+  assert.ok(r.messages.every((m) => /^(system|user|assistant)\/message:|tool\/result:/.test(m)), `混入了非 surface 消息: ${r.messages.filter((m) => !/^(system|user|assistant)\/message:|tool\/result:/.test(m)).join(" | ")}`);
+  assert.ok(!r.messages.some((m) => m.startsWith("turn/start:")), "turn/start 持久但不进模型可见历史");
+  assert.equal(r.messages.length, r.projection, "消息条数须等于投影计数");
+  // 用 charCode 拼，避免夹具自身的转义把断言带偏（本文件第一版就是这么假绿过一次）
+  const tricky = '带"引号"和' + String.fromCharCode(92) + '反斜杠' + String.fromCharCode(10) + '第二行';
+  const evBefore = (await b.request("session/projection", {})).events;
+  await b.request("session/append", { eventType: "user/message", data: tricky });
+  const m2 = await b.request("session/projection", {});
+  assert.equal(m2.messages[m2.messages.length - 1], "user/message: " + tricky, "入口 JSON 转义与落盘转义须逐字符往返");
+  assert.equal(m2.events, evBefore + 1, "多行正文仍须是一行事件，不能被裸换行劈成两行");
+  assert.equal(m2.truncatedTail, false);
+  await b.stop();
+});

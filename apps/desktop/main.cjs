@@ -14,7 +14,11 @@ const HOST = hostExePath({
   appRoot: __dirname,
   resourcesPath: process.resourcesPath,
 });
-const SESSION_DIR = app.getPath("sessionData");
+// 冒烟必须从空会话开始：默认的 sessionData 目录会跨次累积，
+// 「这条写入真的落盘了」这类断言就会被上一次运行的旧日志蒙混过去。
+// 用 --session-dir=<路径> 指定一次性目录；不传时仍用应用自己的目录（给人工运行用）。
+const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
+const SESSION_DIR = SESSION_ARG ? SESSION_ARG.slice("--session-dir=".length) : app.getPath("sessionData");
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 
 const bridge = new HostBridge(HOST, process.env);
@@ -103,8 +107,8 @@ function createWindow() {
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 桌面黄金路径的运行时验收：渲染层 → preload → IPC → 仓颉宿主 → 会话日志 → 再投影。
-// 只看 DOM 里有 JSON 不算数——必须证明那次点击真的被核心落盘，且投影计数随之增长。
+// 桌面黄金路径的运行时验收：真窗口里的 Vue 渲染层 → preload → IPC → 仓颉宿主 → 会话日志 → 再投影。
+// 只看 DOM 里有 JSON 不算数——必须证明点击真的被核心落盘，且投影、流式、审批、取消各自有终态。
 async function uiSmoke() {
   let bad = 0;
   // 逐行标明成败：措辞固定打印会让人把通过读成失败（本文件第一版就这么错过一次）
@@ -112,6 +116,18 @@ async function uiSmoke() {
     if (!ok) bad += 1;
     console.log(`UI ${ok ? "OK  " : "FAIL"} ${line}`);
   };
+  const js = (code) => win.webContents.executeJavaScript(code, true);
+  const text = async (sel) => (await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : ""; })()`)) || "";
+  const count = async (sel) => Number(await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`));
+  const click = (sel) => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
+  const waitFor = async (probe, tries = 120) => {
+    for (let i = 0; i < tries; i++) {
+      if (await probe()) return true;
+      await nap(50);
+    }
+    return false;
+  };
+
   if (!existsSync(HOST)) {
     console.log(`UI_SMOKE FAIL 缺少自包含宿主: ${HOST}`);
     app.exit(2);
@@ -119,67 +135,118 @@ async function uiSmoke() {
   }
   seedIfNeeded();
   createWindow();
-  let before = null;
-  for (let i = 0; i < 60 && !before; i++) {
-    const text = await win.webContents.executeJavaScript("document.getElementById('out').textContent", true);
-    if (text && text.includes("projection")) {
-      try {
-        before = JSON.parse(text);
-      } catch (e) {
-        note(false, `初始投影不是 JSON: ${text.slice(0, 60)}`);
-        break;
-      }
-    } else if (text && text.startsWith("失败")) {
-      note(false, `渲染层报错: ${text}`);
-      break;
-    } else {
-      await nap(200);
-    }
-  }
-  note(!!before && before.events >= 3 && before.projection >= 2, `初始投影=${JSON.stringify(before)}`);
-  // 沙箱与隔离必须是真生效的，不是配置里写着好看
-  const leaked = await win.webContents.executeJavaScript("typeof window.require", true);
-  note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
-  const hasBridge = await win.webContents.executeJavaScript("typeof window.dsh && typeof window.dsh.projection", true);
-  note(hasBridge === "function", `preload 暴露的 dsh.projection 类型=${hasBridge}`);
 
-  await win.webContents.executeJavaScript("document.getElementById('go').click()", true);
-  let after = null;
-  for (let i = 0; i < 60 && !after; i++) {
-    await nap(200);
-    const text = await win.webContents.executeJavaScript("document.getElementById('out').textContent", true);
-    if (text && text.includes("projection")) {
-      const p = JSON.parse(text);
-      if (before && p.events > before.events) after = p;
-    }
-  }
-  note(!!after, `点击后投影=${JSON.stringify(after)}`);
-  if (after) {
-    note(after.events === before.events + 1, `事件增量=${after.events - before.events}（应为 1）`);
-    note(after.durable === after.events, `durable=${after.durable}/${after.events}（append 即落盘）`);
-    const log = require("node:fs").readFileSync(SESSION_LOG, "utf8");
-    note(/user\/message\tclicked at /.test(log), "点击那条 user/message 已由核心写进会话日志");
-    note(after.projection === before.projection + 1, `模型可见投影增量=${after.projection - before.projection}`);
-  }
+  // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影
+  const mounted = await waitFor(() => count("#messages .msg").then((n) => n >= 2));
+  note(mounted, `Vue 挂载后消息条数=${await count("#messages .msg")}（核心投影给出）`);
+  const domMsgs = await count("#messages .msg");
+  const projText = await text("#count-events");
+  note(/^\d+$/.test(projText.split(" ")[1] || ""), `计数条 events=${projText}`);
+
+  // 2) 沙箱与隔离必须真生效
+  const leaked = await js("typeof window.require");
+  note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
+  const apiShape = await js(
+    "['projection','userSend','toolsList','toolCall','turnStart','turnPoll','turnCancel'].map(k => typeof (window.dsh||{})[k]).join(',')"
+  );
+  note(apiShape === "function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+
+  // 3) 多行输入经 IPC 落到核心，且只算一条事件
+  const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
+  const typed = "第一行\n第二行 带\"引号\"";
+  await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify(typed)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  note(await click("#send"), "点击发送已派发");
+  const sent = await waitFor(async () => {
+    const n = Number((await text("#count-events")).split(" ")[1]);
+    return n === beforeEvents + 1;
+  });
+  note(sent, `多行消息后 events=${beforeEvents} → ${await text("#count-events")}`);
+  const lastMsg = await js(`(() => { const m = document.querySelectorAll('#messages .msg'); return m[m.length-1] ? m[m.length-1].textContent : ''; })()`);
+  note(lastMsg.includes("第一行") && lastMsg.includes("第二行") && lastMsg.includes('"引号"'), `末条消息回显=${JSON.stringify(lastMsg.slice(0, 40))}`);
+  const durable = await text("#count-durable");
+  const pending = await text("#count-pending");
+  note(durable.split(" ")[1] === String(beforeEvents + 1) && pending.endsWith("0"), `落盘即 durable=${durable} pending=${pending}`);
+  const logRaw = require("node:fs").readFileSync(SESSION_LOG, "utf8");
+  note(/user\/message\t第一行\\n第二行/.test(logRaw), "多行正文按转义写成一行事件（裸换行没把日志劈开）");
+
+  // 4) 流式：完整一轮必须把核心产出的帧渲回界面并落到终态
+  note(await click("#run-turn"), "已发起完整一轮");
+  const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
+  note(settledTurn, `turn 终态=${await text("#turn-state")}`);
+  const streamed = await text("#stream");
+  note(streamed.includes("你好，world"), `流式文本回显=${JSON.stringify(streamed.slice(0, 40))}`);
+
+  // 5) 取消：可取消那一轮停在帧间，点停止要改终态，不能只把按钮禁用
+  note(await click("#run-turn-2"), "已发起可取消一轮");
+  await waitFor(async () => (await text("#turn-state")) === "turn running");
+  note(await click("#stop-turn"), "已派发停止");
+  const cancelled = await waitFor(async () => (await text("#turn-state")).startsWith("turn cancelled"));
+  note(cancelled, `取消终态=${await text("#turn-state")}`);
+
+  // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
+  note(await click("#tool-write"), "已点开需审批工具");
+  note(await waitFor(() => text("#approval").then((t) => t.length > 0)), "审批浮层出现（一次性放行，无永久授权按钮）");
+  note(await click("#deny"), "已点拒绝");
+  const denied = await waitFor(async () => (await text("#outcome")).includes("被拒"));
+  note(denied, `拒绝结果=${await text("#outcome")}`);
+  note((await click("#tool-write")) && (await click("#allow-once")), "已允许一次");
+  const allowed = await waitFor(async () => (await text("#outcome")).includes("结果：ok"));
+  note(allowed, `放行结果=${await text("#outcome")}`);
+  // 工具事件走的是 append 档位：实例内可见但不等于已提交，界面须把 pending 显出来
+  const pendingNow = Number((await text("#count-pending")).split(" ")[1] || "0");
+  note(pendingNow > 0, `工具事件先只在实例内可见（pending=${pendingNow}），未 flush 不算已提交`);
+  note((await text("#tool-counters")).includes("未登记 0"), `注册表计数=${await text("#tool-counters")}`);
+
   await bridge.stop();
+  // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
+  const log2 = require("node:fs").readFileSync(SESSION_LOG, "utf8");
+  note(/tool\/call\twrite /.test(log2) && /tool\/result\tok:/.test(log2), "放行的工具调用与结果已由核心写进会话日志");
+  note(/tool\/result\tdenied:write:denied/.test(log2), "被拒的调用也按拒绝记账，不是静默成功");
   console.log(bad === 0 ? "UI_SMOKE PASS" : `UI_SMOKE FAIL（${bad} 项不符）`);
   app.exit(bad === 0 ? 0 : 1);
 }
 
-ipcMain.handle("dsh:projection", async () => {
+// IPC 面：每个通道只做一件事、参数逐字段校验类型与范围，方法名由主进程写死。
+// 渲染层拿不到「发任意方法」的能力，也伪造不了 system/message 这类事件类型。
+async function withHost(fn) {
   seedIfNeeded();
   if (!bridge.proc) await bridge.start(SESSION_DIR);
-  return bridge.request("session/projection");
-});
+  return fn();
+}
 
-ipcMain.handle("dsh:append", async (_e, args) => {
-  // 只接受两个字符串字段，避免渲染层拼出任意方法名或参数结构
-  if (!args || typeof args.eventType !== "string" || typeof args.data !== "string") {
+const isStr = (v) => typeof v === "string";
+
+ipcMain.handle("dsh:projection", async () => withHost(() => bridge.request("session/projection")));
+
+ipcMain.handle("dsh:userSend", async (_e, args) => {
+  if (!args || !isStr(args.text) || args.text.length === 0 || args.text.length > 8000) {
     throw new Error("bad arguments");
   }
-  if (!bridge.proc) await bridge.start(SESSION_DIR);
-  return bridge.request("session/append", { eventType: args.eventType, data: args.data });
+  return withHost(() => bridge.request("session/append", { eventType: "user/message", data: args.text }));
 });
+
+ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
+
+ipcMain.handle("dsh:toolCall", async (_e, args) => {
+  if (!args || !isStr(args.name) || !isStr(args.args) || !isStr(args.approval)) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() =>
+    bridge.request("extension/call", { name: args.name, args: args.args, approval: args.approval })
+  );
+});
+
+ipcMain.handle("dsh:turnStart", async (_e, args) => {
+  const limit = args ? args.limit : 0;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("turn/start", { limit }));
+});
+
+ipcMain.handle("dsh:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
+
+ipcMain.handle("dsh:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
 
 const UI_SMOKE = process.argv.includes("--ui-smoke");
 

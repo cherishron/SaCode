@@ -17,6 +17,68 @@ public class SessionEvent {
     }
 }
 
+// 落盘格式是按行的 TSV，字段里的裸控制字符会把一条事件劈成两行，回放时
+// 中段缺帧会被判整份拒绝。所以只转义会破坏帧结构的四个字符，回放时对称还原。
+func escField(s: String): String {
+    let out = ArrayList<Byte>()
+    for (b in s.toArray()) {
+        let n = Int64(b)
+        if (n == 92) {
+            out.add(92)
+            out.add(92)
+        } else if (n == 10) {
+            out.add(92)
+            out.add(110)
+        } else if (n == 13) {
+            out.add(92)
+            out.add(114)
+        } else if (n == 9) {
+            out.add(92)
+            out.add(116)
+        } else {
+            out.add(b)
+        }
+    }
+    return String.fromUtf8(out.toArray())
+}
+
+// 认不出的转义序列保留反斜杠本身，不做「猜一个字符」的降级：
+// 宁可原样交回，也不要把日志里没写过的字符读出来。
+func unescField(s: String): String {
+    let bs = s.toArray()
+    let out = ArrayList<Byte>()
+    var i: Int64 = 0
+    while (i < Int64(bs.size)) {
+        let n = Int64(bs[i])
+        var handled = false
+        if (n == 92 && i + 1 < Int64(bs.size)) {
+            let m = Int64(bs[i + 1])
+            if (m == 92) {
+                out.add(92)
+                i += 1
+                handled = true
+            } else if (m == 110) {
+                out.add(10)
+                i += 1
+                handled = true
+            } else if (m == 114) {
+                out.add(13)
+                i += 1
+                handled = true
+            } else if (m == 116) {
+                out.add(9)
+                i += 1
+                handled = true
+            }
+        }
+        if (!handled) {
+            out.add(bs[i])
+        }
+        i += 1
+    }
+    return String.fromUtf8(out.toArray())
+}
+
 // 会话即事件日志：events 是唯一真相源，模型可见历史由 deriveMessages 投影得到。
 //
 // 并发面：turn 线程在 append 的同时，桌面/CLI 还要读投影。写者之间仍由 WriteLease
@@ -51,7 +113,7 @@ public class SessionLog {
         var ok = false
         mtx.lock()
         for (ev in events) {
-            text += "${ev.seq}\t${ev.eventType}\t${ev.data}\n"
+            text += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
         }
         try {
             File.writeTo(path, text.toArray())
@@ -117,7 +179,7 @@ public class SessionLog {
                     }
                     return false
                 }
-                events.add(SessionEvent(idx, parts[1], parts[2]))
+                events.add(SessionEvent(idx, unescField(parts[1]), unescField(parts[2])))
                 i += 1
             }
             flushedCount = Int64(events.size)

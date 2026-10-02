@@ -112,3 +112,4 @@ npm/*/bin/
 protocol-bridge-dbg/
 apps/desktop/dist/
 dualtest/
+apps/desktop/renderer/vendor/

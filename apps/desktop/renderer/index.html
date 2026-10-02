@@ -1,8 +1,14 @@
 <!doctype html>
-<html lang="zh"><meta charset="utf-8"><title>dsh desktop</title>
-<body style="font:14px system-ui;margin:24px">
-<h3>会话投影（来自仓颉核心，非前端自有状态）</h3>
-<pre id="out">加载中…</pre>
-<button id="go">追加一条 user/message 并重新投影</button>
-<script src="renderer.js"></script>
-</body></html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+<title>DSH</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="vendor/vue.runtime.global.prod.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

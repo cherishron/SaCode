@@ -4,8 +4,12 @@
   "private": true,
   "main": "main.cjs",
   "scripts": {
+    "vendor": "node ../../scripts/pack-vendor.mjs",
+    "prestart": "npm run vendor",
     "start": "electron .",
+    "presmoke": "npm run vendor",
     "smoke": "electron . --smoke",
+    "preui-smoke": "npm run vendor",
     "ui-smoke": "electron . --ui-smoke",
     "test": "node --test"
   },
@@ -32,9 +36,15 @@
     ],
     "win": {
       "target": [
-        "portable"
+        "portable",
+        "nsis"
       ],
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "DSH Desktop Setup ${version}.exe"
     },
     "portable": {
       "artifactName": "dsh-desktop-portable.exe"
@@ -42,6 +52,7 @@
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "vue": "^3.5.43"
   }
 }

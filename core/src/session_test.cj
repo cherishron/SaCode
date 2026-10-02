@@ -270,3 +270,32 @@ func usageAfterFinishIsIgnored() {
     a.push(Chunk("usage", "99", ""))
     @Expect(a.usage, "")
 }
+
+// 会话日志是按行的 TSV：数据里带裸换行会把一条事件劈成两行，回放时中段缺帧
+// 会被判整份拒绝。聊天输入天然多行，所以写入必须转义、回放必须还原。
+@Test
+func multiLineAndTabDataSurviveFlushAndReplay() {
+    let p = tmpPath("multiline")
+    clean("multiline")
+    let w = SessionLog(p)
+    w.append("user/message", "第一行\n第二行\t带制表")
+    @Expect(w.flush(), true)
+    let r = SessionLog(p)
+    @Expect(r.load(), true)
+    @Expect(r.events.size, Int64(1))
+    @Expect(r.events[0].data, "第一行\n第二行\t带制表")
+    @Expect(r.verifySeqContiguous(), true)
+}
+
+// 反斜杠自己不参与转义的话，「还原」会把 C:\tmp 读成别的东西
+@Test
+func backslashAndQuoteDataRoundTripExactly() {
+    let p = tmpPath("backslash")
+    clean("backslash")
+    let w = SessionLog(p)
+    w.append("user/message", "路径 C:\tmp 与 \"引号\"")
+    @Expect(w.flush(), true)
+    let r = SessionLog(p)
+    @Expect(r.load(), true)
+    @Expect(r.events[0].data, "路径 C:\tmp 与 \"引号\"")
+}

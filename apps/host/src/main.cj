@@ -52,10 +52,41 @@ func jsonStr(body: String, key: String): String {
             let out = ArrayList<Byte>()
             var j = i + plen
             while (j < hlen) {
-                if (hay[j] == 34) {
+                let c = hay[j]
+                if (c == 34) {
                     return fromBytes(out)
                 }
-                out.add(hay[j])
+                // 入口就要还原 JSON 转义：否则 "a\"b" 会在 \" 处被当成结束引号而截断，
+                // 聊天消息里的引号与换行都会被写坏（多行消息还会把日志一行事件劈成两行）。
+                if (c == 92 && j + 1 < hlen) {
+                    let e = hay[j + 1]
+                    if (e == 34) {
+                        out.add(34)
+                        j += 2
+                        continue
+                    } else if (e == 92) {
+                        out.add(92)
+                        j += 2
+                        continue
+                    } else if (e == 110) {
+                        out.add(10)
+                        j += 2
+                        continue
+                    } else if (e == 114) {
+                        out.add(13)
+                        j += 2
+                        continue
+                    } else if (e == 116) {
+                        out.add(9)
+                        j += 2
+                        continue
+                    }
+                    // \uXXXX 这类不支持的转义原样保留反斜杠，不做「猜一个字符」的降级
+                    out.add(c)
+                    j += 1
+                    continue
+                }
+                out.add(c)
                 j += 1
             }
             return fromBytes(out)
@@ -253,7 +284,22 @@ main(args: Array<String>) {
                 target = fresh
             }
             let tailFlag = if (target.isTruncatedTail()) { "true" } else { "false" }
-            emit(okFrame(idText, "{\"projection\":${target.deriveMessages().size},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag}}"))
+            // 消息正文一并交出：渲染层只能显示核心投影，不允许自己再拼一份历史。
+            // 只给尾部 64 条，帧大小有界；计数仍是全量投影计数。
+            let msgs = target.deriveMessages()
+            let total = msgs.size
+            let from = if (total > 64) { total - 64 } else { Int64(0) }
+            var marr = "["
+            var mi = from
+            while (mi < total) {
+                if (mi > from) {
+                    marr += ","
+                }
+                marr += "\"${jsonEscapeText(msgs[mi])}\""
+                mi += 1
+            }
+            marr += "]"
+            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr}}"))
             continue
         }
         if (method == "session/append") {
