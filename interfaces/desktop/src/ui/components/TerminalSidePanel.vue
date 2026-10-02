@@ -1,23 +1,25 @@
-﻿<script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+<script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { CloseIcon, TerminalIcon } from 'tdesign-icons-vue-next';
 import {
   isNativeTerminalAvailable,
   listenTerminalExit,
   listenTerminalOutput,
-  resizeTerminal,
   startTerminal,
+  syncTerminalSize,
   writeTerminal,
   closeTerminal,
-} from '../../tauri-bridge.ts';
+} from '../platform/tauri-bridge.ts';
 import { useDesktopApp } from '../composables/useDesktopApp';
 
 /**
  * TerminalSidePanel — 格内 absolute scrim + 侧板（与 FilesSidePanel 同形态）。
  * 接 Tauri PTY；Web 预览下提示需要桌面会话。
+ * 输出保持原始字节流（含 ANSI），渲染层不预剥离。
  */
 const props = defineProps<{
   open: boolean;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -37,6 +39,10 @@ const dragging = ref(false);
 
 let offOutput: (() => void) | null = null;
 let offExit: (() => void) | null = null;
+let sizeObserver: ResizeObserver | null = null;
+/** 字符宽/行高（CSS px），用于像素盒 → cols/rows */
+const CHAR_W = 8;
+const LINE_H = 16;
 
 function push(text: string, tone: 'out' | 'ok' | 'err' | 'muted' = 'out') {
   lines.value = [...lines.value, { text, tone }].slice(-500);
@@ -45,29 +51,53 @@ function push(text: string, tone: 'out' | 'ok' | 'err' | 'muted' = 'out') {
   });
 }
 
+function syncSize() {
+  const el = historyEl.value;
+  const id = terminalId.value;
+  if (!el || !id) return;
+  void syncTerminalSize(id, el.clientWidth, el.clientHeight, CHAR_W, LINE_H).catch(() => {});
+}
+
+function attachSizeObserver() {
+  sizeObserver?.disconnect();
+  const el = historyEl.value;
+  if (!el || typeof ResizeObserver === 'undefined') return;
+  sizeObserver = new ResizeObserver(() => syncSize());
+  sizeObserver.observe(el);
+}
+
 async function ensureTerminal() {
   if (terminalId.value || !available) return;
   status.value = '启动中…';
-  const started = await startTerminal(24, 80);
+  // 用当前面板实测尺寸启动，而非硬编码 24×80
+  const el = historyEl.value;
+  const started = await startTerminal(
+    el ? Math.max(2, Math.floor(el.clientHeight / LINE_H)) : 24,
+    el ? Math.max(2, Math.floor(el.clientWidth / CHAR_W)) : 80,
+  );
   if (!started) {
     status.value = '终端不可用';
     return;
   }
-  terminalId.value = started.terminal_id;
+  const id = started.terminal_id;
+  terminalId.value = id;
   status.value = `${started.shell} · ${workspace.value || 'workspace'}`;
   offOutput = await listenTerminalOutput((payload) => {
-    if (payload.terminal_id !== terminalId.value) return;
-    // 简单可读转录：剥离常见 ANSI CSI
-    const text = payload.data.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
-    if (text) push(text);
-  });
+    if (payload.terminal_id !== id) return;
+    // 原始输出（含 ANSI）；渲染层不剥离
+    if (payload.data) push(payload.data);
+  }, id);
   offExit = await listenTerminalExit((payload) => {
-    if (payload.terminal_id !== terminalId.value) return;
+    if (payload.terminal_id !== id) return;
     push(`[进程退出 ${payload.code ?? ''} ${payload.reason}]`, 'muted');
     terminalId.value = null;
     status.value = '已退出';
-  });
+  }, id);
   push(`已连接 ${started.shell}`, 'ok');
+  void nextTick(() => {
+    attachSizeObserver();
+    syncSize();
+  });
 }
 
 async function submit() {
@@ -94,11 +124,13 @@ function onResizeStart(e: PointerEvent) {
   const startW = panelWidth.value;
   const move = (ev: PointerEvent) => {
     panelWidth.value = Math.min(920, Math.max(320, startW + (startX - ev.clientX)));
+    syncSize();
   };
   const up = () => {
     dragging.value = false;
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
+    syncSize();
   };
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
@@ -108,13 +140,15 @@ watch(
   () => props.open,
   (open) => {
     if (open) void ensureTerminal();
-    if (!open && terminalId.value) {
-      void resizeTerminal(terminalId.value, 24, 80).catch(() => {});
-    }
   },
 );
 
+onMounted(() => {
+  if (props.open || props.embedded) attachSizeObserver();
+});
+
 onBeforeUnmount(() => {
+  sizeObserver?.disconnect();
   offOutput?.();
   offExit?.();
   if (terminalId.value) void closeTerminal(terminalId.value).catch(() => {});
@@ -122,14 +156,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <template v-if="open">
-    <div class="files-scrim" @click="emit('update:open', false)" />
+  <!-- embedded 时由工具栏 v-show 控制可见，切标签不拆终端 -->
+  <template v-if="embedded || open">
+    <div v-if="!embedded" class="files-scrim" @click="emit('update:open', false)" />
     <aside
       class="files-side-panel terminal-panel"
-      :class="{ dragging }"
-      :style="{ width: `${panelWidth}px` }"
+      :class="{ dragging, 'tools-embedded': embedded }"
+      :style="embedded ? {} : { width: `${panelWidth}px` }"
     >
-      <div class="files-resizer" @pointerdown.prevent="onResizeStart" />
+      <div v-if="!embedded" class="files-resizer" @pointerdown.prevent="onResizeStart" />
       <header class="files-head">
         <TerminalIcon size="13" />
         <span class="files-title">终端</span>
@@ -143,20 +178,18 @@ onBeforeUnmount(() => {
         >
           ^C
         </button>
-        <button class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
+        <button v-if="!embedded" class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
           <CloseIcon size="13" />
         </button>
       </header>
 
       <div ref="historyEl" class="scroll-y terminal-history">
-        <div
+        <pre
           v-for="(line, i) in lines"
           :key="i"
           class="terminal-line"
           :class="line.tone"
-        >
-          {{ line.text }}
-        </div>
+        >{{ line.text }}</pre>
         <div v-if="!available" class="files-empty">
           Web 预览无 PTY。请在 Tauri 桌面会话中使用终端。
         </div>

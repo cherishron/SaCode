@@ -1,11 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { ChatSender, type TdAttachmentItem } from '@tdesign-vue-next/chat';
 import { FileIcon, FolderIcon } from 'tdesign-icons-vue-next';
 import BotIcon from './BotIcon.vue';
 import MicIcon from './MicIcon.vue';
+import OutboxPanel from './OutboxPanel.vue';
 import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
 import { useDesktopApp } from '../composables/useDesktopApp';
+import {
+  loadDraft,
+  saveDraft,
+  clearDraft,
+  thinkLevelToReasoningEffort,
+  resolveContextWindow,
+  resolveTokenUsage,
+  computeContextPercent,
+  FALLBACK_CONTEXT_WINDOW,
+  type ReasoningEffort,
+  type TurnLike,
+} from '../logic/turn-events.ts';
 
 type Mode = 'plan' | 'build' | 'yolo';
 
@@ -26,7 +39,9 @@ const {
   sendMessage,
   sending,
   sendError,
-  contextUsage,
+  contextUsageFor,
+  setContextUsageFor,
+  detailForConversation,
   attachments,
   uploadAttachment,
   removeAttachment,
@@ -38,7 +53,8 @@ const {
 const inputValue = ref('');
 const mode = ref<Mode>('build');
 const modelName = ref('');
-const skill = ref('');
+/** 契约 §1.2：技能多选 */
+const selectedSkills = ref<string[]>([]);
 const thinkLevel = ref<'off' | 'low' | 'medium' | 'high'>('medium');
 const enhancing = ref(false);
 const listening = ref(false);
@@ -46,6 +62,34 @@ const files = ref<TdAttachmentItem[]>([]);
 const compactLevel = ref(0);
 const shellEl = ref<HTMLElement | null>(null);
 const footerEl = ref<HTMLElement | null>(null);
+
+// ---- 草稿按会话保存（§6.1）----
+
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleDraftSave() {
+  if (draftTimer) clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    saveDraft(props.conversationId, inputValue.value);
+  }, 400);
+}
+
+// 切换会话时：保存旧草稿、加载新草稿
+watch(() => props.conversationId, (id, prevId) => {
+  if (prevId) saveDraft(prevId, inputValue.value);
+  inputValue.value = loadDraft(id);
+}, { immediate: true });
+
+// 输入变化 → 草稿
+watch(inputValue, () => {
+  scheduleDraftSave();
+});
+
+onMounted(() => {
+  if (props.conversationId) inputValue.value = loadDraft(props.conversationId);
+});
+
+// ---- 模式 / 模型 / 思考 ----
 
 const modeMeta: Record<Mode, { label: string; title: string }> = {
   plan: { label: 'Plan', title: '审批/只规划 · 点击切到 Build' },
@@ -70,14 +114,6 @@ const modelLabel = computed(() => {
   return models.value.find((m) => m.value === modelName.value)?.label || '模型';
 });
 
-const usagePercent = computed(() =>
-  contextUsage.value == null ? 0 : Math.round(Math.min(100, Math.max(0, contextUsage.value))),
-);
-
-const usageDetail = computed(() =>
-  contextUsage.value == null ? '上下文 —' : `上下文 ${usagePercent.value}%`,
-);
-
 const thinkOptions = [
   { value: 'off', label: '关闭' },
   { value: 'low', label: '低' },
@@ -85,11 +121,64 @@ const thinkOptions = [
   { value: 'high', label: '高' },
 ] as const;
 
+/** 契约 §1.2：思考深度 → reasoning_effort */
+const reasoningEffort = computed<ReasoningEffort | null>(() =>
+  thinkLevelToReasoningEffort(thinkLevel.value),
+);
+
+// ---- 技能多选 ----
+
 const skillList = computed(() =>
   (app.workspaceCapabilities.skills ?? []).map((s) => ({ name: s.name })),
 );
 
-/** 项目文件引用（@ 进 context_paths / 输入框） */
+function toggleSkill(name: string) {
+  const idx = selectedSkills.value.indexOf(name);
+  if (idx >= 0) {
+    selectedSkills.value = selectedSkills.value.filter((s) => s !== name);
+  } else {
+    selectedSkills.value = [...selectedSkills.value, name];
+  }
+}
+
+const selectedSkillLabel = computed(() => {
+  if (selectedSkills.value.length === 0) return '';
+  if (selectedSkills.value.length === 1) return selectedSkills.value[0];
+  return `${selectedSkills.value.length} 技能`;
+});
+
+// ---- 上下文百分比：按会话隔离 + 真实 context_window ----
+
+const usagePercent = computed(() => {
+  const id = props.conversationId;
+  const stored = id ? contextUsageFor(id) : null;
+  if (stored != null) return Math.round(Math.min(100, Math.max(0, stored)));
+  // 回退：从轮次的 usage / context_window 计算
+  const detail = id ? detailForConversation(id) : null;
+  if (detail?.turns?.length) {
+    const turns = detail.turns as TurnLike[];
+    const windowSize = resolveContextWindow(turns) ?? FALLBACK_CONTEXT_WINDOW;
+    const usage = resolveTokenUsage(turns);
+    if (usage) return computeContextPercent(usage.total, windowSize);
+  }
+  return 0;
+});
+
+const usageDetail = computed(() => {
+  const id = props.conversationId;
+  const detail = id ? detailForConversation(id) : null;
+  const turns = (detail?.turns ?? []) as TurnLike[];
+  const windowSize = resolveContextWindow(turns);
+  const usage = resolveTokenUsage(turns);
+  if (usage) {
+    const w = windowSize ?? FALLBACK_CONTEXT_WINDOW;
+    return `上下文 ${usagePercent.value}%（${usage.total.toLocaleString()} / ${w.toLocaleString()}）`;
+  }
+  return `上下文 ${usagePercent.value}%`;
+});
+
+// ---- 项目文件引用 ----
+
 const projectFiles = ref<string[]>([]);
 const pickerOpen = ref(false);
 const pickerFilter = ref('');
@@ -178,6 +267,8 @@ type SpeechRecognitionLike = {
   start: () => void;
 };
 
+// ---- 发送 ----
+
 async function handleSend(text: string) {
   const prompt = text.trim();
   if (!prompt || sending.value) return;
@@ -186,7 +277,8 @@ async function handleSend(text: string) {
     mode: mode.value as ExecutionModeInput,
     conversationId: props.conversationId,
     modelName: modelName.value || undefined,
-    skill: skill.value || undefined,
+    skills: selectedSkills.value.length ? [...selectedSkills.value] : undefined,
+    reasoningEffort: reasoningEffort.value,
     contextPaths: [
       ...attachments.value.map((a) => a.path),
       ...projectFiles.value,
@@ -196,6 +288,8 @@ async function handleSend(text: string) {
     inputValue.value = '';
     files.value = [];
     projectFiles.value = [];
+    // 发送成功后清草稿
+    clearDraft(props.conversationId);
     emit('sent', result);
   }
 }
@@ -230,7 +324,7 @@ function onPaste(event: ClipboardEvent) {
 </script>
 
 <template>
-  <div ref="shellEl" class="td-chat-shell">
+  <div ref="shellEl" class="td-chat-shell composer-dock">
     <t-attachments
       v-if="attachments.length"
       class="td-chat-attachments"
@@ -247,11 +341,14 @@ function onPaste(event: ClipboardEvent) {
       </span>
     </div>
 
+    <OutboxPanel />
+
     <t-chat-sender
       v-model="inputValue"
       class="td-chat-sender"
       :placeholder="placeholder"
       :loading="sending"
+      :textarea-props="{ autosize: { minRows: 3, maxRows: 8 }, 'aria-label': '任务内容' }"
       :upload-props="{ multiple: true }"
       :attachments-props="{ items: files }"
       @send="handleSend"
@@ -262,7 +359,7 @@ function onPaste(event: ClipboardEvent) {
       <template #footer-prefix>
         <div ref="footerEl" class="composer-bar composer-bar--official">
           <t-popup trigger="click" placement="top-start" :overlay-style="{ zIndex: 300, padding: '6px' }">
-            <button class="ghost-btn" type="button" title="添加">+</button>
+            <button class="ghost-btn composer-add" type="button" title="添加附件、项目文件或技能" aria-label="添加附件、项目文件或技能">+</button>
             <template #content>
               <div class="plus-menu plus-menu--static">
                 <button type="button" class="plus-item" @click="handleAttachClick">
@@ -278,14 +375,18 @@ function onPaste(event: ClipboardEvent) {
                   <span>编排模式<span class="plus-desc">澄清需求、规格、实现与评审</span></span>
                 </button>
                 <div class="plus-sep" />
+                <!-- 技能多选 -->
+                <div class="plus-section-label">技能（可多选）</div>
                 <button
                   v-for="s in skillList"
                   :key="s.name"
                   type="button"
-                  class="plus-sub-item"
-                  @click="skill = s.name"
+                  class="plus-sub-item skill-toggle"
+                  :class="{ on: selectedSkills.includes(s.name) }"
+                  @click="toggleSkill(s.name)"
                 >
-                  <span class="plus-sub-name">技能 · {{ s.name }}</span>
+                  <span class="skill-check">{{ selectedSkills.includes(s.name) ? '☑' : '☐' }}</span>
+                  <span class="plus-sub-name">{{ s.name }}</span>
                 </button>
                 <div v-if="!skillList.length" class="plus-sub-empty">暂无技能</div>
               </div>
@@ -297,7 +398,9 @@ function onPaste(event: ClipboardEvent) {
           </button>
 
           <t-popup trigger="click" placement="top" :overlay-style="{ zIndex: 300, padding: '6px' }">
-            <button class="model-btn" type="button" title="选择模型">{{ modelLabel }}</button>
+            <button class="model-btn" type="button" title="选择模型">
+              {{ modelLabel }}<template v-if="selectedSkillLabel"> · {{ selectedSkillLabel }}</template>
+            </button>
             <template #content>
               <div class="model-menu plus-menu--static">
                 <div class="think-depth">
@@ -333,18 +436,20 @@ function onPaste(event: ClipboardEvent) {
             </template>
           </t-popup>
 
-          <t-tooltip :content="usageDetail" placement="top">
-            <div class="usage-ring" role="button" :aria-label="usageDetail">
-              <t-progress :percentage="usagePercent" size="small" theme="circle" :label="false" />
-            </div>
-          </t-tooltip>
+          <div class="composer-bar-end">
+            <t-tooltip :content="usageDetail" placement="top">
+              <div class="usage-ring" role="img" :aria-label="usageDetail">
+                <t-progress :percentage="usagePercent" size="small" theme="circle" :label="false" />
+              </div>
+            </t-tooltip>
 
-          <button class="ghost-btn" type="button" title="语音输入" @click="toggleVoice">
-            <MicIcon size="16" />
-          </button>
-          <button class="ghost-btn" type="button" title="提示词增强" :disabled="enhancing || !inputValue.trim()" @click="enhance">
-            <BotIcon size="16" />
-          </button>
+            <button class="ghost-btn" type="button" title="语音输入" aria-label="语音输入" :class="{ listening }" @click="toggleVoice">
+              <MicIcon size="16" />
+            </button>
+            <button class="ghost-btn" type="button" title="提示词增强" aria-label="提示词增强" :disabled="enhancing || !inputValue.trim()" @click="enhance">
+              <BotIcon size="16" />
+            </button>
+          </div>
         </div>
       </template>
     </t-chat-sender>
@@ -374,6 +479,27 @@ function onPaste(event: ClipboardEvent) {
       </div>
     </div>
 
-    <div v-if="sendError" class="composer-error">{{ sendError }}</div>
+    <div v-if="sendError" class="composer-error" role="alert">{{ sendError }}</div>
   </div>
 </template>
+
+<style scoped>
+.skill-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.skill-check {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+}
+.skill-toggle.on {
+  color: var(--accent);
+}
+.plus-section-label {
+  padding: var(--space-1) var(--space-3);
+  font-size: 11px;
+  color: var(--text-weak);
+}
+</style>

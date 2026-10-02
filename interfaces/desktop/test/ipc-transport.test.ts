@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTauriTransport } from '../src/ipc-transport.ts';
-import { isTauri } from '../src/tauri-bridge.ts';
+import { createTauriTransport } from '../src/ui/platform/ipc-transport.ts';
+import { isTauri } from '../src/ui/platform/tauri-bridge.ts';
 
 test('isTauri is false without __TAURI__', () => {
   assert.equal(isTauri(), false);
@@ -51,7 +51,7 @@ test('tauri transport extracts path from absolute url', async () => {
 });
 
 test('SidecarHandleDto contract has no token field in bridge types', async () => {
-  const bridge = await import('../src/tauri-bridge.ts');
+  const bridge = await import('../src/ui/platform/tauri-bridge.ts');
   const dto = {
     host: '127.0.0.1',
     port: 1,

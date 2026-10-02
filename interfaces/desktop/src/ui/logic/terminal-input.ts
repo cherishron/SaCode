@@ -15,9 +15,17 @@ export function terminalKeyData(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | '
   return data && event.altKey ? `\x1b${data}` : data;
 }
 
+// Bounds mirror terminal.rs `validated_size` (1..500 rows, 1..1000 cols),
+// kept slightly stricter on the low end so a collapsed panel never hits 0.
+const MIN_COLS = 2;
+const MIN_ROWS = 2;
+const MAX_COLS = 1000;
+const MAX_ROWS = 500;
+
+/** Estimate PTY cols/rows from a pixel box and font metrics (CSS pixels). */
 export function terminalDimensions(width: number, height: number, charWidth: number, lineHeight: number) {
   return {
-    cols: Math.max(2, Math.floor(width / charWidth)),
-    rows: Math.max(2, Math.floor(height / lineHeight)),
+    cols: Math.min(MAX_COLS, Math.max(MIN_COLS, Math.floor(width / charWidth))),
+    rows: Math.min(MAX_ROWS, Math.max(MIN_ROWS, Math.floor(height / lineHeight))),
   };
 }

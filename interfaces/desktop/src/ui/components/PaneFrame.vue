@@ -14,6 +14,8 @@ const emit = defineEmits<{
   rename: [title: string];
   maximize: [];
   replace: [];
+  dragstart: [event: DragEvent];
+  dragend: [event: DragEvent];
 }>();
 
 const menuOpen = ref(false);
@@ -67,6 +69,9 @@ function cancelRename() {
         v-else
         class="pane-head-title"
         :title="title"
+        draggable="true"
+        @dragstart="emit('dragstart', $event)"
+        @dragend="emit('dragend', $event)"
         @dblclick="startRename"
       >
         {{ title }}

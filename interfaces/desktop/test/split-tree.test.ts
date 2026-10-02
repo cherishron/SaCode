@@ -14,7 +14,7 @@ import {
   splitLeaf,
   swapLeaves,
   validateTree,
-} from '../src/app/split-tree.ts';
+} from '../src/ui/logic/split-tree.ts';
 test('leaves returns visual reading order and paneCount counts leaves', () => {
   assert.deepEqual(leaves(PRESETS['4']), [0, 2, 1, 3]);
   assert.equal(paneCount(PRESETS['4']), 4);

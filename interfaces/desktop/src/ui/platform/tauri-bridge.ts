@@ -1,5 +1,7 @@
 /** Tauri WebView bridge — daemon HTTP/SSE never carry bearer token in the renderer. */
 
+import { terminalDimensions } from '../logic/terminal-input.ts';
+
 export interface SidecarHandleDto {
   host: string;
   port: number;
@@ -32,6 +34,7 @@ export interface TerminalStartDto {
 
 export interface TerminalOutputPayload {
   terminal_id: string;
+  /** Raw PTY output — ANSI/CSI escapes included. Never stripped at this layer. */
   data: string;
 }
 
@@ -108,20 +111,53 @@ export async function closeTerminal(terminalId: string): Promise<boolean> {
   return true;
 }
 
-export async function listenTerminalOutput(
-  handler: (payload: TerminalOutputPayload) => void,
-): Promise<() => void> {
-  const listen = tauriApi()?.event?.listen;
-  if (!listen) return () => {};
-  return listen('terminal-output', (event) => handler(event.payload as TerminalOutputPayload));
+/**
+ * Push a pixel-box size to the native PTY. Call this from panel/container
+ * resize. `charWidth`/`lineHeight` are font metrics in CSS pixels.
+ */
+export async function syncTerminalSize(
+  terminalId: string,
+  widthPx: number,
+  heightPx: number,
+  charWidth: number,
+  lineHeight: number,
+): Promise<boolean> {
+  const { cols, rows } = terminalDimensions(widthPx, heightPx, charWidth, lineHeight);
+  return resizeTerminal(terminalId, rows, cols);
 }
 
-export async function listenTerminalExit(
-  handler: (payload: TerminalExitPayload) => void,
+/**
+ * Subscribe to raw PTY output. Pass `terminalId` to receive only that
+ * session's events (multi-instance routing); omit to receive all.
+ */
+export async function listenTerminalOutput(
+  handler: (payload: TerminalOutputPayload) => void,
+  terminalId?: string,
 ): Promise<() => void> {
   const listen = tauriApi()?.event?.listen;
   if (!listen) return () => {};
-  return listen('terminal-exit', (event) => handler(event.payload as TerminalExitPayload));
+  return listen('terminal-output', (event) => {
+    const payload = event.payload as TerminalOutputPayload;
+    if (terminalId !== undefined && payload.terminal_id !== terminalId) return;
+    handler(payload);
+  });
+}
+
+/**
+ * Subscribe to PTY exit events. Pass `terminalId` to receive only that
+ * session's events; omit to receive all.
+ */
+export async function listenTerminalExit(
+  handler: (payload: TerminalExitPayload) => void,
+  terminalId?: string,
+): Promise<() => void> {
+  const listen = tauriApi()?.event?.listen;
+  if (!listen) return () => {};
+  return listen('terminal-exit', (event) => {
+    const payload = event.payload as TerminalExitPayload;
+    if (terminalId !== undefined && payload.terminal_id !== terminalId) return;
+    handler(payload);
+  });
 }
 
 export async function startDaemon(workspace?: string): Promise<SidecarHandleDto> {
@@ -155,11 +191,27 @@ export async function setTrayEnabled(enabled: boolean): Promise<boolean> {
   return (await invoke('set_tray_enabled', { enabled })) as boolean;
 }
 
-/** 切换开机自启动。非 Tauri 环境为静默 no-op。 */
-export async function setAutostart(enabled: boolean): Promise<void> {
+/** 切换开机自启动。非 Tauri 环境为静默 no-op。返回壳侧真实结果；失败抛错。 */
+export async function setAutostart(enabled: boolean): Promise<boolean> {
   const invoke = getInvoke();
-  if (!invoke) return;
-  await invoke('set_autostart', { enabled });
+  if (!invoke) return false;
+  return (await invoke('set_autostart', { enabled })) as boolean;
+}
+
+export interface SystemIntegrationStatus {
+  tray_enabled: boolean;
+  autostart_enabled: boolean;
+}
+
+/** 查询托盘 / 自启的壳侧真实状态；非 Tauri 返回 null。 */
+export async function getSystemIntegrationStatus(): Promise<SystemIntegrationStatus | null> {
+  const invoke = getInvoke();
+  if (!invoke) return null;
+  try {
+    return (await invoke('system_integration_status')) as SystemIntegrationStatus;
+  } catch {
+    return null;
+  }
 }
 
 export async function daemonProxy(
@@ -180,6 +232,36 @@ export async function startEventBridge(taskId?: string): Promise<void> {
   const invoke = getInvoke();
   if (!invoke) throw new Error('not running under Tauri');
   await invoke('start_event_bridge', taskId ? { taskId } : {});
+}
+
+/** `git_workspace_status` 返回结构：分支名 + porcelain -z 原始字节 */
+export interface GitWorkspaceStatus {
+  branch: string | null;
+  porcelain: string;
+}
+
+/**
+ * 获取工作区 git 状态（`git status --porcelain=v1 -z --branch` 原始输出）。
+ * 非 Tauri 环境返回 null；git 不可用 / 非 git 仓库时抛错（调用方降级展示）。
+ */
+export async function gitWorkspaceStatus(): Promise<GitWorkspaceStatus | null> {
+  const invoke = getInvoke();
+  if (!invoke) return null;
+  return (await invoke('git_workspace_status')) as GitWorkspaceStatus;
+}
+
+/**
+ * 获取工作区 unified diff 文本。
+ * @param cached true = `git diff --cached`（暂存区 vs HEAD）
+ * @param path 可选，仅取单个文件的 diff
+ */
+export async function gitWorkspaceDiff(
+  cached = false,
+  path?: string,
+): Promise<string | null> {
+  const invoke = getInvoke();
+  if (!invoke) return null;
+  return (await invoke('git_workspace_diff', { cached, ...(path ? { path } : {}) })) as string;
 }
 
 export async function listenDaemonEvents(

@@ -16,6 +16,11 @@
   --w-side-min: 184px;
   --w-side-max: 420px;
 
+  /* === 右侧工具栏（格内 absolute 单面板；JS 缺省见 split-persist.ts） === */
+  --w-tools: 520px;
+  --w-tools-min: 240px;
+  --w-tools-tree: 190px;     /* 文件树 / 变更列表内部分隔缺省宽 */
+
   /* === 会话中线（消息流与 composer 必须共用） === */
   --chat-measure: min(64rem, max(48rem, 92%));
   --chat-measure-pane: min(64rem, 92%); /* 分格内：无 48rem 地板 */
@@ -51,6 +56,30 @@
 /* 任务列宽度可拖时由 JS 写入 --w-side（钳制 min/max） */
 .app-shell {
   --task-col: var(--w-side);
+}
+
+/*
+ * 密度档（设置 → 界面 → 密度）：只覆盖列表间距/行高/行高下限，
+ * 不另起第二套度量。html[data-density] 由 preferences.applyInterfacePreferences 写入。
+ * 紧凑档收紧 --list-gap / --list-row-min / --list-line，并微降壳行高。
+ */
+[data-density='compact'] {
+  --list-gap: 2px;
+  --list-row-min: 22px;
+  --list-line: 1.3;
+  --chrome-row: 36px;
+  --pane-head-h: 42px;
+  --header-h: 46px;
+}
+
+[data-density='comfortable'] {
+  /* 显式回写 :root 套餐，切换时无需刷新 */
+  --list-gap: 4px;
+  --list-row-min: 28px;
+  --list-line: 1.45;
+  --chrome-row: 40px;
+  --pane-head-h: 48px;
+  --header-h: 52px;
 }
 
 /* 滚动纪律：纵滚容器 */

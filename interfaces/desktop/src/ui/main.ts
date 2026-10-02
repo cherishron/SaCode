@@ -10,7 +10,7 @@ import './styles/theme.css';
 import './styles/layout-contract.css';
 import './styles/shell.css';
 
-import { applyInterfacePreferences, loadDesktopPreferences } from '../app/settings.ts';
+import { applyInterfacePreferences, loadDesktopPreferences } from './logic/preferences.ts';
 import App from './App.vue';
 
 // 主题跟随设置：系统 / 深色 / 浅色（不写死深色）

@@ -27,6 +27,8 @@ pub struct TerminalStartDto {
 #[derive(Clone, Debug, Serialize)]
 struct TerminalOutput {
     terminal_id: String,
+    /// Raw PTY bytes decoded as UTF-8 only (JSON IPC needs a string). ANSI/CSI
+    /// escapes pass through untouched; stripping is a renderer concern.
     data: String,
 }
 

@@ -8,12 +8,7 @@
 //   - plugins.updater.endpoints / pubkey
 // 后端签名私钥走 CI secret：TAURI_UPDATER_PRIVATE_KEY。
 
-import {
-  checkUpdate,
-  installUpdate,
-  onUpdaterEvent,
-  type Update,
-} from '@tauri-apps/plugin-updater'
+import { check, type Update } from '@tauri-apps/plugin-updater'
 
 export type UpdateCheckResult =
   | { status: 'up-to-date'; current: string }
@@ -23,9 +18,9 @@ export type UpdateCheckResult =
 /** 检查是否有可用更新。插件缺失或环境不支持时返回 error，由调用方决定降级行为。 */
 export async function checkForAppUpdate(): Promise<UpdateCheckResult> {
   try {
-    const update = await checkUpdate()
-    if (!update || !update.available) {
-      return { status: 'up-to-date', current: update?.currentVersion ?? 'unknown' }
+    const update = await check()
+    if (!update) {
+      return { status: 'up-to-date', current: 'unknown' }
     }
     return {
       status: 'update-available',
@@ -45,23 +40,22 @@ export async function downloadAndInstall(
   update: Update,
   onProgress?: (downloaded: number, total: number) => void,
 ): Promise<void> {
-  if (onProgress) {
-    const unlisten = await onUpdaterEvent((event: any) => {
-      if (event?.event === 'DownloadProgress') {
-        const data = event.data ?? {}
-        onProgress(data.downloaded ?? 0, data.contentLength ?? 0)
-      }
-    })
-    try {
-      await update.downloadAndInstall()
-    } finally {
-      await unlisten()
-    }
-  } else {
+  if (!onProgress) {
     await update.downloadAndInstall()
+    return
   }
+  let downloaded = 0
+  let total = 0
+  await update.downloadAndInstall((event) => {
+    if (event.event === 'Started') {
+      total = event.data.contentLength ?? 0
+      downloaded = 0
+      onProgress(downloaded, total)
+    } else if (event.event === 'Progress') {
+      downloaded += event.data.chunkLength
+      onProgress(downloaded, total)
+    } else if (event.event === 'Finished') {
+      onProgress(total || downloaded, total || downloaded)
+    }
+  })
 }
-
-/** 安装完成后需重启应用方可生效；重启由调用方决定时机。
- *  可调用 @tauri-apps/plugin-process 的 relaunch()，该包需另行安装。 */
-export { installUpdate }

@@ -14,6 +14,7 @@ import { highlightLanguage, previewMode, sortTreeEntries } from '../utils/file-k
  */
 const props = defineProps<{
   open: boolean;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -39,7 +40,9 @@ const preview = ref<WorkspaceFilePreview | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const panelWidth = ref(520);
+const treeWidth = ref(220);
 const dragging = ref(false);
+const resizingTree = ref(false);
 
 function sortRows(list: TreeRow[]): TreeRow[] {
   return sortTreeEntries(list) as TreeRow[];
@@ -215,6 +218,24 @@ function onResizeStart(e: PointerEvent) {
   window.addEventListener('pointerup', up);
 }
 
+/** 文件树 ↔ 预览 内部分隔（拖宽；嵌套在工具栏里也一样） */
+function onTreeResizeStart(e: PointerEvent) {
+  if (e.button !== 0) return;
+  resizingTree.value = true;
+  const startX = e.clientX;
+  const startW = treeWidth.value;
+  const move = (ev: PointerEvent) => {
+    treeWidth.value = Math.min(480, Math.max(140, startW + (ev.clientX - startX)));
+  };
+  const up = () => {
+    resizingTree.value = false;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
 const previewLang = computed(() => {
   if (!preview.value) return null;
   return highlightLanguage(preview.value.path);
@@ -334,14 +355,15 @@ watch(
 </script>
 
 <template>
-  <template v-if="open">
-    <div class="files-scrim" @click="emit('update:open', false)" />
+  <!-- embedded 时由工具栏 v-show 控制可见，保持文件树状态 -->
+  <template v-if="embedded || open">
+    <div v-if="!embedded" class="files-scrim" @click="emit('update:open', false)" />
     <aside
       class="files-side-panel files-panel--pretty"
-      :class="{ dragging }"
-      :style="{ width: `${panelWidth}px` }"
+      :class="{ dragging, 'tools-embedded': embedded }"
+      :style="embedded ? {} : { width: `${panelWidth}px` }"
     >
-      <div class="files-resizer" @pointerdown.prevent="onResizeStart" />
+      <div v-if="!embedded" class="files-resizer" @pointerdown.prevent="onResizeStart" />
       <header class="files-head">
         <FileGlyph name="工作区" is-dir :size="15" />
         <span class="files-title">文件</span>
@@ -350,13 +372,13 @@ watch(
         <button class="ghost-btn" type="button" title="刷新" @click="loadRoot">
           <RefreshIcon size="13" />
         </button>
-        <button class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
+        <button v-if="!embedded" class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
           <CloseIcon size="13" />
         </button>
       </header>
 
       <div class="files-body">
-        <aside class="files-tree-pane">
+        <aside class="files-tree-pane" :style="{ width: `${treeWidth}px`, flex: '0 0 auto' }">
           <div class="files-search-wrap">
             <SearchIcon size="13" />
             <input
@@ -391,6 +413,18 @@ watch(
             </div>
           </div>
         </aside>
+
+        <div
+          class="tools-inner-resizer files-split-resizer"
+          :class="{ dragging: resizingTree }"
+          role="separator"
+          aria-label="调整文件树宽度"
+          aria-orientation="vertical"
+          tabindex="0"
+          @pointerdown.prevent="onTreeResizeStart"
+          @keydown.left.prevent="treeWidth = Math.max(140, treeWidth - 12)"
+          @keydown.right.prevent="treeWidth = Math.min(480, treeWidth + 12)"
+        />
 
         <section class="files-preview-pane">
           <template v-if="preview">

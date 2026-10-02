@@ -45,7 +45,7 @@ import {
   type UpdateSessionRequest,
   type WorkspaceCapabilities,
 } from '@cherishron/sacode-client-core';
-import { createTauriTransport } from '../ipc-transport.ts';
+import { createTauriTransport } from '../platform/ipc-transport.ts';
 import { moveQueuedMessage, restoreQueuedMessages, type QueuedMessage } from './conversation-queue.ts';
 import {
   isTauri,
@@ -55,7 +55,7 @@ import {
   stopDaemon,
   daemonInfo,
   type SidecarHandleDto,
-} from '../tauri-bridge.ts';
+} from '../platform/tauri-bridge.ts';
 
 export type RuntimeMode = 'tauri' | 'vite';
 
@@ -74,6 +74,7 @@ export class DesktopApp {
   bootDiagnostics: string[] = [];
   private bootLog(msg: string) {
     this.bootDiagnostics.push(msg);
+    console.log('[sacode-boot]', msg);
     this.emit();
   }  handle: SidecarHandleDto | null = null;
   client: DaemonClient | null = null;
@@ -88,6 +89,7 @@ export class DesktopApp {
   private pendingConversationDetails = new Set<string>();
   private failedConversationDetails = new Set<string>();
   currentConversationId: string | null = null;
+  private conversationSelectionVersion = 0;
   timeline: TimelineItem[] = [];
   changes: ChangeItem[] = [];
   approvals: PendingApproval[] = [];
@@ -153,10 +155,12 @@ export class DesktopApp {
   }
 
   log(text: string) {
+    console.log('[sacode]', text);
     this.push({ kind: 'system', text });
   }
 
   error(text: string) {
+    console.error('[sacode]', text);
     this.push({ kind: 'error', text });
   }
 
@@ -204,6 +208,7 @@ export class DesktopApp {
       this.startViteStream();
     }
 
+    this.conversationSelectionVersion += 1;
     this.currentTaskId = null;
     this.currentConversationId = null;
     this.conversationTurns = null;
@@ -241,6 +246,7 @@ export class DesktopApp {
     localStorage.setItem('sacode.workspace', next);
     this.stopStream?.();
     this.stopStream = null;
+    this.conversationSelectionVersion += 1;
     this.currentTaskId = null;
     this.currentConversationId = null;
     this.conversationTurns = null;
@@ -338,16 +344,51 @@ export class DesktopApp {
     });
   }
 
+  /**
+   * 事件归属解析（保守归属）。
+   *
+   * 只采用事件自带标识（payload.task_id / data.task_id）；当事件缺失 task_id
+   * 但携带 conversation_id 时，按该会话最新一轮任务反查 task_id；确实无法归属时
+   * 返回空串，绝不无条件回落到 currentTaskId，否则多任务并发时会把事件串显到
+   * 当前任务上。
+   */
+  private eventAttribution(payload: {
+    event: string;
+    data: unknown;
+    task_id?: string;
+    id?: string;
+  }): { taskId: string; conversationId: string } {
+    const rec = (payload.data ?? {}) as Record<string, unknown>;
+    const conversationId =
+      (typeof rec.conversation_id === 'string' && rec.conversation_id) || '';
+    const explicitTaskId =
+      (typeof payload.task_id === 'string' && payload.task_id) ||
+      (typeof rec.task_id === 'string' && rec.task_id) ||
+      '';
+    const taskId = explicitTaskId || this.taskIdForConversation(conversationId);
+    return { taskId, conversationId };
+  }
+
+  /** 按会话最新一轮任务反查 task_id（事件缺少 task_id 时的保守归属）。 */
+  private taskIdForConversation(conversationId: string): string {
+    if (!conversationId) return '';
+    const detail =
+      this.conversationDetails.get(conversationId) ??
+      (this.conversationTurns?.id === conversationId ? this.conversationTurns : null);
+    return detail?.turns.at(-1)?.task_id ?? '';
+  }
+
   onDaemonEvent(payload: { event: string; data: unknown; task_id?: string; id?: string }) {
     const data = payload.data;
     const rec = (data ?? {}) as Record<string, unknown>;
-    const taskId =
-      payload.task_id ??
-      (typeof rec.task_id === 'string' ? rec.task_id : undefined) ??
-      this.currentTaskId ??
-      '';
+    const { taskId } = this.eventAttribution(payload);
 
-    if (payload.event === 'tool_call' || payload.event === 'tool_started' || rec.type === 'tool') {
+    if (
+      payload.event === 'tool_call_started' ||
+      payload.event === 'tool_call' ||
+      payload.event === 'tool_started' ||
+      rec.type === 'tool'
+    ) {
       const tool = String(rec.tool ?? rec.tool_name ?? rec.name ?? 'tool');
       const args = (rec.args ?? rec.input ?? {}) as Record<string, unknown>;
       const path = String(args.path ?? args.file ?? args.filename ?? '');
@@ -371,7 +412,7 @@ export class DesktopApp {
         detail: JSON.stringify(rec.args ?? rec).slice(0, 600),
         taskId,
       });
-      void this.refreshApprovals(taskId || this.currentTaskId || '');
+      if (taskId) void this.refreshApprovals(taskId);
       if (approvalId) this.emit();
     }
     if (payload.event === 'approval_resolved' && taskId) {
@@ -685,8 +726,9 @@ export class DesktopApp {
   async selectDesktopConversation(id: string) {
     if (!this.client) return;
     const client = this.client;
+    const selection = ++this.conversationSelectionVersion;
     const detail = await client.getDesktopConversation(id);
-    if (this.client !== client) return;
+    if (this.client !== client || selection !== this.conversationSelectionVersion) return;
     this.failedConversationDetails.delete(id);
     this.conversationDetails.set(id, detail);
     this.conversationTurns = detail;
@@ -694,6 +736,7 @@ export class DesktopApp {
     const latest = detail.turns.at(-1);
     this.currentTaskId = latest?.task_id || null;
     if (latest) await this.selectTask(latest.task_id);
+    if (this.client !== client || selection !== this.conversationSelectionVersion) return;
     if (this.mode === 'vite' && latest && typeof window !== 'undefined') this.startViteStream();
     this.emit();
   }
@@ -712,6 +755,7 @@ export class DesktopApp {
     this.tasks = this.tasks.filter((item) => !taskIds.includes(item.task_id));
     this.timeline = this.timeline.filter((item) => !item.taskId || !taskIds.includes(item.taskId));
     if (this.currentConversationId === id) {
+      this.conversationSelectionVersion += 1;
       this.currentConversationId = null;
       this.currentTaskId = null;
       this.conversationTurns = null;
@@ -741,8 +785,10 @@ export class DesktopApp {
       this.push({ kind: 'user', text: task.prompt, taskId });
     }
     await this.refreshStatus(taskId, true);
+    if (this.currentTaskId !== taskId) return;
     await this.refreshApprovals(taskId);
     await this.refreshChanges(taskId);
+    if (this.currentTaskId !== taskId) return;
     const status = this.timelineStatus || task?.status || '';
     if (status === 'running' || status === 'pending' || status === 'ready' || status === 'retrying') {
       this.startPoll(taskId);
@@ -812,6 +858,10 @@ export class DesktopApp {
     modelProvider?: string;
     modelName?: string;
     skill?: string;
+    /** 契约 §1.2：技能多选 */
+    skills?: string[];
+    /** 契约 §1.2：思考深度 */
+    reasoningEffort?: 'low' | 'medium' | 'high' | null;
     contextPaths?: string[];
     conversationId?: string | null;
   }) {
@@ -830,9 +880,12 @@ export class DesktopApp {
         modelProvider: opts.modelProvider,
         modelName: opts.modelName,
         skill: opts.skill,
+        skills: opts.skills,
+        reasoningEffort: opts.reasoningEffort,
         contextPaths: opts.contextPaths,
       });
       if (created.status === 'error') throw new Error(created.message || '任务创建失败');
+      this.conversationSelectionVersion += 1;
       this.currentTaskId = created.task_id;
       this.currentConversationId = created.conversation_id;
       this.changes = [];
@@ -841,8 +894,14 @@ export class DesktopApp {
       try {
         await this.refreshTasks();
         await this.refreshDesktopConversations();
-        this.conversationTurns = await this.client.getDesktopConversation(created.conversation_id);
-        this.conversationDetails.set(created.conversation_id, this.conversationTurns);
+        const client = this.client;
+        const detail = await client.getDesktopConversation(created.conversation_id);
+        if (this.client === client) {
+          this.conversationDetails.set(created.conversation_id, detail);
+          if (this.currentConversationId === created.conversation_id && this.currentTaskId === created.task_id) {
+            this.conversationTurns = detail;
+          }
+        }
       } catch (e) {
         this.error(`conversation refresh: ${e}`);
       }
@@ -935,6 +994,8 @@ export class DesktopApp {
           modelProvider: first.modelProvider,
           modelName: first.modelName,
           skill: first.skill,
+          skills: first.skills,
+          reasoningEffort: first.reasoningEffort,
           contextPaths: first.contextPaths,
         });
         if (created.status === 'error') throw new Error(created.message || '提交排队消息失败');
@@ -1368,43 +1429,67 @@ export class DesktopApp {
     }
   }
 
+  /** Ensure a resumed task has the same Tauri event bridge as a newly created task. */
+  async startTaskEventBridge(taskId: string): Promise<void> {
+    if (this.mode !== 'tauri') return;
+    try {
+      await startEventBridge(taskId);
+    } catch {
+      /* The global event bridge may already be attached. Polling remains available. */
+    }
+  }
+
   startPoll(taskId: string) {
-    this.pollTimer && clearInterval(this.pollTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
     let ticks = 0;
-    this.pollTimer = setInterval(() => {
+    let inFlight = false;
+    const timer = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
       void (async () => {
         ticks += 1;
         try {
+          if (this.pollTimer !== timer || this.currentTaskId !== taskId) return;
           await this.refreshStatus(taskId, false);
+          if (this.pollTimer !== timer || this.currentTaskId !== taskId) return;
           await this.refreshApprovals(taskId);
-          if (this.currentTaskId !== taskId) {
-            if (this.pollTimer) clearInterval(this.pollTimer);
-            this.pollTimer = null;
-            return;
-          }
+          if (this.pollTimer !== timer || this.currentTaskId !== taskId) return;
           const st = this.timelineStatus;
           if (st === 'completed' || st === 'failed' || st === 'cancelled' || st === 'error') {
             await this.refreshStatus(taskId, true);
             await this.refreshChanges(taskId);
-            if (this.currentConversationId && this.conversationTurns?.turns.some((turn) => turn.task_id === taskId)) {
-              this.conversationTurns = await this.client?.getDesktopConversation(this.currentConversationId) ?? null;
+            if (this.pollTimer !== timer || this.currentTaskId !== taskId) return;
+            const conversationId = this.currentConversationId;
+            const client = this.client;
+            if (conversationId && client) {
+              const detail = await client.getDesktopConversation(conversationId);
+              if (this.pollTimer !== timer || this.currentTaskId !== taskId || this.currentConversationId !== conversationId || this.client !== client) return;
+              this.conversationTurns = detail;
+              this.conversationDetails.set(conversationId, detail);
             }
             await this.refreshDesktopConversations();
             this.emit();
-            if (this.pollTimer) clearInterval(this.pollTimer);
-            this.pollTimer = null;
+            if (this.pollTimer === timer) {
+              clearInterval(timer);
+              this.pollTimer = null;
+            }
           }
         } catch (e) {
           this.error(`poll: ${e}`);
-          if (this.pollTimer) clearInterval(this.pollTimer);
-          this.pollTimer = null;
-        }
-        if (ticks > 180 && this.pollTimer) {
-          clearInterval(this.pollTimer);
-          this.pollTimer = null;
+          if (this.pollTimer === timer) {
+            clearInterval(timer);
+            this.pollTimer = null;
+          }
+        } finally {
+          inFlight = false;
+          if (ticks > 180 && this.pollTimer === timer) {
+            clearInterval(timer);
+            this.pollTimer = null;
+          }
         }
       })();
     }, 1500);
+    this.pollTimer = timer;
   }
 
   timelineStatus = '';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readArchivedSessions, setSessionArchived, updateUnreadSessions } from '../src/app/session-visibility.ts';
+import { readArchivedSessions, setSessionArchived, updateUnreadSessions } from '../src/ui/logic/session-visibility.ts';
 
 test('archiving is scoped to workspace and reversible', () => {
   const values = new Map<string, string>();

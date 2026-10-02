@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DaemonClient, TaskFileChange, TaskListItem } from '@cherishron/sacode-client-core';
-import { DesktopApp } from '../src/app/service.ts';
+import { DesktopApp } from '../src/ui/logic/services.ts';
 
 function completedTask(): TaskListItem {
   return {

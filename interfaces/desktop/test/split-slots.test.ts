@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assign, eject, firstEmptyIn, prune, seed, LOAD_MIME, SWAP_MIME } from '../src/app/split-slots.ts';
+import { assign, eject, firstEmptyIn, prune, seed, LOAD_MIME, SWAP_MIME } from '../src/ui/logic/split-slots.ts';
 test('assign is move semantics: one session never lives in two slots', () => {
   assert.deepEqual(assign(['a', null], 1, 'a'), [null, 'a']);
   assert.deepEqual(assign([], 3, 'x'), [null, null, null, 'x']);

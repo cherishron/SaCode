@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { closePaneLayout, layoutPanes, resizeSplit, restoreWorkbenchLayout, splitPane, swapPanePositions, type SplitLayout } from '../src/app/split-layout.ts';
+import { closePaneLayout, layoutPanes, resizeSplit, restoreWorkbenchLayout, splitPane, swapPanePositions, type SplitLayout } from '../src/ui/logic/split-layout.ts';
 
 test('splitting below a pane keeps its sibling and allows independent resize', () => {
   const initial: SplitLayout = { axis: 'column', ratio: 0.5, first: { pane: 0 }, second: { pane: 1 } };

@@ -1,4 +1,4 @@
-import { el } from '../dom.ts';
+import { el } from '../platform/dom.ts';
 import type { UiDocument, UiNode, UiViewport } from '@cherishron/sacode-client-core';
 
 const SAFE_STYLE_KEYS = new Set([

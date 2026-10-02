@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseReadyInfo, ReadyFileError, waitForHealthy } from '../src/sidecar.ts';
+import { parseReadyInfo, ReadyFileError, waitForHealthy } from '../src/ui/platform/sidecar.ts';
 
 test('parseReadyInfo accepts valid payload', () => {
   const info = parseReadyInfo(

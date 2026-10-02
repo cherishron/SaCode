@@ -1,4 +1,5 @@
 import type { ExecutionModeInput } from '@cherishron/sacode-client-core';
+import type { ReasoningEffort } from './turn-events.ts';
 
 export interface QueuedMessage {
   id: string;
@@ -8,6 +9,10 @@ export interface QueuedMessage {
   modelProvider?: string;
   modelName?: string;
   skill?: string;
+  /** 契约 §1.2：技能多选 */
+  skills?: string[];
+  /** 契约 §1.2：思考深度；null=跟随 provider 默认 */
+  reasoningEffort?: ReasoningEffort | null;
   contextPaths: string[];
   error?: string;
   sending?: boolean;

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildInitialUiDocument, createSaDesignState } from '../src/app/sadesign-state.ts';
+import { buildInitialUiDocument, createSaDesignState } from '../src/ui/logic/sadesign-state.ts';
 import {
   createUiNode,
   executeUiCommand,
   findUiNode,
   findUiNodeLocation,
   nextNodeId,
-} from '../src/app/ui-document-editor.ts';
+} from '../src/ui/logic/ui-document-editor.ts';
 
 test('UICommand updates node content without mutating source document', () => {
   const state = createSaDesignState();

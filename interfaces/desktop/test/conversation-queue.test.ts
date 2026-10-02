@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { moveQueuedMessage, restoreQueuedMessages, type QueuedMessage } from '../src/app/conversation-queue.ts';
+import { moveQueuedMessage, restoreQueuedMessages, type QueuedMessage } from '../src/ui/logic/conversation-queue.ts';
 
 test('queue reordering preserves all message payloads', () => {
   const queue: QueuedMessage[] = ['a', 'b', 'c'].map((id) => ({ id, prompt: id, mode: 'build', backendId: 'sacode', contextPaths: [] }));

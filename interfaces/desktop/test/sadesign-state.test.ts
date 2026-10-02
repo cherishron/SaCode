@@ -16,9 +16,9 @@ import {
   undoUiCommand,
   validateImplementationDraft,
   validateSaDesignDraft,
-} from '../src/app/sadesign-state.ts';
-import { resolveNodePresentation } from '../src/app/ui-document-preview.ts';
-import { findUiNode } from '../src/app/ui-document-editor.ts';
+} from '../src/ui/logic/sadesign-state.ts';
+import { resolveNodePresentation } from '../src/ui/logic/ui-document-preview.ts';
+import { findUiNode } from '../src/ui/logic/ui-document-editor.ts';
 
 test('SaDesign prompt includes project context and selected resources', () => {
   const state = createSaDesignState('opencode');

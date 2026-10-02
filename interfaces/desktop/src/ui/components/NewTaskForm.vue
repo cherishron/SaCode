@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { FolderOpenIcon } from 'tdesign-icons-vue-next';
-import { selectWorkspaceFolder } from '../../tauri-bridge.ts';
+import { selectWorkspaceFolder } from '../platform/tauri-bridge.ts';
 import { useDesktopApp } from '../composables/useDesktopApp';
 import ComposerDock from './ComposerDock.vue';
 

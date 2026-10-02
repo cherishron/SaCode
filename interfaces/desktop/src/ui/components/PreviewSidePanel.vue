@@ -8,6 +8,7 @@ import { ArrowRightIcon, CloseIcon, LinkIcon, RefreshIcon } from 'tdesign-icons-
  */
 const props = defineProps<{
   open: boolean;
+  embedded?: boolean;
   workspaceKey?: string;
 }>();
 
@@ -103,14 +104,15 @@ function onResizeStart(e: PointerEvent) {
 </script>
 
 <template>
-  <template v-if="open">
-    <div class="files-scrim" @click="emit('update:open', false)" />
+  <!-- embedded 时由工具栏 v-show 控制可见，保留预览 iframe -->
+  <template v-if="embedded || open">
+    <div v-if="!embedded" class="files-scrim" @click="emit('update:open', false)" />
     <aside
       class="files-side-panel preview-panel"
-      :class="{ dragging }"
-      :style="{ width: `${panelWidth}px` }"
+      :class="{ dragging, 'tools-embedded': embedded }"
+      :style="embedded ? {} : { width: `${panelWidth}px` }"
     >
-      <div class="files-resizer" @pointerdown.prevent="onResizeStart" />
+      <div v-if="!embedded" class="files-resizer" @pointerdown.prevent="onResizeStart" />
       <header class="files-head">
         <LinkIcon size="13" />
         <span class="files-title">预览</span>
@@ -127,7 +129,7 @@ function onResizeStart(e: PointerEvent) {
         <button class="ghost-btn" type="button" title="刷新" @click="reload">
           <RefreshIcon size="13" />
         </button>
-        <button class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
+        <button v-if="!embedded" class="ghost-btn" type="button" title="关闭" @click="emit('update:open', false)">
           <CloseIcon size="13" />
         </button>
       </header>
