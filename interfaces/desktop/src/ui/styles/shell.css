@@ -3291,3 +3291,261 @@ pre.files-preview-body code.hljs {
   color: var(--accent);
   background: var(--accent-soft);
 }
+
+/* ========== 侧栏脚部：导航行 + 用户行 + 头像浮窗 ==========
+ * .task-col-footer 原为横向 flex，把导航容器挤到 min-content，
+ * 导致「知识库 / 自动化」逐字竖排。改为纵向容器。 */
+.task-col-footer {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-2);
+}
+
+.task-col-footer-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.task-col-footer-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-weak);
+  font: var(--text-12-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-col-footer-link:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.task-col-footer-link.selected {
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+.task-col-footer-link-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-col-footer-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.user-popper {
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: calc(100% + var(--space-2));
+  z-index: 120;
+  padding: var(--space-3);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-md);
+  background: var(--bg-popup);
+  box-shadow: var(--shadow-md);
+}
+
+.user-popper-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.user-popper-avatar { flex-shrink: 0; }
+
+.user-popper-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-popper-id strong {
+  font: var(--text-13-regular);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-popper-id small {
+  font: var(--text-12-regular);
+  color: var(--text-weak);
+}
+
+.user-popper-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-3);
+  margin: var(--space-3) 0;
+  font: var(--text-12-regular);
+}
+
+.user-popper-meta dt { color: var(--text-weak); }
+.user-popper-meta dd { margin: 0; color: var(--text-base); }
+
+.user-popper-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-popper-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: var(--text-12-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-popper-item:hover {
+  background: var(--bg-raised);
+  color: var(--text-strong);
+}
+
+.user-popper-item:focus-visible,
+.user-popper :focus-visible,
+.task-col-footer-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ========== 知识库 / 自动化 全屏浮层 ==========
+ * 组件渲染 .feature-overlay > .feature-panel，但样式只有整页态
+ * .feature-page，浮层因此没有定位、没有底、没有尺寸约束。 */
+.feature-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(12px, 3vw, 40px);
+  background: var(--bg-scrim);
+}
+
+.feature-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-lg);
+  background: var(--bg-base);
+  box-shadow: var(--shadow-md);
+  color: var(--text-strong);
+}
+
+.feature-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-6);
+  flex-shrink: 0;
+  padding: clamp(16px, 2.5vw, 28px) clamp(16px, 3vw, 36px) var(--space-4);
+  border-bottom: 1px solid var(--border-weak);
+}
+
+.feature-panel-title { min-width: 0; }
+
+.feature-panel-title h1 {
+  margin: 6px 0 0;
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-weight: 550;
+  letter-spacing: -.02em;
+}
+
+/* 面板内子块沿用整页态样式，其水平内边距由外层 .feature-page 提供；
+   浮层里没有那层，故在此补上，否则工具栏与列表贴边。 */
+.feature-panel > :not(.feature-panel-head) {
+  margin-inline: clamp(16px, 3vw, 36px);
+}
+
+.feature-panel .feature-columns {
+  overflow: auto;
+  min-height: 0;
+}
+
+/* ========== 会话分组 ========== */
+.task-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: var(--space-2);
+}
+
+/* ========== About 模式徽标基座 ==========
+ * about-mode--{local,online,cloud_degraded} 只给配色，缺共用基座。 */
+.about-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font: var(--text-12-medium);
+  white-space: nowrap;
+}
+
+/* ========== 设置页控件基座 ========== */
+.settings-select {
+  min-width: 0;
+  padding: 4px var(--space-2);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--text-strong);
+  font: var(--text-12-regular);
+}
+
+.settings-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-backend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+/* ========== 工作区 Git 面板 ========== */
+.tools-git-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+}
+
+.git-branch {
+  color: var(--accent-fg);
+  font: var(--text-mono-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
