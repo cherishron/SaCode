@@ -421,7 +421,7 @@ impl SessionService {
         // 灵枢 · 上下文优化：按任务画像筛选注入 prompt 的工具 schema
         // 无角色白名单时，for_prompt 按 TaskProfile 自动映射扩展工具
         let session_profile =
-            crate::model_routing::TaskProfile::from_prompt_and_workspace(&task_info, &cwd);
+            crate::task_routing::TaskProfile::from_prompt_and_workspace(&task_info, &cwd);
         let (injected_specs, _budget_trimmed) =
             tools.for_prompt(None, Some(&session_profile), None);
         let tool_names: Vec<String> = injected_specs

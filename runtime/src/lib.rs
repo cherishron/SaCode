@@ -12,7 +12,6 @@ pub mod hook;
 pub mod identity;
 pub mod mcp;
 pub mod memory;
-pub mod model_routing;
 pub mod plugin;
 pub mod prompt;
 pub mod provider;
@@ -27,6 +26,7 @@ pub mod store;
 pub mod streaming;
 pub mod task_changes;
 pub mod task_protocol;
+pub mod task_routing;
 pub mod tools;
 pub mod wiki;
 pub mod workspace;
@@ -86,10 +86,16 @@ pub use memory::{
     MemoryIndex, MemoryIndexEntry, MemoryKind, MemoryScope, MemoryStatus, MEMORY_INDEX_FILE,
     PROJECT_WIKI_DIR,
 };
-pub use model_routing::{
+pub use task_routing::{
     ExecutionNode, FailoverContext, ModelRoutePlan, NodeDecision, NodeScore, NodeToolCall,
     RoutedModel, TaskProfile, TaskRiskLevel,
 };
+
+/// P2-2 兼容别名：原 `model_routing` 模块已重命名为 `task_routing`
+///（任务画像路由，与 `agents::model_router` 的角色路由区分）。
+/// 旧导入路径 `sacode_runtime::model_routing::*` 仍可用，避免破坏外部调用方。
+#[deprecated(since = "1.1.2", note = "renamed to `task_routing` (task-profile routing; distinct from agents::model_router role routing)")]
+pub use task_routing as model_routing;
 pub use plugin::{
     discover_wasm_plugins, load_wasm_plugin_dir, PluginDescriptor, PluginHost, PluginKind,
     PluginLoader, PluginRegistry, PluginResult, PluginSpec,

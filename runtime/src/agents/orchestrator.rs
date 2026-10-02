@@ -28,7 +28,7 @@ use super::summary_compactor::{
 use super::{build_execution_plan, RoleRegistry};
 use crate::agents::worker::{run_sub_agent, WorkerRunResult};
 use crate::config::profile::Profile;
-use crate::model_routing::TaskProfile;
+use crate::task_routing::TaskProfile;
 use crate::{task_run_from_report, CheckpointStorage};
 
 pub async fn execute_role_driven_orchestration(
@@ -788,7 +788,7 @@ mod tests {
         compact_aggregate_output, compact_conflict_detail, extract_risk_summary,
     };
     use crate::agents::worker::WorkerRunResult;
-    use crate::model_routing::{ModelRoutePlan, RoutedModel};
+    use crate::task_routing::{ModelRoutePlan, RoutedModel};
     use sacode_kernel::SummaryItemRecord;
     use sacode_kernel::{
         AgentRole, ConflictRecord, ExecutionReport, RoleModelPolicy, SubAgentResult, SubAgentTask,

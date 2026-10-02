@@ -11,10 +11,15 @@ use std::sync::Arc;
 
 pub mod importer;
 pub mod profile;
+pub mod provider;
 
 pub use importer::{
     apply_imported_providers, detect_external_tools, read_tool_providers, tool_from_id,
     DetectedTool, ExternalTool, ImportedProvider,
+};
+// P2-1：providers.json 单一事实源（读取/合并下沉到 runtime，CLI 与 daemon 共用）
+pub use provider::{
+    NamedProviderConfig, ProviderCatalog, ProviderCatalogStore, ProviderConfig,
 };
 
 const USER_ROOT_DIR: &str = ".sacode";

@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 
-use crate::model_routing::TaskProfile;
+use crate::task_routing::TaskProfile;
 
 use interceptor::{
     AsyncToolInterceptor, InterceptContext, PostExecuteDecision, PreExecuteDecision,
@@ -936,7 +936,7 @@ mod tests {
         let registry = ToolRegistry::builtin();
 
         // 构造一个会命中 web + git + media 的任务画像，使候选集包含这些扩展工具
-        let mut task_profile = crate::model_routing::TaskProfile::default();
+        let mut task_profile = crate::task_routing::TaskProfile::default();
         task_profile.task_kinds.extend(
             ["web", "git", "media", "test"]
                 .iter()
@@ -1009,7 +1009,7 @@ mod tests {
     #[test]
     fn for_prompt_with_profile_disabled_tools_remove() {
         let registry = ToolRegistry::builtin();
-        let mut task_profile = crate::model_routing::TaskProfile::default();
+        let mut task_profile = crate::task_routing::TaskProfile::default();
         task_profile
             .task_kinds
             .extend(["git", "web"].iter().map(|s| s.to_string()));

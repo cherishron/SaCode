@@ -6,7 +6,7 @@ use sacode_kernel::{
 };
 
 use super::model_router::resolve_role_route;
-use crate::model_routing::TaskProfile;
+use crate::task_routing::TaskProfile;
 
 pub fn parse_orchestration_hint(prompt: &str) -> OrchestrationHint {
     let trimmed = prompt.trim();
@@ -487,9 +487,9 @@ fn estimate_complexity(prompt: &str, profile: &TaskProfile) -> f32 {
 
 fn estimate_risk(profile: &TaskProfile, lower_prompt: &str) -> f32 {
     let mut risk: f32 = match profile.risk_level {
-        crate::model_routing::TaskRiskLevel::Low => 0.2,
-        crate::model_routing::TaskRiskLevel::Medium => 0.5,
-        crate::model_routing::TaskRiskLevel::High => 0.8,
+        crate::task_routing::TaskRiskLevel::Low => 0.2,
+        crate::task_routing::TaskRiskLevel::Medium => 0.5,
+        crate::task_routing::TaskRiskLevel::High => 0.8,
     };
     if contains_any(
         lower_prompt,

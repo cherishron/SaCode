@@ -17,7 +17,7 @@ use crate::executor::task_runner::{
     execute_task_with_failover, execute_task_with_provider, AutoApproveDecider,
     LoggingErrorRecorder, TaskRunConfig,
 };
-use crate::model_routing::TaskProfile;
+use crate::task_routing::TaskProfile;
 use crate::prompt::{build_system_prompt, PromptContext};
 use crate::tools::ToolRegistry;
 use crate::McpConfigStore;

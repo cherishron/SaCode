@@ -9,58 +9,30 @@ use sacode_kernel::model::{
     detect_provider_kind, normalize_base_url, preset_providers, ModelProvider, ProviderSpec,
     SaCodeConfig,
 };
+// P2-1：providers.json 的读取/合并逻辑统一由 runtime 提供（单一事实源），
+// CLI 不再自行解析三种历史格式，仅保留写入与 secret 处理。
+// 这些类型在 runtime 定义，此处重导出以保持 CLI 内部导入路径不变。
+pub use sacode_runtime::config::{
+    NamedProviderConfig, ProviderCatalog, ProviderCatalogStore, ProviderConfig,
+};
 use serde::{Deserialize, Serialize};
 
 const PROVIDER_CONFIG_FILE: &str = ".sacode/provider.json";
-const USER_PROVIDERS_FILE: &str = ".sacode/providers.json";
 const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
 
 /// Resolve user-level home directory (`~/.sacode/providers.json`).
+/// 保留给需要直接拿路径的调用方；读取一律走 `ProviderCatalogStore`。
 fn user_providers_path() -> PathBuf {
-    std::env::var_os("SACODE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("USERPROFILE")
-                .or_else(|| std::env::var_os("HOME"))
-                .map(PathBuf::from)
-        })
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(USER_PROVIDERS_FILE)
+    ProviderCatalogStore::new(Path::new(".")).user_path().to_path_buf()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderConfig {
-    pub base_url: String,
-    /// Plaintext key for legacy providers. Identity/sa-ai entries keep this empty
-    /// and resolve from `secret_ref`.
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub auth_header: Option<String>,
-    #[serde(default)]
-    pub auth_scheme: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub secret_ref: Option<sacode_kernel::model::SecretRef>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderCatalog {
-    #[serde(default)]
-    pub current: String,
-    #[serde(default)]
-    pub providers: BTreeMap<String, ProviderConfig>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NamedProviderConfig {
-    pub name: String,
-    pub config: ProviderConfig,
-}
+// 以下类型统一由 runtime 提供（P2-1 单一事实源），此处不再重复定义：
+// ProviderConfig / ProviderCatalog / NamedProviderConfig
 
 #[derive(Debug, Clone)]
 pub struct ProviderConfigStore {
+    /// 委托给 runtime 的共享 store（读取/合并/格式兼容）。
+    catalog: ProviderCatalogStore,
     /// User-level path (`~/.sacode/providers.json`) — primary write target.
     user_path: PathBuf,
     /// Project-level path (`.sacode/provider.json`) — read-only override.
@@ -75,99 +47,20 @@ pub struct SaCodeConfigStore {
 
 impl ProviderConfigStore {
     pub fn new(workdir: &Path) -> Self {
+        let catalog = ProviderCatalogStore::new(workdir);
         Self {
-            user_path: user_providers_path(),
+            user_path: catalog.user_path().to_path_buf(),
             project_path: workdir.join(PROVIDER_CONFIG_FILE),
+            catalog,
         }
     }
 
     /// Load a catalog from a single file path (user or project).
+    /// 委托 runtime 共享实现（P2-1：统一三种历史格式的解析）。
     fn load_from_file(path: &Path) -> Result<Option<ProviderCatalog>> {
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = fs::read_to_string(path)?;
-        if content.trim().is_empty() {
-            return Ok(None);
-        }
-        let value: serde_json::Value = serde_json::from_str(&content)?;
-        if value.get("providers").is_some() {
-            // Try standard catalog format first.
-            if let Ok(mut catalog) = serde_json::from_value::<ProviderCatalog>(value.clone()) {
-                normalize_catalog(&mut catalog);
-                return Ok(Some(catalog));
-            }
-            // Fallback: desktop camelCase format (apiKey/baseUrl/defaultModel/activeProvider).
-            return Self::parse_desktop_catalog(&value);
-        }
-        // legacy single-provider shape
-        let mut config: ProviderConfig = serde_json::from_value(value)?;
-        config.base_url = normalize_base_url(&config.base_url);
-        let mut providers = BTreeMap::new();
-        providers.insert("default".to_string(), config);
-        Ok(Some(ProviderCatalog {
-            current: "default".to_string(),
-            providers,
-        }))
+        ProviderCatalogStore::load_from_file(path)
     }
 
-    /// Parse desktop app's camelCase provider format into standard catalog.
-    fn parse_desktop_catalog(value: &serde_json::Value) -> Result<Option<ProviderCatalog>> {
-        let providers_val = value.get("providers");
-        let Some(providers_obj) = providers_val.and_then(|v| v.as_object()) else {
-            return Ok(None);
-        };
-        let mut providers = BTreeMap::new();
-        for (name, entry) in providers_obj {
-            // Convert camelCase to snake_case fields.
-            let config = ProviderConfig {
-                base_url: entry
-                    .get("baseUrl")
-                    .or_else(|| entry.get("base_url"))
-                    .and_then(|v| v.as_str())
-                    .map(normalize_base_url)
-                    .unwrap_or_default(),
-                api_key: entry
-                    .get("apiKey")
-                    .or_else(|| entry.get("api_key"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                model: entry
-                    .get("defaultModel")
-                    .or_else(|| entry.get("model"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                auth_header: entry
-                    .get("auth_header")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                auth_scheme: entry
-                    .get("auth_scheme")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                secret_ref: entry
-                    .get("secret_ref")
-                    .map(|v| serde_json::from_value(v.clone()))
-                    .transpose()
-                    .ok()
-                    .flatten(),
-            };
-            providers.insert(name.clone(), config);
-        }
-        let current = value
-            .get("activeProvider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let mut catalog = ProviderCatalog { current, providers };
-        normalize_catalog(&mut catalog);
-        Ok(Some(catalog))
-    }
-
-    /// Merge user-level and project-level catalogs.
-    /// Project-level entries override user-level same-name entries.
     fn load_effective_catalog(&self) -> Result<Option<ProviderCatalog>> {
         let user = Self::load_from_file(&self.user_path)?;
         let project = Self::load_from_file(&self.project_path)?;
@@ -546,34 +439,6 @@ fn default_sacode_config() -> SaCodeConfig {
     }
 }
 
-impl ProviderConfig {
-    /// Resolve api_key for runtime use: prefer secret_ref (product line), legacy plaintext last.
-    pub fn resolved_api_key(&self) -> String {
-        if let Some(r#ref) = self.secret_ref.as_ref() {
-            if let Ok(Some(v)) =
-                sacode_runtime::identity::secret_store::resolve_secret_ref(r#ref, None)
-            {
-                if !v.is_empty() {
-                    return v;
-                }
-            }
-        }
-        self.api_key.clone()
-    }
-
-    pub fn to_model_provider(&self) -> ModelProvider {
-        let kind = detect_provider_kind(&self.base_url, &self.model);
-        ModelProvider {
-            kind,
-            model: self.model.clone(),
-            base_url: Some(normalize_base_url(&self.base_url)),
-            api_key: Some(self.resolved_api_key()),
-            rule: None,
-            auth_header: self.auth_header.clone(),
-            auth_scheme: self.auth_scheme.clone(),
-        }
-    }
-}
 
 /// 从 kernel 预设生成 TUI /connect 选择列表：(name, base_url, needs_api_key)
 /// 统一收敛预设来源，避免 TUI 侧硬编码。

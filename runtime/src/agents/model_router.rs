@@ -22,7 +22,7 @@ use sacode_kernel::{AgentRole, RoleModelPolicy};
 use serde::{Deserialize, Serialize};
 
 use crate::identity::{resolve_secret_ref, IdentitySession};
-use crate::model_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
+use crate::task_routing::{ModelRoutePlan, RoutedModel, TaskProfile};
 
 const SACODE_CONFIG_FILE: &str = ".sacode/config.json";
 const MODEL_HEALTH_FILE: &str = ".sacode/model-health.json";

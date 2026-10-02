@@ -159,7 +159,7 @@ fn ling_shu_for_prompt_default_injects_core_only() {
 #[test]
 fn ling_shu_for_prompt_with_code_profile_includes_code_tools() {
     let registry = ToolRegistry::builtin();
-    let profile = crate::model_routing::TaskProfile {
+    let profile = crate::task_routing::TaskProfile {
         task_kinds: vec!["code".to_string()],
         ..Default::default()
     };
