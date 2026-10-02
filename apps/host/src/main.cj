@@ -1,6 +1,5 @@
 package host
 import core.*
-import std.io.*
 
 main(args: Array<String>) {
     let p = "session.log"
@@ -10,21 +9,38 @@ main(args: Array<String>) {
         println("err	no-command")
         return 0
     }
-    let log = SessionLog(p)
     let cmd = parts[0]
+    let lease = WriteLease(p)
+    let log = SessionLog(p)
     if (cmd == "projection") {
         if (!log.load()) {
             println("err	replay-rejected")
             return 1
         }
-        let m = log.deriveMessages()
-        println("ok	${m.size}	${log.events.size}")
-        for (s in m) {
+        println("ok	${log.deriveMessages().size}	${log.events.size}")
+        for (s in log.deriveMessages()) {
             println("msg	${s}")
         }
         return 0
     }
+    if (cmd == "acquire") {
+        if (!lease.acquire()) {
+            println("err	already-owned")
+            return 1
+        }
+        println("ok	lease-acquired")
+        return 0
+    }
+    if (cmd == "release") {
+        lease.release()
+        println("ok	lease-released")
+        return 0
+    }
     if (cmd == "append") {
+        if (!lease.acquire()) {
+            println("err	already-owned")
+            return 1
+        }
         if (!log.load()) {
             println("err	replay-rejected")
             return 1
@@ -34,6 +50,7 @@ main(args: Array<String>) {
             println("err	flush-failed")
             return 1
         }
+        lease.release()
         println("ok	${log.events.size}")
         return 0
     }

@@ -31,6 +31,11 @@ main(args: Array<String>) {
     }
 
     if (mode == "seed") {
+        let lease = WriteLease("session.log")
+        if (!lease.acquire()) {
+            println("err	already-owned")
+            return 1
+        }
         let sl = SessionLog("session.log")
         sl.append("turn/start", "t1")
         sl.append("system/message", "you are dsh")
@@ -39,9 +44,11 @@ main(args: Array<String>) {
         sl.append("assistant/message", "hi there")
         sl.append("turn/end", "completed")
         if (!sl.flush()) {
+            lease.release()
             println("err\tflush-failed")
             return 1
         }
+        lease.release()
         println("ok\tseeded\t${sl.events.size}")
         return 0
     }
