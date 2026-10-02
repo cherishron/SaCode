@@ -72,6 +72,12 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             ready_file = Some(PathBuf::from(value));
         } else if let Some(value) = arg.strip_prefix("--nonce=") {
             nonce = Some(value.to_string());
+        } else if arg == "--nonce" {
+            i += 1;
+            let value = args
+                .get(i)
+                .ok_or_else(|| anyhow::anyhow!("--nonce 需要参数"))?;
+            nonce = Some(value.clone());
         } else if let Some(value) = arg.strip_prefix("--auth-token=") {
             auth_token = Some(value.to_string());
         } else if arg == "--auth-token" {

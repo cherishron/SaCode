@@ -7,6 +7,7 @@ import {
     phaseForState,
 } from '../src/task-protocol';
 import {
+    parseAgentBackendsList,
     parseAgentsList,
     parseAuditResponse,
     parseDesignProjectContext,
@@ -80,6 +81,117 @@ test('Desktop conversation requests preserve one id across messages', async () =
     assert.match(requests[0].url, /\/api\/desktop\/conversations$/);
     assert.match(requests[1].url, /\/api\/desktop\/conversations\/conversation-1$/);
     assert.equal(JSON.parse(requests[1].body!).prompt, 'second');
+});
+
+test('desktop send maps reasoning_effort / skills / client_msg_id onto the wire', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = {
+            protocol_version: 1, task_id: 'task-1', status: 'queued', message: 'ok', queue_status: 'pending',
+            conversation_id: 'conversation-9', context_window: 200000,
+        };
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+    const response = await client.sendDesktopMessage({
+        prompt: 'hi', mode: 'build', backendId: 'sacode',
+        reasoningEffort: 'high', skills: ['code-review', 'test'], clientMsgId: 'msg-1',
+    });
+    assert.equal(response.context_window, 200000);
+    const wire = JSON.parse(requests[0].body!);
+    assert.equal(wire.reasoning_effort, 'high');
+    assert.deepEqual(wire.skills, ['code-review', 'test']);
+    assert.equal(wire.client_msg_id, 'msg-1');
+
+    await client.createTask({ prompt: 'hi', reasoningEffort: null, skills: [], clientMsgId: 'msg-2' });
+    const taskWire = JSON.parse(requests[1].body!);
+    assert.equal(taskWire.reasoning_effort, null);
+    assert.deepEqual(taskWire.skills, []);
+    assert.equal(taskWire.client_msg_id, 'msg-2');
+});
+
+test('conversation settings / rename / archive / restore / search hit contract endpoints', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = request.url.includes('/settings')
+            ? { conversation_id: 'conversation-1', draft: 'hello', skills: ['a'], reasoning_effort: 'low' }
+            : request.method === 'GET'
+                ? { conversations: [{ id: 'conversation-1', title: 't', created_at: 'now', latest_task_id: 'task-1', status: 'ok', archived: true, unread: false, updated_at: 'later', preview: 'p' }] }
+                : { status: 'ok' };
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+
+    const settings = await client.getDesktopConversationSettings('conversation-1');
+    assert.equal(settings.draft, 'hello');
+    assert.deepEqual(settings.skills, ['a']);
+    assert.match(requests[0].url, /\/api\/desktop\/conversations\/conversation-1\/settings$/);
+
+    const updated = await client.updateDesktopConversationSettings('conversation-1', { draft: 'world', skills: ['b'] });
+    assert.equal(updated.draft, 'hello'); // server echo in stub
+    assert.match(requests[1].url, /\/settings$/);
+    assert.equal(requests[1].method, 'PUT');
+
+    await client.renameDesktopConversation('conversation-1', '新标题');
+    assert.equal(JSON.parse(requests[2].body!).title, '新标题');
+    assert.equal(requests[2].method, 'PUT');
+    assert.match(requests[2].url, /\/api\/desktop\/conversations\/conversation-1$/);
+
+    await client.archiveDesktopConversation('conversation-1');
+    assert.match(requests[3].url, /\/archive$/);
+    await client.restoreDesktopConversation('conversation-1');
+    assert.match(requests[4].url, /\/restore$/);
+
+    const found = await client.listDesktopConversations({ q: '搜索词' });
+    assert.equal(found[0].archived, true);
+    assert.equal(found[0].preview, 'p');
+    assert.match(requests[5].url, /\?q=%E6%90%9C%E7%B4%A2%E8%AF%8D/);
+});
+
+test('MCP replace and skill import hit contract endpoints', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = request.url.includes('/skills/import')
+            ? { status: 'ok', skills: [{ name: 'imported-skill' }] }
+            : { status: 'ok', name: 'srv' };
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, transport });
+
+    await client.replaceMcpServer('srv', {
+        transport: 'http', url: 'https://example.test/mcp',
+        headers: { Authorization: 'Bearer x' }, env: { DEBUG: '1' }, enabled: true,
+    });
+    assert.equal(requests[0].method, 'PUT');
+    assert.match(requests[0].url, /\/api\/mcp\/srv$/);
+    const wire = JSON.parse(requests[0].body!);
+    assert.equal(wire.transport, 'http');
+    assert.deepEqual(wire.headers, { Authorization: 'Bearer x' });
+    assert.deepEqual(wire.env, { DEBUG: '1' });
+
+    const imported = await client.importSkill({ zipBase64: 'UEsDBA==', source: 'project' });
+    assert.equal(imported.skills[0].name, 'imported-skill');
+    assert.equal(requests[1].method, 'POST');
+    assert.match(requests[1].url, /\/api\/skills\/import$/);
+    assert.equal(JSON.parse(requests[1].body!).zip_base64, 'UEsDBA==');
+});
+
+test('parseTaskResponse keeps optional context_window', () => {
+    const response = parseTaskResponse({
+        protocol_version: 1, task_id: 't1', status: 'queued', message: '', queue_status: 'pending',
+        context_window: 128000,
+    });
+    assert.equal(response.context_window, 128000);
+    const without = parseTaskResponse({
+        protocol_version: 1, task_id: 't1', status: 'queued', message: '', queue_status: 'pending',
+    });
+    assert.equal(without.context_window, undefined);
 });
 
 test('knowledge response rejects malformed entries', async () => {
@@ -471,4 +583,129 @@ test('parseSseFrame extracts id and task_id', () => {
     assert.equal(parsed.id, '42');
     assert.equal(parsed.task_id, 'task-9');
     assert.equal((parsed.data as { backend_id?: string }).backend_id, 'sacode');
+});
+
+test('agent backend list hits /api/agent-backends and keeps health/install_hint/quota', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const payload = {
+        backends: [
+            { id: 'sacode', display_name: 'SaCode', kind: 'native', health: 'ready', enabled: true },
+            {
+                id: 'opencode', display_name: 'OpenCode', kind: 'acp', health: 'degraded', enabled: true,
+                executable: 'opencode', args: ['--acp'], install_hint: 'npm i -g opencode',
+                capabilities: { streaming: true, tool_calls: true, approvals: false, cancel: true, sessions: true, modes: ['build'] },
+                quota: { date: '2026-01-02', used: 3, limit: 10, exhausted: false },
+            },
+            { not: 'a backend' },
+        ],
+        default_backend_id: 'sacode',
+    };
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        return {
+            status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(payload),
+            json: async () => payload,
+            arrayBuffer: async () => new ArrayBuffer(0),
+        };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, token: 'test', transport });
+    const list = await client.listAgentBackends();
+    assert.match(requests[0].url, /\/api\/agent-backends$/);
+    assert.equal(requests[0].method, 'GET');
+    assert.equal(list.default_backend_id, 'sacode');
+    assert.equal(list.backends.length, 2);
+    assert.equal(list.backends[1].health, 'degraded');
+    assert.equal(list.backends[1].install_hint, 'npm i -g opencode');
+    assert.equal(list.backends[1].quota?.used, 3);
+    assert.equal(list.backends[1].quota?.limit, 10);
+    assert.equal(list.backends[1].args?.[0], '--acp');
+    assert.equal(list.backends[1].capabilities?.streaming, true);
+    assert.equal(list.backends[1].capabilities?.approvals, false);
+    assert.deepEqual(list.backends[1].capabilities?.modes, ['build']);
+});
+
+test('updateAgentBackend PUTs enabled/executable/args and returns descriptor', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const payload = {
+        status: 'ok',
+        backend: {
+            id: 'opencode', display_name: 'OpenCode', kind: 'acp', health: 'unknown',
+            enabled: false, executable: '/opt/opencode', args: ['--acp'],
+        },
+    };
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        return {
+            status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(payload),
+            json: async () => payload,
+            arrayBuffer: async () => new ArrayBuffer(0),
+        };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, token: 'test', transport });
+    const backend = await client.updateAgentBackend('opencode', {
+        enabled: false,
+        executable: '/opt/opencode',
+        args: ['--acp'],
+    });
+    assert.equal(requests[0].method, 'PUT');
+    assert.match(requests[0].url, /\/api\/agent-backends\/opencode$/);
+    const wire = JSON.parse(requests[0].body!);
+    assert.equal(wire.enabled, false);
+    assert.equal(wire.executable, '/opt/opencode');
+    assert.deepEqual(wire.args, ['--acp']);
+    assert.equal(backend.enabled, false);
+    assert.equal(backend.executable, '/opt/opencode');
+});
+
+test('probeAgentBackend POSTs probe and surfaces unavailable health on failure', async () => {
+    const requests: { method: string; url: string; body?: string }[] = [];
+    const responses: unknown[] = [
+        {
+            status: 'ok',
+            backend: {
+                id: 'opencode', display_name: 'OpenCode', kind: 'acp', health: 'ready',
+                enabled: true, executable: 'opencode', version: '1.2.3',
+            },
+        },
+        {
+            status: 'error',
+            backend: {
+                id: 'opencode', display_name: 'OpenCode', kind: 'acp', health: 'unavailable',
+                enabled: true, diagnostic: 'probe failed: backend/handshake_failed',
+            },
+        },
+    ];
+    const transport: HttpTransport = async request => {
+        requests.push({ method: request.method, url: request.url, body: request.body });
+        const body = responses.shift();
+        return { status: 200, statusText: 'OK', ok: true,
+            text: async () => JSON.stringify(body), json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    };
+    const client = new DaemonClient({ host: '127.0.0.1', port: 3000, token: 'test', transport });
+
+    const ok = await client.probeAgentBackend('opencode');
+    assert.equal(requests[0].method, 'POST');
+    assert.match(requests[0].url, /\/api\/agent-backends\/opencode\/probe$/);
+    assert.equal(ok.health, 'ready');
+    assert.equal(ok.version, '1.2.3');
+
+    const failed = await client.probeAgentBackend('opencode');
+    assert.equal(failed.health, 'unavailable');
+    assert.match(failed.diagnostic ?? '', /probe failed/);
+});
+
+test('parseAgentBackendsList defaults empty and keeps minimal descriptor', () => {
+    const empty = parseAgentBackendsList({ nope: true });
+    assert.equal(empty.backends.length, 0);
+    assert.equal(empty.default_backend_id, 'sacode');
+    const list = parseAgentBackendsList({
+        backends: [{ id: 'opencode', display_name: 'OpenCode', health: 'ready', enabled: true }],
+        default_backend_id: 'opencode',
+    });
+    assert.equal(list.default_backend_id, 'opencode');
+    assert.equal(list.backends[0].health, 'ready');
+    assert.equal(list.backends[0].enabled, true);
+    assert.equal(list.backends[0].quota, null);
 });

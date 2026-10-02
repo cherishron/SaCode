@@ -130,10 +130,36 @@ pub struct CreateProvider {
     base_url: String,
     api_key: String,
     models: Vec<String>,
+    /// 接口协议：openai_compatible | openai_responses | anthropic
+    /// （历史上还有 openai | yapi，向后兼容归一化处理）
+    #[serde(default = "default_api_type")]
+    api_type: String,
     #[serde(default)]
     thinking: bool,
     #[serde(default)]
     reasoning_effort: Option<String>,
+}
+
+fn default_api_type() -> String {
+    "openai_compatible".to_string()
+}
+
+/// 协议类型白名单（3 种）：
+/// - openai_compatible：OpenAI 兼容 /v1/chat/completions
+/// - openai_responses：OpenAI 原生 /v1/responses
+/// - anthropic：Claude / Anthropic Messages API
+pub const VALID_API_TYPES: [&str; 3] = ["openai_compatible", "openai_responses", "anthropic"];
+
+/// 归一化协议类型：历史值 openai→openai_compatible、yapi→openai_compatible、
+/// anthropic/claude→anthropic；未知值 → openai_compatible（默认）。
+pub fn normalize_api_type(raw: &str) -> String {
+    match raw.trim() {
+        "anthropic" | "claude" => "anthropic".to_string(),
+        "openai_responses" => "openai_responses".to_string(),
+        // openai（旧默认）、yapi（已移除的自定义网关）、openai_compatible 及一切
+        // 兼容 OpenAI chat/completions 的自定义端点，均归入 openai_compatible。
+        _ => "openai_compatible".to_string(),
+    }
 }
 
 pub async fn list(State(state): State<Arc<DaemonState>>) -> Reply {
@@ -169,6 +195,7 @@ pub async fn create(
 ) -> Reply {
     let name = input.name.trim();
     let models = input.models.iter().map(|m| m.trim()).collect::<Vec<_>>();
+    let api_type = normalize_api_type(&input.api_type);
     if name.is_empty()
         || name.len() > 64
         || !name
@@ -181,10 +208,11 @@ pub async fn create(
             m.is_empty() || m.len() > 128 || m.contains('/') || m.chars().any(char::is_control)
         })
         || models.len() > 50
+        || !VALID_API_TYPES.contains(&api_type.as_str())
     {
         return error(
             StatusCode::BAD_REQUEST,
-            "Provider 名称、URL、密钥或模型 ID 无效",
+            "Provider 名称、URL、密钥、模型 ID 或接口协议无效",
         );
     }
     let Some(path) = project_config_path(&state) else {
@@ -317,9 +345,128 @@ pub async fn delete(
     (StatusCode::OK, Json(json!({ "deleted": name })))
 }
 
+/// `POST /providers/local/models` 请求体。
+#[derive(Deserialize)]
+pub struct FetchProviderModelsRequest {
+    /// 接口协议（归一化后决定拉取路径）
+    #[serde(default = "default_api_type")]
+    api_type: String,
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+/// `POST /providers/local/models` — 从远端拉取可用模型列表。
+///
+/// - openai_compatible / openai_responses：`GET {base_url}/models`（OpenAI 标准）
+/// - anthropic：`GET {base_url}/models`（Anthropic Messages API 列表端点）
+///
+/// api_key 仅经 daemon 转发，不落盘、不回显。
+pub async fn fetch_provider_models(
+    Json(input): Json<FetchProviderModelsRequest>,
+) -> Reply {
+    if !valid_url(&input.base_url) {
+        return error(StatusCode::BAD_REQUEST, "接口地址无效");
+    }
+    let api_type = normalize_api_type(&input.api_type);
+    let root = input.base_url.trim().trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build();
+    let client = match client {
+        Ok(c) => c,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &format!("HTTP 客户端创建失败: {e}")),
+    };
+    let request = client
+        .get(format!("{root}/models"))
+        .header("accept", "application/json");
+    let request = if input.api_key.trim().is_empty() {
+        request
+    } else if api_type == "anthropic" {
+        // Anthropic 用 x-api-key + anthropic-version；其余两种用 Bearer。
+        request
+            .header("x-api-key", input.api_key.trim())
+            .header("anthropic-version", "2023-06-01")
+    } else {
+        request.bearer_auth(input.api_key.trim())
+    };
+    let response = match request.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                &format!("拉取模型列表失败（网络）: {e}"),
+            );
+        }
+    };
+    if !response.status().is_success() {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            &format!("远端返回 {}: 请检查接口地址与密钥", response.status().as_u16()),
+        );
+    }
+    let body: Value = match response.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                &format!("远端响应不是合法 JSON: {e}"),
+            );
+        }
+    };
+    // OpenAI 形状：{ data: [{ id }] }；Anthropic 形状：{ data: [{ id }] } 或 { models: [...] }
+    let mut ids: Vec<String> = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        if let Some(items) = body.get("models").and_then(|v| v.as_array()) {
+            ids = items
+                .iter()
+                .filter_map(|item| item.get("id").or_else(|| item.get("name")).and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect();
+        }
+    }
+    if ids.is_empty() {
+        return error(StatusCode::BAD_GATEWAY, "远端未返回任何模型（data 为空）");
+    }
+    ids.sort();
+    ids.dedup();
+    let models = ids
+        .into_iter()
+        .map(|id| json!({ "id": id }))
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(json!({ "models": models })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_type_normalizes_legacy_values_and_whitelists() {
+        // 历史值兼容：openai/yapi → openai_compatible
+        assert_eq!(normalize_api_type("openai"), "openai_compatible");
+        assert_eq!(normalize_api_type("yapi"), "openai_compatible");
+        assert_eq!(normalize_api_type(" openai_compatible "), "openai_compatible");
+        // 新值保持
+        assert_eq!(normalize_api_type("openai_responses"), "openai_responses");
+        assert_eq!(normalize_api_type("anthropic"), "anthropic");
+        assert_eq!(normalize_api_type("claude"), "anthropic");
+        // 未知值 → 默认
+        assert_eq!(normalize_api_type("whatever"), "openai_compatible");
+        // 归一化结果必在白名单内
+        assert!(VALID_API_TYPES.contains(&normalize_api_type("openai").as_str()));
+        assert!(VALID_API_TYPES.contains(&normalize_api_type("yapi").as_str()));
+    }
 
     #[test]
     fn provider_config_roundtrip_preserves_unrelated_fields() {

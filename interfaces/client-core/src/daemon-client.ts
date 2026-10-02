@@ -10,6 +10,7 @@ import {
     normalizeBackendId,
     normalizeExecutionMode,
     parseTaskSnapshot,
+    type AgentCapabilities,
     type AgentDescriptor,
     type EntrySource,
     type ExecutionModeInput,
@@ -37,6 +38,8 @@ export interface CreateTaskResponse {
     message: string;
     queue_status: string;
     task?: TaskSnapshot;
+    /** 该模型真实 token 窗口；缺省时前端才允许 200k 兜底（契约 §1.3） */
+    context_window?: number;
 }
 
 export interface TaskStatusBody {
@@ -89,12 +92,132 @@ export interface TaskListResponse {
     tasks: TaskListItem[];
 }
 
+/** 思考深度；null=跟随 provider 默认（契约 §1.2） */
+export type ReasoningEffort = 'low' | 'medium' | 'high' | null;
+
+/** 轮次结构化事件，驱动卡片颗粒度（契约 §2.2，含灵枢特色事件 §2.4） */
+export type TurnEvent =
+    | { type: 'text'; seq: number; text: string }
+    | { type: 'thinking'; seq: number; text: string; collapsed?: boolean }
+    | {
+        type: 'tool';
+        seq: number;
+        tool: string;
+        input?: unknown;
+        output?: string;
+        status: 'running' | 'ok' | 'err';
+        started_at?: string;
+        duration_ms?: number;
+    }
+    | {
+        type: 'approval';
+        seq: number;
+        approval_id: string;
+        tool: string;
+        summary: string;
+        diff?: string;
+        status: 'pending' | 'approved' | 'rejected';
+    }
+    | {
+        type: 'ask';
+        seq: number;
+        question_id: string;
+        question: string;
+        options?: string[];
+        allow_multiple?: boolean;
+        status: 'pending' | 'answered' | 'cancelled';
+        answer?: string | string[];
+    }
+    | {
+        type: 'subagent';
+        seq: number;
+        agent_id: string;
+        title: string;
+        status: 'running' | 'done' | 'failed';
+        summary?: string;
+        result?: string;
+    }
+    /* —— 灵枢特色事件（§2.4）—— */
+    | {
+        type: 'role_assignment';
+        seq: number;
+        roles: Array<{
+            role_id: string;
+            role_name?: string;
+            score?: number;
+            reason?: string;
+            model_provider?: string;
+            model_name?: string;
+        }>;
+    }
+    | {
+        type: 'conflict';
+        seq: number;
+        conflict_id?: string;
+        kind: string;
+        summary: string;
+        details?: string[];
+        status: 'detected' | 'intervening' | 'resolved' | 'ignored';
+        intervention?: {
+            target_role?: string;
+            action?: string;
+        };
+    }
+    | {
+        type: 'model_route';
+        seq: number;
+        role_id?: string;
+        primary: { provider: string; model: string; score?: number; needs_thinking?: boolean };
+        fallbacks?: Array<{ provider: string; model: string; score?: number }>;
+        reason?: string;
+        /** 发生过故障切换 */
+        failed_over?: boolean;
+    }
+    | {
+        type: 'summary';
+        seq: number;
+        task: string;
+        roles?: string[];
+        conclusion?: string;
+        key_risks?: string[];
+        next_action?: string;
+        conflicts?: string[];
+    };
+
+export interface TurnUsage {
+    input_tokens?: number;
+    output_tokens?: number;
+    context_window?: number;
+}
+
+export interface TurnSettingsSnapshot {
+    model_provider?: string;
+    model_name?: string;
+    reasoning_effort?: string | null;
+    skills?: string[];
+}
+
+/** 会话级设置持久化（daemon 侧，含输入草稿）（契约 §1.4） */
+export interface ConversationSettings {
+    conversation_id: string;
+    model_provider?: string;
+    model_name?: string;
+    reasoning_effort?: ReasoningEffort;
+    skills?: string[];
+    draft?: string;
+}
+
 export interface DesktopConversation {
     id: string;
     title: string;
     created_at: string;
     latest_task_id: string;
     status: string;
+    archived?: boolean;
+    unread?: boolean;
+    updated_at?: string;
+    /** 末条消息摘要，列表用 */
+    preview?: string;
 }
 
 export interface DesktopConversationTurn {
@@ -106,6 +229,10 @@ export interface DesktopConversationTurn {
     error?: string | null;
     /** P0-3 回放帧 */
     frames?: Array<{ seq: number; kind: string; text: string; detail?: string | null }>;
+    /** 结构化事件，驱动卡片颗粒度 */
+    events?: TurnEvent[];
+    usage?: TurnUsage;
+    settings_snapshot?: TurnSettingsSnapshot;
 }
 
 export interface DesktopConversationDetail {
@@ -193,6 +320,42 @@ export interface AgentsListResponse {
     default_backend_id: string;
 }
 
+/** O5 per-backend daily quota state (UTC+8 day reset). */
+export interface AgentBackendQuota {
+    date: string;
+    used: number;
+    limit?: number | null;
+    exhausted: boolean;
+    reason?: string | null;
+}
+
+/** Full agent backend descriptor (kernel `AgentDescriptor`, O2/O3/O5 fields included). */
+export interface AgentBackendDescriptor {
+    id: string;
+    display_name: string;
+    kind?: 'native' | 'acp';
+    health?: 'unknown' | 'ready' | 'degraded' | 'unavailable';
+    capabilities?: AgentCapabilities;
+    enabled: boolean;
+    executable?: string | null;
+    args?: string[] | null;
+    version?: string | null;
+    diagnostic?: string | null;
+    install_hint?: string | null;
+    quota?: AgentBackendQuota | null;
+}
+
+export interface AgentBackendsListResponse {
+    backends: AgentBackendDescriptor[];
+    default_backend_id: string;
+}
+
+export interface UpdateAgentBackendInput {
+    enabled?: boolean;
+    executable?: string;
+    args?: string[];
+}
+
 export interface WorkspaceModelOption {
     id: string;
     provider: string;
@@ -204,7 +367,24 @@ export interface WorkspaceModelOption {
 export interface WorkspaceSkillOption {
     name: string;
     description: string;
-    source: 'user' | 'project' | 'workspace' | 'builtin' | string;
+    source: 'user' | 'project' | 'workspace' | 'builtin' | 'imported' | string;
+    /** 默认启用标记；缺省 = true */
+    enabled?: boolean;
+    path?: string;
+    version?: string;
+    author?: string;
+    tags?: string[];
+}
+
+/** MCP 服务器配置（整对象替换语义，契约 §7.1） */
+export interface McpServerConfig {
+    name: string;
+    transport: 'stdio' | 'http' | 'sse';
+    command?: string[];
+    url?: string;
+    env?: Record<string, string>;
+    headers?: Record<string, string>;
+    enabled: boolean;
 }
 
 export interface WorkspaceFileOption {
@@ -228,6 +408,30 @@ export interface AccountStatus {
     default_model?: string | null;
     gateway_base_url: string;
     logged_in_at?: string | null;
+}
+
+/** GET/PUT /account/config 返回的 IdP/网关配置视图（不含任何 token/secret）。 */
+export interface IdentityConfigView {
+    ok?: boolean;
+    stored: {
+        idp_base_url: string;
+        gateway_base_url: string;
+        entitlement_base_url: string;
+        client_id: string;
+        provider_name: string;
+    };
+    effective: {
+        idp_base_url: string;
+        gateway_base_url: string;
+        entitlement_base_url: string;
+        client_id: string;
+        provider_name: string;
+    };
+    env_overrides: {
+        idp_base_url: boolean;
+        gateway_base_url: boolean;
+        entitlement_base_url: boolean;
+    };
 }
 
 export interface EntitlementItem {
@@ -936,6 +1140,7 @@ export function parseTaskResponse(body: unknown): CreateTaskResponse {
         message: typeof body.message === 'string' ? body.message : '',
         queue_status: typeof body.queue_status === 'string' ? body.queue_status : '',
         ...(parseTaskSnapshot(body.task) !== null ? { task: parseTaskSnapshot(body.task)! } : {}),
+        ...(typeof body.context_window === 'number' ? { context_window: body.context_window } : {}),
     };
 }
 
@@ -1215,6 +1420,62 @@ export function parseAgentsList(body: unknown): AgentsListResponse {
     };
 }
 
+const AGENT_BACKEND_HEALTHS = ['unknown', 'ready', 'degraded', 'unavailable'] as const;
+
+function parseAgentBackendQuota(raw: unknown): AgentBackendQuota | null {
+    if (!isRecord(raw)) return null;
+    return {
+        date: typeof raw.date === 'string' ? raw.date : '',
+        used: typeof raw.used === 'number' ? raw.used : 0,
+        limit: typeof raw.limit === 'number' ? raw.limit : null,
+        exhausted: raw.exhausted === true,
+        reason: typeof raw.reason === 'string' ? raw.reason : null,
+    };
+}
+
+/** 解析完整后端 descriptor（含 health / install_hint / quota）；非法项跳过 */
+export function parseAgentBackendDescriptor(raw: unknown): AgentBackendDescriptor | null {
+    if (!isRecord(raw) || typeof raw.id !== 'string') return null;
+    const health = AGENT_BACKEND_HEALTHS.find((h) => raw.health === h);
+    return {
+        id: normalizeBackendId(raw.id),
+        display_name: typeof raw.display_name === 'string' ? raw.display_name : normalizeBackendId(raw.id),
+        kind: raw.kind === 'native' || raw.kind === 'acp' ? raw.kind : undefined,
+        ...(health ? { health } : {}),
+        capabilities: isRecord(raw.capabilities) ? {
+            streaming: raw.capabilities.streaming === true,
+            tool_calls: raw.capabilities.tool_calls === true,
+            approvals: raw.capabilities.approvals === true,
+            cancel: raw.capabilities.cancel === true,
+            sessions: raw.capabilities.sessions === true,
+            modes: Array.isArray(raw.capabilities.modes)
+                ? raw.capabilities.modes.filter((m): m is string => typeof m === 'string')
+                : [],
+            ...(typeof raw.capabilities.notes === 'string' ? { notes: raw.capabilities.notes } : {}),
+        } : undefined,
+        enabled: raw.enabled !== false,
+        executable: typeof raw.executable === 'string' ? raw.executable : null,
+        args: Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === 'string') : null,
+        version: typeof raw.version === 'string' ? raw.version : null,
+        diagnostic: typeof raw.diagnostic === 'string' ? raw.diagnostic : null,
+        install_hint: typeof raw.install_hint === 'string' ? raw.install_hint : null,
+        quota: parseAgentBackendQuota(raw.quota),
+    };
+}
+
+/** GET /api/agent-backends 响应：backends + default_backend_id */
+export function parseAgentBackendsList(body: unknown): AgentBackendsListResponse {
+    if (!isRecord(body) || !Array.isArray(body.backends)) {
+        return { backends: [], default_backend_id: DEFAULT_AGENT_BACKEND_ID };
+    }
+    return {
+        backends: body.backends
+            .map(parseAgentBackendDescriptor)
+            .filter((b): b is AgentBackendDescriptor => b !== null),
+        default_backend_id: normalizeBackendId(body.default_backend_id),
+    };
+}
+
 /**
  * Daemon HTTP client shared by VSCode and Desktop.
  * Desktop must inject a Tauri IPC transport so the WebView never holds the bearer token.
@@ -1287,8 +1548,9 @@ function isAutomationRun(value: unknown): value is AutomationRun {
 }
 function isGitAuthPlatformStatus(value: unknown): value is GitAuthPlatformStatus {
     return isRecord(value) && typeof value.host === 'string' && typeof value.configured === 'boolean'
-        && typeof value.token_present === 'boolean' && typeof value.login === 'string'
-        && typeof value.updated_at === 'string' && typeof value.mode === 'string';
+        && typeof value.token_present === 'boolean' && (value.login === null || typeof value.login === 'string')
+        && (value.updated_at === null || typeof value.updated_at === 'string')
+        && (value.mode === null || typeof value.mode === 'string');
 }
 function isGithubDeviceFlow(value: unknown): value is GithubDeviceFlow {
     return isRecord(value) && typeof value.device_code === 'string' && typeof value.user_code === 'string'
@@ -1398,6 +1660,33 @@ export class DaemonClient {
         return parseAgentsList(await res.json());
     }
 
+    /** O3: 列出 agent backends + 默认后端 */
+    async listAgentBackends(): Promise<AgentBackendsListResponse> {
+        const res = await this.request('GET', '/api/agent-backends');
+        if (!res.ok) throw await responseError(res, 'Agent backend list');
+        return parseAgentBackendsList(await res.json());
+    }
+
+    /** O3: 更新后端 enabled / executable / args（native sacode 不可改） */
+    async updateAgentBackend(id: string, input: UpdateAgentBackendInput): Promise<AgentBackendDescriptor> {
+        const res = await this.request('PUT', `/api/agent-backends/${encodeURIComponent(id)}`, input);
+        if (!res.ok) throw await responseError(res, 'Agent backend update');
+        const body = await res.json();
+        const backend = isRecord(body) ? parseAgentBackendDescriptor(body.backend) : null;
+        if (!backend) throw new Error('Agent backend update returned an unexpected response body');
+        return backend;
+    }
+
+    /** O3: 探测后端，返回最新 descriptor（探测失败时 HTTP 200 + health=unavailable + diagnostic） */
+    async probeAgentBackend(id: string): Promise<AgentBackendDescriptor> {
+        const res = await this.request('POST', `/api/agent-backends/${encodeURIComponent(id)}/probe`);
+        if (!res.ok) throw await responseError(res, 'Agent backend probe');
+        const body = await res.json();
+        const backend = isRecord(body) ? parseAgentBackendDescriptor(body.backend) : null;
+        if (!backend) throw new Error('Agent backend probe returned an unexpected response body');
+        return backend;
+    }
+
     async accountStatus(): Promise<{ account: AccountStatus; login_state?: string | null }> {
         const res = await this.request('GET', '/account/status');
         if (!res.ok) throw await responseError(res, 'Account status');
@@ -1494,6 +1783,18 @@ export class DaemonClient {
         return await res.json() as { ok: boolean; request: Record<string, unknown> };
     }
 
+    async accountConfigGet(): Promise<IdentityConfigView> {
+        const res = await this.request('GET', '/account/config');
+        if (!res.ok) throw await responseError(res, 'Account config');
+        return await res.json() as IdentityConfigView;
+    }
+
+    async accountConfigUpdate(input: { idp_base_url?: string; gateway_base_url?: string; entitlement_base_url?: string; provider_name?: string }): Promise<IdentityConfigView> {
+        const res = await this.request('PUT', '/account/config', input);
+        if (!res.ok) throw await responseError(res, 'Account config update');
+        return await res.json() as IdentityConfigView;
+    }
+
     async registerModelConnection(input: { name: string; base_url: string; upstream_api_key: string; models: { client_model: string; upstream_model: string }[] }): Promise<void> {
         const res = await this.request('POST', '/account/connections', input);
         if (!res.ok) throw await responseError(res, 'Gateway model registration');
@@ -1505,9 +1806,50 @@ export class DaemonClient {
         return await res.json() as { providers: { name: string; base_url: string; models: string[]; has_credential: boolean }[] };
     }
 
-    async createLocalProvider(input: { name: string; base_url: string; api_key: string; models: string[]; thinking: boolean; reasoning_effort?: string }): Promise<void> {
-        const res = await this.request('POST', '/providers/local', input);
+    async createLocalProvider(input: {
+        name: string;
+        /**
+         * 接口协议（3 种）：
+         * - openai_compatible：OpenAI 兼容 /v1/chat/completions（Ollama、vLLM、DeepSeek 等）
+         * - openai_responses：OpenAI 原生 /v1/responses（GPT-5 系列）
+         * - anthropic：Claude / Anthropic Messages API
+         */
+        api_type?: string;
+        base_url: string;
+        api_key: string;
+        models: string[];
+        thinking: boolean;
+        reasoning_effort?: string;
+    }): Promise<void> {
+        const res = await this.request('POST', '/providers/local', {
+            name: input.name,
+            api_type: input.api_type || 'openai_compatible',
+            base_url: input.base_url,
+            api_key: input.api_key,
+            models: input.models,
+            thinking: input.thinking,
+            reasoning_effort: input.reasoning_effort,
+        });
         if (!res.ok) throw await responseError(res, 'Create local provider');
+    }
+
+    /**
+     * 从远端拉取 provider 可用模型列表（OpenAI /models 标准端点；
+     * Anthropic 走 daemon 适配）。api_key 仅经 daemon 转发，不落前端持久存储。
+     */
+    async fetchProviderModels(input: {
+        api_type: string;
+        base_url: string;
+        api_key?: string;
+    }): Promise<{ models: { id: string; owned_by?: string }[] }> {
+        const res = await this.request('POST', '/providers/local/models', {
+            api_type: input.api_type || 'openai_compatible',
+            base_url: input.base_url,
+            api_key: input.api_key ?? '',
+        });
+        if (!res.ok) throw await responseError(res, 'Fetch provider models');
+        const body = await res.json() as { models?: { id: string; owned_by?: string }[] };
+        return { models: Array.isArray(body.models) ? body.models : [] };
     }
 
     async deleteLocalProvider(name: string): Promise<void> {
@@ -1773,7 +2115,7 @@ export class DaemonClient {
     async startGithubDeviceFlow(clientId?: string): Promise<GithubDeviceFlow> {
         const res = await this.request('POST', '/api/git-auth/github/device', { ...(clientId ? { client_id: clientId } : {}) });
         if (!res.ok) throw await responseError(res, 'GitHub device flow');
-        return parseWrappedItem(await res.json(), 'device_flow', isGithubDeviceFlow);
+        return await res.json() as GithubDeviceFlow;
     }
     async pollGithubDeviceFlow(deviceCode: string, timeoutSeconds?: number, clientId?: string): Promise<{ status: string; login?: string }> {
         const res = await this.request('POST', '/api/git-auth/github/poll', {
@@ -1788,7 +2130,7 @@ export class DaemonClient {
     async authorizeGitee(redirectUri?: string): Promise<GiteeAuthorizeFlow> {
         const res = await this.request('POST', '/api/git-auth/gitee/authorize', { ...(redirectUri ? { redirect_uri: redirectUri } : {}) });
         if (!res.ok) throw await responseError(res, 'Gitee authorize');
-        return parseWrappedItem(await res.json(), 'authorize', isGiteeAuthorizeFlow);
+        return await res.json() as GiteeAuthorizeFlow;
     }
     async completeGiteeAuth(code: string, redirectUri?: string): Promise<{ status: string }> {
         const res = await this.request('POST', '/api/git-auth/gitee/callback', {
@@ -1860,6 +2202,12 @@ export class DaemonClient {
         modelName?: string;
         skill?: string;
         contextPaths?: string[];
+        /** 思考深度；null=跟随 provider 默认 */
+        reasoningEffort?: ReasoningEffort;
+        /** 技能多选；空数组=不注入技能 */
+        skills?: string[];
+        /** 幂等去重（草稿重发） */
+        clientMsgId?: string;
     }): Promise<CreateTaskResponse> {
         const body = {
             // Daemon TaskRequest (HTTP) is prompt/mode-first; protocol fields optional for clients.
@@ -1875,14 +2223,18 @@ export class DaemonClient {
             ...(options.modelName ? { model_name: options.modelName } : {}),
             ...(options.skill ? { skill: options.skill } : {}),
             context_paths: options.contextPaths ?? [],
+            ...(options.reasoningEffort !== undefined ? { reasoning_effort: options.reasoningEffort } : {}),
+            ...(options.skills ? { skills: options.skills } : {}),
+            ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
         };
         const res = await this.request('POST', '/task', body);
         if (!res.ok) throw await responseError(res, 'Task creation');
         return parseTaskResponse(await res.json());
     }
 
-    async listDesktopConversations(): Promise<DesktopConversation[]> {
-        const res = await this.request('GET', '/api/desktop/conversations');
+    async listDesktopConversations(options?: { q?: string }): Promise<DesktopConversation[]> {
+        const qs = options?.q ? `?q=${encodeURIComponent(options.q)}` : '';
+        const res = await this.request('GET', `/api/desktop/conversations${qs}`);
         if (!res.ok) throw await responseError(res, 'Conversation list');
         return (await res.json() as { conversations: DesktopConversation[] }).conversations;
     }
@@ -1895,21 +2247,71 @@ export class DaemonClient {
 
     async sendDesktopMessage(options: {
         prompt: string; mode: ExecutionModeInput; backendId: string; conversationId?: string;
-        modelProvider?: string; modelName?: string; skill?: string; contextPaths?: string[];
-    }): Promise<CreateTaskResponse & { conversation_id: string }> {
+        modelProvider?: string; modelName?: string; skill?: string;
+        /** 契约 §1.2：技能多选 */
+        skills?: string[];
+        /** 契约 §1.2：思考深度；null=跟随 provider 默认 */
+        reasoningEffort?: 'low' | 'medium' | 'high' | null;
+        /** 契约 §1.2：幂等去重（草稿重发） */
+        clientMsgId?: string;
+        contextPaths?: string[];
+    }): Promise<CreateTaskResponse & { conversation_id: string; context_window?: number }> {
         const res = await this.request('POST', options.conversationId
             ? `/api/desktop/conversations/${encodeURIComponent(options.conversationId)}`
             : '/api/desktop/conversations', {
             prompt: options.prompt, mode: normalizeExecutionMode(options.mode), backend_id: normalizeBackendId(options.backendId),
-            model_provider: options.modelProvider, model_name: options.modelName, skill: options.skill, context_paths: options.contextPaths ?? [],
+            model_provider: options.modelProvider, model_name: options.modelName, skill: options.skill,
+            skills: options.skills, reasoning_effort: options.reasoningEffort,
+            client_msg_id: options.clientMsgId,
+            context_paths: options.contextPaths ?? [],
         });
         if (!res.ok) throw await responseError(res, 'Conversation message');
-        return await res.json() as CreateTaskResponse & { conversation_id: string };
+        return await res.json() as CreateTaskResponse & { conversation_id: string; context_window?: number };
     }
 
     async deleteDesktopConversation(id: string): Promise<void> {
         const res = await this.request('DELETE', `/api/desktop/conversations/${encodeURIComponent(id)}`);
         if (!res.ok) throw await responseError(res, 'Conversation deletion');
+    }
+
+    /** 会话设置（含输入草稿），daemon 落盘、跨设备同步（契约 §1.4） */
+    async getDesktopConversationSettings(id: string): Promise<ConversationSettings> {
+        const res = await this.request('GET', `/api/desktop/conversations/${encodeURIComponent(id)}/settings`);
+        if (!res.ok) throw await responseError(res, 'Conversation settings');
+        return await res.json() as ConversationSettings;
+    }
+
+    async updateDesktopConversationSettings(
+        id: string,
+        settings: Partial<Omit<ConversationSettings, 'conversation_id'>>,
+    ): Promise<ConversationSettings> {
+        const res = await this.request(
+            'PUT',
+            `/api/desktop/conversations/${encodeURIComponent(id)}/settings`,
+            settings,
+        );
+        if (!res.ok) throw await responseError(res, 'Conversation settings update');
+        return await res.json() as ConversationSettings;
+    }
+
+    /** 重命名（落盘，不再只写 localStorage） */
+    async renameDesktopConversation(id: string, title: string): Promise<void> {
+        const res = await this.request(
+            'PUT',
+            `/api/desktop/conversations/${encodeURIComponent(id)}`,
+            { title },
+        );
+        if (!res.ok) throw await responseError(res, 'Conversation rename');
+    }
+
+    async archiveDesktopConversation(id: string): Promise<void> {
+        const res = await this.request('POST', `/api/desktop/conversations/${encodeURIComponent(id)}/archive`, {});
+        if (!res.ok) throw await responseError(res, 'Conversation archive');
+    }
+
+    async restoreDesktopConversation(id: string): Promise<void> {
+        const res = await this.request('POST', `/api/desktop/conversations/${encodeURIComponent(id)}/restore`, {});
+        if (!res.ok) throw await responseError(res, 'Conversation restore');
     }
 
     async listTasks(): Promise<TaskListResponse> {
@@ -1929,8 +2331,14 @@ export class DaemonClient {
         return parseTaskChanges(await res.json());
     }
 
+    async exportEnterpriseAudit(): Promise<{ ok: boolean; source: string; path: string; lines: number; content: string }> {
+        const res = await this.request('POST', '/api/audit/export', {});
+        if (!res.ok) throw await responseError(res, 'Enterprise audit export');
+        return await res.json() as { ok: boolean; source: string; path: string; lines: number; content: string };
+    }
+
     async runAudit(opts?: { use_ai?: boolean; max_files?: number }): Promise<AuditResponse> {
-        const res = await this.request('POST', '/audit', opts ? JSON.stringify(opts) : '{}');
+        const res = await this.request('POST', '/audit', opts ?? {});
         if (!res.ok) throw await responseError(res, 'Audit scan request');
         return parseAuditResponse(await res.json());
     }
@@ -1959,18 +2367,18 @@ export class DaemonClient {
         contentBase64: string;
         kind?: string;
     }): Promise<{ status: string; path: string; size: number; message?: string }> {
-        const res = await this.request('POST', '/api/workspace/uploads', JSON.stringify({
+        const res = await this.request('POST', '/api/workspace/uploads', {
             filename: options.filename,
             content_base64: options.contentBase64,
             kind: options.kind ?? '',
-        }));
+        });
         if (!res.ok) throw await responseError(res, 'Upload attachment');
         return await res.json() as { status: string; path: string; size: number; message?: string };
     }
 
     /** P1-2：技能管理 */
     async listSkills(): Promise<{
-        skills: Array<{
+        skills: Array<WorkspaceSkillOption & {
             name: string;
             description: string;
             source: string;
@@ -1995,9 +2403,11 @@ export class DaemonClient {
             version?: string;
             author?: string;
             tags?: string[];
+            /** 默认启用标记；缺省 = true */
+            enabled?: boolean;
         },
     ): Promise<{ status: string; name?: string; path?: string; message?: string }> {
-        const res = await this.request('PUT', `/api/skills/${encodeURIComponent(name)}`, JSON.stringify(body));
+        const res = await this.request('PUT', `/api/skills/${encodeURIComponent(name)}`, body);
         if (!res.ok) throw await responseError(res, 'Skill upsert');
         return await res.json() as { status: string; name?: string; path?: string; message?: string };
     }
@@ -2008,15 +2418,32 @@ export class DaemonClient {
         if (!res.ok) throw await responseError(res, 'Skill delete');
     }
 
+    /** 导入技能（ZIP base64 或目录扫描），落 project 源（契约 §7.2） */
+    async importSkill(options: {
+        zipBase64?: string;
+        directory?: string;
+        source?: 'user' | 'project' | 'workspace';
+    }): Promise<{ status: string; skills: Array<{ name: string; path?: string }>; message?: string }> {
+        const res = await this.request('POST', '/api/skills/import', {
+            ...(options.zipBase64 ? { zip_base64: options.zipBase64 } : {}),
+            ...(options.directory ? { directory: options.directory } : {}),
+            ...(options.source ? { source: options.source } : {}),
+        });
+        if (!res.ok) throw await responseError(res, 'Skill import');
+        return await res.json() as { status: string; skills: Array<{ name: string; path?: string }>; message?: string };
+    }
+
     /** P1-1：MCP 服务器管理 */
     async listMcpServers(): Promise<{
         servers: Array<{
             name: string;
             type: string;
+            transport?: 'stdio' | 'http' | 'sse';
             url?: string;
             command?: string;
             args?: string[];
             env?: Record<string, string>;
+            headers?: Record<string, string>;
             enabled: boolean;
             source: string;
         }>;
@@ -2035,12 +2462,23 @@ export class DaemonClient {
             command?: string;
             args?: string[];
             env?: Record<string, string>;
+            headers?: Record<string, string>;
             enabled?: boolean;
             source?: 'user' | 'project';
         },
     ): Promise<{ status: string; name?: string; message?: string }> {
-        const res = await this.request('PUT', `/api/mcp/servers/${encodeURIComponent(name)}`, JSON.stringify(body));
+        const res = await this.request('PUT', `/api/mcp/servers/${encodeURIComponent(name)}`, body);
         if (!res.ok) throw await responseError(res, 'MCP upsert');
+        return await res.json() as { status: string; name?: string; message?: string };
+    }
+
+    /** 整对象替换（含 headers/env），契约 §7.1 `PUT /api/mcp/:name` */
+    async replaceMcpServer(
+        name: string,
+        config: Omit<McpServerConfig, 'name'>,
+    ): Promise<{ status: string; name?: string; message?: string }> {
+        const res = await this.request('PUT', `/api/mcp/${encodeURIComponent(name)}`, config);
+        if (!res.ok) throw await responseError(res, 'MCP replace');
         return await res.json() as { status: string; name?: string; message?: string };
     }
 
@@ -2053,7 +2491,7 @@ export class DaemonClient {
         const res = await this.request(
             'POST',
             `/api/mcp/servers/${encodeURIComponent(name)}/toggle`,
-            JSON.stringify({ enabled, source: source ?? 'project' }),
+            { enabled, source: source ?? 'project' },
         );
         if (!res.ok) throw await responseError(res, 'MCP toggle');
     }
@@ -2076,7 +2514,7 @@ export class DaemonClient {
         const res = await this.request(
             'POST',
             `/task/${encodeURIComponent(taskId)}/answer`,
-            JSON.stringify(body),
+            body,
         );
         if (!res.ok) throw await responseError(res, 'Answer question');
         return await res.json() as { task_id?: string; conversation_id?: string; status?: string; message?: string };
