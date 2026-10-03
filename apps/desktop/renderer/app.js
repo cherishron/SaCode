@@ -5,6 +5,9 @@
 const { createApp, h, ref, onMounted } = window.Vue;
 
 const el = (tag, cls, children, extra) => h(tag, Object.assign({ class: cls }, extra || {}), children);
+const roleName = (role) => ({ system: "系统", developer: "开发者", user: "用户", assistant: "助手", tool: "工具" }[role] || "系统");
+const verdictName = (verdict) => ({ recorded: "已计量", "over-budget": "超出预算", absent: "未收到用量", "bad-usage": "用量格式异常" }[verdict] || "未计量");
+const navIcon = (path) => h("svg", { class: "nav-symbol", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, [h("path", { d: path })]);
 
 // TinyVue 组件由 scripts/pack-tinyvue.mjs 在构建期折叠成 vendor/tinyvue.iife.js（经典脚本）：
 // 组件库自身是 ESM-only，而这里跑在 file:// + CSP script-src 'self' 上，既不能加载 ES module
@@ -286,14 +289,22 @@ createApp({
   render() {
     const self = this;
     const head = el("header", "top", [
-      el("span", "brand", "DSH · 会话投影"),
+      el("div", "heading", [el("h1", null, "会话"), el("span", "note", "消息与执行记录")]),
       el("div", "counters", [
-        el("span", "badge", "events " + self.proj.events, { id: "count-events" }),
-        el("span", "badge", "durable " + self.proj.durable, { id: "count-durable" }),
-        el("span", "badge" + (self.proj.pending > 0 ? " badge-warn" : " badge-ok"), "pending " + self.proj.pending, { id: "count-pending" }),
-        el("span", "badge" + (self.proj.truncatedTail ? " badge-danger" : ""), self.proj.truncatedTail ? "tail truncated" : "tail ok", { id: "count-tail" }),
+        el("span", "badge", "事件 " + self.proj.events, { id: "count-events" }),
+        el("span", "badge", "已保存 " + self.proj.durable, { id: "count-durable" }),
+        el("span", "badge" + (self.proj.pending > 0 ? " badge-warn" : " badge-ok"), "待保存 " + self.proj.pending, { id: "count-pending" }),
+        el("span", "badge" + (self.proj.truncatedTail ? " badge-danger" : ""), self.proj.truncatedTail ? "尾帧已截断" : "记录完整", { id: "count-tail" }),
       ]),
     ]);
+    const nav = el("nav", "navigation", [
+      el("div", "brand", [h("img", { src: "assets/sacode-logo.png", alt: "SaCode", width: 32, height: 32 }), el("span", null, "SaCode")]),
+      el("p", "nav-caption", "编程工作台"),
+      el("a", "nav-item nav-current", [navIcon("M4 4h16v12H9l-5 4V4z M8 8h8 M8 12h5"), el("span", "nav-label", "会话")], { href: "#composer", "aria-current": "page", "aria-label": "会话" }),
+      el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批" }),
+      el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算" }),
+      el("div", "nav-footer", [el("span", "note", "本地会话"), el("span", "note", "使用你的模型与服务凭证")]),
+    ], { "aria-label": "工作台导航" });
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
     // 组标签走 prefix 槽，内容是「组内条数 × 映射角色」——两个数都能从投影数出来，
@@ -311,14 +322,14 @@ createApp({
           },
           {
             prefix: (slot) => [
-              h("span", { class: "msg-role" }, (slot.messageIndexes || slot.messages || []).length + " × " + (slot.role || "system")),
+              h("span", { class: "msg-role" }, roleName(slot.role) + " · " + (slot.messageIndexes || slot.messages || []).length + " 条消息"),
             ],
           }
         ),
       ]),
     ];
 
-    const streamChildren = [el("span", "msg-role", "assistant/stream")];
+    const streamChildren = [el("span", "msg-role", "助手 · 流式输出")];
     if (self.turn.text) streamChildren.push(self.turn.text);
     if (self.turn.running) streamChildren.push(el("span", "note", " …流式中"));
     // 干净收束后正文已落进会话日志、由投影给出那一份气泡，回显框必须撤掉：
@@ -330,13 +341,13 @@ createApp({
       : [];
 
     const turnState = self.turn.settled
-      ? (self.turn.cancelled ? "cancelled" : self.turn.interrupted ? "interrupted" : "settled:" + (self.turn.finishReason || "-"))
-      : self.turn.running ? "running" : "idle";
+      ? (self.turn.cancelled ? "已取消" : self.turn.interrupted ? "已中断" : "已完成")
+      : self.turn.running ? "执行中" : "就绪";
     // 用量呈现：数字与判决只来自核心（开机读 usage/status，跑完一轮取结算帧），界面不推算、不补默认值。
     // 还没拿到数时显示 ?，而不是 0/0——0/0 看起来像「已经花光了」。
     const u = self.usage;
     const usageText = "用量 " + (u.used === null ? "?" : u.used) + "/" + (u.budget === null ? "?" : u.budget)
-      + (u.verdict ? " · " + u.verdict : " · 未计量") + (u.over ? " · 已超档" : "");
+      + " · " + verdictName(u.verdict) + (u.over ? " · 已超档" : "");
     // 超过档就不给再开新轮：界面先把按钮锁住，核心那侧的 -32014 仍是真正的闸门，
     // 两者都要在——只靠界面禁用等于换个客户端就能继续花。
     const turnLocked = self.turn.running || u.over;
@@ -346,11 +357,17 @@ createApp({
       disabled: turnLocked,
       onClick: () => self.runTurn(5),
     }, () => (u.over ? "已超档" : "跑一轮（完整）"));
-    const turnBar = el("div", "approval-row", [
+    const turnBar = el("div", "turn-actions", [
       runTurnBtn,
       el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: turnLocked }),
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
-      // 档位只允许往下调：填大的会被核心拒，界面原样复述核心回的那一档，不自己抬
+      el("span", "badge", "状态 " + turnState, { id: "turn-state", "aria-live": "polite" }),
+    ]);
+    const budgetBox = el("section", "side-section", [
+      el("h2", null, "用量与预算"),
+      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: "turn-usage", "aria-live": "polite" }),
+      el("label", "field-label", "收紧预算", { for: "budget-input" }),
+      el("div", "budget-controls", [
       h("input", {
         class: "input",
         id: "budget-input",
@@ -362,20 +379,18 @@ createApp({
         onInput: (e) => (self.budgetDraft = e.target.value),
       }),
       el("button", "btn", "收紧预算", { id: "apply-budget", onClick: self.setBudget }),
-      el("span", "note", self.budgetNote, { id: "budget-note" }),
-      el("span", "badge", "turn " + turnState, { id: "turn-state" }),
-      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: "turn-usage" }),
-    ]);
+      ]),
+      el("p", "note", self.budgetNote || "预算只能收紧；耗尽后停止执行。", { id: "budget-note", "aria-live": "polite" }),
+    ], { id: "budget-panel", tabindex: -1 });
 
-    const main = el("section", "pane", [
-      el("div", "stream", msgs, { id: "messages" }),
-      streamBox,
+    const main = el("section", "pane conversation", [
+      el("div", "conversation-scroll", [el("div", "stream", msgs, { id: "messages" }), streamBox]),
       turnBar,
-      el("p", "error", self.error, { id: "error" }),
+      self.error ? el("p", "error", self.error, { id: "error", role: "alert" }) : null,
     ]);
 
     const toolBtns = self.tools.map((t, i) =>
-      el("button", "tool", [t.name, el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
+      el("button", "tool", [({ read: "读取文件", write: "写入文件" }[t.name] || t.name), el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
         key: t.name,
         id: "tool-" + t.name,
         onClick: () => self.askTool(t),
@@ -384,7 +399,7 @@ createApp({
 
     const approvalBox = self.approval
       ? [el("div", "approval", [
-          el("p", null, "审批：" + self.approval.name + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
+          el("p", null, "审批：" + ({ write: "写入文件", read: "读取文件" }[self.approval.name] || self.approval.name) + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
           el("div", "approval-row", [
             el("button", "btn btn-primary", "允许一次", { id: "allow-once", onClick: () => self.answerTool("allowed-once") }),
             el("button", "btn btn-danger", "拒绝", { id: "deny", onClick: () => self.answerTool("denied") }),
@@ -393,25 +408,30 @@ createApp({
       : [];
 
     const side = el("aside", "pane side", [
-      el("h3", null, "工具（核心注册表）"),
+      el("section", "side-section", [el("h2", null, "工具与审批"),
       toolBtns,
       approvalBox,
       self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
-      el("p", "note", "未登记 " + self.toolCounters.misses + " · guard 拒 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
+      el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
+      ], { id: "tools-panel", tabindex: -1 }),
+      budgetBox,
     ]);
 
     const composer = el("footer", "composer", [
-      h("textarea", {
+      el("label", "field-label", "发送消息", { for: "composer" }),
+      el("div", "composer-row", [h("textarea", {
         class: "input",
         id: "composer",
         rows: 2,
-        placeholder: "发消息给会话；多行也可以",
+        placeholder: "描述你的任务或补充信息…",
         value: self.draft,
         onInput: (e) => (self.draft = e.target.value),
       }),
       el("button", "btn btn-primary", "发送", { id: "send", onClick: self.send }),
+      ]),
+      el("span", "note", "支持多行输入 · 审批决定由你确认"),
     ]);
 
-    return el("div", "app", [head, main, side, composer]);
+    return el("div", "app", [nav, head, main, side, composer]);
   },
 }).mount("#app");

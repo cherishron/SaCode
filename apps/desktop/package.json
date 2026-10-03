@@ -12,11 +12,13 @@
     "smoke": "electron . --smoke",
     "preui-smoke": "npm run vendor",
     "ui-smoke": "electron . --ui-smoke",
-    "test": "node --test"
+    "test": "node --test",
+    "prelayout-smoke": "npm run vendor",
+    "layout-smoke": "electron . --layout-smoke"
   },
   "build": {
-    "appId": "cn.dsh.desktop",
-    "productName": "DSH Desktop",
+    "appId": "com.cherishron.sacode.desktop",
+    "productName": "SaCode",
     "directories": {
       "output": "dist/electron"
     },
@@ -26,6 +28,7 @@
       "preload.cjs",
       "host-bridge.cjs",
       "paths.cjs",
+      "layout-smoke.cjs",
       "package.json",
       "renderer/**"
     ],
@@ -36,19 +39,20 @@
       }
     ],
     "win": {
+      "icon": "renderer/assets/sacode-icon.ico",
       "target": [
         "portable",
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "artifactName": "DSH Desktop Setup ${version}.exe"
+      "artifactName": "SaCode Setup ${version}.exe"
     },
     "portable": {
-      "artifactName": "dsh-desktop-portable.exe"
+      "artifactName": "sacode-portable.exe"
     }
   },
   "devDependencies": {

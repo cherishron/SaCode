@@ -1,10 +1,10 @@
-/* 设计令牌层：业务样式只引用 var(--*)，主题差异只出现在 :root 的两块定义里。
-   渲染层不持有第二真源——这里只管呈现，数据一律来自核心投影与 poll。 */
+/* SaCode 桌面规范：4px 基础栅格，控件共享高度，内容区独立滚动。 */
 :root {
   --surface: #f6f7f9;
   --surface-2: #ffffff;
   --surface-3: #eceef2;
   --text: #16181d;
+  --brand-surface: #16181d;
   --text-muted: #5c6470;
   --border: #d8dce3;
   --accent: #2455e6;
@@ -17,13 +17,16 @@
   --radius-l: 16px;
   --space-1: 4px;
   --space-2: 8px;
-  --space-3: 14px;
-  --space-4: 22px;
-  --fs-s: 11px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --fs-s: 12px;
   --fs-m: 13px;
   --fs-l: 15px;
+  --control-height: 36px;
+  --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
-
 @media (prefers-color-scheme: dark) {
   :root {
     --surface: #17191d;
@@ -39,152 +42,107 @@
     --danger: #ff7a6e;
   }
 }
-
 * { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--surface);
-  color: var(--text);
-  font: var(--fs-l)/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-}
-
-.app {
-  display: grid;
-  grid-template-columns: 1fr 260px;
-  grid-template-rows: auto 1fr auto;
-  gap: var(--space-3);
-  height: 100vh;
-  padding: var(--space-3);
-}
-
-.top {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.brand { font-weight: 600; letter-spacing: .2px; }
-
-.counters {
-  margin-left: auto;
-  display: flex;
-  gap: var(--space-2);
-  font: var(--fs-s)/1.4 ui-monospace, Consolas, monospace;
-  color: var(--text-muted);
-}
-
-.badge {
-  padding: 2px var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-}
-
+html, body, #app { height: 100%; margin: 0; }
+body { background: var(--surface); color: var(--text); font: var(--fs-m)/1.6 var(--font-ui); }
+button, input, textarea { font: inherit; }
+button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible,
+[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: 18px; font-weight: 600; line-height: 1.4; }
+h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
+.app { display: grid; grid-template-columns: 184px minmax(0, 1fr) 280px;
+  grid-template-rows: auto minmax(0, 1fr) auto; height: 100dvh; overflow: hidden; }
+.navigation { grid-column: 1; grid-row: 1 / -1; display: flex; flex-direction: column;
+  gap: var(--space-2); padding: var(--space-5) var(--space-3); border-right: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-2) var(--space-4);
+  font-size: 18px; font-weight: 600; line-height: 32px; }
+.brand img { display: block; flex: 0 0 32px; object-fit: contain; background: var(--brand-surface); border-radius: var(--radius-s); padding: var(--space-1); }
+.nav-caption { padding: 0 var(--space-2); font-size: var(--fs-s); color: var(--text-muted); margin-bottom: var(--space-2); }
+.nav-item { display: flex; align-items: center; gap: var(--space-3); min-height: 40px; padding: var(--space-2) var(--space-3);
+  color: var(--text-muted); text-decoration: none; border-radius: var(--radius-s); }
+.nav-item:hover { background: var(--surface-3); color: var(--text); }
+.nav-current { background: var(--surface-2); color: var(--accent); font-weight: 600; }
+.nav-symbol { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; }
+.nav-footer { margin-top: auto; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); }
+.top { grid-column: 2 / -1; display: flex; align-items: center; gap: var(--space-4);
+  flex-wrap: wrap; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.heading { display: flex; align-items: baseline; gap: var(--space-3); }
+.counters { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.badge { display: inline-flex; align-items: center; min-height: 28px; padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2);
+  font-size: var(--fs-s); line-height: 18px; overflow-wrap: anywhere; }
 .badge-ok { color: var(--ok); border-color: var(--ok); }
 .badge-warn { color: var(--warn); border-color: var(--warn); }
 .badge-danger { color: var(--danger); border-color: var(--danger); }
-
-.pane {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  padding: var(--space-3);
-  overflow: auto;
-}
-
-.stream { display: flex; flex-direction: column; gap: var(--space-2); }
-
-.msg-role {
-  display: block;
-  font: var(--fs-s)/1.4 ui-monospace, Consolas, monospace;
-  color: var(--text-muted);
-  margin-bottom: var(--space-1);
-}
-
-/* 自定义文本渲染器的正文节点。库的 .tr-bubble__text 只服务它自带的 Text 渲染器，
-   管不到我们这条路径，所以换行必须自己接住：多行正文在日志里是一条事件，
-   界面上要按行显示，不能被折成一行。 */
-.msg-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
-/* 折叠态正文的外层节点：正文与「展开/收起」同排，按钮不单独占一行把读数拆开。 */
-.msg-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1); }
-.btn-fold { margin-left: var(--space-2); }
-
-.streaming {
-  border: 1px dashed var(--accent);
-  border-radius: var(--radius-m);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-2);
-  white-space: pre-wrap;
-  min-height: 2.2em;
-}
-
-.composer {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: var(--space-2);
-}
-
-.input {
-  flex: 1;
-  resize: none;
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  color: var(--text);
-  font: var(--fs-m)/1.5 inherit;
-}
-
-.btn {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  color: var(--text);
-  font: var(--fs-m) inherit;
-  cursor: pointer;
-}
-
+.pane { min-width: 0; min-height: 0; background: var(--surface-2); }
+.conversation { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; }
+.conversation-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5); scrollbar-gutter: stable; }
+.stream { display: flex; flex-direction: column; gap: var(--space-4); }
+#messages .tr-bubble-list { padding: 0; gap: var(--space-5); overflow: visible; }
+#messages .tr-bubble { flex-direction: column; align-items: stretch; }
+#messages .tr-bubble > .msg-role { padding: 0 var(--space-4); }
+#messages .tr-bubble[data-role=user] > .msg-role { text-align: right; }
+#messages .tr-bubble__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; min-width: 0; }
+#messages .tr-bubble__body > .msg-role { grid-area: 1 / 1; padding: 0 var(--space-4); }
+#messages .tr-bubble__content { grid-area: 2 / 1; min-width: 0; }
+#messages .tr-bubble__after { grid-area: 3 / 1; }
+#messages [data-placement=end] .msg-role { text-align: right; }
+#messages .tr-bubble__box { padding: var(--space-3) var(--space-4); max-width: 100%; }
+.msg-role { display: block; font-size: var(--fs-s); line-height: 18px; color: var(--text-muted); margin-bottom: var(--space-2); }
+.msg-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-m); line-height: 1.7; }
+.msg-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.streaming { margin-top: var(--space-4); border-left: 2px solid var(--accent); padding: var(--space-3) var(--space-4);
+  background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border); }
+.turn-actions .badge { margin-left: auto; }
+.composer { grid-column: 2; grid-row: 3; display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4) var(--space-5); border-top: 1px solid var(--border); background: var(--surface-2); }
+.composer-row { display: flex; align-items: flex-end; gap: var(--space-3); }
+.composer-row textarea { flex: 1; min-height: 80px; max-height: 200px; resize: vertical; }
+.composer-row .btn { flex: 0 0 72px; }
+.field-label { display: block; font-size: var(--fs-s); color: var(--text-muted); }
+.input { width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); }
+.btn, .turn-actions .tiny-button { display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--control-height); height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--border);
+  border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); font: var(--fs-m)/20px var(--font-ui);
+  cursor: pointer; white-space: nowrap; margin: 0; }
+.btn:hover:not(:disabled) { background: var(--surface-3); }
+.turn-actions #run-turn { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .btn-primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent); filter: brightness(.95); }
 .btn-danger { color: var(--danger); border-color: var(--danger); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-
-.side h3 { margin: 0 0 var(--space-2); font-size: var(--fs-m); color: var(--text-muted); }
-
-.tool {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin-bottom: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.tool-desc { display: block; font: var(--fs-s) inherit; color: var(--text-muted); }
-
-.approval {
-  margin-top: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-m);
-  background: var(--surface-3);
-}
-
-.approval p { margin: 0 0 var(--space-2); font: var(--fs-m) inherit; }
-.approval-row { display: flex; gap: var(--space-2); }
-
-.outcome { margin-top: var(--space-2); font: var(--fs-m) inherit; color: var(--text-muted); white-space: pre-wrap; }
+.btn-fold { min-height: 28px; height: 28px; font-size: var(--fs-s); }
+.side { grid-column: 3; grid-row: 2 / -1; overflow: auto; padding: var(--space-4); border-left: 1px solid var(--border); scrollbar-gutter: stable; }
+.side-section { display: flex; flex-direction: column; gap: var(--space-3); padding-bottom: var(--space-5); }
+.side-section + .side-section { border-top: 1px solid var(--border); padding-top: var(--space-5); }
+.budget-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; }
+.budget-controls input { height: var(--control-height); }
+.tool { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); width: 100%; text-align: left;
+  padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.tool:hover { background: var(--surface); border-color: var(--accent); }
+.tool-desc { display: block; font-size: var(--fs-s); line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
+.approval { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3);
+  border: 1px solid var(--warn); border-radius: var(--radius-s); background: var(--surface); }
+.approval-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.outcome { font-size: var(--fs-m); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .outcome-denied { color: var(--danger); }
-
-.note { font: var(--fs-s) inherit; color: var(--text-muted); }
-.error { color: var(--danger); font: var(--fs-m) inherit; white-space: pre-wrap; }
-
+.note { font-size: var(--fs-s); line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
+.error { color: var(--danger); padding: var(--space-3) var(--space-5); font-size: var(--fs-m); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 1040px) {
+  .app { grid-template-columns: 64px minmax(0, 1fr) 256px; }
+  .navigation { padding: var(--space-4) var(--space-2); }
+  .brand { padding: 0 0 var(--space-4); justify-content: center; }
+  .brand > span, .nav-caption, .nav-footer, .nav-label { display: none; }
+  .nav-item { justify-content: center; padding: var(--space-2); }
+  .top { padding: var(--space-3) var(--space-4); }
+  .conversation-scroll, .composer { padding: var(--space-4); }
+  .turn-actions { padding: var(--space-3) var(--space-4); }
+}
 /* TinyVue 令牌桥接层。这一段必须留在文件末尾：vendor/tinyvue.iife.css 先加载，
    它自带 324 个 --tv-* 色令牌——那就是第二套色值真源，与本仓「色值只从令牌层出」冲突。
    只桥接当前真用到的这批（不整套抄回来，否则等于把它的设计悄悄请进门）。
@@ -231,7 +189,7 @@ body {
    tr-bubble__box/backgroundColor=rgb(255, 255, 255)。
    只桥被探针抓到的这一枚：--tr-bubble-text-color 不桥——正文由我们的自定义内容渲染器
    出（.msg-text），库那条 .tr-bubble__text 规则在这份 DOM 里根本不生效；
-   布局类（gap/max-width/radius）不携带主题色，桥过去只会打乱库自己的形状语义。 */
+   消息布局则在本文件上方按 SaCode 栅格统一，保留库的角色定位与分组语义。 */
 :root {
   --tr-bubble-box-bg: var(--surface-2);
 }

@@ -1,6 +1,6 @@
 // Electron 主进程：只负责窗口、宿主生命周期与有限的 IPC 面。
 // 不做 agent 业务，不承载会话真源，不把任意命令执行暴露给渲染层。
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, nativeTheme } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
@@ -18,7 +18,7 @@ const HOST = hostExePath({
 // 「这条写入真的落盘了」这类断言就会被上一次运行的旧日志蒙混过去。
 // 用 --session-dir=<路径> 指定一次性目录；不传时仍用应用自己的目录（给人工运行用）。
 const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
-const WILL_SMOKE = process.argv.includes("--smoke") || process.argv.includes("--ui-smoke");
+const WILL_SMOKE = process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 // 冒烟态没传 --session-dir 时也必须落到一次性目录：默认的 sessionData 跨次累积，
 // 「全新会话」类断言会被上一次运行的旧日志蒙混过去（实测用量从 12 一路涨到 48）。
 // 只带 pid 还不够：Windows 会回收 pid，同 pid 的旧目录会被下一次运行接着写，
@@ -41,7 +41,7 @@ function seedIfNeeded() {
   if (!existsSync(SESSION_LOG)) {
     writeFileSync(
       SESSION_LOG,
-      "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tdeveloper/message\tguided by developer note\n3\tassistant/message\tseeded reply from core\n4\tuser/message\thello from desktop\n"
+      "0\tturn/start\tt\n1\tsystem/message\t由 SaCode 初始化本地会话\n2\tdeveloper/message\t请用中文协助完成项目任务。\n3\tassistant/message\t欢迎使用 SaCode。\n4\tuser/message\t你好，SaCode。\n"
     );
   }
 }
@@ -102,6 +102,10 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1100,
     height: 720,
+    minWidth: 860,
+    minHeight: 600,
+    title: "SaCode · 编程工作台",
+    icon: join(__dirname, "renderer", "assets", "sacode-icon.png"),
     show: false,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
@@ -215,7 +219,7 @@ async function uiSmoke() {
     "(() => { const e = document.querySelector('#messages .tr-bubble[data-role=\"developer\"]');" +
     " if (!e) return 'no-developer-group';" +
     " const t = e.querySelector('.msg-text[data-source-role]');" +
-    " return ((t ? (t.textContent || '').trim() : '') === 'guided by developer note' ? 'visible' : 'text:' + (t ? t.textContent : ''))" +
+    " return ((t ? (t.textContent || '').trim() : '') === '请用中文协助完成项目任务。' ? 'visible' : 'text:' + (t ? t.textContent : ''))" +
     " + '|' + (t ? t.getAttribute('data-source-role') : 'no-source-role'); })()"
   );
   note(devBubble === "visible|developer/message", `developer 气泡=${devBubble}`);
@@ -226,7 +230,7 @@ async function uiSmoke() {
   );
   note(placementPair === "end|start|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
   const labelShown = await text("#messages .msg-role");
-  note(/^\d+ × (system|user|assistant|tool|developer)$/.test(labelShown), `组标签=${labelShown}`);
+  note(/^(系统|用户|助手|工具|开发者) · \d+ 条消息$/.test(labelShown), `组标签=${labelShown}`);
   // 连续同角色必须并成一组：再发一条 user，条数进组但组数不变。
   const groupsBeforeMerge = await count("#messages .tr-bubble");
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("第二条 user 消息")}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
@@ -308,12 +312,12 @@ async function uiSmoke() {
 
   // 4) 流式：完整一轮必须把核心产出的帧渲回界面并落到终态
   note(await click("#run-turn"), "已发起完整一轮");
-  const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
+  const settledTurn = await waitFor(async () => (await text("#turn-state")) === "状态 已完成");
   note(settledTurn, `turn 终态=${await text("#turn-state")}`);
   // 用量读数必须由核心结算帧驱动。冒烟态现在总是从一次性目录起（见 SESSION_DIR），
   // 所以这里可以钉死绝对值：全新会话的第一笔就是 12，档位停在默认 200。
   // 之前写成「12 的倍数」是被跨次累积的真实 sessionData 逼的妥协，不再需要。
-  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200 · recorded"));
+  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200 · 已计量"));
   const usageAfterFull = await text("#turn-usage");
   note(usageShown, `用量读数=${usageAfterFull}`);
   // 干净收束后正文必须回到日志这份真源：界面上那句助手话要出自核心投影，
@@ -332,9 +336,9 @@ async function uiSmoke() {
 
   // 5) 取消：可取消那一轮停在帧间，点停止要改终态，不能只把按钮禁用
   note(await click("#run-turn-2"), "已发起可取消一轮");
-  await waitFor(async () => (await text("#turn-state")) === "turn running");
+  await waitFor(async () => (await text("#turn-state")) === "状态 执行中");
   note(await click("#stop-turn"), "已派发停止");
-  const cancelled = await waitFor(async () => (await text("#turn-state")).startsWith("turn cancelled"));
+  const cancelled = await waitFor(async () => (await text("#turn-state")) === "状态 已取消");
   note(cancelled, `取消终态=${await text("#turn-state")}`);
   // 取消的一轮不落 assistant/message：半截正文只能继续由流式回显框呈现，
   // 且不许多出一个助手气泡冒充「助手说过完整的话」。
@@ -347,7 +351,7 @@ async function uiSmoke() {
   );
   // 被取消的一轮不进计量：数值必须与上一轮结算时逐字一致，只允许判决词变成 absent
   const usageAfterCancel = await text("#turn-usage");
-  const cancelUnchanged = usageAfterCancel.includes(" · absent") &&
+  const cancelUnchanged = usageAfterCancel.includes(" · 未收到用量") &&
     usageAfterCancel.split(" · ")[0] === usageAfterFull.split(" · ")[0];
   note(cancelUnchanged, `取消轮不计量=${usageAfterFull} -> ${usageAfterCancel}`);
   // 预算控制面：调大必须由核心拒且停在原档；收紧后徽章档位跟着核心回的数字走。
@@ -425,7 +429,7 @@ async function uiSmoke() {
   // 收紧后 refreshUsage 读 usage/status，核心回的 verdict=over-budget
   const overTurn = await waitFor(async () => (await text("#turn-usage")).includes("已超档"));
   note(overTurn, `超档读数=${await text("#turn-usage")}`);
-  const overSettled = await waitFor(async () => (await text("#turn-usage")).includes("· over-budget"));
+  const overSettled = await waitFor(async () => (await text("#turn-usage")).includes("· 超出预算"));
   note(overSettled, `超档判决=${await text("#turn-usage")}`);
   // 核心侧 -32014 是真闸门；界面这层同时要把按钮锁住，别让人连点靠错误提示循环
   const lockState = await js(
@@ -518,10 +522,21 @@ ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
   return withHost(() => bridge.request("usage/set-budget", { budget: b }));
 });
 
-const UI_SMOKE = process.argv.includes("--ui-smoke");
+const UI_SMOKE = process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.argv.includes("--smoke")) return smoke();
+  if (process.argv.includes("--layout-smoke")) {
+    seedIfNeeded();
+    await bridge.start(SESSION_DIR);
+    createWindow();
+    const captureArg = process.argv.find((a) => a.startsWith("--capture-dir="));
+    const outDir = captureArg ? captureArg.slice("--capture-dir=".length) : join(__dirname, "dist", "layout");
+    const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir });
+    await bridge.stop();
+    app.exit(ok ? 0 : 1);
+    return;
+  }
   if (UI_SMOKE) return uiSmoke();
   createWindow();
   app.on("activate", () => {
