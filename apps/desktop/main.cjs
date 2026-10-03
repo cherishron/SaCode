@@ -213,6 +213,23 @@ async function uiSmoke() {
   await click('a[href="#budget-panel"]');
   note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
   note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
+  await js("document.querySelector('#composer').focus()");
+  const chord = async (keyCode,modifiers=['control']) => {
+    win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});
+    win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});
+    await nap(50);
+  };
+  await chord(',');
+  note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "Ctrl+, 从输入区打开设置");
+  await chord('L');
+  note(await js("document.querySelector('.settings-dialog').contains(document.activeElement)"), "全局聚焦快捷键不穿透设置模态");
+  await chord('Escape',[]);
+  note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='composer'"), "快捷键打开的设置关闭后返回原输入焦点");
+  await chord('P',['control','shift']);
+  note(await waitFor(()=>js("document.activeElement.id==='preview-panel' && !document.querySelector('#side-page-preview').hidden")), "Ctrl+Shift+P 打开并聚焦文档预览");
+  await chord('L');
+  note(await js("document.activeElement.id==='composer'"), "Ctrl+L 从预览返回输入区");
+  await click('#side-tab-inspect');
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
   note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
@@ -510,8 +527,12 @@ async function uiSmoke() {
   note(await js("document.querySelector('#pane-divider').getAttribute('aria-valuenow')") === releasedRatio, "松开鼠标后停止调整并清理拖动监听");
   await click('#split-side');
   note(await waitFor(() => count('.side-secondary').then(n=>n===0)) && (await text('#count-events')) === splitEvents, "合并窗格不改变会话事实");
+  const keyEvents=Number((await text('#count-events')).split(' ')[1]);
+  await js("(() => {const input=document.querySelector('#composer');input.value='快捷键发送验证';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()");
+  await chord('Enter');
+  note(await waitFor(async()=>Number((await text('#count-events')).split(' ')[1])===keyEvents+1) && (await text('#messages')).includes('快捷键发送验证'), "Ctrl+Enter 经核心记录且只新增一条消息");
   await click('#open-settings'); await click('#settings-tab-general');
-  await js("const input=document.querySelector('#settings-budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));");
+  await js("(() => {const input=document.querySelector('#settings-budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#settings-budget-apply');
   note(await waitFor(async()=> (await text('#settings-budget-note')).includes('已收紧到 90')), "设置预算变更通过核心校验");
   note((await text('#settings-budget-usage')) === (await text('#turn-usage')) && (await text('#turn-usage')).includes('/90'), "设置变更同步更新右侧预算投影");

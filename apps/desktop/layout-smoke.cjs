@@ -111,7 +111,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
           visible: !document.querySelector('#side-page-guide').hidden && document.querySelector('#side-page-inspect').hidden,
           tabAlignment: Math.abs(box(tabs[0]).top-box(tabs[1]).top)<1 && Math.abs(box(tabs[0]).height-box(tabs[1]).height)<1,
           contentFits: content.scrollWidth<=content.clientWidth && box(content).bottom<=box(side).bottom+1,
-          cardAlignment: cards.length===4 && cards.every(e => Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
+          cardAlignment: cards.length===5 && cards.every(e => Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
           approvalVisible: document.querySelector('#side-tab-inspect').getAttribute('aria-label').includes('待审批') && !!document.querySelector('.pending-dot') && !!document.querySelector('#guide-approval'),
           noPageOverflow: document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight,
         };

@@ -143,6 +143,24 @@ createApp({
     const budgetNote = ref("");
 
     let pollTimer = null;
+    function desktopKeys(event) {
+      if (event.isComposing || event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      const key=event.key.toLowerCase();
+      const settings=key===',' && !event.shiftKey;
+      const composer=key==='l' && !event.shiftKey;
+      const preview=key==='p' && event.shiftKey;
+      const submit=key==='enter' && !event.shiftKey && event.target.id==='composer';
+      if (!settings && !composer && !preview && !submit) return;
+      event.preventDefault();
+      // 模态优先：全局导航与发送不能穿透上层审批/详情/设置。
+      if (document.querySelector('dialog[open][aria-modal="true"]')) return;
+      if (settings) settingsOpen.value=true;
+      else if (composer) document.getElementById('composer').focus();
+      else if (preview) openSide('preview-panel');
+      else send();
+    }
+    onMounted(() => window.addEventListener('keydown', desktopKeys));
+    window.Vue.onBeforeUnmount(() => { window.removeEventListener('keydown', desktopKeys); stopPolling(); });
 
     async function refresh() {
       proj.value = await window.dsh.projection();
@@ -345,7 +363,7 @@ createApp({
       el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批", onClick: (e) => { e.preventDefault(); self.openSide("tools-panel"); } }),
       el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算", onClick: (e) => { e.preventDefault(); self.openSide("budget-panel"); } }),
       el("a", "nav-item", [navIcon("M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4z M12 6v15"), el("span", "nav-label", "使用指南")], { href: "#guide-panel", "aria-label": "使用指南", onClick: (e) => { e.preventDefault(); self.openSide("guide-panel"); } }),
-      el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", onClick: () => { self.settingsOpen = true; } }),
+      el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", title:"设置（Ctrl+,）", onClick: () => { self.settingsOpen = true; } }),
       el("div", "nav-footer", [el("span", "note", "本地会话"), el("span", "note", "使用你的模型与服务凭证")]),
     ], { "aria-label": "工作台导航" });
 
@@ -491,6 +509,7 @@ createApp({
           ["运行与停止", "使用会话下方的运行按钮开始验证轮次；执行中可点击停止。当前轮次使用示例输出，真实模型任务尚未开放。"],
           ["工具与审批", "在工具页查看工具说明。需要审批的操作只有允许一次或拒绝两种选择；查看详情不会执行工具。"],
           ["预算与保存", "预算只能收紧。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
+          ["快捷键", "Ctrl+, 打开设置；Ctrl+L 聚焦输入；Ctrl+Shift+P 打开文档预览；输入区 Ctrl+Enter 发送。弹窗打开时全局操作暂停，Escape 只关闭最上层。"],
         ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
       ], { id: "guide-panel", tabindex: -1 }),
     ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
@@ -539,6 +558,7 @@ createApp({
         class: "input",
         id: "composer",
         rows: 2,
+        "aria-keyshortcuts":"Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
         onInput: (e) => (self.draft = e.target.value),
