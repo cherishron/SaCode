@@ -189,6 +189,14 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .detail-fields dt { color: var(--text-muted); }
 .detail-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-dialog { width: min(600px, calc(100vw - 48px)); }
+.catalog-dialog { width: min(600px, calc(100vw - 48px)); }
+.catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.catalog-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.catalog-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  gap: var(--space-2) var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-s); }
+.catalog-title { min-width: 0; font-size: var(--fs-m); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-meta, .catalog-id { grid-column: 1 / -1; }
+.catalog-root, .catalog-id { overflow-wrap: anywhere; }
 .settings-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .settings-tab[aria-selected=true] { color: var(--accent); border-color: var(--accent); background: var(--surface); }
 .settings-page { display: flex; flex-direction: column; gap: var(--space-4); }

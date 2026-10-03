@@ -150,3 +150,13 @@
 共享弹窗改为纵向 flex：标题栏不收缩，正文 `min-height:0` 并独立滚动；正文滚动条沿用共享色令牌及稳定占位。仅对 `[open]` 设置 flex，不改变原生 dialog 的隐藏和模态语义。工具详情、设置与浮动预览继续复用同一布局规则。
 
 修复后隔离目录 `dualtest/appearance-host/source` 使用已编译匹配 Host，覆盖本轮 CSS 与布局验收源码：88 组报告合计 **552 项几何检查全部通过**，开发态 **128 项 UI OK、UI_SMOKE PASS**，两次最终进程均退出码 0。日志为 `dualtest/appearance-host/dialog-red.log`、`dialog-green.log`、`dialog-ui.log`；截图与报告为隔离目录 `apps/desktop/dist/layout/`。已打开最小窗口深色长设置截图，确认滚动至末尾后标题与关闭入口仍可见，正文折行且不横向溢出。本轮未重打安装包，不将开发态检查扩称安装包验收完成。
+
+## 核心目录投影与中文会话列表
+
+新增 `core/src/catalog.cj` 的 `SessionCatalog`：默认 `session.log` 与 `sessions/<目录>/session.log` 从真实文件系统发现，标题取首条非空用户消息，事件数经 `SessionLog` 回放得到；不建立第二份持久索引。扫描不递归，规范化路径检查阻止目录外链接；中段损坏显示 `replay-rejected`，截断尾部保留有效前缀并标 `truncated-tail`，只读操作不修复、不写租约、不 flush。
+
+Host 新增固定只读 `session/catalog`，登记初始化能力并允许运行中的回合读取；Electron/preload 仅新增固定 `sessionCatalog()`，没有接收任意根目录或通用方法的 IPC。会话列表复用 SaCode 图标导航、中文共享弹窗、36px 刷新控件和卡片栅格，显示当前会话、目录、已保存事件数与失败状态；处理中禁用刷新并通过 live 状态说明结果。界面明确保留新建、切换与工作区选择的未完成状态。
+
+隔离验证基线为 `2b9e5fb` 加本批文件，排除其他会话的在飞 SSE/审批修改，目录 `dualtest/catalog/source`。核心 **128/128**（含新增目录用例四项），新构建 Host 成功，桌面 **72/72**（新增 Host 集成两项），UI **135 项 OK / UI_SMOKE PASS**，布局 **96 组报告 / 600 项检查 / 零失败**。Host 集成含中文空格目录、引号/换行标题、目录外 junction、损坏日志、非递归发现、未 flush 不计入及 flush 后更新、空目录不创建日志。日志为 `dualtest/catalog/core.log`、`host-build.log`、`catalog-node.log`、`ui.log`、`layout.log`；最终核心复验为 `dualtest/core-final.log`。截图位于隔离目录 `apps/desktop/dist/layout/`，已查看最小窗口深色会话列表，卡片与状态同行对齐且无横向溢出。
+
+本批仅提供真实只读会话清单，不等于工作区/会话管理全流程完成；未重打安装包。目录 API 参考仓颉官方 [Directory 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_classes.html) 与 [FileInfo/Path 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_structs.html)，以本机 SDK 1.1.3 编译及动态用例为落地依据。

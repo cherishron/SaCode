@@ -205,6 +205,25 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       console.log(`LAYOUT ${longSettingsReport.failed.length ? "FAIL" : "PASS"} long-settings ${theme} ${width}x${height} ${longSettingsReport.failed.join(',')}`);
       await js("document.querySelector('#layout-settings-fixture').remove(); document.querySelector('.settings-dialog .dialog-body').scrollTop=0");
       await js("document.querySelector('.settings-dialog .dialog-header button').click()");
+      await js("document.querySelector('#open-catalog').focus(); document.querySelector('#open-catalog').click()");
+      await waitFor("!!document.querySelector('.catalog-dialog[open] #catalog-root')");
+      const catalogReport = await js(`(() => {
+        const dialog=document.querySelector('.catalog-dialog[open]'), rect=dialog.getBoundingClientRect();
+        const cards=[...dialog.querySelectorAll('.catalog-card')], box=e=>e.getBoundingClientRect();
+        const checks={
+          actualCatalog: cards.length>0 && cards.some(e=>e.dataset.sessionId==='current'),
+          fits: rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
+          cardAlignment: cards.length>0 && cards.every(e=>Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
+          titleAndBadgeCentered: cards.every(e=>{const title=box(e.querySelector('h3')), badge=box(e.querySelector('.badge'));return Math.abs(title.top+title.height/2-badge.top-badge.height/2)<1;}),
+          noOverflow: dialog.scrollWidth<=dialog.clientWidth && cards.every(e=>e.scrollWidth<=e.clientWidth),
+          refreshHeight: Math.abs(box(document.querySelector('#refresh-catalog')).height-36)<1,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(catalogReport,{theme,width,height,surface:'catalog'}); reports.push(catalogReport);
+      writeFileSync(join(outDir, `sacode-catalog-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${catalogReport.failed.length ? "FAIL" : "PASS"} catalog ${theme} ${width}x${height} ${catalogReport.failed.join(',')}`);
+      await js("document.querySelector('.catalog-dialog .dialog-header button').click()");
       await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
       await new Promise(r=>setTimeout(r,50));
       const floatReport = await js(`(() => {

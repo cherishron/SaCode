@@ -204,7 +204,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get"
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -294,7 +294,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -639,6 +639,23 @@ main(args: Array<String>) {
                 }
             }
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
+        if (method == "session/catalog") {
+            try {
+                var items = "["
+                var comma = ""
+                for (item in SessionCatalog(".").list()) {
+                    let current = if (item.id == "current") { "true" } else { "false" }
+                    items += comma + "{\"id\":\"${jsonEscapeText(item.id)}\",\"title\":\"${jsonEscapeText(item.title)}\",\"durable\":${item.durable},\"status\":\"${item.status}\",\"current\":${current}}"
+                    comma = ","
+                }
+                items += "]"
+                let root = jsonEscapeText(canonicalize(".").toString())
+                emit(okFrame(idText, "{\"root\":\"${root}\",\"entries\":${items},\"source\":\"durable-log\"}"))
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32004, "catalog-read-failed"))
+            }
             continue
         }
         if (method == "appearance/get") {

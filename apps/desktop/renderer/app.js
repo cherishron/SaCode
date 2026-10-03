@@ -96,6 +96,17 @@ createApp({
     const previewFloating = ref(false);
     const settingsOpen = ref(false);
     const settingsTab = ref("general");
+    const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
+    async function refreshCatalog() {
+      if (catalogBusy.value) return;
+      catalogBusy.value = true; catalogNote.value = "正在读取本地会话…";
+      try {
+        catalog.value = await window.dsh.sessionCatalog();
+        catalogNote.value = "已读取落盘会话；列表不包含尚未保存的事件。";
+      } catch (e) { catalogNote.value = "读取失败：" + String(e.message || e); }
+      finally { catalogBusy.value = false; }
+    }
+    function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
     const appearance = ref({ theme:null, scope:"session" });
     const appearanceBusy = ref(false), appearanceNote = ref("");
     async function refreshAppearance() { appearance.value = await window.dsh.appearanceGet(); }
@@ -364,6 +375,7 @@ createApp({
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       appearance, appearanceBusy, appearanceNote, setTheme,
+      catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -382,6 +394,7 @@ createApp({
       el("div", "brand", [h("img", { src: "assets/sacode-logo.png", alt: "SaCode", width: 32, height: 32 }), el("span", null, "SaCode")]),
       el("p", "nav-caption", "编程工作台"),
       el("a", "nav-item nav-current", [navIcon("M4 4h16v12H9l-5 4V4z M8 8h8 M8 12h5"), el("span", "nav-label", "会话")], { href: "#composer", "aria-current": "page", "aria-label": "会话" }),
+      el("button", "nav-item nav-settings", [navIcon("M3 5h7l2 3h9v12H3V5z"), el("span", "nav-label", "会话列表")], { id:"open-catalog", "aria-label":"本地会话列表", onClick:self.openCatalog }),
       el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批", onClick: (e) => { e.preventDefault(); self.openSide("tools-panel"); } }),
       el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算", onClick: (e) => { e.preventDefault(); self.openSide("budget-panel"); } }),
       el("a", "nav-item", [navIcon("M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4z M12 6v15"), el("span", "nav-label", "使用指南")], { href: "#guide-panel", "aria-label": "使用指南", onClick: (e) => { e.preventDefault(); self.openSide("guide-panel"); } }),
@@ -637,6 +650,21 @@ createApp({
         el("p", "note", "清单来自当前核心。扩展安装、启用和卸载设置尚未开放。"),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
     ]);
-    return el("div", "app", [nav, head, main, side, composer, detail, floating, settings]);
+    const catalogDialog = h(window.SaCodeDialog, { open:self.catalogOpen, title:"SaCode 本地会话", class:"catalog-dialog",
+      onClose:()=>{self.catalogOpen=false;} }, ()=>[
+      el("div", "catalog-toolbar", [el("h2", null, "落盘会话"), el("button", "btn", self.catalogBusy ? "读取中…" : "刷新", {
+        id:"refresh-catalog", disabled:self.catalogBusy, onClick:self.refreshCatalog })]),
+      self.catalog ? el("p", "note catalog-root", "目录："+self.catalog.root, {id:"catalog-root"}) : null,
+      el("p", "note", self.catalogNote, {id:"catalog-note", role:"status", "aria-live":"polite"}),
+      el("div", "catalog-list", self.catalog ? self.catalog.entries.map(item=>el("article", "catalog-card", [
+        el("h3", "catalog-title", item.title || "未命名会话", {title:item.title || "未命名会话"}),
+        el("span", "badge"+(item.status!=="ready" ? " badge-warn" : ""), item.current ? "当前会话" : "本地会话"),
+        el("p", "note catalog-meta", item.status==="replay-rejected" ? "日志回放失败，摘要不可用" : "已保存 "+item.durable+" 条事件"+(item.status==="truncated-tail" ? " · 尾帧不完整" : "")),
+        el("p", "note catalog-id", item.current ? "默认会话" : "会话目录："+item.id),
+      ], {"data-session-id":item.id})) : [], {id:"catalog-list", "aria-busy":String(self.catalogBusy)}),
+      self.catalog && !self.catalog.entries.length ? el("p", "empty-card", "此目录暂无落盘会话。") : null,
+      el("p", "note", "会话新建、切换及工作区选择尚未接入。"),
+    ]);
+    return el("div", "app", [nav, head, main, side, composer, detail, floating, settings, catalogDialog]);
   },
 }).mount("#app");

@@ -177,12 +177,25 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === "function,function,function,function,function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(14).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
+
+  const catalogBefore = await bridge.request("session/catalog");
+  const catalogEvents = await text('#count-events');
+  await js("document.querySelector('#open-catalog').focus(); document.querySelector('#open-catalog').click()");
+  note(await waitFor(()=>js("!!document.querySelector('.catalog-dialog[open] #catalog-root')")), "会话目录由真实核心加载");
+  note(await js("document.querySelectorAll('.catalog-card').length") === catalogBefore.entries.length, "会话列表条数与核心目录投影一致");
+  note(await text('.catalog-title') === catalogBefore.entries[0].title, "会话标题来自日志中的用户消息");
+  note((await text('.catalog-meta')).includes(String(catalogBefore.entries[0].durable)), "会话列表使用落盘事件数");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+  win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "Escape 关闭会话列表");
+  note(await js("document.activeElement.id === 'open-catalog'"), "会话列表关闭后恢复导航焦点");
+  note(await text('#count-events') === catalogEvents, "只读会话目录不修改会话事件");
 
   // 工具详情只读取核心清单，模态关闭不执行工具或消费审批。
   await waitFor(() => count('#detail-write').then(n => n === 1));
@@ -672,6 +685,7 @@ ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
   return withHost(() => bridge.request("usage/set-budget", { budget: b }));
 });
 
+ipcMain.handle("dsh:sessionCatalog", async () => bridge.request("session/catalog"));
 ipcMain.handle("dsh:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
   nativeTheme.themeSource=result.theme;

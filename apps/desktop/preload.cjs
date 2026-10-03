@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld("dsh", {
   usageStatus: () => ipcRenderer.invoke("dsh:usageStatus"),
   usageSetBudget: (budget) => ipcRenderer.invoke("dsh:usageSetBudget", { budget }),
   appearanceGet: () => ipcRenderer.invoke("dsh:appearanceGet"),
+  sessionCatalog: () => ipcRenderer.invoke("dsh:sessionCatalog"),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("dsh:appearanceSetTheme", { theme }),
 });
