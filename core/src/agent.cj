@@ -89,10 +89,18 @@ public class ToolRuntime {
     // 已观察过的路径 → 当时那份字节的状态。它是 write 的判断依据：
     // 「我上次看到的就是现在这份吗」，答不出就不能拿旧认知去覆盖别人的改动。
     let observed = HashMap<String, FileObservation>()
+    let workingDirectory: String
 
-    public init(log: SessionLog, registry: ToolRegistry) {
+    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "") {
         this.log = log
         this.registry = registry
+        this.workingDirectory = workingDirectory
+    }
+
+    private func workingPath(path: String): String {
+        let base = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
+        if (base.size == 0 || Path(path).isAbsolute()) { return path }
+        return Path(base).join(path).toString()
     }
 
     // 固定序：注册表查询 → 审批 → guard → pre-execute → snapshot → execute → post-execute（无损校验）
@@ -169,62 +177,63 @@ public class ToolRuntime {
             log.append("tool/result", "bad-args")
             return ApprovalOutcome(false, "bad-args")
         }
-        lastDetail.snapshotBefore = priorSize(parsed.path)
+        let path = workingPath(parsed.path)
+        lastDetail.snapshotBefore = priorSize(path)
         lastDetail.snapshotExpected = parsed.content.toArray().size
         // snapshot 段顺手取当前那份字节的状态。观察过且状态已变＝第三方动过手，
         // 这一段必须在任何写入之前判：拒了还照写，等于覆盖掉别人的工作。
         var key = ""
         var wasExisting = false
         try {
-            wasExisting = exists(parsed.path)
-            key = fileObservationKey(parsed.path)
+            wasExisting = exists(path)
+            key = fileObservationKey(path)
             let seen = observed.get(key)
             if (wasExisting) {
                 if (let Some(prior) <- seen) {
-                    if (!prior.present) { return failFile("fs-not-observed", parsed.path) }
-                    if (!sameFileBytes(prior.bytes, File.readFrom(parsed.path))) {
-                        return failFile("fs-stale-version", parsed.path)
+                    if (!prior.present) { return failFile("fs-not-observed", path) }
+                    if (!sameFileBytes(prior.bytes, File.readFrom(path))) {
+                        return failFile("fs-stale-version", path)
                     }
                 } else {
-                    return failFile("fs-not-observed", parsed.path)
+                    return failFile("fs-not-observed", path)
                 }
-                File.writeTo(parsed.path, parsed.content.toArray())
+                File.writeTo(path, parsed.content.toArray())
             } else {
                 if (let Some(prior) <- seen) {
-                    if (prior.present) { return failFile("fs-stale-version", parsed.path) }
+                    if (prior.present) { return failFile("fs-stale-version", path) }
                 }
                 // 发布新文件必须在落位时拒绝覆盖，不能靠 exists→write 的时间窗口。
-                publishNewFile(parsed.path, parsed.content.toArray())
+                publishNewFile(path, parsed.content.toArray())
             }
         } catch (e: IOException) {
             lastDetail.stage = "io-error"
-            log.append("tool/result", "io-error:${parsed.path}")
-            return ApprovalOutcome(false, "io-error:${parsed.path}")
+            log.append("tool/result", "io-error:${path}")
+            return ApprovalOutcome(false, "io-error:${path}")
         } catch (e: Exception) {
             lastDetail.stage = "threw"
-            log.append("tool/result", "threw:${parsed.path}")
-            return ApprovalOutcome(false, "threw:${parsed.path}")
+            log.append("tool/result", "threw:${path}")
+            return ApprovalOutcome(false, "threw:${path}")
         }
         // post-execute：写后重读逐字节比对，掉一个字节、被改写一个字节都不算成功
         var back: Array<Byte> = []
         try {
-            back = File.readFrom(parsed.path)
-            key = fileObservationKey(parsed.path)
+            back = File.readFrom(path)
+            key = fileObservationKey(path)
         } catch (e: Exception) {
-            return failFile("post-read-error", parsed.path)
+            return failFile("post-read-error", path)
         }
         let want = parsed.content.toArray()
         if (!sameFileBytes(back, want)) {
             lastDetail.verified = false
             lastDetail.stage = "torn-write"
-            log.append("tool/result", "torn-write:${parsed.path}:expected=${want.size},got=${back.size}")
-            return ApprovalOutcome(false, "torn-write:${parsed.path}")
+            log.append("tool/result", "torn-write:${path}:expected=${want.size},got=${back.size}")
+            return ApprovalOutcome(false, "torn-write:${path}")
         }
         // 这一份刚由本工具写下并核对过，观察记录跟着更新，否则下一次自己写自己会被自己拦
         observed[key] = FileObservation(true, back)
         lastDetail.verified = true
         lastDetail.stage = "ran"
-        let out = "ok:${parsed.path}"
+        let out = "ok:${path}"
         log.append("tool/result", out)
         return ApprovalOutcome(true, out)
     }
@@ -233,7 +242,8 @@ public class ToolRuntime {
     // 必须是盘上真实读到的字节（顺手记下这一份的状态供 write 判断）。
     // 缓存读结果等于没读——FS_NOT_OBSERVED 说的就是这件事。
     private func readStep(args: String): ApprovalOutcome {
-        let path = args.trimAscii()
+        let raw = args.trimAscii()
+        let path = if (raw.size == 0) { raw } else { workingPath(raw) }
         lastDetail.argsAfterPre = path
         lastDetail.preRewrote = (path != args)
         if (path.size == 0) {

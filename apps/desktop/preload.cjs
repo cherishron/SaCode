@@ -17,5 +17,7 @@ contextBridge.exposeInMainWorld("dsh", {
   sessionCatalog: () => ipcRenderer.invoke("dsh:sessionCatalog"),
   sessionCreate: (title) => ipcRenderer.invoke("dsh:sessionCreate", { title }),
   sessionSelect: (sessionId) => ipcRenderer.invoke("dsh:sessionSelect", { sessionId }),
+  workspaceGet: () => ipcRenderer.invoke("dsh:workspaceGet"),
+  workspaceChoose: () => ipcRenderer.invoke("dsh:workspaceChoose"),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("dsh:appearanceSetTheme", { theme }),
 });

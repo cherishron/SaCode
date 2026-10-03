@@ -231,6 +231,26 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       writeFileSync(join(outDir, `sacode-catalog-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${catalogReport.failed.length ? "FAIL" : "PASS"} catalog ${theme} ${width}x${height} ${catalogReport.failed.join(',')}`);
       await js("document.querySelector('.catalog-dialog .dialog-header button').click()");
+      await js("document.querySelector('#open-workspace').focus();document.querySelector('#open-workspace').click()");
+      await waitFor("!!document.querySelector('.workspace-dialog[open] #workspace-directory')");
+      // 等待新弹窗完成绘制，避免截图捕获上一帧的会话列表。
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const workspaceReport=await js(`(()=>{
+        const dialog=document.querySelector('.workspace-dialog[open]'), panel=dialog.querySelector('.workspace-panel'), directory=document.querySelector('#workspace-directory');
+        const box=e=>e.getBoundingClientRect(), rect=box(dialog), controls=[...dialog.querySelectorAll('.btn')];
+        const checks={
+          actualDirectory: directory.textContent.length>0,
+          fits:rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
+          controls:controls.length===2 && controls.every(e=>Math.abs(box(e).height-36)<1),
+          aligned:Math.abs(box(directory).left-box(panel.querySelector('.badge')).left)<1,
+          noOverflow:dialog.scrollWidth<=dialog.clientWidth && panel.scrollWidth<=panel.clientWidth,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(workspaceReport,{theme,width,height,surface:'workspace'});reports.push(workspaceReport);
+      writeFileSync(join(outDir,`sacode-workspace-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${workspaceReport.failed.length ? 'FAIL':'PASS'} workspace ${theme} ${width}x${height} ${workspaceReport.failed.join(',')}`);
+      await js("document.querySelector('.workspace-dialog .dialog-header button').click()");
       await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
       await new Promise(r=>setTimeout(r,50));
       const floatReport = await js(`(() => {

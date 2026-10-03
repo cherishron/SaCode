@@ -1,6 +1,6 @@
 // Electron 主进程：只负责窗口、宿主生命周期与有限的 IPC 面。
 // 不做 agent 业务，不承载会话真源，不把任意命令执行暴露给渲染层。
-const { app, BrowserWindow, ipcMain, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
@@ -33,6 +33,7 @@ const SESSION_LOG = join(SESSION_DIR, "session.log");
 
 const bridge = new HostBridge(HOST, process.env);
 let win = null;
+let chooseWorkspaceDirectory = (options) => dialog.showOpenDialog(win, options);
 
 function seedIfNeeded() {
   // --session-dir 指到一个还不存在的目录是冒烟测试的正常用法（要的是全新目录），
@@ -177,11 +178,11 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === Array(16).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(18).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");
@@ -603,6 +604,28 @@ async function uiSmoke() {
   note(lockState === "attr" || lockState === "cls", `超档后 run-turn 锁定态=${lockState}`);
   note((await text("#run-turn")).includes("已超档"), `超档后按钮文案=${await text("#run-turn")}`);
 
+  // 仅替换系统选择器交回的用户选择，目录配置和文件工具仍走真实核心。
+  const workspacePickerBefore=chooseWorkspaceDirectory;
+  const workspaceUIPath=join(SESSION_DIR,'工作区 UI 项目'); mkdirSync(workspaceUIPath);
+  await js("document.querySelector('#open-workspace').focus();document.querySelector('#open-workspace').click()");
+  note(await waitFor(()=>count('.workspace-dialog[open] #workspace-directory').then(n=>n===1)), "工作区窗口读取当前会话目录");
+  const workspaceEventsBefore=await text('#count-events');
+  chooseWorkspaceDirectory=async()=>({canceled:true,filePaths:[]});
+  await click('#choose-workspace');
+  note(await waitFor(async()=>(await text('#workspace-note')).includes('已取消选择')), "取消目录选择保留原目录");
+  note(await text('#count-events')===workspaceEventsBefore, "取消选择不写会话日志");
+  let workspacePickerContract=false;
+  chooseWorkspaceDirectory=async(options)=>{workspacePickerContract=options.properties.join(',')==='openDirectory' && options.title.includes('SaCode');return {canceled:false,filePaths:[workspaceUIPath]};};
+  await click('#choose-workspace');
+  note(await waitFor(async()=>(await text('#workspace-note')).includes('已保存')), "项目目录经核心落盘后显示已保存");
+  note(workspacePickerContract && (await text('#workspace-directory')).includes('工作区 UI 项目'), "中文工作区和系统文件夹选择契约一致");
+  chooseWorkspaceDirectory=workspacePickerBefore;
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  note(await waitFor(()=>js("!document.querySelector('.workspace-dialog[open]') && document.activeElement.id==='open-workspace'")), "工作区 Escape 关闭并恢复导航焦点");
+  await click('#tool-write'); await waitFor(()=>count('#allow-once').then(n=>n===1)); await click('#allow-once');
+  note(await waitFor(async()=>(await text('#outcome')).startsWith('结果：')), "所选工作区的写入仍经过一次性审批");
+  note(require('node:fs').readFileSync(join(workspaceUIPath,'dsh-tool.txt'),'utf8')==='hello-from-renderer', "相对文件实际写入带空格的中文项目目录");
+
   // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
   const oldTheme=nativeTheme.themeSource;
   const catalogRequestBefore=bridge.request.bind(bridge);
@@ -630,6 +653,7 @@ async function uiSmoke() {
   note(await count('.msg-text')===0, "旧会话延迟投影不会覆盖新会话界面");
   note(await count('.msg-text')===0, "新会话不继承原会话消息");
   note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource==='system', "新会话预算与主题独立初始化");
+  note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
   await js("(() => {const e=document.querySelector('#composer');e.value='只属于中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#send');
@@ -641,6 +665,7 @@ async function uiSmoke() {
   note(await js("document.querySelector('#composer').value==='原会话未发送草稿'"), "切回后恢复原会话草稿");
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
   note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme, "原会话预算与主题恢复");
+  note((await bridge.request('workspace/get')).directory.includes('工作区 UI 项目'), "切回后恢复原会话项目目录");
 
   await bridge.stop();
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
@@ -725,6 +750,15 @@ ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
 });
 
 ipcMain.handle("dsh:sessionCatalog", async () => bridge.request("session/catalog"));
+ipcMain.handle("dsh:workspaceGet", async () => withHost(()=>bridge.request("workspace/get")));
+ipcMain.handle("dsh:workspaceChoose", async () => withHost(async()=>{
+  const workspace=await bridge.request("workspace/get");
+  const choice=await chooseWorkspaceDirectory({title:"选择 SaCode 项目目录", properties:["openDirectory"],
+    defaultPath: workspace.configured && workspace.available ? workspace.directory : app.getPath("documents")});
+  if(choice.canceled) return {cancelled:true};
+  if(!Array.isArray(choice.filePaths) || choice.filePaths.length!==1 || !isStr(choice.filePaths[0])) throw new Error("bad directory selection");
+  return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
+}));
 ipcMain.handle("dsh:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
   return withHost(()=>bridge.request("session/create", {title:args.title}));

@@ -204,7 +204,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog"
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -237,6 +237,7 @@ main(args: Array<String>) {
     var shared = SessionLog(p)
     var leaseHeld = false
     var selectionFault = false
+    var workspaceFault = false
     // 内置仓颉工具在此登记；extension/* 全部走同一个注册表与同一个 ToolRuntime，
     // 保证 CLI 与桌面看到的工具集与审批语义一致。
     let extReg = ToolRegistry()
@@ -295,6 +296,9 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {
+            emit(errFrame(idText, -32003, "workspace-failed-restart-required")); continue
+        }
         if (startupFault && method != "initialize" && method != "session/catalog" && method != "session/create" && method != "session/select") {
             emit(errFrame(idText, -32002, "selection-replay-rejected"))
             continue
@@ -310,7 +314,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -655,6 +659,45 @@ main(args: Array<String>) {
                 }
             }
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
+        if (method == "workspace/get") {
+            var target = shared
+            if (!leaseHeld || workspaceFault) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                target = fresh
+            }
+            let workspace = SessionWorkspace(target, fallback: canonicalize(".").toString())
+            let configured = if (workspace.directory().size > 0) { "true" } else { "false" }
+            let available = if (workspace.available()) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(workspace.effectiveDirectory())}\",\"configured\":${configured},\"available\":${available},\"scope\":\"session\"}"))
+            continue
+        }
+        if (method == "workspace/set-directory") {
+            if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
+                emit(errFrame(idText, -32001, "session-resources-in-flight")); continue
+            }
+            let wanted = jsonStr(body, "directory")
+            try {
+                if (wanted.size == 0 || !FileInfo(canonicalize(wanted)).isDirectory()) { throw Exception("bad-workspace-directory") }
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32602, "bad-workspace-directory")); continue
+            }
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) { emit(errFrame(idText, -32001, "already-owned")); continue }
+                if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                leaseHeld = true
+            }
+            var changed = false
+            try { changed = SessionWorkspace(shared).setDirectory(wanted) } catch (e: Exception) {
+                emit(errFrame(idText, -32602, "bad-workspace-directory")); continue
+            }
+            if (!shared.flush()) { workspaceFault = true; emit(errFrame(idText, -32003, "workspace-flush-failed")); continue }
+            lease.release(); leaseHeld = false
+            extRt = ToolRuntime(shared, extReg)
+            let flag = if (changed) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(SessionWorkspace(shared).directory())}\",\"configured\":true,\"available\":true,\"saved\":true,\"changed\":${flag}}"))
             continue
         }
         if (method == "session/create") {

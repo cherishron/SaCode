@@ -38,6 +38,8 @@ test("握手声明协议与能力", async () => {
   assert.ok(r.capabilities.includes("session/catalog"));
   assert.ok(r.capabilities.includes("session/create"));
   assert.ok(r.capabilities.includes("session/select"));
+  assert.ok(r.capabilities.includes("workspace/get"));
+  assert.ok(r.capabilities.includes("workspace/set-directory"));
   await b.stop();
 });
 

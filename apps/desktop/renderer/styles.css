@@ -192,6 +192,10 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .detail-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-dialog { width: min(600px, calc(100vw - 48px)); }
 .catalog-dialog { width: min(600px, calc(100vw - 48px)); }
+.workspace-dialog { width: min(600px, calc(100vw - 48px)); }
+.workspace-panel { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-s); }
+.workspace-path { max-width: 100%; overflow-wrap: anywhere; font-size: var(--fs-m); }
 .catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .catalog-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .catalog-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
