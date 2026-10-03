@@ -138,12 +138,106 @@ test("turn 在途时读数与收紧预算都进得来，写侧仍串行", async 
     const cx = await b.request("turn/cancel", {});
     assert.equal(cx.cancelRequested, true);
     const t = await pollUntilSettled(b);
-    // limit=2 只发两帧就正常收束、没有 finish：这样的轮次不该被计量
+    // limit=2 在 usage 前取消：报告 absent，不推断实际上游消耗为零。
     assert.equal(t.finishReason, "");
-    assert.equal(t.usageVerdict, "absent", "没跑完的轮次本来就没花钱，记它等于把取消变成消耗");
+    assert.equal(t.usageVerdict, "absent", "没有收到 usage 时不能捏造计量值");
     assert.equal(t.used, 0);
     assert.equal(t.budget, 50, "在途期间收紧的档位要留在这一轮的结算帧上");
   } finally {
     await b.stop();
   }
+});
+
+// 在同一目录重启但不预先开 turn，覆盖由其他写入口先取得租约的路径。
+for (const [method, params] of [
+  ["session/submit", { eventType: "user/message", data: "probe" }],
+  ["session/append", { eventType: "user/message", data: "probe" }],
+  ["approval/ask", { name: "write" }],
+  ["approval/answer", { approvalId: 999, decision: "denied" }],
+  ["extension/call", { name: "unknown", args: "" }],
+]) {
+  test(`重启后 ${method} 先取租约仍恢复历史预算`, async () => {
+    const { b, dir } = await bootFresh("lease");
+    try {
+      await b.request("usage/set-budget", { budget: 5 });
+      await b.request("turn/start", { limit: 5 });
+      assert.equal((await pollUntilSettled(b)).over, true);
+    } finally { await b.stop(); }
+    const fresh = new HostBridge(HOST, process.env);
+    await fresh.start(dir);
+    try {
+      const before = await fresh.request("usage/status");
+      try { await fresh.request(method, params); }
+      catch (e) { assert.equal(method, "extension/call"); assert.match(e.message, /-32010/); }
+      assert.deepEqual(await fresh.request("usage/status"), before);
+      assert.equal((await fresh.request("usage/set-budget", { budget: 50 })).applied, false);
+      await assert.rejects(() => fresh.request("turn/start", { limit: 5 }), /over-budget/);
+    } finally { await fresh.stop(); }
+  });
+}
+
+async function waitForChunks(b, count) {
+  for (let i = 0; i < 100; i++) {
+    // 不调用 turn/poll，避免被测试自身触发结算。
+    if ((await b.request("session/projection")).events >= count + 1) return;
+    await sleep(10);
+  }
+  assert.fail("流事件未到达预期帧数");
+}
+
+for (const limit of [4, 5]) {
+  test(`收到 usage 后未轮询退出仍记账（limit=${limit}）`, async () => {
+    const { b, dir } = await bootFresh("exit");
+    try {
+      await b.request("turn/start", { limit });
+      await waitForChunks(b, limit);
+    } finally {
+      const exit = await b.stop();
+      assert.equal(exit.forced, false);
+      assert.equal(exit.code, 0);
+    }
+    const log = readFileSync(jj(dir, "session.log"), "utf8");
+    assert.equal((log.match(/\tturn\/usage\t12:12/g) || []).length, 1);
+    assert.equal(existsSync(jj(dir, "session.log.lease")), false);
+    const fresh = new HostBridge(HOST, process.env);
+    await fresh.start(dir);
+    try { assert.equal((await fresh.request("usage/status")).used, 12); }
+    finally { await fresh.stop(); }
+  });
+}
+
+test("终态重复轮询与随后退出不重复记账", async () => {
+  const { b, dir } = await bootFresh("once");
+  try {
+    await b.request("turn/start", { limit: 5 });
+    assert.equal((await pollUntilSettled(b)).used, 12);
+    await b.request("turn/poll");
+    await b.request("turn/poll");
+    assert.equal((await b.request("usage/status")).used, 12);
+  } finally { await b.stop(); }
+  assert.equal((readFileSync(jj(dir, "session.log"), "utf8").match(/\tturn\/usage\t/g) || []).length, 1);
+});
+
+test("已用 12 收紧到 5 即时拒绝下一轮且重启仍拒绝", async () => {
+  const { b, dir } = await bootFresh("spent");
+  try {
+    await b.request("turn/start", { limit: 5 });
+    assert.equal((await pollUntilSettled(b)).used, 12);
+    assert.equal((await b.request("usage/set-budget", { budget: 5 })).applied, true);
+    assert.equal((await b.request("usage/status")).over, true);
+    await assert.rejects(() => b.request("turn/start", { limit: 5 }), /over-budget/);
+  } finally { await b.stop(); }
+  const fresh = new HostBridge(HOST, process.env);
+  await fresh.start(dir);
+  try { await assert.rejects(() => fresh.request("turn/start", { limit: 5 }), /over-budget/); }
+  finally { await fresh.stop(); }
+});
+
+test("预算收紧到零不启动任何流", async () => {
+  const { b, dir } = await bootFresh("zero");
+  try {
+    await b.request("usage/set-budget", { budget: 0 });
+    await assert.rejects(() => b.request("turn/start", { limit: 5 }), /over-budget/);
+  } finally { await b.stop(); }
+  assert.doesNotMatch(readFileSync(jj(dir, "session.log"), "utf8"), /\tturn\/start\t/);
 });

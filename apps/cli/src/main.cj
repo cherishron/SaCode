@@ -78,6 +78,34 @@ main(args: Array<String>) {
         let a4 = Assembly()
         a4.push(Chunk("usage", "9", ""))
         expect("缺 finish 时保持 interrupted", a4.interrupted)
+
+        // 计量与预算：CLI 入口要能只靠核心回答「这一轮花了多少、还让不让跑下一轮」。
+        // 这里不借宿主，直接用同一份 core，两个入口因此共享同一套账。
+        let mp = "meter-cli.log"
+        removeIfExists(mp, recursive: false)
+        removeIfExists("${mp}.lease", recursive: false)
+        let mlog = SessionLog(mp)
+        let mt = TokenMeter(mlog, budget: Int64(20))
+        expect("usage 累加并记账", mt.record("12") == "recorded" && mt.used() == Int64(12))
+        expect("超预算的一笔不计入", mt.record("12") == "over-budget" && mt.used() == Int64(12))
+        expect("拦过一次即视为超档", mt.over())
+        expect("预算只可收紧不可放宽", mt.lowerBudget(Int64(15)) && !mt.lowerBudget(Int64(99)))
+        expect("乱码 usage 记 0 并单独计数", mt.record("twelve") == "bad-usage" && mt.used() == Int64(12))
+        mlog.flush()
+        let mlog2 = SessionLog(mp)
+        let mt2 = TokenMeter(mlog2, budget: Int64(20))
+        // 换一个新实例、只靠日志重算：崩溃重启不许「失忆」
+        expect("账能从会话日志重算", mlog2.load() && mt2.rebuild() == Int64(12))
+        expect("重算后仍记得被拦过", mt2.over())
+        expect("重算后下一笔照样拦得住", mt2.record("9") == "over-budget" && mt2.used() == Int64(12))
+        let tightened = TokenMeter(SessionLog("meter-cli-tightened.log"))
+        tightened.record("12")
+        expect("收紧到已用额度以下即时停轮", tightened.lowerBudget(Int64(5)) && tightened.over())
+        let cancelledUsage = TurnResult(true, Int64(4), "", "", "12", true, Int64(0), Int64(0))
+        let exitMeter = TokenMeter(SessionLog("meter-cli-exit.log"))
+        expect("取消仍保留已报告 usage", exitMeter.settleTurn(cancelledUsage) == "recorded" && exitMeter.used() == Int64(12))
+        removeIfExists(mp, recursive: false)
+        removeIfExists("${mp}.lease", recursive: false)
     }
 
     if (mode == "all" || mode == "cancel") {
@@ -205,6 +233,9 @@ main(args: Array<String>) {
         reg.register(ToolSpec("write", "写临时文件", "path content", true))
         reg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
         let rt = ToolRuntime(log, reg)
+        if (exists("probe-tool.txt")) {
+            rt.execute("read", "probe-tool.txt", "", true)
+        }
         let allow = rt.execute("write", "probe-tool.txt hello", "allowed-once", true)
         expect("allowed-once 放行并执行", allow.allowed && allow.why == "ok:probe-tool.txt")
         // 读侧的同一套语义也得从这个入口走一遍：两个入口共用同一个 core
@@ -215,6 +246,12 @@ main(args: Array<String>) {
         let stale = rt.execute("write", "probe-tool.txt next", "allowed-once", true)
         expect("等长外部改动被识别为版本过期并拒绝", !stale.allowed && stale.why == "fs-stale-version:probe-tool.txt")
         expect("拒绝发生在写之前，盘上仍是第三方那一份", rt.lastDetail.stage == "fs-stale-version" && String.fromUtf8(File.readFrom("probe-tool.txt")) == "hellp")
+        let alias = rt.execute("write", "./probe-tool.txt next", "allowed-once", true)
+        expect("路径别名不能绕过观察版本", !alias.allowed && alias.why == "fs-stale-version:./probe-tool.txt")
+        File.writeTo("probe-unseen.txt", "external".toArray())
+        let unseen = rt.execute("write", "probe-unseen.txt overwrite", "allowed-once", true)
+        expect("已有文件未经观察不得覆盖", !unseen.allowed && unseen.why == "fs-not-observed:probe-unseen.txt")
+        removeIfExists("probe-unseen.txt", recursive: false)
         File.writeTo("probe-tool.txt", "hello".toArray())
         let gone = rt.execute("read", "no-such-dir/probe-none.txt", "", true)
         expect("读不到的路径归一成 not-found", !gone.allowed && gone.why == "not-found:no-such-dir/probe-none.txt")

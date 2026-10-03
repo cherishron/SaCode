@@ -51,7 +51,7 @@ func frameIdOf(body: String): Int64 {
 }
 
 // 反斜杠、引号、换行必须转义：Windows 路径与含引号的参数不能写出坏帧。
-// 其余控制字符直接丢弃——宁可少写一个字符，也不发一条对端解析不了的帧。
+// 其余控制字符用 Unicode 转义保留，工具回执必须无损。
 public func jsonEscapeText(s: String): String {
     let out = ArrayList<Byte>()
     for (b in s.toArray()) {
@@ -73,6 +73,14 @@ public func jsonEscapeText(s: String): String {
             out.add(116)
         } else if (n >= 32) {
             out.add(b)
+        } else {
+            let hex = "0123456789abcdef".toArray()
+            out.add(92)
+            out.add(117)
+            out.add(48)
+            out.add(48)
+            out.add(hex[n / 16])
+            out.add(hex[n % 16])
         }
     }
     return String.fromUtf8(out.toArray())

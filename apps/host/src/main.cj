@@ -215,6 +215,15 @@ func allowedDuringTurn(method: String): Bool {
     return turnSide || readSide || callSide || approvalSide || meterSide
 }
 
+// 所有写入口加载会话时同时恢复计量，不能因租约先被审批或工具取得而绕过预算。
+func loadForWrite(log: SessionLog, meter: TokenMeter): Bool {
+    if (!log.load()) {
+        return false
+    }
+    meter.rebuild()
+    return true
+}
+
 main(args: Array<String>) {
     let p = "session.log"
     let lease = WriteLease(p)
@@ -327,7 +336,7 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
@@ -352,7 +361,7 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
@@ -438,7 +447,7 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
@@ -478,7 +487,7 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
@@ -503,7 +512,7 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
@@ -533,14 +542,12 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
                 }
                 leaseHeld = true
-                // 接盘第一件事是重算账：上一轮进程留下的用量，这一轮必须看得见
-                meter.rebuild()
             }
             // 预算拦过一次就不再开新轮：超档必须是停下来问人，而不是自动降级继续跑。
             if (meter.over()) {
@@ -616,12 +623,7 @@ main(args: Array<String>) {
                     settledText = "true"
                     let cFlag = if (r.cancelled) { "true" } else { "false" }
                     let iFlag = if (r.interrupted) { "true" } else { "false" }
-                    // 只有「跑完了」的轮次才欠账：finish 之前必须来一条 usage，
-                    // 缺 finish 的轮次本来就还没花（取消/中断），不配进计量。
-                    var verdict = "absent"
-                    if (r.finishReason.size > 0) {
-                        verdict = meter.record(r.usage)
-                    }
+                    let verdict = meter.settleTurn(r)
                     let oFlag = if (meter.over()) { "true" } else { "false" }
                     tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${r.text}\",\"finishReason\":\"${r.finishReason}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                     turnHandle = None
@@ -652,7 +654,7 @@ main(args: Array<String>) {
                 }
             }
             let oFlag2 = if (mv.over()) { "true" } else { "false" }
-            emit(okFrame(idText, "{\"used\":${mv.used()},\"budget\":${mv.budgetValue()},\"over\":${oFlag2},\"badUsage\":${mv.badCount}}"))
+            emit(okFrame(idText, "{\"used\":${mv.used()},\"budget\":${mv.budgetValue()},\"over\":${oFlag2},\"verdict\":\"${mv.verdict()}\",\"badUsage\":${mv.badCount}}"))
             continue
         }
         if (method == "usage/set-budget") {
@@ -663,13 +665,12 @@ main(args: Array<String>) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
-                if (!shared.load()) {
+                if (!loadForWrite(shared, meter)) {
                     lease.release()
                     emit(errFrame(idText, -32002, "replay-rejected"))
                     continue
                 }
                 leaseHeld = true
-                meter.rebuild()
             }
             let want = jsonNum(body, "budget")
             let ok2 = meter.lowerBudget(want)
@@ -816,6 +817,8 @@ main(args: Array<String>) {
     if (let Some(h) <- turnHandle) {
         h.cancel()
         let r = h.result()
+        let verdict = meter.settleTurn(r)
+        getStdErr().writeln("host-exit-usage: verdict=${verdict} used=${meter.used()}")
         getStdErr().writeln("host-exit-settled-turn: cancelled=${r.cancelled} delivered=${r.delivered}")
         turnHandle = None
         turnBusy = false

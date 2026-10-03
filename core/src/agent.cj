@@ -88,7 +88,7 @@ public class ToolRuntime {
     public var lastDetail = ToolDetail()
     // 已观察过的路径 → 当时那份字节的状态。它是 write 的判断依据：
     // 「我上次看到的就是现在这份吗」，答不出就不能拿旧认知去覆盖别人的改动。
-    let observed = HashMap<String, Array<Byte>>()
+    let observed = HashMap<String, FileObservation>()
 
     public init(log: SessionLog, registry: ToolRegistry) {
         this.log = log
@@ -177,11 +177,12 @@ public class ToolRuntime {
         var wasExisting = false
         try {
             wasExisting = exists(parsed.path)
+            key = fileObservationKey(parsed.path)
+            let seen = observed.get(key)
             if (wasExisting) {
-                key = fileObservationKey(parsed.path)
-                let seen = observed.get(key)
-                if (let Some(bytes) <- seen) {
-                    if (!sameFileBytes(bytes, File.readFrom(parsed.path))) {
+                if (let Some(prior) <- seen) {
+                    if (!prior.present) { return failFile("fs-not-observed", parsed.path) }
+                    if (!sameFileBytes(prior.bytes, File.readFrom(parsed.path))) {
                         return failFile("fs-stale-version", parsed.path)
                     }
                 } else {
@@ -189,6 +190,9 @@ public class ToolRuntime {
                 }
                 File.writeTo(parsed.path, parsed.content.toArray())
             } else {
+                if (let Some(prior) <- seen) {
+                    if (prior.present) { return failFile("fs-stale-version", parsed.path) }
+                }
                 // 发布新文件必须在落位时拒绝覆盖，不能靠 exists→write 的时间窗口。
                 publishNewFile(parsed.path, parsed.content.toArray())
             }
@@ -217,7 +221,7 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "torn-write:${parsed.path}")
         }
         // 这一份刚由本工具写下并核对过，观察记录跟着更新，否则下一次自己写自己会被自己拦
-        observed[key] = back
+        observed[key] = FileObservation(true, back)
         lastDetail.verified = true
         lastDetail.stage = "ran"
         let out = "ok:${parsed.path}"
@@ -238,6 +242,10 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "bad-args")
         }
         if (!exists(Path(path))) {
+            // 缺失也是观察；若之后别人创建了它，只能走禁止覆盖的创建意图。
+            try { observed[fileObservationKey(path)] = FileObservation(false, []) } catch (e: Exception) {
+                // 父目录也不存在时无法解析身份，创建本来就会失败；读仍报 not-found。
+            }
             lastDetail.stage = "not-found"
             log.append("tool/result", "not-found:${path}")
             return ApprovalOutcome(false, "not-found:${path}")
@@ -265,12 +273,13 @@ public class ToolRuntime {
             return failFile("io-error", path)
         }
         // 解码与身份解析都成功，才登记已观察并记录成功，失败不能冒充 read 成功。
-        observed[key] = bytes
+        observed[key] = FileObservation(true, bytes)
         lastDetail.snapshotBefore = bytes.size
         lastDetail.snapshotExpected = bytes.size
         lastDetail.verified = true
         lastDetail.stage = "ran"
-        log.append("tool/result", "ok-read:${path}:${bytes.size}")
+        // 模型将看到的正文必须进日志，不能只存路径和长度而让重放丢掉依据。
+        log.append("tool/result", "ok-read:${path}:${bytes.size}\n${text}")
         return ApprovalOutcome(true, text)
     }
 
@@ -339,7 +348,17 @@ public class ToolRuntime {
 // 当前 Windows 构建的观察键：解析绝对路径和软链接，统一 ASCII 大小写。
 // 逐字节保存观察值，不能用会碰撞的自制短哈希代替内容一致性。
 func fileObservationKey(path: String): String {
-    return canonicalize(path).toString().toAsciiLower()
+    if (exists(path)) { return canonicalize(path).toString().toAsciiLower() }
+    let parent = Path(path).parent.toString()
+    let dir = if (parent.size == 0) { "./" } else { parent }
+    let full = canonicalize(dir).join(Path(path).fileName)
+    return full.toString().toAsciiLower()
+}
+
+class FileObservation {
+    let present: Bool
+    let bytes: Array<Byte>
+    init(present: Bool, bytes: Array<Byte>) { this.present = present; this.bytes = bytes }
 }
 
 func sameFileBytes(left: Array<Byte>, right: Array<Byte>): Bool {

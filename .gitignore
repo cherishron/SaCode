@@ -108,7 +108,7 @@ apps/cli/out/
 dualtest/
 
 # npm 平台包内二进制与依赖（由 scripts/pack-cli.mjs 生成）
-npm/*/bin/
+npm/dsh-cli-*/bin/
 protocol-bridge-dbg/
 apps/desktop/dist/
 dualtest/

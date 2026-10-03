@@ -147,3 +147,42 @@ func tightenedBudgetSurvivesProcessRestart() {
     @Expect(m3.record("9"), "recorded")
     mtCleanup("budget-restart")
 }
+
+@Test
+func tighteningBelowUsageStopsNewTurnsAfterReplay() {
+    mtCleanup("exhausted")
+    let log = SessionLog(mtPath("exhausted"))
+    let m = TokenMeter(log)
+    @Expect(m.record("12"), "recorded")
+    @Expect(m.lowerBudget(Int64(5)), true)
+    @Expect(m.over(), true)
+    @Expect(log.flush(), true)
+    let fresh = SessionLog(mtPath("exhausted"))
+    @Expect(fresh.load(), true)
+    let replayed = TokenMeter(fresh)
+    @Expect(replayed.rebuild(), Int64(12))
+    @Expect(replayed.over(), true)
+    mtCleanup("exhausted")
+}
+
+@Test
+func zeroAndExactlySpentBudgetsStopNewTurns() {
+    let m = TokenMeter(SessionLog(mtPath("exact")), budget: Int64(12))
+    @Expect(m.record("12"), "recorded")
+    @Expect(m.over(), true)
+    let zero = TokenMeter(SessionLog(mtPath("zero")), budget: Int64(0))
+    @Expect(zero.over(), true)
+}
+
+@Test
+func cancelledTurnKeepsReportedUsageWithoutInventingMissingUsage() {
+    let log = SessionLog(mtPath("settle"))
+    let m = TokenMeter(log)
+    let absent = TurnResult(true, Int64(2), "", "", "", true, Int64(0), Int64(0))
+    @Expect(m.settleTurn(absent), "absent")
+    @Expect(m.badCount, Int64(0))
+    let reported = TurnResult(true, Int64(4), "", "", "12", true, Int64(0), Int64(0))
+    @Expect(m.settleTurn(reported), "recorded")
+    @Expect(m.used(), Int64(12))
+    @Expect(mtEventCount(log, "turn/usage"), Int64(1))
+}

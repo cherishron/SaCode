@@ -161,3 +161,48 @@ func jsonEscapingPreservesEveryControlByte() {
     let controls: Array<Byte> = [65, 0, 66, 12, 67, 8, 31]
     @Expect(jsonEscapeText(String.fromUtf8(controls)), "A\\u0000B\\u000cC\\u0008\\u001f")
 }
+
+@Test
+func deletedObservedFileCannotBeSilentlyRecreated() {
+    fsCleanup("deleted")
+    let (rt, _) = fsSetup("deleted")
+    let f = fsFile("deleted")
+    File.writeTo(f, "before".toArray())
+    @Expect(rt.execute("read", f, "", true).allowed, true)
+    removeIfExists(f, recursive: false)
+    let r = rt.execute("write", "./${f} replacement", "allowed-once", true)
+    @Expect(r.allowed, false)
+    @Expect(r.why, "fs-stale-version:./${f}")
+    @Expect(exists(f), false)
+    fsCleanup("deleted")
+}
+
+@Test
+func observedAbsentFileDoesNotAuthorizeOverwritingLaterCreation() {
+    fsCleanup("absent")
+    let (rt, _) = fsSetup("absent")
+    let f = fsFile("absent")
+    @Expect(rt.execute("read", f, "", true).allowed, false)
+    File.writeTo(f, "external".toArray())
+    @Expect(rt.execute("write", "./${f} replacement", "allowed-once", true).why, "fs-not-observed:./${f}")
+    @Expect(String.fromUtf8(File.readFrom(f)), "external")
+    fsCleanup("absent")
+}
+
+@Test
+func readResultContentSurvivesReplayAfterFileIsGone() {
+    fsCleanup("replay")
+    let (rt, log) = fsSetup("replay")
+    let f = fsFile("replay")
+    let body = "第一行\n第二行\t\"原始正文\""
+    File.writeTo(f, body.toArray())
+    @Expect(rt.execute("read", f, "", true).why, body)
+    @Expect(log.flush(), true)
+    removeIfExists(f, recursive: false)
+    let replay = SessionLog(fsLogPath("replay"))
+    @Expect(replay.load(), true)
+    let events = replay.snapshotEvents()
+    @Expect(events[events.size - 1].data, "ok-read:${f}:${body.toArray().size}\n${body}")
+    @Expect(replay.deriveMessages().size, Int64(1))
+    fsCleanup("replay")
+}

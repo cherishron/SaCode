@@ -26,11 +26,32 @@ public class TokenMeter {
         return budget
     }
 
-    // over 回答的是「这个会话有没有已经被预算拦过」，不是「用满了没有」：
-    // 拦过一次就说明消耗越过了人工设的档位，正确的下一步是停下来，
-    // 而不是换成更小的轮次继续往外花。
+    // 历史拒绝或当前额度耗尽都必须停下来；收紧到已用额度以下也即时生效。
     public func over(): Bool {
-        return rejected > Int64(0)
+        return rejected > Int64(0) || total >= budget
+    }
+
+    // 当前账态的判决词：给 usage/status 用，不依赖「上一轮 record 回了什么」。
+    // turn/poll 结算帧带的是「这一轮的 record 结果」，这里是「账盘子的当前状态」——
+    // 收紧到已用以下后，不用再跑一轮就能看出已超档。
+    public func verdict(): String {
+        if (over()) {
+            return "over-budget"
+        }
+        if (total > Int64(0)) {
+            return "recorded"
+        }
+        return "absent"
+    }
+
+    // 轮询和退出共享终态结算：收到 usage 就记账，取消不能抹掉已收到的用量。
+    // 尚未收到 usage 且没有 finish 时只报告 absent，不推断实际消耗为零。
+    // 调用方取得结果后清除 handle，保证一轮只结算一次。
+    public func settleTurn(result: TurnResult): String {
+        if (result.usage.size > 0 || result.finishReason.size > 0) {
+            return record(result.usage)
+        }
+        return "absent"
     }
 
     // 只允许收紧。调大、相等、负数都拒——放宽必须走不到这条路。
