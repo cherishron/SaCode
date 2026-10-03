@@ -257,7 +257,8 @@ async function uiSmoke() {
   // 负数在渲染层就被挡（不给「把档位改成 NaN 从而谁都拦不住」留通路）
   await setBudgetField("-1");
   note(await click("#apply-budget"), "已派发负数预算");
-  note((await text("#budget-note")).includes("非负整数"), `负数预算=${await text("#budget-note")}`);
+  const negBlocked = await waitFor(async () => (await text("#budget-note")).includes("非负整数"));
+  note(negBlocked, `负数预算=${await text("#budget-note")}`);
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
@@ -292,6 +293,27 @@ async function uiSmoke() {
   note(readBack, `只读工具直接执行并读回盘上正文=${(await text("#outcome")).slice(0, 52)}`);
   note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
 
+  // 超档必须当场拦得住：把档位收到低于一次消耗，再跑一轮就该失效。
+  // 这段在 bridge.stop() 之前——stop 之后宿主已死，IPC 会超时。
+  await setBudgetField("5");
+  note(await click("#apply-budget"), "已派发收紧到 5");
+  // 收紧要等一次 IPC 往返：这里必须 waitFor，即时读文案会拿到上一步的旧值
+  const tightened5 = await waitFor(async () => (await text("#budget-note")).includes("已收紧到 5"));
+  note(tightened5, `收紧到 5=${await text("#budget-note")}`);
+  // 收紧后 refreshUsage 读 usage/status，核心回的 verdict=over-budget
+  const overTurn = await waitFor(async () => (await text("#turn-usage")).includes("已超档"));
+  note(overTurn, `超档读数=${await text("#turn-usage")}`);
+  const overSettled = await waitFor(async () => (await text("#turn-usage")).includes("· over-budget"));
+  note(overSettled, `超档判决=${await text("#turn-usage")}`);
+  // 核心侧 -32014 是真闸门；界面这层同时要把按钮锁住，别让人连点靠错误提示循环
+  const lockState = await js(
+    "(() => { const e = document.getElementById('run-turn');" +
+    " if (!e) return 'missing';" +
+    " return e.disabled === true ? 'attr' : (/disabled/.test(e.className) ? 'cls' : 'live'); })()"
+  );
+  note(lockState === "attr" || lockState === "cls", `超档后 run-turn 锁定态=${lockState}`);
+  note((await text("#run-turn")).includes("已超档"), `超档后按钮文案=${await text("#run-turn")}`);
+
   await bridge.stop();
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
   const log2 = require("node:fs").readFileSync(SESSION_LOG, "utf8");
@@ -299,6 +321,7 @@ async function uiSmoke() {
   note(/tool\/result\tdenied:write:approval-denied/.test(log2), "被拒的调用也按拒绝记账，不是静默成功");
   // 审批留下的可追问痕迹：谁批的、批成什么，只能从日志里的 asked/decided 回答
   note(/approval\/asked\t\d+:write/.test(log2) && /approval\/decided\t\d+:denied/.test(log2), "审批的 asked/decided 已进同一份会话日志");
+
   console.log(bad === 0 ? "UI_SMOKE PASS" : `UI_SMOKE FAIL（${bad} 项不符）`);
   app.exit(bad === 0 ? 0 : 1);
 }

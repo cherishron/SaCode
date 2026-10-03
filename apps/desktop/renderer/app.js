@@ -197,7 +197,7 @@ createApp({
 
     async function refreshUsage() {
       const u = await window.dsh.usageStatus();
-      usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: usage.value.verdict };
+      usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: u.verdict || "" };
     }
 
     // 收紧预算：填进来的数字交给核心判，界面只复述核心回的那一档，绝不自己抬。
@@ -266,14 +266,18 @@ createApp({
     const u = self.usage;
     const usageText = "用量 " + (u.used === null ? "?" : u.used) + "/" + (u.budget === null ? "?" : u.budget)
       + (u.verdict ? " · " + u.verdict : " · 未计量") + (u.over ? " · 已超档" : "");
+    // 超过档就不给再开新轮：界面先把按钮锁住，核心那侧的 -32014 仍是真正的闸门，
+    // 两者都要在——只靠界面禁用等于换个客户端就能继续花。
+    const turnLocked = self.turn.running || u.over;
+    const runTurnBtn = h(TV.Button, {
+      type: "primary",
+      id: "run-turn",
+      disabled: turnLocked,
+      onClick: () => self.runTurn(5),
+    }, () => (u.over ? "已超档" : "跑一轮（完整）"));
     const turnBar = el("div", "approval-row", [
-      h(TV.Button, {
-        type: "primary",
-        id: "run-turn",
-        disabled: self.turn.running,
-        onClick: () => self.runTurn(5),
-      }, () => "跑一轮（完整）"),
-      el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: self.turn.running }),
+      runTurnBtn,
+      el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: turnLocked }),
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
       // 档位只允许往下调：填大的会被核心拒，界面原样复述核心回的那一档，不自己抬
       h("input", {
