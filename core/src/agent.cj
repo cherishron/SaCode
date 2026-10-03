@@ -115,6 +115,33 @@ public class ToolRuntime {
         return ApprovalOutcome(true, out)
     }
 
+    // 走审批工单的固定序：注册表 → 消费一次性凭据 → guard → execute → tool/result 落盘。
+    // 与 execute() 的区别只在审批来源：这里的答案必须是 desk 发过号的工单，
+    // 调用方自己声明「批过了」不作数；工单过期、被拒、已用过，全都拒。
+    public func executeWithApproval(name: String, args: String, approvalId: Int64, allowedByGuard: Bool, desk: ApprovalDesk): ApprovalOutcome {
+        log.append("tool/call", "${name} ${args}")
+        if (!registry.has(name)) {
+            registryMisses += 1
+            log.append("tool/result", "unregistered:${name}")
+            return ApprovalOutcome(false, "unregistered-tool:${name}")
+        }
+        if (registry.requiresApproval(name)) {
+            if (desk.consume(approvalId) != "allowed-once") {
+                let st = desk.stateOf(approvalId)
+                log.append("tool/result", "denied:${name}:approval-${st}")
+                return ApprovalOutcome(false, "approval-not-granted:${st}")
+            }
+        }
+        if (!allowedByGuard) {
+            guardDenials += 1
+            log.append("tool/result", "denied:${name}:guard")
+            return ApprovalOutcome(false, "guard-denied")
+        }
+        let out = runTool(name, args)
+        log.append("tool/result", out)
+        return ApprovalOutcome(true, out)
+    }
+
     func runTool(name: String, args: String): String {
         if (name != "write") {
             return "unknown-tool:${name}"

@@ -3,7 +3,7 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
-const { existsSync, writeFileSync } = require("node:fs");
+const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
 const { HostBridge } = require("./host-bridge.cjs");
 const { hostExePath } = require("./paths.cjs");
 
@@ -25,8 +25,11 @@ const bridge = new HostBridge(HOST, process.env);
 let win = null;
 
 function seedIfNeeded() {
+  // --session-dir 指到一个还不存在的目录是冒烟测试的正常用法（要的是全新目录），
+  // 不能因为目录不存在就把写入炸掉。
+  if (!existsSync(SESSION_DIR)) mkdirSync(SESSION_DIR, { recursive: true });
   if (!existsSync(SESSION_LOG)) {
-    require("node:fs").writeFileSync(
+    writeFileSync(
       SESSION_LOG,
       "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tuser/message\thello from desktop\n"
     );
@@ -147,9 +150,9 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','turnStart','turnPoll','turnCancel'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === "function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+  note(apiShape === "function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
@@ -185,11 +188,17 @@ async function uiSmoke() {
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
-  note(await waitFor(() => text("#approval").then((t) => t.length > 0)), "审批浮层出现（一次性放行，无永久授权按钮）");
+  note(await waitFor(() => text("#approval").then((t) => t.includes("工单 #"))), "审批浮层出现且带工单号（一次性放行，无永久授权按钮）");
   note(await click("#deny"), "已点拒绝");
   const denied = await waitFor(async () => (await text("#outcome")).includes("被拒"));
   note(denied, `拒绝结果=${await text("#outcome")}`);
-  note((await click("#tool-write")) && (await click("#allow-once")), "已允许一次");
+  // 放行这条腿同样要等：askTool 现在要跑一次 approval/ask 的协议往返才拿到工单，
+  // 框不是同步出现的（点完就抢点 #allow-once 会在干净会话目录下偶发抢空）。
+  note(await click("#tool-write"), "已再次点开需审批工具");
+  note(await waitFor(async () => (await count("#allow-once")) > 0), "第二张工单的审批卡已出现");
+  const apText = await text("#approval");
+  note(apText.includes("工单 #"), `审批卡带工单号=${apText.slice(0, 48)}`);
+  note(await click("#allow-once"), "已允许一次");
   const allowed = await waitFor(async () => (await text("#outcome")).includes("结果：ok"));
   note(allowed, `放行结果=${await text("#outcome")}`);
   // 工具事件走的是 append 档位：实例内可见但不等于已提交，界面须把 pending 显出来
@@ -201,7 +210,9 @@ async function uiSmoke() {
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
   const log2 = require("node:fs").readFileSync(SESSION_LOG, "utf8");
   note(/tool\/call\twrite /.test(log2) && /tool\/result\tok:/.test(log2), "放行的工具调用与结果已由核心写进会话日志");
-  note(/tool\/result\tdenied:write:denied/.test(log2), "被拒的调用也按拒绝记账，不是静默成功");
+  note(/tool\/result\tdenied:write:approval-denied/.test(log2), "被拒的调用也按拒绝记账，不是静默成功");
+  // 审批留下的可追问痕迹：谁批的、批成什么，只能从日志里的 asked/decided 回答
+  note(/approval\/asked\t\d+:write/.test(log2) && /approval\/decided\t\d+:denied/.test(log2), "审批的 asked/decided 已进同一份会话日志");
   console.log(bad === 0 ? "UI_SMOKE PASS" : `UI_SMOKE FAIL（${bad} 项不符）`);
   app.exit(bad === 0 ? 0 : 1);
 }
@@ -228,12 +239,32 @@ ipcMain.handle("dsh:userSend", async (_e, args) => {
 ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
 
 ipcMain.handle("dsh:toolCall", async (_e, args) => {
-  if (!args || !isStr(args.name) || !isStr(args.args) || !isStr(args.approval)) {
+  // 审批凭据只能是工单号：渲染层传不动「我已经批过了」这句话——它得先去 ask/answer。
+  if (!args || !isStr(args.name) || !isStr(args.args)) {
     throw new Error("bad arguments");
   }
-  return withHost(() =>
-    bridge.request("extension/call", { name: args.name, args: args.args, approval: args.approval })
-  );
+  const approvalId = args.approvalId === undefined ? 0 : args.approvalId;
+  if (!Number.isInteger(approvalId) || approvalId < 0) {
+    throw new Error("bad arguments");
+  }
+  const params = approvalId > 0
+    ? { name: args.name, args: args.args, approvalId }
+    : { name: args.name, args: args.args };
+  return withHost(() => bridge.request("extension/call", params));
+});
+
+ipcMain.handle("dsh:approvalAsk", async (_e, args) => {
+  if (!args || !isStr(args.name) || args.name.length === 0 || args.name.length > 200) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("approval/ask", { name: args.name }));
+});
+
+ipcMain.handle("dsh:approvalAnswer", async (_e, args) => {
+  if (!args || !Number.isInteger(args.approvalId) || args.approvalId < 1 || !isStr(args.decision)) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("approval/answer", { approvalId: args.approvalId, decision: args.decision }));
 });
 
 ipcMain.handle("dsh:turnStart", async (_e, args) => {
@@ -257,6 +288,11 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((e) => {
+  // 冒烟路径里任何未捕获的拒绝都必须当场退出非零：只留一个 UnhandledPromiseRejection
+  // 警告的话进程会挂在窗口上，看上去像「跑得很慢」而不是「失败了」。
+  console.log(`SMOKE FAIL ${e && e.message ? e.message : e}`);
+  app.exit(1);
 });
 
 app.on("window-all-closed", async () => {

@@ -204,7 +204,9 @@ func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
     let readSide = method == "session/projection" || method == "session/subscribe"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
-    return turnSide || readSide || callSide
+    // 审批是人在环：流式进行中也要能发号、应答、查状态、推进过期，否则「边跑边批」做不到
+    let approvalSide = method == "approval/ask" || method == "approval/answer" || method == "approval/status" || method == "approval/tick"
+    return turnSide || readSide || callSide || approvalSide
 }
 
 main(args: Array<String>) {
@@ -217,6 +219,8 @@ main(args: Array<String>) {
     let extReg = ToolRegistry()
     extReg.register(ToolSpec("write", "写临时文件", "path content", true))
     let extRt = ToolRuntime(shared, extReg)
+    // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
+    let approvalDesk = ApprovalDesk(shared)
     // JS 动态扩展宿主：由 core 的 ExtProcess 直接驱动的子进程，与内置仓颉工具共用
     // 同一套语义（未登记即拒、卸载残留归 0、退出必须结算）。
     var jsHost: Option<ExtProcess> = None
@@ -269,7 +273,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/tick\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -429,8 +433,16 @@ main(args: Array<String>) {
                 }
                 leaseHeld = true
             }
-            // 审批应答由调用方显式给出；未登记/无应答/guard 拒绝都在 core 内 fail-closed
-            let out = extRt.execute(jsonStr(body, "name"), jsonStr(body, "args"), jsonStr(body, "approval"), true)
+            // 审批只认工单：需要审批的工具（含未登记名，注册表按拒绝默认取值）必须带 approvalId，
+            // 由 core 侧一次性消费。调用方在请求里自报「allowed-once」在这条路上完全不起作用——
+            // 谁批的、批没批、批过头没有，都只能从日志里的 asked/decided 回答。
+            let ticketId = jsonNum(body, "approvalId")
+            let toolName = jsonStr(body, "name")
+            let out = if (extReg.requiresApproval(toolName)) {
+                extRt.executeWithApproval(toolName, jsonStr(body, "args"), ticketId, true, approvalDesk)
+            } else {
+                extRt.execute(toolName, jsonStr(body, "args"), "", true)
+            }
             if (!out.allowed) {
                 emit(errFrame(idText, -32010, out.why))
                 continue
@@ -442,6 +454,68 @@ main(args: Array<String>) {
             let gone = extReg.unregister(jsonStr(body, "name"))
             let flag = if (gone) { "true" } else { "false" }
             emit(okFrame(idText, "{\"disposed\":${flag},\"tools\":${extReg.count()}}"))
+            continue
+        }
+        // 审批的协议面：asked/decided/expired 都进同一份日志，与 session/submit 同一持久化档位
+        // （租约内内存可见，退出结算时落盘）。审批工单只在有写者时写事件，读状态不需要写者。
+        if (method == "approval/ask") {
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            let aid = approvalDesk.ask(jsonStr(body, "name"))
+            emit(okFrame(idText, "{\"approvalId\":${aid},\"state\":\"pending\",\"pending\":${approvalDesk.pendingCount()}}"))
+            continue
+        }
+        if (method == "approval/answer") {
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            // 参数名不能叫 id：本端解析器按整帧字节扫描，"id" 会先撞上 JSON-RPC 信封自己的 id
+            let target = jsonNum(body, "approvalId")
+            let accepted = approvalDesk.answer(target, jsonStr(body, "decision"))
+            let flag = if (accepted) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"accepted\":${flag},\"state\":\"${approvalDesk.stateOf(target)}\"}"))
+            continue
+        }
+        if (method == "approval/status") {
+            let target2 = jsonNum(body, "approvalId")
+            emit(okFrame(idText, "{\"state\":\"${approvalDesk.stateOf(target2)}\",\"pending\":${approvalDesk.pendingCount()}}"))
+            continue
+        }
+        // 过期用逻辑刻度推进：真实单调时钟接进来之前，测试要能确定地把 pending 推成 expired
+        if (method == "approval/tick") {
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            approvalDesk.advance(jsonNum(body, "ticks"))
+            emit(okFrame(idText, "{\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
         if (method == "turn/start") {

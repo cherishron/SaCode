@@ -138,15 +138,19 @@ test("桌面入口的 extension/list 与 CLI 内置注册表一致", async () =>
   await b.stop();
 });
 
-// 反向：未登记工具与无应答审批都必须走 JSON-RPC 错误，不得静默放行
-test("extension/call 未登记工具与 fail-closed 审批都被拒", async () => {
+// 反向：未登记工具必须走 JSON-RPC 错误；自报的审批字符串在协议面上完全不起作用
+test("extension/call 未登记工具被拒且自报审批不放行", async () => {
   const { b } = await boot();
   await assert.rejects(() => b.request("extension/call", { name: "no.such", args: "a b", approval: "allowed-once" }), /unregistered-tool:no.such/);
-  await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "none" }), /approval-not-allowed-once/);
-  const ok = await b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "allowed-once" });
+  // 关键反向用例：带着「我已经批过了」的自述来调用，没有工单就是不放行
+  await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "allowed-once" }), /approval-not-granted:unknown/);
+  await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi" }), /approval-not-granted:unknown/);
+  const asked = await b.request("approval/ask", { name: "write" });
+  await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
+  const ok = await b.request("extension/call", { name: "write", args: "probe.txt hi", approvalId: asked.approvalId });
   assert.equal(ok.result, "ok:probe.txt");
   const l = await b.request("extension/list", {});
-  assert.equal(l.misses, 1, "未登记拒绝必须计数");
+  assert.equal(l.misses, 1, "未登记拒绝必须计数（审批被拒不计入注册表 miss）");
   await b.stop();
 });
 
@@ -556,5 +560,123 @@ test("残留租按持有者死活分别接管与拒绝", async () => {
     } finally {
       await b.stop();
     }
+  }
+});
+
+// 审批的协议面：调用方自带 approval:"allowed-once" 只是「声称批过了」，
+// 真正可追问的审批要走 发号 → 应答 → 一次性消费，且 asked/decided 落进同一份日志。
+// 工单句柄在协议里一律叫 approvalId，不叫 id：本宿主按整帧字节扫描取值，
+// "id" 会先撞上 JSON-RPC 信封自己的 id，参数被静默读成 -1（本批实测踩到）。
+test("审批工单 ask→answer(allowed-once)→call 只放行一次", async () => {
+  const { b, dir } = await boot();
+  try {
+    const asked = await b.request("approval/ask", { name: "write" });
+    assert.equal(asked.state, "pending");
+    assert.ok(asked.approvalId > 0, "必须先发号，不允许调用方自己挑一个 ID");
+
+    const answered = await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
+    assert.equal(answered.accepted, true);
+    assert.equal(answered.state, "allowed-once");
+
+    const ok = await b.request("extension/call", { name: "write", args: "ticket.txt hi", approvalId: asked.approvalId });
+    assert.equal(ok.result, "ok:ticket.txt");
+
+    // 一次性就是字面意思的一次：同一张工单不得再放行第二次调用
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "ticket.txt again", approvalId: asked.approvalId }),
+      /approval-not-granted:used/,
+      "已消费的工单必须拒绝"
+    );
+    // 旧审批 ID 不可重用：结算过的工单也不再接受第二次应答
+    const reAnswer = await b.request("approval/answer", { approvalId: asked.approvalId, decision: "denied" });
+    assert.equal(reAnswer.accepted, false, "已结算工单不得被改判");
+    assert.equal(reAnswer.state, "used");
+
+    await b.request("session/flush", {});
+    const raw = readFileSync(join(dir, "session.log"), "utf8");
+    assert.ok(raw.includes(`approval/asked\t${asked.approvalId}:write`), "asked 须落盘，否则答不出谁批的");
+    assert.ok(raw.includes(`approval/decided\t${asked.approvalId}:allowed-once`), "decided 须落盘");
+  } finally {
+    await b.stop();
+  }
+});
+
+test("审批过期即拒，且只结算一次", async () => {
+  const { b, dir } = await boot();
+  try {
+    const asked = await b.request("approval/ask", { name: "write" });
+    assert.equal((await b.request("approval/status", { approvalId: asked.approvalId })).state, "pending");
+    const ticked = await b.request("approval/tick", { ticks: 31 });
+    assert.equal(ticked.pending, 0);
+    assert.equal((await b.request("approval/status", { approvalId: asked.approvalId })).state, "expired");
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "late.txt hi", approvalId: asked.approvalId }),
+      /approval-not-granted:expired/,
+      "过期的工单不得再放行"
+    );
+    // 再推进一次不得产生第二条 expired 事件（结算幂等，同一张工单只落一次账）
+    await b.request("approval/tick", { ticks: 5 });
+    await b.request("session/flush", {});
+    const raw = readFileSync(join(dir, "session.log"), "utf8");
+    const expiredLines = raw.split("\n").filter((l) => l.includes("approval/expired")).length;
+    assert.equal(expiredLines, 1, `expired 事件须恰好一条，实得 ${expiredLines} 条`);
+  } finally {
+    await b.stop();
+  }
+});
+
+// 反向：非法决定不得「顺手放行」，也不得把 pending 打成别的状态
+test("非法审批决定被拒且不改判", async () => {
+  const { b } = await boot();
+  try {
+    const asked = await b.request("approval/ask", { name: "write" });
+    for (const bad of ["allowed-always", "", "ALLOWED-ONCE"]) {
+      const r = await b.request("approval/answer", { approvalId: asked.approvalId, decision: bad });
+      assert.equal(r.accepted, false, `决定 [${bad}] 不属于认得的集合，须拒`);
+    }
+    assert.equal((await b.request("approval/status", { approvalId: asked.approvalId })).state, "pending");
+    // 不存在的工单同样拒，且不产生新工单
+    const unknown = await b.request("approval/answer", { approvalId: 9999, decision: "allowed-once" });
+    assert.equal(unknown.accepted, false);
+    assert.equal((await b.request("approval/status", { approvalId: 9999 })).state, "unknown");
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "x.txt y", approvalId: 9999 }),
+      /approval-not-granted/,
+      "拿不存在的工单来调用必须被拒"
+    );
+  } finally {
+    await b.stop();
+  }
+});
+
+test("未应答的工单不放行（pending 不等于批准）", async () => {
+  const { b } = await boot();
+  try {
+    const asked = await b.request("approval/ask", { name: "write" });
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "never.txt hi", approvalId: asked.approvalId }),
+      /approval-not-granted:pending/
+    );
+    // 显式拒绝的工单同样不放行，且状态是 denied 而不是掉回 pending
+    const d = await b.request("approval/answer", { approvalId: asked.approvalId, decision: "denied" });
+    assert.equal(d.accepted, true);
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "never.txt hi", approvalId: asked.approvalId }),
+      /approval-not-granted:denied/
+    );
+  } finally {
+    await b.stop();
+  }
+});
+
+test("握手能力表登记审批四个方法", async () => {
+  const { b } = await boot();
+  try {
+    const r = await b.request("initialize");
+    for (const m of ["approval/ask", "approval/answer", "approval/status", "approval/tick"]) {
+      assert.ok(r.capabilities.includes(m), `能力表缺 ${m}，客户端无法据此决定能不能走工单流程`);
+    }
+  } finally {
+    await b.stop();
   }
 });

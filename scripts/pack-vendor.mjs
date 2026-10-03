@@ -5,11 +5,15 @@
 // 2) 渲染层带 `script-src 'self'` 的 CSP，不带运行时编译器的 global 构建会因
 //    `unsafe-eval` 被拦而整页空白，所以取 runtime 构建，视图用 h() 写。
 import { copyFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const pkg = join("apps", "desktop", "node_modules", "vue", "package.json");
-const src = join("apps", "desktop", "node_modules", "vue", "dist", "vue.runtime.global.prod.js");
-const outDir = join("apps", "desktop", "renderer", "vendor");
+// 路径按脚本自身位置解析：npm 会把脚本生命周期（preui-smoke 等）的工作目录切成包目录，
+// 用相对 cwd 的路径会在 apps/desktop 下找不到刚装好的 vue。
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = join(ROOT, "apps", "desktop", "node_modules", "vue", "package.json");
+const src = join(ROOT, "apps", "desktop", "node_modules", "vue", "dist", "vue.runtime.global.prod.js");
+const outDir = join(ROOT, "apps", "desktop", "renderer", "vendor");
 const out = join(outDir, "vue.runtime.global.prod.js");
 
 // 缺依赖就当场失败，不要让渲染层带着一个空 vendor 假装能用

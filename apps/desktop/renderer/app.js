@@ -117,28 +117,53 @@ createApp({
       }
     }
 
-    function askTool(t) {
-      outcome.value = "";
-      outcomeKind.value = "";
-      // needsApproval 由核心的注册表给出；无应答在 core 侧就是拒绝
-      approval.value = t.needsApproval ? { name: t.name, description: t.description } : null;
-      callTool(t.name, t.needsApproval ? null : "allowed-once");
-    }
-
-    async function answerTool(approvalAnswer) {
-      const name = approval.value ? approval.value.name : "";
-      approval.value = null;
-      await callTool(name, approvalAnswer);
-    }
-
     // IPC 会把宿主错误包一层「Error invoking remote method」；界面上只留协议层的码与原因
     const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': /, "");
 
-    async function callTool(name, approvalAnswer) {
+    async function askTool(t) {
+      outcome.value = "";
+      outcomeKind.value = "";
+      if (!t.needsApproval) {
+        await callTool(t.name, 0);
+        return;
+      }
+      // 需审批的工具先向核心要一张工单（asked 进日志），界面上批的是这张单，
+      // 不是渲染层自己拼的一句 "allowed-once"。
+      try {
+        const a = await window.dsh.approvalAsk(t.name);
+        approval.value = { name: t.name, description: t.description, approvalId: a.approvalId };
+      } catch (e) {
+        approval.value = null;
+        outcomeKind.value = "outcome outcome-denied";
+        outcome.value = "发号失败：" + cleanErr(e);
+      }
+    }
+
+    async function answerTool(approvalAnswer) {
+      const a = approval.value;
+      approval.value = null;
+      if (!a) return;
+      try {
+        const r = await window.dsh.approvalAnswer(a.approvalId, approvalAnswer);
+        if (!r.accepted) {
+          outcomeKind.value = "outcome outcome-denied";
+          outcome.value = "应答未被接受：工单状态 " + r.state;
+          return;
+        }
+      } catch (e) {
+        outcomeKind.value = "outcome outcome-denied";
+        outcome.value = "应答失败：" + cleanErr(e);
+        return;
+      }
+      // 批过的和拒的都真的走一次调用：放行才执行，拒绝要当场看到核心把它挡下来
+      await callTool(a.name, a.approvalId);
+    }
+
+    async function callTool(name, approvalId) {
       if (!name) return;
       const args = "dsh-tool.txt hello-from-renderer";
       try {
-        const r = await window.dsh.toolCall(name, args, approvalAnswer || "no-answer");
+        const r = await window.dsh.toolCall(name, args, approvalId || 0);
         outcomeKind.value = "";
         outcome.value = "结果：" + r.result;
       } catch (e) {
@@ -214,7 +239,7 @@ createApp({
 
     const approvalBox = self.approval
       ? [el("div", "approval", [
-          el("p", "审批：" + self.approval.name + "（一次性放行，不给永久授权）"),
+          el("p", null, "审批：" + self.approval.name + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
           el("div", "approval-row", [
             el("button", "btn btn-primary", "允许一次", { id: "allow-once", onClick: () => self.answerTool("allowed-once") }),
             el("button", "btn btn-danger", "拒绝", { id: "deny", onClick: () => self.answerTool("denied") }),
