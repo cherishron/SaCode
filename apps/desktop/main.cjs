@@ -181,6 +181,32 @@ async function uiSmoke() {
   );
   const [accentTok, tvTok] = String(bridgePair).split("|");
   note(accentTok === tvTok && accentTok.startsWith("rgb"), `TinyVue 主色令牌已接到本仓令牌=${accentTok} vs ${tvTok}`);
+  // 判据只打「组件库渲染出来的元素」：它们的色值必须来自本仓令牌层。
+  // 不扫全部元素——我们自己的 .msg-user 用的是 color-mix()，Chrome 会序列化成
+  // color(srgb …)，跟任何单枚令牌的 rgb() 文本都不相等，那样只会造出假越界。
+  const leakProbe = await js(
+    `(() => {
+      const names = ['--surface','--surface-2','--surface-3','--text','--text-muted','--border','--accent','--accent-text','--ok','--warn','--danger'];
+      const mk = (v) => { const d = document.createElement('div'); d.style.color = v; document.body.appendChild(d); const r = getComputedStyle(d).color; d.remove(); return r; };
+      const allowed = new Set(names.map((n) => mk('var(' + n + ')')));
+      allowed.add('rgba(0, 0, 0, 0)');
+      const bad = [];
+      const tv = document.querySelectorAll('#app [class*="tiny-"]');
+      tv.forEach((e) => {
+        const cs = getComputedStyle(e);
+        ['color','backgroundColor','borderTopColor'].forEach((p) => {
+          const v = cs[p];
+          if (v && !allowed.has(v)) bad.push(String(e.className).slice(0, 22) + '/' + p + '=' + v);
+        });
+      });
+      return tv.length + '|' + bad.length + '|' + bad.slice(0, 4).join(',') + '|' + mk('var(--accent)');
+    })()`
+  );
+  const [tvCount, leakCount, leakFirst, accentResolved] = String(leakProbe).split("|");
+  note(
+    Number(tvCount) > 0 && leakCount === "0",
+    `组件库元素的色值全部来自本仓令牌（探到 tiny 元素 ${tvCount} 个，越界 ${leakCount} 处，首个=${leakFirst || "无"}，accent=${accentResolved}）`
+  );
 
   // 4) 流式：完整一轮必须把核心产出的帧渲回界面并落到终态
   note(await click("#run-turn"), "已发起完整一轮");

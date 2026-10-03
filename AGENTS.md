@@ -38,6 +38,7 @@ JS 扩展宿主：`cd extjs && node --test`
 - `node scripts/pack-cli.mjs`（读 `CANGJIE_HOME`，默认 `D:\Program Files\HuaWei\Cangjie`）
 - `node scripts/pack-host.mjs <exe> <outDir> <dllDirs...>`
 - Electron：`cd apps/desktop && npx electron-builder`（产物在 `dist/electron/`）。若 electron 平台二进制缺失，用 `npm install electron@<ver> --foreground-scripts` 走官方源补齐，勿设镜像。
+- **`github.com` 超时时的可复现构建法**（2026-10-03 实测）：`packaging` 步骤会去 github.com 取 Electron zip，超时后 electron-builder 直接 rc=1 且**产物时间戳不变**——判定「是否真拿到了新产物」要看 exe 的 mtime/体积，别把旧产物的断言当新证据。合规解法是指向本地已装的官方 dist：`npx electron-builder --config.electronDist=node_modules/electron/dist`（rc=0）；这**不是**镜像，红线仍是不设 `ELECTRON_MIRROR`。
 
 ## 必须知道的约束
 - **会话日志是唯一真源**，消息/UI 都是投影。`append` 只在实例内可见，`flush` 才跨进程持久——不要把 `append` 当持久化。
