@@ -4,7 +4,7 @@
 DeepSeek Harness (DSH) 全系统复刻实验：一份**仓颉（Cangjie）共享核心 + 两个入口**（CLI 与 Electron 桌面），二者驱动同一 `core`、同一 `session.log`。
 改动前先读这三份文档，不要靠记忆推断进度：
 - `docs/plans/plan-deepseek-harness-replication.md` — 复刻口径、18 条架构不变量、接口设计。
-- `docs/plans/dsh-capability-matrix.md` — 64 个上游子系统能力矩阵（S0 冻结快照）。
+- `docs/plans/dsh-capability-matrix.md` — 上游子系统能力矩阵（S0 冻结快照；分母 **63 个模块 + 1 行 README**，旧「64 个模块」把索引页算成了能力，2026-10-03 已更正）。
 - `docs/evidence/p0-status-2026-10-02.md` — 哪些已实测、哪些 BLOCKED、解锁条件。
 
 ## 模块边界（别凭目录名猜）

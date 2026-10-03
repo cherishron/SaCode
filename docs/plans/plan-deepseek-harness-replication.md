@@ -273,10 +273,13 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 ### 6.1.2 与 64 模块能力矩阵的逐 M 对照（2026-10-03 实测，HEAD `ff0d651`）
 
 编号口径：矩阵没有逐条 M 号（M0–M8 是阶段标签），下文编号＝**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
-分母本身先要记账：`docs/plans/dsh-capability-matrix.md` 表体实测 **63 个模块行 + 1 行 README**（该行自注「子系统目录索引页」），
-而 `docs/evidence/dsh-upstream-freeze.md` 与 P0 文档声明的分母是 **64 个模块**（192 = 64×3）。
-两者只有一真：要么 README 被当成模块（则表少 1 个模块名），要么表本身少 1 行。
-候选缺名是 `cordis`、`gateway`（只在矩阵第 9 行的阶段关键词与方案 §3.1 出现过，从未成行）。**这是待决口径，不由本批擅改分母**。
+分母已在本批定档（**2026-10-03 重取上游目录并逐名对照，不再是待决口径**）：`api.github.com/.../contents/docs/subsystems` 对
+`ref=639ed01…`（冻结）与 `ref=master`（当日）各取一次，两边都是 **192 条目 = 64 `.md` + 64 `.zh.md` + 64 `.i18n.yaml`**，
+而 **64 个 `.md` 里有一个是 `README.md`（索引页，不是能力）**，故子系统真分母＝**63 模块 + README 行 = 表体 64 行**。
+此前写「64 个模块」是把索引页算进了能力数。逐名比对（不是数数对上，是集合对上）：**双向差集为空，没有缺行**；
+`cordis`、`gateway` 在两个 ref 里都不存在，因此不当作「待补的缺行」，改按框架层/交付层显式裁决（`cordis` 整体出局、
+`gateway` 由 Host+CLI+npm 平台包部分承接），详见矩阵「M0 基座的裁决」。另记一条漂移：`invariants` 只在冻结快照、
+master 已无，master 新增 `claude-code-mods`、冻结快照里没有；本表按 S0 冻结口径，不跟 master 改行。
 
 | 档 | 条数 | 行号 | 判据 |
 | --- | --- | --- | --- |
@@ -296,7 +299,12 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
    两个变异体实测：把键判断改成恒真 → 只有那条用例转红（`projectionBuilds() == builds` 左 1 右 2 之类）；
    改成「只算第一次」 → 同一条用例以 ERROR 报出「相关事件不再更新缓存」的两处断言。其余 85 条两种情况下都照常绿，
    说明这条不变量此前确实没有任何别的用例在守。据此 35 由 D 移入 A。
-2. **README 行被算进了能力分母**（`dsh-capability-matrix.md:76` 自注它是索引页，不是一条能力）。
+2. **README 行被算进了能力分母**（矩阵表体最后一行自注它是索引页、不是一条能力；本批已据此把分母改为 63 模块 + README 行）。
+
+**本节表格的计数是 HEAD `ff0d651` 时点的快照**，不是当前值。截至本批（真实单调钟之后）的当前计数：core `cjpm test` **99/99**、
+`bridge.test.mjs` **34** 条（`node --test` 全目录 37 = 34 + paths 3）、extjs **14/14**、Host 能力表 **23** 个方法（审批面由 4 收为 3）、
+`--ui-smoke` **32** 条 `UI OK`。据此，A 档里的 `approval`、`tools` 两行本批又各自补上了子系统级的分段证据（工单过期改用真实单调钟并撤掉推进通道；工具管线补 pre/snapshot/post 段并归一失败码），
+其余行的判据不变。
 
 另有两处「文档 vs 仓内实况」需要记账（不占矩阵行，但影响采信）：
 `docs/evidence/dsh-upstream-freeze.md:3` 声称账本由 `coverage_ledger.cjs` 跑出（`GATE: PASS (9 checks)`），
@@ -314,7 +322,7 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
 2. ~~审批补协议面：审批只是 `preload.cjs` 里 `dsh:toolCall` 的第三个参数，日志里只有 `tool/result denied:*`，全仓无 asked/decided 事件~~ —— **本批已完成**：`core/src/approval.cj` 落 `ApprovalDesk`（发号、应答、一次性消费、逻辑刻度过期），Host 增 `approval/ask|answer|status|tick` 四个方法并入能力表，`extension/call` 改为只认 `approvalId`（自报审批字符串无通路），渲染层「允许一次/拒绝」两张按钮背后是真的工单往返。剩下的相关项：矩阵里审批所在行的分档待按 §6.1.2 表体行号核对后再调（本批不擅自改分母）。~~把逻辑刻度换成真实单调时钟~~ —— **本批已完成**：`ApprovalDesk` 默认钟源改为 `MonoTime` 差值折算的整秒，`advance()` 与 Host 的 `approval/tick` 通道一并删除（能力表 4→3），`approval/ask` 的 `ttl` 只允许缩短、越界回落默认值。
 3. ~~工具管线补段：`ToolRuntime.execute` 只有 5 段，缺 pre/post-execute、无损 snapshot、失败归一化~~ —— **本批已完成**：`execute` 与 `executeWithApproval` 现在共用同一条 `pipeline`（guard → pre-execute 参数归一化 → snapshot → execute → post-execute 无损校验），每段在 `ToolDetail` 上留痕，失败归一成互不相同的阶段码（`unregistered` / `approval-denied` / `guard-denied` / `unknown-tool` / `bad-args` / `io-error` / `threw` / `torn-write` / `ran`），四种新行为各有用例钉住（core 98/98）。顺带修掉一个真缺陷：旧 `runTool` 只取 `split(" ")[1]`，正文里第一个空格之后的内容被静默丢掉。剩下的相关项：矩阵 54 所在行的分档要按表体行号核对后再调（本批不擅自改分母），以及 `snapshotBefore` 目前是字节数而非内容指纹。
 4. 真模型传输：`apps/host` 只 `import stdx.encoding.json.*`，全仓无 HTTP/SSE 客户端，21 目前永远只是假 provider。走 `stdx.net.http` + SSE 半帧/UTF-8 分片用例，再加一条真凭证烟测（待授权）。
-5. 先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。
+5. ~~先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。~~ —— **本批已定档（2026-10-03 重取上游目录）**：分母＝**63 个模块 + 1 行 README**（192 条目里的 64 个 `.md` 含索引页 `README.md`），逐名双向差集为空、**没有缺行**；`cordis`/`gateway` 两个 ref 都不存在，故按框架层/交付层裁决（`cordis` 整体出局，`gateway` 由 Host+CLI+npm 平台包部分承接），写进矩阵的「M0 基座的裁决」。矩阵表体已按 §6.1.2 的 A/B/C 分档回填「已复刻」列（✔ 9 / ◐ 4 / ☐ 50，README 不计数），「上游已核」保持全 ☐ 不假勾。**剩余**：63 个模块逐篇 en/zh 原文的阅读面仍未做（这是 `上游已核` 唯一的补法），以及 4 行 `◐` 切片要各自补子系统级用例。
 
 ### 6.1.3 桌面 UI 规格：按上游一等公民面复刻（2026-10-03 定稿）
 

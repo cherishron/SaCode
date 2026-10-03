@@ -22,10 +22,11 @@
 
 ## 3. 覆盖分母（可复核，非估算）
 
-- `docs/subsystems?ref=master` 返回 **192 条目 = 64 模块 × (en.md + zh.md + i18n.yaml)**。GitHub contents 单目录上限 1000，故判为完整清单而非分页截断。
+- `docs/subsystems?ref=master` 返回 **192 条目 = 64 `.md` + 64 `.zh.md` + 64 `.i18n.yaml`**。GitHub contents 单目录上限 1000，故判为完整清单而非分页截断。**2026-10-03 更正**：64 个 `.md` 里有一个是 `README.md`（子系统目录索引页），所以**模块真分母是 63**，本账本此前把索引页计成了一个能力；对 `ref=639ed01…`（冻结）与 `ref=master`（当日）各重取一次，两边同为 192 条目。
 - `docs/` 顶层 75 条目，含站点未见的生成物与专章：`dependency-catalog.json`、`persistence-schema.json`、`glossary`、`defensive-patterns`、`event-producer-consumer`、`graph-atlas`、`module-graph`、`rescope`、`session-format-status`、`ui-radius`、`web-styling`、`deepseek-llm-api-wire-extensions`、`testing`、`development`，及目录 `cookbook`、`cordis-api`、`i18n`、`persistence-changes`、`postmortem`、`subsystems`、`upgrade-guide`、`user`。
 - 站点 `/en/reference/subsystems/` 索引解析出 66 条 `subsystems/*.md` 链接，去后缀与 64 模块比对：**命中 64、未命中 0**。
-- 64 模块逐篇的「上游已核」尚未完成，记在 `docs/plans/dsh-capability-matrix.md`（该列全为未勾选）。本账本声明的覆盖数 8 是冻结取证面，不是 64 模块阅读面。
+- 64 模块逐篇的「上游已核」尚未完成，记在 `docs/plans/dsh-capability-matrix.md`（该列全为未勾选）。本账本声明的覆盖数 8 是冻结取证面，不是 64 模块阅读面。**矩阵的「已复刻」列已于 2026-10-03 按方案 §6.1.2 的 A/B/C 分档回填（✔ 9 / ◐ 4 / ☐ 50，README 不计数），但「上游已核」仍全 ☐——不因我方写了实现就反推读过原文。**
+- 名称漂移（2026-10-03 逐名比对）：`invariants` **只在冻结快照** `639ed01` 存在、当日 `master` 已无；`master` 新增 `claude-code-mods`、冻结快照没有。两边各 64 个 `.md`、各 192 条目，所以这不是截断而是改名/增删。矩阵按 S0 冻结口径保留 `invariants`、不加 `claude-code-mods`。
 
 ## 4. 被推翻的先前结论（曾判 → 实测）
 
