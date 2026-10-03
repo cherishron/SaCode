@@ -76,3 +76,9 @@
 `--ui-smoke --session-dir=<新的绝对目录>` 在指定目录生成 `ui-smoke-report.json`，逐项保留断言描述与结果。验收须核对报告存在、`passed=true`、失败数为零、断言总数及发布态标记；报告缺失不能按启动器退出码视为通过。特别是便携启动器可能不转发子程序 stdout，须以该报告复核 UI，并以 `--layout-smoke --capture-dir=<新目录>` 的结构报告和实际截图复核布局。报告属于验收数据，不写入会话事件。
 
 Windows 文件属性也属于 SaCode 品牌验收：`ProductName`、`FileDescription`、`CompanyName` 均须为 SaCode，版权须归于 SaCode，文件版本与桌面包版本一致。打包后运行 `scripts/check-desktop-metadata.ps1 -ExePath <实际 SaCode.exe 路径>` 核对 PE 资源；界面标题和包配置通过不能代替此检查。图标另以实际可执行文件提取结果验收。
+
+## 全局内容字号（待界面接入）
+
+冻结上游字号属于用户级设置，范围 10–22px、默认 14px、步长 1px。控件读数必须来自已持久化的配置；保存失败不能保留前端点击回显。消息、流式正文与输入区须共享字号轴，字号变化时重新测量草稿高度，同时保持界面操作控件的独立尺寸。当前会话主题不等于全局主题配置。
+
+已建立共享核心的独立外观存储，见 [全局外观存储基础](../evidence/global-appearance-store-2026-10-04.md)。Host/IPC、全局根目录、迁移优先级、控件与字号轴尚未接入，该要求仍未验收完成。
