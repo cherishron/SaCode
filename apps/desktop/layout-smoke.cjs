@@ -18,7 +18,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
     nativeTheme.themeSource = theme;
     for (const [width, height] of [[880, 640], [1100, 720], [1440, 900]]) {
       win.setContentSize(width, height);
-      await new Promise((r) => setTimeout(r, 150));
+      // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
+      await new Promise((r) => setTimeout(r, 500));
       const report = await js(`(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
         const equal = (a, b) => Math.abs(a-b) < 1;
@@ -34,6 +35,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
           budgetRow: equal(input.top, apply.top) && equal(input.height, apply.height),
           composerBottom: equal(draft.bottom, send.bottom),
           controlHeights: controls.every(s => equal(box(s).height, 36)),
+          primaryPalette: ['backgroundColor','color','borderTopColor'].every(key =>
+            getComputedStyle(document.querySelector('#run-turn'))[key] === getComputedStyle(document.querySelector('#send'))[key]),
           icons: [...document.querySelectorAll('.nav-symbol')].every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
           messageLabels: [...document.querySelectorAll('.tr-bubble')].every(e => {
@@ -44,7 +47,9 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
           chineseNavigation: [...document.querySelectorAll('.nav-item')].every(e => /[\\u4e00-\\u9fff]/.test(e.getAttribute('aria-label'))),
           noEval: typeof window.require === 'undefined',
         };
-        return { width:innerWidth, height:innerHeight, checks, failed:Object.keys(checks).filter(k => !checks[k]) };
+        const palette = (s) => { const style=getComputedStyle(document.querySelector(s));
+          return [style.backgroundColor,style.color,style.borderTopColor]; };
+        return { width:innerWidth, height:innerHeight, checks, primary:[palette('#run-turn'),palette('#send')], failed:Object.keys(checks).filter(k => !checks[k]) };
       })()`);
       report.theme = theme;
       reports.push(report);
