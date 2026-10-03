@@ -46,3 +46,9 @@ SaCode 输入框采用 soft、浮动预览采用 panel、模态弹窗采用 prom
 直读冻结版本 [AssistantMarkdown.module.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-chat/src/client/chat/AssistantMarkdown.module.css)：正文为纵向 flex，14px/24px，块 gap 16px。SaCode 采用相同块流与间距，在当前 Vue runtime + TinyRobot 消息面接入构建期折叠的 markdown-it，将 token 转为 h() 节点。标题、嵌套列表、引用、代码及表格现在有对应排版；用户与工具消息不解释为 Markdown，折叠摘要保留原文。
 
 代码高亮、远程图片/附件、流式 Markdown、上游宽表格突破消息宽度轴、上下文节点、操作页脚和字号偏好仍未实现。基础表格仅在正文范围滚动，不宣称完成上游宽表格方案。布局夹具只验证正文渲染器，不冒充真实模型回复或日志事件。
+
+## 流式正文与投影正文统一（2026-10-04）
+
+后续增量已补齐基础流式 Markdown：`SaCodeMarkdown.Body` 是流式与投影助手消息共用的 Vue 组件；`Stream` 只接收已有 turn/poll 派生文本和运行状态，不保存业务状态。取消保留半截正文，正常收束撤去回显的原有规则保持不变。
+
+原流式框左侧实体边框造成正文轴偏移，现改用独立中文角色与状态标签，正文采用与 TinyRobot 消息盒一致的内边距。`.msg-node` 中正文占整行，折叠按钮独立换行，避免短正文和长代码因 flex 自动尺寸走不同宽度轴。基础流式已补齐；代码高亮、附件、宽表格、上下文节点及其完整交互继续待补齐。

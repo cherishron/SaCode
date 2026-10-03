@@ -145,6 +145,37 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       writeFileSync(join(outDir,`sacode-markdown-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${markdownReport.failed.length?'FAIL':'PASS'} markdown ${theme} ${width}x${height} ${markdownReport.failed.join(',')}`);
       await js("(()=>{const n=document.querySelector('#markdown-layout-fixture');Vue.render(null,n);n.remove();document.querySelector('.conversation-scroll').scrollTop=0;})()");
+      const streamingText='## 流式标题\n\n正文 **强调**。\n\n- 第一项\n- 第二项\n\n```js\n'+ '流式长代码'.repeat(80)+'\n```';
+      const streamingEvents=await js("document.querySelector('#count-events').textContent");
+      // 临时挂载真实流式组件与 TinyRobot 投影组件；不调用模型、不造会话事件。
+      await js("(()=>{const n=document.createElement('div');n.id='streaming-layout-fixture';document.querySelector('#messages').append(n);foldOpen.ids.add('layout-stream-message');})()");
+      for (const partial of [streamingText.slice(0,10),streamingText.slice(0,62),streamingText]) {
+        await js(`(()=>{const n=document.querySelector('#streaming-layout-fixture');Vue.render(Vue.h('div',{},[
+          Vue.h(SaCodeMarkdown.Stream,{text:${JSON.stringify(partial)},running:true}),
+          Vue.h(TR.BubbleProvider,{contentRendererMatches:[TEXT_MATCH]},()=>[Vue.h(TR.BubbleList,{messages:[{id:'layout-stream-message',role:'assistant',content:${JSON.stringify(partial)},sourceRole:'assistant/message'}],roleConfigs:FOLD.roleConfigs(),autoScroll:false})]),
+        ]),n);})()`);
+        await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      }
+      const streamingReport=await js(`(()=>{
+        const root=document.querySelector('#streaming-layout-fixture'),live=root.querySelector('#stream .markdown-body'),saved=root.querySelector('.tr-bubble .markdown-body'),box=e=>e.getBoundingClientRect();
+        const checks={
+          sameContent:live.textContent===saved.textContent,
+          sharedLeftAxis:Math.abs(box(live).left-box(saved).left)<1,
+          sharedRightAxis:Math.abs(box(live).right-box(saved).right)<1,
+          sameBlockHeight:Math.abs(box(live).height-box(saved).height)<1,
+          semanticBlocks:!!live.querySelector('h2') && !!live.querySelector('ul') && !!live.querySelector('pre'),
+          codeScroll:[live,saved].every(n=>{const p=n.querySelector('pre');return p.scrollWidth>p.clientWidth && getComputedStyle(p).overflowX==='auto';}),
+          noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
+          noSessionWrite:document.querySelector('#count-events').textContent===${JSON.stringify(streamingEvents)},
+        };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(streamingReport,{theme,width,height,surface:'streaming-markdown'});reports.push(streamingReport);
+      await js("(()=>{const s=document.querySelector('.conversation-scroll'),n=document.querySelector('#streaming-layout-fixture h2');s.scrollTop+=n.getBoundingClientRect().top-s.getBoundingClientRect().top-12;})()");
+      await waitFor("(()=>{const n=document.querySelector('#streaming-layout-fixture h2').getBoundingClientRect(),s=document.querySelector('.conversation-scroll').getBoundingClientRect();return n.top>=s.top && n.bottom<=s.bottom;})()");
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      writeFileSync(join(outDir,`sacode-streaming-markdown-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${streamingReport.failed.length?'FAIL':'PASS'} streaming-markdown ${theme} ${width}x${height} ${streamingReport.failed.join(',')}`);
+      await js("(()=>{const n=document.querySelector('#streaming-layout-fixture');Vue.render(null,n);n.remove();foldOpen.ids.delete('layout-stream-message');document.querySelector('.conversation-scroll').scrollTop=0;})()");
       const draftEvents=await js("document.querySelector('#count-events').textContent");
       await js("(()=>{const n=document.querySelector('#composer');n.value='自动增长输入与按钮对齐\\n'.repeat(30);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       await waitFor("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height>36;})()");

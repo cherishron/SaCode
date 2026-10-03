@@ -264,3 +264,13 @@ UI 验证增长、到顶滚动、删除后回到 36px、窄窗口重新折行、
 新增八组正文排版夹具覆盖亮暗主题及四种窗口：语义块存在、16px 块间距、统一左基线、长代码内部滚动、嵌套列表缩进与页面无横向溢出。夹具使用真实 Markdown 渲染器挂载临时视图，不写入会话或伪造模型结果；最小亮色截图 `sacode-markdown-light-860x600.png` 已打开复查。报告位于 `dualtest/composer/source/apps/desktop/dist/layout/layout-report.json`。
 
 未重打安装包，也未验证并发 SSE/Next SDK 改动。完整 Markdown（高亮、图片/附件、流式正文、宽表格与上下文节点）、模型设置、自动化和全页面基线仍未完成；完整桌面目标保持进行中。
+
+## 流式与投影正文统一增量（2026-10-04）
+
+流式与投影助手消息共享 `SaCodeMarkdown.Body`，流式组件仅解释已有瞬时文本；正常收束撤回显、取消保留未落盘正文的生命周期保持不变。移除会使文字轴偏移的流式框边线，内边距与消息盒一致；正文占 `.msg-node` 整行，折叠按钮仍独立换行。
+
+新增任意逐字符截断与未闭合代码围栏测试，Markdown 单测 **4/4**。隔离源码及原宿主继续不含并发 SSE/Next SDK 改动。Electron **170 项 UI OK / UI_SMOKE PASS**，布局最终 **136 组 / 1016 项 / 零失败**，退出码均 0。日志 `dualtest/composer/streaming-markdown-ui-smoke.log` 与 `streaming-markdown-layout-final.log`；语法与差异空白检查通过。
+
+新增八组流式布局验收挂载实际 `Stream` 与 TinyRobot `BubbleProvider/BubbleList`、本仓 `TextBubble`，按三段 Markdown 更新后检查：正文相同、左右轴一致、块高度一致、标题/列表/代码语义存在、两处长代码各自滚动、无页面横向溢出、事件计数未变。临时视图不伪造核心事件或真实模型结果。初次截图取得滚动前画面，补上正文标题可见条件与双帧等待后全量复跑，已打开最小窗口 `sacode-streaming-markdown-light-860x600.png` 复查。
+
+真实取消流程补验共享 Markdown 组件及停止后状态提示撤去；正常收束仍验证只有投影正文。仅证明当前样例流式与组件排版，不宣称真实模型、全 Markdown 功能或整包通过。本批未重打安装包；完整页面、模型配置、自动化、代码高亮、附件及上下文节点继续待补齐。

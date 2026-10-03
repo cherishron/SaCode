@@ -44,5 +44,19 @@ window.SaCodeMarkdown = (function () {
     }
     return root;
   }
-  return { render: (text) => nodes(parser.parse(text, {})) };
+  const render = (text) => nodes(parser.parse(text, {}));
+  // 流式与投影消息共享同一正文组件，格式变化不另造会话状态。
+  const Body = {
+    props: { text: { type: String, default: '' } },
+    setup: (props) => () => window.Vue.h('div', { class: 'msg-text markdown-body' }, render(props.text)),
+  };
+  const Stream = {
+    props: { text: { type: String, default: '' }, running: { type: Boolean, default: false } },
+    setup: (props) => () => window.Vue.h('div', { id: 'stream', class: 'streaming' }, [
+      window.Vue.h('span', { class: 'msg-role' }, '助手 · 流式输出'),
+      props.text ? window.Vue.h('div', { class: 'stream-content' }, [window.Vue.h(Body, { text: props.text })]) : null,
+      props.running ? window.Vue.h('span', { class: 'note stream-status', role: 'status' }, '流式中…') : null,
+    ]),
+  };
+  return { render, Body, Stream };
 })();

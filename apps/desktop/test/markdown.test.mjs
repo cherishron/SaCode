@@ -24,3 +24,11 @@ test('危险链接不会形成可导航 href，安全链接保留', () => {
   assert.equal(nodes.filter(n => n.tag === 'a').length, 1);
   assert.equal(nodes.find(n => n.tag === 'a').props.href, 'https://example.com');
 });
+
+test('任意流式截断可以解析，未闭合代码围栏保留正文', () => {
+  const text='# 标题\n\n正文 **强调**。\n\n- 第一项\n- 第二项\n\n```js\nconst x = "<标签>";\n```';
+  for (let i=0; i<=text.length; i++) assert.doesNotThrow(() => render(text.slice(0,i)));
+  const open = walk(render('```js\nconst x = "<标签>";'));
+  assert.ok(open.some(n => n.tag === 'pre'));
+  assert.ok(open.some(n => n.tag === 'code' && n.children.includes('<标签>')));
+});

@@ -81,7 +81,9 @@ const TextBubble = {
       const state = plan.folded ? (expanded ? "expanded" : "folded") : "plain";
       const markdown = m.role === "assistant" && state !== "folded";
       const children = [
-        h(markdown ? "div" : "p", { class: markdown ? "msg-text markdown-body" : "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, markdown ? window.SaCodeMarkdown.render(text) : expanded ? text : plan.shown),
+        markdown
+          ? h(window.SaCodeMarkdown.Body, { text, "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state })
+          : h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, expanded ? text : plan.shown),
       ];
       if (plan.folded) {
         children.push(
@@ -554,15 +556,12 @@ createApp({
       ]),
     ];
 
-    const streamChildren = [el("span", "msg-role", "助手 · 流式输出")];
-    if (self.turn.text) streamChildren.push(self.turn.text);
-    if (self.turn.running) streamChildren.push(el("span", "note", " …流式中"));
     // 干净收束后正文已落进会话日志、由投影给出那一份气泡，回显框必须撤掉：
     // 留着它等于界面上同一句助手话有两份来源，其中一份重启就没了。
     // 取消的一轮不落 assistant/message，半截正文只能继续由回显框呈现。
     const persisted = self.turn.settled && !self.turn.cancelled;
     const streamBox = self.turn.running || (self.turn.text && !persisted)
-      ? [el("div", "streaming", streamChildren, { id: "stream" })]
+      ? [h(window.SaCodeMarkdown.Stream, { text: self.turn.text, running: self.turn.running })]
       : [];
 
     const turnState = self.turn.settled
