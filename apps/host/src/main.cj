@@ -204,8 +204,9 @@ func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
     let readSide = method == "session/projection" || method == "session/subscribe"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
-    // 审批是人在环：流式进行中也要能发号、应答、查状态、推进过期，否则「边跑边批」做不到
-    let approvalSide = method == "approval/ask" || method == "approval/answer" || method == "approval/status" || method == "approval/tick"
+    // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
+    // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
+    let approvalSide = method == "approval/ask" || method == "approval/answer" || method == "approval/status"
     return turnSide || readSide || callSide || approvalSide
 }
 
@@ -273,7 +274,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/tick\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -471,7 +472,15 @@ main(args: Array<String>) {
                 }
                 leaseHeld = true
             }
-            let aid = approvalDesk.ask(jsonStr(body, "name"))
+            let toolName = jsonStr(body, "name")
+            // ttl 只允许把窗口缩短（1..桌面默认值），不接受延长：过期是 fail-closed 的方向，
+            // 让调用方能拉长就等于没有过期。缺省（jsonNum 回 -1）或越界一律走默认值。
+            let askedTtl = jsonNum(body, "ttl")
+            let aid = if (askedTtl >= 1 && askedTtl < approvalDesk.defaultTtl) {
+                approvalDesk.askWithTtl(toolName, askedTtl)
+            } else {
+                approvalDesk.ask(toolName)
+            }
             emit(okFrame(idText, "{\"approvalId\":${aid},\"state\":\"pending\",\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
@@ -498,24 +507,6 @@ main(args: Array<String>) {
         if (method == "approval/status") {
             let target2 = jsonNum(body, "approvalId")
             emit(okFrame(idText, "{\"state\":\"${approvalDesk.stateOf(target2)}\",\"pending\":${approvalDesk.pendingCount()}}"))
-            continue
-        }
-        // 过期用逻辑刻度推进：真实单调时钟接进来之前，测试要能确定地把 pending 推成 expired
-        if (method == "approval/tick") {
-            if (!leaseHeld) {
-                if (!lease.takeoverIfStale()) {
-                    emit(errFrame(idText, -32001, "already-owned"))
-                    continue
-                }
-                if (!shared.load()) {
-                    lease.release()
-                    emit(errFrame(idText, -32002, "replay-rejected"))
-                    continue
-                }
-                leaseHeld = true
-            }
-            approvalDesk.advance(jsonNum(body, "ticks"))
-            emit(okFrame(idText, "{\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
         if (method == "turn/start") {

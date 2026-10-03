@@ -6,6 +6,7 @@ import { dirname, join as jj, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { setTimeout as sleep } from "node:timers/promises";
 const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
@@ -601,25 +602,47 @@ test("审批工单 ask→answer(allowed-once)→call 只放行一次", async () 
   }
 });
 
-test("审批过期即拒，且只结算一次", async () => {
+test("审批过期由真实单调钟决定，且只结算一次", async () => {
   const { b, dir } = await boot();
   try {
-    const asked = await b.request("approval/ask", { name: "write" });
+    // ttl=1 秒：协议面只允许把窗口缩短，所以这条能等到真过期而不用等默认 30 秒
+    const asked = await b.request("approval/ask", { name: "write", ttl: 1 });
     assert.equal((await b.request("approval/status", { approvalId: asked.approvalId })).state, "pending");
-    const ticked = await b.request("approval/tick", { ticks: 31 });
-    assert.equal(ticked.pending, 0);
-    assert.equal((await b.request("approval/status", { approvalId: asked.approvalId })).state, "expired");
+    // 有界轮询等时钟跨过 deadline：没有任何通道能「推进」时间，只有经过的时间能
+    let state = "pending";
+    for (let i = 0; i < 60 && state === "pending"; i++) {
+      await sleep(100);
+      state = (await b.request("approval/status", { approvalId: asked.approvalId })).state;
+    }
+    assert.equal(state, "expired", "真实钟走过 1 秒窗口后必须自动过期");
     await assert.rejects(
       () => b.request("extension/call", { name: "write", args: "late.txt hi", approvalId: asked.approvalId }),
       /approval-not-granted:expired/,
       "过期的工单不得再放行"
     );
-    // 再推进一次不得产生第二条 expired 事件（结算幂等，同一张工单只落一次账）
-    await b.request("approval/tick", { ticks: 5 });
+    // 再碰一次不得产生第二条 expired 事件（结算幂等，同一张工单只落一次账）
+    await b.request("approval/status", { approvalId: asked.approvalId });
     await b.request("session/flush", {});
     const raw = readFileSync(join(dir, "session.log"), "utf8");
     const expiredLines = raw.split("\n").filter((l) => l.includes("approval/expired")).length;
     assert.equal(expiredLines, 1, `expired 事件须恰好一条，实得 ${expiredLines} 条`);
+  } finally {
+    await b.stop();
+  }
+});
+
+// 过期只能是 fail-closed 的方向：协议面上不得存在「推进时钟」的动作，也不得让调用方
+// 把窗口延长——ttl 越界一律回落到桌面默认值（若被当成 0 会立刻过期，也是错的）。
+test("审批没有可推进的时钟通道，ttl 只可缩短不可延长", async () => {
+  const { b } = await boot();
+  try {
+    await assert.rejects(
+      () => b.request("approval/tick", { ticks: 999 }),
+      /-32601|method not found/,
+      "协议面不应暴露推进过期时钟的动作"
+    );
+    const long = await b.request("approval/ask", { name: "write", ttl: 99999 });
+    assert.equal((await b.request("approval/status", { approvalId: long.approvalId })).state, "pending");
   } finally {
     await b.stop();
   }
@@ -669,13 +692,15 @@ test("未应答的工单不放行（pending 不等于批准）", async () => {
   }
 });
 
-test("握手能力表登记审批四个方法", async () => {
+test("握手能力表登记审批三个方法且不含时钟通道", async () => {
   const { b } = await boot();
   try {
     const r = await b.request("initialize");
-    for (const m of ["approval/ask", "approval/answer", "approval/status", "approval/tick"]) {
+    for (const m of ["approval/ask", "approval/answer", "approval/status"]) {
       assert.ok(r.capabilities.includes(m), `能力表缺 ${m}，客户端无法据此决定能不能走工单流程`);
     }
+    // 反向：过期不再可由调用方推进，能力表里也不该再有这个动作
+    assert.ok(!r.capabilities.includes("approval/tick"), "能力表不应再登记 approval/tick");
   } finally {
     await b.stop();
   }

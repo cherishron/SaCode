@@ -7,8 +7,16 @@ import std.fs.*
 // 日志里只有 tool/result denied:*，全仓没有任何 approval/* 事件——「谁批的、批了没有、
 // 批过头没有」都无从追问。这几条用例把审批钉成一次显式往返：发号 → 应答 → 一次性消费。
 //
-// 时钟是逻辑的（tick/advance），不是墙钟：过期行为必须可被测出来，而不是靠 sleep 赌时序。
-// 接真实单调时钟是后续项，接法只是把 ttl 换成 deadline。
+// 时钟是真实单调钟（MonoTime），不是可由调用方推进的逻辑刻度：过期要么由时间决定，
+// 要么就不算过期。用例分两类——注入假钟做确定性推进（证明过期判定本身正确），
+// 以及不注入任何钟、用真实时间跨过 deadline（证明生产默认接线真的接在单调钟上）。
+
+// 假钟：仓颉不允许把「捕获可变局部变量」的 lambda 当函数值传出去
+// （lambda capturing mutable variables needs to be called directly），
+// 所以可推进的时钟必须装在一个不可变引用里，推进只改它内部的字段。
+class ApprovalTick {
+    var now: Int64 = 0
+}
 
 func apPath(tag: String): String {
     return "core-ap-${tag}.log"
@@ -115,9 +123,10 @@ func expiredTicketCannotGrantExecution() {
     let reg = ToolRegistry()
     reg.register(ToolSpec("write", "写文件", "path", true))
     let rt = ToolRuntime(log, reg)
-    let desk = ApprovalDesk(log)
+    let fake = ApprovalTick()
+    let desk = ApprovalDesk(log, clock: { => fake.now })
     let id = desk.askWithTtl("write", Int64(2))
-    desk.advance(Int64(2))
+    fake.now = 2
     @Expect(desk.stateOf(id), "expired")
     let r = rt.executeWithApproval("write", "a.txt x", id, true, desk)
     @Expect(r.allowed, false)
@@ -150,22 +159,53 @@ func pendingApprovalExpiresAndIsSettledOnce() {
     let p = apPath("expire")
     removeIfExists(p, recursive: false)
     let log = SessionLog(p)
-    let desk = ApprovalDesk(log)
     let ttl: Int64 = 3
+    let fake = ApprovalTick()
+    let desk = ApprovalDesk(log, clock: { => fake.now })
     let shortId = desk.askWithTtl("write", ttl)
     let longId = desk.askWithTtl("write", Int64(50))
     @Expect(desk.pendingCount(), Int64(2))
-    desk.advance(ttl)
+    fake.now = ttl
     @Expect(desk.stateOf(shortId), "expired")
     @Expect(desk.stateOf(longId), "pending")
     @Expect(desk.consume(shortId), "")
     @Expect(desk.pendingCount(), Int64(1))
     @Expect(apEvents(log, "approval/expired"), Int64(1))
-    // 再推进到长工单也过期：expired 事件必须变成 2（长的那条），而不是 3——
+    // 再把钟推到长工单也过期：expired 事件必须变成 2（长的那条），而不是 3——
     // 短工单已被结算过，不得重复落账
-    desk.advance(Int64(60))
+    fake.now = ttl + 60
+    // 过期是「碰到桌面时」结算的：光挪钟不扫描，所以先真碰一次再数账
+    @Expect(desk.pendingCount(), Int64(0))
     @Expect(apEvents(log, "approval/expired"), Int64(2))
     @Expect(desk.stateOf(shortId), "expired")
-    @Expect(desk.pendingCount(), Int64(0))
     removeIfExists(p, recursive: false)
+}
+
+// 这条测的是「生产默认接线」：不注入任何假钟，只等真实单调时间跨过 deadline。
+// 假钟用例证明过期判定本身正确，但证明不了 ApprovalDesk(log) 真的接上了钟——
+// 若默认钟被冻成常量，只有这条会红。
+@Test
+func defaultDeskClockExpiresOnRealMonotonicTime() {
+    let p = apPath("real-clock")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let reg = ToolRegistry()
+    reg.register(ToolSpec("write", "写文件", "path", true))
+    let rt = ToolRuntime(log, reg)
+    let desk = ApprovalDesk(log)
+    let id = desk.askWithTtl("write", Int64(1))
+    @Expect(desk.stateOf(id), "pending")
+    sleep(Duration.second)
+    // 有界轮询，不再往上加定值 sleep：等的只是真实时钟跨过那一秒
+    var tries: Int64 = 0
+    while (desk.stateOf(id) == "pending" && tries < Int64(6)) {
+        sleep(Duration.millisecond * 100)
+        tries += 1
+    }
+    @Expect(desk.stateOf(id), "expired")
+    let r = rt.executeWithApproval("write", "ap-real.txt x", id, true, desk)
+    @Expect(r.allowed, false)
+    @Expect(r.why, "approval-not-granted:expired")
+    removeIfExists(p, recursive: false)
+    removeIfExists("ap-real.txt", recursive: false)
 }
