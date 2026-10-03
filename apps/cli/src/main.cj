@@ -18,8 +18,8 @@ func expect(label: String, got: Bool) {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig]")
         return 64
     }
 
@@ -114,6 +114,62 @@ main(args: Array<String>) {
         log.flush()
         removeIfExists(p, recursive: false)
         println("cancel\tcancelled=${r.cancelled}\tdelivered=${r.delivered}\tsettled=${r.settledToolCalls}")
+    }
+
+    // Ctrl+C 的端到端取证：由外部驱动（PowerShell 的 GenerateConsoleCtrlEvent）向本进程
+    // 所在控制台发中断。这里验的是 DSH 那条不变量——中断不是就地终止进程，
+    // 而是走与桌面 stop 同一条协作式取消：turn 在检查点收束、未落盘的写入结算、写租约归还。
+    // 退出码约定 130（128+SIGINT）；内部断言有任何一条 FAIL 时退 1，避免「被杀也算过」。
+    if (mode == "sig") {
+        let p = "sig-session.log"
+        removeIfExists(p, recursive: false)
+        removeIfExists("${p}.lease", recursive: false)
+        expect("中断处理器注册成功", ConsoleSignals.install())
+        let lease = WriteLease(p)
+        expect("写入前拿到写租约", lease.takeoverIfStale())
+        let tk = TurnToken()
+        let log = SessionLog(p)
+        let q = ThreadSafeDeliveryQueue(8)
+        let id = ConsoleSignals.attach(tk)
+        let hitsBefore = ConsoleSignals.signalCount()
+        let h = TurnRunner().start(CancellableStreamProvider(tk, 2), tk, log, q)
+        // 握手行：驱动看到这行才发中断，同时确认被中断的就是这个 pid。
+        // stdout 被重定向到文件时是块缓冲，不 flush 驱动就永远等不到这行。
+        println("sig\thandoff\tpid=${ownProcessId()}")
+        getStdOut().flush()
+        var waited: Int64 = 0
+        while (h.isRunning() && waited < Int64(8000)) {
+            sleep(10 * Duration.millisecond)
+            waited += Int64(10)
+        }
+        // 没等到中断时也必须收束：provider 在帧间的自旋是「等取消」的，
+        // 本运行时的 sleep(1ms) 实际粒度可到十几毫秒，放着不管就是几十秒挂死。
+        if (ConsoleSignals.signalCount() == hitsBefore) {
+            tk.cancel()
+        }
+        let r = h.result()
+        ConsoleSignals.detach(id)
+        let gotSignal = ConsoleSignals.signalCount() > hitsBefore
+        expect("中断确实送达处理器", gotSignal)
+        // 后两条必须以「真的收到过中断」为前提：上面的兜底取消也会让 r.cancelled 变 true，
+        // 不设前提就是把自测的收束报成中断的功劳。
+        expect("在途 turn 因中断收束", r.cancelled && gotSignal)
+        expect("中断类型是 Ctrl+C 或 Ctrl+Break", (ConsoleSignals.lastKind() == Int64(0) || ConsoleSignals.lastKind() == Int64(1)) && gotSignal)
+        var sawCancelled = false
+        for (ev in log.snapshotEvents()) {
+            if (ev.eventType == "turn/cancelled") {
+                sawCancelled = true
+            }
+        }
+        expect("取消的 turn 留下 turn/cancelled", sawCancelled && gotSignal)
+        expect("未落盘的写入就地结算", log.flush())
+        expect("写租约归还", lease.release())
+        expect("租约文件已消失", !lease.held())
+        expect("在册表清空", ConsoleSignals.attached() == Int64(0))
+        let code = if (failures > 0) { 1 } else { 130 }
+        println("sig\tcancelled=${r.cancelled}\tdelivered=${r.delivered}\tkind=${ConsoleSignals.lastKind()}\thits=${ConsoleSignals.signalCount() - hitsBefore}\tcode=${code}")
+        removeIfExists(p, recursive: false)
+        return code
     }
 
     if (mode == "ext") {
