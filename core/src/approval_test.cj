@@ -1,6 +1,7 @@
 package core
 
 import std.unittest.*
+import std.collection.ArrayList
 import std.fs.*
 
 // 审批的协议面。§6.1.2 补证清单第 2 条：此前审批只是调用方随手带的一个字符串，
@@ -178,6 +179,91 @@ func pendingApprovalExpiresAndIsSettledOnce() {
     @Expect(desk.pendingCount(), Int64(0))
     @Expect(apEvents(log, "approval/expired"), Int64(2))
     @Expect(desk.stateOf(shortId), "expired")
+    removeIfExists(p, recursive: false)
+}
+
+// 工单号要从日志里已出现过的最大号往后发，不能从 1 重来。
+// 起因是实测到的证据：CLI 每次 `dsh call` 都是一个新进程，日志里连着出现两条
+// `approval/asked 1:write`——号只在进程内唯一时，审计答不出「是哪一次批的」，
+// 「旧审批 ID 不可重用」这条也就只在单进程内成立。
+// 测试侧自己剥 `approval/asked` 数据里的号（只取冒号前的连续数字），
+// 这样这几条用例在实现落地前就能编译、并以断言级失败报红，而不是撞在符号未声明上。
+func askedIdOf(data: String): Int64 {
+    var n: Int64 = -1
+    for (c in data.toArray()) {
+        let d = Int64(c) - 48
+        if (d < 0 || d > 9) {
+            break
+        }
+        n = if (n < 0) { d } else { n * 10 + d }
+    }
+    return n
+}
+
+func apDupAskedIds(log: SessionLog): Int64 {
+    let seen = ArrayList<Int64>()
+    var dups: Int64 = 0
+    for (ev in log.snapshotEvents()) {
+        if (ev.eventType == "approval/asked") {
+            let v = askedIdOf(ev.data)
+            var hit = false
+            for (x in seen) {
+                if (x == v) {
+                    hit = true
+                }
+            }
+            if (hit) {
+                dups += 1
+            } else {
+                seen.add(v)
+            }
+        }
+    }
+    return dups
+}
+
+// 跨进程（真实重启）：第二个 desk 从盘上回放后必须往后接号，
+// 并且上一进程留下的号在它这里既不能应答也不能消费——不能隔空改判别人那一次。
+@Test
+func ticketIdsContinueAcrossProcesses() {
+    let p = apPath("cross-process")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let first = ApprovalDesk(log)
+    let a = first.ask("write")
+    let b = first.ask("write")
+    @Expect(a, Int64(1))
+    @Expect(b, Int64(2))
+    @Expect(log.flush(), true)
+    let reloaded = SessionLog(p)
+    @Expect(reloaded.load(), true)
+    let second = ApprovalDesk(reloaded)
+    @Expect(second.ask("write"), Int64(3))
+    @Expect(apEvents(reloaded, "approval/asked"), Int64(3))
+    @Expect(apDupAskedIds(reloaded), Int64(0))
+    @Expect(second.answer(a, "allowed-once"), false)
+    @Expect(second.consume(a), "")
+    @Expect(second.consume(b), "")
+    @Expect(apEvents(reloaded, "approval/decided"), Int64(0))
+    removeIfExists(p, recursive: false)
+}
+
+// 同一份日志上换一个新 desk（进程内的「重开一张桌子」）也不得重号：
+// 发号读的是日志，不只是这个对象自己的计数器。
+@Test
+func secondDeskOnSameLogDoesNotReuseIds() {
+    let p = apPath("same-log")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let first = ApprovalDesk(log)
+    let a = first.ask("write")
+    let second = ApprovalDesk(log)
+    let b = second.ask("write")
+    @Expect(b > a, true)
+    @Expect(apDupAskedIds(log), Int64(0))
+    // 第一张桌子发的号仍归第一个 desk 结算，第二个 desk 不能替它改判
+    @Expect(second.answer(a, "allowed-once"), false)
+    @Expect(first.answer(a, "allowed-once"), true)
     removeIfExists(p, recursive: false)
 }
 

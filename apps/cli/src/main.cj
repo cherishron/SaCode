@@ -492,6 +492,37 @@ main(args: Array<String>) {
         expect("需审批的已登记工具才发工单", needsTicket(reg, "write"))
         expect("免审批工具不发工单", !needsTicket(reg, "read"))
         expect("未登记工具不发工单", !needsTicket(reg, "nosuch"))
+        // 工单号跨进程不复用，在 CLI 交付面上的表现：把日志落盘、换一个 SessionLog
+        // 对象回放，再开一张桌子——必须接在已有最大号之后，而不是又从 1 开始。
+        // 一次 `dsh call` 就是一个新进程，从 1 重来会让日志里出现两条同号的 asked。
+        hlog.flush()
+        let rlog = SessionLog(hp)
+        expect("重启回放能读回已落盘日志", rlog.load())
+        let desk2 = ApprovalDesk(rlog)
+        let t6 = desk2.ask("write")
+        expect("重启后发号接在日志上的最大号之后", t6 > t4)
+        var askedTotal: Int64 = 0
+        var askedDistinct: Int64 = 0
+        let seenIds = ArrayList<String>()
+        for (ev in rlog.snapshotEvents()) {
+            if (ev.eventType == "approval/asked") {
+                askedTotal += 1
+                let head = ev.data.split(":")[0]
+                var fresh = true
+                for (x in seenIds) {
+                    if (x == head) { fresh = false }
+                }
+                if (fresh) {
+                    seenIds.add(head)
+                    askedDistinct += 1
+                }
+            }
+        }
+        expect("日志里每条 asked 的号互不相同", askedTotal == askedDistinct)
+        // 本块共发过 4 张号（t1/t2/t4 三张 + 重启后的 t6）；t3 是复用 t2，不发新号
+        expect("日志上的 asked 条数等于发号次数", askedTotal == Int64(4) && askedDistinct == Int64(4))
+        // 上一进程发过的号在新桌子上既不该应答也不该消费
+        expect("重启后旧号不能在新桌子上改判", !desk2.answer(t2, "denied") && desk2.consume(t2) == "")
         hlog.flush()
         removeIfExists(hp, recursive: false)
         removeIfExists("${hp}.lease", recursive: false)
