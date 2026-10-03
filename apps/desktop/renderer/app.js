@@ -692,7 +692,7 @@ createApp({
 
     const composer = el("footer", "composer", [
       el("label", "field-label", "发送消息", { for: "composer" }),
-      el("div", "composer-row", [h("textarea", {
+      el("div", "composer-card", [h("textarea", {
         class: "input",
         id: "composer",
         rows: 2,
@@ -701,7 +701,7 @@ createApp({
         value: self.draft,
         onInput: (e) => (self.draft = e.target.value),
       }),
-      el("button", "btn btn-primary", "发送", { id: "send", onClick: self.send }),
+      el("div", "composer-controls", [el("button", "btn btn-primary", "发送", { id: "send", onClick: self.send })]),
       ]),
       el("span", "note", "支持多行输入 · 审批决定由你确认"),
     ]);

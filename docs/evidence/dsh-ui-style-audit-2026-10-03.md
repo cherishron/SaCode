@@ -26,3 +26,11 @@ GitHub API 递归树和 contents 通道本次返回成功；web 浏览工具无�
 继续读取冻结快照的 [gradient-shadow-text.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/gradient-shadow-text.css)、[elevation 样式契约](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/tests/elevation-styles.client.spec.ts) 和 `design-platform.css`。确认描边色应继承，派生投影需逐元素计算，避免根级已解析变量导致表面颜色重绑失效。
 
 SaCode 输入框采用 soft、浮动预览采用 panel、模态弹窗采用 prominent 参数，浮起表面使用无实体边框的共享投影；中性平面描边改为发丝线，状态色边框保持实体 1px。参数沿用上游并保留完整 MIT 授权文件 `apps/desktop/renderer/assets/dsh-ui-LICENSE.txt`，通过现有 renderer 打包规则进入产物。主题颜色仍由 SaCode 集中令牌提供，不表示全部上游色板已经迁移。完整菜单材质和未实现页面继续待核。
+
+## 输入卡片与正文排版增量
+
+本批读取冻结快照的 [InputBar.module.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css)、[MessageItem.module.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-chat/src/client/chat/MessageItem.module.css) 和 `ChatView.module.css`。输入正文与操作条在同一卡片内纵向排列；默认正文 14px，输入及助手正文行高 24px，用户正文行高 22px；用户气泡按宽度轴的 70.2% 限制并右对齐。
+
+原 SaCode 的文本框和发送按钮并列、正文使用界面辅助字号，属于上游结构差距。本批将发送操作移入输入卡片底部，统一正文轴并同步流式正文；更新以前自定的“文本域与发送按钮同底边”断言为卡片内纵向结构验收，没有用旧规范阻止上游结构对齐。仍保留原发送、快捷键、草稿与核心真源机制。
+
+本批未实现上游完整 composer 的模型/预设/附件选择、编辑器引用、自动增长和共享拖动宽度轴；不能把输入卡片结构调整宣称为完整 composer 完成。完整 Markdown、字体大小设置与上下文节点也仍待补齐。

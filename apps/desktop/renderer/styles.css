@@ -4,6 +4,7 @@
   --surface: #f6f7f9;
   --surface-2: #ffffff;
   --surface-3: #eceef2;
+  --surface-bubble: var(--surface);
   --text: #16181d;
   --brand-surface: #16181d;
   --text-muted: #5c6470;
@@ -28,6 +29,9 @@
   --fs-s: 12px;
   --fs-m: 13px;
   --fs-l: 15px;
+  --fs-content: 14px;
+  --line-content: 24px;
+  --line-user: 22px;
   --control-height: 36px;
   --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
@@ -37,6 +41,7 @@
     --surface: #17191d;
     --surface-2: #202329;
     --surface-3: #2a2e36;
+    --surface-bubble: var(--surface-3);
     --text: #e8eaee;
     --text-muted: #9aa2ae;
     --border: #3a3f49;
@@ -97,24 +102,37 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 #messages .tr-bubble > .msg-role { padding: 0 var(--space-4); }
 #messages .tr-bubble[data-role=user] > .msg-role { text-align: right; }
 #messages .tr-bubble__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; min-width: 0; }
+#messages .tr-bubble[data-role=user] .tr-bubble__body { max-width: 70.2%; align-self: flex-end; }
 #messages .tr-bubble__body > .msg-role { grid-area: 1 / 1; padding: 0 var(--space-4); }
 #messages .tr-bubble__content { grid-area: 2 / 1; min-width: 0; }
 #messages .tr-bubble__after { grid-area: 3 / 1; }
 #messages [data-placement=end] .msg-role { text-align: right; }
 #messages .tr-bubble__box { border-radius: var(--radius-xl); padding: var(--space-3) var(--space-4); max-width: 100%; }
 .msg-role { display: block; font-size: var(--fs-s); line-height: 18px; color: var(--text-muted); margin-bottom: var(--space-2); }
-.msg-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-m); line-height: 1.7; }
+.msg-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-content); line-height: var(--line-content); }
+#messages .tr-bubble[data-role=user] .msg-text { line-height: var(--line-user); }
+#messages .tr-bubble[data-role=user] .tr-bubble__box { padding-block: 10px;
+  --tr-bubble-box-bg: var(--surface-bubble); background: var(--surface-bubble); }
 .msg-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .streaming { margin-top: var(--space-4); border-left: 2px solid var(--accent); padding: var(--space-3) var(--space-4);
-  background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+  background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: var(--fs-content); line-height: var(--line-content); }
 .turn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
   padding: var(--space-3) var(--space-5); border-top: 0.5px solid var(--border); flex-shrink: 0; }
 .turn-actions .badge { margin-left: auto; }
 .composer { grid-column: 2; grid-row: 3; display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-4) var(--space-5); border-top: 0.5px solid var(--border); background: var(--surface-2); }
-.composer-row { display: flex; align-items: flex-end; gap: var(--space-3); }
-.composer-row textarea { border-radius: var(--radius-panel); flex: 1; min-height: 80px; max-height: 200px; resize: vertical; }
-.composer-row .btn { flex: 0 0 72px; }
+.composer-card { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0;
+  padding: var(--space-2) 0 var(--space-3); border-radius: var(--radius-panel);
+  background: var(--surface-2); box-shadow: var(--elevation-soft); }
+.composer-card textarea { min-height: 80px; max-height: 200px; resize: vertical; border-radius: 0;
+  border: 0; box-shadow: none; background: transparent; padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-content); line-height: var(--line-content); }
+.composer-card:has(textarea:focus) { outline: 2px solid var(--accent); outline-offset: 3px; }
+.composer-card textarea:focus { outline: none; }
+.composer-controls { display: flex; align-items: center; justify-content: flex-end;
+  gap: var(--space-2); padding: 0 var(--space-3); }
+.composer-controls .btn { min-width: 72px; }
 .field-label { display: block; font-size: var(--fs-s); color: var(--text-muted); }
 .input { width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--space-2) var(--space-3);
   border: 0; box-shadow: var(--elevation-soft); border-radius: var(--radius-m); background: var(--surface-2); color: var(--text); }
@@ -290,7 +308,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
   /* 只覆盖已映射的 SaCode 表面，避免改写组件库内部的圆形图形。 */
   :is(.brand img, .nav-item, .badge, .input, .btn, .tiny-button, .side-tab,
       .float-resize, .preview-text, .empty-card, .guide-card, .tool, .approval,
-      .sacode-dialog, .workspace-panel, .catalog-card, .settings-tool, .tr-bubble__box),
+      .sacode-dialog, .workspace-panel, .catalog-card, .settings-tool, .tr-bubble__box, .composer-card),
   :is(.btn, .tiny-button, .sacode-dialog)::before,
   :is(.btn, .tiny-button, .sacode-dialog)::after { corner-shape: superellipse(1.5); }
 }

@@ -426,6 +426,7 @@ async function uiSmoke() {
   // 取消的一轮不落 assistant/message：半截正文只能继续由流式回显框呈现，
   // 且不许多出一个助手气泡冒充「助手说过完整的话」。
   const partialEcho = await text("#stream");
+  note(await js("(()=>{const n=document.querySelector('#stream');return !!n && getComputedStyle(n).fontSize==='14px' && getComputedStyle(n).lineHeight==='24px';})()"), "流式正文与助手消息共享字号和行高");
   note(partialEcho.includes("你好，world"), `取消轮回显保留半截正文=${JSON.stringify(partialEcho.slice(0, 40))}`);
   const assistantGroupsAfterCancel = await count('#messages .tr-bubble[data-role="assistant"]');
   note(

@@ -34,6 +34,9 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
   // 通过真实核心创建多条会话，覆盖长中文标题与多卡片的栅格。
   await js("window.dsh.sessionCreate('布局检查：'+'长会话标题'.repeat(10))");
   await js("window.dsh.sessionCreate('布局检查：文档整理')");
+  // 通过界面发送真实长中文消息，覆盖用户气泡宽度与展开折行。
+  await js("(()=>{const n=document.querySelector('#composer');n.value='长中文消息与输入对齐。'.repeat(35);n.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#send').click();})()");
+  await waitFor("[...document.querySelectorAll('.msg-text')].some(e=>e.textContent.startsWith('长中文消息与输入对齐。'))");
   const reports = [];
   for (const theme of ["light", "dark"]) {
     nativeTheme.themeSource = theme;
@@ -46,6 +49,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       await waitFor("document.hasFocus()");
       win.webContents.sendInputEvent({type:'mouseMove',x:Math.round(sendBefore.x+sendBefore.width/2),y:Math.round(sendBefore.y+sendBefore.height/2)});
       await js("document.querySelector('#composer').focus()");
+      const composerFocus=await js("getComputedStyle(document.querySelector('.composer-card')).outlineStyle==='solid' && getComputedStyle(document.querySelector('#composer')).outlineStyle==='none'");
       // 真实 Tab 进入按钮，验证键盘焦点而非鼠标模式下的脚本 focus。
       win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
       win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
@@ -63,13 +67,15 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           noPageOverflow: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
           columns: equal(main.left, composer.left) && equal(main.right, composer.right) && equal(main.right, side.left),
           budgetRow: equal(input.top, apply.top) && equal(input.height, apply.height),
-          composerBottom: equal(draft.bottom, send.bottom),
+          composerStack: draft.bottom<send.top && send.right<box('.composer-card').right && send.bottom<box('.composer-card').bottom,
+          composerFocusRing: ${composerFocus},
           controlHeights: controls.every(s => equal(box(s).height, 36)),
           stateGeometry: equal(send.width,${sendBefore.width}) && equal(send.height,${sendBefore.height}) && document.querySelector('#send').matches(':hover') && document.activeElement.id==='send' && getComputedStyle(document.querySelector('#send')).outlineStyle!=='none',
           standardRadius: controls.every(s => getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='12px') && getComputedStyle(document.querySelector('#budget-input')).borderTopLeftRadius==='12px',
           navigationRadius: [...document.querySelectorAll('.nav-item')].every(e=>getComputedStyle(e).borderTopLeftRadius==='12px'),
-          composerRadius: getComputedStyle(document.querySelector('#composer')).borderTopLeftRadius==='28px',
-          inputElevation: ['#composer','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return style.borderTopWidth==='0px' && style.boxShadow!=='none';}),
+          composerRadius: getComputedStyle(document.querySelector('.composer-card')).borderTopLeftRadius==='28px',
+          contentTypography: getComputedStyle(document.querySelector('#composer')).fontSize==='14px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='24px' && [...document.querySelectorAll('.msg-text')].every(e=>getComputedStyle(e).fontSize==='14px' && getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'22px':'24px')),
+          inputElevation: ['.composer-card','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return style.borderTopWidth==='0px' && style.boxShadow!=='none';}),
           // Chromium 在分数 DPR 下将实体边框量化为整数设备像素。
           warningBorder: equal(parseFloat(getComputedStyle(document.querySelector('#approval')).borderTopWidth),Math.max(1,Math.floor(devicePixelRatio))/devicePixelRatio),
           inputStrokeRebind: (()=>{const node=document.querySelector('#budget-input'),before=getComputedStyle(node).boxShadow;node.style.setProperty('--elevation-stroke-color','var(--accent)');try{return getComputedStyle(node).boxShadow!==before;}finally{node.style.removeProperty('--elevation-stroke-color');}})(),
@@ -98,6 +104,27 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       reports.push(report);
       writeFileSync(join(outDir, `sacode-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${report.failed.length ? "FAIL" : "PASS"} ${theme} ${width}x${height} ${report.failed.join(',')}`);
+      await js("(()=>{const n=[...document.querySelectorAll('.msg-text')].find(e=>e.textContent.startsWith('长中文消息与输入对齐。'));if(n.dataset.foldState==='folded')n.closest('.tr-bubble').querySelector('.btn-fold').click();})()");
+      await js("(()=>{const n=document.querySelector('.conversation-scroll');n.scrollTop=n.scrollHeight;})()");
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const userReport=await js(`(()=>{
+        const n=[...document.querySelectorAll('.msg-text')].find(e=>e.textContent.startsWith('长中文消息与输入对齐。'));
+        const body=n.closest('.tr-bubble__body'),group=n.closest('.tr-bubble'),box=e=>e.getBoundingClientRect();
+        const checks={
+          actualLongMessage:n.textContent==='长中文消息与输入对齐。'.repeat(35),
+          visibleBubble:getComputedStyle(group.querySelector('.tr-bubble__box')).backgroundColor!==getComputedStyle(document.querySelector('.conversation')).backgroundColor,
+          rightAligned:Math.abs(box(body).right-box(group).right)<1,
+          widthBounded:box(body).width<=box(group).width*.702+1,
+          wraps:box(n).height>44 && n.scrollWidth<=n.clientWidth,
+          compactToggle:getComputedStyle(group.querySelector('.btn-fold')).borderTopLeftRadius==='8px',
+          noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(userReport,{theme,width,height,surface:'long-user'});reports.push(userReport);
+      writeFileSync(join(outDir,`sacode-long-user-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${userReport.failed.length?'FAIL':'PASS'} long-user ${theme} ${width}x${height} ${userReport.failed.join(',')}`);
+      await js("document.querySelector('.conversation-scroll').scrollTop=0");
       await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
       await new Promise((r) => setTimeout(r, 50));
       const dialogReport = await js(`(() => {

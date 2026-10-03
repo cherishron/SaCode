@@ -230,3 +230,15 @@ UI 自动验收替换系统选择器返回值，使用真实目录和核心完�
 重新运行 electron-builder --dir 输出 `dualtest/ui-a6e42f2/source/apps/desktop/dist/elevation-verify/win-unpacked`，rc=0。该包内 SaCode.exe 顺序复跑 UI 与布局，**160 项 UI、104 组 / 784 项布局均通过**，退出码均 0。日志 `dualtest/ui-a6e42f2/{elevation-layout-final.log,elevation-ui.log,elevation-package.log,elevation-package-ui.log,elevation-package-layout.log}`；包内运行生成的报告/截图 `dualtest/ui-a6e42f2/elevation-layout-packaged/`。最小亮色工作区与暗色浮动预览截图已打开复查，投影、焦点描边、正文和长路径可见，窗口边界及原有栅格检查保持通过。
 
 本轮构建的是 unpacked 发布态目录，未重新生成含本批样式的 NSIS/便携包，未验证实际安装卸载。菜单材质、完整色板和未实现页面仍待核验；不声明完整 DSH UI 已完成。
+
+## 上游输入卡片结构与正文轴对齐（2026-10-03）
+
+本批基于冻结上游 InputBar、MessageItem、ChatView 及主题正文规则，调整输入区为同一卡片内的正文和底部发送操作，间隔 12px、按钮靠右；输入焦点描边由外卡片承担。以前本仓的“文本域与发送按钮底边相同”是自定布局，现替换为上游纵向结构验收，保留发送和快捷键的实际业务链路。
+
+输入、助手消息和流式正文统一 14px/24px，用户正文为 14px/22px，用户气泡使用 10px 竖向内边距及消息列 70.2% 宽度上限、右对齐。用户气泡增加集中主题表面令牌，亮暗主题均与背景区分；不在组件内分散硬编码色值。角色分组、折叠阈值、会话日志和核心真源不变。
+
+隔离源码由干净 `7b12caf` 导出至 `dualtest/composer/source`，加入本批四个桌面源码改动；复用此前匹配 Host/DLL，未混入并发 SSE、Next SDK 或依赖修改。vendor 重新生成成功，JS 三个改动文件语法检查通过。最终 **161 项 UI OK / UI_SMOKE PASS**，增加流式回显字号/行高断言；**112 组 / 856 项布局 / 零失败**，退出码均 0。日志 `dualtest/composer/{vendor.log,ui-final-verified.log,layout-final.log}`；报告及截图 `dualtest/composer/source/apps/desktop/dist/layout/`。
+
+布局用界面发送真实长中文消息，经核心投影再展开，覆盖正文完整性、右边对齐、70.2% 宽度上限、折行无横溢出、用户底色可见和紧凑折叠按钮圆角。输入卡片测量结构、焦点环以及正文与控件层级；最小亮色主窗口/长用户消息和暗色主窗口截图已打开复查。原有审批、预算、会话恢复、预览和快捷键 UI 检查全部保留通过。
+
+完整 composer 的模型/预设/附件选择、自动增长、共享宽度轴和完整 Markdown 仍未实现；本批未重打发布产物，不引用前批包内通过证明本批改动已经进入安装包。完整桌面目标保持未完成。
