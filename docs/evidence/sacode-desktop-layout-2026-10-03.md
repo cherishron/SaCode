@@ -218,3 +218,15 @@ UI 自动验收替换系统选择器返回值，使用真实目录和核心完�
 状态检查使用真实 mouseMove 与 Tab，核对悬停、焦点、描边和不变尺寸；标准控件断言同时包含实际禁用的停止按钮。后台窗口最初出现焦点外圈缺失，增加控件共享 focus 规则后仍有同样现象，诊断确认 WebContents 未获焦点；激活 WebContents 后仅一组事件尚未完成。最终增加 document.hasFocus 和事件完成等待，不删除或放宽断言，全量通过。报告保留 before/after、hover、focus、outline 字段，便于复核。此前失败日志保持可追溯。
 
 本批只关闭已实现表面的圆角映射差距；完整主题材质和页面模块仍未完成，未重打含本批 CSS 的安装包，不以旧产物证明新样式通过。
+
+## 弹窗/输入框投影与中性发丝线对齐（2026-10-03）
+
+继续核对 S0 的 `gradient-shadow-text.css`、`design-platform.css`、`elevation-styles.client.spec.ts`。共享投影采用继承的描边色和逐元素派生参数，输入框使用 soft、浮动预览使用 panel、模态弹窗使用 prominent；这些表面的实体 border 为 0。中性按钮、卡片和分隔线使用 0.5px，审批/警告/错误仍保留 1px 状态边框。界面语义与现有技术栈保持原设计。
+
+本批参数适配沿用上游，完整 MIT 文件置于 `apps/desktop/renderer/assets/dsh-ui-LICENSE.txt`，归属说明写在样式源码中。本轮通过 asar API 用本机 path.join 路径提取包内文件，与源文件逐字节比对成功，并核验共享投影规则存在；首次使用斜杠字符串提取失败，改用平台路径后通过，未据提取失败认定授权文件缺失。
+
+隔离源码在前述 a6e42f2 导出及后续已提交的截图路径/圆角改动上加入本批样式和布局脚本，不包含主工作区的 SSE、Next SDK 或依赖修改。开发态 **160 项 UI OK / UI_SMOKE PASS**，**104 组 / 784 项布局 / 零失败**。首轮 warningBorder 红灯来自 150% DPR 的边框设备像素量化；改为按实际 DPR 核验，源码继续保持 1px 实体警告边框。新增动态重绑输入描边色检查，证明派生投影响应表面状态且恢复原值。
+
+重新运行 electron-builder --dir 输出 `dualtest/ui-a6e42f2/source/apps/desktop/dist/elevation-verify/win-unpacked`，rc=0。该包内 SaCode.exe 顺序复跑 UI 与布局，**160 项 UI、104 组 / 784 项布局均通过**，退出码均 0。日志 `dualtest/ui-a6e42f2/{elevation-layout-final.log,elevation-ui.log,elevation-package.log,elevation-package-ui.log,elevation-package-layout.log}`；包内运行生成的报告/截图 `dualtest/ui-a6e42f2/elevation-layout-packaged/`。最小亮色工作区与暗色浮动预览截图已打开复查，投影、焦点描边、正文和长路径可见，窗口边界及原有栅格检查保持通过。
+
+本轮构建的是 unpacked 发布态目录，未重新生成含本批样式的 NSIS/便携包，未验证实际安装卸载。菜单材质、完整色板和未实现页面仍待核验；不声明完整 DSH UI 已完成。

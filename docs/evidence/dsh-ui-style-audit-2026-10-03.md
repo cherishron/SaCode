@@ -20,3 +20,9 @@ GitHub API 递归树和 contents 通道本次返回成功；web 浏览工具无�
 本次又读取冻结快照的 [base.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/base.css) 和 [corner-shape.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/corner-shape.css)，确认六档数值及引擎回退规则。已将 SaCode 标准按钮/输入/导航映射 R12，紧凑折叠控件 R8，工具和审批分组、文件预览 R16，独立内容卡片与气泡 R20，输入主容器/弹窗 R28。保留 SaCode 标志原始图片。
 
 曲线按支持条件作用于已映射表面；组件库内部未核对的圆形图形不被全局覆盖，待审批状态点声明 round。本机 Electron 的 `CSS.supports('corner-shape','superellipse(1.5)')` 返回 false；本轮只能证明圆弧回退、各档实际圆角和状态几何，尚不能证明平滑曲线的渲染效果。圆角映射关闭了前述对应差距，但表面材质、完整主题令牌、完整页面基线仍待核对。
+
+## 表面层级增量
+
+继续读取冻结快照的 [gradient-shadow-text.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/gradient-shadow-text.css)、[elevation 样式契约](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/tests/elevation-styles.client.spec.ts) 和 `design-platform.css`。确认描边色应继承，派生投影需逐元素计算，避免根级已解析变量导致表面颜色重绑失效。
+
+SaCode 输入框采用 soft、浮动预览采用 panel、模态弹窗采用 prominent 参数，浮起表面使用无实体边框的共享投影；中性平面描边改为发丝线，状态色边框保持实体 1px。参数沿用上游并保留完整 MIT 授权文件 `apps/desktop/renderer/assets/dsh-ui-LICENSE.txt`，通过现有 renderer 打包规则进入产物。主题颜色仍由 SaCode 集中令牌提供，不表示全部上游色板已经迁移。完整菜单材质和未实现页面继续待核。

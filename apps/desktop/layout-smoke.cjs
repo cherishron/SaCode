@@ -69,6 +69,10 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           standardRadius: controls.every(s => getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='12px') && getComputedStyle(document.querySelector('#budget-input')).borderTopLeftRadius==='12px',
           navigationRadius: [...document.querySelectorAll('.nav-item')].every(e=>getComputedStyle(e).borderTopLeftRadius==='12px'),
           composerRadius: getComputedStyle(document.querySelector('#composer')).borderTopLeftRadius==='28px',
+          inputElevation: ['#composer','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return style.borderTopWidth==='0px' && style.boxShadow!=='none';}),
+          // Chromium 在分数 DPR 下将实体边框量化为整数设备像素。
+          warningBorder: equal(parseFloat(getComputedStyle(document.querySelector('#approval')).borderTopWidth),Math.max(1,Math.floor(devicePixelRatio))/devicePixelRatio),
+          inputStrokeRebind: (()=>{const node=document.querySelector('#budget-input'),before=getComputedStyle(node).boxShadow;node.style.setProperty('--elevation-stroke-color','var(--accent)');try{return getComputedStyle(node).boxShadow!==before;}finally{node.style.removeProperty('--elevation-stroke-color');}})(),
           bubbleRadius: document.querySelectorAll('.tr-bubble__box').length>0 && [...document.querySelectorAll('.tr-bubble__box')].every(e=>getComputedStyle(e).borderTopLeftRadius==='20px'),
           groupedRadius: ['#tool-write','#approval'].every(s=>getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='16px'),
           cornerCurve: !CSS.supports('corner-shape','superellipse(1.5)') || getComputedStyle(document.querySelector('#send')).cornerShape==='superellipse(1.5)',
@@ -106,6 +110,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const equal = (a,b) => Math.abs(a-b)<1;
         const checks = {
           opened: true,
+          elevation: getComputedStyle(dialog).borderTopWidth==='0px' && getComputedStyle(dialog).boxShadow!=='none',
           fits: box.left>=0 && box.top>=0 && box.right<=innerWidth && box.bottom<=innerHeight,
           centered: equal(box.left+box.width/2,innerWidth/2),
           noOverflow: dialog.scrollWidth<=dialog.clientWidth,
