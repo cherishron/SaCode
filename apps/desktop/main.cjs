@@ -129,9 +129,11 @@ const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 // 只看 DOM 里有 JSON 不算数——必须证明点击真的被核心落盘，且投影、流式、审批、取消各自有终态。
 async function uiSmoke() {
   let bad = 0;
+  const checks = [];
   // 逐行标明成败：措辞固定打印会让人把通过读成失败（本文件第一版就这么错过一次）
   const note = (ok, line) => {
     if (!ok) bad += 1;
+    checks.push({ passed: !!ok, description: line });
     console.log(`UI ${ok ? "OK  " : "FAIL"} ${line}`);
   };
   const js = (code) => win.webContents.executeJavaScript(code, true);
@@ -712,6 +714,10 @@ async function uiSmoke() {
   // 审批留下的可追问痕迹：谁批的、批成什么，只能从日志里的 asked/decided 回答
   note(/approval\/asked\t\d+:write/.test(log2) && /approval\/decided\t\d+:denied/.test(log2), "审批的 asked/decided 已进同一份会话日志");
 
+  // 便携启动器不保证继承 stdout；显式 --session-dir 保留完整断言报告供验收。
+  writeFileSync(join(SESSION_DIR, 'ui-smoke-report.json'), JSON.stringify({
+    passed: bad === 0, failed: bad, checks, packaged: app.isPackaged, version: app.getVersion(),
+  }, null, 2));
   console.log(bad === 0 ? "UI_SMOKE PASS" : `UI_SMOKE FAIL（${bad} 项不符）`);
   app.exit(bad === 0 ? 0 : 1);
 }
