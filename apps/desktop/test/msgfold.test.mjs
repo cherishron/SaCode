@@ -37,6 +37,19 @@ test("未命中映射表回落 system，且不会造出第二个角色", () => {
   assert.equal(ms[0].sourceRole, "unknown/thing");
 });
 
+// developer/message 是不变量 7 里第五类进模型历史的事件，界面不许把它悄悄标成 system：
+// 核心认它、投影带它，气泡就得按自己的角色显示，sourceRole 保留原始前缀以便回日志追问。
+test("developer/message 有自己的角色映射，不被并入 system", () => {
+  const ms = F.toBubbleMessages(["system/message: s", "developer/message: d", "user/message: u"]);
+  assert.equal(ms[0].role, "system");
+  assert.equal(ms[1].role, "developer");
+  assert.equal(ms[1].sourceRole, "developer/message");
+  assert.equal(ms[1].content, "d");
+  const rc = F.roleConfigs();
+  assert.equal(rc.developer.placement, "start");
+  assert.equal(rc.developer.shape, "none");
+});
+
 test("正文里的冒号原样保留（只按第一个冒号切一次）", () => {
   const ms = F.toBubbleMessages(["tool/result ok: path: with: colons"]);
   assert.equal(ms[0].content, "path: with: colons");

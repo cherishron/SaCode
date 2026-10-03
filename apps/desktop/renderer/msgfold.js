@@ -12,7 +12,8 @@ window.DshMsgFold = (function () {
     ["user/", "user", "end", "corner"],
     ["assistant/", "assistant", "start", "corner"],
     ["tool/", "tool", "start", "corner"],
-    ["system/", "system", "start", "none"]
+    ["system/", "system", "start", "none"],
+    ["developer/", "developer", "start", "none"]
   ];
 
   function splitMsg(line) {

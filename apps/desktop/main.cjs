@@ -41,7 +41,7 @@ function seedIfNeeded() {
   if (!existsSync(SESSION_LOG)) {
     writeFileSync(
       SESSION_LOG,
-      "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tassistant/message\tseeded reply from core\n3\tuser/message\thello from desktop\n"
+      "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tdeveloper/message\tguided by developer note\n3\tassistant/message\tseeded reply from core\n4\tuser/message\thello from desktop\n"
     );
   }
 }
@@ -163,8 +163,8 @@ async function uiSmoke() {
   note(trReady, `TinyRobot 折叠产物已加载=${await trShape()}`);
 
   // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影。
-  //    消息面换成 BubbleList 后按「组」计：种子是 system/assistant/user 三个角色，各成一组。
-  const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 3));
+  //    消息面换成 BubbleList 后按「组」计：种子是 system/developer/assistant/user 四个角色，各成一组。
+  const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 4));
   note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
   const projText = await text("#count-events");
   note(/^\d+$/.test(projText.split(" ")[1] || ""), `计数条 events=${projText}`);
@@ -206,17 +206,27 @@ async function uiSmoke() {
   const roleSpread = await js(
     "(() => { const m = document.querySelectorAll('#messages .tr-bubble'); const r = {};" +
     " m.forEach((e) => { const k = e.getAttribute('data-role') || '?'; r[k] = (r[k] || 0) + 1; });" +
-    " return r['system'] + '/' + r['assistant'] + '/' + r['user'] + '|组' + m.length; })()"
+    " return r['system'] + '/' + r['developer'] + '/' + r['assistant'] + '/' + r['user'] + '|组' + m.length; })()"
   );
-  note(roleSpread === "1/1/1|组3", `种子角色分布=${roleSpread}`);
+  note(roleSpread === "1/1/1/1|组4", `种子角色分布=${roleSpread}`);
+  // developer/message 是不变量 7 里第五类进模型历史的事件：核心认它之后，界面不许把它
+  // 并入 system 显示，正文与原始前缀都要可按条追问。
+  const devBubble = await js(
+    "(() => { const e = document.querySelector('#messages .tr-bubble[data-role=\"developer\"]');" +
+    " if (!e) return 'no-developer-group';" +
+    " const t = e.querySelector('.msg-text[data-source-role]');" +
+    " return ((t ? (t.textContent || '').trim() : '') === 'guided by developer note' ? 'visible' : 'text:' + (t ? t.textContent : ''))" +
+    " + '|' + (t ? t.getAttribute('data-source-role') : 'no-source-role'); })()"
+  );
+  note(devBubble === "visible|developer/message", `developer 气泡=${devBubble}`);
   const placementPair = await js(
     "(() => { const q = (r) => { const e = document.querySelector('#messages .tr-bubble[data-role=\"' + r + '\"]');" +
     " return e ? e.getAttribute('data-placement') : 'missing'; };" +
-    " return q('user') + '|' + q('assistant') + '|' + q('system'); })()"
+    " return q('user') + '|' + q('assistant') + '|' + q('system') + '|' + q('developer'); })()"
   );
-  note(placementPair === "end|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
+  note(placementPair === "end|start|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
   const labelShown = await text("#messages .msg-role");
-  note(/^\d+ × (system|user|assistant|tool)$/.test(labelShown), `组标签=${labelShown}`);
+  note(/^\d+ × (system|user|assistant|tool|developer)$/.test(labelShown), `组标签=${labelShown}`);
   // 连续同角色必须并成一组：再发一条 user，条数进组但组数不变。
   const groupsBeforeMerge = await count("#messages .tr-bubble");
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("第二条 user 消息")}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);

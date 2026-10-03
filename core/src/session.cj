@@ -85,9 +85,10 @@ func unescField(s: String): String {
 // 保证「同一会话一个写者」，但**同一进程内的多个线程**共享的是同一个 SessionLog
 // 对象（turn 线程写、主线程读），所以这里所有访问都过锁：不加锁时两个线程
 // 同时读 size 会发出重复 seq，投影读到半改写的列表会撕裂。
-// 只有这四类进模型可见历史；其余（turn/start、stream/chunk、tool/call …）持久但不进。
+// 只有这五类进模型可见历史（不变量 7 冻的集合）；其余（turn/start、stream/chunk、tool/call …）
+// 持久但不进。
 func isSurfaceEvent(t: String): Bool {
-    return t == "system/message" || t == "user/message" || t == "assistant/message" || t == "tool/result"
+    return t == "system/message" || t == "developer/message" || t == "user/message" || t == "assistant/message" || t == "tool/result"
 }
 
 // 锁只保证内存态自洽，跨进程的持久与可见仍然只由 flush 决定。

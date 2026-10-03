@@ -63,6 +63,7 @@ func flushThenLoadRoundTrips() {
 func onlySurfaceEventsEnterModelHistory() {
     let log = SessionLog(tmpPath("project"))
     log.append("system/message", "sys")
+    log.append("developer/message", "dev")
     log.append("turn/start", "t")
     log.append("user/message", "u")
     log.append("tool/call", "c")
@@ -70,9 +71,14 @@ func onlySurfaceEventsEnterModelHistory() {
     log.append("assistant/message", "a")
     log.append("step/start", "s")
     let msgs = log.deriveMessages()
-    // 5 类以下才进模型：turn/step/tool/call 持久但不进
-    @Expect(Int64(msgs.size), Int64(4))
-    @Expect(msgs[3], "assistant/message: a")
+    // 不变量 7 冻的是 5 类：system/developer/user/assistant 四种 message 加 tool/result，
+    // turn/step/tool/call 持久但不进模型历史。
+    // 按整串比对而不是按下标取：越界下标会把一条干净的失败变成 ERROR 桶，读计数时要说清是哪一种。
+    var joined = ""
+    for (m in msgs) {
+        joined += "${m}\n"
+    }
+    @Expect(joined, "system/message: sys\ndeveloper/message: dev\nuser/message: u\ntool/result: r\nassistant/message: a\n")
 }
 
 @Test
