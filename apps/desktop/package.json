@@ -52,6 +52,7 @@
     }
   },
   "devDependencies": {
+    "@opentiny/tiny-robot": "^0.5.1",
     "@opentiny/vue": "^3.32.0",
     "@opentiny/vue-button": "^3.32.0",
     "electron": "^33.0.0",
