@@ -196,3 +196,13 @@ UI 自动验收替换系统选择器返回值，使用真实目录和核心完�
 真实 Electron UI 测试移动一次性项目目录后重新打开窗口，检查恢复提示、原路径与错误状态、重新选择按钮可用，并在 finally 恢复目录；**160 项 UI OK / UI_SMOKE PASS**，日志 `dualtest/workspace/ui-recovery.log`。不模拟目录可用性返回值。
 
 布局入口先通过核心保存真实长中文带空格项目目录，再执行文件读写和全部窗口检查。新增目录必须折行、标题和选择按钮垂直居中断言。首轮出现八条预览 actualRead 红灯：断言仍写死相对文件名；更新为精确核对本次项目目录内的完整文件路径，不放宽为后缀匹配。最终 **104 组 / 680 项 / 零失败**，退出码 0，日志 `dualtest/workspace/layout-long-final.log`；截图和报告为 `dualtest/workspace/source/apps/desktop/dist/layout/`。已打开最小亮色窗口截图，长路径保持卡片内折行且共用左基线。JS 三个改动文件语法检查通过。本批在前述隔离源码上验证，不包含并发 SSE 或依赖修改；未重打安装包，完整 UI 目标继续保持未完成。
+
+## 最新提交发布态重建与截图目录修复（2026-10-03）
+
+从 `a6e42f2` 用 git archive 导出干净源码到 `dualtest/ui-a6e42f2/source`，重新构建 Host 成功；DLL 复用前述隔离运行库集合，Host exe 替换为本次新构建。重新生成 vendor、桌面 **80/80**，使用本机官方 Electron dist 完成 electron-builder（rc=0），没有混入主工作区的 SSE、Next SDK、依赖或打包脚本增量。
+
+产物位于 `dualtest/ui-a6e42f2/source/apps/desktop/dist/electron/`：`SaCode Setup 0.1.0.exe` 80583356 字节，SHA256 `FC55FA4D6AFBB6DCB3DDE2E47F62A922FF23171505CC66504259FDC4B9ABBF35`；`sacode-portable.exe` 80431343 字节，SHA256 `B02DE2CA7D56411323221F08B5A70BBA448062ED2A894F376011DE9C8A2551AB`。两者未签名；实际安装、卸载与便携启动未在本轮验证。
+
+包内 `win-unpacked/SaCode.exe --ui-smoke` 通过 **160 项**。默认 `--layout-smoke` 首轮报 `ENOTDIR`：截图默认写到 asar 内。修复发布态默认目录为本次临时会话的 layout 子目录；开发态目录和显式 `--capture-dir` 保持原语义。仅含该源码修复的隔离目录重新打包到 `dist/verify/win-unpacked`，构建 rc=0；包内再次通过 **160 项 UI、104 组 / 680 项布局 / 零失败**，全部退出码 0。日志：`dualtest/ui-a6e42f2/{host-build.log,vendor.log,node.log,builder.log,ui.log,verify-build-final.log,ui-final.log,layout-final.log}`。实际默认截图报告：`C:/Users/jingg/AppData/Local/Temp/dsh-smoke-520-1791034244635/layout/layout-report.json`。
+
+前述安装包对应 `a6e42f2`，不包含随后发现的默认截图目录修复；`dist/verify` 才包含修复。不得把两者混称为同一版本或声称新安装包已验证安装卸载。下一批仍需重打含修复的交付包，并完成安装卸载及全部功能验收。

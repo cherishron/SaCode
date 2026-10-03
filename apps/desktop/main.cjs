@@ -807,7 +807,9 @@ app.whenReady().then(async () => {
     await bridge.request('workspace/set-directory',{directory:layoutProject});
     createWindow();
     const captureArg = process.argv.find((a) => a.startsWith("--capture-dir="));
-    const outDir = captureArg ? captureArg.slice("--capture-dir=".length) : join(__dirname, "dist", "layout");
+    // 发布态 __dirname 位于只读 asar 内，默认截图必须落在本次临时会话目录。
+    const outDir = captureArg ? captureArg.slice("--capture-dir=".length)
+      : app.isPackaged ? join(SESSION_DIR, "layout") : join(__dirname, "dist", "layout");
     const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir, expectedReadPath:join(layoutProject,'dsh-tool.txt') });
     await bridge.stop();
     app.exit(ok ? 0 : 1);
