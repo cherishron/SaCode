@@ -177,11 +177,11 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === "function,function,function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+  note(apiShape === "function,function,function,function,function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   // 工具详情只读取核心清单，模态关闭不执行工具或消费审批。
@@ -233,6 +233,17 @@ async function uiSmoke() {
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
   note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
+  note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "会话外观默认跟随系统");
+  for (const theme of ['light','dark','system']) {
+    await click('#theme-'+theme);
+    note(await waitFor(()=>js(`document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true' && document.querySelector('#appearance-note').textContent.includes('已保存')`)) && nativeTheme.themeSource===theme, `真实保存主题并驱动 Electron 主题=${theme}`);
+    if (theme==='dark') {
+      win.reload();
+      note(await waitFor(()=>js("document.querySelector('#theme-dark')?.getAttribute('aria-pressed')==='true' && !document.querySelector('#theme-dark').disabled")) && nativeTheme.themeSource==='dark', "重载渲染层从核心恢复已保存主题");
+      await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
+    }
+  }
+  note(require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('appearance/theme\tsystem'), "主题成功回执前已写入会话日志");
   await click('#settings-tab-models');
   note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
   await js("document.querySelector('#settings-tab-models').focus()");
@@ -659,6 +670,19 @@ ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
   const b = args && args.budget;
   if (typeof b !== "number" || !Number.isInteger(b) || b < 0) throw new Error("bad-budget");
   return withHost(() => bridge.request("usage/set-budget", { budget: b }));
+});
+
+ipcMain.handle("dsh:appearanceGet", async () => {
+  const result=await withHost(() => bridge.request("appearance/get"));
+  nativeTheme.themeSource=result.theme;
+  return result;
+});
+ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
+  if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
+  const result=await withHost(() => bridge.request("appearance/set-theme", { theme: args.theme }));
+  if (!result.saved) throw new Error("theme-not-saved");
+  nativeTheme.themeSource=result.theme;
+  return result;
 });
 
 const UI_SMOKE = process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");

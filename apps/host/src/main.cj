@@ -204,7 +204,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe"
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -294,7 +294,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -639,6 +639,51 @@ main(args: Array<String>) {
                 }
             }
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
+        if (method == "appearance/get") {
+            var target = shared
+            if (!leaseHeld) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) {
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                target = fresh
+            }
+            let theme = SessionAppearance(target).theme()
+            emit(okFrame(idText, "{\"theme\":\"${theme}\",\"scope\":\"session\"}"))
+            continue
+        }
+        if (method == "appearance/set-theme") {
+            let wanted = jsonStr(body, "theme")
+            if (!SessionAppearance.validTheme(wanted)) {
+                emit(errFrame(idText, -32602, "bad-theme"))
+                continue
+            }
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!loadForWrite(shared, meter)) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            let appearance = SessionAppearance(shared)
+            let changed = appearance.setTheme(wanted)
+            // 保存成功必须跨过落盘屏障；失败保留写入责任，不能释放租约。
+            if (!shared.flush()) {
+                emit(errFrame(idText, -32003, "flush-failed"))
+                continue
+            }
+            leaseHeld = false
+            lease.release()
+            let flag = if (changed) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"theme\":\"${appearance.theme()}\",\"scope\":\"session\",\"saved\":true,\"changed\":${flag}}"))
             continue
         }
         if (method == "usage/status") {

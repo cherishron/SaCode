@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld("dsh", {
   turnCancel: () => ipcRenderer.invoke("dsh:turnCancel"),
   usageStatus: () => ipcRenderer.invoke("dsh:usageStatus"),
   usageSetBudget: (budget) => ipcRenderer.invoke("dsh:usageSetBudget", { budget }),
+  appearanceGet: () => ipcRenderer.invoke("dsh:appearanceGet"),
+  appearanceSetTheme: (theme) => ipcRenderer.invoke("dsh:appearanceSetTheme", { theme }),
 });

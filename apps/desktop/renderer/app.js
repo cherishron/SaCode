@@ -96,6 +96,20 @@ createApp({
     const previewFloating = ref(false);
     const settingsOpen = ref(false);
     const settingsTab = ref("general");
+    const appearance = ref({ theme:null, scope:"session" });
+    const appearanceBusy = ref(false), appearanceNote = ref("");
+    async function refreshAppearance() { appearance.value = await window.dsh.appearanceGet(); }
+    async function setTheme(theme) {
+      if (appearanceBusy.value) return;
+      appearanceBusy.value=true; appearanceNote.value="正在保存外观…";
+      try {
+        const result=await window.dsh.appearanceSetTheme(theme);
+        appearance.value=result;
+        await refresh();
+        appearanceNote.value="已保存当前会话的外观设置";
+      } catch(e) { appearanceNote.value=String(e.message||e); }
+      finally { appearanceBusy.value=false; }
+    }
     let resizeController = null;
     function beginResize(e) {
       if (e.button !== 0) return;
@@ -340,6 +354,7 @@ createApp({
         await refreshTools();
         // 开机就把账读出来：重启后「已经花掉多少、停在哪个档」不该等到跑完一轮才知道
         await refreshUsage();
+        await refreshAppearance();
       } catch (e) {
         error.value = String(e.message || e);
       }
@@ -348,6 +363,7 @@ createApp({
     return {
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
+      appearance, appearanceBusy, appearanceNote, setTheme,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -602,6 +618,12 @@ createApp({
         },
       })), { role: "tablist", "aria-label": "设置分类" }),
       el("section", "settings-page", [
+        el("section", "appearance-settings", [el("h2", null, "外观（当前会话）"),
+          el("div", "theme-choices", [["system","跟随系统"],["light","亮色"],["dark","深色"]].map(([id,label]) =>
+            el("button", "btn theme-choice", label, { id:"theme-"+id, "aria-pressed":self.appearance.theme===id,
+              disabled:self.appearanceBusy || self.appearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"当前会话主题" }),
+          el("p", "note", self.appearanceNote || "选择保存在当前会话；重新打开会话时恢复。", { id:"appearance-note", "aria-live":"polite" }),
+        ], { "aria-busy":self.appearanceBusy }),
         renderBudget("settings-budget"),
         el("p", "note", "用量和预算来自当前会话，变更由核心校验。这里的设置与右侧预算区同步。"),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
