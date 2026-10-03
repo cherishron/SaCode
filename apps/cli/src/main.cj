@@ -15,11 +15,129 @@ func expect(label: String, got: Bool) {
     }
 }
 
+// CLI 交付面的三块：内置工具注册表（与桌面入口同一份 core 语义）、审批应答的三态判定、
+// 结构化输出。都是纯函数或就地构造，好让 headless 自测能直接断言而不靠标准输入赌时序。
+func builtinTools(): ToolRegistry {
+    let reg = ToolRegistry()
+    reg.register(ToolSpec("write", "写临时工作区文件", "path content", true))
+    reg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
+    return reg
+}
+
+// 「读不到应答」和「答了不批」是两件事：前者返回空串（不作答，工单留在 pending），
+// 后者返回 denied。两者都必须让执行被拒，但只有后者会在日志里留下 decided。
+func decideAnswer(line: Option<String>): String {
+    if (let Some(l) <- line) {
+        let t = l.trimAscii()
+        if (t == "y" || t == "Y" || t == "yes" || t == "Yes" || t == "YES") {
+            return "allowed-once"
+        }
+        return "denied"
+    }
+    return ""
+}
+
+func toolsList(reg: ToolRegistry): ArrayList<String> {
+    return reg.list()
+}
+
+// 落盘 TSV 只转义会劈行的四个字符，JSON 还要额外转义引号——两件事不能用同一个函数。
+func jsonEscape(s: String): String {
+    let out = ArrayList<Byte>()
+    for (b in s.toArray()) {
+        let n = Int64(b)
+        if (n == 92) {
+            out.add(92)
+            out.add(92)
+        } else if (n == 34) {
+            out.add(92)
+            out.add(34)
+        } else if (n == 10) {
+            out.add(92)
+            out.add(110)
+        } else if (n == 13) {
+            out.add(92)
+            out.add(114)
+        } else if (n == 9) {
+            out.add(92)
+            out.add(116)
+        } else {
+            out.add(b)
+        }
+    }
+    return String.fromUtf8(out.toArray())
+}
+
+func callJson(name: String, args: String, out: ApprovalOutcome, code: Int64): String {
+    let ok = if (out.allowed) { "true" } else { "false" }
+    return "{\"tool\":\"${jsonEscape(name)}\",\"args\":\"${jsonEscape(args)}\",\"ok\":${ok},\"why\":\"${jsonEscape(out.why)}\",\"exit\":${code}}"
+}
+
+func toolsJson(reg: ToolRegistry): String {
+    var s = "["
+    var first = true
+    for (n in reg.list()) {
+        if (!first) {
+            s += ","
+        }
+        first = false
+        let ap = if (reg.requiresApproval(n)) { "true" } else { "false" }
+        s += "{\"name\":\"${jsonEscape(n)}\",\"params\":\"${jsonEscape(reg.paramsOf(n))}\",\"approval\":${ap},\"description\":\"${jsonEscape(reg.describe(n))}\"}"
+    }
+    s += "]"
+    return s
+}
+
+// 退出码按失败族分开：0 放行并执行成功，3 审批没过，4 工具不存在，8 执行期失败。
+// 写操作还带「工单状态」这一行诊断，答得出是被审批拦的还是被管线拦的。
+func callExitCode(allowed: Bool, stage: String): Int64 {
+    if (allowed) {
+        return Int64(0)
+    }
+    if (stage == "approval-denied") {
+        return Int64(3)
+    }
+    if (stage == "unregistered" || stage == "unknown-tool") {
+        return Int64(4)
+    }
+    return Int64(8)
+}
+
+// 要不要发工单：注册表说有这个工具、且它标了需审批，才向用户要一个应答。
+// 未登记的工具直接由 executeWithApproval 拒掉——先要号再拒等于让用户回答一个跑不了的动作，
+// 还会在日志里留下一条指向不存在工具的 approval/asked。
+func needsTicket(reg: ToolRegistry, name: String): Bool {
+    return reg.has(name) && reg.requiresApproval(name)
+}
+
+func hasFlag(args: Array<String>, flag: String): Bool {
+    for (a in args) {
+        if (a == flag) {
+            return true
+        }
+    }
+    return false
+}
+
+// 位置参数：本 CLI 的 flag 都不带值，认得的 flag 只有 --json，其余一律照位置参数收下。
+func positionals(args: Array<String>, from: Int64): ArrayList<String> {
+    let out = ArrayList<String>()
+    var i: Int64 = from
+    while (i < Int64(args.size)) {
+        let a = args[i]
+        if (a != "--json") {
+            out.add(a)
+        }
+        i += 1
+    }
+    return out
+}
+
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call]")
         return 64
     }
 
@@ -304,6 +422,82 @@ main(args: Array<String>) {
         removeIfExists("probe-tool.txt", recursive: false)
     }
 
+    if (mode == "all" || mode == "headless") {
+        // CLI 的 headless/结构化交付面（方案 §「CLI 有交互/headless/结构化模式」）：
+        // 审批凭据只能是工单号；读不到应答就是「没有应答者」，它和「答了不批」都必须让执行被拒，
+        // 差别只落在日志里那条 approval/decided 有没有被写出来。
+        let hp = "headless-session.log"
+        removeIfExists(hp, recursive: false)
+        removeIfExists("${hp}.lease", recursive: false)
+        let hlog = SessionLog(hp)
+        let desk = ApprovalDesk(hlog)
+        let reg = builtinTools()
+        let rt = ToolRuntime(hlog, reg)
+        expect("EOF 读不到应答判为不作答", decideAnswer(None) == "")
+        expect("y 判为一次放行", decideAnswer(Some("y")) == "allowed-once")
+        expect("YES 带空白也判为放行", decideAnswer(Some(" YES ")) == "allowed-once")
+        expect("n 判为拒绝", decideAnswer(Some("n")) == "denied")
+        expect("乱码应答判为拒绝而不是放行", decideAnswer(Some("always")) == "denied")
+        // 无应答者：不作答（不写 decided），工单停在 pending，执行必须被拒
+        let t1 = desk.ask("write")
+        let a1 = decideAnswer(None)
+        if (a1 != "") { desk.answer(t1, a1) }
+        let r1 = rt.executeWithApproval("write", "probe-headless.txt x", t1, true, desk)
+        expect("无应答者执行被拒", !r1.allowed && r1.why == "approval-not-granted:pending")
+        expect("拒绝不产生副作用", !exists("probe-headless.txt"))
+        var sawDecided = false
+        for (ev in hlog.snapshotEvents()) {
+            if (ev.eventType == "approval/decided") { sawDecided = true }
+        }
+        expect("没应答就不许留下 decided", !sawDecided)
+        // 答 y：放行、真写盘、读回同一份，且工单用过即失效
+        let t2 = desk.ask("write")
+        desk.answer(t2, decideAnswer(Some("y")))
+        let r2 = rt.executeWithApproval("write", "probe-headless.txt hello", t2, true, desk)
+        expect("答 y 放行并写出正文", r2.allowed && r2.why == "ok:probe-headless.txt")
+        expect("盘上确实是那份正文", exists("probe-headless.txt") && String.fromUtf8(File.readFrom("probe-headless.txt")) == "hello")
+        expect("同一工单不可重用", desk.consume(t2) == "")
+        let r3 = rt.executeWithApproval("write", "probe-headless.txt again", t2, true, desk)
+        expect("重用工单被拒", !r3.allowed && r3.why == "approval-not-granted:used")
+        // 答 n：写下 decided:denied，执行同样被拒
+        let t4 = desk.ask("write")
+        desk.answer(t4, decideAnswer(Some("n")))
+        let r4 = rt.executeWithApproval("write", "probe-headless.txt nope", t4, true, desk)
+        expect("答 n 拒绝执行", !r4.allowed && r4.why == "approval-not-granted:denied")
+        var decidedDenied = false
+        for (ev in hlog.snapshotEvents()) {
+            if (ev.eventType == "approval/decided" && ev.data.contains(":denied")) { decidedDenied = true }
+        }
+        expect("答了不批要留下 decided", decidedDenied)
+        // 免审批的工具不该被要求出示工单
+        let r5 = rt.executeWithApproval("read", "probe-headless.txt", Int64(-1), true, desk)
+        expect("免审批工具不要求工单", r5.allowed && r5.why == "hello")
+        // 结构化输出：stdout 只有一行 JSON，正文里的引号与换行必须转义；诊断走 stderr
+        let js = callJson("write", "a.txt he\"llo\nworld", r2, Int64(0))
+        expect("JSON 结果是单行", !js.contains("\n") && js.startsWith("{") && js.endsWith("}"))
+        expect("JSON 内正文的引号与换行已转义", js.contains("\\\"") && js.contains("\\n") && !js.contains("llo\nworld"))
+        expect("JSON 带工具名、放行状态与退出码", js.contains("\"tool\":\"write\"") && js.contains("\"ok\":true") && js.contains("\"exit\":0"))
+        // 工具清单只能出自注册表这一份真源
+        expect("清单条目数等于注册表", Int64(toolsList(reg).size) == reg.count())
+        let tj = toolsJson(reg)
+        expect("清单标出需审批与免审批", tj.contains("\"name\":\"write\"") && tj.contains("\"approval\":true") && tj.contains("\"approval\":false"))
+        expect("JSON 转义函数不吞反斜杠", jsonEscape("a\\b") == "a\\\\b")
+        // 退出码必须按失败族分开：调用方要答得出「被谁拦的」，不能全挤成 1
+        expect("放行退 0", callExitCode(true, "ok") == Int64(0))
+        expect("审批没过退 3", callExitCode(false, "approval-denied") == Int64(3))
+        expect("工具不存在退 4", callExitCode(false, "unregistered") == Int64(4) && callExitCode(false, "unknown-tool") == Int64(4))
+        expect("执行期失败另退 8", callExitCode(false, "not-found") == Int64(8) && callExitCode(false, "fs-stale-version") == Int64(8))
+        // 没登记的工具不该发工单：先要号再拒，等于让用户回答一个根本跑不了的动作，
+        // 日志里还留下一条指向不存在工具的 approval/asked。
+        expect("需审批的已登记工具才发工单", needsTicket(reg, "write"))
+        expect("免审批工具不发工单", !needsTicket(reg, "read"))
+        expect("未登记工具不发工单", !needsTicket(reg, "nosuch"))
+        hlog.flush()
+        removeIfExists(hp, recursive: false)
+        removeIfExists("${hp}.lease", recursive: false)
+        removeIfExists("probe-headless.txt", recursive: false)
+    }
+
     if (mode == "extjs") {
         // 第二个入口：CLI 用同一份 core 把 JS 扩展宿主作为子进程拉起来跑完整生命周期。
         // 用法：dsh extjs [node 命令] [extjs 目录]
@@ -382,6 +576,86 @@ main(args: Array<String>) {
             failures += 1
         }
         println("extjs\treceived=${xp.received()}\tunsolicited=${xp.unsolicited()}\tlate=${xp.late()}\texit=${xp.exitCode()}")
+    }
+
+    if (mode == "tools") {
+        // 交付面：清单只出自注册表这一份真源，和桌面入口看到的一样。
+        let reg = builtinTools()
+        if (hasFlag(args, "--json")) {
+            println(toolsJson(reg))
+        } else {
+            for (n in toolsList(reg)) {
+                let need = if (reg.requiresApproval(n)) { "approval" } else { "free" }
+                println("tool\t${n}\t${need}\t${reg.describe(n)}")
+            }
+        }
+        return 0
+    }
+
+    if (mode == "call") {
+        // headless 的一次工具调用：审批凭据只能是核心发的工单号，应答从标准输入读一行。
+        // 读不到（EOF / 重定向到空设备）就是「没有应答者」——不作答、不猜一个「批过了」，
+        // 让 executeWithApproval 按 pending 拒掉。诊断与提示一律走 stderr，stdout 只放结果。
+        let ps = positionals(args, 1)
+        if (Int64(ps.size) == 0) {
+            getStdErr().writeln("usage: dsh call <tool> [args...] [--json]")
+            return 64
+        }
+        let toolName = ps[0]
+        var toolArgs = ""
+        var pi: Int64 = 1
+        while (pi < Int64(ps.size)) {
+            if (pi > 1) {
+                toolArgs += " "
+            }
+            toolArgs += ps[pi]
+            pi += 1
+        }
+        let asJson = hasFlag(args, "--json")
+        let lease = WriteLease("session.log")
+        if (!lease.takeoverIfStale()) {
+            getStdErr().writeln("err\talready-owned")
+            return 5
+        }
+        let log = SessionLog("session.log")
+        if (!log.load()) {
+            lease.release()
+            getStdErr().writeln("err\treplay-rejected")
+            return 6
+        }
+        let reg = builtinTools()
+        let desk = ApprovalDesk(log)
+        let rt = ToolRuntime(log, reg)
+        var approvalId: Int64 = Int64(-1)
+        if (needsTicket(reg, toolName)) {
+            approvalId = desk.ask(toolName)
+            getStdErr().writeln("approval\task\t${approvalId}\t${toolName}")
+            getStdErr().writeln("prompt\t允许一次？[y/N]")
+            getStdErr().flush()
+            let ans = decideAnswer(getStdIn().readln())
+            if (ans == "") {
+                getStdErr().writeln("approval\tno-answerer\t${approvalId}")
+            } else if (!desk.answer(approvalId, ans)) {
+                getStdErr().writeln("approval\tanswer-rejected\t${approvalId}")
+            }
+        }
+        let out = rt.executeWithApproval(toolName, toolArgs, approvalId, true, desk)
+        let stage = rt.lastDetail.stage
+        var code: Int64 = callExitCode(out.allowed, stage)
+        if (log.flush()) {
+            lease.release()
+        } else {
+            getStdErr().writeln("err\tflush-failed\tlease-retained")
+            code = if (code == 0) { 7 } else { code }
+        }
+        if (asJson) {
+            println(callJson(toolName, toolArgs, out, code))
+        } else {
+            let verdict = if (out.allowed) { "ok" } else { "denied" }
+            println("call\t${toolName}\t${verdict}\t${stage}\t${out.why}")
+        }
+        getStdErr().writeln("approval\tstate\t${if (approvalId < 0) { "n/a" } else { desk.stateOf(approvalId) }}")
+        return code
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }
