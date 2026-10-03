@@ -881,13 +881,23 @@ cd "D:/Project/sa/saai/sa-code" && git add apps/desktop/renderer/styles.css apps
 
 ---
 
-## Task 6: 修 TinyVue 折叠脚本的 CSS 输出契约缺口
+## Task 6: 修 TinyVue 折叠脚本的 CSS 输出契约缺口（前提已被实测证伪，未执行下面的改造）
+
+> **执行时更正（2026-10-03）**：本任务下面描述的「已提交脚本不产出 `tinyvue.iife.css`、
+> 干净检出即掉样式」经实测是**错的**：把本机那份 css 移开后重跑 `npm run vendor`，文件以
+> 116150 字节重新生成且与原件 `diff` 为空——它是 esbuild 随 `outfile` 自动落下的伴生 CSS。
+> 因此**不改 `pack-tinyvue.mjs`**（改了就是给不存在的问题兜底）。本任务真正保留下来的交付物
+> 只有下面 Step 4 那条可复现判据，实测结果 `vendor-refs OK 5`、rc=0。
+> Step 1/2/3/5 作废，保留原文是为了记下这条怀疑与被证伪的过程。
+> 教训：grep 不到文件名不等于没人产出它——伴生产物要看重跑结果，不能只看脚本源码。
 
 **Files:**
-- Modify: `scripts/pack-tinyvue.mjs`
-- Verify: `apps/desktop/renderer/index.html`（不改，只核它的引用都能被 vendor 步骤生成）
+- Modify: ~~`scripts/pack-tinyvue.mjs`~~（实测不需要，未改）
+- Verify: `apps/desktop/renderer/index.html`（核它的引用都能被 vendor 步骤生成）
 
-**背景（实测过的事实，别当猜测处理）**：`index.html` 一直 `<link>` 着 `vendor/tinyvue.iife.css`，但已提交的 `scripts/pack-tinyvue.mjs` 只产出 `.js`；仓库历史上没有任何脚本写过这个文件。本机那份 116KB 的 css 是孤立产物（首行注释 `/* node_modules/@opentiny/vue-theme/base/index.css */` 说明它出自一次 esbuild CSS bundle）。结果：干净检出 + `npm run vendor` 后 TinyVue Button 掉样式，而 dev/smoke 全绿——典型的「本机撑着、检出即坏」。
+**背景（怀疑，非结论）**：`index.html` 引用 `vendor/tinyvue.iife.css`，而 `scripts/pack-tinyvue.mjs`
+源码里只写了 `.js`；全仓 grep 不到 `iife.css`。据此怀疑干净检出后 Button 掉样式。
+（实测已证伪，见上方更正。）
 
 **Interfaces:**
 - Consumes: `@opentiny/vue-theme/base/index.css`（已随 `@opentiny/vue-button` 装进 `node_modules`）
@@ -1075,7 +1085,9 @@ cd "D:/Project/sa/saai/sa-code" && git add AGENTS.md docs/plans/dsh-capability-m
 
 1. `msgfold.test.mjs` 8 条用例先红（ENOENT）后绿；
 2. 桌面 `npm test` rc=0、`# fail 0`，`# tests` 比批次前多 8；
-3. `npm run ui-smoke` dev 态：`UI OK` 从 46 增至 ≥ 64，`UI FAIL` = 0，rc=0；
+3. `npm run ui-smoke` dev 态：`UI OK` 从 51 增至 ≥ 64，`UI FAIL` = 0，rc=0；
+   （**计数更正**：本计划起草时引用的 46 是**打包态**计数，dev 态基线实测为 51；
+   实际落地为 Task 2 后 52、Task 3 后 60、Task 4 后 67、Task 5 后仍 67（探针是扩面不是加条）。）
 4. 打包态 `win-unpacked` exe：`UI OK` ≥ dev 计数、`UI FAIL` = 0、rc=0，产物 mtime 为新；
 5. `npm run smoke` `SMOKE PASS`；core 119/119、extjs 14/14 复核不变；
 6. 四刀变异反证各自转红并还原回绿，`git diff` 为空；

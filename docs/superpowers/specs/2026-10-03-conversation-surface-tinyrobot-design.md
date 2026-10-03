@@ -129,13 +129,14 @@
 node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs
 ```
 
-**顺带修一个已存在的输出契约缺口**：`index.html` 一直引用 `vendor/tinyvue.iife.css`，但已提交的
-`pack-tinyvue.mjs` 只产出 `.js`——本地那份 116KB 的 css 是孤立产物，干净检出 + `npm run vendor`
-后 Button 会掉样式。修法（决策已定）：在 `pack-tinyvue.mjs` 里补一条 CSS 产物
-（esbuild CSS bundle，入口 `@opentiny/vue-theme/base/index.css`，即当前孤立产物的来源），
-让「`index.html` 引用的每个 vendor 文件都由 vendor 步骤生成」。复判据：删掉
-`renderer/vendor/` 重跑 vendor 后两端文件都在、`npm run ui-smoke` 全绿、重新生成物与现存孤立
-css 逐字节一致为强证据（不一致则以 ui-smoke 与目视为判据）。
+**曾怀疑的输出契约缺口——已被实测证伪（记录在此免得下次重新怀疑一遍）**：本仓一度认为
+`index.html` 引用的 `vendor/tinyvue.iife.css` 没有任何已提交脚本产出（`pack-tinyvue.mjs` 全文
+只写了 `.js`，且全仓 grep 不到 `iife.css` 字样）。实测结论相反：把本机那份移开、重跑
+`npm run vendor`，该文件会以 116150 字节重新出现，且与原文件 `diff` 为空——它是 esbuild 在
+`outfile` 同名位置自动落下的伴生 CSS（组件的样式经 `sideEffects` 链引入，`lib/index.js` 里
+grep 不到 `import "*.css"` 字样，所以静态读码看不出来）。**因此本批不改 `pack-tinyvue.mjs`**。
+保留下来的只有一条可复现判据：`index.html` 里每个 `vendor/` 引用都必须由 vendor 步骤生成
+（实测 `vendor-refs OK 5`，rc=0）。教训：grep 不到文件名不等于没人产出它。
 
 ### 4.3 渲染层
 
