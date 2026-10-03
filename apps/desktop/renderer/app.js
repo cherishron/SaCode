@@ -35,13 +35,41 @@ if (!FOLD || typeof FOLD.toBubbleMessages !== "function") {
 // 而 ToolRole 只往 provider store 登记 tool_call_results、渲染一个注释节点——tool 正文会隐身。
 // priority 0 与默认链的 NORMAL 并列，但 BubbleProvider 合并时自定义在前、排序稳定，故恒先命中，
 // 也顺带压过 ROLE=20 的 ToolRole。
+// 折叠态只是视图态：一条消息折没折，既不是会话事实也不该写进日志。
+// 用 reactive 包 Set 是为了 has() 建立依赖、add()/delete() 能触发这条正文重渲染。
+// 阈值不在这里——FOLD.FOLD_THRESHOLD 是全仓唯一出处，组件里不许出现第二个数字。
+const foldOpen = window.Vue.reactive({ ids: new Set() });
+
 const TextBubble = {
   props: { message: { type: Object, default: () => ({}) }, contentIndex: { type: Number, default: 0 } },
   setup(props) {
     return () => {
       const m = props.message || {};
       const text = typeof m.content === "string" ? m.content : "";
-      return h("p", { class: "msg-text", "data-msg-id": m.id || "", "data-source-role": m.sourceRole || "" }, text);
+      const id = m.id || "";
+      const plan = FOLD.foldPlan(text, FOLD.FOLD_THRESHOLD);
+      const expanded = !!id && foldOpen.ids.has(id);
+      const state = plan.folded ? (expanded ? "expanded" : "folded") : "plain";
+      const children = [
+        h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, expanded ? text : plan.shown),
+      ];
+      if (plan.folded) {
+        children.push(
+          h(
+            "button",
+            {
+              class: "btn btn-fold",
+              "data-fold-toggle": id,
+              onClick: () => {
+                if (foldOpen.ids.has(id)) foldOpen.ids.delete(id);
+                else foldOpen.ids.add(id);
+              },
+            },
+            expanded ? "收起" : "展开"
+          )
+        );
+      }
+      return h("div", { class: "msg-node" }, children);
     };
   },
 };

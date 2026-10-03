@@ -107,6 +107,8 @@ body {
    管不到我们这条路径，所以换行必须自己接住：多行正文在日志里是一条事件，
    界面上要按行显示，不能被折成一行。 */
 .msg-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
+/* 折叠态正文的外层节点：正文与「展开/收起」同排，按钮不单独占一行把读数拆开。 */
+.msg-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1); }
 .btn-fold { margin-left: var(--space-2); }
 
 .streaming {

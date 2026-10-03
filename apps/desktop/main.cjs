@@ -21,10 +21,14 @@ const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
 const WILL_SMOKE = process.argv.includes("--smoke") || process.argv.includes("--ui-smoke");
 // 冒烟态没传 --session-dir 时也必须落到一次性目录：默认的 sessionData 跨次累积，
 // 「全新会话」类断言会被上一次运行的旧日志蒙混过去（实测用量从 12 一路涨到 48）。
-// 传了路径的（打包态手工复验、CI 要留日志）仍以传入者为准。
+// 只带 pid 还不够：Windows 会回收 pid，同 pid 的旧目录会被下一次运行接着写，
+// 于是上一轮的 usage/budget 与 tool 事件就污染了这一轮（实测「用量 12/5」+ 多出 tool 组）。
+// 所以目录名带 pid+时间戳，且冒烟态自己建自己清；传了 --session-dir 的（打包态手工复验、
+// CI 要留日志）仍以传入者为准，我们绝不删别人指定的目录。
+const FRESH_SMOKE_DIR = WILL_SMOKE && !SESSION_ARG;
 const SESSION_DIR = SESSION_ARG
   ? SESSION_ARG.slice("--session-dir=".length)
-  : (WILL_SMOKE ? join(app.getPath("temp"), `dsh-smoke-${process.pid}`) : app.getPath("sessionData"));
+  : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `dsh-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 
 const bridge = new HostBridge(HOST, process.env);
@@ -224,6 +228,37 @@ async function uiSmoke() {
   note(mergedIntoGroup, `连续 user 合并：组数 ${groupsBeforeMerge} → ${await count("#messages .tr-bubble")}（应不变且 ≥ 3）`);
   const userGroupNodes = await count('#messages .tr-bubble[data-role="user"] .msg-text');
   note(userGroupNodes >= 2, `user 组内正文条数=${userGroupNodes}（合并后应 ≥ 2）`);
+
+  // 3c) 长消息折叠：超阈值默认折起来，展开与收起都要有真实状态变化。
+  //     正文尾部放一个只在原文里出现的哨兵串，判「有没有被截掉」就不用比长度。
+  const tailMark = "TAIL-SENTINEL-9F2C";
+  const readFold = () => js(
+    "(() => { const n = document.querySelectorAll('#messages .msg-text[data-fold-state]');" +
+    " const e = n[n.length - 1]; if (!e) return 'missing';" +
+    " return e.getAttribute('data-fold-state') + '|' + ((e.textContent || '').includes('" + tailMark + "') ? 'has-tail' : 'no-tail'); })()"
+  );
+  const clickFold = (wantLabel) => js(
+    "(() => { const n = document.querySelectorAll('#messages .msg-text[data-fold-state]');" +
+    " const e = n[n.length - 1]; if (!e) return 'missing-node';" +
+    " const b = document.querySelector('#messages [data-fold-toggle=\"' + e.getAttribute('data-msg-id') + '\"]');" +
+    " if (!b) return 'no-toggle';" +
+    " if (" + JSON.stringify(wantLabel) + " && b.textContent !== " + JSON.stringify(wantLabel) + ") return 'wrong-label:' + b.textContent;" +
+    " b.click(); return 'ok'; })()"
+  );
+  await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("长".repeat(260) + tailMark)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  note(await click("#send"), "已发一条超阈值的长消息");
+  const foldedShown = await waitFor(async () => (await readFold()) === "folded|no-tail");
+  note(foldedShown, `长消息折叠态=${await readFold()}（默认折起且尾部不可见）`);
+  const plainNodes = await count('#messages .msg-text[data-fold-state="plain"]');
+  note(plainNodes >= 3, `短正文保持 plain=${plainNodes}（未超阈值不该出现折叠按钮）`);
+  const expandClicked = await clickFold("展开");
+  note(expandClicked === "ok", `点展开=${expandClicked}`);
+  const expandedShown = await waitFor(async () => (await readFold()) === "expanded|has-tail");
+  note(expandedShown, `展开态=${await readFold()}（全文回到 DOM）`);
+  const collapseClicked = await clickFold("收起");
+  note(collapseClicked === "ok", `点收起=${collapseClicked}`);
+  const refolded = await waitFor(async () => (await readFold()) === "folded|no-tail");
+  note(refolded, `收起后回到折叠态=${await readFold()}`);
 
   // 3b) 组件库不是「装了就算」：类名要真的由 TinyVue 出，色值要真的从我们的令牌桥过去。
   //     桥接的反证是删掉 styles.css 末尾那一段 --tv-* 覆写 —— 那时两侧会各自解析成不同颜色。
