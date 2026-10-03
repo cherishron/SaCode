@@ -87,11 +87,12 @@ createApp({
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
     const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
+    const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || []));
     const tools = ref([]);
     const detailName = ref("");
     const sideTab = ref("inspect");
     function openSide(target) {
-      sideTab.value = target === "guide-panel" ? "guide" : "inspect";
+      sideTab.value = target === "guide-panel" ? "guide" : target === "preview-panel" ? "preview" : "inspect";
       window.Vue.nextTick(() => {
         const panel = document.getElementById(target);
         if (panel) { panel.focus({ preventScroll: true }); panel.scrollIntoView({ block: "nearest" }); }
@@ -293,7 +294,7 @@ createApp({
 
     return {
       proj, tools, detailName, detailTool, sideTab, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, setBudget, bubbleMessages,
+      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -424,7 +425,7 @@ createApp({
       : [];
 
     const sideTabs = el("div", "side-tabs", [
-      ...[["inspect", "工具与预算"], ["guide", "使用指南"]].map(([id, label], index, tabs) => el("button", "side-tab", [label,
+      ...[["inspect", "工具与预算"], ["preview", "文档预览"], ["guide", "使用指南"]].map(([id, label], index, tabs) => el("button", "side-tab", [label,
         id === "inspect" && self.approval ? el("span", "pending-dot", null, { "aria-hidden": "true" }) : null], {
         id: "side-tab-" + id, role: "tab", "aria-selected": self.sideTab === id,
         "aria-label": label + (id === "inspect" && self.approval ? "，待审批" : ""),
@@ -462,7 +463,22 @@ createApp({
         ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
       ], { id: "guide-panel", tabindex: -1 }),
     ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
-    const side = el("aside", "pane side", [sideTabs, el("div", "side-content", [inspection, guide])], {
+    const preview = el("div", "side-page", [
+      el("section", "side-section", [
+        el("h2", null, "文档预览"),
+        self.readPreview ? [
+          el("p", "preview-path", self.readPreview.path, { id: "preview-path" }),
+          el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: "preview-meta" }),
+          el("pre", "preview-text", self.readPreview.text, { id: "preview-text", tabindex: 0 }),
+          el("p", "note", "内容来自本地会话中的成功读取记录；文件修改后需再次读取以更新快照。"),
+        ] : el("div", "empty-card", [
+          el("h3", null, "暂无读取记录"),
+          el("p", "note", "先在工具页读取文件，成功后这里显示会话记录中的文本快照。"),
+          el("button", "btn", "查看读取工具", { onClick: () => self.openSide("tools-panel") }),
+        ], { id: "preview-empty" }),
+      ], { id: "preview-panel", tabindex: -1 }),
+    ], { id: "side-page-preview", role: "tabpanel", "aria-labelledby": "side-tab-preview", hidden: self.sideTab !== "preview" });
+    const side = el("aside", "pane side", [sideTabs, el("div", "side-content", [inspection, preview, guide])], {
       "aria-label": "工具、预算与指南",
     });
 

@@ -14,6 +14,29 @@ const sandbox = { window: {} };
 runInNewContext(readFileSync(FILE, "utf8"), sandbox);
 const F = sandbox.window.DshMsgFold;
 
+test("读取快照从最新成功记录恢复并保留 Windows 路径与正文", () => {
+  const preview = F.latestReadPreview([
+    "tool/result: ok-read:old.txt:1\nx",
+    "tool/result: ok-read:C:\\项目\\a:b.txt:32\n中文\n<script>原文</script>",
+    "tool/result: not-found:missing.txt",
+  ]);
+  assert.equal(preview.path, "C:\\项目\\a:b.txt");
+  assert.equal(preview.text, "中文\n<script>原文</script>");
+  assert.equal(preview.bytes, 32);
+  assert.equal(preview.messageId, "m1");
+});
+
+test("没有成功读取或损坏头部不产生伪造快照", () => {
+  assert.equal(F.latestReadPreview(["user/message: ok-read:a:0\n", "tool/result: ok-read:a:bad\nx", "tool/result: ok-read:a:999999999999999999999\nx"]), null);
+  assert.equal(F.latestReadPreview([]), null);
+});
+
+test("空文件也是有效读取快照", () => {
+  const preview = F.latestReadPreview(["tool/result: ok-read:empty.txt:0\n"]);
+  assert.equal(preview.text, "");
+  assert.equal(preview.bytes, 0);
+});
+
 test("toBubbleMessages 按映射表把投影行翻成气泡消息", () => {
   const ms = F.toBubbleMessages(["user/message: 你好", "assistant/message: 世界", "tool/result ok: x", "system/message: s"]);
   assert.equal(ms[0].role, "user");

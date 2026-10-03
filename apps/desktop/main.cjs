@@ -204,9 +204,11 @@ async function uiSmoke() {
   note(await js("!document.querySelector('#side-page-guide').hidden && document.querySelector('#side-page-inspect').hidden"), "指南标签切换到独立右侧页面");
   note((await text('#guide-panel')).includes('SaCode 使用指南') && (await text('#guide-panel')).includes('真实模型任务尚未开放'), "中文指南明确当前可用操作与模型限制");
   await js("document.querySelector('#side-tab-guide').focus()");
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
-  note(await waitFor(() => js("document.activeElement.id === 'side-tab-inspect' && !document.querySelector('#side-page-inspect').hidden")), "方向键切换标签并同步焦点");
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Home' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Home' });
+  note(await waitFor(() => js("document.activeElement.id === 'side-tab-inspect' && !document.querySelector('#side-page-inspect').hidden")), "Home 切换首个标签并同步焦点");
+  await click('#side-tab-preview');
+  note((await text('#preview-empty')).includes('暂无读取记录'), "没有读取事实时显示文档预览空状态");
   await click('#side-tab-guide');
   await click('a[href="#budget-panel"]');
   note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
@@ -438,6 +440,11 @@ async function uiSmoke() {
   });
   note(readBack, `只读工具直接执行并读回盘上正文=${(await text("#outcome")).slice(0, 52)}`);
   note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
+  await click('#side-tab-preview');
+  note(await waitFor(async () => (await text('#preview-text')) === 'hello-from-renderer'), "文档预览逐字显示实际读取正文");
+  note((await text('#preview-path')) === 'dsh-tool.txt' && (await text('#preview-meta')).includes('19 字节'), "预览文件名与字节数来自会话读取记录");
+  note(await js("document.querySelector('#preview-empty') === null && !document.querySelector('#side-page-preview').hidden"), "成功读取后预览替换空状态");
+  await click('#side-tab-inspect');
 
   // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
   // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、

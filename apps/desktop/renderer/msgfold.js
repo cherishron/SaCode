@@ -54,11 +54,27 @@ window.DshMsgFold = (function () {
     return { folded: false, shown: text };
   }
 
+  // 只从日志投影的成功读取记录提取快照，路径可能含 Windows 盘符和冒号。
+  // 头部以最后的字节数结尾；正文保留原始换行和字符，不作为 HTML 解释。
+  function latestReadPreview(lines) {
+    for (var i = lines.length - 1; i >= 0; i--) {
+      var parts = splitMsg(lines[i]);
+      if (parts.role !== "tool/result" || parts.text.indexOf("ok-read:") !== 0) continue;
+      var newline = parts.text.indexOf("\n");
+      if (newline < 0) continue;
+      var header = /^(.*):(\d+)$/.exec(parts.text.slice(8, newline));
+      if (!header || !header[1] || !Number.isSafeInteger(Number(header[2]))) continue;
+      return { path: header[1], bytes: Number(header[2]), text: parts.text.slice(newline + 1), messageId: "m" + i };
+    }
+    return null;
+  }
+
   return {
     FOLD_THRESHOLD: FOLD_THRESHOLD,
     ROLE_MAP: ROLE_MAP,
     toBubbleMessages: toBubbleMessages,
     roleConfigs: roleConfigs,
-    foldPlan: foldPlan
+    foldPlan: foldPlan,
+    latestReadPreview: latestReadPreview
   };
 })();

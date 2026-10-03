@@ -17,6 +17,20 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
     await new Promise((r) => setTimeout(r, 50));
   }
   if (!approvalReady) throw new Error("布局验收失败：审批卡未加载");
+  // 使用真实工具生成文件与读取事实，再保留另一张待审批工单覆盖侧栏状态。
+  await js("document.querySelector('#allow-once').click()");
+  const waitFor = async (probe) => {
+    for (let i=0; i<100; i++) {
+      if (await js(probe)) return;
+      await new Promise(r=>setTimeout(r,50));
+    }
+    throw new Error('布局验收状态未就绪：'+probe);
+  };
+  await waitFor("document.querySelector('#outcome')?.textContent.startsWith('结果：')");
+  await js("document.querySelector('#tool-read').click()");
+  await waitFor("!!document.querySelector('#preview-text')");
+  await js("document.querySelector('#tool-write').click()");
+  await waitFor("!!document.querySelector('#approval')");
   const reports = [];
   for (const theme of ["light", "dark"]) {
     nativeTheme.themeSource = theme;
@@ -110,6 +124,25 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       writeFileSync(join(outDir, `sacode-guide-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${guideReport.failed.length ? "FAIL" : "PASS"} guide ${theme} ${width}x${height} ${guideReport.failed.join(',')}`);
       await js("document.querySelector('#guide-approval').click()");
+      await js("document.querySelector('#side-tab-preview').click()");
+      await new Promise(r=>setTimeout(r,50));
+      const previewReport = await js(`(() => {
+        const content=document.querySelector('.side-content'), path=document.querySelector('#preview-path'), text=document.querySelector('#preview-text');
+        const box=e=>e.getBoundingClientRect();
+        const checks={
+          visible: !document.querySelector('#side-page-preview').hidden,
+          actualRead: path.textContent==='dsh-tool.txt' && text.textContent==='hello-from-renderer',
+          aligned: Math.abs(box(path).left-box(text).left)<1 && Math.abs(box(path).right-box(text).right)<1,
+          noOverflow: content.scrollWidth<=content.clientWidth,
+          focusable: text.tabIndex===0,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(previewReport,{theme,width,height,surface:'preview'}); reports.push(previewReport);
+      writeFileSync(join(outDir,
+        `sacode-preview-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${previewReport.failed.length ? "FAIL" : "PASS"} preview ${theme} ${width}x${height} ${previewReport.failed.join(',')}`);
+      await js("document.querySelector('#side-tab-inspect').click()");
     }
   }
   writeFileSync(join(outDir, "layout-report.json"), JSON.stringify(reports, null, 2));
