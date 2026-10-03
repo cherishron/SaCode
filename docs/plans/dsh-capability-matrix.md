@@ -56,7 +56,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-03 token 计量与预算回填后）：`✔` 10 行、`◐` 4 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
+计数（2026-10-03 系统提示组装接入后）：`✔` 11 行、`◐` 3 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -109,7 +109,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | storage | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 47）；真源是追加式 `session.log`，无上游的存储后端形态 |
 | subagent | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 48） |
 | subprocess | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/extproc.cj` 以子进程驱动外部脚本宿主跑 NDJSON JSON-RPC：握手必须来自子进程真实应答、按 `callId` 配对与取消、未知方法回 `-32601`、超时不编终态、强杀后读线程照样收束、命令不存在 fail-closed。core 15 条 + extjs 14 条 |
-| system-prompt | ✔ | ✔ | M2 | ☐ | ◐ | 切片（B 档，行 50）：`apps/cli/src/main.cj` 把系统提示硬编成一条事件，无组装/分层/用例 |
+| system-prompt | ✔ | ✔ | M2 | ☐ | ✔ | `core/src/sysprompt.cj` `SystemPromptBuilder` 从 `ToolRegistry` 读工具名与描述组装提示，角色定义在前、工具清单在后；core `sysprompt_test.cj` 3 条 + CLI headless 3 条断言。CLI `seed` 模式已接入而非硬编 |
 | terminal | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
 | todo | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 52） |
 | token-meter | ✔ | ✔ | M2 | ☐ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言 |
