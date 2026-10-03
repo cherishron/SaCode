@@ -2,7 +2,7 @@
    不写会话事实，不引入第二份 Vue 或模板编译器。 */
 "use strict";
 window.SaCodeDialog = {
-  props: { open: Boolean, title: { type: String, default: "详情" } },
+  props: { open: Boolean, modal: { type: Boolean, default: true }, title: { type: String, default: "详情" } },
   emits: ["close"],
   setup(props, { emit, slots }) {
     const { h, ref, watch, onMounted, onBeforeUnmount } = window.Vue;
@@ -16,7 +16,8 @@ window.SaCodeDialog = {
       if (!node.value) return;
       if (props.open && !node.value.open) {
         opener = document.activeElement;
-        node.value.showModal();
+        if (props.modal) node.value.showModal();
+        else { node.value.show(); node.value.querySelector('button').focus(); }
       } else if (!props.open && node.value.open) {
         node.value.close();
         restore();
@@ -30,7 +31,11 @@ window.SaCodeDialog = {
     });
     return () => h("dialog", {
       ref: node, class: "sacode-dialog", "aria-label": props.title,
+      "aria-modal": props.modal ? "true" : "false",
       onCancel: (event) => { event.preventDefault(); emit("close"); },
+      onKeydown: (event) => {
+        if (!props.modal && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); emit("close"); }
+      },
     }, [
       h("header", { class: "dialog-header" }, [
         h("h2", null, props.title),

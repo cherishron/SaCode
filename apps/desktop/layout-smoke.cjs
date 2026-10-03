@@ -144,6 +144,24 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       console.log(`LAYOUT ${previewReport.failed.length ? "FAIL" : "PASS"} preview ${theme} ${width}x${height} ${previewReport.failed.join(',')}`);
       await js("document.querySelector('#side-tab-inspect').click()");
       await js("document.querySelector('#split-side').click()");
+      await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
+      await new Promise(r=>setTimeout(r,50));
+      const floatReport = await js(`(() => {
+        const dialog=document.querySelector('.floating-preview[open]'), box=dialog.getBoundingClientRect(), text=document.querySelector('#float-preview-text');
+        const checks={
+          visible: !!dialog,
+          fits: box.left>=0 && box.top>=0 && box.right<=innerWidth+1 && box.bottom<=innerHeight+1,
+          noOverflow: dialog.scrollWidth<=dialog.clientWidth,
+          sameSnapshot: text.textContent===document.querySelector('#preview-text').textContent,
+          nonModal: dialog.getAttribute('aria-modal')==='false',
+          controlHeight: Math.abs(dialog.querySelector('.dialog-header button').getBoundingClientRect().height-36)<1,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(floatReport,{theme,width,height,surface:'floating'}); reports.push(floatReport);
+      writeFileSync(join(outDir, `sacode-floating-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${floatReport.failed.length ? "FAIL" : "PASS"} floating ${theme} ${width}x${height} ${floatReport.failed.join(',')}`);
+      await js("document.querySelector('.floating-preview .dialog-header button').click(); document.querySelector('#side-tab-inspect').click()");
       await new Promise(r=>setTimeout(r,50));
       const splitReport = await js(`(() => {
         const primary=document.querySelector('.side-primary'), secondary=document.querySelector('.side-secondary'), divider=document.querySelector('#pane-divider');

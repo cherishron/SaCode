@@ -131,6 +131,9 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .pending-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
 .side-tab:last-child { grid-column: 1 / -1; }
 .preview-path { overflow-wrap: anywhere; font-weight: 600; }
+.preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.floating-preview { position: fixed; z-index: 10; width: min(640px, calc(100vw - 48px));
+  inset: 80px 24px auto auto; margin: 0; max-height: calc(100dvh - 104px); box-shadow: 0 8px 32px rgb(0 0 0 / 25%); }
 .preview-text { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-s);
   font: var(--fs-s)/1.7 Consolas, "Microsoft YaHei", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty-card { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);

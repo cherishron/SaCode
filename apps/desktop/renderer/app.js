@@ -93,6 +93,7 @@ createApp({
     const sideTab = ref("inspect");
     const sideSplit = ref(false);
     const sideRatio = ref(50);
+    const previewFloating = ref(false);
     let resizeController = null;
     function beginResize(e) {
       if (e.button !== 0) return;
@@ -320,7 +321,7 @@ createApp({
 
     return {
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview,
+      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview, previewFloating,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -491,7 +492,9 @@ createApp({
     ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
     const previewBody = (prefix) => [
       el("section", "side-section", [
-        el("h2", null, "文档预览"),
+        el("div", "preview-heading", [el("h2", null, "文档预览"),
+          prefix !== "float-preview" ? el("button", "btn", "浮动预览", { id: prefix + "-float", onClick: () => { self.previewFloating = true; } }) : null,
+        ]),
         self.readPreview ? [
           el("p", "preview-path", self.readPreview.path, { id: prefix + "-path" }),
           el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: prefix + "-meta" }),
@@ -551,6 +554,8 @@ createApp({
         ]),
         el("p", "note", "详情来自核心当前工具清单；关闭弹窗不会执行工具或批准请求。"),
       ] : []);
-    return el("div", "app", [nav, head, main, side, composer, detail]);
+    const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, title: "SaCode · 文档预览",
+      class: "floating-preview", onClose: () => { self.previewFloating = false; } }, () => previewBody("float-preview"));
+    return el("div", "app", [nav, head, main, side, composer, detail, floating]);
   },
 }).mount("#app");
