@@ -184,6 +184,26 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
         writeFileSync(join(outDir, `sacode-settings-${page}-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
         console.log(`LAYOUT ${settingsReport.failed.length ? "FAIL" : "PASS"} settings-${page} ${theme} ${width}x${height} ${settingsReport.failed.join(',')}`);
       }
+      // 长内容只作为几何压力样本，不虚构工具或配置能力。
+      const longSettingsReport = await js(`(() => {
+        const dialog=document.querySelector('.settings-dialog[open]'), body=dialog.querySelector('.dialog-body'), header=dialog.querySelector('.dialog-header');
+        const fixture=document.createElement('p'); fixture.id='layout-settings-fixture'; fixture.className='note';
+        fixture.textContent=('长配置说明：'+ '目录与工具说明'.repeat(30)+'\\n').repeat(60);
+        fixture.style.whiteSpace='pre-wrap'; body.append(fixture);
+        const before=header.getBoundingClientRect(); body.scrollTop=body.scrollHeight;
+        const after=header.getBoundingClientRect(), close=header.querySelector('button').getBoundingClientRect(), rect=dialog.getBoundingClientRect();
+        const checks={
+          bodyScrolls: body.scrollHeight>body.clientHeight && body.scrollTop>0,
+          headerStays: Math.abs(before.top-after.top)<1 && after.top>=rect.top && close.bottom<=rect.bottom,
+          dialogDoesNotScroll: dialog.scrollHeight<=dialog.clientHeight+1,
+          noHorizontalOverflow: body.scrollWidth<=body.clientWidth && rect.right<=innerWidth+1,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(longSettingsReport,{theme,width,height,surface:'long-settings'}); reports.push(longSettingsReport);
+      writeFileSync(join(outDir, `sacode-long-settings-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${longSettingsReport.failed.length ? "FAIL" : "PASS"} long-settings ${theme} ${width}x${height} ${longSettingsReport.failed.join(',')}`);
+      await js("document.querySelector('#layout-settings-fixture').remove(); document.querySelector('.settings-dialog .dialog-body').scrollTop=0");
       await js("document.querySelector('.settings-dialog .dialog-header button').click()");
       await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
       await new Promise(r=>setTimeout(r,50));
