@@ -260,15 +260,53 @@ P0 是本地可撤回实验，不是缩小长期范围，也不是外部发布�
 | 项 | 结论 | 证据与缺口 |
 | --- | --- | --- |
 | 构建 | PASS | `cjc/cjpm 1.1.3` + stdx 1.1.3.1（动态链接 5 包）；host/cli `cjpm build success`；`scripts/pack-host.mjs` 出 89 文件自包含目录，运行不拼 PATH |
-| 会话与回放 | PASS | `core` `cjpm test` **80/80**（seq 编号、flush/load 往返、投影过滤与纯度、租约互斥、**残留租按持有者死活分别接管与拒绝 5 例**、装配终态、尾帧截断三例、会话日志锁下的并发读快照 + **写者落盘与磁盘重放交错的撕裂检测**、**多行与制表符数据的转义往返 2 例**）；durability 屏障与分页由 `bridge.test.mjs` **28/28** 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
+| 会话与回放 | PASS | `core` `cjpm test` **80/80**（seq 编号、flush/load 往返、投影过滤与纯度（**过滤有证据，纯度按 §6.1.2 D 档记为无证据**）、租约互斥、**残留租按持有者死活分别接管与拒绝 5 例**、装配终态、尾帧截断三例、会话日志锁下的并发读快照 + **写者落盘与磁盘重放交错的撕裂检测**、**多行与制表符数据的转义往返 2 例**）；durability 屏障与分页由 `bridge.test.mjs` **28/28** 覆盖。**尾帧截断已按 DSH 语义收口**：半写尾帧只丢该帧并保留已提交前缀（CLI 实测尾行无 LF → `ok 2 2`，投影 2 条），`truncatedTail` 经 Host 投影帧透出以便上层把未结算流标 `interrupted`；中段缺帧仍整份拒绝，不静默前滚 |
 | 模型流式 | PARTIAL | 假 provider 的半帧/分片/终态/max-tokens/usage 次序已由单测覆盖；**缺口**：真模型 HTTPS+SSE 烟测需用户授权凭证，未执行 |
 | 工具与审批 | PASS | `apps/cli` `tool` 模式：`allowed-once` 才放行、无应答即拒、guard 拒绝计数；桌面审批卡片同由 core 的 `ToolRuntime` 裁决——只有「允许一次/拒绝」两个选项（没有永久授权按钮），两条路径的终态与日志记账均经 `--ui-smoke` 实测，反证是「拒绝」按钮改发 `allowed-once` 后界面与日志两条同时转红 |
-| 扩展生命周期 | PASS | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj`（仓颉核心直接驱动 JS 宿主子进程）已落地：core `cjpm test` **80/80**（13 条 `ExtProcess`：握手帧必须来自子进程真实应答、`load→list→call→dispose` 全生命周期走真管道、未知方法回 `-32601`、优雅退出 `exit=0` 且 `forcedExit=false`、子进程收束后不得再有应答、永不应答的调用超时返回 `None` 而不编终态、强杀后读线程照样收束、命令不存在时 fail-closed 不起线程）；`extjs` `node --test` **14/14**（新增按 callId 取消只结算一帧、迟到的 handler 结果不补第二帧、重复 callId 回 `-32022`、取消不存在或已结算的 callId 回 `false`）；CLI `dsh extjs` **12 项断言 ALL PASS**；桌面入口 `bridge.test.mjs` **28/28**（其中 9 条为上一批新增：`extension/host/*` 经 core 子进程走真管道、未 spawn 与无应答分开失败、重复 spawn 被拒且原宿主不丢、父宿主退出后 JS 子进程不得存活、`extension/host/call` 立刻回执且转调期间读侧不排队、`extension/host/cancel` 只按 callId 结算一帧、`turn/cancel` 联动取消在途调用、宿主退出前主动取消并交 `host/settled` 账、**`turn/cancel` 只结算本轮发起的调用**（上一轮仍在途的与 epoch 0 的手动调用都不被误伤，反证：把取消改回「结算全部」该条立刻转红））。并发在途已按 id 配对收口（`core/src/reply.cj` `ReplyTable`）；**转调不再占住 Host 的 stdin 读侧**（`extension/host/call` 发出即回执，收帧交给独立线程 + `ThreadSafeDeliveryQueue`），turn 取消联动在途 `extension/call` 已实测。反证：把 `ExtHost.cancel()` 改成「不真正结算、直接返回 true」→ extjs 2 条与 bridge 2 条同时转红；去掉 EOF 的主动取消 → `extensionCancelled` 由 1 变 0，那条转红。**剩余**：在途调用的轮次归属已按 epoch 隔离（决策 22，`idsForEpoch`），但 Host 仍只允许**单轮 turn 在途**（`turnBusy` 串行），多轮并行时的归属与配额未做 |
+| 扩展生命周期 | PASS | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj`（仓颉核心直接驱动 JS 宿主子进程）已落地：core `cjpm test` **85/85**（15 条 `ExtProcess`：握手帧必须来自子进程真实应答、`load→list→call→dispose` 全生命周期走真管道、未知方法回 `-32601`、优雅退出 `exit=0` 且 `forcedExit=false`、子进程收束后不得再有应答、永不应答的调用超时返回 `None` 而不编终态、强杀后读线程照样收束、命令不存在时 fail-closed 不起线程）；`extjs` `node --test` **14/14**（新增按 callId 取消只结算一帧、迟到的 handler 结果不补第二帧、重复 callId 回 `-32022`、取消不存在或已结算的 callId 回 `false`）；CLI `dsh extjs` **12 项断言 ALL PASS**；桌面入口 `bridge.test.mjs` **28/28**（其中 9 条为上一批新增：`extension/host/*` 经 core 子进程走真管道、未 spawn 与无应答分开失败、重复 spawn 被拒且原宿主不丢、父宿主退出后 JS 子进程不得存活、`extension/host/call` 立刻回执且转调期间读侧不排队、`extension/host/cancel` 只按 callId 结算一帧、`turn/cancel` 联动取消在途调用、宿主退出前主动取消并交 `host/settled` 账、**`turn/cancel` 只结算本轮发起的调用**（上一轮仍在途的与 epoch 0 的手动调用都不被误伤，反证：把取消改回「结算全部」该条立刻转红））。并发在途已按 id 配对收口（`core/src/reply.cj` `ReplyTable`）；**转调不再占住 Host 的 stdin 读侧**（`extension/host/call` 发出即回执，收帧交给独立线程 + `ThreadSafeDeliveryQueue`），turn 取消联动在途 `extension/call` 已实测。反证：把 `ExtHost.cancel()` 改成「不真正结算、直接返回 true」→ extjs 2 条与 bridge 2 条同时转红；去掉 EOF 的主动取消 → `extensionCancelled` 由 1 变 0，那条转红。**剩余**：在途调用的轮次归属已按 epoch 隔离（决策 22，`idsForEpoch`），但 Host 仍只允许**单轮 turn 在途**（`turnBusy` 串行），多轮并行时的归属与配额未做 |
 | 跨端一致 | PASS | CLI 与桌面共享同一 `session.log`，投影与 seq 同源（bridge「投影与 CLI 同源」）；第二写者经协议拿到 `-32001 already-owned`；`WriteLease` 的 TOCTOU 已用 `File.createTemp` + `rename(overwrite:false)` 原子获取收口，`release()` 只认自己那份 owner 凭据（非持有者释放不得删掉别人的租约）。**崩溃残留租约已可自动接管**（本批补齐，决策 23）：租约凭据带持有者 pid（`writer=<pid>-<临时文件名>`），`core/src/procwin.cj` 用 CFFI 绑 `GetCurrentProcessId`/`OpenProcess`/`GetExitCodeProcess` 判活，`takeoverIfStale()` 只在确认持有者已死时清旧租约并重新独占落位。两入口都接了同一函数（Host 4 个获取点 + CLI `seed`），实测三条分向：死者留下的租 → Host `session/append` 成功写入（`events=durable=5`）、CLI 裸 PATH `seed` 出 `ok seeded 6` 且租约已归还；活者（`writer=<真实 pid>-live`）与旧格式无 pid 凭据 → 都回 `-32001 already-owned`/`err already-owned` 且盘上凭据**逐字节未变**。反证两个变异体：`takeoverIfStale` 一律拒绝 → 死者那条转红 `-32001`；去掉判活一律接管 → 活者那条转红 `Missing expected rejection`。**未做**：跨机共享目录下的租约（pid 只在单机内有意义）与 pid 复用导致的误判（策略上偏向「不接管」）|
 | 取消与背压 | PARTIAL | 桌面 stop 与慢消费者两条已实测：`TurnToken` 协作式取消跑在 `spawn` 出的仓颉线程上，`ThreadSafeDeliveryQueue`（Mutex+Condition）投不满只报 `overflow`、`dropped` 恒 0；已独立发布的 `detached()` 令牌不被父取消连带杀死（`futureCancelIsCooperativeNotForced` 钉住「`Future.cancel()` 只发请求」）。计数：core **85/85**、CLI `dsh cancel` 9 项断言裸 PATH rc=0、`bridge.test.mjs` **28/28**（含 turn 在途期间读侧照常应答、`extension/host/call` 在 turn 在途时进得去、**取消按轮次归属只结算本轮调用**）。**Ctrl+C/SIGINT 本批已接线**（决策 24）：`core/src/sigwin.cj` 用 CFFI 绑 `SetConsoleCtrlHandler`，处理器体取消在册的在途 turn 令牌，CLI `sig` 模式跑完整链路（注册→租约→挂令牌→起 turn→握手→结算→归还→退 130）。**剩余**：只剩「系统确实调起了处理器」这一条腿未取证——`GenerateConsoleCtrlEvent` 的三种参数组合在本机全部 `ret=True` 却投递不到任何附属进程，同驱动同控制台下改测 `node` 的 `process.on('SIGINT')` 同样收不到，故判定为**本机交互式控制台缺失（非交互会话/ConPTY）**而非仓颉侧未接；解锁动作是在真能交互的控制台窗口里跑 `dsh sig` 按一次 Ctrl+C（期望无 FAIL 且 rc=130），驱动留在 `scripts/sigwin-e2e.ps1`，判决同时要求 `hits=1`、`kind=0`、`cancelled=true`、`code=130` 与 OS 退出码 |
 | UI/Next SDK | PARTIAL | **Vue 3 已接入并真机验收**：`renderer/app.js` 用 `vue.runtime.global.prod.js`（CSP `script-src 'self'` 禁 `unsafe-eval`，所以取不带运行时编译器的 runtime 构建、视图用 `h()` 写，由 `scripts/pack-vendor.mjs` 落进 `renderer/vendor/`）；消息列表只渲染核心投影交出的 `messages`，流式文本只来自 `turn/poll`，工具与审批态只来自 `extension/list` 与 `extension/call` 的实际应答——渲染层不持有第二真源。设计令牌层 `renderer/styles.css`（`:root` 明暗两套 + 语义类，业务样式不写裸色值）。`electron . --ui-smoke --session-dir=<空目录>` **25 条断言全 `UI OK`**：多行带引号的消息经 IPC 逐字符往返且只算一条事件、`durable/pending/tail` 计数条、完整一轮渲回「你好，world」并落 `settled:stop`、可取消一轮点「停止」落 `cancelled`、审批浮层只有「允许一次/拒绝」两条路径且终态与日志记账都如实、放行前 `pending>0`（append 不等于已提交）、`window.require` 为 `undefined`、preload 只暴露 7 个固定动作。反证：把「拒绝」按钮改成发 `allowed-once` → 界面结果与日志记账两条同时转红。**缺口**：TinyVue/TinyRobot 组件库与 Next SDK 页面工具未接；设计系统只到令牌层，未做上游的槽位/组件呈现体系 |
 | npm CLI 本地包 | PASS | `npm pack` → 隔离目录 `npm i -g` 运行；argv/cwd/stdio/退出码正确；主包不含 Electron；无编译器依赖 |
 | 桌面本地包 | PARTIAL | Electron 官方二进制已到位（`registry.npmjs.org` 与 `github.com` 双双可达，按决策 9 只用官方源）；`electron-builder --win portable nsis` 出便携包与安装向导，宿主经 `extraResources` 落在 `process.resourcesPath/host/bin`（`paths.cjs` 在 packaged 分支拒绝回改进 asar）；打包后应用 `--smoke` 与 `--ui-smoke` 均 PASS；产物实测 `NotSigned`。**缺口**：签名与实际发布另行授权 |
+
+### 6.1.2 与 64 模块能力矩阵的逐 M 对照（2026-10-03 实测，HEAD `ff0d651`）
+
+编号口径：矩阵没有逐条 M 号（M0–M8 是阶段标签），下文编号＝**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
+分母本身先要记账：`docs/plans/dsh-capability-matrix.md` 表体实测 **63 个模块行 + 1 行 README**（该行自注「子系统目录索引页」），
+而 `docs/evidence/dsh-upstream-freeze.md` 与 P0 文档声明的分母是 **64 个模块**（192 = 64×3）。
+两者只有一真：要么 README 被当成模块（则表少 1 个模块名），要么表本身少 1 行。
+候选缺名是 `cordis`、`gateway`（只在矩阵第 9 行的阶段关键词与方案 §3.1 出现过，从未成行）。**这是待决口径，不由本批擅改分母**。
+
+| 档 | 条数 | 行号 | 判据 |
+| --- | --- | --- | --- |
+| A 已实现且有可执行证据 | 9 | 12 core、27 persistence、34 session、54 tools、2 approval、15 extensions、21 llm-streaming、49 subprocess、59 web-client | 指得到具体名字：core `cjpm test` **85** 个 `@Test`（`extproc` 15 / `procwin` 5 / `sigwin` 5 / `inflight` 4 / `reply` 3 / `session` 21 / `thread` 9 / `cancel` 8 / `ext` 11 / `loglock` 4）、`bridge.test.mjs` 28 + `paths.test.mjs` 3、`extjs` 14、CLI 9 个子命令、Host 能力表 19 个方法、`--ui-smoke` 25 条 |
+| B 已实现但无子系统级证据 | 3 | 11 conversation、50 system-prompt、53 token-meter | 代码在但只是切片：`renderer/app.js:10` 只按角色拆文本（无节点/分组/折叠，也无对应用例）；`apps/cli/src/main.cj:47` 系统提示是硬编一条事件；`core/src/agent.cj:52` 只把 usage 当字符串存着，无计量与预算 |
+| C 未实现 | 50 | 1,3,4,5,6,7,8,9,10,13,14,16,17,18,19,20,22,23,24,25,26,28,29,30,31,32,33,36,37,38,39,40,41,42,43,44,45,46,47,48,51,52,55,56,57,58,60,61,62,63 | 全仓关键词 0 命中（compaction/mcp/subagent/agent-team/todo/goal/schedule/skills/lsp/sandbox/PTY/terminal/jobs/ssh/webhook/voice/browser/otel/sqlite/slots/sidebar/credentials/…）。唯一命中是假阳性（`ToolSpec` 含子串 `lSp`、`empty` 含 `pty`、Electron 自己的 `sandbox` 开关）。17 filesystem 归此档的依据：只有 `core/src/agent.cj:118-133` 一处 `File.writeTo`，无 read/edit/glob/grep，不变量 14 的 `FS_NOT_OBSERVED`/`FS_STALE_VERSION` 全仓 0 命中 |
+| D 文档与代码不符 | 2 | 35 session-projection、64 README | 见下 |
+
+D 档明细（两条都已亲自复核，不是转抄子代理结论）：
+1. **35 session-projection 的「纯度」被夸大**。方案不变量 9（`:53`）要求「对无关事件返回**同一引用**（`Object.is` 门控下游）」，
+   但 `core/src/session.cj:193 deriveMessages()` 每次调用都新建 `ArrayList`，没有 checkpoint 也没有引用复用；
+   用例 `core/src/session_test.cj:131 projectionIsPure` 只断言两次调用的 **size 与首元素相等**——引用是不是同一个，它管不着。
+   §6.1.1「会话与回放」行里那句「投影过滤与纯度」据此只能算**过滤有证据、纯度无证据**。
+2. **README 行被算进了能力分母**（`dsh-capability-matrix.md:76` 自注它是索引页，不是一条能力）。
+
+另有两处「文档 vs 仓内实况」需要记账（不占矩阵行，但影响采信）：
+`docs/evidence/dsh-upstream-freeze.md:3` 声称账本由 `coverage_ledger.cjs` 跑出（`GATE: PASS (9 checks)`），
+但 `scripts/` 目录下现在只有 `pack-cli.mjs`/`pack-host.mjs`/`pack-vendor.mjs`/`sigwin-e2e.ps1` 四个文件，**该脚本不在仓内**；
+§6.1.1「扩展生命周期」行此前记的「13 条 `ExtProcess`」也已过期，实测 `core/src/extproc_test.cj` 是 **15** 个 `@Test`。
+
+矩阵自身缺行（本仓证据最足的三块在矩阵里反而没有归属行）：取消与背压（`TurnToken`/`ThreadSafeDeliveryQueue`，8 条用例）、
+崩溃残留租约接管（`takeoverIfStale`，5 条）、Ctrl+C 接线（`sigwin` 5 条 + CLI `sig`）。
+要么给它们补行，要么明确并入 `core`/`persistence`，否则「64 条分母」和实际实现面无法对齐。
+
+补证顺序（按最省轮次排序，每条都是一个具体动作）：
+1. `deriveMessages` 加 checkpoint 且无关事件返回同一引用，`session/projection` 帧回带 `checkpoint`；补一条「追加 `tool/call` 后引用不变」用例，变异体＝每次新建 `ArrayList` 必须转红 —— 这一条把 35 从 D 挪进 A。
+2. 审批补协议面：现在审批只是 `preload.cjs` 里 `dsh:toolCall` 的第三个参数，日志里只有 `tool/result denied:*`，全仓无 `approval/asked|decided` 事件。补这两个 Host 方法 + 一条「pending 审批过期即拒」。
+3. 工具管线补段：`ToolRuntime.execute`（`core/src/agent.cj:93-116`）只有 5 段，缺 pre/post-execute、projectContent/finalizeContent、无损 snapshot、失败归一化 —— 每段一条断言，54 才能从「切片」升为子系统。
+4. 真模型传输：`apps/host` 只 `import stdx.encoding.json.*`，全仓无 HTTP/SSE 客户端，21 目前永远只是假 provider。走 `stdx.net.http` + SSE 半帧/UTF-8 分片用例，再加一条真凭证烟测（待授权）。
+5. 先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。
 
 ### 6.2 长期阶段
 
