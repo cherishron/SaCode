@@ -37,7 +37,7 @@ function seedIfNeeded() {
   if (!existsSync(SESSION_LOG)) {
     writeFileSync(
       SESSION_LOG,
-      "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tuser/message\thello from desktop\n"
+      "0\tturn/start\tt\n1\tsystem/message\tseeded by desktop\n2\tassistant/message\tseeded reply from core\n3\tuser/message\thello from desktop\n"
     );
   }
 }
@@ -158,10 +158,10 @@ async function uiSmoke() {
   const trReady = await waitFor(async () => (await trShape()) === "Bubble,BubbleList,BubbleProvider");
   note(trReady, `TinyRobot 折叠产物已加载=${await trShape()}`);
 
-  // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影
-  const mounted = await waitFor(() => count("#messages .msg").then((n) => n >= 2));
-  note(mounted, `Vue 挂载后消息条数=${await count("#messages .msg")}（核心投影给出）`);
-  const domMsgs = await count("#messages .msg");
+  // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影。
+  //    消息面换成 BubbleList 后按「组」计：种子是 system/assistant/user 三个角色，各成一组。
+  const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 3));
+  note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
   const projText = await text("#count-events");
   note(/^\d+$/.test(projText.split(" ")[1] || ""), `计数条 events=${projText}`);
 
@@ -186,13 +186,44 @@ async function uiSmoke() {
     return n === beforeEvents + 1;
   });
   note(sent, `多行消息后 events=${beforeEvents} → ${await text("#count-events")}`);
-  const lastMsg = await js(`(() => { const m = document.querySelectorAll('#messages .msg'); return m[m.length-1] ? m[m.length-1].textContent : ''; })()`);
+  const lastMsg = await js(`(() => { const m = document.querySelectorAll('#messages .tr-bubble'); return m[m.length - 1] ? m[m.length - 1].textContent : ''; })()`);
   note(lastMsg.includes("第一行") && lastMsg.includes("第二行") && lastMsg.includes('"引号"'), `末条消息回显=${JSON.stringify(lastMsg.slice(0, 40))}`);
   const durable = await text("#count-durable");
   const pending = await text("#count-pending");
   note(durable.split(" ")[1] === String(beforeEvents + 1) && pending.endsWith("0"), `落盘即 durable=${durable} pending=${pending}`);
   const logRaw = require("node:fs").readFileSync(SESSION_LOG, "utf8");
   note(/user\/message\t第一行\\n第二行/.test(logRaw), "多行正文按转义写成一行事件（裸换行没把日志劈开）");
+
+  // 3a) 对话面的行为钉子：气泡外框真的出自组件库、角色与定位可断言、连续同角色合并。
+  //     分组与折叠都只是这份投影之上的视图派生——这里不新增任何真源，断言读到的每个数
+  //     都能回到 session.log 的那几条消息行。
+  const listNodes = await count("#messages .tr-bubble-list");
+  note(listNodes === 1, `BubbleList 容器数=${listNodes}（应为 1）`);
+  const roleSpread = await js(
+    "(() => { const m = document.querySelectorAll('#messages .tr-bubble'); const r = {};" +
+    " m.forEach((e) => { const k = e.getAttribute('data-role') || '?'; r[k] = (r[k] || 0) + 1; });" +
+    " return r['system'] + '/' + r['assistant'] + '/' + r['user'] + '|组' + m.length; })()"
+  );
+  note(roleSpread === "1/1/1|组3", `种子角色分布=${roleSpread}`);
+  const placementPair = await js(
+    "(() => { const q = (r) => { const e = document.querySelector('#messages .tr-bubble[data-role=\"' + r + '\"]');" +
+    " return e ? e.getAttribute('data-placement') : 'missing'; };" +
+    " return q('user') + '|' + q('assistant') + '|' + q('system'); })()"
+  );
+  note(placementPair === "end|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
+  const labelShown = await text("#messages .msg-role");
+  note(/^\d+ × (system|user|assistant|tool)$/.test(labelShown), `组标签=${labelShown}`);
+  // 连续同角色必须并成一组：再发一条 user，条数进组但组数不变。
+  const groupsBeforeMerge = await count("#messages .tr-bubble");
+  await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("第二条 user 消息")}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  note(await click("#send"), "已再发一条 user 消息");
+  // 「组数不变」必须带非零前提，否则 0 === 0 会把「一个组都没渲染」喂成绿。
+  const mergedIntoGroup = await waitFor(
+    async () => groupsBeforeMerge >= 3 && (await count("#messages .tr-bubble")) === groupsBeforeMerge
+  );
+  note(mergedIntoGroup, `连续 user 合并：组数 ${groupsBeforeMerge} → ${await count("#messages .tr-bubble")}（应不变且 ≥ 3）`);
+  const userGroupNodes = await count('#messages .tr-bubble[data-role="user"] .msg-text');
+  note(userGroupNodes >= 2, `user 组内正文条数=${userGroupNodes}（合并后应 ≥ 2）`);
 
   // 3b) 组件库不是「装了就算」：类名要真的由 TinyVue 出，色值要真的从我们的令牌桥过去。
   //     桥接的反证是删掉 styles.css 末尾那一段 --tv-* 覆写 —— 那时两侧会各自解析成不同颜色。
@@ -305,6 +336,19 @@ async function uiSmoke() {
   });
   note(readBack, `只读工具直接执行并读回盘上正文=${(await text("#outcome")).slice(0, 52)}`);
   note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
+
+  // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
+  // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、
+  // 渲染一个注释节点——照默认链走，tool 正文会直接隐身。
+  const toolProbe = await js(
+    "(() => { const m = document.querySelectorAll('#messages .tr-bubble[data-role=\"tool\"]');" +
+    " if (!m.length) return 'no-tool-group';" +
+    " const e = m[m.length - 1];" +
+    " const src = e.querySelector('.msg-text[data-source-role]');" +
+    " return ((e.textContent || '').trim().length > 0 ? 'visible' : 'empty')" +
+    " + '|' + (src ? src.getAttribute('data-source-role') : 'no-source-role'); })()"
+  );
+  note(/^visible\|tool\//.test(toolProbe), `tool 气泡=${toolProbe}`);
 
   // 超档必须当场拦得住：把档位收到低于一次消耗，再跑一轮就该失效。
   // 这段在 bridge.stop() 之前——stop 之后宿主已死，IPC 会超时。

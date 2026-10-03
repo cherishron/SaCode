@@ -18,23 +18,44 @@ if (!TV || !TV.Button) {
   throw new Error("TinyVue vendor missing");
 }
 
-// 核心投影帧里的每条消息形如 "user/message: 正文"；只按第一个冒号切，正文里再冒号原样保留。
-function splitMsg(line) {
-  const i = line.indexOf(":");
-  if (i < 0) return { role: "message", text: line };
-  return { role: line.slice(0, i), text: line.slice(i + 2) };
+const TR = window.TinyRobot;
+if (!TR || !TR.BubbleList || !TR.BubbleProvider) {
+  document.getElementById("app").textContent =
+    "缺 vendor/tinyrobot.iife.js：先跑 node scripts/pack-vendor.mjs、node scripts/pack-tinyvue.mjs 与 node scripts/pack-tinyrobot.mjs";
+  throw new Error("TinyRobot vendor missing");
+}
+const FOLD = window.DshMsgFold;
+if (!FOLD || typeof FOLD.toBubbleMessages !== "function") {
+  document.getElementById("app").textContent = "缺 renderer/msgfold.js";
+  throw new Error("msgfold missing");
 }
 
-function roleClass(role) {
-  if (role.startsWith("user")) return "msg msg-user";
-  if (role.startsWith("assistant")) return "msg msg-assistant";
-  if (role.startsWith("tool")) return "msg msg-tool";
-  return "msg msg-system";
-}
+// 自定义文本内容渲染器：接管所有 text 内容，含 tool/ 行。
+// 非接不可的原因：默认内容渲染器链（dist/index6.js 的 Ke）把 role==="tool" 交给 ToolRole，
+// 而 ToolRole 只往 provider store 登记 tool_call_results、渲染一个注释节点——tool 正文会隐身。
+// priority 0 与默认链的 NORMAL 并列，但 BubbleProvider 合并时自定义在前、排序稳定，故恒先命中，
+// 也顺带压过 ROLE=20 的 ToolRole。
+const TextBubble = {
+  props: { message: { type: Object, default: () => ({}) }, contentIndex: { type: Number, default: 0 } },
+  setup(props) {
+    return () => {
+      const m = props.message || {};
+      const text = typeof m.content === "string" ? m.content : "";
+      return h("p", { class: "msg-text", "data-msg-id": m.id || "", "data-source-role": m.sourceRole || "" }, text);
+    };
+  },
+};
+const TEXT_MATCH = {
+  find: (_message, content) => !!(content && content.type === "text"),
+  renderer: window.Vue.markRaw(TextBubble),
+  priority: 0,
+};
 
 createApp({
   setup() {
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
+    // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
+    const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
     const tools = ref([]);
     const toolCounters = ref({ misses: 0, guardDenials: 0 });
     const draft = ref("");
@@ -230,7 +251,7 @@ createApp({
 
     return {
       proj, tools, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, setBudget,
+      usage, budgetDraft, budgetNote, setBudget, bubbleMessages,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -246,10 +267,28 @@ createApp({
       ]),
     ]);
 
-    const msgs = self.proj.messages.map((line, i) => {
-      const m = splitMsg(line);
-      return el("div", roleClass(m.role), [el("span", "msg-role", m.role), m.text], { key: i });
-    });
+    // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
+    // 组标签走 prefix 槽，内容是「组内条数 × 映射角色」——两个数都能从投影数出来，
+    // 不是第二真源。autoScroll 关掉：本批不引入滚动语义改动。
+    const msgs = [
+      h(TR.BubbleProvider, { contentRendererMatches: [TEXT_MATCH] }, () => [
+        h(
+          TR.BubbleList,
+          {
+            messages: self.bubbleMessages,
+            groupStrategy: "consecutive",
+            fallbackRole: "system",
+            roleConfigs: FOLD.roleConfigs(),
+            autoScroll: false,
+          },
+          {
+            prefix: (slot) => [
+              h("span", { class: "msg-role" }, (slot.messageIndexes || slot.messages || []).length + " × " + (slot.role || "system")),
+            ],
+          }
+        ),
+      ]),
+    ];
 
     const streamChildren = [el("span", "msg-role", "assistant/stream")];
     if (self.turn.text) streamChildren.push(self.turn.text);

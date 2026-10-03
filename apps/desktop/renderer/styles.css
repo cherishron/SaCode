@@ -96,15 +96,6 @@ body {
 
 .stream { display: flex; flex-direction: column; gap: var(--space-2); }
 
-.msg {
-  max-width: 74ch;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--surface-3);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .msg-role {
   display: block;
   font: var(--fs-s)/1.4 ui-monospace, Consolas, monospace;
@@ -112,10 +103,11 @@ body {
   margin-bottom: var(--space-1);
 }
 
-.msg-user { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
-.msg-assistant { background: var(--surface-2); border: 1px solid var(--border); }
-.msg-system { color: var(--text-muted); font-style: italic; }
-.msg-tool { border-left: 3px solid var(--accent); }
+/* 自定义文本渲染器的正文节点。库的 .tr-bubble__text 只服务它自带的 Text 渲染器，
+   管不到我们这条路径，所以换行必须自己接住：多行正文在日志里是一条事件，
+   界面上要按行显示，不能被折成一行。 */
+.msg-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.btn-fold { margin-left: var(--space-2); }
 
 .streaming {
   border: 1px dashed var(--accent);
