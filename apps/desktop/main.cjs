@@ -465,7 +465,7 @@ async function uiSmoke() {
   win.webContents.sendInputEvent({type:'mouseUp',x:rx-32,y:ry+16,button:'left',clickCount:1});
   note(await waitFor(async()=>Math.abs((await floatRect()).width-(beforeSize.width-32))<1), "真实鼠标拖动缩放控件调整尺寸");
   const oldSize=win.getContentSize(); win.setContentSize(860,600); await nap(100);
-  note(await js("(() => {const r=document.querySelector('.floating-preview').getBoundingClientRect();return r.left>=16 && r.top>=16 && r.right<=innerWidth-15 && r.bottom<=innerHeight-15;})()"), "主窗口缩小时浮动预览保持可见边距");
+  note(await waitFor(() => js("(() => {const r=document.querySelector('.floating-preview').getBoundingClientRect();return Math.abs(innerWidth-860)<1 && Math.abs(innerHeight-600)<1 && r.left>=16 && r.top>=16 && r.right<=innerWidth-15 && r.bottom<=innerHeight-15;})()")), "主窗口缩小时浮动预览保持可见边距");
   win.setContentSize(...oldSize); await nap(50);
   await js("document.querySelector('#composer').focus()");
   note(await js("document.activeElement.id === 'composer'"), "浮动预览允许继续聚焦会话输入");
