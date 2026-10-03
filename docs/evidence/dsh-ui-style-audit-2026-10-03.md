@@ -40,3 +40,9 @@ SaCode 输入框采用 soft、浮动预览采用 panel、模态弹窗采用 prom
 继续核对 InputBar 的 `.grow`、`.scroll` 和 `.input`：上游停靠编辑区起步为 36px，自然随正文增长，滚动容器承担 14 行上限。此前 SaCode 的 80px 最小高度及手动调整是自定值，现改为 36px 单行起步、草稿派生高度和内部滚动；受小窗口限制时进一步收紧上限，保留对话空间。
 
 以 Vue runtime 指令和 ResizeObserver 适配原生 textarea，正文或宽度改变才重新测量，保存当前内部滚动位置；卸载时撤销观察和待执行帧。不引入第二份 Vue、模板编译器或业务状态。自动增长项已补齐，模型/预设/附件、引用编辑器和共享宽度轴仍待实现，不能据此声明完整 composer 通过。
+
+## 助手 Markdown 块流增量（2026-10-04）
+
+直读冻结版本 [AssistantMarkdown.module.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-chat/src/client/chat/AssistantMarkdown.module.css)：正文为纵向 flex，14px/24px，块 gap 16px。SaCode 采用相同块流与间距，在当前 Vue runtime + TinyRobot 消息面接入构建期折叠的 markdown-it，将 token 转为 h() 节点。标题、嵌套列表、引用、代码及表格现在有对应排版；用户与工具消息不解释为 Markdown，折叠摘要保留原文。
+
+代码高亮、远程图片/附件、流式 Markdown、上游宽表格突破消息宽度轴、上下文节点、操作页脚和字号偏好仍未实现。基础表格仅在正文范围滚动，不宣称完成上游宽表格方案。布局夹具只验证正文渲染器，不冒充真实模型回复或日志事件。

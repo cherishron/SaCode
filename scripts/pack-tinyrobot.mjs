@@ -5,10 +5,9 @@
 // `module.exports = globalThis.Vue` 的 shim，产物用的还是 pack-vendor.mjs 落进 vendor/
 // 的那一份 Vue runtime——装进两份 Vue 会让组件的响应式系统跟应用的不是同一套实例。
 //
-// markdown-it / dompurify 是 Bubble 的 Markdown 渲染路径在 dist/index6.js 里做的外部动态
-// import。本批不启用那条路径（它不在默认内容渲染器链里），但仍要让两个包在构建期就被
-// 静止化：否则产物里留一条运行时 import()，既是 CSP 上的刺，也是「折叠成功」与
-// 「渲染成功」之间的运行时分叉。
+// 不启用 Bubble 内部动态 import 的 Markdown 路径。现有 peerDependency markdown-it
+// 显式折叠到同一经典脚本，由本仓 renderer/markdown.js 将 token 转成 Vue 节点；
+// 不输出 innerHTML，也不在运行时加载解析器。
 import { existsSync, mkdtempSync, writeFileSync, rmSync, statSync, readFileSync, copyFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -54,7 +53,9 @@ try {
   writeFileSync(
     entry,
     'import { Bubble, BubbleList, BubbleProvider } from "@opentiny/tiny-robot/dist/bubble/index.js";\n' +
-      "globalThis.TinyRobot = { Bubble: Bubble, BubbleList: BubbleList, BubbleProvider: BubbleProvider };\n"
+      'import MarkdownIt from "markdown-it";\n' +
+      "globalThis.TinyRobot = { Bubble: Bubble, BubbleList: BubbleList, BubbleProvider: BubbleProvider };\n" +
+      "globalThis.SaCodeMarkdownIt = MarkdownIt;\n"
   );
 
   await esbuild.build({

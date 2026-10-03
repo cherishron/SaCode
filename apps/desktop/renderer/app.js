@@ -79,8 +79,9 @@ const TextBubble = {
       const plan = FOLD.foldPlan(text, FOLD.FOLD_THRESHOLD);
       const expanded = !!id && foldOpen.ids.has(id);
       const state = plan.folded ? (expanded ? "expanded" : "folded") : "plain";
+      const markdown = m.role === "assistant" && state !== "folded";
       const children = [
-        h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, expanded ? text : plan.shown),
+        h(markdown ? "div" : "p", { class: markdown ? "msg-text markdown-body" : "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, markdown ? window.SaCodeMarkdown.render(text) : expanded ? text : plan.shown),
       ];
       if (plan.folded) {
         children.push(

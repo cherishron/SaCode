@@ -254,3 +254,13 @@ Vue runtime 指令只在正文或宽度变化时测量，ResizeObserver 捕获�
 UI 验证增长、到顶滚动、删除后回到 36px、窄窗口重新折行、只调整草稿不写事件、切换到新会话后收缩、恢复原会话长草稿后重新适配。布局在四种尺寸、亮暗主题中设置真实 30 行中文草稿，精确核验达到对应高度上限、内部滚动、对话可见空间、发送控件仍在卡片内、页面无溢出及事件计数不变。最小窗口长草稿截图已打开复查。
 
 本批未重打安装包；完整模型/预设/附件选择、引用编辑器和共享宽度轴继续未完成。自动增长补齐不代表完整 composer 或完整桌面验收通过。
+
+## 助手 Markdown 排版增量（2026-10-04）
+
+助手展开正文接入基础 Markdown，保持现有中文、SaCode 品牌、Vue runtime、TinyVue 和 TinyRobot。token 转 Vue 节点而非 HTML 注入；用户消息、工具结果和折叠摘要保持原文。HTML/代码文本、危险链接及图片不加载的三项针对性单测全部通过。
+
+沿用上述隔离源码和宿主，纳入本批 renderer、layout-smoke 与 pack-tinyrobot 修改，重新生成 vendor。最终 **168 项 UI OK / UI_SMOKE PASS**、**128 组 / 952 项布局 / 零失败**，两个 Electron 进程退出码均 0；日志 `dualtest/composer/markdown-final-{layout-smoke,ui-smoke}.log`。UI stderr 的 `approval-not-granted:denied` 来自原有拒绝审批测试，预期拒绝及记账断言通过。JS 语法与差异空白检查通过。
+
+新增八组正文排版夹具覆盖亮暗主题及四种窗口：语义块存在、16px 块间距、统一左基线、长代码内部滚动、嵌套列表缩进与页面无横向溢出。夹具使用真实 Markdown 渲染器挂载临时视图，不写入会话或伪造模型结果；最小亮色截图 `sacode-markdown-light-860x600.png` 已打开复查。报告位于 `dualtest/composer/source/apps/desktop/dist/layout/layout-report.json`。
+
+未重打安装包，也未验证并发 SSE/Next SDK 改动。完整 Markdown（高亮、图片/附件、流式正文、宽表格与上下文节点）、模型设置、自动化和全页面基线仍未完成；完整桌面目标保持进行中。

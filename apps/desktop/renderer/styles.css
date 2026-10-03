@@ -110,6 +110,26 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 #messages .tr-bubble__box { border-radius: var(--radius-xl); padding: var(--space-3) var(--space-4); max-width: 100%; }
 .msg-role { display: block; font-size: var(--fs-s); line-height: 18px; color: var(--text-muted); margin-bottom: var(--space-2); }
 .msg-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-content); line-height: var(--line-content); }
+/* 助手正文遵循上游纵向块流与 16px 节奏；宽内容在自身滚动，不撑开会话。 */
+.markdown-body { display:flex; flex-direction:column; gap:16px; white-space:normal; min-width:0; }
+.markdown-body :is(p,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table) { margin:0; }
+.markdown-body :is(h1,h2,h3,h4,h5,h6) { line-height:1.5; font-weight:600; }
+.markdown-body h1 { font-size:24px; }
+.markdown-body h2 { font-size:20px; }
+.markdown-body h3 { font-size:18px; }
+.markdown-body :is(h4,h5,h6) { font-size:16px; }
+.markdown-body :is(ul,ol) { padding-inline-start:24px; }
+.markdown-body li + li { margin-top:4px; }
+.markdown-body li > :is(p,ul,ol) + :is(p,ul,ol) { margin-top:8px; }
+.markdown-body blockquote { border-inline-start:2px solid var(--border); padding-inline-start:14px; color:var(--text-muted); }
+.markdown-body blockquote > * + * { margin-top:16px; }
+.markdown-body code { font-family:Consolas,monospace; font-size:13px; }
+.markdown-body :not(pre) > code { background:var(--surface-3); padding:2px 4px; border-radius:var(--radius-xs); }
+.markdown-body pre { padding:12px 16px; background:var(--surface-3); border-radius:var(--radius-l); overflow:auto; white-space:pre; min-width:0; max-width:100%; }
+.markdown-body table { display:block; overflow-x:auto; max-width:100%; border-collapse:collapse; }
+.markdown-body :is(th,td) { padding:8px 12px; border:0.5px solid var(--border); text-align:start; }
+.markdown-body a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
+.markdown-body hr { width:100%; margin:0; border:0; border-top:0.5px solid var(--border); }
 #messages .tr-bubble[data-role=user] .msg-text { line-height: var(--line-user); }
 #messages .tr-bubble[data-role=user] .tr-bubble__box { padding-block: 10px;
   --tr-bubble-box-bg: var(--surface-bubble); background: var(--surface-bubble); }

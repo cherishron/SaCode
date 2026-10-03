@@ -125,6 +125,26 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       writeFileSync(join(outDir,`sacode-long-user-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${userReport.failed.length?'FAIL':'PASS'} long-user ${theme} ${width}x${height} ${userReport.failed.join(',')}`);
       await js("document.querySelector('.conversation-scroll').scrollTop=0");
+      // 排版夹具只挂载实际正文渲染器，不伪造核心消息或会话事实。
+      const markdownText='# 中文标题\n\n正文 **强调** 与 `行内代码`。\n\n1. 第一项\n   - 嵌套项\n2. 第二项\n\n> 引用正文\n\n```js\n'+ '长代码内容'.repeat(80)+'\n```\n\n| 名称 | 值 |\n| --- | --- |\n| 项目 | 内容 |';
+      await js(`(()=>{const n=document.createElement('div');n.id='markdown-layout-fixture';document.querySelector('.conversation-scroll').append(n);Vue.render(Vue.h('div',{class:'msg-text markdown-body'},SaCodeMarkdown.render(${JSON.stringify(markdownText)})),n);n.scrollIntoView();})()`);
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const markdownReport=await js(`(()=>{
+        const n=document.querySelector('#markdown-layout-fixture .markdown-body'),pre=n.querySelector('pre'),box=e=>e.getBoundingClientRect();
+        const children=[...n.children];
+        const checks={
+          semanticBlocks:!!n.querySelector('h1') && !!n.querySelector('ol ul') && !!n.querySelector('blockquote') && !!n.querySelector('table'),
+          verticalRhythm:children.slice(1).every((e,i)=>Math.abs(box(e).top-box(children[i]).bottom-16)<1),
+          sharedLeftAxis:children.every(e=>Math.abs(box(e).left-box(n).left)<1),
+          codeScroll:pre.scrollWidth>pre.clientWidth && getComputedStyle(pre).overflowX==='auto',
+          nestedIndent:box(n.querySelector('ul')).left>box(n.querySelector('ol')).left,
+          noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
+        };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(markdownReport,{theme,width,height,surface:'markdown'});reports.push(markdownReport);
+      writeFileSync(join(outDir,`sacode-markdown-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${markdownReport.failed.length?'FAIL':'PASS'} markdown ${theme} ${width}x${height} ${markdownReport.failed.join(',')}`);
+      await js("(()=>{const n=document.querySelector('#markdown-layout-fixture');Vue.render(null,n);n.remove();document.querySelector('.conversation-scroll').scrollTop=0;})()");
       const draftEvents=await js("document.querySelector('#count-events').textContent");
       await js("(()=>{const n=document.querySelector('#composer');n.value='自动增长输入与按钮对齐\\n'.repeat(30);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       await waitFor("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height>36;})()");
