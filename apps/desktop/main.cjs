@@ -18,7 +18,13 @@ const HOST = hostExePath({
 // 「这条写入真的落盘了」这类断言就会被上一次运行的旧日志蒙混过去。
 // 用 --session-dir=<路径> 指定一次性目录；不传时仍用应用自己的目录（给人工运行用）。
 const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
-const SESSION_DIR = SESSION_ARG ? SESSION_ARG.slice("--session-dir=".length) : app.getPath("sessionData");
+const WILL_SMOKE = process.argv.includes("--smoke") || process.argv.includes("--ui-smoke");
+// 冒烟态没传 --session-dir 时也必须落到一次性目录：默认的 sessionData 跨次累积，
+// 「全新会话」类断言会被上一次运行的旧日志蒙混过去（实测用量从 12 一路涨到 48）。
+// 传了路径的（打包态手工复验、CI 要留日志）仍以传入者为准。
+const SESSION_DIR = SESSION_ARG
+  ? SESSION_ARG.slice("--session-dir=".length)
+  : (WILL_SMOKE ? join(app.getPath("temp"), `dsh-smoke-${process.pid}`) : app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 
 const bridge = new HostBridge(HOST, process.env);
@@ -212,12 +218,10 @@ async function uiSmoke() {
   note(await click("#run-turn"), "已发起完整一轮");
   const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
   note(settledTurn, `turn 终态=${await text("#turn-state")}`);
-  // 用量读数必须由核心结算帧驱动。绝对值是跨进程累计的（同一份会话日志跑过第二轮就是 24），
-  // 所以这里不写死 12：写死等于假设每次都是全新会话，第二次跑就假红。
-  const usageShown = await waitFor(async () => {
-    const m = (await text("#turn-usage")).match(/用量 (\d+)\/(\d+) · recorded/);
-    return !!(m && Number(m[1]) > 0 && Number(m[1]) % 12 === 0 && Number(m[2]) === 200);
-  });
+  // 用量读数必须由核心结算帧驱动。冒烟态现在总是从一次性目录起（见 SESSION_DIR），
+  // 所以这里可以钉死绝对值：全新会话的第一笔就是 12，档位停在默认 200。
+  // 之前写成「12 的倍数」是被跨次累积的真实 sessionData 逼的妥协，不再需要。
+  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200 · recorded"));
   const usageAfterFull = await text("#turn-usage");
   note(usageShown, `用量读数=${usageAfterFull}`);
   const streamed = await text("#stream");
