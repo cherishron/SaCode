@@ -144,6 +144,25 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       console.log(`LAYOUT ${previewReport.failed.length ? "FAIL" : "PASS"} preview ${theme} ${width}x${height} ${previewReport.failed.join(',')}`);
       await js("document.querySelector('#side-tab-inspect').click()");
       await js("document.querySelector('#split-side').click()");
+      // 独立视觉压力 fixture，不伪造核心失败或写会话日志；仅验证共享错误样式。
+      await js("(() => {const error=document.createElement('p'); error.id='layout-error-fixture';error.className='error';error.textContent=('错误详情：'+ '长路径和返回信息'.repeat(30)+'\\n').repeat(40);document.querySelector('.conversation').append(error);})()");
+      await new Promise(r=>setTimeout(r,50));
+      const errorReport = await js(`(() => {
+        const error=document.querySelector('#layout-error-fixture'), scroll=document.querySelector('.conversation-scroll');
+        const composer=document.querySelector('.composer'), buttons=[...document.querySelectorAll('.turn-actions button')];
+        const checks={
+          constrained: error.getBoundingClientRect().height<=121 && error.scrollHeight>error.clientHeight,
+          conversationVisible: scroll.getBoundingClientRect().height>=64,
+          buttonsPreserved: buttons.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1),
+          paddingAligned: getComputedStyle(error).paddingLeft===getComputedStyle(composer).paddingLeft,
+          noPageOverflow: document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(errorReport,{theme,width,height,surface:'long-error-fixture'}); reports.push(errorReport);
+      writeFileSync(join(outDir, `sacode-error-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${errorReport.failed.length ? "FAIL" : "PASS"} long-error ${theme} ${width}x${height} ${errorReport.failed.join(',')}`);
+      await js("document.querySelector('#layout-error-fixture').remove()");
       await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
       await new Promise(r=>setTimeout(r,50));
       const floatReport = await js(`(() => {

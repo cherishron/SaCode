@@ -89,3 +89,14 @@
 最新取证目录 `dualtest/ui-a7b7875/`：`node-tests.log`、`packaged-ui.log`、`packaged-layout.log`、`packaged-layout/layout-report.json`；报告含六类界面各八组，失败条目为 0。完整安装包/便携包构建已启动，暂不记录其成功或哈希，完成后补证。仍未做实际安装/卸载，不将 unpacked 冒烟等同于安装验收。
 
 将子进程 PATH 限定为 `C:\Windows\System32;C:\Windows` 后，包内 UI 冒烟再次通过，退出码 0（`clean-path-ui.log`）。这证明本批会话、工具与预览切片不依赖 PATH 中的仓颉 SDK/Node；没有覆盖尚未接入的真实 TLS 或扩展宿主能力。
+
+## 最新安装包构建完成与长错误补验
+
+`a7b7875` 完整 electron-builder 构建退出码 0，安装包与便携包均产出，未签名。产物在 `dualtest/ui-a7b7875/source/apps/desktop/dist/electron/`，包含标签页、文本预览、拆分、浮层移动缩放；未包含随后本批的错误区样式修复。
+
+| 产物 | 字节 | SHA256 |
+| --- | ---: | --- |
+| SaCode Setup 0.1.0.exe | 80551596 | 60E9B5540ABAE6833772DE8F5526D020BDA664863BBB844B4E370F81F3E1BE57 |
+| sacode-portable.exe | 80399585 | B751D2DFC034B737AD07FD4D56AE5448AB6EBD15CD3E0D7B27652CDDF77BD155 |
+
+发现并修复长错误区无高度上限、紧凑窗口边距与正文不一致的问题：错误区限高独立滚动，运行栏禁止压缩，正文/错误/输入区共用水平边距。新增八组、每组五项视觉压力检查，全部布局共 400 项通过；105 项 UI 行为回归通过。此压力场景是临时 DOM fixture，仅验证共享样式，没有伪造核心错误、协议应答或持久记录。证据位于 `dualtest/sacode-error-layout/`、`dualtest/error-layout.log`、`dualtest/error-ui.log`，已打开深色最小窗口截图确认运行栏和输入区可见。

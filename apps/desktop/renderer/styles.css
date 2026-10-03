@@ -82,7 +82,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .pane { min-width: 0; min-height: 0; background: var(--surface-2); }
 .conversation { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; }
 .conversation-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5); scrollbar-gutter: stable; }
-.conversation-scroll, .side-primary, .side-secondary { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.conversation-scroll, .side-primary, .side-secondary, .error { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .stream { display: flex; flex-direction: column; gap: var(--space-4); }
 #messages .tr-bubble-list { padding: 0; gap: var(--space-5); overflow: visible; }
 #messages .tr-bubble { flex-direction: column; align-items: stretch; }
@@ -100,7 +100,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .streaming { margin-top: var(--space-4); border-left: 2px solid var(--accent); padding: var(--space-3) var(--space-4);
   background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
 .turn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
-  padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border); }
+  padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border); flex-shrink: 0; }
 .turn-actions .badge { margin-left: auto; }
 .composer { grid-column: 2; grid-row: 3; display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-4) var(--space-5); border-top: 1px solid var(--border); background: var(--surface-2); }
@@ -173,7 +173,8 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .outcome { font-size: var(--fs-m); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .outcome-denied { color: var(--danger); }
 .note { font-size: var(--fs-s); line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
-.error { color: var(--danger); padding: var(--space-3) var(--space-5); font-size: var(--fs-m); white-space: pre-wrap; overflow-wrap: anywhere; }
+.error { color: var(--danger); padding: var(--space-3) var(--space-5); font-size: var(--fs-m);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: min(120px, 25%); overflow: auto; flex-shrink: 0; }
 .sacode-dialog { width: min(520px, calc(100vw - 48px)); max-height: calc(100dvh - 48px);
   padding: 0; border: 1px solid var(--border); border-radius: var(--radius-m);
   background: var(--surface-2); color: var(--text); overflow: auto; }
@@ -193,6 +194,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
   .top { padding: var(--space-3) var(--space-4); }
   .conversation-scroll, .composer { padding: var(--space-4); }
   .turn-actions { padding: var(--space-3) var(--space-4); }
+  .error { padding-left: var(--space-4); padding-right: var(--space-4); }
 }
 /* TinyVue 令牌桥接层。这一段必须留在文件末尾：vendor/tinyvue.iife.css 先加载，
    它自带 324 个 --tv-* 色令牌——那就是第二套色值真源，与本仓「色值只从令牌层出」冲突。
