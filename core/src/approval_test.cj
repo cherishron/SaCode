@@ -98,11 +98,12 @@ func approvalTicketGrantsExactlyOneExecution() {
     let desk = ApprovalDesk(log)
     let id = desk.ask("write")
     @Expect(desk.answer(id, "allowed-once"), true)
-    let first = rt.executeWithApproval("write", "a.txt", id, true, desk)
+    let first = rt.executeWithApproval("write", "a.txt x", id, true, desk)
     @Expect(first.allowed, true)
-    let second = rt.executeWithApproval("write", "a.txt", id, true, desk)
+    let second = rt.executeWithApproval("write", "a.txt x", id, true, desk)
     @Expect(second.allowed, false)
     @Expect(second.why, "approval-not-granted:used")
+    removeIfExists("a.txt", recursive: false)
     removeIfExists(p, recursive: false)
 }
 
@@ -118,7 +119,7 @@ func expiredTicketCannotGrantExecution() {
     let id = desk.askWithTtl("write", Int64(2))
     desk.advance(Int64(2))
     @Expect(desk.stateOf(id), "expired")
-    let r = rt.executeWithApproval("write", "a.txt", id, true, desk)
+    let r = rt.executeWithApproval("write", "a.txt x", id, true, desk)
     @Expect(r.allowed, false)
     @Expect(r.why, "approval-not-granted:expired")
     removeIfExists(p, recursive: false)

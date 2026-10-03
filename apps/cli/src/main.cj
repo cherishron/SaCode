@@ -220,6 +220,8 @@ main(args: Array<String>) {
             if (s.contains("tool/call")) { projHasToolCall = true }
         }
         expect("tool/call 持久但不进模型历史", !projHasToolCall && r.eventCount() >= Int64(6))
+        // 用例自己写的文件自己收掉，否则工作区会留一枚伪「产物」被误提交
+        removeIfExists("probe-tool.txt", recursive: false)
     }
 
     if (mode == "extjs") {
