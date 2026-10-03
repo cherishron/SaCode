@@ -89,6 +89,14 @@ createApp({
     const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
     const tools = ref([]);
     const detailName = ref("");
+    const sideTab = ref("inspect");
+    function openSide(target) {
+      sideTab.value = target === "guide-panel" ? "guide" : "inspect";
+      window.Vue.nextTick(() => {
+        const panel = document.getElementById(target);
+        if (panel) { panel.focus({ preventScroll: true }); panel.scrollIntoView({ block: "nearest" }); }
+      });
+    }
     // 详情始终从当前核心清单派生；卸载后不继续展示过期副本。
     const detailTool = window.Vue.computed(() => tools.value.find((tool) => tool.name === detailName.value) || null);
     const toolCounters = ref({ misses: 0, guardDenials: 0 });
@@ -284,7 +292,7 @@ createApp({
     });
 
     return {
-      proj, tools, detailName, detailTool, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
+      proj, tools, detailName, detailTool, sideTab, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, setBudget, bubbleMessages,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
@@ -304,8 +312,9 @@ createApp({
       el("div", "brand", [h("img", { src: "assets/sacode-logo.png", alt: "SaCode", width: 32, height: 32 }), el("span", null, "SaCode")]),
       el("p", "nav-caption", "编程工作台"),
       el("a", "nav-item nav-current", [navIcon("M4 4h16v12H9l-5 4V4z M8 8h8 M8 12h5"), el("span", "nav-label", "会话")], { href: "#composer", "aria-current": "page", "aria-label": "会话" }),
-      el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批" }),
-      el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算" }),
+      el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批", onClick: (e) => { e.preventDefault(); self.openSide("tools-panel"); } }),
+      el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算", onClick: (e) => { e.preventDefault(); self.openSide("budget-panel"); } }),
+      el("a", "nav-item", [navIcon("M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4z M12 6v15"), el("span", "nav-label", "使用指南")], { href: "#guide-panel", "aria-label": "使用指南", onClick: (e) => { e.preventDefault(); self.openSide("guide-panel"); } }),
       el("div", "nav-footer", [el("span", "note", "本地会话"), el("span", "note", "使用你的模型与服务凭证")]),
     ], { "aria-label": "工作台导航" });
 
@@ -414,7 +423,25 @@ createApp({
         ], { id: "approval" })]
       : [];
 
-    const side = el("aside", "pane side", [
+    const sideTabs = el("div", "side-tabs", [
+      ...[["inspect", "工具与预算"], ["guide", "使用指南"]].map(([id, label], index, tabs) => el("button", "side-tab", [label,
+        id === "inspect" && self.approval ? el("span", "pending-dot", null, { "aria-hidden": "true" }) : null], {
+        id: "side-tab-" + id, role: "tab", "aria-selected": self.sideTab === id,
+        "aria-label": label + (id === "inspect" && self.approval ? "，待审批" : ""),
+        title: label + (id === "inspect" && self.approval ? "，待审批" : ""),
+        "aria-controls": "side-page-" + id, tabindex: self.sideTab === id ? 0 : -1,
+        onClick: () => { self.sideTab = id; },
+        onKeydown: (e) => {
+          const offset = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+          if (!offset && e.key !== "Home" && e.key !== "End") return;
+          e.preventDefault();
+          const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (index + offset + tabs.length) % tabs.length;
+          self.sideTab = tabs[next][0];
+          window.Vue.nextTick(() => document.getElementById("side-tab-" + self.sideTab).focus());
+        },
+      })),
+    ], { role: "tablist", "aria-label": "右侧栏页面" });
+    const inspection = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "工具与审批"),
       toolBtns,
       approvalBox,
@@ -422,7 +449,22 @@ createApp({
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
       budgetBox,
-    ]);
+    ], { id: "side-page-inspect", role: "tabpanel", "aria-labelledby": "side-tab-inspect", hidden: self.sideTab !== "inspect" });
+    const guide = el("div", "side-page", [
+      el("section", "side-section", [
+        el("h2", null, "SaCode 使用指南"),
+        self.approval ? el("button", "btn", "返回处理待审批请求", { id: "guide-approval", onClick: () => self.openSide("tools-panel") }) : null,
+        ...[
+          ["记录任务", "在底部输入任务或补充信息，点击发送后写入当前本地会话。发送消息与启动执行是两个独立操作。"],
+          ["运行与停止", "使用会话下方的运行按钮开始验证轮次；执行中可点击停止。当前轮次使用示例输出，真实模型任务尚未开放。"],
+          ["工具与审批", "在工具页查看工具说明。需要审批的操作只有允许一次或拒绝两种选择；查看详情不会执行工具。"],
+          ["预算与保存", "预算只能收紧。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
+        ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
+      ], { id: "guide-panel", tabindex: -1 }),
+    ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
+    const side = el("aside", "pane side", [sideTabs, el("div", "side-content", [inspection, guide])], {
+      "aria-label": "工具、预算与指南",
+    });
 
     const composer = el("footer", "composer", [
       el("label", "field-label", "发送消息", { for: "composer" }),

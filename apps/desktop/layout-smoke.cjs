@@ -87,6 +87,29 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       writeFileSync(join(outDir, `sacode-detail-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${dialogReport.failed.length ? "FAIL" : "PASS"} tool-detail ${theme} ${width}x${height} ${dialogReport.failed.join(',')}`);
       await js("document.querySelector('dialog[open] .dialog-header button').click()");
+      await js("document.querySelector('#side-tab-guide').click()");
+      await new Promise((r) => setTimeout(r, 50));
+      const guideReport = await js(`(() => {
+        const box = e => e.getBoundingClientRect();
+        const side = document.querySelector('.side'), tabs = [...document.querySelectorAll('.side-tab')];
+        const content = document.querySelector('.side-content'), cards = [...document.querySelectorAll('.guide-card')];
+        const checks = {
+          visible: !document.querySelector('#side-page-guide').hidden && document.querySelector('#side-page-inspect').hidden,
+          tabAlignment: Math.abs(box(tabs[0]).top-box(tabs[1]).top)<1 && Math.abs(box(tabs[0]).height-box(tabs[1]).height)<1,
+          contentFits: content.scrollWidth<=content.clientWidth && box(content).bottom<=box(side).bottom+1,
+          cardAlignment: cards.length===4 && cards.every(e => Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
+          approvalVisible: document.querySelector('#side-tab-inspect').getAttribute('aria-label').includes('待审批') && !!document.querySelector('.pending-dot') && !!document.querySelector('#guide-approval'),
+          noPageOverflow: document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight,
+        };
+        return { checks, contentWidth:content.clientWidth, scrollWidth:content.scrollWidth,
+          contentBottom:box(content).bottom, sideBottom:box(side).bottom,
+          failed:Object.keys(checks).filter(k=>!checks[k]) };
+      })()`);
+      Object.assign(guideReport, { theme, width, height, surface:'guide' });
+      reports.push(guideReport);
+      writeFileSync(join(outDir, `sacode-guide-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${guideReport.failed.length ? "FAIL" : "PASS"} guide ${theme} ${width}x${height} ${guideReport.failed.join(',')}`);
+      await js("document.querySelector('#guide-approval').click()");
     }
   }
   writeFileSync(join(outDir, "layout-report.json"), JSON.stringify(reports, null, 2));

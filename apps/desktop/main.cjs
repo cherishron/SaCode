@@ -200,6 +200,17 @@ async function uiSmoke() {
   note(await waitFor(() => count('dialog[open]').then(n => n === 0)), "Escape 关闭工具详情");
   note(await js("document.activeElement.id === 'detail-write'"), "弹窗关闭后焦点归还详情按钮");
   note((await text('#count-events')) === detailEvents, "查看详情未新增会话事件或审批");
+  await click('#side-tab-guide');
+  note(await js("!document.querySelector('#side-page-guide').hidden && document.querySelector('#side-page-inspect').hidden"), "指南标签切换到独立右侧页面");
+  note((await text('#guide-panel')).includes('SaCode 使用指南') && (await text('#guide-panel')).includes('真实模型任务尚未开放'), "中文指南明确当前可用操作与模型限制");
+  await js("document.querySelector('#side-tab-guide').focus()");
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
+  note(await waitFor(() => js("document.activeElement.id === 'side-tab-inspect' && !document.querySelector('#side-page-inspect').hidden")), "方向键切换标签并同步焦点");
+  await click('#side-tab-guide');
+  await click('a[href="#budget-panel"]');
+  note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
+  note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
@@ -393,6 +404,11 @@ async function uiSmoke() {
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
   note(await waitFor(() => text("#approval").then((t) => t.includes("工单 #"))), "审批浮层出现且带工单号（一次性放行，无永久授权按钮）");
+  const pendingApproval = await text('#approval');
+  await click('#side-tab-guide');
+  note(await js("!!document.querySelector('#guide-approval') && document.querySelector('#side-tab-inspect').getAttribute('aria-label').includes('待审批')"), "指南页保留待审批提示与返回入口");
+  await click('#guide-approval');
+  note(await waitFor(() => js("document.activeElement.id === 'tools-panel' && !document.querySelector('#side-page-inspect').hidden")) && (await text('#approval')) === pendingApproval, "指南往返保留原审批工单并聚焦工具分区");
   note(await click("#deny"), "已点拒绝");
   const denied = await waitFor(async () => (await text("#outcome")).includes("被拒"));
   note(denied, `拒绝结果=${await text("#outcome")}`);
