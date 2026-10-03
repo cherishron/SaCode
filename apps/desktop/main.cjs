@@ -156,9 +156,12 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === "function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+  note(apiShape === "function,function,function,function,function,function,function,function,function,function,function", `preload 暴露面=${apiShape}`);
+  // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget'].indexOf(k) < 0).join(',')");
+  note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
@@ -238,6 +241,23 @@ async function uiSmoke() {
   const cancelUnchanged = usageAfterCancel.includes(" · absent") &&
     usageAfterCancel.split(" · ")[0] === usageAfterFull.split(" · ")[0];
   note(cancelUnchanged, `取消轮不计量=${usageAfterFull} -> ${usageAfterCancel}`);
+  // 预算控制面：调大必须由核心拒且停在原档；收紧后徽章档位跟着核心回的数字走。
+  const setBudgetField = (v) => js(
+    `(() => { const i = document.getElementById('budget-input'); i.value = ${JSON.stringify(v)};` +
+    " i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()"
+  );
+  await setBudgetField("500");
+  note(await click("#apply-budget"), "已派发调大预算");
+  const widened = await waitFor(async () => (await text("#budget-note")).includes("仍停在 200"));
+  note(widened, `调大预算=${await text("#budget-note")}`);
+  await setBudgetField("100");
+  note(await click("#apply-budget"), "已派发收紧预算");
+  const tightened = await waitFor(async () => (await text("#turn-usage")).includes("/100"));
+  note(tightened, `收紧后读数=${await text("#turn-usage")}`);
+  // 负数在渲染层就被挡（不给「把档位改成 NaN 从而谁都拦不住」留通路）
+  await setBudgetField("-1");
+  note(await click("#apply-budget"), "已派发负数预算");
+  note((await text("#budget-note")).includes("非负整数"), `负数预算=${await text("#budget-note")}`);
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
@@ -344,6 +364,14 @@ ipcMain.handle("dsh:turnStart", async (_e, args) => {
 ipcMain.handle("dsh:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
 
 ipcMain.handle("dsh:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
+ipcMain.handle("dsh:usageStatus", async () => withHost(() => bridge.request("usage/status")));
+// 预算只许收紧：非整数、负数在主进程就拒收，调大由核心回 applied:false。
+// 界面拿不到「抬高当前档位」的任何通路，也拿不到发任意方法的那条通道。
+ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
+  const b = args && args.budget;
+  if (typeof b !== "number" || !Number.isInteger(b) || b < 0) throw new Error("bad-budget");
+  return withHost(() => bridge.request("usage/set-budget", { budget: b }));
+});
 
 const UI_SMOKE = process.argv.includes("--ui-smoke");
 

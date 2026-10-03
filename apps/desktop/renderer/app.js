@@ -42,7 +42,12 @@ createApp({
     const approval = ref(null);
     const outcome = ref("");
     const outcomeKind = ref("");
-    const turn = ref({ running: false, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false });
+    const turn = ref({ running: false, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0 });
+    // 计量读数只留一处真源：值全部来自核心的 usage/status 或 turn/poll 结算帧。
+    // 界面不累加、不换算、也不在核心没回话时编一个 0 出来（0/0 看起来像「花光了」）。
+    const usage = ref({ used: null, budget: null, over: false, verdict: "" });
+    const budgetDraft = ref("");
+    const budgetNote = ref("");
 
     let pollTimer = null;
 
@@ -98,10 +103,7 @@ createApp({
             turn.value.interrupted = !!p.interrupted;
             turn.value.delivered = p.delivered || 0;
             // 用量读数只能取自核心的结算帧：界面不另算一份账，也不显示自己推算的预算。
-            turn.value.used = p.used;
-            turn.value.budget = p.budget;
-            turn.value.verdict = p.usageVerdict || "";
-            turn.value.over = !!p.over;
+            usage.value = { used: p.used, budget: p.budget, over: !!p.over, verdict: p.usageVerdict || "" };
             stopPolling();
             await refresh();
             await refreshTools();
@@ -193,10 +195,34 @@ createApp({
       await refresh();
     }
 
+    async function refreshUsage() {
+      const u = await window.dsh.usageStatus();
+      usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: usage.value.verdict };
+    }
+
+    // 收紧预算：填进来的数字交给核心判，界面只复述核心回的那一档，绝不自己抬。
+    async function setBudget() {
+      const raw = String(budgetDraft.value);
+      const n = Number(raw);
+      if (raw === "" || !Number.isInteger(n) || n < 0) {
+        budgetNote.value = "预算要填非负整数";
+        return;
+      }
+      try {
+        const r = await window.dsh.usageSetBudget(n);
+        await refreshUsage();
+        budgetNote.value = r.applied ? "已收紧到 " + r.budget : "拒绝放宽：仍停在 " + r.budget;
+      } catch (e) {
+        budgetNote.value = cleanErr(e);
+      }
+    }
+
     onMounted(async () => {
       try {
         await refresh();
         await refreshTools();
+        // 开机就把账读出来：重启后「已经花掉多少、停在哪个档」不该等到跑完一轮才知道
+        await refreshUsage();
       } catch (e) {
         error.value = String(e.message || e);
       }
@@ -204,6 +230,7 @@ createApp({
 
     return {
       proj, tools, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
+      usage, budgetDraft, budgetNote, setBudget,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -234,11 +261,11 @@ createApp({
     const turnState = self.turn.settled
       ? (self.turn.cancelled ? "cancelled" : self.turn.interrupted ? "interrupted" : "settled:" + (self.turn.finishReason || "-"))
       : self.turn.running ? "running" : "idle";
-    // 用量呈现：数字与判决都来自核心结算帧，界面不推算、不补默认值。
-    // 没跑完过的轮次显示「未计量」，而不是 0/0——0/0 看起来像「花光了」。
-    const usageText = self.turn.verdict
-      ? "用量 " + self.turn.used + "/" + self.turn.budget + " · " + self.turn.verdict + (self.turn.over ? " · 已超档" : "")
-      : "用量 未计量";
+    // 用量呈现：数字与判决只来自核心（开机读 usage/status，跑完一轮取结算帧），界面不推算、不补默认值。
+    // 还没拿到数时显示 ?，而不是 0/0——0/0 看起来像「已经花光了」。
+    const u = self.usage;
+    const usageText = "用量 " + (u.used === null ? "?" : u.used) + "/" + (u.budget === null ? "?" : u.budget)
+      + (u.verdict ? " · " + u.verdict : " · 未计量") + (u.over ? " · 已超档" : "");
     const turnBar = el("div", "approval-row", [
       h(TV.Button, {
         type: "primary",
@@ -248,8 +275,21 @@ createApp({
       }, () => "跑一轮（完整）"),
       el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: self.turn.running }),
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
+      // 档位只允许往下调：填大的会被核心拒，界面原样复述核心回的那一档，不自己抬
+      h("input", {
+        class: "input",
+        id: "budget-input",
+        type: "number",
+        min: "0",
+        step: "1",
+        placeholder: "收紧预算到",
+        value: self.budgetDraft,
+        onInput: (e) => (self.budgetDraft = e.target.value),
+      }),
+      el("button", "btn", "收紧预算", { id: "apply-budget", onClick: self.setBudget }),
+      el("span", "note", self.budgetNote, { id: "budget-note" }),
       el("span", "badge", "turn " + turnState, { id: "turn-state" }),
-      el("span", "badge" + (self.turn.over ? " badge-warn" : ""), usageText, { id: "turn-usage" }),
+      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: "turn-usage" }),
     ]);
 
     const main = el("section", "pane", [

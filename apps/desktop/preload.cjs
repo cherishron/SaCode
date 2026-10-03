@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld("dsh", {
   turnStart: (limit) => ipcRenderer.invoke("dsh:turnStart", { limit }),
   turnPoll: () => ipcRenderer.invoke("dsh:turnPoll"),
   turnCancel: () => ipcRenderer.invoke("dsh:turnCancel"),
+  usageStatus: () => ipcRenderer.invoke("dsh:usageStatus"),
+  usageSetBudget: (budget) => ipcRenderer.invoke("dsh:usageSetBudget", { budget }),
 });
