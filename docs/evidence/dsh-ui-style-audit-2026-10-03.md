@@ -14,3 +14,9 @@ GitHub API 递归树和 contents 通道本次返回成功；web 浏览工具无�
 ## 下一步验证范围
 
 读取 `ui-theme/src/styles/base.css`、`corner-shape.css` 及相关组件 CSS，核对控件、导航、卡片、输入区和对话框的具体映射；为亮暗主题、标准/禁用/悬停/焦点状态补实际计算样式和截图验收。完整页面布局仍须读取 ui-layout、ui-chat、ui-schedule 等模块，不能从这两份规范推断全部页面已经对齐。
+
+## 圆角映射增量
+
+本次又读取冻结快照的 [base.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/base.css) 和 [corner-shape.css](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/styles/corner-shape.css)，确认六档数值及引擎回退规则。已将 SaCode 标准按钮/输入/导航映射 R12，紧凑折叠控件 R8，工具和审批分组、文件预览 R16，独立内容卡片与气泡 R20，输入主容器/弹窗 R28。保留 SaCode 标志原始图片。
+
+曲线按支持条件作用于已映射表面；组件库内部未核对的圆形图形不被全局覆盖，待审批状态点声明 round。本机 Electron 的 `CSS.supports('corner-shape','superellipse(1.5)')` 返回 false；本轮只能证明圆弧回退、各档实际圆角和状态几何，尚不能证明平滑曲线的渲染效果。圆角映射关闭了前述对应差距，但表面材质、完整主题令牌、完整页面基线仍待核对。

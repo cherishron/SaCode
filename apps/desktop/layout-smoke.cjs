@@ -41,6 +41,15 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       win.setContentSize(width, height);
       // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
       await new Promise((r) => setTimeout(r, 500));
+      const sendBefore=await js("(()=>{const r=document.querySelector('#send').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()");
+      win.webContents.focus();
+      await waitFor("document.hasFocus()");
+      win.webContents.sendInputEvent({type:'mouseMove',x:Math.round(sendBefore.x+sendBefore.width/2),y:Math.round(sendBefore.y+sendBefore.height/2)});
+      await js("document.querySelector('#composer').focus()");
+      // 真实 Tab 进入按钮，验证键盘焦点而非鼠标模式下的脚本 focus。
+      win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
+      win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
+      await waitFor("document.activeElement.id==='send' && document.querySelector('#send').matches(':hover')");
       const report = await js(`(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
         const equal = (a, b) => Math.abs(a-b) < 1;
@@ -56,6 +65,14 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           budgetRow: equal(input.top, apply.top) && equal(input.height, apply.height),
           composerBottom: equal(draft.bottom, send.bottom),
           controlHeights: controls.every(s => equal(box(s).height, 36)),
+          stateGeometry: equal(send.width,${sendBefore.width}) && equal(send.height,${sendBefore.height}) && document.querySelector('#send').matches(':hover') && document.activeElement.id==='send' && getComputedStyle(document.querySelector('#send')).outlineStyle!=='none',
+          standardRadius: controls.every(s => getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='12px') && getComputedStyle(document.querySelector('#budget-input')).borderTopLeftRadius==='12px',
+          navigationRadius: [...document.querySelectorAll('.nav-item')].every(e=>getComputedStyle(e).borderTopLeftRadius==='12px'),
+          composerRadius: getComputedStyle(document.querySelector('#composer')).borderTopLeftRadius==='28px',
+          bubbleRadius: document.querySelectorAll('.tr-bubble__box').length>0 && [...document.querySelectorAll('.tr-bubble__box')].every(e=>getComputedStyle(e).borderTopLeftRadius==='20px'),
+          groupedRadius: ['#tool-write','#approval'].every(s=>getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='16px'),
+          cornerCurve: !CSS.supports('corner-shape','superellipse(1.5)') || getComputedStyle(document.querySelector('#send')).cornerShape==='superellipse(1.5)',
+          circularStatus: !!document.querySelector('.pending-dot') && (!CSS.supports('corner-shape','round') || getComputedStyle(document.querySelector('.pending-dot')).cornerShape==='round'),
           primaryPalette: ['backgroundColor','color','borderTopColor'].every(key =>
             getComputedStyle(document.querySelector('#run-turn'))[key] === getComputedStyle(document.querySelector('#send'))[key]),
           icons: [...document.querySelectorAll('.nav-symbol')].every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
@@ -71,7 +88,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         };
         const palette = (s) => { const style=getComputedStyle(document.querySelector(s));
           return [style.backgroundColor,style.color,style.borderTopColor]; };
-        return { width:innerWidth, height:innerHeight, checks, primary:[palette('#run-turn'),palette('#send')], failed:Object.keys(checks).filter(k => !checks[k]) };
+        return { width:innerWidth, height:innerHeight, stateFacts:{before:${JSON.stringify(sendBefore)},after:{width:send.width,height:send.height},hover:document.querySelector('#send').matches(':hover'),focus:document.activeElement.id,outline:getComputedStyle(document.querySelector('#send')).outlineStyle}, cornerShapeSupported:CSS.supports('corner-shape','superellipse(1.5)'), checks, primary:[palette('#run-turn'),palette('#send')], failed:Object.keys(checks).filter(k => !checks[k]) };
       })()`);
       report.theme = theme;
       reports.push(report);
@@ -240,6 +257,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const box=e=>e.getBoundingClientRect(), rect=box(dialog), controls=[...dialog.querySelectorAll('.btn')];
         const checks={
           actualDirectory: directory.textContent.length>0,
+          surfaceRadius: getComputedStyle(dialog).borderTopLeftRadius==='28px' && getComputedStyle(panel).borderTopLeftRadius==='20px',
           fits:rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
           controls:controls.length===2 && controls.every(e=>Math.abs(box(e).height-36)<1),
           aligned:Math.abs(box(directory).left-box(panel.querySelector('.badge')).left)<1,

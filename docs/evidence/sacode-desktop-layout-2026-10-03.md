@@ -206,3 +206,15 @@ UI 自动验收替换系统选择器返回值，使用真实目录和核心完�
 包内 `win-unpacked/SaCode.exe --ui-smoke` 通过 **160 项**。默认 `--layout-smoke` 首轮报 `ENOTDIR`：截图默认写到 asar 内。修复发布态默认目录为本次临时会话的 layout 子目录；开发态目录和显式 `--capture-dir` 保持原语义。仅含该源码修复的隔离目录重新打包到 `dist/verify/win-unpacked`，构建 rc=0；包内再次通过 **160 项 UI、104 组 / 680 项布局 / 零失败**，全部退出码 0。日志：`dualtest/ui-a6e42f2/{host-build.log,vendor.log,node.log,builder.log,ui.log,verify-build-final.log,ui-final.log,layout-final.log}`。实际默认截图报告：`C:/Users/jingg/AppData/Local/Temp/dsh-smoke-520-1791034244635/layout/layout-report.json`。
 
 前述安装包对应 `a6e42f2`，不包含随后发现的默认截图目录修复；`dist/verify` 才包含修复。不得把两者混称为同一版本或声称新安装包已验证安装卸载。下一批仍需重打含修复的交付包，并完成安装卸载及全部功能验收。
+
+## 冻结上游圆角与控件状态几何对齐（2026-10-03）
+
+本批读取 S0 快照的 ui-theme `base.css`、`corner-shape.css`，与圆角规范相互核对，来源与映射见 `dsh-ui-style-audit-2026-10-03.md`。SaCode 共享圆角改为 4/8/12/16/20/28px，并按用途分别应用标准按钮/输入/导航、紧凑按钮、工具与审批分组、预览、独立卡片/气泡以及输入主容器/弹窗。保留原 SaCode 图标、中文文案、Vue runtime 与 OpenTiny 组件；不切换框架。
+
+引擎支持时已映射表面采用平滑曲线，状态点保留圆弧；本机 Electron 不支持 corner-shape，本次实际验证普通圆弧回退，不能宣称平滑曲线渲染已经通过。补充共享按钮焦点描边，使原生和 TinyVue 控件及恢复焦点可辨识。
+
+在前述隔离 `a6e42f2` 源码和发布态截图路径修复上加入本批 CSS、布局脚本，未混入 SSE/依赖修改。最终开发态 **160 项 UI OK / UI_SMOKE PASS**，**104 组 / 752 项布局 / 零失败**，退出码均 0。日志 `dualtest/ui-a6e42f2/{radius-ui-final.log,radius-verified.log}`；结构报告和截图 `dualtest/ui-a6e42f2/source/apps/desktop/dist/layout/`。最小亮色主窗口和暗色工作区截图已打开检查：文字和长路径未因圆角裁剪，卡片和控件仍保持原栅格与高度。
+
+状态检查使用真实 mouseMove 与 Tab，核对悬停、焦点、描边和不变尺寸；标准控件断言同时包含实际禁用的停止按钮。后台窗口最初出现焦点外圈缺失，增加控件共享 focus 规则后仍有同样现象，诊断确认 WebContents 未获焦点；激活 WebContents 后仅一组事件尚未完成。最终增加 document.hasFocus 和事件完成等待，不删除或放宽断言，全量通过。报告保留 before/after、hover、focus、outline 字段，便于复核。此前失败日志保持可追溯。
+
+本批只关闭已实现表面的圆角映射差距；完整主题材质和页面模块仍未完成，未重打含本批 CSS 的安装包，不以旧产物证明新样式通过。
