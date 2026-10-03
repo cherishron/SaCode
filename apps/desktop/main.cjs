@@ -445,6 +445,26 @@ async function uiSmoke() {
   note((await text('#preview-path')) === 'dsh-tool.txt' && (await text('#preview-meta')).includes('19 字节'), "预览文件名与字节数来自会话读取记录");
   note(await js("document.querySelector('#preview-empty') === null && !document.querySelector('#side-page-preview').hidden"), "成功读取后预览替换空状态");
   await click('#side-tab-inspect');
+  const splitEvents = await text('#count-events');
+  await click('#split-side');
+  note(await waitFor(() => count('.side-secondary').then(n=>n===1)) && (await text('#split-preview-text')) === 'hello-from-renderer', "拆分窗格共享同一读取投影");
+  await js("document.querySelector('#pane-divider').focus()");
+  win.webContents.sendInputEvent({ type:'keyDown', keyCode:'Down' });
+  win.webContents.sendInputEvent({ type:'keyUp', keyCode:'Down' });
+  note(await waitFor(() => js("document.querySelector('#pane-divider').getAttribute('aria-valuenow') === '55'")), "分隔条支持键盘调整窗格比例");
+  const drag = await js("(() => { const d=document.querySelector('#pane-divider').getBoundingClientRect(), c=document.querySelector('.side-content').getBoundingClientRect(); return { x:Math.round(d.left+d.width/2), from:Math.round(d.top+d.height/2), to:Math.round(c.top+c.height*.7) }; })()");
+  win.webContents.sendInputEvent({type:'mouseDown',x:drag.x,y:drag.from,button:'left',clickCount:1});
+  await nap(50);
+  win.webContents.sendInputEvent({type:'mouseMove',x:drag.x,y:drag.to,modifiers:['leftButtonDown']});
+  await nap(50);
+  win.webContents.sendInputEvent({type:'mouseUp',x:drag.x,y:drag.to,button:'left',clickCount:1});
+  note(await waitFor(() => js("Number(document.querySelector('#pane-divider').getAttribute('aria-valuenow')) >= 68 && Number(document.querySelector('#pane-divider').getAttribute('aria-valuenow')) <= 72")), "真实鼠标拖动调整窗格比例=" + await js("document.querySelector('#pane-divider').getAttribute('aria-valuenow')"));
+  const releasedRatio = await js("document.querySelector('#pane-divider').getAttribute('aria-valuenow')");
+  win.webContents.sendInputEvent({type:'mouseMove',x:drag.x,y:drag.from});
+  await nap(50);
+  note(await js("document.querySelector('#pane-divider').getAttribute('aria-valuenow')") === releasedRatio, "松开鼠标后停止调整并清理拖动监听");
+  await click('#split-side');
+  note(await waitFor(() => count('.side-secondary').then(n=>n===0)) && (await text('#count-events')) === splitEvents, "合并窗格不改变会话事实");
 
   // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
   // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、

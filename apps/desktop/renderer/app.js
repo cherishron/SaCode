@@ -91,6 +91,32 @@ createApp({
     const tools = ref([]);
     const detailName = ref("");
     const sideTab = ref("inspect");
+    const sideSplit = ref(false);
+    const sideRatio = ref(50);
+    let resizeController = null;
+    function beginResize(e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const divider = e.currentTarget, pointerId = e.pointerId;
+      divider.focus(); divider.setPointerCapture(pointerId);
+      if (resizeController) resizeController.abort();
+      resizeController = new AbortController();
+      const signal = resizeController.signal;
+      // 窗口监听同时覆盖快速越过分隔条的拖动；捕获负责窗口边缘的指针归属。
+      window.addEventListener("pointermove", (move) => {
+        if (move.pointerId !== pointerId || !divider.isConnected) return;
+        const rect = divider.parentElement.getBoundingClientRect();
+        sideRatio.value = Math.max(25, Math.min(75, Math.round((move.clientY-rect.top)/rect.height*100)));
+      }, { signal });
+      const stop = (end) => {
+        if (end.pointerId !== pointerId) return;
+        if (divider.hasPointerCapture(pointerId)) divider.releasePointerCapture(pointerId);
+        resizeController.abort(); resizeController = null;
+      };
+      window.addEventListener("pointerup", stop, { signal });
+      window.addEventListener("pointercancel", stop, { signal });
+    }
+    window.Vue.onBeforeUnmount(() => { if (resizeController) resizeController.abort(); });
     function openSide(target) {
       sideTab.value = target === "guide-panel" ? "guide" : target === "preview-panel" ? "preview" : "inspect";
       window.Vue.nextTick(() => {
@@ -293,7 +319,7 @@ createApp({
     });
 
     return {
-      proj, tools, detailName, detailTool, sideTab, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
+      proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
@@ -463,22 +489,40 @@ createApp({
         ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
       ], { id: "guide-panel", tabindex: -1 }),
     ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
-    const preview = el("div", "side-page", [
+    const previewBody = (prefix) => [
       el("section", "side-section", [
         el("h2", null, "文档预览"),
         self.readPreview ? [
-          el("p", "preview-path", self.readPreview.path, { id: "preview-path" }),
-          el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: "preview-meta" }),
-          el("pre", "preview-text", self.readPreview.text, { id: "preview-text", tabindex: 0 }),
+          el("p", "preview-path", self.readPreview.path, { id: prefix + "-path" }),
+          el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: prefix + "-meta" }),
+          el("pre", "preview-text", self.readPreview.text, { id: prefix + "-text", tabindex: 0 }),
           el("p", "note", "内容来自本地会话中的成功读取记录；文件修改后需再次读取以更新快照。"),
         ] : el("div", "empty-card", [
           el("h3", null, "暂无读取记录"),
           el("p", "note", "先在工具页读取文件，成功后这里显示会话记录中的文本快照。"),
           el("button", "btn", "查看读取工具", { onClick: () => self.openSide("tools-panel") }),
-        ], { id: "preview-empty" }),
-      ], { id: "preview-panel", tabindex: -1 }),
-    ], { id: "side-page-preview", role: "tabpanel", "aria-labelledby": "side-tab-preview", hidden: self.sideTab !== "preview" });
-    const side = el("aside", "pane side", [sideTabs, el("div", "side-content", [inspection, preview, guide])], {
+        ], { id: prefix + "-empty" }),
+      ], { id: prefix + "-panel", tabindex: -1 }),
+    ];
+    const preview = el("div", "side-page", previewBody("preview"), { id: "side-page-preview", role: "tabpanel", "aria-labelledby": "side-tab-preview", hidden: self.sideTab !== "preview" });
+    const sideToolbar = el("div", "side-toolbar", [el("span", "note", "右侧工作区"),
+      el("button", "btn", self.sideSplit ? "合并窗格" : "拆分窗格", { id: "split-side", "aria-pressed": self.sideSplit,
+        onClick: () => { self.sideSplit = !self.sideSplit; if (self.sideSplit) self.sideTab = "inspect"; } }),
+    ]);
+    const side = el("aside", "pane side", [sideToolbar, sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
+      el("div", "side-primary", [inspection, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
+      self.sideSplit ? el("div", "pane-divider", null, { id: "pane-divider", role: "separator", tabindex: 0,
+        "aria-label": "调整右侧窗格高度", "aria-orientation": "horizontal", "aria-valuemin": 25, "aria-valuemax": 75, "aria-valuenow": self.sideRatio,
+        onKeydown: (e) => {
+          if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+          e.preventDefault();
+          self.sideRatio = e.key === "Home" ? 25 : e.key === "End" ? 75 : Math.max(25, Math.min(75, self.sideRatio + (e.key === "ArrowDown" ? 5 : -5)));
+        },
+        onPointerdown: self.beginResize,
+        onDblclick: () => { self.sideRatio = 50; },
+      }) : null,
+      self.sideSplit ? el("div", "side-secondary", previewBody("split-preview"), { role: "region", "aria-label": "文档预览副窗格", style: { flex: 100-self.sideRatio } }) : null,
+    ])], {
       "aria-label": "工具、预算与指南",
     });
 

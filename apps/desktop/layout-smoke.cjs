@@ -143,6 +143,26 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
         `sacode-preview-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${previewReport.failed.length ? "FAIL" : "PASS"} preview ${theme} ${width}x${height} ${previewReport.failed.join(',')}`);
       await js("document.querySelector('#side-tab-inspect').click()");
+      await js("document.querySelector('#split-side').click()");
+      await new Promise(r=>setTimeout(r,50));
+      const splitReport = await js(`(() => {
+        const primary=document.querySelector('.side-primary'), secondary=document.querySelector('.side-secondary'), divider=document.querySelector('#pane-divider');
+        const box=e=>e.getBoundingClientRect(), a=box(primary), b=box(secondary), d=box(divider);
+        const checks={
+          bothPanes: !!primary && !!secondary,
+          aligned: Math.abs(a.left-b.left)<1 && Math.abs(a.right-b.right)<1,
+          separated: a.bottom<=d.top+1 && d.bottom<=b.top+1,
+          balanced: Math.abs(a.height-b.height)<1,
+          independentScroll: getComputedStyle(primary).overflowY==='auto' && getComputedStyle(secondary).overflowY==='auto',
+          sameSnapshot: document.querySelector('#split-preview-text').textContent === document.querySelector('#preview-text').textContent,
+          noPageOverflow: document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight,
+        };
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(splitReport,{theme,width,height,surface:'split'}); reports.push(splitReport);
+      writeFileSync(join(outDir, `sacode-split-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${splitReport.failed.length ? "FAIL" : "PASS"} split ${theme} ${width}x${height} ${splitReport.failed.join(',')}`);
+      await js("document.querySelector('#split-side').click()");
     }
   }
   writeFileSync(join(outDir, "layout-report.json"), JSON.stringify(reports, null, 2));
