@@ -134,9 +134,42 @@ test("宿主退出前结算未 flush 的写入并归还租约", async () => {
 test("桌面入口的 extension/list 与 CLI 内置注册表一致", async () => {
   const { b } = await boot();
   const l = await b.request("extension/list", {});
-  assert.deepEqual(l.tools.map((t) => t.name), ["write"]);
+  assert.deepEqual(l.tools.map((t) => t.name), ["write", "read"]);
   assert.equal(l.tools[0].needsApproval, true, "内置写文件工具必须默认要审批");
+  // 读不改盘，所以它不带审批要求；这条断言同时钉住「内置工具集」这两个入口一致
+  assert.equal(l.tools[1].needsApproval, false, "只读工具不应要求审批");
   await b.stop();
+});
+
+// 读侧与版本过期同样要能从桌面入口走通：两个入口共用同一个 core，
+// 只在 core 里测过不等于入口这条路真的能走。
+test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒为版本过期", async () => {
+  const { b, dir } = await boot();
+  try {
+    const asked = await b.request("approval/ask", { name: "write" });
+    await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
+    const w = await b.request("extension/call", { name: "write", args: "fs-entry.txt hello", approvalId: asked.approvalId });
+    assert.equal(w.result, "ok:fs-entry.txt");
+    const r = await b.request("extension/call", { name: "read", args: "fs-entry.txt" });
+    assert.equal(r.result, "hello", "读侧必须走同一条管线，交回盘上真实读到的字节");
+    // 第三方改成等长的另一串：只比 size 的实现在这里看不出来
+    writeFileSync(join(dir, "fs-entry.txt"), "HELLP");
+    const asked2 = await b.request("approval/ask", { name: "write" });
+    await b.request("approval/answer", { approvalId: asked2.approvalId, decision: "allowed-once" });
+    await assert.rejects(
+      () => b.request("extension/call", { name: "write", args: "fs-entry.txt world", approvalId: asked2.approvalId }),
+      /fs-stale-version:fs-entry.txt/,
+      "旧认知过期后不得覆盖第三方改动"
+    );
+    assert.equal(readFileSync(join(dir, "fs-entry.txt"), "utf8"), "HELLP", "拒绝必须发生在写之前");
+    // 正文含引号时协议帧不能被自己撕开（回执不过一遍转义就会在这里断）
+    const asked3 = await b.request("approval/ask", { name: "write" });
+    await b.request("approval/answer", { approvalId: asked3.approvalId, decision: "allowed-once" });
+    await b.request("extension/call", { name: "write", args: 'fs-quote.txt 他说"好"', approvalId: asked3.approvalId });
+    assert.equal((await b.request("extension/call", { name: "read", args: 'fs-quote.txt' })).result, '他说"好"');
+  } finally {
+    await b.stop();
+  }
 });
 
 // 反向：未登记工具必须走 JSON-RPC 错误；自报的审批字符串在协议面上完全不起作用
@@ -155,15 +188,21 @@ test("extension/call 未登记工具被拒且自报审批不放行", async () =>
   await b.stop();
 });
 
-test("extension/dispose 后注册表清空且二次卸载失败", async () => {
+test("extension/dispose 逐个卸载后注册表清空且二次卸载失败", async () => {
   const { b, dir } = await boot();
-  const d = await b.request("extension/dispose", { name: "write" });
-  assert.equal(d.disposed, true);
-  assert.deepEqual((await b.request("extension/list", {})).tools, []);
-  const again = await b.request("extension/dispose", { name: "write" });
-  assert.equal(again.disposed, false, "句柄一次性，不得重复撤销凑数");
-  await assert.rejects(() => b.request("extension/call", { name: "write", args: "x.txt y", approval: "allowed-once" }), /unregistered-tool:write/);
-  await b.stop();
+  try {
+    const d = await b.request("extension/dispose", { name: "write" });
+    assert.equal(d.disposed, true);
+    // 内置集里还剩只读的 read：逐个卸，不许把「没卸完」当成已清空
+    assert.deepEqual((await b.request("extension/list", {})).tools.map((t) => t.name), ["read"]);
+    const again = await b.request("extension/dispose", { name: "write" });
+    assert.equal(again.disposed, false, "句柄一次性，不得重复撤销凑数");
+    await assert.rejects(() => b.request("extension/call", { name: "write", args: "x.txt y", approval: "allowed-once" }), /unregistered-tool:write/);
+    assert.equal((await b.request("extension/dispose", { name: "read" })).disposed, true);
+    assert.deepEqual((await b.request("extension/list", {})).tools, []);
+  } finally {
+    await b.stop();
+  }
   assert.equal(existsSync(join(dir, "session.log.lease")), false, "工具事件写入后退出仍须归还租约");
 });
 

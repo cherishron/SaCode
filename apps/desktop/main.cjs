@@ -242,6 +242,19 @@ async function uiSmoke() {
   note(pendingNow > 0, `工具事件先只在实例内可见（pending=${pendingNow}），未 flush 不算已提交`);
   note((await text("#tool-counters")).includes("未登记 0"), `注册表计数=${await text("#tool-counters")}`);
 
+  // 只读工具与写侧共用同一张注册表和同一条管线，但不需要工单：点了就直接执行，
+  // 且不得顺手弹出审批卡（审批面只属于真的会改盘的动作）
+  note((await text("#tool-read")).includes("免审批"), `只读工具卡片标出免审批=${(await text("#tool-read")).slice(0, 40)}`);
+  note(await click("#tool-read"), "已点开只读工具");
+  // 断言必须分得清「成功」与「被拒」：not-found 的报错里会带上参数串，
+  // 只 include 正文的话，一条失败的消息也能把这条断言喂绿。
+  const readBack = await waitFor(async () => {
+    const t = await text("#outcome");
+    return t.startsWith("结果：") && t.includes("hello-from-renderer");
+  });
+  note(readBack, `只读工具直接执行并读回盘上正文=${(await text("#outcome")).slice(0, 52)}`);
+  note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
+
   await bridge.stop();
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
   const log2 = require("node:fs").readFileSync(SESSION_LOG, "utf8");

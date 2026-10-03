@@ -173,7 +173,9 @@ createApp({
 
     async function callTool(name, approvalId) {
       if (!name) return;
-      const args = "dsh-tool.txt hello-from-renderer";
+      // 各工具按自己的参数契约给 args：只读工具的路径就是整串参数，
+      // 把「路径 正文」一起塞给它，它会把整串当成一个不存在的路径。
+      const args = name === "read" ? "dsh-tool.txt" : "dsh-tool.txt hello-from-renderer";
       try {
         const r = await window.dsh.toolCall(name, args, approvalId || 0);
         outcomeKind.value = "";

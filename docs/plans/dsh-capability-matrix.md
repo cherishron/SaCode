@@ -39,7 +39,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-03，回填后）：`✔` 9 行、`◐` 4 行、`☐` 50 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
+计数（2026-10-03 回填后，含本批读侧工具）：`✔` 9 行、`◐` 5 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -59,7 +59,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | deliverables | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 14） |
 | extensions | ✔ | ✔ | M8 | ☐ | ✔ | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj` 子进程驱动；未登记即拒、卸载残留归 0、退出必须结算。core `ExtProcess` 15 条 + extjs 14 条 + CLI `dsh extjs` 12 项 |
 | feedback | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 16） |
-| filesystem | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 17）。依据：只有 `core/src/agent.cj` 一处 `File.writeTo`，无 read/edit/glob/grep；不变量 14 的 `FS_NOT_OBSERVED`/`FS_STALE_VERSION` 全仓 0 命中 |
+| filesystem | ✔ | ✔ | M4 | ☐ | ◐ | 本批补上读侧：`read` 与 `write` 共用同一条管线，读交回盘上真实字节并留下版本标记，同路径的写在发现第三方改动（**等长也算**）时于写入前被 `fs-stale-version` 拒掉且不改盘（core `fs_test.cj` 4 条 + bridge 1 条入口往返 + CLI 4 条断言）。**仍缺**：edit/glob/grep 与多文件观察面，故只记 ◐ |
 | goal | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（C 档，行 18） |
 | invariants | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 19）。本仓 §4 的 18 条不变量是**我方复刻口径**，不是对该模块的运行实现；且该行只存在于冻结快照，master 已无（见上方漂移） |
 | jobs | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 20） |
@@ -96,7 +96,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | terminal | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
 | todo | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 52） |
 | token-meter | ✔ | ✔ | M2 | ☐ | ◐ | 切片（B 档，行 53）：`core/src/agent.cj` 只把 usage 当字符串存着，无计量与预算 |
-| tools | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项 |
+| tools | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增） |
 | typert | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 55） |
 | user-questions | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**：该模块原文未读（`上游已核` 为 ☐），不据名字猜档位。已有的审批/人在环面属 `approval` 行，不连带勾选 |
 | voice-input | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 57） |

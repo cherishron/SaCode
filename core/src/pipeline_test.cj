@@ -23,6 +23,7 @@ func newRuntime(tag: String): (SessionLog, ToolRegistry, ToolRuntime) {
     let log = SessionLog(p)
     let reg = ToolRegistry()
     reg.register(ToolSpec("write", "写临时文件", "path content", true))
+    reg.register(ToolSpec("read", "观察文件", "path", false))
     return (log, reg, ToolRuntime(log, reg))
 }
 
@@ -74,6 +75,7 @@ func snapshotRecordsPriorBytesAndVerifiesLossless() {
     let target = "pipe-snap.txt"
     File.writeTo(target, "OLD-CONTENT".toArray())
     let (log, reg, rt) = newRuntime("snap")
+    @Expect(rt.execute("read", target, "", true).allowed, true)
     let r = rt.execute("write", "${target} new content here", "allowed-once", true)
     @Expect(r.allowed, true)
     @Expect(rt.lastDetail.snapshotBefore, Int64(11))
@@ -88,11 +90,14 @@ func snapshotRecordsPriorBytesAndVerifiesLossless() {
 @Test
 func failureCodesAreDistinctPerStage() {
     let (log, reg, rt) = newRuntime("fail")
-    reg.register(ToolSpec("read", "只读工具", "path", false))
+    // 「登记了但还没实现」的占位名必须真的是没实现的那个：
+    // 本批把 read 实现出来之后，再拿 read 当占位就测不出 unknown-tool 了
+    // （会先按 not-found 归一），所以换成仍无实现的 edit。
+    reg.register(ToolSpec("edit", "还没实现的工具", "path", false))
     let badArgs = rt.execute("write", "only-a-path", "allowed-once", true)
     @Expect(badArgs.allowed, false)
     @Expect(rt.lastDetail.stage, "bad-args")
-    let unknownImpl = rt.execute("read", "x.txt y", "allowed-once", true)
+    let unknownImpl = rt.execute("edit", "x.txt y", "allowed-once", true)
     @Expect(unknownImpl.allowed, false)
     @Expect(rt.lastDetail.stage, "unknown-tool")
     let ioErr = rt.execute("write", "no-such-dir/pipe-fail.txt y", "allowed-once", true)

@@ -13,7 +13,9 @@ func emit(body: String) {
 }
 
 func errFrame(id: String, code: Int64, message: String): String {
-    return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"error\":{\"code\":${code},\"message\":\"${message}\"}}"
+    // message 是外部可见文本（工具失败里带着调用方给的路径），不转义就会让
+    // 一条含引号或换行的消息自己把协议帧撕开。
+    return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"error\":{\"code\":${code},\"message\":\"${jsonEscapeText(message)}\"}}"
 }
 
 func okFrame(id: String, result: String): String {
@@ -219,6 +221,9 @@ main(args: Array<String>) {
     // 保证 CLI 与桌面看到的工具集与审批语义一致。
     let extReg = ToolRegistry()
     extReg.register(ToolSpec("write", "写临时文件", "path content", true))
+    // 读侧工具与写侧共用同一条管线；它不改盘，所以默认不要审批，
+    // 但它会留下版本标记，随后同一路径的 write 要按这份标记判是否已被第三方改过。
+    extReg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
     let extRt = ToolRuntime(shared, extReg)
     // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
     let approvalDesk = ApprovalDesk(shared)
@@ -448,7 +453,9 @@ main(args: Array<String>) {
                 emit(errFrame(idText, -32010, out.why))
                 continue
             }
-            emit(okFrame(idText, "{\"result\":\"${out.why}\"}"))
+            // 工具的回执正文现在是真内容（read 交回盘上读到的字节），可能含引号与换行：
+            // 不过一遍转义就会把协议帧自己撕开。
+            emit(okFrame(idText, "{\"result\":\"${jsonEscapeText(out.why)}\"}"))
             continue
         }
         if (method == "extension/dispose") {
