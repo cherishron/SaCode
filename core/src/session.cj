@@ -4,6 +4,7 @@ import std.collection.ArrayList
 import std.fs.*
 import std.io.*
 import std.sync.*
+import std.env.getStdErr
 
 public class SessionEvent {
     public let seq: Int64
@@ -140,7 +141,7 @@ public class SessionLog {
             flushedCount = Int64(events.size)
             ok = true
         } catch (e: IOException) {
-            println("flush failed: ${e.message}")
+            getStdErr().writeln("flush failed: ${e.message}")
             ok = false
         }
         mtx.unlock()

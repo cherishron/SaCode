@@ -31,6 +31,9 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
   await waitFor("!!document.querySelector('#preview-text')");
   await js("document.querySelector('#tool-write').click()");
   await waitFor("!!document.querySelector('#approval')");
+  // 通过真实核心创建多条会话，覆盖长中文标题与多卡片的栅格。
+  await js("window.dsh.sessionCreate('布局检查：'+'长会话标题'.repeat(10))");
+  await js("window.dsh.sessionCreate('布局检查：文档整理')");
   const reports = [];
   for (const theme of ["light", "dark"]) {
     nativeTheme.themeSource = theme;
@@ -210,13 +213,17 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       const catalogReport = await js(`(() => {
         const dialog=document.querySelector('.catalog-dialog[open]'), rect=dialog.getBoundingClientRect();
         const cards=[...dialog.querySelectorAll('.catalog-card')], box=e=>e.getBoundingClientRect();
+        const name=document.querySelector('#new-session-title'), create=document.querySelector('#create-session');
         const checks={
-          actualCatalog: cards.length>0 && cards.some(e=>e.dataset.sessionId==='current'),
+          actualCatalog: cards.length>=3 && cards.some(e=>e.dataset.sessionId==='current'),
           fits: rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
           cardAlignment: cards.length>0 && cards.every(e=>Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
           titleAndBadgeCentered: cards.every(e=>{const title=box(e.querySelector('h3')), badge=box(e.querySelector('.badge'));return Math.abs(title.top+title.height/2-badge.top-badge.height/2)<1;}),
           noOverflow: dialog.scrollWidth<=dialog.clientWidth && cards.every(e=>e.scrollWidth<=e.clientWidth),
           refreshHeight: Math.abs(box(document.querySelector('#refresh-catalog')).height-36)<1,
+          createRowAligned: Math.abs(box(name).top-box(create).top)<1 && Math.abs(box(name).height-36)<1 && Math.abs(box(create).height-36)<1,
+          selectionControlHeights: [...dialog.querySelectorAll('.catalog-select')].every(e=>Math.abs(box(e).height-36)<1),
+          longTitleBounded: cards.some(e=>{const title=e.querySelector('h3');return title.scrollWidth>title.clientWidth && title.title===title.textContent && getComputedStyle(title).textOverflow==='ellipsis';}),
         };
         return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
       })()`);

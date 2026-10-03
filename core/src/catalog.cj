@@ -2,6 +2,7 @@ package core
 
 import std.fs.*
 import std.collection.ArrayList
+import std.unicode.*
 
 // 目录仅发现日志，摘要仍由 SessionLog 回放得出，不保存第二份会话索引。
 // 保留根目录的旧会话，新增会话目录约定为 sessions/<目录>/session.log。
@@ -29,6 +30,7 @@ public class SessionCatalog {
         }
         var title = ""
         for (event in log.snapshotEvents()) {
+            if (event.eventType == "session/title") { title = event.data; break }
             if (event.eventType == "user/message" && event.data.size > 0) {
                 title = event.data
                 break
@@ -36,6 +38,83 @@ public class SessionCatalog {
         }
         let status = if (log.isTruncatedTail()) { "truncated-tail" } else { "ready" }
         return SessionCatalogEntry(id, title, log.durableCount(), status)
+    }
+
+    public func indexPath(): String {
+        return "${canonicalize(root).toString()}/session.log"
+    }
+
+    // 只接收目录清单中的不透明 ID，客户端不能借此传入任意文件路径。
+    public func pathFor(id: String): String {
+        let base = canonicalize(root).toString()
+        if (id == "current" && !exists(indexPath())) { return indexPath() }
+        for (item in list()) {
+            if (item.id == id) {
+                if (item.status == "replay-rejected") { throw Exception("replay-rejected") }
+                return if (id == "current") { indexPath() } else { "${base}/${id}/session.log" }
+            }
+        }
+        throw Exception("unknown-session")
+    }
+
+    public func selectedId(): String {
+        if (exists(indexPath()) && canonicalize(indexPath()).parent.toString() != canonicalize(root).toString()) {
+            throw Exception("invalid-session-directory")
+        }
+        let index = SessionLog(indexPath())
+        if (!index.load()) { throw Exception("catalog-index-rejected") }
+        var id = "current"
+        for (event in index.snapshotEvents()) {
+            if (event.eventType == "workspace/session-selected") { id = event.data }
+        }
+        return id
+    }
+
+    // 调用方持有根日志租约并完成 flush 后，选择才算持久化成功。
+    public func select(index: SessionLog, id: String): Unit {
+        pathFor(id)
+        index.append("workspace/session-selected", id)
+    }
+
+    public func create(title: String): String {
+        for (b in title.toArray()) {
+            if (b < 32 || b == 127) { throw Exception("bad-session-title") }
+        }
+        let name = title.trimStart({r => r.isWhiteSpace()}).trimEnd({r => r.isWhiteSpace()})
+        if (name.size == 0 || name.size > 512) { throw Exception("bad-session-title") }
+        let base = canonicalize(root).toString()
+        let sessions = "${base}/sessions"
+        if (!exists(sessions)) { Directory.create(sessions) }
+        if (canonicalize(sessions).parent.toString() != base || !FileInfo(sessions).isDirectory()) {
+            throw Exception("invalid-session-directory")
+        }
+        let reservation = File.createTemp(Path(sessions))
+        let tempPath = reservation.info.path
+        let token = reservation.info.name
+        reservation.close()
+        removeIfExists(tempPath, recursive: false)
+        var id = ""
+        var directory = ""
+        var attempt: Int64 = 0
+        // 临时文件名可能重复使用；独占目录创建才是最终占位屏障。
+        while (id.size == 0 && attempt < 1024) {
+            let candidate = "sessions/session-${token}-${attempt}"
+            let path = "${base}/${candidate}"
+            attempt += 1
+            if (exists(path)) { continue }
+            try {
+                Directory.create(path)
+                id = candidate
+                directory = path
+            } catch (e: Exception) {
+                if (!exists(path)) { throw e }
+            }
+        }
+        if (id.size == 0) { throw Exception("session-directory-conflict") }
+        let log = SessionLog("${directory}/session.log")
+        log.append("session/title", name)
+        if (!log.flush()) { throw Exception("session-create-flush-failed") }
+        return id
     }
 
     public func list(): ArrayList<SessionCatalogEntry> {

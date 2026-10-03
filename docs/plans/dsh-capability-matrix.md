@@ -98,8 +98,8 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | session-query | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
 | session-reference | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 37） |
 | session-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 38）。C04：上游本地诊断与外发遥测边界待核；保留本地诊断需求，外发默认关闭，不直接排除整模块 |
-| session-title | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 39） |
-| settings | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 40）；§6.1.3 里 Settings 窗仍是未接面 |
+| session-title | ✔ | ✔ | M1 | ☐ | ☐ | 完整模块未实现（C 档，行 39）；桌面新建名称已保存为 `session/title` 并用于列表及主标题，尚未核验上游标题生成/编辑契约与 CLI 交互，不据此改变模块计数 |
+| settings | ✔ | ✔ | M5/M6 | ☐ | ☐ | 完整配置域未实现（C 档，行 40）；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，不以局部设置窗判定整个模块完成 |
 | shell | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 41） |
 | sidebar-right | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地 |
 | skills | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 43） |
@@ -122,5 +122,5 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | web-server | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**理由同 `user-questions`。本仓宿主是 stdio NDJSON JSON-RPC（`apps/host`），与上游 server 形态不同，不据「都是服务端」勾选。C01/C03 官方账号/云服务边界待核；未来 HTTP/WebSocket 访问认证、Origin 和网络访问控制必须保留 |
 | webhook | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 61） |
 | workflow | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 62） |
-| workspace | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 63） |
+| workspace | ✔ | ✔ | M5/M6 | ☐ | ☐ | 工作区模块未实现（C 档，行 63）；本地会话目录已支持列表、新建、切换和恢复所选会话，但项目目录选择、工作区元数据及 CLI 对应交互未接，不把应用会话存储目录称为项目工作区 |
 | README | ✔ | — | 待定 | ☐ | ☐ | 子系统目录索引页，**不是一条能力**；此前被算进「64 个模块」的分母，本节已按 63 + 1 更正（§6.1.2 D 档第 2 条） |

@@ -225,10 +225,18 @@ func loadForWrite(log: SessionLog, meter: TokenMeter): Bool {
 }
 
 main(args: Array<String>) {
-    let p = "session.log"
-    let lease = WriteLease(p)
-    let shared = SessionLog(p)
+    let catalog = SessionCatalog(".")
+    var activeId = "current"
+    var startupFault = false
+    var p = catalog.indexPath()
+    try { activeId = catalog.selectedId(); p = catalog.pathFor(activeId) } catch (e: Exception) {
+        // 根日志损坏交给既有 replay-rejected 协议；缺失所选会话则不能静默切回默认会话。
+        startupFault = e.message != "catalog-index-rejected"
+    }
+    var lease = WriteLease(p)
+    var shared = SessionLog(p)
     var leaseHeld = false
+    var selectionFault = false
     // 内置仓颉工具在此登记；extension/* 全部走同一个注册表与同一个 ToolRuntime，
     // 保证 CLI 与桌面看到的工具集与审批语义一致。
     let extReg = ToolRegistry()
@@ -236,12 +244,12 @@ main(args: Array<String>) {
     // 读侧工具与写侧共用同一条管线；它不改盘，所以默认不要审批，
     // 但它会留下版本标记，随后同一路径的 write 要按这份标记判是否已被第三方改过。
     extReg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
-    let extRt = ToolRuntime(shared, extReg)
+    var extRt = ToolRuntime(shared, extReg)
     // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
-    let approvalDesk = ApprovalDesk(shared)
+    var approvalDesk = ApprovalDesk(shared)
     // token 计量与预算：账只认会话日志重算出来的那份，内存计数不是第二真源，
     // 所以每次接手日志都要 rebuild，崩溃重启后不会因为「失忆」而放行。
-    let meter = TokenMeter(shared)
+    var meter = TokenMeter(shared)
     // JS 动态扩展宿主：由 core 的 ExtProcess 直接驱动的子进程，与内置仓颉工具共用
     // 同一套语义（未登记即拒、卸载残留归 0、退出必须结算）。
     var jsHost: Option<ExtProcess> = None
@@ -251,11 +259,11 @@ main(args: Array<String>) {
     // 「会动日志的写」串行化，读侧（投影/订阅）在 turn 在途期间照常应答。
     var turnHandle: Option<TurnHandle> = None
     var turnBusy = false
-    let turnSink = ThreadSafeDeliveryQueue(64)
+    var turnSink = ThreadSafeDeliveryQueue(64)
     // 工具调用改成「立刻回执 + 独立线程收帧」：主循环因此能在转调期间继续读 stdin，
     // 桌面的 cancel/stop 才追得上在途调用。登记表只由主循环动，收帧线程只写 sink。
-    let callSink = ThreadSafeDeliveryQueue(64)
-    let inflight = InflightCalls()
+    var callSink = ThreadSafeDeliveryQueue(64)
+    var inflight = InflightCalls()
     var callSeq: Int64 = 0
     // 每次 turn/start 递增：调用登记时记下自己属于哪一轮，
     // 取消一轮只结算它自己发起的那些（epoch 0 = 不在任何 turn 里）。
@@ -287,6 +295,14 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        if (startupFault && method != "initialize" && method != "session/catalog" && method != "session/create" && method != "session/select") {
+            emit(errFrame(idText, -32002, "selection-replay-rejected"))
+            continue
+        }
+        if (selectionFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status") {
+            emit(errFrame(idText, -32003, "selection-failed-restart-required"))
+            continue
+        }
         // turn 在途期间只拦「会动日志的写」：读侧走 core 的守护访问器，工具调用的
         // 发起/收帧/取消必须放得进来，否则取消永远追不上在途调用。
         if (turnBusy && !allowedDuringTurn(method)) {
@@ -294,7 +310,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -641,12 +657,74 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
             continue
         }
+        if (method == "session/create") {
+            try {
+                let id = catalog.create(jsonStr(body, "title"))
+                emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(id)}\",\"saved\":true}"))
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32004, e.message))
+            }
+            continue
+        }
+        if (method == "session/select") {
+            let wanted = jsonStr(body, "sessionId")
+            // 未完成审批与扩展调用仍归原会话；必须由用户先结算，不能默默丢掉。
+            if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
+                emit(errFrame(idText, -32001, "session-resources-in-flight"))
+                continue
+            }
+            var targetPath = ""
+            try { targetPath = catalog.pathFor(wanted) } catch (e: Exception) {
+                emit(errFrame(idText, -32602, e.message))
+                continue
+            }
+            let target = SessionLog(targetPath)
+            if (!target.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+            if (leaseHeld) {
+                if (!shared.flush()) { emit(errFrame(idText, -32003, "flush-failed")); continue }
+                lease.release()
+                leaseHeld = false
+            }
+            if (!target.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+            let indexLease = WriteLease(catalog.indexPath())
+            if (!indexLease.takeoverIfStale()) {
+                emit(errFrame(idText, -32001, "already-owned")); continue
+            }
+            let index = SessionLog(catalog.indexPath())
+            if (!index.load()) {
+                indexLease.release(); emit(errFrame(idText, -32002, "catalog-index-rejected")); continue
+            }
+            try { catalog.select(index, wanted) } catch (e: Exception) {
+                indexLease.release(); emit(errFrame(idText, -32602, e.message)); continue
+            }
+            if (!index.flush()) {
+                // 失败保留根租约，由进程退出后按已死写者规则接管；不声称切换成功。
+                selectionFault = true
+                emit(errFrame(idText, -32003, "selection-flush-failed")); continue
+            }
+            indexLease.release()
+            startupFault = false
+            activeId = wanted
+            p = targetPath
+            shared = if (p == catalog.indexPath()) { index } else { target }
+            lease = WriteLease(p)
+            extRt = ToolRuntime(shared, extReg)
+            approvalDesk = ApprovalDesk(shared)
+            meter = TokenMeter(shared)
+            meter.rebuild()
+            turnHandle = None
+            turnSink = ThreadSafeDeliveryQueue(64)
+            callSink = ThreadSafeDeliveryQueue(64)
+            inflight = InflightCalls()
+            emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(activeId)}\",\"selected\":true,\"saved\":true,\"theme\":\"${SessionAppearance(shared).theme()}\"}"))
+            continue
+        }
         if (method == "session/catalog") {
             try {
                 var items = "["
                 var comma = ""
                 for (item in SessionCatalog(".").list()) {
-                    let current = if (item.id == "current") { "true" } else { "false" }
+                    let current = if (item.id == activeId) { "true" } else { "false" }
                     items += comma + "{\"id\":\"${jsonEscapeText(item.id)}\",\"title\":\"${jsonEscapeText(item.title)}\",\"durable\":${item.durable},\"status\":\"${item.status}\",\"current\":${current}}"
                     comma = ","
                 }

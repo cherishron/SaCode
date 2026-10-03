@@ -332,7 +332,7 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
 
 | 面 | 上游含什么 | 数据来源（只允许这些通道） | 交互与终态 | 现状 |
 | --- | --- | --- | --- | --- |
-| Sidebar（brand / panellist / workspaces / directoryFlow / settings 触发） | 会话列表面板与工作区切换 | `session/catalog` 扫描默认日志及 `sessions/<目录>/session.log`，摘要由 core 回放落盘日志得出；不新增前端索引真源 | 当前只读列表；切换会话 = 换 `session.log`，未 flush 的写入须先结算 | 部分：中文会话列表已接入；新建、切换、工作区选择与目录流程未实现 |
+| Sidebar（brand / panellist / workspaces / directoryFlow / settings 触发） | 会话列表面板与工作区切换 | `session/catalog` 扫描默认日志及 `sessions/<目录>/session.log`；`session/create` 与 `session/select` 调用 core，标题和所选会话均由日志回放得出 | 新建并打开会话；切换前 flush 旧写入，待审批/未消费工单、在途回合与扩展须先结算；选择持久化并在重启后恢复 | 部分：中文列表、新建和切换已接入；工作区选择、目录流程及 CLI 对应交互未实现 |
 | Main · conversation header | 当前会话标题、模型、轮次状态 | `session/projection`（events/durable/pending/tail）+ `turn/poll` | 状态只随协议应答变，前端不自造 | **已实现**（计数条 + turn 条） |
 | Main · composer bar（attachments / permission / plan / model） | 输入框上方的四个选择器 | 附件与权限档需 core 新增面；model 选择需真 provider | 无 provider 时不得显示可选模型凑数 | 仅输入框已实现；操作条的「跑一轮（完整）」已改由 TinyVue `Button` 渲染（构建期折叠），attachment/permission/plan/model 四个选择器未实现 |
 | Main · hero（workspace-agentPreset） | 空会话时的 agent 预设卡 | 需 core 提供预设清单 | 预设不是第二真源，只产 `user/message` | 未实现 |

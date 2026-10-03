@@ -160,3 +160,19 @@ Host 新增固定只读 `session/catalog`，登记初始化能力并允许运行
 隔离验证基线为 `2b9e5fb` 加本批文件，排除其他会话的在飞 SSE/审批修改，目录 `dualtest/catalog/source`。核心 **128/128**（含新增目录用例四项），新构建 Host 成功，桌面 **72/72**（新增 Host 集成两项），UI **135 项 OK / UI_SMOKE PASS**，布局 **96 组报告 / 600 项检查 / 零失败**。Host 集成含中文空格目录、引号/换行标题、目录外 junction、损坏日志、非递归发现、未 flush 不计入及 flush 后更新、空目录不创建日志。日志为 `dualtest/catalog/core.log`、`host-build.log`、`catalog-node.log`、`ui.log`、`layout.log`；最终核心复验为 `dualtest/core-final.log`。截图位于隔离目录 `apps/desktop/dist/layout/`，已查看最小窗口深色会话列表，卡片与状态同行对齐且无横向溢出。
 
 本批仅提供真实只读会话清单，不等于工作区/会话管理全流程完成；未重打安装包。目录 API 参考仓颉官方 [Directory 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_classes.html) 与 [FileInfo/Path 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_structs.html)，以本机 SDK 1.1.3 编译及动态用例为落地依据。
+
+## 会话新建、切换与恢复
+
+`SessionCatalog` 新增命名会话创建、清单 ID 路径解析及所选 ID 回放；名称记录为 `session/title`，不伪装为用户消息。所选会话记录在根默认日志的 `workspace/session-selected`，不新增本地缓存或第二份索引文件。新建目录采用独占目录创建屏障，解决 SDK 临时文件名可复用造成的名称冲突；标题显式按 Unicode 空白修剪，并拒绝空白、控制字符和超长输入。
+
+Host 新增固定 `session/create`、`session/select`。切换前先结算旧会话写入，拒绝待决定或已允许但未消费的工单、在途回合、扩展宿主及调用；选择完成落盘后才重新绑定日志、租约、工具运行态、审批、预算和投递队列。重启读取所选 ID；若所选目录丢失，则拒绝静默回退和写入，允许用户通过清单明确选择可用会话恢复。选择保存失败保留根租约，并拒绝后续写入直到重启；flush 错误改走 stderr，stdout 保持 NDJSON 协议帧。
+
+桌面通过固定 IPC 新建并打开会话，切换后重新读取消息、预算与主题，主标题随当前核心标题变化。名称输入、新建与打开按钮共享高度；目录信息与打开按钮同行；长标题省略并保留完整提示。待处理任务/审批或配置保存期间禁用切换并显示中文原因。窗口内草稿按会话保留；临时流式、工具结果、详情、浮动预览与预算输入在切换时清理。响应以会话代次校验，旧会话迟到的投影、工具清单、预算、主题及轮询不得覆盖新界面。
+
+隔离目录 `dualtest/session-management/source` 从 `015ec23` 导出，并纳入后续已提交的审批号与系统提示核心文件，加本批源码；不包含主工作区在飞 SSE、agent 与打包修改。核心 **135/135**，Host 编译成功，桌面 **77/77**（新管理集成五项），UI **147 项 OK / UI_SMOKE PASS**，布局 **96 组 / 624 项 / 零失败**。日志为 `dualtest/session-management-core.log`、`dualtest/session-management/{host-build.log,node.log,ui.log,layout.log}`。包含真实只读文件故障注入：选择保存失败不报告成功、原选择保持不变、后续写入被拒、stdout 每行可解析为 JSON。取消后切换、旧写入 flush、消息/预算/主题隔离、重启恢复、无效 ID、缺失目录显式恢复均有 Host 往返覆盖。
+
+迟到投影反证仅修改隔离渲染文件，移除会话代次保护后，`epoch-red.log` 两项指定 UI 检查失败、进程退出码 1；恢复后完整 UI 套件通过。布局通过真实核心创建多个会话，覆盖长中文标题、多个卡片和表单同行；已查看最小窗口深色截图，表单、标题/状态及目录/打开按钮对齐，正文滚动而关闭入口固定。
+
+另外以绝对路径启动 Node，将 PATH 缩至 Windows/System32 与 Windows，会话管理五项 Host 集成仍全通过，日志 `dualtest/session-management/clean-path-management.log`。新使用的 `libcangjie-std-unicode.dll` 已在宿主同目录，运行不依赖 SDK PATH；该结论只覆盖本批会话管理，不外推 TLS、扩展或安装流程。
+
+本批不等于工作区全流程完成：项目目录选择、工作区元数据、CLI 对应交互、标题生成/重命名仍待补齐；也未重打安装包。核心目录存储不被命名为项目工作区。完整桌面 UI 目标保持未完成。

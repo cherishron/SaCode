@@ -103,6 +103,15 @@ public class ApprovalDesk {
         return n
     }
 
+    // 切换会话时，尚待决定和已放行但未消费的工单都不能丢弃。
+    public func hasOpenTickets(): Bool {
+        reap()
+        for (ticket in items) {
+            if (ticket.state == "pending" || ticket.state == "allowed-once") { return true }
+        }
+        return false
+    }
+
     // 应答只认 pending：已结算（含用过、被拒、过期）的工单一律拒绝改判
     public func answer(id: Int64, decision: String): Bool {
         reap()

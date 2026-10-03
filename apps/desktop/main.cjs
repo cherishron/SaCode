@@ -177,11 +177,11 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === Array(14).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(16).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");
@@ -603,6 +603,45 @@ async function uiSmoke() {
   note(lockState === "attr" || lockState === "cls", `超档后 run-turn 锁定态=${lockState}`);
   note((await text("#run-turn")).includes("已超档"), `超档后按钮文案=${await text("#run-turn")}`);
 
+  // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
+  const oldTheme=nativeTheme.themeSource;
+  const catalogRequestBefore=bridge.request.bind(bridge);
+  let catalogSnapshotCaptured=false, catalogSnapshotReleased=false, delayCatalogSnapshot=true;
+  bridge.request=async(method,params)=>{
+    const result=await catalogRequestBefore(method,params);
+    if (method==='session/projection' && delayCatalogSnapshot) {
+      delayCatalogSnapshot=false; catalogSnapshotCaptured=true;
+      await nap(600); catalogSnapshotReleased=true;
+    }
+    return result;
+  };
+  await js("(() => {const e=document.querySelector('#composer');e.value='原会话的延迟消息';e.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#send').click();})()");
+  await waitFor(async()=>catalogSnapshotCaptured);
+  await js("(() => {const e=document.querySelector('#composer');e.value='原会话未发送草稿';e.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#open-catalog').click();})()");
+  await waitFor(()=>count('#new-session-title').then(n=>n===1));
+  await js("(() => {const e=document.querySelector('#new-session-title');e.value='中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await click('#create-session');
+  note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "新建会话保存并自动打开");
+  const newEntry=(await bridge.request('session/catalog')).entries.find(item=>item.current);
+  note(newEntry.title==='中文验收会话' && newEntry.id!=='current', "会话名称来自核心持久日志");
+  note(await text('#current-session-title')==='中文验收会话', "主标题随实际会话切换");
+  await waitFor(async()=>catalogSnapshotReleased); await nap(50);
+  bridge.request=catalogRequestBefore;
+  note(await count('.msg-text')===0, "旧会话延迟投影不会覆盖新会话界面");
+  note(await count('.msg-text')===0, "新会话不继承原会话消息");
+  note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource==='system', "新会话预算与主题独立初始化");
+  note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
+  await js("(() => {const e=document.querySelector('#composer');e.value='只属于中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await click('#send');
+  note(await waitFor(async()=> (await text('#messages')).includes('只属于中文验收会话')), "新会话消息从核心重新投影");
+  await js("document.querySelector('#open-catalog').click()");
+  await waitFor(()=>js("!!document.querySelector('.catalog-dialog[open] [data-select-session=\"current\"]')"));
+  await click('[data-select-session="current"]');
+  note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "列表可切回默认会话");
+  note(await js("document.querySelector('#composer').value==='原会话未发送草稿'"), "切回后恢复原会话草稿");
+  note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
+  note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme, "原会话预算与主题恢复");
+
   await bridge.stop();
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」
   const log2 = require("node:fs").readFileSync(SESSION_LOG, "utf8");
@@ -686,6 +725,18 @@ ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
 });
 
 ipcMain.handle("dsh:sessionCatalog", async () => bridge.request("session/catalog"));
+ipcMain.handle("dsh:sessionCreate", async (_e, args) => {
+  if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
+  return withHost(()=>bridge.request("session/create", {title:args.title}));
+});
+ipcMain.handle("dsh:sessionSelect", async (_e, args) => {
+  if (!args || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");
+  return withHost(async()=>{
+    const selected = await bridge.request("session/select", {sessionId:args.sessionId});
+    nativeTheme.themeSource=selected.theme;
+    return selected;
+  });
+});
 ipcMain.handle("dsh:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
   nativeTheme.themeSource=result.theme;

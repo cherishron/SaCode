@@ -72,7 +72,9 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .nav-footer { margin-top: auto; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); }
 .top { grid-column: 2 / -1; display: flex; align-items: center; gap: var(--space-4);
   flex-wrap: wrap; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); background: var(--surface-2); }
-.heading { display: flex; align-items: baseline; gap: var(--space-3); }
+.heading { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.heading h1 { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heading .note { white-space: nowrap; }
 .counters { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .badge { display: inline-flex; align-items: center; min-height: 28px; padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2);
@@ -195,8 +197,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .catalog-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
   gap: var(--space-2) var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-s); }
 .catalog-title { min-width: 0; font-size: var(--fs-m); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.catalog-meta, .catalog-id { grid-column: 1 / -1; }
+.catalog-meta { grid-column: 1 / -1; }
+.catalog-id { grid-column: 1; min-width: 0; }
 .catalog-root, .catalog-id { overflow-wrap: anywhere; }
+.catalog-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); }
+.catalog-create .input { height: var(--control-height); }
+.catalog-select { grid-column: 2; justify-self: end; }
 .settings-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .settings-tab[aria-selected=true] { color: var(--accent); border-color: var(--accent); background: var(--surface); }
 .settings-page { display: flex; flex-direction: column; gap: var(--space-4); }

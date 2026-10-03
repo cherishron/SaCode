@@ -97,6 +97,55 @@ createApp({
     const settingsOpen = ref(false);
     const settingsTab = ref("general");
     const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
+    let sessionGeneration = 0;
+    const newSessionTitle = ref("");
+    const sessionDrafts = new Map();
+    function catalogError(e) {
+      const message=String(e.message || e);
+      const reasons={"selection-replay-rejected":"所选会话无法读取，请从会话列表选择可用会话。", "selection-failed-restart-required":"会话选择保存失败，请重启后继续。",
+        "session-resources-in-flight":"请先处理审批工单并关闭在途扩展。", "turn-in-flight":"请先停止当前执行并等待结算。", "already-owned":"会话正在由另一写者使用，请稍后重试。",
+        "bad-session-title":"请输入有效的会话名称。", "replay-rejected":"会话日志无法回放，已保留原会话。", "unknown-session":"会话目录不存在，请刷新列表。",
+        "selection-flush-failed":"会话选择保存失败，请重启后检查日志。", "flush-failed":"当前会话保存失败，尚未切换。"};
+      return Object.entries(reasons).find(([key])=>message.includes(key))?.[1] || message;
+    }
+    async function applySelection(id) {
+      if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
+      if (budgetBusy.value || appearanceBusy.value) throw new Error("正在保存当前会话配置，请稍后切换。");
+      const oldId=catalog.value?.entries.find(item=>item.current)?.id;
+      await window.dsh.sessionSelect(id);
+      sessionGeneration += 1;
+      if (oldId) sessionDrafts.set(oldId,draft.value);
+      draft.value=sessionDrafts.get(id)||"";
+      stopPolling(); foldOpen.ids.clear();
+      turn.value={running:false,settled:false,text:"",finishReason:"",cancelled:false,interrupted:false,delivered:0};
+      approval.value=null; outcome.value=""; outcomeKind.value=""; error.value="";
+      previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
+      catalogNote.value="已切换，正在加载会话…";
+      await refresh(); await refreshTools(); await refreshUsage(); await refreshAppearance();
+      catalog.value=await window.dsh.sessionCatalog();
+      catalogOpen.value=false;
+      window.Vue.nextTick(()=>document.getElementById('composer').focus());
+    }
+    async function selectSession(id) {
+      if (catalogBusy.value) return;
+      catalogBusy.value=true; catalogNote.value="正在保存并切换会话…";
+      try { await applySelection(id); }
+      catch(e) { catalogNote.value=catalogError(e); }
+      finally { catalogBusy.value=false; }
+    }
+    async function createSession() {
+      if (catalogBusy.value || !newSessionTitle.value.trim()) return;
+      catalogBusy.value=true; catalogNote.value="正在新建会话…";
+      try {
+        if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
+        if (budgetBusy.value || appearanceBusy.value) throw new Error("正在保存当前会话配置，请稍后新建。");
+        const created=await window.dsh.sessionCreate(newSessionTitle.value);
+        newSessionTitle.value="";
+        catalog.value=await window.dsh.sessionCatalog();
+        await applySelection(created.id);
+      } catch(e) { catalogNote.value=catalogError(e); }
+      finally { catalogBusy.value=false; }
+    }
     async function refreshCatalog() {
       if (catalogBusy.value) return;
       catalogBusy.value = true; catalogNote.value = "正在读取本地会话…";
@@ -109,7 +158,10 @@ createApp({
     function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
     const appearance = ref({ theme:null, scope:"session" });
     const appearanceBusy = ref(false), appearanceNote = ref("");
-    async function refreshAppearance() { appearance.value = await window.dsh.appearanceGet(); }
+    async function refreshAppearance() {
+      const generation=sessionGeneration, result=await window.dsh.appearanceGet();
+      if (generation===sessionGeneration) appearance.value=result;
+    }
     async function setTheme(theme) {
       if (appearanceBusy.value) return;
       appearanceBusy.value=true; appearanceNote.value="正在保存外观…";
@@ -189,16 +241,20 @@ createApp({
     window.Vue.onBeforeUnmount(() => { window.removeEventListener('keydown', desktopKeys); stopPolling(); });
 
     async function refresh() {
-      proj.value = await window.dsh.projection();
+      const generation=sessionGeneration, result=await window.dsh.projection();
+      if (generation===sessionGeneration) proj.value=result;
     }
 
     async function refreshTools() {
+      const generation=sessionGeneration;
       const r = await window.dsh.toolsList();
+      if (generation!==sessionGeneration) return;
       tools.value = r.tools;
       toolCounters.value = { misses: r.misses, guardDenials: r.guardDenials };
     }
 
     async function send() {
+      const generation=sessionGeneration;
       const text = draft.value;
       if (!text) return;
       draft.value = "";
@@ -206,8 +262,10 @@ createApp({
       try {
         // 渲染层只说「用户说了什么」，事件类型由核心决定：不给它伪造 system/message 的口子
         await window.dsh.userSend(text);
+        if (generation!==sessionGeneration) return;
         await refresh();
       } catch (e) {
+        if (generation!==sessionGeneration) return;
         error.value = String(e.message || e);
       }
     }
@@ -221,9 +279,11 @@ createApp({
 
     function startPolling() {
       stopPolling();
+      const generation=sessionGeneration;
       pollTimer = setInterval(async () => {
         try {
           const p = await window.dsh.turnPoll();
+          if (generation!==sessionGeneration) return;
           for (const f of p.frames) {
             const i = f.indexOf(":");
             const kind = i < 0 ? f : f.slice(0, i);
@@ -246,6 +306,7 @@ createApp({
             await refreshTools();
           }
         } catch (e) {
+          if (generation!==sessionGeneration) return;
           error.value = String(e.message || e);
           stopPolling();
         }
@@ -253,12 +314,15 @@ createApp({
     }
 
     async function runTurn(limit) {
+      const generation=sessionGeneration;
       error.value = "";
       turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
       try {
         await window.dsh.turnStart(limit);
+        if (generation!==sessionGeneration) return;
         startPolling();
       } catch (e) {
+        if (generation!==sessionGeneration) return;
         error.value = String(e.message || e);
         turn.value.running = false;
       }
@@ -277,6 +341,7 @@ createApp({
     const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': /, "");
 
     async function askTool(t) {
+      const generation=sessionGeneration;
       outcome.value = "";
       outcomeKind.value = "";
       if (!t.needsApproval) {
@@ -287,8 +352,10 @@ createApp({
       // 不是渲染层自己拼的一句 "allowed-once"。
       try {
         const a = await window.dsh.approvalAsk(t.name);
+        if (generation!==sessionGeneration) return;
         approval.value = { name: t.name, description: t.description, approvalId: a.approvalId };
       } catch (e) {
+        if (generation!==sessionGeneration) return;
         approval.value = null;
         outcomeKind.value = "outcome outcome-denied";
         outcome.value = "发号失败：" + cleanErr(e);
@@ -296,17 +363,20 @@ createApp({
     }
 
     async function answerTool(approvalAnswer) {
+      const generation=sessionGeneration;
       const a = approval.value;
       approval.value = null;
       if (!a) return;
       try {
         const r = await window.dsh.approvalAnswer(a.approvalId, approvalAnswer);
+        if (generation!==sessionGeneration) return;
         if (!r.accepted) {
           outcomeKind.value = "outcome outcome-denied";
           outcome.value = "应答未被接受：工单状态 " + r.state;
           return;
         }
       } catch (e) {
+        if (generation!==sessionGeneration) return;
         outcomeKind.value = "outcome outcome-denied";
         outcome.value = "应答失败：" + cleanErr(e);
         return;
@@ -316,15 +386,18 @@ createApp({
     }
 
     async function callTool(name, approvalId) {
+      const generation=sessionGeneration;
       if (!name) return;
       // 各工具按自己的参数契约给 args：只读工具的路径就是整串参数，
       // 把「路径 正文」一起塞给它，它会把整串当成一个不存在的路径。
       const args = name === "read" ? "dsh-tool.txt" : "dsh-tool.txt hello-from-renderer";
       try {
         const r = await window.dsh.toolCall(name, args, approvalId || 0);
+        if (generation!==sessionGeneration) return;
         outcomeKind.value = "";
         outcome.value = "结果：" + r.result;
       } catch (e) {
+        if (generation!==sessionGeneration) return;
         outcomeKind.value = "outcome outcome-denied";
         outcome.value = "被拒：" + cleanErr(e);
       }
@@ -333,7 +406,9 @@ createApp({
     }
 
     async function refreshUsage() {
+      const generation=sessionGeneration;
       const u = await window.dsh.usageStatus();
+      if (generation!==sessionGeneration) return;
       usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: u.verdict || "" };
     }
 
@@ -366,8 +441,9 @@ createApp({
         // 开机就把账读出来：重启后「已经花掉多少、停在哪个档」不该等到跑完一轮才知道
         await refreshUsage();
         await refreshAppearance();
+        await refreshCatalog();
       } catch (e) {
-        error.value = String(e.message || e);
+        error.value = catalogError(e);
       }
     });
 
@@ -375,14 +451,15 @@ createApp({
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       appearance, appearanceBusy, appearanceNote, setTheme,
-      catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog,
+      catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
   render() {
     const self = this;
+    const currentTitle = self.catalog?.entries.find(item=>item.current)?.title || "会话";
     const head = el("header", "top", [
-      el("div", "heading", [el("h1", null, "会话"), el("span", "note", "消息与执行记录")]),
+      el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle}), el("span", "note", "消息与执行记录")]),
       el("div", "counters", [
         el("span", "badge", "事件 " + self.proj.events, { id: "count-events" }),
         el("span", "badge", "已保存 " + self.proj.durable, { id: "count-durable" }),
@@ -655,15 +732,21 @@ createApp({
       el("div", "catalog-toolbar", [el("h2", null, "落盘会话"), el("button", "btn", self.catalogBusy ? "读取中…" : "刷新", {
         id:"refresh-catalog", disabled:self.catalogBusy, onClick:self.refreshCatalog })]),
       self.catalog ? el("p", "note catalog-root", "目录："+self.catalog.root, {id:"catalog-root"}) : null,
-      el("p", "note", self.catalogNote, {id:"catalog-note", role:"status", "aria-live":"polite"}),
+      el("p", "note", self.turn.running || self.approval ? "请先结算执行任务并处理待审批工单。" : self.budgetBusy || self.appearanceBusy ? "正在保存当前会话配置，请稍后切换。" : self.catalogNote, {id:"catalog-note", role:"status", "aria-live":"polite"}),
+      el("label", "field-label", "新会话名称", {for:"new-session-title"}),
+      el("div", "catalog-create", [el("input", "input", null, {id:"new-session-title", value:self.newSessionTitle, maxlength:80, disabled:self.catalogBusy,
+        placeholder:"例如：整理项目文档", onInput:e=>{self.newSessionTitle=e.target.value;} }),
+        el("button", "btn btn-primary", "新建会话", {id:"create-session", disabled:self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.turn.running || !!self.approval || !self.newSessionTitle.trim(), onClick:self.createSession})]),
       el("div", "catalog-list", self.catalog ? self.catalog.entries.map(item=>el("article", "catalog-card", [
         el("h3", "catalog-title", item.title || "未命名会话", {title:item.title || "未命名会话"}),
         el("span", "badge"+(item.status!=="ready" ? " badge-warn" : ""), item.current ? "当前会话" : "本地会话"),
         el("p", "note catalog-meta", item.status==="replay-rejected" ? "日志回放失败，摘要不可用" : "已保存 "+item.durable+" 条事件"+(item.status==="truncated-tail" ? " · 尾帧不完整" : "")),
-        el("p", "note catalog-id", item.current ? "默认会话" : "会话目录："+item.id),
+        el("p", "note catalog-id", item.id==="current" ? "默认会话" : "会话目录："+item.id),
+        el("button", "btn catalog-select", item.current ? "已打开" : "打开会话", {"data-select-session":item.id,
+          disabled:self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.turn.running || !!self.approval || item.current || item.status==="replay-rejected", onClick:()=>self.selectSession(item.id)}),
       ], {"data-session-id":item.id})) : [], {id:"catalog-list", "aria-busy":String(self.catalogBusy)}),
       self.catalog && !self.catalog.entries.length ? el("p", "empty-card", "此目录暂无落盘会话。") : null,
-      el("p", "note", "会话新建、切换及工作区选择尚未接入。"),
+      el("p", "note", "切换前会保存当前会话；待审批工单和执行任务需要先处理完毕。工作区选择尚未接入。"),
     ]);
     return el("div", "app", [nav, head, main, side, composer, detail, floating, settings, catalogDialog]);
   },
