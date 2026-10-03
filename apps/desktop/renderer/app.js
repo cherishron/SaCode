@@ -42,7 +42,7 @@ createApp({
     const approval = ref(null);
     const outcome = ref("");
     const outcomeKind = ref("");
-    const turn = ref({ running: false, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0 });
+    const turn = ref({ running: false, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false });
 
     let pollTimer = null;
 
@@ -97,6 +97,11 @@ createApp({
             turn.value.cancelled = !!p.cancelled;
             turn.value.interrupted = !!p.interrupted;
             turn.value.delivered = p.delivered || 0;
+            // 用量读数只能取自核心的结算帧：界面不另算一份账，也不显示自己推算的预算。
+            turn.value.used = p.used;
+            turn.value.budget = p.budget;
+            turn.value.verdict = p.usageVerdict || "";
+            turn.value.over = !!p.over;
             stopPolling();
             await refresh();
             await refreshTools();
@@ -110,7 +115,7 @@ createApp({
 
     async function runTurn(limit) {
       error.value = "";
-      turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0 };
+      turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
       try {
         await window.dsh.turnStart(limit);
         startPolling();
@@ -229,6 +234,11 @@ createApp({
     const turnState = self.turn.settled
       ? (self.turn.cancelled ? "cancelled" : self.turn.interrupted ? "interrupted" : "settled:" + (self.turn.finishReason || "-"))
       : self.turn.running ? "running" : "idle";
+    // 用量呈现：数字与判决都来自核心结算帧，界面不推算、不补默认值。
+    // 没跑完过的轮次显示「未计量」，而不是 0/0——0/0 看起来像「花光了」。
+    const usageText = self.turn.verdict
+      ? "用量 " + self.turn.used + "/" + self.turn.budget + " · " + self.turn.verdict + (self.turn.over ? " · 已超档" : "")
+      : "用量 未计量";
     const turnBar = el("div", "approval-row", [
       h(TV.Button, {
         type: "primary",
@@ -239,6 +249,7 @@ createApp({
       el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: self.turn.running }),
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
       el("span", "badge", "turn " + turnState, { id: "turn-state" }),
+      el("span", "badge" + (self.turn.over ? " badge-warn" : ""), usageText, { id: "turn-usage" }),
     ]);
 
     const main = el("section", "pane", [

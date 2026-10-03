@@ -212,6 +212,9 @@ async function uiSmoke() {
   note(await click("#run-turn"), "已发起完整一轮");
   const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
   note(settledTurn, `turn 终态=${await text("#turn-state")}`);
+  // 用量读数必须由核心结算帧驱动：完整一轮花 12，档位停在默认的 200
+  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("12/200 · recorded"));
+  note(usageShown, `用量读数=${await text("#turn-usage")}`);
   const streamed = await text("#stream");
   note(streamed.includes("你好，world"), `流式文本回显=${JSON.stringify(streamed.slice(0, 40))}`);
 
@@ -221,6 +224,8 @@ async function uiSmoke() {
   note(await click("#stop-turn"), "已派发停止");
   const cancelled = await waitFor(async () => (await text("#turn-state")).startsWith("turn cancelled"));
   note(cancelled, `取消终态=${await text("#turn-state")}`);
+  // 被取消的一轮不进计量：记它等于把「取消」变成一次消耗，读数应停在 absent
+  note((await text("#turn-usage")).includes(" · absent"), `取消轮不计量=${await text("#turn-usage")}`);
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
