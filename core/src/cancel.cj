@@ -152,6 +152,11 @@ public class TurnLoop {
             }
             asm.toolCalls.clear()
             log.append("turn/cancelled", "after ${delivered} chunks")
+        } else if (!cancelled) {
+            // 干净收束才把正文落成助手消息：一轮一条，空正文也落（终态在日志里必须可数）。
+            // 取消的一轮不落 —— 半截正文留在 TurnResult.text 里由界面按 interrupted 呈现，
+            // 不能冒充「助手说过完整的话」进模型可见历史。
+            log.append("assistant/message", asm.assembledText())
         }
         return TurnResult(
             cancelled,

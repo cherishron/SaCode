@@ -79,6 +79,37 @@ main(args: Array<String>) {
         a4.push(Chunk("usage", "9", ""))
         expect("缺 finish 时保持 interrupted", a4.interrupted)
 
+        // 干净收束的助手正文必须落进日志并能在重启后回放。CLI 与桌面吃的是同一套核心，
+        // 这里不落盘就等于两个入口的对话只活在一次进程里。
+        let sp = "settle-cli.log"
+        removeIfExists(sp, recursive: false)
+        removeIfExists("${sp}.lease", recursive: false)
+        let slog = SessionLog(sp)
+        let stk = TurnToken()
+        let sr = TurnLoop().run(CancellableStreamProvider(stk, 5), stk, slog, DeliveryQueue(8))
+        expect("干净收束不落取消态", !sr.cancelled && sr.finishReason == "stop")
+        expect("结算文本与装配同源", sr.text == "你好，world")
+        var settleAssistant: Int64 = 0
+        for (ev in slog.snapshotEvents()) {
+            if (ev.eventType == "assistant/message") {
+                settleAssistant += 1
+            }
+        }
+        expect("助手正文落 assistant/message 且只落一次", settleAssistant == Int64(1))
+        slog.flush()
+        let slog2 = SessionLog(sp)
+        var replayed = false
+        if (slog2.load()) {
+            for (m in slog2.deriveMessages()) {
+                if (m == "assistant/message: 你好，world") {
+                    replayed = true
+                }
+            }
+        }
+        expect("重启后从日志回放助手正文", replayed)
+        removeIfExists(sp, recursive: false)
+        removeIfExists("${sp}.lease", recursive: false)
+
         // 计量与预算：CLI 入口要能只靠核心回答「这一轮花了多少、还让不让跑下一轮」。
         // 这里不借宿主，直接用同一份 core，两个入口因此共享同一套账。
         let mp = "meter-cli.log"

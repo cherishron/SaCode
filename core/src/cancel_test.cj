@@ -109,7 +109,46 @@ func uncancelledTurnCompletesCleanly() {
     @Expect(r.finishReason, "stop")
     @Expect(r.usage, "17")
     @Expect(q.overflow(), Int64(0))
+    // 干净收束的助手正文必须落进日志：日志是唯一真源，UI 与模型历史都由它投影，
+    // 只活在 turn/poll 帧里的回复重启即丢。
+    var assistantN: Int64 = 0
+    var assistantText = ""
+    for (ev in log.events) {
+        if (ev.eventType == "assistant/message") {
+            assistantN += 1
+            assistantText = ev.data
+        }
+    }
+    @Expect(assistantN, Int64(1))
+    @Expect(assistantText, "ab")
+    // 落进日志就得进模型可见历史，否则两个入口看到的「助手说过什么」不一致
+    var inProj = false
+    for (m in log.deriveMessages()) {
+        if (m == "assistant/message: ab") {
+            inProj = true
+        }
+    }
+    @Expect(inProj, true)
     cleanCancel("none")
+}
+
+@Test
+func cancelledTurnPersistsNoAssistantMessage() {
+    let log = SessionLog("core-test-cancel-nosettle.log")
+    let tk = TurnToken()
+    let r = TurnLoop().run(ScriptedProvider(chunks5(), tk, 2), tk, log, DeliveryQueue(8))
+    @Expect(r.cancelled, true)
+    // 半截正文不进模型历史：没有终态原因的回复不能冒充助手说过完整的话
+    var n: Int64 = 0
+    for (ev in log.events) {
+        if (ev.eventType == "assistant/message") {
+            n += 1
+        }
+    }
+    @Expect(n, Int64(0))
+    // 部分文本仍在结果里，由界面按 interrupted 呈现，不是由日志冒充
+    @Expect(r.text, "ab")
+    cleanCancel("nosettle")
 }
 
 @Test
@@ -135,7 +174,8 @@ func slowConsumerDrainsAndDeliveryResumes() {
     // 慢消费者追上来：事件始终可以从持久日志按游标完整恢复
     let got = q.drain(64)
     @Expect(got.size, Int64(1))
-    @Expect(log.events.size, Int64(6))
+    // 干净收束的一轮写 7 条：turn/start + 5 帧 stream/chunk + 1 条 assistant/message
+    @Expect(log.events.size, Int64(7))
     cleanCancel("slow")
 }
 

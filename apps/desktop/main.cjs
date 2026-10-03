@@ -306,8 +306,19 @@ async function uiSmoke() {
   const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200 · recorded"));
   const usageAfterFull = await text("#turn-usage");
   note(usageShown, `用量读数=${usageAfterFull}`);
-  const streamed = await text("#stream");
-  note(streamed.includes("你好，world"), `流式文本回显=${JSON.stringify(streamed.slice(0, 40))}`);
+  // 干净收束后正文必须回到日志这份真源：界面上那句助手话要出自核心投影，
+  // 而不是出自 turn/poll 的瞬时帧——后者重启就没有了。
+  const assistantTail = await js(
+    "(() => { const m = document.querySelectorAll('#messages .tr-bubble[data-role=\"assistant\"]');" +
+    " if (!m.length) return 'none';" +
+    " const t = (m[m.length - 1].textContent || '').trim(); return t.slice(0, 40); })()"
+  );
+  note(String(assistantTail).includes("你好，world"), `助手正文由投影给出=${JSON.stringify(String(assistantTail))}`);
+  // 同一句话不许有两份真源：投影已给出，流式回显框必须撤掉，否则界面上出现两次
+  const streamLeft = await count("#stream");
+  note(streamLeft === 0, `干净收束后流式回显框数=${streamLeft}（应为 0，正文只剩投影那一份）`);
+  const assistantGroupsAfterFull = await count('#messages .tr-bubble[data-role="assistant"]');
+  note(assistantGroupsAfterFull === 2, `助手气泡组数=${assistantGroupsAfterFull}（种子那组 + 本轮投影新落的那组）`);
 
   // 5) 取消：可取消那一轮停在帧间，点停止要改终态，不能只把按钮禁用
   note(await click("#run-turn-2"), "已发起可取消一轮");
@@ -315,6 +326,15 @@ async function uiSmoke() {
   note(await click("#stop-turn"), "已派发停止");
   const cancelled = await waitFor(async () => (await text("#turn-state")).startsWith("turn cancelled"));
   note(cancelled, `取消终态=${await text("#turn-state")}`);
+  // 取消的一轮不落 assistant/message：半截正文只能继续由流式回显框呈现，
+  // 且不许多出一个助手气泡冒充「助手说过完整的话」。
+  const partialEcho = await text("#stream");
+  note(partialEcho.includes("你好，world"), `取消轮回显保留半截正文=${JSON.stringify(partialEcho.slice(0, 40))}`);
+  const assistantGroupsAfterCancel = await count('#messages .tr-bubble[data-role="assistant"]');
+  note(
+    assistantGroupsAfterCancel === assistantGroupsAfterFull,
+    `取消轮后助手气泡组数=${assistantGroupsAfterCancel}（应与 ${assistantGroupsAfterFull} 一致，未新增）`
+  );
   // 被取消的一轮不进计量：数值必须与上一轮结算时逐字一致，只允许判决词变成 absent
   const usageAfterCancel = await text("#turn-usage");
   const cancelUnchanged = usageAfterCancel.includes(" · absent") &&

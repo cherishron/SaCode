@@ -321,7 +321,11 @@ createApp({
     const streamChildren = [el("span", "msg-role", "assistant/stream")];
     if (self.turn.text) streamChildren.push(self.turn.text);
     if (self.turn.running) streamChildren.push(el("span", "note", " …流式中"));
-    const streamBox = self.turn.running || self.turn.text
+    // 干净收束后正文已落进会话日志、由投影给出那一份气泡，回显框必须撤掉：
+    // 留着它等于界面上同一句助手话有两份来源，其中一份重启就没了。
+    // 取消的一轮不落 assistant/message，半截正文只能继续由回显框呈现。
+    const persisted = self.turn.settled && !self.turn.cancelled;
+    const streamBox = self.turn.running || (self.turn.text && !persisted)
       ? [el("div", "streaming", streamChildren, { id: "stream" })]
       : [];
 
