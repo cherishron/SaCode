@@ -209,7 +209,10 @@ func allowedDuringTurn(method: String): Bool {
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
     let approvalSide = method == "approval/ask" || method == "approval/answer" || method == "approval/status"
-    return turnSide || readSide || callSide || approvalSide
+    // 计量读数与「收紧预算」都归读侧：预算只允许往下调，所以在途期间调它
+    // 不会放宽任何放行条件，反而能让正在跑的这一轮更早被拦。
+    let meterSide = method == "usage/status" || method == "usage/set-budget"
+    return turnSide || readSide || callSide || approvalSide || meterSide
 }
 
 main(args: Array<String>) {
@@ -227,6 +230,9 @@ main(args: Array<String>) {
     let extRt = ToolRuntime(shared, extReg)
     // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
     let approvalDesk = ApprovalDesk(shared)
+    // token 计量与预算：账只认会话日志重算出来的那份，内存计数不是第二真源，
+    // 所以每次接手日志都要 rebuild，崩溃重启后不会因为「失忆」而放行。
+    let meter = TokenMeter(shared)
     // JS 动态扩展宿主：由 core 的 ExtProcess 直接驱动的子进程，与内置仓颉工具共用
     // 同一套语义（未登记即拒、卸载残留归 0、退出必须结算）。
     var jsHost: Option<ExtProcess> = None
@@ -279,7 +285,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -533,6 +539,19 @@ main(args: Array<String>) {
                     continue
                 }
                 leaseHeld = true
+                // 接盘第一件事是重算账：上一轮进程留下的用量，这一轮必须看得见
+                meter.rebuild()
+            }
+            // 预算拦过一次就不再开新轮：超档必须是停下来问人，而不是自动降级继续跑。
+            if (meter.over()) {
+                if (leaseHeld) {
+                    if (shared.flush()) {
+                        leaseHeld = false
+                        lease.release()
+                    }
+                }
+                emit(errFrame(idText, -32014, "over-budget"))
+                continue
             }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
@@ -597,7 +616,14 @@ main(args: Array<String>) {
                     settledText = "true"
                     let cFlag = if (r.cancelled) { "true" } else { "false" }
                     let iFlag = if (r.interrupted) { "true" } else { "false" }
-                    tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${r.text}\",\"finishReason\":\"${r.finishReason}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()}"
+                    // 只有「跑完了」的轮次才欠账：finish 之前必须来一条 usage，
+                    // 缺 finish 的轮次本来就还没花（取消/中断），不配进计量。
+                    var verdict = "absent"
+                    if (r.finishReason.size > 0) {
+                        verdict = meter.record(r.usage)
+                    }
+                    let oFlag = if (meter.over()) { "true" } else { "false" }
+                    tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${r.text}\",\"finishReason\":\"${r.finishReason}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                     turnHandle = None
                     turnBusy = false
                     if (leaseHeld) {
@@ -611,6 +637,44 @@ main(args: Array<String>) {
                 }
             }
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
+        if (method == "usage/status") {
+            // 读数只能由计量器给出，而计量器的账来自日志：界面没有「自己算一份」的通路。
+            // 没持有租约时 shared 是空的，必须先按盘上内容重算，否则刚重启的进程会报 0。
+            var mv = meter
+            if (!leaseHeld) {
+                let mlog = SessionLog(p)
+                if (mlog.load()) {
+                    let rm = TokenMeter(mlog, budget: meter.budgetValue())
+                    rm.rebuild()
+                    mv = rm
+                }
+            }
+            let oFlag2 = if (mv.over()) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"used\":${mv.used()},\"budget\":${mv.budgetValue()},\"over\":${oFlag2},\"badUsage\":${mv.badCount}}"))
+            continue
+        }
+        if (method == "usage/set-budget") {
+            // 预算只能收紧：调大、持平、缺参数（jsonNum 回 -1）一律 applied=false，
+            // 且不改当前档位——能被界面自己抬高的防额不是防额。
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!shared.load()) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+                meter.rebuild()
+            }
+            let want = jsonNum(body, "budget")
+            let ok2 = meter.lowerBudget(want)
+            let appliedText = if (ok2) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"applied\":${appliedText},\"budget\":${meter.budgetValue()},\"used\":${meter.used()}}"))
             continue
         }
         if (method == "extension/host/spawn") {

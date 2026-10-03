@@ -39,7 +39,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-03 回填后，含本批读侧工具）：`✔` 9 行、`◐` 5 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
+计数（2026-10-03 token 计量与预算回填后）：`✔` 10 行、`◐` 4 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -95,7 +95,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | system-prompt | ✔ | ✔ | M2 | ☐ | ◐ | 切片（B 档，行 50）：`apps/cli/src/main.cj` 把系统提示硬编成一条事件，无组装/分层/用例 |
 | terminal | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
 | todo | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 52） |
-| token-meter | ✔ | ✔ | M2 | ☐ | ◐ | 切片（B 档，行 53）：`core/src/agent.cj` 只把 usage 当字符串存着，无计量与预算 |
+| token-meter | ✔ | ✔ | M2 | ☐ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言 |
 | tools | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增） |
 | typert | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 55） |
 | user-questions | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**：该模块原文未读（`上游已核` 为 ☐），不据名字猜档位。已有的审批/人在环面属 `approval` 行，不连带勾选 |

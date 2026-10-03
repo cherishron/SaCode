@@ -301,7 +301,7 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
    说明这条不变量此前确实没有任何别的用例在守。据此 35 由 D 移入 A。
 2. **README 行被算进了能力分母**（矩阵表体最后一行自注它是索引页、不是一条能力；本批已据此把分母改为 63 模块 + README 行）。
 
-**本节表格的计数是 HEAD `ff0d651` 时点的快照**，不是当前值。截至本批（真实单调钟之后）的当前计数：core `cjpm test` **103/103**、
+**本节表格的计数是 HEAD `ff0d651` 时点的快照**，不是当前值。截至本批（token 计量与预算之后）的当前计数：core `cjpm test` **116/116**、
 `bridge.test.mjs` **35** 条（`node --test` 全目录 38 = 35 + paths 3）、extjs **14/14**、Host 能力表 **23** 个方法（审批面由 4 收为 3）、
 内置工具集 **2 个**（`write` 需审批、`read` 免审批）、`--ui-smoke` **36** 条 `UI OK`。据此，A 档里的 `approval`、`tools` 两行本批又各自补上了子系统级的分段证据（工单过期改用真实单调钟并撤掉推进通道；工具管线补 pre/snapshot/post 段并归一失败码），
 其余行的判据不变。**再往后本批补了读侧**：矩阵的 `filesystem` 由 ☐（C 档）移入 ◐，于是 A/B/C 三档变成 **10 / 4 / 49**（C 档 50→49），`tools` 行的阶段码多出 `not-found` 与 `fs-stale-version`。
@@ -322,7 +322,7 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
 2. ~~审批补协议面：审批只是 `preload.cjs` 里 `dsh:toolCall` 的第三个参数，日志里只有 `tool/result denied:*`，全仓无 asked/decided 事件~~ —— **本批已完成**：`core/src/approval.cj` 落 `ApprovalDesk`（发号、应答、一次性消费、逻辑刻度过期），Host 增 `approval/ask|answer|status|tick` 四个方法并入能力表，`extension/call` 改为只认 `approvalId`（自报审批字符串无通路），渲染层「允许一次/拒绝」两张按钮背后是真的工单往返。剩下的相关项：矩阵里审批所在行的分档待按 §6.1.2 表体行号核对后再调（本批不擅自改分母）。~~把逻辑刻度换成真实单调时钟~~ —— **本批已完成**：`ApprovalDesk` 默认钟源改为 `MonoTime` 差值折算的整秒，`advance()` 与 Host 的 `approval/tick` 通道一并删除（能力表 4→3），`approval/ask` 的 `ttl` 只允许缩短、越界回落默认值。
 3. ~~工具管线补段：`ToolRuntime.execute` 只有 5 段，缺 pre/post-execute、无损 snapshot、失败归一化~~ —— **本批已完成**：`execute` 与 `executeWithApproval` 现在共用同一条 `pipeline`（guard → pre-execute 参数归一化 → snapshot → execute → post-execute 无损校验），每段在 `ToolDetail` 上留痕，失败归一成互不相同的阶段码（`unregistered` / `approval-denied` / `guard-denied` / `unknown-tool` / `bad-args` / `io-error` / `threw` / `torn-write` / `ran`），四种新行为各有用例钉住（core 98/98）。顺带修掉一个真缺陷：旧 `runTool` 只取 `split(" ")[1]`，正文里第一个空格之后的内容被静默丢掉。剩下的相关项：矩阵 54 所在行的分档要按表体行号核对后再调（本批不擅自改分母），以及 `snapshotBefore` 目前是字节数而非内容指纹。
 4. 真模型传输：`apps/host` 只 `import stdx.encoding.json.*`，全仓无 HTTP/SSE 客户端，21 目前永远只是假 provider。走 `stdx.net.http` + SSE 半帧/UTF-8 分片用例，再加一条真凭证烟测（待授权）。
-5. ~~先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。~~ —— **本批已定档（2026-10-03 重取上游目录）**：分母＝**63 个模块 + 1 行 README**（192 条目里的 64 个 `.md` 含索引页 `README.md`），逐名双向差集为空、**没有缺行**；`cordis`/`gateway` 两个 ref 都不存在，故按框架层/交付层裁决（`cordis` 整体出局，`gateway` 由 Host+CLI+npm 平台包部分承接），写进矩阵的「M0 基座的裁决」。矩阵表体已按 §6.1.2 的 A/B/C 分档回填「已复刻」列（✔ 9 / ◐ 4 / ☐ 50，README 不计数），「上游已核」保持全 ☐ 不假勾。**剩余**：63 个模块逐篇 en/zh 原文的阅读面仍未做（这是 `上游已核` 唯一的补法），以及 4 行 `◐` 切片要各自补子系统级用例。
+5. ~~先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。~~ —— **本批已定档（2026-10-03 重取上游目录）**：分母＝**63 个模块 + 1 行 README**（192 条目里的 64 个 `.md` 含索引页 `README.md`），逐名双向差集为空、**没有缺行**；`cordis`/`gateway` 两个 ref 都不存在，故按框架层/交付层裁决（`cordis` 整体出局，`gateway` 由 Host+CLI+npm 平台包部分承接），写进矩阵的「M0 基座的裁决」。矩阵表体已按 §6.1.2 的 A/B/C 分档回填「已复刻」列（回填时 ✔ 9 / ◐ 4 / ☐ 50；本批 `token-meter` 由 ◐ 升 ✔，现为 ✔ 10 / ◐ 4 / ☐ 49，README 不计数），「上游已核」保持全 ☐ 不假勾。**剩余**：63 个模块逐篇 en/zh 原文的阅读面仍未做（这是 `上游已核` 唯一的补法），以及 4 行 `◐` 切片要各自补子系统级用例。
 
 ### 6.1.3 桌面 UI 规格：按上游一等公民面复刻（2026-10-03 定稿）
 
