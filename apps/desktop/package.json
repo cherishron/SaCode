@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MulanPSL-2.0",
+  "author": "SaCode",
   "main": "main.cjs",
   "scripts": {
     "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs",
