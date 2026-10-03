@@ -2,7 +2,7 @@
   "name": "@dsh/cli",
   "version": "0.1.0",
   "description": "DeepSeek Harness 复刻：仓颉核心的独立 CLI（不依赖 Electron 与桌面前端）",
-  "license": "MIT",
+  "license": "MulanPSL-2.0",
   "bin": { "dsh": "bin/cli.js" },
   "files": ["bin/cli.js"],
   "optionalDependencies": {

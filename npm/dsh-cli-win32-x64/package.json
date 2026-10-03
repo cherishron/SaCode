@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "os": ["win32"],
   "cpu": ["x64"],
-  "license": "MIT",
+  "license": "MulanPSL-2.0",
   "files": ["bin"]
 }
