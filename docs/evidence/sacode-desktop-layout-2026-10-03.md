@@ -87,3 +87,5 @@
 构建复用 `d8761ef` 干净来源的 89 文件 Host 包：`git diff d8761ef a7b7875 -- core apps/host` 无差异，未声称重新编译核心；前端/vendor/asar 已重新生成。未纳入其他任务未提交的真实 SSE 与 OpenSSL 打包修改。依赖缓存来自当前本机 node_modules 与官方 Electron dist，源码来自提交快照。
 
 最新取证目录 `dualtest/ui-a7b7875/`：`node-tests.log`、`packaged-ui.log`、`packaged-layout.log`、`packaged-layout/layout-report.json`；报告含六类界面各八组，失败条目为 0。完整安装包/便携包构建已启动，暂不记录其成功或哈希，完成后补证。仍未做实际安装/卸载，不将 unpacked 冒烟等同于安装验收。
+
+将子进程 PATH 限定为 `C:\Windows\System32;C:\Windows` 后，包内 UI 冒烟再次通过，退出码 0（`clean-path-ui.log`）。这证明本批会话、工具与预览切片不依赖 PATH 中的仓颉 SDK/Node；没有覆盖尚未接入的真实 TLS 或扩展宿主能力。
