@@ -316,6 +316,27 @@ D 档明细（两条都已亲自复核，不是转抄子代理结论）：
 4. 真模型传输：`apps/host` 只 `import stdx.encoding.json.*`，全仓无 HTTP/SSE 客户端，21 目前永远只是假 provider。走 `stdx.net.http` + SSE 半帧/UTF-8 分片用例，再加一条真凭证烟测（待授权）。
 5. 先定分母与 M0：把上面「63 vs 64」与三条缺行定掉，并写明 M0 基座（cordis/scope/invariants/boot/typert/gateway）是「要复刻」还是「显式出局」——否则 C 档 50 条没有收敛判据。
 
+### 6.1.3 桌面 UI 规格：按上游一等公民面复刻（2026-10-03 定稿）
+
+**复刻口径先划死**：本节验收的是**行为等价**——每个面的数据来源通道、状态迁移、审批与取消路径、Escape/焦点语义；**不宣称像素级复刻**，依据是本仓没有上游的设计稿、令牌表或截图（`docs/evidence/dsh-upstream-freeze.md` 冻结的是 64 个 subsystems 文档与站点参考页，属能力契约而非视觉规格）。任何「外观照抄」的说法在没有一手视觉证据前一律不写。
+
+面清单来自本方案 §3.4 已抄录的上游 UI 一等公民面，逐面对到我们的协议通道：
+
+| 面 | 上游含什么 | 数据来源（只允许这些通道） | 交互与终态 | 现状 |
+| --- | --- | --- | --- | --- |
+| Sidebar（brand / panellist / workspaces / directoryFlow / settings 触发） | 会话列表面板与工作区切换 | 列表面板需新的持久化面（会话目录扫描），**当前 core 无此真源** | 切换会话 = 换 `session.log`，未 flush 的写入须先结算 | 未实现（C 档） |
+| Main · conversation header | 当前会话标题、模型、轮次状态 | `session/projection`（events/durable/pending/tail）+ `turn/poll` | 状态只随协议应答变，前端不自造 | **已实现**（计数条 + turn 条） |
+| Main · composer bar（attachments / permission / plan / model） | 输入框上方的四个选择器 | 附件与权限档需 core 新增面；model 选择需真 provider | 无 provider 时不得显示可选模型凑数 | 仅输入框（attachment/permission/plan/model 未实现） |
+| Main · hero（workspace-agentPreset） | 空会话时的 agent 预设卡 | 需 core 提供预设清单 | 预设不是第二真源，只产 `user/message` | 未实现 |
+| Main · plugins 列表与详情 | 已登记扩展与贡献的工具 | `extension/list`（含 `misses`/`guardDenials` 计数） | 卸载后列表与监听残留归 0 | **已实现**（工具侧栏 + 计数） |
+| 审批卡 | 一次性放行/拒绝 | `approval/ask` → `approval/answer` → `extension/call{approvalId}` | 工单号显示在卡上；消费即失效，过期即拒 | **已实现**（本批，打包态 29 条断言含此项） |
+| Rightbar（pane/tab/float/split、guide、文档预览） | 多窗格与文档预览 | 需新的投影窗口（同一日志的不同切片） | 拆分不得复制真源 | 未实现 |
+| Settings 窗（general / models provider-card / plugins tab） | 配置面 | 方案 §2.5 配置面尚未接 | 配置写入要落盘且可回放 | 未实现 |
+| Automation tasks 页 | 定时任务列表 | 上游权威数据在 storage-domain 不在会话历史 | at-least-once 投递，崩溃可重复 | 未实现 |
+| 快捷键 + 共享 modal 原语（顶栏 Escape 仲裁、焦点归还） | 全局键盘与弹层语义 | 纯前端，但**必须可断言** | Escape 只关最上层；关闭后焦点归还触发元素 | 部分（按钮可点，Escape/焦点边界未测） |
+
+**验收增量口径**（每接一个面就加一条，不许只加代码不加断言）：该面的数据只能来自表里那一列的通道；界面上出现的每个数字/状态都能在 `session.log` 或协议应答里找到出处；`--ui-smoke` 的 `UI OK` 条数只增不减。
+
 ### 6.2 长期阶段
 
 | 阶段 | 内容 | 门禁与学习主题 |
@@ -374,6 +395,8 @@ P0 先实现最小版本，不要求完整 M0 才能实验；模块按依赖可�
 | 19 | 渲染层的数据来源与 IPC 面 | 渲染层只显示核心交出来的东西：消息列表 = `session/projection.messages`（尾部 64 条，计数仍为全量）、流式文本 = `turn/poll`、工具与审批态 = `extension/list`/`extension/call` 的真实应答；**前端不拼第二真源**。IPC 按动作命名并逐字段校验类型与范围，不提供「发任意方法」的通道，`dsh:userSend` 固定写 `user/message`——网页拿不到伪造 `system/message` 的口子。Vue 取 runtime 构建 + `h()` 写视图，因为 `script-src 'self'` 禁 `unsafe-eval` 会让带模板编译器的 global 构建整页空白 |
 | 20 | 冒烟必须从空会话开始 | `--smoke`/`--ui-smoke` 支持 `--session-dir=<路径>`，验收一律指向新建的空目录。原因不是洁癖：默认的 sessionData 目录跨次累积，「这条写入真的落盘了」会被上一次运行的旧日志蒙混——本轮一条落盘断言就是这样假绿过一次，同一变异体在独立目录里才被抓住 |
 | 21 | 会话日志的字段转义 | 落盘格式是按行的 `seq\ttype\tdata`，所以 `escField` 只转义会破坏帧结构的四个字符（`\`、LF、CR、TAB），`load` 对称还原；认不出的转义序列保留反斜杠原样，不做「猜一个字符」的降级。裸换行会把一条事件劈成两行，回放时被当成中段缺帧而**整份拒绝**——聊天输入天然多行，这条不成立就没有 durability 可言。宿主入口侧同步补了 JSON 转义的还原（此前 `jsonStr` 会在 `\"` 处把值截断） |
+| 27 | 组件库的消费形态 | `@opentiny/vue@3.32.0` 实测为 **ESM-only**：`main` 与 `module` 都指向 `./index.js`，全文是 `import ... from "@opentiny/vue-xxx"` 的裸说明符，包内**没有 `dist/`、没有 `unpkg`、没有 global/UMD 构建**。我们的渲染层是 `file://` 下的经典脚本页（ES module 被 CORS 拦）且不带模块加载器，所以它**不能**被 `<script>` 直引。2026-10-03 的隔离探针（临时目录 `npm i @opentiny/vue esbuild`）证明可行路径是**构建期一次性折叠**：`esbuild --bundle --format=iife --alias:vue=./vue-global.cjs`（shim 只有一行 `module.exports = globalThis.Vue`，把 `vue` 指向我们已 vendor 的那一份 runtime）→ Button + Modal 产出 **572,850 字节**，产物里 `new Function(` **0** 处、`eval(` **0** 处、残留 `require("vue")` **0** 处，CSP `script-src 'self'` 不破。组件的 render 函数是预编译的（`createElementVNode`/`renderSlot`），不带运行时模板编译器。据此**在真正落地折叠脚本那一批**同步修订 AGENTS.md 里「无打包器」的措辞为**「运行时无模块加载器与模板编译器；第三方组件由构建期脚本折叠成单个经典脚本」**——esbuild 只作 devDependency，不进产物运行时。仍待实测：主题 CSS 与我们令牌层的冲突（上游用 `--tv-*` 变量族，不得让它成为第二套色值真源） |
+| 28 | 桌面 UI 的复刻口径 | 验收只打**行为等价**：面清单、数据来源通道、状态迁移、审批/取消路径、Escape 与焦点归还，逐条能在 `session.log` 或协议应答里找到出处（§6.1.3 的表）。**不宣称像素级复刻**——本仓没有上游设计稿、令牌表或截图作为一等证据，`dsh-upstream-freeze.md` 冻结的是 64 个 subsystems 文档与站点参考页（能力契约，非视觉规格）。每接一个面必须同时加一条 `--ui-smoke` 断言，且 `UI OK` 条数只增不减 |
 | 26 | 审批的凭据只能是工单号 | 审批从「调用方自带一个字符串自称批过了」改为 `ask → answer → 一次性 consume` 的显式往返（`core/src/approval.cj`）。三条 fail-closed 规则：认得的决定只有 `allowed-once` 与 `denied`（其余不改判也不成功）；一次性是字面意思的一次，消费即失效；过期即拒（逻辑刻度 `advance` 推进，不用 sleep 赌时序，接真实单调时钟时只需把 ttl 的来源换成 `MonoTime`，见 std.time 文档）。`asked/decided/expired` 都写成会话日志事件——「谁批的、批没批、批过头没有」只能从唯一真源回答。协议面上：`extension/call` 对需审批工具只认 `approvalId`，桌面 IPC 的 `dsh:toolCall` 也只收工单号，渲染层没有自报审批的通路；未登记名由注册表按拒绝默认取值，检查顺序固定在审批之前。**参数命名硬约束**：本宿主按整帧字节扫描取值，参数不能叫 `id`（会先撞上 JSON-RPC 信封自己的 `id` 并被静默读成 `-1`），工单句柄统一叫 `approvalId` |
 | 25 | 投影缓存的键与只读契约 | 不变量 9 要求「对无关事件返回同一引用（`Object.is` 门控下游）」，但仓内文档取不到身份比较运算符（`Object.is` 无出处），所以钉的是它的**可观测等价物**：`deriveMessages()` 以「surface 事件条数 + 代次」为键缓存，键没变就返回同一个 `projCache` 对象，并暴露 `projectionBuilds()` 让「有没有白重算」可被断言。两个方向都要钉——只测「不重算」会退化成永远不更新的假绿：`turn/start`/`stream/chunk` 只动 `events` 不动 surface 计数，故不触发重建；`assistant/message` 必须触发；`load()` 这类整体替换走 `generation += 1`，避免新旧表面条数恰好相同时端着旧缓存。代价写进注释：**返回的列表按约定只读**，调用方就地改它等于改缓存（Host/CLI 现在都只读其 size/元素）。防回归证据：把键判断改成恒真只有那条用例转红，改成「只算第一次」同一条以 ERROR 报出「不再更新」 |
 | 24 | 中断的处理面 | std 无信号 API，Windows 的「有人按了 Ctrl+C」只有 kernel32 的 `SetConsoleCtrlHandler` 一条路。三条实测约束决定了形状：① 回调由**系统新起的线程**调起，且 `CFunc` **不得捕获环境**，所以在途 turn 的令牌只能经一张进程级在册表（`Mutex` + `ArrayList`）交接，回调体只做「记账 + 逐个 `cancel()`」；② 处理器必须**只注册一次**（`install()` 幂等），否则一次中断把同一批令牌取消多次，「这一轮被第几次中断取消」就无从判断；③ 返回 `TRUE` 表示「本进程已自行处理」，进程不按默认方式就地终止——这正是协作式取消要的：turn 在检查点收束、未 flush 的写入结算、写租约归还，都发生在同一个进程里，不会把半写状态留在盘上。退出码沿用 **130（128+SIGINT）**，且断言失败时退 1，避免「被杀也算过」。两处踩过的坑记在这里：stdout 被重定向时是**块缓冲**，握手行不 `getStdOut().flush()` 外部驱动永远等不到；provider 在帧间自旋用的 `sleep(1ms)` 在本运行时粒度远大于 1ms，等不到中断时不主动取消就是几十秒挂死。取证分级要诚实：`install()` 返回值与处理器体行为有用例（core 85/85 里占 5 条），**OS 真的调起处理器这一条在本机取不到证据**——`GenerateConsoleCtrlEvent` 三种参数组合全部 `ret=True err=0` 而目标计数恒 0，同一驱动同一控制台下换 `node` 的 `SIGINT` 也一样收不到，所以是环境（非交互会话/ConPTY）缺投递，不是接线缺失；补证动作是在可交互的控制台窗口里手按一次 Ctrl+C |
