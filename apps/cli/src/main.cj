@@ -162,7 +162,7 @@ main(args: Array<String>) {
         }
         let sl = SessionLog("session.log")
         sl.append("turn/start", "t1")
-        sl.append("system/message", "you are dsh")
+        sl.append("system/message", SystemPromptBuilder(builtinTools()).build())
         sl.append("user/message", "hello")
         sl.append("tool/call", "read a.txt")
         sl.append("assistant/message", "hi there")
@@ -481,6 +481,12 @@ main(args: Array<String>) {
         expect("清单条目数等于注册表", Int64(toolsList(reg).size) == reg.count())
         let tj = toolsJson(reg)
         expect("清单标出需审批与免审批", tj.contains("\"name\":\"write\"") && tj.contains("\"approval\":true") && tj.contains("\"approval\":false"))
+        // 系统提示从注册表组装：不是硬编一条 "you are dsh"，
+        // 而是把已登记工具的名与描述追加在角色定义之后
+        let sp = SystemPromptBuilder(reg).build()
+        expect("系统提示含角色定义", sp.contains("you are dsh"))
+        expect("系统提示含已登记工具名", sp.contains("write") && sp.contains("read"))
+        expect("系统提示含工具描述", sp.contains("写临时工作区文件"))
         expect("JSON 转义函数不吞反斜杠", jsonEscape("a\\b") == "a\\\\b")
         // 退出码必须按失败族分开：调用方要答得出「被谁拦的」，不能全挤成 1
         expect("放行退 0", callExitCode(true, "ok") == Int64(0))
