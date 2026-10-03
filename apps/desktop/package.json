@@ -5,7 +5,7 @@
   "license": "MulanPSL-2.0",
   "main": "main.cjs",
   "scripts": {
-    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs",
+    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs",
     "prestart": "npm run vendor",
     "start": "electron .",
     "presmoke": "npm run vendor",

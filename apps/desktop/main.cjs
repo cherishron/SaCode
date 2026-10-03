@@ -145,6 +145,19 @@ async function uiSmoke() {
   seedIfNeeded();
   createWindow();
 
+  // 0) 组件库必须真的被折叠进来：光在 package.json 里写着不算接了组件库。
+  //    这条只验「产物加载到了且是可用的组件定义」，渲染语义由后面的气泡断言各自负责。
+  //    判 setup 是函数而不是 typeof === "function"：库用 defineComponent + withScopeId 包装，
+  //    导出的是带 setup 的选项对象（实测 typeof 为 object），按构造函数判会假红。
+  //    必须轮询：窗口刚 createWindow 时文档还没装载，即时读会在旧上下文里取到 undefined。
+  const trShape = () => js(
+    "(() => { const T = window.TinyRobot || {};" +
+    " return ['Bubble', 'BubbleList', 'BubbleProvider']" +
+    " .map((k) => (T[k] && typeof T[k].setup === 'function' ? k : '缺' + k)).join(','); })()"
+  );
+  const trReady = await waitFor(async () => (await trShape()) === "Bubble,BubbleList,BubbleProvider");
+  note(trReady, `TinyRobot 折叠产物已加载=${await trShape()}`);
+
   // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影
   const mounted = await waitFor(() => count("#messages .msg").then((n) => n >= 2));
   note(mounted, `Vue 挂载后消息条数=${await count("#messages .msg")}（核心投影给出）`);
