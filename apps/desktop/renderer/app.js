@@ -141,6 +141,7 @@ createApp({
     const usage = ref({ used: null, budget: null, over: false, verdict: "" });
     const budgetDraft = ref("");
     const budgetNote = ref("");
+    const budgetBusy = ref(false);
 
     let pollTimer = null;
     function desktopKeys(event) {
@@ -313,18 +314,23 @@ createApp({
 
     // 收紧预算：填进来的数字交给核心判，界面只复述核心回的那一档，绝不自己抬。
     async function setBudget() {
+      if (budgetBusy.value) return;
       const raw = String(budgetDraft.value);
       const n = Number(raw);
       if (raw === "" || !Number.isInteger(n) || n < 0) {
         budgetNote.value = "预算要填非负整数";
         return;
       }
+      budgetBusy.value = true;
+      budgetNote.value = "正在提交预算…";
       try {
         const r = await window.dsh.usageSetBudget(n);
         await refreshUsage();
         budgetNote.value = r.applied ? "已收紧到 " + r.budget : "拒绝放宽：仍停在 " + r.budget;
       } catch (e) {
         budgetNote.value = cleanErr(e);
+      } finally {
+        budgetBusy.value = false;
       }
     }
 
@@ -341,7 +347,7 @@ createApp({
 
     return {
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
+      usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -437,12 +443,13 @@ createApp({
         step: "1",
         placeholder: "收紧预算到",
         value: self.budgetDraft,
+        disabled: self.budgetBusy,
         onInput: (e) => (self.budgetDraft = e.target.value),
       }),
-      el("button", "btn", "收紧预算", { id: prefix === "budget" ? "apply-budget" : prefix + "-apply", onClick: self.setBudget }),
+      el("button", "btn", "收紧预算", { id: prefix === "budget" ? "apply-budget" : prefix + "-apply", onClick: self.setBudget, disabled: self.budgetBusy }),
       ]),
       el("p", "note", self.budgetNote || "预算只能收紧；耗尽后停止执行。", { id: prefix + "-note", "aria-live": "polite" }),
-    ], { id: prefix + "-panel", tabindex: -1 });
+    ], { id: prefix + "-panel", tabindex: -1, "aria-busy": self.budgetBusy });
     const budgetBox = renderBudget("budget");
 
     const main = el("section", "pane conversation", [

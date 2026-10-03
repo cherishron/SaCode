@@ -116,3 +116,11 @@
 新增六项真实键盘 UI 检查，总计 119 项通过：设置开启、模态优先、原焦点恢复、预览导航、输入聚焦、Ctrl+Enter 由核心只记录一条消息。原有按钮发送检查保留。含新增指南卡片的 520 项布局检查回归通过。证据位于 `dualtest/keys-ui.log`、`dualtest/keys-layout.log`、`dualtest/sacode-keys-layout/`。本轮未验 macOS 的 Meta 快捷键，不宣称新增平台支持。
 
 当前 Host 仍没有设置/模型配置、工作区/会话目录管理、自动化的真实数据通道（仅会话预算通道可供设置页使用）。这些完整页面及数据接口继续列为未完成，不以静态列表替代；此前 `a7b7875` 产物不包含本轮快捷键。
+
+## 预算表单处理中一致性补验
+
+预算侧栏与设置表单共用 `budgetBusy`，前一次提交尚未结算时拒绝重复进入；两处输入与应用按钮同步禁用、保持原尺寸和文案，区域标记 aria-busy，现有 aria-live 提示正在提交。核心继续校验预算，不将界面禁用视为授权或业务闸门。finally 在成功或异常结束后释放忙碌状态。
+
+新增三条 UI 检查，总计 122 条通过：两处同步锁定、同一帧多次点击只产生一个真实预算请求、回执后恢复。验收在主进程临时包装真实 bridge.request，仅对 `usage/set-budget` 延迟 150ms 并计数，响应仍由原核心返回，结束后恢复原方法；没有伪造预算结果。此前设置补验段中的 `usage/setBudget` 为协议名笔误，实际宿主协议为 `usage/set-budget`，preload 方法为 `usageSetBudget`。
+
+520 项正常状态布局检查回归通过，取证目录 `dualtest/sacode-budget-busy-layout/`、`dualtest/budget-busy-ui.log`、`dualtest/budget-busy-layout.log`。本轮没有做异常注入，不能将成功回执检查推断为全部故障场景通过。改动尚未进入既有安装包。
