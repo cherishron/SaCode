@@ -778,7 +778,7 @@ createApp({
       self.workspace ? el("section","workspace-panel",[
         el("span","badge"+(self.workspace.configured && !self.workspace.available ? " badge-danger" : ""),self.workspace.configured ? self.workspace.available ? "目录可用" : "目录不可用" : "尚未选择项目目录"),
         el("p","workspace-path",self.workspace.directory,{id:"workspace-directory"}),
-        el("p","note",self.workspace.configured ? "相对文件路径以此项目目录为基准。" : "当前使用默认运行目录。选择项目目录后，相对文件路径将以项目目录为基准。"),
+      el("p","note",self.workspace.configured ? self.workspace.available ? "相对文件路径以此项目目录为基准。" : "保存的项目目录已不存在或无法访问。请恢复该目录，或重新选择项目目录；文件操作不会自动改用默认目录。" : "当前使用默认运行目录。选择项目目录后，相对文件路径将以项目目录为基准。",{id:"workspace-description"}),
       ]) : el("p","note","正在读取目录…"),
       el("p","note",self.turn.running || self.approval ? "请先结算执行任务并处理待审批工单。" : self.workspaceNote,{id:"workspace-note",role:"status","aria-live":"polite"}),
       el("p","note","项目目录按当前会话保存；切换会话时恢复对应目录。"),

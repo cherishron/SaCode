@@ -625,6 +625,16 @@ async function uiSmoke() {
   await click('#tool-write'); await waitFor(()=>count('#allow-once').then(n=>n===1)); await click('#allow-once');
   note(await waitFor(async()=>(await text('#outcome')).startsWith('结果：')), "所选工作区的写入仍经过一次性审批");
   note(require('node:fs').readFileSync(join(workspaceUIPath,'dsh-tool.txt'),'utf8')==='hello-from-renderer', "相对文件实际写入带空格的中文项目目录");
+  // 真实移动项目文件夹，检查界面保留原路径并说明恢复方式。
+  const movedWorkspacePath=join(SESSION_DIR,'工作区 UI 项目 临时移动');
+  require('node:fs').renameSync(workspaceUIPath,movedWorkspacePath);
+  try {
+    await click('#open-workspace');
+    note(await waitFor(async()=>(await text('#workspace-description')).includes('请恢复该目录')), "项目目录丢失时显示恢复提示");
+    note((await text('#workspace-directory'))===workspaceUIPath && (await text('.workspace-panel .badge'))==='目录不可用', "不可用目录保留原路径并显示错误状态");
+    note(await js("!document.querySelector('#choose-workspace').disabled"), "目录不可用时仍允许重新选择");
+    await click('.workspace-dialog .dialog-header button');
+  } finally { require('node:fs').renameSync(movedWorkspacePath,workspaceUIPath); }
 
   // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
   const oldTheme=nativeTheme.themeSource;
@@ -791,10 +801,14 @@ app.whenReady().then(async () => {
   if (process.argv.includes("--layout-smoke")) {
     seedIfNeeded();
     await bridge.start(SESSION_DIR);
+    // 使用真实保存的长中文目录，覆盖路径折行而非只有默认短路径。
+    const layoutProject=join(SESSION_DIR,'SaCode 中文项目 目录布局检查','长中文目录与空格路径 '.repeat(3).trim());
+    mkdirSync(layoutProject,{recursive:true});
+    await bridge.request('workspace/set-directory',{directory:layoutProject});
     createWindow();
     const captureArg = process.argv.find((a) => a.startsWith("--capture-dir="));
     const outDir = captureArg ? captureArg.slice("--capture-dir=".length) : join(__dirname, "dist", "layout");
-    const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir });
+    const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir, expectedReadPath:join(layoutProject,'dsh-tool.txt') });
     await bridge.stop();
     app.exit(ok ? 0 : 1);
     return;

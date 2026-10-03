@@ -1,7 +1,7 @@
 // 真 Electron 窗口的几何验收与截图，不用源码字符串代替视觉证据。
 const { mkdirSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
-module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
+module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expectedReadPath }) {
   mkdirSync(outDir, { recursive: true });
   const js = (source) => win.webContents.executeJavaScript(source, true);
   let toolsReady = false;
@@ -134,7 +134,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
         const box=e=>e.getBoundingClientRect();
         const checks={
           visible: !document.querySelector('#side-page-preview').hidden,
-          actualRead: path.textContent==='dsh-tool.txt' && text.textContent==='hello-from-renderer',
+          actualRead: path.textContent===${JSON.stringify(expectedReadPath)} && text.textContent==='hello-from-renderer',
           aligned: Math.abs(box(path).left-box(text).left)<1 && Math.abs(box(path).right-box(text).right)<1,
           noOverflow: content.scrollWidth<=content.clientWidth,
           focusable: text.tabIndex===0,
@@ -243,6 +243,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
           fits:rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
           controls:controls.length===2 && controls.every(e=>Math.abs(box(e).height-36)<1),
           aligned:Math.abs(box(directory).left-box(panel.querySelector('.badge')).left)<1,
+          wrappedPath:directory.textContent.includes('长中文目录与空格路径') && box(directory).height>parseFloat(getComputedStyle(directory).lineHeight)*1.5,
+          toolbarCentered:Math.abs(box(dialog.querySelector('.catalog-toolbar h2')).top+box(dialog.querySelector('.catalog-toolbar h2')).height/2-box(document.querySelector('#choose-workspace')).top-box(document.querySelector('#choose-workspace')).height/2)<1,
           noOverflow:dialog.scrollWidth<=dialog.clientWidth && panel.scrollWidth<=panel.clientWidth,
         };
         return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
