@@ -60,6 +60,33 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       reports.push(report);
       writeFileSync(join(outDir, `sacode-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${report.failed.length ? "FAIL" : "PASS"} ${theme} ${width}x${height} ${report.failed.join(',')}`);
+      await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
+      await new Promise((r) => setTimeout(r, 50));
+      const dialogReport = await js(`(() => {
+        const dialog = document.querySelector('dialog[open]');
+        if (!dialog) return { checks:{opened:false}, failed:['opened'] };
+        const box = dialog.getBoundingClientRect(), header = dialog.querySelector('.dialog-header');
+        const fields = dialog.querySelector('.detail-fields');
+        const keys = [...fields.querySelectorAll('dt')].map(e => e.getBoundingClientRect());
+        const values = [...fields.querySelectorAll('dd')].map(e => e.getBoundingClientRect());
+        const equal = (a,b) => Math.abs(a-b)<1;
+        const checks = {
+          opened: true,
+          fits: box.left>=0 && box.top>=0 && box.right<=innerWidth && box.bottom<=innerHeight,
+          centered: equal(box.left+box.width/2,innerWidth/2),
+          noOverflow: dialog.scrollWidth<=dialog.clientWidth,
+          alignedFields: keys.length===4 && values.length===4 && keys.every((key,i) =>
+            equal(key.left,keys[0].left) && equal(values[i].left,values[0].left) && equal(key.top,values[i].top)),
+          controlHeight: equal(header.querySelector('button').getBoundingClientRect().height,36),
+          focusInside: dialog.contains(document.activeElement),
+        };
+        return { checks, failed:Object.keys(checks).filter(k => !checks[k]) };
+      })()`);
+      dialogReport.theme = theme; dialogReport.width = width; dialogReport.height = height; dialogReport.surface = 'tool-detail';
+      reports.push(dialogReport);
+      writeFileSync(join(outDir, `sacode-detail-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${dialogReport.failed.length ? "FAIL" : "PASS"} tool-detail ${theme} ${width}x${height} ${dialogReport.failed.join(',')}`);
+      await js("document.querySelector('dialog[open] .dialog-header button').click()");
     }
   }
   writeFileSync(join(outDir, "layout-report.json"), JSON.stringify(reports, null, 2));

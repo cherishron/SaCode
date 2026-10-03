@@ -88,6 +88,9 @@ createApp({
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
     const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
     const tools = ref([]);
+    const detailName = ref("");
+    // 详情始终从当前核心清单派生；卸载后不继续展示过期副本。
+    const detailTool = window.Vue.computed(() => tools.value.find((tool) => tool.name === detailName.value) || null);
     const toolCounters = ref({ misses: 0, guardDenials: 0 });
     const draft = ref("");
     const error = ref("");
@@ -281,7 +284,7 @@ createApp({
     });
 
     return {
-      proj, tools, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
+      proj, tools, detailName, detailTool, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, setBudget, bubbleMessages,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
@@ -389,12 +392,16 @@ createApp({
       self.error ? el("p", "error", self.error, { id: "error", role: "alert" }) : null,
     ]);
 
-    const toolBtns = self.tools.map((t, i) =>
+    const toolBtns = self.tools.map((t) =>
+      el("div", "tool-card", [
       el("button", "tool", [({ read: "读取文件", write: "写入文件" }[t.name] || t.name), el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
-        key: t.name,
         id: "tool-" + t.name,
         onClick: () => self.askTool(t),
-      })
+      }),
+      el("button", "btn tool-detail", "查看详情", { id: "detail-" + t.name,
+        "aria-label": "查看" + ({ read: "读取文件", write: "写入文件" }[t.name] || t.name) + "详情",
+        onClick: () => { self.detailName = t.name; } }),
+      ], { key: t.name })
     );
 
     const approvalBox = self.approval
@@ -432,6 +439,16 @@ createApp({
       el("span", "note", "支持多行输入 · 审批决定由你确认"),
     ]);
 
-    return el("div", "app", [nav, head, main, side, composer]);
+    const detail = h(window.SaCodeDialog, { open: !!self.detailTool, title: "工具详情",
+      onClose: () => { self.detailName = ""; } }, () => self.detailTool ? [
+        el("dl", "detail-fields", [
+          el("dt", null, "工具名称"), el("dd", null, ({ read: "读取文件", write: "写入文件" }[self.detailTool.name] || self.detailTool.name)),
+          el("dt", null, "协议标识"), el("dd", null, self.detailTool.name),
+          el("dt", null, "说明"), el("dd", null, self.detailTool.description || "核心未提供说明"),
+          el("dt", null, "执行授权"), el("dd", null, self.detailTool.needsApproval ? "每次执行需一次性审批" : "此工具免审批"),
+        ]),
+        el("p", "note", "详情来自核心当前工具清单；关闭弹窗不会执行工具或批准请求。"),
+      ] : []);
+    return el("div", "app", [nav, head, main, side, composer, detail]);
   },
 }).mount("#app");

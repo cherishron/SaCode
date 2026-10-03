@@ -184,6 +184,23 @@ async function uiSmoke() {
   const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
+  // 工具详情只读取核心清单，模态关闭不执行工具或消费审批。
+  await waitFor(() => count('#detail-write').then(n => n === 1));
+  const detailEvents = await text('#count-events');
+  await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
+  note(await waitFor(() => count('dialog[open]').then(n => n === 1)), "真实工具详情弹窗已打开");
+  note((await text('dialog')).includes('write') && (await text('dialog')).includes('每次执行需一次性审批'), "工具详情保留协议标识与核心授权要求");
+  note(await js("document.querySelector('dialog').contains(document.activeElement)"), "打开弹窗后焦点位于模态内部");
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+  await nap(50);
+  note(await js("document.querySelector('dialog').contains(document.activeElement)"), "Tab 不将焦点移出工具详情弹窗");
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  note(await waitFor(() => count('dialog[open]').then(n => n === 0)), "Escape 关闭工具详情");
+  note(await js("document.activeElement.id === 'detail-write'"), "弹窗关闭后焦点归还详情按钮");
+  note((await text('#count-events')) === detailEvents, "查看详情未新增会话事件或审批");
+
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
   const typed = "第一行\n第二行 带\"引号\"";
