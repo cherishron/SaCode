@@ -1071,6 +1071,8 @@ Modify `docs/evidence/p0-status-2026-10-02.md`：在「最新 R0 收口」段之
 - 实测计数：core `cjpm test` 119/119、extjs 14/14、桌面 `npm test` <Step4 实数>、`--smoke` PASS、dev `--ui-smoke` <UI OK 数>、打包态 `--ui-smoke` <UI OK 数>；
 - 变异反证做了哪几刀（divider 替换 consecutive、阈值边界、展开态置空、`--tr-bubble-box-bg` 桥删除）及各自转红的用例名；
 - 剩余限制：助手正文仍不落 `assistant/message`（冒烟里的 assistant 组出自种子夹具）、Markdown 渲染路径未启用、Next SDK 页面工具与签名/npm publish 仍属未做/待授权；
+  - 执行后更正：第一条已在同日提交 `d8b7ae6` 关闭——干净收束的一轮落一条 `assistant/message`，
+    计数与变异反证见 `docs/evidence/p0-status-2026-10-02.md`「助手回复落进会话日志」一节；
 - 不写任何「像素级复刻上游」的声称。
 
 - [ ] **Step 8: 提交**

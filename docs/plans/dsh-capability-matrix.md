@@ -70,7 +70,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | commands | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 8） |
 | compaction | ✔ | ✔ | M2 | ☐ | ☐ | 未实现（C 档，行 9） |
 | computer-use | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 10） |
-| conversation | ✔ | ✔ | M5/M6 | ☐ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（`groupStrategy=consecutive`）按角色分组，正文由本仓自定义内容渲染器出（默认链把 `role==="tool"` 交给只渲染注释节点的 ToolRole，不接就隐身），长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、组标签、合并、折叠三态、tool 可见与 `--tr-*` 色值桥接（各条见 `docs/evidence/p0-status-2026-10-02.md`）。**剩余**：助手正文仍只在 `turn/poll` 帧里、未落 `assistant/message`（真 provider 批次）；`上游已核` 仍需读 63 篇原文 |
+| conversation | ✔ | ✔ | M5/M6 | ☐ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（`groupStrategy=consecutive`）按角色分组，正文由本仓自定义内容渲染器出（默认链把 `role==="tool"` 交给只渲染注释节点的 ToolRole，不接就隐身），长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、组标签、合并、折叠三态、tool 可见与 `--tr-*` 色值桥接（各条见 `docs/evidence/p0-status-2026-10-02.md`）。**剩余**：落盘正文出自假 provider（`CancellableStreamProvider`）的装配结果，真模型 provider 未接；干净收束路径上 `tool/call`/`tool/result` 仍不落盘（只有取消路径结算）；`上游已核` 仍需读 63 篇原文 |
 | core | ✔ | ✔ | M0 | ☐ | ✔ | 本仓 `core/` 即共享核心（会话日志唯一真源、投影、取消/背压、扩展进程驱动），两个入口同依赖；core `cjpm test` **99/99**。不等同上游 `cordis` 整体，见上方 M0 裁决 |
 | credentials | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 13）；真模型凭证在仓外，未做任何存取。**保留**模型/第三方凭证安全存取、脱敏和轮换；C01 官方账号绑定边界待核，不整模块裁剪 |
 | deliverables | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 14） |
