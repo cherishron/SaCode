@@ -517,3 +517,44 @@ test("turn/cancel 只结算它自己那一轮发起的在途调用", async () =>
   await pollUntilSettled(b);
   await b.stop();
 });
+
+async function bootWithLeaseFile(token) {
+  const root = jj(REPO, "dualtest");
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(jj(root, "lease-"));
+  writeFileSync(join(dir, "session.log"), SEED);
+  writeFileSync(join(dir, "session.log.lease"), token);
+  const b = new HostBridge(HOST, process.env);
+  await b.start(dir);
+  return { b, dir };
+}
+
+// 桌面最常见的死锁：上一次宿主崩了，留下一个没人还的租约，之后每次写入都被拒。
+// 持有者确认已死 → 自动接管；持有者还活着 → 仍须明确拒绝，一个字都不动别人的凭据。
+test("残留租按持有者死活分别接管与拒绝", async () => {
+  {
+    const { b } = await bootWithLeaseFile("writer=4294967000-stale");
+    try {
+      const r = await b.request("session/append", { eventType: "user/message", data: "接管后写入" });
+      // SEED 本身 4 条事件，接管后这条写入进去才是 5
+      assert.equal(r.events, 5, "死者留下的租约不该永久挡住写入");
+      assert.equal(r.durable, 5, "接管来的写入同样要过落盘屏障");
+    } finally {
+      await b.stop();
+    }
+  }
+  {
+    const { b, dir } = await bootWithLeaseFile(`writer=${process.pid}-live`);
+    try {
+      await assert.rejects(
+        () => b.request("session/append", { eventType: "user/message", data: "不该进来" }),
+        /already-owned/,
+        "活着的持有者的租约不得被抢走"
+      );
+      const raw = readFileSync(join(dir, "session.log.lease"), "utf8");
+      assert.equal(raw, `writer=${process.pid}-live`, "拒绝接管时盘上凭据须原样不动");
+    } finally {
+      await b.stop();
+    }
+  }
+});

@@ -38,7 +38,7 @@ main(args: Array<String>) {
 
     if (mode == "seed") {
         let lease = WriteLease("session.log")
-        if (!lease.acquire()) {
+        if (!lease.takeoverIfStale()) {
             println("err	already-owned")
             return 1
         }

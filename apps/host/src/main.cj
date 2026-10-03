@@ -307,7 +307,7 @@ main(args: Array<String>) {
         }
         if (method == "session/append") {
             if (!leaseHeld) {
-                if (!lease.acquire()) {
+                if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
@@ -332,7 +332,7 @@ main(args: Array<String>) {
         // 显式 durability 屏障：submit 只在内存可见，flush 才跨进程可见
         if (method == "session/submit") {
             if (!leaseHeld) {
-                if (!lease.acquire()) {
+                if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
@@ -418,7 +418,7 @@ main(args: Array<String>) {
         if (method == "extension/call") {
             // 工具事件与 session/submit 同一持久化档位：租约内内存可见，退出结算时落盘
             if (!leaseHeld) {
-                if (!lease.acquire()) {
+                if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
@@ -451,7 +451,7 @@ main(args: Array<String>) {
             }
             // 与 session/submit 同一持久化档位：租约内内存可见，结算时落盘
             if (!leaseHeld) {
-                if (!lease.acquire()) {
+                if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
                     continue
                 }
