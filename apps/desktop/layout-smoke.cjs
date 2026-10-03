@@ -125,6 +125,26 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       writeFileSync(join(outDir,`sacode-long-user-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${userReport.failed.length?'FAIL':'PASS'} long-user ${theme} ${width}x${height} ${userReport.failed.join(',')}`);
       await js("document.querySelector('.conversation-scroll').scrollTop=0");
+      const draftEvents=await js("document.querySelector('#count-events').textContent");
+      await js("(()=>{const n=document.querySelector('#composer');n.value='自动增长输入与按钮对齐\\n'.repeat(30);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+      await waitFor("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height>36;})()");
+      const draftReport=await js(`(()=>{
+        const n=document.querySelector('#composer'),card=document.querySelector('.composer-card'),send=document.querySelector('#send'),scroll=document.querySelector('.conversation-scroll'),box=e=>e.getBoundingClientRect();
+        const checks={
+          capped:Math.abs(box(n).height-Math.min(348,innerHeight-360))<1,
+          internalScroll:n.scrollHeight>n.clientHeight && getComputedStyle(n).overflowY==='auto',
+          conversationSpace:box(scroll).height>=80,
+          controlsInside:box(send).right<box(card).right && box(send).bottom<box(card).bottom && box(n).bottom<box(send).top,
+          noPageOverflow:document.documentElement.scrollHeight<=innerHeight && document.documentElement.scrollWidth<=innerWidth,
+          noSessionWrite:document.querySelector('#count-events').textContent===${JSON.stringify(draftEvents)},
+        };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      Object.assign(draftReport,{theme,width,height,surface:'long-draft'});reports.push(draftReport);
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      writeFileSync(join(outDir,`sacode-long-draft-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${draftReport.failed.length?'FAIL':'PASS'} long-draft ${theme} ${width}x${height} ${draftReport.failed.join(',')}`);
+      await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+      await waitFor("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1");
       await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
       await new Promise((r) => setTimeout(r, 50));
       const dialogReport = await js(`(() => {

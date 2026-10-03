@@ -2,7 +2,33 @@
    这里不持有会话真源——消息列表只来自核心投影，流式文本只来自 turn/poll，
    工具与审批态只来自 extension/list 与 extension/call 的实际应答。 */
 "use strict";
-const { createApp, h, ref, onMounted } = window.Vue;
+const { createApp, h, ref, onMounted, withDirectives } = window.Vue;
+
+// 高度是草稿的派生视图；只在正文或宽度变化时测量，避免轮询重置输入滚动位置。
+const draftSize = new WeakMap();
+const autoDraftSize = {
+  mounted(node) {
+    const state={text:null,width:0,frame:0,observer:null};
+    const fit=()=>{
+      state.frame=0;
+      const width=node.getBoundingClientRect().width;
+      if(state.text===node.value && Math.abs(state.width-width)<.5) return;
+      const top=node.scrollTop;
+      node.style.height='auto';
+      node.style.height=node.scrollHeight+'px';
+      node.scrollTop=top;
+      state.text=node.value;state.width=width;
+    };
+    state.schedule=()=>{if(!state.frame)state.frame=requestAnimationFrame(fit);};
+    state.observer=new ResizeObserver(state.schedule);
+    draftSize.set(node,state);state.observer.observe(node);fit();
+  },
+  updated(node) {draftSize.get(node)?.schedule();},
+  beforeUnmount(node) {
+    const state=draftSize.get(node);
+    if(state){state.observer.disconnect();cancelAnimationFrame(state.frame);draftSize.delete(node);}
+  },
+};
 
 const el = (tag, cls, children, extra) => h(tag, Object.assign({ class: cls }, extra || {}), children);
 const roleName = (role) => ({ system: "系统", developer: "开发者", user: "用户", assistant: "助手", tool: "工具" }[role] || "系统");
@@ -692,15 +718,15 @@ createApp({
 
     const composer = el("footer", "composer", [
       el("label", "field-label", "发送消息", { for: "composer" }),
-      el("div", "composer-card", [h("textarea", {
+      el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
         id: "composer",
-        rows: 2,
+        rows: 1,
         "aria-keyshortcuts":"Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
         onInput: (e) => (self.draft = e.target.value),
-      }),
+      }),[[autoDraftSize]]),
       el("div", "composer-controls", [el("button", "btn btn-primary", "发送", { id: "send", onClick: self.send })]),
       ]),
       el("span", "note", "支持多行输入 · 审批决定由你确认"),

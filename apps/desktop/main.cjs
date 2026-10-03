@@ -269,6 +269,24 @@ async function uiSmoke() {
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
+  const setDraftForSize=async(value)=>js(`(()=>{const n=document.querySelector('#composer');n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await setDraftForSize('自动增长输入验证\n'.repeat(5));
+  note(await waitFor(()=>js("document.querySelector('#composer').getBoundingClientRect().height>36")), "多行草稿自动扩展文本域");
+  await setDraftForSize('超过上限的中文草稿\n'.repeat(30));
+  note(await waitFor(()=>js("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height<=Math.min(348,innerHeight-360)+1;})()")), "长草稿达到上限后内部滚动");
+  await setDraftForSize('');
+  note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "删除草稿后高度回到最小值");
+  const draftWindowSize=win.getContentSize();
+  try {
+    win.setContentSize(1440,900);
+    await waitFor(()=>js("innerWidth===1440 && innerHeight===900"));
+    await setDraftForSize('窗口宽度变化应重新测量输入高度。'.repeat(10));
+    await nap(50);
+    const wideDraftHeight=await js("document.querySelector('#composer').getBoundingClientRect().height");
+    win.setContentSize(860,600);
+    note(await waitFor(()=>js(`innerWidth===860 && document.querySelector('#composer').getBoundingClientRect().height>${wideDraftHeight}`)), "窄窗口重新折行并更新草稿高度");
+  } finally {win.setContentSize(...draftWindowSize);await setDraftForSize('');}
+  note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "草稿高度调整不写会话日志");
   const typed = "第一行\n第二行 带\"引号\"";
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify(typed)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   note(await click("#send"), "点击发送已派发");
@@ -651,7 +669,11 @@ async function uiSmoke() {
   };
   await js("(() => {const e=document.querySelector('#composer');e.value='原会话的延迟消息';e.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#send').click();})()");
   await waitFor(async()=>catalogSnapshotCaptured);
-  await js("(() => {const e=document.querySelector('#composer');e.value='原会话未发送草稿';e.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#open-catalog').click();})()");
+  const originalSessionDraft='原会话未发送草稿\n'.repeat(6);
+  await js(`(()=>{const e=document.querySelector('#composer');e.value=${JSON.stringify(originalSessionDraft)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await waitFor(()=>js("document.querySelector('#composer').getBoundingClientRect().height>36"));
+  const originalDraftHeight=await js("document.querySelector('#composer').getBoundingClientRect().height");
+  await click('#open-catalog');
   await waitFor(()=>count('#new-session-title').then(n=>n===1));
   await js("(() => {const e=document.querySelector('#new-session-title');e.value='中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#create-session');
@@ -666,6 +688,7 @@ async function uiSmoke() {
   note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource==='system', "新会话预算与主题独立初始化");
   note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
+  note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "新会话清空草稿并收缩输入高度");
   await js("(() => {const e=document.querySelector('#composer');e.value='只属于中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#send');
   note(await waitFor(async()=> (await text('#messages')).includes('只属于中文验收会话')), "新会话消息从核心重新投影");
@@ -673,7 +696,8 @@ async function uiSmoke() {
   await waitFor(()=>js("!!document.querySelector('.catalog-dialog[open] [data-select-session=\"current\"]')"));
   await click('[data-select-session="current"]');
   note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "列表可切回默认会话");
-  note(await js("document.querySelector('#composer').value==='原会话未发送草稿'"), "切回后恢复原会话草稿");
+  note(await js(`document.querySelector('#composer').value===${JSON.stringify(originalSessionDraft)}`), "切回后恢复原会话草稿");
+  note(await waitFor(()=>js(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${originalDraftHeight})<1`)), "切回后重新适配长草稿高度");
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
   note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme, "原会话预算与主题恢复");
   note((await bridge.request('workspace/get')).directory.includes('工作区 UI 项目'), "切回后恢复原会话项目目录");

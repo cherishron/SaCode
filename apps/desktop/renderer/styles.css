@@ -125,8 +125,9 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .composer-card { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0;
   padding: var(--space-2) 0 var(--space-3); border-radius: var(--radius-panel);
   background: var(--surface-2); box-shadow: var(--elevation-soft); }
-.composer-card textarea { min-height: 80px; max-height: 200px; resize: vertical; border-radius: 0;
-  border: 0; box-shadow: none; background: transparent; padding: var(--space-2) var(--space-4);
+.composer-card textarea { min-height: 36px; max-height: min(calc(var(--line-content) * 14 + 12px), calc(100dvh - 360px));
+  resize: none; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; border-radius: 0;
+  border: 0; box-shadow: none; background: transparent; padding: var(--space-1) var(--space-3) var(--space-2) 14px;
   font-size: var(--fs-content); line-height: var(--line-content); }
 .composer-card:has(textarea:focus) { outline: 2px solid var(--accent); outline-offset: 3px; }
 .composer-card textarea:focus { outline: none; }
