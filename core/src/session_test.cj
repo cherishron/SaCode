@@ -137,6 +137,28 @@ func projectionIsPure() {
     @Expect(first[0], second[0])
 }
 
+// 不变量 9 的「对无关事件返回同一引用」在仓里无法用身份运算符取证，
+// 改钉它的可观测等价物：无关事件不得触发重建，相关事件必须触发重建。
+// 只测「不重建」会退化成永远不更新的假绿，所以两条方向都要断言。
+@Test
+func projectionRebuildsOnlyForSurfaceEvents() {
+    let log = SessionLog(tmpPath("purecache"))
+    log.append("user/message", "u1")
+    let first = log.deriveMessages()
+    @Expect(Int64(first.size), Int64(1))
+    let builds = log.projectionBuilds()
+    log.append("turn/start", "")
+    log.append("stream/chunk", "text")
+    let same = log.deriveMessages()
+    @Expect(log.projectionBuilds(), builds)
+    @Expect(Int64(same.size), Int64(1))
+    log.append("assistant/message", "hi")
+    let grown = log.deriveMessages()
+    @Expect(log.projectionBuilds(), builds + Int64(1))
+    @Expect(Int64(grown.size), Int64(2))
+    @Expect(grown[1], "assistant/message: hi")
+}
+
 @Test
 func leaseIsMutuallyExclusive() {
     let p = tmpPath("lease")

@@ -85,6 +85,11 @@ func unescField(s: String): String {
 // 保证「同一会话一个写者」，但**同一进程内的多个线程**共享的是同一个 SessionLog
 // 对象（turn 线程写、主线程读），所以这里所有访问都过锁：不加锁时两个线程
 // 同时读 size 会发出重复 seq，投影读到半改写的列表会撕裂。
+// 只有这四类进模型可见历史；其余（turn/start、stream/chunk、tool/call …）持久但不进。
+func isSurfaceEvent(t: String): Bool {
+    return t == "system/message" || t == "user/message" || t == "assistant/message" || t == "tool/result"
+}
+
 // 锁只保证内存态自洽，跨进程的持久与可见仍然只由 flush 决定。
 public class SessionLog {
     let path: String
@@ -94,6 +99,17 @@ public class SessionLog {
     public var flushedCount: Int64 = 0
     public var truncatedTail: Bool = false
     let mtx = Mutex()
+    // 投影缓存的键：surface 事件数 + 代次（代次只在 load 这类整体替换时 +1）。
+    // 不变量 9 要的是「无关事件不触发重算」——turn/start、stream/chunk 这些持久但
+    // 不进模型历史的事件只动 events，不动 surface 计数，于是下一次 derive 直接交回
+    // 同一份缓存对象。键里带上代次是为了让 load 换内容后必然重建一次，
+    // 不至于因为「新旧表面条数恰好相同」而端着旧缓存不放。
+    var surfaceCount: Int64 = 0
+    var generation: Int64 = 0
+    var projBuiltSurface: Int64 = -1
+    var projBuiltGeneration: Int64 = -1
+    var projBuilds: Int64 = 0
+    let projCache = ArrayList<String>()
 
     public init(path: String) {
         this.path = path
@@ -103,6 +119,9 @@ public class SessionLog {
         mtx.lock()
         let ev = SessionEvent(Int64(events.size), eventType, data)
         events.add(ev)
+        if (isSurfaceEvent(eventType)) {
+            surfaceCount += 1
+        }
         mtx.unlock()
         return ev
     }
@@ -146,6 +165,8 @@ public class SessionLog {
         if (!exists(path)) {
             // 还没有日志文件 = 零事件，合法回放；损坏只针对「已有内容但序号断裂/尾帧坏掉」
             events.clear()
+            surfaceCount = 0
+            generation += 1
             truncatedTail = false
             flushedCount = Int64(0)
             return true
@@ -153,6 +174,8 @@ public class SessionLog {
         try {
             let text = String.fromUtf8(File.readFrom(path))
             events.clear()
+            surfaceCount = 0
+            generation += 1
             truncatedTail = false
             let lines = ArrayList<String>()
             for (line in text.split("\n")) {
@@ -179,7 +202,11 @@ public class SessionLog {
                     }
                     return false
                 }
-                events.add(SessionEvent(idx, unescField(parts[1]), unescField(parts[2])))
+                let reloaded = SessionEvent(idx, unescField(parts[1]), unescField(parts[2]))
+                events.add(reloaded)
+                if (isSurfaceEvent(reloaded.eventType)) {
+                    surfaceCount += 1
+                }
                 i += 1
             }
             flushedCount = Int64(events.size)
@@ -190,16 +217,33 @@ public class SessionLog {
     }
 
     // 只有 surface 事件进模型历史；turn/step/tool/call 等持久但不进。
+    // 键（surface 条数 + 代次）没变时交回**同一个缓存对象**，不重新分配——
+    // 这就是不变量 9 的「无关事件不触发下游重算」。代价是返回的列表按约定只读：
+    // 调用方就地改它等于改缓存，Host 侧只做遍历拼帧。
     public func deriveMessages(): ArrayList<String> {
-        let out = ArrayList<String>()
         mtx.lock()
-        for (ev in events) {
-            if (ev.eventType == "system/message" || ev.eventType == "user/message" || ev.eventType == "assistant/message" || ev.eventType == "tool/result") {
-                out.add("${ev.eventType}: ${ev.data}")
+        if (projBuiltSurface != surfaceCount || projBuiltGeneration != generation) {
+            projCache.clear()
+            for (ev in events) {
+                if (isSurfaceEvent(ev.eventType)) {
+                    projCache.add("${ev.eventType}: ${ev.data}")
+                }
             }
+            projBuiltSurface = surfaceCount
+            projBuiltGeneration = generation
+            projBuilds += 1
         }
+        let out = projCache
         mtx.unlock()
         return out
+    }
+
+    // 投影实际重算了几次：可观测的「有没有白重算」计数，供用例与遥测读。
+    public func projectionBuilds(): Int64 {
+        mtx.lock()
+        let n = projBuilds
+        mtx.unlock()
+        return n
     }
 
     public func verifySeqContiguous(): Bool {
