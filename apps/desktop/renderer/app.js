@@ -554,7 +554,7 @@ createApp({
         ]),
         el("p", "note", "详情来自核心当前工具清单；关闭弹窗不会执行工具或批准请求。"),
       ] : []);
-    const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, title: "SaCode · 文档预览",
+    const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, adjustable: true, title: "SaCode · 文档预览",
       class: "floating-preview", onClose: () => { self.previewFloating = false; } }, () => previewBody("float-preview"));
     return el("div", "app", [nav, head, main, side, composer, detail, floating]);
   },
