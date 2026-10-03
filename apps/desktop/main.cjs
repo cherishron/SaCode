@@ -212,9 +212,14 @@ async function uiSmoke() {
   note(await click("#run-turn"), "已发起完整一轮");
   const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
   note(settledTurn, `turn 终态=${await text("#turn-state")}`);
-  // 用量读数必须由核心结算帧驱动：完整一轮花 12，档位停在默认的 200
-  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("12/200 · recorded"));
-  note(usageShown, `用量读数=${await text("#turn-usage")}`);
+  // 用量读数必须由核心结算帧驱动。绝对值是跨进程累计的（同一份会话日志跑过第二轮就是 24），
+  // 所以这里不写死 12：写死等于假设每次都是全新会话，第二次跑就假红。
+  const usageShown = await waitFor(async () => {
+    const m = (await text("#turn-usage")).match(/用量 (\d+)\/(\d+) · recorded/);
+    return !!(m && Number(m[1]) > 0 && Number(m[1]) % 12 === 0 && Number(m[2]) === 200);
+  });
+  const usageAfterFull = await text("#turn-usage");
+  note(usageShown, `用量读数=${usageAfterFull}`);
   const streamed = await text("#stream");
   note(streamed.includes("你好，world"), `流式文本回显=${JSON.stringify(streamed.slice(0, 40))}`);
 
@@ -224,8 +229,11 @@ async function uiSmoke() {
   note(await click("#stop-turn"), "已派发停止");
   const cancelled = await waitFor(async () => (await text("#turn-state")).startsWith("turn cancelled"));
   note(cancelled, `取消终态=${await text("#turn-state")}`);
-  // 被取消的一轮不进计量：记它等于把「取消」变成一次消耗，读数应停在 absent
-  note((await text("#turn-usage")).includes(" · absent"), `取消轮不计量=${await text("#turn-usage")}`);
+  // 被取消的一轮不进计量：数值必须与上一轮结算时逐字一致，只允许判决词变成 absent
+  const usageAfterCancel = await text("#turn-usage");
+  const cancelUnchanged = usageAfterCancel.includes(" · absent") &&
+    usageAfterCancel.split(" · ")[0] === usageAfterFull.split(" · ")[0];
+  note(cancelUnchanged, `取消轮不计量=${usageAfterFull} -> ${usageAfterCancel}`);
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
