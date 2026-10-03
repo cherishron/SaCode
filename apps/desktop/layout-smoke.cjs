@@ -4,19 +4,23 @@ const { join } = require("node:path");
 module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
   mkdirSync(outDir, { recursive: true });
   const js = (source) => win.webContents.executeJavaScript(source, true);
+  let toolsReady = false;
   for (let i = 0; i < 100; i++) {
-    if (await js("!!document.querySelector('#tool-write')")) break;
+    if (await js("!!document.querySelector('#tool-write')")) { toolsReady = true; break; }
     await new Promise((r) => setTimeout(r, 50));
   }
+  if (!toolsReady) throw new Error("布局验收失败：工具列表未加载");
   await js("document.querySelector('#tool-write').click()");
+  let approvalReady = false;
   for (let i = 0; i < 100; i++) {
-    if (await js("!!document.querySelector('#approval')")) break;
+    if (await js("!!document.querySelector('#approval')")) { approvalReady = true; break; }
     await new Promise((r) => setTimeout(r, 50));
   }
+  if (!approvalReady) throw new Error("布局验收失败：审批卡未加载");
   const reports = [];
   for (const theme of ["light", "dark"]) {
     nativeTheme.themeSource = theme;
-    for (const [width, height] of [[880, 640], [1100, 720], [1440, 900]]) {
+    for (const [width, height] of [[860, 600], [880, 640], [1100, 720], [1440, 900]]) {
       win.setContentSize(width, height);
       // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
       await new Promise((r) => setTimeout(r, 500));
@@ -39,6 +43,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
             getComputedStyle(document.querySelector('#run-turn'))[key] === getComputedStyle(document.querySelector('#send'))[key]),
           icons: [...document.querySelectorAll('.nav-symbol')].every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
+          messageContentLoaded: document.querySelectorAll('.msg-text').length > 0,
           messageLabels: [...document.querySelectorAll('.tr-bubble')].every(e => {
             const label=e.querySelector('.msg-role'), text=e.querySelector('.msg-text');
             if (!label || !text) return false;
