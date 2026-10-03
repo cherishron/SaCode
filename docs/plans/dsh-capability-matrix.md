@@ -2,6 +2,21 @@
 
 快照：`deepseek-ai/deepseek-harness` @ `639ed015397290b3745d163aafe02ffee4aa3f84`（提交时间 2026-09-29T09:21:31Z，默认分支 `master`，SPDX `MIT`），抓取日 2026-10-02。
 
+## 产品裁剪与待核状态（2026-10-03）
+
+产品范围按 [PRD §2.3](../product/PRD.md) 明确裁剪：npm CLI 与 Electron 桌面均本地使用，无需 DSH 官方账号登录，用户自行配置模型及服务凭证。下表是**已定产品边界，尚待上游核验**；不据此断言冻结上游确实存在对应账号或商业功能，不声明代码已移除。
+
+| PRD 编号 | 裁剪范围 | 核验入口（候选，非已确认归属） | 当前状态与保留要求 |
+| --- | --- | --- | --- |
+| C01 | 若存在，排除官方注册、登录、账号绑定及其本地使用门槛 | boot、settings、credentials、web-client、web-server 及相关配置/插件 | 范围已裁决；存在性、源码位置和依赖待核。保留第三方凭证、IPC/会话身份及远程访问认证 |
+| C02 | 若存在，排除官方订阅、支付、商业权益与云端额度校验 | token-meter、settings、模型 provider 及相关配置/插件 | 范围已裁决；商业计费与本地计量边界待核。保留 token 用量和本地预算 |
+| C03 | 若存在，排除官方账号绑定的同步、云存储和云会话服务 | storage、session、workspace、web-client、web-server 及相关 provider | 范围已裁决；数据归属与调用链待核。保留本地持久化、恢复及双入口一致性 |
+| C04 | 排除官方账号关联遥测与默认官方上报；遥测默认关闭，后续仅提供用户明确启用的可替换服务 | product-telemetry、session-telemetry、otel 及配置/上报 provider | 范围已裁决；数据、目的地和默认行为待核。保留本地诊断需求，启用和关闭均需两入口验收 |
+
+核验需对照冻结快照的文档、源码、配置及测试，登记证据路径、调用链、两入口影响、被排除需求及保留需求。未找到实现时记录核验范围与依据，不能写成“已移除”。裁剪不改变下方 **63 模块 + 1 README** 清单、行序或分母；相关模块仍核验保留需求，不按名字删除 `auth`/`credentials`/`token` 能力。
+
+本节不新增模块行，不修改既有实现计数，也不勾选“上游已核”。既有 `✔` 仅沿用本仓用例口径，不证明裁剪边界已验收。裁剪条目完成核验及 PRD A11 两入口测试后才能登记“排除（已裁决、已核）”，不得算作实现通过或无差异兼容。完成后的产品表述为“裁剪范围内完整复刻，排除官方商业账号及云服务绑定”。
+
 ## 分母（2026-10-03 重取并逐项对照，此前的「63 vs 64」已闭合）
 
 - 对 `api.github.com/repos/.../contents/docs/subsystems` 各取一次 `ref=639ed01…`（冻结）与 `ref=master`（当日）：两边都 **192 条目 = 64 `.md` + 64 `.zh.md` + 64 `.i18n.yaml`**；GitHub contents 单目录上限 1000，判为完整清单而非分页截断。
@@ -27,6 +42,8 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 「走的是控制台中断回调，不等于终端/PTY 子系统已复刻」。这三块的实测计数与变异反证见 `docs/evidence/p0-status-2026-10-02.md` 第 6、7、9、14 项。
 
 ## 列义与图例
+
+2026-10-03 R0 收口：代码 `6e060ff` 已修复计量的租约恢复、正常退出漏记及收紧预算放行问题，控制字符转义、npm 启动源码与 CLI 计量断言也已入库。干净提交核心 119/119、桌面 53/53、扩展 14/14，npm 安装后 stream 17 条与 tool 11 条 ALL PASS；见 [R0 证据](../evidence/r0-review-closeout-2026-10-03.md)。下方旧测试计数保留原批次含义，不扩称当前 Electron 整包已通过。token-meter 的 C02 上游商业边界与 C01–C04 裁剪核验仍待完成。
 
 `zh`=仓库是否含中文文档；`站点参考页`=站点导航是否有同模块页；`建议阶段`=按下方关键词规则的粗分，**需人工复核，不作为承诺**；`上游已核`=我们是否已直读过该模块的 en/zh 原文与生成物——**本列全部为 ☐**：`docs/evidence/dsh-upstream-freeze.md` 明确记「64 模块逐篇的上游已核尚未完成，账本声明的覆盖数 8 是冻结取证面，不是阅读面」，逐模块原文核对是独立一批，不因本方写了实现就反推读过。
 
@@ -55,11 +72,11 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | computer-use | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 10） |
 | conversation | ✔ | ✔ | M5/M6 | ☐ | ◐ | 切片（§6.1.2 B 档，行 11）：`renderer/app.js` 只按角色拆文本，无节点/分组/折叠，也无对应用例 |
 | core | ✔ | ✔ | M0 | ☐ | ✔ | 本仓 `core/` 即共享核心（会话日志唯一真源、投影、取消/背压、扩展进程驱动），两个入口同依赖；core `cjpm test` **99/99**。不等同上游 `cordis` 整体，见上方 M0 裁决 |
-| credentials | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 13）；真模型凭证在仓外，未做任何存取 |
+| credentials | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 13）；真模型凭证在仓外，未做任何存取。**保留**模型/第三方凭证安全存取、脱敏和轮换；C01 官方账号绑定边界待核，不整模块裁剪 |
 | deliverables | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 14） |
 | extensions | ✔ | ✔ | M8 | ☐ | ✔ | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj` 子进程驱动；未登记即拒、卸载残留归 0、退出必须结算。core `ExtProcess` 15 条 + extjs 14 条 + CLI `dsh extjs` 12 项 |
 | feedback | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 16） |
-| filesystem | ✔ | ✔ | M4 | ☐ | ◐ | 本批补上读侧：`read` 与 `write` 共用同一条管线，读交回盘上真实字节并留下版本标记，同路径的写在发现第三方改动（**等长也算**）时于写入前被 `fs-stale-version` 拒掉且不改盘（core `fs_test.cj` 4 条 + bridge 1 条入口往返 + CLI 4 条断言）。**仍缺**：edit/glob/grep 与多文件观察面，故只记 ◐ |
+| filesystem | ✔ | ✔ | M4 | ☐ | ◐ | `read`/`write` 共用管线，按解析后的路径身份保存原始字节与存在/缺失观察；已有文件未观察拒绝覆盖，等长改动、已观察后删除均拒绝旧版本写入，缺失后外部创建拒绝覆盖；非法 UTF-8 不登记成功，控制字符回执无损，读取正文入日志可重放，新建发布禁止替换。core `fs_test.cj` **11 条**（本轮 core 总计 **116/116、rc=0**）；隔离快照 bridge 文件系统往返 2 条、CLI `tool` 11 条断言沿用现有验收报告，不扩称当前计量版整包验收。**仍缺**：edit/glob/grep、provider/consumer 拆分、有界读取与已有文件的受保护原子替换，故仍记 ◐；见 `docs/evidence/filesystem-review-fixes-2026-10-03.md` |
 | goal | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（C 档，行 18） |
 | invariants | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 19）。本仓 §4 的 18 条不变量是**我方复刻口径**，不是对该模块的运行实现；且该行只存在于冻结快照，master 已无（见上方漂移） |
 | jobs | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 20） |
@@ -67,11 +84,11 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | lsp | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 22）；`ToolSpec` 含子串 `lSp` 属假阳性，已记名 |
 | mcp | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 23） |
 | office-to-pdf | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 24） |
-| otel | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 25） |
+| otel | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 25）。C04：默认不外发，上游 exporter、配置与账号依赖待核；仅以明确启用的可替换服务提供，不整模块标为已裁剪 |
 | permission-presets | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 26）；审批只有「允许一次/拒绝」，无预设档位与永久授权 |
 | persistence | ✔ | ✔ | M1 | ☐ | ✔ | `session.log` 的 append/flush 持久化屏障、崩溃恢复合成、尾帧截断（丢半写帧保留已提交前缀）、中段缺帧整份拒绝；core `session` 22 条 + bridge durability 用例 |
 | plan | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 28） |
-| product-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 29）；无任何上报 |
+| product-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 29）；无任何上报。C04：排除官方账号关联与默认官方上报，遥测默认关闭；上游数据、目的地和可替换边界待核，当前无上报不等于裁剪已验收 |
 | ptc-runtime | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 30） |
 | sandbox | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 31）；Electron 自带的 `sandbox` 开关是另一回事，不作命中依据 |
 | schedule | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（C 档，行 32） |
@@ -80,7 +97,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | session-projection | ✔ | ✔ | M1 | ☐ | ✔ | `deriveMessages()` 纯函数 + 以「surface 条数 + 代次」为键的缓存：无关事件不重算并交回同一份缓存对象；两个方向的变异体都被抓（§6.1.2 D 档第 1 条补实后由 D 移入 A） |
 | session-query | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
 | session-reference | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 37） |
-| session-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 38） |
+| session-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 38）。C04：上游本地诊断与外发遥测边界待核；保留本地诊断需求，外发默认关闭，不直接排除整模块 |
 | session-title | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 39） |
 | settings | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 40）；§6.1.3 里 Settings 窗仍是未接面 |
 | shell | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 41） |
@@ -102,7 +119,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | voice-input | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 57） |
 | web | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 58）；全仓无 HTTP/SSE 客户端 |
 | web-client | ✔ | ✔ | M5/M6 | ☐ | ✔ | Electron 桌面入口 + 渲染层（Vue runtime + `h()`，IPC 有限面 9 个动作）；`--ui-smoke` **32 条真机断言**（流式/审批工单/取消/放行前 `pending>0`/`window.require` 为 undefined），开发态与打包态各验一次 |
-| web-server | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**理由同 `user-questions`。本仓宿主是 stdio NDJSON JSON-RPC（`apps/host`），与上游 server 形态不同，不据「都是服务端」勾选 |
+| web-server | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**理由同 `user-questions`。本仓宿主是 stdio NDJSON JSON-RPC（`apps/host`），与上游 server 形态不同，不据「都是服务端」勾选。C01/C03 官方账号/云服务边界待核；未来 HTTP/WebSocket 访问认证、Origin 和网络访问控制必须保留 |
 | webhook | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 61） |
 | workflow | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 62） |
 | workspace | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 63） |
