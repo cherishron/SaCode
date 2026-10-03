@@ -6,6 +6,18 @@ const { createApp, h, ref, onMounted } = window.Vue;
 
 const el = (tag, cls, children, extra) => h(tag, Object.assign({ class: cls }, extra || {}), children);
 
+// TinyVue 组件由 scripts/pack-tinyvue.mjs 在构建期折叠成 vendor/tinyvue.iife.js（经典脚本）：
+// 组件库自身是 ESM-only，而这里跑在 file:// + CSP script-src 'self' 上，既不能加载 ES module
+// 也没有运行时模板编译器，所以只有折叠产物这一条路。用的还是上面那份 Vue runtime（构建期把
+// `vue` 别名到 globalThis.Vue），不允许出现第二份 Vue——那样组件的响应式和应用的不是同一套。
+// 缺产物就当场把话写在界面上：不悄悄退回自画按钮，否则「接了组件库」会变成没法证伪的声称。
+const TV = window.TinyVue;
+if (!TV || !TV.Button) {
+  document.getElementById("app").textContent =
+    "缺 vendor/tinyvue.iife.js：先跑 node scripts/pack-vendor.mjs 与 node scripts/pack-tinyvue.mjs";
+  throw new Error("TinyVue vendor missing");
+}
+
 // 核心投影帧里的每条消息形如 "user/message: 正文"；只按第一个冒号切，正文里再冒号原样保留。
 function splitMsg(line) {
   const i = line.indexOf(":");
@@ -216,7 +228,12 @@ createApp({
       ? (self.turn.cancelled ? "cancelled" : self.turn.interrupted ? "interrupted" : "settled:" + (self.turn.finishReason || "-"))
       : self.turn.running ? "running" : "idle";
     const turnBar = el("div", "approval-row", [
-      el("button", "btn btn-primary", "跑一轮（完整）", { id: "run-turn", onClick: () => self.runTurn(5), disabled: self.turn.running }),
+      h(TV.Button, {
+        type: "primary",
+        id: "run-turn",
+        disabled: self.turn.running,
+        onClick: () => self.runTurn(5),
+      }, () => "跑一轮（完整）"),
       el("button", "btn", "跑一轮（可取消）", { id: "run-turn-2", onClick: () => self.runTurn(2), disabled: self.turn.running }),
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
       el("span", "badge", "turn " + turnState, { id: "turn-state" }),

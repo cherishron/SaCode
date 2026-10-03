@@ -14,9 +14,9 @@
 - 取消与背压（`TurnToken` 协作式取消、有界投递队列）
 - JS 扩展宿主子进程驱动（NDJSON JSON-RPC，按 `callId` 配对与取消）
 - 双入口（仓颉 CLI 与 Electron 桌面）与 npm 平台包
-- 桌面渲染层（Vue 3 runtime + IPC 有限面，流式/审批/取消有真机断言）
+- 桌面渲染层（Vue 3 runtime + IPC 有限面，流式/审批/取消有真机断言；TinyVue 组件经构建期折叠接入）
 
-尚未接入：TinyVue / TinyRobot 组件库、Next SDK、真模型 HTTPS+SSE 烟测、安装包签名与发布。Ctrl+C/SIGINT 的协作式取消已在核心（CFFI 处理器 `core/src/sigwin.cj`）与 CLI（`dsh sig`）落地，缺的是本环境无法把中断真正投递给子进程——需要一次人工在交互控制台按 Ctrl+C 的实测。逐项解锁条件见 `docs/evidence/p0-status-2026-10-02.md`。
+尚未接入：TinyRobot 消息组件与 Next SDK 页面工具、真模型 HTTPS+SSE 烟测、安装包签名与发布。Ctrl+C/SIGINT 的协作式取消已在核心（CFFI 处理器 `core/src/sigwin.cj`）与 CLI（`dsh sig`）落地，缺的是本环境无法把中断真正投递给子进程——需要一次人工在交互控制台按 Ctrl+C 的实测。桌面 UI 各面（Sidebar / Rightbar / Settings / Automation / 快捷键与 modal 原语）的复刻口径与现状逐项列在方案 §6.1.3，解锁条件见 `docs/evidence/p0-status-2026-10-02.md`。
 
 ## 架构
 
@@ -131,7 +131,7 @@ cd apps/desktop && npx electron-builder
 ## 复刻硬约束（改代码前必读）
 
 - **会话日志是唯一真源**：消息与 UI 都是投影。`append` 只在实例内可见，`flush` 才跨进程持久。
-- 桌面渲染层受 CSP `script-src 'self'` 约束（禁 `unsafe-eval`）：只能用 Vue **runtime** 构建 + `h()` 写视图，不能引入模板编译器、打包器或 ES module（`file://` 下会被 CORS 拦）。
+- 桌面渲染层受 CSP `script-src 'self'` 约束（禁 `unsafe-eval`）：只能用 Vue **runtime** 构建 + `h()` 写视图，运行时不能引入模板编译器、模块加载器或 ES module（`file://` 下会被 CORS 拦）。只有 ESM 形态的第三方组件库（如 TinyVue）必须在**构建期**由 `scripts/pack-tinyvue.mjs` 折叠成单个经典脚本，并把 `vue` 别名到已 vendor 的那份 runtime——出现第二份 Vue 时组件的响应式跟的就不是同一套。
 - Electron IPC 面是按动作命名、逐字段校验的**有限集合**，不提供「发任意方法」通道；增删通道要同步改 `preload.cjs` 与 `test/bridge.test.mjs`。
 - 打包态宿主路径只能从 `process.resourcesPath` 解析，缺失时必须 fail-loud，绝不回退 asar 内路径。
 - 注释、文档、commit 一律使用中文；commit 形如 `feat(core,host): 描述`。

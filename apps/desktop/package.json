@@ -5,7 +5,7 @@
   "license": "MulanPSL-2.0",
   "main": "main.cjs",
   "scripts": {
-    "vendor": "node ../../scripts/pack-vendor.mjs",
+    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs",
     "prestart": "npm run vendor",
     "start": "electron .",
     "presmoke": "npm run vendor",
@@ -52,8 +52,11 @@
     }
   },
   "devDependencies": {
+    "@opentiny/vue": "^3.32.0",
+    "@opentiny/vue-button": "^3.32.0",
     "electron": "^33.0.0",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "vue": "^3.5.43"
   }
 }

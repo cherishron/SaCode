@@ -190,3 +190,43 @@ body {
 
 .note { font: var(--fs-s) inherit; color: var(--text-muted); }
 .error { color: var(--danger); font: var(--fs-m) inherit; white-space: pre-wrap; }
+
+/* TinyVue 令牌桥接层。这一段必须留在文件末尾：vendor/tinyvue.iife.css 先加载，
+   它自带 324 个 --tv-* 色令牌——那就是第二套色值真源，与本仓「色值只从令牌层出」冲突。
+   只桥接当前真用到的这批（不整套抄回来，否则等于把它的设计悄悄请进门）。
+   主题不用另写一遍：右侧引用的都是本文件的语义令牌，深色块重定义它们时这里自动跟着走。 */
+:root {
+  --tv-color: var(--accent);
+  --tv-color-text: var(--text);
+  --tv-color-text-secondary: var(--text-muted);
+  --tv-color-bg: var(--surface);
+  --tv-color-bg-secondary: var(--surface-2);
+  --tv-color-border: var(--border);
+  --tv-color-border-secondary: var(--border);
+  --tv-color-border-ghost: transparent;
+  --tv-color-icon-inverse-tint: var(--accent-text);
+  --tv-color-icon-inverse: var(--accent-text);
+  --tv-color-icon-control: var(--text-muted);
+  --tv-color-act-primary-bg: var(--accent);
+  --tv-color-act-primary-text: var(--accent-text);
+  --tv-color-act-primary-text-inverse-tint: var(--accent-text);
+  --tv-color-act-primary-border: var(--accent);
+  --tv-color-act-primary-bg-white: var(--surface-2);
+  --tv-color-act-primary-border-light: var(--border);
+  --tv-color-act-success-bg: var(--ok);
+  --tv-color-act-success-text: var(--ok);
+  --tv-color-act-success-text-white: var(--surface-2);
+  --tv-color-act-success-border: var(--ok);
+  --tv-color-act-warning-bg: var(--warn);
+  --tv-color-act-warning-text: var(--warn);
+  --tv-color-act-warning-text-white: var(--surface-2);
+  --tv-color-act-warning-border: var(--warn);
+  --tv-color-act-danger-bg: var(--danger);
+  --tv-color-act-danger-text: var(--danger);
+  --tv-color-act-danger-text-white: var(--surface-2);
+  --tv-color-act-danger-border: var(--danger);
+  --tv-color-act-info-bg: var(--accent);
+  --tv-color-act-info-text: var(--accent);
+  --tv-color-act-info-text-white: var(--surface-2);
+  --tv-color-act-info-border: var(--accent);
+}

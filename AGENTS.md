@@ -11,7 +11,7 @@ DeepSeek Harness (DSH) 全系统复刻实验：一份**仓颉（Cangjie）共享
 - `core/` — 仓颉静态库，**唯一业务真源**（会话日志、投影、取消/背压、JS 扩展进程驱动）。两个入口都依赖它。
 - `apps/cli/` — 仓颉可执行入口；`main` 按子命令（`seed|projection|all|stream|tool|ext|cancel|extjs|sig`）跑断言式自测，也是 npm CLI 的二进制来源。
 - `apps/host/` — 仓颉 NDJSON/JSON-RPC 宿主，由桌面端 spawn；**stdout 只走协议帧，诊断走 stderr**。
-- `apps/desktop/` — Electron 壳（`main.cjs`/`preload.cjs`/`host-bridge.cjs`/`paths.cjs` + `renderer/`）。渲染层是**纯 JS + Vue runtime，无打包器、无 TypeScript**。
+- `apps/desktop/` — Electron 壳（`main.cjs`/`preload.cjs`/`host-bridge.cjs`/`paths.cjs` + `renderer/`）。渲染层是**纯 JS + Vue runtime，运行时无模块加载器、无模板编译器、无 TypeScript**；第三方组件（TinyVue）由 `scripts/pack-tinyvue.mjs` 在**构建期**折叠成一个经典脚本进 `renderer/vendor/`，esbuild 与组件库都只是 `apps/desktop` 的 devDependency，**产物运行时零 npm 依赖**。
 - `extjs/` — 独立 Node JS 扩展宿主（NDJSON JSON-RPC），被 core 以子进程驱动。
 - `npm/dsh-cli`、`npm/dsh-cli-win32-x64` — npm 平台包；`bin/` 下二进制由脚本生成，**不入库**。
 - `scripts/pack-*.mjs` — 打包脚本（CLI / 宿主 / Vue vendor）。
@@ -30,7 +30,7 @@ DeepSeek Harness (DSH) 全系统复刻实验：一份**仓颉（Cangjie）共享
 - 单测：`npm test`（即 `node --test` 自动发现）。**不要写成 `node --test test/`**——本机 Node 会把目录当模块解析，整串失败。
 - 跑单个用例：`node --test --test-name-pattern="<name>"`
 - 冒烟：先生成宿主 `node scripts/pack-host.mjs apps/host/target/release/bin/main.exe apps/desktop/dist/host <stdx-dll-dir> <runtime-dll-dir>`，再 `npm run smoke`（期望 `SMOKE PASS`）/ `npm run ui-smoke`。dev 态宿主路径固定为 `apps/desktop/dist/host/bin/dsh-host.exe`。
-- `npm run vendor` 把 Vue runtime 拷到 `renderer/vendor/`（`prestart`/`presmoke` 自动触发）。
+- `npm run vendor` 依次跑 `scripts/pack-vendor.mjs`（拷 Vue runtime）与 `scripts/pack-tinyvue.mjs`（把 TinyVue 用到的组件折叠成 `renderer/vendor/tinyvue.iife.js` + `.css`）；`prestart`/`presmoke`/`preui-smoke` 自动触发。`renderer/vendor/` 已被 gitignore，属构建产物。
 
 JS 扩展宿主：`cd extjs && node --test`
 
@@ -41,10 +41,10 @@ JS 扩展宿主：`cd extjs && node --test`
 
 ## 必须知道的约束
 - **会话日志是唯一真源**，消息/UI 都是投影。`append` 只在实例内可见，`flush` 才跨进程持久——不要把 `append` 当持久化。
-- 桌面渲染层受 CSP `script-src 'self'` 约束（禁 `unsafe-eval`）：必须用 Vue **runtime** 构建 + `h()` 写视图，不能引模板编译器/打包器/ES module（`file://` 下会被 CORS 拦）。改渲染层前读 `scripts/pack-vendor.mjs` 顶部注释。
+- 桌面渲染层受 CSP `script-src 'self'` 约束（禁 `unsafe-eval`）：必须用 Vue **runtime** 构建 + `h()` 写视图，运行时不能引模板编译器、模块加载器或 ES module（`file://` 下会被 CORS 拦）。第三方组件库若只有 ESM 形态（TinyVue 就是），**只能在构建期折叠**成经典脚本，且必须把 `vue` 别名到已 vendor 的那一份 runtime——装进第二份 Vue 会让组件的响应式系统与应用的不是同一套。改渲染层前读 `scripts/pack-vendor.mjs` 与 `scripts/pack-tinyvue.mjs` 顶部注释。
 - Electron IPC 面是按动作命名、逐字段校验的**有限**集合（`projection/userSend/toolsList/toolCall/approvalAsk/approvalAnswer/turnStart/turnPoll/turnCancel`），不提供“发任意方法”通道。审批凭据只能是工单号：`toolCall` 只收 `approvalId`，渲染层传自报审批字符串没有通路。增删通道要同步改 `preload.cjs` 与 `test/bridge.test.mjs`。
 - 打包态宿主路径只能从 `process.resourcesPath` 解析；缺它要 fail-loud，**绝不回退 asar 内路径**（见 `apps/desktop/paths.cjs`）。
 - 宿主 exe 必须与全部依赖 DLL 同目录（靠 Windows 默认搜索序，不拼 PATH）。
 - `apps/desktop/test/bridge.test.mjs` 在仓库根使用 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
-- 注释、文档、commit 一律中文；commit 形如 `feat(core,host): 描述`，scope 用 `core/host/cli/desktop/extjs/docs`。
+- 注释、文档、commit 一律中文；commit 形如 `feat(core,host): 描述`，scope 用 `core/host/cli/desktop/extjs/scripts/docs`。
 - 不要提交构建产物：`target/`、`apps/desktop/dist/`、`npm/*/bin/`、`*.log` 均已在 `.gitignore`。

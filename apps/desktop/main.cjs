@@ -172,6 +172,16 @@ async function uiSmoke() {
   const logRaw = require("node:fs").readFileSync(SESSION_LOG, "utf8");
   note(/user\/message\t第一行\\n第二行/.test(logRaw), "多行正文按转义写成一行事件（裸换行没把日志劈开）");
 
+  // 3b) 组件库不是「装了就算」：类名要真的由 TinyVue 出，色值要真的从我们的令牌桥过去。
+  //     桥接的反证是删掉 styles.css 末尾那一段 --tv-* 覆写 —— 那时两侧会各自解析成不同颜色。
+  const tvCls = await js("(() => { const e = document.querySelector('#run-turn'); return e ? e.className : 'missing'; })()");
+  note(/tiny-button/.test(tvCls), `跑一轮按钮由 TinyVue 渲染=${String(tvCls).slice(0, 48)}`);
+  const bridgePair = await js(
+    "(() => { const mk = (v) => { const d = document.createElement('div'); d.style.color = v; document.body.appendChild(d); const r = getComputedStyle(d).color; d.remove(); return r; }; return mk('var(--accent)') + '|' + mk('var(--tv-color-act-primary-bg)'); })()"
+  );
+  const [accentTok, tvTok] = String(bridgePair).split("|");
+  note(accentTok === tvTok && accentTok.startsWith("rgb"), `TinyVue 主色令牌已接到本仓令牌=${accentTok} vs ${tvTok}`);
+
   // 4) 流式：完整一轮必须把核心产出的帧渲回界面并落到终态
   note(await click("#run-turn"), "已发起完整一轮");
   const settledTurn = await waitFor(async () => (await text("#turn-state")).startsWith("turn settled"));
