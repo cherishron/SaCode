@@ -4,5 +4,6 @@
   "os": ["win32"],
   "cpu": ["x64"],
   "license": "MulanPSL-2.0",
-  "files": ["bin"]
+  "publishConfig": { "access": "public" },
+  "files": ["bin", "extjs"]
 }

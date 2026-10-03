@@ -107,8 +107,10 @@ apps/cli/out/
 
 dualtest/
 
-# npm 平台包内二进制与依赖（由 scripts/pack-cli.mjs 生成）
+# npm 平台包内二进制、依赖与扩展宿主副本（均由 scripts/pack-cli.mjs 从 extjs/ 生成，
+# 入库就会与真源码 extjs/ 变成两份）
 npm/dsh-cli-*/bin/
+npm/dsh-cli-*/extjs/
 protocol-bridge-dbg/
 apps/desktop/dist/
 dualtest/

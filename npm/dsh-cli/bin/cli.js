@@ -10,14 +10,22 @@ if (!key) {
   process.exit(78);
 }
 let exe;
+let pkgDir;
 try {
-  const pkgDir = path.dirname(require.resolve(`${key}/package.json`));
+  pkgDir = path.dirname(require.resolve(`${key}/package.json`));
   exe = path.join(pkgDir, "bin", process.platform === "win32" ? "dsh.exe" : "dsh");
   if (!fs.existsSync(exe)) throw new Error("missing");
 } catch {
   process.stderr.write(`dsh: 找不到平台包 ${key} 的可执行文件，请先安装 @dsh/cli\n`);
   process.exit(79);
 }
-const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit", cwd: process.cwd(), env: process.env });
+// 扩展宿主源码随平台包走，装出来的 dsh 没有仓库目录可退，所以把包内位置交给它。
+// 只有包内确实带了 extjs/ 才设这个变量：没带就留空，让 CLI 按它自己的默认值走，
+// 指一个不存在的路径只会把「缺源码」变成更难读的「工作目录不存在」。
+const extDir = path.join(pkgDir, "extjs");
+const env = fs.existsSync(path.join(extDir, "server.cjs"))
+  ? Object.assign({}, process.env, { DSH_EXTJS_DIR: extDir })
+  : process.env;
+const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit", cwd: process.cwd(), env: env });
 if (r.error) { process.stderr.write(`dsh: 启动失败 ${r.error.message}\n`); process.exit(80); }
 process.exit(r.status === null ? 81 : r.status);

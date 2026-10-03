@@ -8,5 +8,6 @@
   "optionalDependencies": {
     "@dsh/cli-win32-x64": "0.1.0"
   },
+  "publishConfig": { "access": "public" },
   "engines": { "node": ">=18" }
 }

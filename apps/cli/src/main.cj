@@ -277,7 +277,15 @@ main(args: Array<String>) {
         // 第二个入口：CLI 用同一份 core 把 JS 扩展宿主作为子进程拉起来跑完整生命周期。
         // 用法：dsh extjs [node 命令] [extjs 目录]
         let nodeCmd = if (args.size > 1) { args[1] } else { "node" }
-        let hostDir = if (args.size > 2) { args[2] } else { "extjs" }
+        // 目录优先级：显式参数 > DSH_EXTJS_DIR（npm 安装态由启动包装指到包内 extjs/）> 仓库相对 "extjs"。
+        // 从 npm 装出来的 dsh 没有仓库目录可退，缺这一档就会在 WorkingDirectory 上炸掉。
+        let hostDir = if (args.size > 2) {
+            args[2]
+        } else if (let Some(d) <- getVariable("DSH_EXTJS_DIR")) {
+            d
+        } else {
+            "extjs"
+        }
         let xp = ExtProcess(nodeCmd, ["server.cjs"], workingDirectory: Path(hostDir))
         expect("仓颉核心能拉起 JS 扩展宿主", xp.start())
         if (xp.alive()) {
