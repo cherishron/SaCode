@@ -124,3 +124,11 @@
 新增三条 UI 检查，总计 122 条通过：两处同步锁定、同一帧多次点击只产生一个真实预算请求、回执后恢复。验收在主进程临时包装真实 bridge.request，仅对 `usage/set-budget` 延迟 150ms 并计数，响应仍由原核心返回，结束后恢复原方法；没有伪造预算结果。此前设置补验段中的 `usage/setBudget` 为协议名笔误，实际宿主协议为 `usage/set-budget`，preload 方法为 `usageSetBudget`。
 
 520 项正常状态布局检查回归通过，取证目录 `dualtest/sacode-budget-busy-layout/`、`dualtest/budget-busy-ui.log`、`dualtest/budget-busy-layout.log`。本轮没有做异常注入，不能将成功回执检查推断为全部故障场景通过。改动尚未进入既有安装包。
+
+## 通用设置的外观配置基础
+
+新增仓颉 `SessionAppearance`，将当前会话主题作为 `appearance/theme` 日志事实；仅允许 `system`、`light`、`dark`，读数从日志事件派生，不新增前端/Electron 独立配置文件。重复值及非法值不新增事件。该事件不进入模型消息投影。当前选择明确属于会话范围，不能将其称为全局配置域。
+
+四条新增核心测试验证默认值不写盘、flush/load 后恢复主题、消息投影不混入外观事件、非法/重复值拒绝、无效历史不覆盖有效值。以干净 HEAD 源码加本批两个新文件导出隔离工程，`cjpm test` 124/124，退出码 0，日志 `dualtest/appearance-domain/core-tests.log`。未纳入并行任务未提交的 SSE、审批及依赖清单修改。
+
+此模块是通用设置的真实数据基础，尚未连接 Host、preload 或主题选择界面。调用方仍须取得会话租约并完成 flush 才能报告保存成功。现有桌面继续跟随系统主题；新模块通过不代表主题选择 UI 已完成，下一步接入有限读写通道并验收保存、重启和两端投影一致性。
