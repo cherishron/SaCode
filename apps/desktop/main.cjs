@@ -213,6 +213,17 @@ async function uiSmoke() {
   await click('a[href="#budget-panel"]');
   note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
   note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
+  await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
+  note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
+  note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
+  await click('#settings-tab-models');
+  note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
+  await js("document.querySelector('#settings-tab-models').focus()");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'End'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'End'});
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden")), "设置分类支持键盘切换与焦点同步");
+  note(await js("(async()=>{const r=await window.dsh.toolsList();const rows=[...document.querySelectorAll('.settings-tool')];return rows.length===r.tools.length && r.tools.every(t=>rows.some(e=>e.dataset.toolName===t.name && e.textContent.includes(t.description)));})()"), "设置工具清单逐项对应核心响应");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='open-settings'"), "关闭设置后焦点返回导航按钮");
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
@@ -499,6 +510,12 @@ async function uiSmoke() {
   note(await js("document.querySelector('#pane-divider').getAttribute('aria-valuenow')") === releasedRatio, "松开鼠标后停止调整并清理拖动监听");
   await click('#split-side');
   note(await waitFor(() => count('.side-secondary').then(n=>n===0)) && (await text('#count-events')) === splitEvents, "合并窗格不改变会话事实");
+  await click('#open-settings'); await click('#settings-tab-general');
+  await js("const input=document.querySelector('#settings-budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));");
+  await click('#settings-budget-apply');
+  note(await waitFor(async()=> (await text('#settings-budget-note')).includes('已收紧到 90')), "设置预算变更通过核心校验");
+  note((await text('#settings-budget-usage')) === (await text('#turn-usage')) && (await text('#turn-usage')).includes('/90'), "设置变更同步更新右侧预算投影");
+  await click('.settings-dialog .dialog-header button');
 
   // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
   // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、

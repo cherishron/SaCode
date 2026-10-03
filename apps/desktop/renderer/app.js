@@ -94,6 +94,8 @@ createApp({
     const sideSplit = ref(false);
     const sideRatio = ref(50);
     const previewFloating = ref(false);
+    const settingsOpen = ref(false);
+    const settingsTab = ref("general");
     let resizeController = null;
     function beginResize(e) {
       if (e.button !== 0) return;
@@ -321,7 +323,7 @@ createApp({
 
     return {
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview, previewFloating,
+      usage, budgetDraft, budgetNote, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -343,6 +345,7 @@ createApp({
       el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批", onClick: (e) => { e.preventDefault(); self.openSide("tools-panel"); } }),
       el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算", onClick: (e) => { e.preventDefault(); self.openSide("budget-panel"); } }),
       el("a", "nav-item", [navIcon("M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4z M12 6v15"), el("span", "nav-label", "使用指南")], { href: "#guide-panel", "aria-label": "使用指南", onClick: (e) => { e.preventDefault(); self.openSide("guide-panel"); } }),
+      el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", onClick: () => { self.settingsOpen = true; } }),
       el("div", "nav-footer", [el("span", "note", "本地会话"), el("span", "note", "使用你的模型与服务凭证")]),
     ], { "aria-label": "工作台导航" });
 
@@ -403,14 +406,14 @@ createApp({
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
       el("span", "badge", "状态 " + turnState, { id: "turn-state", "aria-live": "polite" }),
     ]);
-    const budgetBox = el("section", "side-section", [
+    const renderBudget = (prefix) => el("section", "side-section", [
       el("h2", null, "用量与预算"),
-      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: "turn-usage", "aria-live": "polite" }),
-      el("label", "field-label", "收紧预算", { for: "budget-input" }),
+      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: prefix === "budget" ? "turn-usage" : prefix + "-usage", "aria-live": "polite" }),
+      el("label", "field-label", "收紧预算", { for: prefix + "-input" }),
       el("div", "budget-controls", [
       h("input", {
         class: "input",
-        id: "budget-input",
+        id: prefix + "-input",
         type: "number",
         min: "0",
         step: "1",
@@ -418,10 +421,11 @@ createApp({
         value: self.budgetDraft,
         onInput: (e) => (self.budgetDraft = e.target.value),
       }),
-      el("button", "btn", "收紧预算", { id: "apply-budget", onClick: self.setBudget }),
+      el("button", "btn", "收紧预算", { id: prefix === "budget" ? "apply-budget" : prefix + "-apply", onClick: self.setBudget }),
       ]),
-      el("p", "note", self.budgetNote || "预算只能收紧；耗尽后停止执行。", { id: "budget-note", "aria-live": "polite" }),
-    ], { id: "budget-panel", tabindex: -1 });
+      el("p", "note", self.budgetNote || "预算只能收紧；耗尽后停止执行。", { id: prefix + "-note", "aria-live": "polite" }),
+    ], { id: prefix + "-panel", tabindex: -1 });
+    const budgetBox = renderBudget("budget");
 
     const main = el("section", "pane conversation", [
       el("div", "conversation-scroll", [el("div", "stream", msgs, { id: "messages" }), streamBox]),
@@ -556,6 +560,34 @@ createApp({
       ] : []);
     const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, adjustable: true, title: "SaCode · 文档预览",
       class: "floating-preview", onClose: () => { self.previewFloating = false; } }, () => previewBody("float-preview"));
-    return el("div", "app", [nav, head, main, side, composer, detail, floating]);
+    const settings = h(window.SaCodeDialog, { open: self.settingsOpen, title: "SaCode 设置", class: "settings-dialog",
+      onClose: () => { self.settingsOpen = false; } }, () => [
+      el("div", "settings-tabs", [["general", "通用"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "btn settings-tab", label, {
+        id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
+        "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
+        onClick: () => { self.settingsTab=id; },
+        onKeydown: e => {
+          const offset=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
+          if (!offset && e.key!=='Home' && e.key!=='End') return;
+          e.preventDefault();
+          const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(index+offset+tabs.length)%tabs.length;
+          self.settingsTab=tabs[next][0]; window.Vue.nextTick(()=>document.getElementById('settings-tab-'+self.settingsTab).focus());
+        },
+      })), { role: "tablist", "aria-label": "设置分类" }),
+      el("section", "settings-page", [
+        renderBudget("settings-budget"),
+        el("p", "note", "用量和预算来自当前会话，变更由核心校验。这里的设置与右侧预算区同步。"),
+      ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
+      el("section", "settings-page", [el("h2", null, "模型配置尚未开放"),
+        el("p", "note", "当前执行轮次使用示例输出。真实模型配置接入后，才能设置服务地址、模型和凭证。"),
+      ], { id:"settings-page-models", role:"tabpanel", "aria-labelledby":"settings-tab-models", hidden:self.settingsTab!=="models" }),
+      el("section", "settings-page", [el("h2", null, "当前可用工具"),
+        ...self.tools.map(t=>el("article", "settings-tool", [el("h3", null, ({read:"读取文件",write:"写入文件"}[t.name]||t.name)),
+          el("p", "note", t.description||"核心未提供说明"), el("span", "badge", t.needsApproval?"需一次性审批":"免审批"),
+        ], {key:t.name, "data-tool-name":t.name})),
+        el("p", "note", "清单来自当前核心。扩展安装、启用和卸载设置尚未开放。"),
+      ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
+    ]);
+    return el("div", "app", [nav, head, main, side, composer, detail, floating, settings]);
   },
 }).mount("#app");

@@ -163,6 +163,28 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir }) {
       writeFileSync(join(outDir, `sacode-error-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${errorReport.failed.length ? "FAIL" : "PASS"} long-error ${theme} ${width}x${height} ${errorReport.failed.join(',')}`);
       await js("document.querySelector('#layout-error-fixture').remove()");
+      await js("document.querySelector('#open-settings').click()");
+      for (const page of ['general','models','plugins']) {
+        await js(`document.querySelector('#settings-tab-${page}').click()`);
+        await new Promise(r=>setTimeout(r,50));
+        const settingsReport = await js(`(() => {
+          const dialog=document.querySelector('.settings-dialog[open]'), panel=document.querySelector('#settings-page-${page}'), r=dialog.getBoundingClientRect();
+          const tabs=[...dialog.querySelectorAll('.settings-tab')], controls=[...dialog.querySelectorAll('.btn')].filter(e=>e.getClientRects().length>0);
+          const input=document.querySelector('#settings-budget-input'), apply=document.querySelector('#settings-budget-apply');
+          const checks={
+            visible: !!dialog && !panel.hidden,
+            fits: r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1,
+            noOverflow: dialog.scrollWidth<=dialog.clientWidth,
+            controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().top-tabs[0].getBoundingClientRect().top)<1),
+            budgetAligned: '${page}'!=='general' || (Math.abs(input.getBoundingClientRect().top-apply.getBoundingClientRect().top)<1 && Math.abs(input.getBoundingClientRect().height-36)<1),
+          };
+          return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+        })()`);
+        Object.assign(settingsReport,{theme,width,height,surface:'settings-'+page}); reports.push(settingsReport);
+        writeFileSync(join(outDir, `sacode-settings-${page}-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+        console.log(`LAYOUT ${settingsReport.failed.length ? "FAIL" : "PASS"} settings-${page} ${theme} ${width}x${height} ${settingsReport.failed.join(',')}`);
+      }
+      await js("document.querySelector('.settings-dialog .dialog-header button').click()");
       await js("document.querySelector('#side-tab-preview').click(); document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
       await new Promise(r=>setTimeout(r,50));
       const floatReport = await js(`(() => {
