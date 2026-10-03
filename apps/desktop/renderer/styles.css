@@ -224,3 +224,14 @@ body {
   --tv-color-act-info-text-white: var(--surface-2);
   --tv-color-act-info-border: var(--accent);
 }
+
+/* TinyRobot 气泡的色值桥接，与上面 --tv-* 桥同构：库把 --tr-bubble-box-bg 落在自己的
+   --tr-container-bg-default（字面 #ffffff / #262626）上，不桥就等于绕开本仓令牌层。
+   判据是冒烟里的泄漏探针：删掉下面这一行，它会点名
+   tr-bubble__box/backgroundColor=rgb(255, 255, 255)。
+   只桥被探针抓到的这一枚：--tr-bubble-text-color 不桥——正文由我们的自定义内容渲染器
+   出（.msg-text），库那条 .tr-bubble__text 规则在这份 DOM 里根本不生效；
+   布局类（gap/max-width/radius）不携带主题色，桥过去只会打乱库自己的形状语义。 */
+:root {
+  --tr-bubble-box-bg: var(--surface-2);
+}

@@ -279,7 +279,7 @@ async function uiSmoke() {
       const allowed = new Set(names.map((n) => mk('var(' + n + ')')));
       allowed.add('rgba(0, 0, 0, 0)');
       const bad = [];
-      const tv = document.querySelectorAll('#app [class*="tiny-"]');
+      const tv = document.querySelectorAll('#app [class*="tiny-"], #app [class*="tr-bubble"]');
       tv.forEach((e) => {
         const cs = getComputedStyle(e);
         ['color','backgroundColor','borderTopColor'].forEach((p) => {
