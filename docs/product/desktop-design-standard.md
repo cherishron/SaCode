@@ -74,3 +74,5 @@
 ## 发布入口验收报告
 
 `--ui-smoke --session-dir=<新的绝对目录>` 在指定目录生成 `ui-smoke-report.json`，逐项保留断言描述与结果。验收须核对报告存在、`passed=true`、失败数为零、断言总数及发布态标记；报告缺失不能按启动器退出码视为通过。特别是便携启动器可能不转发子程序 stdout，须以该报告复核 UI，并以 `--layout-smoke --capture-dir=<新目录>` 的结构报告和实际截图复核布局。报告属于验收数据，不写入会话事件。
+
+Windows 文件属性也属于 SaCode 品牌验收：`ProductName`、`FileDescription`、`CompanyName` 均须为 SaCode，版权须归于 SaCode，文件版本与桌面包版本一致。打包后运行 `scripts/check-desktop-metadata.ps1 -ExePath <实际 SaCode.exe 路径>` 核对 PE 资源；界面标题和包配置通过不能代替此检查。图标另以实际可执行文件提取结果验收。

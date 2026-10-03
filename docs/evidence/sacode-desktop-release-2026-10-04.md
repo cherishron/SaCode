@@ -38,3 +38,13 @@
 本机已有旧版 DSH Desktop 安装，本批未覆盖它；NSIS 实际安装与卸载尚待独立验收。Windows 公司元数据仍继承 Electron 的 `GitHub, Inc.`，发布配置需补齐该字段；不能据产品名已更正推断全部文件元数据已更正。
 
 本批未重验 npm CLI，也未集成并行 SSE/Next SDK 改动。模型/凭证配置、自动化、完整 composer、上下文节点、代码高亮、附件、全页面基线及完整 DSH 复刻验收仍未完成。安装包包含当前已实现 UI，不代表完整桌面目标已经达成。
+
+## 公司元数据修复增量
+
+`06c48ce` 在桌面 package.json 增加 `author: SaCode`。已从本机 electron-builder 的 AppInfo/WinPackager 实现确认，公司字段取作者信息，版权默认按公司/产品名生成；作者缺失时之前的 PE 保留了 Electron 自带 `GitHub, Inc.`。本批只提交作者字段，未纳入并行 Next SDK 依赖改动。
+
+从该提交干净导出到 `dualtest/ui-06c48ce/source`，重新生成 vendor，使用官方 Electron dist 构建 `--dir` 发布目录，退出码 0。与 bc71f97 对比，核心、Host 及其打包脚本无差异，复用上一批已验宿主/DLL。实际 `win-unpacked/SaCode.exe` 的产品名、文件描述、公司名均为 SaCode，版权为 `Copyright © 2026 SaCode`，文件版本 0.1.0；结构记录为 `dualtest/ui-06c48ce/metadata-report.json`。
+
+新增 `scripts/check-desktop-metadata.ps1` 读取真实 PE 信息；在旧 bc71f97 可执行文件上按预期拒绝错误公司名，在新可执行文件上通过。提取的原 SA 图标 PNG 与上一批 SHA256 完全一致：`B9D6164A75E4245EE1258E1D51932425AC3BB405786DEC3B31E096E38BD045D2`。新发布目录在仅有 Windows System32 的 PATH 下复跑 **170 项 UI 通过、失败 0、发布态 true、退出码 0**；报告 `dualtest/ui-06c48ce/ui-session/ui-smoke-report.json`。
+
+本增量只构建并核验 win-unpacked，未重新生成 NSIS 和 portable。因此上表两个 bc71f97 安装产物仍含旧公司字段，不沿用新目录检查证明旧安装产物已修复。UI/CSS 未改，未重复全量布局检查。实际安装卸载和完整页面能力继续待完成。
