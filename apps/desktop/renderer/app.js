@@ -166,6 +166,7 @@ createApp({
     const sideRatio = ref(50);
     const previewFloating = ref(false);
     const settingsOpen = ref(false);
+    const pluginManagerOpen = ref(false);
     const settingsTab = ref("general");
     const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
     let sessionGeneration = 0;
@@ -582,7 +583,7 @@ createApp({
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
       proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
-      usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
+      usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen,
       appearanceBusy, appearanceNote, setTheme,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
@@ -622,7 +623,7 @@ createApp({
         el('button','frame-icon sidebar-toggle',[navIcon('M4 4h16v16H4z M9 4v16')],{id:'toggle-sidebar','aria-label':self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',tooltip:{label:self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',side:'right'},onClick:self.toggleSidebar}),
       ]),
       el('button','nav-item new-session',[navIcon('M12 5v14 M5 12h14'),el('span','nav-label','新会话')],{id:'sidebar-new-session','aria-label':'新建会话',disabled:sessionLocked,onClick:self.startNewSession}),
-      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','工具与扩展')],{'aria-label':'工具与扩展',onClick:()=>{self.settingsTab='plugins';self.settingsOpen=true;}}),
+      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','工具与扩展')],{'aria-label':'工具与扩展','aria-pressed':self.pluginManagerOpen,onClick:()=>{self.pluginManagerOpen=!self.pluginManagerOpen;}}),
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
@@ -979,7 +980,7 @@ createApp({
       })]) : null,
       self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
     ]);
-    const center = el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page)],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
