@@ -129,23 +129,98 @@ public class SessionLog {
     }
 
     // flush = 崩溃持久 + 跨进程可见；返回 false 表示未落盘，内存态不能当作已提交。
+    //
+    // 发布前必须先过一道「只增不减」对照（见 mayOverwriteDurable）：内存里没有的事件，
+    // 不能替磁盘上的事件做主。这条是本模块的实质修复——File.writeTo 是打开即截断，
+    // 一次「草稿比磁盘短」的 flush 会把唯一真源改短，而且照样返回成功。
+    //
+    // 为什么不是「草稿写进临时文件再 rename 过去」：本机实测（400 次覆盖 + 3474 次
+    // 并发读）std.fs 的 rename(overwrite:true) 是「先删目标、再移入」，于是并发读者
+    // 有 88% 的次数看到的是**文件根本不存在**，另有 301 次直接读抛异常——
+    // 比原来「短暂看到半份」更糟，因为空会话会被当成合法回放。原地整写至少保证
+    // 目标始终在场。要真正的整份可见得换手段（追加发布），不是这条改名路径。
     public func flush(): Bool {
         var text = ""
         var ok = false
         mtx.lock()
-        for (ev in events) {
-            text += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
-        }
         try {
-            File.writeTo(path, text.toArray())
-            flushedCount = Int64(events.size)
-            ok = true
-        } catch (e: IOException) {
+            for (ev in events) {
+                text += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
+            }
+            if (mayOverwriteDurable(text)) {
+                File.writeTo(path, text.toArray())
+                flushedCount = Int64(events.size)
+                ok = true
+            }
+        } catch (e: Exception) {
             getStdErr().writeln("flush failed: ${e.message}")
             ok = false
+        } finally {
+            // 异常一律在这里收敛：持锁抛出会让这把锁永远再也拿不到
+            mtx.unlock()
         }
-        mtx.unlock()
         return ok
+    }
+
+    // 磁盘上每一条完整事件行都必须原样出现在草稿开头。草稿比磁盘短时，只允许少掉
+    // 「回放本来就授权丢弃」的那一类尾部坏帧（字段不足 3 段），其余一律拒发。
+    // 末字节不是 LF 的半帧不参与对照——它是物理残缺，不是一条待保留的事件。
+    private func mayOverwriteDurable(draft: String): Bool {
+        if (!exists(path)) {
+            return true
+        }
+        var durable = ""
+        try {
+            durable = String.fromUtf8(File.readFrom(path))
+        } catch (e: Exception) {
+            // 读不回磁盘就无法证明草稿不会改短唯一真源，宁可不发
+            getStdErr().writeln("flush refused: durable-unreadable")
+            return false
+        }
+        let kept = wholeLines(durable)
+        let mine = wholeLines(draft)
+        var i: Int64 = 0
+        while (i < kept.size && i < mine.size) {
+            if (kept[i] != mine[i]) {
+                getStdErr().writeln("flush refused: prefix-diverged-at-${i}")
+                return false
+            }
+            i += 1
+        }
+        if (mine.size < kept.size) {
+            var j = i
+            while (j < kept.size) {
+                if (Int64(kept[j].split("\t").size) >= 3) {
+                    getStdErr().writeln("flush refused: draft-shrinks-durable-by-${kept.size - i}")
+                    return false
+                }
+                j += 1
+            }
+        }
+        return true
+    }
+
+    // 按 LF 切出「完整行」序列，口径与 loadLocked 一致：空段丢弃，
+    // 文件末尾没有 LF 时剔除最后一段（那是写了一半的帧）。
+    private func wholeLines(text: String): ArrayList<String> {
+        let out = ArrayList<String>()
+        if (text.size == 0) {
+            return out
+        }
+        let bs = text.toArray()
+        let parts = text.split("\n")
+        var n = Int64(parts.size)
+        if (bs[bs.size - 1] != 10) {
+            n -= 1
+        }
+        var i: Int64 = 0
+        while (i < n) {
+            if (parts[i].size > 0) {
+                out.add(parts[i])
+            }
+            i += 1
+        }
+        return out
     }
 
     public func load(): Bool {

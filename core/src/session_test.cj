@@ -327,3 +327,80 @@ func backslashAndQuoteDataRoundTripExactly() {
     @Expect(r.load(), true)
     @Expect(r.events[0].data, "路径 C:\tmp 与 \"引号\"")
 }
+
+// 唯一真源只能被追加：内存里没有的事件，不能因为一次 flush 就从盘上消失。
+// 未回放的实例内存 0 条，草稿是空的，直接覆写等于把整份会话日志清空。
+@Test
+func flushFromNeverLoadedInstanceCannotEmptyDurableLog() {
+    let dir = "core-test-noshrink"
+    let p = "${dir}/session.log"
+    removeIfExists(dir, recursive: true)
+    Directory.create(dir)
+    let a = SessionLog(p)
+    a.append("user/message", "one")
+    a.append("assistant/message", "two")
+    @Expect(a.flush(), true)
+    let before = String.fromUtf8(File.readFrom(p))
+    @Expect(before.size > 0, true)
+
+    let b = SessionLog(p)
+    @Expect(b.flush(), false)
+    @Expect(String.fromUtf8(File.readFrom(p)), before)
+    // 拒发不得在目录里留下草稿半成品
+    @Expect(Directory.readFrom(dir).size, Int64(1))
+    removeIfExists(dir, recursive: true)
+}
+
+// 中段缺帧是「整份拒绝」，实例内存里那份只读了一半的解释不是可发布状态：
+// 拒绝之后任何 flush 都不得把磁盘上还完好的行删掉（绝不静默前滚）。
+@Test
+func flushAfterRejectedReplayKeepsEveryDurableLine() {
+    let p = tmpPath("reject-flush")
+    clean("reject-flush")
+    let durable = "0\tuser/message\ta\n1\tuser/message\tb\n3\tuser/message\tc\n4\tuser/message\td\n"
+    File.writeTo(p, durable.toArray())
+    let r = SessionLog(p)
+    @Expect(r.load(), false)
+    @Expect(Int64(r.events.size), Int64(2))
+    @Expect(r.flush(), false)
+    @Expect(String.fromUtf8(File.readFrom(p)), durable)
+    clean("reject-flush")
+}
+
+// 路径恰好是目录时：既不能声称已落盘，更不能把目录换成文件。
+@Test
+func flushOntoDirectoryPathIsRefusedAndLeavesTheDirectoryIntact() {
+    let dir = "core-test-asdir"
+    removeIfExists(dir, recursive: true)
+    Directory.create(dir)
+    let log = SessionLog(dir)
+    log.append("user/message", "one")
+    var refused = false
+    var threw = ""
+    try {
+        refused = !log.flush()
+    } catch (e: Exception) {
+        threw = e.message
+    }
+    @Expect(threw, "")
+    @Expect(refused, true)
+    @Expect(exists(dir) && FileInfo(dir).isDirectory(), true)
+    removeIfExists(dir, recursive: true)
+}
+
+// 同一 seq 上内容分叉：另一入口没回放就写了同一条序号，草稿会「改写」已落盘的事件。
+// 事件日志只允许追加，改写等于用一份旧内存覆盖别人已经保存的事实。
+@Test
+func flushCannotRewriteADurableLineWithDifferentContent() {
+    let p = tmpPath("diverge")
+    clean("diverge")
+    let a = SessionLog(p)
+    a.append("user/message", "甲")
+    @Expect(a.flush(), true)
+    let b = SessionLog(p)
+    b.append("user/message", "乙")
+    b.append("user/message", "丙")
+    @Expect(b.flush(), false)
+    @Expect(String.fromUtf8(File.readFrom(p)), "0\tuser/message\t甲\n")
+    clean("diverge")
+}
