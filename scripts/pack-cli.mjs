@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 const SDK = process.env.CANGJIE_HOME || "D:\Program Files\HuaWei\Cangjie";
 const RT = join(SDK, "runtime", "lib", "windows_x86_64_cjnative");
+const STDX = process.env.STDX_HOME || "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx";
+const OPENSSL_HOME = process.env.OPENSSL_HOME || "";
 const out = "npm/dsh-cli-win32-x64/bin";
 const extOut = "npm/dsh-cli-win32-x64/extjs";
 // server.cjs 里 require("./host.cjs")，两个文件必须同去，少一个就是起不来的包。
@@ -58,8 +60,80 @@ for (const f of readdirSync(RT)) {
     n += 1;
   }
 }
-if (existsSync(join(SDK, "third_party", "mingw", "lib", "libgcc_s_seh-1.dll"))) {
-  cpSync(join(SDK, "third_party", "mingw", "lib", "libgcc_s_seh-1.dll"), join(out, "libgcc_s_seh-1.dll"));
-  cpSync(join(SDK, "third_party", "mingw", "lib", "libwinpthread-1.dll"), join(out, "libwinpthread-1.dll"));
+// MinGW 运行期 DLL：仓颉编译器基于 GCC，产物链接 libgcc/libwinpthread/libstdc++。
+// SDK 不一定带 mingw（本机就没有 third_party/mingw），从 OPENSSL_HOME 或 PATH 上搜——
+// 不随包分发则剥掉 PATH 后 exe 启动直接 0xC0000135（STATUS_DLL_NOT_FOUND）。
+const MINGW_DLLS = ["libgcc_s_seh-1.dll", "libwinpthread-1.dll", "libstdc++-6.dll"];
+let mgw = 0;
+for (const dll of MINGW_DLLS) {
+  let found = false;
+  const sources = [];
+  if (OPENSSL_HOME) sources.push(OPENSSL_HOME);
+  sources.push(join(SDK, "third_party", "mingw", "lib"));
+  for (const dir of (process.env.PATH || "").split(/[;:]/)) { if (dir) sources.push(dir); }
+  for (const dir of sources) {
+    const candidate = join(dir, dll);
+    if (existsSync(candidate)) {
+      cpSync(candidate, join(out, dll));
+      mgw += 1;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    console.error(`缺 MinGW 运行时：找不到 ${dll}（exe 启动会 0xC0000135）`);
+    process.exit(1);
+  }
 }
-console.log(`packed ${n} 个文件到 ${out}，扩展宿主 ${EXT_SRC.length} + 样例工具 ${ex} 个到 ${extOut}`);
+// stdx 运行期 DLL：core 直接 import stdx.net.http（RealSseProvider）与 stdx.encoding.json，
+// 平台包必须带这些 DLL，否则剥掉 SDK 后 dsh realstream 会缺 DLL 当场炸（rc=127）。
+if (!existsSync(STDX)) {
+  console.error(`缺少 stdx 动态库目录 ${STDX}，装出来的 dsh 跑不了真实流`);
+  process.exit(2);
+}
+let sx = 0;
+const STDX_DENY = /^libstdx\.unittest|^lib-macro/;
+for (const f of readdirSync(STDX)) {
+  if (/^libstdx.*\.dll$/.test(f) && !STDX_DENY.test(f)) {
+    cpSync(join(STDX, f), join(out, f));
+    sx += 1;
+  }
+}
+// TLS 靠 OpenSSL FFI：RealSseProvider 走 https 必须有这颗，否则 TLS 握手阶段直接炸。
+if (existsSync(join(STDX, "libcangjie-dynamicLoader-opensslFFI.dll"))) {
+  cpSync(join(STDX, "libcangjie-dynamicLoader-opensslFFI.dll"), join(out, "libcangjie-dynamicLoader-opensslFFI.dll"));
+  sx += 1;
+}
+// OpenSSL 3 运行期：libstdx.net.tls 经 tlsFFI → opensslFFI 链加载 libcrypto/libssl，
+// 不随包分发则剥掉 PATH 后 dsh realstream 会缺 DLL（rc=127 can not load openssl library）。
+// Git Bash 下 process.env.PATH 用 Unix 路径（/mingw64/bin），Node 在 Windows 上解析不了，
+// 需要用 OPENSSL_HOME 显式给 Windows 路径（cygpath -w 转换后的）。
+const OPENSSL_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"];
+let ssl = 0;
+for (const dll of OPENSSL_DLLS) {
+  let found = false;
+  if (OPENSSL_HOME && existsSync(join(OPENSSL_HOME, dll))) {
+    cpSync(join(OPENSSL_HOME, dll), join(out, dll));
+    ssl += 1;
+    console.log(`  + ${dll} ← ${OPENSSL_HOME}`);
+    found = true;
+  } else {
+    const pathDirs = (process.env.PATH || "").split(/[;:]/);
+    for (const dir of pathDirs) {
+      if (!dir) continue;
+      const candidate = join(dir, dll);
+      if (existsSync(candidate)) {
+        cpSync(candidate, join(out, dll));
+        ssl += 1;
+        console.log(`  + ${dll} ← ${dir}`);
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) {
+    console.error(`缺 OpenSSL 3 运行时：找不到 ${dll}（TLS 将抛 TlsException）`);
+    process.exit(1);
+  }
+}
+console.log(`packed ${n} 个文件到 ${out}（其中 stdx ${sx} + openssl ${ssl} + mingw ${mgw}），扩展宿主 ${EXT_SRC.length} + 样例工具 ${ex} 个到 ${extOut}`);
