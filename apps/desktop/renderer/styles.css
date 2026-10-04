@@ -250,7 +250,19 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .detail-fields { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: var(--space-3) var(--space-4); margin: 0; }
 .detail-fields dt { color: var(--text-muted); }
 .detail-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.settings-dialog { width: min(600px, calc(100vw - 48px)); }
+.settings-dialog { width:min(800px,calc(100vw - 48px)); height:min(800px,calc(100dvh - 48px)); }
+.settings-dialog[open] { flex-direction:row; }
+.settings-dialog::backdrop { background:rgb(0 0 0 / 24%); }
+.settings-nav { flex:none; display:flex; flex-direction:column; gap:18px; width:188px; padding:22px 12px 0; box-sizing:border-box; min-height:0; }
+.settings-title { padding:0 12px; margin:0; font-size:16px; line-height:24px; font-weight:500; }
+.settings-content { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
+.settings-dialog .settings-header { height:54px; box-sizing:border-box; padding:20px 14px 8px 10px; gap:8px; align-items:flex-start; justify-content:flex-end; border:0; }
+.settings-close { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:var(--radius-s); background:transparent; color:var(--text); cursor:pointer; }
+.settings-close:hover { background:var(--surface-3); }
+.settings-close:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* 分类在独立滚动列内，焦点环内收，避免被滚动裁剪边界切掉。 */
+.settings-tab:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.settings-dialog .settings-options { flex:1; padding:0 24px 24px; gap:0; }
 .catalog-dialog { width: min(600px, calc(100vw - 48px)); }
 .workspace-dialog { width: min(600px, calc(100vw - 48px)); }
 .workspace-panel { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);
@@ -267,8 +279,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .catalog-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); }
 .catalog-create .input { height: var(--control-height); }
 .catalog-select { grid-column: 2; justify-self: end; }
-.settings-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.settings-tab[aria-selected=true] { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+.settings-tabs { display:flex; flex-direction:column; gap:4px; overflow-y:auto; min-height:0; padding-bottom:12px; }
+.settings-tab { flex:none; display:flex; align-items:center; gap:8px; height:40px; padding:9px 16px 9px 12px; box-sizing:border-box; border:0; border-radius:var(--radius-m); background:transparent; cursor:pointer; font:inherit; font-size:14px; line-height:22px; color:var(--text); text-align:left; }
+.settings-tab:hover { background:var(--surface); }
+.settings-tab[aria-selected=true] { background:var(--surface-3); }
+.settings-nav-icon { flex:none; width:16px; height:16px; background:currentColor; mask-size:contain; mask-repeat:no-repeat; mask-position:center; }
+.settings-nav-label { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .settings-page { display: flex; flex-direction: column; gap: var(--space-4); }
 .appearance-settings { display:flex; flex-direction:column; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }
 .appearance-title { font-size:14px; line-height:22px; font-weight:400; margin:0; }

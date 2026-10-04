@@ -2,7 +2,7 @@
    不写会话事实，不引入第二份 Vue 或模板编译器。 */
 "use strict";
 window.SaCodeDialog = {
-  props: { open: Boolean, modal: { type: Boolean, default: true }, adjustable: Boolean, title: { type: String, default: "详情" } },
+  props: { open: Boolean, modal: { type: Boolean, default: true }, adjustable: Boolean, customFrame: Boolean, title: { type: String, default: "详情" } },
   emits: ["close"],
   setup(props, { emit, slots }) {
     const { h, ref, watch, onMounted, onBeforeUnmount } = window.Vue;
@@ -72,7 +72,7 @@ window.SaCodeDialog = {
       onKeydown: (event) => {
         if (!props.modal && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); emit("close"); }
       },
-    }, [
+    }, props.customFrame ? (slots.default ? slots.default() : []) : [
       h("header", { class: "dialog-header" + (props.adjustable ? " movable-header" : ""), tabindex: props.adjustable ? 0 : undefined,
         "aria-label": props.adjustable ? "移动预览，支持方向键" : undefined,
         onPointerdown: e=>beginDrag(e,false), onKeydown:e=>keyAdjust(e,false) }, [

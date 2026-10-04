@@ -305,7 +305,14 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
             visible: !!dialog && !panel.hidden,
             fits: r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1,
             noOverflow: dialog.scrollWidth<=dialog.clientWidth,
-            controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().top-tabs[0].getBoundingClientRect().top)<1),
+            controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().height-40)<1 && Math.abs(e.getBoundingClientRect().left-tabs[0].getBoundingClientRect().left)<1),
+            panelFrame:Math.abs(r.width-Math.min(800,innerWidth-48))<1 && Math.abs(r.height-Math.min(800,innerHeight-48))<1,
+            navWidth:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().width-188)<1,
+            columnsAligned:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().right-dialog.querySelector('.settings-content').getBoundingClientRect().left)<1,
+            navStack:getComputedStyle(dialog.querySelector('.settings-tabs')).flexDirection==='column' && getComputedStyle(dialog.querySelector('.settings-tabs')).gap==='4px',
+            headerFrame:Math.abs(dialog.querySelector('.settings-header').getBoundingClientRect().height-54)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().width-28)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().height-28)<1,
+            optionsInsets:getComputedStyle(dialog.querySelector('.settings-options')).padding==='0px 24px 24px',
+            navIcons:tabs.every(e=>{const i=e.querySelector('.settings-nav-icon').getBoundingClientRect(),label=e.querySelector('.settings-nav-label').getBoundingClientRect();return Math.abs(i.width-16)<1 && Math.abs(i.height-16)<1 && Math.abs((i.top+i.bottom)-(label.top+label.bottom))<1 && Math.abs(label.left-i.right-8)<1;}),
             budgetAligned: '${page}'!=='general' || (Math.abs(input.getBoundingClientRect().top-apply.getBoundingClientRect().top)<1 && Math.abs(input.getBoundingClientRect().height-36)<1),
             ...('${page}'==='general'?{
               themeOrder:cubes.map(e=>e.id).join(',')==='theme-light,theme-dark,theme-system',
@@ -329,14 +336,22 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const fixture=document.createElement('p'); fixture.id='layout-settings-fixture'; fixture.className='note';
         fixture.textContent=('长配置说明：'+ '目录与工具说明'.repeat(30)+'\\n').repeat(60);
         fixture.style.whiteSpace='pre-wrap'; body.append(fixture);
+        const nav=dialog.querySelector('.settings-nav'),title=dialog.querySelector('.settings-title'),list=dialog.querySelector('.settings-tabs');
+        const navBefore=nav.getBoundingClientRect(), titleBefore=title.getBoundingClientRect();
         const before=header.getBoundingClientRect(); body.scrollTop=body.scrollHeight;
+        const contentScroll=body.scrollTop;
+        const navFixture=document.createElement('div');navFixture.id='layout-nav-fixture';navFixture.textContent=('导航长度压力样本\\n').repeat(80);navFixture.style.whiteSpace='pre-wrap';list.append(navFixture);list.scrollTop=list.scrollHeight;
         const after=header.getBoundingClientRect(), close=header.querySelector('button').getBoundingClientRect(), rect=dialog.getBoundingClientRect();
         const checks={
           bodyScrolls: body.scrollHeight>body.clientHeight && body.scrollTop>0,
           headerStays: Math.abs(before.top-after.top)<1 && after.top>=rect.top && close.bottom<=rect.bottom,
           dialogDoesNotScroll: dialog.scrollHeight<=dialog.clientHeight+1,
           noHorizontalOverflow: body.scrollWidth<=body.clientWidth && rect.right<=innerWidth+1,
+          navStays:Math.abs(navBefore.top-nav.getBoundingClientRect().top)<1 && Math.abs(titleBefore.top-title.getBoundingClientRect().top)<1,
+          navScrolls:list.scrollHeight>list.clientHeight && list.scrollTop>0,
+          independentScroll:Math.abs(body.scrollTop-contentScroll)<1,
         };
+        navFixture.remove();list.scrollTop=0;
         return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
       })()`);
       Object.assign(longSettingsReport,{theme,width,height,surface:'long-settings'}); reports.push(longSettingsReport);

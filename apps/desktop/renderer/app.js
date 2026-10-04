@@ -760,20 +760,29 @@ createApp({
       ] : []);
     const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, adjustable: true, title: "SaCode · 文档预览",
       class: "floating-preview", onClose: () => { self.previewFloating = false; } }, () => previewBody("float-preview"));
-    const settings = h(window.SaCodeDialog, { open: self.settingsOpen, title: "SaCode 设置", class: "settings-dialog",
+    const settings = h(window.SaCodeDialog, { open: self.settingsOpen, title: "SaCode 设置", class: "settings-dialog", customFrame:true,
       onClose: () => { self.settingsOpen = false; } }, () => [
-      el("div", "settings-tabs", [["general", "通用"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "btn settings-tab", label, {
+      el('nav','settings-nav',[
+      el('h2','settings-title','SaCode 设置'),
+      el("div", "settings-tabs", [["general", "通用"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
+        type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
         onClick: () => { self.settingsTab=id; },
         onKeydown: e => {
-          const offset=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
+          const offset=['ArrowRight','ArrowDown'].includes(e.key)?1:['ArrowLeft','ArrowUp'].includes(e.key)?-1:0;
           if (!offset && e.key!=='Home' && e.key!=='End') return;
           e.preventDefault();
           const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(index+offset+tabs.length)%tabs.length;
           self.settingsTab=tabs[next][0]; window.Vue.nextTick(()=>document.getElementById('settings-tab-'+self.settingsTab).focus());
         },
-      })), { role: "tablist", "aria-label": "设置分类" }),
+      })), { role: "tablist", "aria-label": "设置分类",'aria-orientation':'vertical' }),
+      ]),
+      el('div','settings-content',[
+      el('header','dialog-header settings-header',[
+        el('button','settings-close',[h('svg',{width:14,height:14,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor','stroke-width':1,'aria-hidden':'true'},[h('path',{d:'M2.5 2.5L13.5 13.5M13.5 2.5L2.5 13.5'})])],{type:'button','aria-label':'关闭SaCode 设置',onClick:()=>{self.settingsOpen=false;}}),
+      ]),
+      el('div','dialog-body settings-options',[
       el("section", "settings-page", [
         el("section", "appearance-settings", [el("h2", "appearance-title", "主题（全局）"),
           el("div", "theme-choices", [["light","亮色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
@@ -804,6 +813,8 @@ createApp({
         ], {key:t.name, "data-tool-name":t.name})),
         el("p", "note", "清单来自当前核心。扩展安装、启用和卸载设置尚未开放。"),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
+      ]),
+      ]),
     ]);
     const catalogDialog = h(window.SaCodeDialog, { open:self.catalogOpen, title:"SaCode 本地会话", class:"catalog-dialog",
       onClose:()=>{self.catalogOpen=false;} }, ()=>[

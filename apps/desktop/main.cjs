@@ -234,6 +234,8 @@ async function uiSmoke() {
   note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
   await js("document.querySelector('#composer').focus()");
   const chord = async (keyCode,modifiers=['control']) => {
+    win.webContents.focus();
+    await waitFor(()=>js("document.hasFocus()"));
     win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});
     win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});
     await nap(50);
@@ -251,6 +253,7 @@ async function uiSmoke() {
   await click('#side-tab-inspect');
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
+  note(await js("document.activeElement.id==='settings-tab-general' && document.querySelector('.settings-tabs').getAttribute('aria-orientation')==='vertical'"), "设置打开后焦点进入当前纵向分类");
   note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
   note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "全局主题默认跟随系统");
   for (const theme of ['light','dark','system']) {
@@ -293,8 +296,17 @@ async function uiSmoke() {
   await click('#settings-tab-models');
   note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
   await js("document.querySelector('#settings-tab-models').focus()");
-  win.webContents.sendInputEvent({type:'keyDown',keyCode:'End'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'End'});
-  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden")), "设置分类支持键盘切换与焦点同步");
+  const settingsFrameBefore=await js("(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:r.width,height:r.height};})()");
+  await chord('Down',[]);
+  const settingsKeyReady=await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden"));
+  note(settingsKeyReady, "设置分类支持键盘切换与焦点同步" + (settingsKeyReady?'':await js("JSON.stringify({focus:document.activeElement.id,selected:document.querySelector('.settings-tab[aria-selected=true]').id,hidden:document.querySelector('#settings-page-plugins').hidden})")));
+  note(await js(`(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return Math.abs(r.width-${settingsFrameBefore.width})<1 && Math.abs(r.height-${settingsFrameBefore.height})<1;})()`), "设置分类切换不会改变面板尺寸");
+  await chord('Up',[]);
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-models' && !document.querySelector('#settings-page-models').hidden")), "纵向分类向上切换同步内容");
+  await chord('Home',[]);
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-general' && !document.querySelector('#settings-page-general').hidden")), "分类 Home 返回通用页");
+  await chord('End',[]);
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden")), "分类 End 进入最后一页");
   note(await js("(async()=>{const r=await window.dsh.toolsList();const rows=[...document.querySelectorAll('.settings-tool')];return rows.length===r.tools.length && r.tools.every(t=>rows.some(e=>e.dataset.toolName===t.name && e.textContent.includes(t.description)));})()"), "设置工具清单逐项对应核心响应");
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='open-settings'"), "关闭设置后焦点返回导航按钮");
