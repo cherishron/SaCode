@@ -21,6 +21,8 @@ test('项目目录持久恢复，真实相对文件工具写入所选目录，�
     assert.equal((await bridge.request('workspace/get')).configured,false);
     const saved=await bridge.request('workspace/set-directory',{directory:project});
     assert.equal(saved.saved,true);
+    const firstCatalog=await bridge.request('session/catalog');
+    assert.equal(firstCatalog.entries.find(item=>item.current).workspaceDirectory,saved.directory);
     const ticket=await bridge.request('approval/ask',{name:'write'});
     await bridge.request('approval/answer',{approvalId:ticket.approvalId,decision:'allowed-once'});
     await bridge.request('extension/call',{name:'write',args:'workspace.txt 工作区正文',approvalId:ticket.approvalId});
@@ -30,6 +32,9 @@ test('项目目录持久恢复，真实相对文件工具写入所选目录，�
     const second=(await bridge.request('session/create',{title:'独立会话'})).id;
     await bridge.request('session/select',{sessionId:second});
     assert.equal((await bridge.request('workspace/get')).configured,false);
+    const isolatedCatalog=await bridge.request('session/catalog');
+    assert.equal(isolatedCatalog.entries.find(item=>item.id===second).workspaceDirectory,'');
+    assert.equal(isolatedCatalog.entries.find(item=>item.id==='current').workspaceDirectory,saved.directory);
     await bridge.request('session/select',{sessionId:'current'});
     assert.equal((await bridge.request('workspace/get')).directory,saved.directory);
     const before=readFileSync(join(dir,'session.log'),'utf8');

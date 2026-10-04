@@ -127,6 +127,7 @@ createApp({
     const sideTab = ref("inspect");
     const viewport = ref(window.innerWidth), sidebarWidth = ref(280), rightWidth = ref(null);
     const sidebarClosed = ref(false), narrowExpanded = ref(false), sideOpen = ref(false), diagnosticsOpen = ref(false);
+    const workspaceSessionLimits = ref(new Map());
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
     const frameColumns = window.Vue.computed(() => window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
       sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0));
@@ -173,7 +174,7 @@ createApp({
     }
     async function openWorkspace() {
       workspaceOpen.value=true;
-      try {await refreshWorkspace();} catch(e) {workspaceNote.value=catalogError(e);}
+      try {await refreshWorkspace(); await refreshCatalog();} catch(e) {workspaceNote.value=catalogError(e);}
     }
     async function chooseWorkspace() {
       if(sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
@@ -181,7 +182,7 @@ createApp({
       try {
         const result=await window.dsh.workspaceChoose();
         if(result.cancelled) {workspaceNote.value="已取消选择，目录未变更。";return;}
-        await refreshWorkspace(); await refresh(); await refreshTools();
+        await refreshWorkspace(); await refresh(); await refreshTools(); await refreshCatalog();
         workspaceNote.value="已保存当前会话的项目目录。";
       } catch(e) {workspaceNote.value=catalogError(e);}
       finally {workspaceBusy.value=false;}
@@ -577,7 +578,7 @@ createApp({
       appearanceBusy, appearanceNote, setTheme,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits,
       send, runTurn, cancelTurn, askTool, answerTool,
     };
   },
@@ -589,6 +590,16 @@ createApp({
     const workspaceName = self.workspace?.configured ? self.workspace.directory.split(/[\\/]/).filter(Boolean).pop() : '工作区';
     // 默认空日志尚未形成持久会话，不在产品导航里制造一条占位会话。
     const sidebarSessions = (self.catalog?.entries || []).filter(item=>item.durable>0);
+    // 分组键来自核心的逐会话工作区投影；不根据当前目录或路径相似度猜测归属。
+    const workspaceGroups = new Map();
+    for (const item of sidebarSessions) {
+      const directory = item.workspaceDirectory || '';
+      if (!workspaceGroups.has(directory)) workspaceGroups.set(directory, []);
+      workspaceGroups.get(directory).push(item);
+    }
+    if (self.workspace?.configured && !workspaceGroups.has(self.workspace.directory)) workspaceGroups.set(self.workspace.directory, []);
+    const renderSession = item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
+      'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>self.selectSession(item.id)});
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation})]),
       el("div", "header-utilities", [
@@ -610,9 +621,19 @@ createApp({
         el('button','frame-icon',[navIcon('M3 7h8l2 2h8v12H3z M17 2v6 M14 5h6')],{id:'open-workspace','aria-label':'当前会话工作区',onClick:self.openWorkspace}),
       ]),
       el('div','sidebar-session-list',[
-        self.workspace?.configured ? el('button','workspace-folder',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,workspaceName)],{title:self.workspace.directory,onClick:self.openWorkspace}) : null,
-        ...sidebarSessions.map(item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
-          'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>self.selectSession(item.id)})),
+        ...[...workspaceGroups].map(([directory,items])=>{
+          const limit=self.workspaceSessionLimits.get(directory) ?? 5;
+          let idle=0;
+          const visible=items.filter(item=>item.current&&self.turn.running || idle++<limit);
+          const hidden=items.length-visible.length;
+          const label=directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
+          return el('section','workspace-group',[
+            el('div','workspace-folder',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,label)],{title:directory||'尚未绑定项目目录的会话'}),
+            ...visible.map(renderSession),
+            items.length>5 ? el('button','workspace-overflow',hidden ? `显示更多（${hidden}）` : '收起会话',{
+              'data-workspace-overflow':directory,'aria-expanded':hidden===0,onClick:()=>self.workspaceSessionLimits.set(directory,hidden ? limit+5 : 5)}) : null,
+          ],{'data-workspace-group':directory});
+        }),
         !sidebarSessions.length ? el('p','sidebar-empty','暂无会话') : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
       ]),

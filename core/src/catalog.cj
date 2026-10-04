@@ -11,11 +11,13 @@ public class SessionCatalogEntry {
     public let title: String
     public let durable: Int64
     public let status: String
-    public init(id: String, title: String, durable: Int64, status: String) {
+    public let workspaceDirectory: String
+    public init(id: String, title: String, durable: Int64, status: String, workspaceDirectory!: String = "") {
         this.id = id
         this.title = title
         this.durable = durable
         this.status = status
+        this.workspaceDirectory = workspaceDirectory
     }
 }
 
@@ -37,7 +39,9 @@ public class SessionCatalog {
             }
         }
         let status = if (log.isTruncatedTail()) { "truncated-tail" } else { "ready" }
-        return SessionCatalogEntry(id, title, log.durableCount(), status)
+        // 工作区归属与打开会话使用同一日志投影；不能因标题已找到而漏掉后续目录变更。
+        return SessionCatalogEntry(id, title, log.durableCount(), status,
+            workspaceDirectory: SessionWorkspace(log).directory())
     }
 
     public func indexPath(): String {

@@ -34,6 +34,30 @@ func catalogEmptyRootDoesNotCreateLogsOrFolders() {
 }
 
 @Test
+func catalogWorkspaceFollowsLastDurableDirectoryWithoutWriting() {
+    let root = "core-catalog-workspace"
+    removeIfExists(root, recursive: true)
+    Directory.create("${root}/sessions/project", recursive: true)
+    let path = "${root}/sessions/project/session.log"
+    let log = SessionLog(path)
+    log.append("session/title", "已有标题")
+    log.append("workspace/directory", "C:/旧项目")
+    log.append("user/message", "目录归属必须继续回放")
+    log.append("workspace/directory", "C:/新项目")
+    @Expect(log.flush(), true)
+    let before = File.readFrom(path)
+    log.append("workspace/directory", "C:/未落盘项目")
+    let entries = SessionCatalog(root).list()
+    @Expect(entries.size, Int64(1))
+    @Expect(entries[0].title, "已有标题")
+    @Expect(entries[0].workspaceDirectory, "C:/新项目")
+    @Expect(entries[0].durable, Int64(4))
+    @Expect(String.fromUtf8(File.readFrom(path)), String.fromUtf8(before))
+    @Expect(exists("${path}.lease"), false)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
 func catalogDoesNotRecurseOrTreatArbitraryFilesAsSessions() {
     let root = "core-catalog-depth"
     removeIfExists(root, recursive: true)

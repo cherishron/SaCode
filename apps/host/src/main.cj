@@ -852,7 +852,7 @@ main(args: Array<String>) {
                 var comma = ""
                 for (item in SessionCatalog(".").list()) {
                     let current = if (item.id == activeId) { "true" } else { "false" }
-                    items += comma + "{\"id\":\"${jsonEscapeText(item.id)}\",\"title\":\"${jsonEscapeText(item.title)}\",\"durable\":${item.durable},\"status\":\"${item.status}\",\"current\":${current}}"
+                    items += comma + "{\"id\":\"${jsonEscapeText(item.id)}\",\"title\":\"${jsonEscapeText(item.title)}\",\"durable\":${item.durable},\"status\":\"${item.status}\",\"workspaceDirectory\":\"${jsonEscapeText(item.workspaceDirectory)}\",\"current\":${current}}"
                     comma = ","
                 }
                 items += "]"

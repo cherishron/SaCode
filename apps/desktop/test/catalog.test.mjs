@@ -29,7 +29,7 @@ test('会话目录读取落盘事实，隔离损坏日志并且不递归到目�
     assert.equal(catalog.source, 'durable-log');
     assert.equal(catalog.entries.length, 3);
     const current = catalog.entries.find(e=>e.current);
-    assert.deepEqual(current, {id:'current',title:'根任务',durable:1,status:'ready',current:true});
+    assert.deepEqual(current, {id:'current',title:'根任务',durable:1,status:'ready',workspaceDirectory:'',current:true});
     assert.equal(catalog.entries.find(e=>e.id==='sessions/中文 会话').title, '引号"与\n换行');
     assert.equal(catalog.entries.find(e=>e.id==='sessions/broken').status, 'replay-rejected');
     assert.doesNotMatch(JSON.stringify(catalog), /目录外的私有消息/);

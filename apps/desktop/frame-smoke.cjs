@@ -86,6 +86,16 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await js("document.querySelector('#sidebar-new-session').click()");
   await waitFor(`document.querySelector('.app').dataset.emptyConversation==='true' && !document.querySelector('#sidebar-new-session').disabled && document.querySelector('[data-sidebar-session][aria-current=page]').dataset.sidebarSession!==${JSON.stringify(priorSession)}`);
   await check('新会话与切换',"(()=>({emptyRestored:!!document.querySelector('.hero-heading'),catalogUpdated:document.querySelectorAll('[data-sidebar-session]').length>=2,selectedOne:document.querySelectorAll('[data-sidebar-session][aria-current=page]').length===1}))()");
+  for(let i=0;i<6;i++) await bridge.request('session/create',{title:`未绑定工作区 ${i+1}`});
+  await js("document.querySelector('#open-catalog').click()");
+  await waitFor("!!document.querySelector('.workspace-overflow') && !document.querySelector('#refresh-catalog').disabled");
+  await js("document.querySelector('.catalog-dialog .dialog-header button').click()");
+  await check('真实工作区归属分组',`(()=>{const groups=[...document.querySelectorAll('[data-workspace-group]')],bound=groups.find(e=>e.dataset.workspaceGroup===${JSON.stringify(fixtureWorkspace)}),unbound=groups.find(e=>e.dataset.workspaceGroup==='');return {boundSession:!!bound && [...bound.querySelectorAll('[data-sidebar-session]')].some(e=>e.dataset.sidebarSession===${JSON.stringify(priorSession)}),unboundSeparate:!!unbound && ![...unbound.querySelectorAll('[data-sidebar-session]')].some(e=>e.dataset.sidebarSession===${JSON.stringify(priorSession)}),idleQuota:!!unbound && unbound.querySelectorAll('[data-sidebar-session]').length===5,overflowHeight:!!unbound && Math.abs(unbound.querySelector('.workspace-overflow').getBoundingClientRect().height-28)<1}})()`);
+  await js("document.querySelector('.workspace-overflow').click()");
+  await check('分组会话展开与收起',"(()=>({expanded:document.querySelector('.workspace-overflow').getAttribute('aria-expanded')==='true',allUnbound:document.querySelector('[data-workspace-group=\"\"]').querySelectorAll('[data-sidebar-session]').length===7}))()");
+  await js("document.querySelector('.workspace-overflow').click()");
+  await check('分组会话恢复五条',"(()=>({collapsed:document.querySelector('.workspace-overflow').getAttribute('aria-expanded')==='false',five:document.querySelector('[data-workspace-group=\"\"]').querySelectorAll('[data-sidebar-session]').length===5}))()");
+  writeFileSync(join(outDir,'workspace-groups.png'),(await win.webContents.capturePage()).toPNG());
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
 };
