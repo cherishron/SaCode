@@ -47,8 +47,36 @@ function longWire(i) {
   return { choices: [{ index: 0, delta: { content: `第${i}帧\n"中文" data: \\尾\t` } }] };
 }
 function handler(req, res) {
-  req.resume();
   const route = req.url.split('/')[1];
+  if (route === 'vision') {
+    // 「附件到底有没有到 provider」只有 provider 侧能证：把收到的请求体里
+    // 真正的 image_url part 数原样回声进答复，装配点没物化就是 0。
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (d) => { raw += d; });
+    req.on('end', () => {
+      let parts = -1;
+      let messages = -1;
+      let textChars = 0;
+      try {
+        const parsed = JSON.parse(raw);
+        messages = (parsed.messages || []).length;
+        parts = 0;
+        for (const m of parsed.messages || []) {
+          if (!Array.isArray(m.content)) continue;
+          for (const p of m.content) {
+            if (p && p.type === 'text') textChars += (p.text || '').length;
+            if (p && p.type === 'image_url' && p.image_url && typeof p.image_url.url === 'string' && p.image_url.url.startsWith('data:image/')) parts += 1;
+          }
+        }
+      } catch (e) { /* 保持 -1：请求体不是合法 JSON 也要能被断言发现 */ }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      res.write(frame(`vision parts=${parts} messages=${messages} text=${textChars}`));
+      res.end('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"total_tokens":3}}\n\ndata: [DONE]\n\n');
+    });
+    return;
+  }
+  req.resume();
   if (route === 'long-expected') {
     res.setHeader('Content-Type', 'application/x-ndjson');
     for (let i = 0; i < 10006; i++) res.write(JSON.stringify(longExpected(i)) + '\n');

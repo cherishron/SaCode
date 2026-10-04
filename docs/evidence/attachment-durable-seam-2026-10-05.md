@@ -227,5 +227,46 @@ DLL 拒绝面单独复验：`RUNTIME_DENY` 那 4 颗（ast / unittest / testmacr
 UI 检查含真夹具的一轮完整往返。所以「安装包里的东西能出真答复」这条目前的依据是
 **同一二进制 + 已证的 provider 往返 + 已证的装包态接线**，不是安装包直接打过真 API。
 
+## 7. 附件进模型请求（同日第三批）
+
+上游依据（`target/upstream-read/attachment.en.md` 直读 L5 与 L149-166）：会话事件与
+模型可见的附件块只含引用与元数据，绝不含 base64；请求字节是另一件事——
+`RequestImageAttachment` 就是「durable 引用 + 编码后的请求字节」。本仓照这条切法落：
+
+- `modelRequestJson(..., attachStore!: ?AttachmentStore = None)` 是「引用 → 请求字节」
+  **唯一**的物化点。带 `attachment/record` 的 user/message 走多 part：
+  `[{"type":"text","text":…},{"type":"image_url","image_url":{"url":"data:<mime>;base64,…"}}]`；
+  没有引用时仍是原来的纯字符串 `content`（`modelRequestKeepsPlainStringContentWhenNothingIsAttached`）。
+- 配对规则沿用投影那条：引用事件服务紧跟其后的那条用户消息；`user/message` 一到就清空 pending，
+  与 `refsForMessage()` 同一条账。
+- 有引用却没有附件仓 → `attachment-store-absent` 整轮失败。这是有意的：静默丢图等于让模型
+  回答一条被阉割的消息却看不出来。
+- 通用文件（`kind != "image"`）不进 vision part——本仓没有 provider 侧文件通道，把任意二进制
+  塞成 image_url 是编造。引用仍留在日志里，该形态由 `modelRequestDoesNotTurnGenericFilesIntoImageParts` 钉住。
+- 对象缺失走 `store.read` 的 `attachment-missing-object`，不降级成「当没附件」。
+- 宿主侧两处都接上：`turn/start` 首次请求装配传 `attachStore: turnAtt`，多步续跑经
+  `ModelAgentLoop.run(..., attach: Some(turnAtt))`——只接首步会让第二步之后的历史悄悄丢图。
+
+取证（provider 侧回声，不看装配点自证）：SSE 夹具新增 `vision` 路由，读完整请求体后
+把 `parts=<真正的 data:image/ part 数> messages=<条数> text=<文字长度>` 回声进答复。
+
+| 阶段 | 实测 |
+|---|---|
+| 接线前（宿主还没拿到仓） | `not ok 1 … 实际答复是「vision parts=0 messages=1 text=0」` — 真实红灯，且红的是「附件被静默丢掉」这个具体缺陷 |
+| 接线后 | `ok 1 … parts=1 messages=1 text=8`；`ok 2 没有附件的消息仍然走纯字符串 content`（`parts=0`）；日志侧三条反向断言（不含 base64、不含提交的原始 base64、只留 `sha256:` 引用）同轮通过 |
+
+计数：核心新增 4 条（`core/src/model_request_test.cj`）→ 核心 `TOTAL: 445 / PASSED: 444, SKIPPED: 1`（那条 SKIPPED 是凭据门控的 `realModelSse`，凭据齐时 441/441 全过）；
+端到端新增 2 条（`apps/desktop/test/attachment-into-model.test.mjs`）→ 桌面全套 `# tests 139 / # pass 139 / # fail 0`；
+CLI 交付面 `att` 由 20 条增至 23 条（多 part 物化、文字 part 共存、日志侧无 base64），`ALL PASS`。
+
+一处测试侧自纠先记下来：端到端第一条刚写好时断言写成 `/text=\d+[1-9]/`，`text=8` 反而匹配不上，
+第一条绿不起来的是**测试自己**而不是被测面；改成 `/text=[1-9]\d*/` 后复跑 2/2。
+
+未接（本批明确不做）：图片规范化/缩放阶段（无编解码器，超限仍是一律拒绝）；`image/webp`；
+历史消息里逐条展示附件（投影仍只交回「最后一条已配对消息」的引用）；运行中发消息走队列时
+的凭证（`queue/enqueue` 还不接受 `receiptIds`）；非 vision 模型的档位（不看 `image: false`
+就照发图片 part，这一档未做门控）。
+
+
 
 

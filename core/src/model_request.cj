@@ -1,12 +1,21 @@
 package core
 import std.collection.ArrayList
+import stdx.encoding.base64.*
 import stdx.encoding.json.*
 
 // 标准消息与具有关联 ID 的工具结果全部从同一会话日志重建。
-public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = []): String {
+public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = [], attachStore!: ?AttachmentStore = None): String {
     var messages = ""
     let pending = ArrayList<String>()
+    // 引用事件服务的是紧跟其后的那条用户消息。「引用 → 请求字节」的物化只发生在这里：
+    // 会话日志里始终只有引用与元数据，base64 不进真源（上游 attachment.en.md L5 与
+    // L149-166 的 RequestImageAttachment 就是这么切的）。
+    var pendingRefs = ArrayList<AttachmentRef>()
     for (event in events) {
+        if (event.eventType == "attachment/record") {
+            pendingRefs = parseAttachmentRefs(event.data)
+            continue
+        }
         var role = ""
         if (event.eventType == "system/message") { role = "system" }
         else if (event.eventType == "developer/message") { role = "developer" }
@@ -45,7 +54,16 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
         if (role.size == 0) { continue }
         if (pending.size > 0) { throw Exception("unsettled-model-tool-calls") }
         if (messages.size > 0) { messages += "," }
-        messages += "{\"role\":\"${role}\",\"content\":\"${jsonEscapeText(event.data)}\"}"
+        if (role == "user") {
+            if (pendingRefs.size > 0) {
+                messages += userMessageWithRefs(event.data, pendingRefs, attachStore)
+            } else {
+                messages += "{\"role\":\"user\",\"content\":\"${jsonEscapeText(event.data)}\"}"
+            }
+            pendingRefs = ArrayList<AttachmentRef>()
+        } else {
+            messages += "{\"role\":\"${role}\",\"content\":\"${jsonEscapeText(event.data)}\"}"
+        }
     }
     if (pending.size > 0) { throw Exception("unsettled-model-tool-calls") }
     var definitions = ""
@@ -57,4 +75,23 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
     }
     let toolsPart = if (definitions.size > 0) { ",\"tools\":[${definitions}]" } else { "" }
     return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[${messages}],\"stream\":true,\"stream_options\":{\"include_usage\":true}${toolsPart}}"
+}
+
+// 带引用事件的 user/message 走多 part 形态：文字一条，图片按引用顺序各一条。
+// 通用文件没有 provider 侧通道，所以不把它塞成 vision part（引用依旧留在日志里）。
+func userMessageWithRefs(text: String, refs: ArrayList<AttachmentRef>, attachStore: ?AttachmentStore): String {
+    var parts = "{\"type\":\"text\",\"text\":\"${jsonEscapeText(text)}\"}"
+    for (ref in refs) {
+        if (ref.kind != "image") {
+            continue
+        }
+        if (let Some(store) <- attachStore) {
+            let data = store.read(ref.attachmentId)
+            parts += ",{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:${jsonEscapeText(ref.mediaType)};base64,${toBase64String(data)}\"}}"
+        } else {
+            // 有引用却没有附件仓：宁可整轮失败，也不让模型看到一条被悄悄阉割的消息。
+            throw Exception("attachment-store-absent")
+        }
+    }
+    return "{\"role\":\"user\",\"content\":[${parts}]}"
 }

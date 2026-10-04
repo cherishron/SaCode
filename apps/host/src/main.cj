@@ -1125,13 +1125,16 @@ main(args: Array<String>) {
             var providerKind = "fake"
             if (baseUrl.size > 0) {
                 // 使用共享核心装配器，实际类型为 user/message，保留已提交的对话上下文。
-                let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: [TodoTool(shared, false).spec()])
+                // 附件仓必须一起交给装配器：有引用却没仓会让请求侧整轮失败，
+                // 而不传仓等于把用户消息里的图片静默丢掉。
+                let turnAtt = AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
+                let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: [TodoTool(shared, false).spec()], attachStore: turnAtt)
                 try {
                     // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
                     let turnKey = key
                     let real = RealSseProvider(baseUrl, turnKey, reqBody, tk)
                     let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }
-                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false))
+                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt))
                     providerKind = "real"
                 } catch (e: Exception) {
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，

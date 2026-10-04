@@ -354,34 +354,39 @@ public class AttachmentStore {
     }
 
     private func parseRefs(data: String): ArrayList<AttachmentRef> {
-        let out = ArrayList<AttachmentRef>()
-        let arr = JsonValue.fromStr(data).asArray()
-        var i = Int64(0)
-        while (true) {
-            if (let Some(item) <- arr.get(i)) {
-                let obj = item.asObject()
-                out.add(AttachmentRef(
-                    strField(obj, "attachmentId"), strField(obj, "kind"), strField(obj, "mediaType"),
-                    intField(obj, "bytes"), intField(obj, "width"), intField(obj, "height"), strField(obj, "name")))
-                i += 1
-            } else {
-                break
-            }
-        }
-        return out
+        return parseAttachmentRefs(data)
     }
+}
 
-    private func strField(obj: JsonObject, key: String): String {
-        if (let Some(v) <- obj.get(key)) {
-            return v.asString().getValue()
+// 引用事件正文的解析：投影与模型请求装配共用同一份形态，不在两处各写一遍。
+public func parseAttachmentRefs(data: String): ArrayList<AttachmentRef> {
+    let out = ArrayList<AttachmentRef>()
+    let arr = JsonValue.fromStr(data).asArray()
+    var i = Int64(0)
+    while (true) {
+        if (let Some(item) <- arr.get(i)) {
+            let obj = item.asObject()
+            out.add(AttachmentRef(
+                attStrField(obj, "attachmentId"), attStrField(obj, "kind"), attStrField(obj, "mediaType"),
+                attIntField(obj, "bytes"), attIntField(obj, "width"), attIntField(obj, "height"), attStrField(obj, "name")))
+            i += 1
+        } else {
+            break
         }
-        return ""
     }
+    return out
+}
 
-    private func intField(obj: JsonObject, key: String): Int64 {
-        if (let Some(v) <- obj.get(key)) {
-            return v.asInt().getValue()
-        }
-        return Int64(0)
+func attStrField(obj: JsonObject, key: String): String {
+    if (let Some(v) <- obj.get(key)) {
+        return v.asString().getValue()
     }
+    return ""
+}
+
+func attIntField(obj: JsonObject, key: String): Int64 {
+    if (let Some(v) <- obj.get(key)) {
+        return v.asInt().getValue()
+    }
+    return Int64(0)
 }

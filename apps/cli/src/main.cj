@@ -455,6 +455,12 @@ main(args: Array<String>) {
         expect("投影把引用配回它服务的那条消息", store.refsForMessage().size == Int64(1))
         expect("引用事件是会话日志里的事实：冷实例回放照样取到", AttachmentStore(attDir, warm, AttachmentLimits.localBackend()).entries().size == Int64(1))
 
+        // 装配点物化：图片只有在拼模型请求那一刻才变成字节，日志里始终只有引用。
+        let req = modelRequestJson("m", attLog.snapshotEvents().toArray(), attachStore: store)
+        expect("模型请求在装配点物化出图片 part", req.contains("\"type\":\"image_url\"") && req.contains("data:image/png;base64,"))
+        expect("物化后的消息同时带文字 part", req.contains("\"type\":\"text\",\"text\":\"带一张图的问题\""))
+        expect("会话日志侧不出现 base64", !attLog.snapshotEvents()[0].data.contains("base64"))
+
         removeIfExists(attRoot, recursive: true)
         println("att\tobjects=${settled}\trecordAt=${recordAt}\tuserAt=${userAt}")
     }

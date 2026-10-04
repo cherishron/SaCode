@@ -7,7 +7,7 @@ import std.convert.*
 public class ModelAgentLoop {
     public func run(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16): TurnResult {
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None): TurnResult {
         if (maxSteps < 1 || maxSteps > 128) { throw Exception("bad-agent-step-limit") }
         log.append("turn/start", "")
         let todo = TodoTool(log, allowParallel)
@@ -81,7 +81,7 @@ public class ModelAgentLoop {
                     sink.offer("projection:queue")
                 }
                 // 唯一请求来源是会话日志：不保留第二份 messages 状态。
-                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()]))
+                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()], attachStore: attach))
                 providerOpen = true
             }
         } catch (e: Exception) {
@@ -97,8 +97,8 @@ public class ModelAgentLoop {
 public class ModelAgentRunner {
     public func start(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16): TurnHandle {
-        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps) }
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None): TurnHandle {
+        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach) }
         return TurnHandle(token, future)
     }
 }
