@@ -2,6 +2,26 @@ package core
 
 import std.collection.ArrayList
 import std.sync.*
+import std.io.*
+import stdx.encoding.json.*
+
+// 流记录保存完整结构；可选元数据用 JSON null 区分缺失与空字符串。
+// 这是 SessionLog 中的一条事实，不引入另一个持久帧存储。
+func streamChunkJson(ch: Chunk): String {
+    let obj = JsonObject()
+    obj.put("kind", JsonString(ch.kind))
+    obj.put("text", JsonString(ch.text))
+    obj.put("reason", JsonString(ch.reason))
+    obj.put("choiceIndex", JsonNull())
+    obj.put("toolIndex", JsonNull())
+    obj.put("toolId", JsonNull())
+    obj.put("toolName", JsonNull())
+    if (let Some(v) <- ch.choiceIndex) { obj.put("choiceIndex", JsonInt(v)) }
+    if (let Some(v) <- ch.toolIndex) { obj.put("toolIndex", JsonInt(v)) }
+    if (let Some(v) <- ch.toolId) { obj.put("toolId", JsonString(v)) }
+    if (let Some(v) <- ch.toolName) { obj.put("toolName", JsonString(v)) }
+    return obj.toString()
+}
 
 // 流式产出的最小抽象：真实 SSE provider 与测试用的假 provider 都实现它。
 // 逐帧产出（而不是先给一整个数组）是取消能在「流中间」生效的前提。
@@ -59,7 +79,6 @@ public interface FrameSink {
 public class DeliveryQueue <: FrameSink {
     let cap: Int64
     let frames = ArrayList<String>()
-    var head: Int64 = 0
     var over: Int64 = 0
 
     public init(cap: Int64) {
@@ -76,18 +95,17 @@ public class DeliveryQueue <: FrameSink {
     }
 
     public func drain(max: Int64): ArrayList<String> {
-        let avail = size()
-        let n = if (avail > max) { max } else { avail }
         let out = ArrayList<String>()
-        for (i in 0..n) {
-            out.add(frames[head + i])
+        if (max <= 0) { return out }
+        let n = min(size(), max)
+        for (_ in 0..n) {
+            out.add(frames.remove(at: 0))
         }
-        head += n
         return out
     }
 
     public func size(): Int64 {
-        return Int64(frames.size) - head
+        return Int64(frames.size)
     }
 
     public func overflow(): Int64 {
@@ -129,18 +147,20 @@ public class TurnLoop {
         log.append("turn/start", "")
         let asm = Assembly()
         var delivered: Int64 = 0
-        while (true) {
-            if (token.cancelled()) {
-                break
+        try {
+            while (true) {
+                if (token.cancelled()) { break }
+                if (let Some(ch) <- p.next()) {
+                    if (token.cancelled()) { break }
+                    asm.push(ch)
+                    delivered += 1
+                    log.append("stream/chunk", streamChunkJson(ch))
+                    sink.offer("${ch.kind}:${ch.text}")
+                    if (!asm.interrupted) { break }
+                } else { break }
             }
-            if (let Some(ch) <- p.next()) {
-                asm.push(ch)
-                delivered += 1
-                log.append("stream/chunk", ch.kind)
-                sink.offer("${ch.kind}:${ch.text}")
-            } else {
-                break
-            }
+        } finally {
+            if (let Some(resource) <- (p as Resource)) { resource.close() }
         }
         let cancelled = token.cancelled()
         var settled: Int64 = 0
@@ -152,10 +172,7 @@ public class TurnLoop {
             }
             asm.toolCalls.clear()
             log.append("turn/cancelled", "after ${delivered} chunks")
-        } else if (!cancelled) {
-            // 干净收束才把正文落成助手消息：一轮一条，空正文也落（终态在日志里必须可数）。
-            // 取消的一轮不落 —— 半截正文留在 TurnResult.text 里由界面按 interrupted 呈现，
-            // 不能冒充「助手说过完整的话」进模型可见历史。
+        } else if (!cancelled && !asm.interrupted) {
             log.append("assistant/message", asm.assembledText())
         }
         return TurnResult(

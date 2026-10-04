@@ -631,9 +631,46 @@ main(args: Array<String>) {
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
             let tk = TurnToken()
             turnEpoch += 1
-            turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
+            // provider 选择：DSH_PROVIDER_BASE_URL 非空时走真实 SSE，否则退回假 provider。
+            // env 经 HostBridge 透传自桌面进程，本端只读不写。
+            let baseUrl = getVariable("DSH_PROVIDER_BASE_URL") ?? ""
+            let model = getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo"
+            var key = getVariable("DSH_PROVIDER_KEY") ?? ""
+            if (key.size == 0) {
+                key = getVariable("STEPFUN_API_KEY") ?? ""
+            }
+            var providerKind = "fake"
+            if (baseUrl.size > 0) {
+                // 从 shared 取最后一条 user 事件正文构造 OpenAI 请求体；
+                // 没有任何 user 事件时 messages 用空串，由上游自行处理。
+                var lastUser = ""
+                for (ev in shared.snapshotEvents()) {
+                    if (ev.eventType == "user") {
+                        lastUser = ev.data
+                    }
+                }
+                let reqBody = "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[{\"role\":\"user\",\"content\":\"${jsonEscapeText(lastUser)}\"}],\"stream\":true}"
+                try {
+                    let real = RealSseProvider(baseUrl, key, reqBody, tk)
+                    turnHandle = Some(TurnRunner().start(real, tk, shared, turnSink))
+                    providerKind = "real"
+                } catch (e: Exception) {
+                    // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，
+                    // 先落盘已积攒的写入再归还租约，与 over-budget 路径同一兜底。
+                    if (leaseHeld) {
+                        if (shared.flush()) {
+                            leaseHeld = false
+                            lease.release()
+                        }
+                    }
+                    emit(errFrame(idText, -32015, "provider-init-failed:${e.message}"))
+                    continue
+                }
+            } else {
+                turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
+            }
             turnBusy = true
-            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit},\"epoch\":${turnEpoch}}"))
+            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit},\"epoch\":${turnEpoch},\"provider\":\"${providerKind}\"}"))
             continue
         }
         if (method == "turn/cancel") {

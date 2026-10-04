@@ -3,6 +3,34 @@ package core
 import std.unittest.*
 import std.collection.ArrayList
 import std.fs.*
+import std.io.*
+
+class OwnedFrameProvider <: Provider & Resource {
+    let token: TurnToken
+    let throws: Bool
+    var closes: Int64 = 0
+    init(token: TurnToken, throws: Bool) { this.token = token; this.throws = throws }
+    public func next(): Option<Chunk> {
+        if (throws) { throw IllegalStateException("failed") }
+        token.cancel()
+        return None
+    }
+    public func close() { closes += 1 }
+    public func isClosed(): Bool { closes > 0 }
+}
+
+@Test
+func turnClosesOwnedProviderOnCancelAndFailure() {
+    for (throws in [false, true]) {
+        let log = SessionLog("core-test-cancel-owned.log")
+        let token = TurnToken()
+        let p = OwnedFrameProvider(token, throws)
+        try { TurnLoop().run(p, token, log, DeliveryQueue(1)) }
+        catch (_: IllegalStateException) {}
+        @Expect(p.closes, Int64(1))
+        cleanCancel("owned")
+    }
+}
 
 // C7 取消与背压：先写下期望语义，再让实现跟上。
 // 关键不变量：取消是协作式的；已独立发布的后台任务不被连带杀死；
@@ -152,6 +180,80 @@ func cancelledTurnPersistsNoAssistantMessage() {
 }
 
 @Test
+func acceptedFinishIsNotOverriddenByLaterCancellation() {
+    let log = SessionLog("core-test-cancel-finish-boundary.log")
+    let tk = TurnToken()
+    let r = TurnLoop().run(ScriptedProvider(chunks5(), tk, 5), tk, log, DeliveryQueue(8))
+    @Expect(r.cancelled, false)
+    @Expect(r.interrupted, false)
+    @Expect(r.finishReason, "stop")
+    @Expect(tk.cancelled(), false)
+    @Expect(log.deriveMessages().size, Int64(1))
+    cleanCancel("finish-boundary")
+}
+
+class FailingFrameProvider <: Provider {
+    public func next(): Option<Chunk> { throw IllegalStateException("provider-failed") }
+}
+
+@Test
+func providerFailureDoesNotPublishAssistantHistory() {
+    let log = SessionLog("core-test-cancel-provider-error.log")
+    let tk = TurnToken()
+    var threw = false
+    try {
+        TurnLoop().run(FailingFrameProvider(), tk, log, DeliveryQueue(8))
+    } catch (e: IllegalStateException) {
+        threw = true
+    }
+    @Expect(threw, true)
+    @Expect(tk.cancelled(), false)
+    @Expect(log.deriveMessages().size, Int64(0))
+    cleanCancel("provider-error")
+}
+
+class CancellingFrameProvider <: Provider {
+    let token: TurnToken
+    init(token: TurnToken) { this.token = token }
+    public func next(): Option<Chunk> {
+        token.cancel()
+        return Some(Chunk("text", "late", ""))
+    }
+}
+
+@Test
+func cancellationDuringProviderReadDoesNotPublishReturnedFrame() {
+    let log = SessionLog("core-test-cancel-read-boundary.log")
+    let tk = TurnToken()
+    let sink = DeliveryQueue(8)
+    let r = TurnLoop().run(CancellingFrameProvider(tk), tk, log, sink)
+    @Expect(r.cancelled, true)
+    @Expect(r.delivered, Int64(0))
+    @Expect(sink.size(), Int64(0))
+    @Expect(r.text, "")
+    @Expect(log.eventCount(), Int64(1))
+    cleanCancel("read-boundary")
+}
+
+@Test
+func interruptedProviderDoesNotPublishAssistantHistory() {
+    let log = SessionLog("core-test-cancel-interrupted.log")
+    let tk = TurnToken()
+    let chs = ArrayList<Chunk>()
+    chs.add(Chunk("text", "partial", ""))
+    let r = TurnLoop().run(ScriptedProvider(chs, tk, -1), tk, log, DeliveryQueue(8))
+    @Expect(r.interrupted, true)
+    @Expect(r.cancelled, false)
+    @Expect(r.text, "partial")
+    @Expect(log.deriveMessages().size, Int64(0))
+    log.flush()
+    let replay = SessionLog("core-test-cancel-interrupted.log")
+    @Expect(replay.load(), true)
+    @Expect(replay.deriveMessages().size, Int64(0))
+    cleanCancel("interrupted")
+}
+
+@Test
 func deliveryQueueOverflowSignalsWithoutLoss() {
     let q = DeliveryQueue(1)
     @Expect(q.offer("1"), true)
@@ -198,6 +300,39 @@ func detachedHandoffSurvivesParentCancel() {
     @Expect(handed.cancelled(), false)
     handed.cancel()
     @Expect(handed.cancelled(), true)
+}
+
+@Test
+func deliveryQueueReclaimsConsumedStorageAcrossLongCycles() {
+    let q = DeliveryQueue(3)
+    var peak: Int64 = 0
+    for (i in 0..20000) {
+        @Assert(q.offer("${i}"), true)
+        if (q.frames.size > peak) { peak = q.frames.size }
+        @Assert(q.drain(1)[0], "${i}")
+    }
+    @Expect(q.frames.size, Int64(0))
+    @Expect(peak <= 3, true)
+    @Expect(q.drain(0).size, Int64(0))
+    @Expect(q.drain(-1).size, Int64(0))
+    @Expect(q.size(), Int64(0))
+    for (i in 0..10000) {
+        @Assert(q.offer("${i}:a"), true)
+        @Assert(q.offer("${i}:b"), true)
+        @Assert(q.offer("${i}:c"), true)
+        @Expect(q.offer("overflow"), false)
+        let first = q.drain(2)
+        @Assert(first[0], "${i}:a")
+        @Assert(first[1], "${i}:b")
+        @Expect(q.frames.size, Int64(1))
+        @Assert(q.offer("${i}:d"), true)
+        let rest = q.drain(8)
+        @Assert(rest[0], "${i}:c")
+        @Assert(rest[1], "${i}:d")
+        @Expect(q.frames.size, Int64(0))
+    }
+    @Expect(q.overflow(), Int64(10000))
+    println("LONG QUEUE cycles=20000 peak=${peak} retained=${q.frames.size} partialCycles=10000 overflow=${q.overflow()}")
 }
 
 func cleanCancel(tag: String) {

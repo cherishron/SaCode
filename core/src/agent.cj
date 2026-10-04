@@ -4,15 +4,25 @@ import std.collection.HashMap
 import std.fs.*
 import std.io.*
 
-// 一次 provider attempt 产出的 chunk 序列（假 provider，真实 SSE 后续接入）
+// provider 增量；工具参数保留原始字符串分片，不解析或重编码。
 public class Chunk {
     let kind: String    // text | tool-call-delta | usage | finish
     public let text: String
     let reason: String
-    public init(kind: String, text: String, reason: String) {
+    public let choiceIndex: Option<Int64>
+    public let toolIndex: Option<Int64>
+    public let toolId: Option<String>
+    public let toolName: Option<String>
+    public init(kind: String, text: String, reason: String,
+        choiceIndex!: Option<Int64> = None, toolIndex!: Option<Int64> = None,
+        toolId!: Option<String> = None, toolName!: Option<String> = None) {
         this.kind = kind
         this.text = text
         this.reason = reason
+        this.choiceIndex = choiceIndex
+        this.toolIndex = toolIndex
+        this.toolId = toolId
+        this.toolName = toolName
     }
 }
 

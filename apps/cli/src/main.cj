@@ -136,8 +136,8 @@ func positionals(args: Array<String>, from: Int64): ArrayList<String> {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream]")
         return 64
     }
 
@@ -693,6 +693,48 @@ main(args: Array<String>) {
         }
         getStdErr().writeln("approval\tstate\t${if (approvalId < 0) { "n/a" } else { desk.stateOf(approvalId) }}")
         return code
+    }
+
+    if (mode == "realstream") {
+        // 真实 SSE 轮：用 RealSseProvider 对本机夹具跑完整一轮并断言。
+        // env 经 shell 透传；baseUrl 空串时合法 skip（本机没起夹具）。
+        let baseUrl = getVariable("DSH_PROVIDER_BASE_URL") ?? ""
+        let model = getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo"
+        var key = getVariable("DSH_PROVIDER_KEY") ?? ""
+        if (key.size == 0) {
+            key = getVariable("STEPFUN_API_KEY") ?? ""
+        }
+        if (baseUrl.size == 0) {
+            println("skip: DSH_PROVIDER_BASE_URL unset")
+            return 0
+        }
+        let reqBody = "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[{\"role\":\"user\",\"content\":\"${jsonEscapeText("hello")}\"}],\"stream\":true}"
+        let sp = "realstream-cli.log"
+        removeIfExists(sp, recursive: false)
+        removeIfExists("${sp}.lease", recursive: false)
+        let log = SessionLog(sp)
+        let tk = TurnToken()
+        let p = RealSseProvider(baseUrl, key, reqBody, tk)
+        let sr = TurnLoop().run(p, tk, log, DeliveryQueue(8))
+        expect("真实流自然收束", !sr.cancelled && sr.finishReason == "stop")
+        expect("夹具正文", sr.text == "first")
+        expect("夹具用量", sr.usage == "22")
+        expect("三帧交付", sr.delivered == Int64(3))
+        expect("未被中断", !sr.interrupted)
+        log.flush()
+        let rlog = SessionLog(sp)
+        var replayed = false
+        if (rlog.load()) {
+            for (m in rlog.deriveMessages()) {
+                if (m.contains("assistant/message: first")) {
+                    replayed = true
+                }
+            }
+        }
+        expect("落盘后回放助手正文", replayed)
+        removeIfExists(sp, recursive: false)
+        removeIfExists("${sp}.lease", recursive: false)
+        println("realstream\tcancelled=${sr.cancelled}\tdelivered=${sr.delivered}\ttext=${sr.text}\tusage=${sr.usage}\tfinish=${sr.finishReason}")
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }
