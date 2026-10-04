@@ -211,4 +211,21 @@ DLL 拒绝面单独复验：`RUNTIME_DENY` 那 4 颗（ast / unittest / testmacr
 时变红；机器独占时复跑分别回到 137/137 与 710/0。两轮都没有改动阈值，
 记为负载抖动，但这两处的时间预算偏紧是有据可查的观测。
 
+### 6.9 真模型凭据面复跑（当前构建）
+
+6.3 那条 `SKIPPED: 1` 的身份已核实：`core/src/sse_test.cj:354` 在无凭据时把
+`realModelSse` 标记跳过。把凭据从 gitignore 的 `target/step.key` 读进环境变量
+（命令行与日志都不落密钥本体）再跑同一套：
+
+| 面 | 命令 | 实测 |
+|---|---|---|
+| 核心 | `cd core && STEPFUN_API_KEY=$(…) cjpm test` | `Summary: TOTAL: 441 / PASSED: 441, SKIPPED: 0, ERROR: 0 / FAILED: 0`，`cjpm test success`；其中 `[ PASSED ] CASE: realModelSse (1896565600 ns)` 就是那条凭据门控用例 |
+| 桌面→宿主→真模型 | `cd apps/desktop && node --test test/real-provider-e2e.test.mjs` | `# tests 1 / # pass 1 / # fail 0 / # skipped 0`，rc=0 |
+
+装机布局本身没有再打一次真模型请求：安装包内的宿主 exe 与上面这两条实测所用的宿主
+`dc3d9f97…facc4` 逐字相同（6.6 三方对账），而装包态已单独跑过 710 项帧检查 + 203 项
+UI 检查含真夹具的一轮完整往返。所以「安装包里的东西能出真答复」这条目前的依据是
+**同一二进制 + 已证的 provider 往返 + 已证的装包态接线**，不是安装包直接打过真 API。
+
+
 
