@@ -328,6 +328,37 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       console.log(`LAYOUT ${longSettingsReport.failed.length ? "FAIL" : "PASS"} long-settings ${theme} ${width}x${height} ${longSettingsReport.failed.join(',')}`);
       await js("document.querySelector('#layout-settings-fixture').remove(); document.querySelector('.settings-dialog .dialog-body').scrollTop=0");
       await js("document.querySelector('.settings-dialog .dialog-header button').click()");
+      await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click();document.querySelector('#settings-tab-general').click()");
+      await waitFor("document.querySelector('.settings-dialog[open]') && document.querySelector('#font-value').textContent==='14'");
+      await js("(()=>{const n=document.querySelector('#composer');n.value='字号变化与高度适配\\n'.repeat(5);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+      for(const size of [10,22,14]) {
+        let current=Number(await js("document.querySelector('#font-value').textContent"));
+        while(current!==size) {
+          const next=current+(current<size?1:-1);
+          await js(`document.querySelector('#font-${current<size?'increase':'decrease'}').click()`);
+          await waitFor(`document.querySelector('#font-value').textContent==='${next}' && !document.querySelector('.font-settings').getAttribute('aria-busy').includes('true')`);
+          current=next;
+        }
+        await waitFor(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${(size+10)*6+12})<1`);
+        await js(`document.querySelector('#font-${size===22?'decrease':'increase'}').focus()`);
+        const fontReport=await js(`(()=>{
+          const n=document.querySelector('#composer'),row=document.querySelector('.font-row'),control=document.querySelector('.font-control'),step=document.querySelector('.font-stepper'),dialog=document.querySelector('.settings-dialog[open]'),box=e=>e.getBoundingClientRect();
+          const texts=[...document.querySelectorAll('#messages .msg-text')];
+          const checks={
+            sharedAxis:getComputedStyle(n).fontSize==='${size}px' && texts.every(e=>getComputedStyle(e).fontSize==='${size}px'),
+            lineAxis:getComputedStyle(n).lineHeight==='${size+10}px' && texts.every(e=>getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'${size+8}px':'${size+10}px')),
+            draftResized:Math.abs(box(n).height-${(size+10)*6+12})<1,
+            rowAligned:Math.abs((box(row).top+box(row).bottom)/2-(box(control).top+box(control).bottom)/2)<1,
+            fixedControl:Math.abs(box(step).height-36)<1 && Math.abs(box(step).width-72)<1 && getComputedStyle(document.querySelector('#send')).fontSize==='13px',
+            focusReveals:getComputedStyle(document.querySelector('.font-arrows')).opacity==='1',
+            contained:box(control).right<=box(dialog).right && dialog.scrollWidth<=dialog.clientWidth && document.documentElement.scrollWidth<=innerWidth,
+          };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+        })()`);
+        Object.assign(fontReport,{theme,width,height,surface:'font-'+size});reports.push(fontReport);
+        writeFileSync(join(outDir,`sacode-font-${size}-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+        console.log(`LAYOUT ${fontReport.failed.length?'FAIL':'PASS'} font-${size} ${theme} ${width}x${height} ${fontReport.failed.join(',')}`);
+      }
+      await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.settings-dialog .dialog-header button').click();})()");
       await js("document.querySelector('#open-catalog').focus(); document.querySelector('#open-catalog').click()");
       await waitFor("!!document.querySelector('.catalog-dialog[open] #catalog-root')");
       const catalogReport = await js(`(() => {

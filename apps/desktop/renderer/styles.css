@@ -32,6 +32,7 @@
   --fs-content: 14px;
   --line-content: 24px;
   --line-user: 22px;
+  --content-delta: 0px;
   --control-height: 36px;
   --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
@@ -110,14 +111,26 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 #messages .tr-bubble__box { border-radius: var(--radius-xl); padding: var(--space-3) var(--space-4); max-width: 100%; }
 .msg-role { display: block; font-size: var(--fs-s); line-height: 18px; color: var(--text-muted); margin-bottom: var(--space-2); }
 .msg-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-content); line-height: var(--line-content); }
+.font-row { display:flex; align-items:center; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }
+.font-row-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; padding-right:48px; }
+.font-title { font-size:14px; line-height:22px; }
+.font-description { margin:0; font-size:12px; line-height:18px; color:var(--text-muted); }
+.font-control { display:inline-flex; align-items:center; gap:8px; flex-shrink:0; }
+.font-stepper { position:relative; display:inline-flex; align-items:center; justify-content:center; width:72px; height:36px; border-radius:var(--radius-m); background:var(--surface-3); }
+.font-value,.font-unit { font-size:14px; line-height:22px; font-variant-numeric:tabular-nums; }
+.font-arrows { position:absolute; right:8px; display:flex; flex-direction:column; gap:2px; opacity:0; }
+.font-stepper:hover .font-arrows,.font-stepper:focus-within .font-arrows { opacity:1; }
+.font-arrow { display:inline-flex; align-items:center; justify-content:center; width:17px; height:12px; padding:0; border:0; border-radius:var(--radius-xs); background:color-mix(in srgb,var(--surface-2) 75%,transparent); color:var(--text); cursor:pointer; }
+.font-arrow:disabled { color:var(--text-muted); cursor:default; }
+.font-arrow:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 /* 助手正文遵循上游纵向块流与 16px 节奏；宽内容在自身滚动，不撑开会话。 */
 .markdown-body { display:flex; flex-direction:column; gap:16px; white-space:normal; min-width:0; }
 .markdown-body :is(p,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table) { margin:0; }
 .markdown-body :is(h1,h2,h3,h4,h5,h6) { line-height:1.5; font-weight:600; }
-.markdown-body h1 { font-size:24px; }
-.markdown-body h2 { font-size:20px; }
-.markdown-body h3 { font-size:18px; }
-.markdown-body :is(h4,h5,h6) { font-size:16px; }
+.markdown-body h1 { font-size:calc(24px + var(--content-delta)); }
+.markdown-body h2 { font-size:calc(20px + var(--content-delta)); }
+.markdown-body h3 { font-size:calc(18px + var(--content-delta)); }
+.markdown-body :is(h4,h5,h6) { font-size:calc(16px + var(--content-delta)); }
 .markdown-body :is(ul,ol) { padding-inline-start:24px; }
 .markdown-body li + li { margin-top:4px; }
 .markdown-body li > :is(p,ul,ol) + :is(p,ul,ol) { margin-top:8px; }

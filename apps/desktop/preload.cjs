@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("dsh", {
   usageStatus: () => ipcRenderer.invoke("dsh:usageStatus"),
   usageSetBudget: (budget) => ipcRenderer.invoke("dsh:usageSetBudget", { budget }),
   appearanceGet: () => ipcRenderer.invoke("dsh:appearanceGet"),
+  globalAppearanceGet: () => ipcRenderer.invoke("dsh:globalAppearanceGet"),
+  globalAppearanceSetFontSize: (fontSize) => ipcRenderer.invoke("dsh:globalAppearanceSetFontSize", { fontSize }),
   sessionCatalog: () => ipcRenderer.invoke("dsh:sessionCatalog"),
   sessionCreate: (title) => ipcRenderer.invoke("dsh:sessionCreate", { title }),
   sessionSelect: (sessionId) => ipcRenderer.invoke("dsh:sessionSelect", { sessionId }),

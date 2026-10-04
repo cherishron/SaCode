@@ -31,7 +31,10 @@ const SESSION_DIR = SESSION_ARG
   : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `dsh-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 
-const bridge = new HostBridge(HOST, process.env);
+// 冒烟只使用自己的配置根，不能修改真实用户的全局外观。
+const bridge = new HostBridge(HOST, WILL_SMOKE
+  ? { ...process.env, SACODE_USER_SETTINGS_DIR: join(SESSION_DIR, 'user-settings') }
+  : process.env);
 let win = null;
 let chooseWorkspaceDirectory = (options) => dialog.showOpenDialog(win, options);
 
@@ -180,11 +183,11 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === Array(18).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(20).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");
@@ -260,6 +263,24 @@ async function uiSmoke() {
     }
   }
   note(require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('appearance/theme\tsystem'), "主题成功回执前已写入会话日志");
+  note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14'")), "全局正文字号默认 14");
+  await click('#font-increase');
+  note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='15' && getComputedStyle(document.querySelector('#composer')).fontSize==='15px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='25px'")), "字号控件保存后正文与输入区共用字号轴");
+  note((await bridge.request('global/appearance/get')).fontSize===15 && !require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('settings/font-size'), "字号保存在独立全局配置，不写会话日志");
+  for(const size of [22,10,14]) {
+    await js(`window.dsh.globalAppearanceSetFontSize(${size})`);win.reload();
+    note(await waitFor(()=>js(`document.querySelector('#font-value').textContent==='${size}' && getComputedStyle(document.querySelector('#composer')).fontSize==='${size}px'`)), `重载从核心恢复全局字号=${size}`);
+    await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
+    await waitFor(()=>js("!!document.querySelector('.settings-dialog[open]')"));
+    if(size!==14) note(await js(`document.querySelector('#font-${size===22?'increase':'decrease'}').disabled`), `字号边界禁用越界按钮=${size}`);
+  }
+  note(await js("window.dsh.globalAppearanceSetFontSize(14.5).then(()=>false,e=>String(e.message).includes('bad-font-size'))"), "IPC 拒绝非法字号而不交给渲染层伪造配置");
+  const fontLease=join(SESSION_DIR,'user-settings','user-settings.log.lease');
+  require('node:fs').writeFileSync(fontLease,`writer=${process.pid}-ui-font-test`);
+  try {
+    await click('#font-increase');
+    note(await waitFor(()=>js("document.querySelector('#font-note').textContent.includes('另一入口') && document.querySelector('#font-value').textContent==='14' && getComputedStyle(document.querySelector('#composer')).fontSize==='14px'")), "字号保存被拒时保留核心读数和原排版");
+  } finally {require('node:fs').unlinkSync(fontLease);}
   await click('#settings-tab-models');
   note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
   await js("document.querySelector('#settings-tab-models').focus()");
@@ -817,6 +838,13 @@ ipcMain.handle("dsh:sessionSelect", async (_e, args) => {
 ipcMain.handle("dsh:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
   nativeTheme.themeSource=result.theme;
+  return result;
+});
+ipcMain.handle("dsh:globalAppearanceGet", () => withHost(() => bridge.request("global/appearance/get")));
+ipcMain.handle("dsh:globalAppearanceSetFontSize", async (_e, args) => {
+  if (!args || !Number.isInteger(args.fontSize) || args.fontSize < 10 || args.fontSize > 22) throw new Error("bad-font-size");
+  const result=await withHost(() => bridge.request("global/appearance/set-font-size", { fontSize:args.fontSize }));
+  if (!result.saved) throw new Error("font-size-not-saved");
   return result;
 });
 ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
