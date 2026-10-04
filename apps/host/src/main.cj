@@ -312,6 +312,8 @@ main(args: Array<String>) {
     // 每次 turn/start 递增：调用登记时记下自己属于哪一轮，
     // 取消一轮只结算它自己发起的那些（epoch 0 = 不在任何 turn 里）。
     var turnEpoch: Int64 = 0
+    var modelKey = ""
+    var modelKeyRef = ""
     while (true) {
         var body = ""
         var eof = false
@@ -339,6 +341,32 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        if (method == "model/get" || method == "model/configure" || method == "model/use-key") {
+            if (turnBusy && method != "model/get") { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
+            try {
+                let settings = ModelSettings.forUser()
+                if (method == "model/configure") {
+                    settings.save(jsonStr(body, "baseUrl"), jsonStr(body, "model"), jsonStr(body, "credentialRef"))
+                    modelKey = ""; modelKeyRef = ""
+                }
+                let saved = settings.read()
+                if (method == "model/use-key") {
+                    let reference = jsonStr(body, "credentialRef")
+                    let key = jsonStr(body, "apiKey")
+                    if (reference.size == 0 || reference != saved.credentialRef || key.size == 0 || key.size > 8192) { throw Exception("bad-model-key") }
+                    for (byte in key.toArray()) { if (byte < 32 || byte == 127) { throw Exception("bad-model-key") } }
+                    modelKeyRef = reference; modelKey = key
+                    emit(okFrame(idText, "{\"loaded\":true}")); continue
+                }
+                let url = if (saved.baseUrl.size > 0) { saved.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
+                let name = if (saved.model.size > 0) { saved.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "" }
+                let environment = saved.baseUrl.size == 0
+                let environmentKey = (getVariable("DSH_PROVIDER_KEY") ?? "").size > 0 || (getVariable("STEPFUN_API_KEY") ?? "").size > 0
+                let readyKey = (environment && environmentKey) || (modelKeyRef == saved.credentialRef && modelKey.size > 0)
+                emit(okFrame(idText, "{\"baseUrl\":\"${jsonEscapeText(url)}\",\"model\":\"${jsonEscapeText(name)}\",\"credentialRef\":\"${jsonEscapeText(saved.credentialRef)}\",\"environment\":${environment},\"keyLoaded\":${readyKey}}"))
+            } catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
+            continue
+        }
         if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size") {
             globalAppearanceRequest(method, body, idText)
             continue
@@ -482,7 +510,7 @@ main(args: Array<String>) {
             for (ev in fresh.snapshotEvents()) {
                 if (ev.seq >= cursor) {
                     if (Int64(picked.size) < limit) {
-                        picked.add("{\"seq\":${ev.seq},\"type\":\"${ev.eventType}\"}")
+                        picked.add("{\"seq\":${ev.seq},\"type\":\"${jsonEscapeText(ev.eventType)}\"}")
                         next = ev.seq + 1
                     } else {
                         more = true
@@ -606,7 +634,19 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"state\":\"${approvalDesk.stateOf(target2)}\",\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
-        if (method == "turn/start") {
+        if (method == "turn/start" || method == "task/start") {
+            var configured: ModelSettingsSnapshot
+            try { configured = ModelSettings.forUser().read() }
+            catch (e: Exception) { emit(errFrame(idText, -32020, e.message)); continue }
+            let baseUrl = if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
+            let model = if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
+            var key = if (configured.credentialRef.size > 0) {
+                if (modelKeyRef == configured.credentialRef) { modelKey } else { "" }
+            } else { getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? "" }
+            if (method == "task/start" && baseUrl.size == 0) { emit(errFrame(idText, -32016, "model-not-configured")); continue }
+            if (method == "task/start" && key.size == 0 && !baseUrl.startsWith("http://127.0.0.1:") && !baseUrl.startsWith("http://localhost:")) {
+                emit(errFrame(idText, -32016, "model-credential-unavailable")); continue
+            }
             if (turnBusy) {
                 emit(errFrame(idText, -32001, "turn-in-flight"))
                 continue
@@ -639,21 +679,17 @@ main(args: Array<String>) {
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
             let tk = TurnToken()
             turnEpoch += 1
-            // provider 选择：DSH_PROVIDER_BASE_URL 非空时走真实 SSE，否则退回假 provider。
-            // env 经 HostBridge 透传自桌面进程，本端只读不写。
-            let baseUrl = getVariable("DSH_PROVIDER_BASE_URL") ?? ""
-            let model = getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo"
-            var key = getVariable("DSH_PROVIDER_KEY") ?? ""
-            if (key.size == 0) {
-                key = getVariable("STEPFUN_API_KEY") ?? ""
-            }
+            // 产品 task/start 必须有真实配置；示例 provider 只保留给诊断 turn/start。
             var providerKind = "fake"
             if (baseUrl.size > 0) {
                 // 使用共享核心装配器，实际类型为 user/message，保留已提交的对话上下文。
-                let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray())
+                let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: [TodoTool(shared, false).spec()])
                 try {
-                    let real = RealSseProvider(baseUrl, key, reqBody, tk)
-                    turnHandle = Some(TurnRunner().start(real, tk, shared, turnSink))
+                    // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
+                    let turnKey = key
+                    let real = RealSseProvider(baseUrl, turnKey, reqBody, tk)
+                    let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }
+                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false))
                     providerKind = "real"
                 } catch (e: Exception) {
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，
@@ -709,7 +745,7 @@ main(args: Array<String>) {
                 if (i2 > 0) {
                     arr += ","
                 }
-                arr += "\"${frames[i2]}\""
+                arr += "\"${jsonEscapeText(frames[i2])}\""
             }
             arr += "]"
             var turnText = "false"
@@ -730,7 +766,7 @@ main(args: Array<String>) {
                     let iFlag = if (r.interrupted) { "true" } else { "false" }
                     let verdict = meter.settleTurn(r)
                     let oFlag = if (meter.over()) { "true" } else { "false" }
-                    tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${r.text}\",\"finishReason\":\"${r.finishReason}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
+                    tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${jsonEscapeText(r.text)}\",\"finishReason\":\"${jsonEscapeText(r.finishReason)}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                     turnHandle = None
                     turnBusy = false
                     if (leaseHeld) {

@@ -179,6 +179,33 @@ test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒�
   }
 });
 
+test("桌面文件工具拒绝未观察覆盖和路径别名绕过，解码失败后宿主仍可用", async () => {
+  const { b, dir } = await boot();
+  const write = async (args) => {
+    const a = await b.request("approval/ask", { name: "write" });
+    await b.request("approval/answer", { approvalId: a.approvalId, decision: "allowed-once" });
+    return b.request("extension/call", { name: "write", args, approvalId: a.approvalId });
+  };
+  try {
+    writeFileSync(join(dir, "protected.txt"), "original");
+    await assert.rejects(() => write("protected.txt overwrite"), /fs-not-observed/);
+    assert.equal(readFileSync(join(dir, "protected.txt"), "utf8"), "original");
+    await b.request("extension/call", { name: "read", args: "protected.txt" });
+    writeFileSync(join(dir, "protected.txt"), "external");
+    await assert.rejects(() => write("./protected.txt overwrite"), /fs-stale-version/);
+    assert.equal(readFileSync(join(dir, "protected.txt"), "utf8"), "external");
+    writeFileSync(join(dir, "binary.dat"), Buffer.from([255]));
+    await assert.rejects(() => b.request("extension/call", { name: "read", args: "binary.dat" }), /invalid-encoding/);
+    assert.equal((await b.request("initialize")).core, "cangjie", "解码失败不能结束宿主");
+    const controls = 'A\0B\fC\b\x1f\n\t"\\';
+    writeFileSync(join(dir, "controls.txt"), controls);
+    const result = await b.request("extension/call", { name: "read", args: "controls.txt" });
+    assert.equal(result.result, controls, "所有控制字符都须逐字符往返");
+  } finally {
+    await b.stop();
+  }
+});
+
 // 反向：未登记工具必须走 JSON-RPC 错误；自报的审批字符串在协议面上完全不起作用
 test("extension/call 未登记工具被拒且自报审批不放行", async () => {
   const { b } = await boot();
@@ -749,5 +776,96 @@ test("握手能力表登记审批三个方法且不含时钟通道", async () =>
     assert.ok(!r.capabilities.includes("approval/tick"), "能力表不应再登记 approval/tick");
   } finally {
     await b.stop();
+  }
+});
+
+// —— token 计量与预算（矩阵 53 token-meter）——
+// 桌面入口的读数必须与 CLI 同源：两个入口都只问同一个 core 的 TokenMeter，
+// 界面不许自己算一份账。
+test("跑完的一轮把 usage 记进日志，turn/poll 交出计量读数", async () => {
+  const { b, dir } = await bootFresh();
+  try {
+    const st = await b.request("turn/start", { limit: 5 });
+    assert.equal(st.started, true);
+    const t = await pollUntilSettled(b);
+    assert.equal(t.finishReason, "stop");
+    assert.equal(t.usage, "12");
+    assert.equal(t.usageVerdict, "recorded", "跑完的一轮必须真的记上账");
+    assert.equal(t.used, 12);
+    assert.equal(t.budget, 200);
+    assert.equal(t.over, false);
+    const s = await b.request("usage/status", {});
+    assert.equal(s.used, 12);
+    assert.equal(s.badUsage, 0);
+    // 事件形状只由核心产生：这一笔与当时的累计都可在盘上追问
+    assert.match(readFileSync(join(dir, "session.log"), "utf8"), /turn\/usage\t12:12/);
+  } finally {
+    await b.stop();
+  }
+});
+
+test("预算只可收紧：调大、持平、缺参数都被拒且停在原档", async () => {
+  const { b } = await bootFresh();
+  try {
+    const up = await b.request("usage/set-budget", { budget: 999999 });
+    assert.equal(up.applied, false, "调大预算就是放宽防额，必须拒");
+    assert.equal(up.budget, 200);
+    const same = await b.request("usage/set-budget", { budget: 200 });
+    assert.equal(same.applied, false, "持平不算收紧");
+    const missing = await b.request("usage/set-budget", {});
+    // 缺参数既不能当成「收紧到 0」把会话打死，也不能默认放行
+    assert.equal(missing.applied, false);
+    assert.equal(missing.budget, 200);
+    const down = await b.request("usage/set-budget", { budget: 20 });
+    assert.equal(down.applied, true);
+    assert.equal(down.budget, 20);
+    const widen = await b.request("usage/set-budget", { budget: 30 });
+    assert.equal(widen.applied, false);
+    assert.equal(widen.budget, 20, "已收紧的档位不能被后来的宽松请求抬回去");
+  } finally {
+    await b.stop();
+  }
+});
+
+test("超档的一轮不计入，之后不再开新轮", async () => {
+  const { b } = await bootFresh();
+  try {
+    const d = await b.request("usage/set-budget", { budget: 5 });
+    assert.equal(d.applied, true);
+    // 在途期间也要拦得住：读侧与收紧预算都归 allowedDuringTurn
+    await b.request("turn/start", { limit: 5 });
+    const t = await pollUntilSettled(b);
+    assert.equal(t.usageVerdict, "over-budget");
+    assert.equal(t.used, 0, "超预算的那一笔不许先记了再红字提醒");
+    assert.equal(t.over, true);
+    // 超档之后开新轮必须被协议面拒绝，而不是自动换个小轮次继续花
+    await assert.rejects(
+      () => b.request("turn/start", { limit: 5 }),
+      /-32014|over-budget/,
+      "拦过一次就说明越了人工档位，下一步是停下来问人"
+    );
+  } finally {
+    await b.stop();
+  }
+});
+
+test("换个进程只靠会话日志重算：用量、超档与预算档位都不丢", async () => {
+  const { b, dir } = await bootFresh();
+  await b.request("usage/set-budget", { budget: 5 });
+  await b.request("turn/start", { limit: 5 });
+  const t = await pollUntilSettled(b);
+  assert.equal(t.usageVerdict, "over-budget");
+  await b.stop();
+  // 全新宿主进程、同一会话目录：账与档位必须从盘上长回来，否则重启就是放宽的后门
+  const b2 = new HostBridge(HOST, process.env);
+  await b2.start(dir);
+  try {
+    const s = await b2.request("usage/status", {});
+    assert.equal(s.used, 0, "被拒的那笔不该在重启后被算成已花掉");
+    assert.equal(s.over, true, "重启后必须仍记得被拦过");
+    assert.equal(s.budget, 5, "重启不得把收紧过的档位洗回默认宽档");
+    await assert.rejects(() => b2.request("turn/start", { limit: 5 }), /-32014|over-budget/);
+  } finally {
+    await b2.stop();
   }
 });

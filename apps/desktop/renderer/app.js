@@ -419,7 +419,8 @@ createApp({
             const i = f.indexOf(":");
             const kind = i < 0 ? f : f.slice(0, i);
             const body = i < 0 ? "" : f.slice(i + 1);
-            if (kind === "text") turn.value.text += body;
+            if (kind === "projection" && body === "todos") await refresh();
+            else if (kind === "text") turn.value.text += body;
             else if (kind === "usage") turn.value.text += "\n[usage " + body + "]";
             else if (kind === "tool-call-delta") turn.value.text += "\n[tool-call " + body + "]";
           }

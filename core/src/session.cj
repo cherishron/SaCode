@@ -303,7 +303,8 @@ public class SessionLog {
             projCache.clear()
             for (ev in events) {
                 if (isSurfaceEvent(ev.eventType)) {
-                    projCache.add("${ev.eventType}: ${ev.data}")
+                    let text = if (ev.eventType == "assistant/message" || ev.eventType == "tool/result") { modelSurfaceText(ev.data) } else { ev.data }
+                    projCache.add("${ev.eventType}: ${text}")
                 }
             }
             projBuiltSurface = surfaceCount
