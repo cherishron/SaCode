@@ -142,3 +142,5 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 ### 2026-10-04 Todo 仓颉投影接入补充
 
 TodoStore 已补齐 trim/非空/去重/并行策略、结构化无损快照与旧日志兼容、turn/start 清空语义；Host session/projection 返回 todos，产品面板读取真实投影。核心全量 390 通过/1 跳过，真实 Host 通信及 Electron 定向链路通过。模型 todo_write 注册、执行中实时刷新、CLI/真实模型及新安装包仍待核；本轮 Host 的整页滚动等待失败尚未解决。证据见 [Todo 后端接入](../evidence/todo-backend-2026-10-04.md)，不将局部接入改标为完整复刻。
+
+2026-10-04 后续：共享核心 TodoTool 已提供严格参数 schema、canonical 返回值和计数，ToolRuntime 支持 agent 会话身份及 guard 拒绝；新增 3 项工具契约测试，全量核心 393 通过/1 跳过。整页 Electron 本次复验 238 组/664 检查通过，但先前滚动超时根因未确认。生产 SSE agent 的工具循环、关联结果和模型请求工具定义仍未接入，不改标为完整完成。

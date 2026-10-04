@@ -100,11 +100,15 @@ public class ToolRuntime {
     // 「我上次看到的就是现在这份吗」，答不出就不能拿旧认知去覆盖别人的改动。
     let observed = HashMap<String, FileObservation>()
     let workingDirectory: String
+    let agentOwned: Bool
+    let todoAllowParallel: Bool
 
-    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "") {
+    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false) {
         this.log = log
         this.registry = registry
         this.workingDirectory = workingDirectory
+        this.agentOwned = agentOwned
+        this.todoAllowParallel = todoAllowParallel
     }
 
     private func workingPath(path: String): String {
@@ -177,6 +181,19 @@ public class ToolRuntime {
             lastDetail.stage = "guard-denied"
             log.append("tool/result", "denied:${name}:guard")
             return ApprovalOutcome(false, "guard-denied")
+        }
+        if (name == "todo_write") {
+            try {
+                let result = TodoTool(log, todoAllowParallel).execute(args, agentOwned)
+                lastDetail.stage = "done"
+                lastDetail.verified = true
+                log.append("tool/result", result)
+                return ApprovalOutcome(true, result)
+            } catch (e: Exception) {
+                lastDetail.stage = "bad-args"
+                log.append("tool/result", e.message)
+                return ApprovalOutcome(false, e.message)
+            }
         }
         if (name == "read") {
             return readStep(args)
