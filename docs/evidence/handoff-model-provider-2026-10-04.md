@@ -212,5 +212,17 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 
 历史文档不改：`p0-status-2026-10-02.md` 里「仍停在 200 / 用量 12/100」是当时的实测快照，按快照留存，以本节为准。
 
+## 14. 交付态复验（安装包内容与离线 CLI 都取到当前构建）
+
+`dist/electron/win-unpacked` 被上一轮冒烟遗留的进程锁住（`EBUSY: unlink icudtl.dat`，`electron-builder` rc=1 且**不会改产物时间戳**），因此本轮打包落到 `dist/electron-final`，没有去动那些进程——它们可能是别的会话或人工开着的应用。
+
+- 打包：`npx electron-builder --config.electronDist=node_modules/electron/dist --config.directories.output=dist/electron-final` rc=0，出 `sacode-portable.exe`（86,734,346 字节）与 `SaCode Setup 0.1.0.exe`；签名按 `signExecutable:false` 显式跳过（未授权签名，不是漏了）。
+- **宿主同步的唯一硬判据**：`dist/host/bin/dsh-host.exe` 与 `dist/electron-final/win-unpacked/resources/host/bin/dsh-host.exe` sha256 逐字相同（`68d3cb29…09b1f4`），证明安装包带的是本轮重打的那份宿主，而不是上一轮的旧产物。
+- 打包态冒烟：`win-unpacked/SaCode.exe --smoke --session-dir=<一次性目录>` → `SMOKE PASS`，rc=0（打包态宿主路径只从 `process.resourcesPath` 解析）。
+- 打包态界面与接线：`win-unpacked/SaCode.exe --frame-smoke` → **243 条 FRAME PASS / 0 FAIL**，含 `模型页写入落到宿主进程`、`选择器改动落到宿主默认指针`、`宿主删除提供商并清掉默认指针`——即「UI → IPC → 打包宿主 → 仓颉核心」这条链在安装包内容里同样成立。该进程跑完不自己退出（外层 `timeout` 收 rc=124），日志已跑到底是有效证据，但「冒烟跑完必须自退」这条本轮没验过，记为待办。
+- 离线 CLI 发布态：`npm pack --offline` 出 `stand-alone-sacode-0.2.0.tgz` 与 `…-win32-x64-0.1.0.tgz`，装进 `target/offline-cli`（gitignore），把 `cjc`/`cjpm` 从 PATH 剥掉（`node` 仍在），跑 `sh ./node_modules/.bin/dsh <模式>`：`all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / extjs 12 / headless 36` 全 `ALL PASS`，**FAIL 合计 0**；`tools|call|projection|seed` 是信息型子命令，不是断言模式。
+- 未做（需另行同意）：真的双击运行 NSIS 装包；这一步会往用户目录写安装，不属本地可逆动作。
+
+
 
 
