@@ -43,8 +43,8 @@ window.SaCodeCodeBlock = (function () {
           h('div',{class:'code-toolbar','data-code-block-banner':''},[
             h('span',{class:'code-language'},window.SaCodeCodeHighlighter.grammarForHint(props.lang)?props.lang:'代码'),
             h('div',{class:'code-actions'},[
-              h('button',{type:'button',class:'code-action code-wrap','aria-label':'自动换行','aria-pressed':wrapped.value,title:wrapLabel,onClick:()=>{wrapped.value=!wrapped.value;}},[icon(wrapped.value?'nowrap':'wrap')]),
-              h('button',{type:'button',class:'code-action code-copy','aria-label':copyLabel,title:copyLabel,disabled:busy.value,onClick:copy},[icon(copied.value?'check':'copy')]),
+              window.SaCodeTooltip.wrap(h('button',{type:'button',class:'code-action code-wrap','aria-label':'自动换行','aria-pressed':wrapped.value,onClick:()=>{wrapped.value=!wrapped.value;}},[icon(wrapped.value?'nowrap':'wrap')]),{label:wrapLabel,side:'top'}),
+              window.SaCodeTooltip.wrap(h('button',{type:'button',class:'code-action code-copy','aria-label':copyLabel,disabled:busy.value,onClick:copy},[icon(copied.value?'check':'copy')]),{label:copyLabel,side:'top'}),
             ]),
           ]),
           h('div',{class:'code-content','data-code-block-content':''},[h('pre',{class:lines?'shiki':'code-plain',tabindex:0,'data-code-language':props.lang},[h('code',{},children)])]),

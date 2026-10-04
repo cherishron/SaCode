@@ -59,6 +59,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
       win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
       await waitFor("document.activeElement.id==='send' && document.querySelector('#send').matches(':hover')");
+      // 主题过渡可能直到绘制帧才启动，固定毫秒等待不能证明 TinyVue 已到终态。
+      await js("(async()=>{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await Promise.all(['#run-turn','#send'].flatMap(s=>document.querySelector(s).getAnimations()).map(a=>a.finished.catch(()=>{})));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));})()");
       const report = await js(`(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
         const equal = (a, b) => Math.abs(a-b) < 1;
@@ -187,6 +189,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       await js("document.querySelector('#markdown-layout-fixture pre').scrollIntoView({block:'center'})");
       writeFileSync(join(outDir,`sacode-markdown-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${markdownReport.failed.length?'FAIL':'PASS'} markdown ${theme} ${width}x${height} ${markdownReport.failed.join(',')}`);
+      const tooltipReport=await require('./tooltip-smoke.cjs')({win,js,waitFor,outDir,theme,width,height});reports.push(tooltipReport);
+      console.log(`LAYOUT ${tooltipReport.failed.length?'FAIL':'PASS'} tooltip ${theme} ${width}x${height} ${tooltipReport.failed.join(',')}`);
       const tableRestHeight=await js("document.querySelector('#markdown-layout-fixture .table-wide').getBoundingClientRect().height");
       await js("(()=>{const n=document.querySelector('#markdown-layout-fixture .table-wide');n.focus();n.scrollIntoView({block:'center'});})()");
       // 等滚动和焦点样式完成绘制，避免几何已更新而截图仍是上一帧。

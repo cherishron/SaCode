@@ -6,6 +6,7 @@ import MarkdownIt from 'markdown-it';
 import CodeHighlighter from '../renderer/highlight-source.mjs';
 
 const window = { SaCodeMarkdownIt: MarkdownIt, SaCodeCodeHighlighter:CodeHighlighter, Vue: { ref:value=>({value}),onBeforeUnmount:()=>{},h: (tag, props, children) => typeof tag==='object'?tag.setup(props)():({ tag, props, children }) } };
+window.SaCodeTooltip={wrap:node=>node};
 vm.runInNewContext(readFileSync(new URL('../renderer/code-block.js', import.meta.url), 'utf8'), { window });
 vm.runInNewContext(readFileSync(new URL('../renderer/markdown.js', import.meta.url), 'utf8'), { window });
 const render = window.SaCodeMarkdown.render;
@@ -63,7 +64,7 @@ test('表格保留对齐，宽表独立滚动，引用中的表格填满内容�
 
 test('代码卡默认换行且可切换，复制成功反馈以实际写入结果为准',async()=>{
   let written,finish,timer,dispose;
-  const host={SaCodeCodeHighlighter:CodeHighlighter,Vue:{ref:value=>({value}),onBeforeUnmount:fn=>{dispose=fn;},h:(tag,props,children)=>({tag,props,children})},navigator:{clipboard:{writeText:text=>{written=text;return new Promise(resolve=>{finish=resolve;});}}},setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=undefined;}};
+  const host={SaCodeTooltip:{wrap:node=>node},SaCodeCodeHighlighter:CodeHighlighter,Vue:{ref:value=>({value}),onBeforeUnmount:fn=>{dispose=fn;},h:(tag,props,children)=>({tag,props,children})},navigator:{clipboard:{writeText:text=>{written=text;return new Promise(resolve=>{finish=resolve;});}}},setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=undefined;}};
   vm.runInNewContext(readFileSync(new URL('../renderer/code-block.js',import.meta.url),'utf8'),{window:host});
   const props={code:'const 中文 = "<标签>";\n',lang:'js'},view=host.SaCodeCodeBlock.Component.setup(props);
   const button=cls=>walk([view()]).find(n=>n.props?.class===cls);
