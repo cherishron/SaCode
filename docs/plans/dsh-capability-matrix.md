@@ -6,6 +6,8 @@
 
 产品范围按 [PRD §2.3](../product/PRD.md) 明确裁剪：npm CLI 与 Electron 桌面均本地使用，无需 DSH 官方账号登录，用户自行配置模型及服务凭证。下表是**已定产品边界，尚待上游核验**；不据此断言冻结上游确实存在对应账号或商业功能，不声明代码已移除。
 
+桌面 UI 裁剪补充（2026-10-04）：不实现官方登录/注册欢迎页、账号绑定、订阅充值或官方余额入口；SaCode 冷启动直接进入本地工作区/会话。官方 Electron 对照实例中显示的账号页面只用于识别裁剪边界，不作为 SaCode 页面交付。`apps/desktop/src/welcome-window.ts` 与 `welcome-api.ts` 已核有官方登录流程；用户自行配置模型 API Key 继续保留，不能作为账号体系一并删除。
+
 | PRD 编号 | 裁剪范围 | 核验入口（候选，非已确认归属） | 当前状态与保留要求 |
 | --- | --- | --- | --- |
 | C01 | 若存在，排除官方注册、登录、账号绑定及其本地使用门槛 | boot、settings、credentials、web-client、web-server 及相关配置/插件 | **已核**（2026-10-04）：credentials 模块 495 行确证上游有 CredentialRef/AuthorizationFlow/DeepSeekAccount（getPlatformSession 返回 origin+token+userId）。保留第三方凭证、IPC/会话身份及远程访问认证。本仓审批凭据只用工单号（明确简化），未实现账号绑定 |

@@ -40,6 +40,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   }
   await check('中文界面字体',"['body','.hero-heading','.nav-label','#composer'].every(s=>getComputedStyle(document.querySelector(s)).fontFamily.includes('Microsoft YaHei')) ? {sansSerif:true} : {sansSerif:false}");
   await check('空会话',`(()=>({empty:document.querySelector('.app').dataset.emptyConversation==='true',noSyntheticMessages:document.querySelectorAll('[data-msg-id]').length===0,noPlaceholderSession:document.querySelectorAll('[data-sidebar-session]').length===0,hero:!!document.querySelector('.hero-heading'),rightClosed:document.querySelector('.side').hidden,diagnosticsHidden:!document.querySelector('#developer-diagnostics').open,brand:document.querySelector('.brand').textContent==='SaCode'}))()`);
+  await check('无账号本地启动',"(()=>({localComposer:!!document.querySelector('#composer'),noAccountActions:![...document.querySelectorAll('button,a')].some(e=>/登录|注册|账号绑定|充值|订阅/.test(e.textContent)),noCredentialGate:!document.querySelector('input[type=password],#sign-in,#api-key')}))()");
   // 连续增长/清空覆盖真实输入事件和自动高度测量，防止偶发留住旧草稿高度。
   for(let i=0;i<12;i++) {
     await js("(async()=>{const n=document.querySelector('#composer');n.value='输入高度检查\\n'.repeat(30);n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
@@ -63,6 +64,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
     }
   }
   win.setContentSize(1100,800);await waitFor('innerWidth===1100');
+  if(process.platform==='win32') await check('Windows 展开导航节奏',"(()=>{const box=s=>document.querySelector(s).getBoundingClientRect(),css=s=>getComputedStyle(document.querySelector(s)),brand=box('.sidebar-brand-row'),create=box('.new-session'),panel=box('.nav-panel'),heading=box('.workspace-heading');return {rootInset:css('.navigation').paddingTop==='6px' && css('.navigation').gap==='0px',brandRow:Math.abs(brand.height-40)<1 && Math.abs(brand.top-46)<1,newSession:Math.abs(create.height-38)<1 && css('.new-session').padding==='8px 12px',brandToCreate:Math.abs(create.top-brand.bottom-8)<1,createToPanel:Math.abs(panel.top-create.bottom-12)<1,panelRow:Math.abs(panel.height-36)<1 && css('.nav-panel').padding==='7px 8px',workspaceHeader:Math.abs(heading.height-36)<1 && Math.abs(heading.top-panel.bottom-10)<1,headerToRows:Math.abs(box('.sidebar-session-list').top-heading.bottom-4)<1,brandSpacing:css('.brand').gap==='8px',newSessionIcons:css('.new-session').gap==='6px'}})()");
   await js("document.querySelector('#open-settings').click()");
   await waitFor("!!document.querySelector('.settings-dialog[open]')");
   await check('设置面板留白',"(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:Math.abs(r.width-800)<1,height:Math.abs(r.height-720)<1,captionClearance:r.top>=40,bottomClearance:innerHeight-r.bottom>=40}})()");
