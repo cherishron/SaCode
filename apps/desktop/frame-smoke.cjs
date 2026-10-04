@@ -120,6 +120,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   writeFileSync(join(outDir,'workspace-groups.png'),(await win.webContents.capturePage()).toPNG());
   await checkConversationScroll({js,waitFor,check});
   await require('./test-support/models-page-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/plugins-page-smoke.cjs')({win,waitFor,check,outDir});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
 };

@@ -883,7 +883,7 @@ createApp({
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
       el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
+      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
         type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
@@ -924,11 +924,7 @@ createApp({
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
       el("section", "settings-page", [h(window.SaCodeModels.Page),
       ], { id:"settings-page-models", role:"tabpanel", "aria-labelledby":"settings-tab-models", hidden:self.settingsTab!=="models" }),
-      el("section", "settings-page", [el("h2", null, "当前可用工具"),
-        ...self.tools.map(t=>el("article", "settings-tool", [el("h3", null, ({read:"读取文件",write:"写入文件"}[t.name]||t.name)),
-          el("p", "note", t.description||"核心未提供说明"), el("span", "badge", t.needsApproval?"需一次性审批":"免审批"),
-        ], {key:t.name, "data-tool-name":t.name})),
-        el("p", "note", "清单来自当前核心。扩展安装、启用和卸载设置尚未开放。"),
+      el("section", "settings-page", [h(window.SaCodePlugins.Page, { tools: self.tools }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
       ]),
       ]),

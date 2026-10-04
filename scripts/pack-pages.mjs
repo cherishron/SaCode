@@ -12,10 +12,12 @@ const vueRuntime = { name: 'sacode-vue-runtime', setup(build) {
   build.onResolve({ filter: /^vue$/ }, () => ({ path: 'vue', namespace: 'sacode-runtime' }));
   build.onLoad({ filter: /^vue$/, namespace: 'sacode-runtime' }, () => ({ contents: 'module.exports = globalThis.Vue;', loader: 'js' }));
 } };
-const outfile = join(desktop, 'renderer/vendor/models-page.iife.js');
-const result = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, 'renderer/pages/models-page.ts')], bundle: true,
-  plugins: [vueRuntime], format: 'iife', globalName: 'SaCodeModels', outfile, target: 'chrome120', metafile: true, logLevel: 'warning' });
-const code = readFileSync(outfile, 'utf8');
-assertStaticRendererBundle(code, result.metafile);
-if (!code.includes('globalThis.Vue')) throw Error('页面未接入唯一 Vue runtime');
-console.log('TypeScript 模型页面编译完成');
+for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins']]) {
+  const outfile = join(desktop, `renderer/vendor/${page}.iife.js`);
+  const result = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, `renderer/pages/${page}.ts`)], bundle: true,
+    plugins: [vueRuntime], format: 'iife', globalName, outfile, target: 'chrome120', metafile: true, logLevel: 'warning' });
+  const code = readFileSync(outfile, 'utf8');
+  assertStaticRendererBundle(code, result.metafile);
+  if (!code.includes('globalThis.Vue')) throw Error('页面未接入唯一 Vue runtime');
+  console.log(`TypeScript 页面编译完成：${page}`);
+}
