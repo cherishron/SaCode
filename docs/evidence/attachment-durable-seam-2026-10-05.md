@@ -172,3 +172,43 @@ DLL 拒绝面单独复验：`RUNTIME_DENY` 那 4 颗（ast / unittest / testmacr
 未经确认不代用户结束进程）。因此本轮把输出目录改到 `dist/electron-att/` 重打，
 不动那些进程；对账与打包态冒烟见 6.6。
 
+### 6.6 安装包内宿主对账 + 装包态端到端
+
+| 项 | 实测 |
+|---|---|
+| 三方 sha256 对账 | 源 `dist/host/bin/dsh-host.exe` = `win-unpacked/resources/host/bin/dsh-host.exe` = **从 `SaCode Setup 0.1.0.exe` 里抽出**的 `resources\host\bin\dsh-host.exe`，三者同为 `dc3d9f9780c2cbd15e31b394565a2cca13f21bccc754b0551a86f75b82fdacc4`。抽法：`7z e 'SaCode Setup 0.1.0.exe' '$PLUGINSDIR/app-64.7z'`，再 `7z e app-64.7z -r '*dsh-host.exe'`（`-r` 是必须的，不加会 `No files to process`——按子路径匹配要递归） |
+| 安装包指纹 | `SaCode Setup 0.1.0.exe` 86,962,654 B，sha256 `9447c0d22e7ed7d33fb55aa271d57e745031ee6eda0597258ee8ae70ee431999`；`sacode-portable.exe` 86,810,618 B |
+| 装包态帧冒烟 | `win-unpacked/SaCode.exe --frame-smoke --session-dir=…` → `FRAME 汇总 {"groups":247,"checks":710,"failed":0}` |
+| 装包态 UI 冒烟 | `win-unpacked/SaCode.exe --ui-smoke …` → `UI_SMOKE PASS`，203 条 `UI OK` / 0 条 `UI FAIL`，其中 `UI OK 附件经宿主落盘后显示为就绪（实际 {"status":"ready","notice":"","attProbe":"ok:u2"}）` |
+
+注意 `--frame-smoke` **不**包含 `--ui-smoke` 那一套（`main.cjs` 里 `UI_SMOKE = FRAME_SMOKE || …`
+只是给帧冒烟内部用的开关，两个套件各自独立入口），所以附件那条要在装机布局下取证
+必须单独跑 `--ui-smoke`——本批就是这么拿到的。
+
+### 6.7 装包态金路径的夹具路径缺陷与修法（本批实际改动）
+
+第一次装包态帧冒烟在金路径组红：`FRAME FAIL Error: 本机 SSE 夹具启动超时`，子进程
+原文是 `Error: Cannot find module '…\dist\electron-att\win-unpacked\scripts\sse-contract-server.cjs'`
+（`code: 'MODULE_NOT_FOUND'`）。根因：`test-support/golden-path-smoke.cjs` 用
+`join(__dirname, '..', '..', '..', 'scripts', …)` 定位夹具，而打包态下 `__dirname` 落在
+`app.asar` 内，往上三级推到的是安装包装配目录，那里没有仓库的 `scripts/`。
+
+改法是给这一条路径加一个显式入口：`process.env.SACODE_SSE_FIXTURE || 原仓库相对路径`。
+这不是把检查缩掉——打包态由驱动方把环境变量指到仓库里那份**同一个**夹具文件，
+金路径组在安装包布局下照样实跑。实测：
+`FRAME 金路径发送前 {"port":27694,"reachable":{"status":200},…}`、
+`FRAME 金路径探针 {"sawReply":true,"error":"","state":"状态 已完成","busy":"false"}`，
+随后整轮 `checks:710, failed:0`。开发态默认值不变，行为不受影响。
+
+顺带记录一个观察：帧冒烟抛错时应用不会退出（本轮 3 个 `SaCode.exe` 停在
+`dist/electron-att` 下需要手动收）。已按 PID 精确收掉本批自己拉起的那 3 个；
+`dist/electron/win-unpacked` 下 17 个更早的（非本轮拉起）未动，交用户裁决。
+
+### 6.8 一条并发负载教训（两次都踩到）
+
+`bridge.test.mjs:292` 的 400 ms 轮询窗口、以及装包态帧冒烟的
+「整页状态未就绪」等待，都在**同一时间还有别的 CPU 活**（cjpm build / 86 MB 归档解压）
+时变红；机器独占时复跑分别回到 137/137 与 710/0。两轮都没有改动阈值，
+记为负载抖动，但这两处的时间预算偏紧是有据可查的观测。
+
+

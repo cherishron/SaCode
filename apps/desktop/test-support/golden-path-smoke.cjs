@@ -4,7 +4,10 @@
 const { spawn } = require('node:child_process');
 const { join } = require('node:path');
 
-const FIXTURE = join(__dirname, '..', '..', '..', 'scripts', 'sse-contract-server.cjs');
+// 装机布局下 __dirname 落在 app.asar 里，往上推仓库路径推不出夹具（实测表现为
+// 「本机 SSE 夹具启动超时」而不是「没有夹具」）。打包态取证要能把夹具指到真实文件，
+// 这样这一组在安装包里照样是实跑，而不是跳过。
+const FIXTURE = process.env.SACODE_SSE_FIXTURE || join(__dirname, '..', '..', '..', 'scripts', 'sse-contract-server.cjs');
 const http = require('node:http');
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
