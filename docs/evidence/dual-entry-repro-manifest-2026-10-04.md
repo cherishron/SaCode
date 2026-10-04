@@ -194,3 +194,4 @@ sha256 = 7f290fc4591b00cdf1ea82be429ec65c23dfcbcbdb6a9f0a3bd3192609bc7d8e
 3. **CLI `realstream` BLOCKED**：需真 provider base URL + API key。
 4. **49 模块在宿主 NDJSON verb 面「未接入」**：矩阵相应行 ◐，`apps/host/src/main.cj` 与 `apps/cli/src/main.cj` 由并发线在飞，本会话不吞并不 revert。
 5. **registry 上 `sacode-win32-x64@0.1.0` 的 inner dsh.exe 与本会话本机构建** sha256 不同（`2268bfc6…` vs `c2bf4464…`），差异来自 cjpm build 时间戳/中间符号；**行为面 175 条断言逐模式一致**即证明线上包已含 49 模块切片。若需要「线上包字节级等于本会话产物」需另行授权 `npm publish`（不可回退动作，本会话未做）。
+6. **cjpm build 非字节级可复现**：本会话两次 HEAD-only `git worktree add --detach` 各跑一次 `cjpm build apps/host` 得 sha256 `b4af3855…` 与 `e61121d5…` 不同。**结论**：本清单第四节的「三段/四段 sha256 逐字相等」只证「同一次 build 到发布产物的传播链」，不证「跨机器/跨时间的构建可复现」。跨环境验证请用**行为面判据**（cjpm test 331 / CLI 7 模式 175 PASS / 宿主 NDJSON 24 PASS / SaCode.exe SMOKE+UI_SMOKE PASS），不用哈希相等。
