@@ -5,10 +5,11 @@ import vm from 'node:vm';
 import MarkdownIt from 'markdown-it';
 import CodeHighlighter from '../renderer/highlight-source.mjs';
 
-const window = { SaCodeMarkdownIt: MarkdownIt, SaCodeCodeHighlighter:CodeHighlighter, Vue: { h: (tag, props, children) => ({ tag, props, children }) } };
+const window = { SaCodeMarkdownIt: MarkdownIt, SaCodeCodeHighlighter:CodeHighlighter, Vue: { ref:value=>({value}),onBeforeUnmount:()=>{},h: (tag, props, children) => typeof tag==='object'?tag.setup(props)():({ tag, props, children }) } };
+vm.runInNewContext(readFileSync(new URL('../renderer/code-block.js', import.meta.url), 'utf8'), { window });
 vm.runInNewContext(readFileSync(new URL('../renderer/markdown.js', import.meta.url), 'utf8'), { window });
 const render = window.SaCodeMarkdown.render;
-const walk = (nodes) => nodes.flatMap(n => typeof n === 'string' ? [] : [n, ...walk(Array.isArray(n.children) ? n.children : [])]);
+const walk = (nodes) => nodes.flatMap(n => n==null || typeof n === 'string' ? [] : [n, ...walk(Array.isArray(n.children) ? n.children : [])]);
 const sourceText=n=>typeof n==='string'?n:Array.isArray(n)?n.map(sourceText).join(''):sourceText(n.children||[]);
 
 test('正文包含标题、嵌套列表、引用、代码与表格语义节点', () => {
@@ -58,4 +59,41 @@ test('表格保留对齐，宽表独立滚动，引用中的表格填满内容�
   assert.deepEqual(Array.from(wide.filter(n=>n.tag==='th'),n=>n.props.style?.textAlign),['left','center','right',undefined]);
   const quote=walk(render('> |甲|乙|丙|丁|\n> |---|---|---|---|\n> |1|2|3|4|'));
   assert.ok(quote.some(n=>n.props.class==='markdown-table-scroll table-fill'));
+});
+
+test('代码卡默认换行且可切换，复制成功反馈以实际写入结果为准',async()=>{
+  let written,finish,timer,dispose;
+  const host={SaCodeCodeHighlighter:CodeHighlighter,Vue:{ref:value=>({value}),onBeforeUnmount:fn=>{dispose=fn;},h:(tag,props,children)=>({tag,props,children})},navigator:{clipboard:{writeText:text=>{written=text;return new Promise(resolve=>{finish=resolve;});}}},setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=undefined;}};
+  vm.runInNewContext(readFileSync(new URL('../renderer/code-block.js',import.meta.url),'utf8'),{window:host});
+  const props={code:'const 中文 = "<标签>";\n',lang:'js'},view=host.SaCodeCodeBlock.Component.setup(props);
+  const button=cls=>walk([view()]).find(n=>n.props?.class===cls);
+  assert.equal(view().props['data-code-wrap'],'true');
+  button('code-action code-wrap').props.onClick();
+  assert.equal(view().props['data-code-wrap'],'false');
+  props.code+='第二行\n';
+  assert.equal(view().props['data-code-wrap'],'false');
+  assert.equal(sourceText(walk([view()]).find(n=>n.tag==='pre')),props.code);
+  const pending=button('code-action code-copy').props.onClick();
+  assert.equal(written,props.code);assert.equal(button('code-action code-copy').props.disabled,true);
+  assert.equal(button('code-action code-copy').props['aria-label'],'复制代码');
+  finish();await pending;
+  assert.equal(button('code-action code-copy').props['aria-label'],'已复制');
+  timer();assert.equal(button('code-action code-copy').props['aria-label'],'复制代码');
+  host.navigator.clipboard.writeText=async()=>{throw new Error('拒绝');};
+  await button('code-action code-copy').props.onClick();
+  assert.equal(button('code-action code-copy').props['aria-label'],'复制代码');
+  assert.ok(walk([view()]).some(n=>n.props?.role==='alert'&&n.children==='复制失败，请重试'));
+  dispose();assert.equal(timer,undefined);
+});
+
+test('无 Clipboard API 时复制回退清理临时节点并恢复焦点，拒绝仍返回失败',async()=>{
+  let selected,removed=false,focused=false,accept=true;
+  const node={select(){selected=this.value;},remove(){removed=true;}};
+  const host={Vue:{h:()=>{},ref:()=>{},onBeforeUnmount:()=>{}},navigator:{},document:{activeElement:{focus(){focused=true;}},getSelection:()=>null,createElement:()=>node,body:{append(){}},execCommand(){if(!accept)throw new Error('拒绝');return true;}}};
+  vm.runInNewContext(readFileSync(new URL('../renderer/code-block.js',import.meta.url),'utf8'),{window:host});
+  assert.equal(await host.SaCodeCodeBlock.writeClipboard('中文\n原文'),true);
+  assert.equal(selected,'中文\n原文');assert.equal(removed,true);assert.equal(focused,true);
+  accept=false;removed=false;focused=false;
+  assert.equal(await host.SaCodeCodeBlock.writeClipboard('下一段'),false);
+  assert.equal(removed,true);assert.equal(focused,true);
 });

@@ -135,6 +135,34 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       const markdownText='# 中文标题\n\n正文 **强调** 与 `行内代码`。\n\n1. 第一项\n   - 嵌套项\n2. 第二项\n\n> 引用正文\n\n```js\nconst 内容 = "'+ '长代码内容'.repeat(80)+'";\n```\n\n| 名称 | 值 |\n| :--- | ---: |\n| 项目 | 内容 |\n\n|'+wideHead+'|\n|'+Array(10).fill('---').join('|')+'|\n|'+wideRow+'|';
       await js(`(()=>{const n=document.createElement('div');n.id='markdown-layout-fixture';document.querySelector('.conversation-scroll').append(n);Vue.render(Vue.h('div',{class:'msg-text markdown-body'},SaCodeMarkdown.render(${JSON.stringify(markdownText)})),n);n.scrollIntoView();})()`);
       await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const codeSource=await js("document.querySelector('#markdown-layout-fixture pre').textContent");
+      const toolbarReport=await js(`(()=>{
+        const root=document.querySelector('#markdown-layout-fixture .markdown-code-card'),header=root.querySelector('.code-toolbar'),language=root.querySelector('.code-language'),actions=root.querySelector('.code-actions'),pre=root.querySelector('pre'),buttons=[...root.querySelectorAll('.code-action')];
+        const box=e=>e.getBoundingClientRect(),center=e=>box(e).top+box(e).height/2;
+        const checks={defaultWrapped:root.dataset.codeWrap==='true' && getComputedStyle(pre).whiteSpace==='pre-wrap' && pre.scrollWidth<=pre.clientWidth+1,headerInsets:getComputedStyle(header).padding==='10px 18px 8px 22px',headerType:getComputedStyle(header).fontSize==='11px'&&getComputedStyle(header).lineHeight==='18px',centered:Math.abs(center(language)-center(actions))<1&&buttons.every(b=>Math.abs(center(b)-center(actions))<1),buttonSize:buttons.every(b=>Math.abs(box(b).width-24)<1&&Math.abs(box(b).height-24)<1),iconSize:buttons.every(b=>Math.abs(box(b.querySelector('svg')).width-14)<1&&Math.abs(box(b.querySelector('svg')).height-14)<1),actionGap:getComputedStyle(actions).gap==='4px',sourceIntact:pre.textContent===${JSON.stringify(codeSource)},noPageOverflow:document.documentElement.scrollWidth<=innerWidth};
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+      })()`);
+      // 在真实渲染组件上截取 Clipboard API 的写入参数，不改用户系统剪贴板。
+      await js("window.__toolbarClipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__toolbarCopiedText=text;}}})");
+      try {
+        await js("document.querySelector('#markdown-layout-fixture .code-copy').click()");
+        await waitFor("document.querySelector('#markdown-layout-fixture .code-copy').getAttribute('aria-label')==='已复制' || !!document.querySelector('#markdown-layout-fixture .code-copy-error')");
+        toolbarReport.checks.copyPayload=await js(`window.__toolbarCopiedText===${JSON.stringify(codeSource)}`);
+        toolbarReport.checks.copyFeedback=await js("document.querySelector('#markdown-layout-fixture .code-copy').getAttribute('aria-label')==='已复制'");
+        await js("document.querySelector('#markdown-layout-fixture .code-toolbar').scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        writeFileSync(join(outDir,`sacode-code-toolbar-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      } finally {await js("if(window.__toolbarClipboardDescriptor)Object.defineProperty(navigator,'clipboard',window.__toolbarClipboardDescriptor);else delete navigator.clipboard;delete window.__toolbarClipboardDescriptor;delete window.__toolbarCopiedText;");}
+      toolbarReport.failed=Object.keys(toolbarReport.checks).filter(k=>!toolbarReport.checks[k]);
+      // 长代码内滚动时实际测量吸顶位置，不仅检查 position 属性。
+      toolbarReport.checks.stickyHeader=await js("(()=>{const fixture=document.querySelector('#markdown-layout-fixture'),root=fixture.querySelector('.markdown-code-card'),header=root.querySelector('.code-toolbar'),scroll=document.querySelector('.conversation-scroll'),spacer=document.createElement('div');spacer.id='code-sticky-spacer';spacer.style.height=scroll.clientHeight+'px';fixture.append(spacer);scroll.scrollTop+=header.getBoundingClientRect().top-scroll.getBoundingClientRect().top+60;const r=header.getBoundingClientRect(),s=scroll.getBoundingClientRect(),edge=s.top+parseFloat(getComputedStyle(scroll).paddingTop);return getComputedStyle(header).position==='sticky' && root.getBoundingClientRect().top<edge && Math.abs(r.top-edge)<1 && r.bottom<=s.bottom;})()");
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      toolbarReport.metrics=await js("(()=>{const h=document.querySelector('#markdown-layout-fixture .code-toolbar'),s=document.querySelector('.conversation-scroll');return {headerTop:h.getBoundingClientRect().top,viewportTop:s.getBoundingClientRect().top,scrollTop:s.scrollTop,ancestors:[h.parentElement,h.parentElement.parentElement,h.parentElement.parentElement.parentElement].map(n=>({class:n.className,overflowX:getComputedStyle(n).overflowX,overflowY:getComputedStyle(n).overflowY,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))};})()");
+      writeFileSync(join(outDir,`sacode-code-sticky-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      await js("document.querySelector('#code-sticky-spacer').remove()");
+      toolbarReport.failed=Object.keys(toolbarReport.checks).filter(k=>!toolbarReport.checks[k]);
+      Object.assign(toolbarReport,{theme,width,height,surface:'code-toolbar'});reports.push(toolbarReport);
+      console.log(`LAYOUT ${toolbarReport.failed.length?'FAIL':'PASS'} code-toolbar ${theme} ${width}x${height} ${toolbarReport.failed.join(',')}`);
+      await js("document.querySelector('#markdown-layout-fixture .code-wrap').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
       const markdownReport=await js(`(()=>{
         const n=document.querySelector('#markdown-layout-fixture .markdown-body'),pre=n.querySelector('pre'),box=e=>e.getBoundingClientRect();
         const children=[...n.children];
@@ -144,7 +172,10 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           sharedLeftAxis:children.every(e=>Math.abs(box(e).left-box(n).left)<1),
           codeScroll:pre.scrollWidth>pre.clientWidth && getComputedStyle(pre).overflowX==='auto',
           codeHighlight:!!pre.querySelector('span[style]') && !![...pre.querySelectorAll('span')].find(e=>e.style.color==='var(--shiki-token-keyword)' && getComputedStyle(e).color==='${theme==='dark'?'rgb(250, 162, 193)':'rgb(214, 51, 108)'}'),
-          codeInsets:getComputedStyle(pre).padding==='16px' && getComputedStyle(pre).borderTopLeftRadius==='16px',
+          codeInsets:getComputedStyle(pre).padding==='6px 22px 20px' && getComputedStyle(pre).borderBottomLeftRadius==='16px',
+          codeType:getComputedStyle(pre).fontSize==='11px'&&getComputedStyle(pre).lineHeight==='19px'&&getComputedStyle(pre.querySelector('code')).fontSize==='11px',
+          headingType:getComputedStyle(n.querySelector('h1')).fontSize==='21px'&&getComputedStyle(n.querySelector('h1')).lineHeight==='30px',
+          tableType:getComputedStyle(n.querySelector('table')).fontSize==='13px'&&getComputedStyle(n.querySelector('table')).lineHeight==='22px'&&getComputedStyle(n.querySelector('th')).fontWeight==='500',
           tableFill:Math.abs(box(n.querySelector('.table-fill')).width-box(n.querySelector('.table-fill table')).width)<1,
           tableAlign:getComputedStyle(n.querySelector('th')).textAlign==='left' && getComputedStyle(n.querySelector('th:nth-child(2)')).textAlign==='right',
           wideTableBounded:n.querySelector('.table-wide').scrollWidth>n.querySelector('.table-wide').clientWidth && box(n.querySelector('.table-wide')).right<=box(n).right+1,
@@ -176,12 +207,17 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       const streamingEvents=await js("document.querySelector('#count-events').textContent");
       // 临时挂载真实流式组件与 TinyRobot 投影组件；不调用模型、不造会话事件。
       await js("(()=>{const n=document.createElement('div');n.id='streaming-layout-fixture';document.querySelector('#messages').append(n);foldOpen.ids.add('layout-stream-message');})()");
+      let streamUnwrapped=false;
       for (const partial of [streamingText.slice(0,10),streamingText.slice(0,62),streamingText]) {
         await js(`(()=>{const n=document.querySelector('#streaming-layout-fixture');Vue.render(Vue.h('div',{},[
           Vue.h(SaCodeMarkdown.Stream,{text:${JSON.stringify(partial)},running:true}),
           Vue.h(TR.BubbleProvider,{contentRendererMatches:[TEXT_MATCH]},()=>[Vue.h(TR.BubbleList,{messages:[{id:'layout-stream-message',role:'assistant',content:${JSON.stringify(partial)},sourceRole:'assistant/message'}],roleConfigs:FOLD.roleConfigs(),autoScroll:false})]),
         ]),n);})()`);
         await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        if(!streamUnwrapped && await js("document.querySelectorAll('#streaming-layout-fixture .code-wrap').length===2")) {
+          await js("document.querySelectorAll('#streaming-layout-fixture .code-wrap').forEach(n=>n.click());new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+          streamUnwrapped=true;
+        }
       }
       const streamingReport=await js(`(()=>{
         const root=document.querySelector('#streaming-layout-fixture'),live=root.querySelector('#stream .markdown-body'),saved=root.querySelector('.tr-bubble .markdown-body'),box=e=>e.getBoundingClientRect();
@@ -192,6 +228,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           sameBlockHeight:Math.abs(box(live).height-box(saved).height)<1,
           semanticBlocks:!!live.querySelector('h2') && !!live.querySelector('ul') && !!live.querySelector('pre'),
           codeScroll:[live,saved].every(n=>{const p=n.querySelector('pre');return p.scrollWidth>p.clientWidth && getComputedStyle(p).overflowX==='auto';}),
+          wrapChoiceSurvivesGrowth:[live,saved].every(n=>n.querySelector('.markdown-code-card').dataset.codeWrap==='false'),
           sameHighlight:[live,saved].every(n=>!!n.querySelector('pre.shiki span[style]')) && live.querySelector('pre code').textContent===saved.querySelector('pre code').textContent,
           noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
           noSessionWrite:document.querySelector('#count-events').textContent===${JSON.stringify(streamingEvents)},
@@ -385,6 +422,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click();document.querySelector('#settings-tab-general').click()");
       await waitFor("document.querySelector('.settings-dialog[open]') && document.querySelector('#font-value').textContent==='14'");
       await js("(()=>{const n=document.querySelector('#composer');n.value='字号变化与高度适配\\n'.repeat(5);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+      const typographyText='# 一级\n\n## 二级\n\n### 三级\n\n#### 四级\n\n##### 五级\n\n###### 六级\n\n`行内代码`\n\n```js\nconst x = 1;\n```\n\n| 名称 | 值 |\n| --- | --- |\n| 项目 | 内容 |';
+      await js(`(()=>{const n=document.createElement('div');n.id='font-markdown-fixture';document.querySelector('.conversation-scroll').append(n);Vue.render(Vue.h(SaCodeMarkdown.Body,{text:${JSON.stringify(typographyText)}}),n);})()`);
       for(const size of [10,22,14]) {
         let current=Number(await js("document.querySelector('#font-value').textContent"));
         while(current!==size) {
@@ -398,6 +437,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const fontReport=await js(`(()=>{
           const n=document.querySelector('#composer'),row=document.querySelector('.font-row'),control=document.querySelector('.font-control'),step=document.querySelector('.font-stepper'),dialog=document.querySelector('.settings-dialog[open]'),box=e=>e.getBoundingClientRect();
           const texts=[...document.querySelectorAll('#messages .msg-text')];
+          const markdown=document.querySelector('#font-markdown-fixture');
           const checks={
             sharedAxis:getComputedStyle(n).fontSize==='${size}px' && texts.every(e=>getComputedStyle(e).fontSize==='${size}px'),
             lineAxis:getComputedStyle(n).lineHeight==='${size+10}px' && texts.every(e=>getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'${size+8}px':'${size+10}px')),
@@ -406,12 +446,16 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
             fixedControl:Math.abs(box(step).height-36)<1 && Math.abs(box(step).width-72)<1 && getComputedStyle(document.querySelector('#send')).fontSize==='13px',
             focusReveals:getComputedStyle(document.querySelector('.font-arrows')).opacity==='1',
             contained:box(control).right<=box(dialog).right && dialog.scrollWidth<=dialog.clientWidth && document.documentElement.scrollWidth<=innerWidth,
+            markdownHeadingScale:[...markdown.querySelectorAll('h1,h2,h3,h4,h5,h6')].every((e,i)=>getComputedStyle(e).fontSize===([21,19,18,14,14,14][i]+${size-14})+'px' && getComputedStyle(e).lineHeight===([30,28,26,24,24,24][i]+${size-14})+'px'),
+            markdownTableScale:getComputedStyle(markdown.querySelector('table')).fontSize==='${size<=14?size-1:size-2}px' && getComputedStyle(markdown.querySelector('table')).lineHeight==='${(size<=14?size-1:size-2)+9}px',
+            fixedCodeType:getComputedStyle(markdown.querySelector('pre code')).fontSize==='11px' && getComputedStyle(markdown.querySelector('pre')).lineHeight==='19px' && getComputedStyle(markdown.querySelector('p code')).fontSize==='12px',
           };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
         })()`);
         Object.assign(fontReport,{theme,width,height,surface:'font-'+size});reports.push(fontReport);
         writeFileSync(join(outDir,`sacode-font-${size}-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
         console.log(`LAYOUT ${fontReport.failed.length?'FAIL':'PASS'} font-${size} ${theme} ${width}x${height} ${fontReport.failed.join(',')}`);
       }
+      await js("(()=>{const n=document.querySelector('#font-markdown-fixture');Vue.render(null,n);n.remove();})()");
       await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.settings-dialog .dialog-header button').click();})()");
       await js("document.querySelector('#open-catalog').focus(); document.querySelector('#open-catalog').click()");
       await waitFor("!!document.querySelector('.catalog-dialog[open] #catalog-root')");

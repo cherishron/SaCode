@@ -38,11 +38,7 @@ window.SaCodeMarkdown = (function () {
         nodes(token.children || []).forEach(add);
       } else if (token.type === 'fence' || token.type === 'code_block') {
         const hint=(token.info||'').trim().split(/\s+/)[0];
-        const lines=window.SaCodeCodeHighlighter.highlight(token.content,hint);
-        const children=lines?lines.flatMap((line,index)=>[
-          ...(index?['\n']:[]),window.Vue.h('span',{class:'code-line'},line.map(span=>window.Vue.h('span',{style:span.style},span.text))),
-        ]):token.content;
-        add(window.Vue.h('pre', {class:lines?'shiki':'code-plain',tabindex:0,'data-code-language':hint}, [window.Vue.h('code', {}, children)]));
+        add(window.Vue.h(window.SaCodeCodeBlock.Component,{key:'fence-'+(token.map?.[0]??root.length),code:token.content,lang:hint}));
       } else if (token.type === 'code_inline') {
         add(window.Vue.h('code', {}, token.content));
       } else if (token.type === 'hardbreak') {

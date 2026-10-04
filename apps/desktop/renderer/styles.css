@@ -124,24 +124,41 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .font-arrow:disabled { color:var(--text-muted); cursor:default; }
 .font-arrow:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 /* 助手正文遵循上游纵向块流与 16px 节奏；宽内容在自身滚动，不撑开会话。 */
-.markdown-body { display:flex; flex-direction:column; gap:16px; white-space:normal; min-width:0; }
+/* 在正文节点派生次级字号，避免在 :root 求值后被继承为固定的 13px。 */
+.markdown-body { --fs-content-secondary:min(calc(var(--fs-content) - 1px),max(13px,calc(var(--fs-content) - 2px))); --content-delta-secondary:calc(var(--fs-content-secondary) - 13px); display:flex; flex-direction:column; gap:16px; white-space:normal; min-width:0; }
 .markdown-body :is(p,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,pre,table) { margin:0; }
-.markdown-body :is(h1,h2,h3,h4,h5,h6) { line-height:1.5; font-weight:600; }
-.markdown-body h1 { font-size:calc(24px + var(--content-delta)); }
-.markdown-body h2 { font-size:calc(20px + var(--content-delta)); }
-.markdown-body h3 { font-size:calc(18px + var(--content-delta)); }
-.markdown-body :is(h4,h5,h6) { font-size:calc(16px + var(--content-delta)); }
+.markdown-body :is(h1,h2,h3) { font-weight:700; }
+.markdown-body h1 { font-size:calc(21px + var(--content-delta)); line-height:calc(30px + var(--content-delta)); }
+.markdown-body h2 { font-size:calc(19px + var(--content-delta)); line-height:calc(28px + var(--content-delta)); }
+.markdown-body h3 { font-size:calc(18px + var(--content-delta)); line-height:calc(26px + var(--content-delta)); }
+.markdown-body :is(h4,h5,h6) { font-size:var(--fs-content); line-height:calc(24px + var(--content-delta)); font-weight:600; }
+.markdown-body strong { font-weight:600; }
 .markdown-body :is(ul,ol) { padding-inline-start:24px; }
 .markdown-body li + li { margin-top:4px; }
 .markdown-body li > :is(p,ul,ol) + :is(p,ul,ol) { margin-top:8px; }
 .markdown-body blockquote { border-inline-start:2px solid var(--border); padding-inline-start:14px; color:var(--text-muted); }
 .markdown-body blockquote > * + * { margin-top:16px; }
-.markdown-body code { font-family:Consolas,monospace; font-size:13px; }
+.markdown-body code { font:12px/19px Consolas,monospace; }
 .markdown-body :not(pre) > code { background:var(--surface-3); padding:2px 4px; border-radius:var(--radius-xs); }
-.markdown-body pre { padding:16px; background:var(--surface-3); color:var(--text); border-radius:var(--radius-l); overflow:auto; white-space:pre; min-width:0; max-width:100%; }
+.markdown-body pre { padding:16px; background:var(--surface-3); color:var(--text); border-radius:var(--radius-l); overflow:auto; white-space:pre; min-width:0; max-width:100%; font:11px/19px Consolas,monospace; }
+.markdown-body pre code { font:inherit; }
 .markdown-body pre:focus-visible { outline-offset:-2px; }
 /* 两项均需重置：继承的标准滚动条样式会覆盖下面的 5px WebKit 样式。 */
 .markdown-body pre { scrollbar-width:auto; scrollbar-color:auto; }
+.markdown-code-card { position:relative; min-width:0; background:var(--surface-3); border-radius:var(--radius-l); }
+.code-toolbar { position:sticky; top:0; z-index:6; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 18px 8px 22px; background:var(--surface-3); border-radius:var(--radius-l) var(--radius-l) 0 0; color:var(--text-muted); font:11px/18px var(--font-ui); }
+.code-language { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:Consolas,monospace; }
+.code-actions { display:flex; align-items:center; gap:4px; flex:none; }
+.code-action { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; min-width:0; padding:0; border:0; border-radius:var(--radius-xs); background:transparent; color:var(--text-muted); cursor:pointer; }
+.code-action:hover { background:var(--surface); }
+.code-action:focus-visible { outline:1px solid var(--accent); outline-offset:2px; }
+.code-action svg { display:block; flex:none; }
+.code-content { display:contents; }
+.markdown-body .markdown-code-card pre { padding:6px 22px 20px; margin:0; border-radius:0 0 var(--radius-l) var(--radius-l); white-space:pre-wrap; word-break:normal; overflow-wrap:anywhere; }
+.markdown-body .markdown-code-card[data-code-wrap=false] pre { white-space:pre; overflow-wrap:normal; }
+.code-copy-error { display:block; padding:0 22px 12px; color:var(--danger); font:11px/18px var(--font-ui); }
+.code-copy-fallback { position:fixed; left:-9999px; }
+.code-copy-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
 .markdown-table-scroll { min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:auto; scrollbar-color:auto; }
 .markdown-table-scroll.table-wide { overflow-x:hidden; padding-bottom:5px; }
 .markdown-table-scroll.table-wide:is(:hover,:focus-visible) { overflow-x:scroll; padding-bottom:0; }
@@ -150,6 +167,8 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .markdown-body pre::-webkit-scrollbar-thumb,.markdown-table-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:var(--radius-xs); }
 .markdown-body pre::-webkit-scrollbar-track,.markdown-table-scroll::-webkit-scrollbar-track { background:transparent; }
 .markdown-table-scroll table { width:max-content; max-width:max-content; border-collapse:collapse; }
+.markdown-body table { font:var(--fs-content-secondary)/calc(22px + var(--content-delta-secondary)) var(--font-ui); }
+.markdown-body th { font-weight:500; }
 .markdown-table-scroll.table-fill table { width:100%; max-width:none; }
 .markdown-body :is(th,td) { padding:10px 16px; border:0; border-bottom:.5px solid var(--border); text-align:start; min-width:100px; max-width:min(30vw,320px); }
 .markdown-body :is(th,td):first-child { padding-left:0; }
