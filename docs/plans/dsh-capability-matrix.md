@@ -58,7 +58,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + 前五批十四个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox）：`✔` 11 行、`◐` 14 行、`☐` 38 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 六批新增十四个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert）：`✔` 11 行、`◐` 17 行、`☐` 35 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -94,12 +94,12 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | ptc-runtime | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 30） |
 | sandbox | ✔ | ✔ | M4 | ✔ | ◐ | `core/src/sandbox.cj` 三档优先级解析（显式 > 会话最后 > 部署默认）+ `SandboxRuntime.confine` fail-closed：`danger-full-access` 不在 confined 集合直接拒、`withoutBackend()` 无后端时抛 `SANDBOX_UNAVAILABLE`，禁止 unconfined passthrough。5 条用例。**上游校正**：上游还有 `ConfinedSandboxMode` 类型级收窄、`SandboxEnforcement = full | partial` 与 `signal?` 中止传播；本仓只在运行期检查字符串模式，无 enforcement 分级，也不接 OS 级沙箱后端 |
 | schedule | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（C 档，行 32） |
-| scope | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 33） |
+| scope | ✔ | ✔ | M0 | ✔ | ◐ | `core/src/scope.cj` `ScopeStack`：`enter(name)` / `exit(name)` 走 log-only 事件 `scope/enter` / `scope/exit`；`current()` 取回放后栈顶；`exit` 严格 LIFO（非栈顶抛 `scope-non-lifo` 且不落事件）。3 条用例覆盖 LIFO 拒 + 回放。本切片不进 surface（第 3 条断言 `deriveMessages().size == 1`）。**上游校正**：上游 scope 还有 scope-kind（session/workspace/global）分层与 `scope/policy` prompt section；本仓只做栈与 LIFO 约束，无分层策略与 prompt 装配 |
 | session | ✔ | ✔ | M1 | ✔ | ✔ | 编号与 seq 连续性、flush/load 往返、写租约互斥与 owner 凭据、**崩溃残留租约按持有者死活分别接管与拒绝**（CFFI 取 pid + 判活）；两入口同函数实测。**上游校正**：上游 surface 类型系统（`SessionEventSurface=current/shadowed/log-only`、`SessionRecord{header,live,persisted}`）本仓未实现投影层区分 |
 | session-projection | ✔ | ✔ | M1 | ✔ | ✔ | `deriveMessages()` 纯函数 + 以「surface 条数 + 代次」为键的缓存：无关事件不重算并交回同一份缓存对象；两个方向的变异体都被抓（§6.1.2 D 档第 1 条补实后由 D 移入 A）。**上游校正**：上游 `SessionProjectionMap` 支持多投影注册（agentTeam/goal/compaction/deliverables 等），本仓只有单一 `deriveMessages()` 投影；上游持久化缓存键本仓用内存缓存 |
 | session-query | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
 | session-reference | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 37） |
-| session-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 38）。**C04 已核**：上游 session-telemetry 模块 213 行确证有 `SessionTelemetryRecord` 两 channel（ledger 镜像 + ops）+ `session-telemetry/record` waterfall 脱敏扩展点 + fail-closed（抛异常的监听器扣下该条记录）。保留本地诊断需求，外发默认关闭，不直接排除整模块 |
+| session-telemetry | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/telemetry.cj` `SessionTelemetryHub`：`subscribe(id, listener)` 单槽注册（重名 `telemetry-duplicate-subscriber`）、`unsubscribe(id)`；`emit(record)` 按订阅顺序 waterfall 逐个调用监听器，**fail-closed**——任一监听器抛异常则中止、后续监听器不收到、`session-telemetry/record` 事件不落（对齐上游 §213「扣下该条记录」）；`recordCount()` 从事件流重算，回放后仍可见历史条数。4 条用例覆盖扇出、fail-closed、退订、log-only 表面。**C04 已核**：上游两 channel（ledger 镜像 + ops）本切片以 log-only 事件近似 ledger 一侧，ops 侧、脱敏扩展点、外发默认关闭的完整边界仍未做 |
 | session-title | ✔ | ✔ | M1 | ✔ | ◐ | 核心切片已落 `core/src/title.cj`（2026-10-04）：`session/title` 是 log-only 事件，不进 `isSurfaceEvent` 白名单；`rename` 空/纯空白拒绝且不留事件、非空 trim 后落 source="user"；`registerProvider` 单槽重复注册抛且首次前缀保留；`generateFrom` 无 provider 走 60 上限截断落 source="fallback"。core `title_test.cj` **4 条**（round-trip 回放 + 空拒绝 + 单槽 + 截断）。**仍缺**：`SessionTitleProviderId` branded、上游 `first-prompt`/`all-prompts` 自动模式、host IPC `session/title-*` 通道、CLI `dsh title` 子命令；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 C01 |
 | settings | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/settings.cj` 三种变更：`update::<k>::<v>` 合并单键、`replace::<k=v,...>` 先清空再应用整份、`mutate::<k>::<expected>::<new>` 按当前值 CAS 拒陈旧；`settings/document-updated` 走 log-only 事件不进 surface。3 条用例覆盖合并、整替、CAS 拒绝。**上游校正**：完整配置域未实现；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，本切片只覆盖 document-updated 契约面，不以局部设置窗判定整个模块完成 |
 | shell | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 41） |
@@ -116,7 +116,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | todo | ✔ | ✔ | M7 | ✔ | ◐ | 核心切片已落 `core/src/todo.cj`（2026-10-04）：`TodoItem` 只有 content 与三态 status（pending/in_progress/completed），刻意无 id/priority/activeForm；`todo/write` 是 log-only 事件不进 `isSurfaceEvent`；每次 write 全量替换（last-write-wins）；空数组仍落事件以便回放能追问「什么时候清的」；任一 status 非法整次拒绝且一条事件都不留。core `todo_test.cj` **4 条**（round-trip + 全量替换 + 非法拒写 + 清空快照）。**仍缺**：模型工具 `dsh-tool-todo` 与 invariant companion（一次校验既有 + 增量跟踪 turn 边界）；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 D 组 |
 | token-meter | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言。**上游校正**：上游 `TokenSurfaceNode` 有 route-priced request-image pricing（`ctx.llm.imageRequestPricing`）与 `heuristicTokens` 影子定价，本仓无节点级定价；**C02 部分核**：未发现订阅/支付/商业权益字段 |
 | tools | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增）。**上游校正**：四段管线契约一致；上游 `ToolRestriction`(per-scope allow/deny) 与 `defineTool` DSL(`ValueSchemaSpec`) 本仓未实现 |
-| typert | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 55） |
+| typert | ✔ | ✔ | M0 | ✔ | ◐ | `core/src/typert.cj` `TypeRegistry`：按名注册 `TypeSpec(name, version)` + 按名解析 + 重名 `typert-duplicate-name` 拒 + 未知名 `typert-unknown-name` 抛；重名拒后原版本不被覆盖（`typertDuplicateNameRejected` 断言）。4 条用例。**上游校正**：本切片是纯进程内注册表，不落 log 事件；上游 branded type 名义化、泛型型变（协变/逆变）与结构等价比较均未做，`ctx.typer` 与工具参数 Schema 的联动待补 |
 | user-questions | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 56）。**上游已核**：`AskUserQuestionItem`(id/question/detail?/header?/options?/multiSelect?/intent?) + `AskUserQuestionIntent`(kind=plan-review) + `askTimed`(返回 pending=仍可答) + `@Remote answer`(REPLY_QUEUED 拒绝第二次) + `user-questions/request` waterfall。阶段定为 M7（委托与编排）。已有的审批/人在环面属 `approval` 行，不连带勾选 |
 | voice-input | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 57） |
 | web | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 58）；全仓无 HTTP/SSE 客户端 |
