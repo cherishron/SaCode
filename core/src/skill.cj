@@ -5,7 +5,8 @@ import std.collection.*
 // `skill/uninstall` 事件承载 `<name>` 做软删（active=false）；`list()` 只回
 // active 名称、`describe(name)` 只对 active 者返描述，卸载后返空串。
 //
-// 本切片假设 name/description 不含 `::`；未来放开需换长度前缀编码。
+// name/description 含 `::` 在 register 处被拒（`skill-delimiter-in-name` /
+// `skill-delimiter-in-description`），不再是「假设不会发生」；放开需换长度前缀编码。
 
 class SkEntry {
     let name: String
@@ -52,6 +53,14 @@ public class SkillRegistry {
         }
         if (description.size == 0) {
             throw Exception("skill-empty-description")
+        }
+        // `<name>::<description>` 里 `::` 就是字段分隔符：名字或描述带上它，
+        // 回放时字段错切，describe() 交回的就不是注册时给的那句。
+        if ((name.indexOf("::") ?? -1) >= 0) {
+            throw Exception("skill-delimiter-in-name")
+        }
+        if ((description.indexOf("::") ?? -1) >= 0) {
+            throw Exception("skill-delimiter-in-description")
         }
         let i = indexOf(name)
         if (i >= 0 && entries[i].active) {

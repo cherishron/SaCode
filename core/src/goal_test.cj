@@ -88,3 +88,47 @@ func goalClearWritesTombstoneAndSnapshotReturnsEmpty() {
     @Expect(log.snapshotEvents().size, Int64(2))
     removeIfExists(root, recursive: true)
 }
+
+// `|` 是 goal/change 的字段分隔符：目标文本里带它，写进去的和读出来的就不是同一件事。
+// 建立/编辑/阻塞三条写路径都要拒，且不落事件（CAS 与「日志不谎称改过」同一口径）。
+@Test
+func goalObjectiveContainingDelimiterIsRejectedWithoutWriting() {
+    let root = "core-goal-delimi"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let svc = GoalService(log)
+    var created = ""
+    try {
+        svc.create("甲|乙")
+        created = "accepted"
+    } catch (e: Exception) {
+        created = e.message
+    }
+    @Expect(created, "bad-goal-content")
+    @Expect(log.eventCount(), Int64(0))
+    @Expect(svc.snapshot().phase, "none")
+
+    let ok = svc.create("正常的目标")
+    @Expect(ok.phase, "active")
+    var edited = ""
+    try {
+        svc.edit(ok.revision, "丙|丁")
+        edited = "accepted"
+    } catch (e: Exception) {
+        edited = e.message
+    }
+    @Expect(edited, "bad-goal-content")
+    var blocked = ""
+    try {
+        svc.block(ok.revision, "缺|凭据")
+        blocked = "accepted"
+    } catch (e: Exception) {
+        blocked = e.message
+    }
+    @Expect(blocked, "bad-goal-content")
+    // 两次拒绝都不许在日志里留下痕迹：revision 仍停在 1
+    @Expect(svc.snapshot().revision, Int64(1))
+    @Expect(svc.snapshot().objective, "正常的目标")
+    removeIfExists(root, recursive: true)
+}

@@ -22,8 +22,8 @@ public class GoalSnapshot {
 // 载荷为完整快照或 clear 墓碑。CAS：每次变更必须携带期望的旧 revision，
 // 不匹配即抛且不落事件（日志不谎称改过）。
 //
-// 事件编码：`<phase>|<objective>|<blockedReason>`——本切片假设字段不含 `|`
-// （现有 CLI/桌面工具产生的目标文本符合此约定）；未来放开该限制需换成长度前缀编码。
+// 事件编码：`<phase>|<objective>|<blockedReason>`。objective / blockedReason 含 `|`
+// 在写入处被拒（`bad-goal-content`），不是只当作约定；放开该限制需换长度前缀编码。
 public class GoalService {
     let log: SessionLog
 
@@ -32,6 +32,11 @@ public class GoalService {
     }
 
     private static func encode(phase: String, objective: String, blockedReason: String): String {
+        // `|` 是本事件的字段分隔符：内容里带上它，读回来的就不是写进去的那件事
+        // （objective 会被截断、blockedReason 错位成别的字段）。写边界当场拒。
+        if ((objective.indexOf("|") ?? -1) >= 0 || (blockedReason.indexOf("|") ?? -1) >= 0) {
+            throw Exception("bad-goal-content")
+        }
         return "${phase}|${objective}|${blockedReason}"
     }
 

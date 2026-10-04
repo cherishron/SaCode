@@ -78,3 +78,38 @@ func skillEventsAreLogOnlyAcrossReplay() {
     @Expect(SkillRegistry(fresh).describe("pdf"), "PDF 处理")
     removeIfExists(root, recursive: true)
 }
+
+// 技能注册把 `<name>::<description>` 编码进一条事件，`::` 就是字段分隔符。
+// 名字或描述里带它，回放时字段会错切——注册必须当场拒，且一条事件都不留。
+@Test
+func skillRegisterRejectsFieldsCarryingThePairDelimiter() {
+    let root = "core-skill-delimi"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let reg = SkillRegistry(log)
+    var badName = ""
+    try {
+        reg.register("a::b", "描述")
+        badName = "accepted"
+    } catch (e: Exception) {
+        badName = e.message
+    }
+    @Expect(badName, "skill-delimiter-in-name")
+
+    var badDesc = ""
+    try {
+        reg.register("ok", "前::后")
+        badDesc = "accepted"
+    } catch (e: Exception) {
+        badDesc = e.message
+    }
+    @Expect(badDesc, "skill-delimiter-in-description")
+
+    @Expect(log.eventCount(), Int64(0))
+    @Expect(reg.list().size, Int64(0))
+    reg.register("ok", "能用")
+    @Expect(reg.list().size, Int64(1))
+    @Expect(reg.describe("ok"), "能用")
+    removeIfExists(root, recursive: true)
+}

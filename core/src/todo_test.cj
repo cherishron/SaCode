@@ -81,3 +81,40 @@ func todoEmptyListStillPersistsClearSnapshot() {
     @Expect(log.snapshotEvents().size, Int64(2))
     removeIfExists(root, recursive: true)
 }
+
+// `|` 与换行是 todo 事件的记录内分隔符。含分隔符的内容当场看不出问题，
+// 回放时却会被拆成两条或把 status 读错位——写边界必须拒，
+// 不能让唯一真源存进一份读不回原样的东西。
+@Test
+func todoContentContainingRecordDelimiterIsRejected() {
+    let root = "core-todo-delimi"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let todos = TodoStore(log)
+    var piped = ""
+    try {
+        todos.write([TodoItem("甲|乙", "pending")])
+        piped = "accepted"
+    } catch (e: Exception) {
+        piped = e.message
+    }
+    @Expect(piped, "bad-todo-content")
+
+    var newline = ""
+    try {
+        todos.write([TodoItem("甲\n乙", "pending")])
+        newline = "accepted"
+    } catch (e: Exception) {
+        newline = e.message
+    }
+    @Expect(newline, "bad-todo-content")
+
+    // 拒绝必须一条事件都不落：与 bad-todo-status 同一契约
+    @Expect(log.eventCount(), Int64(0))
+    // 不含分隔符的照常写，且能原样读回
+    todos.write([TodoItem("正常的", "pending")])
+    @Expect(log.eventCount(), Int64(1))
+    @Expect(todos.list()[0].content, "正常的")
+    removeIfExists(root, recursive: true)
+}

@@ -382,3 +382,56 @@ abort 信号那处改动经过仓颉核心的真宿主路径仍然是 12/12。
 但它同一行给的逐模式数字是 all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / extjs 12 / headless 36，
 相加是 **174**。本会话实测逐模式数字与那串逐模式数字完全相同，所以差的是旧记录的**汇总写法**，
 不是用例缺失。收口文档批次处理（见待办：证据更正）。
+
+---
+
+## 批次 7：P2 —— `|` / `::` 是字段分隔符，含分隔符的内容能写进日志却读不回原样
+
+**缺陷族**（三个模块同一个形状，代码里各自写着「本切片假设不含分隔符」却没人拦）：
+- `core/src/todo.cj`：记录编码 `<content>|<status>`，条目之间用 `\n` 分隔。
+  `write([TodoItem("甲|乙","pending")])` 当场成功，回放时 `list()` 按第一个 `|` 切，
+  status 读成 `乙|pending`；`content` 里带换行则一条变两条。
+- `core/src/goal.cj`：`<phase>|<objective>|<blockedReason>`。objective 带 `|` 时
+  `create()` 返回的内存快照与 `snapshot()` 回放出来的不是同一件事。
+- `core/src/skill.cj`：`<name>::<description>`。名字或描述带 `::` 时字段错切，
+  `describe()` 交回的不是注册时那句。
+
+共同点：写侧不设防，坏数据进的是**唯一真源**（会话日志），要等到回放才现形——
+而回放读出来的是一份自相但没有报错的账。
+
+**红先证据**（三条用例，工作区与 HEAD 副本各跑了一遍，形态一致）：
+
+```
+FAILED: 2, listed below:
+  goalObjectiveContainingDelimiterIsRejectedWithoutWriting
+  skillRegisterRejectsFieldsCarryingThePairDelimiter
+  todoContentContainingRecordDelimiterIsRejected        ← 这条落在 ERROR 桶
+```
+`todo…` 那条进的是 ERROR 桶而不是 FAILED：goal 用例里第一次「被拒」的 create 当场其实
+落了事件，随后的 create 抛 `goal-already-exists` 冒出用例外层——红灯是红，但归因写着「用例自己
+踩空」，不是「实现拒了」。这正是修好之后会消失的现象，还原复跑证实（见下）。
+
+**做法**：一律在**写边界**拒，错误码互不相同且可读——`bad-todo-content`、`bad-goal-content`、
+`skill-delimiter-in-name` / `skill-delimiter-in-description`；拒绝时一条事件都不落，
+与既有的 `bad-todo-status`、`stale-goal-revision`、`skill-empty-name` 同一口径。
+goal 的守卫放在 `GoalService.encode` 这个唯一写通道上，create/edit/block 三条路径一起覆盖。
+三个模块头部那句「本切片假设不含分隔符」就地改成「在写入处被拒」，不再留假设。
+
+**变异反证**（一次施加三个变异，每个变异有独占受害者）：把三处 `if (...) throw` 全部删掉，
+红集合**恰好等于**本批新增的三条用例，其余 382 条不受影响：
+
+| 态 | TOTAL | PASSED | SKIPPED | FAILED | ERROR | rc |
+|---|---|---|---|---|---|---|
+| HEAD 副本 + 本批 6 文件（改前红态在真实工作区跑：FAILED 2 + ERROR 1） | 386 | 385 | 1 | 0 | 0 | 0 |
+| 同一副本，三处守卫全删 | 386 | 382 | 1 | 2 | 1 | 1 |
+| `cp` 备份还原，`diff -q` 证明与工作区逐字一致后复跑 | 386 | 385 | 1 | 0 | 0 | 0 |
+
+**双入口**（都在只含 `HEAD` + 本批改动的 detached worktree 里构建与运行，DLL 由工作区已构建目录供 PATH）：
+- CLI `cjpm build success`；七模式实跑 **PASS 174 / FAIL 0**：all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / extjs 12 / headless 36。
+- 宿主 `cjpm build success`（协议面无改动，本批三个模块没有 `confine`/`todo`/`goal`/`skill` 的宿主调用点）。
+- 工作区（含并发线未入库的 `core/src/model_settings*.cj`）另跑一遍：`TOTAL: 388 / PASSED: 387 / FAILED: 0`，
+  与副本计数差 2 条，差的就是那两条未入库用例——**提交级判据取 386/385/0 那一行**。
+
+**顺带把旧账对齐**：`p0-status` 里「7 个断言模式 175 PASS」与它同一行给的逐模式数字相加是 **174**；
+本批在 HEAD 副本里逐模式实测就是 77/21/11/8/9/12/36 = 174。旧记录的汇总写法多 1，
+逐模式数字与本会话实测完全一致，属汇总笔误而非用例缺失。
