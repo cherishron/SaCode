@@ -11,6 +11,8 @@ export interface Tab { id: string; label: string; order: number; component: Comp
 export interface Tool { name: string; description?: string; needsApproval?: boolean }
 const el = (tag: string, cls: string, children: any, props: any = {}) => h(tag, { class: 'plugins-' + cls, ...props }, children);
 const phases = { pending: '等待依赖', loading: '加载中', active: '运行中', failed: '启动失败', unloading: '卸载中' };
+// Vue useId 的序号仅在应用内唯一；插件/Next SDK 可挂载独立应用，需补组件实例序号。
+let pageInstance = 0;
 const title = (e: PluginEntry) => e.title || e.moduleName.replace(/^@[^/]+\//, '').replace(/^cordis(?:-plugin-|:)/, '').replace(/^sacode-(?:host-|client-)?/, '');
 const matches = (e: PluginEntry, query: string) => [e.moduleName, e.entryId, title(e), e.description].some(v => v?.toLocaleLowerCase().includes(query));
 
@@ -86,8 +88,11 @@ export const Page = defineComponent({
   name: 'SaCodePluginsPage',
   props: { adapter: Object as PropType<Adapter>, tabs: Array as PropType<Tab[]>, tools: Array as PropType<Tool[]> },
   setup(props) {
-    const uid = 'plugins-' + useId();
-    const rows = computed(() => (props.tabs || [{ id: 'inventory', label: '插件列表', order: 20, component: Inventory, props: { adapter: props.adapter } }]).slice().sort((a,b) => a.order - b.order || a.id.localeCompare(b.id)));
+    const uid = 'plugins-' + useId() + '-' + (++pageInstance);
+    const rows = computed(() => (props.tabs || [
+      { id:'configuration',label:'插件配置',order:10,component:(window as any).SaCodeConfiguration.Page },
+      { id: 'inventory', label: '插件列表', order: 20, component: Inventory, props: { adapter: props.adapter } },
+    ]).slice().sort((a,b) => a.order - b.order || a.id.localeCompare(b.id)));
     const chosen = ref(''), visited = ref<string[]>([]);
     const active = computed(() => rows.value.find(t => t.id === chosen.value)?.id || rows.value[0]?.id);
     watch(active, id => { if (id && !visited.value.includes(id)) visited.value.push(id); }, { immediate: true });

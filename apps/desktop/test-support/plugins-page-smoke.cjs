@@ -2,8 +2,9 @@
 module.exports = async function({win,check,waitFor,outDir}) {
   const js = code => win.webContents.executeJavaScript(`(async()=>{${code}})()`,true);
   await js(`document.querySelector('#open-settings').click();document.querySelector('#settings-tab-plugins').click()`);
+  await js(`const e=[...document.querySelectorAll('#settings-page-plugins [role=tab]')].find(e=>e.textContent==='插件列表');if(e)e.click()`);
   await waitFor("!!document.querySelector('#settings-page-plugins .plugins-inventory')");
-  await check('插件页真实入口与数据边界',"({title:document.querySelector('#settings-page-plugins .plugins-heading').textContent==='内置插件',unconnected:document.querySelector('#settings-page-plugins').textContent.includes('插件清单接口尚未接入'),tools:document.querySelectorAll('#settings-page-plugins .settings-tool').length>0,noFakeTabs:!document.querySelector('#settings-page-plugins [role=tablist]')})");
+  await check('插件页真实入口与数据边界',"({title:document.querySelector('#settings-page-plugins .plugins-heading').textContent==='内置插件',unconnected:document.querySelector('#settings-page-plugins').textContent.includes('插件清单接口尚未接入'),tools:document.querySelectorAll('#settings-page-plugins .settings-tool').length>0,configurationView:!![...document.querySelectorAll('#settings-page-plugins [role=tab]')].find(e=>e.textContent==='插件配置')})");
   require('node:fs').writeFileSync(require('node:path').join(outDir,'plugins-product.png'),(await win.webContents.capturePage()).toPNG());
   await js(`document.querySelector('.settings-close').click();
     const root=document.createElement('div');root.id='plugins-fixture';root.className='settings-dialog';Object.assign(root.style,{position:'fixed',top:'80px',left:'300px',width:'720px',maxHeight:'calc(100vh - 160px)',height:'auto',padding:'24px',overflow:'auto',display:'block',zIndex:'20',background:'var(--panel-surface)',borderRadius:'16px'});document.body.append(root);
