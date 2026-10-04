@@ -9,6 +9,10 @@ class ExtHost {
   #pending = new Map();
   // 外部 callId → 结算函数：取消要落在「那一次调用」上，所以按调用方给的键另建一张表。
   #byExt = new Map();
+  // 外部 callId → 该次的 abort 控制器与 handler promise：取消不只是放弃等待，
+  // 还得把「可以停了」交给扩展，并且有机会如实回报它到底停没停。
+  #signals = new Map();
+  #work = new Map();
   #nextListener = 1;
   #nextCall = 1;
   #closed = false;
@@ -69,24 +73,57 @@ class ExtHost {
     });
     this.#pending.set(id, rejectExiting);
     if (key !== null) this.#byExt.set(key, rejectExiting);
+    // 第二参数是给扩展的协作面：不读 ctx 的旧扩展零改动，读得到的才能在取消前收手。
+    const ac = new AbortController();
+    const work = Promise.resolve(t.handler(args || {}, { signal: ac.signal }));
+    if (key !== null) {
+      this.#signals.set(key, ac);
+      this.#work.set(key, work);
+    }
     try {
-      return await Promise.race([Promise.resolve(t.handler(args || {})), exiting]);
+      return await Promise.race([work, exiting]);
     } finally {
       this.#pending.delete(id);
-      if (key !== null) this.#byExt.delete(key);
+      if (key !== null) {
+        this.#byExt.delete(key);
+        this.#signals.delete(key);
+        this.#work.delete(key);
+      }
     }
   }
 
-  // 只结算仍在这条 callId 上的在途调用；已经结算或从来没登记过都回 false，
-  // 绝不假装「取消成功了」。迟到的 handler 结果因为 race 已定而不会再补一帧。
-  cancel(callId) {
+  // 取消做两件事：给扩展发 abort，并结算等待者——然后如实记账「扩展到底停了没有」。
+  // cancelled 的语义只有「这条在途调用被结算了」，它不代表副作用已停止：
+  // 停止与否取决于扩展读不读 ctx.signal，所以收束情况单独记到诊断面，不塞进应答帧
+  // （应答帧一旦要等收束观察，就会晚于那条 call 自己的结算帧，破坏既有帧序）。
+  // 迟到的 handler 结果因为 race 已定而不会再补一帧。
+  cancel(callId, opts = {}) {
     const key = callId === undefined || callId === null ? null : String(callId);
     if (key === null) return false;
     const rej = this.#byExt.get(key);
     if (!rej) return false;
+    // 先取句柄再结算：等待者一被 reject，call() 的 finally 就会把这两条清掉
+    const ac = this.#signals.get(key);
+    const work = this.#work.get(key);
     this.#byExt.delete(key);
+    if (ac) ac.abort();
     rej(new Error(`cancelled: ${callId}`));
+    if (work) this.#watchSettle(key, work, opts.settleMs === undefined ? 200 : opts.settleMs);
     return true;
+  }
+
+  // 有界观察 handler 是否真收束了；不协作的扩展记成 still-running，而不是替它假定「已停止」。
+  // 诊断走 stderr：stdout 只走协议帧。
+  #watchSettle(key, work, settleMs) {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) process.stderr.write(`cancel-settle callId=${key} outcome=still-running\n`);
+    }, settleMs);
+    timer.unref();
+    work.then(
+      () => { done = true; process.stderr.write(`cancel-settle callId=${key} outcome=settled\n`); },
+      () => { done = true; process.stderr.write(`cancel-settle callId=${key} outcome=settled\n`); }
+    );
   }
 
   dispose(name) {
@@ -102,6 +139,8 @@ class ExtHost {
     for (const reject of this.#pending.values()) reject(new Error("host-exiting"));
     this.#pending.clear();
     this.#byExt.clear();
+    this.#signals.clear();
+    this.#work.clear();
     this.#listeners.clear();
     this.#handles.clear();
   }

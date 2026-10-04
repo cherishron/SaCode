@@ -271,3 +271,58 @@ pack rc=0
 `console.error("缺 MinGW 运行时…")` 并退 1。worktree 用完已 `--force` 回收。
 
 **本批未跑**：装出来的 `dsh.exe` 剥 SDK PATH 的 175 条断言（那是完整发布链，本批只到「打包成功」）。
+
+---
+
+## 批次 5：P1 —— 扩展宿主的取消只结算等待者，扩展收不到「可以停了」
+
+**缺陷**：`extjs/host.cjs` 的 `cancel(callId)` 只把等待者 reject 掉，`t.handler(args)` 拿不到
+任何取消通知——副作用照旧发生，而调用方收到的应答叫 `cancelled: true`。
+调用面 `t.handler(args || {})` 连第二参数都不传，扩展即使想协作也没有入口。
+
+**做法**：
+- `call()` 为每笔带 callId 的调用建一个 `AbortController`，以 `t.handler(args, { signal })` 交给扩展；
+  不读 `ctx` 的旧扩展零改动（`echo/delayed/slow/broken` 全部照旧，16 条测试里 14 条本来就是它们的）。
+- `cancel()` 顺序固定为「取句柄 → abort → 结算等待者」；先取句柄是因为等待者一被 reject，
+  `call()` 的 `finally` 就把登记清掉了。
+- 新增 `#watchSettle()`：有界观察 handler 到底收束没有，结果写 **stderr 诊断面**
+  （`cancel-settle callId=<key> outcome=settled|still-running`），stdout 仍只走协议帧。
+  `settled` 与 `cancelled` 是两件事：`cancelled` 的语义就是「这条在途调用被结算了」，
+  它不代表副作用停止；这一点写进注释与诊断，不塞进应答帧。
+
+**中途撤回的一个设计**：先把 `cancel` 改成 async 并让应答带 `{cancelled, settled, outcome}`，
+实跑立刻红了两条**既有**协议用例：
+
+```
+not ok 11 - extension/cancel 按 callId 结算在途调用，只回一帧且迟到结果不再补帧   （3 !== 4）
+not ok 12 - 取消不存在或已结算的 callId 明确回 false，二次取消不重复结算           （4 !== 5）
+```
+原因是应答帧要等收束观察写完，于是排到了那条 call 自己的 -32021 结算帧之后，
+帧序契约（按 id 配对的先后）被改动打破。还有一条更深的问题：协作快的 handler 会在
+reject 之前就把 race 判给真实结果，「取消」到底回错误还是回结果变成取决于 handler 速度——
+这是不该有的不确定性。因此把收束信息从协议面撤走、改记 stderr，应答面逐字回到原样
+（`git diff -- extjs/server.cjs` 只剩注释变化）。
+
+**红→绿**（`node --test extjs/test/extjs.test.mjs`，显式点名单个文件）：
+
+```
+改前：# pass 14  # fail 2   → 新增的两条
+改后：# tests 16 # pass 16  # fail 0
+```
+
+**两次独立变异，各杀一条**（证明两条断言各自有独占归属）：
+| 变异 | 红集合 |
+|---|---|
+| `t.handler(args || {}, {signal})` 退回 `t.handler(args || {})` | 只有「取消把 abort 信号交给扩展」 |
+| 去掉 `if (work) this.#watchSettle(...)` | 只有「收束情况记到诊断面」 |
+
+两次变异后都已逐字还原，还原复跑回 16/16。
+
+**新增样例扩展**：`extjs/example/watchful.cjs`（handler 等 abort，收到就协作收束，并把
+`started/aborted/ranOut` 记在导出对象上——取消后调用方拿不到返回值，没有这个计数就只能靠猜）。
+它随 `EXT_EXAMPLE` 整目录分发规则自动进包，无需改打包脚本。
+
+**本批未跑（BLOCKED）**：CLI `dsh extjs` 子命令与宿主的 `extension/host/*` 链路没重跑——
+工作区 core 当前被并发线未入库的 `core/src/model_request_test.cj` 挡住编译
+（见批次 3 的报错原文）。协议面本轮是逐字不变的（应答帧、错误码、帧序都不动），
+风险集中在扩展宿主自身，已由上面 16 条覆盖，其中两条是走 `server.cjs` 真子进程的端到端帧序用例。

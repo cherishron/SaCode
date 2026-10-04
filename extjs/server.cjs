@@ -41,7 +41,8 @@ async function dispatch(req) {
       }
     }
     case "extension/cancel":
-      // 只回「有没有真结算到一笔在途调用」，不替调用方编结果；结果帧仍由那条 call 写出
+      // 只回「有没有真结算到一笔在途调用」，不替调用方编结果；结果帧仍由那条 call 写出。
+      // 扩展是否真的停止了另说：那部分记在宿主的 stderr 上，不混进协议面。
       return send({ jsonrpc: "2.0", id, result: { cancelled: host.cancel(req.params.callId) } });
     case "extension/dispose":
       return send({ jsonrpc: "2.0", id, result: { disposed: host.dispose(req.params.name) } });

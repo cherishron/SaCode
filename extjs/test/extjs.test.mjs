@@ -310,3 +310,63 @@ test("host/shutdown 先应答、再结算在途调用、最后干净退出", asy
     p.kill();
   }
 });
+
+// 取消必须把「可以停了」这件事真交给扩展：只把等待者 reject 掉，扩展无从收手，
+// 副作用照旧发生，而调用方拿到的却是一个叫「cancelled」的应答。
+test("取消把 abort 信号交给扩展，等待者仍按 cancelled 结算", async () => {
+  const WATCH = jj(ROOT, "example", "watchful.cjs");
+  const mod = require(WATCH);
+  mod.stats.started = 0;
+  mod.stats.aborted = 0;
+  mod.stats.ranOut = 0;
+  const h = new ExtHost();
+  assert.equal(await h.load(WATCH), true);
+  const p = h.call("example.watchful", { text: "x" }, "w1");
+  // 先把「这一笔会被结算」挂上去：拒绝发生在下一个 await 之前，晚一步认领就成了
+  // 没人处理的 unhandledRejection
+  const rejected = assert.rejects(p, /cancelled/);
+  await new Promise((r) => setImmediate(r));
+
+  // 契约不变：布尔只说「这条在途调用被结算了」
+  assert.equal(h.cancel("w1"), true);
+  await rejected;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(mod.stats.aborted, 1, "扩展必须真的收到过 abort 信号");
+  assert.equal(mod.stats.ranOut, 0, "收到信号就该提前收束，而不是跑满窗口");
+});
+
+// 「取消成功」不等于「副作用停止了」：这条区别不许被抹平。
+// 协作的扩展记成 settled，不协作的记成 still-running，都写进 stderr 诊断面——
+// 应答帧保持原样，否则取消的应答会排到那条 call 自己的结算帧之后。
+test("收束情况记到诊断面：协作 settled，不协作 still-running", async () => {
+  const WATCH = jj(ROOT, "example", "watchful.cjs");
+  const wrote = [];
+  const real = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk) => { wrote.push(String(chunk)); return true; };
+  try {
+    const h1 = new ExtHost();
+    await h1.load(SLOW);
+    const p1 = h1.call("example.slow", {}, "s1");
+    const r1 = assert.rejects(p1, /cancelled/);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h1.cancel("s1", { settleMs: 20 }), true);
+    await r1;
+    await new Promise((r) => setTimeout(r, 60));
+    assert.ok(wrote.some((l) => /cancel-settle callId=s1 outcome=still-running/.test(l)),
+      `没记到 still-running：${JSON.stringify(wrote)}`);
+    require(SLOW).resolvePending();
+
+    const h2 = new ExtHost();
+    await h2.load(WATCH);
+    const p2 = h2.call("example.watchful", { text: "y" }, "w2");
+    const r2 = assert.rejects(p2, /cancelled/);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h2.cancel("w2", { settleMs: 500 }), true);
+    await r2;
+    await new Promise((r) => setTimeout(r, 60));
+    assert.ok(wrote.some((l) => /cancel-settle callId=w2 outcome=settled/.test(l)),
+      `没记到 settled：${JSON.stringify(wrote)}`);
+  } finally {
+    process.stderr.write = real;
+  }
+});
