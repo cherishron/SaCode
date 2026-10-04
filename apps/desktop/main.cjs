@@ -1,5 +1,6 @@
 // Electron 主进程：只负责窗口、宿主生命周期与有限的 IPC 面。
 // 不做 agent 业务，不承载会话真源，不把任意命令执行暴露给渲染层。
+require('./stdio-guard.cjs').installStdioGuard();
 const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
