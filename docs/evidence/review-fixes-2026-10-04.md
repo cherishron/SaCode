@@ -211,3 +211,63 @@ error: unable to infer generic argument of this function
 `approval-tool-mismatch:read`，且 `approval/status` 仍见 `allowed-once`」这一组**没有跑过**，
 标 BLOCKED。解锁动作：等宿主线 `apps/host/src/main.cj` 的在飞改动落库、`dualtest/` 无人占用时
 重建驱动脚本再跑。宿主入口这一批只有「编译通过」这一条硬证据。
+
+---
+
+## 批次 4：P2 —— pack-cli 的 SDK 缺省路径与 PATH 切分（本机 MinGW 找不到的真因）
+
+**两条缺陷**（都在 `scripts/pack-cli.mjs`，平台包出的是发布出去的 `dsh.exe`）：
+
+1. `const SDK = process.env.CANGJIE_HOME || "D:\Program Files\HuaWei\Cangjie"` ——
+   JS 字符串里 `\P`、`\C` 不是合法转义，反斜杠被吞，缺省值实际是
+   `D:Program FilesHuaWeiCangjie`，一台没设 `CANGJIE_HOME` 的机器上运行期库一颗都拷不到。
+2. `(process.env.PATH || "").split(/[;:]/)` —— Windows 的 PATH 只用 `;` 分隔，
+   而每个条目自带盘符冒号；把 `:` 也当分隔符会把 `C:\tools` 切成 `["C", "\tools"]`。
+
+**这条切分错误就是本会话早前「pack-cli 找不到 MinGW DLL」的真因**，
+当时用「先 `cygpath -w` 再把 mingw64 目录拼进 PATH」绕过去了，那是治症状。
+本轮在同一台机器、同一种 Git Bash 启动环境下直接对比两种切法（未预处理 PATH）：
+
+| 判据 | 旧切法 | 新切法 |
+|---|---|---|
+| PATH 条目数 | 140（全是碎块） | 70 |
+| `libgcc_s_seh-1.dll` | 找不到 | `C:\Users\jingg\.qoder-cn\bin\git\mingw64\bin` |
+| `libstdc++-6.dll` | 找不到 | 同上 |
+| `libcrypto-3-x64.dll` | 找不到 | 同上 |
+| `libssl-3-x64.dll` | 找不到 | 同上 |
+| `libwinpthread-1.dll` | 落到 `\Program Files\HuaWei\Cangjie\tools\bin`（丢了盘符，按当前盘根解析） | 同上 |
+
+缺省 SDK 路径那条同样实测：`existsSync(runtimeLibDir({}))` 新值 `true`、旧值 `false`。
+**注**：本机 `CANGJIE_HOME` 是设了的，所以第 1 条在这里一直没咬到人——它是「换机即坏」的潜伏缺陷，
+不是本机已发生的故障。
+
+**做法**：把这两条判据抽成 `scripts/sdk-paths.mjs`（`sdkRoot` / `runtimeLibDir` / `pathEntries`），
+`pack-cli.mjs` 改为引用它（抽取时保持原语义不动，好让测试先对上旧行为再红）。
+缺省值改用正斜杠；`pathEntries` 按平台选分隔符（`win32` 用 `;`，其余用 `:`）。
+
+**红→绿**（`scripts/sdk-paths.test.mjs`，`node --test` 显式点名单个文件）：
+
+```
+改前：# pass 4  # fail 2
+  not ok 1  默认 SDK 根目录不丢路径分隔符
+    expected: 'D:/Program Files/HuaWei/Cangjie'   actual: 'D:Program FilesHuaWeiCangjie'
+  not ok 4  Windows 的 PATH 只按分号切，盘符冒号不是分隔符
+改后：# pass 6  # fail 0
+```
+红灯落在断言失败而不是模块加载失败，因为抽取那一步先保住了旧语义。
+
+**端到端**（工作区 core 被并发线的未入库文件挡住编不过，所以照批次 3 的办法开
+detached worktree：`HEAD` + 只放本批 3 个脚本文件，跑真打包脚本）：
+
+```
+cjpm build success
+  + libcrypto-3-x64.dll ← C:\Users\jingg\.qoder-cn\bin\git\mingw64\bin
+  + libssl-3-x64.dll   ← C:\Users\jingg\.qoder-cn\bin\git\mingw64\bin
+packed 45 个文件到 npm/dsh-cli-win32-x64/bin（其中 stdx 33 + openssl 2 + mingw 3），
+扩展宿主 2 + 样例工具 4 个到 npm/dsh-cli-win32-x64/extjs
+pack rc=0
+```
+`mingw 3` 与 `openssl 2` 齐——旧切法下这五颗里四颗根本搜不到，脚本会
+`console.error("缺 MinGW 运行时…")` 并退 1。worktree 用完已 `--force` 回收。
+
+**本批未跑**：装出来的 `dsh.exe` 剥 SDK PATH 的 175 条断言（那是完整发布链，本批只到「打包成功」）。

@@ -2,9 +2,10 @@
 import { cpSync, mkdirSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { sdkRoot, runtimeLibDir, pathEntries } from "./sdk-paths.mjs";
 
-const SDK = process.env.CANGJIE_HOME || "D:\Program Files\HuaWei\Cangjie";
-const RT = join(SDK, "runtime", "lib", "windows_x86_64_cjnative");
+const SDK = sdkRoot(process.env);
+const RT = runtimeLibDir(process.env);
 const STDX = process.env.STDX_HOME || "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx";
 const OPENSSL_HOME = process.env.OPENSSL_HOME || "";
 const out = "npm/dsh-cli-win32-x64/bin";
@@ -70,7 +71,7 @@ for (const dll of MINGW_DLLS) {
   const sources = [];
   if (OPENSSL_HOME) sources.push(OPENSSL_HOME);
   sources.push(join(SDK, "third_party", "mingw", "lib"));
-  for (const dir of (process.env.PATH || "").split(/[;:]/)) { if (dir) sources.push(dir); }
+  for (const dir of pathEntries(process.env.PATH, process.platform)) { sources.push(dir); }
   for (const dir of sources) {
     const candidate = join(dir, dll);
     if (existsSync(candidate)) {
@@ -118,7 +119,7 @@ for (const dll of OPENSSL_DLLS) {
     console.log(`  + ${dll} ← ${OPENSSL_HOME}`);
     found = true;
   } else {
-    const pathDirs = (process.env.PATH || "").split(/[;:]/);
+    const pathDirs = pathEntries(process.env.PATH, process.platform);
     for (const dir of pathDirs) {
       if (!dir) continue;
       const candidate = join(dir, dll);
