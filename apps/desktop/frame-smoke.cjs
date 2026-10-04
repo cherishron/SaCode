@@ -173,6 +173,12 @@ async function checkConversationScroll({js,waitFor,check}) {
   await js("document.querySelector('.conversation-scroll').scrollTop=100");
   await waitFor("!!document.querySelector('#scroll-to-bottom')");
   await check('真实会话回到最新按钮',"(()=>{const b=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),n=document.querySelector('.conversation-scroll').getBoundingClientRect();return {width:Math.abs(b.width-34)<1,height:Math.abs(b.height-34)<1,insideViewport:b.left>=n.left&&b.right<=n.right&&b.bottom<=n.bottom,reading:document.querySelector('.conversation-scroll').dataset.followingTail==='false'}})()");
+  await check('正文输入区共用滚动宿主',"(()=>{const scroller=document.querySelector('.conversation-scroll'),seat=document.querySelector('.composer-seat'),card=document.querySelector('.composer-card').getBoundingClientRect(),viewport=scroller.getBoundingClientRect(),latest=document.querySelector('#scroll-to-bottom').getBoundingClientRect();return {shared:seat.parentElement===scroller,sticky:getComputedStyle(seat).position==='sticky',inputVisible:card.top>=viewport.top&&card.bottom<=viewport.bottom,buttonClearsComposer:latest.bottom<=seat.getBoundingClientRect().top-15}})()");
+  await js("(()=>{const n=document.querySelector('#composer');n.value='输入区增长与阅读锚点\\n'.repeat(24);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await waitFor("document.querySelector('#composer').getBoundingClientRect().height>200");
+  await check('长草稿更新浮动控件位置',"(()=>{const seat=document.querySelector('.composer-seat'),button=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),scroller=document.querySelector('.conversation-scroll').getBoundingClientRect();return {composerVisible:seat.getBoundingClientRect().bottom<=scroller.bottom+1,buttonClearsComposer:button.bottom<=seat.getBoundingClientRect().top-15,readingPreserved:Math.abs(document.querySelector('.conversation-scroll').scrollTop-100)<1}})()");
+  await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await waitFor("document.querySelector('#composer').getBoundingClientRect().height<100");
   const current=await js("(async()=>{const c=await window.dsh.sessionCatalog();return c.entries.find(e=>e.current).id})()");
   await js("document.querySelectorAll('.workspace-overflow[aria-expanded=false]').forEach(b=>b.click())");
   const other=await js(`[...document.querySelectorAll('[data-sidebar-session]')].find(n=>n.dataset.sidebarSession!==${JSON.stringify(current)}).dataset.sidebarSession`);

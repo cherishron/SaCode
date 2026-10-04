@@ -97,3 +97,9 @@ SaCode 新增经典脚本 `renderer/conversation-scroll.js`，由 Vue runtime �
 尚未完成：官方 turn/part 层级锚点、历史分页及 turn 导航；输入区与正文共用官方 sticky scrollport 的结构（本方当前输入区仍位于滚动区域外）；官方原生可用截图和逐页视觉比对。这一增量不能作为完整会话页面或完整桌面复刻验收通过的依据。官方账号欢迎页继续属于明确裁剪范围。
 
 补充复验：共享 dualtest 目录被外部清理后，在独立 D:/Temp/SaCode-ui-scroll-20261004 快照使用已有 18:04 Host 再跑整页，38 组、155 项通过；报告保存在该目录 captures/reports.json。全量组件布局检查中途发生 global/appearance/set-font-size Host 超时，随后共享环境被清理，本轮未完成，不登记为全量通过。
+
+## 正文与驻留输入区共用滚动容器
+
+重新读取冻结 SHA 的官方 `ConversationRoot.module.css` 原文件，核对 `.scrollBody`、`.composerSeat` 与 hero 分支后，将 SaCode 正文和输入区放入同一滚动宿主。活跃会话的输入区采用 `position: sticky; bottom: 0; z-index: 7`，上方固定 36px 渐变遮罩；空会话在同一宿主内居中，不替换输入 DOM。滚动条保持 2px 边缘间距及稳定 gutter。浮动返回最新按钮的位置使用 ResizeObserver 发布的实际输入区高度，随长草稿增高，继续位于输入区上方 16px。
+
+独立 Electron 整页检查为 40 组、162 项、零失败、退出码 0；新增实际 DOM 检查正文/输入区同宿主、sticky 生效、输入可见、返回最新不覆盖输入区，以及长草稿增长后按钮避让与阅读位置保留。此前的“输入区仍位于滚动区域外”差异在本增量中已处理；历史分页、turn/part 锚点、完整设置/菜单/侧栏及官方原生截图仍未完成，不能据此登记完整前端验收通过。

@@ -63,10 +63,15 @@
 .header-utilities { display:flex; gap:8px; margin-left:20px; }
 .pending-approval { color:var(--warn); }
 .conversation { grid-area:auto; flex:1; min-height:0; position:relative; }
-.to-bottom-slot { position:absolute; right:0; bottom:16px; left:0; height:0; display:flex; justify-content:flex-end; padding-right:max(32px,calc((100% - var(--chat-width))/2)); pointer-events:none; z-index:8; }
+.to-bottom-slot { position:absolute; right:0; bottom:calc(var(--composer-height,152px) + 16px); left:0; height:0; display:flex; justify-content:flex-end; padding-right:max(32px,calc((100% - var(--chat-width))/2)); pointer-events:none; z-index:8; }
 .to-bottom { display:flex; align-items:center; justify-content:center; width:34px; height:34px; margin-top:-34px; padding:0; border:0; border-radius:100px; color:var(--text); background:var(--input-surface); box-shadow:0 2px 8px #0002; cursor:pointer; pointer-events:auto; }
 .to-bottom:hover { background:var(--surface-3); }
-.conversation-scroll { padding:16px 32px; margin-right:2px; overflow-anchor:none; }
+.conversation-scroll { display:flex; flex-direction:column; padding:0; margin-right:2px; overflow-anchor:none; }
+.conversation-scroll::-webkit-scrollbar-track { margin:2px; }
+.conversation-content { flex:1 0 auto; min-height:auto; padding:16px 32px; }
+.composer-seat { display:flex; flex:none; flex-direction:column; }
+.conversation-center:not(.is-empty) .composer-seat { position:sticky; bottom:0; z-index:7; background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 0%,transparent) 0px,var(--surface-2) 36px); }
+.conversation-center.is-empty .conversation-scroll { justify-content:center; }
 .conversation-center .error { width:100%; max-width:calc(var(--chat-width) + 64px); align-self:center; padding-left:16px; padding-right:16px; }
 .stream,.conversation-content>.markdown-stream { width:100%; max-width:var(--chat-width); margin:0 auto; }
 .composer { grid-area:auto; flex:none; align-self:center; width:min(calc(var(--chat-width) + 64px),100%); padding:16px 16px 8px; border:0; background:transparent; }

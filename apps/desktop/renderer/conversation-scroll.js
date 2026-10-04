@@ -27,6 +27,8 @@
     function reconcile() {
       frame = 0;
       if(disposed || !node.clientHeight) return;
+      const seat=node.querySelector('[data-composer-seat]');
+      if(seat) node.parentElement.style.setProperty('--composer-height',seat.offsetHeight+'px');
       if(following) jump(metrics().floor);
       else if(position) {
         const anchor=anchors().find(e=>e.dataset.msgId===position.id);

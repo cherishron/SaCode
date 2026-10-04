@@ -724,17 +724,8 @@ createApp({
     ], { id: prefix + "-panel", tabindex: -1, "aria-busy": self.budgetBusy });
     const budgetBox = renderBudget("budget");
 
-    const main = el("section", "pane conversation", [
-      withDirectives(el("div", "conversation-scroll", [el('div','conversation-content',[el("div", "stream", msgs, { id: "messages" }), streamBox])]), [[window.SaCodeConversationScroll.directive, {
-        session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
-        onChange:following=>{self.followingTail=following;},
-      }]]),
-      !self.followingTail ? el('div','to-bottom-slot',[el('button','to-bottom',[navIcon('M6 9l6 6 6-6')],{
-        id:'scroll-to-bottom','aria-label':'回到最新消息',tooltip:{label:'回到最新消息'},
-        onClick:()=>window.SaCodeConversationScroll.toBottom(document.querySelector('.conversation-scroll')),
-      })]) : null,
-      self.error ? el("p", "error", self.error, { id: "error", role: "alert" }) : null,
-    ],{hidden:emptyConversation && !self.error});
+    // 会话正文和驻留输入区在同一滚动宿主中，输入 DOM 跨空会话/活跃会话保持不变。
+    const transcript = el('div','conversation-content',[el("div", "stream", msgs, { id: "messages" }), streamBox],{hidden:emptyConversation});
 
     const toolBtns = self.tools.map((t) =>
       el("div", "tool-card", [
@@ -979,7 +970,21 @@ createApp({
     const frameHandle = (name,left,value,min,max) => el('div','frame-divider',null,{id:name+'-divider',role:'separator',tabindex:0,
       'aria-label':name==='sidebar'?'调整导航宽度':'调整侧栏宽度','aria-orientation':'vertical','aria-valuemin':min,'aria-valuemax':max,'aria-valuenow':value,
       style:{left:left+'px'},onPointerdown:e=>self.beginFrameResize(name,e),onKeydown:e=>self.resizeFrameKey(name,e)});
-    const center = el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main,composer],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const main = el('section','pane conversation',[
+      withDirectives(el('div','conversation-scroll',[
+        transcript,
+        el('div','composer-seat',[composer],{'data-composer-seat':''}),
+      ]),[[window.SaCodeConversationScroll.directive,{
+        session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
+        onChange:following=>{self.followingTail=following;},
+      }]]),
+      !self.followingTail && !emptyConversation ? el('div','to-bottom-slot',[el('button','to-bottom',[navIcon('M6 9l6 6 6-6')],{
+        id:'scroll-to-bottom','aria-label':'回到最新消息',tooltip:{label:'回到最新消息'},
+        onClick:()=>window.SaCodeConversationScroll.toBottom(document.querySelector('.conversation-scroll')),
+      })]) : null,
+      self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
+    ]);
+    const center = el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
