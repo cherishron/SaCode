@@ -11,7 +11,9 @@ public class TokenMeter {
     var rejected: Int64
     public var badCount: Int64 = 0
 
-    public init(log: SessionLog, budget!: Int64 = 200) {
+    // 默认档是「失控闸门」而不是配额：真实模型一轮就要几百 token，
+    // 把默认压到几百等于装好后第一条消息就把会话打死，而预算又只许收紧——没人能救回来。
+    public init(log: SessionLog, budget!: Int64 = 200000) {
         this.log = log
         this.total = Int64(0)
         this.budget = budget

@@ -44,11 +44,11 @@ test("完整一轮把 usage 记进日志，usage/status 与 turn/poll 读数一�
     assert.equal(t.usageVerdict, "recorded", "跑完的一轮必须真的记上账");
     // 全新会话的第一笔就是 12，不是 12 的其它倍数——这条钉住「起点为零」
     assert.equal(t.used, 12);
-    assert.equal(t.budget, 200);
+    assert.equal(t.budget, 200000);
     assert.equal(t.over, false);
     const s = await b.request("usage/status", {});
     assert.equal(s.used, t.used, "读数以日志为准，两个入口不许给出两个数");
-    assert.equal(s.budget, 200);
+    assert.equal(s.budget, 200000);
     assert.equal(s.badUsage, 0);
     assert.match(readFileSync(jj(dir, "session.log"), "utf8"), /turn\/usage\t12:12/);
   } finally {
@@ -61,13 +61,13 @@ test("预算只可收紧：调大、持平、缺参数都被拒且停在原档",
   try {
     const up = await b.request("usage/set-budget", { budget: 999999 });
     assert.equal(up.applied, false, "调大预算就是放宽防额，必须拒");
-    assert.equal(up.budget, 200);
-    const same = await b.request("usage/set-budget", { budget: 200 });
+    assert.equal(up.budget, 200000);
+    const same = await b.request("usage/set-budget", { budget: 200000 });
     assert.equal(same.applied, false, "持平不算收紧");
     // 缺参数既不能当成「收紧到 0」把会话打死，也不能默认放行
     const missing = await b.request("usage/set-budget", {});
     assert.equal(missing.applied, false);
-    assert.equal(missing.budget, 200);
+    assert.equal(missing.budget, 200000);
     const down = await b.request("usage/set-budget", { budget: 20 });
     assert.equal(down.applied, true);
     assert.equal(down.budget, 20);
@@ -129,7 +129,7 @@ test("turn 在途时读数与收紧预算都进得来，写侧仍串行", async 
   try {
     await b.request("turn/start", { limit: 2 });
     const s = await b.request("usage/status", {});
-    assert.equal(s.budget, 200, "在途期间读数不该被 turn-in-flight 挡掉");
+    assert.equal(s.budget, 200000, "在途期间读数不该被 turn-in-flight 挡掉");
     const d = await b.request("usage/set-budget", { budget: 50 });
     assert.equal(d.applied, true, "在途期间也该能把档位收紧");
     await assert.rejects(() => b.request("session/append", { eventType: "user/message", data: "x" }), /turn-in-flight/,

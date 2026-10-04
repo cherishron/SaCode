@@ -196,4 +196,21 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 
 已知边界：宿主 → 渲染层没有配置变更推送，`modelDirectory` 只在保存/删除后与启动时主动 `load()`；带外（如 CLI）改注册表时，输入区的已选标签会短暂陈旧，直到下一次加载。
 
+## 13. 真模型端到端跑通，并因此改掉默认预算
+
+新增 `apps/desktop/test/real-provider-e2e.test.mjs`：不打本地桩，凭据只从 `STEPFUN_API_KEY` 环境变量或 gitignore 的 `target/step.key` 读，走配置面登记 → `credential/set` → `task/start` → 轮询结算，断言 `provider:real`、正文非空、`finishReason` 是 `stop|max-tokens`、有 `text:` 增量帧、答复落进会话投影，且**会话日志里搜不到凭据材料**。无凭据时 `t.skip()` 并如实报为跳过，不冒充通过。
+
+第一条红灯不是断言写错，而是产品缺陷：`used` 为 0。诊断脚本（一次性，落在 gitignore 的 `apps/desktop/target/`）交出结算帧：`usage:328`、`usageVerdict:"over-budget"`、日志事件 `usage/over-budget 328:0`。原因是 `TokenMeter` 的默认档位 200 token——真实模型随便一轮就几百 token，而预算**只允许收紧**（这条不变量是对的），于是「装好后第一条消息能打，第二条起整个会话永久拦死」，界面也没有任何抬高通路。
+
+改法：默认档当失控闸门而不是配额，`core/src/meter.cj` 默认 `200 → 200000`，同步 11 处断言（`usage.test.mjs` 5、`bridge.test.mjs` 4、`session-management.test.mjs` 1、`ui-smoke.cjs` 2 处读数）。`ui-smoke` 的「调大预算被拒」场景原本填 500——在新默认下 500 是合法收紧，场景会假过；把填值改成 `999999`，让它继续是「抬高被拒且停在原档」。
+
+顺带把 `ui-smoke` 的 preload 暴露面清单补上 6 条模型通道（27 个键、`未登记的额外键=（无）`），并把「模型页如实标注后端未接入」那条诚实断言翻成「由宿主交出读写面」——告示撤了，断言跟着改，不留一条会自动失败的旧钉子。
+
+复验计数：核心 `cjpm test` **420 条全通过**（带 `STEPFUN_API_KEY` 时那条真实 SSE 集成用例从 SKIPPED 变 PASSED：`PASSED 420 / SKIPPED 0 / FAILED 0 / ERROR 0`，rc=0；不带凭据时 419/1/0）；桌面 **125/125 通过**（含真模型往返）；`npm run smoke` → `SMOKE PASS`；`npm run ui-smoke` → `UI_SMOKE PASS`，**200 条 UI OK / 0 条 UI FAIL**，其中 `用量读数=用量 12/200000 · 已计量`、`调大预算=拒绝放宽：仍停在 200000`。
+
+实测到的上游流式形态（step_plan + `stream_options.include_usage`）：`usage` 挂在**每个** chunk 上，`finish_reason` 与正文增量同条到达，最后还有一条 `choices:[]` 只带 usage，再 `[DONE]`——现有解析器逐条覆盖 `usage` 并按 `finish` 收口，因此取到的是终值 328；这条形状此前只有本地桩（usage 只在终条）覆盖到，真端点把它验出来了。
+
+历史文档不改：`p0-status-2026-10-02.md` 里「仍停在 200 / 用量 12/100」是当时的实测快照，按快照留存，以本节为准。
+
+
 

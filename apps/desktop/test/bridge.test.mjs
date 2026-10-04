@@ -792,7 +792,7 @@ test("跑完的一轮把 usage 记进日志，turn/poll 交出计量读数", asy
     assert.equal(t.usage, "12");
     assert.equal(t.usageVerdict, "recorded", "跑完的一轮必须真的记上账");
     assert.equal(t.used, 12);
-    assert.equal(t.budget, 200);
+    assert.equal(t.budget, 200000);
     assert.equal(t.over, false);
     const s = await b.request("usage/status", {});
     assert.equal(s.used, 12);
@@ -809,13 +809,13 @@ test("预算只可收紧：调大、持平、缺参数都被拒且停在原档",
   try {
     const up = await b.request("usage/set-budget", { budget: 999999 });
     assert.equal(up.applied, false, "调大预算就是放宽防额，必须拒");
-    assert.equal(up.budget, 200);
-    const same = await b.request("usage/set-budget", { budget: 200 });
+    assert.equal(up.budget, 200000);
+    const same = await b.request("usage/set-budget", { budget: 200000 });
     assert.equal(same.applied, false, "持平不算收紧");
     const missing = await b.request("usage/set-budget", {});
     // 缺参数既不能当成「收紧到 0」把会话打死，也不能默认放行
     assert.equal(missing.applied, false);
-    assert.equal(missing.budget, 200);
+    assert.equal(missing.budget, 200000);
     const down = await b.request("usage/set-budget", { budget: 20 });
     assert.equal(down.applied, true);
     assert.equal(down.budget, 20);

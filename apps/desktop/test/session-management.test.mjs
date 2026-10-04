@@ -28,7 +28,7 @@ test('新建与切换隔离消息、主题、预算，结算旧写入并在重�
     assert.equal(selected.saved,true); assert.equal(selected.theme,'system');
     assert.match(readFileSync(join(dir,'session.log'),'utf8'),/切换前未保存/);
     assert.deepEqual((await bridge.request('session/projection')).messages,[]);
-    assert.equal((await bridge.request('usage/status')).budget,200);
+    assert.equal((await bridge.request('usage/status')).budget,200000);
     assert.equal((await bridge.request('appearance/get')).theme,'system');
     await bridge.request('session/append',{eventType:'user/message',data:'只属于新会话'});
     await bridge.request('session/select',{sessionId:'current'});

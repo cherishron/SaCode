@@ -69,11 +69,11 @@ async function uiSmoke(context) {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === Array(21).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(27).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");
@@ -180,7 +180,7 @@ async function uiSmoke(context) {
   await click('#theme-system');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14' && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "主题保存保持另一字段字号并恢复系统主题");
   await click('#settings-tab-models');
-  note((await text('#settings-page-models')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并如实标注后端未接入");
+  note(!(await text('#settings-page-models')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并由宿主交出读写面");
   await js("document.querySelector('#settings-tab-models').focus()");
   const settingsFrameBefore=await js("(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:r.width,height:r.height};})()");
   await chord('Down',[]);
@@ -381,9 +381,9 @@ async function uiSmoke(context) {
   const settledTurn = await waitFor(async () => (await text("#turn-state")) === "状态 已完成");
   note(settledTurn, `turn 终态=${await text("#turn-state")}`);
   // 用量读数必须由核心结算帧驱动。冒烟态现在总是从一次性目录起（见 SESSION_DIR），
-  // 所以这里可以钉死绝对值：全新会话的第一笔就是 12，档位停在默认 200。
+  // 所以这里可以钉死绝对值：全新会话的第一笔就是 12，档位停在默认 200000。
   // 之前写成「12 的倍数」是被跨次累积的真实 sessionData 逼的妥协，不再需要。
-  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200 · 已计量"));
+  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200000 · 已计量"));
   const usageAfterFull = await text("#turn-usage");
   note(usageShown, `用量读数=${usageAfterFull}`);
   // 干净收束后正文必须回到日志这份真源：界面上那句助手话要出自核心投影，
@@ -429,9 +429,9 @@ async function uiSmoke(context) {
     `(() => { const i = document.getElementById('budget-input'); i.value = ${JSON.stringify(v)};` +
     " i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()"
   );
-  await setBudgetField("500");
+  await setBudgetField("999999");
   note(await click("#apply-budget"), "已派发调大预算");
-  const widened = await waitFor(async () => (await text("#budget-note")).includes("仍停在 200"));
+  const widened = await waitFor(async () => (await text("#budget-note")).includes("仍停在 200000"));
   note(widened, `调大预算=${await text("#budget-note")}`);
   await setBudgetField("100");
   note(await click("#apply-budget"), "已派发收紧预算");
@@ -658,7 +658,7 @@ async function uiSmoke(context) {
   bridge.request=catalogRequestBefore;
   note(await count('.msg-text')===0, "旧会话延迟投影不会覆盖新会话界面");
   note(await count('.msg-text')===0, "新会话不继承原会话消息");
-  note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
+  note((await text('#turn-usage')).includes('0/200000') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
   note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
   note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-52)<1")), "新会话清空草稿并收缩到官方空会话高度");
