@@ -58,14 +58,14 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + 六批新增十四个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert）：`✔` 11 行、`◐` 17 行、`☐` 35 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 七批新增十七个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert / session-reference / boot / slots）：`✔` 11 行、`◐` 20 行、`☐` 32 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
 | agent-team | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（§6.1.2 C 档，行 1） |
 | approval | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/approval.cj` 工单往返 `ask→answer→一次性 consume`，`asked/decided/expired` 进同一份会话日志；过期由真实单调钟决定（`approval/tick` 通道已撤）。core 9 条 + bridge 6 条；两刀变异反证（去一次性置位、去决定白名单）。**上游校正**：上游四档（allow/deny/ask/open-turn）+ waterfall（pre-execute 允许 ask），本仓两档（允许一次/拒绝）且上游要求 open turn 本仓未实现 |
 | attachment | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 3） |
-| boot | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 4）；本仓入口是 `main(args)` 直起，无上游启动装配序列 |
+| boot | ✔ | ✔ | M0 | ✔ | ◐ | `core/src/boot.cj` `BootSequence`：按序 `register(name)` 落名、重名 `boot-duplicate-stage` 拒；run 后 register `boot-already-run` 拒；`run()` 冻结注册表并按序进 history，多次调用只生效第一次（幂等）；`isRun()` 查执行态。4 条用例覆盖顺序、重名拒、run 后拒、run 幂等。**上游校正**：本切片是纯进程内注册表；上游 `ctx.boot` 还有 `dependencies` 与 `phases`（config / workspace / providers / telemetry / ...）拓扑排序与 `@Remote boot` 装配面，本仓未做，也不落 log 事件 |
 | browser-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 5） |
 | client-modules | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 6） |
 | client-resources | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 7） |
@@ -98,14 +98,14 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | session | ✔ | ✔ | M1 | ✔ | ✔ | 编号与 seq 连续性、flush/load 往返、写租约互斥与 owner 凭据、**崩溃残留租约按持有者死活分别接管与拒绝**（CFFI 取 pid + 判活）；两入口同函数实测。**上游校正**：上游 surface 类型系统（`SessionEventSurface=current/shadowed/log-only`、`SessionRecord{header,live,persisted}`）本仓未实现投影层区分 |
 | session-projection | ✔ | ✔ | M1 | ✔ | ✔ | `deriveMessages()` 纯函数 + 以「surface 条数 + 代次」为键的缓存：无关事件不重算并交回同一份缓存对象；两个方向的变异体都被抓（§6.1.2 D 档第 1 条补实后由 D 移入 A）。**上游校正**：上游 `SessionProjectionMap` 支持多投影注册（agentTeam/goal/compaction/deliverables 等），本仓只有单一 `deriveMessages()` 投影；上游持久化缓存键本仓用内存缓存 |
 | session-query | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
-| session-reference | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 37） |
+| session-reference | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/xref.cj` `SessionReferenceStore`：`add(kind, path, version)` 落 log-only `session/reference` 事件 `kind::path::version`；空 kind → `xref-invalid-kind`、空 path → `xref-not-found`，两者都 throw 不落事件；同一三元组重复登记走 dedupe（`HashSet` 前置判 + 事件层只一条）；`candidates()` 从事件流回放取序列。4 条用例覆盖列表、双拒、dedupe、log-only 表面。**上游校正**：本仓只有 add+list 两件；上游 §225 的 7 ErrorCode（stale-version / outside-workspace / denied / malformed / too-large）未逐一落码，`SessionReferenceMention` 与 prompt 装配未接 |
 | session-telemetry | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/telemetry.cj` `SessionTelemetryHub`：`subscribe(id, listener)` 单槽注册（重名 `telemetry-duplicate-subscriber`）、`unsubscribe(id)`；`emit(record)` 按订阅顺序 waterfall 逐个调用监听器，**fail-closed**——任一监听器抛异常则中止、后续监听器不收到、`session-telemetry/record` 事件不落（对齐上游 §213「扣下该条记录」）；`recordCount()` 从事件流重算，回放后仍可见历史条数。4 条用例覆盖扇出、fail-closed、退订、log-only 表面。**C04 已核**：上游两 channel（ledger 镜像 + ops）本切片以 log-only 事件近似 ledger 一侧，ops 侧、脱敏扩展点、外发默认关闭的完整边界仍未做 |
 | session-title | ✔ | ✔ | M1 | ✔ | ◐ | 核心切片已落 `core/src/title.cj`（2026-10-04）：`session/title` 是 log-only 事件，不进 `isSurfaceEvent` 白名单；`rename` 空/纯空白拒绝且不留事件、非空 trim 后落 source="user"；`registerProvider` 单槽重复注册抛且首次前缀保留；`generateFrom` 无 provider 走 60 上限截断落 source="fallback"。core `title_test.cj` **4 条**（round-trip 回放 + 空拒绝 + 单槽 + 截断）。**仍缺**：`SessionTitleProviderId` branded、上游 `first-prompt`/`all-prompts` 自动模式、host IPC `session/title-*` 通道、CLI `dsh title` 子命令；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 C01 |
 | settings | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/settings.cj` 三种变更：`update::<k>::<v>` 合并单键、`replace::<k=v,...>` 先清空再应用整份、`mutate::<k>::<expected>::<new>` 按当前值 CAS 拒陈旧；`settings/document-updated` 走 log-only 事件不进 surface。3 条用例覆盖合并、整替、CAS 拒绝。**上游校正**：完整配置域未实现；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，本切片只覆盖 document-updated 契约面，不以局部设置窗判定整个模块完成 |
 | shell | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 41） |
 | sidebar-right | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地。**上游校正**：上游 sidebar-right 是 React 组合系统（tab-type registry + dsh-resource:// 地址 + dockkit 布局），zh 版在冻结 commit 不存在（404），本仓 Vue runtime 架构根本不同 |
 | skills | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 43） |
-| slots | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 44）；渲染层只到令牌层 + 组件令牌桥接，无上游槽位/呈现体系 |
+| slots | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/slots.cj` `SlotRegistry`（非渲染面）：`register(slotId, kind)` 落 log-only `slots/register`；`activate(slotId)` 未注册 `slots-unknown` 抛、已激活 noop 不落事件、正常激活落 `slots/activate`；`isRegistered/isActivated/eventCount` 从事件流回放；4 条用例覆盖 happy/未知拒/重复激活 noop/log-only 表面。**上游校正**：本切片只做注册-激活生命周期，事件不进 surface（`deriveMessages().size == 1` 钉住）；上游 tab-type registry + `dsh-resource://` 地址 + dockkit 布局 + 渲染层槽位挂载仍未接 |
 | spill | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 45） |
 | ssh | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 46） |
 | storage | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/storage.cj` `StorageHub`：`domain/changed` log-only 事件承载 `open::<name>::<version>` / `close::<name>` / `put::<name>::<k>::<v>`；`open` 严格序列拒绝（内存开启集重名 → already-open；日志已存在同名不同版本 → version-mismatch），两者都 throw 不落事件；`putFrom` 供回放不再重复 append。4 条用例覆盖往返+回放、重名拒、版本拒、close 后同版本可重开。**上游校正**：真源仍是追加式 `session.log`，无上游的多 backend / facet / `malformed-medium` / `invalid-record` 分类；`domain/changed` 跨进程推送未做 |
