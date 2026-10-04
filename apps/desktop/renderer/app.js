@@ -350,15 +350,13 @@ createApp({
       const settings=key===',' && !event.shiftKey;
       const composer=key==='l' && !event.shiftKey;
       const preview=key==='p' && event.shiftKey;
-      const submit=key==='enter' && !event.shiftKey && event.target.id==='composer';
-      if (!settings && !composer && !preview && !submit) return;
+      if (!settings && !composer && !preview) return;
       event.preventDefault();
       // 模态优先：全局导航与发送不能穿透上层审批/详情/设置。
-      if (document.querySelector('dialog[open][aria-modal="true"]')) return;
+      if (document.querySelector('dialog:modal')) return;
       if (settings) settingsOpen.value=true;
       else if (composer) document.getElementById('composer').focus();
       else if (preview) openSide('preview-panel');
-      else send();
     }
     onMounted(() => window.addEventListener('keydown', desktopKeys));
     window.Vue.onBeforeUnmount(() => { window.removeEventListener('keydown', desktopKeys); stopPolling(); });
@@ -378,6 +376,7 @@ createApp({
 
     async function send() {
       if(sendBusy.value) return;
+      if(turn.value.running){error.value='运行中的排队与即时补充接口尚未接入，草稿已保留。';return;}
       const generation=sessionGeneration;
       const text = draft.value, revision=draftRevision;
       if (!text.trim()) return;
@@ -852,11 +851,14 @@ createApp({
         class: "input",
         id: "composer",
         rows: 1,
-        "aria-keyshortcuts":"Control+Enter Meta+Enter",
+        "aria-keyshortcuts":"Enter Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
         onInput: (e) => self.updateDraft(e.target.value),
-      }),[[autoDraftSize]]),
+      }),[[autoDraftSize],[window.SaCodeAttachments.keymapDirective,{
+        canSubmit:()=>!self.sendBusy&&!document.querySelector('dialog:modal'),
+        submit:()=>self.send(),
+      }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:false,showAdd:false}),
       el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:true}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()

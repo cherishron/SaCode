@@ -19,6 +19,8 @@ module.exports=async function({win,check,waitFor,outDir}){
   await waitFor("!!document.querySelector('dialog.attachments-lightbox[open]')");
   await check('图片原图在模态预览中显示',"({original:document.querySelector('.attachments-original').src===attachmentFixture.url,alt:document.querySelector('.attachments-original').alt==='预览图片.png'})");
   await check('原图覆盖视口且焦点进入关闭按钮',"({viewport:document.querySelector('.attachments-lightbox').getBoundingClientRect().width===innerWidth,topLayer:document.querySelector('.attachments-lightbox').matches(':modal'),focus:document.activeElement.matches('.attachments-lightbox-close'),noTitle:!document.querySelector('.attachments-lightbox h2')})");
+  await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:',',ctrlKey:true,bubbles:true,cancelable:true}));document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'l',ctrlKey:true,bubbles:true,cancelable:true}))`);
+  await check('原图模态阻止全局设置和输入框聚焦穿透',"({singleModal:document.querySelectorAll('dialog:modal').length===1,focus:document.activeElement.matches('.attachments-lightbox-close')})");
   await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
   require('node:fs').writeFileSync(require('node:path').join(outDir,'composer-image-lightbox.png'),(await win.webContents.capturePage()).toPNG());
   await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}))`);
