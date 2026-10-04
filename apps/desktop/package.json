@@ -31,6 +31,7 @@
       "paths.cjs",
       "layout-smoke.cjs",
       "frame-smoke.cjs",
+      "test-support/**",
       "package.json",
       "renderer/**"
     ],

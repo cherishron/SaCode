@@ -152,7 +152,8 @@ async function checkConversationScroll({js,waitFor,check}) {
   await waitFor("scrollFixture.host.dataset.followingTail==='true'");
   await check('发送新输入恢复尾部',"({atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
   await js("scrollFixture.content.lastElementChild.style.height='650px'");
-  await new Promise(r=>setTimeout(r,120));
+  // ResizeObserver 与动画帧异步结算；等待可观察终态，超时仍判失败。
+  await waitFor("scrollFixture.host.dataset.followingTail==='true' && Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1");
   await check('尾部跟随流式增高',"({atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
   await js("scrollFixture.host.scrollTop=100");
   await waitFor("scrollFixture.host.dataset.followingTail==='false'");

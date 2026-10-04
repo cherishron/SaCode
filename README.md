@@ -13,6 +13,7 @@
 | 内容 | 唯一位置 |
 | --- | --- |
 | 桌面主进程、预加载和页面 | `apps/desktop/` |
+| 桌面协议及交互冒烟支持 | `apps/desktop/test-support/`（仅显式冒烟模式加载） |
 | 桌面调用的仓颉宿主源码 | `apps/host/src/` |
 | 两入口共享仓颉业务核心 | `core/src/` |
 | 开发态自包含宿主（生成文件） | `apps/desktop/dist/host/bin/` |
