@@ -50,6 +50,24 @@
 上一轮（`target/frame-golden12.log`）同一入口报 `247 组 / 709 条 / failed 1`，唯一失败就是本节的步边界用例，其失败事实被打印为 `panelClearedMidTurn:false` 而其余三项为真：夹具第二次请求即刻收尾，导致读 DOM 时轮次已结算。改成第二次请求也拖 1.2 秒，让「还在跑、面板已清空」真的存在可观察时刻，再跑即 `failed 0`。这是改夹具的可观察性，不是放宽断言。
 
 
+## 交付态复验（提交 4bf7ef3 之后重打）
+
+| 步骤 | 结果 |
+| --- | --- |
+| 宿主重打 | `node scripts/pack-host.mjs apps/host/target/release/bin/main.exe apps/desktop/dist/host <stdx 动态目录> <CANGJIE_HOME/runtime/lib/windows_x86_64_cjnative>` → 「host 打包完成：91 个文件」，包内 exe 与构建产物 `cmp` 逐字一致 |
+| 重打后开发态 | `npm test` 132/132、`rc=0`；`npm run smoke` → `SMOKE PASS`、`rc=0` |
+| 桌面包 | `npx electron-builder --config.directories.output=dist/electron-queue --config.electronDist=node_modules/electron/dist` → `rc=0`；产出 `SaCode Setup 0.1.0.exe` 86,915,071 B 与 `sacode-portable.exe` 86,763,041 B。**没有走镜像**，electron 源用本机已装官方 dist；`signExecutable:false` 显式关签名，日志逐条打了 `file signing skipped` |
+| 宿主双份一致性 | `dist/host/bin/dsh-host.exe` 与 `dist/electron-queue/win-unpacked/resources/host/bin/dsh-host.exe` 的 sha256 同为 `b97094cf…65d0b9`——安装包带的就是这一批的宿主，不是上一轮旧产物 |
+| 打包态冒烟 | 直接跑 `win-unpacked/SaCode.exe --smoke` → `SMOKE PASS`、`rc=0`（打包态宿主路径由 `process.resourcesPath` 解析） |
+| CLI 发布态 | `node scripts/pack-cli.mjs` → 45 个文件；`npm pack --offline` 两个 tarball 装进仓内一次性目录，剥掉含 `cangjie`/`stdx-work` 的 PATH 段并 `unset CANGJIE_HOME`（`which cjc`/`which cjpm` 均不可见、`node` 仍可见）后 `dsh all/extjs/stream/tool` → `rc=0`，`PASS 77/12/21/11`、`FAIL 0` |
+
+### 交付态边界与一条必须上报的冲突
+
+- NSIS 安装包**没有真的双击装到本机**（会写用户目录，需用户在场确认）；打包态证据来自 `win-unpacked` 直跑与 `portable` 产物存在性。
+- 打包态只跑了 `--smoke`；`--ui-smoke` 与 `--frame-smoke` 的完整链在开发态跑，打包态未重跑。
+- 签名仍未定，三条路线（接受未签名 / Azure Trusted Signing / 商业 CA）待用户选择。
+- **冲突（不替他人裁决）**：本次 `app.asar` 里打进了 **152 个 npm 包**（`app.asar` 52.8 MB），根因是工作区里另一会话尚未提交的 `apps/desktop/package.json` 改动把 `@opentiny/next-sdk` 声明成了**生产依赖**（`dependencies`），electron-builder 会按声明把它的整棵传递树（`@ai-sdk/*`、`@modelcontextprotocol/sdk`、`express`、`hono` 等）收进包。这与 `AGENTS.md` 记的「第三方组件构建期折叠、**产物运行时零 npm 依赖**」直接矛盾。本批未改该文件（既不吞并也不回退），要么把它改成构建期折叠（照 TinyVue/TinyRobot 的既有路子），要么显式承认桌面产物从此依赖 npm 运行时——需要用户定。
+
 ## 诚实边界
 
 - 起轮失败码到中文提示的映射此前是坏的：Electron 会在宿主帧外再套一层 `Error: `，原来的 `replace(/^-?\d+\s*/,"")` 去不掉前缀，映射表整体命中不到，页面只显示「起轮失败：Error: -32016 …」。本轮改为按「数字 + 空白 + 标识」提取符号码，金路径场景 C 才真的断言到那句中文提示——该用例写在实现之后，属测试后补，不是红先。
