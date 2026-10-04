@@ -1,5 +1,5 @@
 {
-  "name": "@dsh/cli-win32-x64",
+  "name": "@stand-alone/sacode-win32-x64",
   "version": "0.1.0",
   "os": ["win32"],
   "cpu": ["x64"],

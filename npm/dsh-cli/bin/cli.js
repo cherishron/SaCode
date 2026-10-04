@@ -4,7 +4,7 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 
-const key = { "win32:x64": "@dsh/cli-win32-x64", "linux:x64": "@dsh/cli-linux-x64", "darwin:arm64": "@dsh/cli-darwin-arm64" }[`${process.platform}:${process.arch}`];
+const key = { "win32:x64": "@stand-alone/sacode-win32-x64", "linux:x64": "@stand-alone/sacode-linux-x64", "darwin:arm64": "@stand-alone/sacode-darwin-arm64" }[`${process.platform}:${process.arch}`];
 if (!key) {
   process.stderr.write(`dsh: 未预置当前平台的二进制 (${process.platform}/${process.arch})\n`);
   process.exit(78);
@@ -16,7 +16,7 @@ try {
   exe = path.join(pkgDir, "bin", process.platform === "win32" ? "dsh.exe" : "dsh");
   if (!fs.existsSync(exe)) throw new Error("missing");
 } catch {
-  process.stderr.write(`dsh: 找不到平台包 ${key} 的可执行文件，请先安装 @dsh/cli\n`);
+  process.stderr.write(`dsh: 找不到平台包 ${key} 的可执行文件，请先安装 @stand-alone/sacode\n`);
   process.exit(79);
 }
 // 扩展宿主源码随平台包走，装出来的 dsh 没有仓库目录可退，所以把包内位置交给它。
