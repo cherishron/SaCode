@@ -3,6 +3,7 @@ package core
 import std.unittest.*
 import std.fs.*
 import std.collection.ArrayList
+import std.sync.*
 
 // 用相对路径落盘，跑完即删：核心单测不依赖外部临时目录 API。
 func tmpPath(tag: String): String {
@@ -404,3 +405,42 @@ func flushCannotRewriteADurableLineWithDifferentContent() {
     @Expect(String.fromUtf8(File.readFrom(p)), "0\tuser/message\t甲\n")
     clean("diverge")
 }
+
+// 接管者按顺序各自动手时：第二个看到的是「别人（活着的）刚拿到的租约」，
+// 必须拒绝，且既不改写盘上归属、也不留下搬运用的中转文件。
+// 注：本机多线程版本反复 30 轮也造不出「同时读到同一份死租约」的窗口
+// （把 removeIfExists 的返回值判据改成无条件删除，30 轮仍然全绿），
+// 所以这一条只钉顺序面，不宣称证明了并发唯一性。
+@Test
+func onlyOneOfTwoTakersMayClaimACrashedHoldersLease() {
+    let p = tmpPath("race")
+    clean("race")
+    // pid 取一个必然打不开句柄的值：isProcessAlive 对它恒为 false
+    File.writeTo("${p}.lease", "writer=5000000000-stale".toArray())
+    let a = WriteLease(p)
+    let b = WriteLease(p)
+    @Expect(a.takeoverIfStale(), true)
+    @Expect(b.takeoverIfStale(), false)
+    // 输的一方不许改写盘上归属，更不许把赢家的租约清掉
+    @Expect(b.currentOwner() == a.ownerToken(), true)
+    // 接管用的搬运算子必须自己收干净，不在盘上留中转文件
+    @Expect(a.stagingArtifact() == "" || !exists(a.stagingArtifact()), true)
+    @Expect(b.stagingArtifact() == "" || !exists(b.stagingArtifact()), true)
+    @Expect(a.release(), true)
+    clean("race")
+}
+
+// 接管前那一记「判活」是唯一的护栏：活人的租约一个字节都不能碰。
+@Test
+func takeoverLeavesALiveHoldersLeaseUntouched() {
+    let p = tmpPath("alive")
+    clean("alive")
+    let stamped = "writer=${ownProcessId()}-live"
+    File.writeTo("${p}.lease", stamped.toArray())
+    let a = WriteLease(p)
+    @Expect(a.takeoverIfStale(), false)
+    @Expect(a.currentOwner() == stamped, true)
+    removeIfExists("${p}.lease", recursive: false)
+    clean("alive")
+}
+

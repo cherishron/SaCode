@@ -104,3 +104,43 @@ FAILED: 1  → flushCannotRewriteADurableLineWithDifferentContent
 **未跑的验收**：`apps/desktop` 的 `npm test` / `smoke` / `ui-smoke` 未跑——AGENTS.md 记录该套测试会在仓库根
 使用 `dualtest/`，而当前 `dualtest/` 下有另一条线的在飞目录（`adjust-ui.log`、`official-baseline-20261004` 等），
 跑它会删别人的东西。桌面入口这一项标 **BLOCKED（并发占用）**，解锁动作是等前端线结束后在干净 `dualtest/` 上重跑。
+
+---
+
+## 批次 2：租约接管竞态 —— 审查结论被实测下调
+
+**审查时的说法**（P1）：`core/src/lease.cj:87-106` 的 `takeoverIfStale()` 是「先 `removeIfExists` 再 `acquire`」，
+两个进程同时看到同一个死持有者时会都删成功、都抢成功 → 一份会话日志出现两个并发写者。
+
+**实测**：这个说法站不住，至少在本机证明不了。
+
+| 试过的复现 | 结果 |
+|---|---|
+| 顺序两个接管者（a 接管成功，b 再接管） | b **返回 false**：它看到的已是 a 的活凭据 |
+| 多线程 2×30 轮同时接管同一份死租约 | **从未出现两个赢家**，且把判据改成无条件删除后**照样全绿** |
+
+关键反证是第二条的后半：我写的那条并发用例**杀不掉变异体**——把
+`if (!removeIfExists(leasePath, ...)) { return false }` 改成无条件 `removeIfExists(...)`（也就是我审查时
+声称的缺陷形态）后，30 轮并发仍 377 条全绿。用例绿是因为它测不到，不是因为实现是对的。
+按「空/无效测试即假绿」的既有纪律，**这条并发用例已删除**，不留作防回归依据。
+（`lease.cj` 已用 `cp` 还原并 `git diff --numstat` 证明与 HEAD 逐字一致。）
+
+**为什么杀不掉**（源码核对，未运行验证）：现存实现里 `std.fs.removeIfExists` 对已不存在的目标返回 false，
+于是「删不到的人不接管」这一条已经在起作用；剩下的窗口是「B 读到的凭据是死的 → A 删并重取到新凭据 →
+B 再执行它那次 `removeIfExists`」，需要 B 在判活与删除之间被挂起整个 A 的接管时长。本机的
+`spawn` 没能把这个窗口打开（也可能是 30 轮不够），我没有可注入延迟的接缝，所以**既不能证明它发生过，
+也不能证明它不会发生**。
+
+**本批真正落下的两条钉**（都是确定性顺序面，各有独立价值）：
+- `onlyOneOfTwoTakersMayClaimACrashedHoldersLease`：输家不改写盘上归属、`release` 归还真拿到者、
+  接管过程不留中转文件（复用既有的 `stagingArtifact()` 约定）。
+- `takeoverLeavesALiveHoldersLeaseUntouched`：凭据 stamp 的是本进程活 pid 时，接管返回 false 且盘上凭据逐字未动。
+
+**计数**：`TOTAL: 377 / PASSED: 376 / SKIPPED: 1 / FAILED: 0 / ERROR: 0`，rc=0；
+`@Test` 注解总数 377 与 TOTAL 逐一对上。
+
+**留给后续批次的选项（未实现，因为拿不出能红的用例）**：把接管做成「同一源路径的独占搬移」——
+`rename(leasePath, to: "<leasePath>.stale-<pid>-<序号>", overwrite: false)`，只有赢家搬得动，
+输家的 rename 因源不在而失败即放弃；搬进独占槽位后再认一次凭据，若那其实是活人的租约就原样放回。
+这条能真正封死窗口，但在本机它改的是「测不出差别」的那一段，写进主干等于加无防回归代码，故本批不做。
+若要收口，需要先有跨进程（两个真实子进程同时接管）的取证通道，而不是同进程线程。
