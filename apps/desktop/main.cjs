@@ -266,7 +266,7 @@ async function uiSmoke() {
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
   note(await js("document.activeElement.id==='settings-tab-general' && document.querySelector('.settings-tabs').getAttribute('aria-orientation')==='vertical'"), "设置打开后焦点进入当前纵向分类");
-  note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
+  note((await text('.language-settings'))==='语言中文' && await js("!document.querySelector('#settings-budget-panel')"), "通用设置保持中文，预算操作集中在右侧用量区");
   note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "全局主题默认跟随系统");
   for (const theme of ['light','dark','system']) {
     await click('#theme-'+theme);
@@ -654,19 +654,18 @@ async function uiSmoke() {
   await js("(() => {const input=document.querySelector('#composer');input.value='快捷键发送验证';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()");
   await chord('Enter');
   note(await waitFor(async()=>Number((await text('#count-events')).split(' ')[1])===keyEvents+1) && (await text('#messages')).includes('快捷键发送验证'), "Ctrl+Enter 经核心记录且只新增一条消息");
-  await click('#open-settings'); await click('#settings-tab-general');
-  await js("(() => {const input=document.querySelector('#settings-budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await click('#open-budget');
+  await js("(() => {const input=document.querySelector('#budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));})()");
   // 统计实际核心调用；延迟仅用于验收处理中状态，不替换请求或响应。
   const originalRequest=bridge.request.bind(bridge); let budgetRequests=0;
   bridge.request=async (method,...args) => { if(method==='usage/set-budget') { budgetRequests++; await nap(150); } return originalRequest(method,...args); };
-  const budgetPending=await js("(() => {document.querySelector('#settings-budget-apply').click();document.querySelector('#settings-budget-apply').click();document.querySelector('#apply-budget').click();return window.Vue.nextTick().then(()=>({locked:document.querySelector('#settings-budget-input').disabled && document.querySelector('#budget-input').disabled && document.querySelector('#settings-budget-apply').disabled && document.querySelector('#apply-budget').disabled,busy:document.querySelector('#settings-budget-panel').getAttribute('aria-busy')}));})()");
-  note(budgetPending.locked && budgetPending.busy==='true', "预算提交中侧栏与设置同步锁定且报告忙碌状态");
-  note(await waitFor(async()=> (await text('#settings-budget-note')).includes('已收紧到 90')), "设置预算变更通过核心校验");
+  const budgetPending=await js("(() => {document.querySelector('#apply-budget').click();document.querySelector('#apply-budget').click();return window.Vue.nextTick().then(()=>({locked:document.querySelector('#budget-input').disabled && document.querySelector('#apply-budget').disabled,busy:document.querySelector('#budget-panel').getAttribute('aria-busy')}));})()");
+  note(budgetPending.locked && budgetPending.busy==='true', "预算提交中锁定表单且报告忙碌状态");
+  note(await waitFor(async()=> (await text('#budget-note')).includes('已收紧到 90')), "预算变更通过核心校验");
   bridge.request=originalRequest;
   note(budgetRequests===1, "同帧重复提交只产生一次真实核心预算调用");
-  note(await js("!document.querySelector('#settings-budget-input').disabled && !document.querySelector('#apply-budget').disabled"), "预算回执完成后恢复两处控件");
-  note((await text('#settings-budget-usage')) === (await text('#turn-usage')) && (await text('#turn-usage')).includes('/90'), "设置变更同步更新右侧预算投影");
-  await click('.settings-dialog .dialog-header button');
+  note(await js("!document.querySelector('#budget-input').disabled && !document.querySelector('#apply-budget').disabled"), "预算回执完成后恢复表单控件");
+  note((await text('#turn-usage')).includes('/90'), "预算变更同步更新核心用量投影");
 
   // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
   // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、

@@ -65,3 +65,16 @@
 
 /* 官方 SettingsRoot：桌面遮罩留白取标题栏 40px，两侧共 80px。 */
 .settings-dialog { height:min(800px,calc(100dvh - 80px)); }
+/* 通用设置依照官方 GeneralSection 连续排列，分隔线属于各行，不叠加列间距。 */
+#settings-page-general { gap:0; }
+.settings-row { display:flex; align-items:center; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }
+.settings-row-title { flex:1; min-width:0; padding-right:48px; font-size:14px; line-height:22px; }
+.settings-fixed-value { display:flex; align-items:center; justify-content:center; min-width:82px; height:36px; padding:0 14px; border-radius:12px; background:var(--surface-3); font-size:14px; }
+.settings-feedback:empty { display:none; }
+/* 官方平台模块表面与活动导航分别取色，不复用侧栏背景或消息层。 */
+.settings-dialog { --settings-module:rgb(249,250,251); --settings-nav-active:rgb(235,238,242); --settings-card-border:rgb(0 0 0 / 16%); }
+@media(prefers-color-scheme:dark) { .settings-dialog { --settings-module:rgb(53,54,56); --settings-nav-active:rgb(67,69,74); --settings-card-border:rgb(255 255 255 / 20%); } }
+.settings-fixed-value,.settings-dialog .font-stepper,.settings-dialog .theme-choice[aria-pressed=true] { background:var(--settings-module); }
+.settings-dialog .settings-tab[aria-selected=true] { background:var(--settings-nav-active); }
+.settings-dialog .theme-choice:not([aria-pressed=true]) { border-color:var(--settings-card-border); }
+.settings-dialog .font-unit { color:var(--text-muted); }

@@ -846,7 +846,7 @@ createApp({
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
       el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
+      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["plugins", "工具与扩展"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
         type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
@@ -866,25 +866,24 @@ createApp({
       ]),
       el('div','dialog-body settings-options',[
       el("section", "settings-page", [
-        el("section", "appearance-settings", [el("h2", "appearance-title", "主题（全局）"),
-          el("div", "theme-choices", [["light","亮色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
+        el('section','settings-row language-settings',[el('span','settings-row-title','语言'),el('output','settings-fixed-value','中文',{'aria-label':'界面语言'})]),
+        el("section", "appearance-settings", [el("h2", "appearance-title", "外观"),
+          el("div", "theme-choices", [["light","浅色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
             el("button", "theme-choice", [el('span','theme-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/theme-${id}.svg')`}}),el('span','theme-label',label)], { id:"theme-"+id, type:'button', "aria-pressed":self.globalAppearance.theme===id,
               disabled:self.appearanceBusy || self.fontBusy || self.globalAppearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"全局主题" }),
-          el("p", "note", self.appearanceNote || "选择保存在用户配置；切换会话和重新打开后保持。旧会话主题记录保留，不覆盖全局主题。", { id:"appearance-note", "aria-live":"polite" }),
+          el("p", "note settings-feedback", self.appearanceNote, { id:"appearance-note", "aria-live":"polite" }),
         ], { "aria-busy":self.appearanceBusy }),
-        renderBudget("settings-budget"),
         el('section','font-settings',[
           el('div','font-row',[
-            el('div','font-row-text',[el('label','font-title','正文字号（全局）',{id:'font-title'}),el('p','font-description','调整消息和输入区正文；按钮、标签与代码字号保持不变。')]),
+            el('div','font-row-text',[el('label','font-title','字号大小',{id:'font-title'}),el('p','font-description','仅影响会话内容的字号')]),
             el('div','font-control',[
               el('div','font-stepper',[
                 el('span','font-value',self.globalAppearance.fontSize===null?'—':String(self.globalAppearance.fontSize),{id:'font-value','aria-labelledby':'font-title'}),
                 el('span','font-arrows',[[1,'增大正文字号','font-increase','M2 6l3-3 3 3'],[-1,'减小正文字号','font-decrease','M2 3l3 3 3-3']].map(([delta,label,id,path])=>window.SaCodeTooltip.wrap(h('button',{id,class:'font-arrow',type:'button','aria-label':label,disabled:self.fontBusy || self.appearanceBusy || self.globalAppearance.fontSize===null || (delta>0?self.globalAppearance.fontSize>=22:self.globalAppearance.fontSize<=10),onClick:()=>self.setFontSize(self.globalAppearance.fontSize+delta)},[h('svg',{width:9,height:9,viewBox:'0 0 10 10',fill:'none',stroke:'currentColor','stroke-width':1.4,'aria-hidden':'true'},[h('path',{d:path})])]),{label,side:'right'}))),
               ]),el('span','font-unit','像素'),
             ]),
-          ]),el('p','note',self.fontNote || '范围 10–22 像素，切换会话和重新打开后保持。',{id:'font-note','aria-live':'polite'}),
+          ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
         ],{'aria-busy':self.fontBusy}),
-        el("p", "note", "用量和预算来自当前会话，变更由核心校验。这里的设置与右侧预算区同步。"),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
       el("section", "settings-page", [el("h2", null, "模型配置尚未开放"),
         el("p", "note", "当前执行轮次使用示例输出。真实模型配置接入后，才能设置服务地址、模型和凭证。"),

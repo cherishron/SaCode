@@ -371,7 +371,6 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const settingsReport = await js(`(() => {
           const dialog=document.querySelector('.settings-dialog[open]'), panel=document.querySelector('#settings-page-${page}'), r=dialog.getBoundingClientRect();
           const tabs=[...dialog.querySelectorAll('.settings-tab')], controls=[...dialog.querySelectorAll('.btn')].filter(e=>e.getClientRects().length>0);
-          const input=document.querySelector('#settings-budget-input'), apply=document.querySelector('#settings-budget-apply');
           const cubes=[...panel.querySelectorAll('.theme-choice')], cubeRows=new Map();
           for(const cube of cubes){const rect=cube.getBoundingClientRect(),key=Math.round(rect.top);if(!cubeRows.has(key))cubeRows.set(key,[]);cubeRows.get(key).push(rect);}
           const checks={
@@ -386,10 +385,11 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
             headerFrame:Math.abs(dialog.querySelector('.settings-header').getBoundingClientRect().height-54)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().width-28)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().height-28)<1,
             optionsInsets:getComputedStyle(dialog.querySelector('.settings-options')).padding==='0px 24px 24px',
             navIcons:tabs.every(e=>{const i=e.querySelector('.settings-nav-icon').getBoundingClientRect(),label=e.querySelector('.settings-nav-label').getBoundingClientRect();return Math.abs(i.width-16)<1 && Math.abs(i.height-16)<1 && Math.abs((i.top+i.bottom)-(label.top+label.bottom))<1 && Math.abs(label.left-i.right-8)<1;}),
-            budgetAligned: '${page}'!=='general' || (Math.abs(input.getBoundingClientRect().top-apply.getBoundingClientRect().top)<1 && Math.abs(input.getBoundingClientRect().height-36)<1),
+            generalRows: '${page}'!=='general' || (getComputedStyle(panel).gap==='0px' && !panel.querySelector('[id^="settings-budget"]')),
             ...('${page}'==='general'?{
               themeOrder:cubes.map(e=>e.id).join(',')==='theme-light,theme-dark,theme-system',
               themeSelected:cubes.filter(e=>e.getAttribute('aria-pressed')==='true').length===1 && document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true',
+              settingsModulePalette:[panel.querySelector('.theme-choice[aria-pressed=true]'),panel.querySelector('.font-stepper'),panel.querySelector('.settings-fixed-value')].every(e=>getComputedStyle(e).backgroundColor===('${theme}'==='dark'?'rgb(53, 54, 56)':'rgb(249, 250, 251)')),
               themeColumns:cubes.length===3 && cubes.every(e=>getComputedStyle(e).flexDirection==='column' && getComputedStyle(e).alignItems==='center' && getComputedStyle(e).gap==='4px'),
               themeRowAlignment:[...cubeRows.values()].every(row=>row.every(rect=>Math.abs(rect.height-row[0].height)<1 && rect.left>=panel.getBoundingClientRect().left && rect.right<=panel.getBoundingClientRect().right+1)),
               themeInsets:cubes.every(e=>getComputedStyle(e).padding==='20px 32px' && getComputedStyle(e).borderTopLeftRadius==='20px'),
