@@ -641,15 +641,8 @@ main(args: Array<String>) {
             }
             var providerKind = "fake"
             if (baseUrl.size > 0) {
-                // 从 shared 取最后一条 user 事件正文构造 OpenAI 请求体；
-                // 没有任何 user 事件时 messages 用空串，由上游自行处理。
-                var lastUser = ""
-                for (ev in shared.snapshotEvents()) {
-                    if (ev.eventType == "user") {
-                        lastUser = ev.data
-                    }
-                }
-                let reqBody = "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[{\"role\":\"user\",\"content\":\"${jsonEscapeText(lastUser)}\"}],\"stream\":true}"
+                // 使用共享核心装配器，实际类型为 user/message，保留已提交的对话上下文。
+                let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray())
                 try {
                     let real = RealSseProvider(baseUrl, key, reqBody, tk)
                     turnHandle = Some(TurnRunner().start(real, tk, shared, turnSink))
