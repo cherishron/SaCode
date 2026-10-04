@@ -124,6 +124,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await require('./test-support/plugin-configuration-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/subagent-settings-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/plugin-manager-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/model-select-smoke.cjs')({win,waitFor,check,outDir});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
 };
