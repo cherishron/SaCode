@@ -35,7 +35,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
   await js("window.dsh.sessionCreate('布局检查：'+'长会话标题'.repeat(10))");
   await js("window.dsh.sessionCreate('布局检查：文档整理')");
   // 通过界面发送真实长中文消息，覆盖用户气泡宽度与展开折行。
-  await js("(()=>{const n=document.querySelector('#composer');n.value='长中文消息与输入对齐。'.repeat(35);n.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#send').click();})()");
+  await js("(async()=>{const n=document.querySelector('#composer');n.value='长中文消息与输入对齐。'.repeat(35);n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click();})()");
   await waitFor("[...document.querySelectorAll('.msg-text')].some(e=>e.textContent.startsWith('长中文消息与输入对齐。'))");
   const reports = [];
   for (const theme of ["light", "dark"]) {
@@ -47,6 +47,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
     await js("document.querySelector('.settings-dialog .dialog-header button').click()");
     for (const [width, height] of [[860, 600], [880, 640], [1100, 720], [1440, 900]]) {
       win.setContentSize(width, height);
+      // 非空草稿才有可用发送动作；不提交，只验输入与键盘焦点。
+      await js("(()=>{const n=document.querySelector('#composer');n.value='布局验收草稿';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
       await new Promise((r) => setTimeout(r, 500));
       const sendBefore=await js("(()=>{const r=document.querySelector('#send').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()");
@@ -67,7 +69,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const main = box('.conversation'), composer = box('.composer'), side = box('.side');
         const input = box('#budget-input'), apply = box('#apply-budget');
         const draft = box('#composer'), send = box('#send');
-        const controls = ['#run-turn','#run-turn-2','#stop-turn','#apply-budget','#allow-once','#deny','#send'];
+        const controls = ['#run-turn','#run-turn-2','#stop-turn','#apply-budget','#allow-once','#deny'];
         const checks = {
           brand: document.title.startsWith('SaCode') && document.querySelector('.brand').textContent === 'SaCode',
           logo: document.querySelector('.brand img').naturalWidth > 0,
@@ -88,10 +90,13 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           inputStrokeRebind: (()=>{const node=document.querySelector('#budget-input'),before=getComputedStyle(node).boxShadow;node.style.setProperty('--elevation-stroke-color','var(--accent)');try{return getComputedStyle(node).boxShadow!==before;}finally{node.style.removeProperty('--elevation-stroke-color');}})(),
           bubbleRadius: document.querySelectorAll('.tr-bubble__box').length>0 && [...document.querySelectorAll('.tr-bubble__box')].every(e=>getComputedStyle(e).borderTopLeftRadius==='20px'),
           groupedRadius: ['#tool-write','#approval'].every(s=>getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='16px'),
-          cornerCurve: !CSS.supports('corner-shape','superellipse(1.5)') || getComputedStyle(document.querySelector('#send')).cornerShape==='superellipse(1.5)',
+          cornerCurve: !CSS.supports('corner-shape','superellipse(1.5)') || getComputedStyle(document.querySelector('#run-turn')).cornerShape==='superellipse(1.5)',
+          sendGeometry:equal(send.width,34)&&equal(send.height,34)&&getComputedStyle(document.querySelector('#send')).borderTopLeftRadius==='999px'&&(!CSS.supports('corner-shape','round')||getComputedStyle(document.querySelector('#send')).cornerShape==='round'),
+          sendGlyph:equal(box('#send svg').width,16)&&equal(box('#send svg').height,16),
+          sendPalette:getComputedStyle(document.querySelector('#send')).backgroundColor==='${theme==='dark'?'rgb(65, 118, 230)':'rgb(122, 170, 255)'}'&&getComputedStyle(document.querySelector('#send')).color==='rgb(255, 255, 255)',
+          composerRow:getComputedStyle(document.querySelector('.composer-controls')).padding==='2px 8px 6px'&&getComputedStyle(document.querySelector('.composer-card')).gap==='12px'&&getComputedStyle(document.querySelector('#composer')).padding==='4px 8px 0px 14px',
           circularStatus: !!document.querySelector('.pending-dot') && (!CSS.supports('corner-shape','round') || getComputedStyle(document.querySelector('.pending-dot')).cornerShape==='round'),
-          primaryPalette: ['backgroundColor','color','borderTopColor'].every(key =>
-            getComputedStyle(document.querySelector('#run-turn'))[key] === getComputedStyle(document.querySelector('#send'))[key]),
+          primaryPalette: (()=>{const style=getComputedStyle(document.querySelector('#run-turn'));return style.backgroundColor==='${theme==='dark'?'rgb(126, 160, 255)':'rgb(36, 85, 230)'}'&&style.borderTopColor===style.backgroundColor&&style.color==='${theme==='dark'?'rgb(16, 19, 26)':'rgb(255, 255, 255)'}';})(),
           icons: [...document.querySelectorAll('.nav-symbol')].every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
           messageContentLoaded: document.querySelectorAll('.msg-text').length > 0,
@@ -251,7 +256,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       const draftReport=await js(`(()=>{
         const n=document.querySelector('#composer'),card=document.querySelector('.composer-card'),send=document.querySelector('#send'),scroll=document.querySelector('.conversation-scroll'),box=e=>e.getBoundingClientRect();
         const checks={
-          capped:Math.abs(box(n).height-Math.min(348,innerHeight-360))<1,
+          capped:Math.abs(box(n).height-Math.min(340,innerHeight-360))<1,
           internalScroll:n.scrollHeight>n.clientHeight && getComputedStyle(n).overflowY==='auto',
           conversationSpace:box(scroll).height>=80,
           controlsInside:box(send).right<box(card).right && box(send).bottom<box(card).bottom && box(n).bottom<box(send).top,
@@ -265,6 +270,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       console.log(`LAYOUT ${draftReport.failed.length?'FAIL':'PASS'} long-draft ${theme} ${width}x${height} ${draftReport.failed.join(',')}`);
       await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       await waitFor("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1");
+      draftReport.checks.emptySendDisabled=await js("document.querySelector('#send').disabled && getComputedStyle(document.querySelector('#send')).opacity==='0.4'");
+      draftReport.failed=Object.keys(draftReport.checks).filter(key=>!draftReport.checks[key]);
       await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
       await new Promise((r) => setTimeout(r, 50));
       const dialogReport = await js(`(() => {
@@ -436,7 +443,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           await waitFor(`document.querySelector('#font-value').textContent==='${next}' && !document.querySelector('.font-settings').getAttribute('aria-busy').includes('true')`);
           current=next;
         }
-        await waitFor(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${(size+10)*6+12})<1`);
+        await waitFor(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${(size+10)*6+4})<1`);
         await js(`document.querySelector('#font-${size===22?'decrease':'increase'}').focus()`);
         const fontReport=await js(`(()=>{
           const n=document.querySelector('#composer'),row=document.querySelector('.font-row'),control=document.querySelector('.font-control'),step=document.querySelector('.font-stepper'),dialog=document.querySelector('.settings-dialog[open]'),box=e=>e.getBoundingClientRect();
@@ -445,7 +452,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           const checks={
             sharedAxis:getComputedStyle(n).fontSize==='${size}px' && texts.every(e=>getComputedStyle(e).fontSize==='${size}px'),
             lineAxis:getComputedStyle(n).lineHeight==='${size+10}px' && texts.every(e=>getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'${size+8}px':'${size+10}px')),
-            draftResized:Math.abs(box(n).height-${(size+10)*6+12})<1,
+            draftResized:Math.abs(box(n).height-${(size+10)*6+4})<1,
             rowAligned:Math.abs((box(row).top+box(row).bottom)/2-(box(control).top+box(control).bottom)/2)<1,
             fixedControl:Math.abs(box(step).height-36)<1 && Math.abs(box(step).width-72)<1 && getComputedStyle(document.querySelector('#send')).fontSize==='13px',
             focusReveals:getComputedStyle(document.querySelector('.font-arrows')).opacity==='1',

@@ -314,10 +314,16 @@ async function uiSmoke() {
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
   const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
   const setDraftForSize=async(value)=>js(`(()=>{const n=document.querySelector('#composer');n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await setDraftForSize('   \n');
+  note(await waitFor(()=>js("document.querySelector('#send').disabled && getComputedStyle(document.querySelector('#send')).opacity==='0.4'")), "空白草稿保持发送禁用与四成透明度");
+  await js("document.querySelector('#composer').focus()");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Enter',modifiers:['control']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Enter',modifiers:['control']});
+  await new Promise(r=>setTimeout(r,100));
+  note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "空白快捷键发送不新增会话事实");
   await setDraftForSize('自动增长输入验证\n'.repeat(5));
   note(await waitFor(()=>js("document.querySelector('#composer').getBoundingClientRect().height>36")), "多行草稿自动扩展文本域");
   await setDraftForSize('超过上限的中文草稿\n'.repeat(30));
-  note(await waitFor(()=>js("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height<=Math.min(348,innerHeight-360)+1;})()")), "长草稿达到上限后内部滚动");
+  note(await waitFor(()=>js("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height<=Math.min(340,innerHeight-360)+1;})()")), "长草稿达到上限后内部滚动");
   await setDraftForSize('');
   note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "删除草稿后高度回到最小值");
   const draftWindowSize=win.getContentSize();
@@ -333,7 +339,11 @@ async function uiSmoke() {
   note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "草稿高度调整不写会话日志");
   const typed = "第一行\n第二行 带\"引号\"";
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify(typed)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
-  note(await click("#send"), "点击发送已派发");
+  await js("document.querySelector('#composer').focus()");
+  const sendPoint=await js("(()=>{const r=document.querySelector('#send').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+  win.webContents.sendInputEvent({type:'mouseMove',...sendPoint});win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...sendPoint});win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...sendPoint});
+  note(await waitFor(()=>js("document.querySelector('#composer').value===''")), "真实圆形按钮点击发送已派发");
+  note(await js("document.activeElement.id==='composer'"), "鼠标发送后保留输入焦点");
   const sent = await waitFor(async () => {
     const n = Number((await text("#count-events")).split(" ")[1]);
     return n === beforeEvents + 1;
@@ -482,7 +492,8 @@ async function uiSmoke() {
   // 5) 取消：可取消那一轮停在帧间，点停止要改终态，不能只把按钮禁用
   note(await click("#run-turn-2"), "已发起可取消一轮");
   await waitFor(async () => (await text("#turn-state")) === "状态 执行中");
-  note(await click("#stop-turn"), "已派发停止");
+  note(await js("document.querySelector('#send').getAttribute('aria-label')==='停止执行' && !!document.querySelector('#send rect') && !document.querySelector('#send').disabled"), "空草稿执行中显示可用的圆形停止动作");
+  note(await click("#send"), "输入区停止动作已派发核心取消");
   const cancelled = await waitFor(async () => (await text("#turn-state")) === "状态 已取消");
   note(cancelled, `取消终态=${await text("#turn-state")}`);
   // 取消的一轮不落 assistant/message：半截正文只能继续由流式回显框呈现，

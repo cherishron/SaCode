@@ -326,7 +326,7 @@ createApp({
     async function send() {
       const generation=sessionGeneration;
       const text = draft.value;
-      if (!text) return;
+      if (!text.trim()) return;
       draft.value = "";
       error.value = "";
       try {
@@ -737,7 +737,7 @@ createApp({
     });
 
     const composer = el("footer", "composer", [
-      el("label", "field-label", "发送消息", { for: "composer" }),
+      el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
         id: "composer",
@@ -747,7 +747,14 @@ createApp({
         value: self.draft,
         onInput: (e) => (self.draft = e.target.value),
       }),[[autoDraftSize]]),
-      el("div", "composer-controls", [el("button", "btn btn-primary", "发送", { id: "send", onClick: self.send })]),
+      el("div", "composer-controls", [el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+        self.turn.running && !self.draft.trim()
+          ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
+          : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
+      ])], { id: "send", type:'button', 'aria-label':self.turn.running && !self.draft.trim()?'停止执行':'发送消息', disabled:!self.turn.running && !self.draft.trim(),
+        tooltip:{label:self.turn.running && !self.draft.trim()?'停止执行':'发送消息',side:'top',delayMs:500},
+        // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
+        onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
       ]),
       el("span", "note", "支持多行输入 · 审批决定由你确认"),
     ]);
