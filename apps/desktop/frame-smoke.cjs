@@ -119,6 +119,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await check('分组会话恢复五条',"(()=>({collapsed:document.querySelector('.workspace-overflow').getAttribute('aria-expanded')==='false',five:document.querySelector('[data-workspace-group=\"\"]').querySelectorAll('[data-sidebar-session]').length===5}))()");
   writeFileSync(join(outDir,'workspace-groups.png'),(await win.webContents.capturePage()).toPNG());
   await checkConversationScroll({js,waitFor,check});
+  await require('./test-support/models-page-smoke.cjs')({win,waitFor,check,outDir});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
 };
@@ -141,12 +142,12 @@ async function checkConversationScroll({js,waitFor,check}) {
   await new Promise(r=>setTimeout(r,120));
   await check('上翻后增长不抢阅读位置',"({preserved:Math.abs(scrollFixture.host.scrollTop-scrollFixture.savedTop)<1})");
   await js("scrollFixture.anchor=scrollFixture.content.children[3];scrollFixture.offset=scrollFixture.anchor.getBoundingClientRect().top-scrollFixture.host.getBoundingClientRect().top;scrollFixture.content.firstElementChild.style.height='160px'");
-  await new Promise(r=>setTimeout(r,120));
+  await waitFor("Math.abs(scrollFixture.anchor.getBoundingClientRect().top-scrollFixture.host.getBoundingClientRect().top-scrollFixture.offset)<1");
   await check('布局变化补偿消息锚点',"({anchorRetained:Math.abs(scrollFixture.anchor.getBoundingClientRect().top-scrollFixture.host.getBoundingClientRect().top-scrollFixture.offset)<1})");
   await js("scrollFixture.restoreTop=scrollFixture.host.scrollTop;scrollFixture.owner.update({session:'fixture-b',lastUser:'u2'})");
   await waitFor("scrollFixture.host.dataset.followingTail==='true'");
   await js("scrollFixture.owner.update({session:'fixture-a',lastUser:'u1'})");
-  await waitFor("scrollFixture.host.dataset.followingTail==='false'");
+  await waitFor("scrollFixture.host.dataset.followingTail==='false' && Math.abs(scrollFixture.host.scrollTop-scrollFixture.restoreTop)<1");
   await check('会话切换恢复阅读位置',"({restored:Math.abs(scrollFixture.host.scrollTop-scrollFixture.restoreTop)<1})");
   await js("scrollFixture.owner.update({session:'fixture-a',lastUser:'u3'})");
   await waitFor("scrollFixture.host.dataset.followingTail==='true'");

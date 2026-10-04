@@ -13,6 +13,7 @@
 | 内容 | 唯一位置 |
 | --- | --- |
 | 桌面主进程、预加载和页面 | `apps/desktop/` |
+| 构建期 TypeScript 页面源码 | `apps/desktop/renderer/pages/`（编译为 vendor 经典脚本） |
 | 桌面协议及交互冒烟支持 | `apps/desktop/test-support/`（仅显式冒烟模式加载） |
 | 桌面调用的仓颉宿主源码 | `apps/host/src/` |
 | 两入口共享仓颉业务核心 | `core/src/` |

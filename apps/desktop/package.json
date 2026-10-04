@@ -6,7 +6,7 @@
   "author": "SaCode",
   "main": "main.cjs",
   "scripts": {
-    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs",
+    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs && node ../../scripts/pack-pages.mjs",
     "prestart": "npm run vendor",
     "start": "electron .",
     "presmoke": "npm run vendor",

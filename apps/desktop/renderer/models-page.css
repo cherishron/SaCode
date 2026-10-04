@@ -1,0 +1,42 @@
+/* 参照冻结 ui-settings-models 几何，使用 SaCode 主题变量。 */
+.models-section { display:flex; flex-direction:column; gap:12px; max-width:720px; color:var(--text); }
+.models-title { margin:0; font-size:16px; line-height:24px; font-weight:500; }
+.models-intro { margin:0; font-size:14px; line-height:22px; color:var(--text-muted); }
+.models-notice,.models-savedNotice,.models-error,.models-advancedHint,.models-modelEmpty { margin:0; font-size:12px; line-height:18px; }
+.models-notice,.models-advancedHint,.models-modelEmpty { color:var(--text-muted); }
+.models-savedNotice { color:#16835d; }.models-error { color:var(--danger,#c33); }
+.models-rows { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.models-rowCard { border:.5px solid var(--settings-card-border); border-radius:16px; padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
+.models-rowHead,.models-rowIdentity,.models-rowActions { display:flex; align-items:center; gap:6px; min-width:0; }
+.models-rowHead { gap:10px; }.models-rowActions { margin-left:auto; gap:4px; }
+.models-rowName { font-size:14px; line-height:22px; font-weight:500; overflow-wrap:anywhere; }
+.models-rowTag { padding:1px 6px; border:.5px solid var(--border); border-radius:4px; font-size:11px; line-height:16px; color:var(--text-muted); }
+.models-credentialDot { flex:none; width:8px; height:8px; border-radius:50%; }.models-credentialDotConfigured { background:#16835d; }.models-credentialDotMissing { background:#c33; }
+.models-primaryButton,.models-secondaryButton,.models-dangerButton,.models-addButton,.models-linkButton,.models-addModelButton,.models-iconButton,.models-modeButton { box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:4px; height:36px; padding:0 14px; border:0; border-radius:8px; font:inherit; font-size:14px; line-height:22px; cursor:pointer; }
+.models-primaryButton { background:var(--text); color:var(--panel-surface); }
+.models-secondaryButton,.models-addButton { border:.5px solid var(--border); background:transparent; color:var(--text); }
+.models-dangerButton { color:var(--danger,#c33); background:transparent; }
+.models-linkButton,.models-addModelButton,.models-iconButton { background:transparent; color:var(--text-muted); height:28px; padding:0 10px; font-size:12px; line-height:18px; }
+.models-rowActions button { height:28px; padding:0 10px; font-size:12px; line-height:18px; }
+.models-section button:hover:not(:disabled) { filter:brightness(.92); }
+.models-section button:disabled { opacity:.4; cursor:default; }
+.models-section button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.models-editor,.models-addCard { border-radius:12px; background:var(--settings-module); padding:14px 16px; display:flex; flex-direction:column; gap:14px; }
+.models-addCard .models-editor { background:none; padding:0; }
+.models-field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.models-fieldLabel { font-size:12px; line-height:18px; font-weight:500; color:var(--text-muted); }
+.models-input { box-sizing:border-box; width:100%; height:32px; padding:0 10px; border:.5px solid var(--border); border-radius:8px; font:inherit; font-size:14px; line-height:22px; background:var(--panel-surface); color:var(--text); }
+select.models-input { max-width:240px; cursor:pointer; }.models-input:focus { outline:none; border-color:var(--accent); }.models-input::placeholder { color:var(--text-muted); }.models-input:disabled { opacity:.6; }
+.models-editorActions { display:flex; justify-content:flex-end; gap:8px; }
+.models-addBlock,.models-addPanel { display:flex; flex-direction:column; gap:14px; }
+.models-addPanel[hidden],.models-modelAdvanced[hidden] { display:none; }
+.models-addButton { width:100%; min-width:180px; height:44px; border:1px dashed var(--border); border-radius:12px; }
+.models-addModes { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+.models-modeSwitch { display:flex; gap:4px; padding:3px; border-radius:8px; background:var(--settings-nav-active); }
+.models-modeButton { height:28px; padding:0 10px; font-size:12px; background:transparent; color:var(--text); }.models-modeButton[aria-pressed=true] { background:var(--panel-surface); }
+.models-modelCatalog { display:flex; flex-direction:column; gap:10px; padding-top:12px; border-top:.5px solid var(--border); }
+.models-modelListHead { display:flex; align-items:center; justify-content:space-between; gap:12px; }.models-modelCatalogTitle { font-size:12px; line-height:18px; font-weight:500; color:var(--text-muted); }
+.models-modelList { display:flex; flex-direction:column; gap:8px; }.models-modelEntry { border:.5px solid var(--border); border-radius:12px; padding:6px; }
+.models-modelRow { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto auto; align-items:end; gap:6px; }.models-iconButton { width:28px; padding:0; }
+.models-modelAdvanced { display:flex; flex-direction:column; gap:8px; padding:12px 6px 6px; }.models-modelInputTypes { border:0; padding:0; margin:0; font-size:12px; display:flex; gap:12px; }.models-modelInputTypes legend { padding-bottom:6px; color:var(--text-muted); }
+.models-fetchActions { display:flex; gap:8px; margin:8px 0; }.models-fetchList { max-height:260px; overflow:auto; }.models-fetchRow { display:flex; align-items:center; gap:8px; padding:8px; font-size:14px; }

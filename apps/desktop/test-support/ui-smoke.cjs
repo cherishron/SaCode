@@ -180,7 +180,7 @@ async function uiSmoke(context) {
   await click('#theme-system');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14' && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "主题保存保持另一字段字号并恢复系统主题");
   await click('#settings-tab-models');
-  note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
+  note((await text('#settings-page-models')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并如实标注后端未接入");
   await js("document.querySelector('#settings-tab-models').focus()");
   const settingsFrameBefore=await js("(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:r.width,height:r.height};})()");
   await chord('Down',[]);
