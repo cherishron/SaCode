@@ -58,7 +58,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + 七批新增十七个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert / session-reference / boot / slots）：`✔` 11 行、`◐` 20 行、`☐` 32 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 八批新增二十个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert / session-reference / boot / slots / spill / compaction / commands）：`✔` 11 行、`◐` 23 行、`☐` 29 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -69,8 +69,8 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | browser-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 5） |
 | client-modules | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 6） |
 | client-resources | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 7） |
-| commands | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 8） |
-| compaction | ✔ | ✔ | M2 | ✔ | ☐ | 未实现（C 档，行 9） |
+| commands | ✔ | ✔ | M7 | ✔ | ◐ | `core/src/cmds.cj` `CommandRegistry`：按名注册 (name, help) + 按名 resolve + 未知名 `command-unknown-name` 抛 + 重名 `command-duplicate-name` 抛（拒后原 help 保留）+ 空 name `command-empty-name` 抛；纯进程内不落 log 事件。4 条用例。**上游校正**：本切片只做注册表面；上游 slash 语法糖、参数 Schema 校验、`@Remote commands/list` 与 prompt 注入均未接 |
+| compaction | ✔ | ✔ | M2 | ✔ | ◐ | `core/src/compact.cj` `CompactionLedger`：log-only `compaction/record` 事件承载 `<reason>::<before>::<after>`（三字段都字符串，避开 Int64 parse 陷阱）；空 reason 抛 `compaction-empty-reason`，空 before/after 抛 `compaction-empty-count`，都 throw 不落事件；`entries()` 从事件流回放取 ArrayList。3 条用例覆盖列表、空 reason 拒、log-only 表面（`deriveMessages().size == 1`）。**上游校正**：本切片只落 marker，实际摘要生成、阈值触发、被压缩消息的 tombstone 与 prompt 重组都未做；before/after 的数值裁决交给调用方 |
 | computer-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 10） |
 | conversation | ✔ | ✔ | M5/M6 | ✔ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（`groupStrategy=consecutive`）按角色分组，正文由本仓自定义内容渲染器出（默认链把 `role==="tool"` 交给只渲染注释节点的 ToolRole，不接就隐身），长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、组标签、合并、折叠三态、tool 可见与 `--tr-*` 色值桥接（各条见 `docs/evidence/p0-status-2026-10-02.md`）。**上游校正**：上游 conversation 是 React assembly（`ui-conversation` 把持久 Session event 与 `assistant/live-chunk` 关联成稳定 Context），本仓是 Vue 列表（`BubbleProvider+BubbleList`），命名占用而非契约复刻；上游 `live-chunk` 概念本仓无。**剩余**：落盘正文出自假 provider 的装配结果，真模型 provider 未接；干净收束路径上 `tool/call`/`tool/result` 仍不落盘 |
 | core | ✔ | ✔ | M0 | ✔ | ✔ | 本仓 `core/` 即共享核心（会话日志唯一真源、投影、取消/背压、扩展进程驱动），两个入口同依赖；core `cjpm test` **99/99**。不等同上游 `cordis` 整体，见上方 M0 裁决。**上游校正**：上游 `SessionEventMap` 13 类事件（session/system/developer/user/assistant/tool/turn/usage/approval/agent/compaction/request/workspace），本仓主动裁剪到 5 类（session/system/user/assistant/tool-result），`developer/message` 已于 `cd9c8a7` 补进投影 |
@@ -106,7 +106,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | sidebar-right | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地。**上游校正**：上游 sidebar-right 是 React 组合系统（tab-type registry + dsh-resource:// 地址 + dockkit 布局），zh 版在冻结 commit 不存在（404），本仓 Vue runtime 架构根本不同 |
 | skills | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 43） |
 | slots | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/slots.cj` `SlotRegistry`（非渲染面）：`register(slotId, kind)` 落 log-only `slots/register`；`activate(slotId)` 未注册 `slots-unknown` 抛、已激活 noop 不落事件、正常激活落 `slots/activate`；`isRegistered/isActivated/eventCount` 从事件流回放；4 条用例覆盖 happy/未知拒/重复激活 noop/log-only 表面。**上游校正**：本切片只做注册-激活生命周期，事件不进 surface（`deriveMessages().size == 1` 钉住）；上游 tab-type registry + `dsh-resource://` 地址 + dockkit 布局 + 渲染层槽位挂载仍未接 |
-| spill | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 45） |
+| spill | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/spill.cj` `SpillStore`：log-only `spill/marker` 事件承载 `<turn>::<reason>`；空 turn 抛 `spill-empty-turn`、空 reason 抛 `spill-empty-reason`，两者都 throw 不落事件；`markers()` 从事件流回放取 ArrayList。3 条用例覆盖列表、双拒、log-only 表面（`deriveMessages().size == 1` 钉住不进 surface）。**上游校正**：本切片只做 marker 事件，实际 spill 落地（写到仓外文件、内容寻址、清理策略）与 spill 目录管理未做 |
 | ssh | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 46） |
 | storage | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/storage.cj` `StorageHub`：`domain/changed` log-only 事件承载 `open::<name>::<version>` / `close::<name>` / `put::<name>::<k>::<v>`；`open` 严格序列拒绝（内存开启集重名 → already-open；日志已存在同名不同版本 → version-mismatch），两者都 throw 不落事件；`putFrom` 供回放不再重复 append。4 条用例覆盖往返+回放、重名拒、版本拒、close 后同版本可重开。**上游校正**：真源仍是追加式 `session.log`，无上游的多 backend / facet / `malformed-medium` / `invalid-record` 分类；`domain/changed` 跨进程推送未做 |
 | subagent | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 48） |
