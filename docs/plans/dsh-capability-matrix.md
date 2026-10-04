@@ -58,17 +58,17 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + 十一批新增二十九个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert / session-reference / boot / slots / spill / compaction / commands / schedule / user-questions / feedback / mcp / ssh / voice-input / workflow / subagent / skills）：`✔` 11 行、`◐` 32 行、`☐` 20 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 十二批新增三十两个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox / scope / session-telemetry / typert / session-reference / boot / slots / spill / compaction / commands / schedule / user-questions / feedback / mcp / ssh / voice-input / workflow / subagent / skills / client-resources / client-modules / attachment）：`✔` 11 行、`◐` 35 行、`☐` 17 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
 | agent-team | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（§6.1.2 C 档，行 1） |
 | approval | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/approval.cj` 工单往返 `ask→answer→一次性 consume`，`asked/decided/expired` 进同一份会话日志；过期由真实单调钟决定（`approval/tick` 通道已撤）。core 9 条 + bridge 6 条；两刀变异反证（去一次性置位、去决定白名单）。**上游校正**：上游四档（allow/deny/ask/open-turn）+ waterfall（pre-execute 允许 ask），本仓两档（允许一次/拒绝）且上游要求 open turn 本仓未实现 |
-| attachment | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 3） |
+| attachment | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/attach.cj` `AttachmentStore`：log-only `attachment/record` 事件承载 `<name>::<mime>::<size>`（三字段全字符串避开 Int64 parse）；空 name 抛 `attachment-empty-name`、空 mime 抛 `attachment-empty-mime`，size 允许为空；`entries()` 从事件流回放取 ArrayList。3 条用例覆盖列表、双空拒、log-only 表面（`deriveMessages().size == 1`）。**上游校正**：本切片只做 marker，实际上传落盘、大小限制、mime 校验与 prompt 附件装配未接 |
 | boot | ✔ | ✔ | M0 | ✔ | ◐ | `core/src/boot.cj` `BootSequence`：按序 `register(name)` 落名、重名 `boot-duplicate-stage` 拒；run 后 register `boot-already-run` 拒；`run()` 冻结注册表并按序进 history，多次调用只生效第一次（幂等）；`isRun()` 查执行态。4 条用例覆盖顺序、重名拒、run 后拒、run 幂等。**上游校正**：本切片是纯进程内注册表；上游 `ctx.boot` 还有 `dependencies` 与 `phases`（config / workspace / providers / telemetry / ...）拓扑排序与 `@Remote boot` 装配面，本仓未做，也不落 log 事件 |
 | browser-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 5） |
-| client-modules | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 6） |
-| client-resources | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 7） |
+| client-modules | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/cmod.cj` `ClientModuleRegistry`：纯进程内注册表——按 (id, version) `register` + `activate(id)` 加载 + `isLoaded(id)` 查询；空 id/version 抛 `cmod-empty-*`，重名 `cmod-duplicate-id` 抛、未知 activate `cmod-unknown-id` 抛。4 条用例覆盖 happy+activate、未知 activate、重名拒、双空拒。**上游校正**：本切片只做加载状态表，未接真模块装载、生命周期钩子与 prompt 注入；上游 `@Remote modules/*` 通道未做 |
+| client-resources | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/resource.cj` `ResourceRegistry`：log-only `resource/register` 事件承载 `<uri>::<mime>`（`dsh-resource://<kind>/<id>` 形式）；`lookup(uri)` 未登记返空串、`list()` 枚举所有已登记 uri；空 uri/mime 各自抛；重名走 noop 不重复落事件；`init` 从 `snapshotEvents()` 回放。4 条用例覆盖注册查列、双空拒、未知 lookup 空、log-only 表面。**上游校正**：本切片只做 URI 命名空间登记，实际 `dsh-resource://` 请求解析与内容流未接；上游 sidebar-right 与 dockkit 布局归 sidebar-right 行 |
 | commands | ✔ | ✔ | M7 | ✔ | ◐ | `core/src/cmds.cj` `CommandRegistry`：按名注册 (name, help) + 按名 resolve + 未知名 `command-unknown-name` 抛 + 重名 `command-duplicate-name` 抛（拒后原 help 保留）+ 空 name `command-empty-name` 抛；纯进程内不落 log 事件。4 条用例。**上游校正**：本切片只做注册表面；上游 slash 语法糖、参数 Schema 校验、`@Remote commands/list` 与 prompt 注入均未接 |
 | compaction | ✔ | ✔ | M2 | ✔ | ◐ | `core/src/compact.cj` `CompactionLedger`：log-only `compaction/record` 事件承载 `<reason>::<before>::<after>`（三字段都字符串，避开 Int64 parse 陷阱）；空 reason 抛 `compaction-empty-reason`，空 before/after 抛 `compaction-empty-count`，都 throw 不落事件；`entries()` 从事件流回放取 ArrayList。3 条用例覆盖列表、空 reason 拒、log-only 表面（`deriveMessages().size == 1`）。**上游校正**：本切片只落 marker，实际摘要生成、阈值触发、被压缩消息的 tombstone 与 prompt 重组都未做；before/after 的数值裁决交给调用方 |
 | computer-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 10） |
