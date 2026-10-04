@@ -39,7 +39,12 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
   await waitFor("[...document.querySelectorAll('.msg-text')].some(e=>e.textContent.startsWith('长中文消息与输入对齐。'))");
   const reports = [];
   for (const theme of ["light", "dark"]) {
-    nativeTheme.themeSource = theme;
+    await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
+    await waitFor("!!document.querySelector('.settings-dialog[open]')");
+    await js(`document.querySelector('#theme-${theme}').click()`);
+    await waitFor(`document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true' && !document.querySelector('#theme-${theme}').disabled`);
+    if(nativeTheme.themeSource!==theme) throw new Error('全局主题未驱动窗口：'+theme);
+    await js("document.querySelector('.settings-dialog .dialog-header button').click()");
     for (const [width, height] of [[860, 600], [880, 640], [1100, 720], [1440, 900]]) {
       win.setContentSize(width, height);
       // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
@@ -294,12 +299,23 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           const dialog=document.querySelector('.settings-dialog[open]'), panel=document.querySelector('#settings-page-${page}'), r=dialog.getBoundingClientRect();
           const tabs=[...dialog.querySelectorAll('.settings-tab')], controls=[...dialog.querySelectorAll('.btn')].filter(e=>e.getClientRects().length>0);
           const input=document.querySelector('#settings-budget-input'), apply=document.querySelector('#settings-budget-apply');
+          const cubes=[...panel.querySelectorAll('.theme-choice')], cubeRows=new Map();
+          for(const cube of cubes){const rect=cube.getBoundingClientRect(),key=Math.round(rect.top);if(!cubeRows.has(key))cubeRows.set(key,[]);cubeRows.get(key).push(rect);}
           const checks={
             visible: !!dialog && !panel.hidden,
             fits: r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1,
             noOverflow: dialog.scrollWidth<=dialog.clientWidth,
             controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().top-tabs[0].getBoundingClientRect().top)<1),
             budgetAligned: '${page}'!=='general' || (Math.abs(input.getBoundingClientRect().top-apply.getBoundingClientRect().top)<1 && Math.abs(input.getBoundingClientRect().height-36)<1),
+            ...('${page}'==='general'?{
+              themeOrder:cubes.map(e=>e.id).join(',')==='theme-light,theme-dark,theme-system',
+              themeSelected:cubes.filter(e=>e.getAttribute('aria-pressed')==='true').length===1 && document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true',
+              themeColumns:cubes.length===3 && cubes.every(e=>getComputedStyle(e).flexDirection==='column' && getComputedStyle(e).alignItems==='center' && getComputedStyle(e).gap==='4px'),
+              themeRowAlignment:[...cubeRows.values()].every(row=>row.every(rect=>Math.abs(rect.height-row[0].height)<1 && rect.left>=panel.getBoundingClientRect().left && rect.right<=panel.getBoundingClientRect().right+1)),
+              themeInsets:cubes.every(e=>getComputedStyle(e).padding==='20px 32px' && getComputedStyle(e).borderTopLeftRadius==='20px'),
+              themeIconLabel:cubes.every(e=>{const icon=e.querySelector('.theme-icon').getBoundingClientRect(),label=e.querySelector('.theme-label').getBoundingClientRect();return Math.abs(icon.width-16)<1 && Math.abs(icon.height-16)<1 && Math.abs((icon.left+icon.right)-(label.left+label.right))<1 && Math.abs(label.top-icon.bottom-4)<1;}),
+              themeGap:getComputedStyle(panel.querySelector('.theme-choices')).gap==='8px',
+            }:{}),
           };
           return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
         })()`);

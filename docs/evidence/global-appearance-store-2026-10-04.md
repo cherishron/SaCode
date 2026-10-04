@@ -47,3 +47,15 @@ Electron/preload 新增两个固定命名入口：读取全局外观、保存整
 从隔离源码 `dualtest/font-ui/source` 验证，Host/DLL 沿用本页上一增量已验的核心/Host（本批未修改它们），不纳入工作区未提交的 provider/SSE/Next SDK 改动。桌面 Node **91/91**，真实 Electron UI **180 项**，布局 **160 组/1184 项**，失败均为 0，退出码均为 0。日志分别为 `dualtest/font-ui/desktop-tests.log`、`ui-smoke-final.log`、`layout-smoke-final.log`；结构布局报告位于该源码的 `apps/desktop/dist/layout/layout-report.json`。
 
 UI 覆盖字号保存、重载恢复、上下限、非法小数及租约失败不回显；布局覆盖四种窗口尺寸、亮暗主题和 10/22/14 三种字号，检查正文与输入区轴、草稿高度重测、控件居中、固定尺寸、键盘焦点箭头及无页面溢出。实际查看 860×600 暗色 22px 截图，中文内容和 SaCode 图标保留，设置页在窗口内滚动。本增量未重跑核心单测、未重打安装包，也不证明全局主题迁移或完整 DSH 页面目标已完成。
+
+## 全局主题作用域与选择卡增量
+
+再次直读冻结上游 [AppearanceRow.tsx](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/client/AppearanceRow.tsx) 和 [样式](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-theme/src/client/AppearanceRow.module.css)。主题选择由持久偏好驱动，顺序为亮色、深色、跟随系统；采用图标在上、文字在下的选择卡。实现对应 8px 行间距、4px 图标/文字间距、20/32px 内边距、180px flex 基础宽度和 20px 圆角，窄窗口换行。三种装饰图标来自冻结 [ui-primitives/icons/index.tsx](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/client/ui-primitives/src/icons/index.tsx)，沿用现有 MIT 授权；SaCode 品牌图标未改。
+
+新增有限命名的全局主题保存 IPC，严格校验 system/light/dark，成功回执后才应用 Electron nativeTheme。界面启动、会话切换、全局读取及外观保存均以用户配置快照驱动窗口。字号保存也应用返回快照中的主题，避免另一入口刚修改主题后界面选中态与窗口颜色不同。主题/字号按钮在任一外观保存期间共同禁用。
+
+优先级明确为用户配置（缺省 system）；旧会话主题及读写协议保留，但不应用到桌面窗口。不会从当前会话自动迁移或覆盖用户配置，不删除会话历史；损坏的用户配置显式报错，不以旧会话主题代替。此为本仓旧会话设置到用户级界面的转换策略，不声明兼容上游用户设置文件格式或已提供跨进程实时订阅。
+
+最终代码与 `dualtest/theme-ui/source` 九个界面源码/资产逐文件哈希一致，未纳入并行 provider/SSE/Next SDK 改动；核心/Host 未改，沿用上一已验自包含 bundle。本批桌面 Node **91/91**、真实 Electron UI **186 项**、布局 **160 组/1240 项**，失败 0、退出码 0。最终日志为 `dualtest/theme-ui/desktop-tests-final.log`、`ui-smoke-final.log`、`layout-smoke-final.log`，结构布局报告位于该隔离源码 `apps/desktop/dist/layout/layout-report.json`。早一轮日志保留，最终结论只用 final 日志。
+
+UI 新增验证全局主题保存失败不切换颜色/选中态、非法主题拒绝、另一入口主题经字号保存同步、主题保存保留字号，以及新建/切换会话时全局深色保持、旧会话亮色记录仍可读取。布局用实际设置按钮保存两种主题，增加选择卡顺序、唯一选中态、纵向排列、同行对齐、内边距/圆角、图标尺寸与文字中心轴、行间距检查；实际打开亮暗两张 860×600 通用设置截图，确认换行、装饰图标和中文文案。未重打安装包，未重复核心单测，完整页面、全局实时订阅及打包态验收仍未完成。

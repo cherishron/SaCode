@@ -172,7 +172,7 @@ createApp({
       approval.value=null; outcome.value=""; outcomeKind.value=""; error.value="";
       previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
       catalogNote.value="已切换，正在加载会话…";
-      await refresh(); await refreshTools(); await refreshUsage(); await refreshAppearance(); await refreshWorkspace();
+      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace();
       await refreshGlobalAppearance();
       workspaceNote.value="";
       catalog.value=await window.dsh.sessionCatalog();
@@ -209,8 +209,7 @@ createApp({
       finally { catalogBusy.value = false; }
     }
     function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
-    const appearance = ref({ theme:null, scope:"session" });
-    const globalAppearance = ref({fontSize:null}), fontBusy=ref(false), fontNote=ref('');
+    const globalAppearance = ref({theme:null,fontSize:null}), fontBusy=ref(false), fontNote=ref('');
     function fontError(e) {
       const message=String(e.message||e);
       if(message.includes('settings-already-owned')) return '另一入口正在保存配置，请稍后重试。';
@@ -222,7 +221,7 @@ createApp({
       catch(e) {fontNote.value=fontError(e);}
     }
     async function setFontSize(value) {
-      if(fontBusy.value) return;
+      if(fontBusy.value || appearanceBusy.value) return;
       fontBusy.value=true; fontNote.value='正在保存全局正文字号…';
       try {
         globalAppearance.value=await window.dsh.globalAppearanceSetFontSize(value);
@@ -231,19 +230,13 @@ createApp({
       finally {fontBusy.value=false;}
     }
     const appearanceBusy = ref(false), appearanceNote = ref("");
-    async function refreshAppearance() {
-      const generation=sessionGeneration, result=await window.dsh.appearanceGet();
-      if (generation===sessionGeneration) appearance.value=result;
-    }
     async function setTheme(theme) {
-      if (appearanceBusy.value) return;
-      appearanceBusy.value=true; appearanceNote.value="正在保存外观…";
+      if (appearanceBusy.value || fontBusy.value) return;
+      appearanceBusy.value=true; appearanceNote.value="正在保存全局主题…";
       try {
-        const result=await window.dsh.appearanceSetTheme(theme);
-        appearance.value=result;
-        await refresh();
-        appearanceNote.value="已保存当前会话的外观设置";
-      } catch(e) { appearanceNote.value=String(e.message||e); }
+        globalAppearance.value=await window.dsh.globalAppearanceSetTheme(theme);
+        appearanceNote.value="已保存全局主题，切换会话后保持。";
+      } catch(e) { appearanceNote.value=fontError(e); }
       finally { appearanceBusy.value=false; }
     }
     let resizeController = null;
@@ -508,13 +501,12 @@ createApp({
     }
 
     onMounted(async () => {
+      await refreshGlobalAppearance();
       try {
         await refresh();
         await refreshTools();
         // 开机就把账读出来：重启后「已经花掉多少、停在哪个档」不该等到跑完一轮才知道
         await refreshUsage();
-        await refreshAppearance();
-        await refreshGlobalAppearance();
         await refreshCatalog();
         await refreshWorkspace();
       } catch (e) {
@@ -525,7 +517,7 @@ createApp({
     return {
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
-      appearance, appearanceBusy, appearanceNote, setTheme,
+      appearanceBusy, appearanceNote, setTheme,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace,
@@ -783,11 +775,11 @@ createApp({
         },
       })), { role: "tablist", "aria-label": "设置分类" }),
       el("section", "settings-page", [
-        el("section", "appearance-settings", [el("h2", null, "外观（当前会话）"),
-          el("div", "theme-choices", [["system","跟随系统"],["light","亮色"],["dark","深色"]].map(([id,label]) =>
-            el("button", "btn theme-choice", label, { id:"theme-"+id, "aria-pressed":self.appearance.theme===id,
-              disabled:self.appearanceBusy || self.appearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"当前会话主题" }),
-          el("p", "note", self.appearanceNote || "选择保存在当前会话；重新打开会话时恢复。", { id:"appearance-note", "aria-live":"polite" }),
+        el("section", "appearance-settings", [el("h2", "appearance-title", "主题（全局）"),
+          el("div", "theme-choices", [["light","亮色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
+            el("button", "theme-choice", [el('span','theme-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/theme-${id}.svg')`}}),el('span','theme-label',label)], { id:"theme-"+id, type:'button', "aria-pressed":self.globalAppearance.theme===id,
+              disabled:self.appearanceBusy || self.fontBusy || self.globalAppearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"全局主题" }),
+          el("p", "note", self.appearanceNote || "选择保存在用户配置；切换会话和重新打开后保持。旧会话主题记录保留，不覆盖全局主题。", { id:"appearance-note", "aria-live":"polite" }),
         ], { "aria-busy":self.appearanceBusy }),
         renderBudget("settings-budget"),
         el('section','font-settings',[
@@ -796,7 +788,7 @@ createApp({
             el('div','font-control',[
               el('div','font-stepper',[
                 el('span','font-value',self.globalAppearance.fontSize===null?'—':String(self.globalAppearance.fontSize),{id:'font-value','aria-labelledby':'font-title'}),
-                el('span','font-arrows',[[1,'增大正文字号','font-increase','M2 6l3-3 3 3'],[-1,'减小正文字号','font-decrease','M2 3l3 3 3-3']].map(([delta,label,id,path])=>h('button',{id,class:'font-arrow',type:'button','aria-label':label,disabled:self.fontBusy || self.globalAppearance.fontSize===null || (delta>0?self.globalAppearance.fontSize>=22:self.globalAppearance.fontSize<=10),onClick:()=>self.setFontSize(self.globalAppearance.fontSize+delta)},[h('svg',{width:9,height:9,viewBox:'0 0 10 10',fill:'none',stroke:'currentColor','stroke-width':1.4,'aria-hidden':'true'},[h('path',{d:path})])]))),
+                el('span','font-arrows',[[1,'增大正文字号','font-increase','M2 6l3-3 3 3'],[-1,'减小正文字号','font-decrease','M2 3l3 3 3-3']].map(([delta,label,id,path])=>h('button',{id,class:'font-arrow',type:'button','aria-label':label,disabled:self.fontBusy || self.appearanceBusy || self.globalAppearance.fontSize===null || (delta>0?self.globalAppearance.fontSize>=22:self.globalAppearance.fontSize<=10),onClick:()=>self.setFontSize(self.globalAppearance.fontSize+delta)},[h('svg',{width:9,height:9,viewBox:'0 0 10 10',fill:'none',stroke:'currentColor','stroke-width':1.4,'aria-hidden':'true'},[h('path',{d:path})])]))),
               ]),el('span','font-unit','像素'),
             ]),
           ]),el('p','note',self.fontNote || '范围 10–22 像素，切换会话和重新打开后保持。',{id:'font-note','aria-live':'polite'}),

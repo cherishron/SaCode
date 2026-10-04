@@ -183,11 +183,11 @@ async function uiSmoke() {
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
+    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].map(k => typeof (window.dsh||{})[k]).join(',')"
   );
-  note(apiShape === Array(20).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  note(apiShape === Array(21).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose'].indexOf(k) < 0).join(',')");
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");
@@ -252,7 +252,7 @@ async function uiSmoke() {
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
   note((await text('#settings-budget-usage')) === (await text('#turn-usage')), "设置用量与侧栏共用核心读数");
-  note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "会话外观默认跟随系统");
+  note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "全局主题默认跟随系统");
   for (const theme of ['light','dark','system']) {
     await click('#theme-'+theme);
     note(await waitFor(()=>js(`document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true' && document.querySelector('#appearance-note').textContent.includes('已保存')`)) && nativeTheme.themeSource===theme, `真实保存主题并驱动 Electron 主题=${theme}`);
@@ -262,7 +262,7 @@ async function uiSmoke() {
       await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
     }
   }
-  note(require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('appearance/theme\tsystem'), "主题成功回执前已写入会话日志");
+  note(require('node:fs').readFileSync(join(SESSION_DIR,'user-settings','user-settings.log'),'utf8').includes('settings/theme\tsystem') && !require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('appearance/theme'), "主题落盘到用户配置，界面不再写入会话主题");
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14'")), "全局正文字号默认 14");
   await click('#font-increase');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='15' && getComputedStyle(document.querySelector('#composer')).fontSize==='15px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='25px'")), "字号控件保存后正文与输入区共用字号轴");
@@ -278,9 +278,18 @@ async function uiSmoke() {
   const fontLease=join(SESSION_DIR,'user-settings','user-settings.log.lease');
   require('node:fs').writeFileSync(fontLease,`writer=${process.pid}-ui-font-test`);
   try {
+    await click('#theme-dark');
+    note(await waitFor(()=>js("document.querySelector('#appearance-note').textContent.includes('另一入口') && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "全局主题保存被拒时不改变选中态和窗口颜色");
     await click('#font-increase');
     note(await waitFor(()=>js("document.querySelector('#font-note').textContent.includes('另一入口') && document.querySelector('#font-value').textContent==='14' && getComputedStyle(document.querySelector('#composer')).fontSize==='14px'")), "字号保存被拒时保留核心读数和原排版");
   } finally {require('node:fs').unlinkSync(fontLease);}
+  note(await js("window.dsh.globalAppearanceSetTheme('blue').then(()=>false,e=>String(e.message).includes('bad-theme'))") && nativeTheme.themeSource==='system', "非法主题被 IPC 拒绝且窗口主题不变");
+  await bridge.request('global/appearance/set-theme',{theme:'dark'});
+  await click('#font-increase');
+  note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='15' && document.querySelector('#theme-dark').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='dark', "字号保存返回的完整用户快照同步另一入口修改的主题");
+  await js("window.dsh.globalAppearanceSetFontSize(14)");
+  await click('#theme-system');
+  note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14' && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "主题保存保持另一字段字号并恢复系统主题");
   await click('#settings-tab-models');
   note((await text('#settings-page-models')).includes('模型配置尚未开放'), "模型页如实标注配置未开放");
   await js("document.querySelector('#settings-tab-models').focus()");
@@ -681,6 +690,12 @@ async function uiSmoke() {
   } finally { require('node:fs').renameSync(movedWorkspacePath,workspaceUIPath); }
 
   // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
+  await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
+  await click('#theme-dark');
+  note(await waitFor(()=>js("document.querySelector('#theme-dark').getAttribute('aria-pressed')==='true' && !document.querySelector('#theme-dark').disabled")) && nativeTheme.themeSource==='dark', "切换会话前保存用户级深色主题");
+  await js("document.querySelector('.settings-dialog .dialog-header button').click()");
+  await bridge.request('appearance/set-theme',{theme:'light'});
+  note((await js("window.dsh.appearanceGet()")).theme==='light' && nativeTheme.themeSource==='dark', "旧会话主题可读取且不会覆盖全局窗口主题");
   const oldTheme=nativeTheme.themeSource;
   const catalogRequestBefore=bridge.request.bind(bridge);
   let catalogSnapshotCaptured=false, catalogSnapshotReleased=false, delayCatalogSnapshot=true;
@@ -710,7 +725,7 @@ async function uiSmoke() {
   bridge.request=catalogRequestBefore;
   note(await count('.msg-text')===0, "旧会话延迟投影不会覆盖新会话界面");
   note(await count('.msg-text')===0, "新会话不继承原会话消息");
-  note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource==='system', "新会话预算与主题独立初始化");
+  note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
   note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
   note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "新会话清空草稿并收缩输入高度");
@@ -724,7 +739,7 @@ async function uiSmoke() {
   note(await js(`document.querySelector('#composer').value===${JSON.stringify(originalSessionDraft)}`), "切回后恢复原会话草稿");
   note(await waitFor(()=>js(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${originalDraftHeight})<1`)), "切回后重新适配长草稿高度");
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
-  note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme, "原会话预算与主题恢复");
+  note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme && (await bridge.request('appearance/get')).theme==='light', "原会话预算恢复，旧主题记录保留且不覆盖全局主题");
   note((await bridge.request('workspace/get')).directory.includes('工作区 UI 项目'), "切回后恢复原会话项目目录");
 
   await bridge.stop();
@@ -831,27 +846,37 @@ ipcMain.handle("dsh:sessionSelect", async (_e, args) => {
   if (!args || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");
   return withHost(async()=>{
     const selected = await bridge.request("session/select", {sessionId:args.sessionId});
-    nativeTheme.themeSource=selected.theme;
     return selected;
   });
 });
 ipcMain.handle("dsh:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
+  return result;
+});
+// 桌面主题只取用户配置；旧会话主题仍可读取，但不再改变窗口。
+ipcMain.handle("dsh:globalAppearanceGet", async () => {
+  const result=await withHost(() => bridge.request("global/appearance/get"));
   nativeTheme.themeSource=result.theme;
   return result;
 });
-ipcMain.handle("dsh:globalAppearanceGet", () => withHost(() => bridge.request("global/appearance/get")));
+ipcMain.handle("dsh:globalAppearanceSetTheme", async (_e, args) => {
+  if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
+  const result=await withHost(() => bridge.request("global/appearance/set-theme", { theme:args.theme }));
+  if (!result.saved) throw new Error("theme-not-saved");
+  nativeTheme.themeSource=result.theme;
+  return result;
+});
 ipcMain.handle("dsh:globalAppearanceSetFontSize", async (_e, args) => {
   if (!args || !Number.isInteger(args.fontSize) || args.fontSize < 10 || args.fontSize > 22) throw new Error("bad-font-size");
   const result=await withHost(() => bridge.request("global/appearance/set-font-size", { fontSize:args.fontSize }));
   if (!result.saved) throw new Error("font-size-not-saved");
+  nativeTheme.themeSource=result.theme;
   return result;
 });
 ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
   if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
   const result=await withHost(() => bridge.request("appearance/set-theme", { theme: args.theme }));
   if (!result.saved) throw new Error("theme-not-saved");
-  nativeTheme.themeSource=result.theme;
   return result;
 });
 
