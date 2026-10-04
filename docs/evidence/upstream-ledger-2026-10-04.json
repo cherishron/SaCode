@@ -1,0 +1,1904 @@
+{
+  "snapshot": {
+    "source": "deepseek-ai/deepseek-harness@639ed015397290b3745d163aafe02ffee4aa3f84",
+    "fetched_on": "2026-10-04"
+  },
+  "denominator": {
+    "declared_unique_pages": 63,
+    "completeness": "proven",
+    "via": "github-contents-api-192-entries-verified-against-matrix-63-modules"
+  },
+  "entries": [
+    {
+      "key": "reference/subsystems/agent-team/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/agent-team.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/agent-team/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/agent-team.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/approval/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/approval.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/approval/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/approval.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/attachment/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/attachment.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/attachment/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/attachment.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/boot/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/boot.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/boot/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/boot.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/browser-use/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/browser-use.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/browser-use/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/browser-use.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/client-modules/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/client-modules.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/client-modules/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/client-modules.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/client-resources/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/client-resources.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/client-resources/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/client-resources.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/commands/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/commands.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/commands/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/commands.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/compaction/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/compaction.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/compaction/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/compaction.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/computer-use/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/computer-use.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/computer-use/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/computer-use.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/conversation/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/conversation.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/conversation/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/conversation.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/core/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/core.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/core/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/core.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/credentials/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/credentials.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/credentials/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/credentials.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/deliverables/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/deliverables.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/deliverables/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/deliverables.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/extensions/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/extensions.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/extensions/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/extensions.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/feedback/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/feedback.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/feedback/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/feedback.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/filesystem/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/filesystem.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/filesystem/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/filesystem.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/goal/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/goal.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/goal/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/goal.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/invariants/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/invariants.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/invariants/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/invariants.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/jobs/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/jobs.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/jobs/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/jobs.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/llm-streaming/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/llm-streaming.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/llm-streaming/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/llm-streaming.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/lsp/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/lsp.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/lsp/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/lsp.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/mcp/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/mcp.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/mcp/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/mcp.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/office-to-pdf/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/office-to-pdf.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/office-to-pdf/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/office-to-pdf.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/otel/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/otel.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/otel/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/otel.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/permission-presets/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/permission-presets.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/permission-presets/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/permission-presets.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/persistence/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/persistence.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/persistence/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/persistence.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/plan/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/plan.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/plan/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/plan.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/product-telemetry/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/product-telemetry.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/product-telemetry/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/product-telemetry.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/ptc-runtime/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/ptc-runtime.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/ptc-runtime/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/ptc-runtime.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/sandbox/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/sandbox.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/sandbox/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/sandbox.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/schedule/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/schedule.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/schedule/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/schedule.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/scope/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/scope.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/scope/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/scope.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-projection/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-projection.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-projection/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-projection.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-query/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-query.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-query/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-query.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-reference/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-reference.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-reference/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-reference.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-telemetry/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-telemetry.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-telemetry/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-telemetry.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-title/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-title.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/session-title/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/session-title.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/settings/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/settings.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/settings/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/settings.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/shell/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/shell.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/shell/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/shell.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/sidebar-right/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/sidebar-right.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/sidebar-right/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/sidebar-right.zh.md",
+      "channel": "repo-raw",
+      "status": 404,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "empty",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/skills/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/skills.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/skills/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/skills.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/slots/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/slots.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/slots/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/slots.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/spill/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/spill.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/spill/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/spill.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/ssh/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/ssh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/ssh/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/ssh.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/storage/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/storage.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/storage/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/storage.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/subagent/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/subagent.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/subagent/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/subagent.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/subprocess/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/subprocess.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/subprocess/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/subprocess.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/system-prompt/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/system-prompt.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/system-prompt/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/system-prompt.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/terminal/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/terminal.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/terminal/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/terminal.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/todo/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/todo.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/todo/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/todo.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/token-meter/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/token-meter.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/token-meter/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/token-meter.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/tools/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/tools.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/tools/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/tools.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/typert/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/typert.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/typert/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/typert.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/user-questions/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/user-questions.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/user-questions/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/user-questions.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/voice-input/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/voice-input.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/voice-input/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/voice-input.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web-client/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web-client.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web-client/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web-client.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web-server/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web-server.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/web-server/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/web-server.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/webhook/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/webhook.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/webhook/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/webhook.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/workflow/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/workflow.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/workflow/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/workflow.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/workspace/en",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/workspace.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    },
+    {
+      "key": "reference/subsystems/workspace/zh",
+      "url": "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/639ed015397290b3745d163aafe02ffee4aa3f84/docs/subsystems/workspace.zh.md",
+      "channel": "repo-raw",
+      "status": 200,
+      "transport_error": null,
+      "identity_source": "user-provided",
+      "body": "full",
+      "list_complete": true,
+      "secondhand": false
+    }
+  ],
+  "claims": [
+    {
+      "id": "C-agent-team",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/agent-team/en",
+        "reference/subsystems/agent-team/zh"
+      ]
+    },
+    {
+      "id": "C-approval",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/approval/en",
+        "reference/subsystems/approval/zh"
+      ]
+    },
+    {
+      "id": "C-attachment",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/attachment/en",
+        "reference/subsystems/attachment/zh"
+      ]
+    },
+    {
+      "id": "C-boot",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/boot/en",
+        "reference/subsystems/boot/zh"
+      ]
+    },
+    {
+      "id": "C-browser-use",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/browser-use/en",
+        "reference/subsystems/browser-use/zh"
+      ]
+    },
+    {
+      "id": "C-client-modules",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/client-modules/en",
+        "reference/subsystems/client-modules/zh"
+      ]
+    },
+    {
+      "id": "C-client-resources",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/client-resources/en",
+        "reference/subsystems/client-resources/zh"
+      ]
+    },
+    {
+      "id": "C-commands",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/commands/en",
+        "reference/subsystems/commands/zh"
+      ]
+    },
+    {
+      "id": "C-compaction",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/compaction/en",
+        "reference/subsystems/compaction/zh"
+      ]
+    },
+    {
+      "id": "C-computer-use",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/computer-use/en",
+        "reference/subsystems/computer-use/zh"
+      ]
+    },
+    {
+      "id": "C-conversation",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/conversation/en",
+        "reference/subsystems/conversation/zh"
+      ]
+    },
+    {
+      "id": "C-core",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/core/en",
+        "reference/subsystems/core/zh"
+      ]
+    },
+    {
+      "id": "C-credentials",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/credentials/en",
+        "reference/subsystems/credentials/zh"
+      ]
+    },
+    {
+      "id": "C-deliverables",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/deliverables/en",
+        "reference/subsystems/deliverables/zh"
+      ]
+    },
+    {
+      "id": "C-extensions",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/extensions/en",
+        "reference/subsystems/extensions/zh"
+      ]
+    },
+    {
+      "id": "C-feedback",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/feedback/en",
+        "reference/subsystems/feedback/zh"
+      ]
+    },
+    {
+      "id": "C-filesystem",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/filesystem/en",
+        "reference/subsystems/filesystem/zh"
+      ]
+    },
+    {
+      "id": "C-goal",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/goal/en",
+        "reference/subsystems/goal/zh"
+      ]
+    },
+    {
+      "id": "C-invariants",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/invariants/en",
+        "reference/subsystems/invariants/zh"
+      ]
+    },
+    {
+      "id": "C-jobs",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/jobs/en",
+        "reference/subsystems/jobs/zh"
+      ]
+    },
+    {
+      "id": "C-llm-streaming",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/llm-streaming/en",
+        "reference/subsystems/llm-streaming/zh"
+      ]
+    },
+    {
+      "id": "C-lsp",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/lsp/en",
+        "reference/subsystems/lsp/zh"
+      ]
+    },
+    {
+      "id": "C-mcp",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/mcp/en",
+        "reference/subsystems/mcp/zh"
+      ]
+    },
+    {
+      "id": "C-office-to-pdf",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/office-to-pdf/en",
+        "reference/subsystems/office-to-pdf/zh"
+      ]
+    },
+    {
+      "id": "C-otel",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/otel/en",
+        "reference/subsystems/otel/zh"
+      ]
+    },
+    {
+      "id": "C-permission-presets",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/permission-presets/en",
+        "reference/subsystems/permission-presets/zh"
+      ]
+    },
+    {
+      "id": "C-persistence",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/persistence/en",
+        "reference/subsystems/persistence/zh"
+      ]
+    },
+    {
+      "id": "C-plan",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/plan/en",
+        "reference/subsystems/plan/zh"
+      ]
+    },
+    {
+      "id": "C-product-telemetry",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/product-telemetry/en",
+        "reference/subsystems/product-telemetry/zh"
+      ]
+    },
+    {
+      "id": "C-ptc-runtime",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/ptc-runtime/en",
+        "reference/subsystems/ptc-runtime/zh"
+      ]
+    },
+    {
+      "id": "C-sandbox",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/sandbox/en",
+        "reference/subsystems/sandbox/zh"
+      ]
+    },
+    {
+      "id": "C-schedule",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/schedule/en",
+        "reference/subsystems/schedule/zh"
+      ]
+    },
+    {
+      "id": "C-scope",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/scope/en",
+        "reference/subsystems/scope/zh"
+      ]
+    },
+    {
+      "id": "C-session",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session/en",
+        "reference/subsystems/session/zh"
+      ]
+    },
+    {
+      "id": "C-session-projection",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session-projection/en",
+        "reference/subsystems/session-projection/zh"
+      ]
+    },
+    {
+      "id": "C-session-query",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session-query/en",
+        "reference/subsystems/session-query/zh"
+      ]
+    },
+    {
+      "id": "C-session-reference",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session-reference/en",
+        "reference/subsystems/session-reference/zh"
+      ]
+    },
+    {
+      "id": "C-session-telemetry",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session-telemetry/en",
+        "reference/subsystems/session-telemetry/zh"
+      ]
+    },
+    {
+      "id": "C-session-title",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/session-title/en",
+        "reference/subsystems/session-title/zh"
+      ]
+    },
+    {
+      "id": "C-settings",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/settings/en",
+        "reference/subsystems/settings/zh"
+      ]
+    },
+    {
+      "id": "C-shell",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/shell/en",
+        "reference/subsystems/shell/zh"
+      ]
+    },
+    {
+      "id": "C-sidebar-right",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/sidebar-right/en"
+      ]
+    },
+    {
+      "id": "C-skills",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/skills/en",
+        "reference/subsystems/skills/zh"
+      ]
+    },
+    {
+      "id": "C-slots",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/slots/en",
+        "reference/subsystems/slots/zh"
+      ]
+    },
+    {
+      "id": "C-spill",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/spill/en",
+        "reference/subsystems/spill/zh"
+      ]
+    },
+    {
+      "id": "C-ssh",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/ssh/en",
+        "reference/subsystems/ssh/zh"
+      ]
+    },
+    {
+      "id": "C-storage",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/storage/en",
+        "reference/subsystems/storage/zh"
+      ]
+    },
+    {
+      "id": "C-subagent",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/subagent/en",
+        "reference/subsystems/subagent/zh"
+      ]
+    },
+    {
+      "id": "C-subprocess",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/subprocess/en",
+        "reference/subsystems/subprocess/zh"
+      ]
+    },
+    {
+      "id": "C-system-prompt",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/system-prompt/en",
+        "reference/subsystems/system-prompt/zh"
+      ]
+    },
+    {
+      "id": "C-terminal",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/terminal/en",
+        "reference/subsystems/terminal/zh"
+      ]
+    },
+    {
+      "id": "C-todo",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/todo/en",
+        "reference/subsystems/todo/zh"
+      ]
+    },
+    {
+      "id": "C-token-meter",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/token-meter/en",
+        "reference/subsystems/token-meter/zh"
+      ]
+    },
+    {
+      "id": "C-tools",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/tools/en",
+        "reference/subsystems/tools/zh"
+      ]
+    },
+    {
+      "id": "C-typert",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/typert/en",
+        "reference/subsystems/typert/zh"
+      ]
+    },
+    {
+      "id": "C-user-questions",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/user-questions/en",
+        "reference/subsystems/user-questions/zh"
+      ]
+    },
+    {
+      "id": "C-voice-input",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/voice-input/en",
+        "reference/subsystems/voice-input/zh"
+      ]
+    },
+    {
+      "id": "C-web",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/web/en",
+        "reference/subsystems/web/zh"
+      ]
+    },
+    {
+      "id": "C-web-client",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/web-client/en",
+        "reference/subsystems/web-client/zh"
+      ]
+    },
+    {
+      "id": "C-web-server",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/web-server/en",
+        "reference/subsystems/web-server/zh"
+      ]
+    },
+    {
+      "id": "C-webhook",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/webhook/en",
+        "reference/subsystems/webhook/zh"
+      ]
+    },
+    {
+      "id": "C-workflow",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/workflow/en",
+        "reference/subsystems/workflow/zh"
+      ]
+    },
+    {
+      "id": "C-workspace",
+      "polarity": "positive",
+      "refs": [
+        "reference/subsystems/workspace/en",
+        "reference/subsystems/workspace/zh"
+      ]
+    }
+  ]
+}

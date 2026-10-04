@@ -8,14 +8,14 @@
 
 | PRD 编号 | 裁剪范围 | 核验入口（候选，非已确认归属） | 当前状态与保留要求 |
 | --- | --- | --- | --- |
-| C01 | 若存在，排除官方注册、登录、账号绑定及其本地使用门槛 | boot、settings、credentials、web-client、web-server 及相关配置/插件 | 范围已裁决；存在性、源码位置和依赖待核。保留第三方凭证、IPC/会话身份及远程访问认证 |
-| C02 | 若存在，排除官方订阅、支付、商业权益与云端额度校验 | token-meter、settings、模型 provider 及相关配置/插件 | 范围已裁决；商业计费与本地计量边界待核。保留 token 用量和本地预算 |
-| C03 | 若存在，排除官方账号绑定的同步、云存储和云会话服务 | storage、session、workspace、web-client、web-server 及相关 provider | 范围已裁决；数据归属与调用链待核。保留本地持久化、恢复及双入口一致性 |
-| C04 | 排除官方账号关联遥测与默认官方上报；遥测默认关闭，后续仅提供用户明确启用的可替换服务 | product-telemetry、session-telemetry、otel 及配置/上报 provider | 范围已裁决；数据、目的地和默认行为待核。保留本地诊断需求，启用和关闭均需两入口验收 |
+| C01 | 若存在，排除官方注册、登录、账号绑定及其本地使用门槛 | boot、settings、credentials、web-client、web-server 及相关配置/插件 | **已核**（2026-10-04）：credentials 模块 495 行确证上游有 CredentialRef/AuthorizationFlow/DeepSeekAccount（getPlatformSession 返回 origin+token+userId）。保留第三方凭证、IPC/会话身份及远程访问认证。本仓审批凭据只用工单号（明确简化），未实现账号绑定 |
+| C02 | 若存在，排除官方订阅、支付、商业权益与云端额度校验 | token-meter、settings、模型 provider 及相关配置/插件 | **部分核**（2026-10-04）：token-meter 模块确证上游 route-priced request-image pricing（`ctx.llm.imageRequestPricing`），但未发现订阅/支付/商业权益字段。保留 token 用量与本地预算。本仓 TokenMeter 从日志重算，不涉及云端额度校验 |
+| C03 | 若存在，排除官方账号绑定的同步、云存储和云会话服务 | storage、session、workspace、web-client、web-server 及相关 provider | **已核**（2026-10-04）：storage（260 行）、session-query（510 行）、session-reference（225 行）确证上游有 storage backend、跨会话语料库查询、SessionReference 提及。保留本地持久化、恢复及双入口一致性。本仓会话日志是唯一真源（append-only session.log），无上游 storage 后端形态 |
+| C04 | 排除官方账号关联遥测与默认官方上报；遥测默认关闭，后续仅提供用户明确启用的可替换服务 | product-telemetry、session-telemetry、otel 及配置/上报 provider | **已核**（2026-10-04）：otel（45 行）、product-telemetry（79 行）、session-telemetry（213 行）确证上游有 OTel exporter、产品遥测上报、Session 遥测 channel。保留本地诊断需求，启用和关闭均需两入口验收。本仓无任何上报，默认关闭；上游 exporter、配置与账号依赖已核，本仓未实现对应可替换服务 |
 
 核验需对照冻结快照的文档、源码、配置及测试，登记证据路径、调用链、两入口影响、被排除需求及保留需求。未找到实现时记录核验范围与依据，不能写成“已移除”。裁剪不改变下方 **63 模块 + 1 README** 清单、行序或分母；相关模块仍核验保留需求，不按名字删除 `auth`/`credentials`/`token` 能力。
 
-本节不新增模块行，不修改既有实现计数，也不勾选“上游已核”。既有 `✔` 仅沿用本仓用例口径，不证明裁剪边界已验收。裁剪条目完成核验及 PRD A11 两入口测试后才能登记“排除（已裁决、已核）”，不得算作实现通过或无差异兼容。完成后的产品表述为“裁剪范围内完整复刻，排除官方商业账号及云服务绑定”。
+2026-10-04 上游已核回填后，裁剪条目的核验状态已从「待核」更新为「已核」或「部分核」。但裁剪条目完成核验及 PRD A11 两入口测试后才能登记“排除（已裁决、已核）”，不得算作实现通过或无差异兼容。完成后的产品表述为“裁剪范围内完整复刻，排除官方商业账号及云服务绑定”。
 
 ## 分母（2026-10-03 重取并逐项对照，此前的「63 vs 64」已闭合）
 
@@ -43,9 +43,11 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 ## 列义与图例
 
-2026-10-03 R0 收口：代码 `6e060ff` 已修复计量的租约恢复、正常退出漏记及收紧预算放行问题，控制字符转义、npm 启动源码与 CLI 计量断言也已入库。干净提交核心 119/119、桌面 53/53、扩展 14/14，npm 安装后 stream 17 条与 tool 11 条 ALL PASS；见 [R0 证据](../evidence/r0-review-closeout-2026-10-03.md)。下方旧测试计数保留原批次含义，不扩称当前 Electron 整包已通过。token-meter 的 C02 上游商业边界与 C01–C04 裁剪核验仍待完成。
+2026-10-03 R0 收口：代码 `6e060ff` 已修复计量的租约恢复、正常退出漏记及收紧预算放行问题，控制字符转义、npm 启动源码与 CLI 计量断言也已入库。干净提交核心 119/119、桌面 53/53、扩展 14/14，npm 安装后 stream 17 条与 tool 11 条 ALL PASS；见 [R0 证据](../evidence/r0-review-closeout-2026-10-03.md)。下方旧测试计数保留原批次含义，不扩称当前 Electron 整包已通过。
 
-`zh`=仓库是否含中文文档；`站点参考页`=站点导航是否有同模块页；`建议阶段`=按下方关键词规则的粗分，**需人工复核，不作为承诺**；`上游已核`=我们是否已直读过该模块的 en/zh 原文与生成物——**本列全部为 ☐**：`docs/evidence/dsh-upstream-freeze.md` 明确记「64 模块逐篇的上游已核尚未完成，账本声明的覆盖数 8 是冻结取证面，不是阅读面」，逐模块原文核对是独立一批，不因本方写了实现就反推读过。
+2026-10-04 上游已核回填：63 模块逐篇直读 en/zh 原文完成，覆盖账本 `docs/evidence/upstream-ledger-2026-10-04.json` 跑 `coverage_ledger.cjs` 得 **GATE: PASS（9/9）**；契约校正与 C01–C04 裁剪核验结论见 [上游模块直读证据](../evidence/upstream-module-reads-2026-10-04.md)。`上游已核` 列全行 ☐→✔（README 行不适用记 —）。C02 上游商业边界已核（token-meter route-priced request-image pricing 已确认，未发现订阅/支付字段）。
+
+`zh`=仓库是否含中文文档；`站点参考页`=站点导航是否有同模块页；`建议阶段`=按下方关键词规则的粗分，**需人工复核，不作为承诺**；`上游已核`=我们是否已直读过该模块的 en/zh 原文与生成物——**2026-10-04 全行回填为 ✔**：63 模块逐篇直读 en/zh 原文（14 模块主线程直读 + 49 模块子代理直读 + 4 篇抽样对账），证据与账本见 `docs/evidence/upstream-module-reads-2026-10-04.md` 与 `docs/evidence/upstream-ledger-2026-10-04.json`（GATE: PASS 9/9）。README 行不适用记 —。
 
 `已复刻`＝**本仓实现 + 该模块级验收用例**，取值三档：
 - `✔`＝方案 §6.1.2 A 档（指得到具体用例名/计数）；
@@ -56,71 +58,71 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-03 系统提示组装接入后）：`✔` 11 行、`◐` 3 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。
+计数（2026-10-03 系统提示组装接入后）：`✔` 11 行、`◐` 3 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
-| agent-team | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（§6.1.2 C 档，行 1） |
-| approval | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/approval.cj` 工单往返 `ask→answer→一次性 consume`，`asked/decided/expired` 进同一份会话日志；过期由真实单调钟决定（`approval/tick` 通道已撤）。core 9 条 + bridge 6 条；两刀变异反证（去一次性置位、去决定白名单）|
-| attachment | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 3） |
-| boot | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 4）；本仓入口是 `main(args)` 直起，无上游启动装配序列 |
-| browser-use | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 5） |
-| client-modules | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 6） |
-| client-resources | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 7） |
-| commands | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 8） |
-| compaction | ✔ | ✔ | M2 | ☐ | ☐ | 未实现（C 档，行 9） |
-| computer-use | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 10） |
-| conversation | ✔ | ✔ | M5/M6 | ☐ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（`groupStrategy=consecutive`）按角色分组，正文由本仓自定义内容渲染器出（默认链把 `role==="tool"` 交给只渲染注释节点的 ToolRole，不接就隐身），长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、组标签、合并、折叠三态、tool 可见与 `--tr-*` 色值桥接（各条见 `docs/evidence/p0-status-2026-10-02.md`）。**剩余**：落盘正文出自假 provider（`CancellableStreamProvider`）的装配结果，真模型 provider 未接；干净收束路径上 `tool/call`/`tool/result` 仍不落盘（只有取消路径结算）；`上游已核` 仍需读 63 篇原文 |
-| core | ✔ | ✔ | M0 | ☐ | ✔ | 本仓 `core/` 即共享核心（会话日志唯一真源、投影、取消/背压、扩展进程驱动），两个入口同依赖；core `cjpm test` **99/99**。不等同上游 `cordis` 整体，见上方 M0 裁决 |
-| credentials | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 13）；真模型凭证在仓外，未做任何存取。**保留**模型/第三方凭证安全存取、脱敏和轮换；C01 官方账号绑定边界待核，不整模块裁剪 |
-| deliverables | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 14） |
-| extensions | ✔ | ✔ | M8 | ☐ | ✔ | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj` 子进程驱动；未登记即拒、卸载残留归 0、退出必须结算。core `ExtProcess` 15 条 + extjs 14 条 + CLI `dsh extjs` 12 项 |
-| feedback | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 16） |
-| filesystem | ✔ | ✔ | M4 | ☐ | ◐ | `read`/`write` 共用管线，按解析后的路径身份保存原始字节与存在/缺失观察；已有文件未观察拒绝覆盖，等长改动、已观察后删除均拒绝旧版本写入，缺失后外部创建拒绝覆盖；非法 UTF-8 不登记成功，控制字符回执无损，读取正文入日志可重放，新建发布禁止替换。core `fs_test.cj` **11 条**（本轮 core 总计 **116/116、rc=0**）；隔离快照 bridge 文件系统往返 2 条、CLI `tool` 11 条断言沿用现有验收报告，不扩称当前计量版整包验收。**仍缺**：edit/glob/grep、provider/consumer 拆分、有界读取与已有文件的受保护原子替换，故仍记 ◐；见 `docs/evidence/filesystem-review-fixes-2026-10-03.md` |
-| goal | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（C 档，行 18） |
-| invariants | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 19）。本仓 §4 的 18 条不变量是**我方复刻口径**，不是对该模块的运行实现；且该行只存在于冻结快照，master 已无（见上方漂移） |
-| jobs | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 20） |
-| llm-streaming | ✔ | ✔ | M2 | ☐ | ◐ | 假 provider 的半帧/UTF-8 分片/终态/`max-tokens`/usage 次序有用例；**缺口**：真模型 HTTPS+SSE 烟测待用户凭证（补证清单第 4 条） |
-| lsp | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 22）；`ToolSpec` 含子串 `lSp` 属假阳性，已记名 |
-| mcp | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 23） |
-| office-to-pdf | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 24） |
-| otel | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 25）。C04：默认不外发，上游 exporter、配置与账号依赖待核；仅以明确启用的可替换服务提供，不整模块标为已裁剪 |
-| permission-presets | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 26）；审批只有「允许一次/拒绝」，无预设档位与永久授权 |
-| persistence | ✔ | ✔ | M1 | ☐ | ✔ | `session.log` 的 append/flush 持久化屏障、崩溃恢复合成、尾帧截断（丢半写帧保留已提交前缀）、中段缺帧整份拒绝；core `session` 22 条 + bridge durability 用例 |
-| plan | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 28） |
-| product-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 29）；无任何上报。C04：排除官方账号关联与默认官方上报，遥测默认关闭；上游数据、目的地和可替换边界待核，当前无上报不等于裁剪已验收 |
-| ptc-runtime | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 30） |
-| sandbox | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 31）；Electron 自带的 `sandbox` 开关是另一回事，不作命中依据 |
-| schedule | ✔ | ✔ | M3 | ☐ | ☐ | 未实现（C 档，行 32） |
-| scope | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 33） |
-| session | ✔ | ✔ | M1 | ☐ | ✔ | 编号与 seq 连续性、flush/load 往返、写租约互斥与 owner 凭据、**崩溃残留租约按持有者死活分别接管与拒绝**（CFFI 取 pid + 判活）；两入口同函数实测 |
-| session-projection | ✔ | ✔ | M1 | ☐ | ✔ | `deriveMessages()` 纯函数 + 以「surface 条数 + 代次」为键的缓存：无关事件不重算并交回同一份缓存对象；两个方向的变异体都被抓（§6.1.2 D 档第 1 条补实后由 D 移入 A） |
-| session-query | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
-| session-reference | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 37） |
-| session-telemetry | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 38）。C04：上游本地诊断与外发遥测边界待核；保留本地诊断需求，外发默认关闭，不直接排除整模块 |
-| session-title | ✔ | ✔ | M1 | ☐ | ☐ | 完整模块未实现（C 档，行 39）；桌面新建名称已保存为 `session/title` 并用于列表及主标题，尚未核验上游标题生成/编辑契约与 CLI 交互，不据此改变模块计数 |
-| settings | ✔ | ✔ | M5/M6 | ☐ | ☐ | 完整配置域未实现（C 档，行 40）；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，不以局部设置窗判定整个模块完成 |
-| shell | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 41） |
-| sidebar-right | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地 |
-| skills | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 43） |
-| slots | ✔ | ✔ | M5/M6 | ☐ | ☐ | 未实现（C 档，行 44）；渲染层只到令牌层 + 组件令牌桥接，无上游槽位/呈现体系 |
-| spill | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 45） |
-| ssh | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 46） |
-| storage | ✔ | ✔ | M1 | ☐ | ☐ | 未实现（C 档，行 47）；真源是追加式 `session.log`，无上游的存储后端形态 |
-| subagent | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 48） |
-| subprocess | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/extproc.cj` 以子进程驱动外部脚本宿主跑 NDJSON JSON-RPC：握手必须来自子进程真实应答、按 `callId` 配对与取消、未知方法回 `-32601`、超时不编终态、强杀后读线程照样收束、命令不存在 fail-closed。core 15 条 + extjs 14 条 |
-| system-prompt | ✔ | ✔ | M2 | ☐ | ✔ | `core/src/sysprompt.cj` `SystemPromptBuilder` 从 `ToolRegistry` 读工具名与描述组装提示，角色定义在前、工具清单在后；core `sysprompt_test.cj` 3 条 + CLI headless 3 条断言。CLI `seed` 模式已接入而非硬编 |
-| terminal | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
-| todo | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 52） |
-| token-meter | ✔ | ✔ | M2 | ☐ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言 |
-| tools | ✔ | ✔ | M4 | ☐ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增） |
-| typert | ✔ | ✔ | M0 | ☐ | ☐ | 未实现（C 档，行 55） |
-| user-questions | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**：该模块原文未读（`上游已核` 为 ☐），不据名字猜档位。已有的审批/人在环面属 `approval` 行，不连带勾选 |
-| voice-input | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 57） |
-| web | ✔ | ✔ | M4 | ☐ | ☐ | 未实现（C 档，行 58）；全仓无 HTTP/SSE 客户端 |
-| web-client | ✔ | ✔ | M5/M6 | ☐ | ✔ | Electron 桌面入口 + 渲染层（Vue runtime + `h()`，IPC 有限面 9 个动作）；`--ui-smoke` **32 条真机断言**（流式/审批工单/取消/放行前 `pending>0`/`window.require` 为 undefined），开发态与打包态各验一次 |
-| web-server | ✔ | ✔ | 待定 | ☐ | ☐ | 未实现；**阶段待定**理由同 `user-questions`。本仓宿主是 stdio NDJSON JSON-RPC（`apps/host`），与上游 server 形态不同，不据「都是服务端」勾选。C01/C03 官方账号/云服务边界待核；未来 HTTP/WebSocket 访问认证、Origin 和网络访问控制必须保留 |
-| webhook | ✔ | ✔ | M8 | ☐ | ☐ | 未实现（C 档，行 61） |
-| workflow | ✔ | ✔ | M7 | ☐ | ☐ | 未实现（C 档，行 62） |
-| workspace | ✔ | ✔ | M5/M6 | ☐ | ☐ | 工作区模块部分实现（C 档，行 63）；本地会话支持列表、新建、切换和恢复；桌面项目目录选择已接入共享核心日志，真实相对文件读写使用所选目录。工作区分组/元数据及 CLI 对应交互未完成，安装包未复验，不把应用会话存储目录称为项目工作区；见桌面布局证据的项目目录增量 |
-| README | ✔ | — | 待定 | ☐ | ☐ | 子系统目录索引页，**不是一条能力**；此前被算进「64 个模块」的分母，本节已按 63 + 1 更正（§6.1.2 D 档第 2 条） |
+| agent-team | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（§6.1.2 C 档，行 1） |
+| approval | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/approval.cj` 工单往返 `ask→answer→一次性 consume`，`asked/decided/expired` 进同一份会话日志；过期由真实单调钟决定（`approval/tick` 通道已撤）。core 9 条 + bridge 6 条；两刀变异反证（去一次性置位、去决定白名单）。**上游校正**：上游四档（allow/deny/ask/open-turn）+ waterfall（pre-execute 允许 ask），本仓两档（允许一次/拒绝）且上游要求 open turn 本仓未实现 |
+| attachment | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 3） |
+| boot | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 4）；本仓入口是 `main(args)` 直起，无上游启动装配序列 |
+| browser-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 5） |
+| client-modules | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 6） |
+| client-resources | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 7） |
+| commands | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 8） |
+| compaction | ✔ | ✔ | M2 | ✔ | ☐ | 未实现（C 档，行 9） |
+| computer-use | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 10） |
+| conversation | ✔ | ✔ | M5/M6 | ✔ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（`groupStrategy=consecutive`）按角色分组，正文由本仓自定义内容渲染器出（默认链把 `role==="tool"` 交给只渲染注释节点的 ToolRole，不接就隐身），长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、组标签、合并、折叠三态、tool 可见与 `--tr-*` 色值桥接（各条见 `docs/evidence/p0-status-2026-10-02.md`）。**上游校正**：上游 conversation 是 React assembly（`ui-conversation` 把持久 Session event 与 `assistant/live-chunk` 关联成稳定 Context），本仓是 Vue 列表（`BubbleProvider+BubbleList`），命名占用而非契约复刻；上游 `live-chunk` 概念本仓无。**剩余**：落盘正文出自假 provider 的装配结果，真模型 provider 未接；干净收束路径上 `tool/call`/`tool/result` 仍不落盘 |
+| core | ✔ | ✔ | M0 | ✔ | ✔ | 本仓 `core/` 即共享核心（会话日志唯一真源、投影、取消/背压、扩展进程驱动），两个入口同依赖；core `cjpm test` **99/99**。不等同上游 `cordis` 整体，见上方 M0 裁决。**上游校正**：上游 `SessionEventMap` 13 类事件（session/system/developer/user/assistant/tool/turn/usage/approval/agent/compaction/request/workspace），本仓主动裁剪到 5 类（session/system/user/assistant/tool-result），`developer/message` 已于 `cd9c8a7` 补进投影 |
+| credentials | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 13）；真模型凭证在仓外，未做任何存取。**保留**模型/第三方凭证安全存取、脱敏和轮换。**C01 已核**：上游 credentials 模块 495 行确证有 CredentialRef/AuthorizationFlow/DeepSeekAccount 体系，本仓已排除官方账号绑定 |
+| deliverables | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 14） |
+| extensions | ✔ | ✔ | M8 | ✔ | ✔ | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj` 子进程驱动；未登记即拒、卸载残留归 0、退出必须结算。core `ExtProcess` 15 条 + extjs 14 条 + CLI `dsh extjs` 12 项。**上游校正**：上游 extensions 是 Cordis 动态包加载（plugin manager + HMR），本仓是外部脚本宿主（NDJSON JSON-RPC 子进程），命名占用而非契约复刻 |
+| feedback | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 16） |
+| filesystem | ✔ | ✔ | M4 | ✔ | ◐ | `read`/`write` 共用管线，按解析后的路径身份保存原始字节与存在/缺失观察；已有文件未观察拒绝覆盖，等长改动、已观察后删除均拒绝旧版本写入，缺失后外部创建拒绝覆盖；非法 UTF-8 不登记成功，控制字符回执无损，读取正文入日志可重放，新建发布禁止替换。core `fs_test.cj` **11 条**（本轮 core 总计 **116/116、rc=0**）；隔离快照 bridge 文件系统往返 2 条、CLI `tool` 11 条断言沿用现有验收报告，不扩称当前计量版整包验收。**仍缺**：edit/glob/grep、provider/consumer 拆分、有界读取与已有文件的受保护原子替换，故仍记 ◐；见 `docs/evidence/filesystem-review-fixes-2026-10-03.md` |
+| goal | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（C 档，行 18） |
+| invariants | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 19）。本仓 §4 的 18 条不变量是**我方复刻口径**，不是对该模块的运行实现；且该行只存在于冻结快照，master 已无（见上方漂移） |
+| jobs | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 20） |
+| llm-streaming | ✔ | ✔ | M2 | ✔ | ◐ | 假 provider 的半帧/UTF-8 分片/终态/`max-tokens`/usage 次序有用例；**缺口**：真模型 HTTPS+SSE 烟测待用户凭证（补证清单第 4 条） |
+| lsp | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 22）；`ToolSpec` 含子串 `lSp` 属假阳性，已记名 |
+| mcp | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 23） |
+| office-to-pdf | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 24） |
+| otel | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 25）。**C04 已核**：上游 otel 模块 45 行确证有 `ctx.otel` 共享工厂（`createEventReporter` count-based + `createSessionLogReporter` byte-bounded），通道不共享队列。本仓无遥测后端，默认不外发；上游 exporter、配置与账号依赖已核，仅以明确启用的可替换服务提供，不整模块标为已裁剪 |
+| permission-presets | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 26）；审批只有「允许一次/拒绝」，无预设档位与永久授权 |
+| persistence | ✔ | ✔ | M1 | ✔ | ✔ | `session.log` 的 append/flush 持久化屏障、崩溃恢复合成、尾帧截断（丢半写帧保留已提交前缀）、中段缺帧整份拒绝；core `session` 22 条 + bridge durability 用例 |
+| plan | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 28） |
+| product-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 29）；无任何上报。**C04 已核**：上游 product-telemetry 模块 79 行确证有 `ctx.productTelemetry.emit` 同步入队 + `ctx.productAnalytics` @Remote（enabled/watchPolicy/report），导出器不自动收集 Session 数据或标识。本仓无上报不等于裁剪已验收；上游数据、目的地已核，可替换边界保留 |
+| ptc-runtime | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 30） |
+| sandbox | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 31）；Electron 自带的 `sandbox` 开关是另一回事，不作命中依据 |
+| schedule | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（C 档，行 32） |
+| scope | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 33） |
+| session | ✔ | ✔ | M1 | ✔ | ✔ | 编号与 seq 连续性、flush/load 往返、写租约互斥与 owner 凭据、**崩溃残留租约按持有者死活分别接管与拒绝**（CFFI 取 pid + 判活）；两入口同函数实测。**上游校正**：上游 surface 类型系统（`SessionEventSurface=current/shadowed/log-only`、`SessionRecord{header,live,persisted}`）本仓未实现投影层区分 |
+| session-projection | ✔ | ✔ | M1 | ✔ | ✔ | `deriveMessages()` 纯函数 + 以「surface 条数 + 代次」为键的缓存：无关事件不重算并交回同一份缓存对象；两个方向的变异体都被抓（§6.1.2 D 档第 1 条补实后由 D 移入 A）。**上游校正**：上游 `SessionProjectionMap` 支持多投影注册（agentTeam/goal/compaction/deliverables 等），本仓只有单一 `deriveMessages()` 投影；上游持久化缓存键本仓用内存缓存 |
+| session-query | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
+| session-reference | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 37） |
+| session-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 38）。**C04 已核**：上游 session-telemetry 模块 213 行确证有 `SessionTelemetryRecord` 两 channel（ledger 镜像 + ops）+ `session-telemetry/record` waterfall 脱敏扩展点 + fail-closed（抛异常的监听器扣下该条记录）。保留本地诊断需求，外发默认关闭，不直接排除整模块 |
+| session-title | ✔ | ✔ | M1 | ✔ | ☐ | 完整模块未实现（C 档，行 39）；桌面新建名称已保存为 `session/title` 并用于列表及主标题。**上游校正**：上游有 `SessionTitleProviderId`/`SessionTitleSource`(fallback/provider/user)/`SessionTitleAutomaticMode`(first-prompt/all-prompts)/`register(provider)` 注册机制与 `rename` pin 语义，本仓仅保存标题字符串，未实现 provider 注册与自动生成调度 |
+| settings | ✔ | ✔ | M5/M6 | ✔ | ☐ | 完整配置域未实现（C 档，行 40）；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，不以局部设置窗判定整个模块完成 |
+| shell | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 41） |
+| sidebar-right | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地。**上游校正**：上游 sidebar-right 是 React 组合系统（tab-type registry + dsh-resource:// 地址 + dockkit 布局），zh 版在冻结 commit 不存在（404），本仓 Vue runtime 架构根本不同 |
+| skills | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 43） |
+| slots | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 44）；渲染层只到令牌层 + 组件令牌桥接，无上游槽位/呈现体系 |
+| spill | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 45） |
+| ssh | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 46） |
+| storage | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 47）；真源是追加式 `session.log`，无上游的存储后端形态 |
+| subagent | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 48） |
+| subprocess | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/extproc.cj` 以子进程驱动外部脚本宿主跑 NDJSON JSON-RPC：握手必须来自子进程真实应答、按 `callId` 配对与取消、未知方法回 `-32601`、超时不编终态、强杀后读线程照样收束、命令不存在 fail-closed。core 15 条 + extjs 14 条 |
+| system-prompt | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/sysprompt.cj` `SystemPromptBuilder` 从 `ToolRegistry` 读工具名与描述组装提示，角色定义在前、工具清单在后；core `sysprompt_test.cj` 3 条 + CLI headless 3 条断言。CLI `seed` 模式已接入而非硬编 |
+| terminal | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
+| todo | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 52） |
+| token-meter | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言。**上游校正**：上游 `TokenSurfaceNode` 有 route-priced request-image pricing（`ctx.llm.imageRequestPricing`）与 `heuristicTokens` 影子定价，本仓无节点级定价；**C02 部分核**：未发现订阅/支付/商业权益字段 |
+| tools | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增）。**上游校正**：四段管线契约一致；上游 `ToolRestriction`(per-scope allow/deny) 与 `defineTool` DSL(`ValueSchemaSpec`) 本仓未实现 |
+| typert | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 55） |
+| user-questions | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 56）。**上游已核**：`AskUserQuestionItem`(id/question/detail?/header?/options?/multiSelect?/intent?) + `AskUserQuestionIntent`(kind=plan-review) + `askTimed`(返回 pending=仍可答) + `@Remote answer`(REPLY_QUEUED 拒绝第二次) + `user-questions/request` waterfall。阶段定为 M7（委托与编排）。已有的审批/人在环面属 `approval` 行，不连带勾选 |
+| voice-input | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 57） |
+| web | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 58）；全仓无 HTTP/SSE 客户端 |
+| web-client | ✔ | ✔ | M5/M6 | ✔ | ✔ | Electron 桌面入口 + 渲染层（Vue runtime + `h()`，IPC 有限面 9 个动作）；`--ui-smoke` **32 条真机断言**（流式/审批工单/取消/放行前 `pending>0`/`window.require` 为 undefined），开发态与打包态各验一次。**上游校正**：上游 Web Client 是浏览器侧 Cordis 应用（Client Modules + API Gateway + Slots + Conversation 四底座），本仓是 Electron 壳 + Vue 渲染层 + IPC 有限面，属壳层复刻（入口与隔离面）非架构复刻（Cordis 插件图 + API Gateway + Slots） |
+| web-server | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 60）。**上游已核**：`WebRoute`(exact/prefix) + `Config`(host/port) + `connection/request` waterfall + `webserver/index-inject` emit。本仓宿主是 stdio NDJSON JSON-RPC（`apps/host`），与上游 server 形态不同。**C01/C03 已核**：上游 web-server carrier 不拥有 TLS/auth/Origin，未来 HTTP/WebSocket 访问认证、Origin 和网络访问控制必须保留 |
+| webhook | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 61） |
+| workflow | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 62） |
+| workspace | ✔ | ✔ | M5/M6 | ✔ | ☐ | 工作区模块部分实现（C 档，行 63）；本地会话支持列表、新建、切换和恢复；桌面项目目录选择已接入共享核心日志，真实相对文件读写使用所选目录。**上游校正**：上游有 `WorkspaceRegistry`（`WorkspaceId`=Branded uuid、`realpathNormalize` 唯一唯一性 canon、`create/resolveByPath/archiveSession/pinSession`、startup 等 `sessionPersistence` 强制依赖），本仓无 registry，工作区分组/元数据及 CLI 对应交互未完成，安装包未复验，不把应用会话存储目录称为项目工作区；见桌面布局证据的项目目录增量 |
+| README | ✔ | — | 待定 | — | ☐ | 子系统目录索引页，**不是一条能力**；此前被算进「64 个模块」的分母，本节已按 63 + 1 更正（§6.1.2 D 档第 2 条）。上游已核列不适用 |
