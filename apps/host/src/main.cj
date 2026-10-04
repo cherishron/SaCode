@@ -378,6 +378,14 @@ main(args: Array<String>) {
                 }
                 target = fresh
             }
+            // 待办投影由共享核心回放；损坏快照不能拖垮协议主进程。
+            var todos = "null"
+            try {
+                todos = TodoStore(target).projectionJson()
+            } catch (_: Exception) {
+                emit(errFrame(idText, -32002, "todo-replay-rejected"))
+                continue
+            }
             let tailFlag = if (target.isTruncatedTail()) { "true" } else { "false" }
             // 消息正文一并交出：渲染层只能显示核心投影，不允许自己再拼一份历史。
             // 只给尾部 64 条，帧大小有界；计数仍是全量投影计数。
@@ -394,7 +402,7 @@ main(args: Array<String>) {
                 mi += 1
             }
             marr += "]"
-            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr}}"))
+            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr},\"todos\":${todos}}"))
             continue
         }
         if (method == "session/append") {

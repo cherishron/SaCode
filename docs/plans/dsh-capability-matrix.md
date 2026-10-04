@@ -138,3 +138,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | workflow | ✔ | ✔ | M7 | ✔ | ◐ | `core/src/workflow.cj` `WorkflowLedger`：log-only `workflow/step` 事件承载 `start::<id>::<label>` / `done::<id>` / `fail::<id>::<reason>`；状态机 running → done/failed 终态不可逆；未知 id `workflow-unknown-id`、终态上再 done/fail 抛 `workflow-terminal` 且都不落事件；`status(id)` 从事件流回放。4 条用例覆盖 happy、fail 终态、未知拒、log-only 表面。**上游校正**：本切片只做步骤状态 marker；上游 workflow 的多步依赖图、重试策略与 `@Remote workflow/run` 通道未接 |
 | workspace | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/wspace.cj` `WorkspaceRegistry`：log-only `workspace/change` 事件承载 `create::<id>::<path>` / `archive::<id>` / `pin::<id>::<sessionId>`；空 id/path/sessionId 各自抛 `ws-empty-*`；重名 `ws-duplicate-id` 抛；未知 archive/pin `ws-unknown-id` 抛；`list()` 只回未归档者；`pinned(id)` 取会话集合序列。4 条用例覆盖 create+pin+archive 生命周期、重名拒、未知 pin 拒、log-only 表面。**上游校正**：上游 `WorkspaceId` 是 Branded uuid + `realpathNormalize` 唯一 canon；本切片用 `id: String` 由调用方保证唯一性，未接 canonicalize 与 archiveSession/pinSession 的 `sessionPersistence` 强制依赖；安装包未复验；不把应用会话存储目录称为项目工作区 |
 | README | ✔ | — | 待定 | — | ☐ | 子系统目录索引页，**不是一条能力**；此前被算进「64 个模块」的分母，本节已按 63 + 1 更正（§6.1.2 D 档第 2 条）。上游已核列不适用 |
+
+### 2026-10-04 Todo 仓颉投影接入补充
+
+TodoStore 已补齐 trim/非空/去重/并行策略、结构化无损快照与旧日志兼容、turn/start 清空语义；Host session/projection 返回 todos，产品面板读取真实投影。核心全量 390 通过/1 跳过，真实 Host 通信及 Electron 定向链路通过。模型 todo_write 注册、执行中实时刷新、CLI/真实模型及新安装包仍待核；本轮 Host 的整页滚动等待失败尚未解决。证据见 [Todo 后端接入](../evidence/todo-backend-2026-10-04.md)，不将局部接入改标为完整复刻。

@@ -846,7 +846,7 @@ createApp({
       emptyConversation ? el('div','hero-workspace-row',[
         el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
       ]) : null,
-      h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:[]}),
+      h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
       h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,rows:[],running:self.turn.running}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {

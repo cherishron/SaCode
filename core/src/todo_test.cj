@@ -82,39 +82,73 @@ func todoEmptyListStillPersistsClearSnapshot() {
     removeIfExists(root, recursive: true)
 }
 
-// `|` 与换行是 todo 事件的记录内分隔符。含分隔符的内容当场看不出问题，
-// 回放时却会被拆成两条或把 status 读错位——写边界必须拒，
-// 不能让唯一真源存进一份读不回原样的东西。
+// JSON 快照允许正文里的分隔符、换行、引号和控制字符无损回放。
 @Test
-func todoContentContainingRecordDelimiterIsRejected() {
+func todoStructuredSnapshotRoundTripsSpecialContent() {
     let root = "core-todo-delimi"
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     let log = SessionLog("${root}/session.log")
     let todos = TodoStore(log)
-    var piped = ""
-    try {
-        todos.write([TodoItem("甲|乙", "pending")])
-        piped = "accepted"
-    } catch (e: Exception) {
-        piped = e.message
-    }
-    @Expect(piped, "bad-todo-content")
-
-    var newline = ""
-    try {
-        todos.write([TodoItem("甲\n乙", "pending")])
-        newline = "accepted"
-    } catch (e: Exception) {
-        newline = e.message
-    }
-    @Expect(newline, "bad-todo-content")
-
-    // 拒绝必须一条事件都不落：与 bad-todo-status 同一契约
-    @Expect(log.eventCount(), Int64(0))
-    // 不含分隔符的照常写，且能原样读回
-    todos.write([TodoItem("正常的", "pending")])
+    let controls: Array<Byte> = [0, 12]
+    let content = "甲|乙\n引号\"路径\\" + String.fromUtf8(controls) + "末尾"
+    todos.write([TodoItem(content, "pending")])
     @Expect(log.eventCount(), Int64(1))
-    @Expect(todos.list()[0].content, "正常的")
+    @Expect(todos.list()[0].content, content)
+    @Expect(log.flush(), true)
+    let fresh = SessionLog("${root}/session.log")
+    @Expect(fresh.load(), true)
+    @Expect(TodoStore(fresh).list()[0].content, content)
+    @Expect(fresh.deriveMessages().size, Int64(0))
     removeIfExists(root, recursive: true)
+}
+
+@Test
+func todoRejectsEmptyDuplicateAndDisallowedParallelAtomically() {
+    let log = SessionLog("todo-validation-unused.log")
+    let todos = TodoStore(log)
+    for (items in [
+        [TodoItem(" \t　  ", "pending")],
+        [TodoItem("  同一个  ", "pending"), TodoItem("同一个", "completed")],
+        [TodoItem("甲", "in_progress"), TodoItem("乙", "in_progress")]
+    ]) {
+        var rejected = false
+        try { todos.write(items) } catch (_: Exception) { rejected = true }
+        @Expect(rejected, true)
+        @Expect(log.eventCount(), Int64(0))
+    }
+    let parallel = TodoStore(log, allowParallelInProgress: true)
+    parallel.write([TodoItem("　甲 ", "in_progress"), TodoItem("乙", "in_progress")])
+    @Expect(parallel.list().size, Int64(2))
+    @Expect(parallel.list()[0].content, "甲")
+}
+
+@Test
+func todoProjectionClearsAtNewTurnAndRetainsAtEnd() {
+    let log = SessionLog("todo-lifecycle-unused.log")
+    let todos = TodoStore(log)
+    @Expect(todos.projectionJson(), "null")
+    todos.write([TodoItem("完成", "completed")])
+    log.append("turn/end", "")
+    @Expect(todos.list().size, Int64(1))
+    log.append("turn/start", "")
+    @Expect(todos.list().size, Int64(0))
+    @Expect(todos.projectionJson(), "null")
+    todos.write([TodoItem("下一轮", "pending")])
+    @Expect(todos.list()[0].content, "下一轮")
+    todos.write([])
+    @Expect(todos.projectionJson(), "[]")
+}
+
+@Test
+func todoReadsLegacyLogSnapshotsBeforeNewStructuredWrites() {
+    let log = SessionLog("todo-legacy-unused.log")
+    log.append("todo/write", "旧任务|pending\n旧完成|completed")
+    let todos = TodoStore(log)
+    @Expect(todos.list().size, Int64(2))
+    @Expect(todos.list()[1].status, "completed")
+    log.append("todo/write", "{\"todos\":旧任务|pending")
+    @Expect(todos.list()[0].content, "{\"todos\":旧任务")
+    todos.write([TodoItem("新|任务", "pending")])
+    @Expect(todos.list()[0].content, "新|任务")
 }
