@@ -125,6 +125,40 @@ createApp({
     const tools = ref([]);
     const detailName = ref("");
     const sideTab = ref("inspect");
+    const viewport = ref(window.innerWidth), sidebarWidth = ref(280), rightWidth = ref(null);
+    const sidebarClosed = ref(false), narrowExpanded = ref(false), sideOpen = ref(false), diagnosticsOpen = ref(false);
+    const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
+    const frameColumns = window.Vue.computed(() => window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
+      sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0));
+    function toggleSidebar() {
+      if (viewport.value < 1024) { narrowExpanded.value = sidebarCollapsed.value; sidebarClosed.value = false; }
+      else sidebarClosed.value = !sidebarClosed.value;
+    }
+    const updateViewport = () => { viewport.value = window.innerWidth; if(viewport.value >= 1024) narrowExpanded.value = false; };
+    let frameDrag = null;
+    function beginFrameResize(side, event) {
+      if(event.button !== 0) return;
+      event.preventDefault(); frameDrag?.abort(); frameDrag = new AbortController();
+      const start=event.clientX, base=side==='sidebar'?sidebarWidth.value:frameColumns.value.rightbar;
+      const {signal}=frameDrag;
+      const move=e=>{
+        if(side==='sidebar') sidebarWidth.value=window.SaCodeFrame.clamp(base+e.clientX-start,264,420);
+        else rightWidth.value=window.SaCodeFrame.clamp(base-e.clientX+start,300,viewport.value*.7);
+      };
+      const stop=()=>{frameDrag?.abort();frameDrag=null;};
+      window.addEventListener('pointermove',move,{signal}); window.addEventListener('pointerup',stop,{signal}); window.addEventListener('pointercancel',stop,{signal});
+    }
+    function resizeFrameKey(side,event) {
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const left=side==='sidebar', min=left?264:300, max=left?420:viewport.value*.7;
+      const base=left?sidebarWidth.value:frameColumns.value.rightbar;
+      const delta=(event.key==='ArrowRight'?16:-16)*(left?1:-1);
+      const value=event.key==='Home'?min:event.key==='End'?max:base+delta;
+      if(left) sidebarWidth.value=window.SaCodeFrame.clamp(value,min,max); else rightWidth.value=window.SaCodeFrame.clamp(value,min,max);
+    }
+    onMounted(()=>window.addEventListener('resize',updateViewport));
+    window.Vue.onBeforeUnmount(()=>{window.removeEventListener('resize',updateViewport);frameDrag?.abort();});
     const sideSplit = ref(false);
     const sideRatio = ref(50);
     const previewFloating = ref(false);
@@ -185,9 +219,10 @@ createApp({
     }
     async function selectSession(id) {
       if (catalogBusy.value) return;
+      if(catalog.value?.entries.some(item=>item.current && item.id===id)) return;
       catalogBusy.value=true; catalogNote.value="正在保存并切换会话…";
       try { await applySelection(id); }
-      catch(e) { catalogNote.value=catalogError(e); }
+      catch(e) { catalogNote.value=catalogError(e); error.value=catalogNote.value; }
       finally { catalogBusy.value=false; }
     }
     async function createSession() {
@@ -200,8 +235,13 @@ createApp({
         newSessionTitle.value="";
         catalog.value=await window.dsh.sessionCatalog();
         await applySelection(created.id);
-      } catch(e) { catalogNote.value=catalogError(e); }
+      } catch(e) { catalogNote.value=catalogError(e); error.value=catalogNote.value; }
       finally { catalogBusy.value=false; }
+    }
+    async function startNewSession() {
+      if(catalogBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value || turn.value.running || approval.value) return;
+      newSessionTitle.value='新会话';
+      await createSession();
     }
     async function refreshCatalog() {
       if (catalogBusy.value) return;
@@ -268,6 +308,7 @@ createApp({
     }
     window.Vue.onBeforeUnmount(() => { if (resizeController) resizeController.abort(); });
     function openSide(target) {
+      sideOpen.value = true;
       sideTab.value = target === "guide-panel" ? "guide" : target === "preview-panel" ? "preview" : "inspect";
       window.Vue.nextTick(() => {
         const panel = document.getElementById(target);
@@ -334,6 +375,7 @@ createApp({
         await window.dsh.userSend(text);
         if (generation!==sessionGeneration) return;
         await refresh();
+        await refreshCatalog();
       } catch (e) {
         if (generation!==sessionGeneration) return;
         error.value = String(e.message || e);
@@ -519,6 +561,7 @@ createApp({
     });
 
     return {
+      frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
       proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       appearanceBusy, appearanceNote, setTheme,
@@ -531,27 +574,40 @@ createApp({
   render() {
     const self = this;
     const currentTitle = self.catalog?.entries.find(item=>item.current)?.title || "会话";
+    const emptyConversation = !self.proj.messages.length && !self.turn.running && !self.turn.text;
+    const sessionLocked = self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.workspaceBusy || self.turn.running || !!self.approval;
+    const workspaceName = self.workspace?.configured ? self.workspace.directory.split(/[\\/]/).filter(Boolean).pop() : '工作区';
+    // 默认空日志尚未形成持久会话，不在产品导航里制造一条占位会话。
+    const sidebarSessions = (self.catalog?.entries || []).filter(item=>item.durable>0);
     const head = el("header", "top", [
-      el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle}), el("span", "note", "消息与执行记录")]),
-      el("div", "counters", [
-        el("span", "badge", "事件 " + self.proj.events, { id: "count-events" }),
-        el("span", "badge", "已保存 " + self.proj.durable, { id: "count-durable" }),
-        el("span", "badge" + (self.proj.pending > 0 ? " badge-warn" : " badge-ok"), "待保存 " + self.proj.pending, { id: "count-pending" }),
-        el("span", "badge" + (self.proj.truncatedTail ? " badge-danger" : ""), self.proj.truncatedTail ? "尾帧已截断" : "记录完整", { id: "count-tail" }),
+      el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation})]),
+      el("div", "header-utilities", [
+        el('button','frame-icon',[navIcon('M5 18V9 M12 18V4 M19 18v-6 M3 21h18')],{id:'open-budget','aria-label':'用量与预算',tooltip:{label:'用量与预算'},onClick:()=>self.openSide('budget-panel')}),
+        el('button','frame-icon',[navIcon('M4 4h16v16H4z M14 4v16')],{id:'toggle-side','aria-label':self.sideOpen?'关闭侧栏':'打开侧栏','aria-expanded':self.sideOpen,tooltip:{label:self.sideOpen?'关闭侧栏':'打开侧栏'},onClick:()=>{self.sideOpen=!self.sideOpen;}}),
+        self.approval ? el('button','frame-icon pending-approval',[navIcon('M12 3l10 18H2z M12 9v5 M12 17v1')],{'aria-label':'处理待审批请求',onClick:()=>self.openSide('tools-panel')}) : null,
       ]),
     ]);
     const nav = el("nav", "navigation", [
-      el("div", "brand", [h("img", { src: "assets/sacode-logo.png", alt: "SaCode", width: 32, height: 32 }), el("span", null, "SaCode")]),
-      el("p", "nav-caption", "编程工作台"),
-      el("a", "nav-item nav-current", [navIcon("M4 4h16v12H9l-5 4V4z M8 8h8 M8 12h5"), el("span", "nav-label", "会话")], { href: "#composer", "aria-current": "page", "aria-label": "会话" }),
-      el("button", "nav-item nav-settings", [navIcon("M3 5h7l2 3h9v12H3V5z"), el("span", "nav-label", "会话列表")], { id:"open-catalog", "aria-label":"本地会话列表", onClick:self.openCatalog }),
-      el("button", "nav-item nav-settings", [navIcon("M3 7h18v14H3V7z M8 7V3h8v4"), el("span", "nav-label", "工作区")], {id:"open-workspace", "aria-label":"当前会话工作区", onClick:self.openWorkspace}),
-      el("a", "nav-item", [navIcon("M14 4a6 6 0 0 0-7 8L3 16l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z"), el("span", "nav-label", "工具与审批")], { href: "#tools-panel", "aria-label": "工具与审批", onClick: (e) => { e.preventDefault(); self.openSide("tools-panel"); } }),
-      el("a", "nav-item", [navIcon("M5 18V9 M12 18V4 M19 18v-6 M3 21h18"), el("span", "nav-label", "用量与预算")], { href: "#budget-panel", "aria-label": "用量与预算", onClick: (e) => { e.preventDefault(); self.openSide("budget-panel"); } }),
-      el("a", "nav-item", [navIcon("M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4z M12 6v15"), el("span", "nav-label", "使用指南")], { href: "#guide-panel", "aria-label": "使用指南", onClick: (e) => { e.preventDefault(); self.openSide("guide-panel"); } }),
+      el('div','sidebar-brand-row',[
+        el("button", "brand", [h("img", { src: "assets/sacode-logo.png", alt: "SaCode", width: 24, height: 24 }), el("span", null, "SaCode")],{'aria-label':self.sidebarCollapsed?'打开侧边栏':'SaCode · 新建会话',onClick:()=>self.sidebarCollapsed?self.toggleSidebar():self.startNewSession()}),
+        el('button','frame-icon sidebar-toggle',[navIcon('M4 4h16v16H4z M9 4v16')],{id:'toggle-sidebar','aria-label':self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',tooltip:{label:self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',side:'right'},onClick:self.toggleSidebar}),
+      ]),
+      el('button','nav-item new-session',[navIcon('M12 5v14 M5 12h14'),el('span','nav-label','新会话')],{id:'sidebar-new-session','aria-label':'新建会话',disabled:sessionLocked,onClick:self.startNewSession}),
+      el('button','nav-item',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','工具与扩展')],{'aria-label':'工具与扩展',onClick:()=>{self.settingsTab='plugins';self.settingsOpen=true;}}),
+      el('div','workspace-heading',[
+        el('span','nav-label','工作区'),
+        el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
+        el('button','frame-icon',[navIcon('M3 7h8l2 2h8v12H3z M17 2v6 M14 5h6')],{id:'open-workspace','aria-label':'当前会话工作区',onClick:self.openWorkspace}),
+      ]),
+      el('div','sidebar-session-list',[
+        self.workspace?.configured ? el('button','workspace-folder',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,workspaceName)],{title:self.workspace.directory,onClick:self.openWorkspace}) : null,
+        ...sidebarSessions.map(item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
+          'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>self.selectSession(item.id)})),
+        !sidebarSessions.length ? el('p','sidebar-empty','暂无会话') : null,
+        self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
+      ]),
       el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']}, onClick: () => { self.settingsOpen = true; } }),
-      el("div", "nav-footer", [el("span", "note", "本地会话"), el("span", "note", "使用你的模型与服务凭证")]),
-    ], { "aria-label": "工作台导航" });
+    ], { "aria-label": "工作区与会话导航" });
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
     // 组标签走 prefix 槽，内容是「组内条数 × 映射角色」——两个数都能从投影数出来，
@@ -631,9 +687,8 @@ createApp({
 
     const main = el("section", "pane conversation", [
       el("div", "conversation-scroll", [el("div", "stream", msgs, { id: "messages" }), streamBox]),
-      turnBar,
       self.error ? el("p", "error", self.error, { id: "error", role: "alert" }) : null,
-    ]);
+    ],{hidden:emptyConversation && !self.error});
 
     const toolBtns = self.tools.map((t) =>
       el("div", "tool-card", [
@@ -683,6 +738,17 @@ createApp({
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
       budgetBox,
+      el('details','diagnostics',[
+        el('summary',null,'开发诊断'),
+        el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),
+        turnBar,
+        el('div','counters',[
+          el('span','badge','事件 '+self.proj.events,{id:'count-events'}),
+          el('span','badge','已保存 '+self.proj.durable,{id:'count-durable'}),
+          el('span','badge'+(self.proj.pending?' badge-warn':' badge-ok'),'待保存 '+self.proj.pending,{id:'count-pending'}),
+          el('span','badge'+(self.proj.truncatedTail?' badge-danger':''),self.proj.truncatedTail?'尾帧已截断':'记录完整',{id:'count-tail'}),
+        ]),
+      ],{id:'developer-diagnostics',open:self.diagnosticsOpen,onToggle:e=>{self.diagnosticsOpen=e.target.open;}}),
     ], { id: "side-page-inspect", role: "tabpanel", "aria-labelledby": "side-tab-inspect", hidden: self.sideTab !== "inspect" });
     const guide = el("div", "side-page", [
       el("section", "side-section", [
@@ -690,7 +756,7 @@ createApp({
         self.approval ? el("button", "btn", "返回处理待审批请求", { id: "guide-approval", onClick: () => self.openSide("tools-panel") }) : null,
         ...[
           ["记录任务", "在底部输入任务或补充信息，点击发送后写入当前本地会话。发送消息与启动执行是两个独立操作。"],
-          ["运行与停止", "使用会话下方的运行按钮开始验证轮次；执行中可点击停止。当前轮次使用示例输出，真实模型任务尚未开放。"],
+          ["运行与停止", "侧栏的开发诊断可验证执行与取消。当前轮次使用示例输出，真实模型任务尚未开放；执行中可点击输入区停止按钮。"],
           ["工具与审批", "在工具页查看工具说明。需要审批的操作只有允许一次或拒绝两种选择；查看详情不会执行工具。"],
           ["预算与保存", "预算只能收紧。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
           ["快捷键", "Ctrl+, 打开设置；Ctrl+L 聚焦输入；Ctrl+Shift+P 打开文档预览；输入区 Ctrl+Enter 发送。弹窗打开时全局操作暂停，Escape 只关闭最上层。"],
@@ -718,6 +784,7 @@ createApp({
     const sideToolbar = el("div", "side-toolbar", [el("span", "note", "右侧工作区"),
       el("button", "btn", self.sideSplit ? "合并窗格" : "拆分窗格", { id: "split-side", "aria-pressed": self.sideSplit,
         onClick: () => { self.sideSplit = !self.sideSplit; if (self.sideSplit) self.sideTab = "inspect"; } }),
+      el('button','frame-icon','×',{id:'close-side','aria-label':'关闭侧栏',onClick:()=>{self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side').focus());}}),
     ]);
     const side = el("aside", "pane side", [sideToolbar, sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
       el("div", "side-primary", [inspection, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
@@ -734,9 +801,14 @@ createApp({
       self.sideSplit ? el("div", "side-secondary", previewBody("split-preview"), { role: "region", "aria-label": "文档预览副窗格", style: { flex: 100-self.sideRatio } }) : null,
     ])], {
       "aria-label": "工具、预算与指南",
+      hidden:!self.sideOpen || self.frameColumns.rightbar===0,
     });
 
     const composer = el("footer", "composer", [
+      emptyConversation ? el('div','hero-heading',[h('img',{src:'assets/sacode-logo.png',alt:'SaCode',width:32,height:32}),el('span',null,'探索未至之境')]) : null,
+      emptyConversation ? el('div','hero-workspace-row',[
+        el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
+      ]) : null,
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
@@ -756,7 +828,6 @@ createApp({
         // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
         onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
       ]),
-      el("span", "note", "支持多行输入 · 审批决定由你确认"),
     ]);
 
     const detail = h(window.SaCodeDialog, { open: !!self.detailTool, title: "工具详情",
@@ -860,6 +931,13 @@ createApp({
     ]);
     const size=self.globalAppearance.fontSize;
     const fontAxis=Number.isInteger(size)?{'--fs-content':size+'px','--line-content':(size+10)+'px','--line-user':(size+8)+'px','--content-delta':(size-14)+'px'}:{};
-    return el("div", "app", [nav, head, main, side, composer, detail, floating, settings, catalogDialog, workspaceDialog],{style:fontAxis});
+    const frameHandle = (name,left,value,min,max) => el('div','frame-divider',null,{id:name+'-divider',role:'separator',tabindex:0,
+      'aria-label':name==='sidebar'?'调整导航宽度':'调整侧栏宽度','aria-orientation':'vertical','aria-valuemin':min,'aria-valuemax':max,'aria-valuenow':value,
+      style:{left:left+'px'},onPointerdown:e=>self.beginFrameResize(name,e),onKeydown:e=>self.resizeFrameKey(name,e)});
+    const center = el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main,composer],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
+      !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
+      self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
+      detail, floating, settings, catalogDialog, workspaceDialog],{style:{...fontAxis,gridTemplateColumns:`${self.frameColumns.sidebar}px minmax(0,1fr) ${self.frameColumns.rightbar}px`},'data-sidebar-collapsed':String(self.sidebarCollapsed),'data-empty-conversation':String(emptyConversation),'data-catalog-ready':String(!!self.catalog)});
   },
 }).mount("#app");

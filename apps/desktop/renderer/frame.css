@@ -1,0 +1,67 @@
+/* 完整框架依据官方 AppFrame / SidebarRoot / ConversationRoot；旧工作台几何由此替换。 */
+:root { --surface:rgb(249,250,251); --surface-2:#fff; --surface-3:rgb(235,238,242); --text:rgb(15,17,21); --text-muted:rgb(97,102,107); --border:rgb(0 0 0 / 12%); --input-surface:#fff; --panel-surface:#fff; --new-session-fill:#fff; }
+@media(prefers-color-scheme:dark) {
+  :root { --surface:rgb(27,27,28); --surface-2:rgb(21,21,23); --surface-3:rgb(35,35,36); --text:rgb(249,250,251); --text-muted:rgb(173,178,184); --border:rgb(255 255 255 / 12%); --input-surface:rgb(44,44,46); --panel-surface:rgb(44,44,46); --new-session-fill:rgb(67,69,74); }
+}
+.app { position:relative; grid-template-rows:minmax(0,1fr); padding-top:40px; }
+.window-caption { position:absolute; top:0; left:0; right:0; height:40px; -webkit-app-region:drag; }
+.navigation { grid-column:1; grid-row:1; gap:6px; padding:0 12px 6px; background:var(--surface); font-size:14px; }
+.sidebar-brand-row { display:flex; height:40px; align-items:center; gap:8px; margin-top:-40px; z-index:1; }
+.brand { display:flex; border:0; background:transparent; color:var(--text); padding:0; gap:10px; flex:1; min-width:0; cursor:pointer; font:600 20px/28px var(--font-ui); -webkit-app-region:no-drag; }
+.brand img { flex:none; width:24px; height:24px; padding:0; background:transparent; border-radius:0; }
+.frame-icon { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; flex:none; border:0; border-radius:8px; background:transparent; color:var(--text-muted); padding:4px; cursor:pointer; -webkit-app-region:no-drag; }
+.frame-icon:hover { background:var(--surface-3); color:var(--text); }
+.frame-icon svg { width:18px; height:18px; }
+.nav-item { min-height:36px; height:36px; padding:6px 8px; gap:8px; border:0; background:transparent; cursor:pointer; text-align:left; font-size:14px; color:var(--text); }
+.new-session { justify-content:center; margin:6px 0; background:var(--new-session-fill); box-shadow:var(--elevation-stroke); }
+.workspace-heading { display:flex; align-items:center; gap:4px; margin-top:12px; color:var(--text-muted); }
+.workspace-heading>.nav-label { flex:1; padding-left:4px; }
+.sidebar-session-list { flex:1; min-height:0; overflow:auto; margin-right:-2px; }
+.sidebar-session,.workspace-folder { display:flex; align-items:center; width:100%; min-height:32px; padding:6px 8px; gap:8px; border:0; border-radius:8px; text-align:left; color:var(--text); background:transparent; cursor:pointer; }
+.sidebar-session span,.workspace-folder span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.sidebar-session { font-size:13px; }
+.sidebar-session.selected,.sidebar-session:hover,.workspace-folder:hover { background:var(--surface-3); }
+.sidebar-session:disabled { opacity:.5; cursor:default; }
+.sidebar-empty { color:var(--text-muted); text-align:center; margin-top:80px; }
+.nav-settings { margin-top:auto; flex:none; }
+.app[data-sidebar-collapsed=true] .navigation { padding:18px 10px 6px; gap:12px; }
+.app[data-sidebar-collapsed=true] .sidebar-brand-row { margin-top:-40px; height:40px; margin-bottom:6px; justify-content:center; }
+.app[data-sidebar-collapsed=true] .brand { flex:none; justify-content:center; width:36px; }
+.app[data-sidebar-collapsed=true] :is(.brand>span,.sidebar-toggle,.nav-label,.sidebar-session-list) { display:none; }
+.app[data-sidebar-collapsed=true] .nav-item { padding:8px; width:36px; justify-content:center; margin:0; }
+.app[data-sidebar-collapsed=true] .workspace-heading { flex-direction:column; gap:12px; margin:0; }
+.app[data-sidebar-collapsed=true] .workspace-heading .frame-icon { width:36px; height:36px; }
+.app[data-sidebar-collapsed=true] .nav-settings { margin-top:auto; }
+.conversation-center { grid-column:2; grid-row:1; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border-top-left-radius:16px; background:var(--surface-2); --chat-width:clamp(680px,calc(var(--conversation-width)*.64),920px); }
+.top { grid-area:auto; flex:none; min-height:50px; padding:10px 28px 10px 20px; flex-wrap:nowrap; border:0; gap:10px; }
+.heading { flex:1; min-width:0; }
+.heading h1 { max-width:none; font-size:14px; font-weight:500; line-height:20px; padding:4px 8px; }
+.header-utilities { display:flex; gap:8px; margin-left:20px; }
+.pending-approval { color:var(--warn); }
+.conversation { grid-area:auto; flex:1; min-height:0; }
+.conversation-scroll { padding:16px 32px; margin-right:2px; }
+.conversation-center .error { width:100%; max-width:calc(var(--chat-width) + 64px); align-self:center; padding-left:16px; padding-right:16px; }
+.stream,.conversation-scroll>.markdown-stream { width:100%; max-width:var(--chat-width); margin:0 auto; }
+.composer { grid-area:auto; flex:none; align-self:center; width:min(calc(var(--chat-width) + 64px),100%); padding:16px 16px 8px; border:0; background:transparent; }
+.composer-card { background:var(--input-surface); }
+.conversation-center.is-empty .composer { margin:auto 0; padding-bottom:32px; gap:8px; }
+.hero-heading { display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:16px; font-size:28px; line-height:36px; font-weight:500; }
+.hero-heading img { object-fit:contain; }
+.hero-workspace-row { display:flex; align-items:center; gap:2px; padding:0 16px 0 20px; margin-top:4px; }
+.workspace-chip { display:flex; align-items:center; gap:6px; max-width:100%; padding:4px 8px; border:0; border-radius:8px; background:transparent; color:var(--text); cursor:pointer; font-size:13px; line-height:20px; }
+.workspace-chip>span:not(.chip-chevron) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip-chevron { color:var(--text-muted); }
+.workspace-chip:hover { background:var(--surface-3); }
+.is-empty .composer-card textarea { min-height:52px; }
+.side { grid-column:3; grid-row:1; }
+.frame-divider { position:absolute; top:40px; bottom:0; width:8px; transform:translateX(-4px); z-index:9; cursor:col-resize; touch-action:none; }
+.frame-divider:hover,.frame-divider:focus-visible { background:color-mix(in srgb,var(--accent) 20%,transparent); }
+.diagnostics { padding:12px 0; border-top:.5px solid var(--border); }
+.diagnostics summary { cursor:pointer; color:var(--text-muted); }
+.diagnostics>.note { padding-top:12px; }
+.diagnostics .turn-actions { padding:12px 0; border:0; }
+.diagnostics .counters { margin:0; }
+.sacode-dialog { background:var(--panel-surface); }
+
+/* 官方 SettingsRoot：桌面遮罩留白取标题栏 40px，两侧共 80px。 */
+.settings-dialog { height:min(800px,calc(100dvh - 80px)); }

@@ -10,6 +10,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
     await new Promise((r) => setTimeout(r, 50));
   }
   if (!toolsReady) throw new Error("布局验收失败：工具列表未加载");
+  // 业务组件验收显式打开可选侧栏与诊断；默认产品布局由 frame-smoke 独立检查。
+  await js("document.querySelector('#toggle-side').click();document.querySelector('#developer-diagnostics').open=true");
   await js("document.querySelector('#tool-write').click()");
   let approvalReady = false;
   for (let i = 0; i < 100; i++) {
@@ -74,7 +76,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           brand: document.title.startsWith('SaCode') && document.querySelector('.brand').textContent === 'SaCode',
           logo: document.querySelector('.brand img').naturalWidth > 0,
           noPageOverflow: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
-          columns: equal(main.left, composer.left) && equal(main.right, composer.right) && equal(main.right, side.left),
+          columns: equal(main.left,box('.conversation-center').left) && equal(main.right,box('.conversation-center').right) && composer.left>=main.left && composer.right<=main.right && equal(main.right,side.left),
           budgetRow: equal(input.top, apply.top) && equal(input.height, apply.height),
           composerStack: draft.bottom<send.top && send.right<box('.composer-card').right && send.bottom<box('.composer-card').bottom,
           composerFocusRing: ${composerFocus},
@@ -97,7 +99,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           composerRow:getComputedStyle(document.querySelector('.composer-controls')).padding==='2px 8px 6px'&&getComputedStyle(document.querySelector('.composer-card')).gap==='12px'&&getComputedStyle(document.querySelector('#composer')).padding==='4px 8px 0px 14px',
           circularStatus: !!document.querySelector('.pending-dot') && (!CSS.supports('corner-shape','round') || getComputedStyle(document.querySelector('.pending-dot')).cornerShape==='round'),
           primaryPalette: (()=>{const style=getComputedStyle(document.querySelector('#run-turn'));return style.backgroundColor==='${theme==='dark'?'rgb(126, 160, 255)':'rgb(36, 85, 230)'}'&&style.borderTopColor===style.backgroundColor&&style.color==='${theme==='dark'?'rgb(16, 19, 26)':'rgb(255, 255, 255)'}';})(),
-          icons: [...document.querySelectorAll('.nav-symbol')].every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
+          icons: [...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
           messageContentLoaded: document.querySelectorAll('.msg-text').length > 0,
           messageLabels: [...document.querySelectorAll('.tr-bubble')].every(e => {
@@ -377,7 +379,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
             fits: r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1,
             noOverflow: dialog.scrollWidth<=dialog.clientWidth,
             controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().height-40)<1 && Math.abs(e.getBoundingClientRect().left-tabs[0].getBoundingClientRect().left)<1),
-            panelFrame:Math.abs(r.width-Math.min(800,innerWidth-48))<1 && Math.abs(r.height-Math.min(800,innerHeight-48))<1,
+            panelFrame:Math.abs(r.width-Math.min(800,innerWidth-48))<1 && Math.abs(r.height-Math.min(800,innerHeight-80))<1,
             navWidth:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().width-188)<1,
             columnsAligned:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().right-dialog.querySelector('.settings-content').getBoundingClientRect().left)<1,
             navStack:getComputedStyle(dialog.querySelector('.settings-tabs')).flexDirection==='column' && getComputedStyle(dialog.querySelector('.settings-tabs')).gap==='4px',

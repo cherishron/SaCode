@@ -30,6 +30,7 @@
       "host-bridge.cjs",
       "paths.cjs",
       "layout-smoke.cjs",
+      "frame-smoke.cjs",
       "package.json",
       "renderer/**"
     ],

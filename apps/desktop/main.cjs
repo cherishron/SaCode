@@ -18,7 +18,8 @@ const HOST = hostExePath({
 // 「这条写入真的落盘了」这类断言就会被上一次运行的旧日志蒙混过去。
 // 用 --session-dir=<路径> 指定一次性目录；不传时仍用应用自己的目录（给人工运行用）。
 const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
-const WILL_SMOKE = process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
+const FRAME_SMOKE = process.argv.includes('--frame-smoke');
+const WILL_SMOKE = FRAME_SMOKE || process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 // 冒烟态没传 --session-dir 时也必须落到一次性目录：默认的 sessionData 跨次累积，
 // 「全新会话」类断言会被上一次运行的旧日志蒙混过去（实测用量从 12 一路涨到 48）。
 // 只带 pid 还不够：Windows 会回收 pid，同 pid 的旧目录会被下一次运行接着写，
@@ -30,6 +31,7 @@ const SESSION_DIR = SESSION_ARG
   ? SESSION_ARG.slice("--session-dir=".length)
   : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `dsh-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
+if(WILL_SMOKE) app.setPath('userData',join(SESSION_DIR,'electron-user-data'));
 
 // 冒烟只使用自己的配置根，不能修改真实用户的全局外观。
 const bridge = new HostBridge(HOST, WILL_SMOKE
@@ -45,7 +47,7 @@ function seedIfNeeded() {
   if (!existsSync(SESSION_LOG)) {
     writeFileSync(
       SESSION_LOG,
-      "0\tturn/start\tt\n1\tsystem/message\t由 SaCode 初始化本地会话\n2\tdeveloper/message\t请用中文协助完成项目任务。\n3\tassistant/message\t欢迎使用 SaCode。\n4\tuser/message\t你好，SaCode。\n"
+      WILL_SMOKE && !FRAME_SMOKE ? "0\tturn/start\tt\n1\tsystem/message\t由 SaCode 初始化本地会话\n2\tdeveloper/message\t请用中文协助完成项目任务。\n3\tassistant/message\t欢迎使用 SaCode。\n4\tuser/message\t你好，SaCode。\n" : ""
     );
   }
 }
@@ -108,7 +110,8 @@ function createWindow() {
     height: 720,
     minWidth: 860,
     minHeight: 600,
-    title: "SaCode · 编程工作台",
+    title: "SaCode",
+    ...(process.platform === 'win32' ? {titleBarStyle:'hidden',titleBarOverlay:{color:nativeTheme.shouldUseDarkColors?'#1b1b1c':'#f9fafb',symbolColor:nativeTheme.shouldUseDarkColors?'#f9fafb':'#0f1115',height:40}} : {}),
     icon: join(__dirname, "renderer", "assets", "sacode-icon.png"),
     show: false,
     webPreferences: {
@@ -116,15 +119,20 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // 隐藏冒烟窗口仍需执行动画帧，否则草稿测量会停在后台节流状态。
+      ...(WILL_SMOKE ? { backgroundThrottling: false } : {}),
     },
   });
   win.loadFile(join(__dirname, "renderer", "index.html"));
-  // UI 冒烟不需要把窗口摆到用户桌面上
+  // 常规启动显示窗口；具体冒烟按需显示以验证动画帧或原生键盘焦点。
   win.once("ready-to-show", () => {
     if (!UI_SMOKE) win.show();
   });
   win.on("closed", () => (win = null));
 }
+nativeTheme.on('updated',()=>{
+  if(process.platform==='win32' && win && !win.isDestroyed()) win.setTitleBarOverlay({color:nativeTheme.shouldUseDarkColors?'#1b1b1c':'#f9fafb',symbolColor:nativeTheme.shouldUseDarkColors?'#f9fafb':'#0f1115',height:40});
+});
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -176,6 +184,10 @@ async function uiSmoke() {
   //    消息面换成 BubbleList 后按「组」计：种子是 system/developer/assistant/user 四个角色，各成一组。
   const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 4));
   note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
+  // 原生 Tab/Escape 验收必须有真实窗口焦点，隐藏窗口的 hasFocus 会偶发失效。
+  win.show(); win.focus(); win.webContents.focus();
+  if (!await waitFor(()=>js('document.hasFocus()'))) throw new Error('UI 冒烟窗口未取得键盘焦点');
+  await js("document.querySelector('#toggle-side').click();document.querySelector('#developer-diagnostics').open=true");
   const projText = await text("#count-events");
   note(/^\d+$/.test(projText.split(" ")[1] || ""), `计数条 events=${projText}`);
 
@@ -229,7 +241,7 @@ async function uiSmoke() {
   await click('#side-tab-preview');
   note((await text('#preview-empty')).includes('暂无读取记录'), "没有读取事实时显示文档预览空状态");
   await click('#side-tab-guide');
-  await click('a[href="#budget-panel"]');
+  await click('#open-budget');
   note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
   note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
   await js("document.querySelector('#composer').focus()");
@@ -325,17 +337,27 @@ async function uiSmoke() {
   await setDraftForSize('超过上限的中文草稿\n'.repeat(30));
   note(await waitFor(()=>js("(()=>{const n=document.querySelector('#composer');return n.scrollHeight>n.clientHeight && n.getBoundingClientRect().height<=Math.min(340,innerHeight-360)+1;})()")), "长草稿达到上限后内部滚动");
   await setDraftForSize('');
-  note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "删除草稿后高度回到最小值");
+  const collapsedDraft=await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-(document.querySelector('.app').dataset.emptyConversation==='true'?52:36))<1"));
+  note(collapsedDraft, "删除草稿后高度回到官方对应阶段最小值"+(collapsedDraft?'':await js("(()=>{const n=document.querySelector('#composer'),s=getComputedStyle(n);return JSON.stringify({height:n.getBoundingClientRect().height,min:s.minHeight,inline:n.style.height,scroll:n.scrollHeight,value:n.value,phase:document.querySelector('.app').dataset.emptyConversation,font:s.fontSize,line:s.lineHeight});})()")));
   const draftWindowSize=win.getContentSize();
+  const draftColumns=await js("({sidebarClosed:document.querySelector('.app').dataset.sidebarCollapsed==='true',rightOpen:!document.querySelector('.side').hidden})");
   try {
     win.setContentSize(1440,900);
     await waitFor(()=>js("innerWidth===1440 && innerHeight===900"));
+    // 固定栏位状态，避免窄窗口自动收栏抵消输入区变窄，导致旧断言误报。
+    await js("(()=>{if(!document.querySelector('.side').hidden)document.querySelector('#close-side').click();if(document.querySelector('.app').dataset.sidebarCollapsed!=='true')document.querySelector('#toggle-sidebar').click();})()");
+    await waitFor(()=>js("document.querySelector('.side').hidden && document.querySelector('.app').dataset.sidebarCollapsed==='true'"));
     await setDraftForSize('窗口宽度变化应重新测量输入高度。'.repeat(10));
     await nap(50);
     const wideDraftHeight=await js("document.querySelector('#composer').getBoundingClientRect().height");
     win.setContentSize(860,600);
-    note(await waitFor(()=>js(`innerWidth===860 && document.querySelector('#composer').getBoundingClientRect().height>${wideDraftHeight}`)), "窄窗口重新折行并更新草稿高度");
-  } finally {win.setContentSize(...draftWindowSize);await setDraftForSize('');}
+    const narrowResized=await waitFor(()=>js(`Math.abs(innerWidth-860)<=1 && document.querySelector('#composer').getBoundingClientRect().height>${wideDraftHeight}`));
+    note(narrowResized, "窄窗口重新折行并更新草稿高度"+(narrowResized?'':await js(`(()=>{const n=document.querySelector('#composer');return JSON.stringify({viewport:innerWidth,wideHeight:${wideDraftHeight},narrowHeight:n.getBoundingClientRect().height,inputWidth:n.getBoundingClientRect().width,scrollHeight:n.scrollHeight});})()`)));
+  } finally {
+    win.setContentSize(...draftWindowSize);await setDraftForSize('');
+    if(!draftColumns.sidebarClosed) await js("document.querySelector('.brand').click()");
+    if(draftColumns.rightOpen) await js("document.querySelector('#toggle-side').click()");
+  }
   note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "草稿高度调整不写会话日志");
   const typed = "第一行\n第二行 带\"引号\"";
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify(typed)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
@@ -751,7 +773,7 @@ async function uiSmoke() {
   note((await text('#turn-usage')).includes('0/200') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
   note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
-  note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1")), "新会话清空草稿并收缩输入高度");
+  note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-52)<1")), "新会话清空草稿并收缩到官方空会话高度");
   await js("(() => {const e=document.querySelector('#composer');e.value='只属于中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#send');
   note(await waitFor(async()=> (await text('#messages')).includes('只属于中文验收会话')), "新会话消息从核心重新投影");
@@ -903,10 +925,20 @@ ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
   return result;
 });
 
-const UI_SMOKE = process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
+const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
 app.whenReady().then(async () => {
   if (process.argv.includes("--smoke")) return smoke();
+  if (FRAME_SMOKE) {
+    seedIfNeeded(); await bridge.start(SESSION_DIR); createWindow();
+    const captureArg=process.argv.find(a=>a.startsWith('--capture-dir='));
+    const outDir=captureArg?captureArg.slice('--capture-dir='.length):join(SESSION_DIR,'frame');
+    try {
+      const ok=await require('./frame-smoke.cjs')({win,nativeTheme,outDir});
+      await bridge.stop();app.exit(ok?0:1);
+    } catch(e) {console.error('FRAME FAIL',e);await bridge.stop();app.exit(1);}
+    return;
+  }
   if (process.argv.includes("--layout-smoke")) {
     seedIfNeeded();
     await bridge.start(SESSION_DIR);
