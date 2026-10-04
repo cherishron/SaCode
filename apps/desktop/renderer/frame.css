@@ -62,10 +62,13 @@
 .heading h1 { max-width:none; font-size:14px; font-weight:500; line-height:20px; padding:4px 8px; }
 .header-utilities { display:flex; gap:8px; margin-left:20px; }
 .pending-approval { color:var(--warn); }
-.conversation { grid-area:auto; flex:1; min-height:0; }
-.conversation-scroll { padding:16px 32px; margin-right:2px; }
+.conversation { grid-area:auto; flex:1; min-height:0; position:relative; }
+.to-bottom-slot { position:absolute; right:0; bottom:16px; left:0; height:0; display:flex; justify-content:flex-end; padding-right:max(32px,calc((100% - var(--chat-width))/2)); pointer-events:none; z-index:8; }
+.to-bottom { display:flex; align-items:center; justify-content:center; width:34px; height:34px; margin-top:-34px; padding:0; border:0; border-radius:100px; color:var(--text); background:var(--input-surface); box-shadow:0 2px 8px #0002; cursor:pointer; pointer-events:auto; }
+.to-bottom:hover { background:var(--surface-3); }
+.conversation-scroll { padding:16px 32px; margin-right:2px; overflow-anchor:none; }
 .conversation-center .error { width:100%; max-width:calc(var(--chat-width) + 64px); align-self:center; padding-left:16px; padding-right:16px; }
-.stream,.conversation-scroll>.markdown-stream { width:100%; max-width:var(--chat-width); margin:0 auto; }
+.stream,.conversation-content>.markdown-stream { width:100%; max-width:var(--chat-width); margin:0 auto; }
 .composer { grid-area:auto; flex:none; align-self:center; width:min(calc(var(--chat-width) + 64px),100%); padding:16px 16px 8px; border:0; background:transparent; }
 .composer-card { background:var(--input-surface); }
 .conversation-center.is-empty .composer { margin:auto 0; padding-bottom:32px; gap:8px; }

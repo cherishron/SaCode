@@ -118,6 +118,70 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await js("document.querySelector('.workspace-overflow').click()");
   await check('分组会话恢复五条',"(()=>({collapsed:document.querySelector('.workspace-overflow').getAttribute('aria-expanded')==='false',five:document.querySelector('[data-workspace-group=\"\"]').querySelectorAll('[data-sidebar-session]').length===5}))()");
   writeFileSync(join(outDir,'workspace-groups.png'),(await win.webContents.capturePage()).toPNG());
+  await checkConversationScroll({js,waitFor,check});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
+};
+
+// 原生 Chromium 的滚动与 ResizeObserver 验收；fixture 只测试 UI 阅读控制器，不冒充核心消息。
+async function checkConversationScroll({js,waitFor,check}) {
+  await js(`(()=>{
+    const host=document.createElement('div');host.id='scroll-fixture';
+    Object.assign(host.style,{position:'fixed',left:'10px',top:'50px',width:'240px',height:'240px',overflow:'auto',overflowAnchor:'none',zIndex:99});
+    const content=document.createElement('div');host.append(content);
+    for(let i=0;i<20;i++){const row=document.createElement('p');row.dataset.msgId='fixture-'+i;row.textContent='滚动阅读位置 '+i;row.style.height='60px';content.append(row);}
+    document.body.append(host);
+    window.scrollFixture={host,content,owner:SaCodeConversationScroll.attach(host,{session:'fixture-a',lastUser:'u1'})};
+  })()`);
+  await waitFor("scrollFixture.host.scrollTop>500 && scrollFixture.host.dataset.followingTail==='true'");
+  await check('滚动首次打开跟随尾部',"(()=>{const n=scrollFixture.host;return {atFloor:Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1}})()");
+  await js("scrollFixture.host.scrollTop=200");
+  await waitFor("scrollFixture.host.dataset.followingTail==='false'");
+  await js("scrollFixture.savedTop=scrollFixture.host.scrollTop;scrollFixture.content.lastElementChild.style.height='500px'");
+  await new Promise(r=>setTimeout(r,120));
+  await check('上翻后增长不抢阅读位置',"({preserved:Math.abs(scrollFixture.host.scrollTop-scrollFixture.savedTop)<1})");
+  await js("scrollFixture.anchor=scrollFixture.content.children[3];scrollFixture.offset=scrollFixture.anchor.getBoundingClientRect().top-scrollFixture.host.getBoundingClientRect().top;scrollFixture.content.firstElementChild.style.height='160px'");
+  await new Promise(r=>setTimeout(r,120));
+  await check('布局变化补偿消息锚点',"({anchorRetained:Math.abs(scrollFixture.anchor.getBoundingClientRect().top-scrollFixture.host.getBoundingClientRect().top-scrollFixture.offset)<1})");
+  await js("scrollFixture.restoreTop=scrollFixture.host.scrollTop;scrollFixture.owner.update({session:'fixture-b',lastUser:'u2'})");
+  await waitFor("scrollFixture.host.dataset.followingTail==='true'");
+  await js("scrollFixture.owner.update({session:'fixture-a',lastUser:'u1'})");
+  await waitFor("scrollFixture.host.dataset.followingTail==='false'");
+  await check('会话切换恢复阅读位置',"({restored:Math.abs(scrollFixture.host.scrollTop-scrollFixture.restoreTop)<1})");
+  await js("scrollFixture.owner.update({session:'fixture-a',lastUser:'u3'})");
+  await waitFor("scrollFixture.host.dataset.followingTail==='true'");
+  await check('发送新输入恢复尾部',"({atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
+  await js("scrollFixture.content.lastElementChild.style.height='650px'");
+  await new Promise(r=>setTimeout(r,120));
+  await check('尾部跟随流式增高',"({atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
+  await js("scrollFixture.host.scrollTop=100");
+  await waitFor("scrollFixture.host.dataset.followingTail==='false'");
+  await js("SaCodeConversationScroll.toBottom(scrollFixture.host)");
+  await check('显式返回最新',"({following:scrollFixture.host.dataset.followingTail==='true',atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
+  await js("scrollFixture.owner.dispose();scrollFixture.host.remove();delete window.scrollFixture");
+  // 再穿过真实 userSend/核心投影，验证产品宿主和浮动按钮的接线。
+  for(let i=0;i<5;i++) {
+    await js(`(()=>{const input=document.querySelector('#composer');input.value=${JSON.stringify(Array.from({length:32},(_,j)=>`会话滚动验收 ${i+1} · 第 ${j+1} 行`).join('\n'))};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await waitFor("!document.querySelector('#send').disabled");
+    const count=await js("document.querySelectorAll('[data-msg-id]').length");
+    await js("document.querySelector('#send').click()");
+    try {await waitFor(`document.querySelectorAll('[data-msg-id]').length>${count} && document.querySelector('#send').getAttribute('aria-busy')!=='true'`);}
+    catch(e) {console.log('SCROLL_SEND_STATE',await js("({error:document.querySelector('#error')?.textContent,draft:document.querySelector('#composer').value.length,disabled:document.querySelector('#send').disabled,messages:document.querySelectorAll('[data-msg-id]').length})"));throw e;}
+  }
+  await js("document.querySelectorAll('.btn-fold').forEach(b=>b.click())");
+  await waitFor("(()=>{const n=document.querySelector('.conversation-scroll');return n.scrollHeight-n.clientHeight>200 && Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1})()");
+  await js("document.querySelector('.conversation-scroll').scrollTop=100");
+  await waitFor("!!document.querySelector('#scroll-to-bottom')");
+  await check('真实会话回到最新按钮',"(()=>{const b=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),n=document.querySelector('.conversation-scroll').getBoundingClientRect();return {width:Math.abs(b.width-34)<1,height:Math.abs(b.height-34)<1,insideViewport:b.left>=n.left&&b.right<=n.right&&b.bottom<=n.bottom,reading:document.querySelector('.conversation-scroll').dataset.followingTail==='false'}})()");
+  const current=await js("(async()=>{const c=await window.dsh.sessionCatalog();return c.entries.find(e=>e.current).id})()");
+  await js("document.querySelectorAll('.workspace-overflow[aria-expanded=false]').forEach(b=>b.click())");
+  const other=await js(`[...document.querySelectorAll('[data-sidebar-session]')].find(n=>n.dataset.sidebarSession!==${JSON.stringify(current)}).dataset.sidebarSession`);
+  await js(`document.querySelector('[data-sidebar-session="'+${JSON.stringify(other)}+'"]').click()`);
+  await waitFor(`document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(other)} && !document.querySelector('#sidebar-new-session').disabled`);
+  await js(`document.querySelector('[data-sidebar-session="'+${JSON.stringify(current)}+'"]').click()`);
+  await waitFor(`document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(current)} && !document.querySelector('#sidebar-new-session').disabled && !!document.querySelector('#scroll-to-bottom')`);
+  await check('真实会话切换保留阅读位置',"({restored:Math.abs(document.querySelector('.conversation-scroll').scrollTop-100)<1})");
+  await js("document.querySelector('#scroll-to-bottom').click()");
+  await waitFor("!document.querySelector('#scroll-to-bottom')");
+  await check('真实会话返回尾部',"(()=>{const n=document.querySelector('.conversation-scroll');return {following:n.dataset.followingTail==='true',atFloor:Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1}})()");
 };

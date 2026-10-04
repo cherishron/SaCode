@@ -120,6 +120,7 @@ const TEXT_MATCH = {
 createApp({
   setup() {
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
+    const scrollSession = ref(0), followingTail = ref(true);
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
     const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
     const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || []));
@@ -168,6 +169,7 @@ createApp({
     const settingsTab = ref("general");
     const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
     let sessionGeneration = 0;
+    let selectedScrollId = 'initial';
     const workspaceOpen=ref(false), workspace=ref(null), workspaceBusy=ref(false), workspaceNote=ref("");
     async function refreshWorkspace() {
       const generation=sessionGeneration, result=await window.dsh.workspaceGet();
@@ -205,6 +207,7 @@ createApp({
       const oldId=catalog.value?.entries.find(item=>item.current)?.id;
       await window.dsh.sessionSelect(id);
       sessionGeneration += 1;
+      selectedScrollId=id;
       if (oldId) sessionDrafts.set(oldId,draft.value);
       draft.value=sessionDrafts.get(id)||"";
       stopPolling(); foldOpen.ids.clear();
@@ -250,6 +253,10 @@ createApp({
       catalogBusy.value = true; catalogNote.value = "正在读取本地会话…";
       try {
         catalog.value = await window.dsh.sessionCatalog();
+        if(selectedScrollId==='initial') {
+          selectedScrollId=catalog.value.entries.find(item=>item.current)?.id || 'initial';
+          scrollSession.value=selectedScrollId;
+        }
         catalogNote.value = "已读取落盘会话；列表不包含尚未保存的事件。";
       } catch (e) { catalogNote.value = "读取失败：" + String(e.message || e); }
       finally { catalogBusy.value = false; }
@@ -357,7 +364,7 @@ createApp({
 
     async function refresh() {
       const generation=sessionGeneration, result=await window.dsh.projection();
-      if (generation===sessionGeneration) proj.value=result;
+      if (generation===sessionGeneration) {proj.value=result;scrollSession.value=selectedScrollId;}
     }
 
     async function refreshTools() {
@@ -574,7 +581,7 @@ createApp({
 
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       appearanceBusy, appearanceNote, setTheme,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
@@ -643,7 +650,7 @@ createApp({
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
     // 组标签走 prefix 槽，内容是「组内条数 × 映射角色」——两个数都能从投影数出来，
-    // 不是第二真源。autoScroll 关掉：本批不引入滚动语义改动。
+    // 不是第二真源。autoScroll 关掉：滚动由唯一 conversation-scroll 宿主管理。
     const msgs = [
       h(TR.BubbleProvider, { contentRendererMatches: [TEXT_MATCH] }, () => [
         h(
@@ -718,7 +725,14 @@ createApp({
     const budgetBox = renderBudget("budget");
 
     const main = el("section", "pane conversation", [
-      el("div", "conversation-scroll", [el("div", "stream", msgs, { id: "messages" }), streamBox]),
+      withDirectives(el("div", "conversation-scroll", [el('div','conversation-content',[el("div", "stream", msgs, { id: "messages" }), streamBox])]), [[window.SaCodeConversationScroll.directive, {
+        session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
+        onChange:following=>{self.followingTail=following;},
+      }]]),
+      !self.followingTail ? el('div','to-bottom-slot',[el('button','to-bottom',[navIcon('M6 9l6 6 6-6')],{
+        id:'scroll-to-bottom','aria-label':'回到最新消息',tooltip:{label:'回到最新消息'},
+        onClick:()=>window.SaCodeConversationScroll.toBottom(document.querySelector('.conversation-scroll')),
+      })]) : null,
       self.error ? el("p", "error", self.error, { id: "error", role: "alert" }) : null,
     ],{hidden:emptyConversation && !self.error});
 

@@ -86,3 +86,14 @@
 核对官方 `SidebarRoot.module.css`、`WorkspaceBrowser.module.css` 与 `SettingsRoot.module.css` 后，对齐 Windows 展开导航：根上下内边距 6px，根不额外叠加 gap；40px 品牌行后留 8px，再放置 38px 新会话按钮；按钮下留 12px，插件入口为 36px 高、7px/8px 内边距、左右 2px 外边距；工作区标题为 36px 高，顶部 2px、底部 4px。品牌图文间距 8px，新会话图文间距 6px。底部设置采用官方 42px 触发按钮和 4px/-2px 外框留白；空列表采用 24px 图标、13px/20px 文字及 80px 顶部留白。整页真实几何检查通过。
 
 SaCode 不实现官方登录、注册、账号绑定、订阅充值或官方余额入口，冷启动直接进入本地会话；官方欢迎页仅是独立对照实例的裁剪证据。PRD 与矩阵已经补充此 UI 边界。新增无账号启动检查确认真实输入区直接可用、没有账号动作和凭证启动门槛，整页合计 28 组、140 项检查、零失败。此检查只证明冷启动界面边界，不代替阻断官方账号服务端点后的两个入口完整执行验收；模型配置、安全凭证存取与远程访问控制继续保留。
+## 会话阅读位置与尾部跟随增量
+
+本批直接核对冻结上游 `packages/client/ui-chat/src/client/chat/use-chat-scroll.ts`、`use-chat-reading.ts`、`use-chat-viewport.ts`、`use-scroll-follow.ts` 和 `ChatView.module.css`：无保存位置时打开尾部，自有输入恢复尾部跟随，上翻后内容增长保留阅读位置，以语义锚点恢复会话；回到最新按钮为 34px 圆形控件。官方 `scrollToBottom` 使用即时定位，阅读容差为 `FOLLOW_THRESHOLD + 1 = 25px`。
+
+SaCode 新增经典脚本 `renderer/conversation-scroll.js`，由 Vue runtime 指令接入现有唯一滚动宿主，继续关闭 TinyRobot 内部自动滚动。只在 UI 内存中按实际会话 ID 保存消息锚点与视口偏移，不写核心日志、不增加业务 IPC；ResizeObserver 同时观察视口与正文，包括流式正文增长。中文“回到最新消息”按钮沿消息内容右边缘对齐，保留 SaCode 名称与原图标。消息折叠、流式区和正文仍使用既有 TinyRobot/Vue 渲染路径。
+
+隔离 Electron 33.4.11 整页验收通过：38 组、155 项检查、零失败、退出码 0。其中七组以独立 Chromium DOM fixture 检查尾部跟随、上翻保位、锚点补偿、切换恢复和返回最新；另外三组穿过实际 `userSend`、核心投影和产品 DOM，发送五条多行消息并展开，验证真实长会话的浮动按钮尺寸、视口边界、实际会话切换恢复阅读位置及返回尾部。fixture 不是官方截图或核心执行证据。UI 冒烟再次通过，退出码 0。
+
+尚未完成：官方 turn/part 层级锚点、历史分页及 turn 导航；输入区与正文共用官方 sticky scrollport 的结构（本方当前输入区仍位于滚动区域外）；官方原生可用截图和逐页视觉比对。这一增量不能作为完整会话页面或完整桌面复刻验收通过的依据。官方账号欢迎页继续属于明确裁剪范围。
+
+补充复验：共享 dualtest 目录被外部清理后，在独立 D:/Temp/SaCode-ui-scroll-20261004 快照使用已有 18:04 Host 再跑整页，38 组、155 项通过；报告保存在该目录 captures/reports.json。全量组件布局检查中途发生 global/appearance/set-font-size Host 超时，随后共享环境被清理，本轮未完成，不登记为全量通过。
