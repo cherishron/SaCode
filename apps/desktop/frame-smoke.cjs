@@ -18,6 +18,26 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   }
   const typography=await js("Object.fromEntries(['body','.hero-heading','.nav-label','#composer'].map(s=>[s,getComputedStyle(document.querySelector(s)).fontFamily]))");
   console.log('FRAME 字体',JSON.stringify(typography));
+  // 计算样式只能证明声明，实际字形可能仍回退；记录 Chromium 真正使用的字体。
+  win.webContents.debugger.attach('1.3');
+  let platformFonts;
+  try {
+    await win.webContents.debugger.sendCommand('DOM.enable');
+    await win.webContents.debugger.sendCommand('CSS.enable');
+    const document=await win.webContents.debugger.sendCommand('DOM.getDocument');
+    platformFonts={};
+    for(const selector of ['.hero-heading','.new-session .nav-label','.brand']) {
+      const node=await win.webContents.debugger.sendCommand('DOM.querySelector',{nodeId:document.root.nodeId,selector});
+      platformFonts[selector]=(await win.webContents.debugger.sendCommand('CSS.getPlatformFontsForNode',{nodeId:node.nodeId})).fonts;
+    }
+  } finally {win.webContents.debugger.detach();}
+  writeFileSync(join(outDir,'platform-fonts.json'),JSON.stringify(platformFonts,null,2));
+  console.log('FRAME 实际字体',JSON.stringify(platformFonts));
+  const chineseGlyphs=['.hero-heading','.new-session .nav-label'].every(selector=>platformFonts[selector].some(font=>font.familyName==='Microsoft YaHei' && font.glyphCount>0));
+  if(process.platform==='win32') {
+    reports.push({name:'Windows 实际中文字形',checks:{yahei:chineseGlyphs},failed:chineseGlyphs?[]:['yahei']});
+    console.log('FRAME '+(chineseGlyphs?'PASS':'FAIL')+' Windows 实际中文字形');
+  }
   await check('中文界面字体',"['body','.hero-heading','.nav-label','#composer'].every(s=>getComputedStyle(document.querySelector(s)).fontFamily.includes('Microsoft YaHei')) ? {sansSerif:true} : {sansSerif:false}");
   await check('空会话',`(()=>({empty:document.querySelector('.app').dataset.emptyConversation==='true',noSyntheticMessages:document.querySelectorAll('[data-msg-id]').length===0,noPlaceholderSession:document.querySelectorAll('[data-sidebar-session]').length===0,hero:!!document.querySelector('.hero-heading'),rightClosed:document.querySelector('.side').hidden,diagnosticsHidden:!document.querySelector('#developer-diagnostics').open,brand:document.querySelector('.brand').textContent==='SaCode'}))()`);
   // 连续增长/清空覆盖真实输入事件和自动高度测量，防止偶发留住旧草稿高度。
@@ -37,7 +57,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
       await check(theme+'-'+width,`(()=>{
         const rect=s=>document.querySelector(s).getBoundingClientRect(),equal=(a,b)=>Math.abs(a-b)<1;
         const nav=rect('.navigation'),center=rect('.conversation-center'),card=rect('.composer-card'),hero=rect('.hero-heading');
-        return {sidebar:equal(nav.width,${actualWidth<1024?56:280}),caption:equal(center.top,40),centerAfterSidebar:equal(nav.right,center.left),rightClosed:document.querySelector('.side').hidden,heroAxis:equal((hero.left+hero.right)/2,(card.left+card.right)/2),composerWithinCenter:card.left>=center.left&&card.right<=center.right,settingsAtBottom:rect('#open-settings').bottom>=innerHeight-12,noOverflow:document.documentElement.scrollWidth<=innerWidth&&document.documentElement.scrollHeight<=innerHeight};
+        return {sidebar:equal(nav.width,${actualWidth<1024?(process.platform==='win32'?0:56):280}),caption:equal(center.top,40),centerAfterSidebar:equal(nav.right,center.left),rightClosed:document.querySelector('.side').hidden,heroAxis:equal((hero.left+hero.right)/2,(card.left+card.right)/2),composerWithinCenter:card.left>=center.left&&card.right<=center.right,settingsAtBottom:${actualWidth<1024&&process.platform==='win32'?"document.querySelector('#open-settings').getClientRects().length===0":"rect('#open-settings').bottom>=innerHeight-12"},noOverflow:document.documentElement.scrollWidth<=innerWidth&&document.documentElement.scrollHeight<=innerHeight};
       })()`);
       writeFileSync(join(outDir,`empty-${theme}-${width}.png`),(await win.webContents.capturePage()).toPNG());
     }
@@ -49,8 +69,8 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await js("document.querySelector('.settings-close').click()");
   await js("document.querySelector('#toggle-sidebar').click()");
   await waitFor("document.querySelector('.app').dataset.sidebarCollapsed==='true'");
-  await check('手动折叠',"(()=>({rail:Math.abs(document.querySelector('.navigation').getBoundingClientRect().width-56)<1}))()");
-  await js("document.querySelector('.brand').click()");
+  await check('手动折叠',`(()=>{const toggle=document.querySelector('#toggle-sidebar').getBoundingClientRect(),create=document.querySelector('#sidebar-new-session').getBoundingClientRect();return {track:Math.abs(document.querySelector('.navigation').getBoundingClientRect().width-${process.platform==='win32'?0:56})<1,captionToggle:${process.platform==='win32'?"Math.abs(toggle.left-12)<1 && Math.abs(toggle.top-6)<1 && Math.abs(toggle.width-28)<1":"true"},captionNewSession:${process.platform==='win32'?"Math.abs(create.left-48)<1 && Math.abs(create.top-6)<1 && Math.abs(create.width-28)<1":"true"}}})()`);
+  await js("document.querySelector('#toggle-sidebar').click()");
   await waitFor("document.querySelector('.app').dataset.sidebarCollapsed==='false'");
   await js("document.querySelector('#toggle-side').click()");
   await waitFor("!document.querySelector('.side').hidden");

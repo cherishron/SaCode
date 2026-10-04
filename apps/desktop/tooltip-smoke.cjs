@@ -37,9 +37,19 @@ module.exports=async function tooltipSmoke({win,js,waitFor,outDir,theme,width,he
   await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
   writeFileSync(join(outDir,`sacode-tooltip-modal-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
   await js("document.querySelector('.settings-dialog .dialog-header button').click()");
+  // Windows 零宽折叠态不显示设置入口；先按真实路径展开，再检查其提示，随后恢复栏位。
+  const settingsHidden=await js("document.querySelector('#open-settings').getClientRects().length===0");
+  if(settingsHidden) {
+    await js("document.querySelector('#toggle-sidebar').click()");
+    await waitFor("document.querySelector('#open-settings').getClientRects().length>0");
+  }
   await clear();await move('#open-settings');await waitFor(`!!${tip('#open-settings')}`);
   checks.shortcutCaps=await js(`(()=>{const t=${tip('#open-settings')},k=t.querySelector('.tooltip-keys');return t.textContent==='设置Ctrl+,' && Math.abs(k.getBoundingClientRect().height-16)<1&&getComputedStyle(k).gap==='2px';})()`);
   await clear();
+  if(settingsHidden) {
+    await js("document.querySelector('#toggle-sidebar').click()");
+    await waitFor("document.querySelector('#open-settings').getClientRects().length===0");
+  }
   await js("(()=>{const root=document.createElement('div');root.id='tooltip-test-fixture';document.body.append(root);window.__tooltipOptions=Vue.reactive({label:'长中文提示与窗口边缘。'.repeat(5)+'a'.repeat(120),side:'bottom',delayMs:100,focusDelayMs:100,maxWidth:240,openOnClick:true,disabled:false});window.__tooltipApp=Vue.createApp({setup:()=>()=>SaCodeTooltip.wrap(Vue.h('button',{id:'tooltip-test-anchor',type:'button',disabled:__tooltipOptions.disabled,style:{position:'fixed',right:'4px',bottom:'4px',width:'24px',height:'24px',padding:0}},'?'),{...__tooltipOptions})});__tooltipApp.mount(root);})()");
   try {
     await move('#tooltip-test-anchor');checks.hoverDelayed=await js(`!${tip('#tooltip-test-anchor')}`);await move('#send');

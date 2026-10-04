@@ -3,6 +3,7 @@
    工具与审批态只来自 extension/list 与 extension/call 的实际应答。 */
 "use strict";
 const { createApp, h, ref, onMounted, withDirectives } = window.Vue;
+const nativePlatform = new URLSearchParams(location.search).get('platform') || 'web';
 
 // 高度是草稿的派生视图；只在正文或宽度变化时测量，避免轮询重置输入滚动位置。
 const draftSize = new WeakMap();
@@ -130,7 +131,7 @@ createApp({
     const workspaceSessionLimits = ref(new Map());
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
     const frameColumns = window.Vue.computed(() => window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
-      sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0));
+      sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
     function toggleSidebar() {
       if (viewport.value < 1024) { narrowExpanded.value = sidebarCollapsed.value; sidebarClosed.value = false; }
       else sidebarClosed.value = !sidebarClosed.value;
@@ -968,6 +969,6 @@ createApp({
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
-      detail, floating, settings, catalogDialog, workspaceDialog],{style:{...fontAxis,gridTemplateColumns:`${self.frameColumns.sidebar}px minmax(0,1fr) ${self.frameColumns.rightbar}px`},'data-sidebar-collapsed':String(self.sidebarCollapsed),'data-empty-conversation':String(emptyConversation),'data-catalog-ready':String(!!self.catalog)});
+      detail, floating, settings, catalogDialog, workspaceDialog],{style:{...fontAxis,gridTemplateColumns:`${self.frameColumns.sidebar}px minmax(0,1fr) ${self.frameColumns.rightbar}px`},'data-platform':nativePlatform,'data-sidebar-collapsed':String(self.sidebarCollapsed),'data-empty-conversation':String(emptyConversation),'data-catalog-ready':String(!!self.catalog)});
   },
 }).mount("#app");

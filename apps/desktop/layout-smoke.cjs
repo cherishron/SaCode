@@ -83,7 +83,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           controlHeights: controls.every(s => equal(box(s).height, 36)),
           stateGeometry: equal(send.width,${sendBefore.width}) && equal(send.height,${sendBefore.height}) && document.querySelector('#send').matches(':hover') && document.activeElement.id==='send' && getComputedStyle(document.querySelector('#send')).outlineStyle!=='none',
           standardRadius: controls.every(s => getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='12px') && getComputedStyle(document.querySelector('#budget-input')).borderTopLeftRadius==='12px',
-          navigationRadius: [...document.querySelectorAll('.nav-item')].every(e=>getComputedStyle(e).borderTopLeftRadius==='12px'),
+          navigationRadius: [...document.querySelectorAll('.nav-item')].filter(e=>e.getClientRects().length).every(e=>getComputedStyle(e).borderTopLeftRadius===(e.matches('.new-session') && document.querySelector('.app').dataset.platform==='win32' && document.querySelector('.app').dataset.sidebarCollapsed==='true'?'50%':'12px')),
           composerRadius: getComputedStyle(document.querySelector('.composer-card')).borderTopLeftRadius==='28px',
           contentTypography: getComputedStyle(document.querySelector('#composer')).fontSize==='14px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='24px' && [...document.querySelectorAll('.msg-text')].every(e=>getComputedStyle(e).fontSize==='14px' && getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'22px':'24px')),
           inputElevation: ['.composer-card','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return style.borderTopWidth==='0px' && style.boxShadow!=='none';}),

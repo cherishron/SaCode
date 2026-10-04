@@ -123,7 +123,8 @@ function createWindow() {
       ...(WILL_SMOKE ? { backgroundThrottling: false } : {}),
     },
   });
-  win.loadFile(join(__dirname, "renderer", "index.html"));
+  // 原生平台只用于布局选择，不扩大 IPC 或业务能力。
+  win.loadFile(join(__dirname, "renderer", "index.html"), {query:{platform:process.platform}});
   // 常规启动显示窗口；具体冒烟按需显示以验证动画帧或原生键盘焦点。
   win.once("ready-to-show", () => {
     if (!UI_SMOKE) win.show();
@@ -359,7 +360,7 @@ async function uiSmoke() {
     note(narrowResized, "窄窗口重新折行并更新草稿高度"+(narrowResized?'':await js(`(()=>{const n=document.querySelector('#composer');return JSON.stringify({viewport:innerWidth,wideHeight:${wideDraftHeight},narrowHeight:n.getBoundingClientRect().height,inputWidth:n.getBoundingClientRect().width,scrollHeight:n.scrollHeight});})()`)));
   } finally {
     win.setContentSize(...draftWindowSize);await setDraftForSize('');
-    if(!draftColumns.sidebarClosed) await js("document.querySelector('.brand').click()");
+    if(!draftColumns.sidebarClosed) await js("document.querySelector('#toggle-sidebar').click()");
     if(draftColumns.rightOpen) await js("document.querySelector('#toggle-side').click()");
   }
   note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "草稿高度调整不写会话日志");
