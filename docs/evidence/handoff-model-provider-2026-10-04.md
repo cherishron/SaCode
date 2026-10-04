@@ -142,3 +142,26 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 
 变异反证（一轮构建三处变异）：撤掉 declared 守卫、把明文键名单换成不可能命中的名字、把 baseUrl 档位校验改成恒真——各自杀掉一条独占用例。**其中一条暴露了真问题**：`registryHasNoSlotForTheSecretValue` 当时用的草稿 `models: []`，它先被「自定义提供商至少一个模型」拒绝，于是那条断言并没有在检验明文槽位这道闸——换成除 `apiKey` 外完全合法的草稿后，同一个变异才把它杀红。红集合从 2 条变成预期的 3 条。还原 `diff -q` 无输出，复跑回 414/413/1/0。
 
+
+## 10. 宿主配置面 + 远端模型清单 + 轮次采纳注册表
+
+`apps/host/src/main.cj` 新增 `providerSurfaceRequest`，把模型页的每个动作接到核心：`model/registry/{describe,update,remove,set-default,add-catalog,catalog}`、`credential/{describe,set,unset}`、`model/list`。三类拒绝按原码回传（`settings-conflict` / `settings-rejected` / `provider-not-found`），合并成「保存失败」就丢掉了「别人先改过，请重新加载」这条唯一可执行的信息。`initialize.capabilities` 同步声明这六个方法名。
+
+新增 `core/src/model_catalog.cj`：`GET ${baseUrl}/models`，TLS 默认校验、禁跟随重定向。畸形形态一律 `bad-model-catalog`（空正文、非 JSON、顶层数组、`{"data":{}}`、条目非对象、id 非字符串、带 `error`、超 512 条、超 1MiB）， Trim + 去重保序；`summary(apiKey, ids)` 的密钥形参刻意不读，摘要面上不带凭据材料。传输失败区分 `http-status:<code>`（原样带上）与 `model-catalog-request-failed`。
+
+轮次侧：`turn/start` 与 `task/start` 先读注册表默认指针，`openai-completions` 之外的方言在起轮前拒（`-32016 protocol-not-supported:<p>`，装配器只会出 Chat Completions 的体），凭据按 `credentialRef` 每次现取；注册表为空才回落单路模型设置与 `DSH_PROVIDER_*`。
+
+核心计数：414 → **TOTAL 418 / PASSED 417 / SKIPPED 1 / FAILED 0 / ERROR 0**（模型清单 4 条），`cjpm test success`。桌面计数：**117/117 通过**（新增 `provider-registry.test.mjs` 4 条 + `user-text-quote.test.mjs` 1 条）。
+
+变异反证（宿主面，两轮构建，每个变异各有一条独占受害用例）：
+
+| 变异（只改语义不改签名） | 独占用例 | 结果 |
+| --- | --- | --- |
+| `resolveCredentialKey` 改成按引用缓存首次值 | 「凭据每次操作现取」 | 红：旋转后仍发旧令牌，401 断言失败 |
+| `update` 提交时忽略客户端 `expectedRevision`，改传当前版本 | 「注册表读写与两类拒绝分开回传」 | 红：Missing expected rejection（冲突不再发生） |
+| 轮次 `fromRegistry` 恒假（不采纳注册表） | 「轮次按注册表装配请求」 | 红：`-32016 model-not-configured` |
+| 方言护栏条件改成恒假 | 「非 Chat Completions 方言显式拒绝」 | 红：`-32015 provider-init-failed:http-request-error`（真的把异方言当 Chat Completions 发了） |
+
+第一轮三个变异同批施加时红集合为 {1,2,3,4}；其中用例 4 的红灯在「方言护栏」与「不采纳注册表」两个变异下都会出现（遮蔽），所以第 4 个变异单独一轮复跑，此时 1/2/3 全绿、只有 4 红，归因才成立。还原用 `cp` 备份 + `diff -q` 无输出，重编重打后 4 条回到全绿。
+
+未闭合：宿主 `describe()` 的 `writable` 目前恒真（核心没有只读文档档位）；`credentialWritable`/`keyConfigured` 需要宿主在出JSON 时按引用查一次凭据层——这是下一批（桌面 IPC 通道 + 模型页真适配器）的前提。

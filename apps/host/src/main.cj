@@ -224,6 +224,107 @@ func loadForWrite(log: SessionLog, meter: TokenMeter): Bool {
     return true
 }
 
+func boolText(value: Bool): String {
+    if (value) { return "true" }
+    return "false"
+}
+
+// 引用→值：CredentialStore 自己就分层（活环境压过用户文件层），所以这里每次现取。
+// 不在宿主里留缓存——上游的机制是「旋转后的下一次请求就用新值」，缓存会把它变成谎言。
+func resolveCredentialKey(reference: String): String {
+    if (reference.size == 0) {
+        return ""
+    }
+    try {
+        if (let Some(v) <- CredentialStore.forUser().resolve(reference)) {
+            return v.value
+        }
+    } catch (e: Exception) {
+        return ""
+    }
+    return ""
+}
+
+// 提供商与凭证的配置面：桌面模型页的每个动作都必须落到仓颉核心，渲染层不留第二份状态。
+// 失败原样带码回传——settings-conflict 与 settings-rejected 对用户是两句话，
+// 合并成「保存失败」就丢掉了「别人先改过，请重新加载」这条唯一可执行的信息。
+func providerSurfaceRequest(method: String, body: String, idText: String): Unit {
+    let registry = ProviderRegistry.forUser()
+    let creds = CredentialStore.forUser()
+    try {
+        if (method == "model/registry/describe" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog") {
+            if (method == "model/registry/update") {
+                let request = JsonValue.fromStr(body).asObject()
+                var draft: Option<JsonObject> = None
+                if (let Some(p) <- request.get("params")) {
+                    if (let Some(d) <- p.asObject().get("draft")) {
+                        draft = Some(d.asObject())
+                    }
+                }
+                if (draft.isNone()) {
+                    emit(errFrame(idText, -32020, "settings-rejected"))
+                    return
+                }
+                registry.updateObject(draft.getOrThrow(), jsonNum(body, "expectedRevision"))
+            } else if (method == "model/registry/remove") {
+                registry.remove(jsonStr(body, "id"), jsonNum(body, "expectedRevision"))
+            } else if (method == "model/registry/set-default") {
+                registry.setDefault(jsonStr(body, "providerId"), jsonStr(body, "model"), jsonNum(body, "expectedRevision"))
+            } else if (method == "model/registry/add-catalog") {
+                registry.addFromCatalog(jsonStr(body, "id"), jsonStr(body, "credentialRef"))
+            }
+            emit(okFrame(idText, registry.describe().asJson()))
+            return
+        }
+        if (method == "model/registry/catalog") {
+            emit(okFrame(idText, registry.catalogJson()))
+            return
+        }
+        if (method == "credential/describe" || method == "credential/set" || method == "credential/unset") {
+            let reference = jsonStr(body, "ref")
+            if (method == "credential/set") {
+                creds.set(reference, jsonStr(body, "value"))
+            } else if (method == "credential/unset") {
+                creds.unset(reference)
+            }
+            let after = creds.describe(reference)
+            emit(okFrame(idText, "{\"ref\":\"${jsonEscapeText(reference)}\",\"configured\":${boolText(after.configured)},\"source\":\"${jsonEscapeText(after.source)}\",\"writable\":${boolText(after.writable)},\"summary\":\"${jsonEscapeText(after.safeSummary())}\"}"))
+            return
+        }
+        if (method == "model/list") {
+            // 「测试连接」与「拉取模型清单」是同一次动作：真的发一个 GET /models，只回报事实。
+            let record = ProviderRegistry.forUser().describe().providers
+            var baseUrl = ""
+            var reference = ""
+            let wanted = jsonStr(body, "providerId")
+            for (p in record) {
+                if (wanted.size == 0 || p.id == wanted) {
+                    baseUrl = p.baseUrl
+                    reference = p.credentialRef
+                }
+            }
+            if (baseUrl.size == 0) {
+                emit(errFrame(idText, -32020, "provider-not-found"))
+                return
+            }
+            let secret = resolveCredentialKey(reference)
+            let ids = ModelCatalog().fetch(baseUrl, secret)
+            var arr = "["
+            for (i in 0..ids.size) {
+                if (i > 0) { arr += "," }
+                arr += "\"${jsonEscapeText(ids[i])}\""
+            }
+            arr += "]"
+            emit(okFrame(idText, "{\"models\":${arr},\"summary\":\"${jsonEscapeText(ModelCatalog.summary(secret, ids))}\"}"))
+            return
+        }
+    } catch (e: Exception) {
+        emit(errFrame(idText, -32020, e.message))
+        return
+    }
+    emit(errFrame(idText, -32601, "method-not-found"))
+}
+
 // 全局外观有独立租约，不依赖当前会话的写入状态；只接收已命名的字段。
 func globalAppearanceRequest(method: String, body: String, idText: String): Unit {
     var theme = ""
@@ -367,6 +468,13 @@ main(args: Array<String>) {
             } catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
             continue
         }
+        if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list") {
+            // 在途轮次里只放行读面：改提供商或换凭据不该打断正在流式返回的这一轮
+            let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe"
+            if (turnBusy && !configReadSide) { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
+            providerSurfaceRequest(method, body, idText)
+            continue
+        }
         if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size") {
             globalAppearanceRequest(method, body, idText)
             continue
@@ -389,7 +497,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -638,11 +746,38 @@ main(args: Array<String>) {
             var configured: ModelSettingsSnapshot
             try { configured = ModelSettings.forUser().read() }
             catch (e: Exception) { emit(errFrame(idText, -32020, e.message)); continue }
-            let baseUrl = if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
-            let model = if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
-            var key = if (configured.credentialRef.size > 0) {
-                if (modelKeyRef == configured.credentialRef) { modelKey } else { "" }
-            } else { getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? "" }
+            // 注册表里选定的提供商优先；没有注册表条目时才回到单路模型设置与环境变量。
+            // 默认指针在校验时就保证「提供商存在且模型在其清单里」，所以这里不必再兜第二层。
+            let registryView = ProviderRegistry.forUser().describe()
+            var planBaseUrl = ""
+            var planModel = ""
+            var planRef = ""
+            var planProtocol = ""
+            for (p in registryView.providers) {
+                if (p.id == registryView.defaultProviderId && registryView.defaultModel.size > 0) {
+                    planBaseUrl = p.baseUrl
+                    planModel = registryView.defaultModel
+                    planRef = p.credentialRef
+                    planProtocol = p.protocol
+                }
+            }
+            let fromRegistry = planBaseUrl.size > 0
+            if (fromRegistry && planProtocol != "openai-completions") {
+                // 请求装配器目前只会出 Chat Completions 的体；把 Anthropic/Responses 形状的
+                // 提供商当成它来发，等于对着端点说不存在的方言——宁可当场拒。
+                emit(errFrame(idText, -32016, "protocol-not-supported:${planProtocol}"))
+                continue
+            }
+            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
+            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
+            var key = ""
+            if (fromRegistry) {
+                key = resolveCredentialKey(planRef)
+            } else if (configured.credentialRef.size > 0) {
+                if (modelKeyRef == configured.credentialRef && modelKey.size > 0) { key = modelKey } else { key = resolveCredentialKey(configured.credentialRef) }
+            } else {
+                key = getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
+            }
             if (method == "task/start" && baseUrl.size == 0) { emit(errFrame(idText, -32016, "model-not-configured")); continue }
             if (method == "task/start" && key.size == 0 && !baseUrl.startsWith("http://127.0.0.1:") && !baseUrl.startsWith("http://localhost:")) {
                 emit(errFrame(idText, -32016, "model-credential-unavailable")); continue

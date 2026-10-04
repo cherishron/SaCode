@@ -117,6 +117,12 @@ public class ProviderRegistry {
         this.file = file
     }
 
+    // 与模型设置、全局外观同一个用户设置目录：两个入口（CLI 与桌面宿主）解析到同一份文档
+    public static func forUser(): ProviderRegistry {
+        let dir = Path(GlobalAppearanceSettings.forUser().settingsPath()).parent.toString()
+        return ProviderRegistry("${dir}/providers.log")
+    }
+
     // 每次操作都从盘上重放：注册表是文档，不是进程内状态——
     // 另一个入口改过之后，这里不能还拿旧视图去判断冲突。
     private func reload(): Unit {
@@ -240,9 +246,15 @@ public class ProviderRegistry {
 
     // 写侧只认白名单字段；任何想顺路把密钥值塞进来的草稿一律拒绝——
     // 这个文档面上根本没有能承载明文的槽位，而不是「存了但读的时候删掉」。
+    // 写侧的两个入口：字符串形态给单测与日志回放用，对象形态给宿主直接用——
+    // 宿主的请求体已经解析过了，再序列化一遍只为喂回字符串是白做一次编码转换。
     public func update(draft: String, expectedRevision: Int64): Unit {
+        updateObject(json(draft), expectedRevision)
+    }
+
+    public func updateObject(obj: JsonObject, expectedRevision: Int64): Unit {
         reload()
-        let rec = parseRecord(draft, false)
+        let rec = parseRecordObject(obj, false)
         let existing = find(rec.id)
         if (existing.declared) {
             throw Exception("settings-rejected")
@@ -290,7 +302,10 @@ public class ProviderRegistry {
 
     // 从事件里复原记录：只信自家写出的规范形态，解析不过就当回放被拒绝
     private func parseRecord(text: String, fromLog: Bool): ProviderRecord {
-        let obj = json(text)
+        return parseRecordObject(json(text), fromLog)
+    }
+
+    private func parseRecordObject(obj: JsonObject, fromLog: Bool): ProviderRecord {
         for (forbidden in ["apiKey", "api_key", "key", "token", "secret", "value"]) {
             if (let Some(v) <- obj.get(forbidden)) {
                 if (!isNullValue(v)) {
