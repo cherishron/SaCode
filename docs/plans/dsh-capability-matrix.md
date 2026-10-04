@@ -58,7 +58,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-03 系统提示组装接入后）：`✔` 11 行、`◐` 3 行、`☐` 49 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + session-title/todo 核心切片后）：`✔` 11 行、`◐` 5 行、`☐` 47 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -100,7 +100,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | session-query | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 36）；只有投影与分页读取，无查询面 |
 | session-reference | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 37） |
 | session-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 38）。**C04 已核**：上游 session-telemetry 模块 213 行确证有 `SessionTelemetryRecord` 两 channel（ledger 镜像 + ops）+ `session-telemetry/record` waterfall 脱敏扩展点 + fail-closed（抛异常的监听器扣下该条记录）。保留本地诊断需求，外发默认关闭，不直接排除整模块 |
-| session-title | ✔ | ✔ | M1 | ✔ | ☐ | 完整模块未实现（C 档，行 39）；桌面新建名称已保存为 `session/title` 并用于列表及主标题。**上游校正**：上游有 `SessionTitleProviderId`/`SessionTitleSource`(fallback/provider/user)/`SessionTitleAutomaticMode`(first-prompt/all-prompts)/`register(provider)` 注册机制与 `rename` pin 语义，本仓仅保存标题字符串，未实现 provider 注册与自动生成调度 |
+| session-title | ✔ | ✔ | M1 | ✔ | ◐ | 核心切片已落 `core/src/title.cj`（2026-10-04）：`session/title` 是 log-only 事件，不进 `isSurfaceEvent` 白名单；`rename` 空/纯空白拒绝且不留事件、非空 trim 后落 source="user"；`registerProvider` 单槽重复注册抛且首次前缀保留；`generateFrom` 无 provider 走 60 上限截断落 source="fallback"。core `title_test.cj` **4 条**（round-trip 回放 + 空拒绝 + 单槽 + 截断）。**仍缺**：`SessionTitleProviderId` branded、上游 `first-prompt`/`all-prompts` 自动模式、host IPC `session/title-*` 通道、CLI `dsh title` 子命令；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 C01 |
 | settings | ✔ | ✔ | M5/M6 | ✔ | ☐ | 完整配置域未实现（C 档，行 40）；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，不以局部设置窗判定整个模块完成 |
 | shell | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 41） |
 | sidebar-right | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地。**上游校正**：上游 sidebar-right 是 React 组合系统（tab-type registry + dsh-resource:// 地址 + dockkit 布局），zh 版在冻结 commit 不存在（404），本仓 Vue runtime 架构根本不同 |
@@ -113,7 +113,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | subprocess | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/extproc.cj` 以子进程驱动外部脚本宿主跑 NDJSON JSON-RPC：握手必须来自子进程真实应答、按 `callId` 配对与取消、未知方法回 `-32601`、超时不编终态、强杀后读线程照样收束、命令不存在 fail-closed。core 15 条 + extjs 14 条 |
 | system-prompt | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/sysprompt.cj` `SystemPromptBuilder` 从 `ToolRegistry` 读工具名与描述组装提示，角色定义在前、工具清单在后；core `sysprompt_test.cj` 3 条 + CLI headless 3 条断言。CLI `seed` 模式已接入而非硬编 |
 | terminal | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 51）；无 PTY。Ctrl+C 走的是 `SetConsoleCtrlHandler`（`core/src/sigwin.cj`），属中断处理面，不等于终端子系统 |
-| todo | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 52） |
+| todo | ✔ | ✔ | M7 | ✔ | ◐ | 核心切片已落 `core/src/todo.cj`（2026-10-04）：`TodoItem` 只有 content 与三态 status（pending/in_progress/completed），刻意无 id/priority/activeForm；`todo/write` 是 log-only 事件不进 `isSurfaceEvent`；每次 write 全量替换（last-write-wins）；空数组仍落事件以便回放能追问「什么时候清的」；任一 status 非法整次拒绝且一条事件都不留。core `todo_test.cj` **4 条**（round-trip + 全量替换 + 非法拒写 + 清空快照）。**仍缺**：模型工具 `dsh-tool-todo` 与 invariant companion（一次校验既有 + 增量跟踪 turn 边界）；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 D 组 |
 | token-meter | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/meter.cj` `TokenMeter`：usage 只从会话日志重算（`turn/usage`、`usage/over-budget`、`usage/bad-usage`、`usage/budget`），超档那笔不计入且之后不开新轮（Host `-32014`），预算只可收紧且收紧本身是日志事实；Host 出 `usage/status`+`usage/set-budget` 与 `turn/poll` 读数，CLI `stream` 8 条断言。**上游校正**：上游 `TokenSurfaceNode` 有 route-priced request-image pricing（`ctx.llm.imageRequestPricing`）与 `heuristicTokens` 影子定价，本仓无节点级定价；**C02 部分核**：未发现订阅/支付/商业权益字段 |
 | tools | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/agent.cj` 两个入口共用同一条 `pipeline`（guard → 参数归一化 → snapshot → 执行 → 无损校验），失败归一成互不相同的阶段码并落 `tool/result`；`pipeline_test.cj` 4 条，内容截断变异体能同时咬住两条。缺 `projectContent`/`finalizeContent` 等上游分段，见 §6.1.2 补证第 3 条剩余项。阶段码已含 `not-found`、`fs-stale-version`（读侧与本批新增）。**上游校正**：四段管线契约一致；上游 `ToolRestriction`(per-scope allow/deny) 与 `defineTool` DSL(`ValueSchemaSpec`) 本仓未实现 |
 | typert | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 55） |
