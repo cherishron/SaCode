@@ -119,6 +119,3 @@ apps/desktop/renderer/vendor/
 # pack-tinyvue 的临时折叠入口（esbuild 解析要靠它待在 apps/desktop 下）
 apps/desktop/.tinyvue-*/
 apps/desktop/.tinyrobot-*/
-
-# TypeScript 页面构建期临时 shim
-apps/desktop/.pages-*/

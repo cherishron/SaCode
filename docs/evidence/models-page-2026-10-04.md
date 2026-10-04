@@ -22,3 +22,13 @@ renderer/pages/models-page.ts 使用 TypeScript/Vue 3 runtime h()，scripts/pack
 ## 未完成
 
 多提供商仓颉配置/凭证引用及平台凭证存储、模型目录查询、协议请求适配尚未接入。现有 core/model_settings.cj 原型仅单路配置，不能满足整个页面契约。提供商 schema、只读/版本冲突、默认模型恢复、插件 footer 等官方交互仍需补齐。完整页面复刻、后端接入、真实 StepFun 验收、独立 npm CLI 和最终安装包仍未完成；本次没有生成最终安装包。
+
+## 配置语义补齐（后续增量）
+
+- 提供商区分 declared，内置目录条目不再错误标为自定义，内置提供商隐藏自有 ID/协议编辑；环境提供的凭证只读，删除文案保留外部凭证。
+- 模型目录具有默认/自定义状态，恢复默认只变更草稿，保存后由核心承接持久化；只读配置可查看但禁用写操作。
+- 页面 Adapter 的 load 返回 revision/writable，save/remove 携带打开卡片时的 expectedRevision；冲突显示官方中文说明并保留草稿，关闭后重载，再打开使用新版本。订阅卸载时回收；较早返回的目录请求不能覆盖最新快照。真实后端尚未实现该契约。
+- TypeScript 5.9.3 严格检查通过：在 apps/desktop 执行 `npm exec --yes --package=typescript@5.9.3 -- tsc --noEmit --strict --lib ES2022,DOM --module ESNext --moduleResolution Bundler --target ES2022 renderer/pages/models-page.ts`。首次检查发现删除弹窗 slot 中 nullable 引用，修为可选访问后通过。检查器通过 npm exec 使用，不作为运行时依赖。
+- 当前整页 Electron 最终 59 组/210 条检查通过（退出码 0）；新增默认恢复、环境凭证只读、版本冲突/重新打开、只读写阻断、刷新乱序、订阅回收。日志 `D:\Temp\SaCode-ui-scroll-20261004\models-version-frame.log`，报告 `models-version-captures/reports.json`。依旧是组件 fixture 的配置行为验收，不是仓颉业务完成证明。
+
+- 最终虚拟 Vue 模块构建去除了随机临时 shim 路径，同一源码连续构建 SHA256 均为 `3C912DD2D72ED10F240368FD979D16B2DB13200A3E1A8F3D0093CD1EF4531124`；仅证明模型页面 bundle 的重复构建一致，不代表全产品产物已可复现。实际最终 bundle 经 Electron 59 组/210 条检查通过，日志 `models-version-stable.log`，报告 `models-version-stable/reports.json`。
