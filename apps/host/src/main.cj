@@ -224,6 +224,49 @@ func loadForWrite(log: SessionLog, meter: TokenMeter): Bool {
     return true
 }
 
+// 全局外观有独立租约，不依赖当前会话的写入状态；只接收已命名的字段。
+func globalAppearanceRequest(method: String, body: String, idText: String): Unit {
+    var theme = ""
+    var size: Int64 = -1
+    try {
+        let request = JsonValue.fromStr(body).asObject()
+        if (let Some(value) <- request.get("method")) {
+            if (value.asString().getValue() != method) { throw Exception("bad-global-request") }
+        } else { throw Exception("bad-global-request") }
+        if (method != "global/appearance/get") {
+            if (let Some(value) <- request.get("params")) {
+                let params = value.asObject()
+                if (method == "global/appearance/set-theme") {
+                    if (let Some(field) <- params.get("theme")) { theme = field.asString().getValue() }
+                    if (!SessionAppearance.validTheme(theme)) { throw Exception("bad-theme") }
+                } else {
+                    if (let Some(field) <- params.get("fontSize")) { size = field.asInt().getValue() }
+                    if (!GlobalAppearanceSettings.validFontSize(size)) { throw Exception("bad-font-size") }
+                }
+            } else { throw Exception("bad-global-request") }
+        }
+    } catch (e: Exception) {
+        let message = if (method == "global/appearance/set-font-size") { "bad-font-size" } else { "bad-global-appearance-params" }
+        emit(errFrame(idText, -32602, message))
+        return
+    }
+    try {
+        let settings = GlobalAppearanceSettings.forUser()
+        var changed = false
+        if (method == "global/appearance/set-theme") { changed = settings.setTheme(theme) }
+        if (method == "global/appearance/set-font-size") { changed = settings.setFontSize(size) }
+        let snapshot = settings.read()
+        let writeResult = if (method == "global/appearance/get") { "" } else {
+            let flag = if (changed) { "true" } else { "false" }
+            ",\"saved\":true,\"changed\":${flag}"
+        }
+        emit(okFrame(idText, "{\"theme\":\"${snapshot.theme}\",\"fontSize\":${snapshot.fontSize},\"scope\":\"user\"${writeResult}}"))
+    } catch (e: Exception) {
+        let code: Int64 = if (e.message == "settings-already-owned") { -32001 } else { -32003 }
+        emit(errFrame(idText, code, e.message))
+    }
+}
+
 main(args: Array<String>) {
     let catalog = SessionCatalog(".")
     var activeId = "current"
@@ -296,6 +339,10 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size") {
+            globalAppearanceRequest(method, body, idText)
+            continue
+        }
         if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {
             emit(errFrame(idText, -32003, "workspace-failed-restart-required")); continue
         }
@@ -314,7 +361,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {

@@ -25,3 +25,15 @@
 这是全局配置核心基础，尚未接入 Host 固定协议、Electron/preload、字号控件或 CSS 字号轴，界面依然使用原有会话主题。还需确定两入口统一的用户配置根目录、处理已有会话主题与全局主题的迁移/优先级，并完成真实跨进程写入及发布失败故障验收。
 
 下一步绑定已持久化的字号到消息、流式正文和输入区的同一轴，字号改变时重新测量草稿高度，并验证默认/最大/最小字号下的亮暗主题和窄窗口。不得把核心单测通过声明为字号设置页面、全局设置域或完整桌面目标完成。本批不涉及并行 SSE/Next SDK 改动，未重打桌面产物。
+
+## 用户根目录与 Host 协议增量
+
+核心新增 `GlobalAppearanceSettings.forUser()`：显式 `SACODE_USER_SETTINGS_DIR` 只接受绝对路径；否则读取非空 USERPROFILE，再回退 HOME，使用 `<用户主目录>/.sacode/user`。主目录缺失显式报错，不能回退项目或会话 cwd。两入口可调用同一解析逻辑；CLI 设置命令尚未接入。
+
+Host 登记三个固定方法：`global/appearance/get`、`global/appearance/set-theme`、`global/appearance/set-font-size`。返回主题、数值字号、`scope:user`，写成功才返回 `saved:true`，无变化返回 `changed:false`。参数从解析后的 JSON params 读取，非法数值类型、小数和越界拒绝；不接受由参数提供的根目录。全局配置独立于会话故障、租约及执行状态，协议分派先处理全局方法，避免损坏会话阻止用户读取配置。
+
+从暂存树导出 `dualtest/global-appearance-host/source`，只纳入本批 core、Host 和新测试，不含并行 provider/SSE/Next SDK 改动。使用仓颉 1.1.3 构建自包含 Host 后，最终核心 **143/143**、桌面 Node **90/90**，退出码均 0，日志 `core-verified.log`、`desktop-verified.log` 均位于上述 dualtest 根目录。
+
+六项新 Host 测试覆盖两个真实进程共享用户设置及重启/会话切换；严格参数及重复写无变化；会话写者租约与损坏会话不阻塞全局设置；活进程配置租约及损坏配置拒绝写入并保留原始内容；相对根目录拒绝；默认 HOME 根目录和缺失主目录时拒绝回退 cwd。测试均显式隔离配置目录，不改当前用户的真实设置。
+
+本增量未改 Electron IPC/preload，也未绑定渲染层。当前会话主题 API 和现有界面继续保留；全局与会话主题的迁移/优先级仍待处理。下一批需接入有限命名 IPC、全局字号控件与共享 CSS 轴，并处理字体变化后的草稿测量。安装包和 UI 端到端验收尚未覆盖这些新协议。

@@ -1,6 +1,7 @@
 package core
 
 import std.fs.*
+import std.env.*
 
 // 用户外观独立于会话；切换会话不会改变字号，配置不会进入模型消息。
 public class GlobalAppearanceSnapshot {
@@ -15,6 +16,22 @@ public class GlobalAppearanceSnapshot {
 public class GlobalAppearanceSettings {
     let root: String
     let path: String
+
+    // 两入口使用同一用户目录；显式绝对路径覆盖供部署和隔离验收使用。
+    public static func forUser(): GlobalAppearanceSettings {
+        let override = getVariable("SACODE_USER_SETTINGS_DIR") ?? ""
+        var home = getVariable("USERPROFILE") ?? ""
+        if (home.size == 0) { home = getVariable("HOME") ?? "" }
+        if (override.size == 0 && home.size == 0) { throw Exception("settings-home-unavailable") }
+        let directory = if (override.size > 0) { override } else { "${home}/.sacode/user" }
+        let bytes = directory.toArray()
+        let absolute = (bytes.size > 0 && bytes[0] == 47) ||
+            (bytes.size >= 3 && bytes[1] == 58 && (bytes[2] == 47 || bytes[2] == 92)) ||
+            (bytes.size >= 2 && bytes[0] == 92 && bytes[1] == 92)
+        if (!absolute) { throw Exception("settings-root-not-absolute") }
+        if (!exists(directory)) { Directory.create(directory, recursive: true) }
+        return GlobalAppearanceSettings(directory)
+    }
 
     public init(directory: String) {
         root = canonicalize(directory).toString()
