@@ -1,10 +1,25 @@
-# DSH — DeepSeek Harness 全系统复刻
+# SaCode
 
 一份**仓颉（Cangjie）共享核心**驱动两个入口：命令行（CLI）与 Electron 桌面应用。二者使用同一个 `core`、同一份 `session.log`，行为语义一致。
 
 > 复刻口径、18 条架构不变量与上游能力矩阵见 `docs/plans/`；已实测状态与待解锁项见 `docs/evidence/`。
 
 产品需求、账号与云服务裁剪范围及双入口验收标准见 [PRD](docs/product/PRD.md)。
+
+## 当前源码入口与目录约定
+
+本分支采用仓颉工作区，根 `cjpm.toml` 的成员为 `core`、`apps/cli`、`apps/host`。桌面源码唯一入口是 **`apps/desktop/`**：其 `package.json` 定义 Electron 启动及安装包构建，`main.cjs` 是主进程入口，`renderer/` 是页面源码。根目录 `desktop/` 曾留下空 `dist/`，没有源码或构建配置，不属于第二套桌面实现，现已清理。
+
+| 内容 | 唯一位置 |
+| --- | --- |
+| 桌面主进程、预加载和页面 | `apps/desktop/` |
+| 桌面调用的仓颉宿主源码 | `apps/host/src/` |
+| 两入口共享仓颉业务核心 | `core/src/` |
+| 开发态自包含宿主（生成文件） | `apps/desktop/dist/host/bin/` |
+| Electron 安装包及解包目录（生成文件） | `apps/desktop/dist/electron/` |
+| 页面第三方库折叠产物（生成文件） | `apps/desktop/renderer/vendor/` |
+
+不要编辑 `dist/`、`win-unpacked/resources/app.asar` 或已安装目录中的文件来替代源码改动。旧分支的 Rust/Tauri 路径不属于本分支构建入口；历史证据中的旧产品名及产物名仅用于追溯。输出目录中多个同版本文件可能来自不同时间的构建，最终交付须核对当前源码、Host 和产物，而不是只看版本号或文件存在。
 
 ## 这是什么
 
@@ -18,7 +33,7 @@
 - 双入口（仓颉 CLI 与 Electron 桌面）与 npm 平台包
 - 桌面渲染层（Vue 3 runtime + IPC 有限面，流式/审批/取消有真机断言；TinyVue 组件经构建期折叠接入）
 
-尚未接入：TinyRobot 消息组件与 Next SDK 页面工具、真模型 HTTPS+SSE 烟测、安装包签名与发布。Ctrl+C/SIGINT 的协作式取消已在核心（CFFI 处理器 `core/src/sigwin.cj`）与 CLI（`dsh sig`）落地，缺的是本环境无法把中断真正投递给子进程——需要一次人工在交互控制台按 Ctrl+C 的实测。桌面 UI 各面（Sidebar / Rightbar / Settings / Automation / 快捷键与 modal 原语）的复刻口径与现状逐项列在方案 §6.1.3，解锁条件见 `docs/evidence/p0-status-2026-10-02.md`。
+TinyRobot 消息组件已接入，HTTPS/SSE provider 已有实现和本地协议夹具检查。Next SDK 页面工具、真实模型任务完整产品闭环、完整桌面复刻验收、安装包签名与发布仍未完成。Ctrl+C/SIGINT 的协作式取消已在核心（CFFI 处理器 `core/src/sigwin.cj`）与 CLI（`dsh sig`）落地，缺的是本环境无法把中断真正投递给子进程——需要一次人工在交互控制台按 Ctrl+C 的实测。桌面 UI 各面（Sidebar / Rightbar / Settings / Automation / 快捷键与 modal 原语）的复刻口径与现状逐项列在方案 §6.1.3，解锁条件见 `docs/evidence/p0-status-2026-10-02.md`。
 
 ## 架构
 
@@ -38,7 +53,7 @@
 | `core/` | 仓颉静态库，唯一业务真源：会话日志、投影、取消/背压、扩展进程驱动 |
 | `apps/cli/` | 仓颉可执行入口，同时是可断言自测的 CLI，也是 npm CLI 的二进制来源 |
 | `apps/host/` | 仓颉 NDJSON / JSON-RPC 宿主，由桌面端 spawn；stdout 只走协议帧 |
-| `apps/desktop/` | Electron 壳 + 渲染层（纯 JS + Vue runtime，无打包器、无 TypeScript） |
+| `apps/desktop/` | Electron 壳 + Vue 3 runtime、TinyVue/TinyRobot 页面；第三方库构建期折叠为经典脚本 |
 | `extjs/` | 独立 Node JS 扩展宿主（NDJSON JSON-RPC），被 core 以子进程驱动 |
 | `npm/dsh-cli`、`npm/dsh-cli-win32-x64` | npm 平台包；`bin/` 下二进制由脚本生成，不入库 |
 | `scripts/pack-*.mjs` | 打包脚本（CLI / 宿主 / Vue vendor） |
