@@ -456,7 +456,7 @@ main(args: Array<String>) {
         let r2 = rt.executeWithApproval("write", "probe-headless.txt hello", t2, true, desk)
         expect("答 y 放行并写出正文", r2.allowed && r2.why == "ok:probe-headless.txt")
         expect("盘上确实是那份正文", exists("probe-headless.txt") && String.fromUtf8(File.readFrom("probe-headless.txt")) == "hello")
-        expect("同一工单不可重用", desk.consume(t2) == "")
+        expect("同一工单不可重用", desk.consume(t2, "write") == "")
         let r3 = rt.executeWithApproval("write", "probe-headless.txt again", t2, true, desk)
         expect("重用工单被拒", !r3.allowed && r3.why == "approval-not-granted:used")
         // 答 n：写下 decided:denied，执行同样被拒
@@ -528,7 +528,7 @@ main(args: Array<String>) {
         // 本块共发过 4 张号（t1/t2/t4 三张 + 重启后的 t6）；t3 是复用 t2，不发新号
         expect("日志上的 asked 条数等于发号次数", askedTotal == Int64(4) && askedDistinct == Int64(4))
         // 上一进程发过的号在新桌子上既不该应答也不该消费
-        expect("重启后旧号不能在新桌子上改判", !desk2.answer(t2, "denied") && desk2.consume(t2) == "")
+        expect("重启后旧号不能在新桌子上改判", !desk2.answer(t2, "denied") && desk2.consume(t2, "write") == "")
         hlog.flush()
         removeIfExists(hp, recursive: false)
         removeIfExists("${hp}.lease", recursive: false)

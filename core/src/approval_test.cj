@@ -56,9 +56,9 @@ func allowedOnceIsSingleUse() {
     let id = desk.ask("write")
     @Expect(desk.answer(id, "allowed-once"), true)
     @Expect(desk.stateOf(id), "allowed-once")
-    @Expect(desk.consume(id), "allowed-once")
+    @Expect(desk.consume(id, "write"), "allowed-once")
     // 用第二次必须拿不到放行：一次性就是字面意思的一次
-    @Expect(desk.consume(id), "")
+    @Expect(desk.consume(id, "write"), "")
     @Expect(apEvents(log, "approval/decided"), Int64(1))
     removeIfExists(p, recursive: false)
 }
@@ -85,12 +85,12 @@ func answerUnknownIdFailsAndIllegalDecisionIsRefused() {
     let log = SessionLog(p)
     let desk = ApprovalDesk(log)
     @Expect(desk.answer(Int64(4242), "allowed-once"), false)
-    @Expect(desk.consume(Int64(4242)), "")
+    @Expect(desk.consume(Int64(4242), "write"), "")
     // fail-closed：非 allowed-once 的「放行」都不算放行（没有永久授权这条路径）
     let id = desk.ask("write")
     @Expect(desk.answer(id, "allowed-always"), false)
     @Expect(desk.stateOf(id), "pending")
-    @Expect(desk.consume(id), "")
+    @Expect(desk.consume(id, "write"), "")
     removeIfExists(p, recursive: false)
 }
 
@@ -169,7 +169,7 @@ func pendingApprovalExpiresAndIsSettledOnce() {
     fake.now = ttl
     @Expect(desk.stateOf(shortId), "expired")
     @Expect(desk.stateOf(longId), "pending")
-    @Expect(desk.consume(shortId), "")
+    @Expect(desk.consume(shortId, "write"), "")
     @Expect(desk.pendingCount(), Int64(1))
     @Expect(apEvents(log, "approval/expired"), Int64(1))
     // 再把钟推到长工单也过期：expired 事件必须变成 2（长的那条），而不是 3——
@@ -242,8 +242,8 @@ func ticketIdsContinueAcrossProcesses() {
     @Expect(apEvents(reloaded, "approval/asked"), Int64(3))
     @Expect(apDupAskedIds(reloaded), Int64(0))
     @Expect(second.answer(a, "allowed-once"), false)
-    @Expect(second.consume(a), "")
-    @Expect(second.consume(b), "")
+    @Expect(second.consume(a, "write"), "")
+    @Expect(second.consume(b, "write"), "")
     @Expect(apEvents(reloaded, "approval/decided"), Int64(0))
     removeIfExists(p, recursive: false)
 }
@@ -294,4 +294,46 @@ func defaultDeskClockExpiresOnRealMonotonicTime() {
     @Expect(r.why, "approval-not-granted:expired")
     removeIfExists(p, recursive: false)
     removeIfExists("ap-real.txt", recursive: false)
+}
+
+// 工单批的是「哪一个工具」必须算进凭据本身。只认 id 的话，一张批过的读票
+// 就能替一次需要审批的写放行：审批答复被挪用到别的动作上，日志里还写着「批过了」。
+@Test
+func ticketApprovedForAnotherToolCannotAuthorizeWrite() {
+    let p = apPath("bind")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let reg = ToolRegistry()
+    reg.register(ToolSpec("read", "读文件", "path", false))
+    reg.register(ToolSpec("write", "写文件", "path content", true))
+    let rt = ToolRuntime(log, reg)
+    let desk = ApprovalDesk(log)
+    let id = desk.ask("read")
+    @Expect(desk.answer(id, "allowed-once"), true)
+    let r = rt.executeWithApproval("write", "a.txt x", id, true, desk)
+    @Expect(r.allowed, false)
+    @Expect(r.why, "approval-tool-mismatch:read")
+    // 误用不得把票烧掉：这张票对它真正批过的动作仍然只放行一次
+    @Expect(desk.stateOf(id), "allowed-once")
+    removeIfExists("a.txt", recursive: false)
+    removeIfExists(p, recursive: false)
+}
+
+// 桌面级同一件事的两半：挪用拿不到放行，但也不把人批过的那次作废——
+// 对的工具仍然能放行，且仍然只有一次。
+@Test
+func consumeIsBoundToToolAndMisuseDoesNotBurnTicket() {
+    let p = apPath("bind-desk")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let desk = ApprovalDesk(log)
+    let id = desk.ask("read")
+    @Expect(desk.answer(id, "allowed-once"), true)
+    @Expect(desk.toolOf(id), "read")
+    @Expect(desk.consume(id, "write"), "")
+    @Expect(desk.consume(id, "read"), "allowed-once")
+    @Expect(desk.consume(id, "read"), "")
+    // 不存在的号既不放行也没有工具可报，调用方据空串走原来的「没批过」分支
+    @Expect(desk.toolOf(Int64(99999)), "")
+    removeIfExists(p, recursive: false)
 }

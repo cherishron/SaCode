@@ -148,7 +148,15 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
-            if (desk.consume(approvalId) != "allowed-once") {
+            if (desk.consume(approvalId, name) != "allowed-once") {
+                let bound = desk.toolOf(approvalId)
+                if (bound.size > 0 && bound != name) {
+                    // 票是批给别的工具的：拒绝原因必须和「没批过」分开写，
+                    // 否则日志里只留一个 denied，答不出人到底批了什么、被拿去干了什么。
+                    lastDetail.stage = "approval-mismatch"
+                    log.append("tool/result", "denied:${name}:approval-mismatch:${bound}")
+                    return ApprovalOutcome(false, "approval-tool-mismatch:${bound}")
+                }
                 let st = desk.stateOf(approvalId)
                 lastDetail.stage = "approval-denied"
                 log.append("tool/result", "denied:${name}:approval-${st}")

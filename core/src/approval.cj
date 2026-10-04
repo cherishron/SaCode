@@ -7,10 +7,11 @@ import std.time.MonoTime
 // 而不是调用方随手带一个字符串说自己批过了。理由是可追问性——
 // 只有把 asked/decided/expired 写成事件，才答得出「谁批的、批没批、批过头没有」。
 //
-// 三条 fail-closed 规则：
+// 四条 fail-closed 规则：
 // 1) 认得的决定只有 `allowed-once` 与 `denied`，其余（allowed-always、空串、乱码）不改判也不成功；
 // 2) 一次性就是字面意思的一次，consume 用过即失效；
-// 3) 过期即拒：pending 过了期限自动转 expired，consume 拿不到放行。
+// 3) 过期即拒：pending 过了期限自动转 expired，consume 拿不到放行；
+// 4) 票绑工具：consume 要同时报出「要执行的是哪个工具」，批给别的工具的票不放行。
 // 旧审批 ID 不可重用：已结算的工单不再接受第二次应答，也不产生第二条 decided。
 //
 // 时钟是真实单调钟（MonoTime 差值换算成整秒），不是可由调用方推进的刻度：
@@ -129,17 +130,31 @@ public class ApprovalDesk {
         return false
     }
 
-    // 取走放行凭据：只有 allowed-once 且还没被消费过的工单能拿到，取到即作废。
-    // 其余情况一律空串，调用方据此拒绝执行——没有「默认放行」这条路。
-    public func consume(id: Int64): String {
+    // 取走放行凭据：必须是「批给这一个工具」的一次性凭据，取到即作废。
+    // 工具名算进凭据本身——只认 id 的票能被挪去放行任何别的动作，而人回答的是
+    // 「这一件事可以做」，不是「这个号以后干什么都行」。
+    // 挪用不烧票：这张票对它真正批过的动作还得能放行一次，
+    // 否则一次误用就把人已给出的审批答复作废了。
+    public func consume(id: Int64, tool: String): String {
         reap()
         if (let Some(t) <- find(id)) {
-            if (t.state == "allowed-once") {
+            if (t.tool == tool && t.state == "allowed-once") {
                 t.state = "used"
                 return "allowed-once"
             }
         }
         return ""
+    }
+
+    // 这张票批的是哪个工具；号不存在回空串。与 stateOf 同一类只读探查，
+    // 让调用方能把「挪用了别的工具的票」和「压根没批/已过期」写成两种拒绝原因。
+    public func toolOf(id: Int64): String {
+        reap()
+        let t = find(id)
+        match (t) {
+            case Some(x) => x.tool
+            case None => ""
+        }
     }
 
     // 日志里出现过的最大工单号；没有 asked 事件时为 0（下一张就是 1 号）。

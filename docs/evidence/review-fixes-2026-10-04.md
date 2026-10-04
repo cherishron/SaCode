@@ -144,3 +144,70 @@ B 再执行它那次 `removeIfExists`」，需要 B 在判活与删除之间被�
 输家的 rename 因源不在而失败即放弃；搬进独占槽位后再认一次凭据，若那其实是活人的租约就原样放回。
 这条能真正封死窗口，但在本机它改的是「测不出差别」的那一段，写进主干等于加无防回归代码，故本批不做。
 若要收口，需要先有跨进程（两个真实子进程同时接管）的取证通道，而不是同进程线程。
+
+---
+
+## 批次 3：P1 —— 审批工单不绑工具，一张批过的票可以放行任何别的动作
+
+**缺陷**：`ApprovalTicket` 本来就存了 `tool`（`approval/asked` 事件也写着 `<id>:<tool>`），
+但 `consume(id)` 只看 `state == "allowed-once"`，从不比对「现在要执行的是哪个工具」。
+于是 `desk.ask("read")` 被人批了以后，这张票可以拿去放行需要审批的 `write`——
+人回答的是「读这件事可以做」，实现当成「这个号以后干什么都行」，
+而且日志里只会留下一条 `denied/allowed` 都对不上的账。
+
+**红先证据**（`ticketApprovedForAnotherToolCannotAuthorizeWrite`，用**已有 API** 写 behavioral 红，
+不需要先改签名拿编译器红）：注册 `read`(不要审批) + `write`(要审批)，批给 read 的票去执行 write：
+
+```
+FAILED: 1  → ticketApprovedForAnotherToolCannotAuthorizeWrite   （其余 377 条全绿）
+    write 真的执行了：r.allowed == true
+```
+红集合恰好等于本批新增的那一条，无附带失败。
+
+**修法**：
+- `ApprovalDesk.consume(id: Int64, tool: String): String`——只有「批给这个工具」且 `allowed-once` 才放行；
+  **挪用不烧票**（错工具的 consume 不改 state），否则一次误用就把人已给出的审批答复作废了。
+- 新增 `ApprovalDesk.toolOf(id): String`（与既有 `stateOf` 同一类只读探查），号不存在回空串。
+- `core/src/agent.cj` 的 `executeWithApproval` 把工具名交给 consume，并按原因分叉写日志：
+  票是批给别的工具时写 `denied:<name>:approval-mismatch:<bound>` 与
+  `approval-tool-mismatch:<bound>`；查无此号（`toolOf` 回空串）仍走原来的
+  `approval-not-granted:<state>`，不伪装成挪用。
+- `core/src/approval.cj` 头部的 fail-closed 规则由三条改为四条，第 4 条就是票绑工具。
+- 调用点同步：`approval_test.cj` 8 处、`apps/cli/src/main.cj` 2 处 `consume` 补工具名。
+  宿主不需要改：它的 `extension/call` 本来就走 `extRt.executeWithApproval(name, ...)`
+  （`apps/host/src/main.cj:529-530`），绑定在 core 侧生效。
+
+**变异反证**：把 `if (t.tool == tool && t.state == "allowed-once")` 退回成
+`if (t.state == "allowed-once")`，实跑红集合**恰好等于**本批两条新用例：
+
+```
+FAILED: 2 → ticketApprovedForAnotherToolCannotAuthorizeWrite
+            consumeIsBoundToToolAndMisuseDoesNotBurnTicket
+```
+`consumeIsBoundToToolAndMisuseDoesNotBurnTicket` 是**实现之后**补的桌面级用例（不宣称红先），
+它独占钉住「挪用不放行 + 对的工具仍放行一次 + 未知号 `toolOf` 回空串」这三点。
+
+**计数**：
+| 取证态 | 实测 |
+|---|---|
+| 工作区（本批 4 个文件） | core `TOTAL: 379 / PASSED: 378 / SKIPPED: 1 / FAILED: 0 / ERROR: 0`，rc=0；`@Test` 注解总数 379 与 TOTAL 对上 |
+| CLI 工作区构建 | `cjpm build success`，六模式 **PASS 162 / FAIL 0**（all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / headless 36，与批次 1 逐模式相同） |
+| **HEAD + 只放本批 4 个文件**的 detached worktree（`git worktree add --detach`，用完 `--force` 回收） | core `TOTAL: 379 / PASSED: 378 / FAILED: 0`，rc=0；CLI `cjpm build success` + 六模式 **PASS 162 / FAIL 0**；宿主 `cjpm build success` |
+
+**为什么要另开 worktree 取证**：本批收尾时工作区的 core **已经编不过了**，但原因不是我改的文件——
+并发线新落的未入库文件 `core/src/model_request_test.cj` 让整包编译失败：
+
+```
+error: unable to infer generic argument of this function
+  ==> core/src/model_request_test.cj:6.45: expectEqual("messages.size", "Int64(4)", messages.size, Int64(4), isDelta: false,)
+```
+我没有动它，也不替它改（那是另一条线在飞的活）。因此把「工作区取证」与「提交级取证」切开：
+本批的提交级判据来自上面那张表最后一行——`HEAD` 副本里只放我这 4 个文件，独立跑通。
+
+**本批未跑（BLOCKED）**：宿主 NDJSON 协议面那条 23 项驱动脚本连同 `dualtest/` 一起被并发线
+`rm -rf` 掉了（AGENTS.md 把「先 `rm -rf dualtest` 再跑」写进 `bridge.test.mjs` 的恢复步骤，
+它顺手清掉了整目录）。批次 1 那 23 项 PASS 是当时实测、已记录在本文档；本批新增的
+「`approval/ask` 发号给 read → `approval/answer` → `extension/call` 挪用到 write 必须回
+`approval-tool-mismatch:read`，且 `approval/status` 仍见 `allowed-once`」这一组**没有跑过**，
+标 BLOCKED。解锁动作：等宿主线 `apps/host/src/main.cj` 的在飞改动落库、`dualtest/` 无人占用时
+重建驱动脚本再跑。宿主入口这一批只有「编译通过」这一条硬证据。
