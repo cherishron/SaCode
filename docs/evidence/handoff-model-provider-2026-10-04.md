@@ -165,3 +165,16 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 第一轮三个变异同批施加时红集合为 {1,2,3,4}；其中用例 4 的红灯在「方言护栏」与「不采纳注册表」两个变异下都会出现（遮蔽），所以第 4 个变异单独一轮复跑，此时 1/2/3 全绿、只有 4 红，归因才成立。还原用 `cp` 备份 + `diff -q` 无输出，重编重打后 4 条回到全绿。
 
 未闭合：宿主 `describe()` 的 `writable` 目前恒真（核心没有只读文档档位）；`credentialWritable`/`keyConfigured` 需要宿主在出JSON 时按引用查一次凭据层——这是下一批（桌面 IPC 通道 + 模型页真适配器）的前提。
+
+## 11. 凭据名派生 + 描述面交出凭据状态（模型页接真实宿主的前提）
+
+模型页的草稿上没有「凭据环境变量名」这一栏，页面提示写明 ID「用于派生凭据名」。派生落在核心 `deriveCredentialRef(id)`（大写、`-`→`_`、套 `SA_CODE_…_API_KEY` 命名空间），不是宿主也不是渲染层——两个入口必须推出同一个名字，否则 CLI 里配好的密钥在桌面端解析成另一个空引用。
+
+红灯是 `textField` 对**缺字段**直接抛 `settings-rejected`（provider_registry.cj:504），即这份文档原本要求全字段齐备。改成 `optionalTextField(obj, key, required)`：写侧允许不给（不给才派生），回放侧仍严格（自家写出的形态一定带这个字段）。显式给了但形状不对（`9bad`）仍然拒绝——派生不兜这个。
+
+宿主 `providerSurfaceRequest` 两处补强：
+- 描述/写回面改用 `providerViewJson`，逐提供商按 `credentialRef` 现查凭据层，交出 `keyConfigured` 与 `credentialWritable`。启动环境提供的引用报 `writable:false`，页面据此把密钥框锁住。
+- `model/list` 允许内联 `{baseUrl, apiKey}`：「获取可用模型」发生在保存之前，草稿里的地址与刚敲进的密钥直接去问远端。内联明文只活在这一次调用里——不进注册表、不进会话日志、不进回执（断言 `!JSON.stringify(inline).includes('inline-secret')`）。
+
+计数：核心 **TOTAL 420 / PASSED 419 / SKIPPED 1 / FAILED 0 / ERROR 0**（+2），`cjpm test` rc=0；桌面 **122/122 通过**（`provider-registry.test.mjs` 4→6 条）。新增两条桌面用例在改宿主前取到真红灯：第 5 条 `-32020 settings-rejected`（旧宿主不吃无引用草稿），第 6 条 `keyConfigured` 期望 `true` 实得 `undefined`。
+

@@ -18,9 +18,9 @@ const draft = (id, baseUrl) => ({
            { id: 'm-2', name: '模型二', contextWindow: '', maxTokens: '', image: false }],
 });
 
-async function boot(dir) {
+async function boot(dir, extraEnv = {}) {
   assert.ok(existsSync(HOST), '缺少自包含宿主');
-  const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings') });
+  const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings'), ...extraEnv });
   await bridge.start(dir);
   return bridge;
 }
@@ -195,4 +195,47 @@ test('非 Chat Completions 方言的提供商在起轮前显式拒绝', { timeou
   });
   await bridge.request('session/submit', { eventType: 'user/message', data: '你好' });
   await assert.rejects(() => bridge.request('task/start'), /protocol-not-supported:anthropic-messages/);
+});
+
+// 模型页的草稿上没有「凭据环境变量名」这一栏：ID 派生与凭据状态都得由宿主交出，
+// 否则页面既存不下密钥，也显示不出「这把钥匙配了没有」。
+test('宿主交出派生凭据名与凭据状态，未保存的草稿也能现场询问模型清单', { timeout: 30000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sacode-derive-'));
+  const stub = await stubCatalog('inline-secret');
+  t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
+
+  const bridge = await boot(dir);
+  t.after(() => bridge.stop());
+  const { credentialRef, ...noRef } = draft('gw', `http://127.0.0.1:${stub.port}`);
+  const saved = await bridge.request('model/registry/update', { draft: noRef, expectedRevision: 0 });
+  assert.equal(saved.providers[0].credentialRef, 'SA_CODE_GW_API_KEY', '凭据名要由提供商 ID 派生');
+  assert.equal(saved.providers[0].keyConfigured, false, '刚建好还没配钥匙');
+
+  await bridge.request('credential/set', { ref: 'SA_CODE_GW_API_KEY', value: 'inline-secret' });
+  const after = await bridge.request('model/registry/describe');
+  assert.equal(after.providers[0].keyConfigured, true, '配好之后描述面要跟上');
+  assert.equal(after.providers[0].credentialWritable, true);
+
+  // 「获取可用模型」发生在保存之前：草稿里的地址与刚输入的密钥直接去问远端
+  const inline = await bridge.request('model/list', { baseUrl: `http://127.0.0.1:${stub.port}`, apiKey: 'inline-secret' });
+  assert.deepEqual(inline.models, ['m-1', 'm-2']);
+  assert.equal(stub.seenAuth[stub.seenAuth.length - 1], 'Bearer inline-secret');
+  assert.ok(!JSON.stringify(inline).includes('inline-secret'), '内联明文不得出现在任何回执里');
+});
+
+// 启动环境已经提供了这把钥匙：页面上它是只读的，写面不能盖住运维给的值。
+test('环境提供的凭据在描述面标为只读', { timeout: 30000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sacode-readonly-'));
+  const stub = await stubCatalog('unused');
+  t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
+
+  const bridge = await boot(dir, { SA_CODE_TEST_KEY: 'from-launch-environment' });
+  t.after(() => bridge.stop());
+  const saved = await bridge.request('model/registry/update', {
+    draft: { ...draft('mine', `http://127.0.0.1:${stub.port}`) }, expectedRevision: 0,
+  });
+  assert.equal(saved.providers[0].keyConfigured, true, '环境里的值算已配置');
+  assert.equal(saved.providers[0].credentialWritable, false, '环境提供的引用不可写');
+  const info = await bridge.request('credential/describe', { ref: 'SA_CODE_TEST_KEY' });
+  assert.equal(info.source, 'env');
 });

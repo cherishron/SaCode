@@ -198,6 +198,37 @@ func registryKeepsLastWritePerProviderAndCountsCommitsNotEntries() {
 
 // 内置目录项由核心给出，不允许写侧伪造：改它的 baseUrl/protocol 就是拒绝，
 // 但它可以被选为默认——这是页面「内置提供商隐藏自有 ID/协议编辑」的后端依据。
+// 模型页的草稿里没有「凭据名」这一栏：上游的规则是提供商 ID 派生凭据名，
+// 派生必须发生在核心，两个入口（CLI 与桌面宿主）才不会各推一套名字。
+@Test
+func registryDerivesCredentialRefFromProviderId() {
+    regCleanup()
+    let draft = "{\"id\":\"my-gw\",\"name\":\"显示名\",\"baseUrl\":\"https://example.com/v1\",\"protocol\":\"openai-completions\",\"models\":[{\"id\":\"m\",\"name\":\"m\",\"contextWindow\":\"\",\"maxTokens\":\"\",\"image\":false}]}"
+    reg().update(draft, 0)
+    let view = reg().describe()
+    @Expect(view.providers.size, Int64(1))
+    @Expect(view.providers[0].credentialRef, "SA_CODE_MY_GW_API_KEY")
+    // 显式给了引用时以显式为准：派生不该覆盖调用方点名的那个
+    reg().update(draftJson("other", "https://b.example.com/v1", "openai-completions", "m"), 1)
+    @Expect(reg().describe().providers[1].credentialRef, "SA_KEY")
+    regCleanup()
+}
+
+// 缺字段是「没点名」，给了但形状不对是「点错了名」——后者不能被派生悄悄兜住。
+@Test
+func registryRejectsPresentButMalformedCredentialRef() {
+    regCleanup()
+    var code = ""
+    try {
+        reg().update("{\"id\":\"gw\",\"name\":\"显示名\",\"baseUrl\":\"https://example.com/v1\",\"protocol\":\"openai-completions\",\"credentialRef\":\"9bad\",\"models\":[{\"id\":\"m\",\"name\":\"m\",\"contextWindow\":\"\",\"maxTokens\":\"\",\"image\":false}]}", 0)
+    } catch (e: Exception) {
+        code = e.message
+    }
+    @Expect(code, "settings-rejected")
+    @Expect(reg().describe().providers.size, Int64(0))
+    regCleanup()
+}
+
 @Test
 func registryCatalogEntriesAreNotForgiableOrEditable() {
     regCleanup()

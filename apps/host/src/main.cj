@@ -245,6 +245,38 @@ func resolveCredentialKey(reference: String): String {
     return ""
 }
 
+// 描述面按引用现查凭据层：页面上那颗「钥匙配了没有」的点只能来自核心事实，
+// 不能由渲染层自己记一份——否则换个入口配的密钥在这里就是假的。
+func providerObjectJson(p: ProviderRecord, creds: CredentialStore): String {
+    var models = "["
+    for (i in 0..p.models.size) {
+        if (i > 0) { models += "," }
+        models += p.models[i].toJson()
+    }
+    models += "]"
+    var configured = false
+    var writable = true
+    try {
+        let info = creds.describe(p.credentialRef)
+        configured = info.configured
+        writable = info.writable
+    } catch (_: Exception) {
+        configured = false
+        writable = true
+    }
+    return "{\"id\":\"${jsonEscapeText(p.id)}\",\"name\":\"${jsonEscapeText(p.name)}\",\"baseUrl\":\"${jsonEscapeText(p.baseUrl)}\",\"protocol\":\"${jsonEscapeText(p.protocol)}\",\"credentialRef\":\"${jsonEscapeText(p.credentialRef)}\",\"declared\":${boolText(p.declared)},\"models\":${models},\"keyConfigured\":${boolText(configured)},\"credentialWritable\":${boolText(writable)}}"
+}
+
+func providerViewJson(view: ProviderView, creds: CredentialStore): String {
+    var arr = "["
+    for (i in 0..view.providers.size) {
+        if (i > 0) { arr += "," }
+        arr += providerObjectJson(view.providers[i], creds)
+    }
+    arr += "]"
+    return "{\"providers\":${arr},\"revision\":${view.revision},\"writable\":${boolText(view.writable)},\"defaultProviderId\":\"${jsonEscapeText(view.defaultProviderId)}\",\"defaultModel\":\"${jsonEscapeText(view.defaultModel)}\"}"
+}
+
 // 提供商与凭证的配置面：桌面模型页的每个动作都必须落到仓颉核心，渲染层不留第二份状态。
 // 失败原样带码回传——settings-conflict 与 settings-rejected 对用户是两句话，
 // 合并成「保存失败」就丢掉了「别人先改过，请重新加载」这条唯一可执行的信息。
@@ -273,7 +305,7 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
             } else if (method == "model/registry/add-catalog") {
                 registry.addFromCatalog(jsonStr(body, "id"), jsonStr(body, "credentialRef"))
             }
-            emit(okFrame(idText, registry.describe().asJson()))
+            emit(okFrame(idText, providerViewJson(registry.describe(), creds)))
             return
         }
         if (method == "model/registry/catalog") {
@@ -296,6 +328,7 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
             let record = ProviderRegistry.forUser().describe().providers
             var baseUrl = ""
             var reference = ""
+            var secret = ""
             let wanted = jsonStr(body, "providerId")
             for (p in record) {
                 if (wanted.size == 0 || p.id == wanted) {
@@ -304,10 +337,19 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
                 }
             }
             if (baseUrl.size == 0) {
-                emit(errFrame(idText, -32020, "provider-not-found"))
-                return
+                // 「获取可用模型」发生在保存之前：草稿里的地址与刚敲进的密钥直接去问远端。
+                // 内联明文只活在这一次调用里——不进注册表、不进会话日志、不进回执。
+                let inlineUrl = jsonStr(body, "baseUrl")
+                if (inlineUrl.size == 0) {
+                    emit(errFrame(idText, -32020, "provider-not-found"))
+                    return
+                }
+                baseUrl = inlineUrl
+                let inlineKey = jsonStr(body, "apiKey")
+                secret = if (inlineKey.size > 0) { inlineKey } else { resolveCredentialKey(jsonStr(body, "credentialRef")) }
+            } else {
+                secret = resolveCredentialKey(reference)
             }
-            let secret = resolveCredentialKey(reference)
             let ids = ModelCatalog().fetch(baseUrl, secret)
             var arr = "["
             for (i in 0..ids.size) {

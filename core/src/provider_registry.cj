@@ -40,6 +40,27 @@ let saCodeCatalog = [
 
 let providerProtocols = ["openai-completions", "openai-responses", "anthropic-messages"]
 
+// 凭据名从提供商 ID 派生（大写、短横线换下划线，套上 SaCode 命名空间）。
+// 派生放在核心而不是宿主或渲染层：两个入口必须推出同一个名字，
+// 否则 CLI 里配好的密钥在桌面端会解析成另一个空引用。
+public func deriveCredentialRef(id: String): String {
+    let body = ArrayList<UInt8>()
+    for (b in id.toArray()) {
+        body.add(if (b == 45) {
+            UInt8(95)
+        } else if (b >= 97 && b <= 122) {
+            b - UInt8(32)
+        } else {
+            b
+        })
+    }
+    let all = ArrayList<UInt8>()
+    for (b in "SA_CODE_".toArray()) { all.add(b) }
+    for (b in body.toArray()) { all.add(b) }
+    for (b in "_API_KEY".toArray()) { all.add(b) }
+    return String.fromUtf8(all.toArray())
+}
+
 public class ModelSpec {
     public let id: String
     public let name: String
@@ -317,7 +338,7 @@ public class ProviderRegistry {
         let name = textField(obj, "name")
         let baseUrl = textField(obj, "baseUrl")
         let protocol = textField(obj, "protocol")
-        let credentialRef = textField(obj, "credentialRef")
+        let credentialRef = optionalTextField(obj, "credentialRef", fromLog)
         let declared = if (fromLog) { boolField(obj, "declared") } else { false }
         checkId(id)
         checkText(name, 100)
@@ -331,14 +352,16 @@ public class ProviderRegistry {
         if (!known) {
             throw Exception("settings-rejected")
         }
-        if (!isValidCredentialRef(credentialRef)) {
+        // 「没点名」才派生；给了但形状不对仍按非法拒绝，不能派生兜住。
+        let ref = if (credentialRef.size == 0) { deriveCredentialRef(id) } else { credentialRef }
+        if (!isValidCredentialRef(ref)) {
             throw Exception("settings-rejected")
         }
         let models = parseModels(obj)
         if (!declared && models.size == 0) {
             throw Exception("settings-rejected")
         }
-        return ProviderRecord(id, name, baseUrl, protocol, credentialRef, declared, models)
+        return ProviderRecord(id, name, baseUrl, protocol, ref, declared, models)
     }
 
     private func parseModels(obj: JsonObject): Array<ModelSpec> {
@@ -479,6 +502,21 @@ public class ProviderRegistry {
             return v.asString().getValue()
         }
         throw Exception("settings-rejected")
+    }
+
+    // 凭据名是这一份文档里唯一允许「不给」的字段：模型页的草稿上没有这一栏，
+    // 由 ID 派生发生在核心。回放侧仍要严格——自家写出的形态一定带着它。
+    private static func optionalTextField(obj: JsonObject, key: String, required: Bool): String {
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) {
+                return ""
+            }
+            return v.asString().getValue()
+        }
+        if (required) {
+            throw Exception("settings-rejected")
+        }
+        return ""
     }
 
     private static func boolField(obj: JsonObject, key: String): Bool {
