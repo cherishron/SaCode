@@ -1,7 +1,25 @@
-// 两个界面入口共享同一测试目录；目录桩不代表仓颉会话模型选择已经接入。
-module.exports=async function({win,check,waitFor,outDir}){
+// 第一个入口走真实 IPC → 真实宿主注册表（选择接入证据）；后面的目录桩不代表接入。
+module.exports=async function({win,check,waitFor,outDir,bridge}){
   const js=code=>win.webContents.executeJavaScript(`(async()=>{${code}})()`,true);
-  await check('发送区模型选择真实入口',"({seat:!!document.querySelector('.composer-controls .model-select-root'),disabled:document.querySelector('.composer-controls .model-select-trigger').disabled,noFakeSelection:document.querySelector('.composer-controls .model-select-trigger').textContent.includes('请选择模型')})");
+  await check('发送区模型选择真实入口',"({seat:!!document.querySelector('.composer-controls .model-select-root'),enabled:!document.querySelector('.composer-controls .model-select-trigger').disabled,noFakeSelection:document.querySelector('.composer-controls .model-select-trigger').textContent.includes('请选择模型')})");
+  // 在真实选择器里挑一个模型：默认指针必须落到宿主注册表，下一轮请求就按它装配。
+  await js("document.querySelector('.composer-controls .model-select-trigger').click()");
+  await waitFor("!!document.querySelector('.composer-controls .model-select-menu')");
+  await js("document.querySelector('.composer-controls [data-model-root=model]').click()");
+  await waitFor("!!document.querySelector('.composer-controls [data-model-id=smoke-model]')");
+  await js("document.querySelector('.composer-controls [data-model-id=smoke-model]').click()");
+  await waitFor("document.querySelector('.composer-controls .model-select-trigger').textContent.includes('冒烟模型')");
+  const pointer=await bridge.request('model/registry/describe');
+  await check('选择器改动落到宿主默认指针','('+JSON.stringify({
+    provider:pointer.defaultProviderId==='smoke-gw',model:pointer.defaultModel==='smoke-model',
+    secretAbsentFromDoc:!JSON.stringify(pointer).includes('smoke-secret-value'),
+  })+')');
+  // 冒烟自己收尾：删掉本轮创建的提供商，后面的用例回到「未配置注册表」的默认路径。
+  const afterRemove=await bridge.request('model/registry/remove',{id:'smoke-gw',expectedRevision:pointer.revision});
+  await check('宿主删除提供商并清掉默认指针','('+JSON.stringify({
+    gone:!afterRemove.providers.some(p=>p.id==='smoke-gw'),
+    defaultCleared:afterRemove.defaultProviderId===''&&afterRemove.defaultModel==='',
+  })+')');
   await js(`const root=document.createElement('div');root.id='model-selector-fixture';Object.assign(root.style,{position:'fixed',bottom:'30px',left:'400px',width:'600px',zIndex:30,background:'var(--panel-surface)',padding:'16px'});document.body.append(root);
     window.selectFixture={root,subscribers:new Set(),loadCalls:0,writes:[],failLoad:true,locked:Vue.ref(false),state:{current:{provider:'alpha',model:'a'},retainedEffort:undefined,routable:true,status:'ready',pending:null,error:null,failures:[{provider:'missing',name:'缺失提供方',message:'暂时不可用'}],groups:[{id:'alpha',name:'提供方甲',models:[{id:'a',name:'Alpha Model',reasoning:{defaultEffort:'auto',efforts:[{id:'auto',name:'自动'},{id:'custom-deep',name:'深度'}]}},{id:'aster',name:'Aster Model'},{id:'atlas',name:'Atlas Model'}]},{id:'beta',name:'提供方乙',models:[{id:'reasoner',name:'Beta Reasoner',reasoning:{defaultEffort:'high',efforts:[{id:'low',name:'轻量'},{id:'high',name:'深入'}]}},{id:'brave',name:'Brave Model'}]},{id:'account-only',credentialKind:'account',name:'官方账号',models:[{id:'account-model',name:'账号专用模型'}]}]}};
     const f=selectFixture;f.emit=()=>f.subscribers.forEach(fn=>fn());f.button=text=>[...root.querySelectorAll('[data-selector=first] button')].find(b=>b.textContent===text);f.trigger=()=>root.querySelector('[data-selector=first] .model-select-trigger');f.menu=()=>root.querySelector('[data-selector=first] .model-select-menu');

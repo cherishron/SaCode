@@ -119,12 +119,12 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await check('分组会话恢复五条',"(()=>({collapsed:document.querySelector('.workspace-overflow').getAttribute('aria-expanded')==='false',five:document.querySelector('[data-workspace-group=\"\"]').querySelectorAll('[data-sidebar-session]').length===5}))()");
   writeFileSync(join(outDir,'workspace-groups.png'),(await win.webContents.capturePage()).toPNG());
   await checkConversationScroll({js,waitFor,check});
-  await require('./test-support/models-page-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/models-page-smoke.cjs')({win,waitFor,check,outDir,bridge});
   await require('./test-support/plugins-page-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/plugin-configuration-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/subagent-settings-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/plugin-manager-smoke.cjs')({win,waitFor,check,outDir});
-  await require('./test-support/model-select-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/model-select-smoke.cjs')({win,waitFor,check,outDir,bridge});
   await require('./test-support/composer-attachments-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/composer-keymap-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/queue-dock-smoke.cjs')({win,waitFor,check,outDir});

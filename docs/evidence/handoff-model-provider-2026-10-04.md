@@ -178,3 +178,22 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 
 计数：核心 **TOTAL 420 / PASSED 419 / SKIPPED 1 / FAILED 0 / ERROR 0**（+2），`cjpm test` rc=0；桌面 **122/122 通过**（`provider-registry.test.mjs` 4→6 条）。新增两条桌面用例在改宿主前取到真红灯：第 5 条 `-32020 settings-rejected`（旧宿主不吃无引用草稿），第 6 条 `keyConfigured` 期望 `true` 实得 `undefined`。
 
+## 12. 桌面 IPC 通道 + 模型页真适配器（选择与配置在产品里真的驱动宿主）
+
+新增 6 条按动作命名的通道（`preload.cjs`）：`modelsDescribe/modelsCatalog/modelsSave/modelsRemove/modelsSetDefault/modelsList`，没有新增「发任意方法」的通路（`test/models-ipc.test.mjs` 断言 `api` 上不存在 `request`，并逐字段比对发送的载荷形状）。主进程侧把校验拆进 `models-guard.cjs`（与 `stdio-guard.cjs`/`paths.cjs` 同样的「主进程逻辑拆成可 node 测的模块」做法）：白名单之外的字段丢弃、能承载明文的键位拒收、版本号非整数拒收、密钥控制字符与长度封顶。`modelsSave` 写完注册表后，用**回执里派生出的 credentialRef** 去落凭据——渲染层全程没有指定凭据名的通路。
+
+渲染层 `renderer/app.js` 交出两个真适配器：`modelsAdapter`（load/save/remove/listModels，宿主错误码 `settings-conflict`→页面 `model-conflict`、`read-only`→`model-read-only`）与 `modelDirectory`（输入区选择器的目录：groups 取注册表、select 写默认指针）。模型页此前挂着「后端尚未接入」的诚实告示，现在告示撤掉并由真往返断言替代。
+
+真实验收（真 Chromium + 真打包宿主，`npx electron . --frame-smoke`，rc=0，**243 条 FRAME PASS / 0 FAIL**）：
+- `模型页真实产品入口`：`后端尚未接入` 不再出现；`目录来自宿主而非空表`：协议下拉 3 项、目录下拉含 `StepFun`（此前那条 `catalogFromHost` 断言写成 `[].every(...)`，空集合聚合出假红，已改成先开表单再核具体选项）。
+- `模型页写入落到宿主进程`：页面上填的 `smoke-gw` 由**另一个进程**读回，`credentialRef` 为派生的 `SA_CODE_SMOKE_GW_API_KEY`、`keyConfigured:true`、注册表文档面不含明文、`credential/describe` 读回 configured。
+- `选择器改动落到宿主默认指针`：在产品输入区点选 `冒烟模型` 之后，宿主侧 `defaultProviderId/defaultModel` 即为该选择——下一轮请求就按它装配（宿主侧那条断言已由 `provider-registry.test.mjs` 第 3 条钉住）。
+- `宿主删除提供商并清掉默认指针`：冒烟自己收尾，后续用例回到「未配置注册表」的默认路径，不污染别的检查。
+
+桌面 node 计数：122 → **124/124 通过**（新增 `models-ipc.test.mjs` 2 条）。
+
+命名收口：用户可见面上撤掉上游产品名——引用气泡的 tooltip 不再回显 `@[…](dsh-session:…)` 线串（改为显示标题，同时仍**兼容**读入 `dsh-session:` 与新的 `sacode-session:` 两种写法，避免旧日志里的引用失效）；演示文件工具的路径由 `dsh-tool.txt` 改为 `sacode-tool.txt`（`renderer/app.js`、`main.cjs` 布局冒烟期望值、`ui-smoke.cjs` 两处断言同步）。仍存的 `window.dsh` 全局名、`dsh:*` 通道前缀、`DSH_PROVIDER_*` 环境变量与 `dsh-host.exe` 属于内部/交付面标识，改名要同时动打包脚本与安装资源路径，留作单独一批。
+
+已知边界：宿主 → 渲染层没有配置变更推送，`modelDirectory` 只在保存/删除后与启动时主动 `load()`；带外（如 CLI）改注册表时，输入区的已选标签会短暂陈旧，直到下一次加载。
+
+

@@ -374,6 +374,90 @@ createApp({
       toolCounters.value = { misses: r.misses, guardDenials: r.guardDenials };
     }
 
+    // 模型页的每一次读写都穿过宿主：渲染层不留第二份提供商状态。
+    // 宿主错误码要翻成页面认识的两类——「别人先改过」与「内容不合法」是两句不同的话。
+    const modelsError = (error) => {
+      const text = String((error && error.message) || error);
+      const code = /settings-conflict/.test(text) ? "model-conflict" : /read-only/.test(text) ? "model-read-only" : "";
+      return code ? Object.assign(Error(text), { code }) : error;
+    };
+    const modelsAdapter = {
+      async load() {
+        const view = await window.dsh.modelsDescribe().catch(modelsError);
+        const catalogView = await window.dsh.modelsCatalog().catch(modelsError);
+        const catalog = Array.isArray(catalogView) ? catalogView : [];
+        const byId = {};
+        for (const c of catalog) byId[c.id] = c;
+        const providers = (view.providers || []).map((p) => {
+          const base = byId[p.id];
+          return { ...p, defaultModels: base ? base.models : undefined,
+            modelsCustomized: base ? JSON.stringify(p.models) !== JSON.stringify(base.models) : true };
+        });
+        return { providers, catalog, revision: view.revision, writable: view.writable };
+      },
+      async save(draft, expectedRevision) {
+        const { key, ...rest } = draft;
+        await window.dsh.modelsSave(rest, key || "", expectedRevision).catch(modelsError);
+        void modelDirectory.load();
+      },
+      async remove(id, expectedRevision) {
+        await window.dsh.modelsRemove(id, expectedRevision).catch(modelsError);
+        void modelDirectory.load();
+      },
+      async listModels(draft) {
+        const r = await window.dsh.modelsList({ baseUrl: draft.baseUrl, apiKey: draft.key }).catch(modelsError);
+        return (r.models || []).map((id) => ({ id, name: id, contextWindow: "", maxTokens: "", image: false }));
+      },
+    };
+
+    // 输入区的模型选择器共用同一份注册表：选定即写默认指针，下一轮请求就按它装配。
+    // 目录状态只在宿主里，这里只做快照投影与订阅通知，不留第二份「已选模型」。
+    const modelDirectory = (() => {
+      let snapshot = { current: null, groups: [], failures: [], status: "idle", pending: null, error: null, routable: null };
+      const listeners = new Set();
+      let revision = 0, seq = 0;
+      const publish = (next) => { snapshot = next; for (const fn of listeners) fn(); };
+      const apply = (view) => {
+        revision = view.revision;
+        const groups = (view.providers || []).map((p) => ({
+          id: p.id, name: p.name || p.id, credentialKind: "api-key",
+          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id })),
+        }));
+        const chosen = view.defaultProviderId && view.defaultModel
+          ? { provider: view.defaultProviderId, model: view.defaultModel } : null;
+        const routable = groups.some((g) => chosen && g.id === chosen.provider
+          && g.models.some((m) => m.id === chosen.model));
+        publish({ current: chosen, groups, failures: [], status: "ready", pending: null, error: null, routable });
+      };
+      return {
+        getSnapshot: () => snapshot,
+        subscribe(invalidate) { listeners.add(invalidate); return () => listeners.delete(invalidate); },
+        async load() {
+          const generation = ++seq;
+          publish({ ...snapshot, status: "loading" });
+          try {
+            const view = await window.dsh.modelsDescribe();
+            if (generation === seq) apply(view);
+          } catch (e) {
+            if (generation === seq) publish({ ...snapshot, status: "error", error: String((e && e.message) || e) });
+          }
+        },
+        async select(value) {
+          if (!value || !value.provider || !value.model) throw Error("bad-model-selection");
+          const generation = ++seq;
+          publish({ ...snapshot, status: "selecting", pending: value });
+          try {
+            const view = await window.dsh.modelsSetDefault(value.provider, value.model, revision);
+            if (generation === seq) apply(view);
+          } catch (e) {
+            if (generation === seq) publish({ ...snapshot, status: "error", pending: null, error: String((e && e.message) || e) });
+            throw e;
+          }
+        },
+      };
+    })();
+    void modelDirectory.load();
+
     async function send() {
       if(sendBusy.value) return;
       if(turn.value.running){error.value='运行中的排队与即时补充接口尚未接入，草稿已保留。';return;}
@@ -522,7 +606,7 @@ createApp({
       if (!name) return;
       // 各工具按自己的参数契约给 args：只读工具的路径就是整串参数，
       // 把「路径 正文」一起塞给它，它会把整串当成一个不存在的路径。
-      const args = name === "read" ? "dsh-tool.txt" : "dsh-tool.txt hello-from-renderer";
+      const args = name === "read" ? "sacode-tool.txt" : "sacode-tool.txt hello-from-renderer";
       try {
         const r = await window.dsh.toolCall(name, args, approvalId || 0);
         if (generation!==sessionGeneration) return;
@@ -584,7 +668,7 @@ createApp({
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
       proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen,
-      appearanceBusy, appearanceNote, setTheme,
+      appearanceBusy, appearanceNote, setTheme, modelsAdapter, modelDirectory,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits,
@@ -863,7 +947,7 @@ createApp({
         submit:()=>self.send(),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:false,showAdd:false}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:true}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:true}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
@@ -930,7 +1014,7 @@ createApp({
           ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
         ],{'aria-busy':self.fontBusy}),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
-      el("section", "settings-page", [h(window.SaCodeModels.Page),
+      el("section", "settings-page", [h(window.SaCodeModels.Page, { adapter: self.modelsAdapter }),
       ], { id:"settings-page-models", role:"tabpanel", "aria-labelledby":"settings-tab-models", hidden:self.settingsTab!=="models" }),
       el("section", "settings-page", [h(window.SaCodePlugins.Page, { tools: self.tools }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),

@@ -23,4 +23,11 @@ contextBridge.exposeInMainWorld("dsh", {
   workspaceGet: () => ipcRenderer.invoke("dsh:workspaceGet"),
   workspaceChoose: () => ipcRenderer.invoke("dsh:workspaceChoose"),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("dsh:appearanceSetTheme", { theme }),
+  // 模型配置面：一个动作一条通道，字段形状由主进程守卫，渲染层拼不出任意宿主方法。
+  modelsDescribe: () => ipcRenderer.invoke("dsh:modelsDescribe"),
+  modelsCatalog: () => ipcRenderer.invoke("dsh:modelsCatalog"),
+  modelsSave: (draft, key, expectedRevision) => ipcRenderer.invoke("dsh:modelsSave", { draft, key, expectedRevision }),
+  modelsRemove: (id, expectedRevision) => ipcRenderer.invoke("dsh:modelsRemove", { id, expectedRevision }),
+  modelsSetDefault: (providerId, model, expectedRevision) => ipcRenderer.invoke("dsh:modelsSetDefault", { providerId, model, expectedRevision }),
+  modelsList: (request) => ipcRenderer.invoke("dsh:modelsList", { baseUrl: request.baseUrl, apiKey: request.apiKey }),
 });

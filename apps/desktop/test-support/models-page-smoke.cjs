@@ -1,11 +1,42 @@
-// 真实 Chromium 组件交互验收；仅此 fixture 的提供商适配器为内存桩，不作为后端接入证据。
-module.exports = async function ({ win, check, waitFor, outDir }) {
+// 真实 Chromium 组件交互验收。前半段走真实 IPC → 真实宿主进程（后端接入证据）；
+// 后半段的提供商适配器是内存桩，只用于组件行为，不作为后端接入证据。
+module.exports = async function ({ win, check, waitFor, outDir, bridge }) {
   const js = source => win.webContents.executeJavaScript(`(async()=>{${source}})()`, true);
   await js(`document.querySelector('#open-settings').click();document.querySelector('#settings-tab-models').click()`);
   await waitFor("!!document.querySelector('#models-add-provider')");
-  await check('模型页真实产品入口', "({typedComponent:!!window.SaCodeModels?.Page,accountRemoved:!document.querySelector('#settings-page-models').textContent.includes('DeepSeek'),honest:document.querySelector('#settings-page-models').textContent.includes('后端尚未接入')})");
+  await check('模型页真实产品入口', "({typedComponent:!!window.SaCodeModels?.Page,accountRemoved:!document.querySelector('#settings-page-models').textContent.includes('DeepSeek'),noStubNotice:!document.querySelector('#settings-page-models').textContent.includes('后端尚未接入')})");
   await js(`document.querySelector('#models-add-provider').click()`);
+  await check('目录来自宿主而非空表', "(()=>{const s=[...document.querySelectorAll('#settings-page-models select[aria-label=\"提供商\"]')];return {selectPresent:s.length===1,catalogNamed:s[0].textContent.includes('StepFun'),threeProtocols:document.querySelector('#settings-page-models select[aria-label=\"API 协议\"]').options.length===3}})()");
   await check('模型页自定义添加表单', "({route:!!document.querySelector('#settings-page-models input[aria-label=\"Provider ID\"]'),keyMasked:document.querySelector('#settings-page-models input[aria-label=\"API 密钥\"]').type==='password',protocols:document.querySelector('#settings-page-models select[aria-label=\"API 协议\"]').options.length===3})");
+
+  // —— 真实往返：页面上填的提供商要能在另一个进程（宿主）里读回来 ——
+  const realClick = text => js(`[...document.querySelectorAll('#settings-page-models button')].find(e=>e.textContent===${JSON.stringify(text)}&&!e.closest('[hidden]')).click()`);
+  const realInput = (label, value) => js(`(()=>{const e=[...document.querySelectorAll('#settings-page-models input[aria-label=${JSON.stringify(label)}]')].find(e=>!e.closest('[hidden]'));e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  await realClick('自定义模型 API');
+  await realInput('Provider ID', 'smoke-gw');
+  await realInput('显示名称', '冒烟网关');
+  await realInput('API 地址', 'http://127.0.0.1:9/v1');
+  await realInput('API 密钥', 'smoke-secret-value');
+  await realClick('＋ 添加模型');
+  await realInput('模型 ID 1', 'smoke-model');
+  await realInput('显示名称 1', '冒烟模型');
+  await realClick('创建提供商');
+  await waitFor("document.querySelector('#settings-page-models .models-savedNotice')?.textContent.includes('冒烟网关')");
+  const view = await bridge.request('model/registry/describe');
+  const stored = view.providers.find(p => p.id === 'smoke-gw');
+  const cred = stored ? await bridge.request('credential/describe', { ref: stored.credentialRef }) : { configured: false };
+  await check('密钥不回显在页面文本里', "(()=>{const b=document.querySelector('#settings-page-models');const t=b?b.textContent:'no-section';return {noEcho:!t.includes('smoke-secret-value'),savedShown:t.includes('冒烟网关'),dotConfigured:!!document.querySelector('#settings-page-models [aria-label=\"API 密钥已配置\"]')}})()");
+  await check('模型页写入落到宿主进程', '(' + JSON.stringify({
+    persisted: !!stored,
+    derivedRef: !!stored && stored.credentialRef === 'SA_CODE_SMOKE_GW_API_KEY',
+    keyConfigured: !!stored && stored.keyConfigured === true,
+    modelStored: !!stored && stored.models.length === 1 && stored.models[0].id === 'smoke-model',
+    revisionAdvanced: view.revision >= 1,
+    registryDocHasNoSecret: !JSON.stringify(view).includes('smoke-secret-value'),
+    credentialReadBack: cred.configured === true,
+  }) + ')');
+  require('node:fs').writeFileSync(require('node:path').join(outDir, 'models-real-save.png'), (await win.webContents.capturePage()).toPNG());
+
   require('node:fs').writeFileSync(require('node:path').join(outDir,'models-custom-form.png'),(await win.webContents.capturePage()).toPNG());
   await js(`document.querySelector('.settings-close').click();
     (()=>{

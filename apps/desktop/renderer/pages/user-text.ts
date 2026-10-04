@@ -4,7 +4,7 @@ import {h,type VNode} from 'vue';
 type Range={start:number;end:number;label:string;kind:'session'|'plain';display?:string};
 export function projectUserText(text:string,sessionLabels:readonly string[]=[],slashNames:readonly string[]=[],slashKind:'skill'|'command'='skill',references?:{openFile:(path:string)=>void;openSkill:(name:string)=>void}):VNode[] {
   const ranges:Range[]=[];
-  for(const wire of text.matchAll(/@\[([^\]\n]+)\]\(dsh-session:[^)\s]+\)/gu))ranges.push({start:wire.index,end:wire.index+wire[0].length,label:wire[0],kind:'session',display:wire[1]});
+  for(const wire of text.matchAll(/@\[([^\]\n]+)\]\((?:(?:dsh|sacode)-session):[^)\s]+\)/gu))ranges.push({start:wire.index,end:wire.index+wire[0].length,label:wire[1],kind:'session',display:wire[1]});
   for(const label of [...new Set(sessionLabels)].sort((a,b)=>b.length-a.length)){const token='@'+label;for(let start=text.indexOf(token);start>=0;start=text.indexOf(token,start+token.length))ranges.push({start,end:start+token.length,label:token,kind:'session'});}
   for(const token of text.matchAll(/(^|\s)(\/[\w-]+(?=\s|$)|@"[^"\n]+"|@[^\s]+)/gu)){const raw=token[2],label=raw.startsWith('@"')?raw:raw.replace(/[.,;:!?，。；：！？]+$/u,'');if(label.length<=1||(label.startsWith('/')&&!slashNames.includes(label.slice(1))))continue;const start=token.index+token[1].length;ranges.push({start,end:start+label.length,label,kind:'plain'});}
   ranges.sort((a,b)=>a.start-b.start||(a.kind==='session'?0:1)-(b.kind==='session'?0:1)||b.end-a.end);

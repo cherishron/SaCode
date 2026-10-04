@@ -482,7 +482,7 @@ async function uiSmoke(context) {
   note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
   await click('#side-tab-preview');
   note(await waitFor(async () => (await text('#preview-text')) === 'hello-from-renderer'), "文档预览逐字显示实际读取正文");
-  note((await text('#preview-path')) === 'dsh-tool.txt' && (await text('#preview-meta')).includes('19 字节'), "预览文件名与字节数来自会话读取记录");
+  note((await text('#preview-path')) === 'sacode-tool.txt' && (await text('#preview-meta')).includes('19 字节'), "预览文件名与字节数来自会话读取记录");
   note(await js("document.querySelector('#preview-empty') === null && !document.querySelector('#side-page-preview').hidden"), "成功读取后预览替换空状态");
   await js("document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
   note(await waitFor(() => count('.floating-preview[open]').then(n=>n===1)) && (await text('#float-preview-text')) === (await text('#preview-text')), "浮动预览显示同一份读取快照");
@@ -610,7 +610,7 @@ async function uiSmoke(context) {
   note(await waitFor(()=>js("!document.querySelector('.workspace-dialog[open]') && document.activeElement.id==='open-workspace'")), "工作区 Escape 关闭并恢复导航焦点");
   await click('#tool-write'); await waitFor(()=>count('#allow-once').then(n=>n===1)); await click('#allow-once');
   note(await waitFor(async()=>(await text('#outcome')).startsWith('结果：')), "所选工作区的写入仍经过一次性审批");
-  note(require('node:fs').readFileSync(join(workspaceUIPath,'dsh-tool.txt'),'utf8')==='hello-from-renderer', "相对文件实际写入带空格的中文项目目录");
+  note(require('node:fs').readFileSync(join(workspaceUIPath,'sacode-tool.txt'),'utf8')==='hello-from-renderer', "相对文件实际写入带空格的中文项目目录");
   // 真实移动项目文件夹，检查界面保留原路径并说明恢复方式。
   const movedWorkspacePath=join(SESSION_DIR,'工作区 UI 项目 临时移动');
   require('node:fs').renameSync(workspaceUIPath,movedWorkspacePath);

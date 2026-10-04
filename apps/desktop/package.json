@@ -29,6 +29,7 @@
       "stdio-guard.cjs",
       "preload.cjs",
       "host-bridge.cjs",
+      "models-guard.cjs",
       "paths.cjs",
       "layout-smoke.cjs",
       "frame-smoke.cjs",

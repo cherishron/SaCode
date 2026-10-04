@@ -207,6 +207,49 @@ ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
   return result;
 });
 
+// 模型配置面：字段守卫在主进程（models-guard.cjs），凭据名由核心按 ID 派生。
+// 密钥只在「写凭据」这一次调用里存在：不透传进注册表文档，不回写，不落日志。
+const modelsGuard = require("./models-guard.cjs");
+
+ipcMain.handle("dsh:modelsDescribe", async () => withHost(() => bridge.request("model/registry/describe")));
+ipcMain.handle("dsh:modelsCatalog", async () => withHost(() => bridge.request("model/registry/catalog")));
+
+ipcMain.handle("dsh:modelsSave", async (_e, args) => {
+  const draft = modelsGuard.sanitizeDraft(args && args.draft);
+  const key = modelsGuard.sanitizeKey(args ? args.key : undefined);
+  const expectedRevision = modelsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
+  const view = await withHost(() => bridge.request("model/registry/update", { draft, expectedRevision }));
+  if (key.length > 0) {
+    // 写凭据要用核心派生出的那个名字，而不是渲染层点名的：页面上根本没有这一栏。
+    const saved = (view.providers || []).find((p) => p.id === draft.id);
+    if (!saved || !saved.credentialRef) throw new Error("credential-ref-missing");
+    await withHost(() => bridge.request("credential/set", { ref: saved.credentialRef, value: key }));
+  }
+  return view;
+});
+
+ipcMain.handle("dsh:modelsRemove", async (_e, args) => {
+  const id = args && args.id;
+  if (!isStr(id) || id.length === 0 || id.length > 64) throw new Error("bad-model-id");
+  return withHost(() => bridge.request("model/registry/remove", { id, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:modelsSetDefault", async (_e, args) => {
+  const providerId = args && args.providerId;
+  const model = args && args.model;
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
+  if (!isStr(model) || model.length === 0 || model.length > 200) throw new Error("bad-model-name");
+  return withHost(() => bridge.request("model/registry/set-default", {
+    providerId, model, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
+  }));
+});
+
+// 「测试连接 / 获取可用模型」：草稿还没保存就能问远端，内联明文只活在这一次调用里。
+ipcMain.handle("dsh:modelsList", async (_e, args) => {
+  const request = modelsGuard.sanitizeListRequest(args);
+  return withHost(() => bridge.request("model/list", request));
+});
+
 const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
 app.whenReady().then(async () => {
@@ -233,7 +276,7 @@ app.whenReady().then(async () => {
     // 发布态 __dirname 位于只读 asar 内，默认截图必须落在本次临时会话目录。
     const outDir = captureArg ? captureArg.slice("--capture-dir=".length)
       : app.isPackaged ? join(SESSION_DIR, "layout") : join(__dirname, "dist", "layout");
-    const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir, expectedReadPath:join(layoutProject,'dsh-tool.txt') });
+    const ok = await require("./layout-smoke.cjs")({ win, nativeTheme, outDir, expectedReadPath:join(layoutProject,'sacode-tool.txt') });
     await bridge.stop();
     app.exit(ok ? 0 : 1);
     return;
