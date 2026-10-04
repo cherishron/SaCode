@@ -1,7 +1,7 @@
 // 官方整页几何的真实 Electron 验收；独立空日志启动，不把旧工作台当成通过条件。
 const {mkdirSync,writeFileSync}=require('node:fs');
 const {join}=require('node:path');
-module.exports=async function({win,nativeTheme,outDir}) {
+module.exports=async function({win,nativeTheme,outDir,bridge}) {
   mkdirSync(outDir,{recursive:true});
   // 初始隐藏窗口不会持续产生活跃动画帧；整页验收显示窗口但不抢焦点。
   win.showInactive();
@@ -72,6 +72,15 @@ module.exports=async function({win,nativeTheme,outDir}) {
   }
   await check('会话草稿重复收缩',"(()=>({dockedFloor:Math.abs(document.querySelector('#composer').getBoundingClientRect().height-36)<1}))()");
   writeFileSync(join(outDir,'active-conversation.png'),(await win.webContents.capturePage()).toPNG());
+  // 项目行来自真实核心记录；不在渲染层伪造一条工作区事实。
+  const fixtureWorkspace=join(outDir,'SaCode 工作区排版检查');
+  mkdirSync(fixtureWorkspace,{recursive:true});
+  await bridge.request('workspace/set-directory',{directory:fixtureWorkspace});
+  await js("document.querySelector('#open-workspace').click()");
+  await waitFor("!!document.querySelector('.workspace-folder') && !!document.querySelector('.workspace-dialog[open]')");
+  await js("document.querySelector('.workspace-dialog .dialog-header button').click()");
+  await check('工作区与会话行',"(()=>{const row=document.querySelector('.workspace-folder'),sessions=[...document.querySelectorAll('.sidebar-session')],box=e=>e.getBoundingClientRect();return {projectHeight:Math.abs(box(row).height-34)<1,sessionHeight:sessions.length>0 && sessions.every(e=>Math.abs(box(e).height-32)<1),leadingIcons:[row,...sessions].every(e=>Math.abs(box(e.querySelector('svg')).width-16)<1 && Math.abs(box(e.querySelector('svg')).height-16)<1),sessionTitleGap:sessions.every(e=>Math.abs(box(e.querySelector('span')).left-box(e.querySelector('svg')).right-4)<1),projectTitleGap:Math.abs(box(row.querySelector('span')).left-box(row.querySelector('svg')).right-6)<1}})()");
+  writeFileSync(join(outDir,'workspace-session-rows.png'),(await win.webContents.capturePage()).toPNG());
   await waitFor("!!document.querySelector('[data-sidebar-session][aria-current=page]') && !document.querySelector('#sidebar-new-session').disabled");
   const priorSession=await js("document.querySelector('[data-sidebar-session][aria-current=page]').dataset.sidebarSession");
   await js("document.querySelector('#sidebar-new-session').click()");

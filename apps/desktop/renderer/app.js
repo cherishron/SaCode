@@ -176,7 +176,7 @@ createApp({
       try {await refreshWorkspace();} catch(e) {workspaceNote.value=catalogError(e);}
     }
     async function chooseWorkspace() {
-      if(workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
+      if(sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
       workspaceBusy.value=true; workspaceNote.value="请选择项目目录…";
       try {
         const result=await window.dsh.workspaceChoose();
@@ -199,7 +199,7 @@ createApp({
     }
     async function applySelection(id) {
       if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
-      if (budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在保存当前会话配置，请稍后切换。");
+      if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后切换。");
       const oldId=catalog.value?.entries.find(item=>item.current)?.id;
       await window.dsh.sessionSelect(id);
       sessionGeneration += 1;
@@ -230,7 +230,7 @@ createApp({
       catalogBusy.value=true; catalogNote.value="正在新建会话…";
       try {
         if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
-        if (budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在保存当前会话配置，请稍后新建。");
+        if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后新建。");
         const created=await window.dsh.sessionCreate(newSessionTitle.value);
         newSessionTitle.value="";
         catalog.value=await window.dsh.sessionCatalog();
@@ -239,7 +239,7 @@ createApp({
       finally { catalogBusy.value=false; }
     }
     async function startNewSession() {
-      if(catalogBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value || turn.value.running || approval.value) return;
+      if(sendBusy.value || catalogBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value || turn.value.running || approval.value) return;
       newSessionTitle.value='新会话';
       await createSession();
     }
@@ -318,7 +318,9 @@ createApp({
     // 详情始终从当前核心清单派生；卸载后不继续展示过期副本。
     const detailTool = window.Vue.computed(() => tools.value.find((tool) => tool.name === detailName.value) || null);
     const toolCounters = ref({ misses: 0, guardDenials: 0 });
-    const draft = ref("");
+    const draft = ref(""), sendBusy=ref(false);
+    let draftRevision=0, sendTicket=0;
+    function updateDraft(value) { draftRevision++; draft.value=value; }
     const error = ref("");
     const approval = ref(null);
     const outcome = ref("");
@@ -365,21 +367,29 @@ createApp({
     }
 
     async function send() {
+      if(sendBusy.value) return;
       const generation=sessionGeneration;
-      const text = draft.value;
+      const text = draft.value, revision=draftRevision;
       if (!text.trim()) return;
-      draft.value = "";
+      const ticket=++sendTicket;
+      let acknowledged=false;
+      sendBusy.value=true;
       error.value = "";
       try {
         // 渲染层只说「用户说了什么」，事件类型由核心决定：不给它伪造 system/message 的口子
         await window.dsh.userSend(text);
         if (generation!==sessionGeneration) return;
+        acknowledged=true;
+        sendBusy.value=false;
+        // 核心确认成功后才清空；在途请求不能覆盖用户随后编辑的新草稿。
+        if(draftRevision===revision) draft.value="";
         await refresh();
         await refreshCatalog();
       } catch (e) {
-        if (generation!==sessionGeneration) return;
-        error.value = String(e.message || e);
+        if (generation!==sessionGeneration || ticket!==sendTicket) return;
+        error.value = acknowledged ? "消息已发送，暂时无法刷新会话。" : text.length>8000 ? "消息最多支持 8000 个字符，请缩短后重试。" : "消息发送失败，请稍后重试。";
       }
+      finally {if(generation===sessionGeneration && ticket===sendTicket) sendBusy.value=false;}
     }
 
     function stopPolling() {
@@ -562,7 +572,7 @@ createApp({
 
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, error, approval, outcome, outcomeKind, turn,
+      proj, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab,
       appearanceBusy, appearanceNote, setTheme,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
@@ -575,7 +585,7 @@ createApp({
     const self = this;
     const currentTitle = self.catalog?.entries.find(item=>item.current)?.title || "会话";
     const emptyConversation = !self.proj.messages.length && !self.turn.running && !self.turn.text;
-    const sessionLocked = self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.workspaceBusy || self.turn.running || !!self.approval;
+    const sessionLocked = self.sendBusy || self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.workspaceBusy || self.turn.running || !!self.approval;
     const workspaceName = self.workspace?.configured ? self.workspace.directory.split(/[\\/]/).filter(Boolean).pop() : '工作区';
     // 默认空日志尚未形成持久会话，不在产品导航里制造一条占位会话。
     const sidebarSessions = (self.catalog?.entries || []).filter(item=>item.durable>0);
@@ -817,13 +827,13 @@ createApp({
         "aria-keyshortcuts":"Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
-        onInput: (e) => (self.draft = e.target.value),
+        onInput: (e) => self.updateDraft(e.target.value),
       }),[[autoDraftSize]]),
       el("div", "composer-controls", [el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
-      ])], { id: "send", type:'button', 'aria-label':self.turn.running && !self.draft.trim()?'停止执行':'发送消息', disabled:!self.turn.running && !self.draft.trim(),
+      ])], { id: "send", type:'button', 'aria-label':self.turn.running && !self.draft.trim()?'停止执行':'发送消息', 'aria-busy':self.sendBusy, disabled:self.sendBusy || (!self.turn.running && !self.draft.trim()),
         tooltip:{label:self.turn.running && !self.draft.trim()?'停止执行':'发送消息',side:'top',delayMs:500},
         // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
         onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
@@ -906,20 +916,20 @@ createApp({
       el("label", "field-label", "新会话名称", {for:"new-session-title"}),
       el("div", "catalog-create", [el("input", "input", null, {id:"new-session-title", value:self.newSessionTitle, maxlength:80, disabled:self.catalogBusy,
         placeholder:"例如：整理项目文档", onInput:e=>{self.newSessionTitle=e.target.value;} }),
-        el("button", "btn btn-primary", "新建会话", {id:"create-session", disabled:self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.workspaceBusy || self.turn.running || !!self.approval || !self.newSessionTitle.trim(), onClick:self.createSession})]),
+        el("button", "btn btn-primary", "新建会话", {id:"create-session", disabled:sessionLocked || !self.newSessionTitle.trim(), onClick:self.createSession})]),
       el("div", "catalog-list", self.catalog ? self.catalog.entries.map(item=>el("article", "catalog-card", [
         el("h3", "catalog-title", item.title || "未命名会话", {title:item.title || "未命名会话"}),
         el("span", "badge"+(item.status!=="ready" ? " badge-warn" : ""), item.current ? "当前会话" : "本地会话"),
         el("p", "note catalog-meta", item.status==="replay-rejected" ? "日志回放失败，摘要不可用" : "已保存 "+item.durable+" 条事件"+(item.status==="truncated-tail" ? " · 尾帧不完整" : "")),
         el("p", "note catalog-id", item.id==="current" ? "默认会话" : "会话目录："+item.id),
         el("button", "btn catalog-select", item.current ? "已打开" : "打开会话", {"data-select-session":item.id,
-          disabled:self.catalogBusy || self.budgetBusy || self.appearanceBusy || self.workspaceBusy || self.turn.running || !!self.approval || item.current || item.status==="replay-rejected", onClick:()=>self.selectSession(item.id)}),
+          disabled:sessionLocked || item.current || item.status==="replay-rejected", onClick:()=>self.selectSession(item.id)}),
       ], {"data-session-id":item.id})) : [], {id:"catalog-list", "aria-busy":String(self.catalogBusy)}),
       self.catalog && !self.catalog.entries.length ? el("p", "empty-card", "此目录暂无落盘会话。") : null,
       el("p", "note", "切换前会保存当前会话；待审批工单和执行任务需要先处理完毕。项目目录随会话恢复。"),
     ]);
     const workspaceDialog=h(window.SaCodeDialog,{open:self.workspaceOpen,title:"SaCode 工作区",class:"workspace-dialog",onClose:()=>{self.workspaceOpen=false;}},()=>[
-      el("div","catalog-toolbar",[el("h2",null,"当前会话项目目录"),el("button","btn","选择目录…",{id:"choose-workspace",disabled:self.workspaceBusy || self.budgetBusy || self.appearanceBusy || self.turn.running || !!self.approval,onClick:self.chooseWorkspace})]),
+      el("div","catalog-toolbar",[el("h2",null,"当前会话项目目录"),el("button","btn","选择目录…",{id:"choose-workspace",disabled:sessionLocked,onClick:self.chooseWorkspace})]),
       self.workspace ? el("section","workspace-panel",[
         el("span","badge"+(self.workspace.configured && !self.workspace.available ? " badge-danger" : ""),self.workspace.configured ? self.workspace.available ? "目录可用" : "目录不可用" : "尚未选择项目目录"),
         el("p","workspace-path",self.workspace.directory,{id:"workspace-directory"}),

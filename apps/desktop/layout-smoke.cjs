@@ -99,7 +99,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           composerRow:getComputedStyle(document.querySelector('.composer-controls')).padding==='2px 8px 6px'&&getComputedStyle(document.querySelector('.composer-card')).gap==='12px'&&getComputedStyle(document.querySelector('#composer')).padding==='4px 8px 0px 14px',
           circularStatus: !!document.querySelector('.pending-dot') && (!CSS.supports('corner-shape','round') || getComputedStyle(document.querySelector('.pending-dot')).cornerShape==='round'),
           primaryPalette: (()=>{const style=getComputedStyle(document.querySelector('#run-turn'));return style.backgroundColor==='${theme==='dark'?'rgb(126, 160, 255)':'rgb(36, 85, 230)'}'&&style.borderTopColor===style.backgroundColor&&style.color==='${theme==='dark'?'rgb(16, 19, 26)':'rgb(255, 255, 255)'}';})(),
-          icons: [...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).every(e => equal(e.getBoundingClientRect().width,18) && equal(e.getBoundingClientRect().height,18)),
+          icons: [...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).every(e => {const size=e.closest('.sidebar-session,.workspace-folder')?16:18;return equal(e.getBoundingClientRect().width,size) && equal(e.getBoundingClientRect().height,size);}),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
           messageContentLoaded: document.querySelectorAll('.msg-text').length > 0,
           messageLabels: [...document.querySelectorAll('.tr-bubble')].every(e => {

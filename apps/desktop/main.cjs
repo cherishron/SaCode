@@ -150,7 +150,11 @@ async function uiSmoke() {
   const js = (code) => win.webContents.executeJavaScript(code, true);
   const text = async (sel) => (await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : ""; })()`)) || "";
   const count = async (sel) => Number(await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`));
-  const click = (sel) => js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
+  const click = async (sel) => {
+    // 常规发送路径等待真实回执；重复点击的专门验收仍在同帧直接操作按钮。
+    if(sel==='#send' && !await waitFor(()=>js("!!document.querySelector('#send') && !document.querySelector('#send').disabled"))) return false;
+    return js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
+  };
   const waitFor = async (probe, tries = 120) => {
     for (let i = 0; i < tries; i++) {
       if (await probe()) return true;
@@ -324,7 +328,7 @@ async function uiSmoke() {
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='open-settings'"), "关闭设置后焦点返回导航按钮");
 
   // 3) 多行输入经 IPC 落到核心，且只算一条事件
-  const beforeEvents = Number((await text("#count-events")).split(" ")[1]);
+  let beforeEvents = Number((await text("#count-events")).split(" ")[1]);
   const setDraftForSize=async(value)=>js(`(()=>{const n=document.querySelector('#composer');n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await setDraftForSize('   \n');
   note(await waitFor(()=>js("document.querySelector('#send').disabled && getComputedStyle(document.querySelector('#send')).opacity==='0.4'")), "空白草稿保持发送禁用与四成透明度");
@@ -359,6 +363,21 @@ async function uiSmoke() {
     if(draftColumns.rightOpen) await js("document.querySelector('#toggle-side').click()");
   }
   note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "草稿高度调整不写会话日志");
+  const deniedDraft='长'.repeat(8001);
+  await setDraftForSize(deniedDraft);await click('#send');
+  note(await waitFor(()=>js("document.querySelector('#composer').value.length===8001 && document.querySelector('.error').textContent.includes('8000') && !document.querySelector('#send').disabled")), "真实 IPC 拒绝过长消息后保留草稿并恢复发送控件");
+  note(Number((await text('#count-events')).split(' ')[1])===beforeEvents, "被拒消息没有写入核心会话日志");
+  const sendRequest=bridge.request.bind(bridge);let sendRequests=0;
+  bridge.request=async(method,params,...rest)=>{if(method==='session/append' && params?.eventType==='user/message'){sendRequests++;await nap(200);}return sendRequest(method,params,...rest);};
+  try {
+    await setDraftForSize('回执前保留的原始消息');
+    const pendingSend=await js("(()=>{document.querySelector('#send').click();document.querySelector('#send').click();return Vue.nextTick().then(()=>({locked:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),draft:document.querySelector('#composer').value,sessionLocked:document.querySelector('#sidebar-new-session').disabled}));})()");
+    note(pendingSend.locked && pendingSend.busy==='true' && pendingSend.draft==='回执前保留的原始消息' && pendingSend.sessionLocked, "消息等待真实回执时保留草稿并阻止重复发送和会话切换");
+    await setDraftForSize('请求期间继续编辑的新草稿');
+    note(await waitFor(()=>js("document.querySelector('#messages').textContent.includes('回执前保留的原始消息') && !document.querySelector('#send').disabled && document.querySelector('#composer').value==='请求期间继续编辑的新草稿'")), "成功回执不会清空请求期间新编辑的草稿");
+    note(sendRequests===1 && Number((await text('#count-events')).split(' ')[1])===beforeEvents+1, "同帧重复点击仅写入一条真实用户消息");
+  } finally {bridge.request=sendRequest;await setDraftForSize('');}
+  beforeEvents=Number((await text('#count-events')).split(' ')[1]);
   const typed = "第一行\n第二行 带\"引号\"";
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify(typed)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   await js("document.querySelector('#composer').focus()");
@@ -414,7 +433,7 @@ async function uiSmoke() {
   note(await click("#send"), "已再发一条 user 消息");
   // 「组数不变」必须带非零前提，否则 0 === 0 会把「一个组都没渲染」喂成绿。
   const mergedIntoGroup = await waitFor(
-    async () => groupsBeforeMerge >= 3 && (await count("#messages .tr-bubble")) === groupsBeforeMerge
+    async () => groupsBeforeMerge >= 3 && (await count("#messages .tr-bubble")) === groupsBeforeMerge && (await text('#messages')).includes('第二条 user 消息')
   );
   note(mergedIntoGroup, `连续 user 合并：组数 ${groupsBeforeMerge} → ${await count("#messages .tr-bubble")}（应不变且 ≥ 3）`);
   const userGroupNodes = await count('#messages .tr-bubble[data-role="user"] .msg-text');
@@ -933,7 +952,7 @@ app.whenReady().then(async () => {
     const captureArg=process.argv.find(a=>a.startsWith('--capture-dir='));
     const outDir=captureArg?captureArg.slice('--capture-dir='.length):join(SESSION_DIR,'frame');
     try {
-      const ok=await require('./frame-smoke.cjs')({win,nativeTheme,outDir});
+      const ok=await require('./frame-smoke.cjs')({win,nativeTheme,outDir,bridge});
       await bridge.stop();app.exit(ok?0:1);
     } catch(e) {console.error('FRAME FAIL',e);await bridge.stop();app.exit(1);}
     return;
