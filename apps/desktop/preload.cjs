@@ -3,7 +3,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 // 没有通用的 request(everything) 通道——那等于把宿主协议面整个交给网页。
 contextBridge.exposeInMainWorld("dsh", {
   projection: () => ipcRenderer.invoke("dsh:projection"),
-  userSend: (text) => ipcRenderer.invoke("dsh:userSend", { text }),
+  userSend: (text, receiptIds) => ipcRenderer.invoke("dsh:userSend", { text, receiptIds }),
+  // 附件：字节只以 base64 过界一次，落盘、内容寻址 id 与暂存凭证都由核心铸造，
+  // 渲染层既拿不到宿主路径，也没通路自报「我上传过这个 id」。
+  attachmentUpload: (kind, name, mediaType, data) => ipcRenderer.invoke("dsh:attachmentUpload", { kind, name, mediaType, data }),
   toolsList: () => ipcRenderer.invoke("dsh:toolsList"),
   toolCall: (name, args, approvalId) => ipcRenderer.invoke("dsh:toolCall", { name, args, approvalId }),
   approvalAsk: (name) => ipcRenderer.invoke("dsh:approvalAsk", { name }),

@@ -1,9 +1,10 @@
-// 控制式附件视图验收；上传状态来自测试草稿，不声明真实文件存储已接入。
+// 控制式附件视图验收；输入区那一条走真实装配（入口可用、拖放被接受），
+// 其余状态用测试草稿喂给组件，声明的是视图行为而不是存储语义。
 module.exports=async function({win,check,waitFor,outDir}){
   const js=code=>win.webContents.executeJavaScript(`(async()=>{${code}})()`,true);
-  await check('发送区附件真实入口未伪造上传能力',"({entry:!!document.querySelector('.composer-controls [aria-label=\"添加附件\"]'),disabled:document.querySelector('.composer-controls [aria-label=\"添加附件\"]').disabled,noDraft:!document.querySelector('.composer [data-attachment-id]')})");
-  await js(`const dt=new DataTransfer();dt.items.add(new File(['x'],'尚未接入.txt'));document.body.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:dt,clientX:100,clientY:100}))`);
-  await check('未接入上传时会话拖放明确阻止',"({blocked:!!document.querySelector('[data-attachment-drop-disabled=true]'),noDraft:!document.querySelector('.composer [data-attachment-id]')})");
+  await check('真实会话的附件入口是可用的而非占位',"({entry:!!document.querySelector('.composer-controls [aria-label=\"添加附件\"]'),enabled:document.querySelector('.composer-controls [aria-label=\"添加附件\"]').disabled===false,rail:!!document.querySelector('.composer .attachments-root'),noDraft:!document.querySelector('.composer [data-attachment-id]')})");
+  await js(`const dt=new DataTransfer();dt.items.add(new File(['x'],'拖入文件.txt'));document.body.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:dt,clientX:100,clientY:100}))`);
+  await check('拖放文件被接受而非明确阻止',"({accepted:!!document.querySelector('[data-attachment-drop-disabled=false]'),noDraft:!document.querySelector('.composer [data-attachment-id]')})");
   await js(`window.dispatchEvent(new DragEvent('dragend'));document.querySelector('.nav-panel').click();await Vue.nextTick();const root=document.createElement('div');root.id='attachment-fixture';Object.assign(root.style,{position:'fixed',bottom:'60px',left:'430px',width:'430px',zIndex:30,background:'var(--panel-surface)',padding:'16px'});document.body.append(root);
     const canvas=document.createElement('canvas');canvas.width=32;canvas.height=24;const ctx=canvas.getContext('2d');ctx.fillStyle='#557799';ctx.fillRect(0,0,32,24);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));const file=new File([blob],'预览图片.png',{type:'image/png'});const url=URL.createObjectURL(file);
     window.attachmentFixture={root,url,items:Vue.ref([{id:'image',kind:'image',file,previewUrl:url},{id:'upload',kind:'file',file:new File(['report'],'报告.md')},{id:'error',kind:'file',file:new File(['failed'],'失败.txt')}]),uploads:Vue.ref({upload:{status:'uploading',loaded:150,total:100},error:{status:'error',message:'upload'}}),accept:Vue.ref(true),active:Vue.ref(true),adds:[],removes:[],retries:[]};

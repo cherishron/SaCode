@@ -199,7 +199,13 @@ createApp({
         "workspace-flush-failed":"项目目录保存失败，请重启后检查会话日志。", "workspace-failed-restart-required":"项目目录保存失败，请重启后继续。", "bad-workspace-directory":"请选择存在的项目文件夹。",
         "session-resources-in-flight":"请先处理审批工单并关闭在途扩展。", "turn-in-flight":"请先停止当前执行并等待结算。", "already-owned":"会话正在由另一写者使用，请稍后重试。",
         "bad-session-title":"请输入有效的会话名称。", "replay-rejected":"会话日志无法回放，已保留原会话。", "unknown-session":"会话目录不存在，请刷新列表。",
-        "selection-flush-failed":"会话选择保存失败，请重启后检查日志。", "flush-failed":"当前会话保存失败，尚未切换。"};
+        "selection-flush-failed":"会话选择保存失败，请重启后检查日志。", "flush-failed":"当前会话保存失败，尚未切换。",
+        "attachment-receipt-unknown":"附件凭证已失效，请重新上传。", "attachment-media-type-mismatch":"附件内容与所选类型不符。",
+        "attachment-unsupported-media-type":"图片暂时只支持 PNG、JPEG、GIF。", "attachment-bad-base64":"附件读取失败，请重试。",
+        "attachment-image-too-large":"单张图片不能超过 20 MB。", "attachment-image-count-exceeded":"一条消息最多 20 张图片。",
+        "attachment-image-bytes-exceeded":"一条消息的图片合计不能超过 200 MB。", "attachment-image-pixels-exceeded":"图片像素超过 6400 万。",
+        "attachment-image-dimension-exceeded":"图片单边不能超过 8192 像素。", "attachment-corrupt-object":"附件内容校验不通过，请重新上传。",
+        "attachment-missing-object":"附件对象已不在盘上，请重新上传。"};
       return Object.entries(reasons).find(([key])=>message.includes(key))?.[1] || message;
     }
     async function applySelection(id) {
@@ -217,6 +223,7 @@ createApp({
       previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
       catalogNote.value="已切换，正在加载会话…";
       queuePending.value=[];
+      clearAttachments();
       await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshQueue();
       await refreshGlobalAppearance();
       workspaceNote.value="";
@@ -332,6 +339,74 @@ createApp({
     const draft = ref(""), sendBusy=ref(false);
     // 队列面板只显示核心的投影；pending 只是「自己刚发出去还没回执」的回声
     const queueRows = ref([]), queuePending = ref([]);
+    // 附件轨：字节只在上传那一刻过界一次，之后渲染层手里只有宿主发的凭证与引用。
+    const attachments = ref([]), uploads = ref({});
+    let attSeq = 0;
+    const IMAGE_MIME = ["image/png", "image/jpeg", "image/gif"];
+    const kindOf = (file) => (IMAGE_MIME.includes(file.type) ? "image" : "file");
+    function readAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          // reader.result 是只读访问器，写它会在回调里抛 TypeError 让这条 Promise 永不结算
+          const text = String(reader.result || "");
+          const comma = text.indexOf(",");
+          if (comma < 0) { reject(new Error("附件读取失败")); } else { resolve(text.slice(comma + 1)); }
+        };
+        reader.onerror = () => reject(new Error("附件读取失败"));
+        reader.readAsDataURL(file);
+      });
+    }
+    async function uploadAttachment(item, file) {
+      const generation = sessionGeneration;
+      try {
+        const data = await readAsBase64(file);
+        const kind = kindOf(file);
+        const out = await window.dsh.attachmentUpload(kind, file.name || "", kind === "image" ? file.type : "", data);
+        if (generation !== sessionGeneration) { return; }
+        item.receiptId = out.receiptId;
+        item.attachment = out.attachment;
+        if (kind === "image" && !item.previewUrl) { item.previewUrl = URL.createObjectURL(file); }
+        uploads.value = { ...uploads.value, [item.id]: { status: "ready" } };
+      } catch (e) {
+        if (generation !== sessionGeneration) { return; }
+        uploads.value = { ...uploads.value, [item.id]: { status: "error", message: catalogError(e) } };
+        error.value = catalogError(e);
+      }
+    }
+    function addAttachments(files, directories) {
+      for (const file of files) {
+        const item = { id: "a" + (++attSeq), kind: kindOf(file), file, previewUrl: "" };
+        attachments.value = [...attachments.value, item];
+        uploads.value = { ...uploads.value, [item.id]: { status: "uploading" } };
+        void uploadAttachment(item, file);
+      }
+      // 文件夹不是附件：上游这条线只收文件，所以明说而不是静默吞掉。
+      if (directories && directories.length) {
+        error.value = "只接受文件，文件夹不入库：" + directories.map((d) => d.name).join("、");
+      }
+    }
+    function removeAttachment(id) {
+      const gone = attachments.value.find((a) => a.id === id);
+      if (gone && gone.previewUrl) { URL.revokeObjectURL(gone.previewUrl); }
+      attachments.value = attachments.value.filter((a) => a.id !== id);
+      const rest = { ...uploads.value };
+      delete rest[id];
+      uploads.value = rest;
+    }
+    function retryAttachment(id) {
+      const item = attachments.value.find((a) => a.id === id);
+      if (!item) { return; }
+      uploads.value = { ...uploads.value, [id]: { status: "uploading" } };
+      void uploadAttachment(item, item.file);
+    }
+    function clearAttachments() {
+      for (const item of attachments.value) {
+        if (item.previewUrl) { URL.revokeObjectURL(item.previewUrl); }
+      }
+      attachments.value = [];
+      uploads.value = {};
+    }
     let rpcSeq = 0;
     let draftRevision=0, sendTicket=0;
     function updateDraft(value) { draftRevision++; draft.value=value; }
@@ -507,16 +582,24 @@ createApp({
       if (!text.trim()) return;
       const ticket=++sendTicket;
       let acknowledged=false;
+      // 附件还没落盘就不能发：宁可挡在发送这一步，也不发一条引用了不存在对象的消息
+      if (attachments.value.some((a) => !a.receiptId)) {
+        error.value = attachments.value.some((a) => (uploads.value[a.id] || {}).status === "error")
+          ? "有附件上传失败，请重试或先移除" : "附件还在上传，请等它就绪";
+        return;
+      }
+      const receipts = attachments.value.map((a) => a.receiptId);
       sendBusy.value=true;
       error.value = "";
       try {
-        // 渲染层只说「用户说了什么」，事件类型由核心决定：不给它伪造 system/message 的口子
-        await window.dsh.userSend(text);
+        // 渲染层只说「用户说了什么」加上自己拿到的凭证，事件类型由核心决定：不给它伪造 system/message 的口子
+        await window.dsh.userSend(text, receipts);
         if (generation!==sessionGeneration) return;
         acknowledged=true;
         sendBusy.value=false;
         // 核心确认成功后才清空；在途请求不能覆盖用户随后编辑的新草稿。
         if(draftRevision===revision) draft.value="";
+        clearAttachments();
         await refresh();
         await refreshCatalog();
         // 消息落进会话只是半件事：产品链路上发完就要起一轮，否则装了也收不到答复。
@@ -757,7 +840,7 @@ createApp({
 
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen,
       appearanceBusy, appearanceNote, setTheme, modelsAdapter, modelDirectory,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
@@ -1038,8 +1121,8 @@ createApp({
         canSubmit:()=>!self.sendBusy&&!document.querySelector('dialog:modal'),
         submit:()=>self.send(),
       }]]),
-      h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:false,showAdd:false}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:true}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:false,onAdd:(files,dirs)=>self.addAttachments(files,dirs)}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),

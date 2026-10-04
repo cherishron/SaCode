@@ -1,7 +1,9 @@
 package host
 import core.*
 import stdx.encoding.json.*
+import stdx.encoding.base64.*
 import std.collection.ArrayList
+import std.collection.HashMap
 import std.env.*
 import std.fs.*
 
@@ -99,6 +101,54 @@ func jsonStr(body: String, key: String): String {
 }
 
 // 取 "id":<整数> 的 id；找不到或为 null 时返回 "null"。
+// 附件帧的入参走完整 JSON 解析而不是手扫：显示名里可能带转义引号，
+// 而 base64 载荷长度不受限，手扫的「value 不含引号」前提在这两条上都不成立。
+func attHasReceipts(body: String): Bool {
+    let hay = bytesOf(body)
+    let pat = bytesOf("\"receiptIds\"")
+    var i: Int64 = 0
+    while (i + pat.size <= hay.size) {
+        var same = true
+        var k: Int64 = 0
+        while (k < pat.size) {
+            if (hay[i + k] != pat[k]) {
+                same = false
+                break
+            }
+            k += 1
+        }
+        if (same) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+func attStr(obj: JsonObject, key: String): String {
+    if (let Some(v) <- obj.get(key)) {
+        return v.asString().getValue()
+    }
+    return ""
+}
+
+func attList(obj: JsonObject, key: String): ArrayList<String> {
+    let out = ArrayList<String>()
+    if (let Some(v) <- obj.get(key)) {
+        let arr = v.asArray()
+        var i: Int64 = 0
+        while (true) {
+            if (let Some(item) <- arr.get(i)) {
+                out.add(item.asString().getValue())
+                i += 1
+            } else {
+                break
+            }
+        }
+    }
+    return out
+}
+
 func jsonId(body: String): String {
     let hay = bytesOf(body)
     let pat = bytesOf("\"id\":")
@@ -444,6 +494,12 @@ main(args: Array<String>) {
     var leaseHeld = false
     var selectionFault = false
     var workspaceFault = false
+    // 上传与结算之间靠暂存凭证连接：凭证由本宿主铸造，对端自报的 attachmentId
+    // 没有通路——「谁上传的」与「谁引用的」必须是同一次会话里的同一张条子。
+    // 宿主文件后端的内容寻址目录相对会话根（与 SessionCatalog(".") 同一个 CWD）。
+    let attReceipts = HashMap<String, AttachmentRef>()
+    var attSeq = Int64(0)
+    let attDir = "attachments/v1"
     // 内置仓颉工具在此登记；extension/* 全部走同一个注册表与同一个 ToolRuntime，
     // 保证 CLI 与桌面看到的工具集与审批语义一致。
     let extReg = ToolRegistry()
@@ -559,7 +615,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -616,7 +672,42 @@ main(args: Array<String>) {
                 }
                 leaseHeld = true
             }
-            shared.append(jsonStr(body, "eventType"), jsonStr(body, "data"))
+            var attachFailure = ""
+            var receiptIds = ArrayList<String>()
+            if (attHasReceipts(body)) {
+                try {
+                    receiptIds = attList(JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject(), "receiptIds")
+                } catch (_: Exception) {
+                    attachFailure = "attachment-bad-request"
+                }
+            }
+            if (attachFailure.size > 0) {
+                emit(errFrame(idText, -32024, attachFailure))
+                continue
+            }
+            if (receiptIds.size == 0) {
+                // 没有凭证的调用方走原路：报文形态与这次改动之前逐字相同
+                shared.append(jsonStr(body, "eventType"), jsonStr(body, "data"))
+            } else {
+                let att = AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
+                let refs = ArrayList<AttachmentRef>()
+                for (rid in receiptIds) {
+                    if (let Some(r) <- attReceipts.get(rid)) {
+                        refs.add(r)
+                    } else {
+                        attachFailure = "attachment-receipt-unknown"
+                    }
+                }
+                if (attachFailure.size > 0) {
+                    // 认不出任何一张凭证就整条拒掉：既不落半结算的消息，也不烧掉好凭证
+                    emit(errFrame(idText, -32024, attachFailure))
+                    continue
+                }
+                att.commitMessage(jsonStr(body, "data"), refs)
+                for (rid in receiptIds) {
+                    attReceipts.remove(rid)
+                }
+            }
             if (!shared.flush()) {
                 // 未落盘则保留写租约与内存态，调用方可重试 flush，不得当作已提交
                 emit(errFrame(idText, -32003, "flush-failed"))
@@ -907,6 +998,48 @@ main(args: Array<String>) {
                 continue
             }
             emit(okFrame(idText, "{\"accepted\":true}"))
+            continue
+        }
+        if (method == "attachment/upload") {
+            var uploadFailure = ""
+            var uploaded = ""
+            try {
+                // body 是整条报文，参数在 params 里：直接对信封取字段会全都读成空
+                let req = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                let kind = attStr(req, "kind")
+                let name = attStr(req, "name")
+                let mediaType = attStr(req, "mediaType")
+                let encoded = attStr(req, "data")
+                var data = Array<Byte>(0, repeat: UInt8(0))
+                if (encoded.size > 0) {
+                    match (fromBase64String(encoded)) {
+                        case Some(bs) => data = bs
+                        case None => uploadFailure = "attachment-bad-base64"
+                    }
+                }
+                if (uploadFailure.size == 0) {
+                    let att = AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
+                    // 先持久化、后事件：这一步只落对象，凭证在内存里，消息还没写。
+                    let ref = if (kind == "image") {
+                        att.saveImage(data, mediaType, name)
+                    } else if (kind == "file") {
+                        att.saveFile(data, name)
+                    } else {
+                        throw Exception("attachment-bad-kind")
+                    }
+                    attSeq += 1
+                    let receipt = "u${attSeq}"
+                    attReceipts.add(receipt, ref)
+                    uploaded = "{\"receiptId\":\"${receipt}\",\"attachment\":${ref.toJson()}}"
+                }
+            } catch (e: Exception) {
+                uploadFailure = e.message
+            }
+            if (uploadFailure.size > 0) {
+                emit(errFrame(idText, -32024, uploadFailure))
+                continue
+            }
+            emit(okFrame(idText, uploaded))
             continue
         }
         if (method == "turn/start" || method == "task/start") {

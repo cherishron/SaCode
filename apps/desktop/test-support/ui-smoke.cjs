@@ -70,12 +70,21 @@ async function uiSmoke(context) {
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
   // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
-  const PRELOAD_API = ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
+  const PRELOAD_API = ['projection','userSend','attachmentUpload','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.dsh||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
   const apiExtra = await js(`Object.keys(window.dsh||{}).filter(k => ${JSON.stringify(PRELOAD_API)}.indexOf(k) < 0).join(',')`);
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
+  // 附件入口必须是真的：字节交给宿主落盘，界面只拿得到凭证与引用，移除要真撤下卡片。
+  await js(`const dt=new DataTransfer();dt.items.add(new File([Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,2,0,0,0,1,8,6,0,0,0,0,0,0,0])],'真图.png',{type:'image/png'}));const inp=document.querySelector('.attachments-picker input[type="file"]');inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))`);
+  await waitFor(() => js(`(()=>{const c=document.querySelector('[data-attachment-id]');return !!c&&c.dataset.uploadStatus!=='uploading'})()`));
+  const attProbe = await js(`Promise.race([window.dsh.attachmentUpload('file','探针.txt','','YWJj').then(v=>'ok:'+v.receiptId).catch(e=>'err:'+String(e.message||e)),new Promise(r=>setTimeout(()=>r('IPC 无回执'),4000))])`);
+  const attState = await js(`(()=>{const card=document.querySelector('[data-attachment-id]');return {status:card?card.dataset.uploadStatus:'无卡片',notice:(document.getElementById('error')||{}).textContent||''}})()`);
+  note(attState.status === "ready", `附件经宿主落盘后显示为就绪（实际 ${JSON.stringify({ ...attState, attProbe })}）`);
+  note(await js(`document.querySelectorAll('[data-attachment-id]').length`) === 1, '一次选择只生成一张附件卡片');
+  await js(`document.querySelector('[aria-label^="移除图片"]').click()`);
+  note(await waitFor(() => js(`!document.querySelector('[data-attachment-id]')`)), '移除附件会撤下卡片');
 
   const catalogBefore = await bridge.request("session/catalog");
   const catalogEvents = await text('#count-events');

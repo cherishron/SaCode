@@ -97,11 +97,34 @@ const isStr = (v) => typeof v === "string";
 
 ipcMain.handle("dsh:projection", async () => withHost(() => bridge.request("session/projection")));
 
+// 暂存凭证是宿主铸造的短串，界面只能原样带回，拼不出别的形状
+const RECEIPT_RE = /^u[1-9]\d{0,6}$/;
+
 ipcMain.handle("dsh:userSend", async (_e, args) => {
   if (!args || !isStr(args.text) || args.text.length === 0 || args.text.length > 8000) {
     throw new Error("bad arguments");
   }
-  return withHost(() => bridge.request("session/append", { eventType: "user/message", data: args.text }));
+  const ids = args.receiptIds == null ? [] : args.receiptIds;
+  if (!Array.isArray(ids) || ids.length > 20 || !ids.every((v) => isStr(v) && RECEIPT_RE.test(v))) {
+    throw new Error("bad arguments");
+  }
+  const params = ids.length
+    ? { eventType: "user/message", data: args.text, receiptIds: ids }
+    : { eventType: "user/message", data: args.text };
+  return withHost(() => bridge.request("session/append", params));
+});
+
+ipcMain.handle("dsh:attachmentUpload", async (_e, args) => {
+  // 入参只有四格：kind、显示名、声明类型、base64。落盘位置与内容寻址 id 都在核心那一侧。
+  if (!args || (args.kind !== "image" && args.kind !== "file")
+    || !isStr(args.name) || args.name.length > 300
+    || !isStr(args.mediaType) || args.mediaType.length > 100
+    || !isStr(args.data) || args.data.length > 28000000) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("attachment/upload", {
+    kind: args.kind, name: args.name, mediaType: args.mediaType, data: args.data,
+  }));
 });
 
 ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
