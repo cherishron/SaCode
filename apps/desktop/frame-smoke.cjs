@@ -14,7 +14,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   const reports=[];
   async function check(name,source) {
     const checks=await js(source),failed=Object.keys(checks).filter(k=>!checks[k]);
-    reports.push({name,checks,failed});console.log('FRAME '+(failed.length?'FAIL':'PASS')+' '+name+' '+failed.join(','));
+    reports.push({name,checks,failed});console.log('FRAME '+(failed.length?'FAIL':'PASS')+' '+name+' '+failed.join(',')+(failed.length?' '+JSON.stringify(checks):''));
   }
   const typography=await js("Object.fromEntries(['body','.hero-heading','.nav-label','#composer'].map(s=>[s,getComputedStyle(document.querySelector(s)).fontFamily]))");
   console.log('FRAME 字体',JSON.stringify(typography));
@@ -126,12 +126,17 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await require('./test-support/plugin-manager-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/model-select-smoke.cjs')({win,waitFor,check,outDir,bridge});
   await require('./test-support/composer-attachments-smoke.cjs')({win,waitFor,check,outDir});
-  await require('./test-support/composer-keymap-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/composer-keymap-smoke.cjs')({win,waitFor,check});
   await require('./test-support/queue-dock-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/context-meter-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/todo-panel-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/todo-host-smoke.cjs')({win,bridge,waitFor,check});
+  // 金路径放最后：它会发真实消息并起一轮，前面的夹具都按「没有答复」的状态断言。
+  await require('./test-support/golden-path-smoke.cjs')({win,check,waitFor,bridge});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
+  // reports.json 落在一次性冒烟目录里、随目录一起被清，所以汇总必须自己印到 stdout，
+  // 否则「多少组、多少条、几条失败」只剩下一个可被截断的行数可查。
+  console.log('FRAME 汇总 '+JSON.stringify({groups:reports.length,checks:reports.reduce((n,r)=>n+Object.keys(r.checks).length,0),failed:reports.reduce((n,r)=>n+r.failed.length,0)}));
   return reports.every(r=>!r.failed.length);
 };
 
@@ -199,7 +204,7 @@ async function checkConversationScroll({js,waitFor,check}) {
   await waitFor(`document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(other)} && !document.querySelector('#sidebar-new-session').disabled`);
   await js(`document.querySelector('[data-sidebar-session="'+${JSON.stringify(current)}+'"]').click()`);
   await waitFor(`document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(current)} && !document.querySelector('#sidebar-new-session').disabled && !!document.querySelector('#scroll-to-bottom')`);
-  await check('真实会话切换保留阅读位置',"({restored:Math.abs(document.querySelector('.conversation-scroll').scrollTop-100)<1})");
+  await check('真实会话切换保留阅读位置',"(()=>{const n=document.querySelector('.conversation-scroll');return {restored:Math.abs(n.scrollTop-100)<1,scrollTop:n.scrollTop,messages:document.querySelectorAll('[data-msg-id]').length,anchor:n.dataset.followingTail}})()");
   await js("document.querySelector('#scroll-to-bottom').click()");
   await waitFor("!document.querySelector('#scroll-to-bottom')");
   await check('真实会话返回尾部',"(()=>{const n=document.querySelector('.conversation-scroll');return {following:n.dataset.followingTail==='true',atFloor:Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1}})()");

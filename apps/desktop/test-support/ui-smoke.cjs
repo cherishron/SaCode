@@ -68,12 +68,13 @@ async function uiSmoke(context) {
   // 2) 沙箱与隔离必须真生效
   const leaked = await js("typeof window.require");
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
-  const apiShape = await js(
-    "['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'].map(k => typeof (window.dsh||{})[k]).join(',')"
-  );
-  note(apiShape === Array(27).fill("function").join(","), `preload 暴露面=${apiShape}`);
+  // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
+  // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
+  const PRELOAD_API = ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
+  const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.dsh||{})[k]).join(',')`);
+  note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js("Object.keys(window.dsh||{}).filter(k => ['projection','userSend','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'].indexOf(k) < 0).join(',')");
+  const apiExtra = await js(`Object.keys(window.dsh||{}).filter(k => ${JSON.stringify(PRELOAD_API)}.indexOf(k) < 0).join(',')`);
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
 
   const catalogBefore = await bridge.request("session/catalog");

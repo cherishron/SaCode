@@ -72,7 +72,9 @@
 .composer-seat { display:flex; flex:none; flex-direction:column; }
 .conversation-center:not(.is-empty) .composer-seat { position:sticky; bottom:0; z-index:7; background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 0%,transparent) 0px,var(--surface-2) 36px); }
 .conversation-center.is-empty .conversation-scroll { justify-content:center; }
-.conversation-center .error { width:100%; max-width:calc(var(--chat-width) + 64px); align-self:center; padding-left:16px; padding-right:16px; }
+/* 告警不能把输入区从停靠位顶走：发送失败或起轮被拒时，正文照常滚、输入框不动，
+   提示钉在会话区顶端做浮层（to-bottom-slot 用的是同一套浮层思路）。 */
+.conversation-center .error { position:absolute; top:0; left:0; right:0; margin:0 auto; z-index:9; width:100%; max-width:calc(var(--chat-width) + 64px); padding-left:16px; padding-right:16px; background:var(--surface-2); box-shadow:var(--elevation-prominent); }
 .stream,.conversation-content>.markdown-stream { width:100%; max-width:var(--chat-width); margin:0 auto; }
 .composer { grid-area:auto; flex:none; align-self:center; width:min(calc(var(--chat-width) + 64px),100%); padding:16px 16px 8px; border:0; background:transparent; }
 .composer-card { background:var(--input-surface); }

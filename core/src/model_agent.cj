@@ -72,6 +72,14 @@ public class ModelAgentLoop {
                 }
                 if (token.cancelled()) { break }
                 if (step + 1 >= maxSteps) { finish = "step-limit"; interrupted = true; break }
+                // 步边界：即时补充全部落地。摘走之后送达是另一件事——每条另写一条
+                // user/message，队列事件本身不进模型可见历史，两条账互不冒充。
+                // 只有「确要去发下一次请求」的位置才摘：step-limit 已经 break，
+                // 在那之后摘走等于把消息吞进没人看的清单。
+                for (note in AgentInbox(log).claimStep()) {
+                    log.append("user/message", note.text)
+                    sink.offer("projection:queue")
+                }
                 // 唯一请求来源是会话日志：不保留第二份 messages 状态。
                 provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()]))
                 providerOpen = true

@@ -51,6 +51,36 @@ func modelAgentExecutesSplitTodoAndContinuesFromLoggedResult() {
     @Expect(log.deriveMessages()[3], "assistant/message: 已经规划。")
 }
 
+// 步边界送达即时补充：与轮次边界「只摘一条」不同，一个 pre-step 边界要把
+// next-step 全部摘走，并且送达是另写一条 user/message——队列事件本身不进模型可见历史。
+// 文本用纯 ASCII：本用例钉的是「有没有落进请求体」，不能被 JSON 转义形态干扰。
+@Test
+func inboxSteeredMessageLandsAtNextStepBoundary() {
+    let log = SessionLog("model-agent-steer-unused.log")
+    log.append("user/message", "先做第一步")
+    let inbox = AgentInbox(log)
+    inbox.queue("q1", "follow-up-42", "rpc-s1")
+    inbox.steerFromQueue("q1")
+    @Expect(inbox.sizeOf("next-step"), Int64(1))
+    let first = AgentChunks([
+        Chunk("tool-call-delta", "{\"todos\":[{\"content\":\"步边界\",\"status\":\"in_progress\"}]}", "", toolIndex: Some(0), toolId: Some("call-s"), toolName: Some("todo_write")),
+        Chunk("finish", "", "tool_calls")])
+    let final = AgentChunks([Chunk("text", "收到补充。", ""), Chunk("finish", "", "stop")])
+    let requests = ArrayList<String>()
+    let next: (String) -> Provider = { body => requests.add(body); final }
+    let result = ModelAgentLoop().run(first, next, "test-model", TurnToken(), log, DeliveryQueue(32), false)
+    @Expect(requests.size, Int64(1))
+    @Expect(requests[0].contains("follow-up-42"), true)
+    @Expect(log.deriveMessages().contains("user/message: follow-up-42"), true)
+    // 摘走发生在 runner 自己新建的那份投影里：手里的旧 handle 不是活视图，
+    // 要看清单只能按日志重放，这正好也是「日志是唯一真源」的一条旁证。
+    let after = AgentInbox(log)
+    @Expect(after.sizeOf("next-step"), Int64(0))
+    @Expect(after.sizeOf("next-turn"), Int64(0))
+    @Expect(after.badCount, Int64(0))
+    @Expect(result.finishReason, "stop")
+}
+
 @Test
 func modelAgentTruncationAndCancellationNeverExecutePartialTodos() {
     for (reason in ["max-tokens", ""]) {

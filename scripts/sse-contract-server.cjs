@@ -9,11 +9,15 @@ const { execFileSync } = require('node:child_process');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-sse-contract-'));
 let targetHits = 0;
 let credentialHits = 0;
+let toolTurns = 0;
 const sockets = new Set();
 const timers = new Set();
 const servers = [];
 // 启动/测试失控也不能留下服务；正常退出会撤销此看门狗。
-const watchdog = setTimeout(() => process.exit(2), 20000);
+// 默认仍是 20 秒硬时限；需要跨多轮停滞路由的夹具（金路径）自己声明更长的预算，
+// 不能靠「碰运气没超时」通过，也不能悄悄把默认值抬高。
+const watchdogMs = Number(process.env.SSE_WATCHDOG_MS || '20000');
+const watchdog = setTimeout(() => process.exit(2), watchdogMs);
 function later(fn, ms) { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); }
 function track(server) {
   servers.push(server);
@@ -66,6 +70,24 @@ function handler(req, res) {
   if (route === 'redirect') { res.writeHead(307, { Location: `http://127.0.0.1:${target.address().port}/target` }); res.end('private response'); return; }
   if (['401', '429', '500'].includes(route)) { res.writeHead(Number(route)); res.end('private response Bearer fixture-only'); return; }
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+  if (route === 'tools') {
+    // 步边界夹具：第一次请求先出一段正文再拖 1.5 秒抛 todo_write 工具调用，
+    // 给调用方留出「运行中排队 + 即时补充」的窗口；第二次请求也拖 1.2 秒才收尾，
+    // 否则摘取与送达全在毫秒内跑完，界面读到的已经是结算后的空闲态，
+    // 「轮次还在跑、面板已经清空」这一条就没有可观察的时刻。
+    toolTurns += 1;
+    const first = toolTurns === 1;
+    res.write(frame('tool-step-first'));
+    later(() => {
+      if (first) {
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-step', function: { name: 'todo_write', arguments: '{"todos":[{"content":"步边界","status":"in_progress"}]}' } }] } }] })}\n\n`);
+        res.end('data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+        return;
+      }
+      res.end('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"total_tokens":7}}\n\ndata: [DONE]\n\n');
+    }, first ? 1500 : 1200);
+    return;
+  }
   res.write(frame('first'));
   if (route === 'stall') { later(() => { res.end(frame('late')); }, 5000); return; }
   if (route === 'cancel') { later(() => { res.end(frame('late')); }, 1500); return; }

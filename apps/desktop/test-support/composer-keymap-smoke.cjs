@@ -20,11 +20,6 @@ module.exports=async function({win,check,waitFor}){
   await js(`document.querySelector('#composer').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))`);
   await waitFor("document.querySelector('#composer').value===''");
   await check('真实输入区普通 Enter 经宿主确认后清空草稿',"({cleared:document.querySelector('#composer').value==='',message:document.querySelector('#messages').textContent.includes('按键验收的真实用户消息'),focus:document.activeElement.id==='composer'})");
-  await js(`document.querySelector('#run-turn-2').click()`);
-  await waitFor("document.querySelector('#turn-state').textContent==='状态 执行中'");
-  await js(`const node=document.querySelector('#composer');node.value='尚未送达的运行中补充';node.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click()`);
-  await check('未接入运行中送达接口时保留草稿且不伪造排队消息',"({draft:document.querySelector('#composer').value==='尚未送达的运行中补充',notice:document.querySelector('.error').textContent.includes('排队与即时补充接口尚未接入'),notSent:!document.querySelector('#messages').textContent.includes('尚未送达的运行中补充')})");
-  await js(`const node=document.querySelector('#composer');node.value='';node.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click()`);
-  await waitFor("document.querySelector('#turn-state').textContent==='状态 已取消'");
-  await check('缺少补充接口不影响已有的核心取消通路',"({cancelled:document.querySelector('#turn-state').textContent==='状态 已取消'})");
+  // 运行中发送的排队与取消，由金路径夹具在可控制的慢流路由上验收（示例假轮的
+  // 两帧窗口太短，按不动）：这里不再重复一遍时序碰运气。
 };

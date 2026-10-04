@@ -143,6 +143,36 @@ ipcMain.handle("dsh:turnStart", async (_e, args) => {
   return withHost(() => bridge.request("turn/start", { limit }));
 });
 
+// 产品发送后的起轮走这一条：task/start 只认真实配置，缺配置/缺凭据/协议不支持一律显式报错，
+// 不像 turn/start 那样在没配置时静默退回示例 provider——界面上演一场假成功比报错更糟。
+ipcMain.handle("dsh:taskStart", async () => withHost(() => bridge.request("task/start", {})));
+
+// 队列三动作逐字段校验：条目身份只能来自核心铸造的那串 id，
+// 渲染层拼不出「改任意一条」或「带任意正文的未知动作」。
+const QUEUE_ID = /^q\d{1,18}$/;
+const QUEUE_KINDS = ["edit", "remove", "steer"];
+
+ipcMain.handle("dsh:queueDescribe", async () => withHost(() => bridge.request("queue/describe")));
+
+ipcMain.handle("dsh:queueEnqueue", async (_e, args) => {
+  if (!args || !isStr(args.text) || args.text.trim().length === 0 || args.text.length > 8000
+    || !isStr(args.rpcId) || args.rpcId.length === 0 || args.rpcId.length > 128) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("queue/enqueue", { text: args.text, rpcId: args.rpcId }));
+});
+
+ipcMain.handle("dsh:queueUpdate", async (_e, args) => {
+  if (!args || !isStr(args.itemId) || !QUEUE_ID.test(args.itemId) || !QUEUE_KINDS.includes(args.kind)) {
+    throw new Error("bad arguments");
+  }
+  const text = args.text === undefined || args.text === null ? "" : args.text;
+  if (!isStr(text) || text.length > 8000) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("queue/update", { itemId: args.itemId, kind: args.kind, text }));
+});
+
 ipcMain.handle("dsh:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
 
 ipcMain.handle("dsh:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));

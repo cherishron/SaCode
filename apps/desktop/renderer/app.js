@@ -216,7 +216,8 @@ createApp({
       approval.value=null; outcome.value=""; outcomeKind.value=""; error.value="";
       previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
       catalogNote.value="已切换，正在加载会话…";
-      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace();
+      queuePending.value=[];
+      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshQueue();
       await refreshGlobalAppearance();
       workspaceNote.value="";
       catalog.value=await window.dsh.sessionCatalog();
@@ -329,6 +330,9 @@ createApp({
     const detailTool = window.Vue.computed(() => tools.value.find((tool) => tool.name === detailName.value) || null);
     const toolCounters = ref({ misses: 0, guardDenials: 0 });
     const draft = ref(""), sendBusy=ref(false);
+    // 队列面板只显示核心的投影；pending 只是「自己刚发出去还没回执」的回声
+    const queueRows = ref([]), queuePending = ref([]);
+    let rpcSeq = 0;
     let draftRevision=0, sendTicket=0;
     function updateDraft(value) { draftRevision++; draft.value=value; }
     const error = ref("");
@@ -372,6 +376,42 @@ createApp({
       if (generation!==sessionGeneration) return;
       tools.value = r.tools;
       toolCounters.value = { misses: r.misses, guardDenials: r.guardDenials };
+    }
+
+    // 排队清单只认核心的投影：条目正文、id、rpcId 全部来自宿主回执，界面不自建排队状态。
+    // 上游 QueueDock 显示的是 next-turn 那一份；即时补充由核心在步边界消化，不在这张清单里。
+    async function refreshQueue() {
+      const generation=sessionGeneration;
+      let view;
+      try { view = await window.dsh.queueDescribe(); } catch (e) { return; }
+      if (generation!==sessionGeneration) return;
+      queueRows.value = (view.nextTurn || []).map((r) => ({ id: r.id, content: [{ type: "text", text: r.text }], source: { kind: "user", rpcId: r.rpcId } }));
+      const admitted = new Set(queueRows.value.map((r) => r.source.rpcId));
+      queuePending.value = queuePending.value.filter((p) => !admitted.has(p.requestId));
+    }
+
+    async function updateQueue(id, action) {
+      const text = action.kind === "edit" ? (action.content || []).map((b) => (b.type === "text" ? b.text || "" : "")).join("") : "";
+      await window.dsh.queueUpdate(id, action.kind, text);
+      await refreshQueue();
+    }
+
+    // 运行中发送 = 排队：草稿交给核心铸造条目身份，回执到了才清空草稿。
+    async function enqueueDraft() {
+      const text = draft.value, revision = draftRevision;
+      if (!text.trim()) return;
+      if (text.length > 8000) { error.value = "消息最多支持 8000 个字符，请缩短后重试。"; return; }
+      const requestId = "r" + (++rpcSeq);
+      error.value = "";
+      queuePending.value = queuePending.value.concat([{ requestId, placement: "queued", text, attachments: [] }]);
+      try {
+        await window.dsh.queueEnqueue(text, requestId);
+        if (draftRevision === revision) draft.value = "";
+        await refreshQueue();
+      } catch (e) {
+        queuePending.value = queuePending.value.filter((p) => p.requestId !== requestId);
+        error.value = "排队失败：" + cleanErr(e);
+      }
     }
 
     // 模型页的每一次读写都穿过宿主：渲染层不留第二份提供商状态。
@@ -457,10 +497,11 @@ createApp({
       };
     })();
     void modelDirectory.load();
+    void refreshQueue();
 
     async function send() {
       if(sendBusy.value) return;
-      if(turn.value.running){error.value='运行中的排队与即时补充接口尚未接入，草稿已保留。';return;}
+      if(turn.value.running){await enqueueDraft();return;}
       const generation=sessionGeneration;
       const text = draft.value, revision=draftRevision;
       if (!text.trim()) return;
@@ -478,6 +519,8 @@ createApp({
         if(draftRevision===revision) draft.value="";
         await refresh();
         await refreshCatalog();
+        // 消息落进会话只是半件事：产品链路上发完就要起一轮，否则装了也收不到答复。
+        await startTask();
       } catch (e) {
         if (generation!==sessionGeneration || ticket!==sendTicket) return;
         error.value = acknowledged ? "消息已发送，暂时无法刷新会话。" : text.length>8000 ? "消息最多支持 8000 个字符，请缩短后重试。" : "消息发送失败，请稍后重试。";
@@ -504,6 +547,9 @@ createApp({
             const kind = i < 0 ? f : f.slice(0, i);
             const body = i < 0 ? "" : f.slice(i + 1);
             if (kind === "projection" && body === "todos") await refresh();
+            // 步边界由 runner 线程摘走即时补充：正文多了已送达的一句、清单少了一条，
+            // 两边都要按核心重读，不能等这一轮结算才更新。
+            else if (kind === "projection" && body === "queue") { await refresh(); await refreshQueue(); }
             else if (kind === "text") turn.value.text += body;
             else if (kind === "usage") turn.value.text += "\n[usage " + body + "]";
             else if (kind === "tool-call-delta") turn.value.text += "\n[tool-call " + body + "]";
@@ -520,6 +566,19 @@ createApp({
             stopPolling();
             await refresh();
             await refreshTools();
+            // 结算帧先到、核心已在边界摘走条目：面板要先按核心重新读一次，
+            // 不能再拿上一轮的旧清单判断「还有没有下一条」。
+            await refreshQueue();
+            // 队列一次只消化一条（上游轮次边界口径）：正常结算后再起一轮，轮到下一条。
+            // 用户按停止的那一轮不起新轮——取消是「停下」，不是「换一条继续」；
+            // 排队条目留在核心面板里，下一次发送或手动起轮时才在边界被摘走。
+            if (!turn.value.cancelled && queueRows.value.length) {
+              await startTask();
+              // 起轮即边界：核心可能刚把队首摘成一条 user/message。正文要按新投影重画、
+              // 面板要按新清单收项，否则同一条消息会同时出现在正文与队列两处。
+              await refresh();
+              await refreshQueue();
+            }
           }
         } catch (e) {
           if (generation!==sessionGeneration) return;
@@ -527,6 +586,38 @@ createApp({
           stopPolling();
         }
       }, 60);
+    }
+
+    // 起轮的失败码来自核心，界面只把它翻成人话：消息已经落进会话是事实，
+    // 不能因为跑不动就装作没发过。
+    const turnStartFailure = (code) => ({
+      "model-not-configured": "还没有配置模型：消息已存入会话，请到设置 → 模型添加提供商并设为默认。",
+      "model-credential-unavailable": "提供商还没有可用凭据：消息已存入会话，请到设置 → 模型填入 API 密钥。",
+      "over-budget": "本轮额度已用满：消息已存入会话，请新建会话继续。",
+      "turn-in-flight": "上一轮还在执行，请稍候。",
+      "already-owned": "会话正被另一个入口占用，请稍候再试。",
+      "replay-rejected": "会话日志回放被拒，消息未起轮；请检查会话文件是否完整。",
+      "provider-init-failed": "连不上模型服务：消息已存入会话，请检查 API 地址与网络。",
+      "flush-failed": "会话未能落盘，消息只在内存里可见。",
+    })[code] || ("起轮失败：" + code);
+
+    async function startTask() {
+      const generation = sessionGeneration;
+      error.value = "";
+      turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
+      try {
+        await window.dsh.taskStart();
+        if (generation !== sessionGeneration) return;
+        startPolling();
+      } catch (e) {
+        if (generation !== sessionGeneration) return;
+        // 宿主帧是「-32016 model-not-configured」，Electron 再套一层「Error: 」前缀，
+        // 所以按「数字 + 空白 + 标识」取符号码；带后缀的（provider-init-failed:xxx）取到主码即止。
+        const text = String(cleanErr(e));
+        const code = text.match(/\d+\s+([a-z][a-z0-9-]*)/);
+        error.value = turnStartFailure(code ? code[1] : text);
+        turn.value.running = false;
+      }
     }
 
     async function runTurn(limit) {
@@ -673,6 +764,7 @@ createApp({
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits,
       send, runTurn, cancelTurn, askTool, answerTool,
+      queueRows, queuePending, updateQueue,
     };
   },
   render() {
@@ -932,7 +1024,7 @@ createApp({
         el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
       ]) : null,
       h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
-      h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,rows:[],running:self.turn.running}),
+      h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",

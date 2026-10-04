@@ -212,7 +212,27 @@ func allowedDuringTurn(method: String): Bool {
     // 计量读数与「收紧预算」都归读侧：预算只允许往下调，所以在途期间调它
     // 不会放宽任何放行条件，反而能让正在跑的这一轮更早被拦。
     let meterSide = method == "usage/status" || method == "usage/set-budget"
-    return turnSide || readSide || callSide || approvalSide || meterSide
+    // 运行中排队与改队列正是在途期间要做的事，拦掉等于这个面板没法用
+    return turnSide || readSide || callSide || approvalSide || meterSide || isQueueMethod(method)
+}
+
+// 队列读写都是「按动作命名」的有限方法：界面说不出任意一条路径，也拿不到通用转发。
+func isQueueMethod(method: String): Bool {
+    return method == "queue/describe" || method == "queue/enqueue" || method == "queue/update"
+}
+
+// 条目交给桌面的只有 id、正文与本次提交的 rpcId：条目身份由核心铸造，界面不能自报。
+func inboxListJson(inbox: AgentInbox, target: String): String {
+    var out = "["
+    var first = true
+    for (m in inbox.snapshot(target)) {
+        if (!first) {
+            out += ","
+        }
+        first = false
+        out += "{\"id\":\"${jsonEscapeText(m.id)}\",\"text\":\"${jsonEscapeText(m.text)}\",\"rpcId\":\"${jsonEscapeText(m.rpcId)}\"}"
+    }
+    return out + "]"
 }
 
 // 所有写入口加载会话时同时恢复计量，不能因租约先被审批或工具取得而绕过预算。
@@ -539,7 +559,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "session/projection") {
@@ -640,6 +660,7 @@ main(args: Array<String>) {
             continue
         }
         // 只回放**已落盘**事件：cursor 之后、limit 之内，more 表示还有
+
         if (method == "session/subscribe") {
             let fresh = SessionLog(p)
             if (!fresh.load()) {
@@ -784,6 +805,110 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"state\":\"${approvalDesk.stateOf(target2)}\",\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
+        // 队列是会话日志里的事实：读侧按投影规矩来（持租约看内存态，否则只认已落盘），
+        // 写侧与 session/submit 同一持久化档位——append 只在实例内可见，结算或 flush 才跨进程。
+        if (method == "queue/describe") {
+            var qTarget = shared
+            if (!leaseHeld) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) {
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                qTarget = fresh
+            }
+            let inbox = AgentInbox(qTarget)
+            let turnListJson = inboxListJson(inbox, "next-turn")
+            let stepListJson = inboxListJson(inbox, "next-step")
+            let runningFlag = if (turnBusy) { "true" } else { "false" }
+            emit(okFrame(idText, "{\"nextTurn\":${turnListJson},\"nextStep\":${stepListJson},\"running\":${runningFlag},\"mutable\":true,\"bad\":${inbox.badCount}}"))
+            continue
+        }
+        if (method == "queue/enqueue") {
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!loadForWrite(shared, meter)) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            let text = jsonStr(body, "text")
+            let rpcId = jsonStr(body, "rpcId")
+            let inbox = AgentInbox(shared)
+            if (rpcId.size > 0 && inbox.hasRpc(rpcId)) {
+                // 同一次提交的回声：接受，但绝不复制第二条（上游 hasPromptRequest 提前 accepted）
+                emit(okFrame(idText, "{\"accepted\":true,\"deduped\":true,\"id\":\"\"}"))
+                continue
+            }
+            // 条目身份由核心铸造：界面递进来的「id」没有通路，重复 id 也就无从伪造
+            let newId = "q${shared.eventCount()}"
+            var enqueueFailure = ""
+            try {
+                inbox.queue(newId, text, rpcId)
+            } catch (e: Exception) {
+                enqueueFailure = if (e.message == "inbox-empty-text") { "queue-edit-blank" } else { e.message }
+            }
+            if (enqueueFailure.size > 0) {
+                emit(errFrame(idText, -32021, enqueueFailure))
+                continue
+            }
+            emit(okFrame(idText, "{\"accepted\":true,\"deduped\":false,\"id\":\"${newId}\"}"))
+            continue
+        }
+        if (method == "queue/update") {
+            if (!leaseHeld) {
+                if (!lease.takeoverIfStale()) {
+                    emit(errFrame(idText, -32001, "already-owned"))
+                    continue
+                }
+                if (!loadForWrite(shared, meter)) {
+                    lease.release()
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    continue
+                }
+                leaseHeld = true
+            }
+            let itemId = jsonStr(body, "itemId")
+            let kind = jsonStr(body, "kind")
+            let text = jsonStr(body, "text")
+            if (kind == "steer" && !turnBusy) {
+                // 即时补充改的是「正在跑的这一轮」：没有轮次可改就是不可用，不是假装接受
+                emit(errFrame(idText, -32023, "queue-steer-unavailable"))
+                continue
+            }
+            let inbox = AgentInbox(shared)
+            var updateFailure = ""
+            try {
+                if (kind == "remove") {
+                    inbox.remove(itemId)
+                } else if (kind == "edit") {
+                    inbox.edit(itemId, text)
+                } else if (kind == "steer") {
+                    inbox.steerFromQueue(itemId)
+                } else {
+                    updateFailure = "queue-bad-action"
+                }
+            } catch (e: Exception) {
+                updateFailure = if (e.message == "inbox-item-not-found") {
+                    "queue-item-not-found"
+                } else if (e.message == "inbox-empty-text") {
+                    "queue-edit-blank"
+                } else {
+                    e.message
+                }
+            }
+            if (updateFailure.size > 0) {
+                emit(errFrame(idText, -32021, updateFailure))
+                continue
+            }
+            emit(okFrame(idText, "{\"accepted\":true}"))
+            continue
+        }
         if (method == "turn/start" || method == "task/start") {
             var configured: ModelSettingsSnapshot
             try { configured = ModelSettings.forUser().read() }
@@ -851,6 +976,13 @@ main(args: Array<String>) {
                 }
                 emit(errFrame(idText, -32014, "over-budget"))
                 continue
+            }
+            // 轮次边界：从队列里摘恰好一条（上游 core.md:275「one next-turn message at a turn
+            // boundary」），送达本身是另一件事——它作为独立的 user/message 落进日志，
+            // 队列事件不进模型可见历史，两条账互不冒充。
+            let admitted = AgentInbox(shared).claimTurn()
+            if (admitted.size > 0) {
+                shared.append("user/message", admitted[0].text)
             }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
