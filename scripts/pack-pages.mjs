@@ -12,7 +12,7 @@ const vueRuntime = { name: 'sacode-vue-runtime', setup(build) {
   build.onResolve({ filter: /^vue$/ }, () => ({ path: 'vue', namespace: 'sacode-runtime' }));
   build.onLoad({ filter: /^vue$/, namespace: 'sacode-runtime' }, () => ({ contents: 'module.exports = globalThis.Vue;', loader: 'js' }));
 } };
-for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect']]) {
+for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect'], ['composer-attachments','SaCodeAttachments']]) {
   const outfile = join(desktop, `renderer/vendor/${page}.iife.js`);
   const result = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, `renderer/pages/${page}.ts`)], bundle: true,
     plugins: [vueRuntime], format: 'iife', globalName, outfile, target: 'chrome120', metafile: true, logLevel: 'warning' });
