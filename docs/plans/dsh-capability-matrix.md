@@ -58,7 +58,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + 首批八个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook）：`✔` 11 行、`◐` 11 行、`☐` 41 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 前五批十四个非前端核心切片：session-title / todo / plan / goal / permission-presets / deliverables / jobs / webhook / settings / storage / sandbox）：`✔` 11 行、`◐` 14 行、`☐` 38 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -92,7 +92,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | plan | ✔ | ✔ | M4 | ✔ | ◐ | 核心切片已落 `core/src/plan.cj`（2026-10-04）：`plan/mode { active: boolean }` 是 log-only 全值替换会话事件，不进 `isSurfaceEvent`；`set(bool)` 同值返回 "noop" 且不落事件、异值返回 "committed"；`active()` 取回放最后一条、空日志默认 false。core `plan_test.cj` **3 条**（round-trip flush→load 不进 surface、noop 不追加、空默认）。**仍缺**：上游 `'queued'`/`'cancelled'` 两态（在 pre-step 边界落地）、`exit_plan_mode` 工具、`/plan` 命令、`plan:policy` prompt section、`PlanModeConfig` 加载期校验；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 B 组 |
 | product-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 29）；无任何上报。**C04 已核**：上游 product-telemetry 模块 79 行确证有 `ctx.productTelemetry.emit` 同步入队 + `ctx.productAnalytics` @Remote（enabled/watchPolicy/report），导出器不自动收集 Session 数据或标识。本仓无上报不等于裁剪已验收；上游数据、目的地已核，可替换边界保留 |
 | ptc-runtime | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 30） |
-| sandbox | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 31）；Electron 自带的 `sandbox` 开关是另一回事，不作命中依据 |
+| sandbox | ✔ | ✔ | M4 | ✔ | ◐ | `core/src/sandbox.cj` 三档优先级解析（显式 > 会话最后 > 部署默认）+ `SandboxRuntime.confine` fail-closed：`danger-full-access` 不在 confined 集合直接拒、`withoutBackend()` 无后端时抛 `SANDBOX_UNAVAILABLE`，禁止 unconfined passthrough。5 条用例。**上游校正**：上游还有 `ConfinedSandboxMode` 类型级收窄、`SandboxEnforcement = full | partial` 与 `signal?` 中止传播；本仓只在运行期检查字符串模式，无 enforcement 分级，也不接 OS 级沙箱后端 |
 | schedule | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（C 档，行 32） |
 | scope | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 33） |
 | session | ✔ | ✔ | M1 | ✔ | ✔ | 编号与 seq 连续性、flush/load 往返、写租约互斥与 owner 凭据、**崩溃残留租约按持有者死活分别接管与拒绝**（CFFI 取 pid + 判活）；两入口同函数实测。**上游校正**：上游 surface 类型系统（`SessionEventSurface=current/shadowed/log-only`、`SessionRecord{header,live,persisted}`）本仓未实现投影层区分 |
@@ -101,14 +101,14 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | session-reference | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 37） |
 | session-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 38）。**C04 已核**：上游 session-telemetry 模块 213 行确证有 `SessionTelemetryRecord` 两 channel（ledger 镜像 + ops）+ `session-telemetry/record` waterfall 脱敏扩展点 + fail-closed（抛异常的监听器扣下该条记录）。保留本地诊断需求，外发默认关闭，不直接排除整模块 |
 | session-title | ✔ | ✔ | M1 | ✔ | ◐ | 核心切片已落 `core/src/title.cj`（2026-10-04）：`session/title` 是 log-only 事件，不进 `isSurfaceEvent` 白名单；`rename` 空/纯空白拒绝且不留事件、非空 trim 后落 source="user"；`registerProvider` 单槽重复注册抛且首次前缀保留；`generateFrom` 无 provider 走 60 上限截断落 source="fallback"。core `title_test.cj` **4 条**（round-trip 回放 + 空拒绝 + 单槽 + 截断）。**仍缺**：`SessionTitleProviderId` branded、上游 `first-prompt`/`all-prompts` 自动模式、host IPC `session/title-*` 通道、CLI `dsh title` 子命令；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 C01 |
-| settings | ✔ | ✔ | M5/M6 | ✔ | ☐ | 完整配置域未实现（C 档，行 40）；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，不以局部设置窗判定整个模块完成 |
+| settings | ✔ | ✔ | M5/M6 | ✔ | ◐ | `core/src/settings.cj` 三种变更：`update::<k>::<v>` 合并单键、`replace::<k=v,...>` 先清空再应用整份、`mutate::<k>::<expected>::<new>` 按当前值 CAS 拒陈旧；`settings/document-updated` 走 log-only 事件不进 surface。3 条用例覆盖合并、整替、CAS 拒绝。**上游校正**：完整配置域未实现；中文设置窗已接当前会话预算与持久外观，模型/凭证/扩展管理仍未开放，本切片只覆盖 document-updated 契约面，不以局部设置窗判定整个模块完成 |
 | shell | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 41） |
 | sidebar-right | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 42）；§6.1.3 的 Sidebar / Rightbar 两个面未落地。**上游校正**：上游 sidebar-right 是 React 组合系统（tab-type registry + dsh-resource:// 地址 + dockkit 布局），zh 版在冻结 commit 不存在（404），本仓 Vue runtime 架构根本不同 |
 | skills | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 43） |
 | slots | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 44）；渲染层只到令牌层 + 组件令牌桥接，无上游槽位/呈现体系 |
 | spill | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 45） |
 | ssh | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 46） |
-| storage | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 47）；真源是追加式 `session.log`，无上游的存储后端形态 |
+| storage | ✔ | ✔ | M1 | ✔ | ◐ | `core/src/storage.cj` `StorageHub`：`domain/changed` log-only 事件承载 `open::<name>::<version>` / `close::<name>` / `put::<name>::<k>::<v>`；`open` 严格序列拒绝（内存开启集重名 → already-open；日志已存在同名不同版本 → version-mismatch），两者都 throw 不落事件；`putFrom` 供回放不再重复 append。4 条用例覆盖往返+回放、重名拒、版本拒、close 后同版本可重开。**上游校正**：真源仍是追加式 `session.log`，无上游的多 backend / facet / `malformed-medium` / `invalid-record` 分类；`domain/changed` 跨进程推送未做 |
 | subagent | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 48） |
 | subprocess | ✔ | ✔ | M4 | ✔ | ✔ | `core/src/extproc.cj` 以子进程驱动外部脚本宿主跑 NDJSON JSON-RPC：握手必须来自子进程真实应答、按 `callId` 配对与取消、未知方法回 `-32601`、超时不编终态、强杀后读线程照样收束、命令不存在 fail-closed。core 15 条 + extjs 14 条 |
 | system-prompt | ✔ | ✔ | M2 | ✔ | ✔ | `core/src/sysprompt.cj` `SystemPromptBuilder` 从 `ToolRegistry` 读工具名与描述组装提示，角色定义在前、工具清单在后；core `sysprompt_test.cj` 3 条 + CLI headless 3 条断言。CLI `seed` 模式已接入而非硬编 |
