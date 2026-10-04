@@ -16,7 +16,18 @@ module.exports=async function({win,check,waitFor,outDir}){
       if(c.kind==='enable-row')f.snapshot.packages[0].rows.find(r=>r.entryId===c.entryId).enabled=c.enabled;
       if(c.kind==='uninstall')f.snapshot.confirm=c.name;if(c.kind==='cancel-confirm')delete f.snapshot.confirm;if(c.kind==='confirm-uninstall'){f.snapshot.packages=[];delete f.snapshot.confirm;}
       if(c.kind==='cancel-install')i.phase='cancelling';if(c.kind==='reconcile-install')i.phase='done';if(c.kind==='edit-install')i.phase='idle';if(c.kind==='approve-builds'){i.failure=undefined;i.phase='running';}
-    }};f.app=Vue.createApp(SaCodePluginManager.Page,{adapter});f.app.mount(root);f.button=text=>[...document.querySelectorAll('#manager-fixture button,dialog.plugin-manager-install button')].find(b=>b.textContent===text);
+    }};
+    f.mounted=[];f.disposed=[];f.contributions=Vue.ref([]);
+    const Form=Vue.defineComponent({props:['subject'],setup(props){const draft=Vue.ref('');const key=JSON.stringify(props.subject);Vue.onMounted(()=>f.mounted.push(key));Vue.onBeforeUnmount(()=>f.disposed.push(key));return()=>Vue.h('input',{'aria-label':'贡献配置草稿',value:draft.value,onInput:e=>draft.value=e.target.value,'data-subject':key});}});
+    const Label=Vue.defineComponent({props:['text'],setup(props){return()=>Vue.h('span',{'data-contribution-label':''},props.text);}});
+    f.contributions.value=[{id:'bundle-config',order:0,slot:'configuration',subject:{kind:'bundle',name:'@sample/plugin'},component:Vue.markRaw(Form)},
+      {id:'row-config',order:0,slot:'configuration',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Form)},
+      {id:'other-package-config',order:0,slot:'configuration',subject:{kind:'row',name:'@another/plugin',rowId:'row1'},component:Vue.markRaw(Form)},
+      {id:'badge-b',order:20,slot:'badge',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Label),props:{text:'后徽标'}},
+      {id:'badge-a',order:10,slot:'badge',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Label),props:{text:'前徽标'}},
+      {id:'row-section',order:0,slot:'section',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Label),props:{text:'组件贡献说明'}},
+      {id:'item-config',order:0,slot:'configuration',subject:{kind:'item',id:'shell'},component:Vue.markRaw(Form)}];
+    f.app=Vue.createApp({setup:()=>()=>Vue.h(SaCodePluginManager.Page,{adapter,contributions:f.contributions.value})});f.app.mount(root);f.button=text=>[...document.querySelectorAll('#manager-fixture button,dialog.plugin-manager-install button')].find(b=>b.textContent===text);
   `);
   await waitFor("!!document.querySelector('#manager-fixture [data-package-name]')");
   await js(`document.querySelector('#manager-fixture input[aria-label="启用 示例插件"]').click()`);
@@ -26,6 +37,20 @@ module.exports=async function({win,check,waitFor,outDir}){
   await js(`const input=document.querySelector('#manager-fixture input[aria-label="筛选组件"]');input.value='组件1';input.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#manager-fixture input[aria-label="启用组件 组件1"]').click()`);
   await waitFor("managerFixture.snapshot.packages[0].rows[1].enabled===false");
   await check('组件筛选与精确入口启停',"({oneRow:document.querySelectorAll('#manager-fixture .plugin-manager-row').length===1,entry:managerFixture.commands.some(c=>c.kind==='enable-row'&&c.entryId==='entry1'&&c.enabled===false)})");
+  await check('插件包配置贡献只挂载所属表单',"({oneForm:document.querySelectorAll('#manager-fixture input[aria-label=\"贡献配置草稿\"]').length===1,bundle:JSON.parse(document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]').dataset.subject).kind==='bundle',configuredRow:!!managerFixture.button('配置 组件1')})");
+  await js(`const input=document.querySelector('#manager-fixture input[aria-label="贡献配置草稿"]');input.value='包草稿';input.dispatchEvent(new Event('input',{bubbles:true}));managerFixture.button('配置 组件1').click()`);
+  await waitFor("!!document.querySelector('#manager-fixture [data-plugin-row-detail]')");
+  await check('组件配置按包名与组件标识隔离并排序',"({oneForm:document.querySelectorAll('#manager-fixture input[aria-label=\"贡献配置草稿\"]').length===1,row:JSON.parse(document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]').dataset.subject).rowId==='row1',draftIsolated:document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]').value==='',badges:[...document.querySelectorAll('#manager-fixture [data-contribution-label]')].map(e=>e.textContent).join('|')==='前徽标|后徽标|组件贡献说明',bundleDisposed:managerFixture.disposed.some(k=>JSON.parse(k).kind==='bundle')})");
+  await js(`const input=document.querySelector('#manager-fixture input[aria-label="贡献配置草稿"]');input.value='组件草稿';input.dispatchEvent(new Event('input',{bubbles:true}));managerFixture.button('返回 示例插件').click()`);
+  await waitFor("!document.querySelector('#manager-fixture [data-plugin-row-detail]')");
+  await check('返回插件包释放组件草稿并重新挂载包配置',"({emptyDraft:document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]').value==='',rowDisposed:managerFixture.disposed.some(k=>JSON.parse(k).kind==='row'),filterPreserved:document.querySelector('#manager-fixture input[aria-label=\"筛选组件\"]').value==='组件1'})");
+  await js(`managerFixture.button('配置 组件1').click();await Vue.nextTick();managerFixture.contributions.value=managerFixture.contributions.value.filter(c=>c.id!=='row-config')`);
+  await check('卸载配置贡献撤销已打开表单',"({removed:!document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]'),otherPackageNotLeaked:document.querySelector('#manager-fixture [data-plugin-row-detail]').textContent.includes('组件1')})");
+  await js(`managerFixture.button('返回 示例插件').click();await Vue.nextTick();document.querySelector('#manager-fixture input[aria-label="启用 示例插件"]').click()`);
+  await waitFor("managerFixture.snapshot.packages[0].enabled===false");
+  await check('停用插件包隐藏组件启停但保留配置',"({noRowSwitch:!document.querySelector('#manager-fixture input[aria-label=\"启用组件 组件1\"]'),packageConfig:!!document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]'),parentOff:!document.querySelector('#manager-fixture input[aria-label=\"启用 示例插件\"]').checked})");
+  await js(`managerFixture.button('返回插件列表').click();await Vue.nextTick();managerFixture.button('终端').click()`);
+  await check('官方插件配置使用对应贡献表单',"({item:document.querySelector('#manager-fixture [data-plugin-item-detail]').dataset.pluginItemDetail==='shell',exact:JSON.parse(document.querySelector('#manager-fixture input[aria-label=\"贡献配置草稿\"]').dataset.subject).id==='shell',oneForm:document.querySelectorAll('#manager-fixture input[aria-label=\"贡献配置草稿\"]').length===1})");
   await js(`managerFixture.button('返回插件列表').click();await Vue.nextTick();managerFixture.button('添加插件').click()`);
   await waitFor("!!document.querySelector('dialog.plugin-manager-install[open]')");
   await check('插件安装空输入阻止提交',"({blocked:managerFixture.button('安装').disabled,accountRemoved:!document.querySelector('dialog.plugin-manager-install').textContent.includes('DeepSeek')})");
