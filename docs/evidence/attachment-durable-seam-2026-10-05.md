@@ -89,7 +89,86 @@
 - 历史消息里按条展示附件：投影只给「最后一条已配对消息」的引用（`refsForMessage()`），
   逐条配对与气泡内渲染未做。
 - 运行中发消息走队列时的附件：`queue/enqueue` 尚未接受凭证，附件只在直接发送路径结算。
-- 打包态复验：本批改了 core 与宿主，`apps/desktop/dist/host` 已重打，但
-  `electron-builder` 的 NSIS 产物与安装包内 exe 的 sha256 同步尚未重跑；CLI 平台包同理
-  （core 变了，npm 包内的 `dsh.exe` 是旧产物）。
+- 打包态复验：见第 6 节。CLI 平台包已从改动后的 core 重打并剥 SDK PATH 离线复验；
+  桌面包在同一轮重打（安装包内宿主 exe 的 sha256 对账见 6.4）。
 - 上传失败在图片卡片上只有全局提示，卡片本身没有可读的失败标记（只加了状态属性）。
+
+## 6. 交付面复验（同日追加批次）
+
+上一批只证明了 core／宿主／渲染层三个面，装机产物里没有一条断言会碰附件线：`apps/cli`
+的 `main` 是 CLI 平台包的自检面，而它没有附件子命令。本批补这一段，并把两个入口的
+打包态一起复验。
+
+### 6.1 CLI 交付面新增 `att` 子命令（20 条离线断言）
+
+覆盖：内容寻址（引用 id 就是内容的 sha256）、对象按摘要名落 `attachments/v1`、读回逐字节
+相等、按容器头部认出的固有宽高、通用文件不设额度（空文件照落盘）、引用只留末段名、
+类型不符拒且不留半个对象、单边超上限拒（本仓不做规范化缩放）、批量「先全量校验再整体
+发布」、外来 id 一律拒不派生路径、对象被篡改后读回被拒、引用事件排在它服务的用户消息
+之前、引用事件不含 blob、投影配对、以及 `append` 不跨进程 / `flush` 才跨进程的边界。
+
+### 6.2 变异反证（两轮合跑，红集合恰好等于预期受害集）
+
+| 轮 | 变异 | 独占受害断言 | 实测 |
+|---|---|---|---|
+| M1-A | `persist` 改成 no-op（只建目录不发布） | 对象按内容名落在 attachments/v1 下 / 读回逐字节等于提交字节 / 通用文件不设准入额度：空文件照落盘 | 3 条 FAIL |
+| M1-C | `commitMessage` 两条事件顺序倒置 | 引用事件排在它服务的那条用户消息之前 / 投影把引用配回它服务的那条消息 | 2 条 FAIL |
+| M2-B | 落盘挪进校验循环（边校验边发布） | 批量先全量校验再整体发布 | 1 条 FAIL |
+| M2-D | `read` 不复核摘要 | 对象被篡改后读回被拒 | 1 条 FAIL |
+
+M1 一轮 5 条 FAIL（`PASS=15`）、M2 一轮 2 条 FAIL（`PASS=18`），两组受害集互不相交；
+每轮还原后用 `diff <(git show HEAD:core/src/attach.cj) core/src/attach.cj` 证逐字一致
+（输出 `RESTORE-IDENTICAL`），复跑回 `PASS=20 FAIL=0 rc=0`。
+
+**测试侧一处改造披露**：权威读那条断言原本直接写 `attBytesEq(store.read(id), png)`，
+M1-A 下 `read` 抛 `attachment-missing-object` 把整个 `att` 段打断——只打印了 2 条 PASS
+就退出，红集合无法归因。改成把读回包进 try/catch 再断言布尔值，才拿到完整的 5 条红表。
+改的是断言的容错，不是被测语义。
+
+### 6.3 提交前整套复跑计数
+
+| 面 | 命令 | 实测 |
+|---|---|---|
+| 仓颉核心 | `cd core && cjpm test` | `Summary: TOTAL: 441 / PASSED: 440, SKIPPED: 1, ERROR: 0 / FAILED: 0`，`cjpm test success`，rc=0。那 1 条 SKIPPED 由框架计数报出、日志未打出用例名（`FAILED`/`ERROR` 均为 0，非本批引入） |
+| 桌面全套 | `cd apps/desktop && npm test` | `# tests 137 / # pass 137 / # fail 0`，rc=0 |
+| CLI 合并面 | `dsh all` | `PASS=97 FAIL=0`，rc=0（`att` 的 20 条并入 `all`） |
+
+**一条并发负载造成的抖动**：第一次 `npm test` 跑到 `bridge.test.mjs:292`
+「全新会话第一个 turn 能在流中被取消并结算」拿到 `frames: []`（期望 2 帧，轮询窗口
+约 400 ms）。那一轮正与 `cjpm build`／打包／DLL 探针并发，且它随后被前台超时打断，
+不是挂死。机器空闲时独立重跑同一套：137/137 全绿。断言与窗口都没有改动，所以这条
+记为环境抖动而非通过证据——它同时是「400 ms 窗口在低配机器上偏紧」的观测记录。
+
+### 6.4 CLI 平台包离线复验（装机态）
+
+`node scripts/pack-cli.mjs` → `packed 45 个文件`；`npm pack --offline` 两个 tarball
+（主包 1375 B / 平台包 11534487 B）→ 离线装进仓内一次性目录 → 剥掉 4 项仓颉 SDK PATH
+（`command -v cjpm`/`cjc` 均不可见，`node` 可见）→ 逐子命令按 `^PASS`/`^FAIL ` 计数：
+
+| 子命令 | rc | PASS | FAIL |
+|---|---|---|---|
+| all | 0 | 97 | 0 |
+| stream | 0 | 21 | 0 |
+| tool | 0 | 11 | 0 |
+| ext | 0 | 8 | 0 |
+| cancel | 0 | 9 | 0 |
+| extjs | 0 | 12 | 0 |
+| headless | 0 | 36 | 0 |
+| att | 0 | 20 | 0 |
+| seed / projection | 0 | 数据输出型子命令，不产 PASS 行 | — |
+
+DLL 拒绝面单独复验：`RUNTIME_DENY` 那 4 颗（ast / unittest / testmacro / prop_test）
+在装机目录里逐颗确认**缺席**；把真依赖 `libcangjie-runtime.dll` 移走后 `dsh att` 当场
+`rc=127 error while loading shared libraries`，放回后 `rc=0 PASS=20`。绿不是静默降级换来的。
+
+### 6.5 桌面包
+
+`apps/desktop/dist/host/bin/dsh-host.exe` 由还原后的 core 重打（91 个文件，OpenSSL 两颗
+随包）。`electron-builder` 第一次重打报
+`EBUSY: resource busy or locked, unlink '…\dist\electron\win-unpacked\v8_context_snapshot.bin'`，
+`dist/electron/` 里留下的是 10-03/10-04 的旧产物——按「产物时间戳不变就不能当新证据」的
+老规矩，旧产物的任何断言都不作数。锁源经查是 7 个仍存活的
+`dist\electron\win-unpacked\resources\host\bin\dsh-host.exe` 孤儿进程（此前打包态冒烟留下，
+未经确认不代用户结束进程）。因此本轮把输出目录改到 `dist/electron-att/` 重打，
+不动那些进程；对账与打包态冒烟见 6.6。
+

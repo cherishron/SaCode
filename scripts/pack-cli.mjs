@@ -46,9 +46,10 @@ for (const f of readdirSync(EXT_EXAMPLE)) {
 let n = 1;
 // 运行期不需要的模块 DLL 不进包：unittest 系是测试框架自身，ast 是宏/反射的编译期模块，
 // 四颗合计 28.6MB（bin 目录 42MB → 14MB）。反证不是靠推理：从安装结果里删掉这 4 颗后，
-// 剥掉 SDK 的 PATH 逐子命令仍全绿（all 41 / stream 21 / tool 11 / ext 8 / cancel 9 / extjs 12，
-// seed 与 projection 输出正常）；同法删掉真依赖 libcangjie-runtime.dll 时 exec 当场
-// rc=127「error while loading shared libraries」——缺了就会响亮地炸，所以绿不是静默降级换来的。
+// 剥掉 SDK 的 PATH 逐子命令仍全绿（2026-10-05 实测 all 97 / stream 21 / tool 11 / ext 8 /
+// cancel 9 / extjs 12 / headless 36 / att 20，seed 与 projection 输出正常）；同法删掉真依赖
+// libcangjie-runtime.dll 时 exec 当场 rc=127「error while loading shared libraries」——
+// 缺了就会响亮地炸，所以绿不是静默降级换来的。
 const RUNTIME_DENY = [
   "libcangjie-std-ast.dll",
   "libcangjie-std-unittest.dll",

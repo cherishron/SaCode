@@ -133,11 +133,57 @@ func positionals(args: Array<String>, from: Int64): ArrayList<String> {
     return out
 }
 
+// 附件断言的夹具：PNG 头部只写到「读得出宽高」为止（签名 + IHDR 长度/类型/宽高/深度位深）。
+// core/src/attach_test.cj 里的同形夹具是测试文件，不会链进 CLI 二进制，交付面自带一份。
+func attPng(width: Int64, height: Int64): Array<Byte> {
+    let out = ArrayList<Byte>()
+    for (v in [UInt8(137), UInt8(80), UInt8(78), UInt8(71), UInt8(13), UInt8(10), UInt8(26), UInt8(10), UInt8(0), UInt8(0), UInt8(0), UInt8(13), UInt8(73), UInt8(72), UInt8(68), UInt8(82)]) {
+        out.add(v)
+    }
+    for (n in [width, height]) {
+        out.add(UInt8((n / 16777216) % 256))
+        out.add(UInt8((n / 65536) % 256))
+        out.add(UInt8((n / 256) % 256))
+        out.add(UInt8(n % 256))
+    }
+    for (v in [UInt8(8), UInt8(6), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0)]) {
+        out.add(v)
+    }
+    return out.toArray()
+}
+
+func attObjectCount(dir: String): Int64 {
+    // 「一条都没落盘」正是要证的形态，此时目录还没建；Directory.readFrom 对
+    // 不存在的目录是抛而不是交回空清单，所以先探一次。
+    if (!exists(dir)) {
+        return Int64(0)
+    }
+    var n = Int64(0)
+    for (info in Directory.readFrom(dir)) {
+        if (info.isRegular()) {
+            n += 1
+        }
+    }
+    return n
+}
+
+func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
+    if (a.size != b.size) {
+        return false
+    }
+    for (i in 0..Int64(a.size)) {
+        if (a[i] != b[i]) {
+            return false
+        }
+    }
+    return true
+}
+
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att]")
         return 64
     }
 
@@ -291,6 +337,126 @@ main(args: Array<String>) {
         log.flush()
         removeIfExists(p, recursive: false)
         println("cancel\tcancelled=${r.cancelled}\tdelivered=${r.delivered}\tsettled=${r.settledToolCalls}")
+    }
+
+    // 附件在产品交付面的断言：npm 平台包里的 dsh.exe 离线跑的就是这一段——内容寻址落盘、
+    // 准入拒绝不留对象、先持久化后事件这三条装机后就成立，不靠网络也不靠桌面壳。
+    // 抛断一律用「赋值的 try/catch」：把 lambda 塞进断言宏会解到 unclosed delimiter。
+    if (mode == "all" || mode == "att") {
+        let attRoot = "att-check"
+        let attDir = "${attRoot}/attachments/v1"
+        let attPath = "${attRoot}/session.log"
+        removeIfExists(attRoot, recursive: true)
+        Directory.create(attRoot, recursive: true)
+        let attLog = SessionLog(attPath)
+        let store = AttachmentStore(attDir, attLog, AttachmentLimits.localBackend())
+        let png = attPng(Int64(2), Int64(1))
+
+        expect("交付包内的摘要实现对上公开测试向量", sha256Hex([UInt8(97), UInt8(98), UInt8(99)]) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+
+        let img = store.saveImage(png, "image/png", "a.png")
+        expect("图片引用 id 就是它的 sha256", img.attachmentId == "sha256:${sha256Hex(png)}")
+        expect("对象按内容名落在 attachments/v1 下", exists(store.hostPath(img.attachmentId)))
+        // 权威读直接调真函数，但把它包进 try：读不到就是这条断言该红，
+        // 不能让未捕获异常把后面的断言全部咽掉（变异反证要靠完整的红集合归因）。
+        var backEq = false
+        try {
+            backEq = attBytesEq(store.read(img.attachmentId), png)
+        } catch (e: Exception) {
+            backEq = false
+        }
+        expect("读回逐字节等于提交字节", backEq)
+        expect("引用里带着按容器头部认出的固有宽高", img.width == Int64(2) && img.height == Int64(1))
+
+        let emptyFile = store.saveFile(Array<Byte>(0, repeat: UInt8(0)), "C:/远端/奇怪的.txt")
+        expect("通用文件不设准入额度：空文件照落盘", emptyFile.bytes == Int64(0) && exists(store.hostPath(emptyFile.attachmentId)))
+        expect("引用只留末段名，不把提交方的路径存进来", emptyFile.name == "奇怪的.txt")
+
+        let settled = attObjectCount(attDir)
+        var code = ""
+        try {
+            let sunk = store.saveImage(png, "image/jpeg", "b.jpg")
+            code = "no-throw:${sunk.attachmentId}"
+        } catch (e: Exception) {
+            code = e.message
+        }
+        expect("声称 jpeg 而头部是 png：拒", code == "attachment-media-type-mismatch")
+        expect("拒绝不留半个对象", attObjectCount(attDir) == settled)
+
+        code = ""
+        try {
+            let sunk = store.saveImage(attPng(Int64(9000), Int64(1)), "image/png", "big.png")
+            code = "no-throw:${sunk.attachmentId}"
+        } catch (e: Exception) {
+            code = e.message
+        }
+        expect("单边超上限拒收（本仓不做规范化缩放）", code == "attachment-image-dimension-exceeded")
+
+        // 批量：整批里有一个不合格成员时，合格成员也不能被发布出去。
+        // 两个成员都用「新对象」的字节，否则命中已存在的同名对象，计数看不出有没有落盘。
+        code = ""
+        try {
+            let pair = ArrayList<ImageInput>()
+            pair.add(ImageInput(attPng(Int64(1), Int64(1)), "image/png", "ok.png"))
+            pair.add(ImageInput(attPng(Int64(3), Int64(4)), "image/gif", "liar.gif"))
+            let sunk = store.saveImages(pair)
+            code = "no-throw:${Int64(sunk.size)}"
+        } catch (e: Exception) {
+            code = e.message
+        }
+        expect("批量先全量校验再整体发布", code == "attachment-media-type-mismatch" && attObjectCount(attDir) == settled)
+
+        // 不透明 id 的下游后果：拿外来串去派生路径就是目录穿越，必须在形态上就拒掉。
+        code = ""
+        try {
+            let sunk = store.read("../../core/src/attach.cj")
+            code = "no-throw:${Int64(sunk.size)}"
+        } catch (e: Exception) {
+            code = e.message
+        }
+        expect("外来 id 一律拒，不据它派生路径", code == "attachment-bad-id")
+
+        let stray = store.saveFile([UInt8(1), UInt8(2), UInt8(3)], "stray.bin")
+        File.writeTo(store.hostPath(stray.attachmentId), [UInt8(9), UInt8(9)])
+        code = ""
+        try {
+            let sunk = store.read(stray.attachmentId)
+            code = "no-throw:${Int64(sunk.size)}"
+        } catch (e: Exception) {
+            code = e.message
+        }
+        expect("对象被篡改后读回被拒", code == "attachment-corrupt-object")
+
+        let refs = ArrayList<AttachmentRef>()
+        refs.add(img)
+        store.commitMessage("带一张图的问题", refs)
+        // 冷实例必须显式 load()：SessionLog 构造不读盘，不 load 的「看不到」是空的而非证据。
+        let cold = SessionLog(attPath)
+        expect("未 flush 的 append 不跨进程：冷实例加载后一条消息都没有", cold.load() && cold.deriveMessages().size == Int64(0))
+        expect("未 flush 的引用事件同样不跨进程", cold.snapshotEvents().size == Int64(0))
+        let warm = SessionLog(attPath)
+        expect("flush 后冷实例能加载出这条消息", attLog.flush() && warm.load() && warm.deriveMessages().size == Int64(1))
+
+        var recordAt = Int64(-1)
+        var userAt = Int64(-1)
+        var step = Int64(0)
+        for (ev in attLog.snapshotEvents()) {
+            if (ev.eventType == "attachment/record" && recordAt < Int64(0)) {
+                recordAt = step
+            }
+            if (ev.eventType == "user/message") {
+                userAt = step
+            }
+            step += 1
+        }
+        expect("引用事件排在它服务的那条用户消息之前", recordAt >= Int64(0) && userAt > recordAt)
+        let recordText = store.entries()[0]
+        expect("引用事件只带引用与元数据，不带 blob", recordText.contains(sha256Hex(png)) && !recordText.contains("base64") && !recordText.contains("data:"))
+        expect("投影把引用配回它服务的那条消息", store.refsForMessage().size == Int64(1))
+        expect("引用事件是会话日志里的事实：冷实例回放照样取到", AttachmentStore(attDir, warm, AttachmentLimits.localBackend()).entries().size == Int64(1))
+
+        removeIfExists(attRoot, recursive: true)
+        println("att\tobjects=${settled}\trecordAt=${recordAt}\tuserAt=${userAt}")
     }
 
     // Ctrl+C 的端到端取证：由外部驱动（PowerShell 的 GenerateConsoleCtrlEvent）向本进程
