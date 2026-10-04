@@ -16,6 +16,30 @@ import std.collection.*
 // 说明：user-file 层沿用上游 local provider 的 env-file 形态——值是明文存在用户自有文件里，
 // 不是操作系统钥匙串。想再 Harden 成平台安全存储是另一件事，这里不假装已经做到。
 
+// 引用形态单独露出来给别的文档面复用（提供商注册表也按同一语法校验 credentialRef），
+// 免得两处各自演化出两种「合法引用」。
+public func isValidCredentialRef(ref: String): Bool {
+    if (ref.size == 0) {
+        return false
+    }
+    let bs = ref.toArray()
+    var i: Int64 = 0
+    while (i < bs.size) {
+        let b = bs[i]
+        let letter = (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+        let digit = b >= 48 && b <= 57
+        if (i == 0) {
+            if (!letter) {
+                return false
+            }
+        } else if (!letter && !digit) {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
 public class CredentialValue {
     public let value: String
     public let source: String
@@ -58,23 +82,8 @@ public class CredentialStore {
 
     // 引用只接受 POSIX 环境变量语法：^[A-Za-z_][A-Za-z0-9_]*$
     private static func checkRef(ref: String): Unit {
-        if (ref.size == 0) {
+        if (!isValidCredentialRef(ref)) {
             throw Exception("bad-credential-ref")
-        }
-        let bs = ref.toArray()
-        var i: Int64 = 0
-        while (i < bs.size) {
-            let b = bs[i]
-            let letter = (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
-            let digit = b >= 48 && b <= 57
-            if (i == 0) {
-                if (!letter) {
-                    throw Exception("bad-credential-ref")
-                }
-            } else if (!letter && !digit) {
-                throw Exception("bad-credential-ref")
-            }
-            i += 1
         }
     }
 

@@ -128,3 +128,17 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 明文密钥只从本地 gitignore 文件与环境变量读，未进入任何入库文件；提交前对本批全部文件跑过密钥串扫描，结果 `NO-SECRET-IN-STAGED`。
 
 需要说清的一点：`user-file` 层沿用上游 local provider 的 env-file 形态——值是明文存在用户自有文件里，**不是操作系统钥匙串**。`model_settings.cj` 顶部注释原先写「明文密钥交给平台安全存储」，那是尚未成立的前提；要不要再往平台安全存储（DPAPI / Credential Manager）硬一层是另一件事，这里不假装已经做到。
+
+## 9. 提供商注册表（对齐模型页 Adapter 契约）
+
+模型页要的是「多提供商 + 乐观并发 + 读面没有能带明文的槽位」，`model_settings.cj` 的单路 `base_url/model/credential-ref` 撑不起整个页面（上一条线在 `models-page-2026-10-04.md` 里也这么判）。新增 `core/src/provider_registry.cj`：
+
+- 文档形态仍是「事件日志即真源」：`provider/upsert` / `provider/remove` / `provider/default`，每次操作从盘上重放。
+- **修订号按提交次数走，不是条目数**——它是版本；`expectedRevision` 落后报 `settings-conflict`，内容不合法报 `settings-rejected`。上游把这两类分得很清，混起来 UI 就没法提示「别人先改了」。
+- 写面只认白名单字段，草稿里出现 `apiKey`/`token`/`secret`/`value` 这类能承载明文的键直接拒绝；不是「存了但读的时候删掉」。
+- 内置目录项 `declared`，写侧不能伪造或改它的 baseUrl/protocol，但可以被选为默认；默认指针指向被删条目或不在清单里的模型时一律回落/拒绝。
+
+核心计数：改前 **398→405**（凭证缝）→ **TOTAL 414 / PASSED 413 / SKIPPED 1 / FAILED 0**（注册表 9 条），rc=0。
+
+变异反证（一轮构建三处变异）：撤掉 declared 守卫、把明文键名单换成不可能命中的名字、把 baseUrl 档位校验改成恒真——各自杀掉一条独占用例。**其中一条暴露了真问题**：`registryHasNoSlotForTheSecretValue` 当时用的草稿 `models: []`，它先被「自定义提供商至少一个模型」拒绝，于是那条断言并没有在检验明文槽位这道闸——换成除 `apiKey` 外完全合法的草稿后，同一个变异才把它杀红。红集合从 2 条变成预期的 3 条。还原 `diff -q` 无输出，复跑回 414/413/1/0。
+
