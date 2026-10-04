@@ -323,6 +323,62 @@ reject 之前就把 race 判给真实结果，「取消」到底回错误还是�
 它随 `EXT_EXAMPLE` 整目录分发规则自动进包，无需改打包脚本。
 
 **本批未跑（BLOCKED）**：CLI `dsh extjs` 子命令与宿主的 `extension/host/*` 链路没重跑——
-工作区 core 当前被并发线未入库的 `core/src/model_request_test.cj` 挡住编译
+工作区 core 当时被并发线未入库的 `core/src/model_request_test.cj` 挡住编译
 （见批次 3 的报错原文）。协议面本轮是逐字不变的（应答帧、错误码、帧序都不动），
 风险集中在扩展宿主自身，已由上面 16 条覆盖，其中两条是走 `server.cjs` 真子进程的端到端帧序用例。
+
+> **更正（批次 6 里补跑，此句原为 BLOCKED）**：这条已补跑并全绿，见批次 6 的
+> 「`dsh extjs` 从仓库根跑 = 12 PASS / 0 FAIL」。当时的阻塞原因是并发线随后把
+> `model_request_test.cj` 修好并落库（`7da09f4`），不是本批的问题；就地保留这段原文并注明更正。
+
+---
+
+## 批次 6：P1 —— sandbox 的 confined 集合是开集，认不出的档位被当「没约束」透传
+
+**缺陷**：`core/src/sandbox.cj` 的 `confine()` 只点名拒 `danger-full-access`，
+其余任何字符串——拼错的 `read-onlyy`、空串、自定义档位——都原样带着 argv 返回。
+调用方拿到的是「已约束」，实际什么都没拦：典型的 fail-open。
+上游 §221 用 `ConfinedSandboxMode` 做**类型级收窄**（只有 `read-only` / `workspace-write`
+能进这个参数位），仓颉这边没有那个类型，就必须把「按闭集校验」补在运行期。
+
+**红先证据**（`sandboxConfineRejectsUnrecognizedMode`）：
+
+```
+FAILED: 1 → sandboxConfineRejectsUnrecognizedMode
+  拼错档位与空串都走到了 passed-through
+```
+取证在 detached worktree（`HEAD` + 只放本批两个文件）里跑，随后并发线把
+`model_request_test.cj` 修好落库（`7da09f4`），工作区也恢复可编，两条态都各跑了一遍。
+
+**做法**：新增包级 `isConfinedMode(mode)` 只认 `read-only` 与 `workspace-write`，
+`confine` 改为「无后端 → `SANDBOX_UNAVAILABLE`；档位不在闭集内 → `SANDBOX_MODE_NOT_CONFINED`」，
+`danger-full-access` 因为不在集合里而继续被拒（不是靠点名）。
+`confine` 目前**没有任何生产调用方**（`apps/cli`、`apps/host` 全文 grep 无 `confine`），
+改动只影响核心用例，两入口无行为面变化。
+
+**顺带收紧的两条既有用例**（新增 `sandboxFailureReasonsAreDistinct`）：原先两条只判
+「有没有抛」，任何一次抛都算过——把无后端与档位不认钉成两个不同错误码之后，
+「抛了但抛错原因」这种假绿才拦得住。
+
+**变异反证**：把 `if (!isConfinedMode(mode))` 退回 `if (mode == "danger-full-access")`，
+红集合恰好只有 `sandboxConfineRejectsUnrecognizedMode` 一条；还原用 `cp` 备份并 `diff`
+证明与工作区逐字一致，复跑回全绿。
+
+**计数**：
+| 取证态 | 实测 |
+|---|---|
+| detached worktree（HEAD + 本批 2 文件）改前 | `TOTAL: 383 / PASSED: 381 / SKIPPED: 1 / FAILED: 1` |
+| 同上，改后 | `TOTAL: 383 / PASSED: 382 / FAILED: 0`，rc=0 |
+| 同上，施加变异 | `FAILED: 1`（仅目标用例） |
+| 同上，还原复跑 | `TOTAL: 383 / PASSED: 382 / FAILED: 0`，rc=0 |
+| 工作区（HEAD 已含并发线 `7da09f4`）+ 本批 | `TOTAL: 385 / PASSED: 384 / SKIPPED: 1 / FAILED: 0 / ERROR: 0`，rc=0 |
+| 工作区 CLI `cjpm build` + 隔离目录六模式 | `cjpm build success`；all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / headless 36 = **PASS 162 / FAIL 0** |
+| `dsh extjs` 从仓库根跑（真子进程 + core 侧 NDJSON 驱动） | **12 PASS / 0 FAIL**，含「可取消的调用能异步发出」「在途调用按 callId 取消成功」「取消的终态帧由 sink 交出」「子进程收束后不得再有应答」 |
+
+最后那一条同时把**批次 5 标成 BLOCKED 的 `extension/host/*` 链路**补跑了（就地已在原文注明更正）：
+abort 信号那处改动经过仓颉核心的真宿主路径仍然是 12/12。
+
+**顺带记一笔旧账对不上**：`p0-status-2026-10-02.md` 写「7 个断言模式 175 PASS」，
+但它同一行给的逐模式数字是 all 77 / stream 21 / tool 11 / ext 8 / cancel 9 / extjs 12 / headless 36，
+相加是 **174**。本会话实测逐模式数字与那串逐模式数字完全相同，所以差的是旧记录的**汇总写法**，
+不是用例缺失。收口文档批次处理（见待办：证据更正）。
