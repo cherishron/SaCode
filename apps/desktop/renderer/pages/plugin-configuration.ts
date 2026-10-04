@@ -1,5 +1,6 @@
 // 插件配置共用暂存表单：字段值、覆盖层与修订号来自共享核心，密钥不进入设置快照。
 import { defineComponent, h, ref, computed, onMounted, onBeforeUnmount, useId, type PropType } from 'vue';
+import type { Adapter as SubagentAdapter } from './subagent-settings';
 export interface Field { key: string; label: string; hint: string; numeric?: boolean }
 export interface Definition { namespace: string; title: string; description: string; fields: Field[]; credential?: boolean }
 export interface Snapshot {
@@ -18,6 +19,7 @@ export const definitions: Definition[] = [
   { namespace:'agent-loop', title:'Agent 循环', description:'控制 Agent 派发工具调用的方式。', fields:[{key:'maxParallelToolCalls',label:'并行工具调用数',hint:'同一步内最多同时运行多少个可并行的调用。',numeric:true}] },
   { namespace:'shell',title:'终端',description:'限制每条命令最多能跑多久、最多输出多少内容。',fields:[{key:'timeoutMs',label:'命令超时（毫秒）',hint:'单条命令允许运行多久，超时即终止。',numeric:true},{key:'maxOutputBytes',label:'单流输出上限（字节）',hint:'超出部分会转存到临时文件，而不是被丢弃。',numeric:true}] },
   { namespace:'web-search',title:'网络搜索',description:'设置搜索提供方的接口和请求预算。',credential:true,fields:[{key:'baseURL',label:'接口地址',hint:'留空则使用提供方默认地址。'},{key:'maxUses',label:'单次请求最多搜索次数',hint:'一次请求在必须作答前最多可以搜索多少次。',numeric:true}] },
+  { namespace:'subagent',title:'子智能体',description:'设置子智能体的递归层级、数量和模型。',fields:[] },
 ];
 const el = (tag:string,cls:string,children:any,props:any={}) => h(tag,{class:'plugin-config-'+cls,...props},children);
 let formInstance = 0;
@@ -77,10 +79,10 @@ export const Form = defineComponent({
   },
 });
 export const Page=defineComponent({
-  name:'SaCodePluginConfiguration',props:{adapter:Object as PropType<Adapter>},
+  name:'SaCodePluginConfiguration',props:{adapter:Object as PropType<Adapter>,subagentAdapter:Object as PropType<SubagentAdapter>},
   setup(props){const chosen=ref<string|null>(null);return()=>el('div','page',[
     !props.adapter?el('p','notice','以下为复刻目标的配置页面，仓颉配置接口尚未接入。',{role:'status'}):null,
     ...definitions.map(d=>el('section','card',[el('button','cardHead',[el('strong','title',d.title),el('span','summary',d.description)],{type:'button','aria-expanded':chosen.value===d.namespace,onClick:()=>chosen.value=chosen.value===d.namespace?null:d.namespace}),
-      chosen.value===d.namespace?h(Form,{definition:d,adapter:props.adapter}):null],{key:d.namespace,'data-config-namespace':d.namespace})),
+      chosen.value===d.namespace?(d.namespace==='subagent'?h((window as any).SaCodeSubagent.Card,{adapter:props.subagentAdapter}):h(Form,{definition:d,adapter:props.adapter})):null],{key:d.namespace,'data-config-namespace':d.namespace})),
   ]);},
 });
