@@ -58,7 +58,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 
 编号口径：矩阵没有逐条 M 号，方案 §6.1.2 引用时用**表内行序**（1=`agent-team` … 63=`workspace`，64=README 行）。
 
-计数（2026-10-04 上游 63 模块直读回填 + session-title/todo 核心切片后）：`✔` 11 行、`◐` 5 行、`☐` 47 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
+计数（2026-10-04 上游 63 模块直读回填 + 首批五个非前端核心切片：session-title / todo / plan / goal / permission-presets）：`✔` 11 行、`◐` 8 行、`☐` 44 行（63 个模块行）；README 行不参与计数。判据与逐行出处见 `docs/plans/plan-deepseek-harness-replication.md` §6.1.2，本列不另立第二套分类。`上游已核` 列 2026-10-04 全行回填为 ✔（63 模块逐篇直读），不改「已复刻」计数。
 
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |
 |---|:-:|:-:|---|:-:|:-:|---|
@@ -79,7 +79,7 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | extensions | ✔ | ✔ | M8 | ✔ | ✔ | `core/src/ext.cj` 注册表 + `extjs/` 独立 Node 宿主 + `core/src/extproc.cj` 子进程驱动；未登记即拒、卸载残留归 0、退出必须结算。core `ExtProcess` 15 条 + extjs 14 条 + CLI `dsh extjs` 12 项。**上游校正**：上游 extensions 是 Cordis 动态包加载（plugin manager + HMR），本仓是外部脚本宿主（NDJSON JSON-RPC 子进程），命名占用而非契约复刻 |
 | feedback | ✔ | ✔ | M5/M6 | ✔ | ☐ | 未实现（C 档，行 16） |
 | filesystem | ✔ | ✔ | M4 | ✔ | ◐ | `read`/`write` 共用管线，按解析后的路径身份保存原始字节与存在/缺失观察；已有文件未观察拒绝覆盖，等长改动、已观察后删除均拒绝旧版本写入，缺失后外部创建拒绝覆盖；非法 UTF-8 不登记成功，控制字符回执无损，读取正文入日志可重放，新建发布禁止替换。core `fs_test.cj` **11 条**（本轮 core 总计 **116/116、rc=0**）；隔离快照 bridge 文件系统往返 2 条、CLI `tool` 11 条断言沿用现有验收报告，不扩称当前计量版整包验收。**仍缺**：edit/glob/grep、provider/consumer 拆分、有界读取与已有文件的受保护原子替换，故仍记 ◐；见 `docs/evidence/filesystem-review-fixes-2026-10-03.md` |
-| goal | ✔ | ✔ | M3 | ✔ | ☐ | 未实现（C 档，行 18） |
+| goal | ✔ | ✔ | M3 | ✔ | ◐ | 核心切片已落 `core/src/goal.cj`（2026-10-04）：`GoalSnapshot { id, revision, phase, objective, blockedReason }`；`goal/change` 是 log-only 事件不进 `isSurfaceEvent`；`create/edit/pause/resume/complete/block/clear` 每次变更 CAS 检查期望的旧 revision（不匹配抛 `stale-goal-revision` 且不落事件）；`clear` 落 `phase='none'` 墓碑后 `snapshot()` 返回空；`revision` 从「日志里已出现的 goal/change 条数」派生不重复编码。core `goal_test.cj` **4 条**（id+phase 分配、CAS 陈旧拒绝、phase 转移 flush→load 回放、clear 墓碑）。**仍缺**：`GoalMessageSource.kind='goal'` roundsStarted 语义、`maxGoalRounds` 与 turn 交互、`goal/activation-changed` emit、`@Remote` 修饰、多 goal（本切片单 goal 场景 id 固定 `goal-1`）；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 B 组 |
 | invariants | ✔ | ✔ | M0 | ✔ | ☐ | 未实现（C 档，行 19）。本仓 §4 的 18 条不变量是**我方复刻口径**，不是对该模块的运行实现；且该行只存在于冻结快照，master 已无（见上方漂移） |
 | jobs | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 20） |
 | llm-streaming | ✔ | ✔ | M2 | ✔ | ◐ | 假 provider 的半帧/UTF-8 分片/终态/`max-tokens`/usage 次序有用例；**缺口**：真模型 HTTPS+SSE 烟测待用户凭证（补证清单第 4 条） |
@@ -87,9 +87,9 @@ Ctrl+C 的协作式取消（`sigwin` + CFFI `SetConsoleCtrlHandler`）这三块�
 | mcp | ✔ | ✔ | M7 | ✔ | ☐ | 未实现（C 档，行 23） |
 | office-to-pdf | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 24） |
 | otel | ✔ | ✔ | M8 | ✔ | ☐ | 未实现（C 档，行 25）。**C04 已核**：上游 otel 模块 45 行确证有 `ctx.otel` 共享工厂（`createEventReporter` count-based + `createSessionLogReporter` byte-bounded），通道不共享队列。本仓无遥测后端，默认不外发；上游 exporter、配置与账号依赖已核，仅以明确启用的可替换服务提供，不整模块标为已裁剪 |
-| permission-presets | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 26）；审批只有「允许一次/拒绝」，无预设档位与永久授权 |
+| permission-presets | ✔ | ✔ | M4 | ✔ | ◐ | 核心切片已落 `core/src/permission_presets.cj`（2026-10-04）：默认表 `workspace-write`/`danger-full-access`；`permission/preset` 是 log-only 事件不进 `isSurfaceEvent`；`set` 未知名抛且一条事件都不留、同值 noop、异值落事件；`current()` 取回放最后一条。core `permission_presets_test.cj` **4 条**（空默认、log-only 持久可回放、同值 noop、未知名拒绝）。**仍缺**：`registerAuto` 固定 auto 预设、`PresetSpec.sandbox/approval` 双 knob 捆绑、`permission-presets/catalog-changed` emit、与 `ctx.sandbox`/`ctx.approval` 的 compose 契约；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 B 组 |
 | persistence | ✔ | ✔ | M1 | ✔ | ✔ | `session.log` 的 append/flush 持久化屏障、崩溃恢复合成、尾帧截断（丢半写帧保留已提交前缀）、中段缺帧整份拒绝；core `session` 22 条 + bridge durability 用例 |
-| plan | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 28） |
+| plan | ✔ | ✔ | M4 | ✔ | ◐ | 核心切片已落 `core/src/plan.cj`（2026-10-04）：`plan/mode { active: boolean }` 是 log-only 全值替换会话事件，不进 `isSurfaceEvent`；`set(bool)` 同值返回 "noop" 且不落事件、异值返回 "committed"；`active()` 取回放最后一条、空日志默认 false。core `plan_test.cj` **3 条**（round-trip flush→load 不进 surface、noop 不追加、空默认）。**仍缺**：上游 `'queued'`/`'cancelled'` 两态（在 pre-step 边界落地）、`exit_plan_mode` 工具、`/plan` 命令、`plan:policy` prompt section、`PlanModeConfig` 加载期校验；见 `docs/evidence/upstream-module-reads-2026-10-04.md` §4 B 组 |
 | product-telemetry | ✔ | ✔ | M1 | ✔ | ☐ | 未实现（C 档，行 29）；无任何上报。**C04 已核**：上游 product-telemetry 模块 79 行确证有 `ctx.productTelemetry.emit` 同步入队 + `ctx.productAnalytics` @Remote（enabled/watchPolicy/report），导出器不自动收集 Session 数据或标识。本仓无上报不等于裁剪已验收；上游数据、目的地已核，可替换边界保留 |
 | ptc-runtime | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 30） |
 | sandbox | ✔ | ✔ | M4 | ✔ | ☐ | 未实现（C 档，行 31）；Electron 自带的 `sandbox` 开关是另一回事，不作命中依据 |
