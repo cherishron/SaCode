@@ -870,6 +870,7 @@ createApp({
         // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
         onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
       ]),
+      h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession}),
     ]);
 
     const detail = h(window.SaCodeDialog, { open: !!self.detailTool, title: "工具详情",

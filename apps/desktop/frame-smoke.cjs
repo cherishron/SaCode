@@ -128,6 +128,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await require('./test-support/composer-attachments-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/composer-keymap-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/queue-dock-smoke.cjs')({win,waitFor,check,outDir});
+  await require('./test-support/context-meter-smoke.cjs')({win,waitFor,check,outDir});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));
   return reports.every(r=>!r.failed.length);
 };

@@ -1,0 +1,20 @@
+.context-meter-root { display:inline-flex; flex:none; }
+.context-meter-trigger { display:inline-flex; align-items:center; gap:6px; padding:1px 8px; border:0; border-radius:4px; background:transparent; color:var(--text-muted); font:13px/20px var(--font-ui); font-variant-numeric:tabular-nums; cursor:pointer; }
+.context-meter-trigger:hover,.context-meter-trigger[aria-expanded=true] { background:var(--panel-surface); color:var(--text); }
+.context-meter-trigger:focus-visible { outline:2px solid var(--accent); }
+.context-meter-track { fill:none; stroke:var(--border); stroke-width:2; }
+.context-meter-fill { fill:none; stroke:var(--text-muted); stroke-width:2; stroke-linecap:round; }
+.context-meter-panel { position:fixed; inset:auto; margin:0; box-sizing:border-box; width:min(264px,calc(100vw - 24px)); padding:12px; border:0; border-radius:8px; background:var(--surface-2); box-shadow:var(--elevation-prominent); color:var(--text-muted); font:12px/20px var(--font-ui); overflow:auto; }
+.context-meter-panel:not(:popover-open) { display:none; }
+.context-meter-header { display:flex; align-items:center; gap:6px; }
+.context-meter-figures { margin-left:auto; color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
+.context-meter-percent { font-weight:500; color:var(--text); }
+.context-meter-bar { display:flex; gap:1px; margin:10px 0 12px; height:4px; border-radius:999px; background:var(--panel-surface); overflow:hidden; }
+.context-meter-segment { flex:none; min-width:2px; height:100%; border-radius:1px; background:var(--context-tint,var(--text-muted)); }
+.context-meter-swatch { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:2px; background:var(--context-tint); }
+.context-meter-segment.system,.context-meter-swatch.system { --context-tint:#94a3b8; }
+.context-meter-segment.tools,.context-meter-swatch.tools { --context-tint:rgb(167,139,250); }
+.context-meter-segment.messages,.context-meter-swatch.messages { --context-tint:#3b82f6; }
+.context-meter-rows { margin:6px 0 0; }
+.context-meter-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 0; }
+.context-meter-row dd { margin:0; font-variant-numeric:tabular-nums; color:var(--text); }
