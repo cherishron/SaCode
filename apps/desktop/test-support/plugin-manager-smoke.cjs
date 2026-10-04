@@ -28,7 +28,7 @@ module.exports=async function({win,check,waitFor,outDir}){
       {id:'badge-a',order:10,slot:'badge',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Label),props:{text:'前徽标'}},
       {id:'row-section',order:0,slot:'section',subject:{kind:'row',name:'@sample/plugin',rowId:'row1'},component:Vue.markRaw(Label),props:{text:'组件贡献说明'}},
       {id:'item-config',order:0,slot:'configuration',subject:{kind:'item',id:'shell'},component:Vue.markRaw(Form)}];
-    f.app=Vue.createApp({setup:()=>()=>Vue.h(SaCodePluginManager.Page,{adapter,contributions:f.contributions.value})});f.app.mount(root);f.button=text=>[...document.querySelectorAll('#manager-fixture button,dialog.plugin-manager-install button')].find(b=>b.textContent===text);
+    f.app=Vue.createApp({setup:()=>()=>Vue.h(SaCodePluginManager.Page,{adapter,contributions:f.contributions.value})});f.app.mount(root);f.button=text=>text==='安装源'?document.querySelector('[data-install-registry-toggle]'):[...document.querySelectorAll('#manager-fixture button,dialog.plugin-manager-install button')].find(b=>b.textContent===text);
   `);
   await waitFor("!!document.querySelector('#manager-fixture [data-package-name]')");
   await js(`document.querySelector('#manager-fixture input[aria-label="启用 示例插件"]').click()`);
@@ -59,6 +59,36 @@ module.exports=async function({win,check,waitFor,outDir}){
   await waitFor("managerFixture.snapshot.install.spec==='@sample/new-plugin'");
   await js(`const input=document.querySelector('input[aria-label="包名或地址"]');input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));`);
   await check('插件输入法确认不触发安装',"({noInstall:!managerFixture.commands.some(c=>c.kind==='run-install')})");
+  await js(`document.querySelector('input[aria-label="包名或地址"]').dispatchEvent(new Event('blur'));managerFixture.dialogHeight=document.querySelector('dialog.plugin-manager-install').getBoundingClientRect().height;managerFixture.button('安装源').click()`);
+  await waitFor("!!document.querySelector('[data-install-registry]:popover-open')");
+  await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  await check('安装源浮层不改变模态高度并受窗口边界约束',"(()=>{const p=document.querySelector('[data-install-registry]').getBoundingClientRect();return {fixed:getComputedStyle(document.querySelector('[data-install-registry]')).position==='fixed',unchanged:Math.abs(document.querySelector('dialog.plugin-manager-install').getBoundingClientRect().height-managerFixture.dialogHeight)<1,bounded:p.left>=11&&p.right<=innerWidth-11&&p.top>=11&&p.bottom<=innerHeight-11};})()");
+  await js(`document.querySelector('[data-install-registry] input[type=radio]:checked').focus()`);
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
+  await waitFor("document.activeElement===document.querySelector('input[aria-label=\"自定义安装源\"]')");
+  await check('安装源 Tab 进入自定义地址',"({field:document.activeElement.getAttribute('aria-label')==='自定义安装源'})");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab',modifiers:['shift']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab',modifiers:['shift']});
+  await waitFor("document.activeElement?.type==='radio'");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab',modifiers:['shift']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab',modifiers:['shift']});
+  await waitFor("!document.querySelector('[data-install-registry]:popover-open')");
+  await check('安装源 Shift Tab 返回按钮且不关安装窗口',"({focus:document.activeElement.hasAttribute('data-install-registry-toggle'),modalKept:!!document.querySelector('dialog.plugin-manager-install[open]'),noClose:!managerFixture.commands.some(c=>c.kind==='close-install')})");
+  await js(`managerFixture.button('安装源').click()`);
+  await waitFor("!!document.querySelector('[data-install-registry]:popover-open')");
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await waitFor("!document.querySelector('[data-install-registry]:popover-open')");
+  await check('Escape 仅关闭安装源浮层',"({modalKept:!!document.querySelector('dialog.plugin-manager-install[open]'),focus:document.activeElement.hasAttribute('data-install-registry-toggle'),noClose:!managerFixture.commands.some(c=>c.kind==='close-install')})");
+  await js(`managerFixture.button('安装源').click()`);
+  await waitFor("!!document.querySelector('[data-install-registry]:popover-open')");
+  const oldBounds=win.getBounds();win.setSize(860,620);
+  await waitFor("innerWidth===860");
+  await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  await check('窗口缩小时安装源浮层保持可见',"(()=>{const p=document.querySelector('[data-install-registry]').getBoundingClientRect();return {bounded:p.left>=11&&p.right<=innerWidth-11&&p.top>=11&&p.bottom<=innerHeight-11,scrollable:getComputedStyle(document.querySelector('[data-install-registry]')).overflowY==='auto'};})()");
+  require('node:fs').writeFileSync(require('node:path').join(outDir,'plugin-manager-registry-small.png'),(await win.webContents.capturePage()).toPNG());
+  win.setBounds(oldBounds);
+  await waitFor(`innerWidth===${oldBounds.width}`);
+  await js(`document.querySelector('input[aria-label="包名或地址"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+  await waitFor("!document.querySelector('[data-install-registry]:popover-open')");
+  await check('点击浮层外部只收起安装源',"({modalKept:!!document.querySelector('dialog.plugin-manager-install[open]'),noClose:!managerFixture.commands.some(c=>c.kind==='close-install')})");
   await js(`document.querySelector('input[aria-label="包名或地址"]').dispatchEvent(new Event('blur'));managerFixture.button('安装源').click();await Vue.nextTick();const input=document.querySelector('input[aria-label="自定义安装源"]');input.value='bad-source';input.dispatchEvent(new Event('input',{bubbles:true}))`);
   await check('安装源非法地址阻止提交',"({invalid:document.querySelector('input[aria-label=\"自定义安装源\"]').getAttribute('aria-invalid')==='true',blocked:managerFixture.button('安装').disabled})");
   await js(`const input=document.querySelector('input[aria-label="自定义安装源"]');input.value='https://packages.example.test/';input.dispatchEvent(new Event('input',{bubbles:true}))`);

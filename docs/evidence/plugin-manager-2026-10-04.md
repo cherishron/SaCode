@@ -45,3 +45,13 @@
 pack-pages 五模块构建与约束检查、plugin-manager.ts TypeScript 严格检查、冒烟脚本语法检查及 git diff --check 通过。隔离环境 manager-recovery-frame-final.log 退出码 0；manager-recovery-captures-final/reports.json 共 139 组、422 条检查，失败 0。新增错误分类、兼容优先级、多源故障、更换源、GitHub 显式恢复、取消不确定、无新增依赖和刷新恢复的真实 Chromium 交互检查。适配器仍是内存桩，未执行真实网络安装。
 
 本批补齐所列错误视图和恢复动作契约，不宣称完整后端安装兼容或完整前端验收完成。安装源浮层定位与键盘细节、完整视觉资产仍待继续；真实仓颉服务、外部模型验收、npm CLI 和最终安装包仍在后续完整交付范围。
+
+## 第四轮：安装源浮层
+
+对照官方 InstallDialog 的安装源浮层、Tab 路径、Escape 与外部点击行为，抽出 registry-picker.ts。使用 Chromium 原生 manual popover 顶层，在原生 dialog 内保持可交互，不把节点移到模态框外的 inert 区域。浮层按按钮末端对齐，以 12px 窗口边距裁限；空间不足时向上展开，限制高度并提供内部滚动。ResizeObserver、窗口 resize 和滚动更新位置，卸载时释放观察器、监听器和动画帧。浮层不参与表单布局，不改变安装窗口高度。
+
+提供默认源、后端提供的源与自定义源单选；按钮显示当前所选源。自定义 URL 使用 URL 解析验证协议和主机，非法地址阻断安装。Tab 从已选单选项进入地址输入；Shift+Tab 返回单选项，越过两者时关闭并回到按钮。Escape 捕获阻断原生模态框的关闭，点击外部只收起浮层。安装检查阶段隐藏浮层并禁用选择。
+
+pack-pages 五模块构建与约束检查、plugin-manager.ts 和 registry-picker.ts 的 TypeScript 严格检查、冒烟语法及 git diff --check 通过。首次新增窗口缩小用例请求 640px，低于产品 BrowserWindow 的 minWidth=860，等待失败；未修改产品最小宽度，改在允许的 860×620 范围验收。manager-picker-frame-final.log 退出码 0；manager-picker-captures-final/reports.json 共 145 组、436 条检查，失败 0。包含真实 Electron 键盘事件驱动的 Tab、Shift+Tab 和 Escape 检查。已查看 plugin-manager-registry-small.png，浮层在小窗口可见且可滚动。
+
+这些检查仍使用内存安装适配器，不证明仓颉配置及真实安装完成。完整官方视觉资产和其他前端页面、后端全部能力接入、真实模型测试以及 npm CLI/最终安装包继续纳入完整验收范围。
