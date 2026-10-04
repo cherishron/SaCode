@@ -106,3 +106,25 @@ CLI 的 `extjs` 模式必须在仓库根跑：它以相对工作目录 `extjs` �
 ## 7. 本批入库范围
 
 一个提交落地「接手 + 修复」这一条最小自洽绿线：核心的模型纵向切片（provider 配置、请求装配、工具调用按索引装配、多步循环）、宿主的真实 provider 接入与协议帧转义、桌面的真机用例与待办投影刷新帧。之所以不拆成两个提交：上一条线留下的宿主文件本来就编译失败，任何「只提交继承部分」的切法都会造出一个不可编译、且带一条已知红用例的中间提交；拆开只为形式上的归属，代价是历史里出现假红灯。
+
+## 8. 凭证缝（上游 credentials 硬规约落地）
+
+上游原文取证：`docs/subsystems/credentials.md`（api.github.com contents，冻结 639ed01，sha `eb708f95…`，496 行直读）与 `docs/subsystems/settings.md`（sha `ff047b74…`）。落地的四条不变量：引用名只接受 POSIX 环境变量语法；分层 `env` > `user-file`，每次操作重新解析（旋转密钥落到下一次请求，不需要重启）；空值在所有层都算缺席且盘上一行都不留；由活环境供值的引用**写入当场拒绝**——写了也会被影子压住，那是假装保存成功。`describe()` 是配置面唯一读面，没有任何槽位能带值穿过。
+
+新增 `core/src/credential.cj` + 7 条用例。核心计数：改前 **TOTAL 398 / PASSED 397**，改后 **TOTAL 405 / PASSED 404 / SKIPPED 1 / FAILED 0 / ERROR 0**，rc=0。
+
+一次 `--filter credential` 跑出 `PASSED: 0 / SKIPPED: 405 / rc=0` —— 过滤器没匹配上任何用例，全量被跳过。**这不是通过**，据此改判全量跑才作数。
+
+变异反证（一轮构建同时施加三个变异，各配独占受害用例）：
+
+| 变异 | 改法 | 唯一受害者 |
+|---|---|---|
+| 撤掉环境只读闸 | `envLookup(ref).size > 0` → `< 0` | `credentialEnvLayerShadowsUserFileAndIsNotWritable` |
+| 空值不再等于撤销 | 落盘条件 `value.size > 0` → `>= 0` | `credentialEmptyValueMeansAbsentEverywhere` |
+| 读侧改成首次为准 | `found` 覆盖条件加 `found.size == 0` | `credentialMalformedStoreLinesAreNotConfigured` |
+
+红集合恰为这 3 条（`FAILED: 3`，其余 401 通过），`cp` 还原后 `diff -q` 无输出、复跑回 405/404/1/0。
+
+明文密钥只从本地 gitignore 文件与环境变量读，未进入任何入库文件；提交前对本批全部文件跑过密钥串扫描，结果 `NO-SECRET-IN-STAGED`。
+
+需要说清的一点：`user-file` 层沿用上游 local provider 的 env-file 形态——值是明文存在用户自有文件里，**不是操作系统钥匙串**。`model_settings.cj` 顶部注释原先写「明文密钥交给平台安全存储」，那是尚未成立的前提；要不要再往平台安全存储（DPAPI / Credential Manager）硬一层是另一件事，这里不假装已经做到。

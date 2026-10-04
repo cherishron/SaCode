@@ -2,7 +2,8 @@ package core
 
 import std.fs.*
 
-// 模型配置由共享核心持久化；日志只保存凭证引用，明文密钥交给平台安全存储。
+// 模型配置由共享核心持久化；这份日志只保存**凭证引用**（POSIX 环境变量名），
+// 值由 CredentialStore 的分层 provider 持有——配置面任何一条读面都不带明文穿过。
 public class ModelSettingsSnapshot {
     public let baseUrl: String
     public let model: String
