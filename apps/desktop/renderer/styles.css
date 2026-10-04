@@ -138,9 +138,22 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .markdown-body blockquote > * + * { margin-top:16px; }
 .markdown-body code { font-family:Consolas,monospace; font-size:13px; }
 .markdown-body :not(pre) > code { background:var(--surface-3); padding:2px 4px; border-radius:var(--radius-xs); }
-.markdown-body pre { padding:12px 16px; background:var(--surface-3); border-radius:var(--radius-l); overflow:auto; white-space:pre; min-width:0; max-width:100%; }
-.markdown-body table { display:block; overflow-x:auto; max-width:100%; border-collapse:collapse; }
-.markdown-body :is(th,td) { padding:8px 12px; border:0.5px solid var(--border); text-align:start; }
+.markdown-body pre { padding:16px; background:var(--surface-3); color:var(--text); border-radius:var(--radius-l); overflow:auto; white-space:pre; min-width:0; max-width:100%; }
+.markdown-body pre:focus-visible { outline-offset:-2px; }
+/* 两项均需重置：继承的标准滚动条样式会覆盖下面的 5px WebKit 样式。 */
+.markdown-body pre { scrollbar-width:auto; scrollbar-color:auto; }
+.markdown-table-scroll { min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:auto; scrollbar-color:auto; }
+.markdown-table-scroll.table-wide { overflow-x:hidden; padding-bottom:5px; }
+.markdown-table-scroll.table-wide:is(:hover,:focus-visible) { overflow-x:scroll; padding-bottom:0; }
+.markdown-table-scroll:focus-visible { outline-offset:-2px; }
+.markdown-body pre::-webkit-scrollbar,.markdown-table-scroll::-webkit-scrollbar { height:5px; }
+.markdown-body pre::-webkit-scrollbar-thumb,.markdown-table-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:var(--radius-xs); }
+.markdown-body pre::-webkit-scrollbar-track,.markdown-table-scroll::-webkit-scrollbar-track { background:transparent; }
+.markdown-table-scroll table { width:max-content; max-width:max-content; border-collapse:collapse; }
+.markdown-table-scroll.table-fill table { width:100%; max-width:none; }
+.markdown-body :is(th,td) { padding:10px 16px; border:0; border-bottom:.5px solid var(--border); text-align:start; min-width:100px; max-width:min(30vw,320px); }
+.markdown-body :is(th,td):first-child { padding-left:0; }
+.markdown-body td:last-child { padding-right:0; }
 .markdown-body a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
 .markdown-body hr { width:100%; margin:0; border:0; border-top:0.5px solid var(--border); }
 #messages .tr-bubble[data-role=user] .msg-text { line-height: var(--line-user); }

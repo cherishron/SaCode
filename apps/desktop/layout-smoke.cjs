@@ -131,7 +131,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       console.log(`LAYOUT ${userReport.failed.length?'FAIL':'PASS'} long-user ${theme} ${width}x${height} ${userReport.failed.join(',')}`);
       await js("document.querySelector('.conversation-scroll').scrollTop=0");
       // 排版夹具只挂载实际正文渲染器，不伪造核心消息或会话事实。
-      const markdownText='# 中文标题\n\n正文 **强调** 与 `行内代码`。\n\n1. 第一项\n   - 嵌套项\n2. 第二项\n\n> 引用正文\n\n```js\n'+ '长代码内容'.repeat(80)+'\n```\n\n| 名称 | 值 |\n| --- | --- |\n| 项目 | 内容 |';
+      const wideHead=Array.from({length:10},(_,i)=>'列'+i).join('|'),wideRow=Array.from({length:10},(_,i)=>'长表格内容'+i).join('|');
+      const markdownText='# 中文标题\n\n正文 **强调** 与 `行内代码`。\n\n1. 第一项\n   - 嵌套项\n2. 第二项\n\n> 引用正文\n\n```js\nconst 内容 = "'+ '长代码内容'.repeat(80)+'";\n```\n\n| 名称 | 值 |\n| :--- | ---: |\n| 项目 | 内容 |\n\n|'+wideHead+'|\n|'+Array(10).fill('---').join('|')+'|\n|'+wideRow+'|';
       await js(`(()=>{const n=document.createElement('div');n.id='markdown-layout-fixture';document.querySelector('.conversation-scroll').append(n);Vue.render(Vue.h('div',{class:'msg-text markdown-body'},SaCodeMarkdown.render(${JSON.stringify(markdownText)})),n);n.scrollIntoView();})()`);
       await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
       const markdownReport=await js(`(()=>{
@@ -142,15 +143,36 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           verticalRhythm:children.slice(1).every((e,i)=>Math.abs(box(e).top-box(children[i]).bottom-16)<1),
           sharedLeftAxis:children.every(e=>Math.abs(box(e).left-box(n).left)<1),
           codeScroll:pre.scrollWidth>pre.clientWidth && getComputedStyle(pre).overflowX==='auto',
+          codeHighlight:!!pre.querySelector('span[style]') && !![...pre.querySelectorAll('span')].find(e=>e.style.color==='var(--shiki-token-keyword)' && getComputedStyle(e).color==='${theme==='dark'?'rgb(250, 162, 193)':'rgb(214, 51, 108)'}'),
+          codeInsets:getComputedStyle(pre).padding==='16px' && getComputedStyle(pre).borderTopLeftRadius==='16px',
+          tableFill:Math.abs(box(n.querySelector('.table-fill')).width-box(n.querySelector('.table-fill table')).width)<1,
+          tableAlign:getComputedStyle(n.querySelector('th')).textAlign==='left' && getComputedStyle(n.querySelector('th:nth-child(2)')).textAlign==='right',
+          wideTableBounded:n.querySelector('.table-wide').scrollWidth>n.querySelector('.table-wide').clientWidth && box(n.querySelector('.table-wide')).right<=box(n).right+1,
           nestedIndent:box(n.querySelector('ul')).left>box(n.querySelector('ol')).left,
           noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
         };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
       })()`);
       Object.assign(markdownReport,{theme,width,height,surface:'markdown'});reports.push(markdownReport);
+      await js("document.querySelector('#markdown-layout-fixture pre').scrollIntoView({block:'center'})");
       writeFileSync(join(outDir,`sacode-markdown-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${markdownReport.failed.length?'FAIL':'PASS'} markdown ${theme} ${width}x${height} ${markdownReport.failed.join(',')}`);
+      const tableRestHeight=await js("document.querySelector('#markdown-layout-fixture .table-wide').getBoundingClientRect().height");
+      await js("(()=>{const n=document.querySelector('#markdown-layout-fixture .table-wide');n.focus();n.scrollIntoView({block:'center'});})()");
+      // 等滚动和焦点样式完成绘制，避免几何已更新而截图仍是上一帧。
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const wideTableReport=await js(`(()=>{
+        const n=document.querySelector('#markdown-layout-fixture .table-wide'),before=n.textContent;n.scrollLeft=100;
+        const rect=n.getBoundingClientRect(),scroll=document.querySelector('.conversation-scroll').getBoundingClientRect();
+        const barHeight=n.offsetHeight-n.clientHeight;
+        const checks={keyboardScroll:n.matches(':focus-visible') && getComputedStyle(n).overflowX==='scroll' && n.scrollLeft>0,sourceUnchanged:n.textContent===before,tenColumns:n.querySelectorAll('th').length===10,contained:document.documentElement.scrollWidth<=innerWidth,stableHeight:Math.abs(rect.height-${tableRestHeight})<1,visible:rect.top>=scroll.top && rect.bottom<=scroll.bottom,scrollbarFivePixels:Math.abs(barHeight-5)<1};
+        return {checks,failed:Object.keys(checks).filter(k=>!checks[k]),metrics:{before:${tableRestHeight},after:rect.height,scrollbarWidth:getComputedStyle(n).scrollbarWidth,scrollbarColor:getComputedStyle(n).scrollbarColor,barHeight:getComputedStyle(n,'::-webkit-scrollbar').height,actualBarHeight:barHeight}};
+      })()`);
+      Object.assign(wideTableReport,{theme,width,height,surface:'wide-table'});reports.push(wideTableReport);
+      await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      writeFileSync(join(outDir,`sacode-wide-table-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+      console.log(`LAYOUT ${wideTableReport.failed.length?'FAIL':'PASS'} wide-table ${theme} ${width}x${height} ${wideTableReport.failed.join(',')}`);
       await js("(()=>{const n=document.querySelector('#markdown-layout-fixture');Vue.render(null,n);n.remove();document.querySelector('.conversation-scroll').scrollTop=0;})()");
-      const streamingText='## 流式标题\n\n正文 **强调**。\n\n- 第一项\n- 第二项\n\n```js\n'+ '流式长代码'.repeat(80)+'\n```';
+      const streamingText='## 流式标题\n\n正文 **强调**。\n\n- 第一项\n- 第二项\n\n```js\nconst 内容 = "'+ '流式长代码'.repeat(80)+'";\n```';
       const streamingEvents=await js("document.querySelector('#count-events').textContent");
       // 临时挂载真实流式组件与 TinyRobot 投影组件；不调用模型、不造会话事件。
       await js("(()=>{const n=document.createElement('div');n.id='streaming-layout-fixture';document.querySelector('#messages').append(n);foldOpen.ids.add('layout-stream-message');})()");
@@ -170,6 +192,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           sameBlockHeight:Math.abs(box(live).height-box(saved).height)<1,
           semanticBlocks:!!live.querySelector('h2') && !!live.querySelector('ul') && !!live.querySelector('pre'),
           codeScroll:[live,saved].every(n=>{const p=n.querySelector('pre');return p.scrollWidth>p.clientWidth && getComputedStyle(p).overflowX==='auto';}),
+          sameHighlight:[live,saved].every(n=>!!n.querySelector('pre.shiki span[style]')) && live.querySelector('pre code').textContent===saved.querySelector('pre code').textContent,
           noPageOverflow:document.documentElement.scrollWidth<=innerWidth,
           noSessionWrite:document.querySelector('#count-events').textContent===${JSON.stringify(streamingEvents)},
         };return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};

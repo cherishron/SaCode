@@ -12,6 +12,7 @@ import { existsSync, mkdtempSync, writeFileSync, rmSync, statSync, readFileSync,
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertStaticRendererBundle } from './renderer-bundle-guard.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP = join(ROOT, "apps", "desktop");
@@ -54,11 +55,13 @@ try {
     entry,
     'import { Bubble, BubbleList, BubbleProvider } from "@opentiny/tiny-robot/dist/bubble/index.js";\n' +
       'import MarkdownIt from "markdown-it";\n' +
+      'import CodeHighlighter from "../renderer/highlight-source.mjs";\n' +
       "globalThis.TinyRobot = { Bubble: Bubble, BubbleList: BubbleList, BubbleProvider: BubbleProvider };\n" +
-      "globalThis.SaCodeMarkdownIt = MarkdownIt;\n"
+      "globalThis.SaCodeMarkdownIt = MarkdownIt;\n" +
+      "globalThis.SaCodeCodeHighlighter = CodeHighlighter;\n"
   );
 
-  await esbuild.build({
+  const buildResult=await esbuild.build({
     entryPoints: [entry],
     bundle: true,
     format: "iife",
@@ -66,13 +69,15 @@ try {
     outfile: OUT_JS,
     logLevel: "warning",
     target: ["chrome120"],
+    metafile:true,
   });
 
   // 反证式自检：CSP 的生死线是产物里不能有运行时求值、不能有运行时模块加载，
   // 也不能残留裸 "vue" 说明符（那等于第二份 Vue）。
   const code = readFileSync(OUT_JS, "utf8");
-  if (/new Function\(|\beval\(/.test(code)) die("折叠产物含运行时求值，会撞 CSP script-src 'self'");
-  if (/import\(/.test(code)) die("折叠产物残留 import()，外部动态 import 没能在构建期静止化");
+  // TextMate 规则字符串含 import(?=...)；以构建器的实际输出依赖检查运行时模块，
+  // 不能把语法数据误判为 import 表达式。所有输出均禁止动态或外部依赖。
+  try {assertStaticRendererBundle(code,buildResult.metafile);} catch(e) {die(e.message);}
   if (/require\("vue"\)|from"vue"|from "vue"/.test(code)) die("折叠产物残留 vue 裸说明符，alias 没生效");
   if (!code.includes("globalThis.Vue")) die("折叠产物没接上 globalThis.Vue，会出现第二份 Vue");
   if (!code.includes("globalThis.TinyRobot")) die("折叠产物没挂上 globalThis.TinyRobot");

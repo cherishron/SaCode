@@ -63,6 +63,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "shiki": "4.3.1",
     "vue": "^3.5.43"
   }
 }

@@ -10,7 +10,12 @@ window.SaCodeMarkdown = (function () {
       if (token.nesting === -1) {
         if (stack.length > 1) {
           const frame = stack.pop();
-          add(window.Vue.h(frame.tag, frame.props, frame.children));
+          const node=window.Vue.h(frame.tag, frame.props, frame.children);
+          if(frame.tag==='table') {
+            // 列数在关闭表格时从解析 token 计数；不依赖 Vue 私有节点结构。
+            const fill=frame.columns<4 || stack.some(parent=>parent.tag==='blockquote');
+            add(window.Vue.h('div',{class:'markdown-table-scroll'+(fill?' table-fill':' table-wide'),tabindex:0},[node]));
+          } else add(node);
         }
       } else if (token.nesting === 1) {
         const tag = tags.has(token.tag) ? token.tag : 'span';
@@ -22,11 +27,22 @@ window.SaCodeMarkdown = (function () {
           if (title) props.title = title;
         }
         if (tag === 'ol' && token.attrGet('start')) props.start = token.attrGet('start');
-        stack.push({ tag, props, children: [] });
+        if(tag==='th' || tag==='td') {
+          const align=/^text-align:(left|center|right)$/.exec(token.attrGet('style')||'');
+          if(align) props.style={textAlign:align[1]};
+          const table=stack.find(frame=>frame.tag==='table');
+          if(table && tag==='th')table.columns++;
+        }
+        stack.push({ tag, props, children: [], columns:0 });
       } else if (token.type === 'inline') {
         nodes(token.children || []).forEach(add);
       } else if (token.type === 'fence' || token.type === 'code_block') {
-        add(window.Vue.h('pre', {}, [window.Vue.h('code', {}, token.content)]));
+        const hint=(token.info||'').trim().split(/\s+/)[0];
+        const lines=window.SaCodeCodeHighlighter.highlight(token.content,hint);
+        const children=lines?lines.flatMap((line,index)=>[
+          ...(index?['\n']:[]),window.Vue.h('span',{class:'code-line'},line.map(span=>window.Vue.h('span',{style:span.style},span.text))),
+        ]):token.content;
+        add(window.Vue.h('pre', {class:lines?'shiki':'code-plain',tabindex:0,'data-code-language':hint}, [window.Vue.h('code', {}, children)]));
       } else if (token.type === 'code_inline') {
         add(window.Vue.h('code', {}, token.content));
       } else if (token.type === 'hardbreak') {
