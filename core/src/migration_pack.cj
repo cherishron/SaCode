@@ -128,8 +128,8 @@ public class MigrationProviderEntry {
         arr += "]"
         return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
             + "\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\","
-            + "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } else { "false" }},{"
-            + "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }},{"
+            + "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } else { "false" }},"
+            + "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }},"
             + "\"transport\":\"${jsonEscapeText(transport)}\",\"models\":${arr}}"
     }
 
@@ -438,8 +438,27 @@ public class MigrationBundle {
     }
 
     public func toJson(): String {
-        var refs = "["
+        // 构建 providers 数组
+        var prov = "["
         var i: Int64 = 0
+        while (i < Int64(providers.size)) {
+            if (i > 0) { prov += "," }
+            prov += providers[i].toJson()
+            i += 1
+        }
+        prov += "]"
+        // 构建 customModels 数组
+        var cust = "["
+        i = 0
+        while (i < Int64(customModels.size)) {
+            if (i > 0) { cust += "," }
+            cust += customModels[i].toJson()
+            i += 1
+        }
+        cust += "]"
+        // 构建 credentialRefs 数组
+        var refs = "["
+        i = 0
         while (i < Int64(credentialRefs.size)) {
             if (i > 0) { refs += "," }
             refs += "\"${jsonEscapeText(credentialRefs[i])}\""
@@ -449,7 +468,7 @@ public class MigrationBundle {
         return "{\"format\":\"${jsonEscapeText(format)}\",\"kind\":\"${jsonEscapeText(kind)}\","
             + "\"generatedAt\":${generatedAt},\"schemaVersion\":${schemaVersion},"
             + "\"checksum\":\"${jsonEscapeText(checksum)}\","
-            + "\"providers\":${entriesJson()},\"credentialRefs\":${refs}}"
+            + "\"providers\":${prov},\"customModels\":${cust},\"credentialRefs\":${refs}}"
     }
 
     // 从 JSON 解析
@@ -568,8 +587,8 @@ public class MigrationPlanEntry {
     }
 
     public func toJson(): String {
-        let prov = if (let Some(p) <- provider) { "\"${jsonEscapeText(p.toJson())}\"" } else { "null" }
-        let cust = if (let Some(c) <- customModel) { "\"${jsonEscapeText(c.toJson())}\"" } else { "null" }
+        let prov = if (let Some(p) <- provider) { p.toJson() } else { "null" }
+        let cust = if (let Some(c) <- customModel) { c.toJson() } else { "null" }
         return "{\"kind\":\"${jsonEscapeText(kind)}\",\"id\":\"${jsonEscapeText(id)}\","
             + "\"action\":\"${jsonEscapeText(action)}\",\"provider\":${prov},\"customModel\":${cust}}"
     }
