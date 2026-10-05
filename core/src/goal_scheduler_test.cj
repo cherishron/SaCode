@@ -414,3 +414,44 @@ func driverDoesNotRunRoundWhenNoActiveGoal() {
     @Expect(svc.snapshot().phase, "none")
     removeIfExists(root, recursive: true)
 }
+
+// 轮内编辑后的目标不能被旧轮证据完成；下一轮必须针对新修订执行。
+@Test
+func driverOldEvidenceCannotCompleteEditedGoal() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let calls = RoundCounter()
+    let r = GoalDriver(s, svc).run(Int64(2), Int64(100000), Int64(3), { => false }, { =>
+        calls.bump()
+        if (calls.n == Int64(1)) {
+            svc.edit(svc.snapshot().revision, "修改后的目标需重新验收")
+            return RoundOutcome(true, true)
+        }
+        return RoundOutcome(true, false)
+    })
+    @Expect(calls.n, Int64(2))
+    @Expect(r.stopReason, "round-limit")
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().objective, "修改后的目标需重新验收")
+    removeIfExists(root, recursive: true)
+}
+
+// 暂停不强杀当前轮；该轮随后交来的完成候选也不能覆盖用户暂停。
+@Test
+func driverOldEvidenceCannotOverridePause() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let calls = RoundCounter()
+    let r = GoalDriver(s, svc).run(Int64(100), Int64(100000), Int64(3), { => false }, { =>
+        calls.bump()
+        svc.pause(svc.snapshot().revision)
+        return RoundOutcome(true, true)
+    })
+    @Expect(calls.n, Int64(1))
+    @Expect(r.rounds, Int64(1))
+    @Expect(r.stopReason, "paused")
+    @Expect(svc.snapshot().phase, "paused")
+    removeIfExists(root, recursive: true)
+}

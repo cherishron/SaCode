@@ -232,9 +232,11 @@ public class GoalDriver {
                 scheduler.endRound(outcome.progressed)
                 rounds += Int64(1)
                 if (outcome.evidence) {
-                    // 有证据才收口，基于边界重读后的当前修订做 CAS。
+                    // 证据属于本轮开头的目标修订。轮内编辑/暂停/删除后，不能把旧证据
+                    // 重新绑定到最新修订；交回下一次边界读取处理新状态。
                     let current = svc.snapshot()
-                    if (scheduler.completeIfEvidenced(svc, current.revision, true)) {
+                    if (current.phase == "active" && current.revision == snap.revision &&
+                        scheduler.completeIfEvidenced(svc, snap.revision, true)) {
                         stopReason = "completed"
                         done = true
                     }
