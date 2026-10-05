@@ -7,46 +7,50 @@ class ExtHost {
   #listeners = new Map();
   #handles = new Map();
   #pending = new Map();
-  // 外部 callId → 结算函数：取消要落在「那一次调用」上，所以按调用方给的键另建一张表。
+  // 外部 callId → 调用记录；记录包含所属扩展、abort 控制器、工作 promise 和结算状态。
   #byExt = new Map();
-  // 外部 callId → 该次的 abort 控制器与 handler promise：取消不只是放弃等待，
-  // 还得把「可以停了」交给扩展，并且有机会如实回报它到底停没停。
-  #signals = new Map();
-  #work = new Map();
   #nextListener = 1;
   #nextCall = 1;
   #closed = false;
 
   async load(modulePath) {
+    if (this.#closed) throw new Error("host-exiting");
     let mod;
     const abs = jabs(modulePath) ? modulePath : jresolve(__dirname, modulePath);
-    try {
-      mod = require(abs);
-    } catch (e) {
-      throw new Error(`load-error: ${e.message}`);
-    }
-    if (!mod || typeof mod.name !== "string" || typeof mod.handler !== "function") {
+    try { mod = require(abs); }
+    catch (e) { throw new Error(`load-error: ${e.message}`); }
+    if (!mod || typeof mod.name !== "string" || !mod.name.trim() || typeof mod.handler !== "function") {
       throw new Error("load-error: extension must export {name, description, params, handler}");
     }
-    if (this.#tools.has(mod.name)) return false;
-    this.#tools.set(mod.name, {
-      name: mod.name,
-      description: mod.description || "",
-      params: mod.params || "",
-      handler: mod.handler,
-    });
-    this.#handles.set(mod.name, []);
-    if (typeof mod.setup === "function") {
-      mod.setup({
-        on: (event, cb) => {
-          const id = this.#nextListener++;
-          this.#listeners.set(id, { event, cb });
-          this.#handles.get(mod.name).push(id);
-          return id;
-        },
+    // 初始化也占据名称；只有完整初始化成功后，工具才进入可调用目录。
+    if (this.#handles.has(mod.name)) return false;
+    const owner = { live: true, ids: [] };
+    this.#handles.set(mod.name, owner);
+    try {
+      if (typeof mod.setup === "function") {
+        await mod.setup({
+          on: (event, cb) => {
+            if (this.#closed) throw new Error("host-exiting");
+            if (!owner.live || this.#handles.get(mod.name) !== owner) throw new Error("extension-disposed");
+            if (typeof event !== "string" || typeof cb !== "function") throw new Error("invalid-listener");
+            const id = this.#nextListener++;
+            this.#listeners.set(id, { event, cb }); owner.ids.push(id);
+            return id;
+          },
+        });
+      }
+      if (this.#closed) throw new Error("host-exiting");
+      if (!owner.live || this.#handles.get(mod.name) !== owner) throw new Error("extension-disposed");
+      this.#tools.set(mod.name, {
+        name: mod.name, description: mod.description || "", params: mod.params || "", handler: mod.handler,
       });
+      return true;
+    } catch (error) {
+      owner.live = false;
+      for (const id of owner.ids) this.#listeners.delete(id);
+      if (this.#handles.get(mod.name) === owner) this.#handles.delete(mod.name);
+      throw error;
     }
-    return true;
   }
 
   list() {
@@ -71,25 +75,32 @@ class ExtHost {
     const exiting = new Promise((_, rej) => {
       rejectExiting = rej;
     });
-    this.#pending.set(id, rejectExiting);
-    if (key !== null) this.#byExt.set(key, rejectExiting);
-    // 第二参数是给扩展的协作面：不读 ctx 的旧扩展零改动，读得到的才能在取消前收手。
     const ac = new AbortController();
-    const work = Promise.resolve(t.handler(args || {}, { signal: ac.signal }));
-    if (key !== null) {
-      this.#signals.set(key, ac);
-      this.#work.set(key, work);
-    }
+    const record = { id, name, key, reject: rejectExiting, ac, work: null, settled: false };
+    this.#pending.set(id, record);
+    if (key !== null) this.#byExt.set(key, record);
+    // 在受 finally 保护的 promise 内调用，同步异常同样释放所有账目。
+    const work = record.work = Promise.resolve().then(() => {
+      if (ac.signal.aborted) throw new Error("cancelled-before-handler");
+      return t.handler(args || {}, { signal: ac.signal });
+    });
     try {
       return await Promise.race([work, exiting]);
     } finally {
       this.#pending.delete(id);
-      if (key !== null) {
-        this.#byExt.delete(key);
-        this.#signals.delete(key);
-        this.#work.delete(key);
-      }
+      // 取消后调用方可能重用 callId；旧调用结算不能删除新调用的句柄。
+      if (key !== null && this.#byExt.get(key) === record) this.#byExt.delete(key);
     }
+  }
+
+  #stop(record, reason, settleMs = 200) {
+    if (record.settled) return;
+    record.settled = true;
+    if (record.key !== null && this.#byExt.get(record.key) === record) this.#byExt.delete(record.key);
+    // 先拒绝等待者，再送达 abort，协作的迟到返回不能抢成成功。
+    record.reject(new Error(reason));
+    record.ac.abort();
+    this.#watchSettle(record.key ?? `internal-${record.id}`, record.work, settleMs);
   }
 
   // 取消做两件事：给扩展发 abort，并结算等待者——然后如实记账「扩展到底停了没有」。
@@ -100,15 +111,9 @@ class ExtHost {
   cancel(callId, opts = {}) {
     const key = callId === undefined || callId === null ? null : String(callId);
     if (key === null) return false;
-    const rej = this.#byExt.get(key);
-    if (!rej) return false;
-    // 先取句柄再结算：等待者一被 reject，call() 的 finally 就会把这两条清掉
-    const ac = this.#signals.get(key);
-    const work = this.#work.get(key);
-    this.#byExt.delete(key);
-    if (ac) ac.abort();
-    rej(new Error(`cancelled: ${callId}`));
-    if (work) this.#watchSettle(key, work, opts.settleMs === undefined ? 200 : opts.settleMs);
+    const record = this.#byExt.get(key);
+    if (!record) return false;
+    this.#stop(record, `cancelled: ${callId}`, opts.settleMs === undefined ? 200 : opts.settleMs);
     return true;
   }
 
@@ -127,22 +132,25 @@ class ExtHost {
   }
 
   dispose(name) {
-    if (!this.#tools.has(name)) return false;
+    const owner = this.#handles.get(name);
+    if (!owner) return false;
+    owner.live = false;
     this.#tools.delete(name);
-    for (const id of this.#handles.get(name) || []) this.#listeners.delete(id);
+    for (const id of owner.ids) this.#listeners.delete(id);
     this.#handles.delete(name);
+    for (const record of this.#pending.values()) {
+      if (record.name === name) this.#stop(record, `extension-disposed: ${name}`);
+    }
     return true;
   }
 
   close() {
+    if (this.#closed) return;
     this.#closed = true;
-    for (const reject of this.#pending.values()) reject(new Error("host-exiting"));
-    this.#pending.clear();
-    this.#byExt.clear();
-    this.#signals.clear();
-    this.#work.clear();
-    this.#listeners.clear();
-    this.#handles.clear();
+    for (const owner of this.#handles.values()) owner.live = false;
+    for (const record of this.#pending.values()) this.#stop(record, "host-exiting");
+    this.#pending.clear(); this.#byExt.clear(); this.#tools.clear();
+    this.#listeners.clear(); this.#handles.clear();
   }
 
   listenerCount() {
