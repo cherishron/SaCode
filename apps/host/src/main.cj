@@ -339,7 +339,7 @@ func providerObjectJson(p: ProviderRecord, creds: CredentialStore): String {
         configured = false
         writable = true
     }
-    return "{\"id\":\"${jsonEscapeText(p.id)}\",\"name\":\"${jsonEscapeText(p.name)}\",\"baseUrl\":\"${jsonEscapeText(p.baseUrl)}\",\"protocol\":\"${jsonEscapeText(p.protocol)}\",\"credentialRef\":\"${jsonEscapeText(p.credentialRef)}\",\"declared\":${boolText(p.declared)},\"models\":${models},\"keyConfigured\":${boolText(configured)},\"credentialWritable\":${boolText(writable)}}"
+    return "{\"id\":\"${jsonEscapeText(p.id)}\",\"name\":\"${jsonEscapeText(p.name)}\",\"baseUrl\":\"${jsonEscapeText(p.baseUrl)}\",\"protocol\":\"${jsonEscapeText(p.protocol)}\",\"credentialRef\":\"${jsonEscapeText(p.credentialRef)}\",\"declared\":${boolText(p.declared)},\"models\":${models},\"keyConfigured\":${boolText(configured)},\"credentialWritable\":${boolText(writable)},\"sortOrder\":${p.sortOrder},\"enabled\":${boolText(p.enabled)},\"transport\":\"${jsonEscapeText(p.transport)}\"}"
 }
 
 func providerViewJson(view: ProviderView, creds: CredentialStore): String {
@@ -350,6 +350,49 @@ func providerViewJson(view: ProviderView, creds: CredentialStore): String {
     }
     arr += "]"
     return "{\"providers\":${arr},\"revision\":${view.revision},\"writable\":${boolText(view.writable)},\"defaultProviderId\":\"${jsonEscapeText(view.defaultProviderId)}\",\"defaultModel\":\"${jsonEscapeText(view.defaultModel)}\"}"
+}
+
+// 协议面不接受「没点名修订号」的写：缺失就拒，而不是静默当成无条件写。
+// 核心侧的 -1 = 无条件写是给 CLI 自测与测试用的，不能变成协议面的默认——
+// 「没给版本」和「不在乎版本」是两件事。
+func revisionOrReject(body: String, idText: String): Option<Int64> {
+    let request = JsonValue.fromStr(body).asObject()
+    if (let Some(p) <- request.get("params")) {
+        if (let Some(r) <- p.asObject().get("expectedRevision")) {
+            return Some(r.asInt().getValue())
+        }
+    }
+    emit(errFrame(idText, -32020, "missing-revision"))
+    return None
+}
+
+// 取 params 下的子对象并序列化成文本，喂给核心的字符串入口。
+// 宿主不手写 JSON 拼接：键序由 stdx 决定，核心按 key 取值与顺序无关。
+func draftTextOf(body: String, key: String): String {
+    let request = JsonValue.fromStr(body).asObject()
+    if (let Some(p) <- request.get("params")) {
+        if (let Some(d) <- p.asObject().get(key)) {
+            return d.toString()
+        }
+    }
+    return ""
+}
+
+// 取 params 下的字符串数组（如 custom/import/* 的 items）
+func stringArrayFrom(body: String, key: String): Array<String> {
+    let out = ArrayList<String>()
+    let request = JsonValue.fromStr(body).asObject()
+    if (let Some(p) <- request.get("params")) {
+        if (let Some(a) <- p.asObject().get(key)) {
+            let arr = a.asArray()
+            var pos: Int64 = 0
+            while (let Some(item) <- arr.get(pos)) {
+                pos += 1
+                out.add(item.asString().getValue())
+            }
+        }
+    }
+    return out.toArray()
 }
 
 // 提供商与凭证的配置面：桌面模型页的每个动作都必须落到仓颉核心，渲染层不留第二份状态。
@@ -433,6 +476,105 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
             }
             arr += "]"
             emit(okFrame(idText, "{\"models\":${arr},\"summary\":\"${jsonEscapeText(ModelCatalog.summary(secret, ids))}\"}"))
+            return
+        }
+        // —— 第 3 层自定义模型与发现/导入（模型目录动词组）——
+        if (method == "custom/describe") {
+            emit(okFrame(idText, CustomModelRegistry.forUser().describe().asJson()))
+            return
+        }
+        if (method == "custom/upsert") {
+            let request = JsonValue.fromStr(body).asObject()
+            var draft: Option<JsonObject> = None
+            if (let Some(p) <- request.get("params")) {
+                if (let Some(d) <- p.asObject().get("draft")) {
+                    draft = Some(d.asObject())
+                }
+            }
+            if (draft.isNone()) {
+                emit(errFrame(idText, -32020, "settings-rejected"))
+                return
+            }
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                CustomModelRegistry.forUser().upsertObject(draft.getOrThrow(), rev)
+                emit(okFrame(idText, CustomModelRegistry.forUser().describe().asJson()))
+            }
+            return
+        }
+        if (method == "custom/remove" || method == "binding/remove") {
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                if (method == "custom/remove") {
+                    CustomModelRegistry.forUser().remove(jsonStr(body, "customId"), rev)
+                    emit(okFrame(idText, CustomModelRegistry.forUser().describe().asJson()))
+                } else {
+                    CustomModelRegistry.forUser().removeBinding(
+                        jsonStr(body, "customId"), jsonStr(body, "providerId"), jsonStr(body, "modelId"), rev)
+                    emit(okFrame(idText, CustomModelRegistry.forUser().describe().asJson()))
+                }
+            }
+            return
+        }
+        if (method == "binding/upsert" || method == "binding/reorder") {
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                let customs = CustomModelRegistry.forUser()
+                if (method == "binding/upsert") {
+                    customs.upsertBinding(jsonStr(body, "customId"), draftTextOf(body, "binding"),
+                        registry.describe(), rev)
+                } else {
+                    customs.reorderBindings(jsonStr(body, "customId"), stringArrayFrom(body, "keys"), rev)
+                }
+                emit(okFrame(idText, customs.describe().asJson()))
+            }
+            return
+        }
+        if (method == "custom/import/new" || method == "custom/import/into") {
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                let customs = CustomModelRegistry.forUser()
+                if (method == "custom/import/new") {
+                    let created = customs.importNewModels(stringArrayFrom(body, "items"), registry.describe(), rev)
+                    var arr = "["
+                    for (i in 0..created.size) {
+                        if (i > 0) { arr += "," }
+                        arr += "\"${jsonEscapeText(created[i])}\""
+                    }
+                    arr += "]"
+                    emit(okFrame(idText, "{\"created\":${arr},\"view\":${customs.describe().asJson()}}"))
+                } else {
+                    let added = customs.importInto(jsonStr(body, "customId"), stringArrayFrom(body, "items"),
+                        registry.describe(), rev)
+                    emit(okFrame(idText, "{\"added\":${added}}"))
+                }
+            }
+            return
+        }
+        if (method == "model/pull") {
+            // 拉取与「测试连接」同源：真的发一次 GET /models。坏响应不 catch——
+            // 必须由外层抛出去变成帧错误，绝不能报「0 个模型」。
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                let wanted = jsonStr(body, "providerId")
+                var baseUrl = ""
+                var reference = ""
+                for (p in registry.describe().providers) {
+                    if (p.id == wanted) {
+                        baseUrl = p.baseUrl
+                        reference = p.credentialRef
+                    }
+                }
+                if (baseUrl.size == 0) {
+                    emit(errFrame(idText, -32020, "provider-not-found"))
+                    return
+                }
+                let ids = ModelCatalog().fetch(baseUrl, resolveCredentialKey(reference))
+                registry.applyPulledModels(wanted, ids, rev)
+                emit(okFrame(idText, providerViewJson(registry.describe(), creds)))
+            }
+            return
+        }
+        if (method == "model/upstream/upsert") {
+            if (let Some(rev) <- revisionOrReject(body, idText)) {
+                registry.addUpstreamModel(jsonStr(body, "providerId"), jsonStr(body, "modelId"), rev)
+                emit(okFrame(idText, providerViewJson(registry.describe(), creds)))
+            }
             return
         }
     } catch (e: Exception) {
@@ -598,9 +740,9 @@ main(args: Array<String>) {
             } catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
             continue
         }
-        if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list") {
+        if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list" || method == "custom/describe" || method == "custom/upsert" || method == "custom/remove" || method == "binding/upsert" || method == "binding/remove" || method == "binding/reorder" || method == "model/pull" || method == "model/upstream/upsert" || method == "custom/import/new" || method == "custom/import/into") {
             // 在途轮次里只放行读面：改提供商或换凭据不该打断正在流式返回的这一轮
-            let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe"
+            let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe" || method == "custom/describe"
             if (turnBusy && !configReadSide) { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
             providerSurfaceRequest(method, body, idText)
             continue
@@ -627,7 +769,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
