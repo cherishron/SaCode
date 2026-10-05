@@ -35,6 +35,14 @@ let saCodeCatalog = [
         "openai-completions",
         "STEPFUN_API_KEY",
         ["step-5-preview", "step-3.5-flash"]
+    ),
+    CatalogEntry(
+        "sensenova",
+        "SenseNova",
+        "https://token.sensenova.cn/v1",
+        "openai-completions",
+        "SA_CODE_SENSENOVA_API_KEY",
+        []
     )
 ]
 
