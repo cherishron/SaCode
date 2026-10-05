@@ -10,6 +10,7 @@
 - `a77e6ba` feat(core)：applyStop——把 budget/round-limit/elapsed-limit/no-progress 四类限额停止经 `GoalService.block` 落 `goal-<reason>` 阻塞；run=true 与非限额理由不动目标、不空写事件。
 - `0d41f0e` feat(core)：GoalDriver 跨轮持续执行驱动——`run(maxRounds,maxElapsed,noProgressLimit,budgetExceeded,runRound)`；**只在轮次边界重读目标 phase**，故暂停/编辑/删除对下一轮生效、绝不强杀当前轮次；有证据才经 CAS 收口；限额停止经 applyStop 落阻塞防无限空转。`runRound`/`budgetExceeded` 由调用方注入，驱动不认识 inbox、不碰模型请求构造。
 - `238247f` feat(core)：GoalRunner——把 GoalDriver 接进真实模型工具循环（新文件，不改并发改动的 `model_agent.cj`）。一轮 = 一次 `ModelAgentLoop.run`；进展判据取「本轮干净执行了工具调用」（`settledToolCalls>0 && !interrupted && !cancelled`），完成证据由调用方传入的 `evidence(TurnResult)` 判定（核心不臆造完成），限额停止经 applyStop 落阻塞。即时补充送达沿用 `ModelAgentLoop` 内部既有 `claimStep`，本层不重复。
+- `34dfaaa` feat(core)：SystemPromptBuilder.build 增可选 `goal/rounds/elapsed`——`goal/change` 是 log-only（模型看不见目标正文），故目标必须由提示构造注入才能「每轮看到要追求什么」。active 注入 正文/状态/轮次/时长 + 「只有有实际证据才可提出完成」；暂停/受阻只展示不催促；无目标或墓碑逐字退回旧输出（`withNone==plain` 兼容反证）。sysprompt.cj/model_request.cj 当时均 clean，未与并发 prompt_enhance（自带请求、不碰这两个文件）冲突。
 
 ### 核心单测读数（固定流程：落盘→剥 ANSI→取最后一个 Summary）
 
