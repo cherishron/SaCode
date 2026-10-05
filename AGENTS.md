@@ -43,7 +43,7 @@ JS 扩展宿主：`cd extjs && node --test`
 ## 必须知道的约束
 - **会话日志是唯一真源**，消息/UI 都是投影。`append` 只在实例内可见，`flush` 才跨进程持久——不要把 `append` 当持久化。
 - 桌面渲染层受 CSP `script-src 'self'` 约束（禁 `unsafe-eval`）：必须用 Vue **runtime** 构建 + `h()` 写视图，运行时不能引模板编译器、模块加载器或 ES module（`file://` 下会被 CORS 拦）。第三方组件库若只有 ESM 形态（TinyVue 与 TinyRobot 都是），**只能在构建期折叠**成经典脚本，且必须把 `vue` 别名到已 vendor 的那一份 runtime——装进第二份 Vue 会让组件的响应式系统与应用的不是同一套。折叠产物还必须过反证式自检：无 `new Function`/`eval`、**无残留 `import(`**（TinyRobot 的 Markdown 路径本来对外部 `markdown-it`/`dompurify` 做动态 import，实测只引 Bubble/BubbleList/BubbleProvider 时那条路径被 tree-shaking 掉，才没有留下运行时模块加载）、无裸 `"vue"` 说明符、且接上 `globalThis.Vue`。改渲染层前读 `scripts/pack-vendor.mjs`、`scripts/pack-tinyvue.mjs` 与 `scripts/pack-tinyrobot.mjs` 顶部注释。
-- Electron IPC 面是按动作命名、逐字段校验的**有限**集合（`projection/userSend/toolsList/toolCall/approvalAsk/approvalAnswer/turnStart/turnPoll/turnCancel`），不提供“发任意方法”通道。审批凭据只能是工单号：`toolCall` 只收 `approvalId`，渲染层传自报审批字符串没有通路。增删通道要同步改 `preload.cjs` 与 `test/bridge.test.mjs`。
+- Electron IPC 面是按动作命名、逐字段校验的**有限**集合，**唯一权威是 `apps/desktop/preload.cjs` 里 `contextBridge.exposeInMainWorld` 的顶层 key**（2026-10-05 实测：提交态 **33** 条、工作区态 **42** 条；本文件此前那句只列了 9 条名字，是过期的历史清单，别拿它当分母，重测法见 `docs/superpowers/specs/2026-10-05-model-center-design.md` §9.2），不提供“发任意方法”通道。审批凭据只能是工单号：`toolCall` 只收 `approvalId`，渲染层传自报审批字符串没有通路。增删通道要同步改 `preload.cjs` 与 `test/bridge.test.mjs`。
 - 打包态宿主路径只能从 `process.resourcesPath` 解析；缺它要 fail-loud，**绝不回退 asar 内路径**（见 `apps/desktop/paths.cjs`）。
 - 宿主 exe 必须与全部依赖 DLL 同目录（靠 Windows 默认搜索序，不拼 PATH）。
 - `apps/desktop/test/bridge.test.mjs` 在仓库根使用 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
