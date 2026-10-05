@@ -1,5 +1,5 @@
 // 冻结 ui-settings-plugins / ui-settings-plugin-inventory 的页面结构；Host 状态只读。
-import { defineComponent, h, ref, computed, watch, onMounted, onBeforeUnmount, nextTick, useId, type PropType, type Component } from 'vue';
+import { defineComponent, h, ref, computed, watch, onBeforeUnmount, nextTick, useId, type PropType, type Component } from 'vue';
 import { builtinDescription } from './plugin-descriptions';
 export interface PluginEntry {
   moduleName: string; entryId: string | null; title?: string; description?: string; descriptionZhCN?: string; metadataError?: string;
@@ -24,15 +24,26 @@ export const Inventory = defineComponent({
   setup(props) {
     const snapshot = ref<Snapshot>({ entries: [], presets: [] }), status = ref<'loading' | 'error' | 'ready' | 'unconnected'>('unconnected');
     const query = ref(''), chosen = ref(''), expanded = ref<string | null>(null);
-    let generation = 0, disposed = false, off: (() => void) | undefined;
+    let generation = 0, binding = 0, disposed = false, off: (() => void) | undefined;
     const reload = async () => {
-      if (!props.adapter) return;
+      const adapter = props.adapter;
+      if (!adapter || disposed) return;
       const request = ++generation; status.value = 'loading';
-      try { const value = await props.adapter.list(); if (!disposed && request === generation) { snapshot.value = value; status.value = 'ready'; } }
+      try { const value = await adapter.list(); if (!disposed && request === generation) { snapshot.value = value; status.value = 'ready'; } }
       catch { if (!disposed && request === generation) status.value = 'error'; }
     };
-    onMounted(() => { off = props.adapter?.subscribe?.(() => { void reload(); }); void reload(); });
-    onBeforeUnmount(() => { disposed = true; generation++; off?.(); });
+    // 插件可晚绑定、替换和卸载；旧订阅及迟到响应都不得污染新提供者的清单。
+    const stopAdapterWatch = watch(() => props.adapter, adapter => {
+      const owner = ++binding; generation++;
+      const release = off; off = undefined; release?.();
+      snapshot.value = { entries: [], presets: [] }; chosen.value = ''; expanded.value = null;
+      status.value = adapter ? 'loading' : 'unconnected';
+      if (!adapter) return;
+      try { off = adapter.subscribe?.(() => { if (!disposed && owner === binding) void reload(); }); }
+      catch { status.value = 'error'; return; }
+      void reload();
+    }, { immediate: true, flush: 'sync' });
+    onBeforeUnmount(() => { disposed = true; binding++; generation++; stopAdapterWatch(); const release = off; off = undefined; release?.(); });
     const selected = computed(() => snapshot.value.presets.find(p => p.id === chosen.value) || snapshot.value.presets.find(p => p.isDefault) || snapshot.value.presets[0]);
     const normalized = computed(() => query.value.trim().toLocaleLowerCase());
     const button = (text: string, action: () => void, attrs: any = {}) => el('button', 'button', text, { type: 'button', onClick: action, ...attrs });
