@@ -25,6 +25,7 @@
 | 真模型往返 | `DSH_HOST='<win-unpacked>/resources/host/bin/dsh-host.exe' node --test test/real-provider-enhance.test.mjs` | `# tests 1` `# pass 1` `# fail 0`，**跑的是安装包内那份宿主**；断言回执模型 = 会话选中模型、增强文本非空且不等于草稿、保留「队列/插话」意图而不 invent 技术栈、投影里没有 assistant 消息、用量读数不低于回执 usage |
 | 开发态窗口 | `cd apps/desktop && npm run ui-smoke -- "--session-dir=D:\Project\sa\saai\sa-code\target\du1"` | rc=0，231 条 `UI OK`，0 条 `UI FAIL`，`UI_SMOKE PASS` |
 | 打包态窗口 | `cd apps/desktop/dist/electron/win-unpacked && ELECTRON_ENABLE_LOGGING=1 SACODE_SSE_FIXTURE='D:\Project\sa\saai\sa-code\scripts\sse-contract-server.cjs' ./SaCode.exe --ui-smoke --session-dir='D:\Project\sa\saai\sa-code\target\pu2'` | rc=0，231 条 `UI OK`，0 条 `UI FAIL`，`UI_SMOKE PASS`；`target/pu2/ui-smoke-report.json` 记 `{total:231, failed:0, passed:231}`。其中增强段 24 条断言逐条为绿，含「图标变回退」「Ctrl+Z 被应用接管」「继续编辑后 Ctrl+Z 交回输入框」「请求途中改过草稿，迟到结果不覆盖输入框」「加载态再点一次即取消」 |
+| 提交级取证 | 在仓库外另起一份 detached worktree 检出本批提交，`cd core && cjpm test` 与 `cd apps/host && cjpm build` | core rc=0，`Summary: TOTAL: 506`，PASSED 505，SKIPPED 1，FAILED 0，ERROR 0；host rc=0 且打印 `cjpm build success`。**上面那行 503 是本会话中途在工作区态测的**，其间隔壁会话又落了几条目标用例，落库后以提交级的 506 为准；两态都不许拿 0 输出或 rc=0 当通过 |
 
 ## 三、交付链对账
 
