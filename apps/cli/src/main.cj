@@ -15,6 +15,14 @@ func expect(label: String, got: Bool) {
     }
 }
 
+// 目标驱动自测用的轮次计数：闭包只捕获这个可变对象，避开捕获 var 的编译器限制。
+class CliRoundTick {
+    var n: Int64 = 0
+    func bump(): Unit {
+        n += 1
+    }
+}
+
 // CLI 交付面的三块：内置工具注册表（与桌面入口同一份 core 语义）、审批应答的三态判定、
 // 结构化输出。都是纯函数或就地构造，好让 headless 自测能直接断言而不靠标准输入赌时序。
 func builtinTools(): ToolRegistry {
@@ -182,8 +190,8 @@ func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal") {
+        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal]")
         return 64
     }
 
@@ -907,6 +915,70 @@ main(args: Array<String>) {
         removeIfExists(sp, recursive: false)
         removeIfExists("${sp}.lease", recursive: false)
         println("realstream\tcancelled=${sr.cancelled}\tdelivered=${sr.delivered}\ttext=${sr.text}\tusage=${sr.usage}\tfinish=${sr.finishReason}")
+    }
+
+    if (mode == "all" || mode == "goal") {
+        // 目标模式 CLI 一致性：与桌面共用同一份 core 目标引擎——生命周期 CAS、分隔符护栏、
+        // 崩溃恢复、跨轮驱动「没拿到证据不收口」。goal-cli.log 用后即删，不碰别的模式的日志。
+        let gp = "goal-cli.log"
+        removeIfExists(gp, recursive: false)
+        let glog = SessionLog(gp)
+        let gsvc = GoalService(glog)
+        let created = gsvc.create("复刻到底")
+        expect("goal 建立 active rev1 id=goal-1", created.phase == "active" && created.revision == Int64(1) && created.id == "goal-1")
+        // 陈旧 CAS：不改目标、不留事件（日志不谎称改过）。
+        let revBefore = gsvc.snapshot().revision
+        let evtBefore = glog.eventCount()
+        var staleMsg = ""
+        try {
+            gsvc.edit(Int64(0), "改写")
+            staleMsg = "accepted"
+        } catch (e: Exception) {
+            staleMsg = e.message
+        }
+        expect("goal 陈旧修订被拒且不留事件", staleMsg == "stale-goal-revision" && glog.eventCount() == evtBefore && gsvc.snapshot().revision == revBefore)
+        // 暂停→恢复：状态迁移与修订递增。
+        gsvc.pause(Int64(1))
+        let paused = gsvc.snapshot()
+        gsvc.resume(Int64(2))
+        let resumed = gsvc.snapshot()
+        expect("goal 暂停/恢复迁移", paused.phase == "paused" && resumed.phase == "active" && resumed.revision == Int64(3))
+        // 分隔符护栏：objective 含 `|` 在写入处被拒，revision 不进。
+        var delimMsg = ""
+        try {
+            gsvc.edit(Int64(3), "甲|乙")
+            delimMsg = "accepted"
+        } catch (e: Exception) {
+            delimMsg = e.message
+        }
+        expect("goal objective 含分隔符被拒", delimMsg == "bad-goal-content" && gsvc.snapshot().revision == Int64(3))
+        // 崩溃恢复：flush→重载，从 goal/change 条数重算 phase/revision。
+        let flushed = glog.flush()
+        let reload = SessionLog(gp)
+        let loaded = reload.load()
+        let reSnap = GoalService(reload).snapshot()
+        expect("goal 崩溃恢复 active rev3", flushed && loaded && reSnap.phase == "active" && reSnap.revision == Int64(3))
+        // 跨轮驱动：连续跑，第 2 轮才给证据 → 经 CAS 收口；goal/round 落 2 条。
+        let dsched = GoalScheduler(glog, { => Int64(0) })
+        let tick = CliRoundTick()
+        let dres = GoalDriver(dsched, gsvc).run(Int64(10), Int64(100000), Int64(0), { => false }, { =>
+            tick.bump()
+            RoundOutcome(true, tick.n >= Int64(2))
+        })
+        expect("goal 驱动连续跑到有证据收口", dres.stopReason == "completed" && dres.rounds == Int64(2) && gsvc.snapshot().phase == "complete")
+        expect("goal 驱动 goal/round 落 2 条 log-only", dsched.roundsDone() == Int64(2))
+        // 无证据撞轮数上限 → applyStop 落 goal-round-limit 阻塞，不空转。
+        let gp2 = "goal-cli-limit.log"
+        removeIfExists(gp2, recursive: false)
+        let llog = SessionLog(gp2)
+        let lsvc = GoalService(llog)
+        lsvc.create("拿不到证据")
+        let lsched = GoalScheduler(llog, { => Int64(0) })
+        let lres = GoalDriver(lsched, lsvc).run(Int64(2), Int64(100000), Int64(0), { => false }, { => RoundOutcome(true, false) })
+        let lsnap = lsvc.snapshot()
+        expect("goal 无证据撞轮数上限落阻塞", lres.stopReason == "round-limit" && lres.rounds == Int64(2) && lsnap.phase == "blocked" && lsnap.blockedReason == "goal-round-limit")
+        removeIfExists(gp, recursive: false)
+        removeIfExists(gp2, recursive: false)
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }
