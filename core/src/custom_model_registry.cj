@@ -145,6 +145,12 @@ public class CustomModelRecord {
             maxOutputTokens: maxOutputTokens, probeEnabled: probeEnabled,
             probeMaxPerDay: probeMaxPerDay)
     }
+    public func withBinding(b: BindingRecord): CustomModelRecord {
+        let next = ArrayList<BindingRecord>()
+        for (old in bindings) { next.add(old) }
+        next.add(b)
+        return withBindings(next.toArray())
+    }
 }
 
 public class CustomModelView {
@@ -425,6 +431,77 @@ public class CustomModelRegistry {
     private func parseBinding(text: String): BindingRecord {
         let obj = json(text)
         return parseOneBinding(obj)
+    }
+
+    // —— 两种导入操作（规格 §9.1）：各建一个新模型 vs 加入已有模型 ——
+
+    // 每个选中上游各建一个自定义模型，初始单绑定。新建入口**不预判能力**：
+    // 用户可能先建结构、后配供应商或补填价格，能力适配由 importInto（加入带
+    // requires 的已有模型）与 B2 调度过滤把守；这里拒了反而堵死「先建后配」。
+    // 幂等键是 (providerId, modelId) 稳定派生的自定义模型 id：同一个包重复
+    // 导入不重复创建，一条都没新建就不落事件。
+    public func importNewModels(items: Array<String>, providers: ProviderView, expectedRevision: Int64): Array<String> {
+        reload()
+        guardRevision(expectedRevision)
+        let created = ArrayList<String>()
+        for (key in items) {
+            let parts = splitKey(key)
+            let derived = "${parts[0]}-${parts[1]}"
+            // 派生不出合法 id 就整批拒：静默跳过会让用户以为导过了
+            checkStableId(derived)
+            if (find(derived).id.size > 0) { continue }
+            let bindings = ArrayList<BindingRecord>()
+            bindings.add(parseBinding(importedBindingJson(parts[0], parts[1], 0)))
+            let rec = CustomModelRecord(derived, parts[1], "", true, "general", ["text-output"],
+                bindings.toArray(), "weighted")
+            commit("custom/upsert", rec.toJson(ownerId: owner))
+            created.add(derived)
+        }
+        return created.toArray()
+    }
+
+    // 加入已有自定义模型：先过能力适配与重复绑定校验，整批原子——
+    // 半途失败留下「一半已导入」会让用户重试时撞唯一键。
+    // 返回本次真正新增的绑定条数；一条都没加是成功，但不落事件。
+    public func importInto(customId: String, items: Array<String>, providers: ProviderView, expectedRevision: Int64): Int64 {
+        reload()
+        guardRevision(expectedRevision)
+        let rec = find(customId)
+        if (rec.id.size == 0) {
+            throw Exception("settings-rejected")
+        }
+        var built = rec
+        var added: Int64 = 0
+        for (key in items) {
+            let parts = splitKey(key)
+            if (hasBinding(built, parts[0], parts[1])) { continue }
+            let b = parseBinding(importedBindingJson(parts[0], parts[1], nextOrder(built)))
+            if (!fitsRequirements(built, b, providers)) {
+                throw Exception("settings-rejected")
+            }
+            built = built.withBinding(b)
+            added += 1
+        }
+        if (added == 0) { return 0 }
+        commit("custom/upsert", built.toJson(ownerId: owner))
+        return added
+    }
+
+    private static func nextOrder(rec: CustomModelRecord): Int64 {
+        var top: Int64 = -1
+        for (b in rec.bindings) {
+            if (b.order > top) { top = b.order }
+        }
+        return top + 1
+    }
+
+    // 导入 = 「候选进入调度」，不是「替用户决定价格」：币种留空 = 未定价，
+    // 四档费率全 -1，账本侧对应用 待核算 状态承接（§7.1）。
+    private static func importedBindingJson(providerId: String, modelId: String, order: Int64): String {
+        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
+            + "\"enabled\":true,\"order\":${order},\"weight\":1,"
+            + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,"
+            + "\"priceVersion\":0,\"currency\":\"\"}"
     }
 
     private func guardRevision(expectedRevision: Int64): Unit {
