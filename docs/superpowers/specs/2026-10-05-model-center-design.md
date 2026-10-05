@@ -399,10 +399,24 @@
 
 ### 9.2 桌面 IPC
 
-基线实测（本批直读 `apps/desktop/preload.cjs`）：当前暴露 **32 条通道**——
+**基线实测（本批直读 `apps/desktop/preload.cjs`）：登记时提交态 **32 条通道**；2026-10-05 在当前 HEAD 复测为 **33 条**（多的那条是 `attachmentImageRead`，附件线由另一批落库），工作区态已 **42 条**（在飞的 goal-control / prompt-enhance 一线又加 9 条：`goalDescribe,goalCreate,goalEdit,goalPause,goalResume,goalClear,promptEnhance,promptPoll,promptCancel`）——**这个数会随别的批次漂**，本批任何「N→N+k」都以开工当日重测为准，重测法见下面代码块**：`exposeInMainWorld` 的对象字面量里有嵌套函数体，非配对的花括号会在第一个 `}` 处截断，本次第一版就这么把 33 数成了 2，必须按「深度 1 处的顶层 `key:`」数**——
 `projection,userSend,attachmentUpload,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`（按 `preload.cjs` 里的出现顺序原样列出），`apps/desktop/test/bridge.test.mjs` 现有 **41** 条 `test()`。
 
-> **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 23 条。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线；AGENTS.md 那句要么按实测更正，要么改成「以 preload.cjs 为准」。
+> **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 **24** 条（HEAD 33 条 vs 那句里的 9 条）。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线。
+
+重测通道数（HEAD 态与工作区态各数一次；**只认 `exposeInMainWorld` 块里缩进两空格的顶层 key**）：
+
+```bash
+cd /d/Project/sa/saai/sa-code
+for SRC in apps/desktop/preload.cjs ; do
+  awk '/contextBridge.exposeInMainWorld/{f=1} f&&/^  [A-Za-z][A-Za-z0-9_]*:/{print $1}' "$SRC" | tr -d ' :' | sort -u | wc -l
+done
+git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{f=1} f&&/^  [A-Za-z][A-Za-z0-9_]*:/{print $1}' | tr -d ' :' | sort -u | wc -l
+```
+
+> 这条命令是实测跑通的：给出 **HEAD 33 / 工作区 42**。反面教训记一句——**别拿「正则找冒号前标识符」的简易办法数**：本批先后试出 2、29、37 三个错数，前一个是花括号不配对被嵌套函数体截断，后一个是字符扫描时把 `(`、`[` 与字符串里的括号一起算了深度。数完必须做一次**名单级对账**（把上面数出的集合与本文那份通道名清单做双向差集），只核总数核不出漏数。
+
+本批与在飞那一线**命名不冲突**：`AGENTS.md` 那句已按实测改成「以 `preload.cjs` 为准」（同批），B1 新增通道全部走 `custom*`/`binding*`/`modelPull` 一族，与 `goal*`/`prompt*` 不重叠。
 
 **桌面模型页已存在且已接线**（`apps/desktop/renderer/pages/models-page.ts` 179 行：列表、编辑草稿、拉取候选弹窗、密钥输入带 `credentialWritable` 只读态、删除确认；`model-select.ts` 69 行是任务输入侧的选择器）。所以 B1 在渲染层是**扩展**不是新建。但本批读出一个必须先收的真缺陷：
 
