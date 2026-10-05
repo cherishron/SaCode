@@ -167,12 +167,68 @@ process.on('SIGINT', () => process.exit(0));
 process.stdin.resume();
 process.stdin.on('data', () => process.exit(0));
 process.stdin.on('end', () => process.exit(0));
+// openssl 定位：SSE_OPENSSL 显式指定优先；其次从 PATH 上 git 的安装根推导
+// （Git for Windows 自带 openssl，但它自己的 bin 目录按默认安装不进 PATH，
+//  本机实测 `where openssl` 为空而 `D:\Program Files\Git\mingw64\bin\openssl.exe` 存在）；
+// 再次扫一遍标准安装位置。仓颉侧 launch 传不了子进程环境变量，所以这层自愈
+// 必须落在夹具内部——否则 9 条网络用例只能靠人工先设变量，否则整组 ERROR。
+function resolveOnPath(name) {
+  try {
+    const probe = process.platform === 'win32' ? 'where' : 'which';
+    const out = execFileSync(probe, [name], { encoding: 'utf8', timeout: 5000 });
+    const first = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+    return first || null;
+  } catch (_) { return null; }
+}
+
+function opensslCandidates() {
+  const list = [];
+  if (process.env.SSE_OPENSSL) list.push(process.env.SSE_OPENSSL);
+  if (process.platform === 'win32') {
+    try {
+      const where = execFileSync('where', ['git'], { encoding: 'utf8', timeout: 5000 });
+      for (const line of where.split(/\r?\n/)) {
+        const found = line.trim();
+        if (!found) continue;
+        // <root>\cmd\git.exe 与 <root>\bin\git.exe 都上推两级拿到安装根
+        const root = path.resolve(path.dirname(found), '..');
+        list.push(path.join(root, 'mingw64', 'bin', 'openssl.exe'));
+        list.push(path.join(root, 'usr', 'bin', 'openssl.exe'));
+      }
+    } catch (_) { /* git 不在 PATH 上就只走标准位置 */ }
+    list.push(
+      'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe',
+      'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe',
+      'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+      path.join(os.homedir(), 'scoop', 'apps', 'openssl', 'current', 'bin', 'openssl.exe'),
+      'C:\\ProgramData\\chocolatey\\bin\\openssl.exe',
+    );
+  }
+  return list;
+}
+
+function findOpenssl() {
+  for (const candidate of opensslCandidates()) {
+    if (fs.existsSync(candidate)) return { command: candidate, source: candidate };
+  }
+  // 裸名字（PATH 上的 openssl）最后才认：先查它是否真的解析得到，
+  // 解析不到就返回 null，让调用方拿到「找不到」而不是一句 spawn ENOENT。
+  const onPath = resolveOnPath('openssl');
+  if (onPath) return { command: onPath, source: 'PATH' };
+  return null;
+}
+
 (async () => {
   try {
-    const openssl = process.env.SSE_OPENSSL || 'openssl';
-    execFileSync(openssl, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'key.pem'), '-out', path.join(dir, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost'], { stdio: 'ignore', timeout: 10000 });
+    const openssl = findOpenssl();
+    if (!openssl) throw new Error('openssl 未找到（SSE_OPENSSL 未设，PATH 与常见安装位置都没有）');
+    execFileSync(openssl.command, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'key.pem'), '-out', path.join(dir, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost'], { stdio: 'ignore', timeout: 10000 });
     const secure = https.createServer({ key: fs.readFileSync(path.join(dir, 'key.pem')), cert: fs.readFileSync(path.join(dir, 'cert.pem')) }, handler);
     await track(target); await track(plain); await track(secure);
     process.stdout.write(`${plain.address().port}\n${secure.address().port}\n`);
-  } catch (_) { process.stderr.write('本机 SSE 夹具启动失败（需 openssl，或设置 SSE_OPENSSL）\n'); process.exit(1); }
+  } catch (e) {
+    const why = e && e.message ? e.message : String(e);
+    process.stderr.write(`本机 SSE 夹具启动失败：${why}（可用 SSE_OPENSSL 指定 openssl 可执行文件）\n`);
+    process.exit(1);
+  }
 })();
