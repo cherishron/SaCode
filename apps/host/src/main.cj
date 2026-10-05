@@ -645,20 +645,26 @@ main(args: Array<String>) {
             let tailFlag = if (target.isTruncatedTail()) { "true" } else { "false" }
             // 消息正文一并交出：渲染层只能显示核心投影，不允许自己再拼一份历史。
             // 只给尾部 64 条，帧大小有界；计数仍是全量投影计数。
-            let msgs = target.deriveMessages()
+            var msgs = ArrayList<MessageProjectionRow>()
+            try { msgs = projectMessageRows(target.snapshotEvents().toArray()) }
+            catch (_: Exception) { emit(errFrame(idText, -32002, "message-replay-rejected")); continue }
             let total = msgs.size
             let from = if (total > 64) { total - 64 } else { Int64(0) }
             var marr = "["
+            var rows = "["
             var mi = from
             while (mi < total) {
                 if (mi > from) {
                     marr += ","
+                    rows += ","
                 }
-                marr += "\"${jsonEscapeText(msgs[mi])}\""
+                marr += "\"${jsonEscapeText(msgs[mi].line())}\""
+                rows += msgs[mi].toJson()
                 mi += 1
             }
             marr += "]"
-            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr},\"todos\":${todos}}"))
+            rows += "]"
+            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr},\"messageRows\":${rows},\"todos\":${todos}}"))
             continue
         }
         if (method == "session/append") {

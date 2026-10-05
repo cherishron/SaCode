@@ -14,6 +14,16 @@ const sandbox = { window: {} };
 runInNewContext(readFileSync(FILE, "utf8"), sandbox);
 const F = sandbox.window.DshMsgFold;
 
+test('附件与事件身份来自对应投影行，重复正文和尾部裁切不混用',()=>{
+ const attachment={attachmentId:'sha256:a',kind:'file',name:'说明.txt',bytes:3};
+ const rows=[{id:'event-4',attachments:[attachment]},{id:'event-8',attachments:[]}];
+ const bubbles=F.toBubbleMessages(['user/message: 同文','user/message: 同文'],rows);
+ assert.equal(bubbles[0].id,'event-4');assert.equal(bubbles[1].id,'event-8');
+ assert.equal(bubbles[0].attachments[0],attachment);assert.equal(bubbles[1].attachments.length,0);
+ assert.equal(F.toBubbleMessages(['user/message: 同文'],rows.slice(1))[0].id,'event-8');
+ assert.equal(F.latestReadPreview(['tool/result: ok-read:a.txt:1\nx'],[{id:'event-9'}]).messageId,'event-9');
+});
+
 test("读取快照从最新成功记录恢复并保留 Windows 路径与正文", () => {
   const preview = F.latestReadPreview([
     "tool/result: ok-read:old.txt:1\nx",

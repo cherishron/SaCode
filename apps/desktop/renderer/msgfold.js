@@ -22,7 +22,7 @@ window.DshMsgFold = (function () {
     return { role: line.slice(0, i), text: line.slice(i + 1).replace(/^ /, "") };
   }
 
-  function toBubbleMessages(lines) {
+  function toBubbleMessages(lines, rows) {
     var out = [];
     for (var i = 0; i < lines.length; i++) {
       var parts = splitMsg(lines[i]);
@@ -33,7 +33,8 @@ window.DshMsgFold = (function () {
           break;
         }
       }
-      out.push({ id: "m" + i, role: role, content: parts.text, sourceRole: parts.role });
+      var metadata = rows && rows[i];
+      out.push({ id: metadata ? metadata.id : "m" + i, role: role, content: parts.text, sourceRole: parts.role, attachments: metadata ? metadata.attachments : [] });
     }
     return out;
   }
@@ -56,7 +57,7 @@ window.DshMsgFold = (function () {
 
   // 只从日志投影的成功读取记录提取快照，路径可能含 Windows 盘符和冒号。
   // 头部以最后的字节数结尾；正文保留原始换行和字符，不作为 HTML 解释。
-  function latestReadPreview(lines) {
+  function latestReadPreview(lines, rows) {
     for (var i = lines.length - 1; i >= 0; i--) {
       var parts = splitMsg(lines[i]);
       if (parts.role !== "tool/result" || parts.text.indexOf("ok-read:") !== 0) continue;
@@ -64,7 +65,7 @@ window.DshMsgFold = (function () {
       if (newline < 0) continue;
       var header = /^(.*):(\d+)$/.exec(parts.text.slice(8, newline));
       if (!header || !header[1] || !Number.isSafeInteger(Number(header[2]))) continue;
-      return { path: header[1], bytes: Number(header[2]), text: parts.text.slice(newline + 1), messageId: "m" + i };
+      return { path: header[1], bytes: Number(header[2]), text: parts.text.slice(newline + 1), messageId: rows && rows[i] ? rows[i].id : "m" + i };
     }
     return null;
   }

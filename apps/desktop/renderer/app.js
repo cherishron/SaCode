@@ -91,6 +91,15 @@ const TextBubble = {
           ? h(window.SaCodeMarkdown.Body, { text, "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state })
           : h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, expanded ? text : plan.shown),
       ];
+      if (m.attachments?.length) {
+        children.push(h('div',{class:'attachments-rail history-attachments',role:'group','aria-label':'消息附件'},m.attachments.map((a,index)=>h('article',{class:'attachments-fileCard','data-history-attachment':a.attachmentId,'data-attachment-kind':a.kind,key:index},[
+          h('span',{class:'attachments-fileIcon','aria-hidden':true},a.kind==='image'?'▧':'▤'),
+          h('span',{class:'attachments-fileBody'},[
+            h('span',{class:'attachments-name',title:a.name},a.name||(a.kind==='image'?'图片附件':'文件附件')),
+            h('span',{class:'attachments-meta'},a.kind==='image'?`${a.width} × ${a.height} · ${a.bytes} B · 图片引用`:`${a.bytes} B`),
+          ]),
+        ]))));
+      }
       if (plan.folded) {
         children.push(
           h(
@@ -122,8 +131,8 @@ createApp({
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
     const scrollSession = ref(0), followingTail = ref(true);
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
-    const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || []));
-    const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || []));
+    const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || [], proj.value.messageRows));
+    const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || [], proj.value.messageRows));
     const tools = ref([]);
     const detailName = ref("");
     const sideTab = ref("inspect");
