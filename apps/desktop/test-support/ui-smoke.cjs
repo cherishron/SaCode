@@ -71,7 +71,7 @@ async function uiSmoke(context) {
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
   // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
-  const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
+  const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList','goalDescribe','goalCreate','goalEdit','goalPause','goalResume','goalClear'];
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.dsh||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
@@ -805,6 +805,9 @@ async function uiSmoke(context) {
     note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'")), "加载态再点一次即取消，图标回到增强");
     note(await enhValue() === "要被取消的另一条", "取消后草稿保持原样");
 
+    // 上一笔走的是「加载态再点一次即取消」：取消只是发请求，宿主那一槽要等它自己结算才腾出来。
+    // 不等就立刻再发，撞上的 -32001 会被读成「图标没进加载态」——那是夹具时序红，不是产品红。
+    note(await waitFor(() => bridge.request("prompt/poll").then((r) => r.running === false), 80), "取消结算后宿主槽位已腾出，才发下一笔");
     // 换会话也要作废在途那一笔（目标 §四「切换会话…废弃对应的迟到结果」）。
     // 三条各钉一个失效面：迟到结果不许落进别的会话草稿、图标不许卡在加载态、宿主那一槽必须腾出来。
     await enhConfigure("/cancel");
