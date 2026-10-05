@@ -1057,6 +1057,7 @@ func randomInstallationId(): String {
 - `init(file: String, owner!: String = "")`；`forUser()` 传 `Principal.forUser().installationId`。
 - `commit` 的事件 data 外层多写一个 `"ownerId":"${owner}"` 字段。**只有新文档面带它**——`providers.log` 是既有的第 1/2 层文档，本批不动它的落盘形态，否则会把别人已有的历史盘读坏。
 - `reload()` 的事件循环开头加：`if (owner.size > 0 && fieldOfText(ev.data, "ownerId") != owner) { continue }`——**别人的条目当不存在，不报错也不合并**。
+- **这条过滤正是规格 §2.4 对偶的落点，本批要顺手把形状留对**：`ownerId` **只能**来自构造参数（`forUser()` 传本机 `installationId`），**不许**提供「从入参/data 里读一个 owner 覆盖」的通路。否则 B5 的导入若原样搬运包内 `ownerId`，新机器上 `describe()` 得到**空集**而事件确实躺在日志里——文档面 grep 得到、调度面看不见、没有任何本批断言会红（规格断言 77/78 管的是那一批，但形状是本批定的）。判据按形态核，不出假用例：`commit`/`upsert` 的参数表里**不得出现** owner 类入参，`ownerId` 事件字段的值必须与构造参数逐字相等——本批既没有那个入参，就不许写一条「传入外来 owner 被忽略」的用例来冒充覆盖（它测的是不存在的通路）。
 
 用例追加到 `custom_model_registry_test.cj`（本任务计数因此从 4 条变 5 条，Step 4 期望值随之 +1）：
 
