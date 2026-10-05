@@ -52,6 +52,12 @@ public class BindingRecord {
             + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
             + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
     }
+    // 复制修改：class 字段是 let，逐字段重建（同 ProviderRecord 的 withX 系列）
+    public func withOrder(next: Int64): BindingRecord {
+        return BindingRecord(providerId, modelId, enabled, next, weight,
+            priceInMicro, priceOutMicro, priceCacheReadMicro, priceCacheWriteMicro,
+            priceVersion, currency)
+    }
 }
 
 public class CustomModelRecord {
@@ -129,6 +135,15 @@ public class CustomModelRecord {
             + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
             + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "false" }},"
             + "\"probeMaxPerDay\":${probeMaxPerDay}}"
+    }
+    // 复制修改：绑定数组换了就重建记录，其它十八个字段原样带着
+    public func withBindings(next: Array<BindingRecord>): CustomModelRecord {
+        return CustomModelRecord(id, name, description, enabled, category, requires, next, mode,
+            sortOrder: sortOrder, params: params, modalityBudget: modalityBudget,
+            dailyTokens: dailyTokens, monthlyTokens: monthlyTokens,
+            dailyAmountMicro: dailyAmountMicro, monthlyAmountMicro: monthlyAmountMicro,
+            maxOutputTokens: maxOutputTokens, probeEnabled: probeEnabled,
+            probeMaxPerDay: probeMaxPerDay)
     }
 }
 
@@ -239,6 +254,179 @@ public class CustomModelRegistry {
         return CustomModelRecord("", "", "", false, "", [], [], "weighted")
     }
 
+    // —— 绑定写面：保存时就拒，不等调度器运行时静默跳过 ——
+
+    public func upsertBinding(customId: String, bindingJson: String, providers: ProviderView, expectedRevision: Int64): Unit {
+        reload()
+        guardRevision(expectedRevision)
+        let rec = find(customId)
+        if (rec.id.size == 0) {
+            throw Exception("settings-rejected")
+        }
+        let b = parseBinding(bindingJson)
+        // 同一 (providerId, modelId) 不得重复绑定：键是实例，不是品牌——
+        // deepseek-a 与 deepseek-b 各绑一次是号池的正确形态
+        if (hasBinding(rec, b.providerId, b.modelId)) {
+            throw Exception("settings-rejected")
+        }
+        if (!fitsRequirements(rec, b, providers)) {
+            throw Exception("settings-rejected")
+        }
+        if (Int64(rec.bindings.size) + 1 > 32) {
+            throw Exception("settings-rejected")
+        }
+        let next = ArrayList<BindingRecord>()
+        for (old in rec.bindings) { next.add(old) }
+        next.add(b)
+        commit("custom/upsert", rec.withBindings(next.toArray()).toJson(ownerId: owner))
+    }
+
+    public func removeBinding(customId: String, providerId: String, modelId: String, expectedRevision: Int64): Unit {
+        reload()
+        guardRevision(expectedRevision)
+        let rec = find(customId)
+        if (rec.id.size == 0) {
+            throw Exception("settings-rejected")
+        }
+        var found = false
+        let next = ArrayList<BindingRecord>()
+        for (b in rec.bindings) {
+            if (b.providerId == providerId && b.modelId == modelId) {
+                found = true
+            } else {
+                next.add(b)
+            }
+        }
+        if (!found) {
+            throw Exception("settings-rejected")
+        }
+        commit("custom/upsert", rec.withBindings(next.toArray()).toJson(ownerId: owner))
+    }
+
+    // 重排必须整条给全：少给一段比不重排更糟（半途状态没法解释），
+    // 键集与现存逐一对应才落盘，order 列按给定顺序重写 0..n-1。
+    public func reorderBindings(customId: String, orderedKeys: Array<String>, expectedRevision: Int64): Unit {
+        reload()
+        guardRevision(expectedRevision)
+        let rec = find(customId)
+        if (rec.id.size == 0) {
+            throw Exception("settings-rejected")
+        }
+        if (Int64(orderedKeys.size) != Int64(rec.bindings.size)) {
+            throw Exception("settings-rejected")
+        }
+        var used = Array<Bool>(rec.bindings.size, repeat: false)
+        let out = ArrayList<BindingRecord>()
+        for (key in orderedKeys) {
+            let parts = splitKey(key)
+            var pick = Int64(-1)
+            var i = Int64(0)
+            while (i < Int64(rec.bindings.size)) {
+                let b = rec.bindings[i]
+                if (!used[i] && b.providerId == parts[0] && b.modelId == parts[1]) {
+                    pick = i
+                }
+                i += 1
+            }
+            if (pick < 0) {
+                throw Exception("settings-rejected")
+            }
+            used[pick] = true
+            out.add(rec.bindings[pick].withOrder(Int64(out.size)))
+        }
+        commit("custom/upsert", rec.withBindings(out.toArray()).toJson(ownerId: owner))
+    }
+
+    // 供应商删了要显示「供应商已关闭/已删除」，不静默丢配置：
+    // dangling 不是拒绝，是读面与 B2 过滤链的输入。
+    public func isDangling(b: BindingRecord, providers: ProviderView): Bool {
+        for (p in providers.providers) {
+            if (p.id == b.providerId) { return false }
+        }
+        return true
+    }
+
+    private func fitsRequirements(rec: CustomModelRecord, b: BindingRecord, providers: ProviderView): Bool {
+        if (isDangling(b, providers)) { return false }
+        let spec = providerModel(b.providerId, b.modelId, providers)
+        // unknown 不等于满足：不认识的能力不投放（§2.2）
+        if (spec.availability != "available") { return false }
+        // requires 里混着两类词，满足路径不同，不能都塞给 supports：
+        //   能力位（tools/stream/structured-output/image-output）→ supports 登记；
+        //   模态（text-output）→ outputModalities 含 text。
+        // 把模态词也当 supports 查是死路——"text-output" 不是合法 supports 值，
+        // 任何 requires 含 text-output 的模型都永远绑不上，能力适配会退化成空转。
+        for (need in rec.requires) {
+            if (need == "text-output") {
+                if (!hasFlag(spec.outputModalities, "text")) { return false }
+            } else if (!spec.hasCapability(need)) {
+                return false
+            }
+        }
+        if (hasFlag(rec.requires, "image-output") && !hasFlag(spec.outputModalities, "image")) {
+            return false
+        }
+        return true
+    }
+
+    // 找不到上游模型时返回 availability=unknown 的空 spec：
+    // 空值不特殊放行，与「unknown 不等于满足」同一条纪律。
+    private static func providerModel(providerId: String, modelId: String, providers: ProviderView): ModelSpec {
+        for (p in providers.providers) {
+            if (p.id == providerId) {
+                for (m in p.models) {
+                    if (m.id == modelId) { return m }
+                }
+            }
+        }
+        return ModelSpec("", "", "", "", false)
+    }
+
+    private static func hasBinding(rec: CustomModelRecord, providerId: String, modelId: String): Bool {
+        for (b in rec.bindings) {
+            if (b.providerId == providerId && b.modelId == modelId) { return true }
+        }
+        return false
+    }
+
+    private static func hasFlag(list: Array<String>, value: String): Bool {
+        for (v in list) {
+            if (v == value) { return true }
+        }
+        return false
+    }
+
+    // 只按第一个 '/' 切，且只允许一段斜线：step/、/m-a、a/b/c 都拒
+    private static func splitKey(key: String): Array<String> {
+        let bs = key.toArray()
+        var slash = Int64(-1)
+        var i = Int64(0)
+        while (i < Int64(bs.size)) {
+            if (bs[i] == 47) { slash = i; break }
+            i += 1
+        }
+        if (slash <= 0 || slash >= Int64(bs.size) - 1) {
+            throw Exception("settings-rejected")
+        }
+        var j = slash + 1
+        while (j < Int64(bs.size)) {
+            if (bs[j] == 47) { throw Exception("settings-rejected") }
+            j += 1
+        }
+        let head = ArrayList<Byte>()
+        let tail = ArrayList<Byte>()
+        i = Int64(0)
+        while (i < slash) { head.add(bs[i]); i += 1 }
+        i = slash + 1
+        while (i < Int64(bs.size)) { tail.add(bs[i]); i += 1 }
+        return [String.fromUtf8(head.toArray()), String.fromUtf8(tail.toArray())]
+    }
+
+    private func parseBinding(text: String): BindingRecord {
+        let obj = json(text)
+        return parseOneBinding(obj)
+    }
+
     private func guardRevision(expectedRevision: Int64): Unit {
         if (expectedRevision >= 0 && expectedRevision != revision) {
             throw Exception("settings-conflict")
@@ -345,8 +533,26 @@ public class CustomModelRegistry {
         var pos: Int64 = 0
         while (let Some(item) <- arr.get(pos)) {
             pos += 1
-            let o = item.asObject()
-            let providerId = textField(o, "providerId")
+            out.add(parseOneBinding(item.asObject()))
+        }
+        // 去重在这里做：parseOneBinding 是单条判据，跨条一致性是本层的规则
+        var i = Int64(0)
+        while (i < Int64(out.size)) {
+            var j = Int64(i + 1)
+            while (j < Int64(out.size)) {
+                if (out[i].providerId == out[j].providerId && out[i].modelId == out[j].modelId) {
+                    throw Exception("settings-rejected")
+                }
+                j += 1
+            }
+            i += 1
+        }
+        return out.toArray()
+    }
+
+    // 单条绑定判据：唯一键查重、能力适配、写侧都走它——一份判据两个入口
+    private static func parseOneBinding(o: JsonObject): BindingRecord {
+        let providerId = textField(o, "providerId")
             let modelId = textField(o, "modelId")
             if (providerId.size == 0 || modelId.size == 0) {
                 throw Exception("settings-rejected")
@@ -359,13 +565,6 @@ public class CustomModelRegistry {
             let weight = intField(o, "weight", 1)
             if (weight < 1 || weight > 1000) {
                 throw Exception("settings-rejected")
-            }
-            // 同一 (providerId, modelId) 不得重复绑定：键是实例，不是品牌——
-            // deepseek-a 与 deepseek-b 各绑一次是号池的正确形态
-            for (seen in out) {
-                if (seen.providerId == providerId && seen.modelId == modelId) {
-                    throw Exception("settings-rejected")
-                }
             }
             let priceInMicro = priceField(o, "priceInMicro")
             let priceOutMicro = priceField(o, "priceOutMicro")
@@ -380,11 +579,9 @@ public class CustomModelRegistry {
             if (currency.size > 0 && !isCurrencyCode(currency)) {
                 throw Exception("settings-rejected")
             }
-            out.add(BindingRecord(providerId, modelId, enabled, order, weight,
+            return BindingRecord(providerId, modelId, enabled, order, weight,
                 priceInMicro, priceOutMicro, priceCacheReadMicro, priceCacheWriteMicro,
-                priceVersion, currency))
-        }
-        return out.toArray()
+                priceVersion, currency)
     }
 
     // 币种码：3 位大写字母；空串 = 未定价（导入时用户还没填价，不凭空造单价）
