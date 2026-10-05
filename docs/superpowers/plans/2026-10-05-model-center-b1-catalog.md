@@ -8,7 +8,7 @@
 
 **Tech Stack:** 仓颉 cjc/cjpm **1.1.3**（cjnative，target `x86_64-w64-mingw32`）；`stdx.encoding.json`；`std.unittest`；桌面侧 Node ≥18 + Electron + Vue **runtime**（`h()` 手写，无模板编译器）。
 
-**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46（41、46 是 2026-10-05 覆盖核查后补进本批的：前者钉「跨币种不许用统一单价抹平」，后者钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」）。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
+**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46、56。这三条是后补的：**41** 钉「跨币种不许用统一单价抹平」，**46** 钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」，**56** 钉「同一供应商能加多份实例」（2026-10-05 用户澄清号池需求后新增，规格 §2.1 实例语义；现状 `addFromCatalog` 对已存在 id 直接 `settings-rejected`，等于「一个品牌只能加一份」，本批要改掉）。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
 
 ## Global Constraints
 
@@ -315,15 +315,15 @@ git commit -m "feat(core): 上游模型登记能力面，缺字段一律 unknown
 
 ---
 
-## Task 2: `ProviderRecord` 的 `sortOrder` / `enabled` / `transport`
+## Task 2: `ProviderRecord` 的 `sortOrder` / `enabled` / `transport` + 供应商实例池语义
 
 **Files:**
-- Modify: `core/src/provider_registry.cj:79-108`（`ProviderRecord`）、`:329-365`（`parseRecordObject`）、`:109-128`（`ProviderView.asJson`）、`:149-200`（回放）、新增 `provider_enabled_test.cj`
+- Modify: `core/src/provider_registry.cj:79-108`（`ProviderRecord`）、`:329-365`（`parseRecordObject`）、`:109-128`（`ProviderView.asJson`）、`:149-200`（回放）、`addFromCatalog`（降为「按目录模板建一份新实例」，用符号锚点定位，行号会漂）、新增 `provider_enabled_test.cj`
 - Test: `core/src/provider_enabled_test.cj`（新建）
 
 **Interfaces:**
 - Consumes: Task 1 的 `enumField`。
-- Produces: `ProviderRecord` 新字段 `sortOrder: Int64`、`enabled: Bool`、`transport: String`（`direct` | `relay`）；`public func setSortOrder(id: String, order: Int64, expectedRevision: Int64): Unit`、`public func setEnabled(id: String, enabled: Bool, expectedRevision: Int64): Unit`（各自落一条事件，**不重写整条记录**）；事件类型 `provider/sort`、`provider/enabled`。
+- Produces: `ProviderRecord` 新字段 `sortOrder: Int64`、`enabled: Bool`、`transport: String`（`direct` | `relay`）；`public func setSortOrder(id: String, order: Int64, expectedRevision: Int64): Unit`、`public func setEnabled(id: String, enabled: Bool, expectedRevision: Int64): Unit`（各自落一条事件，**不重写整条记录**）；事件类型 `provider/sort`、`provider/enabled`；再加 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): String`（返回**新建实例的 id**，同一条目录项可反复调用，每次是一份独立实例、独立 `credentialRef`）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -396,7 +396,7 @@ func unknownTransportIsRejected() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t2.log 2>&1; echo "rc=$?"
 ```
 
-Expected：编译期红在 `setEnabled` / `setSortOrder` / `enabled` 三个未声明符号上。
+Expected：编译期红在 `setEnabled` / `setSortOrder` / `enabled` 三个未声明符号上。（Step 5b 的三条用例写完后会多一个未声明符号 `addInstanceFromCatalog`——本任务的红灯分两段，两段都只允许红在「未声明」这一类上，出现别的错误形态就按语言坑处理，不许顺手改用例。）
 
 - [ ] **Step 3: 加字段与「缺省为真」的读取器**
 
@@ -508,13 +508,92 @@ func sortRecords(src: Array<ProviderRecord>): Array<ProviderRecord> {
 
 `setSortOrder` / `provider/sort` 同形（`withSortOrder`）。`withX` 系列是 `ProviderRecord` 上的复制方法——仓颉的 `class` 字段是 `let`，逐字段重建新实例即可，**不要改成 `var`**（可变共享记录会让回放视图不安全）。
 
+- [ ] **Step 5b: 供应商实例池语义（2026-10-05 用户澄清后新增；规格 §2.1、断言 56）**
+
+号池的全部前提就一句话：**第 1 层的唯一键是实例，不是品牌**。用户要把同一个供应商的两把密钥（两个账号）都配进来，让 §4 的轮询在实例之间转。现状做不到——`addFromCatalog` 里 `find(id).id.size > 0` 就抛 `settings-rejected`，而 `id` 用的是目录项 id，于是「一个品牌只能加一份」。先写三条失败用例（**追加到同一个 `provider_enabled_test.cj`**，别再写一遍 `package core` 和 import；换新日志名，避免与上面三条的 `enFile` 串味）：
+
+```cangjie
+let poolFile = "core-test-pool-providers.log"
+
+func poolCleanup(): Unit {
+    if (exists(poolFile)) {
+        try { removeIfExists(poolFile, recursive: false) } catch (e: Exception) {}
+    }
+}
+
+@Test
+func sameCatalogEntryTwiceYieldsTwoInstances() {
+    poolCleanup()
+    let r = ProviderRegistry(poolFile)
+    let idA = r.addInstanceFromCatalog("stepfun", "")
+    let idB = r.addInstanceFromCatalog("stepfun", "")
+    @Expect(idA == idB, false)
+    let view = ProviderRegistry(poolFile).describe()
+    @Expect(view.providers.size, Int64(2))
+    // 同地址是号池的正常形态，不是重复条目
+    @Expect(view.providers[0].baseUrl == view.providers[1].baseUrl, true)
+    @Expect(view.providers[0].credentialRef == view.providers[1].credentialRef, false)
+    poolCleanup()
+}
+
+@Test
+func eachInstanceDerivesItsOwnCredentialRef() {
+    poolCleanup()
+    let r = ProviderRegistry(poolFile)
+    let idA = r.addInstanceFromCatalog("stepfun", "")
+    let idB = r.addInstanceFromCatalog("stepfun", "")
+    let view = ProviderRegistry(poolFile).describe()
+    // ref 只准由「实例 id」派生：按目录 id 派生会让两份实例共用同一个环境变量名，
+    // 后配的密钥静默顶掉先配的——比直接拒绝更坏。
+    @Expect(view.providers[0].credentialRef, deriveCredentialRef(idA))
+    @Expect(view.providers[1].credentialRef, deriveCredentialRef(idB))
+    poolCleanup()
+}
+
+@Test
+func duplicateCredentialRefAcrossInstancesIsRejected() {
+    poolCleanup()
+    let r = ProviderRegistry(poolFile)
+    r.addInstanceFromCatalog("stepfun", "")
+    let refA = ProviderRegistry(poolFile).describe().providers[0].credentialRef
+    var thrown = ""
+    try {
+        r.addInstanceFromCatalog("stepfun", refA)
+    } catch (e: Exception) {
+        thrown = e.message
+    }
+    @Expect(thrown, "settings-rejected")
+    // 拒了就不能留下半条：第二份既没建出来，第一份也原样还在
+    @Expect(ProviderRegistry(poolFile).describe().providers.size, Int64(1))
+    @Expect(ProviderRegistry(poolFile).describe().providers[0].credentialRef, refA)
+    poolCleanup()
+}
+```
+
+实现规则（全落在 `addFromCatalog` 的邻域，**不动** `update` / `remove` / `setDefault` 的既有语义）：
+
+1. 新增 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): String`，返回新实例 id；`addFromCatalog` 改成它的薄封装（转调并丢弃返回值），这样宿主的现有调用点不必在同一步里跟着改，切到 `addInstanceFromCatalog` 是 Task 7 的活。
+2. **实例 id 由核心生成**：`reload()` 后先试 `catalogId` 本身，被占则依次试 `catalogId-2`、`catalogId-3`……最多试 64 次，仍撞就 `throw Exception("settings-rejected")`。要点是别再拿目录 id 当唯一键——目录项是**模板**，不是实例。
+3. `credentialRef` 传空 → 用 `deriveCredentialRef(新实例 id)`；传非空 → 仍过 `isValidCredentialRef`，且**与任一已有实例的 ref 相同就抛 `settings-rejected`**。这道闸是号池在凭证层的唯一堵口，缺它两份实例会解析到同一个名字。
+4. `name` = 目录项 `name` + 实例后缀（`StepFun`、`StepFun (2)`……）；显示名不做唯一键，列表里必须可辨。
+5. `declared` 仍为 `true`，`models[]` 从目录项整份复制（两份实例初始模型列表相同，之后各自被 `model/pull` 独立刷新）；`sortOrder`/`enabled`/`transport` 走 Task 1、Task 2 已定的缺省。
+6. 落盘沿用**一条 `provider/upsert` 事件**（新增整条记录，不是改旧记录），老日志零迁移。
+
+- [ ] **Step 5c: 跑到红（实例池这三条）**
+
+```bash
+cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t2c.log 2>&1; echo "rc=$?"
+```
+
+Expected：`FAILED` 列表里出现 `sameCatalogEntryTwiceYieldsTwoInstances`、`eachInstanceDerivesItsOwnCredentialRef`、`duplicateCredentialRefAcrossInstancesIsRejected` 三条中的至少一条，或编译期红在 `addInstanceFromCatalog` 上。**`TOTAL` 必须比 Step 2 那次多 3**；`TOTAL: 0` 或整包没跑都不算红。
+
 - [ ] **Step 6: 跑绿并核数**
 
 ```bash
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t2b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 470`（463 + Task1 的 4 + 本任务 3）、`FAILED: 0`、`ERROR: 0`、`rc=0`。
+Expected：`TOTAL: 473`（463 + Task1 的 4 + 本任务 6：`enabled`/`transport` 三条 + 实例池三条）、`FAILED: 0`、`ERROR: 0`、`rc=0`。
 
 - [ ] **Step 7: 提交**
 
@@ -989,7 +1068,7 @@ func entriesOfAnotherOwnerAreInvisibleButNotDestroyed() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t3b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 479`（+9）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 482`（+9）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1190,7 +1269,7 @@ Expected：编译红在 `upsertBinding` / `removeBinding` / `reorderBindings` / 
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 484`（463 + Task1 4 + Task2 3 + Task3 9 + 本任务 5）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 487`（463 + Task1 4 + Task2 6 + Task3 9 + 本任务 5）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 6: 变异反证（本任务的核心不变量不能是假绿）**
 
@@ -1397,7 +1476,7 @@ func badCatalogBodyThrowsInsteadOfReportingZeroModels() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5c.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 488`（+4）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
+Expected：`TOTAL: 491`（+4）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
 
 - [ ] **Step 6: 提交**
 
@@ -1551,7 +1630,7 @@ Expected：编译红在 `importNewModels` / `importInto`。
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t6b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 492`（+4）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 495`（+4）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1572,7 +1651,7 @@ git commit -m "feat(core): 上游模型两种导入入口，重复导入幂等�
 
 **Interfaces:**
 - Consumes: Task 2–6 的 `ProviderRegistry` / `CustomModelRegistry` / `addUpstreamModel` / `applyPulledModels` API。
-- Produces: 新动词 `custom/describe`、`custom/upsert`、`custom/remove`、`binding/upsert`、`binding/remove`、`binding/reorder`、`model/pull`、`model/upstream/upsert`、`custom/import/new`、`custom/import/into`；每个写动词入参必带 `expectedRevision`；`initialize.capabilities` 数组同步这十个串。
+- Produces: 新动词 `custom/describe`、`custom/upsert`、`custom/remove`、`binding/upsert`、`binding/remove`、`binding/reorder`、`model/pull`、`model/upstream/upsert`、`custom/import/new`、`custom/import/into`；每个写动词入参必带 `expectedRevision`；`initialize.capabilities` 数组同步这十个串。**另加一条既有动词的行为改动**：`model/registry/add-catalog` 的调用点从 `addFromCatalog` 切到 `addInstanceFromCatalog`，同一 `id` 可连发两次各得一份实例，响应体仍是供应商视图（`providers[]` 里两份，各自 `credentialRef`）——通道名与动词串都不变，所以断言 52 的对称面不受影响，但载荷语义变了，桌面模型页的「添加」按钮由此从「加过就禁用」改为「可重复添加」。
 
 - [ ] **Step 1: 写失败测试（协议面，不是实现面）**
 
@@ -1616,6 +1695,15 @@ const binding = { providerId: 'step', modelId: 'm-a', enabled: true, order: 0, w
 test('capabilities 声明了本批新增的每个动词', async () => {
   const cap = await rpc('initialize');
   for (const m of NEW) assert.ok(cap.capabilities.includes(m), `未声明: ${m}`);
+});
+
+test('add-catalog 同一目录项连发两次得到两个实例（号池，断言 56）', async () => {
+  await rpc('model/registry/add-catalog', { id: 'stepfun', credentialRef: '' });
+  const b = await rpc('model/registry/add-catalog', { id: 'stepfun', credentialRef: '' });
+  // 该动词的响应体本身就是供应商视图（HEAD 实测：动词末尾统一 emit providerViewJson）
+  assert.equal(b.providers.length, 2, '第二次不得把第一份顶掉');
+  assert.notEqual(b.providers[0].credentialRef, b.providers[1].credentialRef, '两份实例各自一把密钥引用');
+  assert.equal(b.providers[0].baseUrl, b.providers[1].baseUrl, '同地址多实例是号池的正常形态');
 });
 
 test('custom/describe 空目录返回零条目且 revision 为 0', async () => {
@@ -1905,10 +1993,10 @@ git commit -m "feat(desktop): 模型页地址校验收紧为核心的子集，�
 
 全部满足才算 B1 出口，任一不满足就写清卡点继续开着，**不缩范围凑绿**：
 
-1. `cd core && cjpm test` → `TOTAL: 492`（基线 463 + 本批 29 条：Task1 4、Task2 3、Task3 9、Task4 5、Task5 4、Task6 4）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
-2. 六处变异全部转红且各自归因到指定用例名：Task 4 Step 6 的四处（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等`），加 Task 3 的两处——(a) 把 `intFieldDefault` 的预算列缺省从 `-1` 改成 `0`，必须只让 `unsetBudgetReplaysAsMinusOneNotZero` 变红（这条杀的正是「未设置被读成额度耗尽」）；(b) 把规则 9 的币种一致性检查改成恒真，必须只让 `twoCurrenciesInOneModelAreRejectedWithoutMerge` 变红。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
+1. `cd core && cjpm test` → `TOTAL: 495`（基线 463 + 本批 32 条：Task1 4、Task2 6、Task3 9、Task4 5、Task5 4、Task6 4）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
+2. 七处变异全部转红且各自归因到指定用例名：Task 4 Step 6 的四处（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等`），加 Task 3 的两处——(a) 把 `intFieldDefault` 的预算列缺省从 `-1` 改成 `0`，必须只让 `unsetBudgetReplaysAsMinusOneNotZero` 变红（这条杀的正是「未设置被读成额度耗尽」）；(b) 把规则 9 的币种一致性检查改成恒真，必须只让 `twoCurrenciesInOneModelAreRejectedWithoutMerge` 变红。加 Task 2 的一处 (c)：把 `addInstanceFromCatalog` 里「ref 与已有实例重复即 `settings-rejected`」这道闸放行，必须**只**让 `duplicateCredentialRefAcrossInstancesIsRejected` 变红——这道闸是「两把密钥塌成一把」的唯一堵口。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
 3. `cd apps/desktop && node --test`（全量）rc=0；`bridge.test.mjs` 通道基线已按实际数字更新。
 4. `npm run ui-smoke` 输出 `UI SMOKE PASS`，或明确记 BLOCKED 及其解锁动作。
 5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`；**且这十个动词与 `preload.cjs` 新增的十条通道逐个对映**（断言 52——本批实测抓到 `binding/reorder` 一度只有动词没有通道，那样核心能改顺序、桌面改不了，等于交付半成品）。
-6. 断言 1、2、3、4、31、41、46 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）。
+6. 断言 1、2、3、4、31、41、46、56 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）；**56→Task 2 Step 5b 的 `sameCatalogEntryTwiceYieldsTwoInstances` + `eachInstanceDerivesItsOwnCredentialRef` + `duplicateCredentialRefAcrossInstancesIsRejected` 三条，再加 Task 7 那条宿主帧用例（`model/registry/add-catalog` 连发两次得到两个实例）——核心绿了但宿主还在走旧的「同 id 即拒」，号池对用户依然不可用。**
 7. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。
