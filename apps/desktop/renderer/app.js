@@ -59,7 +59,7 @@ if (!TR || !TR.BubbleList || !TR.BubbleProvider) {
     "缺 vendor/tinyrobot.iife.js：先跑 node scripts/pack-vendor.mjs、node scripts/pack-tinyvue.mjs 与 node scripts/pack-tinyrobot.mjs";
   throw new Error("TinyRobot vendor missing");
 }
-const FOLD = window.DshMsgFold;
+const FOLD = window.SaCodeMsgFold;
 if (!FOLD || typeof FOLD.toBubbleMessages !== "function") {
   document.getElementById("app").textContent = "缺 renderer/msgfold.js";
   throw new Error("msgfold missing");
@@ -181,14 +181,27 @@ createApp({
     const sideRatio = ref(50);
     const previewFloating = ref(false);
     const settingsOpen = ref(false);
+    const generalSettings = window.SaCodeGeneralSettings.createGeneralSettingsAssembly();
+    window.Vue.onBeforeUnmount(()=>generalSettings.dispose());
     const pluginManagerOpen = ref(false);
+    // 插件管理器适配器只建一次：每次渲染都新建会让轮询定时器与在途状态跨实例泄漏。
+    // 通道不齐时工厂整体返回 null，页面据此保持 unconnected，不用假适配器冒充已接后端。
+    const pluginManagerAdapter = window.SaCodePluginManager && window.SaCodePluginManager.createSacodePluginManagerAdapter
+      ? window.SaCodePluginManager.createSacodePluginManagerAdapter(window.sacode)
+      : null;
+    // 模型中心装配：四页（供应商/自定义模型/预算/迁移）通过槽位系统注册。
+    const modelCenter = window.SaCodeClientSlots && window.SaCodeClientSlots.createModelCenterAssembly
+      ? window.SaCodeClientSlots.createModelCenterAssembly()
+      : null;
+    window.Vue.onBeforeUnmount(()=>modelCenter && modelCenter.dispose());
+    const modelCenterOwner = ref(null);
     const settingsTab = ref("general");
     const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
     let sessionGeneration = 0;
     let selectedScrollId = 'initial';
     const workspaceOpen=ref(false), workspace=ref(null), workspaceBusy=ref(false), workspaceNote=ref("");
     async function refreshWorkspace() {
-      const generation=sessionGeneration, result=await window.dsh.workspaceGet();
+      const generation=sessionGeneration, result=await window.sacode.workspaceGet();
       if(generation===sessionGeneration) workspace.value=result;
     }
     async function openWorkspace() {
@@ -199,7 +212,7 @@ createApp({
       if(sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
       workspaceBusy.value=true; workspaceNote.value="请选择项目目录…";
       try {
-        const result=await window.dsh.workspaceChoose();
+        const result=await window.sacode.workspaceChoose();
         if(result.cancelled) {workspaceNote.value="已取消选择，目录未变更。";return;}
         await refreshWorkspace(); await refresh(); await refreshTools(); await refreshCatalog();
         workspaceNote.value="已保存当前会话的项目目录。";
@@ -227,13 +240,13 @@ createApp({
       if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
       if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后切换。");
       const oldId=catalog.value?.entries.find(item=>item.current)?.id;
-      await window.dsh.sessionSelect(id);
+      await window.sacode.sessionSelect(id);
       sessionGeneration += 1;
       selectedScrollId=id;
       if (oldId) sessionDrafts.set(oldId,draft.value);
       // 换会话时把在途增强撤掉：那份迟到结果属于上一个会话的输入框，
       // 留在宿主槽位里既会顶掉下一次的发起，也可能落进别的草稿。
-      if (enhance.value.busy) { window.dsh.promptCancel().catch(() => {}); }
+      if (enhance.value.busy) { window.sacode.promptCancel().catch(() => {}); }
       clearEnhance();
       draft.value=sessionDrafts.get(id)||"";
       stopPolling(); foldOpen.ids.clear();
@@ -246,7 +259,7 @@ createApp({
       await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshQueue();
       await refreshGlobalAppearance();
       workspaceNote.value="";
-      catalog.value=await window.dsh.sessionCatalog();
+      catalog.value=await window.sacode.sessionCatalog();
       catalogOpen.value=false;
       window.Vue.nextTick(()=>document.getElementById('composer').focus());
     }
@@ -264,9 +277,9 @@ createApp({
       try {
         if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
         if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后新建。");
-        const created=await window.dsh.sessionCreate(newSessionTitle.value);
+        const created=await window.sacode.sessionCreate(newSessionTitle.value);
         newSessionTitle.value="";
-        catalog.value=await window.dsh.sessionCatalog();
+        catalog.value=await window.sacode.sessionCatalog();
         await applySelection(created.id);
       } catch(e) { catalogNote.value=catalogError(e); error.value=catalogNote.value; }
       finally { catalogBusy.value=false; }
@@ -280,7 +293,7 @@ createApp({
       if (catalogBusy.value) return;
       catalogBusy.value = true; catalogNote.value = "正在读取本地会话…";
       try {
-        catalog.value = await window.dsh.sessionCatalog();
+        catalog.value = await window.sacode.sessionCatalog();
         if(selectedScrollId==='initial') {
           selectedScrollId=catalog.value.entries.find(item=>item.current)?.id || 'initial';
           scrollSession.value=selectedScrollId;
@@ -290,7 +303,15 @@ createApp({
       finally { catalogBusy.value = false; }
     }
     function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
-    const globalAppearance = ref({theme:null,fontSize:null}), fontBusy=ref(false), fontNote=ref('');
+    const globalAppearance = ref({theme:null,fontSize:null,busySend:null}), fontBusy=ref(false), fontNote=ref('');
+    const busySendSaving=ref(false),busySendNote=ref(''),busySendError=ref(false);
+    async function setBusySend(value) {
+      if(busySendSaving.value)return;
+      busySendSaving.value=true;busySendError.value=false;busySendNote.value='正在保存发送偏好…';
+      try {globalAppearance.value=await window.sacode.globalAppearanceSetBusySend(value);busySendNote.value='已保存，下一次发送生效。';}
+      catch(e){busySendError.value=true;busySendNote.value=fontError(e);}
+      finally{busySendSaving.value=false;}
+    }
     function fontError(e) {
       const message=String(e.message||e);
       if(message.includes('settings-already-owned')) return '另一入口正在保存配置，请稍后重试。';
@@ -298,14 +319,14 @@ createApp({
       return '无法读取或保存全局外观配置，请检查用户配置目录。';
     }
     async function refreshGlobalAppearance() {
-      try {globalAppearance.value=await window.dsh.globalAppearanceGet();}
-      catch(e) {fontNote.value=fontError(e);}
+      try {globalAppearance.value=await window.sacode.globalAppearanceGet();busySendError.value=false;busySendNote.value='';}
+      catch(e) {fontNote.value=fontError(e);busySendError.value=true;busySendNote.value=fontError(e);}
     }
     async function setFontSize(value) {
       if(fontBusy.value || appearanceBusy.value) return;
       fontBusy.value=true; fontNote.value='正在保存全局正文字号…';
       try {
-        globalAppearance.value=await window.dsh.globalAppearanceSetFontSize(value);
+        globalAppearance.value=await window.sacode.globalAppearanceSetFontSize(value);
         fontNote.value='已保存全局正文字号。';
       } catch(e) {fontNote.value=fontError(e);}
       finally {fontBusy.value=false;}
@@ -315,7 +336,7 @@ createApp({
       if (appearanceBusy.value || fontBusy.value) return;
       appearanceBusy.value=true; appearanceNote.value="正在保存全局主题…";
       try {
-        globalAppearance.value=await window.dsh.globalAppearanceSetTheme(theme);
+        globalAppearance.value=await window.sacode.globalAppearanceSetTheme(theme);
         appearanceNote.value="已保存全局主题，切换会话后保持。";
       } catch(e) { appearanceNote.value=fontError(e); }
       finally { appearanceBusy.value=false; }
@@ -381,7 +402,7 @@ createApp({
       try {
         const data = await readAsBase64(file);
         const kind = kindOf(file);
-        const out = await window.dsh.attachmentUpload(kind, file.name || "", kind === "image" ? file.type : "", data);
+        const out = await window.sacode.attachmentUpload(kind, file.name || "", kind === "image" ? file.type : "", data);
         if (generation !== sessionGeneration) { return; }
         item.receiptId = out.receiptId;
         item.attachment = out.attachment;
@@ -463,6 +484,8 @@ createApp({
         "enhance-max-tokens": "改写被截断了，半截话不能替换你的草稿。",
         "enhance-unexpected-tool": "模型试图执行操作，这次增强已作废，草稿保持原样。",
         "provider-init-failed": "连不上模型，草稿已保留，可以再试一次。",
+        "http-request-error": "连不上模型，草稿已保留，可以再试一次。",
+        "http-status": "模型拒绝了这次请求（常见于密钥或模型名不对），草稿已保留。",
         "timeout": "模型响应超时，草稿已保留，可以再试一次。",
         "enhance-in-flight": "上一条增强还在进行，请先取消它。",
       };
@@ -491,7 +514,9 @@ createApp({
         enhance.value = { busy: false, undo: false };
         return;
       }
-      updateDraft(text);
+      if (!window.SaCodeComposerEdit.replace(document.getElementById("composer"),text)) {
+        enhance.value={busy:false,undo:false};error.value="输入框无法建立撤销记录，草稿已保留。";return;
+      }
       enhanceUndo = { text: frozen.original };
       enhance.value = { busy: false, undo: true };
       error.value = "";
@@ -502,7 +527,7 @@ createApp({
         enhanceTimer = null;
         if (enhanceFrozen !== frozen) { return; }
         let result = null;
-        try { result = await window.dsh.promptPoll(); }
+        try { result = await window.sacode.promptPoll(); }
         catch (e) { finishEnhance(frozen, null, e); return; }
         if (enhanceFrozen !== frozen) { return; }
         if (!result || !result.settled) { pollEnhance(frozen); return; }
@@ -517,7 +542,7 @@ createApp({
       enhanceFrozen = frozen;
       enhance.value = { busy: true, undo: false };
       error.value = "";
-      try { await window.dsh.promptEnhance(original); }
+      try { await window.sacode.promptEnhance(original); }
       catch (e) { finishEnhance(frozen, null, e); return; }
       if (enhanceFrozen === frozen) { pollEnhance(frozen); }
     }
@@ -527,14 +552,14 @@ createApp({
       enhanceFrozen = null;
       stopEnhancePoll();
       enhance.value = { busy: false, undo: false };
-      try { await window.dsh.promptCancel(); } catch (_) {}
+      try { await window.sacode.promptCancel(); } catch (_) {}
     }
     function undoEnhance() {
       if (!enhance.value.undo || !enhanceUndo) { return; }
       const original = enhanceUndo.text;
       enhanceUndo = null;
       enhance.value = { busy: false, undo: false };
-      updateDraft(original);
+      if (!window.SaCodeComposerEdit.undo(document.getElementById("composer"),original)) updateDraft(original);
       focusComposerCaret();
     }
     function clickEnhance() {
@@ -572,13 +597,13 @@ createApp({
     window.Vue.onBeforeUnmount(() => { window.removeEventListener('keydown', desktopKeys); stopPolling(); });
 
     async function refresh() {
-      const generation=sessionGeneration, result=await window.dsh.projection();
+      const generation=sessionGeneration, result=await window.sacode.projection();
       if (generation===sessionGeneration) {proj.value=result;scrollSession.value=selectedScrollId;}
     }
 
     async function refreshTools() {
       const generation=sessionGeneration;
-      const r = await window.dsh.toolsList();
+      const r = await window.sacode.toolsList();
       if (generation!==sessionGeneration) return;
       tools.value = r.tools;
       toolCounters.value = { misses: r.misses, guardDenials: r.guardDenials };
@@ -589,7 +614,7 @@ createApp({
     async function refreshQueue() {
       const generation=sessionGeneration;
       let view;
-      try { view = await window.dsh.queueDescribe(); } catch (e) { return; }
+      try { view = await window.sacode.queueDescribe(); } catch (e) { return; }
       if (generation!==sessionGeneration) return;
       queueRows.value = (view.nextTurn || []).map(window.SaCodeQueue.projectQueueRow);
       const admitted = new Set(queueRows.value.map((r) => r.source.rpcId));
@@ -598,12 +623,20 @@ createApp({
 
     async function updateQueue(id, action) {
       const text = action.kind === "edit" ? (action.content || []).map((b) => (b.type === "text" ? b.text || "" : "")).join("") : "";
-      await window.dsh.queueUpdate(id, action.kind, text);
+      await window.sacode.queueUpdate(id, action.kind, text);
       await refreshQueue();
     }
 
-    // 运行中发送 = 排队：草稿交给核心铸造条目身份，回执到了才清空草稿。
-    async function enqueueDraft() {
+    // 运行中送达由核心按偏好与修饰键判定；收到回执后才清空本次草稿。
+    async function enqueueDraft(accelerated=false) {
+      if(globalAppearance.value.busySend!== 'queue' && globalAppearance.value.busySend!=='steer') {
+        error.value='发送偏好尚未读取，请在设置中重新读取后再发送。';return;
+      }
+      sendBusy.value=true;
+      try { await submitBusyDraft(accelerated); } finally {sendBusy.value=false;}
+    }
+    async function submitBusyDraft(accelerated) {
+      const generation=sessionGeneration;
       const text = draft.value, revision = draftRevision;
       if (!text.trim()) return;
       if (text.length > 8000) { error.value = "消息最多支持 8000 个字符，请缩短后重试。"; return; }
@@ -618,15 +651,18 @@ createApp({
         return;
       }
       const receipts = attachments.value.map((a) => a.receiptId);
+      const submittedIds=attachments.value.map(a=>a.id);
       queuePending.value = queuePending.value.concat([{ requestId, placement: "queued", text, attachments: [] }]);
       try {
-        await window.dsh.queueEnqueue(text, requestId, receipts);
-        if (draftRevision === revision) draft.value = "";
-        clearAttachments();
+        await window.sacode.queueEnqueue(text, requestId, receipts, accelerated);
+        queuePending.value = queuePending.value.filter(p=>p.requestId!==requestId);
+        if(generation!==sessionGeneration)return;
+        if (draftRevision === revision) { clearEnhance(); updateDraft(""); }
+        for(const id of submittedIds)removeAttachment(id);
         await refreshQueue();
       } catch (e) {
         queuePending.value = queuePending.value.filter((p) => p.requestId !== requestId);
-        error.value = "排队失败：" + cleanErr(e);
+        if(generation===sessionGeneration)error.value = "发送补充失败：" + cleanErr(e);
       }
     }
 
@@ -639,8 +675,8 @@ createApp({
     };
     const modelsAdapter = {
       async load() {
-        const view = await window.dsh.modelsDescribe().catch(modelsError);
-        const catalogView = await window.dsh.modelsCatalog().catch(modelsError);
+        const view = await window.sacode.modelsDescribe().catch(modelsError);
+        const catalogView = await window.sacode.modelsCatalog().catch(modelsError);
         const catalog = Array.isArray(catalogView) ? catalogView : [];
         const byId = {};
         for (const c of catalog) byId[c.id] = c;
@@ -653,15 +689,15 @@ createApp({
       },
       async save(draft, expectedRevision) {
         const { key, ...rest } = draft;
-        await window.dsh.modelsSave(rest, key || "", expectedRevision).catch(modelsError);
+        await window.sacode.modelsSave(rest, key || "", expectedRevision).catch(modelsError);
         void modelDirectory.load();
       },
       async remove(id, expectedRevision) {
-        await window.dsh.modelsRemove(id, expectedRevision).catch(modelsError);
+        await window.sacode.modelsRemove(id, expectedRevision).catch(modelsError);
         void modelDirectory.load();
       },
       async listModels(draft) {
-        const r = await window.dsh.modelsList({ baseUrl: draft.baseUrl, apiKey: draft.key }).catch(modelsError);
+        const r = await window.sacode.modelsList({ baseUrl: draft.baseUrl, apiKey: draft.key }).catch(modelsError);
         return (r.models || []).map((id) => ({ id, name: id, contextWindow: "", maxTokens: "", image: false }));
       },
     };
@@ -692,7 +728,7 @@ createApp({
           const generation = ++seq;
           publish({ ...snapshot, status: "loading" });
           try {
-            const view = await window.dsh.modelsDescribe();
+            const view = await window.sacode.modelsDescribe();
             if (generation === seq) apply(view);
           } catch (e) {
             if (generation === seq) publish({ ...snapshot, status: "error", error: String((e && e.message) || e) });
@@ -703,7 +739,7 @@ createApp({
           const generation = ++seq;
           publish({ ...snapshot, status: "selecting", pending: value });
           try {
-            const view = await window.dsh.modelsSetDefault(value.provider, value.model, revision);
+            const view = await window.sacode.modelsSetDefault(value.provider, value.model, revision);
             if (generation === seq) apply(view);
           } catch (e) {
             if (generation === seq) publish({ ...snapshot, status: "error", pending: null, error: String((e && e.message) || e) });
@@ -725,9 +761,9 @@ createApp({
     }
     void refreshQueue();
 
-    async function send() {
+    async function send(accelerated=false) {
       if(sendBusy.value) return;
-      if(turn.value.running){await enqueueDraft();return;}
+      if(turn.value.running){await enqueueDraft(accelerated);return;}
       const generation=sessionGeneration;
       const text = draft.value, revision=draftRevision;
       if (!text.trim()) return;
@@ -745,12 +781,12 @@ createApp({
       error.value = "";
       try {
         // 渲染层只说「用户说了什么」加上自己拿到的凭证，事件类型由核心决定：不给它伪造 system/message 的口子
-        await window.dsh.userSend(text, receipts);
+        await window.sacode.userSend(text, receipts);
         if (generation!==sessionGeneration) return;
         acknowledged=true;
         sendBusy.value=false;
         // 核心确认成功后才清空；在途请求不能覆盖用户随后编辑的新草稿。
-        if(draftRevision===revision) draft.value="";
+        if(draftRevision===revision) { clearEnhance(); updateDraft(""); }
         clearAttachments();
         await refresh();
         await refreshCatalog();
@@ -775,7 +811,7 @@ createApp({
       const generation=sessionGeneration;
       pollTimer = setInterval(async () => {
         try {
-          const p = await window.dsh.turnPoll();
+          const p = await window.sacode.turnPoll();
           if (generation!==sessionGeneration) return;
           for (const f of p.frames) {
             const i = f.indexOf(":");
@@ -842,7 +878,7 @@ createApp({
       error.value = "";
       turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
       try {
-        await window.dsh.taskStart();
+        await window.sacode.taskStart();
         if (generation !== sessionGeneration) return;
         startPolling();
       } catch (e) {
@@ -861,7 +897,7 @@ createApp({
       error.value = "";
       turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
       try {
-        await window.dsh.turnStart(limit);
+        await window.sacode.turnStart(limit);
         if (generation!==sessionGeneration) return;
         startPolling();
       } catch (e) {
@@ -874,7 +910,7 @@ createApp({
     async function cancelTurn() {
       error.value = "";
       try {
-        await window.dsh.turnCancel();
+        await window.sacode.turnCancel();
       } catch (e) {
         error.value = String(e.message || e);
       }
@@ -894,7 +930,7 @@ createApp({
       // 需审批的工具先向核心要一张工单（asked 进日志），界面上批的是这张单，
       // 不是渲染层自己拼的一句 "allowed-once"。
       try {
-        const a = await window.dsh.approvalAsk(t.name);
+        const a = await window.sacode.approvalAsk(t.name);
         if (generation!==sessionGeneration) return;
         approval.value = { name: t.name, description: t.description, approvalId: a.approvalId };
       } catch (e) {
@@ -911,7 +947,7 @@ createApp({
       approval.value = null;
       if (!a) return;
       try {
-        const r = await window.dsh.approvalAnswer(a.approvalId, approvalAnswer);
+        const r = await window.sacode.approvalAnswer(a.approvalId, approvalAnswer);
         if (generation!==sessionGeneration) return;
         if (!r.accepted) {
           outcomeKind.value = "outcome outcome-denied";
@@ -935,7 +971,7 @@ createApp({
       // 把「路径 正文」一起塞给它，它会把整串当成一个不存在的路径。
       const args = name === "read" ? "sacode-tool.txt" : "sacode-tool.txt hello-from-renderer";
       try {
-        const r = await window.dsh.toolCall(name, args, approvalId || 0);
+        const r = await window.sacode.toolCall(name, args, approvalId || 0);
         if (generation!==sessionGeneration) return;
         outcomeKind.value = "";
         outcome.value = "结果：" + r.result;
@@ -950,7 +986,7 @@ createApp({
 
     async function refreshUsage() {
       const generation=sessionGeneration;
-      const u = await window.dsh.usageStatus();
+      const u = await window.sacode.usageStatus();
       if (generation!==sessionGeneration) return;
       usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: u.verdict || "" };
     }
@@ -967,7 +1003,7 @@ createApp({
       budgetBusy.value = true;
       budgetNote.value = "正在提交预算…";
       try {
-        const r = await window.dsh.usageSetBudget(n);
+        const r = await window.sacode.usageSetBudget(n);
         await refreshUsage();
         budgetNote.value = r.applied ? "已收紧到 " + r.budget : "拒绝放宽：仍停在 " + r.budget;
       } catch (e) {
@@ -994,9 +1030,11 @@ createApp({
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
       proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
-      usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen,
+      usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen, pluginManagerAdapter,
       appearanceBusy, appearanceNote, setTheme, modelsAdapter, modelDirectory,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
+      generalSettings, busySendSaving, busySendNote, busySendError, setBusySend,
+      modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits,
       send, runTurn, cancelTurn, askTool, answerTool,
@@ -1260,6 +1298,7 @@ createApp({
         el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
       ]) : null,
       h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
+      self.scrollSession!=='initial' && self.scrollSession!==0 ? h(window.SaCodeGoal.GoalBar,{key:'goal-'+self.scrollSession,adapter:{describe:()=>window.sacode.goalDescribe(String(self.scrollSession)),create:text=>window.sacode.goalCreate(String(self.scrollSession),text),edit:(revision,text)=>window.sacode.goalEdit(String(self.scrollSession),revision,text),pause:revision=>window.sacode.goalPause(String(self.scrollSession),revision),resume:revision=>window.sacode.goalResume(String(self.scrollSession),revision),clear:revision=>window.sacode.goalClear(String(self.scrollSession),revision)}}):null,
       h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,sessionId:String(self.scrollSession),rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
@@ -1272,7 +1311,7 @@ createApp({
         onInput: (e) => self.userEditDraft(e.target.value),
       }),[[autoDraftSize],[window.SaCodeAttachments.keymapDirective,{
         canSubmit:()=>!self.sendBusy&&!document.querySelector('dialog:modal'),
-        submit:()=>self.send(),
+        submit:accelerated=>self.send(accelerated),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
       el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:false,onAdd:(files,dirs)=>self.addAttachments(files,dirs)}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
@@ -1314,7 +1353,7 @@ createApp({
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
       el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
+      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["model-center", "模型中心"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
         type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
@@ -1352,9 +1391,11 @@ createApp({
             ]),
           ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
         ],{'aria-busy':self.fontBusy}),
+        h(self.generalSettings.Outlet,{owner:{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance}}),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
       el("section", "settings-page", [h(window.SaCodeModels.Page, { adapter: self.modelsAdapter }),
       ], { id:"settings-page-models", role:"tabpanel", "aria-labelledby":"settings-tab-models", hidden:self.settingsTab!=="models" }),
+      self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
       el("section", "settings-page", [h(window.SaCodePlugins.Page, { tools: self.tools }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
       ]),
@@ -1410,7 +1451,7 @@ createApp({
       })]) : null,
       self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
     ]);
-    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page)],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
