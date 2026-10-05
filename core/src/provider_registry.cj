@@ -137,9 +137,14 @@ public class ProviderRecord {
     public let credentialRef: String
     public let declared: Bool
     public let models: Array<ModelSpec>
-    public init(id: String, name: String, baseUrl: String, protocol: String, credentialRef: String, declared: Bool, models: Array<ModelSpec>) {
+    public let sortOrder: Int64
+    public let enabled: Bool
+    public let transport: String
+    public init(id: String, name: String, baseUrl: String, protocol: String, credentialRef: String, declared: Bool, models: Array<ModelSpec>,
+        sortOrder!: Int64 = 0, enabled!: Bool = true, transport!: String = "direct") {
         this.id = id; this.name = name; this.baseUrl = baseUrl; this.protocol = protocol
         this.credentialRef = credentialRef; this.declared = declared; this.models = models
+        this.sortOrder = sortOrder; this.enabled = enabled; this.transport = transport
     }
     public func toJson(): String {
         var arr = "["
@@ -148,7 +153,7 @@ public class ProviderRecord {
             arr += models[i].toJson()
         }
         arr += "]"
-        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\",\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${declared},\"models\":${arr}}"
+        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\",\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${declared},\"models\":${arr},\"sortOrder\":${sortOrder},\"enabled\":${enabled},\"transport\":\"${jsonEscapeText(transport)}\"}"
     }
     public func hasModel(model: String): Bool {
         var found = false
@@ -157,6 +162,43 @@ public class ProviderRecord {
         }
         return found
     }
+    // 复制修改：class 字段是 let，逐字段重建新实例；
+    // 不用 var——可变共享记录会让回放视图不安全。
+    public func withEnabled(on: Bool): ProviderRecord {
+        return ProviderRecord(id, name, baseUrl, protocol, credentialRef, declared, models,
+            sortOrder: sortOrder, enabled: on, transport: transport)
+    }
+    public func withSortOrder(order: Int64): ProviderRecord {
+        return ProviderRecord(id, name, baseUrl, protocol, credentialRef, declared, models,
+            sortOrder: order, enabled: enabled, transport: transport)
+    }
+    public func withModels(next: Array<ModelSpec>): ProviderRecord {
+        return ProviderRecord(id, name, baseUrl, protocol, credentialRef, declared, next,
+            sortOrder: sortOrder, enabled: enabled, transport: transport)
+    }
+}
+
+// 稳定升序：条目上限 128，用「按名次重建」而不是 ArrayList.insert——
+// 后者的方法名与签名未经本机核验，不靠编译器猜（规格 B1 Task 2 Step 4）。
+// 严格小于挑首选，保证同 sortOrder 时保持首次出现序。
+func sortRecords(src: Array<ProviderRecord>): Array<ProviderRecord> {
+    let out = ArrayList<ProviderRecord>()
+    var used = Array<Bool>(src.size, repeat: false)
+    var placed = Int64(0)
+    while (placed < Int64(src.size)) {
+        var pick = Int64(-1)
+        var i = Int64(0)
+        while (i < Int64(src.size)) {
+            if (!used[i] && (pick < 0 || src[i].sortOrder < src[pick].sortOrder)) {
+                pick = i
+            }
+            i += 1
+        }
+        used[pick] = true
+        out.add(src[pick])
+        placed += 1
+    }
+    return out.toArray()
 }
 
 public class ProviderView {
@@ -177,8 +219,7 @@ public class ProviderView {
         }
         arr += "]"
         return "{\"providers\":${arr},\"revision\":${revision},\"writable\":${writable},\"defaultProviderId\":\"${jsonEscapeText(defaultProviderId)}\",\"defaultModel\":\"${jsonEscapeText(defaultModel)}\"}"
-    }
-}
+    }}
 
 public class ProviderRegistry {
     let file: String
@@ -240,7 +281,48 @@ public class ProviderRegistry {
             } else if (ev.eventType == "provider/default") {
                 defProvider = fieldOfText(ev.data, "providerId")
                 defModel = fieldOfText(ev.data, "model")
+            } else if (ev.eventType == "provider/enabled") {
+                let target = fieldOfText(ev.data, "providerId")
+                let on = boolOfText(ev.data, "enabled")
+                var i = Int64(0)
+                while (i < Int64(entries.size)) {
+                    if (entries[i].id == target) {
+                        entries[i] = entries[i].withEnabled(on)
+                    }
+                    i += 1
+                }
+            } else if (ev.eventType == "provider/sort") {
+                let target = fieldOfText(ev.data, "providerId")
+                let order = intOfText(ev.data, "sortOrder")
+                var i = Int64(0)
+                while (i < Int64(entries.size)) {
+                    if (entries[i].id == target) {
+                        entries[i] = entries[i].withSortOrder(order)
+                    }
+                    i += 1
+                }
             }
+        }
+        // 视图恒按 sortOrder 升序。未点名（<=0）的条目按首次出现序补号；
+        // 已有显式正值时，未点名条目接在最大显式值之后——「新增接末尾」，
+        // 不与显式值相撞（相撞会让顺序取决于插入算法而不是用户配置）。
+        var maxExplicit: Int64 = -1
+        for (rec in entries) {
+            if (rec.sortOrder > 0 && rec.sortOrder > maxExplicit) { maxExplicit = rec.sortOrder }
+        }
+        var next: Int64 = if (maxExplicit < 0) { 0 } else { maxExplicit + 1 }
+        let fixed = ArrayList<ProviderRecord>()
+        for (rec in entries) {
+            if (rec.sortOrder <= 0) {
+                fixed.add(rec.withSortOrder(next))
+                next += 1
+            } else {
+                fixed.add(rec)
+            }
+        }
+        entries = ArrayList<ProviderRecord>()
+        for (rec in sortRecords(fixed.toArray())) {
+            entries.add(rec)
         }
         // 默认指针不能指向已经不存在的条目或模型
         if (defProvider.size > 0) {
@@ -295,27 +377,80 @@ public class ProviderRegistry {
     }
 
     public func addFromCatalog(id: String, credentialRef: String): Unit {
+        addInstanceFromCatalog(id, credentialRef)
+    }
+
+    // 号池的存储形态：同一目录项可反复添加，每次建一份新实例。
+    // 目录项只是模板（地址、协议、初始模型列表），实例 id 由核心生成——
+    // 拿目录 id 当唯一键就等于「一个品牌只能加一份」，与号池口径冲突。
+    // 故意不返回 id：宿主动词的响应体统一是供应商视图，新实例 id 从视图读回，
+    // 多加一条返回值等于给同一个事实造第二份来源。
+    public func addInstanceFromCatalog(catalogId: String, credentialRef: String): Unit {
         reload()
         var picked: Option<CatalogEntry> = None
         for (e in saCodeCatalog) {
-            if (e.id == id) { picked = Some(e) }
+            if (e.id == catalogId) { picked = Some(e) }
         }
         if (picked.isNone()) {
             throw Exception("settings-rejected")
         }
         let e = picked.getOrThrow()
-        if (find(id).id.size > 0) {
-            throw Exception("settings-rejected")
+        // 实例 id：先试目录 id 本身，被占则依次 -2、-3……最多 64 个候选
+        var instanceId = catalogId
+        var attempt = Int64(2)
+        while (find(instanceId).id.size > 0) {
+            if (attempt > 64) {
+                throw Exception("settings-rejected")
+            }
+            instanceId = "${catalogId}-${attempt}"
+            attempt += 1
         }
-        if (!isValidCredentialRef(credentialRef)) {
-            throw Exception("settings-rejected")
+        // 凭据引用：空 = 按实例 id 派生（两份实例天然不同名）；
+        // 非空 = 过形状校验，且不得与任一已有实例重复——
+        // 这道闸是「两把密钥塌成一把」的唯一堵口。
+        var ref = credentialRef
+        if (ref.size == 0) {
+            ref = deriveCredentialRef(instanceId)
+        } else {
+            if (!isValidCredentialRef(ref)) {
+                throw Exception("settings-rejected")
+            }
+            for (rec in entries) {
+                if (rec.credentialRef == ref) {
+                    throw Exception("settings-rejected")
+                }
+            }
+        }
+        // 显示名带实例后缀，同品牌多份必须可辨；name 不做唯一键
+        var name = e.name
+        if (instanceId != catalogId) {
+            name = "${e.name} (${attempt - 1})"
         }
         let models = ArrayList<ModelSpec>()
         for (m in e.modelIds) {
             models.add(ModelSpec(m, m, "", "", false))
         }
-        let rec = ProviderRecord(e.id, e.name, e.baseUrl, e.protocol, credentialRef, true, models.toArray())
+        let rec = ProviderRecord(instanceId, name, e.baseUrl, e.protocol, ref, true, models.toArray())
         commit("provider/upsert", rec.toJson())
+    }
+
+    // 拖动/关断只改一列：绝不重写整条记录，否则会把别处刚改过的 baseUrl 盖回去。
+    public func setEnabled(id: String, on: Bool, expectedRevision: Int64): Unit {
+        reload()
+        guardRevision(expectedRevision)
+        if (find(id).id.size == 0) {
+            throw Exception("settings-rejected")
+        }
+        commit("provider/enabled", "{\"providerId\":\"${jsonEscapeText(id)}\",\"enabled\":${if (on) { "true" } else { "false" }}}")
+    }
+
+    public func setSortOrder(id: String, order: Int64, expectedRevision: Int64): Unit {
+        reload()
+        guardRevision(expectedRevision)
+        if (find(id).id.size == 0 || order < 0) {
+            throw Exception("settings-rejected")
+        }
+        commit("provider/sort", "{\"providerId\":\"${jsonEscapeText(id)}\",\"sortOrder\":${order}}")
     }
 
     // 写侧只认白名单字段；任何想顺路把密钥值塞进来的草稿一律拒绝——
@@ -414,7 +549,16 @@ public class ProviderRegistry {
         if (!declared && models.size == 0) {
             throw Exception("settings-rejected")
         }
-        return ProviderRecord(id, name, baseUrl, protocol, ref, declared, models)
+        // 排序列只接受非负：负值会被回放归一读成「未点名」而静默改号，
+        // 用户拖出来的位置就丢了——这里显式拒绝，不静默修正。
+        let sortOrder = intField(obj, "sortOrder", 0)
+        if (sortOrder < 0) {
+            throw Exception("settings-rejected")
+        }
+        return ProviderRecord(id, name, baseUrl, protocol, ref, declared, models,
+            sortOrder: sortOrder,
+            enabled: boolFieldDefault(obj, "enabled", true),
+            transport: enumField(obj, "transport", ["direct", "relay"], "direct"))
     }
 
     private func parseModels(obj: JsonObject): Array<ModelSpec> {
@@ -635,5 +779,42 @@ public class ProviderRegistry {
             return v.asString().getValue()
         }
         return ""
+    }
+
+    // 自家事件的取值助手：与 fieldOfText 同一条解析路径，只是类型不同
+    private static func boolOfText(text: String, key: String): Bool {
+        let obj = json(text)
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) { return false }
+            return v.asBool().getValue()
+        }
+        return false
+    }
+
+    private static func intOfText(text: String, key: String): Int64 {
+        let obj = json(text)
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) { return 0 }
+            return v.asInt().getValue()
+        }
+        return 0
+    }
+
+    // enabled 的缺省必须是 true：盘上的老记录根本没有这个字段，
+    // 用 boolField 的「缺席即 false」会把全部历史提供商读成已关断。
+    private static func boolFieldDefault(obj: JsonObject, key: String, dflt: Bool): Bool {
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) { return dflt }
+            return v.asBool().getValue()
+        }
+        return dflt
+    }
+
+    private static func intField(obj: JsonObject, key: String, dflt: Int64): Int64 {
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) { return dflt }
+            return v.asInt().getValue()
+        }
+        return dflt
     }
 }
