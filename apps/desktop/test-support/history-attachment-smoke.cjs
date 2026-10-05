@@ -15,7 +15,7 @@ module.exports=async function({win,bridge,waitFor,check}) {
  await waitFor("!document.querySelector('#sidebar-new-session').disabled && document.querySelector('.app').dataset.emptyConversation==='true'");
  const history=(await bridge.request('session/catalog')).entries.find(row=>row.current).id;
  console.log('HISTORY_STAGE','历史会话已创建');
- const image=await bridge.request('attachment/upload',{kind:'image',name:'历史图片.png',mediaType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAAAAAAA'});
+ const image=await bridge.request('attachment/upload',{kind:'image',name:'历史图片.png',mediaType:'image/png',data:require('./image-fixture.cjs').png.toString('base64')});
  const file=await bridge.request('attachment/upload',{kind:'file',name:'<b>说明.txt',mediaType:'',data:'YWJj'});
  await bridge.request('session/append',{data:'相同历史正文',receiptIds:[image.receiptId,file.receiptId]});
  await bridge.request('session/append',{eventType:'user/message',data:'相同历史正文'});
@@ -33,9 +33,17 @@ module.exports=async function({win,bridge,waitFor,check}) {
   await waitFor(`!document.querySelector('#sidebar-new-session').disabled && document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(id)}`);
  }
  await waitFor("document.querySelectorAll('#messages [data-history-attachment]').length===2");
+ await waitFor("document.querySelector('#messages .persisted-image img')?.naturalWidth===2 && document.querySelector('#messages .persisted-image')?.dataset.imageState==='ready'");
+ await check('真实历史图片读取并解码为缩略图',"(()=>{const img=document.querySelector('#messages .persisted-image img');return {decoded:img.naturalWidth===2&&img.naturalHeight===1,blob:img.src.startsWith('blob:')}})()");
+ await js("(()=>{document.querySelector('#messages .persisted-image-frame').focus();document.querySelector('#messages .persisted-image-frame').click();return true})()");
+ await waitFor("document.querySelector('dialog.attachments-lightbox')?.open && document.querySelector('.attachments-original')?.naturalWidth===2");
+ await check('真实历史图片打开原图',"({decoded:document.querySelector('.attachments-original').naturalWidth===2,blob:document.querySelector('.attachments-original').src.startsWith('blob:')})");
+ await js("document.querySelector('.attachments-lightbox-close').click()");
+ await waitFor("!document.querySelector('dialog.attachments-lightbox') && document.activeElement===document.querySelector('#messages .persisted-image-frame')");
  console.log('HISTORY_STAGE','历史卡片已出现',await js("[...document.querySelectorAll('#messages .msg-node')].map(n=>({text:n.querySelector('.msg-text')?.textContent,cards:n.querySelectorAll('[data-history-attachment]').length}))"));
  await check('真实历史附件只属于对应消息并安全展示名称',"(()=>{const rows=[...document.querySelectorAll('#messages .msg-node')].filter(n=>n.querySelector('.msg-text')?.textContent==='相同历史正文');const cards=[...rows[0].querySelectorAll('[data-history-attachment]')];return {paired:rows.length===2&&rows[1].querySelectorAll('[data-history-attachment]').length===0,ordered:cards[0].dataset.attachmentKind==='image'&&cards[1].dataset.attachmentKind==='file',imageReference:cards[0].textContent.includes('历史图片.png')&&cards[0].textContent.includes('2 × 1'),fileName:cards[1].textContent.includes('<b>说明.txt'),fileBytes:cards[1].textContent.includes('3 B'),escaped:!cards[1].querySelector('b')}})()");
  await js(`document.querySelector('[data-sidebar-session="'+${JSON.stringify(current)}+'"]').click()`);
  await waitFor(`!document.querySelector('#sidebar-new-session').disabled && document.querySelector('[data-sidebar-session][aria-current=page]')?.dataset.sidebarSession===${JSON.stringify(current)}`);
  win.webContents.removeListener('console-message',consoleProbe);
 };
+

@@ -22,7 +22,7 @@ window.DshMsgFold = (function () {
     return { role: line.slice(0, i), text: line.slice(i + 1).replace(/^ /, "") };
   }
 
-  function toBubbleMessages(lines, rows) {
+  function toBubbleMessages(lines, rows, sessionId) {
     var out = [];
     for (var i = 0; i < lines.length; i++) {
       var parts = splitMsg(lines[i]);
@@ -34,7 +34,9 @@ window.DshMsgFold = (function () {
         }
       }
       var metadata = rows && rows[i];
-      out.push({ id: metadata ? metadata.id : "m" + i, role: role, content: parts.text, sourceRole: parts.role, attachments: metadata ? metadata.attachments : [] });
+      var message = { id: metadata ? metadata.id : "m" + i, role: role, content: parts.text, sourceRole: parts.role, attachments: metadata ? metadata.attachments : [] };
+      if (sessionId) message.sessionId = sessionId;
+      out.push(message);
     }
     return out;
   }

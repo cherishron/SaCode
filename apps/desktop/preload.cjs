@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("dsh", {
   // 附件：字节只以 base64 过界一次，落盘、内容寻址 id 与暂存凭证都由核心铸造，
   // 渲染层既拿不到宿主路径，也没通路自报「我上传过这个 id」。
   attachmentUpload: (kind, name, mediaType, data) => ipcRenderer.invoke("dsh:attachmentUpload", { kind, name, mediaType, data }),
+  attachmentImageRead: (sessionId, attachmentId) => ipcRenderer.invoke("dsh:attachmentImageRead", { sessionId, attachmentId }),
   toolsList: () => ipcRenderer.invoke("dsh:toolsList"),
   toolCall: (name, args, approvalId) => ipcRenderer.invoke("dsh:toolCall", { name, args, approvalId }),
   approvalAsk: (name) => ipcRenderer.invoke("dsh:approvalAsk", { name }),

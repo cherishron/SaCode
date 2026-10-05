@@ -129,6 +129,13 @@ ipcMain.handle("dsh:attachmentUpload", async (_e, args) => {
 
 ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
 
+ipcMain.handle("dsh:attachmentImageRead", async (_e, args) => {
+  if (!args || Object.keys(args).some(key => key !== 'sessionId' && key !== 'attachmentId')
+    || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length > 300
+    || !isStr(args.attachmentId) || !/^sha256:[a-f0-9]{64}$/.test(args.attachmentId)) throw Error('bad arguments');
+  return withHost(() => bridge.request('attachment/image-read', { sessionId: args.sessionId, attachmentId: args.attachmentId }));
+});
+
 ipcMain.handle("dsh:toolCall", async (_e, args) => {
   // 审批凭据只能是工单号：渲染层传不动「我已经批过了」这句话——它得先去 ask/answer。
   if (!args || !isStr(args.name) || !isStr(args.args)) {

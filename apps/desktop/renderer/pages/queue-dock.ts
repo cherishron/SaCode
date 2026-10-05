@@ -2,6 +2,7 @@
 // 队列事实与操作结果由仓颉适配器提供，本视图不自行生成已送达消息。
 import {defineComponent,h,ref,computed,watch,nextTick,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import {projectUserText} from './user-text';
+import {PersistedImage} from './persisted-image';
 export {projectUserText} from './user-text';
 export type AttachmentRef={attachmentId:string;name:string;bytes:number};
 export type QueueProjectionRow={id:string;text:string;rpcId:string;attachments?:ReadonlyArray<AttachmentRef&{kind:'image'|'file'}>};
@@ -29,7 +30,7 @@ const Editor=defineComponent({props:{text:{type:String,required:true},busy:Boole
   onMounted(()=>{node.value?.focus();void fit();});watch(()=>props.text,()=>void fit());
   return()=>h('textarea',{ref:node,class:'queue-editor',rows:1,'aria-label':'编辑排队消息',value:props.text,readOnly:props.busy,onInput:(e:Event)=>emit('change',(e.target as HTMLTextAreaElement).value),onKeydown:(e:KeyboardEvent)=>{if(e.isComposing||e.keyCode===229||props.busy)return;if(e.key==='Escape'){e.preventDefault();e.stopPropagation();emit('cancel');}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();e.stopPropagation();if(!e.repeat)emit('save');}}});
 }});
-export const QueueDock=defineComponent({name:'SaCodeQueueDock',props:{rows:{type:Array as PropType<QueueRow[]>,default:()=>[]},pending:{type:Array as PropType<Pending[]>,default:()=>[]},running:Boolean,mutable:{type:Boolean,default:true},updateQueue:Function as PropType<(id:string,action:QueueAction)=>Promise<void>>,loadImage:Function as PropType<(a:AttachmentRef)=>Promise<string>>},emits:['notice'],setup(props,{emit}){
+export const QueueDock=defineComponent({name:'SaCodeQueueDock',props:{rows:{type:Array as PropType<QueueRow[]>,default:()=>[]},pending:{type:Array as PropType<Pending[]>,default:()=>[]},running:Boolean,mutable:{type:Boolean,default:true},sessionId:String,updateQueue:Function as PropType<(id:string,action:QueueAction)=>Promise<void>>,loadImage:Function as PropType<(a:AttachmentRef)=>Promise<string>>},emits:['notice'],setup(props,{emit}){
   const listId='sacode-queue-'+(++nextDock),editing=ref<{id:string;text:string}|null>(null),busy=ref<string|null>(null),collapsed=ref(true);let disposed=false;
   const rows=computed(()=>{const transcript=new Set(props.pending.filter(p=>p.placement==='transcript').map(p=>p.requestId));return props.rows.filter(r=>r.source?.kind!=='user'||!r.source.rpcId||!transcript.has(r.source.rpcId));});
   const pending=computed(()=>{const admitted=new Set(rows.value.filter(r=>r.source?.kind==='user').map(r=>r.source?.rpcId));return props.pending.filter(p=>p.placement==='queued'&&!admitted.has(p.requestId));});
@@ -47,7 +48,7 @@ export const QueueDock=defineComponent({name:'SaCodeQueueDock',props:{rows:{type
         ...rows.value.map(row=>{const edit=editing.value?.id===row.id,text=textOf(row.content),attachments=row.content.filter(b=>(b.type==='image'||b.type==='file')&&b.attachment);return el('li','row',[
           count.value===1?icon('M3 6h18M3 12h18M3 18h12'):null,
           edit?h(Editor,{text:editing.value!.text,busy:locked,onChange:(text:string)=>editing.value={id:row.id,text},onSave:()=>void save(),onCancel:()=>editing.value=null}):[
-            attachments.length?el('span','attachments',attachments.map((b,index)=>b.type==='image'?h(Thumb,{key:b.attachment!.attachmentId+':'+index,attachment:b.attachment!,loadImage:props.loadImage}):file(b.attachment!))):null,
+            attachments.length?el('span','attachments',attachments.map((b,index)=>b.type==='image'?props.sessionId?h(PersistedImage,{key:b.attachment!.attachmentId+':'+index,attachment:b.attachment!,sessionId:props.sessionId,mode:'queue',label:'排队图片'}):h(Thumb,{key:b.attachment!.attachmentId+':'+index,attachment:b.attachment!,loadImage:props.loadImage}):file(b.attachment!))):null,
             el('span','preview',projectUserText(previewOf(row.content))),
           ],
           props.mutable?el('div','actions',edit?[

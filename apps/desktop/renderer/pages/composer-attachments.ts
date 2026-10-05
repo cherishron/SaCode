@@ -2,6 +2,7 @@
 import {defineComponent,h,ref,watch,nextTick,onMounted,onBeforeUnmount,Teleport,type PropType} from 'vue';
 import {ImageLightbox} from './image-lightbox';
 export {installComposerKeymap,keymapDirective,resolveSubmitMode} from './composer-keymap';
+export {PersistedImage} from './persisted-image';
 export type Attachment={id:string;kind:'image'|'file';file:File;previewUrl?:string};
 export type Upload={status:'uploading';loaded?:number;total?:number}|{status:'ready'}|{status:'error';message?:string};
 const el=(tag:string,cls:string,children:any,props:any={})=>h(tag,{class:'attachments-'+cls,...props},children);

@@ -92,7 +92,10 @@ const TextBubble = {
           : h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, expanded ? text : plan.shown),
       ];
       if (m.attachments?.length) {
-        children.push(h('div',{class:'attachments-rail history-attachments',role:'group','aria-label':'消息附件'},m.attachments.map((a,index)=>h('article',{class:'attachments-fileCard','data-history-attachment':a.attachmentId,'data-attachment-kind':a.kind,key:index},[
+        children.push(h('div',{class:'attachments-rail history-attachments',role:'group','aria-label':'消息附件'},m.attachments.map((a,index)=>a.kind==='image'?h('article',{class:'history-image-entry','data-history-attachment':a.attachmentId,'data-attachment-kind':a.kind,key:index},[
+          h(window.SaCodeAttachments.PersistedImage,{attachment:a,sessionId:m.sessionId,label:'历史图片'}),
+          h('span',{class:'attachments-fileBody'},[h('span',{class:'attachments-name'},a.name||'图片附件'),h('span',{class:'attachments-meta'},`${a.width} × ${a.height} · ${a.bytes} B`)]),
+        ]):h('article',{class:'attachments-fileCard','data-history-attachment':a.attachmentId,'data-attachment-kind':a.kind,key:index},[
           h('span',{class:'attachments-fileIcon','aria-hidden':true},a.kind==='image'?'▧':'▤'),
           h('span',{class:'attachments-fileBody'},[
             h('span',{class:'attachments-name',title:a.name},a.name||(a.kind==='image'?'图片附件':'文件附件')),
@@ -131,7 +134,7 @@ createApp({
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
     const scrollSession = ref(0), followingTail = ref(true);
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
-    const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || [], proj.value.messageRows));
+    const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || [], proj.value.messageRows, String(scrollSession.value)));
     const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || [], proj.value.messageRows));
     const tools = ref([]);
     const detailName = ref("");
@@ -1138,7 +1141,7 @@ createApp({
         el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
       ]) : null,
       h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
-      h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
+      h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,sessionId:String(self.scrollSession),rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
