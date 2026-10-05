@@ -25,7 +25,8 @@ test('真实 Host 执行 SSE Todo 调用并携带关联结果继续请求', { ti
       const event = value => res.write('data: ' + JSON.stringify(value) + '\n\n');
       if (requests.length === 1) {
         event({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-real-todo', function: { name: 'todo_', arguments: args.slice(0, 13) } }] } }] });
-        event({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { name: 'write', arguments: args.slice(13) } }] } }] });
+        // StepFun 续片显式携带空 ID，不能覆盖首片身份或误报冲突。
+        event({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: '', function: { name: 'write', arguments: args.slice(13) } }] } }] });
         event({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { total_tokens: 3 } });
       } else {
         assert.equal(requests.length, 2, '不可重复请求或无限循环');

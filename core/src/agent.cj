@@ -3,6 +3,7 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.fs.*
 import std.io.*
+import stdx.encoding.json.*
 
 // provider 增量；工具参数保留原始字符串分片，不解析或重编码。
 public class Chunk {
@@ -102,15 +103,24 @@ public class ToolRuntime {
     let workingDirectory: String
     let agentOwned: Bool
     let todoAllowParallel: Bool
+    let modelProtocol: Bool
 
-    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false) {
+    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false) {
         this.log = log
         this.registry = registry
         this.workingDirectory = workingDirectory
         this.agentOwned = agentOwned
         this.todoAllowParallel = todoAllowParallel
+        this.modelProtocol = modelProtocol
     }
 
+    // 模型协议由上层统一记录关联 ID；管线审计仍入同一日志，但不重复进入模型历史。
+    private func recordCall(data: String): Unit {
+        log.append(if (modelProtocol) { "tool/runtime/call" } else { "tool/call" }, data)
+    }
+    private func recordResult(data: String): Unit {
+        log.append(if (modelProtocol) { "tool/runtime/result" } else { "tool/result" }, data)
+    }
     private func workingPath(path: String): String {
         let base = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
         if (base.size == 0 || Path(path).isAbsolute()) { return path }
@@ -120,19 +130,19 @@ public class ToolRuntime {
     // 固定序：注册表查询 → 审批 → guard → pre-execute → snapshot → execute → post-execute（无损校验）
     public func execute(name: String, args: String, answer: String, allowedByGuard: Bool): ApprovalOutcome {
         lastDetail = ToolDetail()
-        log.append("tool/call", "${name} ${args}")
+        recordCall( "${name} ${args}")
         if (!registry.has(name)) {
             // 未登记的工具不走审批：拒绝并计数，审批应答再正确也无效
             registryMisses += 1
             lastDetail.stage = "unregistered"
-            log.append("tool/result", "unregistered:${name}")
+            recordResult( "unregistered:${name}")
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
             // fail-closed：只有 allowed-once 放行，无应答者/非法应答一律拒
             if (answer != "allowed-once") {
                 lastDetail.stage = "approval-denied"
-                log.append("tool/result", "denied:${name}:${answer}")
+                recordResult( "denied:${name}:${answer}")
                 return ApprovalOutcome(false, "approval-not-allowed-once")
             }
         }
@@ -144,11 +154,11 @@ public class ToolRuntime {
     // 调用方自己声明「批过了」不作数；工单过期、被拒、已用过，全都拒。
     public func executeWithApproval(name: String, args: String, approvalId: Int64, allowedByGuard: Bool, desk: ApprovalDesk): ApprovalOutcome {
         lastDetail = ToolDetail()
-        log.append("tool/call", "${name} ${args}")
+        recordCall( "${name} ${args}")
         if (!registry.has(name)) {
             registryMisses += 1
             lastDetail.stage = "unregistered"
-            log.append("tool/result", "unregistered:${name}")
+            recordResult( "unregistered:${name}")
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
@@ -158,12 +168,12 @@ public class ToolRuntime {
                     // 票是批给别的工具的：拒绝原因必须和「没批过」分开写，
                     // 否则日志里只留一个 denied，答不出人到底批了什么、被拿去干了什么。
                     lastDetail.stage = "approval-mismatch"
-                    log.append("tool/result", "denied:${name}:approval-mismatch:${bound}")
+                    recordResult( "denied:${name}:approval-mismatch:${bound}")
                     return ApprovalOutcome(false, "approval-tool-mismatch:${bound}")
                 }
                 let st = desk.stateOf(approvalId)
                 lastDetail.stage = "approval-denied"
-                log.append("tool/result", "denied:${name}:approval-${st}")
+                recordResult( "denied:${name}:approval-${st}")
                 return ApprovalOutcome(false, "approval-not-granted:${st}")
             }
         }
@@ -179,7 +189,7 @@ public class ToolRuntime {
         if (!allowedByGuard) {
             guardDenials += 1
             lastDetail.stage = "guard-denied"
-            log.append("tool/result", "denied:${name}:guard")
+            recordResult( "denied:${name}:guard")
             return ApprovalOutcome(false, "guard-denied")
         }
         if (name == "todo_write") {
@@ -187,11 +197,11 @@ public class ToolRuntime {
                 let result = TodoTool(log, todoAllowParallel).execute(args, agentOwned)
                 lastDetail.stage = "done"
                 lastDetail.verified = true
-                log.append("tool/result", result)
+                recordResult( result)
                 return ApprovalOutcome(true, result)
             } catch (e: Exception) {
                 lastDetail.stage = "bad-args"
-                log.append("tool/result", e.message)
+                recordResult( e.message)
                 return ApprovalOutcome(false, e.message)
             }
         }
@@ -201,7 +211,7 @@ public class ToolRuntime {
         if (name != "write") {
             // 注册过但这个实现还没写的工具：与「未登记」是两种失败，必须分开归一
             lastDetail.stage = "unknown-tool"
-            log.append("tool/result", "unknown-tool:${name}")
+            recordResult( "unknown-tool:${name}")
             return ApprovalOutcome(false, "unknown-tool:${name}")
         }
         let parsed = normalizeArgs(args)
@@ -209,7 +219,7 @@ public class ToolRuntime {
         lastDetail.argsAfterPre = parsed.norm
         if (!parsed.ok) {
             lastDetail.stage = "bad-args"
-            log.append("tool/result", "bad-args")
+            recordResult( "bad-args")
             return ApprovalOutcome(false, "bad-args")
         }
         let path = workingPath(parsed.path)
@@ -242,11 +252,11 @@ public class ToolRuntime {
             }
         } catch (e: IOException) {
             lastDetail.stage = "io-error"
-            log.append("tool/result", "io-error:${path}")
+            recordResult( "io-error:${path}")
             return ApprovalOutcome(false, "io-error:${path}")
         } catch (e: Exception) {
             lastDetail.stage = "threw"
-            log.append("tool/result", "threw:${path}")
+            recordResult( "threw:${path}")
             return ApprovalOutcome(false, "threw:${path}")
         }
         // post-execute：写后重读逐字节比对，掉一个字节、被改写一个字节都不算成功
@@ -261,7 +271,7 @@ public class ToolRuntime {
         if (!sameFileBytes(back, want)) {
             lastDetail.verified = false
             lastDetail.stage = "torn-write"
-            log.append("tool/result", "torn-write:${path}:expected=${want.size},got=${back.size}")
+            recordResult( "torn-write:${path}:expected=${want.size},got=${back.size}")
             return ApprovalOutcome(false, "torn-write:${path}")
         }
         // 这一份刚由本工具写下并核对过，观察记录跟着更新，否则下一次自己写自己会被自己拦
@@ -269,7 +279,7 @@ public class ToolRuntime {
         lastDetail.verified = true
         lastDetail.stage = "ran"
         let out = "ok:${path}"
-        log.append("tool/result", out)
+        recordResult( out)
         return ApprovalOutcome(true, out)
     }
 
@@ -277,13 +287,24 @@ public class ToolRuntime {
     // 必须是盘上真实读到的字节（顺手记下这一份的状态供 write 判断）。
     // 缓存读结果等于没读——FS_NOT_OBSERVED 说的就是这件事。
     private func readStep(args: String): ApprovalOutcome {
-        let raw = args.trimAscii()
+        var raw = args.trimAscii()
+        if (raw.startsWith("{")) {
+            try {
+                let obj = JsonValue.fromStr(raw).asObject()
+                if (obj.size() != 1) { throw Exception("bad-args") }
+                raw = obj.get("path").getOrThrow().asString().getValue()
+            } catch (_: Exception) {
+                lastDetail.stage = "bad-args"
+                recordResult("bad-args")
+                return ApprovalOutcome(false, "bad-args")
+            }
+        }
         let path = if (raw.size == 0) { raw } else { workingPath(raw) }
         lastDetail.argsAfterPre = path
         lastDetail.preRewrote = (path != args)
         if (path.size == 0) {
             lastDetail.stage = "bad-args"
-            log.append("tool/result", "bad-args")
+            recordResult( "bad-args")
             return ApprovalOutcome(false, "bad-args")
         }
         if (!exists(Path(path))) {
@@ -292,7 +313,7 @@ public class ToolRuntime {
                 // 父目录也不存在时无法解析身份，创建本来就会失败；读仍报 not-found。
             }
             lastDetail.stage = "not-found"
-            log.append("tool/result", "not-found:${path}")
+            recordResult( "not-found:${path}")
             return ApprovalOutcome(false, "not-found:${path}")
         }
         var bytes: Array<Byte> = []
@@ -300,11 +321,11 @@ public class ToolRuntime {
             bytes = File.readFrom(path)
         } catch (e: IOException) {
             lastDetail.stage = "io-error"
-            log.append("tool/result", "io-error:${path}")
+            recordResult( "io-error:${path}")
             return ApprovalOutcome(false, "io-error:${path}")
         } catch (e: Exception) {
             lastDetail.stage = "threw"
-            log.append("tool/result", "threw:${path}")
+            recordResult( "threw:${path}")
             return ApprovalOutcome(false, "threw:${path}")
         }
         var text = ""
@@ -324,19 +345,29 @@ public class ToolRuntime {
         lastDetail.verified = true
         lastDetail.stage = "ran"
         // 模型将看到的正文必须进日志，不能只存路径和长度而让重放丢掉依据。
-        log.append("tool/result", "ok-read:${path}:${bytes.size}\n${text}")
+        recordResult( "ok-read:${path}:${bytes.size}\n${text}")
         return ApprovalOutcome(true, text)
     }
 
     private func failFile(stage: String, path: String): ApprovalOutcome {
         lastDetail.stage = stage
-        log.append("tool/result", "${stage}:${path}")
+        recordResult( "${stage}:${path}")
         return ApprovalOutcome(false, "${stage}:${path}")
     }
 
     // pre-execute 的归一化只动「路径与正文之间」的空白：路径前的空白、路径与正文之间多余的
     // 空白都吃掉，但正文内部的空格是内容，不是分隔符——把它当分隔符会静默丢内容。
     func normalizeArgs(args: String): ToolArgs {
+        if (args.trimAscii().startsWith("{")) {
+            try {
+                let obj = JsonValue.fromStr(args).asObject()
+                if (obj.size() != 2) { throw Exception("bad-args") }
+                let path = obj.get("path").getOrThrow().asString().getValue()
+                let content = obj.get("content").getOrThrow().asString().getValue()
+                if (path.trimAscii().size == 0) { throw Exception("bad-args") }
+                return ToolArgs(path, content, obj.toString(), true)
+            } catch (_: Exception) { return ToolArgs("", "", "", false) }
+        }
         let parts = args.split(" ")
         var path = ""
         var body = ArrayList<String>()

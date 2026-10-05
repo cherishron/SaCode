@@ -44,8 +44,12 @@ public class ModelToolCalls {
             fresh
         }
         if (let Some(id) <- chunk.toolId) {
-            if (call.id.size > 0 && call.id != id) { throw Exception("conflicting-tool-id") }
-            call.id = id
+            // StepFun 的续片显式携带空 id；它表示该帧不提供身份，不能清空首帧 ID。
+            // 不同的非空 ID 仍拒绝，全部帧都无身份则由 complete 拒绝。
+            if (id.size > 0) {
+                if (call.id.size > 0 && call.id != id) { throw Exception("conflicting-tool-id") }
+                call.id = id
+            }
         }
         if (let Some(name) <- chunk.toolName) { call.name += name }
         call.args += chunk.text

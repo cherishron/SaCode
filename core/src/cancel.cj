@@ -127,9 +127,11 @@ public class TurnResult {
     public let usage: String
     public let interrupted: Bool
     public let settledToolCalls: Int64
+    // 结算包含拒绝、失败和取消；目标进展只能使用成功执行的次数。
+    public let successfulToolCalls: Int64
     public let pendingToolCalls: Int64
 
-    public init(cancelled: Bool, delivered: Int64, text: String, finishReason: String, usage: String, interrupted: Bool, settledToolCalls: Int64, pendingToolCalls: Int64) {
+    public init(cancelled: Bool, delivered: Int64, text: String, finishReason: String, usage: String, interrupted: Bool, settledToolCalls: Int64, pendingToolCalls: Int64, successfulToolCalls!: Int64 = 0) {
         this.cancelled = cancelled
         this.delivered = delivered
         this.text = text
@@ -137,6 +139,7 @@ public class TurnResult {
         this.usage = usage
         this.interrupted = interrupted
         this.settledToolCalls = settledToolCalls
+        this.successfulToolCalls = successfulToolCalls
         this.pendingToolCalls = pendingToolCalls
     }
 }

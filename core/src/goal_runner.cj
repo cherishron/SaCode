@@ -17,7 +17,8 @@ public class GoalRunner {
         allowParallel: Bool, scheduler: GoalScheduler, svc: GoalService,
         maxRounds: Int64, maxElapsed: Int64, noProgressLimit: Int64,
         budgetExceeded: () -> Bool, evidence: (TurnResult) -> Bool,
-        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): DriveResult {
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
+        toolRuntime!: ?ModelToolRuntime = None): DriveResult {
         let driver = GoalDriver(scheduler, svc)
         return driver.run(maxRounds, maxElapsed, noProgressLimit, budgetExceeded, { =>
             // 轮次边界送达：自驱动的持续目标每开一轮是一次新 turn，须在「本轮请求构造前」
@@ -31,8 +32,8 @@ public class GoalRunner {
                     log.append("user/message", note.text)
                 }
             }
-            let result = ModelAgentLoop().run(makeFirst(), nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages)
-            RoundOutcome(result.settledToolCalls > 0 && !result.interrupted && !result.cancelled, evidence(result))
+            let result = ModelAgentLoop().run(makeFirst(), nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages, toolRuntime: toolRuntime)
+            RoundOutcome(result.successfulToolCalls > 0 && !result.interrupted && !result.cancelled, evidence(result))
         })
     }
 }
