@@ -42,6 +42,12 @@
 2. SDK 里有 `libcangjie-std-crypto.cipher.dll` / `libcangjie-std-crypto.digest.dll`，`stdx` 里有 `libstdx.crypto.crypto.dll`（符号表里能看到 `GCM`）。
    → AEAD 原语大概率可用，但**具体 API 形态我还没证**（`strings` 从 `.cjo` 里取不出符号）。所以 §10 批次 0 先跑一个最小编译探针钉住它，探针不过则按 §10 的降级阶梯走，**不允许**为了绿灯手写对称加密。
 
+3. **本栈的密码学面实测清单**（从 SDK/stdx 的二进制符号抽取，`strings` 在本机不可用，改用 Node 读 latin1 后取可见串）：
+   - `std.crypto.cipher` 只有**接口** `BlockCipher`（`encrypt`/`decrypt`），**没有任何具体算法**；`std.crypto.digest` 同理只有 `Digest` 接口与泛化 `digest`。这修正了 `core/src/sha256.cj:5-9` 的「本机唯一的摘要实现是 stdx.crypto.digest」——不是「唯一」，是 **std 侧根本没有现成实现**。
+   - `stdx.crypto.crypto` 的**唯一具体分组密码是 `SM4`**，模式枚举 `OperationMode` 有 `CBC|CTR|GCM`，并暴露 `aad`/`tagSize`/`ivSize`/`key`；另有 `PaddingMode`（`NoPadding|PKCS7Padding`）与 `SecureRandom`（带 `priv` 私有随机字节）。
+   - **全栈 0 处 `AES` 命中**；**0 处任何 KDF**（`PBKDF`/`Scrypt`/`HKDF` 全无命中）；`stdx.crypto.digest` 有 `SHA256`/`SHA384`/`MD5` 与 `HMAC(key, Digest)`。
+   → 结论：**AEAD 可用但只有 SM4-GCM**，且**口令派生必须自建**（见 §8.2）。这把我原先写的 `AES-256-GCM` 直接推翻。
+
 ---
 
 ## 2. 三层数据模型
@@ -290,13 +296,26 @@
 
 `config` 包**结构上就没有能承载明文的槽位**（继承 `provider_registry.cj:330` 的拒绝清单），不是「写了再擦掉」。
 
-### 8.2 加密形态
+### 8.2 加密形态（按 §1.3 实测的密码学面定，不是按理想选型定）
 
-`secret-bundle` 的凭据段用口令派生密钥的 AEAD 封装：`PBKDF2-HMAC-SHA256`（迭代次数与盐长度写在头部、不低于 300k）+ `AES-256-GCM`（盐、IV、认证标签逐条独立），明文密钥永不同时落盘。
+`secret-bundle` 的凭据段 = **口令派生密钥 + AEAD 封装**，两半分别落在本栈真实存在的东西上：
 
-- **禁止**为了「能跑通」手写对称加密或退化成哈希混淆。
-- 若批次 0 探针证明本机 SDK 无可用的 AEAD 面：**`secret-bundle` 记 BLOCKED**（写清缺哪原语、解锁条件是 SDK 能力或独立交付件），`config` 包照常可用。**不允许**因为这条不通就取消密钥迁移需求，也不允许用弱替代蒙过去。
-- 派生与解包只在需要时发生；口令不落盘、不进日志、不进记忆。
+| 半 | 用什么 | 为什么只能这样 |
+| --- | --- | --- |
+| AEAD | `stdx.crypto.crypto` 的 **`SM4` + `OperationMode.GCM`**（`aad`/`tagSize`/`ivSize` 在该类上可见），底层是 OpenSSL `EVP_CIPHER_*`（符号里可见 `DYN_EVP_CIPHER_fetch`/`DYN_EVP_CIPHER_CTX_ctrl`） | 全栈 **0 处 AES**；`std.crypto.cipher` 只有 `BlockCipher` 接口。SM4-GCM 是本栈唯一由真实密码库提供的 AEAD |
+| 口令派生 | 自建 **PBKDF2-HMAC-SHA256**，构建在 `stdx.crypto.digest` 的 `HMAC(key, SHA256)` 之上；迭代次数与盐长度写进信封头部，**不低于 600k** | 全栈 **0 处 KDF**（无 PBKDF2/scrypt/HKDF）。不派生就直接用口令当密钥是硬伤，所以这一层必须有 |
+| 随机材料 | `stdx.crypto.crypto.SecureRandom`（`priv` 私有随机字节）出盐与 IV | 不用时钟或进程内计数器凑随机 |
+| 密钥长度 | PBKDF2 输出取前 128 位作 SM4 密钥（SM4 分组与密钥均 128 位） | 算法规格所限，如实写明是 **128 位安全强度**，不宣称 AES-256 等级 |
+
+派生纪律：
+
+- **PBKDF2 只允许构建在已 vetted 的 HMAC 之上**，且必须用 **RFC 6070 的 PBKDF2-HMAC-SHA256 向量**钉住（`c=1/2/4096/16777216`、`dkLen=1/2/8/32/40`、含 `passwordPASSWORDpassword` 与 `pass\000word` 的 NUL 截断用例）。这是自建派生唯一可接受的证明方式；**不允许**手写分组密码或哈希混淆冒充加密。
+- 每条凭据条目独立盐与 IV，认证标签逐条存；密文被改动一位即解密失败（GCM 标签），**不得降级为「忽略校验继续导入」**。
+- `aad` 绑住信封头（`format`/`kind`/`schemaVersion`/条目摘要），防止把头换成 `config` 或换条目数后仍校验通过。
+- 口令不落盘、不进日志、不进记忆；派生与解包只在需要时发生。
+- **信封头部必须显式记录算法标识**（`cipher: "SM4-GCM"`、`kdf: "PBKDF2-HMAC-SHA256"`、迭代次数、盐/IV/标签长度）。这样将来 SDK 出现 AES 或真实 KDF 时可以换档，而旧包仍按头部自描述可解——算法敏捷性写进格式，不靠记忆。
+- **被否决的替代**：借 `npm/dsh-cli/bin/cli.js` 的 Node 侧 `crypto`（有 AES-256-GCM 与 scrypt）来做封装。否决理由：那会让 CLI 与桌面各用一套加解密实现，直接违反「桌面、CLI 与安装包规则一致」，而迁移包恰恰是跨入口的产物。
+- 若 B0 探针证明 `SM4` 的 GCM 构造在本机跑不通（`cjpm` 链接、OpenSSL 版本或 `tagSize` 语义与符号所见不符）：**`secret-bundle` 记 BLOCKED**，写清卡在哪一步、解锁条件是什么，`config` 包照常可用。**不允许**因此取消密钥迁移需求，也不允许用弱替代蒙过去。
 
 ### 8.3 导入流程与不变量
 
@@ -317,9 +336,12 @@
 
 `usage-ledger.log`（账本）、已用额度、在途预留、`route-health.log`（熔断/冷却状态）、`待核算` 记录都**不进** `config`/`secret-bundle`。整套服务搬迁走独立的「数据目录备份恢复」流程，本设计只提供文档级迁移，并如实说明它不恢复运行数据。
 
-### 8.5 交付形态
+### 8.5 交付形态（依赖实测后收敛）
 
-解包与打包需要 AEAD，而这会拉进 OpenSSL 依赖：把 `MigrationBundle` 的加解密入口放进 CLI 子命令（`dsh migrate export/import`），并由桌面通过既有「外部 exe 在 resources 里、绝不回退 asar 内路径」的规则调用（`apps/desktop/paths.cjs`）。加密不可用时 fail-loud，UI 直接显示不可用原因。
+`stdx.crypto.*` **已经在交付产物里**：`scripts/pack-cli.mjs:99-105` 拷 `STDX` 下全部 `libstdx*.dll`（只排除 unittest 与宏），`scripts/pack-host.mjs:18-22` 把传入 DLL 目录里的 `*.dll` 全量拷进 `bin/`；而 `libcrypto-3-x64.dll` 本来就因 TLS 随包（§1.3）。
+→ **加密迁移不新增任何分发依赖**，也就没有「为了少拉依赖把它单独关进一个可执行文件」的理由。
+
+因此实现落在 **`core`（`MigrationBundle`）一处**：桌面走宿主动词 `migrate/*`，CLI 走 `dsh migrate export|import`，两者调的是同一段代码——迁移包的格式与算法只能有一份真相。加密不可用（B0 判 BLOCKED 或运行期缺库）时 **fail-loud**，UI 与 CLI 直接显示卡点，不提供「先导出来再说」的路径。
 
 ---
 
@@ -355,7 +377,7 @@
 
 | 批次 | 内容 | 出口判据 |
 | --- | --- | --- |
-| **B0 可行性探针**（半天级） | ① AEAD 面能不能用（`std.crypto.cipher` / `stdx.crypto` 最小编译探针 + 一次真实加解密回环）；② 时钟注入在冷却/探测计时上的形状；③ relay 转发 SSE 与 usage 透传的手工探针 | 三条各有实测结论；AEAD 不通则 `secret-bundle` 立刻按 BLOCKED 建档，不拖到 B5 |
+| **B0 可行性探针**（半天级） | ① `SM4(OperationMode.GCM, key, iv, ...)` 的真实构造形态与 `aad`/`tagSize` 语义：编译 + 一次加解密回环 + 改一字节必失败；② `stdx.crypto.digest.HMAC(key, SHA256)` 流式接口形态，用它把 **RFC 6070 向量**跑通（PBKDF2 的前置）；③ 时钟注入在冷却/探测计时上的形状；④ relay 转发 SSE 与 usage 透传的手工探针 | 四条各有实测结论；①② 任一不通则 `secret-bundle` 立刻按 BLOCKED 建档并写清卡点，不拖到 B5 |
 | **B1 模型目录** | 供应商新字段、上游模型能力面、`CustomModelRegistry`、拉取/手动添加、两种导入操作、能力适配校验 | 目录 CRUD + 重复拉取不重复导入 + 能力不适配保存即拒，均绿 |
 | **B2 调度闭环** | `ModelRouter`（过滤链 + 轮询 + 平滑加权）、供应商开关语义、`RouteHealth` 三档作用域与失败分类、冷却 + 低频探测 + 试恢复、跨进程探测租约 | 目标里的每一条自动化验收绿（§11） |
 | **B3 计量与预算** | `UsageLedger`（尝试粒度、定点金额、计价快照、预留/结算/作废、待核算）、`budget/*` 动词、统计查询面 | 并发不重复预留/结算；改价不重算历史；取消有 usage 照记 |
@@ -398,6 +420,11 @@
 | 23 | relay 下正文/工具增量/usage/终止序逐帧透传，不被改写 | 网关侧聚合改写 |
 | 24 | 已送达或已开始输出的请求不被自动重放 | 默认盲目重放 |
 | 25 | CLI `modelcenter`、桌面 `node --test`、打包态冒烟对同一夹具给出同一决策序列 | 桌面走本地简化的选路分支 |
+| 26 | PBKDF2-HMAC-SHA256 逐条命中 RFC 6070 向量（含 `c=4096`、`dkLen=32`、NUL 截断那条） | 少一轮迭代或 salt 拼接错位 |
+| 27 | SM4-GCM 加解密回环等价；密文或头部改一字节 → 解密必失败，**不产出明文** | 忽略认证标签继续解 |
+| 28 | `aad` 绑头部：把头里 `kind` 从 `secret-bundle` 改成 `config` 后解密失败 | `aad` 留空 |
+| 29 | 错误口令只报「口令不对/解不开」，不回吐任何部分明文，也不落口令 | 失败路径把已解出的片段写进日志 |
+| 30 | 信封头显式记录 `cipher`/`kdf`/迭代数/各长度；未知算法标识直接拒 | 按当前实现硬猜旧包参数 |
 
 ### 11.1 最终验收闭环的对位
 
@@ -408,8 +435,8 @@
 | 发起真实任务 | B2（+B4 走加速时） | 3、10、21、23、24 |
 | 查看结果与费用 | B3 / B6 | 8、14、15、16 |
 | 故障后自动恢复 | B2 | 5、6、7、11、12 |
-| 安全导出 | B5 | 17 |
-| 新机器导入并继续使用 | B5 | 18、19、20 |
+| 安全导出 | B5 | 17、26、27、28、30 |
+| 新机器导入并继续使用 | B5 | 18、19、20、29 |
 | 三入口规则一致 | 每批 | 25 |
 
 目标原文里「第三次有效失败触发**当天熔断**，重启不清零，**次日恢复**」这条已被目标 §2 的表述取代为「退出正常调度 + 冷却 + 低频探测」（避免五小时额度恢复后仍被锁到第二天）；保留的不变部分是**跨重启不清零**（断言 5）与**换自定义模型不能绕过暂停**（断言 6）。
@@ -434,7 +461,8 @@
 
 | 风险 | 处置 |
 | --- | --- |
-| AEAD 面在本机 SDK 上的真实形态未证 | B0 探针；不通则 `secret-bundle` BLOCKED，`config` 包照常 |
+| 本栈只有 SM4-GCM、没有 AES 也没有 KDF；自建 PBKDF2 是必需而非可选 | §1.3 已把符号面钉死；B0 先跑 RFC 6070 向量再谈封装。**对外表述只写 128 位安全强度，不写成 AES-256**；SDK 将来提供 AES 或真实 KDF 时按信封头的算法标识换档，旧包仍可自描述解出 |
+| `SM4` 构造形态只有符号证据、没有运行证据 | B0 第①条：编译 + 回环 + 改一字节必失败；不通即 `secret-bundle` BLOCKED，`config` 包不受影响 |
 | relay 需要真实服务端才存在，本地只能桩验证 | B0/B4 用受控桩证传输契约（含帧透传与取消），真实网关接入单独记「待运行验证」，不写成已达成 |
 | 供应商的额度重置时刻与限流语义各家不同 | 只采信供应商明确证据；无证据走阶梯并在页面标「恢复时刻为估算」 |
 | 账本与文档共用目录的写竞争 | 全部经 `WriteLease`；`bridge.test.mjs` 在仓库根用 `dualtest/`，异常残留先 `rm -rf dualtest` |
