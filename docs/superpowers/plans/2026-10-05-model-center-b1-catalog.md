@@ -8,7 +8,7 @@
 
 **Tech Stack:** 仓颉 cjc/cjpm **1.1.3**（cjnative，target `x86_64-w64-mingw32`）；`stdx.encoding.json`；`std.unittest`；桌面侧 Node ≥18 + Electron + Vue **runtime**（`h()` 手写，无模板编译器）。
 
-**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
+**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46（41、46 是 2026-10-05 覆盖核查后补进本批的：前者钉「跨币种不许用统一单价抹平」，后者钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」）。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
 
 ## Global Constraints
 
@@ -41,7 +41,7 @@ cd /d/Project/sa/saai/sa-code && git worktree add --detach ../sa-b1-head HEAD > 
 cd ../sa-b1-head/core && cjpm test > ../../sa-code/target/b1-baseline.log 2>&1; echo "rc=$?"
 ```
 
-读到的是**提交态基线** `B`。此后每个任务的期望值改成 `B + 本批到该任务为止的累计新增`（新增条数固定：4、3、5、5、4、4，合计 25），并在出口判据里按同一个 `B` 复算。工作区态计数只能用于「开发中不破坏别人」的参考，**不能当提交级证据**；用完 `git worktree remove ../sa-b1-head`（有残留 target 就先确认再删）。裸跑构建产物时 stdx/runtime DLL 必须与 exe 同目录，或用 **POSIX 形式**（`/c/...` 而不是 `C:/...`）加进 PATH。
+读到的是**提交态基线** `B`。此后每个任务的期望值改成 `B + 本批到该任务为止的累计新增`（新增条数固定：4、3、9、5、4、4，合计 29），并在出口判据里按同一个 `B` 复算。工作区态计数只能用于「开发中不破坏别人」的参考，**不能当提交级证据**；用完 `git worktree remove ../sa-b1-head`（有残留 target 就先确认再删）。裸跑构建产物时 stdx/runtime DLL 必须与 exe 同目录，或用 **POSIX 形式**（`/c/...` 而不是 `C:/...`）加进 PATH。
 
 ---
 
@@ -535,7 +535,7 @@ git commit -m "feat(core): 供应商加排序、硬开关与传输通道，历�
 **Interfaces:**
 - Consumes: `SessionLog`（`provider_registry.cj:312-322` 的 commit 形态）、Task 1/2 的字段读取器（**把它们提为文件内 `private static` 不够用——本任务在 `custom_model_registry.cj` 里自带一份同名私有助手，两份保持逐字一致，收口进 `core/src/settings_fields.cj` 留到 B6，本批不做抽象**）。
 - Produces:
-  - `public class CustomModelRecord { id, name, description: String; enabled: Bool; category: String; requires: Array<String>; bindings: Array<BindingRecord>; mode: String; sortOrder: Int64 }`
+  - `public class CustomModelRecord { id, name, description: String; enabled: Bool; category: String; requires: Array<String>; bindings: Array<BindingRecord>; mode: String; sortOrder: Int64; params: String; modalityBudget: String; dailyTokens: Int64; monthlyTokens: Int64; dailyAmountMicro: Int64; monthlyAmountMicro: Int64; maxOutputTokens: Int64; probeEnabled: Bool; probeMaxPerDay: Int64 }`（**共 18 个字段**。后 9 个是规格 §2.3「落盘形态在 B1 一次定死」要求随本批存下来的**参数/预算/探测**三组：`params` 与 `modalityBudget` 存**原文 JSON 文本**（空串=未设置，核心不拍平字段名，因为三种协议参数叫法不同、探测单位按 `meterUnit` 各异），五个预算列用 **`-1` 表示「未设置」而 `0` 表示「额度为零、立刻耗尽」**——这两个值的区别正是断言 46 的靶子。B2 读 `probe.*`、B3 读预算列做判定，本批只负责无损落盘与取值校验。）
   - `public class BindingRecord { providerId: String; modelId: String; enabled: Bool; order: Int64; weight: Int64; priceMicro: Int64; priceVersion: Int64; currency: String }`
   - `public class CustomModelView { models: Array<CustomModelRecord>; revision: Int64; writable: Bool }`
   - `public class CustomModelRegistry { init(file: String) / static forUser(): CustomModelRegistry / describe(): CustomModelView / upsert(draft: String, expectedRevision: Int64): Unit / upsertObject(obj: JsonObject, expectedRevision: Int64): Unit / remove(id: String, expectedRevision: Int64): Unit }`（`upsert`/`upsertObject` 成对，与 `provider_registry.cj:272-279` 的 `update`/`updateObject` 关系逐字一致：前者解析文本，后者省一次解析给宿主用）
@@ -626,6 +626,84 @@ func customModelRejectsUnknownMode() {
     @Expect(thrown, "settings-rejected")
     cmCleanup()
 }
+
+// —— 以下四条对应规格 §2.3「落盘形态在 B1 一次定死」与 §11 断言 41、46 ——
+
+@Test
+func paramsBudgetAndProbePolicySurviveReplay() {
+    cmCleanup()
+    let draft = cmDraft("code", cmBinding("step", "m-a", 0, 1))
+        .replace("\"bindings\"",
+            "\"params\":\"{\\\"temperature\\\":0.7}\",\"modalityBudget\":\"{\\\"image\\\":50}\","
+            + "\"dailyTokens\":200000,\"maxOutputTokens\":8192,\"probeMaxPerDay\":5,\"bindings\"")
+    CustomModelRegistry(cmFile).upsert(draft, -1)
+    let rec = CustomModelRegistry(cmFile).describe().models[0]
+    // 原文无损：核心不拍平参数键、不重新序列化，否则 B2/B3 读到的已经不是用户写的那份
+    @Expect(rec.params, "{\"temperature\":0.7}")
+    @Expect(rec.modalityBudget, "{\"image\":50}")
+    @Expect(rec.dailyTokens, Int64(200000))
+    @Expect(rec.maxOutputTokens, Int64(8192))
+    @Expect(rec.probeMaxPerDay, Int64(5))
+    cmCleanup()
+}
+
+@Test
+func unsetBudgetReplaysAsMinusOneNotZero() {
+    cmCleanup()
+    // 普通草稿里根本没有预算列——缺省只能是「未设置」，不能是 0
+    CustomModelRegistry(cmFile).upsert(cmDraft("code", cmBinding("step", "m-a", 0, 1)), -1)
+    let rec = CustomModelRegistry(cmFile).describe().models[0]
+    @Expect(rec.dailyTokens, Int64(-1))
+    @Expect(rec.monthlyTokens, Int64(-1))
+    @Expect(rec.dailyAmountMicro, Int64(-1))
+    @Expect(rec.monthlyAmountMicro, Int64(-1))
+    @Expect(rec.maxOutputTokens, Int64(-1))
+    @Expect(rec.params, "")
+    @Expect(rec.probeEnabled, true)
+    @Expect(rec.probeMaxPerDay, Int64(3))
+    // 而「有意的零额度」是另一种值，两者必须在盘上区分得开
+    CustomModelRegistry(cmFile).upsert(
+        cmDraft("code", cmBinding("step", "m-a", 0, 1)).replace("\"bindings\"", "\"dailyTokens\":0,\"bindings\""), 1)
+    @Expect(CustomModelRegistry(cmFile).describe().models[0].dailyTokens, Int64(0))
+    cmCleanup()
+}
+
+@Test
+func secretShapedKeyInsideParamsIsRejected() {
+    cmCleanup()
+    var thrown = ""
+    try {
+        // 借「自由格式参数」把明文写进第 3 层文档，正是 §8.1 拒绝清单要堵的那类绕行
+        CustomModelRegistry(cmFile).upsert(
+            cmDraft("code", cmBinding("step", "m-a", 0, 1))
+                .replace("\"bindings\"", "\"params\":\"{\\\"api_key\\\":\\\"sk-abcdef\\\"}\",\"bindings\""), -1)
+    } catch (e: Exception) {
+        thrown = e.message
+    }
+    @Expect(thrown, "settings-rejected")
+    @Expect(CustomModelRegistry(cmFile).describe().models.size, Int64(0))
+    cmCleanup()
+}
+
+@Test
+func twoCurrenciesInOneModelAreRejectedWithoutMerge() {
+    cmCleanup()
+    let cny = cmBinding("step", "m-a", 0, 1)
+    let usd = cmBinding("step", "m-b", 1, 1).replace("\"currency\":\"CNY\"", "\"currency\":\"USD\"")
+    var thrown = ""
+    try {
+        CustomModelRegistry(cmFile).upsert(cmDraft("code", cny + "," + usd), -1)
+    } catch (e: Exception) {
+        thrown = e.message
+    }
+    @Expect(thrown, "settings-rejected")
+    @Expect(CustomModelRegistry(cmFile).describe().models.size, Int64(0))
+    // 未定价（空串）不参与冲突判定，否则 Task 6 的「先导入再填价」立不住
+    let free = cmBinding("step", "m-c", 2, 1).replace("\"currency\":\"CNY\"", "\"currency\":\"\"")
+    CustomModelRegistry(cmFile).upsert(cmDraft("code", cny + "," + free), -1)
+    @Expect(CustomModelRegistry(cmFile).describe().models[0].bindings.size, Int64(2))
+    cmCleanup()
+}
 ```
 
 - [ ] **Step 2: 跑到红**
@@ -688,8 +766,23 @@ public class CustomModelRecord {
     public let bindings: Array<BindingRecord>
     public let mode: String
     public let sortOrder: Int64
+    // 参数与模态预算是自由格式原文：核心不拍平键名，因为协议间叫法不同（§2.3）
+    public let params: String
+    public let modalityBudget: String
+    // -1 = 未设置，0 = 有意的零额度。这两个值绝不能合并（断言 46）
+    public let dailyTokens: Int64
+    public let monthlyTokens: Int64
+    public let dailyAmountMicro: Int64
+    public let monthlyAmountMicro: Int64
+    public let maxOutputTokens: Int64
+    public let probeEnabled: Bool
+    public let probeMaxPerDay: Int64
     public init(id: String, name: String, description: String, enabled: Bool, category: String,
-        requires: Array<String>, bindings: Array<BindingRecord>, mode: String, sortOrder!: Int64 = 0) {
+        requires: Array<String>, bindings: Array<BindingRecord>, mode: String,
+        sortOrder!: Int64 = 0, params!: String = "", modalityBudget!: String = "",
+        dailyTokens!: Int64 = -1, monthlyTokens!: Int64 = -1, dailyAmountMicro!: Int64 = -1,
+        monthlyAmountMicro!: Int64 = -1, maxOutputTokens!: Int64 = -1,
+        probeEnabled!: Bool = true, probeMaxPerDay!: Int64 = 3) {
         this.id = id
         this.name = name
         this.description = description
@@ -699,9 +792,18 @@ public class CustomModelRecord {
         this.bindings = bindings
         this.mode = mode
         this.sortOrder = sortOrder
+        this.params = params
+        this.modalityBudget = modalityBudget
+        this.dailyTokens = dailyTokens
+        this.monthlyTokens = monthlyTokens
+        this.dailyAmountMicro = dailyAmountMicro
+        this.monthlyAmountMicro = monthlyAmountMicro
+        this.maxOutputTokens = maxOutputTokens
+        this.probeEnabled = probeEnabled
+        this.probeMaxPerDay = probeMaxPerDay
     }
     // 逐字段拼回：落盘形态与解析形态必须成对，否则回放一次就丢字段
-    public func toJson(): String { /* 八个字段逐个写出；bindings 用 for + 逗号拼接，形态与 BindingRecord.toJson 逐字一致 */ }
+    public func toJson(): String { /* 十八个字段逐个写出；bindings 用 for + 逗号拼接，形态与 BindingRecord.toJson 逐字一致 */ }
 }
 
 public class CustomModelView {
@@ -719,7 +821,7 @@ public class CustomModelView {
 }
 ```
 
-> `CustomModelRecord.toJson()` 与 `modelsOf(...)` 的函数体就是「八个字段逐个拼 + 数组用逗号串」这一件事，照同文件上方 `BindingRecord.toJson()` 与 `provider_registry.cj:74-77`、`:91-99` 的现成写法逐字同构（含 `jsonEscapeText` 转义）。**这两处是本批唯一允许照抄而不是重写的地方**，因为它们是纯机械序列化，任何 deviation 都会被回放测试当场抓到。
+> `CustomModelRecord.toJson()` 与 `modelsOf(...)` 的函数体就是「十八个字段逐个拼 + 数组用逗号串」这一件事，照同文件上方 `BindingRecord.toJson()` 与 `provider_registry.cj:74-77`、`:91-99` 的现成写法逐字同构（含 `jsonEscapeText` 转义）。**这两处是本批唯一允许照抄而不是重写的地方**，因为它们是纯机械序列化，任何 deviation 都会被回放测试当场抓到。
 
 注册表本体：
 
@@ -795,6 +897,9 @@ public class CustomModelRegistry {
 6. `mode ∈ customModes`，缺省 `weighted`。
 7. `bindings` 必填、可为空数组（空数组意味着「不可调度」，见 Task 4 的保存即拒），上限 32。
 8. 每条绑定：`providerId`/`modelId` 非空、`weight` ∈ 1..1000、`priceMicro >= 0`、`enabled` 缺省 `true`。**`currency` 允许空串，语义是「未定价」；给了就必须是 3 位大写字母。`priceVersion: 0` 同义「未定价」**——这两个缺省是 Task 6 的导入操作能成立的前提：从上游清单导入时用户还没填价，若此处强制必填币种，导入就只能凭空造一个假单价（§7 明令禁止「用统一单价把金额算错」，账本侧对应用 `待核算` 状态承接）。
+9. **同一模型内非空 `currency` 至多一种**（断言 41）。空串（未定价）不计入这个「至多一种」。规则不是「禁止混币」而是「禁止用统一单价把金额算错」：真要跨币得由 §2.3 的显式换算登记来承载，那是 B5/B6 的面，本批先按保存即拒守住，**绝不静默折算**。
+10. `params` 与 `modalityBudget` 是**自由格式 JSON 原文**，本批只做三件事：长度上限（各 ≤4000 字符）、过 §1 那份明文字段名单的逐个查（`api_key`/`token`/`secret`/`value` 之类出现在参数文本里就 `settings-rejected`，断言 46 第三条用例）、**逐字无损回读**（解析成 JSON 只为校验能解析，落盘写的还是用户给的那串；重新序列化会重排键序，B2/B3 读到的就不是用户写的那份）。**不拆成固定字段**——三种协议参数叫法不同，核心不发明上游没有的键（§2.3）。
+11. 预算与探测列：新增文件级私有助手 `intFieldDefault(obj, key, dflt)`（照 Task 2 的 `boolFieldDefault` 同一形态——**缺字段返回缺省值，而不是返回 0**，这是断言 46 第二条用例的立足点）。预算列合法域是 `-1 | >= 0`（`-1` = 未设置，`0` = 有意的零额度，其它负数 `settings-rejected`）；`probeMaxPerDay ∈ 0..100`（`0` 表示不排定时探测，`route/probe/run` 的手动通道仍可用，与 §5.3「软件全关时不继续产生探测费用」同一口径）；`probeEnabled` 缺省 `true`。
 
 - [ ] **Step 3b: 把本地身份缝进写入（§2.4 要求「现在就缝好，但不建设账号」）**
 
@@ -882,7 +987,7 @@ func entriesOfAnotherOwnerAreInvisibleButNotDestroyed() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t3b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 475`（+5）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 479`（+9）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1083,7 +1188,7 @@ Expected：编译红在 `upsertBinding` / `removeBinding` / `reorderBindings` / 
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 480`（463 + Task1 4 + Task2 3 + Task3 5 + 本任务 5）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 484`（463 + Task1 4 + Task2 3 + Task3 9 + 本任务 5）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 6: 变异反证（本任务的核心不变量不能是假绿）**
 
@@ -1290,7 +1395,7 @@ func badCatalogBodyThrowsInsteadOfReportingZeroModels() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5c.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 484`（+4）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
+Expected：`TOTAL: 488`（+4）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
 
 - [ ] **Step 6: 提交**
 
@@ -1444,7 +1549,7 @@ Expected：编译红在 `importNewModels` / `importInto`。
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t6b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 488`（+4）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: 492`（+4）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1798,10 +1903,10 @@ git commit -m "feat(desktop): 模型页地址校验收紧为核心的子集，�
 
 全部满足才算 B1 出口，任一不满足就写清卡点继续开着，**不缩范围凑绿**：
 
-1. `cd core && cjpm test` → `TOTAL: 488`（基线 463 + 本批 25 条：Task1 4、Task2 3、Task3 5、Task4 5、Task5 4、Task6 4）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
-2. Task 4 Step 6 的四处变异全部转红且各自归因到指定用例名（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等` 四条不变量已被钉住）。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
+1. `cd core && cjpm test` → `TOTAL: 492`（基线 463 + 本批 29 条：Task1 4、Task2 3、Task3 9、Task4 5、Task5 4、Task6 4）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
+2. 六处变异全部转红且各自归因到指定用例名：Task 4 Step 6 的四处（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等`），加 Task 3 的两处——(a) 把 `intFieldDefault` 的预算列缺省从 `-1` 改成 `0`，必须只让 `unsetBudgetReplaysAsMinusOneNotZero` 变红（这条杀的正是「未设置被读成额度耗尽」）；(b) 把规则 9 的币种一致性检查改成恒真，必须只让 `twoCurrenciesInOneModelAreRejectedWithoutMerge` 变红。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
 3. `cd apps/desktop && node --test`（全量）rc=0；`bridge.test.mjs` 通道基线已按实际数字更新。
 4. `npm run ui-smoke` 输出 `UI SMOKE PASS`，或明确记 BLOCKED 及其解锁动作。
 5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`。
-6. 断言 1、2、3、4、31 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8。
+6. 断言 1、2、3、4、31、41、46 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）。
 7. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。
