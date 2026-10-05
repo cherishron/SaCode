@@ -30,7 +30,7 @@
 
 1. ~~把 GoalDriver 接进模型工具循环~~：核心侧已完成（`238247f` GoalRunner）；剩余的是**宿主/CLI 改为调用 GoalRunner**（`apps/host/src/main.cj`、`apps/cli/src/main.cj`），并给 `evidence` 接一条真实的完成证据通道（如完成回执/测试通过信号），`budgetExceeded` 接用量闸。
 2. **目标控制 IPC + 渲染层目标卡**（`apps/host/src/main.cj`、`apps/desktop/renderer/app.js` 正被并发改）——展示目标/状态/累计时长/轮次，编辑/暂停/恢复/删除且不打断当前轮；消息任何状态都能发（送达已由 `model_agent.cj:79 claimStep` 与 `apps/host/src/main.cj:1146 claimTurn` 既有实现覆盖，无需新建 inbox）。
-3. **CLI 一致性**（`apps/cli/src/main.cj` 正被并发改）。
+3. ~~CLI 一致性~~：已完成（`d0eb842` `dsh goal` 模式，纳入 `all`）——隔离 worktree 构建 `apps/cli` 后跑 `dsh goal`，实测 **8 PASS / ALL PASS，rc=0**（断言生命周期 CAS、分隔符护栏、崩溃恢复 rev3、驱动连续跑到证据收口、goal/round 落 2 条 log-only、无证据撞轮数上限落 goal-round-limit 阻塞）。注：`apps/cli/src/main.cj` 提交时并发未脏该文件，落库独立无冲突。
 4. **真实模型自动化测试**（step-5-preview，隔离工作区真改文件 + 运行中插话）。
 5. **从稳定 HEAD 重编宿主 → 重打 NSIS → 双入口回归 → 无 SDK 装卸核查**。
 
