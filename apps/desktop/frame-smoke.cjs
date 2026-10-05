@@ -155,7 +155,8 @@ async function checkConversationScroll({js,waitFor,check}) {
   })()`);
   await waitFor("scrollFixture.host.scrollTop>500 && scrollFixture.host.dataset.followingTail==='true'");
   await check('滚动首次打开跟随尾部',"(()=>{const n=scrollFixture.host;return {atFloor:Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1}})()");
-  await js("scrollFixture.host.scrollTop=200");
+  // 用户上翻先有滚轮意图；仅改 scrollTop 可能是布局自动滚动，不能冒充输入。
+  await js("scrollFixture.host.dispatchEvent(new WheelEvent('wheel',{deltaY:-100}));scrollFixture.host.scrollTop=200");
   await waitFor("scrollFixture.host.dataset.followingTail==='false'");
   await js("scrollFixture.savedTop=scrollFixture.host.scrollTop;scrollFixture.content.lastElementChild.style.height='500px'");
   await new Promise(r=>setTimeout(r,120));
@@ -175,7 +176,7 @@ async function checkConversationScroll({js,waitFor,check}) {
   // ResizeObserver 与动画帧异步结算；等待可观察终态，超时仍判失败。
   await waitFor("scrollFixture.host.dataset.followingTail==='true' && Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1");
   await check('尾部跟随流式增高',"({atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
-  await js("scrollFixture.host.scrollTop=100");
+  await js("scrollFixture.host.dispatchEvent(new WheelEvent('wheel',{deltaY:-100}));scrollFixture.host.scrollTop=100");
   await waitFor("scrollFixture.host.dataset.followingTail==='false'");
   await js("SaCodeConversationScroll.toBottom(scrollFixture.host)");
   await check('显式返回最新',"({following:scrollFixture.host.dataset.followingTail==='true',atFloor:Math.abs(scrollFixture.host.scrollHeight-scrollFixture.host.clientHeight-scrollFixture.host.scrollTop)<1})");
@@ -191,7 +192,7 @@ async function checkConversationScroll({js,waitFor,check}) {
   }
   await js("document.querySelectorAll('.btn-fold').forEach(b=>b.click())");
   await waitFor("(()=>{const n=document.querySelector('.conversation-scroll');return n.scrollHeight-n.clientHeight>200 && Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1})()");
-  await js("document.querySelector('.conversation-scroll').scrollTop=100");
+  await js("(()=>{const n=document.querySelector('.conversation-scroll');n.dispatchEvent(new WheelEvent('wheel',{deltaY:-100}));n.scrollTop=100})()");
   await waitFor("!!document.querySelector('#scroll-to-bottom')");
   await check('真实会话回到最新按钮',"(()=>{const b=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),n=document.querySelector('.conversation-scroll').getBoundingClientRect();return {width:Math.abs(b.width-34)<1,height:Math.abs(b.height-34)<1,insideViewport:b.left>=n.left&&b.right<=n.right&&b.bottom<=n.bottom,reading:document.querySelector('.conversation-scroll').dataset.followingTail==='false'}})()");
   await check('正文输入区共用滚动宿主',"(()=>{const scroller=document.querySelector('.conversation-scroll'),seat=document.querySelector('.composer-seat'),card=document.querySelector('.composer-card').getBoundingClientRect(),viewport=scroller.getBoundingClientRect(),latest=document.querySelector('#scroll-to-bottom').getBoundingClientRect();return {shared:seat.parentElement===scroller,sticky:getComputedStyle(seat).position==='sticky',inputVisible:card.top>=viewport.top&&card.bottom<=viewport.bottom,buttonClearsComposer:latest.bottom<=seat.getBoundingClientRect().top-15}})()");
