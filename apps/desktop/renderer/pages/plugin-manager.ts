@@ -1,8 +1,9 @@
 // 插件安装管理视图；安装任务、取消确认、启用状态均由仓颉适配器提供。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType,type Component} from 'vue';
 import {RegistryPicker,validRegistry} from './registry-picker';
-export interface Row {id:string;moduleName?:string;entryId?:string;name:string;description?:string;enabled:boolean;phase:string|null;readOnlyReason?:string}
-export interface Package {name:string;title:string;description?:string;version?:string;installed:boolean;enabled:boolean;optional:boolean;readOnlyReason?:string;error?:string;rows:Row[]}
+import {builtinDescription} from './plugin-descriptions';
+export interface Row {id:string;moduleName?:string;entryId?:string;name:string;description?:string;descriptionZhCN?:string;enabled:boolean;phase:string|null;readOnlyReason?:string}
+export interface Package {name:string;title:string;description?:string;descriptionZhCN?:string;version?:string;installed:boolean;enabled:boolean;optional:boolean;readOnlyReason?:string;error?:string;rows:Row[]}
 export type Phase='idle'|'checking'|'starting'|'running'|'cancelling'|'applying'|'unconfirmed'|'unknown'|'done'|'failed';
 export interface Install {open:boolean;spec:string;phase:Phase;registry:string;registries:{name:string;url:string}[];subject?:{name:string;description?:string;version?:string;host?:string};inputError?:string;failure?:{reason:string;code?:string;pendingBuilds?:string[];failedAt?:'registry'|'spec-host';kind?:string;uncertainty?:'result'|'cancellation'|'acceptance';incompatible?:{name:string;version:string;runtimeVersion:string;peers:Record<string,string>}[]};attempts?:{registries:string[];total:number};approvedBuilds?:string[];runs:{jobId:string;command:string;cwd:string;output:string;exitCode?:number|null}[];installed?:string;restartRequired?:boolean;enabling?:boolean}
 export interface Snapshot {available:boolean;packages:Package[];install:Install;notice?:string;busy:string[];confirm?:string;highlight?:string}
@@ -31,6 +32,8 @@ export function githubRecovery(i:Install):boolean {
 const el=(tag:string,cls:string,children:any,props:any={})=>h(tag,{class:'plugin-manager-'+cls,...props},children);
 const title:Record<Phase,string>={idle:'添加插件',checking:'正在检查…',starting:'正在启动安装',running:'插件安装中…',cancelling:'正在取消安装',applying:'正在应用插件',unconfirmed:'安装状态尚未确认',unknown:'未能获取安装结果',done:'已安装',failed:'插件安装失败'};
 const phaseText:Record<string,string>={pending:'等待依赖',loading:'加载中',active:'运行中',failed:'异常',unloading:'卸载中'};
+const packageDescription=(pkg:Package)=>builtinDescription(pkg.name,pkg.description,pkg.descriptionZhCN);
+const rowDescription=(row:Row)=>builtinDescription(row.moduleName||row.id,row.description,row.descriptionZhCN);
 const initialInstall=():Install=>({open:false,spec:'',phase:'idle',registry:'',registries:[],runs:[]});
 export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Object as PropType<Adapter>,contributions:Array as PropType<Contribution[]>},setup(props){
   const snapshot=ref<Snapshot>({available:false,packages:[],busy:[],install:initialInstall()}),status=ref<'unconnected'|'loading'|'ready'|'error'>(props.adapter?'loading':'unconnected');
@@ -50,16 +53,16 @@ export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Obj
   const contributed=(slot:Contribution['slot'],subject:Subject)=>matching(slot,subject).map(c=>h(c.component,{...c.props,subject,key:subjectKey(subject)+':'+slot+':'+c.id}));
   const packageCard=(pkg:Package)=>el('article','card',[
     button(pkg.title,()=>openPackage(pkg),{class:'plugin-manager-cardHead','aria-label':'查看 '+pkg.title}),
-    pkg.version?el('span','tag','v'+pkg.version):null,el('p','description',pkg.description||pkg.name),
+    pkg.version?el('span','tag','v'+pkg.version):null,el('p','description',packageDescription(pkg)||pkg.name),
     el('p','status',pkg.error?'异常':!pkg.enabled?'已停用':pkg.rows.some(r=>r.phase==='failed')?'异常':pkg.rows.some(r=>r.phase==='active')?'运行中':'未运行'),
     switcher('启用 '+pkg.title,pkg.enabled,!!pkg.readOnlyReason||busy(pkg),()=>void mutation({kind:'enable-package',name:pkg.name,enabled:!pkg.enabled})),
     pkg.readOnlyReason?el('p','note',pkg.readOnlyReason):null,
   ],{key:pkg.name,'data-package-name':pkg.name,'data-highlighted':snapshot.value.highlight===pkg.name});
   const official=()=>el('section','group',[el('h2','groupTitle','官方'),el('div','cards',[...((window as any).SaCodeConfiguration.definitions as {namespace:string;title:string;description:string}[]).map(d=>el('article','card',[button(d.title,()=>selected.value='config:'+d.namespace,{class:'plugin-manager-cardHead'}),el('p','description',d.description)],{key:d.namespace})),...snapshot.value.packages.filter(p=>!p.installed&&p.optional).map(packageCard)]),el('p','note','内置插件列表及运行状态可在「设置 → 内置插件」中查看。')]);
   const packageDetail=(pkg:Package)=>{
-    const query=rowFilter.value.trim().toLocaleLowerCase(),rows=pkg.rows.filter(r=>[r.name,r.description,r.entryId].some(v=>v?.toLocaleLowerCase().includes(query)));
+    const query=rowFilter.value.trim().toLocaleLowerCase(),rows=pkg.rows.filter(r=>[r.name,r.description,rowDescription(r),r.entryId].some(v=>v?.toLocaleLowerCase().includes(query)));
     const subject:Subject={kind:'bundle',name:pkg.name};
-    return el('div','detail',[button('返回插件列表',()=>selected.value=null),el('header','detailHead',[el('div','detailTitle',[el('h1','title',pkg.title),el('p','description',pkg.description||pkg.name)]),pkg.installed?button('卸载',()=>void mutation({kind:'uninstall',name:pkg.name}),{disabled:busy(pkg)||!!pkg.readOnlyReason}):null]),
+    return el('div','detail',[button('返回插件列表',()=>selected.value=null),el('header','detailHead',[el('div','detailTitle',[el('h1','title',pkg.title),el('p','description',packageDescription(pkg)||pkg.name)]),pkg.installed?button('卸载',()=>void mutation({kind:'uninstall',name:pkg.name}),{disabled:busy(pkg)||!!pkg.readOnlyReason}):null]),
       el('div','actions',contributed('actions',subject)),el('div','badges',contributed('badge',subject)),
       el('code','identity',pkg.name+(pkg.version?'@'+pkg.version:'')),switcher('启用 '+pkg.title,pkg.enabled,busy(pkg)||!!pkg.readOnlyReason,()=>void mutation({kind:'enable-package',name:pkg.name,enabled:!pkg.enabled})),
       pkg.error?el('p','error',pkg.error,{role:'alert'}):null,pkg.readOnlyReason?el('p','note',pkg.readOnlyReason):null,
@@ -67,14 +70,14 @@ export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Obj
       el('h2','groupTitle','包含的组件'),el('p','note',`共 ${pkg.rows.length} 个 · ${pkg.rows.filter(r=>r.enabled&&r.phase==='active').length} 运行中 · ${pkg.rows.filter(r=>!r.enabled).length} 已停用 · ${pkg.rows.filter(r=>r.phase==='failed').length} 异常`),
       pkg.rows.length>=10?el('input','input',null,{type:'search','aria-label':'筛选组件',placeholder:'筛选组件',value:rowFilter.value,onInput:(e:Event)=>rowFilter.value=(e.target as HTMLInputElement).value}):null,
       !rows.length?el('p','note',query?'没有匹配的组件。':'这个插件包不包含任何组件。'):null,
-      ...rows.map(r=>el('article','row',[el('div','rowText',[el('strong','label',r.name),el('p','description',r.description||r.entryId||r.id),el('span','status',!r.enabled?'已关闭':phaseText[r.phase||'']||'未运行'),r.readOnlyReason?el('p','note',r.readOnlyReason):null]),el('div','actions',[matching('configuration',{kind:'row',name:pkg.name,rowId:r.id}).length?button('配置 '+r.name,()=>selectedRow.value=r.id):null,pkg.enabled?switcher('启用组件 '+r.name,r.enabled,busy(pkg)||snapshot.value.busy.includes(r.entryId||'')||!!r.readOnlyReason||!r.entryId,()=>void mutation({kind:'enable-row',entryId:r.entryId!,enabled:!r.enabled})):null])],{key:r.id})),
+      ...rows.map(r=>el('article','row',[el('div','rowText',[el('strong','label',r.name),el('p','description',rowDescription(r)||r.entryId||r.id),el('span','status',!r.enabled?'已关闭':phaseText[r.phase||'']||'未运行'),r.readOnlyReason?el('p','note',r.readOnlyReason):null]),el('div','actions',[matching('configuration',{kind:'row',name:pkg.name,rowId:r.id}).length?button('配置 '+r.name,()=>selectedRow.value=r.id):null,pkg.enabled?switcher('启用组件 '+r.name,r.enabled,busy(pkg)||snapshot.value.busy.includes(r.entryId||'')||!!r.readOnlyReason||!r.entryId,()=>void mutation({kind:'enable-row',entryId:r.entryId!,enabled:!r.enabled})):null])],{key:r.id})),
       ...contributed('section',subject),
     ],{key:subjectKey(subject)});
   };
   const rowDetail=(pkg:Package,row:Row)=>{const subject:Subject={kind:'row',name:pkg.name,rowId:row.id};return el('div','detail',[
     el('header','detailHead',[button('返回 '+pkg.title,()=>selectedRow.value=null),el('div','actions',contributed('actions',subject))]),
     el('div','titleRow',[el('h1','title',row.name),...contributed('badge',subject)]),row.name!==row.id?el('code','identity',row.id):null,
-    row.moduleName?el('code','identity',row.moduleName):null,row.description?el('p','description',row.description):null,
+    row.moduleName?el('code','identity',row.moduleName):null,rowDescription(row)?el('p','description',rowDescription(row)):null,
     el('section','configuration',contributed('configuration',subject),{'data-plugin-config':subjectKey(subject)}),...contributed('section',subject),
   ],{key:subjectKey(subject),'data-plugin-row-detail':subjectKey(subject)});};
   const itemDetail=(id:string)=>{const subject:Subject={kind:'item',id},definition=((window as any).SaCodeConfiguration.definitions as {namespace:string;title:string}[]).find(d=>d.namespace===id),forms=contributed('configuration',subject);return el('div','detail',[
@@ -94,7 +97,7 @@ export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Obj
         h(RegistryPicker,{open:registryOpen.value&&!checking,busy:checking,value:i.registry,custom:customRegistry.value,options:i.registries,onToggle:()=>registryOpen.value=!registryOpen.value,onClose:()=>registryOpen.value=false,onCustom:(text:string)=>customRegistry.value=text,onChoose:(url:string)=>void send({kind:'choose-registry',url})}),
         el('p','note','请确认插件来源可信。插件以你的权限运行，可能读取本机数据。暂不支持自动更新，升级时需卸载后重新安装。'),button(checking?'正在检查…':'安装',run,{disabled:checking||sending.value||!i.spec.trim()||registryInvalid}),
       ]):el('div','wizard',[
-        i.subject?el('article','subject',[el('h3','groupTitle',i.subject.name),el('p','description',i.subject.description),i.subject.version?el('p','note','版本 '+i.subject.version):null]):null,
+        i.subject?el('article','subject',[el('h3','groupTitle',i.subject.name),el('p','description',builtinDescription(i.subject.name,i.subject.description)),i.subject.version?el('p','note','版本 '+i.subject.version):null]):null,
         i.failure?el('p','error',failureText(i),{role:'alert'}):null,
         i.failure?.uncertainty?el('p','note',i.failure.uncertainty==='acceptance'?'正在等待后端接收安装任务，确认接收后才可确认取消。':i.failure.uncertainty==='cancellation'?(i.phase==='applying'?'取消请求未得到确认；安装已进入收尾阶段，请等待结果。':'尚未确认安装已停止，请重试取消或等待安装结果。'):'未收到安装结果，请核对安装状态。',{role:'status'}):null,
         pending&&(i.attempts?.registries.length||0)>1?el('p','note',`正在改用 ${registryName(i,i.attempts!.registries.at(-1)!)} 重试（第 ${i.attempts!.registries.length} 个源，共 ${i.attempts!.total} 个）`):null,

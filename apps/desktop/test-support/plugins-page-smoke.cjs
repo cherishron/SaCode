@@ -50,6 +50,18 @@ module.exports = async function({win,check,waitFor,outDir}) {
   await js(`pluginFixture.root.style.width='720px'`);
   await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
   require('node:fs').writeFileSync(require('node:path').join(outDir,'plugins-inventory-fixture.png'),(await win.webContents.capturePage()).toPNG());
+  await js(`pluginFixture.entries=[
+    {moduleName:'@deepseek-ai/dsh-persona',entryId:'persona',description:'Composition-authored deployment persona',enabled:true,phase:'active'},
+    {moduleName:'@deepseek-ai/dsh-tool-fs',entryId:'tool-fs',description:'Model-facing filesystem tools',enabled:false,phase:null},
+    {moduleName:'@community/tool-fs',entryId:'custom-fs',description:'Custom filesystem integration',enabled:true,phase:'failed'}
+  ];pluginFixture.presets=[];pluginFixture.invalidate()`);
+  await waitFor("document.querySelectorAll('#plugins-fixture [data-plugin-module]').length===3");
+  await check('内置插件中文说明保留原始身份与真实状态',"({persona:document.querySelector('[data-plugin-module=\"@deepseek-ai/dsh-persona\"]').textContent.includes('身份、角色和工作风格'),files:document.querySelector('[data-plugin-module=\"@deepseek-ai/dsh-tool-fs\"]').textContent.includes('文件读取、写入和编辑'),disabled:document.querySelector('[data-plugin-module=\"@deepseek-ai/dsh-tool-fs\"]').textContent.includes('已停用'),sourceUnchanged:pluginFixture.entries[0].description==='Composition-authored deployment persona',thirdParty:document.querySelector('[data-plugin-module=\"@community/tool-fs\"]').textContent.includes('Custom filesystem integration')})");
+  await js(`const e=document.querySelector('#plugins-fixture input[aria-label="搜索插件"]');e.value='文件读取';e.dispatchEvent(new Event('input',{bubbles:true}))`);
+  await check('内置插件可按中文用途搜索',"({oneMatch:document.querySelectorAll('#plugins-fixture [data-plugin-module]').length===1,correctIdentity:document.querySelector('#plugins-fixture [data-plugin-module]').dataset.pluginModule==='@deepseek-ai/dsh-tool-fs'})");
+  await js(`const e=document.querySelector('#plugins-fixture input[aria-label="搜索插件"]');e.value='persona';e.dispatchEvent(new Event('input',{bubbles:true}))`);
+  await check('中文插件说明仍支持原始 ID 搜索',"({oneMatch:document.querySelectorAll('#plugins-fixture [data-plugin-module]').length===1,correctIdentity:document.querySelector('#plugins-fixture [data-plugin-module]').dataset.pluginModule==='@deepseek-ai/dsh-persona'})");
+  require('node:fs').writeFileSync(require('node:path').join(outDir,'plugins-chinese-fixture.png'),(await win.webContents.capturePage()).toPNG());
   await js(`pluginFixture.app.unmount()`);
   await check('插件视图卸载释放订阅',"({released:pluginFixture.off===true})");
   await js(`pluginFixture.root.remove();delete window.pluginFixture`);

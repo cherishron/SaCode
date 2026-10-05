@@ -1,7 +1,8 @@
 // 冻结 ui-settings-plugins / ui-settings-plugin-inventory 的页面结构；Host 状态只读。
 import { defineComponent, h, ref, computed, watch, onMounted, onBeforeUnmount, nextTick, useId, type PropType, type Component } from 'vue';
+import { builtinDescription } from './plugin-descriptions';
 export interface PluginEntry {
-  moduleName: string; entryId: string | null; title?: string; description?: string; metadataError?: string;
+  moduleName: string; entryId: string | null; title?: string; description?: string; descriptionZhCN?: string; metadataError?: string;
   enabled: boolean; condition?: string; phase: 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null;
 }
 export interface Preset { id: string; name: string; isDefault?: boolean; broken?: string; rows: PluginEntry[] }
@@ -13,8 +14,9 @@ const el = (tag: string, cls: string, children: any, props: any = {}) => h(tag, 
 const phases = { pending: '等待依赖', loading: '加载中', active: '运行中', failed: '启动失败', unloading: '卸载中' };
 // Vue useId 的序号仅在应用内唯一；插件/Next SDK 可挂载独立应用，需补组件实例序号。
 let pageInstance = 0;
-const title = (e: PluginEntry) => e.title || e.moduleName.replace(/^@[^/]+\//, '').replace(/^cordis(?:-plugin-|:)/, '').replace(/^sacode-(?:host-|client-)?/, '');
-const matches = (e: PluginEntry, query: string) => [e.moduleName, e.entryId, title(e), e.description].some(v => v?.toLocaleLowerCase().includes(query));
+const title = (e: PluginEntry) => e.title || e.moduleName.replace(/^@deepseek-ai\/dsh-(?:client-)?/, '').replace(/^@[^/]+\//, '').replace(/^cordis(?:-plugin-|:)/, '').replace(/^sacode-(?:host-|client-)?/, '');
+const description = (e: PluginEntry) => builtinDescription(e.moduleName, e.description, e.descriptionZhCN);
+const matches = (e: PluginEntry, query: string) => [e.moduleName, e.entryId, title(e), e.description, description(e)].some(v => v?.toLocaleLowerCase().includes(query));
 
 export const Inventory = defineComponent({
   name: 'SaCodePluginInventory',
@@ -46,7 +48,7 @@ export const Inventory = defineComponent({
             entry.phase ? el('span', 'phaseDot', null, { role: 'img', 'aria-label': phases[entry.phase], title: phases[entry.phase], 'data-phase': entry.phase }) : null,
             el('span', 'chevron', '⌄', { 'aria-hidden': 'true' }),
           ])]),
-          entry.description ? el('span', 'cardDescription', entry.description) : null,
+          description(entry) ? el('span', 'cardDescription', description(entry)) : null,
           entry.entryId && entry.entryId.replace(/^include:/, '') !== title(entry) ? el('code', 'identity', entry.entryId.replace(/^include:/, '')) : null,
         ], { type: 'button', 'aria-expanded': open, 'aria-controls': detailId, 'aria-label': title(entry) + ', ' + (entry.entryId ? entry.entryId + ', ' : '') + state, onClick: () => expanded.value = open ? null : key }),
         entry.metadataError ? el('p', 'failure', '包元信息错误：' + entry.metadataError, { role: 'status' }) : null,
