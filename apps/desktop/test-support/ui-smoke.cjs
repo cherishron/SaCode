@@ -1,6 +1,7 @@
 // 桌面黄金路径验收；依赖由主进程注入，不注册产品 IPC。
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
 const { join } = require("node:path");
+const { spawn } = require("node:child_process");
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,7 +71,7 @@ async function uiSmoke(context) {
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
   // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
-  const PRELOAD_API = ['projection','userSend','attachmentUpload','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
+  const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList'];
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.dsh||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
@@ -704,6 +705,110 @@ async function uiSmoke(context) {
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
   note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme && (await bridge.request('appearance/get')).theme==='light', "原会话预算恢复，旧主题记录保留且不覆盖全局主题");
   note((await bridge.request('workspace/get')).directory.includes('工作区 UI 项目'), "切回后恢复原会话项目目录");
+
+  // ── 提示词增强：整段走真实链路 ──
+  // 渲染层点击 → preload → 主进程 IPC → 仓颉宿主 → 本机 SSE 夹具，再原路回应用户草稿。
+  // 模型是用宿主的配置面现配的，不是给界面塞一个假对象：这样「用当前会话选中的模型」
+  // 这一条才算被证明，而不是被替换成一条容易过的断言。
+  // 夹具路径与 golden-path 同一套约定：打包态从 asar 里往上爬找不到仓库 scripts/，
+  // 由驱动用 SACODE_SSE_FIXTURE 指到真实那份，这一组断言在安装包里才是实跑而不是跳过。
+  const enhFixturePath = process.env.SACODE_SSE_FIXTURE
+    || join(__dirname, "..", "..", "..", "scripts", "sse-contract-server.cjs");
+  const enhFixture = spawn(process.execPath, [enhFixturePath], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
+  const enhPort = await new Promise((res, rej) => {
+    let buf = "";
+    const to = setTimeout(() => rej(new Error("增强夹具启动超时")), 9000);
+    enhFixture.stdout.on("data", (d) => { buf += d.toString(); const i = buf.indexOf("\n"); if (i >= 0) { clearTimeout(to); res(buf.slice(0, i).trim()); } });
+    enhFixture.on("error", (e) => { clearTimeout(to); rej(e); });
+    enhFixture.on("exit", (c, s) => { clearTimeout(to); rej(new Error(`增强夹具提前退出 code=${c} signal=${s}`)); });
+  });
+  try {
+    const enhDraft = "想让队列能中途插话";
+    const enhEcho = `model=fixture-model messages=2 tools=0 draft=${enhDraft}`;
+    const enhState = () => js("(() => { const b = document.querySelector('#composer-enhance'); return b ? { state: b.dataset.state, disabled: b.disabled, busy: b.getAttribute('aria-busy'), label: b.getAttribute('aria-label') } : null; })()");
+    const enhValue = () => js("document.querySelector('#composer').value");
+    const enhHijack = () => js("(() => { const n = document.querySelector('#composer'); n.focus(); const e = new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }); n.dispatchEvent(e); return e.defaultPrevented; })()");
+    const enhConfigure = (path) => bridge.request("model/configure", { baseUrl: `http://127.0.0.1:${enhPort}${path}`, model: "fixture-model", credentialRef: "SACODEENHKEY" });
+
+    await bridge.request("credential/set", { ref: "SACODEENHKEY", value: "fixture-secret" });
+    note(true, `增强夹具与测试模型已配好（端口 ${enhPort}）`);
+    await enhConfigure("/enhance");
+
+    note(await js("!!document.querySelector('#composer-enhance')"), "输入区有增强提示词图标");
+    const enhReady = await enhState();
+    note(!!enhReady && enhReady.state === "ready" && enhReady.disabled === false && enhReady.label === "增强提示词", `写好草稿后增强图标可用（实际 ${JSON.stringify(enhReady)}）`);
+    await setDraftForSize("   ");
+    note(await js("document.querySelector('#composer-enhance').disabled === true"), "空白草稿时增强图标禁用");
+    await setDraftForSize(enhDraft);
+
+    const bubblesBefore = await count("#messages .tr-bubble");
+    const ledgerBefore = await bridge.request("usage/status");
+    await click("#composer-enhance");
+    const enhBusy = await enhState();
+    note(!!enhBusy && enhBusy.state === "busy" && enhBusy.busy === "true", `请求期间进入加载态（实际 ${JSON.stringify(enhBusy)}）`);
+    // 在途第二笔只能被宿主挡掉：界面挡一次不算数，协议面也得只有一槽。
+    const second = await bridge.request("prompt/enhance", { draft: "第二条" }).then(() => "accepted").catch((e) => String(e.message || e));
+    note(second.includes("enhance-in-flight"), `在途期间第二笔增强被宿主拒绝（实际「${second}」）`);
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'")), "模型返回后增强图标变为回退");
+    note(await enhValue() === enhEcho, `增强文本直接应用到输入框，且请求只带这一条草稿（实际「${await enhValue()}」）`);
+    note(await count("#messages .tr-bubble") === bubblesBefore, "增强不自动发送消息、不启动任务、不执行工具");
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='undo' && document.querySelector('#composer').value.length>0"), "应用后输入框仍有内容可继续编辑");
+    const billed = await bridge.request("prompt/poll");
+    const ledgerAfter = await bridge.request("usage/status");
+    // 用量必须被「处置」，两档都是法定的：档位装得下就入账，装不下就按超档拦下并留下事实。
+    // 唯一不可接受的是静默丢弃——那等于增强花了钱而账上看不出来。
+    // 本轮前面已经把预算收到很小，所以这里走的是哪一档由读数决定，不由我挑。
+    const fits = ledgerBefore.used + 22 <= ledgerBefore.budget;
+    note(fits
+      ? (billed.usageVerdict === "recorded" && ledgerAfter.used === ledgerBefore.used + 22)
+      : (billed.usageVerdict === "over-budget" && ledgerAfter.used === ledgerBefore.used && ledgerAfter.over === true),
+      `增强用量按当前档位入账或按超档拦下（实际 ${JSON.stringify({ before: [ledgerBefore.used, ledgerBefore.budget], verdict: billed.usageVerdict, after: [ledgerAfter.used, ledgerAfter.budget, ledgerAfter.over] })}）`);
+    note(!(await text("#error")).includes("fixture-secret") && !(await text("#messages")).includes("fixture-secret"), "凭据明文不出现在界面任何一处");
+
+    await click("#composer-enhance");
+    note(await enhValue() === enhDraft, `点击回退图标恢复增强前的原文（实际「${await enhValue()}」）`);
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "回退后图标恢复为增强");
+
+    // 再走一次，但这次用 Ctrl+Z 回退：劫持与交回两种情形分别钉死
+    await click("#composer-enhance");
+    await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'"));
+    note(await enhHijack() === true, "回退态下输入框 Ctrl+Z 被应用接管，恢复增强前的原文");
+    note(await enhValue() === enhDraft, "Ctrl+Z 后草稿就是增强前那一行");
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "Ctrl+Z 回退后图标恢复为增强");
+
+    await click("#composer-enhance");
+    await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'"));
+    await setDraftForSize(enhEcho + "（我补的一句）");
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "改动增强后的文本，图标立即恢复为增强");
+    note(await enhHijack() === false, "继续编辑后 Ctrl+Z 交回输入框自身的撤销顺序，应用不劫持");
+
+    // 迟到的结果不得覆盖：请求途中改草稿（哪怕改回同一行），返回后也必须作废
+    await enhConfigure("/cancel");
+    await setDraftForSize("这一条要被取消");
+    await click("#composer-enhance");
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='busy'"), "慢响应下增强停在加载态");
+    await setDraftForSize("这一条要被取消");
+    await setDraftForSize("途中改掉的一行");
+    await setDraftForSize("这一条要被取消");
+    await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'"), 200);
+    note(await enhValue() === "这一条要被取消", "请求途中改过草稿，迟到结果不覆盖输入框");
+
+    // 加载态再点一次即取消
+    await setDraftForSize("要被取消的另一条");
+    await click("#composer-enhance");
+    const cancelClick = await enhState();
+    note(!!cancelClick && cancelClick.state === "busy", "取消测试已进入在途");
+    await click("#composer-enhance");
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'")), "加载态再点一次即取消，图标回到增强");
+    note(await enhValue() === "要被取消的另一条", "取消后草稿保持原样");
+    await bridge.request("prompt/cancel");
+    await enhConfigure("/enhance");
+  } finally {
+    try { enhFixture.stdin.write("x"); enhFixture.stdin.end(); enhFixture.kill(); } catch (_) {}
+  }
 
   await bridge.stop();
   // 退出结算后才落盘：这两条同时证明 durability 屏障与「拒绝也被记账」

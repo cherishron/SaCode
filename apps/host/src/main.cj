@@ -263,7 +263,10 @@ func allowedDuringTurn(method: String): Bool {
     // 不会放宽任何放行条件，反而能让正在跑的这一轮更早被拦。
     let meterSide = method == "usage/status" || method == "usage/set-budget"
     // 运行中排队与改队列正是在途期间要做的事，拦掉等于这个面板没法用
-    return turnSide || readSide || callSide || approvalSide || meterSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method)
+    // 增强与轮次各走各的车道：turn 在跑时也要能润色下一条草稿，
+    // 反过来增强在途时桌面的取消必须答得上来——否则「支持取消」只是一句空话。
+    let enhanceSide = method == "prompt/enhance" || method == "prompt/poll" || method == "prompt/cancel"
+    return turnSide || readSide || callSide || approvalSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method)
 }
 
 // 队列读写都是「按动作命名」的有限方法：界面说不出任意一条路径，也拿不到通用转发。
@@ -535,6 +538,13 @@ main(args: Array<String>) {
     var turnEpoch: Int64 = 0
     var modelKey = ""
     var modelKeyRef = ""
+    // 提示词增强是第三条独立车道：不占会话租约、不进 turnBusy、不接工具执行循环，
+    // 结果只回给调用方，永不落成会话消息（替用户说话的是发送，不是润色）。
+    // 一槽就够：第二笔会把第一笔的结算顶掉，界面上表现为「点了没反应」。
+    var enhanceHandle: Option<EnhanceHandle> = None
+    var enhanceModel = ""
+    // 同一笔用量只能进账一次；租约取不到时保持 false，让下一次轮询补记。
+    var enhanceBilled = false
     while (true) {
         var body = ""
         var eof = false
@@ -617,7 +627,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
@@ -1324,6 +1334,127 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
             continue
         }
+        // 提示词增强：一次独立的模型往返，请求里只有「一条指令 + 这一条草稿」。
+        // 三条分支都不写会话消息（只有用量那一笔进账，它本来就该记在同一份账上），
+        // 也不碰 turnBusy——所以 turn 在跑时能润色，润色在跑时桌面也停得下来。
+        if (method == "prompt/enhance") {
+            let draft = jsonStr(body, "draft")
+            if (draft.trimAscii().size == 0) { emit(errFrame(idText, -32602, "enhance-empty-draft")); continue }
+            // 顶掉在途那一笔等于让上一次点击无声消失，所以这里也挡一次，不只靠界面。
+            if (let Some(h) <- enhanceHandle) {
+                if (h.isRunning()) { emit(errFrame(idText, -32001, "enhance-in-flight")); continue }
+            }
+            // 「这次用哪颗模型」的取值顺序与 turn/start 一致：注册表默认优先，
+            // 其次单路模型设置，最后环境变量。点击即定档，之后换模型只影响下一次请求。
+            var configured: ModelSettingsSnapshot
+            try { configured = ModelSettings.forUser().read() }
+            catch (e: Exception) { emit(errFrame(idText, -32020, e.message)); continue }
+            let registryView = ProviderRegistry.forUser().describe()
+            var planBaseUrl = ""
+            var planModel = ""
+            var planRef = ""
+            var planProtocol = ""
+            for (p in registryView.providers) {
+                if (p.id == registryView.defaultProviderId && registryView.defaultModel.size > 0) {
+                    planBaseUrl = p.baseUrl
+                    planModel = registryView.defaultModel
+                    planRef = p.credentialRef
+                    planProtocol = p.protocol
+                }
+            }
+            let fromRegistry = planBaseUrl.size > 0
+            if (fromRegistry && planProtocol != "openai-completions") {
+                emit(errFrame(idText, -32016, "protocol-not-supported:${planProtocol}")); continue
+            }
+            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
+            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
+            var key = ""
+            if (fromRegistry) {
+                key = resolveCredentialKey(planRef)
+            } else if (configured.credentialRef.size > 0) {
+                if (modelKeyRef == configured.credentialRef && modelKey.size > 0) { key = modelKey } else { key = resolveCredentialKey(configured.credentialRef) }
+            } else {
+                key = getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
+            }
+            // 没配就是没配：宁可报错，也不悄悄换一颗模型顶上——用户看到的写法
+            // 来自哪一家，界面永远分辨不出来，所以这里不能替他猜。
+            if (baseUrl.size == 0) { emit(errFrame(idText, -32016, "model-not-configured")); continue }
+            if (key.size == 0 && !baseUrl.startsWith("http://127.0.0.1:") && !baseUrl.startsWith("http://localhost:")) {
+                emit(errFrame(idText, -32016, "model-credential-unavailable")); continue
+            }
+            var badRequest = ""
+            var rawRequest = ""
+            try { rawRequest = enhanceRequestJson(model, draft) } catch (e: Exception) { badRequest = e.message }
+            if (badRequest.size > 0) { emit(errFrame(idText, -32602, badRequest)); continue }
+            // 请求字节、凭据、端点都在起跑前冻成不可变值：这一笔认的就是点击那一刻
+            // 那颗模型与那份配置，跟之后任何一次改动都无关。
+            let request = rawRequest
+            let enhanceKey = key
+            let tk = TurnToken()
+            let factory: () -> Provider = { => RealSseProvider(baseUrl, enhanceKey, request, tk) }
+            enhanceHandle = Some(EnhanceRunner().start(factory, tk))
+            enhanceModel = model
+            enhanceBilled = false
+            emit(okFrame(idText, "{\"started\":true,\"model\":\"${jsonEscapeText(model)}\"}"))
+            continue
+        }
+        if (method == "prompt/poll") {
+            var activeText = "false"
+            var runningText = "false"
+            var settledText = "false"
+            var tail = ""
+            if (let Some(h) <- enhanceHandle) {
+                activeText = "true"
+                let o = h.tryOutcome()
+                if (o.running) {
+                    runningText = "true"
+                    tail = ",\"model\":\"${jsonEscapeText(enhanceModel)}\""
+                } else {
+                    settledText = "true"
+                    let okText = if (o.ok) { "true" } else { "false" }
+                    let cancelText = if (o.cancelled) { "true" } else { "false" }
+                    // 增强花的 token 和轮次花的是同一份预算，所以记在同一本账上；
+                    // 但轮询是幂等读，同一笔只能进账一次。
+                    var verdict = "absent"
+                    if (enhanceBilled) {
+                        verdict = meter.verdict()
+                    } else if (o.usage.size > 0 || o.finishReason.size > 0) {
+                        var held = leaseHeld
+                        if (!held) {
+                            // 账本归租约持有者写：抢不到就这一笔先不记，留给下一次轮询补，
+                            // 绝不另开一份内存计数冒充账。
+                            if (lease.takeoverIfStale()) {
+                                if (loadForWrite(shared, meter)) { held = true; leaseHeld = true } else { lease.release() }
+                            }
+                        }
+                        if (held) {
+                            verdict = meter.record(o.usage)
+                            enhanceBilled = true
+                        } else {
+                            verdict = "lease-busy"
+                        }
+                    }
+                    let oFlag = if (meter.over()) { "true" } else { "false" }
+                    tail = ",\"model\":\"${jsonEscapeText(enhanceModel)}\",\"ok\":${okText},\"cancelled\":${cancelText},\"error\":\"${jsonEscapeText(o.error)}\",\"text\":\"${jsonEscapeText(o.text)}\",\"usage\":\"${jsonEscapeText(o.usage)}\",\"finishReason\":\"${jsonEscapeText(o.finishReason)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
+                }
+            }
+            emit(okFrame(idText, "{\"active\":${activeText},\"running\":${runningText},\"settled\":${settledText}${tail}}"))
+            continue
+        }
+        if (method == "prompt/cancel") {
+            // 只发取消请求，终态仍由 prompt/poll 交出；增强被作废不得牵连那一轮 turn。
+            var requested = "false"
+            var wasRunning = "false"
+            if (let Some(h) <- enhanceHandle) {
+                if (h.isRunning()) {
+                    wasRunning = "true"
+                    h.cancel()
+                    requested = "true"
+                }
+            }
+            emit(okFrame(idText, "{\"cancelRequested\":${requested},\"wasRunning\":${wasRunning}}"))
+            continue
+        }
         if (method == "workspace/get") {
             var target = shared
             if (!leaseHeld || workspaceFault) {
@@ -1373,6 +1504,14 @@ main(args: Array<String>) {
             continue
         }
         if (method == "session/select") {
+            // 换会话时把在途的增强作废：那笔结果属于上一个会话的输入框，
+            // 留着一个已经不该被应用的迟到结果，早晚会落进错的草稿里。
+            if (let Some(h) <- enhanceHandle) {
+                if (h.isRunning()) { h.cancel() }
+            }
+            enhanceHandle = None
+            enhanceModel = ""
+            enhanceBilled = false
             let wanted = jsonStr(body, "sessionId")
             // 未完成审批与扩展调用仍归原会话；必须由用户先结算，不能默默丢掉。
             if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {

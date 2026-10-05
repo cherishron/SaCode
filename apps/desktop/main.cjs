@@ -228,6 +228,18 @@ ipcMain.handle("dsh:queueUpdate", async (_e, args) => {
 ipcMain.handle("dsh:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
 
 ipcMain.handle("dsh:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
+// 提示词增强：草稿是唯一入参，逐字段校验在这里做——空白与超长在主进程就拒收，
+// 一条都不许发到宿主。宿主因此只会收到「确实有内容的这一条」，
+// 而用哪颗模型、哪份凭据由宿主自己按当前会话定，这条通道给不出那个位置。
+ipcMain.handle("dsh:promptEnhance", async (_e, args) => {
+  if (!args || !isStr(args.draft) || args.draft.trim().length === 0 || args.draft.length > 8000) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("prompt/enhance", { draft: args.draft }));
+});
+// 轮询与取消没有负载：增强进行到哪一步只能由宿主说，渲染层猜不出也改不了。
+ipcMain.handle("dsh:promptPoll", async () => withHost(() => bridge.request("prompt/poll")));
+ipcMain.handle("dsh:promptCancel", async () => withHost(() => bridge.request("prompt/cancel")));
 ipcMain.handle("dsh:usageStatus", async () => withHost(() => bridge.request("usage/status")));
 // 预算只许收紧：非整数、负数在主进程就拒收，调大由核心回 applied:false。
 // 界面拿不到「抬高当前档位」的任何通路，也拿不到发任意方法的那条通道。

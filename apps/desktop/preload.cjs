@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld("dsh", {
   queueUpdate: (itemId, kind, text) => ipcRenderer.invoke("dsh:queueUpdate", { itemId, kind, text }),
   turnPoll: () => ipcRenderer.invoke("dsh:turnPoll"),
   turnCancel: () => ipcRenderer.invoke("dsh:turnCancel"),
+  // 提示词增强：负载里只有一个草稿字段。用哪颗模型、哪个端点、哪份凭据都由宿主在
+  // 点击那一刻自己定——渲染层既说不出 model，也说不出 baseUrl，更没有报凭据的位置。
+  promptEnhance: (draft) => ipcRenderer.invoke("dsh:promptEnhance", { draft }),
+  promptPoll: () => ipcRenderer.invoke("dsh:promptPoll"),
+  promptCancel: () => ipcRenderer.invoke("dsh:promptCancel"),
   usageStatus: () => ipcRenderer.invoke("dsh:usageStatus"),
   usageSetBudget: (budget) => ipcRenderer.invoke("dsh:usageSetBudget", { budget }),
   appearanceGet: () => ipcRenderer.invoke("dsh:appearanceGet"),

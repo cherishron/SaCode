@@ -228,6 +228,10 @@ createApp({
       sessionGeneration += 1;
       selectedScrollId=id;
       if (oldId) sessionDrafts.set(oldId,draft.value);
+      // 换会话时把在途增强撤掉：那份迟到结果属于上一个会话的输入框，
+      // 留在宿主槽位里既会顶掉下一次的发起，也可能落进别的草稿。
+      if (enhance.value.busy) { window.dsh.promptCancel().catch(() => {}); }
+      clearEnhance();
       draft.value=sessionDrafts.get(id)||"";
       stopPolling(); foldOpen.ids.clear();
       turn.value={running:false,settled:false,text:"",finishReason:"",cancelled:false,interrupted:false,delivered:0};
@@ -434,10 +438,122 @@ createApp({
     const budgetNote = ref("");
     const budgetBusy = ref(false);
 
+    // 提示词增强：图标只有「增强」与「回退」两副面孔，判据是「上一次替换还完整地留在输入框里」。
+    // 用户一改就作废——哪怕改回一模一样的字也算作废，因为从那一刻起「该不该覆盖」已经不由我们决定了。
+    const enhance = ref({ busy: false, undo: false });
+    let enhanceSeq = 0, enhanceTimer = null, enhanceUndo = null, enhanceFrozen = null;
+    function stopEnhancePoll() { if (enhanceTimer) { clearTimeout(enhanceTimer); enhanceTimer = null; } }
+    function clearEnhance() { stopEnhancePoll(); enhanceFrozen = null; enhanceUndo = null; enhance.value = { busy: false, undo: false }; }
+    // 草稿的每一条改动路径都得经过这里：增强是「程序替换」，它同样是一次可撤销的编辑，
+    // 但它不能把用户的编辑历史吃掉。
+    function userEditDraft(value) {
+      if (enhance.value.undo) { enhanceUndo = null; enhance.value = { busy: false, undo: false }; }
+      updateDraft(value);
+    }
+    function enhanceNotice(failure, result) {
+      const raw = failure ? String(failure.message || failure) : String((result && result.error) || "");
+      const reasons = {
+        "model-not-configured": "还没有选择模型，请先在模型中心配好再增强。",
+        "model-credential-unavailable": "当前模型的密钥没有配好，增强没有发出。",
+        "protocol-not-supported": "当前模型的说法暂不支持增强，草稿已保留。",
+        "enhance-empty-result": "模型没有给出可用的改写，草稿保持原样。",
+        "enhance-max-tokens": "改写被截断了，半截话不能替换你的草稿。",
+        "enhance-unexpected-tool": "模型试图执行操作，这次增强已作废，草稿保持原样。",
+        "provider-init-failed": "连不上模型，草稿已保留，可以再试一次。",
+        "timeout": "模型响应超时，草稿已保留，可以再试一次。",
+        "enhance-in-flight": "上一条增强还在进行，请先取消它。",
+      };
+      return Object.entries(reasons).find(([key]) => raw.includes(key))?.[1] || catalogError(failure || new Error(raw));
+    }
+    function focusComposerCaret() {
+      window.Vue.nextTick(() => {
+        const box = document.getElementById("composer");
+        if (!box) { return; }
+        box.focus();
+        try { box.setSelectionRange(box.value.length, box.value.length); } catch (_) {}
+      });
+    }
+    function finishEnhance(frozen, result, failure) {
+      // 认的是那一次发起：被取消过、换过会话，迟到的结果就作废，不去动现在的输入框。
+      if (enhanceFrozen !== frozen) { return; }
+      enhanceFrozen = null;
+      const text = result && typeof result.text === "string" ? result.text : "";
+      const usable = !failure && result && result.settled !== false && result.ok && !result.cancelled && text.trim().length > 0;
+      if (!usable) {
+        enhance.value = { busy: false, undo: false };
+        if (!(result && result.cancelled)) { error.value = enhanceNotice(failure, result); }
+        return;
+      }
+      if (draftRevision !== frozen.revision || sessionGeneration !== frozen.generation) {
+        enhance.value = { busy: false, undo: false };
+        return;
+      }
+      updateDraft(text);
+      enhanceUndo = { text: frozen.original };
+      enhance.value = { busy: false, undo: true };
+      error.value = "";
+      focusComposerCaret();
+    }
+    function pollEnhance(frozen) {
+      enhanceTimer = setTimeout(async () => {
+        enhanceTimer = null;
+        if (enhanceFrozen !== frozen) { return; }
+        let result = null;
+        try { result = await window.dsh.promptPoll(); }
+        catch (e) { finishEnhance(frozen, null, e); return; }
+        if (enhanceFrozen !== frozen) { return; }
+        if (!result || !result.settled) { pollEnhance(frozen); return; }
+        finishEnhance(frozen, result, null);
+      }, 120);
+    }
+    async function startEnhance() {
+      const original = draft.value;
+      if (!original.trim() || enhance.value.busy) { return; }
+      const frozen = { seq: ++enhanceSeq, revision: draftRevision, generation: sessionGeneration, original };
+      enhanceUndo = null;
+      enhanceFrozen = frozen;
+      enhance.value = { busy: true, undo: false };
+      error.value = "";
+      try { await window.dsh.promptEnhance(original); }
+      catch (e) { finishEnhance(frozen, null, e); return; }
+      if (enhanceFrozen === frozen) { pollEnhance(frozen); }
+    }
+    async function cancelEnhance() {
+      const frozen = enhanceFrozen;
+      if (!frozen) { return; }
+      enhanceFrozen = null;
+      stopEnhancePoll();
+      enhance.value = { busy: false, undo: false };
+      try { await window.dsh.promptCancel(); } catch (_) {}
+    }
+    function undoEnhance() {
+      if (!enhance.value.undo || !enhanceUndo) { return; }
+      const original = enhanceUndo.text;
+      enhanceUndo = null;
+      enhance.value = { busy: false, undo: false };
+      updateDraft(original);
+      focusComposerCaret();
+    }
+    function clickEnhance() {
+      if (enhance.value.busy) { cancelEnhance(); }
+      else if (enhance.value.undo) { undoEnhance(); }
+      else { startEnhance(); }
+    }
+
     let pollTimer = null;
     function desktopKeys(event) {
       if (event.isComposing || event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return;
       const key=event.key.toLowerCase();
+      // 增强刚替换完、用户还没再动过：Ctrl+Z 就是回退这次替换。
+      // 一旦用户改过文字，这个快捷键就交回浏览器自己的撤销顺序——
+      // 那时代码里的「原文」已经是历史，跳过用户的新编辑去恢复它等于删掉他刚写的东西。
+      if (key === 'z' && !event.shiftKey) {
+        if (enhance.value.undo && event.target && event.target.id === 'composer' && !document.querySelector('dialog:modal')) {
+          event.preventDefault();
+          undoEnhance();
+        }
+        return;
+      }
       const settings=key===',' && !event.shiftKey;
       const composer=key==='l' && !event.shiftKey;
       const preview=key==='p' && event.shiftKey;
@@ -874,7 +990,7 @@ createApp({
 
     return {
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen,
       appearanceBusy, appearanceNote, setTheme, modelsAdapter, modelDirectory,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
@@ -1150,13 +1266,24 @@ createApp({
         "aria-keyshortcuts":"Enter Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
-        onInput: (e) => self.updateDraft(e.target.value),
+        onInput: (e) => self.userEditDraft(e.target.value),
       }),[[autoDraftSize],[window.SaCodeAttachments.keymapDirective,{
         canSubmit:()=>!self.sendBusy&&!document.querySelector('dialog:modal'),
         submit:()=>self.send(),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:false,onAdd:(files,dirs)=>self.addAttachments(files,dirs)}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:false,onAdd:(files,dirs)=>self.addAttachments(files,dirs)}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+        // 同一颗图标位换三副面孔：进行中转圈、可回退时换回退箭头，用户一改就转回增强。
+        self.enhance.busy
+          ? h('path',{d:'M8 1.6a6.4 6.4 0 1 1-6.3 7.5',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round'})
+          : self.enhance.undo
+            ? h('path',{d:'M6.2 3.4 2.7 6.9l3.5 3.5M3 6.9h6.6a3.1 3.1 0 0 1 0 6.2H7.7',fill:'none',stroke:'currentColor','stroke-width':'1.5','stroke-linecap':'round','stroke-linejoin':'round'})
+            : h('path',{d:'M7 1.5l1.4 3.6 3.6 1.4-3.6 1.4L7 11.5 5.6 7.9 2 6.5l3.6-1.4L7 1.5zM12.6 10.2l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7.7-1.7z',fill:'currentColor'}),
+      ])], { id: "composer-enhance", type:'button', 'aria-label':self.enhance.busy?'取消增强':(self.enhance.undo?'回退增强':'增强提示词'), 'aria-busy':self.enhance.busy, 'data-state':self.enhance.busy?'busy':(self.enhance.undo?'undo':'ready'),
+        disabled:!self.enhance.busy && !self.enhance.undo && !self.draft.trim(),
+        tooltip:{label:self.enhance.busy?'取消增强':(self.enhance.undo?'回退增强（Ctrl+Z）':'用当前模型把这条说得更清楚'),side:'top',delayMs:500},
+        // 与发送按钮一样不把焦点从输入框挪走：增强完还要接着改草稿。
+        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
