@@ -37,7 +37,7 @@
       }
       remember(); publish();
     }
-    function schedule() { if(!frame) frame=requestAnimationFrame(reconcile); }
+    function schedule() { if(!disposed && !frame) frame=requestAnimationFrame(reconcile); }
     function update(next) {
       value=next;
       if(session!==next.session) {
@@ -46,7 +46,7 @@
       } else if(next.lastUser!==lastUser) {
         lastUser=next.lastUser; following=true; position=null;
       }
-      schedule();
+      observeChildren(); schedule();
     }
     function onScroll() {
       const m=metrics();
@@ -64,11 +64,19 @@
     node.addEventListener('scroll',onScroll,{passive:true});
     for(const type of ['wheel','touchstart','pointerdown','keydown']) node.addEventListener(type,intent,{passive:true});
     const observer=new ResizeObserver(schedule);
-    observer.observe(node);
-    for(const child of node.children) observer.observe(child);
+    const observed=new Set();
+    function observeChildren() {
+      if(disposed) return;
+      const current=new Set([node,...node.children]);
+      for(const target of observed) if(!current.has(target)) {observer.unobserve(target);observed.delete(target);}
+      for(const target of current) if(!observed.has(target)) {observer.observe(target);observed.add(target);}
+    }
+    // 插件视图可晚于 directive.mounted 挂载，也可自行替换，不依赖父组件更新。
+    const childObserver=new MutationObserver(()=>{observeChildren();schedule();});
+    childObserver.observe(node,{childList:true});
     update(binding);
     const owner={update,toBottom(){following=true;position=null;remember();reconcile();},dispose(){
-      disposed=true;cancelAnimationFrame(frame);observer.disconnect();
+      disposed=true;cancelAnimationFrame(frame);frame=0;observer.disconnect();childObserver.disconnect();observed.clear();
       node.removeEventListener('scroll',onScroll);
       for(const type of ['wheel','touchstart','pointerdown','keydown']) node.removeEventListener(type,intent);
       owners.delete(node);
