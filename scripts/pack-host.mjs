@@ -1,8 +1,8 @@
 // 组装自包含 Host：可执行文件 + 全部依赖 DLL 放同一目录，
 // 依赖 Windows 默认 DLL 搜索序（exe 同目录优先），因此运行时无需拼 PATH。
 // OpenSSL 3（libcrypto-3-x64.dll / libssl-3-x64.dll）由 stdx 的 opensslFFI
-// 包装层在运行时按默认搜索序加载；若不随包分发，剥掉 PATH 的真机将抛
-// TlsException: Can not load openssl library。以下自动从 PATH 发现并打包。
+// 包装层在运行时按默认搜索序加载；stdx TLS FFI 还导入 libwinpthread-1.dll。
+// 两者均需随包分发，否则无 SDK 路径时可能在 Host 启动前即报 0xC0000135。
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 const [, , exe, outDir, ...dllDirs] = process.argv;
@@ -20,9 +20,10 @@ for (const d of dllDirs) {
     if (f.endsWith(".dll")) { cpSync(join(d, f), join(dst, f)); n += 1; }
   }
 }
-const OPENSSL_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"];
+const RUNTIME_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll", "libwinpthread-1.dll"];
 const pathDirs = (process.env.PATH || "").split(";");
-for (const dll of OPENSSL_DLLS) {
+for (const dll of RUNTIME_DLLS) {
+  if (existsSync(join(dst,dll))) continue;
   let found = false;
   for (const dir of pathDirs) {
     if (!dir) continue;
@@ -36,7 +37,7 @@ for (const dll of OPENSSL_DLLS) {
     }
   }
   if (!found) {
-    console.error(`缺 OpenSSL 3 运行时：PATH 上找不到 ${dll}（TLS 将抛 TlsException）`);
+    console.error(`缺 Host 运行时：DLL 目录或 PATH 上找不到 ${dll}（不能生成自包含发布包）`);
     process.exit(1);
   }
 }
