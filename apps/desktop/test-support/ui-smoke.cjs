@@ -804,6 +804,24 @@ async function uiSmoke(context) {
     await click("#composer-enhance");
     note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'")), "加载态再点一次即取消，图标回到增强");
     note(await enhValue() === "要被取消的另一条", "取消后草稿保持原样");
+
+    // 换会话也要作废在途那一笔（目标 §四「切换会话…废弃对应的迟到结果」）。
+    // 三条各钉一个失效面：迟到结果不许落进别的会话草稿、图标不许卡在加载态、宿主那一槽必须腾出来。
+    await enhConfigure("/cancel");
+    await setDraftForSize("换会话前的一条草稿");
+    await click("#composer-enhance");
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='busy'"), "换会话前增强已在途");
+    await js("document.querySelector('#open-catalog').click()");
+    await waitFor(() => js(`!!document.querySelector('.catalog-dialog[open] [data-select-session="${newEntry.id}"]')`));
+    await click(`[data-select-session="${newEntry.id}"]`);
+    note(await waitFor(() => js("!document.querySelector('.catalog-dialog[open]')")), "增强在途时仍能切到另一个会话");
+    await nap(1900);
+    const afterSwitch = await enhValue();
+    note(!String(afterSwitch).includes("late"), `切会话后迟到的增强结果不覆盖新会话草稿（实际 ${JSON.stringify(afterSwitch)}）`);
+    note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "切会话后增强图标不卡在加载态");
+    await enhConfigure("/enhance");
+    const reissued = await bridge.request("prompt/enhance", { draft: "切会话后的新一条" }).then(() => "accepted").catch((e) => String(e.message || e));
+    note(reissued === "accepted", `切会话会把在途那一笔从宿主槽位撤下，下一笔发得出去（实际 ${reissued}）`);
     await bridge.request("prompt/cancel");
     await enhConfigure("/enhance");
   } finally {
