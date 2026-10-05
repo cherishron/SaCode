@@ -135,3 +135,43 @@ func goalRunnerDoesNotRunWhenGoalNotActive() {
     @Expect(svc.snapshot().phase, "paused")
     removeIfExists(root, recursive: true)
 }
+
+// 自驱动多轮的送达：runner 每开一轮是一次新 turn，必须在「本轮请求构造前」把排队的
+// next-turn 补充送达成真实 user/message（消费一次即清队列，宿主另 claim 也不重复）。
+@Test
+func goalRunnerDeliversQueuedTurnMessageAtRoundBoundary() {
+    let root = "core-grunner-deliver"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("途中补充要在边界送达")
+    // 跑起来之前排一条 next-turn 补充
+    let inbox = AgentInbox(log)
+    inbox.queue("t1", "queued-turn-note", "rpc-1")
+    @Expect(inbox.sizeOf("next-turn"), Int64(1))
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let r = GoalRunner().run(
+        { => tick.bump(); toolTurnFirst("g-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32), false,
+        sched, svc,
+        Int64(10), Int64(100000), Int64(0),
+        { => false },
+        { _ => tick.n >= Int64(2) })
+    @Expect(r.stopReason, "completed")
+    @Expect(r.rounds, Int64(2))
+    // 边界送达后队列清空，且那条补充落成恰好一条真实 user/message（第 2 轮 claimTurn 已空）
+    let after = AgentInbox(log)
+    @Expect(after.sizeOf("next-turn"), Int64(0))
+    var seen = Int64(0)
+    for (m in log.deriveMessages()) {
+        if (m == "user/message: queued-turn-note") {
+            seen += Int64(1)
+        }
+    }
+    @Expect(seen, Int64(1))
+    removeIfExists(root, recursive: true)
+}

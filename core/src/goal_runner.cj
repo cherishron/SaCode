@@ -20,6 +20,17 @@ public class GoalRunner {
         maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): DriveResult {
         let driver = GoalDriver(scheduler, svc)
         return driver.run(maxRounds, maxElapsed, noProgressLimit, budgetExceeded, { =>
+            // 轮次边界送达：自驱动的持续目标每开一轮是一次新 turn，须在「本轮请求构造前」
+            // 把排队的 next-turn 补充送达成真实 user/message（附件走 commitMessage）。
+            // claimTurn 消费一次即从队列删除，宿主若另行 claim 也不会重复送达。
+            for (note in AgentInbox(log).claimTurn()) {
+                if (note.attachments.size > 0) {
+                    if (let Some(store) <- attach) { store.commitMessage(note.text, note.attachments) }
+                    else { throw Exception("attachment-store-absent") }
+                } else {
+                    log.append("user/message", note.text)
+                }
+            }
             let result = ModelAgentLoop().run(makeFirst(), nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages)
             RoundOutcome(result.settledToolCalls > 0 && !result.interrupted && !result.cancelled, evidence(result))
         })
