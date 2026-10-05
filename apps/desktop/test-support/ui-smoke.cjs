@@ -59,6 +59,24 @@ async function uiSmoke(context) {
   //    消息面换成 BubbleList 后按「组」计：种子是 system/developer/assistant/user 四个角色，各成一组。
   const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 4));
   note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
+  // 真实挂载路径反证：单元遮蔽、插件卸载、父声明坍缩及重装恢复都改变实际 DOM。
+  const slotBubbles = await count('#messages .tr-bubble');
+  note(await js("CLIENT_VIEWS.slots.entriesOfSlot('conversation.view').some(e=>e.options.id==='chat' && e.registrant==='ui-chat')"), '聊天视图来自 ui-chat 槽位贡献');
+  const slotDraft = await js("document.querySelector('#composer').value");
+  await js("(() => { const e=document.querySelector('#composer');e.value='槽位切换期间的草稿';e.dispatchEvent(new Event('input',{bubbles:true}));CLIENT_VIEWS.install('smoke-overlay',scope=>scope.slots.register({name:'conversation.view',id:'chat',priority:-5},Vue.defineComponent({setup:()=>()=>Vue.h('div',{id:'plugin-view-probe'},'槽位接入验收')}))); })()");
+  note(await waitFor(()=>js("!!document.querySelector('#plugin-view-probe') && !document.querySelector('#messages')")), '新插件通过槽位接管视图，原气泡树实际卸载');
+  note(await js("document.querySelector('#composer').value==='槽位切换期间的草稿'"), '视图插件切换不丢输入草稿');
+  await js("CLIENT_VIEWS.unload('smoke-overlay')");
+  note(await waitFor(()=>count('#messages .tr-bubble').then(n=>n===slotBubbles && n>0)), '卸载遮蔽插件后原聊天组件及投影气泡恢复');
+  await js("CLIENT_VIEWS.unload('ui-conversation')");
+  note(await waitFor(()=>js("!document.querySelector('#messages') && CLIENT_VIEWS.slots.entries('conversation.view').length===0")), '父插件卸载递归撤销视图和声明');
+  await js("CLIENT_VIEWS.installConversation(); void 0");
+  note(await waitFor(()=>count('#messages .tr-bubble').then(n=>n===slotBubbles && n>0)), '父声明重新安装时聊天注入自动重新激活');
+  await js("CLIENT_VIEWS.unload('ui-chat')");
+  note(await waitFor(()=>js("!document.querySelector('#messages')")), '聊天插件自身卸载移除实际视图');
+  await js("CLIENT_VIEWS.installChat(); void 0");
+  note(await waitFor(()=>count('#messages .tr-bubble').then(n=>n===slotBubbles && n>0)), '聊天插件重新安装后恢复同一份宿主投影');
+  await js(`(() => { const e=document.querySelector('#composer');e.value=${JSON.stringify(slotDraft)};e.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   // 原生 Tab/Escape 验收必须有真实窗口焦点，隐藏窗口的 hasFocus 会偶发失效。
   win.show(); win.focus(); win.webContents.focus();
   if (!await waitFor(()=>js('document.hasFocus()'))) throw new Error('UI 冒烟窗口未取得键盘焦点');
