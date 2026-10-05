@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -59,7 +60,7 @@ test("真实 SSE provider 跑通本机夹具的 OpenAI 流", async () => {
   try {
     const dir = freshDir();
     const env = {
-      ...process.env,
+      ...fixtureHostEnv(dir),
       DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}`,
       DSH_PROVIDER_MODEL: "fixture",
       DSH_PROVIDER_KEY: "fixture-only",

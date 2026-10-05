@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync } from 'node:fs';
@@ -14,7 +15,7 @@ test('真实 Host 投影待办快照、重启回放与新轮次清空', async ()
   const directory = mkdtempSync(join(tmpdir(), 'sacode-todo-host-'));
   const items = [{ content: '甲|乙\n引号"路径\\', status: 'in_progress' }, { content: '完成', status: 'completed' }];
   async function start() {
-    const bridge = new HostBridge(host);
+    const bridge = new HostBridge(host, fixtureHostEnv(directory));
     await bridge.start(directory);
     await bridge.request('initialize');
     return bridge;

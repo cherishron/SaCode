@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 // 桌面入口的 token 计量与预算验收（矩阵 53 token-meter）。
 // 单独成文件而不是加进 bridge.test.mjs，是因为那个文件里同时躺着另一路会话未落库的改动；
 // 这里的每条用例都自己建会话目录，跑多少次都不受别的用例的累计态影响。
@@ -19,7 +20,7 @@ async function bootFresh(tag) {
   const root = jj(REPO, "dualtest", "usage");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, tag + "-"));
-  const b = new HostBridge(HOST, process.env);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
@@ -111,7 +112,7 @@ test("换个进程只靠会话日志重算：用量、超档与预算档位都�
   await b.stop();
   // 全新宿主进程、同一会话目录：账与档位必须从盘上长回来，否则重启就是放宽的后门
   // 复用上一个进程的会话目录，起一个全新宿主进程
-  const b3 = new HostBridge(HOST, process.env);
+  const b3 = new HostBridge(HOST, fixtureHostEnv(dir));
   await b3.start(dir);
   try {
     const s = await b3.request("usage/status", {});
@@ -163,7 +164,7 @@ for (const [method, params] of [
       await b.request("turn/start", { limit: 5 });
       assert.equal((await pollUntilSettled(b)).over, true);
     } finally { await b.stop(); }
-    const fresh = new HostBridge(HOST, process.env);
+    const fresh = new HostBridge(HOST, fixtureHostEnv(dir));
     await fresh.start(dir);
     try {
       const before = await fresh.request("usage/status");
@@ -199,7 +200,7 @@ for (const limit of [4, 5]) {
     const log = readFileSync(jj(dir, "session.log"), "utf8");
     assert.equal((log.match(/\tturn\/usage\t12:12/g) || []).length, 1);
     assert.equal(existsSync(jj(dir, "session.log.lease")), false);
-    const fresh = new HostBridge(HOST, process.env);
+    const fresh = new HostBridge(HOST, fixtureHostEnv(dir));
     await fresh.start(dir);
     try { assert.equal((await fresh.request("usage/status")).used, 12); }
     finally { await fresh.stop(); }
@@ -227,7 +228,7 @@ test("已用 12 收紧到 5 即时拒绝下一轮且重启仍拒绝", async () =
     assert.equal((await b.request("usage/status")).over, true);
     await assert.rejects(() => b.request("turn/start", { limit: 5 }), /over-budget/);
   } finally { await b.stop(); }
-  const fresh = new HostBridge(HOST, process.env);
+  const fresh = new HostBridge(HOST, fixtureHostEnv(dir));
   await fresh.start(dir);
   try { await assert.rejects(() => fresh.request("turn/start", { limit: 5 }), /over-budget/); }
   finally { await fresh.stop(); }

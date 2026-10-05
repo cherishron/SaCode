@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -22,7 +23,7 @@ test('真实 Host 请求携带用户正文及前文，响应落盘后可投影',
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const dir=mkdtempSync(join(tmpdir(),'sacode-model-context-'));
   const exe=process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
-  const bridge=new HostBridge(exe,{...process.env,DSH_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}`,DSH_PROVIDER_MODEL:'fixture-model',DSH_PROVIDER_KEY:'fixture-only'});
+  const bridge=new HostBridge(exe,{...fixtureHostEnv(dir),DSH_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}`,DSH_PROVIDER_MODEL:'fixture-model',DSH_PROVIDER_KEY:'fixture-only'});
   try {
     await bridge.start(dir);
     for(const text of ['第一轮中文任务','继续\n保留"引号"与\\路径']) {

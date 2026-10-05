@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -25,7 +26,7 @@ async function boot() {
   if (!existsSync(HOST)) {
     throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
   }
-  const b = new HostBridge(HOST, process.env);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
@@ -130,7 +131,7 @@ test("宿主退出前结算未 flush 的写入并归还租约", async () => {
   assert.equal(r.forced, false, "必须走优雅退出而不是强杀");
   assert.equal(existsSync(join(dir, "session.log.lease")), false, "退出后不得留下写租约");
   assert.ok(readFileSync(join(dir, "session.log"), "utf8").includes("4\tassistant/message\tsettled on exit"));
-  const b2 = new HostBridge(HOST, process.env);
+  const b2 = new HostBridge(HOST, fixtureHostEnv(dir));
   await b2.start(dir);
   const sub = await b2.request("session/subscribe", { cursor: 4 });
   assert.deepEqual(sub.events, [{ seq: 4, type: "assistant/message" }]);
@@ -248,7 +249,7 @@ async function bootFresh() {
   const root = jj(REPO, "dualtest");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "fresh-"));
-  const b = new HostBridge(HOST, process.env);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
@@ -604,7 +605,7 @@ async function bootWithLeaseFile(token) {
   const dir = mkdtempSync(jj(root, "lease-"));
   writeFileSync(join(dir, "session.log"), SEED);
   writeFileSync(join(dir, "session.log.lease"), token);
-  const b = new HostBridge(HOST, process.env);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
@@ -859,7 +860,7 @@ test("换个进程只靠会话日志重算：用量、超档与预算档位都�
   assert.equal(t.usageVerdict, "over-budget");
   await b.stop();
   // 全新宿主进程、同一会话目录：账与档位必须从盘上长回来，否则重启就是放宽的后门
-  const b2 = new HostBridge(HOST, process.env);
+  const b2 = new HostBridge(HOST, fixtureHostEnv(dir));
   await b2.start(dir);
   try {
     const s = await b2.request("usage/status", {});

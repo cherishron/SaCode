@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
@@ -10,7 +11,7 @@ const host=process.env.DSH_HOST || resolve('dist/host/bin/dsh-host.exe');
 const boot=async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-session-management-'));
   writeFileSync(join(dir,'session.log'),'0\tuser/message\t原会话\n');
-  const bridge=new HostBridge(host,process.env); await bridge.start(dir);
+  const bridge=new HostBridge(host, fixtureHostEnv(dir)); await bridge.start(dir);
   return {dir,bridge};
 };
 
@@ -38,7 +39,7 @@ test('新建与切换隔离消息、主题、预算，结算旧写入并在重�
     assert.equal((await bridge.request('appearance/get')).theme,'dark');
     await bridge.request('session/select',{sessionId:id});
   } finally { await bridge.stop(); }
-  const restarted=new HostBridge(host,process.env); await restarted.start(dir);
+  const restarted=new HostBridge(host, fixtureHostEnv(dir)); await restarted.start(dir);
   try {
     assert.equal((await restarted.request('session/catalog')).entries.find(e=>e.current).id,id);
     assert.deepEqual((await restarted.request('session/projection')).messages,['user/message: 只属于新会话']);
@@ -99,7 +100,7 @@ test('重启发现所选目录丢失时拒绝静默回退，显式选择可用�
   const dir=mkdtempSync(join(tmpdir(),'sacode-selection-missing-'));
   const original='0\tuser/message\t原会话\n1\tworkspace/session-selected\tsessions/missing\n';
   writeFileSync(join(dir,'session.log'),original);
-  const bridge=new HostBridge(host,process.env); await bridge.start(dir);
+  const bridge=new HostBridge(host, fixtureHostEnv(dir)); await bridge.start(dir);
   try {
     assert.equal((await bridge.request('initialize')).protocolVersion,'0.1');
     await assert.rejects(()=>bridge.request('session/projection'),/selection-replay-rejected/);
