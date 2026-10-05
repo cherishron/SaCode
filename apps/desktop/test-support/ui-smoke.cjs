@@ -22,8 +22,8 @@ async function uiSmoke(context) {
   const text = async (sel) => (await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : ""; })()`)) || "";
   const count = async (sel) => Number(await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`));
   const click = async (sel) => {
-    // 常规发送路径等待真实回执；重复点击的专门验收仍在同帧直接操作按钮。
-    if(sel==='#send' && !await waitFor(()=>js("!!document.querySelector('#send') && !document.querySelector('#send').disabled"))) return false;
+    // 常规发送和目录选择先等真实加载回执；重复点击验收仍在同帧直接操作。
+    if(['#send','#choose-workspace'].includes(sel) && !await waitFor(()=>js(`(() => { const e=document.querySelector(${JSON.stringify(sel)});return !!e && !e.disabled; })()`))) return false;
     return js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
   };
   const waitFor = async (probe, tries = 120) => {
