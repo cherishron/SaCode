@@ -8,7 +8,7 @@
 
 **Tech Stack:** 仓颉 cjc/cjpm **1.1.3**（cjnative，target `x86_64-w64-mingw32`）；`stdx.encoding.json`；`std.unittest`；桌面侧 Node ≥18 + Electron + Vue **runtime**（`h()` 手写，无模板编译器）。
 
-**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46、56。这三条是后补的：**41** 钉「跨币种不许用统一单价抹平」，**46** 钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」，**56** 钉「同一供应商能加多份实例」（2026-10-05 用户澄清号池需求后新增，规格 §2.1 实例语义；现状 `addFromCatalog` 对已存在 id 直接 `settings-rejected`，等于「一个品牌只能加一份」，本批要改掉）。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
+**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46、56、60。这四条是后补的：**41** 钉「跨币种不许用统一单价抹平」，**46** 钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」，**56** 钉「同一供应商能加多份实例」（2026-10-05 用户澄清号池需求后新增，规格 §2.1 实例语义；现状 `addFromCatalog` 对已存在 id 直接 `settings-rejected`，等于「一个品牌只能加一份」，本批要改掉）；**60** 钉「桌面下拉里还选得到第二份」——号池实测有**两道**闸：核心那句同 id 即拒，加上 `models-page.ts:166` 把已添加过的目录项从选项里滤掉，Task 2 与 Task 7 收前一道，Task 8 Step 3b 收后一道。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
 
 ## Global Constraints
 
@@ -1877,7 +1877,7 @@ git commit -m "feat(host): 模型目录十个动词上宿主，能力声明与�
 ## Task 8: 模型页对齐——前端校验收紧为核心的真子集
 
 **Files:**
-- Modify: `apps/desktop/renderer/pages/models-page.ts:29`（`validateDraft` 的 URL 判据）、`apps/desktop/renderer/pages/models-page.ts:10-16`（`Provider`/`Model` 类型补 Task 2 的新字段）
+- Modify: `apps/desktop/renderer/pages/models-page.ts:166`（提供商下拉里那条「已添加过的目录项就隐藏」的 `filter`——号池的第二道闸，见规格 §2.1/§9.2）、`apps/desktop/renderer/pages/models-page.ts:29`（`validateDraft` 的 URL 判据）、`apps/desktop/renderer/pages/models-page.ts:10-16`（`Provider`/`Model` 类型补 Task 2 的新字段）
 - Modify: `apps/desktop/preload.cjs`（新 IPC 通道）、`apps/desktop/test/bridge.test.mjs`
 - Test: `apps/desktop/test/models-validate.test.mjs`（新建）
 
@@ -1956,6 +1956,29 @@ if (!secure && !local) return '请输入有效的 HTTP 或 HTTPS 地址。';
 
 保留原有的 `u.username || u.password || u.search || u.hash` 检查不动。**不要**在前端新增核心没有的规则（比如限制端口段）——口径是「前端接受形态 ⊆ 核心接受形态」。
 
+- [ ] **Step 3b: 去掉号池的第二道闸（渲染层下拉过滤，断言 60）**
+
+`models-page.ts:166` 的下拉写作 `catalog.value.filter(p => !providers.value.some(v => v.id === p.id))`——目录项一旦加过就从选项里消失。这段是纯逻辑，**收成一个导出函数再测**，沿用 Step 1 已经建好的那套 esbuild 转译壳（同一个 `dist/ts/modules/models-page.mjs`，别再起第二次 `buildSync`）：
+
+```javascript
+// 追加到 apps/desktop/test/models-validate.test.mjs（顶部 import 处多取一个名字）
+const { validateDraft, selectableCatalogEntries } = await import(pathToFileURL(resolve(here, '../dist/ts/modules/models-page.mjs')).href);
+
+test('目录项已添加一份后仍然可选（号池，断言 60）', () => {
+  const catalog = [{ id: 'stepfun', name: 'StepFun' }, { id: 'other', name: 'Other' }];
+  const providers = [{ id: 'stepfun', name: 'StepFun' }];      // 已经加过一份 stepfun
+  const got = selectableCatalogEntries(catalog, providers);
+  assert.ok(got.some((e) => e.id === 'stepfun'), '已添加过的目录项不得从选项里消失');
+  assert.equal(got.length, 2, '目录条目一条都不该被藏起来');
+});
+```
+
+实现：在 `models-page.ts` 导出 `selectableCatalogEntries(catalog, providers)`，**原样返回 `catalog`**（保留 `providers` 参数是为了调用点签名不动，也给以后真需要按别的维度筛留个落点）；`:166` 的下拉改成调它，删掉那句 `!providers.value.some(v => v.id === p.id)`。**同批复查其它以「目录项已被添加」为判据的禁用逻辑**（「添加」按钮、目录弹窗的可选态），有就一并去掉。
+
+Expected（Step 3b 的红灯形态）：转译壳 import 时报 `does not provide an exported name 'selectableCatalogEntries'`，`# fail 1`——「模块还没导出这个名字」与本批 Task 2 的「未声明符号」同属允许的红灯形态；出现别的错误形态先怀疑测试自己写错，别改实现。
+
+这条只钉到**函数面**；「用户真能在下拉里点到第二份」属 Step 6 的 `npm run ui-smoke`，两件事分别记，不许拿函数绿冒充 UI 绿。
+
 - [ ] **Step 4: 类型面补新字段并接自定义模型页签**
 
 `Provider` 接口加 `sortOrder?: number; enabled?: boolean; transport?: 'direct' | 'relay'`（可选，避免宿主未升级时渲染崩）。本任务**只做类型与呈现字段透传**，自定义模型编辑 UI 属 B6 面板批次；若在这里就想加页签，先回来确认它不属于本批出口判据。
@@ -1998,5 +2021,5 @@ git commit -m "feat(desktop): 模型页地址校验收紧为核心的子集，�
 3. `cd apps/desktop && node --test`（全量）rc=0；`bridge.test.mjs` 通道基线已按实际数字更新。
 4. `npm run ui-smoke` 输出 `UI SMOKE PASS`，或明确记 BLOCKED 及其解锁动作。
 5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`；**且这十个动词与 `preload.cjs` 新增的十条通道逐个对映**（断言 52——本批实测抓到 `binding/reorder` 一度只有动词没有通道，那样核心能改顺序、桌面改不了，等于交付半成品）。
-6. 断言 1、2、3、4、31、41、46、56 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）；**56→Task 2 Step 5b 的 `sameCatalogEntryTwiceYieldsTwoInstances` + `eachInstanceDerivesItsOwnCredentialRef` + `duplicateCredentialRefAcrossInstancesIsRejected` 三条，再加 Task 7 那条宿主帧用例（`model/registry/add-catalog` 连发两次得到两个实例）——核心绿了但宿主还在走旧的「同 id 即拒」，号池对用户依然不可用。**
+6. 断言 1、2、3、4、31、41、46、56、60 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）；**56→Task 2 Step 5b 的 `sameCatalogEntryTwiceYieldsTwoInstances` + `eachInstanceDerivesItsOwnCredentialRef` + `duplicateCredentialRefAcrossInstancesIsRejected` 三条，再加 Task 7 那条宿主帧用例（`model/registry/add-catalog` 连发两次得到两个实例）——核心绿了但宿主还在走旧的「同 id 即拒」，号池对用户依然不可用；**60→Task 8 Step 3b 的 `目录项已添加一份后仍然可选（号池，断言 60）`**——这条管的是第三段通路（渲染层），三段里任何一段没改，用户在桌面上就加不出第二份。**
 7. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。
