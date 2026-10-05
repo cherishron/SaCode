@@ -663,13 +663,23 @@ async function uiSmoke(context) {
   // 真实移动项目文件夹，检查界面保留原路径并说明恢复方式。
   const movedWorkspacePath=join(SESSION_DIR,'工作区 UI 项目 临时移动');
   require('node:fs').renameSync(workspaceUIPath,movedWorkspacePath);
+  const workspaceRequestBefore=bridge.request.bind(bridge);
+  let workspaceCatalogEntered=false, releaseWorkspaceCatalog;
+  const workspaceCatalogGate=new Promise(resolve=>{releaseWorkspaceCatalog=resolve;});
+  bridge.request=async(method,params)=>{
+    const result=await workspaceRequestBefore(method,params);
+    if(method==='session/catalog') {workspaceCatalogEntered=true;await workspaceCatalogGate;}
+    return result;
+  };
   try {
     await click('#open-workspace');
     note(await waitFor(async()=>(await text('#workspace-description')).includes('请恢复该目录')), "项目目录丢失时显示恢复提示");
     note((await text('#workspace-directory'))===workspaceUIPath && (await text('.workspace-panel .badge'))==='目录不可用', "不可用目录保留原路径并显示错误状态");
-    note(await js("!document.querySelector('#choose-workspace').disabled"), "目录不可用时仍允许重新选择");
+    note(await waitFor(async()=>workspaceCatalogEntered && await js("document.querySelector('#choose-workspace').disabled")), "工作区目录刷新未结算时暂时锁定重新选择");
+    releaseWorkspaceCatalog();
+    note(await waitFor(()=>js("!document.querySelector('#choose-workspace').disabled")), "目录不可用且刷新已结算时仍允许重新选择");
     await click('.workspace-dialog .dialog-header button');
-  } finally { require('node:fs').renameSync(movedWorkspacePath,workspaceUIPath); }
+  } finally { releaseWorkspaceCatalog();bridge.request=workspaceRequestBefore;require('node:fs').renameSync(movedWorkspacePath,workspaceUIPath); }
 
   // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
   await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
