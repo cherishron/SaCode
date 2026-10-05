@@ -34,6 +34,8 @@
 
 读结果的方法固定：输出重定向落盘 → `sed` 剥 ANSI → `tr` 拆行 → 只认剥码后**最后一个** Summary 块里的五个计数，并与退出码交叉验证。**禁止**用 `grep -c '\[ PASSED \]'` 之类的 token 计数判通过。
 
+**行号锚点只当参照，动手前一律用符号重定位**（`grep -n "func X"` 或 `grep -n "let X"`）。实测教训：本计划登记时 `apps/host/src/main.cj` 的四处锚点是 362 / 363-375 / 601 / 630，到复核时同一文件已被别的批次改动，真值变成 355 / 361-372 / 593 / 620——**照旧行号动手会改到别人的代码块里**。`core/src/*.cj` 相对稳（`provider_registry.cj` 的 64 / 367 / 497-527 三处复核未漂），但同样先核再改。
+
 **基线会漂**：本工作区有并发会话在往 `core` 落用例（上一批登记时是 463，别的会话报过 484 这个**工作区态**计数）。所以每个 Step 里写死的 `TOTAL: 4xx` 是**按 `8a7dc77` 提交态**算出来的目标值，不是无条件事实。开工第一件事：
 
 ```bash
@@ -1565,7 +1567,7 @@ git commit -m "feat(core): 上游模型两种导入入口，重复导入幂等�
 ## Task 7: 宿主动词与 `initialize.capabilities` 同步
 
 **Files:**
-- Modify: `apps/host/src/main.cj:601-605`（动词白名单）、`:362-435` 区（`providerSurfaceRequest` 分发）、`:630`（`initialize.capabilities`）
+- Modify: `apps/host/src/main.cj`（HEAD 实测：`configReadSide` 白名单在 `:593-594`、`providerSurfaceRequest` 分发在 `:355` 起；**登记时记的 601-605 / 362-435 已漂过一轮**）、`:630`（`initialize.capabilities`）
 - Test: `apps/desktop/test/host-verbs.test.mjs`（新建，Node 子进程驱动宿主 NDJSON）
 
 **Interfaces:**
@@ -1653,7 +1655,7 @@ Expected：三个 rc 全 0，且 exe 的 mtime 落在本轮。**先核 mtime 再
 
 - [ ] **Step 3: 接动词**
 
-新动词组放进 `providerSurfaceRequest`（`apps/host/src/main.cj:362` 起的那个函数）里，**照 `model/registry/update` 的既有形态取对象**（`:363-375`：`JsonValue.fromStr(body).asObject()` → `params.draft` → `registry.updateObject(draft, jsonNum(body, "expectedRevision"))`）。自定义模型侧复用同一形状：
+新动词组放进 `providerSurfaceRequest`（HEAD 实测 `apps/host/src/main.cj:355` 的那个函数。**动手前先重定位再改**：`grep -n "func providerSurfaceRequest" apps/host/src/main.cj`——这是本仓改动最频繁的文件，行号会随别的批次漂移，只有符号名是稳的）里，**照 `model/registry/update` 的既有形态取对象**（HEAD 实测 `:361-372`：`JsonValue.fromStr(body).asObject()` → `params.draft` → `registry.updateObject(draft, jsonNum(body, "expectedRevision"))`）。自定义模型侧复用同一形状：
 
 ```cangjie
         if (method == "custom/describe") {
@@ -1748,7 +1750,7 @@ Expected：三个 rc 全 0，且 exe 的 mtime 落在本轮。**先核 mtime 再
 
 - [ ] **Step 4: 更新在途轮次的放行白名单**
 
-`apps/host/src/main.cj:601` 那个 `if` 列出的白名单决定「流式轮次里允许哪些配置面请求」。把 `custom/describe` 加进**读面**（与 `model/registry/describe` 同档），其余写动词留在「在途即 `turn-in-flight`」那一侧：
+`apps/host/src/main.cj:593` 那个 `configReadSide` 布尔式（先 `grep -n "let configReadSide" apps/host/src/main.cj` 重定位）决定「流式轮次里允许哪些配置面请求」。把 `custom/describe` 加进**读面**（与 `model/registry/describe` 同档），其余写动词留在「在途即 `turn-in-flight`」那一侧：
 
 ```cangjie
             let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog"
@@ -1759,7 +1761,7 @@ Expected：三个 rc 全 0，且 exe 的 mtime 落在本轮。**先核 mtime 再
 
 - [ ] **Step 5: 同步 capabilities 并跑绿**
 
-`:630` 的数组尾部追加十个动词串（**逐字与 Step 1 的 `NEW` 数组一致**）。然后：
+`:620` 的 `capabilities` 数组尾部追加十个动词串（先 `grep -n capabilities apps/host/src/main.cj` 重定位）（**逐字与 Step 1 的 `NEW` 数组一致**）。然后：
 
 ```bash
 cd /d/Project/sa/saai/sa-code/apps/host && cjpm build > ../../target/b1-t7-build.log 2>&1; echo "build rc=$?"

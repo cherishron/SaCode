@@ -21,7 +21,7 @@
 | 远端模型清单拉取 + 连接测试：坏响应不等于「0 个模型」、摘要不带凭据 | `core/src/model_catalog.cj:101`（`:15`、`:95`） | 「拉取模型」的传输层已具备，缺的是**发现结果 → 自定义模型**的导入编排 |
 | 会话级 token 计量：账从会话日志重算、超档那笔不计入、预算只能收紧 | `core/src/meter.cj:7`（`:62` 收紧、`:52` 结算） | 这是**失控闸门**，不是模型额度；两者在 §7 明确分权 |
 | 请求装配：标准消息与工具结果全部从会话日志重建 | `core/src/model_request.cj:7` | 调度器插在装配之前，不改变装配的纯函数性质 |
-| 单一 provider 的真实请求装配点 | `apps/host/src/main.cj:1172`（`RealSseProvider(baseUrl, turnKey, reqBody, tk)`） | **调度器的唯一插入点**，桌面与宿主共用 |
+| 真实请求的装配点，以及**每步续跑的工厂缝** | `core/src/model_agent.cj:102` 的 `start(first: Provider, nextProvider: (String) -> Provider, …)`，与 `:88` 每步都调 `nextProvider(...)`；宿主侧装配在 `apps/host/src/main.cj` 的 `let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)` 与其下一行的 `let continuation: (String) -> Provider`（**该文件不写行号，见 §4.1 的锚点纪律**） | **调度器的插入点已经存在、形状也对**：每步一个工厂。要改的是宿主传进去的那个工厂，不是 `core` 的签名（见 §4.1） |
 
 ### 1.2 确认是空白（不是推断，是 0 命中）
 
@@ -164,15 +164,20 @@
 
 ### 4.1 插入点与两处必须先收的真缺陷（本批直读宿主源码）
 
-**插入点**：`apps/host/src/main.cj:1163-1174`。现状是 `RealSseProvider(baseUrl, turnKey, reqBody, tk)` 在轮次开始时装配一次，**多步续跑用的闭包 `{ request => RealSseProvider(baseUrl, turnKey, request, tk) }` 把同一个上游冻在闭包里**。
+**锚点纪律（本节只适用于 `apps/host/src/main.cj`）**：这个文件**只认符号，不认行号**。证据是本设计当天三次量同一处：登记时 `:1163-1174`，第一次复核 `:1197-1198`，写完 B1 计划再复核已变成 `:1226-1230`——中间隔着另两个会话的落库（含 `7fa8739`）。定位一律用 `grep -n "let continuation" apps/host/src/main.cj` 这类符号式检索，命中数必须恰好为 1 才动手；`core/src/*.cj` 的锚点当天复核未漂，但仍按同一纪律先核再改。
+
+**插入点**：`apps/host/src/main.cj` 里真实轮次的装配段——由 `let real = DeferredProvider(...)`、`let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }` 和紧随其后的 `ModelAgentRunner().start(real, continuation, ...)` 三行构成。
 
 - 缺陷 A：**目标执行的每一步不会重新过调度**。上游第 2 步挂了仍继续朝同一 `baseUrl` 打，与目标里「一次逻辑请求可能失败后切换上游」直接不符。
-  改法：`ModelAgentRunner` 的续跑闭包改成「向 `ModelRouter` 再要一条路由」（每步一次决策，含健康过滤与预算预留），路由结果连同 `attemptId` 一起交给 `TransportChannel`；闭包只捕获调度器与请求装配器，不捕获具体上游。
+  **定位修正（2026-10-05 对 HEAD 复核，本条原先归因错了）**：`ModelAgentRunner` 早已收「每步工厂」——`model_agent.cj:102` 的签名是 `start(first: Provider, nextProvider: (String) -> Provider, …)`，且 `:88` 在每次续跑处**确实调用** `nextProvider(...)`。冻住上游的不是 core 的机制，而是宿主传进去的那一个工厂实现：`{ request => RealSseProvider(baseUrl, turnKey, request, tk) }` 里 `baseUrl` 是外层捕获的常量。
+  改法与影响面因此**缩小**：只改宿主那个工厂，让它每步向 `ModelRouter` 要一条路由（含健康过滤与预算预留），路由结果连同 `attemptId` 交给 `TransportChannel`；**`core` 的 runner 签名一个字都不用动**，B2 这一项不是 API 改造而是宿主侧替换实现。
+  仓颉侧的现成约束（就写在同一处代码的注释里，`let turnKey = key` 上方那两行注释）：lambda 不得捕获可变变量却被间接调用，所以 `turnKey` 那类值是先 `let` 冻结再进闭包的。工厂里同理不能持有「上一步选中的路由」这类可变捕获——每步都重新问 `ModelRouter`，正好与调度的确定性合同一致。新增断言见 §11 第 49 条。
+- 缺陷 A 的补充缝（2026-10-05 另一会话刚落库，对本设计有利）：`core/src/deferred_provider.cj:5` 的 `DeferredProvider(makeProvider: () -> Provider, token)` 把**首步** provider 的构造推迟到第一次读流（`next()`）时才做，并记住结果。B2 把「向 `ModelRouter` 要路由 + 预算预留」放进这个工厂后，天然获得两条免费性质：轮次在起流前被取消时**既不发上游请求也不产生预留**（与 §5.2「用户取消不计入失败」、§7.3「预留必须作废」同一口径），且取消检查（`token.cancelled()`）已在该工厂的调用路径上。注意 `continuation` 那一支**目前没有包惰性壳**、直接构造 `RealSseProvider`——两支都归到同一个 `resolve` 函数才算收口。
 - 缺陷 B：**`protocol` 字段被存下但从不生效**。`providerProtocols` 收三种（`openai-completions`/`openai-responses`/`anthropic-messages`，`provider_registry.cj:41`），但 `core/src/sse.cj:11` 的 `RealSseProvider` 只实现一种线格式，全仓 `anthropic`/`x-api-key` 在请求路径上 **0 命中**。后果：把供应商存成 `anthropic-messages` 仍按 OpenAI 形态发出去，认证头与请求体都不对——这是**用错协议冒充支持**。
   改法：加 `ProtocolAdapter` 缝（`core/src/protocol_adapter.cj`），把「线格式 + 认证头形态 + 流式事件映射」按协议各一份；**只登记已实现的适配器**。调度时对未实现协议的绑定返回带类型拒绝 `adapter-unimplemented` 并把它排除出候选，同时能力页如实显示「协议适配器未实现」。**不允许**回落到 OpenAI 形态盲发。
   顺序影响：目标 §2.1 要求「按适配器分别支持」，所以 `openai-completions`（已可用）之外两种是需求不是可选项，落在 B2（缝与拒绝语义）与后续批次逐个补实现；补一个就把它的协议从「不可调度」移到「可调度」，不改规则只改注册表。
 
-**取参通道收敛**：同一处还有三条并存的参数来源——注册表 plan（`:1082-1094`）、遗留 `ModelSettings`（`configured.baseUrl`）、环境变量兜底 `DSH_PROVIDER_BASE_URL` / `DSH_PROVIDER_KEY` / `STEPFUN_API_KEY`（`:1101`、`:1109`）。模型中心上线后必须**只剩一条**：任务输入 → 自定义模型 ID → `ModelRouter` 决策 → 凭据按 `credentialRef` 现解析。环境变量兜底降为「开发态夹具」，在产品路径（`task/start`）里**不再参与**取值，缺配置就 fail-loud（这条现有代码已具备雏形：`task/start` 无 base_url 会硬失败，而 `turn/start` 静默走假 provider——B2 一并收口，别把诊断通道当产品通道）。
+**取参通道收敛**：同一处还有三条并存的参数来源——注册表 plan、遗留 `ModelSettings`（`configured.baseUrl`）、环境变量兜底。三条分别落在：任务路径的 `let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) … else { getVariable("DSH_PROVIDER_BASE_URL") … }`，以及紧邻的 `key = getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY")`；**同一条兜底链在 `model/*` 那几个动词的分支里还有一份**（`let url = if (saved.baseUrl.size > 0) … else { getVariable("DSH_PROVIDER_BASE_URL") }` 与 `let environmentKey = … || (getVariable("STEPFUN_API_KEY") …)`）。**四处都要收**，只收任务路径那一处会留下「配置面读得到、`model/*` 动词仍被环境变量影子压住」的假收口（定位一律 `grep -n DSH_PROVIDER_BASE_URL apps/host/src/main.cj`，命中数应为 2）。模型中心上线后必须**只剩一条**：任务输入 → 自定义模型 ID → `ModelRouter` 决策 → 凭据按 `credentialRef` 现解析。环境变量兜底降为「开发态夹具」，在产品路径（`task/start`）里**不再参与**取值，缺配置就 fail-loud（这条现有代码已具备雏形：`task/start` 无 base_url 会硬失败，而 `turn/start` 静默走假 provider——B2 一并收口，别把诊断通道当产品通道）。
 
 ---
 
@@ -216,7 +221,12 @@
 - `notBefore` 取值优先级：**供应商证据 > 退避阶梯**。供应商给了 `Retry-After` 或额度重置时刻就照它；没给则按 `30min → 1h → 2h → 4h`（同一作用域连续冷却逐档抬升，上限 4h），全部可配置，默认即此。
 - **成功不清零累计失败数**，但恢复正常调度；失败数只做展示与归因。
 - 状态持久化在 `route-health.log`，**跨重启不丢**；不再有「次日自动恢复」这条——恢复由探测决定。
-- 探测去重：探测任务持有 `WriteLease`（复用 `model_settings.cj:58` 的租约形态），同一作用域同时只允许一个在途探测；CLI 与桌面共享这份租约，因此不会各探一次。
+- 探测去重：探测任务持有 `WriteLease`（复用 `model_settings.cj:58` 的 `takeoverIfStale()` → `finally release()` 形态），同一作用域同时只允许一个在途探测；CLI 与桌面共享这份租约，因此不会各探一次。
+  **但 `core/src/lease.cj` 的实际语义决定了这里有三条必须写死的规则**（2026-10-05 直读源码核对）：
+  1. 租约是**按文件路径**的（`init(sessionPath)` → `<path>.lease`），不是按作用域。要做到「按作用域去重」，就得**一个作用域一个租约文件**（如 `<设置目录>/probe-lease-<作用域键>.lease`），不能指望一份 `route-health.log.lease` 同时表达多个作用域——那会把不相干的探测也串起来。
+  2. **没有 TTL**。`takeoverIfStale()` 只在「盘上 pid 被 `procwin.cj:29` 的 `isProcessAlive` 判为确认已死」时才接管；pid 被复用的情形它**故意不接管**（源码注释：宁可让人手工清）。后果必须如实写进设计：宿主进程**活着但卡死**（例如探测连接既不返回也不超时）时，该作用域的恢复探测会一直停在「在途」，别的路径进不去。
+  3. `acquire()` 是**非阻塞 try-lock**，回 `Bool`。这正好允许「拿不到就立刻给带类型拒绝」，而不是排队等锁。
+  所以：探测必须自带**有界超时**（沿用 `model_catalog.cj:101` 的 `readTimeout` 形态）并在 `finally` 里 `release()`；拿不到租约时回 `probe-in-flight`（不静默跳过、不排队）；页面把「该作用域有在途探测」显示出来，并提供显式的 `route/probe/run` 入口让人复核——**清理滞留租约不允许由程序自动做**（`release()` 只认自己的 token，抢写失败的一方无权清持有者的）。新增断言见 §11 第 50 条。
 - **谁发起探测**：由活着的宿主进程（桌面 spawn 的 `dsh-host`）跑探测定时器；CLI 的单发子命令**不**起后台定时器，只在 `route/probe/run` 被显式调用时探一次。软件全部关着时不继续产生探测费用，也不假装恢复。
 - 探测预算：`probe.maxPerDay` 默认每个作用域每日 **3 条**，探测费用计入 `usage_kind=probe` 且受模型额度预算约束；上限可改，改法同其它写面（带 `expectedRevision`，落一条事件）。
 - 探测成功 → 状态转 `trial`：只放行**一条**正常请求做确认，该请求成功才回 `available`，失败则回 `cooling` 并抬一档。
@@ -288,6 +298,7 @@
 ```
 
 - 预留与结算都在 `usage-ledger.log` 上持 `WriteLease` 落盘，**同机 CLI 与桌面共享同一本账**（跨机器不共享，见 §8）。
+  **租约的临界区只许覆盖落盘写入，绝不跨网络调用**——§5.3 核到的三条租约语义（按路径、无 TTL、崩溃接管只认 pid 判死）在这里更致命：`usage-ledger.log` 是全机唯一的账本文件，若把「预留 → 发请求 → 结算」整段圈进一次持有，一次 15 秒的探测或一轮几分钟的目标执行会**冻住另一个入口的每一次记账**，而卡死的持有者别人接不进来。现成用法（`model_settings.cj:58`）之所以安全，就是它只圈住一次临时文件改名。预留与发请求之间只能是「取租约 → 写一条 `reserve` 事件 → 归还 → 再发请求」，结算同形（断言 51）。
 - 结算按 `attemptId` **幂等**：同一 attempt 第二次结算返回首次结论、不重复扣费。
 - `已用 + 在途预留` 不得突破上限；只看「请求结束后的已用」等于放行并发超支。
 - 无法可靠预估成本的请求（`meterUnit=unknown` 或严格预算模式）：**拒绝执行**，或要求用户显式允许按估算预留；不允许默默当零成本发出去。
@@ -504,6 +515,9 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 46 | 自定义模型条目的**参数/预算/探测字段随 B1 落盘并可逐字回放**；缺省语义是「未设置」而**不是 0**（§2.3）：`defaultParams` 原文 JSON 无损回读、且拒绝承载明文凭据字段；预算列缺省时 §4 的过滤不得判成「已耗尽」 | 把缺省预算存成 0（路由立刻全部被预算闸掉），或参数文本落盘后被重新序列化改写字段顺序 |
 | 47 | 导入后「设置」逐类等值（目标 §5 第三条的字面清单）：供应商与上游模型、自定义模型与绑定顺序/权重、计价条目与版本、模型额度预算、探测策略（`probe.enabled`/`maxPerDay`）与 `defaultParams` **逐项比对相等**，而不是只证「条目数没变」 | 只比条目数，把预算与探测策略在导入途中丢掉 |
 | 48 | 调度面与凭据/网络在**形态上**隔离（目标 §6 第二条）：`ModelRouter` 的字段集与入参里不出现 `CredentialStore`、`Client`/`HttpRequestBuilder` 或任何读时钟的调用，凭据只在装配点按 `credentialRef` 现解析（§3 的「明确禁止」列由此变成可检的东西） | 路由器里顺手 `resolve` 凭据或直接发请求——功能照样绿，但分离边界没了 |
+| 49 | 每一步续跑都重新过一次调度且**不改 `core` 签名**：宿主传给 `ModelAgentRunner.start` 的 `nextProvider` 工厂每步向 `ModelRouter` 要路由，第 2 步失败可换到另一条 `baseUrl`；`model_agent.cj` 的 `start`/`run` 签名保持原样（§4.1 定位修正） | 把工厂改回 `request => RealSseProvider(常量 baseUrl, …)`——即当前 HEAD 的形态，指定用例转红 |
+| 50 | 租约三条语义都被钉住：**一个作用域一个租约文件**（A 作用域在途不挡 B 作用域）、拿不到租约立刻回 `probe-in-flight` 而不是静默跳过或排队、持有者进程确认已死才可接管（`isProcessAlive` 判活为真时绝不删别人的租约） | 共用单一 `route-health.log.lease`（跨作用域互斥）；或拿不到锁就静默返回；或按「租约存在太久」直接删 |
+| 51 | 账本租约的临界区不跨网络：`UsageLedger` 的 `reserve`/`settle` 在**归还租约之后**才允许出现 provider 调用（形态断言，照 48 的检法），且 `release()` 在 `finally` 里成对出现 | 把「预留 → 请求 → 结算」整段圈进一次持有——另一个入口在请求期间一次也写不进账本 |
 
 ### 11.1 最终验收闭环的对位
 
@@ -511,8 +525,8 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | --- | --- | --- |
 | 配置供应商 | B1 | 4、17、31 |
 | 创建自定义模型 | B1（44 的「CLI 参数拒收」半随 B2 取参收敛） | 1、2、3、41、44、46 |
-| 发起真实任务 | B2（+B4 走加速时） | 3、10、21、23、24、40、45 |
-| 查看结果与费用 | B3 / B6 | 8、14、15、16、43 |
+| 发起真实任务 | B2（+B4 走加速时） | 3、10、21、23、24、40、45、49 |
+| 查看结果与费用 | B3 / B6 | 8、14、15、16、43、51 |
 | 故障后自动恢复 | B2 | 5、6、7、11、12、32、33、37、38、39、40、45 |
 | 安全导出 | B5 | 17、26、27、28、30 |
 | 新机器导入并继续使用 | B5 | 18、19、20、29、42、47 |
@@ -653,10 +667,10 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | §1「日常任务只需选择自定义模型，不必反复选供应商或填密钥」 | §2.3 末条、§4.1 取参收敛 | 36、44 | B1/B2 | 部分：B1 交「第 3 层是唯一读面」，44 的 CLI 参数拒收随 B2 |
 | §2「轮询和平滑加权轮询」 | §4 | 10 | B2 | 覆盖 |
 | §2「能力、开关、健康状态与预算过滤」 | §4 过滤链 | 3、4、5、13 | B2/B3 | 部分：B2 用**注入的**账本视图证纯函数与优先级，接真账本在 B3 |
-| §2「三次有效失败后退出正常调度，进入冷却与低频恢复探测，而不是无条件停用到次日」 | §5.1、§5.3 | 5、12 | B2 | 覆盖（与目标原文「当天熔断/次日恢复」的替换关系已在 §11.1 下方写明） |
+| §2「三次有效失败后退出正常调度，进入冷却与低频恢复探测，而不是无条件停用到次日」 | §5.1、§5.3 | 5、12、50 | B2 | 覆盖（与目标原文「当天熔断/次日恢复」的替换关系已在 §11.1 下方写明） |
 | §2「区分线路/模型/限流/额度耗尽/凭证失效，按实际受影响范围暂停」 | §5.1、§5.2 | 6、8、9、32、33 | B2 | 覆盖 |
 | §2「优先遵守供应商恢复时间，否则可配置低频退避」 | §5.3 | 7、38 | B2 | 覆盖（阶梯取值见 §16.2） |
-| §2「健康状态跨重启保留、CLI 与桌面不重复探测、成功后有限放行」 | §5.3 | 5、11、12、37 | B2 | 覆盖 |
+| 健康状态跨重启保留、CLI 与桌面不重复探测、成功后有限放行 | §5.3（含 2026-10-05 对 `lease.cj` 三条语义的补写） | 5、11、12、37、50 | B2 | 覆盖 |
 | §3「加速通道用于模型请求、**模型发现**和**健康探测**」 | §6「三种用途共用同一通道决策」 | **40、45** | B4 | **本轮补齐**：原 §6 只写了模型请求；现状证据是 `model_catalog.cj:101` 在 `:105` 自建 client 直连，与通道抽象无关，不收口则「切了 relay 但发现仍裸连」 |
 | §3「只负责受控传输，不另建一套模型调度规则」 | §3 禁止列、§6 定位、§12 | 25、48 | 每批 | 覆盖 |
 | §3「流式、工具调用、usage 传递和取消，不盲目重放」 | §6 | 23、24 | B4 | 部分：B0 ④ 透传桩测未跑（§15 末段），跑之前不写成已达成 |
@@ -664,7 +678,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | §3「访问授权独立设计，不要求先建账号体系」 | §6 末条 | — | B4 | **待你拍板**（见 §16.2 第 8 行） |
 | §4「按每次上游尝试记录用量、结果、费用及计价快照」 | §7.1 | 15、43 | B3 | 覆盖 |
 | §4「固定精度十进制；不同币种、不同模态分别处理」 | §7.2、§2.2 `meterUnit` | 16、41 | B1/B3 | 覆盖 |
-| §4「同机 CLI 与桌面共享账本、原子预留、幂等结算、待核算」 | §7.3 | 13、14 | B3 | 覆盖 |
+| §4「同机 CLI 与桌面共享账本、原子预留、幂等结算、待核算」 | §7.3（含租约临界区不跨网络） | 13、14、51 | B3 | 覆盖 |
 | §4「失败与取消有 usage 就记，没有 usage 不冒充零消费」 | §7.1 | 8、14 | B3 | 覆盖 |
 | §4「分开展示模型/探测/加速费用；本地费用不冒充余额」 | §7.5 | 14、43 | B6 | 覆盖 |
 | §5「默认导出不含密钥的配置包」 | §8.1 | 17 | B5 | 覆盖 |
@@ -699,4 +713,4 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 1. 条款列必须与目标原文一一对应：标题段十条总要求 + §1 十条 + §2 六条 + §3 五条 + §4 五条 + §5 五条 + §6 四条 + 最终验收三条 = **48 行**。本表实测 `48` 数据行、五列齐全（脚本核：表格行数、每行列数、转义竖线先剥再数列）。
 2. 每个 `覆盖` 都要能指到一条 §11 断言或一个已指名的用例名（表里出现的 `entriesOfAnotherOwnerAreInvisibleButNotDestroyed` 这类就是后者）；指不到就应改标 `部分` 或 `本轮补齐`。
 3. 每个 `部分` 都写明了缺的那半与承接批次，不允许出现「部分」但看不出部分在哪。
-4. 断言总数 **48**（§11 实测编号 1..48 连续、无重复、无缺号），本轮因这张表新增 **40–48** 九条；`§11.1` 对位表与 §10 批次表已同步。机械对账另核出一条方向也成立的性质：**§11 里没有任何一条断言从未被引用**（48 个编号全部出现在 §10/§11.1/§16.1 某处），所以不存在「写了断言但没人认领」的悬空项。未闭环的两处（协议实现 1/3、真实网关）在表里是 `部分`/`待你拍板`，不在任何一行里被写成「已覆盖」。
+4. 断言总数 **51**（§11 实测编号 1..51 连续、无重复、无缺号），本轮新增 **40–51** 十二条（其中 49–51 来自对 `model_agent.cj`/`lease.cj` 的 HEAD 直读复核：一条纠正了缺陷 A 的归因，两条把租语义补成可检的东西）；`§11.1` 对位表与 §10 批次表已同步。机械对账另核出一条方向也成立的性质：**§11 里没有任何一条断言从未被引用**（48 个编号全部出现在 §10/§11.1/§16.1 某处），所以不存在「写了断言但没人认领」的悬空项。未闭环的两处（协议实现 1/3、真实网关）在表里是 `部分`/`待你拍板`，不在任何一行里被写成「已覆盖」。
