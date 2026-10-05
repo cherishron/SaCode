@@ -40,6 +40,14 @@ let saCodeCatalog = [
 
 let providerProtocols = ["openai-completions", "openai-responses", "anthropic-messages"]
 
+// 第 2 层能力面闭集：能力只能显式登记，名字像不算；缺失一律 unknown。
+// 这些闭集与 ModelSpec 的字段一一对应，解析与落盘共用同一份真源。
+let modalities = ["text", "image", "audio", "video", "embedding"]
+let capabilityFlags = ["tools", "stream", "structured-output", "image-output"]
+let meterUnits = ["token", "image", "second", "request", "unknown"]
+let provenances = ["provider-listed", "user-entered", "human-confirmed", "unknown"]
+let availabilities = ["available", "unsupported", "unknown"]
+
 // 凭据名从提供商 ID 派生（大写、短横线换下划线，套上 SaCode 命名空间）。
 // 派生放在核心而不是宿主或渲染层：两个入口必须推出同一个名字，
 // 否则 CLI 里配好的密钥在桌面端会解析成另一个空引用。
@@ -67,12 +75,57 @@ public class ModelSpec {
     public let contextWindow: String
     public let maxTokens: String
     public let image: Bool
-    public init(id: String, name: String, contextWindow: String, maxTokens: String, image: Bool) {
+    public let inputModalities: Array<String>
+    public let outputModalities: Array<String>
+    public let supports: Array<String>
+    public let meterUnit: String
+    public let provenance: String
+    public let availability: String
+    public init(id: String, name: String, contextWindow: String, maxTokens: String, image: Bool,
+        inputModalities!: Array<String> = [], outputModalities!: Array<String> = [],
+        supports!: Array<String> = [], meterUnit!: String = "unknown",
+        provenance!: String = "unknown", availability!: String = "unknown") {
         this.id = id; this.name = name; this.contextWindow = contextWindow
         this.maxTokens = maxTokens; this.image = image
+        this.inputModalities = inputModalities; this.outputModalities = outputModalities
+        this.supports = supports; this.meterUnit = meterUnit
+        this.provenance = provenance; this.availability = availability
     }
     public func toJson(): String {
-        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"contextWindow\":\"${jsonEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\",\"image\":${image}}"
+        var inArr = "["
+        var i = Int64(0)
+        while (i < Int64(inputModalities.size)) {
+            if (i > 0) { inArr += "," }
+            inArr += "\"${jsonEscapeText(inputModalities[i])}\""
+            i += 1
+        }
+        inArr += "]"
+        var outArr = "["
+        i = Int64(0)
+        while (i < Int64(outputModalities.size)) {
+            if (i > 0) { outArr += "," }
+            outArr += "\"${jsonEscapeText(outputModalities[i])}\""
+            i += 1
+        }
+        outArr += "]"
+        var supArr = "["
+        i = Int64(0)
+        while (i < Int64(supports.size)) {
+            if (i > 0) { supArr += "," }
+            supArr += "\"${jsonEscapeText(supports[i])}\""
+            i += 1
+        }
+        supArr += "]"
+        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"contextWindow\":\"${jsonEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\",\"image\":${image},"
+            + "\"inputModalities\":${inArr},\"outputModalities\":${outArr},\"supports\":${supArr},"
+            + "\"meterUnit\":\"${jsonEscapeText(meterUnit)}\",\"provenance\":\"${jsonEscapeText(provenance)}\",\"availability\":\"${jsonEscapeText(availability)}\"}"
+    }
+    // 只认显式登记：`unknown` 在能力过滤里不等于满足，名字像也不算。
+    public func hasCapability(need: String): Bool {
+        for (c in supports) {
+            if (c == need) { return true }
+        }
+        return false
     }
 }
 
@@ -380,8 +433,13 @@ public class ProviderRegistry {
                 textField(o, "name"),
                 textField(o, "contextWindow"),
                 textField(o, "maxTokens"),
-                boolField(o, "image")
-            )
+                boolField(o, "image"),
+                inputModalities: stringArrayField(o, "inputModalities", modalities),
+                outputModalities: stringArrayField(o, "outputModalities", modalities),
+                supports: stringArrayField(o, "supports", capabilityFlags),
+                meterUnit: enumField(o, "meterUnit", meterUnits, "unknown"),
+                provenance: enumField(o, "provenance", provenances, "unknown"),
+                availability: enumField(o, "availability", availabilities, "unknown"))
             if (spec.id.size == 0 || spec.id.size > 200) {
                 throw Exception("settings-rejected")
             }
@@ -524,6 +582,51 @@ public class ProviderRegistry {
             return v.asBool().getValue()
         }
         return false
+    }
+
+    // 数组字段：缺省=空；给了就必须逐个落在闭集里，且不得重复——
+    // 静默收下未知值等于把「不认识」伪装成「不支持」。
+    private static func stringArrayField(obj: JsonObject, key: String, allowed: Array<String>): Array<String> {
+        if (obj.get(key).isNone()) {
+            return []
+        }
+        let v = obj.get(key).getOrThrow()
+        if (isNullValue(v)) {
+            return []
+        }
+        let arr = v.asArray()
+        let out = ArrayList<String>()
+        var pos: Int64 = 0
+        while (let Some(item) <- arr.get(pos)) {
+            pos += 1
+            if (isNullValue(item)) {
+                continue
+            }
+            let s = item.asString().getValue()
+            var known = false
+            for (a in allowed) {
+                if (a == s) { known = true }
+            }
+            if (!known) { throw Exception("settings-rejected") }
+            for (seen in out) {
+                if (seen == s) { throw Exception("settings-rejected") }
+            }
+            out.add(s)
+        }
+        return out.toArray()
+    }
+
+    // 单值枚举：缺省或 null 都取 default（老日志没有这个字段，必须回放成功而不是整份作废）
+    private static func enumField(obj: JsonObject, key: String, allowed: Array<String>, dflt: String): String {
+        if (let Some(v) <- obj.get(key)) {
+            if (isNullValue(v)) { return dflt }
+            let s = v.asString().getValue()
+            for (a in allowed) {
+                if (a == s) { return s }
+            }
+            throw Exception("settings-rejected")
+        }
+        return dflt
     }
 
     private static func fieldOfText(text: String, key: String): String {
