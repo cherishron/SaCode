@@ -6,6 +6,7 @@ export interface Model { id: string; name: string; contextWindow: string; maxTok
 export interface Provider {
   id: string; name: string; baseUrl: string; protocol: Protocol; models: Model[]; keyConfigured: boolean;
   declared?: boolean; defaultModels?: Model[]; modelsCustomized?: boolean; credentialWritable?: boolean;
+  sortOrder?: number; enabled?: boolean; transport?: 'direct' | 'relay';
 }
 export interface Draft extends Provider { key: string }
 export interface Adapter {
@@ -26,10 +27,26 @@ const clone = (p: Provider): Draft => ({ ...p, models: p.models.map(m => ({ ...m
 const unavailable = '模型管理后端尚未接入，配置不会保存。';
 const el = (tag: string, cls: string, children: any, props: any = {}) => h(tag, { class: 'models-' + cls, ...props }, children);
 
+// 目录项只是模板，不是唯一键：同一条目录项可反复选中，每次由核心建一份新实例
+// （号池的正确形态）。原先把「已添加过的目录项」从选项里滤掉，用户在桌面上下拉里
+// 根本选不到第二份——核心允许建两份也白搭。providers 参数保留是为了调用点签名
+// 不动，也为以后真需要按别的维度筛留个落点。
+export function selectableCatalogEntries(catalog: Provider[], providers: Provider[]): Provider[] {
+  return catalog;
+}
+
 export function validateDraft(d: Draft, providers: Provider[], editing: boolean): string {
   if (!/^[a-z][a-z0-9-]*$/.test(d.id)) return 'Provider ID 需以小写字母开头，之后可用小写字母、数字和短横线。';
   if (!editing && providers.some(p => p.id === d.id)) return '已有提供商使用了这个 ID。';
-  try { const u = new URL(d.baseUrl); if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash) return '请输入有效的 HTTP 或 HTTPS 地址。'; }
+  // 地址判据是核心规则（provider_registry.cj checkBaseUrl）的真子集：https 任意主机，
+  // 或 http 仅限本机回环（联调用本地 mock）；带凭据/查询/片段的一律拒。
+  // 前端不接受「比核心宽」的形态——那会让用户填 http://任意域名 过前端、被核心打回。
+  try {
+    const u = new URL(d.baseUrl);
+    const secure = u.protocol === 'https:' && u.host.length > 0;
+    const local = (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && u.protocol === 'http:';
+    if ((!secure && !local) || u.username || u.password || u.search || u.hash) return '请输入有效的 HTTP 或 HTTPS 地址。';
+  }
   catch { return '请输入有效的 HTTP 或 HTTPS 地址。'; }
   if (/[\x00-\x20\x7f]/.test(d.key)) return '该 API 密钥格式错误，请检查。';
   if (d.declared && !d.models.length) return '自定义模型 API 至少需要一个模型。';
@@ -163,7 +180,7 @@ export const Page = defineComponent({
       el('div', 'addBlock', addOpen.value ? [el('div', 'addCard', [
         el('div', 'addModes', [el('div', 'modeSwitch', ['catalog', 'custom'].map(m => button(m === 'catalog' ? '第三方模型提供商' : '自定义模型 API', () => { mode.value = m as 'catalog' | 'custom'; failure.value = ''; }, 'modeButton', { 'aria-pressed': mode.value === m, disabled: busy.value || (m === 'catalog' && !catalog.value.length) }))),
           el('p', 'advancedHint', mode.value === 'catalog' ? '从内置目录中选择提供商，填入其 API 密钥即可使用。' : '连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。')]),
-        el('div', 'addPanel', [el('label', 'field', [el('span', 'fieldLabel', '提供商'), el('select', 'input', [h('option', { value: '' }, '选择提供商'), ...catalog.value.filter(p => !providers.value.some(v => v.id === p.id)).map(p => h('option', { value: p.id }, p.name || p.id))], { value: adopted.value.id, disabled: busy.value, 'aria-label': '提供商', onChange: (e: Event) => { const p = catalog.value.find(p => p.id === (e.target as HTMLSelectElement).value); if (p) adopted.value = clone(p); } })]), renderEditor(adopted.value, false)], { hidden: mode.value !== 'catalog' }),
+        el('div', 'addPanel', [el('label', 'field', [el('span', 'fieldLabel', '提供商'), el('select', 'input', [h('option', { value: '' }, '选择提供商'), ...selectableCatalogEntries(catalog.value, providers.value).map(p => h('option', { value: p.id }, p.name || p.id))], { value: adopted.value.id, disabled: busy.value, 'aria-label': '提供商', onChange: (e: Event) => { const p = catalog.value.find(p => p.id === (e.target as HTMLSelectElement).value); if (p) adopted.value = clone(p); } })]), renderEditor(adopted.value, false)], { hidden: mode.value !== 'catalog' }),
         el('div', 'addPanel', [renderEditor(custom.value, true)], { hidden: mode.value !== 'custom' }),
       ])] : [button('＋ 添加模型提供商', () => { addOpen.value = true; expectedRevision.value = revision.value; mode.value = catalog.value.length ? 'catalog' : 'custom'; failure.value = ''; saved.value = ''; }, 'addButton', { id: 'models-add-provider', disabled: busy.value || !writable.value })]),
       deleting.value ? h((window as any).SaCodeDialog, { open: true, title: '删除 ' + (deleting.value.name || deleting.value.id) + '？', onClose: () => { if (!busy.value) deleting.value = null; } }, () => [el('p', 'intro', deleting.value?.credentialWritable === false ? '此操作会移除提供商配置；由启动环境提供的凭证将会保留。' : '此操作会移除提供商配置和存储的 API 密钥。'), failure.value ? el('p', 'error', failure.value, { role: 'alert' }) : null, el('div', 'editorActions', [button('取消', () => deleting.value = null), button(busy.value ? '正在删除…' : '确认删除', remove, 'dangerButton', { disabled: busy.value || !writable.value })])]) : null,

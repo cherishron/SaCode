@@ -51,4 +51,16 @@ contextBridge.exposeInMainWorld("dsh", {
   modelsRemove: (id, expectedRevision) => ipcRenderer.invoke("dsh:modelsRemove", { id, expectedRevision }),
   modelsSetDefault: (providerId, model, expectedRevision) => ipcRenderer.invoke("dsh:modelsSetDefault", { providerId, model, expectedRevision }),
   modelsList: (request) => ipcRenderer.invoke("dsh:modelsList", { baseUrl: request.baseUrl, apiKey: request.apiKey }),
+  // 第 3 层自定义模型与模型目录写面：一个动作一条通道，字段形状由主进程守卫
+  // （customs-guard.cjs），渲染层拼不出任意宿主方法，也没有「发任意请求」的通道。
+  customsDescribe: () => ipcRenderer.invoke("dsh:customsDescribe"),
+  customsUpsert: (draft, expectedRevision) => ipcRenderer.invoke("dsh:customsUpsert", { draft, expectedRevision }),
+  customsRemove: (customId, expectedRevision) => ipcRenderer.invoke("dsh:customsRemove", { customId, expectedRevision }),
+  bindingUpsert: (customId, binding, expectedRevision) => ipcRenderer.invoke("dsh:bindingUpsert", { customId, binding, expectedRevision }),
+  bindingRemove: (customId, providerId, modelId, expectedRevision) => ipcRenderer.invoke("dsh:bindingRemove", { customId, providerId, modelId, expectedRevision }),
+  bindingReorder: (customId, keys, expectedRevision) => ipcRenderer.invoke("dsh:bindingReorder", { customId, keys, expectedRevision }),
+  modelPull: (providerId, expectedRevision) => ipcRenderer.invoke("dsh:modelPull", { providerId, expectedRevision }),
+  modelUpstreamUpsert: (providerId, modelId, expectedRevision) => ipcRenderer.invoke("dsh:modelUpstreamUpsert", { providerId, modelId, expectedRevision }),
+  customImportNew: (items, expectedRevision) => ipcRenderer.invoke("dsh:customImportNew", { items, expectedRevision }),
+  customImportInto: (customId, items, expectedRevision) => ipcRenderer.invoke("dsh:customImportInto", { customId, items, expectedRevision }),
 });

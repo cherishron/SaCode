@@ -344,6 +344,74 @@ ipcMain.handle("dsh:modelsList", async (_e, args) => {
   return withHost(() => bridge.request("model/list", request));
 });
 
+// 第 3 层自定义模型与模型目录写面：字段守卫在主进程（customs-guard.cjs），
+// 第 3 层文档不认识 baseUrl 与凭据，草稿里出现它们一律拒收。
+const customsGuard = require("./customs-guard.cjs");
+
+ipcMain.handle("dsh:customsDescribe", async () => withHost(() => bridge.request("custom/describe")));
+
+ipcMain.handle("dsh:customsUpsert", async (_e, args) => {
+  const draft = customsGuard.sanitizeDraft(args && args.draft);
+  const expectedRevision = customsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
+  return withHost(() => bridge.request("custom/upsert", { draft, expectedRevision }));
+});
+
+ipcMain.handle("dsh:customsRemove", async (_e, args) => {
+  const customId = args && args.customId;
+  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
+  return withHost(() => bridge.request("custom/remove", { customId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:bindingUpsert", async (_e, args) => {
+  const customId = args && args.customId;
+  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
+  const binding = customsGuard.sanitizeBinding(args && args.binding);
+  return withHost(() => bridge.request("binding/upsert", { customId, binding, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:bindingRemove", async (_e, args) => {
+  const customId = args && args.customId;
+  const providerId = args && args.providerId;
+  const modelId = args && args.modelId;
+  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-custom-provider");
+  if (!isStr(modelId) || modelId.length === 0 || modelId.length > 200) throw new Error("bad-custom-model");
+  return withHost(() => bridge.request("binding/remove", { customId, providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:bindingReorder", async (_e, args) => {
+  const customId = args && args.customId;
+  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
+  const keys = customsGuard.sanitizeKeyList(args && args.keys);
+  return withHost(() => bridge.request("binding/reorder", { customId, keys, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:modelPull", async (_e, args) => {
+  const providerId = args && args.providerId;
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
+  return withHost(() => bridge.request("model/pull", { providerId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:modelUpstreamUpsert", async (_e, args) => {
+  const providerId = args && args.providerId;
+  const modelId = args && args.modelId;
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
+  if (!isStr(modelId) || modelId.length === 0 || modelId.length > 200) throw new Error("bad-model-name");
+  return withHost(() => bridge.request("model/upstream/upsert", { providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:customImportNew", async (_e, args) => {
+  const items = customsGuard.sanitizeKeyList(args && args.items);
+  return withHost(() => bridge.request("custom/import/new", { items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
+ipcMain.handle("dsh:customImportInto", async (_e, args) => {
+  const customId = args && args.customId;
+  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
+  const items = customsGuard.sanitizeKeyList(args && args.items);
+  return withHost(() => bridge.request("custom/import/into", { customId, items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
+});
+
 const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
 app.whenReady().then(async () => {
