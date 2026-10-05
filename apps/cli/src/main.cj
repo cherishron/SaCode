@@ -977,8 +977,29 @@ main(args: Array<String>) {
         let lres = GoalDriver(lsched, lsvc).run(Int64(2), Int64(100000), Int64(0), { => false }, { => RoundOutcome(true, false) })
         let lsnap = lsvc.snapshot()
         expect("goal 无证据撞轮数上限落阻塞", lres.stopReason == "round-limit" && lres.rounds == Int64(2) && lsnap.phase == "blocked" && lsnap.blockedReason == "goal-round-limit")
+        // 入口级组合证据：目标存成 log-only 的 goal/change，模型历史看不见它；只有注入系统提示，
+        // 正文才经 modelRequestJson 进请求体。两条对照（都建了同一个 goal）钉住「注入是唯一通路」。
+        let reqPath = "goal-cli-req.log"
+        let plainPath = "goal-cli-plain.log"
+        removeIfExists(reqPath, recursive: false)
+        removeIfExists(plainPath, recursive: false)
+        let rreg = ToolRegistry()
+        let rlog = SessionLog(reqPath)
+        let rg = GoalService(rlog).create("GOAL-REPLICATE-49-MODULES")
+        rlog.append("system/message", SystemPromptBuilder(rreg).build(goal: rg, rounds: Int64(2), elapsed: Int64(9)))
+        rlog.append("user/message", "继续")
+        let rbody = modelRequestJson("test-model", rlog.snapshotEvents().toArray())
+        let plog = SessionLog(plainPath)
+        GoalService(plog).create("GOAL-REPLICATE-49-MODULES")
+        plog.append("system/message", SystemPromptBuilder(rreg).build())
+        plog.append("user/message", "继续")
+        let pbody = modelRequestJson("test-model", plog.snapshotEvents().toArray())
+        expect("注入后目标正文进入模型请求体", rbody.contains("GOAL-REPLICATE-49-MODULES"))
+        expect("不注入则 log-only 目标进不了模型请求体", !pbody.contains("GOAL-REPLICATE-49-MODULES"))
         removeIfExists(gp, recursive: false)
         removeIfExists(gp2, recursive: false)
+        removeIfExists(reqPath, recursive: false)
+        removeIfExists(plainPath, recursive: false)
     }
 
     if (failures == 0) { println("ALL PASS"); return 0 }
