@@ -232,3 +232,63 @@ func completeStaleRevisionRejected() {
     @Expect(svc.snapshot().phase, "active")
     removeIfExists(root, recursive: true)
 }
+
+// applyStop：无进展达阈值 → 决策 no-progress，落进目标即 block 并带原因。
+@Test
+func applyStopNoProgressBlocksGoal() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    s.beginRound(); fc.advance(1); s.endRound(false)
+    s.beginRound(); fc.advance(1); s.endRound(false)
+    let d = s.decide("active", Int64(100), Int64(10000), Int64(2), false)
+    @Expect(d.reason, "no-progress")
+    s.applyStop(svc, svc.snapshot().revision, d)
+    let g = svc.snapshot()
+    @Expect(g.phase, "blocked")
+    @Expect(g.blockedReason, "goal-no-progress")
+    removeIfExists(root, recursive: true)
+}
+
+// applyStop：预算超限 → block reason goal-budget。
+@Test
+func applyStopBudgetBlocksGoal() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let d = s.decide("active", Int64(100), Int64(10000), Int64(3), true)
+    @Expect(d.reason, "budget")
+    s.applyStop(svc, svc.snapshot().revision, d)
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().blockedReason, "goal-budget")
+    removeIfExists(root, recursive: true)
+}
+
+// applyStop：run=true 的决策不动目标，也不落事件（幂等）。
+@Test
+func applyStopRunDecisionIsNoOp() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let rev = svc.snapshot().revision
+    let eventsBefore = log.eventCount()
+    let d = s.decide("active", Int64(100), Int64(10000), Int64(3), false)
+    s.applyStop(svc, rev, d)
+    @Expect(svc.snapshot().phase, "active")
+    @Expect(svc.snapshot().revision, rev)
+    @Expect(log.eventCount(), eventsBefore)
+    removeIfExists(root, recursive: true)
+}
+
+// applyStop：非限额的停止理由（paused）不去 block，目标保持原样。
+@Test
+func applyStopNonLimitReasonIsNoOp() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let rev = svc.snapshot().revision
+    let d = s.decide("paused", Int64(100), Int64(10000), Int64(3), false)
+    s.applyStop(svc, rev, d)
+    @Expect(svc.snapshot().phase, "active")
+    removeIfExists(root, recursive: true)
+}

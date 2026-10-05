@@ -146,6 +146,19 @@ public class GoalScheduler {
         return GoalDecision(true, "")
     }
 
+    // 把一轮的停止决策落到目标状态：限额类停止（预算/轮数/时长/无进展）经 GoalService.block
+    // 落阻塞原因，需用户放宽或恢复才继续——防「目标没完成却无限空转」。run=true 或非限额
+    // 的停止理由（paused/complete/blocked/no-goal 这些不是限额触发）都不动目标：幂等、不空写事件。
+    public func applyStop(svc: GoalService, revision: Int64, decision: GoalDecision): Unit {
+        if (decision.run) {
+            return
+        }
+        let reason = decision.reason
+        if (reason == "budget" || reason == "round-limit" || reason == "elapsed-limit" || reason == "no-progress") {
+            svc.block(revision, "goal-${reason}")
+        }
+    }
+
     // 证据完成闸：无证据不收口（返回 false，目标照旧 active）；有证据才经 CAS 收口，
     // 陈旧修订会由 GoalService.complete 抛 stale-goal-revision 向上传播——旧目标完成不了新目标。
     public func completeIfEvidenced(
