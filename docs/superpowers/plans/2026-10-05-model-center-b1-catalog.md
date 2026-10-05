@@ -8,7 +8,7 @@
 
 **Tech Stack:** 仓颉 cjc/cjpm **1.1.3**（cjnative，target `x86_64-w64-mingw32`）；`stdx.encoding.json`；`std.unittest`；桌面侧 Node ≥18 + Electron + Vue **runtime**（`h()` 手写，无模板编译器）。
 
-**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46、56、60。这四条是后补的：**41** 钉「跨币种不许用统一单价抹平」，**46** 钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」，**56** 钉「同一供应商能加多份实例」（2026-10-05 用户澄清号池需求后新增，规格 §2.1 实例语义；现状 `addFromCatalog` 对已存在 id 直接 `settings-rejected`，等于「一个品牌只能加一份」，本批要改掉）；**60** 钉「桌面下拉里还选得到第二份」——号池实测有**两道**闸：核心那句同 id 即拒，加上 `models-page.ts:166` 把已添加过的目录项从选项里滤掉，Task 2 与 Task 7 收前一道，Task 8 Step 3b 收后一道。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
+**Spec:** `docs/superpowers/specs/2026-10-05-model-center-design.md` —— 本计划实现 §2（三层数据模型）、§3 表中 `ModelSettingsDoc`/`CustomModelRegistry` 两行、§3.1 的装配口径、§9.1 里「自定义模型」「发现与导入」两组动词，以及 §11 断言 1、2、3、4、31、41、46、56、60、66、67（65 本批只收形态半，见出口判据第 6 条）。这四条是后补的：**41** 钉「跨币种不许用统一单价抹平」，**46** 钉「参数/预算/探测三组字段随本批落盘、缺省是未设置而不是 0」，**56** 钉「同一供应商能加多份实例」（2026-10-05 用户澄清号池需求后新增，规格 §2.1 实例语义；现状 `addFromCatalog` 对已存在 id 直接 `settings-rejected`，等于「一个品牌只能加一份」，本批要改掉）；**60** 钉「桌面下拉里还选得到第二份」——号池实测有**两道**闸：核心那句同 id 即拒，加上 `models-page.ts:166` 把已添加过的目录项从选项里滤掉，Task 2 与 Task 7 收前一道，Task 8 Step 3b 收后一道。§4 的 `ModelRouter`、§5 的 `RouteHealth`、§7 的 `UsageLedger`、§8 的 `MigrationBundle`、§6 的 relay 属 B2–B5，**本批不得顺手实现，也不得因此删掉它们的需求**。
 
 ## Global Constraints
 
@@ -23,27 +23,30 @@
 - **工作区有并发会话在改源码**：每次只 `git add` 本批路径，用「先 add 再裸 `git commit`」，绝不 `git commit -- <路径>`（那会把别人未落库的 hunk 一起吞了）。提交后 `git show --stat` 核对文件清单。
 - 测试红灯要区分「预期红灯」与「真语言坑」：本批红灯的唯一合法形态是**新用例名出现在剥码后 Summary 的 FAILED 列表里**，且 `TOTAL` 比基线恰好多出本批新增条数。
 - 计时敏感用例必须独占跑（并发构建/大文件校验会压穿有界轮询窗口造成假红）。本批不含计时用例；若新增了，单独跑。
+- **装配口径（规格 §3.1，2026-10-05 用户明确「一切皆插件，但模型中心属内置功能」）**：内置的是规则，可插的是提供方实现。本批不得把模型中心的判定散写进宿主方法分派或渲染层主干，也**不新建私有 Loader/注册机制**（那会是第二套装配契约）；能力声明只允许一份真源（断言 66，双向核）；本批新增用例一律在零网络、无账号、无市场的条件下可跑（断言 67）。
 
 **基线（HEAD `8a7dc77` 实测，`docs/superpowers/specs/2026-10-05-model-center-design.md` §14）：**
 
 | 面 | 命令 | 基线 |
 | --- | --- | --- |
-| 核心单测 | `cd core && cjpm test` | **TOTAL 463 / PASSED 462 / SKIPPED 1 / FAILED 0 / ERROR 0** |
-| 桌面桥接 | `cd apps/desktop && npm test` | `bridge.test.mjs` **41** 个 `test()`；`preload.cjs` **32** 条 IPC 通道（登记值）→ **2026-10-05 在当前 HEAD 复测 33 条、工作区态 42 条**（goal-control / prompt-enhance 一线在飞）。开工第一件事除了重测 `B`，还要按规格 §9.2 那条**已实测跑通**的 awk 命令重测通道数（HEAD 33 / 工作区 42 是本批实测值；简易正则先后数出过 2、29、37 三个错数，数完必须与规格 §9.2 的名单做双向差集，只核总数核不出漏数），Task 8 里「基线 +10」的算式以重测值为准（通道数 = Task 7 的动词数，逐一对映，见规格 §11 断言 52）。在飞那 9 条（`goalDescribe/goalCreate/goalEdit/goalPause/goalResume/goalClear/promptEnhance/promptPoll/promptCancel`）与本批新通道名**逐个比对不重叠** |
+| 核心单测 | `cd core && cjpm test` | `8a7dc77` 提交态 **TOTAL 463 / PASSED 462 / SKIPPED 1 / FAILED 0 / ERROR 0**；**2026-10-05 在 HEAD `d54a967` 的提交态实跑复测：TOTAL 510 / PASSED 509 / SKIPPED 1 / ERROR 0 / FAILED 0，`rc=0`**（并发会话又落了 47 条）。基线 `B` 以开工当日实跑为准，**不要再拿 463 做加法** |
+| 桌面桥接 | `cd apps/desktop && npm test` | `bridge.test.mjs` **40** 个 `test()`（**不是 41**：松散 `grep -c "test("` 会把 `:546` 那条正则的 `.test(m)` 算成用例，必须 `grep -c "^test("`）；`preload.cjs` **32** 条 IPC 通道（登记值）→ **2026-10-05 在 HEAD `d54a967` 复测 42 条，工作区态同为 42，双向差集为空**。开工第一件事除了重测 `B`，还要按规格 §9.2 那条**已实测跑通**的 awk 命令重测通道数（HEAD 42 / 工作区 42 是 2026-10-05 下午的复测值，登记当日是 32 / 上午是 33；简易正则先后数出过 2、29、37 三个错数，数完必须与规格 §9.2 的名单做双向差集，只核总数核不出漏数），Task 8 里「基线 +10」的算式以重测值为准（通道数 = Task 7 的动词数，逐一对映，见规格 §11 断言 52）。已落库的那 10 条（`attachmentImageRead` + `goalDescribe/goalCreate/goalEdit/goalPause/goalResume/goalClear` + `promptEnhance/promptPoll/promptCancel`）与本批新通道名**逐个比对不重叠** |
 | CLI 自检 | `cd apps/cli && cjpm build` 后逐模式 | `all` 100、`stream` 21、`tool` 11、`ext` 8、`cancel` 9、`extjs` 12、`headless` 36、`sig` 6 = **203 PASS** |
 
 读结果的方法固定：输出重定向落盘 → `sed` 剥 ANSI → `tr` 拆行 → 只认剥码后**最后一个** Summary 块里的五个计数，并与退出码交叉验证。**禁止**用 `grep -c '\[ PASSED \]'` 之类的 token 计数判通过。
 
 **行号锚点只当参照，动手前一律用符号重定位**（`grep -n "func X"` 或 `grep -n "let X"`）。实测教训：本计划登记时 `apps/host/src/main.cj` 的四处锚点是 362 / 363-375 / 601 / 630，到复核时同一文件已被别的批次改动，真值变成 355 / 361-372 / 593 / 620——**照旧行号动手会改到别人的代码块里**。`core/src/*.cj` 相对稳（`provider_registry.cj` 的 64 / 367 / 497-527 三处复核未漂），但同样先核再改。
 
-**基线会漂**：本工作区有并发会话在往 `core` 落用例（上一批登记时是 463，别的会话报过 484 这个**工作区态**计数）。所以每个 Step 里写死的 `TOTAL: 4xx` 是**按 `8a7dc77` 提交态**算出来的目标值，不是无条件事实。开工第一件事：
+**基线会漂**：本工作区有并发会话在往 `core` 落用例（登记时是 463，别的会话报过 484 这个**工作区态**计数，2026-10-05 在 HEAD `d54a967` 实跑是 510）。所以每个 Step 的期望值一律写成 **`B + 本批到该任务为止的累计新增`** 的公式形态，`B` 由开工当日实跑取；Step 里保留的绝对值是 `8a7dc77` 与 `d54a967` 两档的历史对照，**不是无条件事实**。开工第一件事：
 
 ```bash
 cd /d/Project/sa/saai/sa-code && git worktree add --detach ../sa-b1-head HEAD > target/b1-worktree.log 2>&1; echo "rc=$?"
 cd ../sa-b1-head/core && cjpm test > ../../sa-code/target/b1-baseline.log 2>&1; echo "rc=$?"
 ```
 
-读到的是**提交态基线** `B`。此后每个任务的期望值改成 `B + 本批到该任务为止的累计新增`（新增条数固定：4、3、9、5、4、4，合计 29），并在出口判据里按同一个 `B` 复算。工作区态计数只能用于「开发中不破坏别人」的参考，**不能当提交级证据**；用完 `git worktree remove ../sa-b1-head`（有残留 target 就先确认再删）。裸跑构建产物时 stdx/runtime DLL 必须与 exe 同目录，或用 **POSIX 形式**（`/c/...` 而不是 `C:/...`）加进 PATH。
+读到的是**提交态基线** `B`。此后每个任务的期望值就是 `B + 累计新增`，**新增条数固定为 Task1 4、Task2 6、Task3 9、Task4 5、Task5 4、Task6 4，合计 32**（Task 2 因号池多 3 条；旧文档里的「4、3、…，合计 29」是号池需求进来之前的数，已废），并在出口判据里按同一个 `B` 复算。
+
+**静态计数不能当基线**（本轮实测两个方向都出现过）：同一条 `git grep -h "^@Test" <rev> -- 'core/src/*_test.cj' | wc -l`，在 `8a7dc77` 上是 **477** 而实跑 TOTAL 是 **463**（多 14），在 `d54a967` 上是 **510** 而实跑 TOTAL 也是 **510**（恰好相等）。一次漂、一次不漂，所以只能得出「不可靠」的结论——**基线必须实跑取，静态数只配当线索**。工作区态计数只能用于「开发中不破坏别人」的参考，**不能当提交级证据**；用完 `git worktree remove ../sa-b1-head`（有残留 target 就先确认再删）。裸跑构建产物时 stdx/runtime DLL 必须与 exe 同目录，或用 **POSIX 形式**（`/c/...` 而不是 `C:/...`）加进 PATH。
 
 ---
 
@@ -302,7 +305,7 @@ func legacyRecordWithoutCapabilitiesStillReplays() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t1b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：剥码后最后一个 Summary 为 `TOTAL: 467`（基线 463 + 本任务 4 条）、`PASSED: 466`、`SKIPPED: 1`、`FAILED: 0`、`ERROR: 0`，`rc=0` 且打印 `cjpm test success`。**任一计数对不上就不算过**——尤其是 `TOTAL` 少于 467 意味着用例没被构建 glob 收进去（`core/src/*_test.cj` 按扩展名收文件）。
+Expected：剥码后最后一个 Summary 为 `TOTAL: B+4`（`8a7dc77` 上是 467，HEAD `d54a967` 上是 514）、`PASSED: B+3`、`SKIPPED: 1`、`FAILED: 0`、`ERROR: 0`，`rc=0` 且打印 `cjpm test success`。**任一计数对不上就不算过**——尤其是 `TOTAL` 少于 `B+4` 意味着用例没被构建 glob 收进去（`core/src/*_test.cj` 按扩展名收文件）。
 
 - [ ] **Step 6: 提交**
 
@@ -596,7 +599,7 @@ Expected：`FAILED` 列表里出现 `sameCatalogEntryTwiceYieldsTwoInstances`、
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t2b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 473`（463 + Task1 的 4 + 本任务 6：`enabled`/`transport` 三条 + 实例池三条）、`FAILED: 0`、`ERROR: 0`、`rc=0`。
+Expected：`TOTAL: B+10`（Task1 的 4 + 本任务 6：`enabled`/`transport` 三条 + 实例池三条；`8a7dc77` 上是 473，HEAD `d54a967` 上是 520）、`FAILED: 0`、`ERROR: 0`、`rc=0`。
 
 - [ ] **Step 7: 提交**
 
@@ -1071,7 +1074,7 @@ func entriesOfAnotherOwnerAreInvisibleButNotDestroyed() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t3b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 482`（+9）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: B+19`（+9；`8a7dc77` 上是 482，HEAD `d54a967` 上是 529）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1272,7 +1275,7 @@ Expected：编译红在 `upsertBinding` / `removeBinding` / `reorderBindings` / 
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 487`（463 + Task1 4 + Task2 6 + Task3 9 + 本任务 5）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: B+24`（Task1 4 + Task2 6 + Task3 9 + 本任务 5；`8a7dc77` 上是 487，HEAD `d54a967` 上是 534）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 6: 变异反证（本任务的核心不变量不能是假绿）**
 
@@ -1479,7 +1482,7 @@ func badCatalogBodyThrowsInsteadOfReportingZeroModels() {
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t5c.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 491`（+4）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
+Expected：`TOTAL: B+28`（+4；`8a7dc77` 上是 491，HEAD `d54a967` 上是 538）、`FAILED: 0`、`rc=0`。（若 `ModelCatalog.ids` 当前是私有的，就把它提为 `public`，这是本任务唯一允许的可见性放宽，且必须只放宽这一个方法。）
 
 - [ ] **Step 6: 提交**
 
@@ -1633,7 +1636,7 @@ Expected：编译红在 `importNewModels` / `importInto`。
 cd /d/Project/sa/saai/sa-code/core && cjpm test > ../target/b1-t6b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：`TOTAL: 495`（+4）、`FAILED: 0`、`rc=0`。
+Expected：`TOTAL: B+32`（+4；`8a7dc77` 上是 495，HEAD `d54a967` 上是 542）、`FAILED: 0`、`rc=0`。
 
 - [ ] **Step 5: 提交**
 
@@ -1988,13 +1991,13 @@ Expected（Step 3b 的红灯形态）：转译壳 import 时报 `does not provid
 
 - [ ] **Step 5: 同步 IPC 面并跑绿**
 
-`preload.cjs` 按动作加通道（`customsDescribe`、`customsUpsert`、`customsRemove`、`bindingUpsert`、`bindingRemove`、`bindingReorder`、`modelPull`、`modelUpstreamUpsert`、`customImportNew`、`customImportInto`），逐字段校验，**不提供「发任意方法」通路**。`bridge.test.mjs` 的通道基线从**开工实测值 `C`** 变成 **`C+10`**（登记时 `C`=32、复核时 HEAD=33、工作区已 42——**照抄 32 会得到一个错的基线**；用例数另算 `41+N`。**注意「32+9=41 通道」与「41 个 `test()`」同数纯属巧合，两处不许混用一个数**）（N = 新增用例数，写进 commit body）。
+`preload.cjs` 按动作加通道（`customsDescribe`、`customsUpsert`、`customsRemove`、`bindingUpsert`、`bindingRemove`、`bindingReorder`、`modelPull`、`modelUpstreamUpsert`、`customImportNew`、`customImportInto`），逐字段校验，**不提供「发任意方法」通路**。`bridge.test.mjs` 的通道基线从**开工实测值 `C`** 变成 **`C+10`**（登记时 `C`=32、当日上午 HEAD=33、当日下午 HEAD `d54a967` =42 且工作区同为 42——**照抄 32 或 33 都会得到一个错的基线**；用例数另算 `40+N`。**先前这里写的「用例数 41」是假数，源于松散 `grep -c "test("` 把 `:546` 的 `.test(m)` 算成一条**；而且「通道数 41」与「用例数 41」那种同数巧合根本不存在，两处历来是两个不同的量，不许混用一个数）（N = 新增用例数，写进 commit body）。
 
 ```bash
 cd /d/Project/sa/saai/sa-code/apps/desktop && node --test test/models-validate.test.mjs test/bridge.test.mjs > ../../target/b1-t8b.log 2>&1; echo "rc=$?"
 ```
 
-Expected：两个文件都 rc=0；`bridge.test.mjs` 的 `# pass` ≥ 41。跑之前确认 `dualtest/` 无异常残留（有则先 `rm -rf dualtest`）。
+Expected：两个文件都 rc=0；`bridge.test.mjs` 的 `# pass` ≥ 40 + 本批新增条数（基线 40 的数法照 `grep -c "^test("`，别用松散 `test(`）。跑之前确认 `dualtest/` 无异常残留（有则先 `rm -rf dualtest`）。
 
 - [ ] **Step 6: 桌面冒烟复验（UI 改动必须真跑起来）**
 
@@ -2019,10 +2022,11 @@ git commit -m "feat(desktop): 模型页地址校验收紧为核心的子集，�
 
 全部满足才算 B1 出口，任一不满足就写清卡点继续开着，**不缩范围凑绿**：
 
-1. `cd core && cjpm test` → `TOTAL: 495`（基线 463 + 本批 32 条：Task1 4、Task2 6、Task3 9、Task4 5、Task5 4、Task6 4）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
+1. `cd core && cjpm test` → `TOTAL: B+32`（本批 32 条：Task1 4、Task2 6、Task3 9、Task4 5、Task5 4、Task6 4；`B` 取开工当日实跑的提交态基线，2026-10-05 在 HEAD `d54a967` 上 `B`=510 → 期望 **542**）、`FAILED: 0`、`ERROR: 0`、`SKIPPED: 1`，`rc=0` 且打印 `cjpm test success`。
 2. 七处变异全部转红且各自归因到指定用例名：Task 4 Step 6 的四处（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等`），加 Task 3 的两处——(a) 把 `intFieldDefault` 的预算列缺省从 `-1` 改成 `0`，必须只让 `unsetBudgetReplaysAsMinusOneNotZero` 变红（这条杀的正是「未设置被读成额度耗尽」）；(b) 把规则 9 的币种一致性检查改成恒真，必须只让 `twoCurrenciesInOneModelAreRejectedWithoutMerge` 变红。加 Task 2 的一处 (c)：把 `addInstanceFromCatalog` 里「ref 与已有实例重复即 `settings-rejected`」这道闸放行，必须**只**让 `duplicateCredentialRefAcrossInstancesIsRejected` 变红——这道闸是「两把密钥塌成一把」的唯一堵口。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
 3. `cd apps/desktop && node --test`（全量）rc=0；`bridge.test.mjs` 通道基线已按实际数字更新。
 4. `npm run ui-smoke` 输出 `UI SMOKE PASS`，或明确记 BLOCKED 及其解锁动作。
-5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`；**且这十个动词与 `preload.cjs` 新增的十条通道逐个对映**（断言 52——本批实测抓到 `binding/reorder` 一度只有动词没有通道，那样核心能改顺序、桌面改不了，等于交付半成品）。
-6. 断言 1、2、3、4、31、41、46、56、60、63 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）；**56→Task 2 Step 5b 的 `sameCatalogEntryTwiceYieldsTwoInstances` + `eachInstanceDerivesItsOwnCredentialRef` + `duplicateCredentialRefAcrossInstancesIsRejected` 三条，再加 Task 7 那条宿主帧用例（`model/registry/add-catalog` 连发两次得到两个实例）——核心绿了但宿主还在走旧的「同 id 即拒」，号池对用户依然不可用；**60→Task 8 Step 3b 的 `目录项已添加一份后仍然可选（号池，断言 60）`**——这条管的是第三段通路（渲染层），三段里任何一段没改，用户在桌面上就加不出第二份。**；**63→Task 3 Step 3b**（`core/src/principal.cj` 只有 `kind: "local"` 与 `installationId` 两个字段，且本批交付后核心与宿主的动词清单里仍不得出现 login/register 一类形态——注意 `register` 一词在工具注册面有 **72 处词面碰撞**，判据是动词清单本身，不是 grep 命中数）。断言 64（同机限定）属 B3 的账本作用域键，不在本批。
-7. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。
+5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`；**且这十个动词与 `preload.cjs` 新增的十条通道逐个对映**（断言 52——本批实测抓到 `binding/reorder` 一度只有动词没有通道，那样核心能改顺序、桌面改不了，等于交付半成品）。这条的「逐字一致」必须**双向**核（**断言 66**）：声明里有而分派里没有 → 红；分派里有而声明里没有 → **同样红**，只核前一半等于没核。规格 §3.1 把「能力清单只有一份」列为「内置」不得退化成硬编码特判的判据。
+6. **断言 67**（内置 = 零市场/零注册/零账号）：本批 Task 2/3/5/6 的全部用例都是纯文档面操作，断网复验一次即可，把「断网重跑输出与联网一致」记进 commit body，不新增用例。**断言 65** 本批**只收形态半**：`ModelRouter`/`UsageLedger`/`RouteHealth` 到 B2、B3 才存在，所以本批的可检形式是「`provider_registry.cj` 的校验、`apps/host/src/main.cj` 的动词分派与 `apps/desktop/preload.cjs` 的通道清单里，**不出现按 `protocol` 分支的字面量**」——`grep -n "openai-completions\|anthropic-messages\|openai-responses" apps/host/src/main.cj apps/desktop/preload.cjs` 期望**空输出**（协议名只许出现在 `core` 的闭集常量与 provider 适配单元里）。这条是 review 判读，**不许在出口判据里写成已全绿**；决策层那三个单元的半随 B2/B3 各自补。
+7. 断言 1、2、3、4、31、41、46、56、60、63 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）；**56→Task 2 Step 5b 的 `sameCatalogEntryTwiceYieldsTwoInstances` + `eachInstanceDerivesItsOwnCredentialRef` + `duplicateCredentialRefAcrossInstancesIsRejected` 三条，再加 Task 7 那条宿主帧用例（`model/registry/add-catalog` 连发两次得到两个实例）——核心绿了但宿主还在走旧的「同 id 即拒」，号池对用户依然不可用；**60→Task 8 Step 3b 的 `目录项已添加一份后仍然可选（号池，断言 60）`**——这条管的是第三段通路（渲染层），三段里任何一段没改，用户在桌面上就加不出第二份。**；**63→Task 3 Step 3b**（`core/src/principal.cj` 只有 `kind: "local"` 与 `installationId` 两个字段，且本批交付后核心与宿主的动词清单里仍不得出现 login/register 一类形态——注意 `register` 一词在工具注册面有 **72 处词面碰撞**，判据是动词清单本身，不是 grep 命中数）。断言 64（同机限定）属 B3 的账本作用域键，不在本批。
+8. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。

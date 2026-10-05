@@ -144,6 +144,27 @@
 
 不变量：**桌面和 CLI 都只能通过同一组仓颉 API 得到决策**，渲染层与宿主脚本里不允许出现「我自己挑一个 provider」的通路。
 
+### 3.1 装配口径：模型中心是**内置插件**——不是硬编码特判，也不是市场安装项（2026-10-05 用户明确）
+
+产品口径是「一切皆插件」（`docs/product/PRD.md` §5「一切皆插件」与验收项 A12；证据 `docs/evidence/plugin-lifetime-architecture-2026-10-05.md`），用户同时明确**模型中心属于内置功能**。这两句在 PRD 原文里本就接得上——§5 写的是「**默认产品由已装配的内置插件构成**，用户无需先去市场寻找必需能力」。所以本设计的落点收成一句：
+
+> **内置的是规则，可插的是提供方实现。** 三层文档面、调度、健康、预算、迁移、本地身份是内置规则，随产品构建、零市场 / 零账号 / 零注册即可用；而「某一家上游具体怎么说话」（协议适配、清单发现、外部 JS/TS 或 MCP 承接）是插件位。
+
+两种误读都要挡住，各自都给了反证：
+
+| 误读 | 为什么不行（引原文） | 本设计里的反证 |
+| --- | --- | --- |
+| 「内置」= 可以按硬编码特判做 | A12：「固定硬编码能力或仅工具回调**不得判通过**」；§5：「现有固定分派、自定义工具回调、状态 marker 和直接挂载页面**不构成完整插件架构证明**」 | 断言 65（新增协议不散改决策层）+ 断言 66（能力清单只有一份，且双向核） |
+| 「一切皆插件」= 扩展可以自己发模型请求；或反过来「内置」= 第三方接不进来 | §5 把「模型提供方」明确列入插件契约组合的对象，但同一句要求「动态扩展通路也必须保持身份、参数及权限校验」 | 断言 68（外部提供方只能经注册表 + 账本 + 健康视图，不得自开 HTTP、自写凭据、绕开 `reserve`/`settle`） |
+
+**与现状的诚实差距（不假装已达成）**：通用装配契约 `Loader`/`Scope`/`Service`/`effect` 当前只有 ◐（矩阵 `core`、`extensions` 两行的本轮裁决；那份证据的结尾把「上游 Loader/Scope/Service/effect 的仓颉共享装配契约」列为下一接入前提）。因此 B1–B6 **不新建一份私有 Loader**——那会变成第二套装配机制，正是这条口径要避免的东西；改为要求模型中心从第一天起就长成**将来可原样登记进装配契约的形状**：
+
+- 规则只住在 §3 表格里列出的那些单元里，不渗进 agent loop、宿主方法分派与页面主干（§4.1 的插入点结论与此同向：改的是宿主传进去的那个工厂，不是 `core` 的签名）；
+- **每个供应商实例即一个作用域**，作用域键就是 §2.1 的 `credentialRef`，与 §5.1 的 `route-set` 同键——**不新增一套作用域概念**。停用/删除实例按 PRD 的生命期口径「停止接纳调用、结算在途工作、撤销所属贡献」落地，实现上就是 §5.1 已有的作用域失效 + §7.3 的作废，不是新机制；
+- 协议是**数据 + 适配单元**而不是 `switch`：§1.3 缺陷 B 现在的形态正是「`protocol` 存下但从不生效」，断言 35 守住「不盲发」，断言 65 守住「加协议不散改调度/账本/健康/分派」。
+
+功能性的多协议实现（`openai-responses`、`anthropic-messages` 适配器）仍按 §16.1 登记为「部分」逐批后补；把形状钉住**不等于**宣称已支持。
+
 ---
 
 ## 4. 调度规则
@@ -442,10 +463,14 @@
 
 ### 9.2 桌面 IPC
 
-**基线实测（本批直读 `apps/desktop/preload.cjs`）：登记时提交态 **32 条通道**；2026-10-05 在当前 HEAD 复测为 **33 条**（多的那条是 `attachmentImageRead`，附件线由另一批落库），工作区态已 **42 条**（在飞的 goal-control / prompt-enhance 一线又加 9 条：`goalDescribe,goalCreate,goalEdit,goalPause,goalResume,goalClear,promptEnhance,promptPoll,promptCancel`）——**这个数会随别的批次漂**，本批任何「N→N+k」都以开工当日重测为准，重测法见下面代码块**：`exposeInMainWorld` 的对象字面量里有嵌套函数体，非配对的花括号会在第一个 `}` 处截断，本次第一版就这么把 33 数成了 2，必须按「深度 1 处的顶层 `key:`」数**——
-`projection,userSend,attachmentUpload,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`（按 `preload.cjs` 里的出现顺序原样列出），`apps/desktop/test/bridge.test.mjs` 现有 **41** 条 `test()`。
+**基线实测（本批直读 `apps/desktop/preload.cjs`）：登记时提交态 **32 条通道**；2026-10-05 上午复测 **33 条**（多的那条是 `attachmentImageRead`）；同日在 HEAD `d54a967` **再复测为 42 条，且工作区态与 HEAD 的双向差集为空**——原先标成「工作区在飞」的那 10 条已整条落库（`attachmentImageRead` + `goalDescribe,goalCreate,goalEdit,goalPause,goalResume,goalClear` + `promptEnhance,promptPoll,promptCancel`）——**这个数会随别的批次漂，本批任何「N→N+k」都以开工当日重测为准**，重测法见下面代码块**：`exposeInMainWorld` 的对象字面量里有嵌套函数体，非配对的花括号会在第一个 `}` 处截断，本次第一版就这么把 33 数成了 2，必须按「深度 1 处的顶层 `key:`」数**——
+`projection,userSend,attachmentUpload,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`（按 `preload.cjs` 里的出现顺序原样列出）。
 
-> **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 **24** 条（HEAD 33 条 vs 那句里的 9 条）。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线。
+**HEAD `d54a967` 的完整名单（42 条，按出现顺序）**——上面那份 32 条是 `8a7dc77` 时期的，留着作对账基线，新增的 10 条**插在名单里而不是追加在尾部**，所以只比尾部会漏：`projection,userSend,attachmentUpload,attachmentImageRead,goalDescribe,goalCreate,goalEdit,goalPause,goalResume,goalClear,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,promptEnhance,promptPoll,promptCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`。
+
+`apps/desktop/test/bridge.test.mjs` 现有 **40** 条 `test()`（HEAD 与工作区各数一次都是 40）。**先前登记的 41 是假数**：松散 `grep -c "test("` 会把 `bridge.test.mjs:546` 里那条正则的 `.test(m)` 也算成一条用例，必须用 `grep -c "^test("`；这条纪律与 §16.3 第 5 条同源——**计数模式本身要先反证**。
+
+> **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 **24** 条（HEAD 42 条 vs 那句里的 9 条，差 **33**）。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线。
 
 重测通道数（HEAD 态与工作区态各数一次；**只认 `exposeInMainWorld` 块里缩进两空格的顶层 key**）：
 
@@ -457,7 +482,7 @@ done
 git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{f=1} f&&/^  [A-Za-z][A-Za-z0-9_]*:/{print $1}' | tr -d ' :' | sort -u | wc -l
 ```
 
-> 这条命令是实测跑通的：给出 **HEAD 33 / 工作区 42**。反面教训记一句——**别拿「正则找冒号前标识符」的简易办法数**：本批先后试出 2、29、37 三个错数，前一个是花括号不配对被嵌套函数体截断，后一个是字符扫描时把 `(`、`[` 与字符串里的括号一起算了深度。数完必须做一次**名单级对账**（把上面数出的集合与本文那份通道名清单做双向差集），只核总数核不出漏数。
+> 这条命令是实测跑通的：2026-10-05 上午给出 **HEAD 33 / 工作区 42**，同日下午在 HEAD `d54a967` 复测为 **HEAD 42 / 工作区 42**（两个集合做双向差集为空，说明那条在飞线已整条落库）。反面教训记一句——**别拿「正则找冒号前标识符」的简易办法数**：本批先后试出 2、29、37 三个错数，前一个是花括号不配对被嵌套函数体截断，后一个是字符扫描时把 `(`、`[` 与字符串里的括号一起算了深度。数完必须做一次**名单级对账**（把上面数出的集合与本文那份通道名清单做双向差集），只核总数核不出漏数。
 
 本批与在飞那一线**命名不冲突**：`AGENTS.md` 那句已按实测改成「以 `preload.cjs` 为准」（同批），B1 新增通道全部走 `custom*`/`binding*`/`modelPull` 一族，与 `goal*`/`prompt*` 不重叠。
 
@@ -499,7 +524,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 批次 | 内容 | 出口判据 |
 | --- | --- | --- |
 | **B0 可行性探针**（半天级；①② 已于 2026-10-05 跑完，结论见 §15） | ① `SM4` 的真实构造形态：编译 + 一次加解密回环 + 改一字节必失败——**实测 `CBC`/`CTR` 通过、`GCM` 四种参数组合全部运行期失败**；② `stdx.crypto.digest.HMAC(key, SHA256)` 流式接口形态，用它把 **RFC 6070 向量**跑通（PBKDF2 的前置）——**实测四条取值与 Node `crypto` 逐字节一致**，并额外证成 SM4-CTR 密钥流与 `openssl enc -sm4-ctr` 逐字节一致；③ 时钟注入在冷却/探测计时上的形状——**已闭合，证据是现成源码**（`approval.cj:23-26` 的单调基准是进程启动时刻，故持久状态只能落墙钟，见 §5.3）；④ relay 转发 SSE 与 usage 透传的手工探针 | ①② 已出实测结论并据此改写 §8.2（`secret-bundle` **不 BLOCKED**）；③ 已据此补上两类时钟分工与三道墙钟护栏（断言 37–39）；④ 在 B4 开工前补，未证前不得把透传契约写成已达成 |
-| **B1 模型目录** | 供应商**实例化语义与下拉可达性**（§2.1：同品牌可多份、目录项降为模板、新建撞 id 显式拒、`credentialRef` 逐实例派生；§9.2：渲染层去掉「已添加就隐藏」）、供应商新字段、上游模型能力面、`CustomModelRegistry`（**含条目自带的参数/预算/探测字段的落盘形态**，§2.3）、拉取/手动添加、两种导入操作、能力适配校验 | 目录 CRUD（含**同一目录项建两份实例都成功**）+ 重复拉取不重复导入 + 能力不适配保存即拒，均绿；断言 41、46、56、60、63 绿（44 只收「第 3 层是唯一读面」这半，另半「CLI 参数拒收 `providerId`」随 B2 的取参收敛一起收） |
+| **B1 模型目录** | 供应商**实例化语义与下拉可达性**（§2.1：同品牌可多份、目录项降为模板、新建撞 id 显式拒、`credentialRef` 逐实例派生；§9.2：渲染层去掉「已添加就隐藏」）、供应商新字段、上游模型能力面、`CustomModelRegistry`（**含条目自带的参数/预算/探测字段的落盘形态**，§2.3）、拉取/手动添加、两种导入操作、能力适配校验 | 目录 CRUD（含**同一目录项建两份实例都成功**）+ 重复拉取不重复导入 + 能力不适配保存即拒，均绿；断言 41、46、56、60、63、66、67 绿，断言 65 本批只收形态半（`ModelRouter` 到 B2 才存在，见 §10 末段与本批计划的出口判据第 6 条）（44 只收「第 3 层是唯一读面」这半，另半「CLI 参数拒收 `providerId`」随 B2 的取参收敛一起收） |
 | **B2 调度闭环** | **先补失败输入通路**（§5.2 那三段：结构化失败对象、`attempt/failed` 事件、白名单头），再上 `ModelRouter`（过滤链 + 轮询 + 平滑加权）、供应商开关语义、`RouteHealth` 三档作用域与失败分类、冷却 + 低频探测 + 试恢复、跨进程探测租约；**CLI 读同一份配置文档发起任务**（§9.4） | 目标里的每一条自动化验收绿（§11）；断言 53 只有在 429 **响应头**里带 `Retry-After` 的夹具上跑绿才算，注入常量不算；断言 62 绿 |
 | **B3 计量与预算** | `UsageLedger`（尝试粒度、定点金额、计价快照、预留/结算/作废、待核算）、`budget/*` 动词、统计查询面 | 并发不重复预留/结算；改价不重算历史；取消有 usage 照记；断言 64 绿（作用域键不含机器/网络标识是同机限定的可检形式） |
 | **B4 加速通道** | `TransportChannel` 的 `direct`/`relay`、slug 允许集、流式与取消透传、线路健康与模型健康分档、**`chat`/`discover`/`probe` 三形态共用同一通道决策**（把 `model_catalog.cj:101` 的自建直连收进来） | relay 下真实模型跑通一条端到端，且线路故障不动模型失败计数；断言 40、45 绿 |
@@ -507,6 +532,8 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | **B6 面板** | 费用/用量统计（**含按实例 `providerId` 的分组回看**，§7.5）、健康展示、探测记录展示 | 展示数字全部来自核心读面，无本地二次计算；断言 61 绿 |
 
 每批都按现有流程红先、变异反证、双入口复验；**批次顺序不等于范围裁剪**，B6 完成才谈得上「模型中心达成」。
+
+断言 **65** 在 B1 只能收形态半（那三个决策单元 B2/B3 才存在），全半随 B2、B3 各自批次补绿；**66、67** 随 B1 全绿；**68** 依赖 extensions 那条线的承接面，在通用装配契约落地前保持为**形状约束**——现阶段的判据是「核心没有新增任何让扩展自头发模型请求 / 自写凭据 / 绕开账本的通路」，这一条现在就成立。如实登记：68 **不是**已有绿色用例覆盖的断言，也不因它还没有独立绿而从 §11 删除。
 
 实现计划按批出：本设计先出 B1 的实现计划（B0 的 ①② 已跑完并已据此改写 §8.2，`secret-bundle` 不再挂在 BLOCKED 上；③④ 归到 B2/B4 开工前），B2 及之后各批在本表出口判据下逐批另出计划，不因后批未排而从前批里删需求。
 
@@ -579,6 +606,10 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 61 | 统计面不把实例维度聚合掉：核心读面能按 `providerId` 回看某自定义模型下各实例的用量与费用，页面只显示回来的数字（§7.5） | 只按 `usageKind` 汇总——号池里「哪把 key 先撞额度」看不出来，池退化成盲轮询 |
 | 62 | 双入口读**同一份配置**：桌面建的实例池与自定义模型，CLI 侧发起任务时选到的是同一条目、同一份健康与账本状态，且 CLI 不写本地副本（§9.4） | 给 CLI 造一份自己的模型表或缓存；或 CLI 只跑得起出厂默认那条单上游路径——「规则一致」就退化成「桌面独占功能」 |
 | 63 | 「无需账号即可使用」是**结构性的**而非文案：`Principal` 只有 `kind: "local"` 与 `installationId` 两个字段；核心与宿主不存在 `login`/`register`/`auth/*` 一类动词或 IPC 通道；将来接账号必须**新立批次**，不许给现有写面加一个可选的 `userId` 参数（§2.4、§12） | 给 `custom/upsert` 悄悄加 `userId`，或新增一个 `auth/login` 却不声明批次——「当前不建账号」就变成装饰话。**取证陷阱**：现状 grep `register` 有 72 处命中，全是工具注册面（`unregistered-tool` 一类）的词面碰撞，**不许**拿词面命中当作「已有账号体系」的证据，也不许拿它反证「没有」——判据是动词/通道清单本身 |
+| 65 | 模型中心不做成硬编码特判：**新增一种 `protocol` 只动 provider 适配单元与目录数据**，`ModelRouter`、`UsageLedger`、`RouteHealth` 与宿主方法分派里不出现按 `protocol` 分支的字面量（形态断言，照 48 的检法；PRD A12「固定硬编码能力…不得判通过」在模型中心上的对偶，见 §3.1） | 在调度或账本里写 `if protocol == "anthropic-messages"`，把协议泄漏进决策层——将来接装配契约时要整段拆掉 |
+| 66 | 能力清单只有一份：`initialize.capabilities` 声明的动词集与实际可分派的动词集**双向相等**（声明未实现 → 红；实现了未声明 → 同样红），且桌面通道由这份清单派生而非另写一份（§3.1；断言 52 只核「少一条通道」，这条核「各写一份」） | 宿主手写一张 `if method ==` 表、桌面另写一张通道名单，两张各自漂移，声明面变成广告 |
+| 67 | 「内置」按 PRD 的字面义成立：**装配与使用模型中心全链路不依赖注册、登录、市场或发布**（§5「用户无需先去市场寻找必需能力」）；B1–B6 的文档面与决策面用例在断网下全绿（真实模型请求那类本就在凭据门后，不在此列） | 把模型中心做成「先装某个插件/先登录才能选模型」，或让核心在启动时够远端清单 |
+| 68 | 第三方提供方走同一扇门：经适配宿主承接的模型提供方只能通过核心注册表 + `UsageLedger` + `RouteHealth` 发请求，**不得**自开 HTTP、自写凭据、绕开 `reserve`/`settle`（§3 信任边界与 §4 账本在插件面上的对偶；§5「动态扩展通路也必须保持身份、参数及权限校验」） | 给扩展开一条「自己发模型请求」的旁路，预算、账本与健康计数同时被绕过 |
 | 64 | 「当前不宣称跨机器协调」可证：账本与租约的**作用域键里不含任何机器或网络标识**（只有本机路径 + 同机作用域键，形态断言照 48 的检法），且展示面把本地累计费用标成「本地累计」而不是「余额/已同步/多设备」（§7.3 括注、§7.5、§12） | 往作用域键里塞 `deviceId` 或远端主机名；或把本地累计显示成账户余额——那是把「同机限定」偷偷说成跨机能力 |
 
 ### 11.1 最终验收闭环的对位
@@ -625,6 +656,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 账本与文档共用目录的写竞争 | 全部经 `WriteLease`；`bridge.test.mjs` 在仓库根用 `dualtest/`，异常残留先 `rm -rf dualtest` |
 | 宿主产物过期导致的假绿 | 每批模型中心改动后重打宿主再跑桌面用例，并核 exe 的 mtime |
 | 并发会话同仓改源码 | 本设计只新增一份文档，落地时逐文件精确暂存，不吞他人改动 |
+| 「内置」被读成「可以硬编码特判」，模型中心的判定散进宿主分派与页面主干 | §3.1 + 断言 65/66 是形态断言，B1 内即可红；通用装配契约那一批落地时**若要求重写模型中心**，按 B1 的形态违规处理，不记作「契约变更」——这条是本设计替后面那批守的 |
 
 ---
 
@@ -778,6 +810,6 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 1. 条款列必须与目标原文一一对应：标题段十条总要求 + §1 十条 + §2 六条 + §3 五条 + §4 五条 + §5 五条 + §6 四条 + 最终验收三条 = **48 行**。本表实测 `48` 数据行、五列齐全（脚本核：表格行数、每行列数、转义竖线先剥再数列）。**但别拿第一列的 `§N` 前缀当分组复核依据**：按前缀机械分组得到的是 标题段 12 / §1 10 / §2 5 / §3 5 / §4 5 / §5 5 / §6 4 / 最终验收 2，与上面的条款数 10 / 6 / 3 对不上——差的是几行**无前缀或异前缀的派生条款**（如「健康状态跨重启保留…」属 §2 第 5 条但没写 `§2「`）。总数 48 与每行 5 列才是可机械复核的量，分组分布只作线索。
 2. 每个 `覆盖` 都要能指到**三种指针之一**：(a) §11 的断言编号；(b) 一个已指名的用例名（英文标识符，如 `entriesOfAnotherOwnerAreInvisibleButNotDestroyed`）；(c) 一个 `§` 章节指针，且该章节里逐条列出了断言集（本轮只有一处用它：最终验收「七步闭环」→ `§11.1`）。**不接受 `—`**——唯一豁免：`待你拍板` 行允许 `—`，因为那一行本来就不是代码能闭的东西（现仅一处：加速服务的部署与访问授权）；其余状态指不到就应改标 `部分` 或 `本轮补齐`。这条规则本轮第一次机械执行就抓到 5 行不合格，其中 1 行是**假覆盖**（拿还没新建的 `Principal` 当已覆盖依据），已改正——写规则而不执行规则等于没写。
 3. 每个 `部分` 都写明了缺的那半与承接批次，不允许出现「部分」但看不出部分在哪。
-4. 断言总数 **64**（§11 实测编号 1..64 连续、无重复、无缺号），本轮新增 **40–64** 二十五条（其中 49–51 来自对 `model_agent.cj`/`lease.cj` 的 HEAD 直读复核：一条纠正了缺陷 A 的归因，两条把租语义补成可检的东西）；`§11.1` 对位表与 §10 批次表已同步。机械对账另核出一条方向也成立的性质：**§11 里没有任何一条断言从未被引用**（1..64 每个编号都出现在 §10/§11.1/§16.1 某处），所以不存在「写了断言但没人认领」的悬空项。未闭环的两处（协议实现 1/3、真实网关）在表里是 `部分`/`待你拍板`，不在任何一行里被写成「已覆盖」。
+4. 断言总数 **68**（§11 实测编号 1..68 连续、无重复、无缺号），本轮新增 **40–68** 二十九条（其中 49–51 来自对 `model_agent.cj`/`lease.cj` 的 HEAD 直读复核：一条纠正了缺陷 A 的归因，两条把租语义补成可检的东西）；`§11.1` 对位表与 §10 批次表已同步。机械对账另核出一条方向也成立的性质：**§11 里没有任何一条断言从未被引用**（1..68 每个编号都出现在 §10/§11.1/§16.1 某处），所以不存在「写了断言但没人认领」的悬空项。未闭环的两处（协议实现 1/3、真实网关）在表里是 `部分`/`待你拍板`，不在任何一行里被写成「已覆盖」。
 5. **状态列本身也要机械核，不能只读一遍**。定死四条禁令，每条各配一个注入探针（先证门禁会红，再认它的绿）：状态必须落在四种口径之内；`覆盖` 行的断言列必须有三种指针之一（§11 编号 / 指名用例名 / `§` 章节指针），唯一豁免是 `待你拍板` 行允许 `—`，因为那一行不是代码能闭的；批次列必须能解析出 `B\d` 或 `每批`；`部分` 行必须用「：」写明缺的那半。四条探针全部被抓、基线违规为 0 才算核过——本轮实测 **GATE-OK 4/4**，基线状态分布 **覆盖 27 / 本轮补齐 13 / 部分 7 / 待你拍板 1**（合计 48）。这条规则第一次执行就抓到一处**假覆盖**（拿尚未新建的 `Principal` 当「已覆盖」的依据）和四处空指的 `—`，可见「写了规则不执行」与「没写规则」一样危险。
 6. **跨文档契约名对账**：把规格与批次计划里反引号包裹的符号名各取一次做集合差，凡是「计划当接口用、规格里查无此名」的都要判定——要么补进规格（它属于契约），要么明确标成计划私有（实现细节）。本轮第一次执行抓到一处：`addInstanceFromCatalog` 只出现在计划里，而 B5 的迁移导入同样要用它，属跨批次契约，已补进 §2.1 并钉死「新实例 id 从视图读回、不作返回值」。这个差集天然带大量实现细节名（本批实测 117 个），**逐条判、不做机械否决**；能机械化的只有后半句——凡被别的批次 `Consumes` 的名字，必须能在规格里查到名字。
