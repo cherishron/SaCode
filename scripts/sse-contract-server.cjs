@@ -127,6 +127,9 @@ function handler(req, res) {
   if (route === 'target') { targetHits++; if (req.headers.authorization) credentialHits++; res.end('target'); return; }
   if (route === 'redirect') { res.writeHead(307, { Location: `http://127.0.0.1:${target.address().port}/target` }); res.end('private response'); return; }
   if (['401', '429', '500'].includes(route)) { res.writeHead(Number(route)); res.end('private response Bearer fixture-only'); return; }
+  // 断言 53 的专用夹具：429 且响应头里**真有** Retry-After。
+  // 常量注入不算那条的绿——必须走真实响应头这条通路。
+  if (route === 'quota') { res.writeHead(429, { 'Retry-After': '42' }); res.end('private response Bearer fixture-only'); return; }
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
   if (route === 'tools') {
     // 步边界夹具：第一次请求先出一段正文再拖 1.5 秒抛 todo_write 工具调用，

@@ -6,6 +6,35 @@ import stdx.net.http.*
 import stdx.net.tls.*
 import stdx.encoding.json.*
 
+// 结构化打开结果：要么给出可用的 provider，要么给出结构化失败。
+// 与构造器的抛出路径并存——既有调用方按 message 断言，不改它们的行为。
+public class SseOpenResult {
+    public let provider: Option<RealSseProvider>
+    public let failure: Option<TransportFailure>
+    init(provider: Option<RealSseProvider>, failure: Option<TransportFailure>) {
+        this.provider = provider
+        this.failure = failure
+    }
+}
+
+// 读错误响应体用于摘要：上限 8KB，只保留可打印 ASCII（错误体可能含非 UTF-8 字节，
+// 直接 String.fromUtf8 会抛；摘要只供日志阅读，转义是可接受的降级）。
+func drainSummary(stream: InputStream, cap: Int64): String {
+    let buf = Array<UInt8>(4096, repeat: 0)
+    let all = ArrayList<Byte>()
+    while (Int64(all.size) < cap) {
+        let n = stream.read(buf)
+        if (n <= 0) { break }
+        var i: Int64 = 0
+        while (i < n && Int64(all.size) < cap) {
+            let b = buf[i]
+            all.add(if (b < 32 || b >= 127) { UInt8(46) } else { b })
+            i += 1
+        }
+    }
+    return String.fromUtf8(all.toArray())
+}
+
 // 真实 SSE provider：默认验证证书，逐事件解析并排队全部增量。
 // 读异常显式失败；取消优先于缓冲，usage 总量先于延迟交付的 finish。
 public class RealSseProvider <: Provider & Resource {
@@ -33,28 +62,77 @@ public class RealSseProvider <: Provider & Resource {
 
     // 生产构造器：发真实 HTTPS POST
     // 生产默认仍为 30 秒；请求级超时覆盖客户端配置，取消最迟在读返回后检查。
+    // 失败仍在构造期抛（message 形态 http-status:<n> / http-request-error 不变，
+    // 既有网络用例按该形态断言）；要拿结构化失败详情的调用方走 open()。
     public init(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
         readTimeout!: Duration = Duration.second * 30) {
+        let opened = RealSseProvider.open(baseUrl, apiKey, requestJsonBody, token, readTimeout: readTimeout)
+        if (let Some(f) <- opened.failure) {
+            throw Exception(f.message())
+        }
+        let p = opened.provider.getOrThrow()
         this.token = token
-        // 系统 CA 验证，禁止重定向转发凭据。
+        this.body = p.body
+        this.clientOpt = p.clientOpt
+        this.responseOpt = p.responseOpt
+    }
+
+    // 私有装配构造器：只给 open() 用
+    private init(token: TurnToken, body: InputStream, client: Option<Client>, resp: Option<HttpResponse>) {
+        this.token = token
+        this.body = body
+        this.clientOpt = client
+        this.responseOpt = resp
+    }
+
+    // 结构化打开：非 200 时**先读白名单头与正文摘要、再关响应**——
+    // 原实现是先 close 再抛，响应头与正文都拿不到（§5.2 实测三段全缺的第一段），
+    // 于是「遵守供应商恢复时间」只能由夹具喂绿。
+    public static func open(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
+        readTimeout!: Duration = Duration.second * 30): SseOpenResult {
         let c = ClientBuilder().tlsConfig(TlsClientConfig()).autoRedirect(false).build()
+        var opened: Option<HttpResponse> = None
         try {
             let req = HttpRequestBuilder().post().url("${baseUrl}/chat/completions")
                 .header("Authorization", "Bearer ${apiKey}")
                 .header("Content-Type", "application/json")
                 .body(requestJsonBody).readTimeout(readTimeout).build()
             let resp = c.send(req)
+            opened = Some(resp)
             if (resp.status != 200) {
+                let status = Int64(resp.status)
+                // 只取白名单头，逐个点名（不遍历全部响应头：失败对象会落日志，
+                // 不能变成第二条凭据通道）。
+                // 顺序说明（2026-10-05 变异实测）：把 close() 提前到读取之前，
+                // 本机 stdx 仍能读出 headers 与缓冲体（HttpBufferedBody），
+                // 所以「先读后关」不构成可断言的不变量——真正的增量是把
+                // 供应商证据**取出来并结构化**，而不是读取时序。此处仍按
+                // 先读后关写，避免依赖 close 的实现细节。
+                var pairs = ArrayList<(String, String)>()
+                for (name in failureHeaderWhitelist) {
+                    if (let Some(v) <- resp.headers.getFirst(name)) {
+                        pairs.add((name, v))
+                    }
+                }
+                let kept = whitelistedHeaders(pairs.toArray())
+                let raw = drainSummary(resp.body, 8192)
+                let redacted = redactBody(raw)
                 try { resp.close() } catch (_: Exception) {}
-                throw Exception("http-status:${resp.status}")
+                try { c.close() } catch (_: Exception) {}
+                return SseOpenResult(None, Some(failureOf("http-status", true, status: status,
+                    retryAfterSeconds: retryAfterFromHeaders(kept, 0), bodyLen: redacted[0],
+                    summary: "http-status:${status}")))
             }
-            this.body = resp.body
-            this.clientOpt = Some(c)
-            this.responseOpt = Some(resp)
+            return SseOpenResult(Some(RealSseProvider(token, resp.body, Some(c), Some(resp))), None)
         } catch (e: Exception) {
             try { c.close() } catch (_: Exception) {}
-            if (e.message.startsWith("http-status:")) { throw Exception(e.message) }
-            throw Exception("http-request-error")
+            if (let Some(resp) <- opened) {
+                try { resp.close() } catch (_: Exception) {}
+            }
+            // 连接类失败：本批还分不出「未上线」与「已上线」（连接被拒/DNS/TLS 与
+            // 读超时在异常文案里同名），如实标 unattributed 且 reachedUpstream=false，
+            // 由 §5.2 末行口径不进任何一档计数——不默认算成模型故障。
+            return SseOpenResult(None, Some(failureOf("transport", false, summary: "http-request-error")))
         }
     }
 
