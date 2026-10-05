@@ -41,9 +41,9 @@
 | ui-approval | `packages/client/ui-approval/README.md` | 待逐项回填；无全项通过声明 |
 | ui-attachment | `packages/client/ui-attachment/README.md` | 待逐项回填；无全项通过声明 |
 | ui-brand-official | `packages/client/ui-brand-official/README.md` | 待逐项回填；无全项通过声明 |
-| ui-chat | `packages/client/ui-chat/README.md` | 待逐项回填；无全项通过声明 |
+| ui-chat | `packages/client/ui-chat/README.md` | 部分完成：冻结 client/apply.ts 已读，聊天实际由槽位注入；消息完整交互仍分项核验 |
 | ui-commands | `packages/client/ui-commands/README.md` | 待逐项回填；无全项通过声明 |
-| ui-conversation | `packages/client/ui-conversation/README.md` | 待逐项回填；无全项通过声明 |
+| ui-conversation | `packages/client/ui-conversation/README.md` | 部分完成：冻结 client/apply.ts 已读，conversation.view 声明、坍缩与重装已接；全量视图装配未完成 |
 | ui-deliverables | `packages/client/ui-deliverables/README.md` | 待逐项回填；无全项通过声明 |
 | ui-directory-picker-browse | `packages/client/ui-directory-picker-browse/README.md` | 待逐项回填；无全项通过声明 |
 | ui-directory-picker-native | `packages/client/ui-directory-picker-native/README.md` | 待逐项回填；无全项通过声明 |
@@ -82,12 +82,18 @@
 | ui-sidebar-terminal | `packages/client/ui-sidebar-terminal/README.md` | 待逐项回填；无全项通过声明 |
 | ui-sidebar | `packages/client/ui-sidebar/README.md` | 待逐项回填；无全项通过声明 |
 | ui-skill | `packages/client/ui-skill/README.md` | 待逐项回填；无全项通过声明 |
-| ui-slots | `packages/client/ui-slots/README.md` | 待逐项回填；无全项通过声明 |
+| ui-slots | `packages/client/ui-slots/README.md` | 部分完成：README 与 src/index.ts 已读，普通槽位和 Vue 挂载已接；完整 Factory/Store/客户端模块尚未完成 |
 | ui-subagent | `packages/client/ui-subagent/README.md` | 待逐项回填；无全项通过声明 |
 | ui-theme | `packages/client/ui-theme/README.md` | 待逐项回填；无全项通过声明 |
 | ui-tool | `packages/client/ui-tool/README.md` | 待逐项回填；无全项通过声明 |
-| ui-trajectory | `packages/client/ui-trajectory/README.md` | 待逐项回填；无全项通过声明 |
+| ui-trajectory | `packages/client/ui-trajectory/README.md` | 来源 client/index.ts 已读；实现待接，尚无真实轨迹视图、历史加载与检查器验收，不据来源核验升级状态 |
 | ui-user-questions | `packages/client/ui-user-questions/README.md` | 待逐项回填；无全项通过声明 |
 | ui-workflow-run | `packages/client/ui-workflow-run/README.md` | 待逐项回填；无全项通过声明 |
 | ui-workspace | `packages/client/ui-workspace/README.md` | 待逐项回填；无全项通过声明 |
 | session-log-export | `packages/session-query/session-log-export/README.md` | 待逐项回填；无全项通过声明 |
+
+## 本轮增量证据
+
+客户端普通槽位与实际聊天插件装配已提交 `53170e7`；工作区冒烟的加载边界反证提交 `4d77a93`、`59363d8`；插件延迟挂载后的滚动观察器修复提交 `fcc9b4b`。槽位单测 10/10、主目录槽位与静态 bundle 合计 11/11、隔离开发态界面 254/254。前两次打包态分别 1 项失败，保留并修复时序证据；最终打包态完整 255/255、0 FAIL、rc=0，不能据此升级整项能力。最终产物与实测细节以 [客户端槽位证据](../evidence/client-slots-2026-10-05.md) 的后续实测为准。最终源码完整桌面测试 186 总数／184 PASS／2 SKIP／0 FAIL；SDK 环境隔离曾定位缺 pthread 运行库，`ea35c12` 修复；独立整页验收先复现真实滚动问题，修复后打包态 736 检查／0 FAIL。完整插件架构、轨迹、系统提示词和工具生命周期仍有缺口，不提升全项通过数。
+
+模型工具管线已由 `09bf0c1` 接入注册表、审批、关联结果及续请求；核心 518/518 含指定真实模型调用，Host 协议回归和 CLI 自检通过，见 [模型工具管线证据](../evidence/model-tool-runtime-2026-10-05.md)。仍未接任意插件分派及完整桌面文件工具审批，不能以该切片替代工具全生命周期验收。
