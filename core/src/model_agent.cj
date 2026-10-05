@@ -7,10 +7,11 @@ import std.convert.*
 public class ModelAgentLoop {
     public func run(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): TurnResult {
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
+        toolRuntime!: ?ModelToolRuntime = None): TurnResult {
         if (maxSteps < 1 || maxSteps > 128) { throw Exception("bad-agent-step-limit") }
         log.append("turn/start", "")
-        let todo = TodoTool(log, allowParallel)
+        let executor = toolRuntime ?? ModelToolRuntime(log, allowParallel)
         var provider = first
         var providerOpen = true
         var delivered = Int64(0)
@@ -19,6 +20,7 @@ public class ModelAgentLoop {
         var finish = ""
         var interrupted = true
         var settled = Int64(0)
+        var succeeded = Int64(0)
         try {
             for (step in 0..maxSteps) {
                 if (token.cancelled()) { break }
@@ -62,9 +64,10 @@ public class ModelAgentLoop {
                     if (token.cancelled()) { result = "{\"error\":\"cancelled\"}" }
                     else {
                         try {
-                            if (call.name != "todo_write") { throw Exception("unregistered-tool:${call.name}") }
-                            result = todo.execute(call.args, true)
-                            sink.offer("projection:todos")
+                            let outcome = executor.execute(call)
+                            if (outcome.allowed) { succeeded += 1 }
+                            result = if (outcome.allowed) { outcome.why } else { "{\"error\":\"${jsonEscapeText(outcome.why)}\"}" }
+                            if (call.name == "todo_write" && outcome.allowed) { sink.offer("projection:todos") }
                         } catch (e: Exception) { result = "{\"error\":\"${jsonEscapeText(e.message)}\"}" }
                     }
                     log.append("tool/result", modelToolResultData(call.id, result))
@@ -85,7 +88,7 @@ public class ModelAgentLoop {
                     sink.offer("projection:queue")
                 }
                 // 唯一请求来源是会话日志：不保留第二份 messages 状态。
-                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()], attachStore: attach, supportsImages: supportsImages))
+                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: executor.specs(), attachStore: attach, supportsImages: supportsImages))
                 providerOpen = true
             }
         } catch (e: Exception) {
@@ -94,15 +97,16 @@ public class ModelAgentLoop {
         } finally { if (providerOpen) { if (let Some(resource) <- (provider as Resource)) { resource.close() } } }
         if (token.cancelled()) { log.append("turn/cancelled", "after ${delivered} chunks") }
         else { log.append("turn/end", finish) }
-        return TurnResult(token.cancelled(), delivered, text, finish, "${totalUsage}", interrupted, settled, 0)
+        return TurnResult(token.cancelled(), delivered, text, finish, "${totalUsage}", interrupted, settled, 0, successfulToolCalls: succeeded)
     }
 }
 
 public class ModelAgentRunner {
     public func start(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): TurnHandle {
-        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages) }
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
+        toolRuntime!: ?ModelToolRuntime = None): TurnHandle {
+        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages, toolRuntime: toolRuntime) }
         return TurnHandle(token, future)
     }
 }

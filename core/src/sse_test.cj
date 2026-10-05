@@ -361,7 +361,7 @@ func realModelSse() {
     let key = getVariable("STEPFUN_API_KEY") ?? ""
     @Assert(key.size > 0)
     let token = TurnToken()
-    let body = "{\"model\":\"step-3.7-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"say hi in one word\"}],\"stream\":true}"
+    let body = "{\"model\":\"step-5-preview\",\"messages\":[{\"role\":\"user\",\"content\":\"say hi in one word\"}],\"stream\":true}"
     let p = RealSseProvider("https://api.stepfun.com/step_plan/v1", key, body, token)
     var text = ""
     var hasFinish = false
