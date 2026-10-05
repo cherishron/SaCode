@@ -11,6 +11,7 @@
 - `0d41f0e` feat(core)：GoalDriver 跨轮持续执行驱动——`run(maxRounds,maxElapsed,noProgressLimit,budgetExceeded,runRound)`；**只在轮次边界重读目标 phase**，故暂停/编辑/删除对下一轮生效、绝不强杀当前轮次；有证据才经 CAS 收口；限额停止经 applyStop 落阻塞防无限空转。`runRound`/`budgetExceeded` 由调用方注入，驱动不认识 inbox、不碰模型请求构造。
 - `238247f` feat(core)：GoalRunner——把 GoalDriver 接进真实模型工具循环（新文件，不改并发改动的 `model_agent.cj`）。一轮 = 一次 `ModelAgentLoop.run`；进展判据取「本轮干净执行了工具调用」（`settledToolCalls>0 && !interrupted && !cancelled`），完成证据由调用方传入的 `evidence(TurnResult)` 判定（核心不臆造完成），限额停止经 applyStop 落阻塞。即时补充送达沿用 `ModelAgentLoop` 内部既有 `claimStep`，本层不重复。
 - `34dfaaa` feat(core)：SystemPromptBuilder.build 增可选 `goal/rounds/elapsed`——`goal/change` 是 log-only（模型看不见目标正文），故目标必须由提示构造注入才能「每轮看到要追求什么」。active 注入 正文/状态/轮次/时长 + 「只有有实际证据才可提出完成」；暂停/受阻只展示不催促；无目标或墓碑逐字退回旧输出（`withNone==plain` 兼容反证）。sysprompt.cj/model_request.cj 当时均 clean，未与并发 prompt_enhance（自带请求、不碰这两个文件）冲突。
+- `2bf10b4` feat(core)：GoalRunner 轮次边界送达——自驱动多轮时，此前只在 `ModelAgentLoop` 步边界 `claimStep`，跨轮的 next-turn 排队补充没人摘，「本轮结束后在下一次请求构造前送达」在多轮场景悬空。每轮 `runRound` 顶部先 `claimTurn` 送达（附件 `commitMessage` 否则落 user/message）再构造本轮首个请求；`claimTurn` 消费一次即清队列，宿主另 claim 不重复。先 behavioral 红（仅该用例 FAILED 1），实现后 **TOTAL 484 / PASSED 483 / FAILED 0 / rc=0**。
 
 ### 核心单测读数（固定流程：落盘→剥 ANSI→取最后一个 Summary）
 
