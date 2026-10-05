@@ -938,15 +938,43 @@ main(args: Array<String>) {
             }
             // 条目身份由核心铸造：界面递进来的「id」没有通路，重复 id 也就无从伪造
             let newId = "q${shared.eventCount()}"
+            var receiptIds = ArrayList<String>()
             var enqueueFailure = ""
-            try {
-                inbox.queue(newId, text, rpcId)
-            } catch (e: Exception) {
-                enqueueFailure = if (e.message == "inbox-empty-text") { "queue-edit-blank" } else { e.message }
+            if (attHasReceipts(body)) {
+                try {
+                    receiptIds = attList(JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject(), "receiptIds")
+                } catch (_: Exception) {
+                    enqueueFailure = "attachment-bad-request"
+                }
+            }
+            var boundRefs = ArrayList<AttachmentRef>()
+            if (enqueueFailure.size == 0) {
+                for (rid in receiptIds) {
+                    if (let Some(r) <- attReceipts.get(rid)) {
+                        boundRefs.add(r)
+                    } else {
+                        // 认不出任何一张凭证就整条拒：不落半绑定的条目，也不烧掉好凭证
+                        enqueueFailure = "attachment-receipt-unknown"
+                        boundRefs = ArrayList<AttachmentRef>()
+                        break
+                    }
+                }
+            }
+            if (enqueueFailure.size == 0) {
+                try {
+                    inbox.queue(newId, text, rpcId, attachments: boundRefs)
+                } catch (e: Exception) {
+                    enqueueFailure = if (e.message == "inbox-empty-text") { "queue-edit-blank" } else { e.message }
+                }
             }
             if (enqueueFailure.size > 0) {
-                emit(errFrame(idText, -32021, enqueueFailure))
+                let attachError = enqueueFailure.startsWith("attachment-")
+                emit(errFrame(idText, if (attachError) { Int64(-32024) } else { Int64(-32021) }, enqueueFailure))
                 continue
+            }
+            for (rid in receiptIds) {
+                // 入队即消费：凭证换成条目上的引用，同一个凭证第二次使用没有通路
+                attReceipts.remove(rid)
             }
             emit(okFrame(idText, "{\"accepted\":true,\"deduped\":false,\"id\":\"${newId}\"}"))
             continue
@@ -1115,7 +1143,14 @@ main(args: Array<String>) {
             // 队列事件不进模型可见历史，两条账互不冒充。
             let admitted = AgentInbox(shared).claimTurn()
             if (admitted.size > 0) {
-                shared.append("user/message", admitted[0].text)
+                if (admitted[0].attachments.size > 0) {
+                    // 入队时绑上的引用，在送达这一刻落成「attachment/record + user/message」，
+                    // 与直接发送走同一个提交器：两条路径写出来的事实必须是同一种形态。
+                    AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
+                        .commitMessage(admitted[0].text, admitted[0].attachments)
+                } else {
+                    shared.append("user/message", admitted[0].text)
+                }
             }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }

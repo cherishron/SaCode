@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("dsh", {
   taskStart: () => ipcRenderer.invoke("dsh:taskStart"),
   // 运行中消息队列：条目由核心铸造，界面只能排、只能改自己那一条，拿不到通用转发
   queueDescribe: () => ipcRenderer.invoke("dsh:queueDescribe"),
-  queueEnqueue: (text, rpcId) => ipcRenderer.invoke("dsh:queueEnqueue", { text, rpcId }),
+  queueEnqueue: (text, rpcId, receiptIds) => ipcRenderer.invoke("dsh:queueEnqueue", { text, rpcId, receiptIds }),
   queueUpdate: (itemId, kind, text) => ipcRenderer.invoke("dsh:queueUpdate", { itemId, kind, text }),
   turnPoll: () => ipcRenderer.invoke("dsh:turnPoll"),
   turnCancel: () => ipcRenderer.invoke("dsh:turnCancel"),

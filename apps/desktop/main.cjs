@@ -182,7 +182,14 @@ ipcMain.handle("dsh:queueEnqueue", async (_e, args) => {
     || !isStr(args.rpcId) || args.rpcId.length === 0 || args.rpcId.length > 128) {
     throw new Error("bad arguments");
   }
-  return withHost(() => bridge.request("queue/enqueue", { text: args.text, rpcId: args.rpcId }));
+  // 排队也可以带附件：凭证形状与发送那条通道同一套校验，不给自报字符串留通路
+  const ids = args.receiptIds == null ? [] : args.receiptIds;
+  if (!Array.isArray(ids) || ids.length > 20 || !ids.every((v) => isStr(v) && RECEIPT_RE.test(v))) {
+    throw new Error("bad arguments");
+  }
+  return withHost(() => bridge.request("queue/enqueue", ids.length
+    ? { text: args.text, rpcId: args.rpcId, receiptIds: ids }
+    : { text: args.text, rpcId: args.rpcId }));
 });
 
 ipcMain.handle("dsh:queueUpdate", async (_e, args) => {

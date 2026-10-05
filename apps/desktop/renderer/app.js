@@ -478,10 +478,19 @@ createApp({
       if (text.length > 8000) { error.value = "消息最多支持 8000 个字符，请缩短后重试。"; return; }
       const requestId = "r" + (++rpcSeq);
       error.value = "";
+      // 回合运行中发的图不能被丢掉：与发送那条路径同一道准入——没就绪就挡在这一步，
+      // 就绪了就把宿主发放的凭证一起交出去（凭证只能来自本宿主，界面自报没有通路）。
+      if (attachments.value.some((a) => !a.receiptId)) {
+        error.value = attachments.value.some((a) => (uploads.value[a.id] || {}).status === "error")
+          ? "有附件上传失败，请重试或先移除" : "附件还在上传，请等它就绪";
+        return;
+      }
+      const receipts = attachments.value.map((a) => a.receiptId);
       queuePending.value = queuePending.value.concat([{ requestId, placement: "queued", text, attachments: [] }]);
       try {
-        await window.dsh.queueEnqueue(text, requestId);
+        await window.dsh.queueEnqueue(text, requestId, receipts);
         if (draftRevision === revision) draft.value = "";
+        clearAttachments();
         await refreshQueue();
       } catch (e) {
         queuePending.value = queuePending.value.filter((p) => p.requestId !== requestId);

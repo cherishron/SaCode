@@ -256,3 +256,76 @@ func inboxRpcIdIsTheAdmissionDedupKey() {
     @Expect(AgentInbox(fresh).hasRpc("rpc-1"), false)
     removeIfExists(root, recursive: true)
 }
+
+// 上游 file-upload 生成面（attachment.en.md L341-355，直读）：
+// 「Bind receipts while one prompt enters an Agent inbox … binding kept after commit until
+// queue or history observation retires its receipts」——排队那一刻凭证就绑到这条 prompt 上，
+// 提交成功后仍保留，直到队列或历史观测把它结算掉。所以引用是队列条目的事实，不是界面外挂。
+@Test
+func inboxQueueCarriesAttachmentRefsAcrossReplay() {
+    let root = inboxRoot("queue-att")
+    let log = inboxLog(root)
+    let inbox = AgentInbox(log)
+    let refs = ArrayList<AttachmentRef>()
+    refs.add(AttachmentRef("sha256:aaaa", "image", "image/png", Int64(33), Int64(2), Int64(1), "a.png"))
+    inbox.queue("m1", "带一张图的排队", "rpc-1", attachments: refs)
+    @Expect(inbox.items("next-turn")[0].attachments.size, Int64(1))
+    @Expect(log.flush(), true)
+    let fresh = inboxLog(root)
+    @Expect(fresh.load(), true)
+    let replayed = AgentInbox(fresh)
+    @Expect(replayed.items("next-turn")[0].attachments[0].attachmentId, "sha256:aaaa")
+    @Expect(replayed.items("next-turn")[0].attachments[0].mediaType, "image/png")
+    // 队列本身仍然是 log-only：引用跟着条目落盘，但一个字都不进模型可见历史
+    @Expect(fresh.deriveMessages().size, Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 反向钉子：没有引用的条目不能顺手多写一个键——报文形态要与这次改动之前逐字相同，
+// 否则「队列事件形状」这条被冻住的契约就悄悄变了。
+@Test
+func inboxQueueWithoutRefsKeepsSpliceShapeUnchanged() {
+    let root = inboxRoot("queue-plain")
+    let log = inboxLog(root)
+    AgentInbox(log).queue("m1", "纯文字排队", "rpc-1")
+    var data = ""
+    for (event in log.snapshotEvents()) {
+        if (event.eventType == "agent/inbox/spliced") { data = event.data }
+    }
+    @Expect(data.contains("\"attachments\""), false)
+    @Expect(data.contains("sha256:"), false)
+    removeIfExists(root, recursive: true)
+}
+
+// 改正文是整块替换文本，不是重建一条新消息：绑在这条 prompt 上的引用必须跟着走，
+// 否则「编辑一下」就等于把用户选的图静默丢掉。
+@Test
+func inboxEditKeepsBoundAttachmentRefs() {
+    let root = inboxRoot("queue-edit")
+    let log = inboxLog(root)
+    let inbox = AgentInbox(log)
+    let refs = ArrayList<AttachmentRef>()
+    refs.add(AttachmentRef("sha256:bbbb", "image", "image/png", Int64(33), Int64(2), Int64(1), "b.png"))
+    inbox.queue("m1", "原话", "rpc-1", attachments: refs)
+    inbox.edit("m1", "改了正文")
+    @Expect(inbox.items("next-turn")[0].text, "改了正文")
+    @Expect(inbox.items("next-turn")[0].attachments.size, Int64(1))
+    @Expect(inbox.items("next-turn")[0].attachments[0].attachmentId, "sha256:bbbb")
+    removeIfExists(root, recursive: true)
+}
+
+// 「即时补充」只是换一张清单，不是重打一条：绑着的引用要跟着条目从 next-turn 走到 next-step。
+@Test
+func inboxSteerKeepsBoundAttachmentRefs() {
+    let root = inboxRoot("queue-steer")
+    let log = inboxLog(root)
+    let inbox = AgentInbox(log)
+    let refs = ArrayList<AttachmentRef>()
+    refs.add(AttachmentRef("sha256:cccc", "image", "image/png", Int64(33), Int64(2), Int64(1), "c.png"))
+    inbox.queue("m1", "排队后要转成即时补充", "rpc-1", attachments: refs)
+    inbox.steerFromQueue("m1")
+    @Expect(inbox.sizeOf("next-turn"), Int64(0))
+    @Expect(inbox.items("next-step")[0].attachments.size, Int64(1))
+    @Expect(inbox.items("next-step")[0].attachments[0].attachmentId, "sha256:cccc")
+    removeIfExists(root, recursive: true)
+}

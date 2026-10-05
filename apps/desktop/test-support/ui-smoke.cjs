@@ -86,6 +86,26 @@ async function uiSmoke(context) {
   await js(`document.querySelector('[aria-label^="移除图片"]').click()`);
   note(await waitFor(() => js(`!document.querySelector('[data-attachment-id]')`)), '移除附件会撤下卡片');
 
+  // 排队这条 IPC 也要能把凭证交出去：真 preload → 主进程逐字段校验 → 仓颉宿主 → 会话日志。
+  // 回合中发的图此前会被静默丢掉（enqueueDraft 从不读 attachments），这里用真实通道钉住。
+  await js(`window.dsh.attachmentUpload('file','排队探针.txt','','YWJj').then(v=>{window.__qReceipt=v.receiptId})`);
+  await waitFor(() => js(`!!window.__qReceipt`));
+  const qReject = await js(`window.dsh.queueEnqueue('自报凭证的排队','rpc-bad',['r-foreign-0000']).then(()=>'accepted').catch(e=>'err:'+String(e.message||e))`);
+  note(qReject.indexOf('bad arguments') >= 0 && qReject.indexOf('err:') === 0,
+    `外来凭证在 preload/主进程这层就被挡掉（实际「${qReject}」）`);
+  const qAccept = await js(`window.dsh.queueEnqueue('带一张图的排队','rpc-att',[window.__qReceipt]).then(v=>'ok:'+v.accepted).catch(e=>'err:'+String(e.message||e))`);
+  note(qAccept === 'ok:true', `宿主发放的凭证随排队条目一起被接受（实际「${qAccept}」）`);
+  // append 只在宿主实例内可见，flush 才跨进程：读盘前要先让核心落一次
+  await bridge.request('session/flush');
+  const qLogged = require('node:fs').existsSync(SESSION_LOG) ? require('node:fs').readFileSync(SESSION_LOG, 'utf8') : '';
+  note(qLogged.includes('agent/inbox/spliced') && qLogged.includes('sha256:ba7816bf'),
+    '排队条目把引用落成会话事实（探针「abc」的内容寻址引用出现在拼接事件里，日志仍无 base64）');
+  note(!qLogged.includes('YWJj'), '排队路径同样不把上传字节写进日志');
+  const qRows = await bridge.request('queue/describe');
+  for (const row of (qRows.nextTurn || [])) {
+    await bridge.request('queue/update', { itemId: row.id, kind: 'remove' }).catch(() => {});
+  }
+
   const catalogBefore = await bridge.request("session/catalog");
   const catalogEvents = await text('#count-events');
   await js("document.querySelector('#open-catalog').focus(); document.querySelector('#open-catalog').click()");

@@ -22,10 +22,14 @@ public class InboxMessage {
     public let id: String
     public let text: String
     public let rpcId: String
-    public init(id: String, text: String, rpcId: String) {
+    // 排队即绑定：引用跟着条目走，宿主才知道这条 prompt 占了哪几张暂存凭证。
+    public let attachments: ArrayList<AttachmentRef>
+
+    public init(id: String, text: String, rpcId: String, attachments: ArrayList<AttachmentRef>) {
         this.id = id
         this.text = text
         this.rpcId = rpcId
+        this.attachments = attachments
     }
 }
 
@@ -171,6 +175,14 @@ public class AgentInbox {
             mo.put("id", JsonString(m.id))
             mo.put("text", JsonString(m.text))
             mo.put("rpcId", JsonString(m.rpcId))
+            // 只在真的带引用时多出这个键：不带引用的拼接报文要与历史逐字相同。
+            if (m.attachments.size > 0) {
+                let refs = JsonArray()
+                for (ref in m.attachments) {
+                    refs.add(ref.toJsonObject())
+                }
+                mo.put("attachments", refs)
+            }
             arr.add(mo)
         }
         obj.put("inserted", arr)
@@ -234,7 +246,13 @@ public class AgentInbox {
             while (let Some(item) <- arr.get(pos)) {
                 pos += 1
                 let mo = item.asObject()
-                inserted.add(InboxMessage(inboxString(mo, "id"), inboxString(mo, "text"), inboxString(mo, "rpcId")))
+                var refs = ArrayList<AttachmentRef>()
+                if (let Some(value) <- mo.get("attachments")) {
+                    // 与投影、请求装配共用同一个解析器；形态不合法就整条拼接计为坏，
+                    // 不在这里造出半个条目。
+                    refs = parseAttachmentRefs(value.toString())
+                }
+                inserted.add(InboxMessage(inboxString(mo, "id"), inboxString(mo, "text"), inboxString(mo, "rpcId"), refs))
             }
         } catch (e: Exception) {
             ok = false
@@ -262,17 +280,17 @@ public class AgentInbox {
     // 拼接是「回放 → 算增量 → 写一条整体替换」的读改写，跨多条事件；单条 append 的锁
     // 护不住它。宿主协议线程与 runner 线程现在都会写拼接，所以所有写入口都持同一把
     // 会话日志锁（本类内部只调私有方法，不出现自己等自己的重入）。
-    public func queue(id: String, text: String, rpcId: String): Unit {
+    public func queue(id: String, text: String, rpcId: String, attachments!: ArrayList<AttachmentRef> = ArrayList<AttachmentRef>()): Unit {
         synchronized(log.mtx) {
             requireNew(id, text)
-            appendTo(TARGET_TURN, InboxMessage(id, text, rpcId))
+            appendTo(TARGET_TURN, InboxMessage(id, text, rpcId, attachments))
         }
     }
 
     public func step(id: String, text: String, rpcId: String): Unit {
         synchronized(log.mtx) {
             requireNew(id, text)
-            appendTo(TARGET_STEP, InboxMessage(id, text, rpcId))
+            appendTo(TARGET_STEP, InboxMessage(id, text, rpcId, ArrayList<AttachmentRef>()))
         }
     }
 
@@ -287,7 +305,9 @@ public class AgentInbox {
                 throw Exception("inbox-item-not-found")
             }
             let old = items(at.targetName)[at.index]
-            let next = InboxMessage(id, text, old.rpcId)
+            // edit 只换正文：绑定在这条 prompt 上的引用原样带过去（凭证已在宿主侧消费，
+            // 这里丢了就等于用户选的图被一次编辑吃掉）。
+            let next = InboxMessage(id, text, old.rpcId, old.attachments)
             let single = ArrayList<InboxMessage>()
             single.add(next)
             writeSplice(at.targetName, at.index, Int64(1), single, false)
@@ -315,15 +335,17 @@ public class AgentInbox {
     public func steerFromQueue(id: String): Unit {
         synchronized(log.mtx) {
             var queued = false
+            var bound = ArrayList<AttachmentRef>()
             for (m in turnItems) {
                 if (m.id == id) {
                     queued = true
+                    bound = m.attachments
                 }
             }
             if (!queued) {
                 throw Exception("inbox-item-not-found")
             }
-            let msg = InboxMessage(id, textOf(id), rpcIdOf(id))
+            let msg = InboxMessage(id, textOf(id), rpcIdOf(id), bound)
             removeItem(id)
             let single = ArrayList<InboxMessage>()
             single.add(msg)

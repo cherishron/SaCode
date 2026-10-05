@@ -336,3 +336,60 @@ No connection could be made because the target machine actively refused it.
 
 
 
+
+## 10. 队列路径的附件凭证（同日第四批，闭 §7 那条「未接」）
+
+上游契约（`target/upstream-read/attachment.en.md` L341-355，直读；`.zh.md` 同段 javadoc 未翻译，
+两条已逐字比对一致）：
+
+```ts
+bindPrompt(agent, receiptIds, requestId): PromptFileBinding
+// 「Bind receipts while one prompt enters an Agent inbox. Disposal restores every prior binding
+//  unless the caller commits successful delivery … kept after commit until queue or history
+//  observation retires its receipts.」
+retirePrompt(agent, requestId): void
+// 「Retire every receipt accepted by one removed queue occurrence.」
+```
+
+落到本仓的行为：**入队即绑定**（凭证换成条目上的引用，同一个凭证第二次使用没有通路），
+**送达才提交**（轮次边界经与直接发送同一个 `commitMessage` 落成 `attachment/record` +
+`user/message`），**移除即作废**（条目在送达前被删掉，日志里一条引用都不多）。
+
+先说清一处流程上的不合规，免得这份证据被当成「全程红先」：**核心那四条用例是严格红先**
+（先只写测试，编译器给出 `'attachments' is not a member of class 'InboxMessage'` 与
+`extra argument given for parameter list`，实现后先出现两条**行为红**
+`inboxEditKeepsBoundAttachmentRefs` / `inboxSteerKeepsBoundAttachmentRefs` 再转绿）；
+而**宿主与桌面两面的实现先写在了测试前面**。这一面没有「实现前必见红」的原始观察，
+改用变异反证补因果（下表），并且只承认由变异独占杀掉的用例。
+
+| 变异 | 语义改动（不动签名） | 独占受害用例 | 实测 |
+|---|---|---|---|
+| M1 送达不吃引用 | 轮次边界改回无条件 `shared.append("user/message", …)` | 排队带图那条 | `not ok 1 … 实际答复是「vision parts=0 messages=2 text=0」`；第二条仍绿（条目已被删，本来就没有送达） |
+| M2 移除假成功 | `kind == "remove"` 分支报 accepted 但不摘走条目 | 移除作废那条 | `not ok 2 … 被删掉的条目不得冒充成一句用户消息`；第一条不受影响 |
+
+两个变异同时施加时红集合恰好是这两条，且**每条各有一个只有它能杀的死法**（M1 单独在位时
+第二条仍绿，M2 单独在位时第一条仍绿），还原后 `diff` 备份为空、复跑回 2/2。
+
+实测计数（新宿主、新核心）：
+
+| 面 | 计数 |
+|---|---|
+| 核心 | `cjpm test` `TOTAL: 449 / PASSED: 448, SKIPPED: 1（凭据门控）, ERROR: 0, FAILED: 0`；带 `STEPFUN_API_KEY` 复跑 `445/445` 那一轮见 §8，本轮新增 4 条全绿 |
+| 桌面 | `npm test` `# tests 141 / # pass 141 / # fail 0`（新增 `test/queue-attachment.test.mjs` 两条：送达 `parts=1` 与移除 `parts=0`，另含「外来凭证整条拒」「引用紧邻正文之前」「日志无 base64」） |
+| 界面冒烟 | `npm run ui-smoke` → `UI_SMOKE PASS`，`UI OK` 207 / `UI FAIL` 0（上一批 203，本批 +4：外来凭证挡在 preload/主进程、真凭证随排队被接受、拼接事件里出现内容寻址引用、日志不含上传字节） |
+
+三条测试侧自纠（红都是**测试自己**，不是被测面）：
+
+1. 一开始断言「被删掉的条目一个字都不进会话日志」——错了。入列本身就是一条
+   `agent/inbox/spliced` 事实，正文当然在日志里；该钉的是它**不得变成 `user/message`**。
+   改成按 `seq⇥eventType⇥正文` 拆字段后判据成立。
+2. `bad arguments` 的断言写成 `indexOf(...) === 0`，而 Electron 会把主进程异常包成
+   `err:Error invoking remote method 'dsh:queueEnqueue': Error: bad arguments`；改成
+   「以 `err:` 开头且包含 `bad arguments`」。
+3. 读盘判「引用有没有落进日志」拿到假红：`queue/enqueue` 只 `append` 不 `flush`，
+   而 append 不跨进程——先 `session/flush` 再读才是对的（这条正是 AGENTS.md 写死的不变量）。
+
+未接（本批明确不做，留作下一步）：QueueDock 上给排队条目画一张附件卡片（条目已带引用，
+投影面还没交出去）；CLI 交付面没有加排队相关断言（`att` 仍是 23 条，队列绑定属宿主链路）；
+历史消息逐条展示附件；`agent/inbox/spliced` 的 `attachments` 形态虽由核心解析，
+但 `queue/describe` 还没把它投影给界面。
