@@ -69,6 +69,29 @@ public func deriveCredentialRef(id: String): String {
     return String.fromUtf8(all.toArray())
 }
 
+// 稳定 ID 的公共规则：小写字母开头 + [a-z0-9-]，≤64。
+// 提成文件级 func 是让第 3 层（自定义模型）共用同一份判据——
+// 两份实现各自漂移比多一个文件级函数坏得多。
+func checkStableId(id: String): Unit {
+    let bs = id.toArray()
+    if (bs.size == 0 || bs.size > 64) {
+        throw Exception("settings-rejected")
+    }
+    let lower = bs[0] >= 97 && bs[0] <= 122
+    if (!lower) {
+        throw Exception("settings-rejected")
+    }
+    var i: Int64 = 1
+    while (i < bs.size) {
+        let b = bs[i]
+        let ok = (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 45
+        if (!ok) {
+            throw Exception("settings-rejected")
+        }
+        i += 1
+    }
+}
+
 public class ModelSpec {
     public let id: String
     public let name: String
@@ -528,7 +551,7 @@ public class ProviderRegistry {
         let protocol = textField(obj, "protocol")
         let credentialRef = optionalTextField(obj, "credentialRef", fromLog)
         let declared = if (fromLog) { boolField(obj, "declared") } else { false }
-        checkId(id)
+        checkStableId(id)
         checkText(name, 100)
         checkBaseUrl(baseUrl)
         var known = false
@@ -601,26 +624,6 @@ public class ProviderRegistry {
             throw Exception("settings-rejected")
         }
         return out.toArray()
-    }
-
-    private static func checkId(id: String): Unit {
-        let bs = id.toArray()
-        if (bs.size == 0 || bs.size > 64) {
-            throw Exception("settings-rejected")
-        }
-        let lower = bs[0] >= 97 && bs[0] <= 122
-        if (!lower) {
-            throw Exception("settings-rejected")
-        }
-        var i: Int64 = 1
-        while (i < bs.size) {
-            let b = bs[i]
-            let ok = (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 45
-            if (!ok) {
-                throw Exception("settings-rejected")
-            }
-            i += 1
-        }
     }
 
     private static func checkText(value: String, limit: Int64): Unit {
