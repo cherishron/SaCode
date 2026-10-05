@@ -48,6 +48,9 @@
    - **全栈 0 处 `AES` 命中**；**0 处任何 KDF**（`PBKDF`/`Scrypt`/`HKDF` 全无命中）；`stdx.crypto.digest` 有 `SHA256`/`SHA384`/`MD5` 与 `HMAC(key, Digest)`。
    → 结论：**AEAD 可用但只有 SM4-GCM**，且**口令派生必须自建**（见 §8.2）。这把我原先写的 `AES-256-GCM` 直接推翻。
 
+4. **B0 运行期探针的修正（2026-10-05 实测，见 §15）**：上面第 3 条是**符号面**证据，运行期并不全部成立——`SM4` 的 `CBC`/`CTR` 能构造、能加密、能逐字节回环，但 **`OperationMode.GCM` 在四种参数组合下一律抛 `Encrypt failed due to create tag error.`**，且把 OpenSSL 3.5.4 的 `libcrypto-3-x64.dll` 钉进 exe 同目录（DLL 搜索序第一位）后仍复现。
+   → 所以「本栈有可用的 AEAD」这句**只在符号层成立、运行层不成立**；`secret-bundle` 改用 §8.2 的 **SM4-CTR + HMAC-SHA256 encrypt-then-MAC** 组合，两个原语都已在本机跑通并被外部实现逐字节对照过。**不是降级**：ETM 是认证的加密构造，完整性失败即拒绝解包。
+
 ---
 
 ## 2. 三层数据模型
@@ -314,26 +317,29 @@
 
 `config` 包**结构上就没有能承载明文的槽位**（继承 `provider_registry.cj:330` 的拒绝清单），不是「写了再擦掉」。
 
-### 8.2 加密形态（按 §1.3 实测的密码学面定，不是按理想选型定）
+### 8.2 加密形态（B0 运行期实测后定，不是按理想选型定）
 
-`secret-bundle` 的凭据段 = **口令派生密钥 + AEAD 封装**，两半分别落在本栈真实存在的东西上：
+`secret-bundle` 的凭据段 = **口令派生密钥 + 认证的加密封装**。选型不由「哪种构造更体面」决定，而由 §15 的 B0 实测决定：本栈唯一可用的分组密码模式是 `CBC`/`CTR`（`GCM` 运行期一律失败），所以封装用 **encrypt-then-MAC（ETM）**——两个都已在本机跑通的原语组合出认证加密：
 
 | 半 | 用什么 | 为什么只能这样 |
 | --- | --- | --- |
-| AEAD | `stdx.crypto.crypto` 的 **`SM4` + `OperationMode.GCM`**（`aad`/`tagSize`/`ivSize` 在该类上可见），底层是 OpenSSL `EVP_CIPHER_*`（符号里可见 `DYN_EVP_CIPHER_fetch`/`DYN_EVP_CIPHER_CTX_ctrl`） | 全栈 **0 处 AES**；`std.crypto.cipher` 只有 `BlockCipher` 接口。SM4-GCM 是本栈唯一由真实密码库提供的 AEAD |
-| 口令派生 | 自建 **PBKDF2-HMAC-SHA256**，构建在 `stdx.crypto.digest` 的 `HMAC(key, SHA256)` 之上；迭代次数与盐长度写进信封头部，**不低于 600k** | 全栈 **0 处 KDF**（无 PBKDF2/scrypt/HKDF）。不派生就直接用口令当密钥是硬伤，所以这一层必须有 |
+| 保密 | `stdx.crypto.crypto` 的 **`SM4` + `OperationMode.CTR`**（16 字节 IV，实测密文长度=明文长度，SDK 不额外填充） | 全栈 **0 处 AES**；`std.crypto.cipher` 只有 `BlockCipher` 接口；`OperationMode.GCM` 有符号证据但**运行期不可用**（§1.3 第 4 条、§15） |
+| 认证 | **`HMAC-SHA256`**（`stdx.crypto.digest`）覆盖 `信封头 ‖ IV ‖ 密文`，标签 32 字节逐条存 | 没有 AEAD 可用时，ETM 是用已 vetted 的哈希-消息码补出完整性的标准做法；把 MAC 覆盖范围放到头部，才使「把头换成 `config` 或改条目数」不能蒙混过关 |
+| 口令派生 | 自建 **PBKDF2-HMAC-SHA256**，构建在 `HMAC(key, SHA256)` 之上；迭代次数与盐长度写进信封头部，**不低于 600k** | 全栈 **0 处 KDF**（无 PBKDF2/scrypt/HKDF）。不派生就直接用口令当密钥是硬伤，所以这一层必须有 |
+| 子密钥分离 | 同一 `(口令, 盐)` 跑 **两次** PBKDF2，上下文串不同：`sacode-migrate/1\|enc` 出 16 字节 SM4 密钥、`sacode-migrate/1\|mac` 出 32 字节 HMAC 密钥 | 一把密钥同时做加密和 MAC 是已知误用面。派生结果已被 openssl CLI 独立复现（§15），换档到真正的 KDF 时按头部算法标识走 |
 | 随机材料 | `stdx.crypto.crypto.SecureRandom`（`priv` 私有随机字节）出盐与 IV | 不用时钟或进程内计数器凑随机 |
-| 密钥长度 | PBKDF2 输出取前 128 位作 SM4 密钥（SM4 分组与密钥均 128 位） | 算法规格所限，如实写明是 **128 位安全强度**，不宣称 AES-256 等级 |
+| 密钥长度 | SM4 分组与密钥均 128 位，HMAC-SHA256 标签 256 位 | 如实写明是 **128 位安全强度**，不宣称 AES-256 等级 |
 
-派生纪律：
+派生与封装纪律：
 
-- **PBKDF2 只允许构建在已 vetted 的 HMAC 之上**，且必须用 **RFC 6070 的 PBKDF2-HMAC-SHA256 向量**钉住（`c=1/2/4096/16777216`、`dkLen=1/2/8/32/40`、含 `passwordPASSWORDpassword` 与 `pass\000word` 的 NUL 截断用例）。这是自建派生唯一可接受的证明方式；**不允许**手写分组密码或哈希混淆冒充加密。
-- 每条凭据条目独立盐与 IV，认证标签逐条存；密文被改动一位即解密失败（GCM 标签），**不得降级为「忽略校验继续导入」**。
-- `aad` 绑住信封头（`format`/`kind`/`schemaVersion`/条目摘要），防止把头换成 `config` 或换条目数后仍校验通过。
+- **PBKDF2 只允许构建在已 vetted 的 HMAC 之上**，且必须用 **RFC 6070 的 PBKDF2-HMAC-SHA256 向量**钉住（`c=1/2/4096/16777216`、`dkLen=1/2/8/32/40`、含 `passwordPASSWORDpassword` 的 `dkLen=40` 多块用例与 `pass\000word` 的 NUL 截断用例）。这是自建派生唯一可接受的证明方式；**不允许**手写分组密码或哈希混淆冒充加密。
+- **校验顺序是硬约束**：解包必须 先算 MAC → 定长时间比较 → 通过后才解密。反序（先解密再校验）会把密文改动交给 padding/明文处理路径；比较用逐字节异或累积、不提前返回，避免按位置泄露。
+- 每条凭据条目独立盐与 IV，标签逐条存；密文、IV 或头部任一处被改动一位即整条拒绝，**不得降级为「忽略校验继续导入」**。
+- **信封头部必须显式记录算法标识**（`cipher: "SM4-CTR"`、`mac: "HMAC-SHA256"`、`compose: "ETM"`、`kdf: "PBKDF2-HMAC-SHA256"`、迭代次数、盐/IV/标签长度）。将来 SDK 出现可用 AEAD（含 `SM4-GCM` 修复）或真实 KDF 时按头部换档，旧包仍自描述可解——算法敏捷性写进格式，不靠记忆。
 - 口令不落盘、不进日志、不进记忆；派生与解包只在需要时发生。
-- **信封头部必须显式记录算法标识**（`cipher: "SM4-GCM"`、`kdf: "PBKDF2-HMAC-SHA256"`、迭代次数、盐/IV/标签长度）。这样将来 SDK 出现 AES 或真实 KDF 时可以换档，而旧包仍按头部自描述可解——算法敏捷性写进格式，不靠记忆。
-- **被否决的替代**：借 `npm/dsh-cli/bin/cli.js` 的 Node 侧 `crypto`（有 AES-256-GCM 与 scrypt）来做封装。否决理由：那会让 CLI 与桌面各用一套加解密实现，直接违反「桌面、CLI 与安装包规则一致」，而迁移包恰恰是跨入口的产物。
-- 若 B0 探针证明 `SM4` 的 GCM 构造在本机跑不通（`cjpm` 链接、OpenSSL 版本或 `tagSize` 语义与符号所见不符）：**`secret-bundle` 记 BLOCKED**，写清卡在哪一步、解锁条件是什么，`config` 包照常可用。**不允许**因此取消密钥迁移需求，也不允许用弱替代蒙过去。
+- **被否决的替代（一）**：借 `npm/dsh-cli/bin/cli.js` 的 Node 侧 `crypto`（有 AES-256-GCM 与 scrypt）来做封装。否决理由：那会让 CLI 与桌面各用一套加解密实现，直接违反「桌面、CLI 与安装包规则一致」，而迁移包恰恰是跨入口的产物。
+- **被否决的替代（二）**：`SM4-CBC + HMAC` 的 ETM。否决理由：CBC 需要填充，多出一条 padding 处理路径与 padding-oracle 面；CTR 是流式用法、实测不填充，密文长度还顺带不泄露明文的块对齐。
+- **B0 结论：`secret-bundle` 不 BLOCKED。** §10 原写的「GCM 跑不通则记 BLOCKED」是当时的分支，实测走了另一支——用可运行的原语组合出等价的认证加密，需求一条没减。运行期缺 `libstdx.crypto.*` 或 `libcrypto` 时仍按 §8.5 fail-loud。
 
 ### 8.3 导入流程与不变量
 
@@ -359,9 +365,9 @@
 `stdx.crypto.*` **已经在交付产物里**：`scripts/pack-cli.mjs:99-105` 拷 `STDX` 下全部 `libstdx*.dll`（只排除 unittest 与宏），`scripts/pack-host.mjs:18-22` 把传入 DLL 目录里的 `*.dll` 全量拷进 `bin/`；而 `libcrypto-3-x64.dll` 本来就因 TLS 随包（§1.3）。
 → **加密迁移不新增任何分发依赖**，也就没有「为了少拉依赖把它单独关进一个可执行文件」的理由。
 
-因此实现落在 **`core`（`MigrationBundle`）一处**：桌面走宿主动词 `migrate/*`，CLI 走 `dsh migrate export|import`，两者调的是同一段代码——迁移包的格式与算法只能有一份真相。加密不可用（B0 判 BLOCKED 或运行期缺库）时 **fail-loud**，UI 与 CLI 直接显示卡点，不提供「先导出来再说」的路径。
+因此实现落在 **`core`（`MigrationBundle`）一处**：桌面走宿主动词 `migrate/*`，CLI 走 `dsh migrate export|import`，两者调的是同一段代码——迁移包的格式与算法只能有一份真相。加密不可用（运行期缺 `libstdx.crypto.*` 或缺 `libcrypto`）时 **fail-loud**，UI 与 CLI 直接显示卡点，不提供「先导出来再说」的路径。
 
-链接侧也已核：`core/cjpm.toml` 与 `apps/host/cjpm.toml` 用 `[target.x86_64-w64-mingw32.bin-dependencies] path-option` 指向**整个** `stdx/.../dynamic/stdx` 目录（现在这样解析 `stdx.encoding.json` 与 `stdx.net.http`），**不存在「按模块逐个声明」这道额外配置**——引入 `stdx.crypto.crypto` 不改构建配置。仍要 B0 编译实证一次（该目录里有 `libstdx.crypto.crypto.dll` 与 `libstdx.crypto.keysFFI.dll.a`，但 `.dll.a` 是否覆盖 crypto/kit 全部导入符号没核到底）。换机器时这条 path-option 仍是硬编码本机路径（AGENTS 已知项），迁移功能不新增这个约束，但也不替它解。
+链接侧已核并已**编译+运行实证**（§15）：`core/cjpm.toml` 与 `apps/host/cjpm.toml` 用 `[target.x86_64-w64-mingw32.bin-dependencies] path-option` 指向**整个** `stdx/.../dynamic/stdx` 目录（现在这样解析 `stdx.encoding.json` 与 `stdx.net.http`），**不存在「按模块逐个声明」这道额外配置**——引入 `stdx.crypto.crypto` 不改构建配置；一次性探针包只用同一条 path-option 就链接成功并跑出了 §15 的结论，`.dll.a` 是否覆盖全部导入符号这个疑问随之消解。换机器时这条 path-option 仍是硬编码本机路径（AGENTS 已知项），迁移功能不新增这个约束，但也不替它解。
 
 ---
 
@@ -407,7 +413,7 @@
 
 | 批次 | 内容 | 出口判据 |
 | --- | --- | --- |
-| **B0 可行性探针**（半天级） | ① `SM4(OperationMode.GCM, key, iv, ...)` 的真实构造形态与 `aad`/`tagSize` 语义：编译 + 一次加解密回环 + 改一字节必失败；② `stdx.crypto.digest.HMAC(key, SHA256)` 流式接口形态，用它把 **RFC 6070 向量**跑通（PBKDF2 的前置）；③ 时钟注入在冷却/探测计时上的形状；④ relay 转发 SSE 与 usage 透传的手工探针 | 四条各有实测结论；①② 任一不通则 `secret-bundle` 立刻按 BLOCKED 建档并写清卡点，不拖到 B5 |
+| **B0 可行性探针**（半天级；①② 已于 2026-10-05 跑完，结论见 §15） | ① `SM4` 的真实构造形态：编译 + 一次加解密回环 + 改一字节必失败——**实测 `CBC`/`CTR` 通过、`GCM` 四种参数组合全部运行期失败**；② `stdx.crypto.digest.HMAC(key, SHA256)` 流式接口形态，用它把 **RFC 6070 向量**跑通（PBKDF2 的前置）——**实测四条取值与 Node `crypto` 逐字节一致**，并额外证成 SM4-CTR 密钥流与 `openssl enc -sm4-ctr` 逐字节一致；③ 时钟注入在冷却/探测计时上的形状；④ relay 转发 SSE 与 usage 透传的手工探针 | ①② 已出实测结论并据此改写 §8.2（`secret-bundle` **不 BLOCKED**）；③④ 在 B2/B4 各自开工前补，未证前不得把对应机制写成已达成 |
 | **B1 模型目录** | 供应商新字段、上游模型能力面、`CustomModelRegistry`、拉取/手动添加、两种导入操作、能力适配校验 | 目录 CRUD + 重复拉取不重复导入 + 能力不适配保存即拒，均绿 |
 | **B2 调度闭环** | `ModelRouter`（过滤链 + 轮询 + 平滑加权）、供应商开关语义、`RouteHealth` 三档作用域与失败分类、冷却 + 低频探测 + 试恢复、跨进程探测租约 | 目标里的每一条自动化验收绿（§11） |
 | **B3 计量与预算** | `UsageLedger`（尝试粒度、定点金额、计价快照、预留/结算/作废、待核算）、`budget/*` 动词、统计查询面 | 并发不重复预留/结算；改价不重算历史；取消有 usage 照记 |
@@ -417,7 +423,7 @@
 
 每批都按现有流程红先、变异反证、双入口复验；**批次顺序不等于范围裁剪**，B6 完成才谈得上「模型中心达成」。
 
-实现计划按批出：本设计先出 B0+B1 的实现计划（B0 的三条结论决定 B5 是否 BLOCKED，必须最先跑），B2 及之后各批在本表出口判据下逐批另出计划，不因后批未排而从前批里删需求。
+实现计划按批出：本设计先出 B1 的实现计划（B0 的 ①② 已跑完并已据此改写 §8.2，`secret-bundle` 不再挂在 BLOCKED 上；③④ 归到 B2/B4 开工前），B2 及之后各批在本表出口判据下逐批另出计划，不因后批未排而从前批里删需求。
 
 ---
 
@@ -451,7 +457,7 @@
 | 24 | 已送达或已开始输出的请求不被自动重放 | 默认盲目重放 |
 | 25 | CLI `modelcenter`、桌面 `node --test`、打包态冒烟对同一夹具给出同一决策序列 | 桌面走本地简化的选路分支 |
 | 26 | PBKDF2-HMAC-SHA256 逐条命中 RFC 6070 向量（含 `c=4096`、`dkLen=32`、NUL 截断那条） | 少一轮迭代或 salt 拼接错位 |
-| 27 | SM4-GCM 加解密回环等价；密文或头部改一字节 → 解密必失败，**不产出明文** | 忽略认证标签继续解 |
+| 27 | ETM 封装回环等价（SM4-CTR 加密 + HMAC-SHA256 认证）；密文、IV 或信封头任一改一字节 → 解包必失败，**不产出明文**；口令错 → 同样失败 | 先解密后校验、MAC 比较提前返回、或忽略认证标签继续导入 |
 | 28 | `aad` 绑头部：把头里 `kind` 从 `secret-bundle` 改成 `config` 后解密失败 | `aad` 留空 |
 | 29 | 错误口令只报「口令不对/解不开」，不回吐任何部分明文，也不落口令 | 失败路径把已解出的片段写进日志 |
 | 30 | 信封头显式记录 `cipher`/`kdf`/迭代数/各长度；未知算法标识直接拒 | 按当前实现硬猜旧包参数 |
@@ -497,8 +503,8 @@
 
 | 风险 | 处置 |
 | --- | --- |
-| 本栈只有 SM4-GCM、没有 AES 也没有 KDF；自建 PBKDF2 是必需而非可选 | §1.3 已把符号面钉死；B0 先跑 RFC 6070 向量再谈封装。**对外表述只写 128 位安全强度，不写成 AES-256**；SDK 将来提供 AES 或真实 KDF 时按信封头的算法标识换档，旧包仍可自描述解出 |
-| `SM4` 构造形态只有符号证据、没有运行证据 | B0 第①条：编译 + 回环 + 改一字节必失败；不通即 `secret-bundle` BLOCKED，`config` 包不受影响 |
+| 本栈没有 AES 也没有 KDF；自建 PBKDF2 是必需而非可选 | §1.3 已把符号面钉死；§15 已用 RFC 6070 向量 + Node `crypto` 外部对照面把 PBKDF2/HMAC 逐字节钉住。**对外表述只写 128 位安全强度，不写成 AES-256**；SDK 将来提供 AES 或真实 KDF 时按信封头的算法标识换档，旧包仍可自描述解出 |
+| ~~`SM4` 构造形态只有符号证据、没有运行证据~~ → **已闭合，且结论与符号面相反** | §15 实测：`CBC`/`CTR` 可用、`GCM` 四种参数组合全灭（含把 OpenSSL 3.5.4 钉进 exe 目录复现）。已据此把封装改成 ETM（§8.2），`secret-bundle` **不 BLOCKED** |
 | relay 需要真实服务端才存在，本地只能桩验证 | B0/B4 用受控桩证传输契约（含帧透传与取消），真实网关接入单独记「待运行验证」，不写成已达成 |
 | 供应商的额度重置时刻与限流语义各家不同 | 只采信供应商明确证据；无证据走阶梯并在页面标「恢复时刻为估算」 |
 | 账本与文档共用目录的写竞争 | 全部经 `WriteLease`；`bridge.test.mjs` 在仓库根用 `dualtest/`，异常残留先 `rm -rf dualtest` |
@@ -520,8 +526,54 @@
 
 对照 `docs/evidence/handoff-model-provider-2026-10-04.md` §4：`all` 由 77 → **100**，其余六个模式计数不变。
 
-### 14.1 三个取证陷阱（本批实测踩到，写下来免得再踩）
+### 14.1 四个取证陷阱（本批实测踩到，写下来免得再踩）
 
 1. **干净副本里 `cjpm build` 不会把 stdx DLL 拷到 exe 同目录**，而主仓 `apps/cli/target/release/bin/` 里有 37 颗（历史打包留下的）。直接跑副本产物会 `rc=127`、**stdout 空**，逐模式 `grep -c '^PASS'` 得 0——看着像「零断言通过」，其实进程根本没起来。真因要分开捕获：`> out 2> err` 才看得见 `error while loading shared libraries: libstdx.net.tls.dll`（把 stdx 目录加进 PATH 在这台机器上仍不生效，必须拷到 exe 同目录）。
 2. **CLI 各模式的输出形态不统一**：`all/stream/tool/ext/cancel/extjs/headless/sig` 用 `^PASS`/`^FAIL`，而 `seed`/`projection` 用 `ok\t<词>\t<数>` 形态。按 `^PASS` 计数会把这两个模式读成 0 条断言，等于漏分母。
 3. 颜色码会插在 token 中间（与 `cangjie-cjpm-test-result-verification` 记的同一类陷阱），计数前必须先剥 ANSI 再匹配。
+4. **`cjpm build ... | tail` 会把构建退出码换成 `tail` 的 0**，于是 `&& ./main.exe` 照跑**上一轮遗留的 exe**——B0 里就出现过一次「编译失败但运行输出看似新结论」（实际是旧二进制）。修法：先 `rm` 产物、构建重定向到日志文件、单独取 `$?` 判 rc，再决定是否运行；`rc != 0` 时打印 `NOT RUN`，绝不让运行发生在构建失败之后。
+
+## 15. B0 密码学探针实测记录（2026-10-05，结论已据此改写 §8.2）
+
+**方法**：一次性探针包 `target/b0/`（gitignore 产物目录，不进产品源码、不进 workspace），只用 `core/cjpm.toml` 同一条 `[target.*.bin-dependencies] path-option` 指向 `stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx`；`cjpm build` 通过后把该目录全部 `*.dll` 与探针 exe 同目录放置（§14.1 第 1 条），按 `^PASS`/`^FAIL` 计数。外部对照面两个：**Node `crypto`**（HMAC-SHA256 与 PBKDF2-HMAC-SHA256）和 **`openssl enc -sm4-ctr`**（密钥流）。工具链：cjc/cjpm 1.1.3（cjnative，x86_64-w64-mingw32）。
+
+**本轮总账：11 PASS / 4 FAIL**（4 条 FAIL 全部是同一条 `SM4-GCM` 路径的四个参数变体）。
+
+| # | 断言 | 实测 |
+| --- | --- | --- |
+| 1 | `SM4(OperationMode.CBC, 16B key, iv:16B)` 可构造可加密 | PASS，`enc=32`（明文 31 字节，SDK 按 PKCS7 补 1 块内字节） |
+| 2 | CBC 解密逐字节回到原文 | PASS |
+| 3 | `SM4(OperationMode.CTR, ...)` 可构造可加密 | PASS，`enc=31 == plain=31`（流式用法，实测不填充） |
+| 4 | CTR 解密逐字节回到原文 | PASS |
+| 5 | GCM `iv=12 + aad + tagSize=16` | **FAIL `Encrypt failed due to create tag error.`** |
+| 6 | GCM `iv=12 + 无 aad + tagSize=16` | **FAIL 同上** |
+| 7 | GCM `iv=16 + aad + tagSize=16` | **FAIL 同上** |
+| 8 | GCM `iv=12 + aad + tagSize=12` | **FAIL 同上** |
+| 9 | ETM 密文形态（`ct == plain`，`tag=32`） | PASS |
+| 10 | ETM 正确口令回环等价 | PASS |
+| 11 | ETM 改密文 1 字节 → 拒绝解包 | PASS |
+| 12 | ETM 改信封头（`secret-bundle`→`config`）→ 拒绝 | PASS |
+| 13 | ETM 错口令 → 拒绝 | PASS |
+| 14 | ETM 改 IV 1 字节 → 拒绝 | PASS |
+| 15 | `SecureRandom().nextBytes(Array<Byte>)` 产盐/IV | PASS |
+
+**GCM 失败归因（不是环境版本问题）**：
+
+- `openssl list -cipher-algorithms` 里 **`SM4-GCM @ default` 是存在的**（OID `1.2.156.10197.1.104.8`）；它只缺席于 `cipher-commands`（那是 CLI 子命令名单，不代表 provider 能力）——**先前据 `cipher-commands` 判「本机 OpenSSL 无 SM4-GCM」是取错了表**。
+- 本机同时存在两颗 `libcrypto-3-x64.dll`：`/mingw64/bin` 是 **OpenSSL 3.5.4**，`C:/Program Files/Huawei/BasicService` 是 **3.0.9**（低于文档要求的 3.2）。把 **3.5.4 复制进 exe 同目录**（Windows DLL 搜索序第一位，消除 PATH 歧义）后重跑，**四个 GCM 变体仍全部同一错误**。
+- → 结论：失败在 **stdx 1.1.3.1 的 GCM 调用路径**上（错误文案 `create tag` 指向取认证标签那一步），不是本机缺库、也不是参数取值。这条我们改不了，所以按 §8.2 换构造，而不是把 `secret-bundle` 挂成 BLOCKED。
+
+**逐字节对照值**（换机器或复核时可直接重放；盐=`16×0x07`、IV=`16×0x09`、口令 `migration-passphrase`、明文 `sk-upstream-secret-长度不定` 的 UTF-8 共 31 字节）：
+
+| 项 | 值 |
+| --- | --- |
+| HMAC-SHA256(`key`, `The quick brown fox...`) | `f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8` |
+| PBKDF2 c=2 dkLen=32（pass/salt） | `3e915a8b575707d72fe3dfd731e8fb5d050ac4922d31fd8bd05cd592df666e9e` |
+| PBKDF2 c=4096（password/salt） | `c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a` |
+| PBKDF2 c=1 dkLen=40（多块） | `051e945b44155846de9d879b8c062eee1f5fc6ef37e33c8a8ee0a770d45be8da441d1113172e4b85` |
+| 派生 encKey（上下文 `\|enc`，c=2） | `a29978a5494a4a948542f0f3efe32d58` |
+| 仓颉 SM4-CTR 密文 | `b1ebc0d73303e40c3fd93a36c5ca4d9074cf1e5fa6a067aa01ad089ec808ba` |
+| `openssl enc -sm4-ctr -K a299…d58 -iv 0909…09` | **与上一行逐字节一致**（独立实现复现） |
+| ETM 标签 HMAC-SHA256(macKey, header‖iv‖ct) | `31f73b01ecb866c3697674841a9d60c8091be0e1f225ffdd55d6adef5d0c36c5` |
+
+**尚未跑的 B0 余项**：③ 冷却/探测计时上的时钟注入形状（归 B2 开工前）、④ relay 的 SSE 与 usage 透传桩测（归 B4 开工前）。探针代码留在 gitignore 的 `target/b0/`，不进产品源码；`secret-bundle` 的正式实现要在 `core` 里按 §8.2 红先重写一遍，探针不构成防回归。
