@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,chmodSync} from 'node:fs';
@@ -11,7 +12,7 @@ const boot=async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-workspace-'));
   const project=join(dir,'中文 项目'); mkdirSync(project);
   writeFileSync(join(dir,'session.log'),'0\tuser/message\t任务\n');
-  const bridge=new HostBridge(host,process.env); await bridge.start(dir);
+  const bridge=new HostBridge(host, fixtureHostEnv(dir)); await bridge.start(dir);
   return {dir,project,bridge};
 };
 
@@ -41,14 +42,14 @@ test('项目目录持久恢复，真实相对文件工具写入所选目录，�
     await assert.rejects(()=>bridge.request('workspace/set-directory',{directory:join(project,'workspace.txt')}),/bad-workspace-directory/);
     assert.equal(readFileSync(join(dir,'session.log'),'utf8'),before);
   } finally {await bridge.stop();}
-  const fresh=new HostBridge(host,process.env); await fresh.start(dir);
+  const fresh=new HostBridge(host, fixtureHostEnv(dir)); await fresh.start(dir);
   try {assert.equal((await fresh.request('workspace/get')).configured,true);}
   finally {await fresh.stop();}
 });
 
 test('待审批工单与另一写者的租约禁止改变项目目录',async()=>{
   const {dir,project,bridge}=await boot();
-  const reader=new HostBridge(host,process.env); await reader.start(dir);
+  const reader=new HostBridge(host, fixtureHostEnv(dir)); await reader.start(dir);
   try {
     const ticket=await bridge.request('approval/ask',{name:'write'});
     await assert.rejects(()=>bridge.request('workspace/set-directory',{directory:project}),/session-resources-in-flight/);

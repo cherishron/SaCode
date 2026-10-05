@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ const host=process.env.DSH_HOST || resolve('dist/host/bin/dsh-host.exe');
 test('外观保存跨落盘屏障，重启恢复且不污染模型消息', async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-appearance-'));
   writeFileSync(join(dir,'session.log'),'0\tuser/message\t任务\n');
-  const first=new HostBridge(host,process.env);
+  const first=new HostBridge(host, fixtureHostEnv(dir));
   await first.start(dir);
   try {
     const handshake=await first.request('initialize');
@@ -28,7 +29,7 @@ test('外观保存跨落盘屏障，重启恢复且不污染模型消息', async
     assert.equal(projection.messages.length,1);
     assert.equal(projection.pending,0);
   } finally { await first.stop(); }
-  const second=new HostBridge(host,process.env);
+  const second=new HostBridge(host, fixtureHostEnv(dir));
   await second.start(dir);
   try { assert.equal((await second.request('appearance/get')).theme,'dark'); }
   finally { await second.stop(); }
@@ -37,7 +38,7 @@ test('外观保存跨落盘屏障，重启恢复且不污染模型消息', async
 test('另一写者持有租约时拒绝主题变更，不覆盖原日志', async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-appearance-lock-'));
   writeFileSync(join(dir,'session.log'),'0\tuser/message\t任务\n');
-  const writer=new HostBridge(host,process.env), reader=new HostBridge(host,process.env);
+  const writer=new HostBridge(host, fixtureHostEnv(dir)), reader=new HostBridge(host, fixtureHostEnv(dir));
   await writer.start(dir); await reader.start(dir);
   try {
     await writer.request('session/submit',{eventType:'user/message',data:'待保存'});

@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
@@ -21,7 +22,7 @@ test('会话目录读取落盘事实，隔离损坏日志并且不递归到目�
   writeFileSync(join(dir, 'sessions', 'parent', 'nested', 'session.log'), original);
   writeFileSync(join(outside, 'session.log'), '0\tuser/message\t目录外的私有消息\n');
   symlinkSync(outside, join(dir, 'sessions', 'outside'), process.platform==='win32' ? 'junction' : 'dir');
-  const bridge = new HostBridge(host, process.env);
+  const bridge = new HostBridge(host, fixtureHostEnv(dir));
   await bridge.start(dir);
   try {
     assert.ok((await bridge.request('initialize')).capabilities.includes('session/catalog'));
@@ -43,7 +44,7 @@ test('会话目录读取落盘事实，隔离损坏日志并且不递归到目�
 
 test('全新目录不由只读清单创建会话', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sacode-catalog-empty-'));
-  const bridge = new HostBridge(host, process.env);
+  const bridge = new HostBridge(host, fixtureHostEnv(dir));
   await bridge.start(dir);
   try { assert.deepEqual((await bridge.request('session/catalog')).entries, []); }
   finally { await bridge.stop(); }

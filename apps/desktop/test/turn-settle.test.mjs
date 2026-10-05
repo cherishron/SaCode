@@ -1,3 +1,4 @@
+import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 // 桌面入口的「助手回复跨进程回放」验收（矩阵 71 conversation 的数据面前提）。
 // 单独成文件而不加进 bridge.test.mjs，是因为那个文件里同时躺着另一路会话未落库的改动。
 // 这里钉的是：turn 干净收束后，助手正文必须由核心落进 session.log，
@@ -22,7 +23,7 @@ async function bootFresh(tag) {
   if (!existsSync(HOST)) {
     throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
   }
-  const b = new HostBridge(HOST, process.env);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
