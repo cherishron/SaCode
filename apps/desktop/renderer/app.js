@@ -460,6 +460,8 @@ createApp({
         "enhance-max-tokens": "改写被截断了，半截话不能替换你的草稿。",
         "enhance-unexpected-tool": "模型试图执行操作，这次增强已作废，草稿保持原样。",
         "provider-init-failed": "连不上模型，草稿已保留，可以再试一次。",
+        "http-request-error": "连不上模型，草稿已保留，可以再试一次。",
+        "http-status": "模型拒绝了这次请求（常见于密钥或模型名不对），草稿已保留。",
         "timeout": "模型响应超时，草稿已保留，可以再试一次。",
         "enhance-in-flight": "上一条增强还在进行，请先取消它。",
       };
@@ -488,7 +490,9 @@ createApp({
         enhance.value = { busy: false, undo: false };
         return;
       }
-      updateDraft(text);
+      if (!window.SaCodeComposerEdit.replace(document.getElementById("composer"),text)) {
+        enhance.value={busy:false,undo:false};error.value="输入框无法建立撤销记录，草稿已保留。";return;
+      }
       enhanceUndo = { text: frozen.original };
       enhance.value = { busy: false, undo: true };
       error.value = "";
@@ -531,7 +535,7 @@ createApp({
       const original = enhanceUndo.text;
       enhanceUndo = null;
       enhance.value = { busy: false, undo: false };
-      updateDraft(original);
+      if (!window.SaCodeComposerEdit.undo(document.getElementById("composer"),original)) updateDraft(original);
       focusComposerCaret();
     }
     function clickEnhance() {
@@ -618,7 +622,7 @@ createApp({
       queuePending.value = queuePending.value.concat([{ requestId, placement: "queued", text, attachments: [] }]);
       try {
         await window.dsh.queueEnqueue(text, requestId, receipts);
-        if (draftRevision === revision) draft.value = "";
+        if (draftRevision === revision) { clearEnhance(); updateDraft(""); }
         clearAttachments();
         await refreshQueue();
       } catch (e) {
@@ -747,7 +751,7 @@ createApp({
         acknowledged=true;
         sendBusy.value=false;
         // 核心确认成功后才清空；在途请求不能覆盖用户随后编辑的新草稿。
-        if(draftRevision===revision) draft.value="";
+        if(draftRevision===revision) { clearEnhance(); updateDraft(""); }
         clearAttachments();
         await refresh();
         await refreshCatalog();

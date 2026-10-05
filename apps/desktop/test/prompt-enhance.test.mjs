@@ -150,6 +150,28 @@ test("增强用量进同一份 token 账", async () => {
   }
 });
 
+test("不轮询也结算增强，换会话不串账，重新启动仍保留用量", async () => {
+  const fixture = await startFixture();
+  const paths = freshDir("enh-no-poll");
+  const env = hostEnv(paths, { DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`, DSH_PROVIDER_MODEL: "fixture-model" });
+  let b = new HostBridge(HOST, env);
+  await b.start(paths.dir);
+  try {
+    await b.request("prompt/enhance", { draft: "第一笔" });
+    await nap(300);
+    const other = await b.request("session/create", { title: "另一会话" });
+    await b.request("session/select", { sessionId: other.id });
+    assert.equal((await b.request("usage/status")).used, 0, "原会话费用不能进入新会话");
+    await b.request("session/select", { sessionId: "current" });
+    assert.equal((await b.request("usage/status")).used, 22, "没有 prompt/poll 也不能丢账");
+    await b.request("prompt/enhance", { draft: "关闭前第二笔" });
+    await nap(300);
+    await b.stop();
+    b = new HostBridge(HOST, env); await b.start(paths.dir);
+    assert.equal((await b.request("usage/status")).used, 44, "关闭窗口也要结算增强");
+  } finally { await b.stop(); stopFixture(fixture.proc); }
+});
+
 test("空白草稿被拒，不发出任何模型请求", async () => {
   const paths = freshDir("enhblank");
   const b = new HostBridge(HOST, hostEnv(paths, {

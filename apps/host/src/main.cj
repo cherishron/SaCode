@@ -544,7 +544,8 @@ main(args: Array<String>) {
     var enhanceHandle: Option<EnhanceHandle> = None
     var enhanceModel = ""
     // 同一笔用量只能进账一次；租约取不到时保持 false，让下一次轮询补记。
-    var enhanceBilled = false
+    var enhanceCharge: Option<EnhanceCharge> = None
+    let enhanceCharges = ArrayList<EnhanceCharge>()
     while (true) {
         var body = ""
         var eof = false
@@ -569,6 +570,11 @@ main(args: Array<String>) {
         if (!valid) {
             emit(errFrame("null", -32700, "parse error"))
             continue
+        }
+        var chargeIndex = Int64(enhanceCharges.size) - 1
+        while (chargeIndex >= 0) {
+            if (enhanceCharges[chargeIndex].settle()) { enhanceCharges.remove(at: chargeIndex) }
+            chargeIndex -= 1
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
@@ -1394,7 +1400,10 @@ main(args: Array<String>) {
             let factory: () -> Provider = { => RealSseProvider(baseUrl, enhanceKey, request, tk) }
             enhanceHandle = Some(EnhanceRunner().start(factory, tk))
             enhanceModel = model
-            enhanceBilled = false
+            if (let Some(h) <- enhanceHandle) {
+                let charge = EnhanceCharge(h, shared, meter, lease)
+                enhanceCharge = Some(charge); enhanceCharges.add(charge)
+            }
             emit(okFrame(idText, "{\"started\":true,\"model\":\"${jsonEscapeText(model)}\"}"))
             continue
         }
@@ -1416,24 +1425,7 @@ main(args: Array<String>) {
                     // 增强花的 token 和轮次花的是同一份预算，所以记在同一本账上；
                     // 但轮询是幂等读，同一笔只能进账一次。
                     var verdict = "absent"
-                    if (enhanceBilled) {
-                        verdict = meter.verdict()
-                    } else if (o.usage.size > 0 || o.finishReason.size > 0) {
-                        var held = leaseHeld
-                        if (!held) {
-                            // 账本归租约持有者写：抢不到就这一笔先不记，留给下一次轮询补，
-                            // 绝不另开一份内存计数冒充账。
-                            if (lease.takeoverIfStale()) {
-                                if (loadForWrite(shared, meter)) { held = true; leaseHeld = true } else { lease.release() }
-                            }
-                        }
-                        if (held) {
-                            verdict = meter.record(o.usage)
-                            enhanceBilled = true
-                        } else {
-                            verdict = "lease-busy"
-                        }
-                    }
+                    if (let Some(charge) <- enhanceCharge) { charge.settle(); verdict = charge.verdict }
                     let oFlag = if (meter.over()) { "true" } else { "false" }
                     tail = ",\"model\":\"${jsonEscapeText(enhanceModel)}\",\"ok\":${okText},\"cancelled\":${cancelText},\"error\":\"${jsonEscapeText(o.error)}\",\"text\":\"${jsonEscapeText(o.text)}\",\"usage\":\"${jsonEscapeText(o.usage)}\",\"finishReason\":\"${jsonEscapeText(o.finishReason)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                 }
@@ -1511,7 +1503,7 @@ main(args: Array<String>) {
             }
             enhanceHandle = None
             enhanceModel = ""
-            enhanceBilled = false
+            enhanceCharge = None
             let wanted = jsonStr(body, "sessionId")
             // 未完成审批与扩展调用仍归原会话；必须由用户先结算，不能默默丢掉。
             if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
@@ -1795,6 +1787,10 @@ main(args: Array<String>) {
             continue
         }
         emit(errFrame(idText, -32601, "method not found"))
+    }
+    for (charge in enhanceCharges) {
+        charge.handle.cancel(); charge.handle.result()
+        if (!charge.settle()) { getStdErr().writeln("host-exit-enhance-usage: ${charge.verdict}") }
     }
     // stdin 关闭时若仍有在途 turn：先取消再 join，绝不留一个「没人回答的在途请求」，
     // 且必须在线程收束之后才落盘与归还租约。

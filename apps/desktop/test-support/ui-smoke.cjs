@@ -785,6 +785,18 @@ async function uiSmoke(context) {
     note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "改动增强后的文本，图标立即恢复为增强");
     note(await enhHijack() === false, "继续编辑后 Ctrl+Z 交回输入框自身的撤销顺序，应用不劫持");
 
+    // 实际编辑与原生键盘必须验结果；合成 keydown 的 defaultPrevented 不证明撤销栈。
+    await setDraftForSize(enhDraft);
+    await click("#composer-enhance");
+    await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'"));
+    await js("(()=>{const n=document.querySelector('#composer');n.focus();n.setSelectionRange(n.value.length,n.value.length);})()");
+    await win.webContents.insertText("用户补充");
+    note(await waitFor(()=>enhValue().then(v=>v===enhEcho+"用户补充")), "增强之后真实输入保留新编辑");
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Z',modifiers:['control']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Z',modifiers:['control']});
+    note(await waitFor(()=>enhValue().then(v=>v===enhEcho)), "真实 Ctrl+Z 首先撤销用户补充，不跳回原文");
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Z',modifiers:['control']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Z',modifiers:['control']});
+    note(await waitFor(()=>enhValue().then(v=>v===enhDraft)), "第二次真实 Ctrl+Z 才撤销增强替换");
+
     // 迟到的结果不得覆盖：请求途中改草稿（哪怕改回同一行），返回后也必须作废
     await enhConfigure("/cancel");
     await setDraftForSize("这一条要被取消");
@@ -808,6 +820,24 @@ async function uiSmoke(context) {
     // 上一笔走的是「加载态再点一次即取消」：取消只是发请求，宿主那一槽要等它自己结算才腾出来。
     // 不等就立刻再发，撞上的 -32001 会被读成「图标没进加载态」——那是夹具时序红，不是产品红。
     note(await waitFor(() => bridge.request("prompt/poll").then((r) => r.running === false), 80), "取消结算后宿主槽位已腾出，才发下一笔");
+    // 失败路径也得在真窗口里走一遍：连不上不该吃掉草稿，也不该把图标钉在加载态。
+    await bridge.request("model/configure", { baseUrl: "http://127.0.0.1:1/enhance", model: "fixture-model", credentialRef: "SACODEENHKEY" });
+    await setDraftForSize("连不上也要留着的一条");
+    await click("#composer-enhance");
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'"), 200), "模型连不上时图标退回增强态，允许再试");
+    const failNotice = await text("#error");
+    note(await enhValue() === "连不上也要留着的一条", `失败保留草稿（界面提示 ${JSON.stringify(failNotice)}）`);
+    note(failNotice.length > 0 && !failNotice.includes("http-"), `失败给出人话提示而不是裸协议串（实际 ${JSON.stringify(failNotice)}）`);
+    // 连不上是一类，模型回非 200 是另一类（密钥填错最常落到 401）：两种都不许把状态码甩给用户。
+    await enhConfigure("/401");
+    await setDraftForSize("被拒也要留着的一条");
+    await click("#composer-enhance");
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'"), 200), "模型返回 401 时图标退回增强态，允许再试");
+    const statusNotice = await text("#error");
+    note(await enhValue() === "被拒也要留着的一条", `401 保留草稿（界面提示 ${JSON.stringify(statusNotice)}）`);
+    note(statusNotice.length > 0 && !statusNotice.includes("http-status"), `401 给出人话提示而不是状态码（实际 ${JSON.stringify(statusNotice)}）`);
+    await enhConfigure("/enhance");
+    await js("(() => { const e=document.getElementById('error'); if (e) e.textContent=''; })()");
     // 换会话也要作废在途那一笔（目标 §四「切换会话…废弃对应的迟到结果」）。
     // 三条各钉一个失效面：迟到结果不许落进别的会话草稿、图标不许卡在加载态、宿主那一槽必须腾出来。
     await enhConfigure("/cancel");
