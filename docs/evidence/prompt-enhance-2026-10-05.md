@@ -48,7 +48,7 @@
 | 打包态协议面 | `win-unpacked/SaCode.exe --smoke` rc=0 `SMOKE PASS`，其 `initialize` 回执 capabilities 内已列出 `prompt/enhance`、`prompt/poll`、`prompt/cancel` |
 | 签名 | 未签名（`signExecutable:false` 仍是显式配置），本轮未改 |
 
-## 四、这轮踩到并留下的三条现场事实
+## 四、这轮踩到并留下的四条现场事实
 
 1. **装包态控制台不接管道。** `win-unpacked/SaCode.exe` 是 GUI 子系统程序，不带 `ELECTRON_ENABLE_LOGGING=1` 时
    stdout 一行也拿不到（`rc=0` + 空输出跟「跑得很慢」长得一模一样）。打包态取证只认两样：
@@ -71,7 +71,7 @@
    但不能对外说「变异反证已闭」。同一次变异跑里 `取消目录选择保留原目录` 也变红了，
    与后续干净跑（du5/pu5）对照确认那是那条用例自身的间歇性，不是变异带来的。
 
-## 五、桌面聚合套件（`cd apps/desktop && npm test`）本次读数与归因
+## 五、桌面聚合套件（`cd apps/desktop && npm test`）读数与归因（工作区态，12:27 前后那次；此后隔壁又提交了 goal 六个通道，冒烟里那份登记表本批已跟上）
 
 `# tests 169` `# pass 164` `# fail 5`（rc=1）。这 5 条逐条：
 
