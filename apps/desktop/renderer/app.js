@@ -128,9 +128,11 @@ const TEXT_MATCH = {
   renderer: window.Vue.markRaw(TextBubble),
   priority: 0,
 };
+const CLIENT_VIEWS = window.SaCodeSlots.createConversationAssembly();
 
 createApp({
   setup() {
+    window.Vue.onBeforeUnmount(() => CLIENT_VIEWS.dispose());
     const proj = ref({ projection: 0, events: 0, durable: 0, pending: 0, truncatedTail: false, messages: [] });
     const scrollSession = ref(0), followingTail = ref(true);
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
@@ -1399,7 +1401,7 @@ createApp({
       style:{left:left+'px'},onPointerdown:e=>self.beginFrameResize(name,e),onKeydown:e=>self.resizeFrameKey(name,e)});
     const main = el('section','pane conversation',[
       withDirectives(el('div','conversation-scroll',[
-        transcript,
+        h(CLIENT_VIEWS.Outlet, { owner: { transcript, activeView: 'chat' }, sessionId: self.scrollSession && self.scrollSession !== 'initial' ? String(self.scrollSession) : undefined }),
         el('div','composer-seat',[composer],{'data-composer-seat':''}),
       ]),[[window.SaCodeConversationScroll.directive,{
         session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
