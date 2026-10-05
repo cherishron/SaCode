@@ -36,6 +36,7 @@ test("握手声明协议与能力", async () => {
   assert.equal(r.protocolVersion, "0.1");
   assert.ok(r.capabilities.includes("session/projection"));
   assert.ok(r.capabilities.includes("attachment/image-read"));
+  for (const action of ['describe', 'create', 'edit', 'pause', 'resume', 'clear']) assert.ok(r.capabilities.includes('goal/' + action));
   assert.ok(r.capabilities.includes("session/catalog"));
   assert.ok(r.capabilities.includes("session/create"));
   assert.ok(r.capabilities.includes("session/select"));

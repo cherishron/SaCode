@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld("dsh", {
   // 渲染层既拿不到宿主路径，也没通路自报「我上传过这个 id」。
   attachmentUpload: (kind, name, mediaType, data) => ipcRenderer.invoke("dsh:attachmentUpload", { kind, name, mediaType, data }),
   attachmentImageRead: (sessionId, attachmentId) => ipcRenderer.invoke("dsh:attachmentImageRead", { sessionId, attachmentId }),
+  goalDescribe: (sessionId) => ipcRenderer.invoke("dsh:goalDescribe", { sessionId }),
+  goalCreate: (sessionId, objective) => ipcRenderer.invoke("dsh:goalCreate", { sessionId, objective }),
+  goalEdit: (sessionId, revision, objective) => ipcRenderer.invoke("dsh:goalEdit", { sessionId, revision, objective }),
+  goalPause: (sessionId, revision) => ipcRenderer.invoke("dsh:goalPause", { sessionId, revision }),
+  goalResume: (sessionId, revision) => ipcRenderer.invoke("dsh:goalResume", { sessionId, revision }),
+  goalClear: (sessionId, revision) => ipcRenderer.invoke("dsh:goalClear", { sessionId, revision }),
   toolsList: () => ipcRenderer.invoke("dsh:toolsList"),
   toolCall: (name, args, approvalId) => ipcRenderer.invoke("dsh:toolCall", { name, args, approvalId }),
   approvalAsk: (name) => ipcRenderer.invoke("dsh:approvalAsk", { name }),

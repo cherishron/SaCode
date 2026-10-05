@@ -129,6 +129,21 @@ ipcMain.handle("dsh:attachmentUpload", async (_e, args) => {
 
 ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
 
+// 固定目标动作；完成只由执行证据通道决定，不向网页开放 goalComplete。
+function goalArguments(args, fields) {
+  if (!args || Object.keys(args).some(key => !fields.includes(key))
+    || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length > 300
+    || (fields.includes('revision') && (!Number.isSafeInteger(args.revision) || args.revision < 1))
+    || (fields.includes('objective') && (!isStr(args.objective) || !args.objective.trim() || args.objective.length > 8000))) throw Error('bad arguments');
+  return Object.fromEntries(fields.map(key => [key, args[key]]));
+}
+ipcMain.handle('dsh:goalDescribe', async (_e, args) => { const params = goalArguments(args, ['sessionId']); return withHost(() => bridge.request('goal/describe', params)); });
+ipcMain.handle('dsh:goalCreate', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'objective']); return withHost(() => bridge.request('goal/create', params)); });
+ipcMain.handle('dsh:goalEdit', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision', 'objective']); return withHost(() => bridge.request('goal/edit', params)); });
+ipcMain.handle('dsh:goalPause', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/pause', params)); });
+ipcMain.handle('dsh:goalResume', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/resume', params)); });
+ipcMain.handle('dsh:goalClear', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/clear', params)); });
+
 ipcMain.handle("dsh:attachmentImageRead", async (_e, args) => {
   if (!args || Object.keys(args).some(key => key !== 'sessionId' && key !== 'attachmentId')
     || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length > 300

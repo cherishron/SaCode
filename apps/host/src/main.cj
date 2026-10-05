@@ -263,7 +263,7 @@ func allowedDuringTurn(method: String): Bool {
     // 不会放宽任何放行条件，反而能让正在跑的这一轮更早被拦。
     let meterSide = method == "usage/status" || method == "usage/set-budget"
     // 运行中排队与改队列正是在途期间要做的事，拦掉等于这个面板没法用
-    return turnSide || readSide || callSide || approvalSide || meterSide || isQueueMethod(method)
+    return turnSide || readSide || callSide || approvalSide || meterSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method)
 }
 
 // 队列读写都是「按动作命名」的有限方法：界面说不出任意一条路径，也拿不到通用转发。
@@ -617,7 +617,38 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            continue
+        }
+        if (method == "goal/describe" || isGoalControlMethod(method)) {
+            // 会话身份必须随动作绑定；迟到控制不能编辑切换后的另一会话。
+            if (jsonStr(body, "sessionId") != activeId) { emit(errFrame(idText, -32025, "goal-session-changed")); continue }
+            if (method == "goal/describe") {
+                try {
+                    var source = shared
+                    if (!leaseHeld) {
+                        source = SessionLog(p)
+                        if (!source.load()) { throw Exception("replay-rejected") }
+                    }
+                    emit(okFrame(idText, goalProjectionJson(source)))
+                } catch (e: Exception) { emit(errFrame(idText, -32025, e.message)) }
+                continue
+            }
+            let hadLease = leaseHeld
+            if (!hadLease) {
+                if (!lease.takeoverIfStale()) { emit(errFrame(idText, -32001, "already-owned")); continue }
+                if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                leaseHeld = true
+            }
+            try {
+                let result = controlGoalJson(shared, method, jsonNum(body, "revision"), jsonStr(body, "objective"))
+                if (!shared.flush()) { throw Exception("goal-flush-failed") }
+                if (!hadLease) { lease.release(); leaseHeld = false }
+                emit(okFrame(idText, result))
+            } catch (e: Exception) {
+                if (!hadLease && shared.flush()) { lease.release(); leaseHeld = false }
+                emit(errFrame(idText, -32025, e.message))
+            }
             continue
         }
         if (method == "attachment/image-read") {
@@ -1194,7 +1225,7 @@ main(args: Array<String>) {
                     let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: [TodoTool(shared, false).spec()], attachStore: turnAtt, supportsImages: imageCapability)
                     // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
                     let turnKey = key
-                    let real = RealSseProvider(baseUrl, turnKey, reqBody, tk)
+                    let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)
                     let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }
                     turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: imageCapability))
                     providerKind = "real"

@@ -3,6 +3,12 @@ package core
 import std.time.MonoTime
 import std.convert.*
 
+class GoalRoundTotals {
+    var rounds: Int64 = 0
+    var elapsed: Int64 = 0
+    var streak: Int64 = 0
+}
+
 // 持续目标调度器：把「一轮模型工具循环结束 → 是否已达目标 → 未达且允许就续下一轮」
 // 的决策收进共享核心，桌面与 CLI 共用同一份判据，前端只展示与提交控制、不决定目标是否完成。
 //
@@ -12,7 +18,7 @@ import std.convert.*
 //   3. 完成必须有证据，且基于陈旧修订的完成被拒（复用 GoalService 的 CAS），旧目标的结论完成不了新目标。
 //
 // 执行时长按「每轮各自落一条自身时长」累加，而不是存原始时钟读数：单调钟跨进程不可比，
-// 但差值（本轮跑了多久）可跨重启求和。暂停与审批等待天然不计——只有真正结束的轮次才落事件。
+// 但差值（本轮跑了多久）可跨重启求和。轮次间暂停不计；轮内网络/工具等待包含在时长里。
 
 // 一轮的调度结论：要不要继续，以及停下时为什么。
 public class GoalDecision {
@@ -35,6 +41,7 @@ public class GoalScheduler {
     let clock: () -> Int64
     // 当前这轮的起始刻度；-1 表示没有进行中的轮次。
     var roundStart: Int64 = -1
+    var roundRevision: Int64 = 0
 
     public init(log: SessionLog, clock: () -> Int64) {
         this.log = log
@@ -49,6 +56,7 @@ public class GoalScheduler {
 
     public func beginRound(): Unit {
         roundStart = clock()
+        roundRevision = GoalService(log).snapshot().revision
     }
 
     // 收束一轮：没有 beginRound 就拒（不谎记一轮），非正时长也拒。
@@ -60,41 +68,37 @@ public class GoalScheduler {
         if (elapsed < 0) {
             throw Exception("bad-goal-round")
         }
-        log.append("goal/round", GoalScheduler.roundData(elapsed, progressed))
+        log.append("goal/round", "${GoalScheduler.roundData(elapsed, progressed)}|${roundRevision}")
         roundStart = -1
     }
 
-    // 已完成轮次 = goal/round 事件条数。普通循环直扫，不用会捕获可变局部变量的闭包。
-    public func roundsDone(): Int64 {
-        var n = Int64(0)
-        for (ev in log.snapshotEvents()) {
-            if (ev.eventType == "goal/round") {
-                n += 1
-            }
-        }
-        return n
-    }
+// 当前目标已完成轮次；新目标重置，目标内编辑/暂停/恢复保留已有计量。
+    public func roundsDone(): Int64 { return totals().rounds }
 
     // 累计执行时长 = 各轮自身时长之和。
-    public func elapsedSeconds(): Int64 {
-        var sum = Int64(0)
-        for (ev in log.snapshotEvents()) {
-            if (ev.eventType != "goal/round") {
-                continue
-            }
-            let fields = ev.data.split("|")
-            if (fields.size < 2) {
-                continue
-            }
-            sum += Int64.parse(fields[0])
-        }
-        return sum
-    }
+    public func elapsedSeconds(): Int64 { return totals().elapsed }
 
     // 从最后一条往前顺序扫，连续「无进展」的轮数；一旦有进展即清零（防无限空转的判据）。
-    public func noProgressStreak(): Int64 {
-        var streak = Int64(0)
+    public func noProgressStreak(): Int64 { return totals().streak }
+
+    // 新目标从 none/complete 建立时重新计量，编辑/暂停/恢复沿用原目标。
+    // 新格式携带开轮修订，旧轮迟到的结算不能记到替代目标；兼容两字段旧日志。
+    private func totals(): GoalRoundTotals {
+        let result = GoalRoundTotals()
+        var phase = "none"
+        var revision = Int64(0)
+        var firstRevision = Int64(0)
         for (ev in log.snapshotEvents()) {
+            if (ev.eventType == "goal/change") {
+                revision += 1
+                let nextPhase = ev.data.split("|")[0]
+                if (nextPhase == "active" && (phase == "none" || phase == "complete")) {
+                    firstRevision = revision
+                    result.rounds = 0; result.elapsed = 0; result.streak = 0
+                }
+                phase = nextPhase
+                continue
+            }
             if (ev.eventType != "goal/round") {
                 continue
             }
@@ -102,13 +106,16 @@ public class GoalScheduler {
             if (fields.size < 2) {
                 continue
             }
+            if (fields.size >= 3 && Int64.parse(fields[2]) < firstRevision) { continue }
+            result.rounds += 1
+            result.elapsed += Int64.parse(fields[0])
             if (fields[1] == "1") {
-                streak = Int64(0)
+                result.streak = 0
             } else {
-                streak += 1
+                result.streak += 1
             }
         }
-        return streak
+        return result
     }
 
     // 纯读决策：不落事件。命中任一停止条件即停，理由互斥且有序。

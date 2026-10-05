@@ -1,4 +1,5 @@
 package core
+import std.sync.*
 
 // Goal 快照：与上游 `GoalSnapshot extends GoalRef` 一致——id 是 `goal-<n>`、
 // revision 是 CAS 值、phase 四态之一；本切片单 goal 场景 id 固定 `goal-1`，
@@ -21,6 +22,7 @@ public class GoalSnapshot {
 // Goal 服务：每次变更都是 `goal/change` log-only 会话事件（不进 isSurfaceEvent 白名单）；
 // 载荷为完整快照或 clear 墓碑。CAS：每次变更必须携带期望的旧 revision，
 // 不匹配即抛且不落事件（日志不谎称改过）。
+// 检查与追加共用会话锁，避免协议线程和执行线程同时用同一修订写入。
 //
 // 事件编码：`<phase>|<objective>|<blockedReason>`。objective / blockedReason 含 `|`
 // 在写入处被拒（`bad-goal-content`），不是只当作约定；放开该限制需换长度前缀编码。
@@ -77,46 +79,60 @@ public class GoalService {
 
     // 建立：仅当当前没有 active/paused/blocked 目标时可创建；complete 与 none 都放行。
     public func create(objective: String): GoalSnapshot {
-        let current = snapshot()
-        if (current.phase == "active" || current.phase == "paused" || current.phase == "blocked") {
-            throw Exception("goal-already-exists")
+        return synchronized(log.mtx) {
+            let current = snapshot()
+            if (current.phase == "active" || current.phase == "paused" || current.phase == "blocked") {
+                throw Exception("goal-already-exists")
+            }
+            log.append("goal/change", GoalService.encode("active", objective, ""))
+            GoalSnapshot("goal-1", current.revision + 1, "active", objective, "")
         }
-        log.append("goal/change", GoalService.encode("active", objective, ""))
-        return GoalSnapshot("goal-1", current.revision + 1, "active", objective, "")
     }
 
     public func edit(expected: Int64, objective: String): GoalSnapshot {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode(current.phase, objective, current.blockedReason))
-        return GoalSnapshot(current.id, current.revision + 1, current.phase, objective, current.blockedReason)
+        return synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode(current.phase, objective, current.blockedReason))
+            GoalSnapshot(current.id, current.revision + 1, current.phase, objective, current.blockedReason)
+        }
     }
 
     public func pause(expected: Int64): GoalSnapshot {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode("paused", current.objective, ""))
-        return GoalSnapshot(current.id, current.revision + 1, "paused", current.objective, "")
+        return synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode("paused", current.objective, ""))
+            GoalSnapshot(current.id, current.revision + 1, "paused", current.objective, "")
+        }
     }
 
     public func resume(expected: Int64): GoalSnapshot {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode("active", current.objective, ""))
-        return GoalSnapshot(current.id, current.revision + 1, "active", current.objective, "")
+        return synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode("active", current.objective, ""))
+            GoalSnapshot(current.id, current.revision + 1, "active", current.objective, "")
+        }
     }
 
     public func complete(expected: Int64): GoalSnapshot {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode("complete", current.objective, ""))
-        return GoalSnapshot(current.id, current.revision + 1, "complete", current.objective, "")
+        return synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode("complete", current.objective, ""))
+            GoalSnapshot(current.id, current.revision + 1, "complete", current.objective, "")
+        }
     }
 
     public func block(expected: Int64, reason: String): GoalSnapshot {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode("blocked", current.objective, reason))
-        return GoalSnapshot(current.id, current.revision + 1, "blocked", current.objective, reason)
+        return synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode("blocked", current.objective, reason))
+            GoalSnapshot(current.id, current.revision + 1, "blocked", current.objective, reason)
+        }
     }
 
     public func clear(expected: Int64): Unit {
-        let current = cas(expected)
-        log.append("goal/change", GoalService.encode("none", "", ""))
+        synchronized(log.mtx) {
+            let current = cas(expected)
+            log.append("goal/change", GoalService.encode("none", "", ""))
+        }
     }
 }

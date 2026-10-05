@@ -53,7 +53,7 @@ test('排队条目由核心铸造 id，同一次提交不会重复入列', async
     assert.equal(echo.deduped, true, '同一 rpcId 的回声接受但不复制');
     const view = await bridge.request('queue/describe');
     assert.equal(view.nextTurn.length, 1);
-    assert.deepEqual(view.nextTurn[0], { id: first.id, text: '排队的第一条', rpcId: 'rpc-1' });
+    assert.deepEqual(view.nextTurn[0], { id: first.id, text: '排队的第一条', rpcId: 'rpc-1', attachments: [] });
     assert.equal(view.nextStep.length, 0);
     assert.equal(view.running, false);
   } finally {
