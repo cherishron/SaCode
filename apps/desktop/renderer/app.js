@@ -460,7 +460,7 @@ createApp({
       let view;
       try { view = await window.dsh.queueDescribe(); } catch (e) { return; }
       if (generation!==sessionGeneration) return;
-      queueRows.value = (view.nextTurn || []).map((r) => ({ id: r.id, content: [{ type: "text", text: r.text }], source: { kind: "user", rpcId: r.rpcId } }));
+      queueRows.value = (view.nextTurn || []).map(window.SaCodeQueue.projectQueueRow);
       const admitted = new Set(queueRows.value.map((r) => r.source.rpcId));
       queuePending.value = queuePending.value.filter((p) => !admitted.has(p.requestId));
     }

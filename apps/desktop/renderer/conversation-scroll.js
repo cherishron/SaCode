@@ -52,6 +52,9 @@
       const m=metrics();
       // 布局补偿的 scroll 事件不算读者移动；底部扩容也不释放跟随意图。
       if(Math.abs(m.top-landed)<=.5) return;
+      // 先收缩再展开可让自动 scroll 晚于新布局到达；待执行定位期间保留跟随意图。
+      // 真正的滚轮/触摸/指针/键盘操作先经 intent 撤掉 frame，因此仍会进入下方阅读分支。
+      if(following && frame) return;
       following=m.floor-m.top<=threshold;
       landed=m.top; position=following ? null : capture();
       remember(); publish();

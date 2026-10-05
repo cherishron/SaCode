@@ -4,9 +4,14 @@ import {defineComponent,h,ref,computed,watch,nextTick,onMounted,onBeforeUnmount,
 import {projectUserText} from './user-text';
 export {projectUserText} from './user-text';
 export type AttachmentRef={attachmentId:string;name:string;bytes:number};
+export type QueueProjectionRow={id:string;text:string;rpcId:string;attachments?:ReadonlyArray<AttachmentRef&{kind:'image'|'file'}>};
 export type Block={type:string;text?:string;attachment?:AttachmentRef};
 export type QueueRow={id:string;content:Block[];source?:{kind:string;rpcId?:string}};
 export type Pending={requestId:string;placement:'queued'|'transcript';text:string;attachments:({type:'image';previewUrl:string}|{type:'file';attachment:AttachmentRef})[]};
+// Host 引用保留顺序和元数据，正文与附件不能在适配时被静默丢掉。
+export function projectQueueRow(row:QueueProjectionRow):QueueRow {
+  return {id:row.id,content:[...(row.attachments||[]).map(attachment=>({type:attachment.kind,attachment:{...attachment,name:attachment.name||(attachment.kind==='image'?'图片附件':'文件附件')}})),{type:'text',text:row.text}],source:{kind:'user',rpcId:row.rpcId}};
+}
 export type QueueAction={kind:'remove'|'steer'}|{kind:'edit';content:Block[]};
 export const previewOf=(content:Block[])=>{const flat=content.filter(b=>b.type!=='image'&&b.type!=='file').map(b=>b.type==='text'?b.text||'':`[${b.type}]`).join(' ').replace(/\s+/g,' ').trim();const chars=Array.from(flat);return chars.length>200?chars.slice(0,200).join('')+'…':flat;};
 const textOf=(content:Block[])=>content.every(b=>b.type==='text')?content.map(b=>b.text||'').join(''):null;
@@ -17,7 +22,7 @@ const glyphs={edit:'M4 16l12-12 4 4L8 20H4z',remove:'M4 6h16M9 6V3h6v3M6 6l1 15h
 let nextDock=0;
 const Thumb=defineComponent({props:{attachment:{type:Object as PropType<AttachmentRef>,required:true},loadImage:Function as PropType<(a:AttachmentRef)=>Promise<string>>},setup(props){const url=ref<string|null>(null);let serial=0;
   watch(()=>[props.attachment,props.loadImage],async()=>{const ticket=++serial;url.value=null;if(!props.loadImage)return;try{const loaded=await props.loadImage(props.attachment);if(ticket===serial)url.value=loaded;}catch{}},{immediate:true});
-  onBeforeUnmount(()=>{serial++;});return()=>url.value?h('img',{class:'queue-thumb',src:url.value,alt:'排队图片'}):el('span','thumb',null,{'aria-hidden':true});
+  onBeforeUnmount(()=>{serial++;});return()=>url.value?h('img',{class:'queue-thumb',src:url.value,alt:'排队图片'}):el('span','thumb',icon('M3 3h18v18H3zM3 16l6-6 4 4 3-3 5 5'),{role:'img','aria-label':'排队图片 '+props.attachment.name,title:props.attachment.name});
 }});
 const Editor=defineComponent({props:{text:{type:String,required:true},busy:Boolean},emits:['change','save','cancel'],setup(props,{emit}){const node=ref<HTMLTextAreaElement|null>(null);
   const fit=async()=>{await nextTick();const n=node.value;if(n){n.style.height='auto';n.style.height=(n.scrollHeight+n.offsetHeight-n.clientHeight)+'px';}};

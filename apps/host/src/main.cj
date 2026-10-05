@@ -271,18 +271,20 @@ func isQueueMethod(method: String): Bool {
     return method == "queue/describe" || method == "queue/enqueue" || method == "queue/update"
 }
 
-// 条目交给桌面的只有 id、正文与本次提交的 rpcId：条目身份由核心铸造，界面不能自报。
+// 条目与附件均来自核心日志投影；只交引用元数据，不交本地路径或上传字节。
 func inboxListJson(inbox: AgentInbox, target: String): String {
-    var out = "["
-    var first = true
-    for (m in inbox.snapshot(target)) {
-        if (!first) {
-            out += ","
-        }
-        first = false
-        out += "{\"id\":\"${jsonEscapeText(m.id)}\",\"text\":\"${jsonEscapeText(m.text)}\",\"rpcId\":\"${jsonEscapeText(m.rpcId)}\"}"
+    let list = JsonArray()
+    for (message in inbox.snapshot(target)) {
+        let item = JsonObject()
+        item.put("id", JsonString(message.id))
+        item.put("text", JsonString(message.text))
+        item.put("rpcId", JsonString(message.rpcId))
+        let refs = JsonArray()
+        for (ref in message.attachments) { refs.add(ref.toJsonObject()) }
+        item.put("attachments", refs)
+        list.add(item)
     }
-    return out + "]"
+    return list.toString()
 }
 
 // 所有写入口加载会话时同时恢复计量，不能因租约先被审批或工具取得而绕过预算。
