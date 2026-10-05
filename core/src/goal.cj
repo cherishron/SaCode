@@ -1,7 +1,8 @@
 package core
 import std.sync.*
 
-// Goal 快照：与上游 `GoalSnapshot extends GoalRef` 一致——id 是 `goal-<n>`、
+// Goal 快照切片：保留修订 CAS 与四态；尚未完整复刻上游 UUID、轮数上限及结构化原因。
+// 本地 id 是 `goal-<n>`、
 // revision 是 CAS 值、phase 四态之一；本切片单 goal 场景 id 固定 `goal-1`，
 // revision 由「日志里已出现的 goal/change 条数」派生（不重复编码到事件数据里）。
 public class GoalSnapshot {
@@ -31,6 +32,17 @@ public class GoalService {
 
     public init(log: SessionLog) {
         this.log = log
+    }
+
+    // 核心边界也校验，不能只依赖桌面控制适配器。
+    private static func objectiveText(value: String): String {
+        let text = value.trimAscii()
+        if (text.size == 0) { throw Exception("bad-goal-objective") }
+        return text
+    }
+
+    private static func requirePhase(current: GoalSnapshot, allowed: Array<String>): Unit {
+        if (!allowed.contains(current.phase)) { throw Exception("invalid-goal-transition") }
     }
 
     private static func encode(phase: String, objective: String, blockedReason: String): String {
@@ -84,22 +96,25 @@ public class GoalService {
             if (current.phase == "active" || current.phase == "paused" || current.phase == "blocked") {
                 throw Exception("goal-already-exists")
             }
-            log.append("goal/change", GoalService.encode("active", objective, ""))
-            GoalSnapshot("goal-1", current.revision + 1, "active", objective, "")
+            let text = GoalService.objectiveText(objective)
+            log.append("goal/change", GoalService.encode("active", text, ""))
+            GoalSnapshot("goal-1", current.revision + 1, "active", text, "")
         }
     }
 
     public func edit(expected: Int64, objective: String): GoalSnapshot {
         return synchronized(log.mtx) {
             let current = cas(expected)
-            log.append("goal/change", GoalService.encode(current.phase, objective, current.blockedReason))
-            GoalSnapshot(current.id, current.revision + 1, current.phase, objective, current.blockedReason)
+            let text = GoalService.objectiveText(objective)
+            log.append("goal/change", GoalService.encode(current.phase, text, current.blockedReason))
+            GoalSnapshot(current.id, current.revision + 1, current.phase, text, current.blockedReason)
         }
     }
 
     public func pause(expected: Int64): GoalSnapshot {
         return synchronized(log.mtx) {
             let current = cas(expected)
+            GoalService.requirePhase(current, ["active"])
             log.append("goal/change", GoalService.encode("paused", current.objective, ""))
             GoalSnapshot(current.id, current.revision + 1, "paused", current.objective, "")
         }
@@ -108,6 +123,7 @@ public class GoalService {
     public func resume(expected: Int64): GoalSnapshot {
         return synchronized(log.mtx) {
             let current = cas(expected)
+            GoalService.requirePhase(current, ["active", "paused", "blocked"])
             log.append("goal/change", GoalService.encode("active", current.objective, ""))
             GoalSnapshot(current.id, current.revision + 1, "active", current.objective, "")
         }
@@ -116,6 +132,7 @@ public class GoalService {
     public func complete(expected: Int64): GoalSnapshot {
         return synchronized(log.mtx) {
             let current = cas(expected)
+            GoalService.requirePhase(current, ["active", "paused", "blocked"])
             log.append("goal/change", GoalService.encode("complete", current.objective, ""))
             GoalSnapshot(current.id, current.revision + 1, "complete", current.objective, "")
         }
@@ -124,8 +141,11 @@ public class GoalService {
     public func block(expected: Int64, reason: String): GoalSnapshot {
         return synchronized(log.mtx) {
             let current = cas(expected)
-            log.append("goal/change", GoalService.encode("blocked", current.objective, reason))
-            GoalSnapshot(current.id, current.revision + 1, "blocked", current.objective, reason)
+            GoalService.requirePhase(current, ["active"])
+            let text = reason.trimAscii()
+            if (text.size == 0) { throw Exception("bad-goal-block-reason") }
+            log.append("goal/change", GoalService.encode("blocked", current.objective, text))
+            GoalSnapshot(current.id, current.revision + 1, "blocked", current.objective, text)
         }
     }
 
