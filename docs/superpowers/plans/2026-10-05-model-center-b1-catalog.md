@@ -323,7 +323,7 @@ git commit -m "feat(core): 上游模型登记能力面，缺字段一律 unknown
 
 **Interfaces:**
 - Consumes: Task 1 的 `enumField`。
-- Produces: `ProviderRecord` 新字段 `sortOrder: Int64`、`enabled: Bool`、`transport: String`（`direct` | `relay`）；`public func setSortOrder(id: String, order: Int64, expectedRevision: Int64): Unit`、`public func setEnabled(id: String, enabled: Bool, expectedRevision: Int64): Unit`（各自落一条事件，**不重写整条记录**）；事件类型 `provider/sort`、`provider/enabled`；再加 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): String`（返回**新建实例的 id**，同一条目录项可反复调用，每次是一份独立实例、独立 `credentialRef`）。
+- Produces: `ProviderRecord` 新字段 `sortOrder: Int64`、`enabled: Bool`、`transport: String`（`direct` | `relay`）；`public func setSortOrder(id: String, order: Int64, expectedRevision: Int64): Unit`、`public func setEnabled(id: String, enabled: Bool, expectedRevision: Int64): Unit`（各自落一条事件，**不重写整条记录**）；事件类型 `provider/sort`、`provider/enabled`；再加 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): Unit`（同一条目录项可反复调用，每次建一份独立实例、独立 `credentialRef`；**新建实例的 id 由 `describe()` 读回，不作返回值**——宿主动词的响应体本来就统一是供应商视图，加返回值只会多出第二条真源）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -525,10 +525,11 @@ func poolCleanup(): Unit {
 func sameCatalogEntryTwiceYieldsTwoInstances() {
     poolCleanup()
     let r = ProviderRegistry(poolFile)
-    let idA = r.addInstanceFromCatalog("stepfun", "")
-    let idB = r.addInstanceFromCatalog("stepfun", "")
-    @Expect(idA == idB, false)
+    r.addInstanceFromCatalog("stepfun", "")
+    r.addInstanceFromCatalog("stepfun", "")
     let view = ProviderRegistry(poolFile).describe()
+    // 调用方不指定实例身份：id 由核心生成，两次必然落到两个 id 上
+    @Expect(view.providers[0].id == view.providers[1].id, false)
     @Expect(view.providers.size, Int64(2))
     // 同地址是号池的正常形态，不是重复条目
     @Expect(view.providers[0].baseUrl == view.providers[1].baseUrl, true)
@@ -540,13 +541,15 @@ func sameCatalogEntryTwiceYieldsTwoInstances() {
 func eachInstanceDerivesItsOwnCredentialRef() {
     poolCleanup()
     let r = ProviderRegistry(poolFile)
-    let idA = r.addInstanceFromCatalog("stepfun", "")
-    let idB = r.addInstanceFromCatalog("stepfun", "")
+    r.addInstanceFromCatalog("stepfun", "")
+    r.addInstanceFromCatalog("stepfun", "")
     let view = ProviderRegistry(poolFile).describe()
     // ref 只准由「实例 id」派生：按目录 id 派生会让两份实例共用同一个环境变量名，
     // 后配的密钥静默顶掉先配的——比直接拒绝更坏。
-    @Expect(view.providers[0].credentialRef, deriveCredentialRef(idA))
-    @Expect(view.providers[1].credentialRef, deriveCredentialRef(idB))
+    @Expect(view.providers[0].credentialRef, deriveCredentialRef(view.providers[0].id))
+    @Expect(view.providers[1].credentialRef, deriveCredentialRef(view.providers[1].id))
+    // 显式再钉一次不相等：若实现改成按「目录 id」派生，上面两条会同时通过而这条红
+    @Expect(view.providers[0].credentialRef == view.providers[1].credentialRef, false)
     poolCleanup()
 }
 
@@ -572,7 +575,7 @@ func duplicateCredentialRefAcrossInstancesIsRejected() {
 
 实现规则（全落在 `addFromCatalog` 的邻域，**不动** `update` / `remove` / `setDefault` 的既有语义）：
 
-1. 新增 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): String`，返回新实例 id；`addFromCatalog` 改成它的薄封装（转调并丢弃返回值），这样宿主的现有调用点不必在同一步里跟着改，切到 `addInstanceFromCatalog` 是 Task 7 的活。
+1. 新增 `public func addInstanceFromCatalog(catalogId: String, credentialRef: String): Unit`，落一条 `provider/upsert` 事件；`addFromCatalog` 改成它的薄封装（转调即可），这样宿主的现有调用点不必在同一步里跟着改，切到 `addInstanceFromCatalog` 是 Task 7 的活。**故意不返回 id**：宿主每个动词的响应体统一是供应商视图（`providerViewJson`），新实例 id 从视图里读——多加一条返回值通路等于给同一个事实造第二份来源，也免得 CLI/宿主两处要各自处理一个新形态。
 2. **实例 id 由核心生成**：`reload()` 后先试 `catalogId` 本身，被占则依次试 `catalogId-2`、`catalogId-3`……最多试 64 次，仍撞就 `throw Exception("settings-rejected")`。要点是别再拿目录 id 当唯一键——目录项是**模板**，不是实例。
 3. `credentialRef` 传空 → 用 `deriveCredentialRef(新实例 id)`；传非空 → 仍过 `isValidCredentialRef`，且**与任一已有实例的 ref 相同就抛 `settings-rejected`**。这道闸是号池在凭证层的唯一堵口，缺它两份实例会解析到同一个名字。
 4. `name` = 目录项 `name` + 实例后缀（`StepFun`、`StepFun (2)`……）；显示名不做唯一键，列表里必须可辨。
