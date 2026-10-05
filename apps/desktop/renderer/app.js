@@ -522,7 +522,12 @@ createApp({
       error.value = "";
       focusComposerCaret();
     }
-    function pollEnhance(frozen) {
+    function pollEnhance(frozen, startTime) {
+      const elapsed = Date.now() - (startTime || Date.now());
+      if (elapsed > 10000) {
+        finishEnhance(frozen, null, new Error("提示词增强超时"));
+        return;
+      }
       enhanceTimer = setTimeout(async () => {
         enhanceTimer = null;
         if (enhanceFrozen !== frozen) { return; }
@@ -530,7 +535,7 @@ createApp({
         try { result = await window.sacode.promptPoll(); }
         catch (e) { finishEnhance(frozen, null, e); return; }
         if (enhanceFrozen !== frozen) { return; }
-        if (!result || !result.settled) { pollEnhance(frozen); return; }
+        if (!result || !result.settled) { pollEnhance(frozen, startTime); return; }
         finishEnhance(frozen, result, null);
       }, 120);
     }
@@ -544,7 +549,7 @@ createApp({
       error.value = "";
       try { await window.sacode.promptEnhance(original); }
       catch (e) { finishEnhance(frozen, null, e); return; }
-      if (enhanceFrozen === frozen) { pollEnhance(frozen); }
+      if (enhanceFrozen === frozen) { pollEnhance(frozen, Date.now()); }
     }
     async function cancelEnhance() {
       const frozen = enhanceFrozen;
