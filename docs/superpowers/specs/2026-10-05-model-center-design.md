@@ -343,6 +343,8 @@
 
 因此实现落在 **`core`（`MigrationBundle`）一处**：桌面走宿主动词 `migrate/*`，CLI 走 `dsh migrate export|import`，两者调的是同一段代码——迁移包的格式与算法只能有一份真相。加密不可用（B0 判 BLOCKED 或运行期缺库）时 **fail-loud**，UI 与 CLI 直接显示卡点，不提供「先导出来再说」的路径。
 
+链接侧也已核：`core/cjpm.toml` 与 `apps/host/cjpm.toml` 用 `[target.x86_64-w64-mingw32.bin-dependencies] path-option` 指向**整个** `stdx/.../dynamic/stdx` 目录（现在这样解析 `stdx.encoding.json` 与 `stdx.net.http`），**不存在「按模块逐个声明」这道额外配置**——引入 `stdx.crypto.crypto` 不改构建配置。仍要 B0 编译实证一次（该目录里有 `libstdx.crypto.crypto.dll` 与 `libstdx.crypto.keysFFI.dll.a`，但 `.dll.a` 是否覆盖 crypto/kit 全部导入符号没核到底）。换机器时这条 path-option 仍是硬编码本机路径（AGENTS 已知项），迁移功能不新增这个约束，但也不替它解。
+
 ---
 
 ## 9. 协议面与双入口一致性
@@ -362,7 +364,12 @@
 
 ### 9.2 桌面 IPC
 
-`preload.cjs` 增补**逐字段校验**的通道，同步改 `apps/desktop/test/bridge.test.mjs`（AGENTS 的硬要求）。渲染层不得拼出「路由决策」或「金额累加」——它只显示核心回的数字。
+基线实测（本批直读 `apps/desktop/preload.cjs`）：当前暴露 **32 条通道**——
+`projection,userSend,attachmentUpload,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`（按 `preload.cjs` 里的出现顺序原样列出），`apps/desktop/test/bridge.test.mjs` 现有 **41** 条 `test()`。
+
+> **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 23 条。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线；AGENTS.md 那句要么按实测更正，要么改成「以 preload.cjs 为准」。
+
+本设计新增通道按同一命名风格补齐（自定义模型 CRUD 与绑定、健康查看、额度预算、加速设置、迁移导出/导入的 plan/apply 两段），仍守两条既有纪律：**逐字段校验**、**不提供「发任意方法」通道**；增删通道必须同步改 `preload.cjs` 与 `bridge.test.mjs`（AGENTS 硬要求），且渲染层不得拼出「路由决策」或「金额累加」——它只显示核心回的数字。
 
 ### 9.3 三个入口跑同一套规则的证据
 
