@@ -624,7 +624,7 @@ git commit -m "feat(core): 供应商加排序、硬开关与传输通道，历�
 - Consumes: `SessionLog`（`provider_registry.cj:312-322` 的 commit 形态）、Task 1/2 的字段读取器（**把它们提为文件内 `private static` 不够用——本任务在 `custom_model_registry.cj` 里自带一份同名私有助手，两份保持逐字一致，收口进 `core/src/settings_fields.cj` 留到 B6，本批不做抽象**）。
 - Produces:
   - `public class CustomModelRecord { id, name, description: String; enabled: Bool; category: String; requires: Array<String>; bindings: Array<BindingRecord>; mode: String; sortOrder: Int64; params: String; modalityBudget: String; dailyTokens: Int64; monthlyTokens: Int64; dailyAmountMicro: Int64; monthlyAmountMicro: Int64; maxOutputTokens: Int64; probeEnabled: Bool; probeMaxPerDay: Int64 }`（**共 18 个字段**。后 9 个是规格 §2.3「落盘形态在 B1 一次定死」要求随本批存下来的**参数/预算/探测**三组：`params` 与 `modalityBudget` 存**原文 JSON 文本**（空串=未设置，核心不拍平字段名，因为三种协议参数叫法不同、探测单位按 `meterUnit` 各异），五个预算列用 **`-1` 表示「未设置」而 `0` 表示「额度为零、立刻耗尽」**——这两个值的区别正是断言 46 的靶子。B2 读 `probe.*`、B3 读预算列做判定，本批只负责无损落盘与取值校验。）
-  - `public class BindingRecord { providerId: String; modelId: String; enabled: Bool; order: Int64; weight: Int64; priceMicro: Int64; priceVersion: Int64; currency: String }`
+  - `public class BindingRecord { providerId: String; modelId: String; enabled: Bool; order: Int64; weight: Int64; priceInMicro: Int64; priceOutMicro: Int64; priceCacheReadMicro: Int64; priceCacheWriteMicro: Int64; priceVersion: Int64; currency: String }`（**四档费率**，`-1`＝该维度未登记；对应规格 §7.1 计量输入三段与断言 76——单一 `priceMicro` 会把「用总量乘一个单价」这种同币种内的算错固化进落盘形态）
   - `public class CustomModelView { models: Array<CustomModelRecord>; revision: Int64; writable: Bool }`
   - `public class CustomModelRegistry { init(file: String) / static forUser(): CustomModelRegistry / describe(): CustomModelView / upsert(draft: String, expectedRevision: Int64): Unit / upsertObject(obj: JsonObject, expectedRevision: Int64): Unit / remove(id: String, expectedRevision: Int64): Unit }`（`upsert`/`upsertObject` 成对，与 `provider_registry.cj:272-279` 的 `update`/`updateObject` 关系逐字一致：前者解析文本，后者省一次解析给宿主用）
   - 事件类型：`custom/upsert`、`custom/remove`；错误：`settings-conflict`、`settings-rejected`、`custom-replay-rejected`、`custom-flush-failed`。
@@ -654,7 +654,7 @@ func cmDraft(id: String, bindings: String): String {
 
 func cmBinding(provider: String, model: String, order: Int64, weight: Int64): String {
     return "{\"providerId\":\"${provider}\",\"modelId\":\"${model}\",\"enabled\":true,"
-        + "\"order\":${order},\"weight\":${weight},\"priceMicro\":1000,\"priceVersion\":1,"
+        + "\"order\":${order},\"weight\":${weight},\"priceInMicro\":1000,\"priceOutMicro\":2000,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,\"priceVersion\":1,"
         + "\"currency\":\"CNY\"}"
 }
 
@@ -823,24 +823,33 @@ public class BindingRecord {
     public let enabled: Bool
     public let order: Int64
     public let weight: Int64
-    public let priceMicro: Int64
+    public let priceInMicro: Int64
+    public let priceOutMicro: Int64
+    public let priceCacheReadMicro: Int64
+    public let priceCacheWriteMicro: Int64
     public let priceVersion: Int64
     public let currency: String
     public init(providerId: String, modelId: String, enabled: Bool, order: Int64, weight: Int64,
-        priceMicro: Int64, priceVersion: Int64, currency: String) {
+        priceInMicro: Int64, priceOutMicro: Int64, priceCacheReadMicro: Int64,
+        priceCacheWriteMicro: Int64, priceVersion: Int64, currency: String) {
         this.providerId = providerId
         this.modelId = modelId
         this.enabled = enabled
         this.order = order
         this.weight = weight
-        this.priceMicro = priceMicro
+        this.priceInMicro = priceInMicro
+        this.priceOutMicro = priceOutMicro
+        this.priceCacheReadMicro = priceCacheReadMicro
+        this.priceCacheWriteMicro = priceCacheWriteMicro
         this.priceVersion = priceVersion
         this.currency = currency
     }
     public func toJson(): String {
         return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
             + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},"
-            + "\"priceMicro\":${priceMicro},\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
+            + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
+            + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
+            + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
     }
 }
 
@@ -984,7 +993,7 @@ public class CustomModelRegistry {
 5. `requires` 走 `stringArrayField` 同规则（闭集、去重），且至少 1 项。
 6. `mode ∈ customModes`，缺省 `weighted`。
 7. `bindings` 必填、可为空数组（空数组意味着「不可调度」，见 Task 4 的保存即拒），上限 32。
-8. 每条绑定：`providerId`/`modelId` 非空、`weight` ∈ 1..1000、`priceMicro >= 0`、`enabled` 缺省 `true`。**`currency` 允许空串，语义是「未定价」；给了就必须是 3 位大写字母。`priceVersion: 0` 同义「未定价」**——这两个缺省是 Task 6 的导入操作能成立的前提：从上游清单导入时用户还没填价，若此处强制必填币种，导入就只能凭空造一个假单价（§7 明令禁止「用统一单价把金额算错」，账本侧对应用 `待核算` 状态承接）。
+8. 每条绑定：`providerId`/`modelId` 非空、`weight` ∈ 1..1000、`enabled` 缺省 `true`；**四个费率各自要么 `-1`（该维度未登记）要么 `>= 0`**，四档全 `-1` 与 `priceVersion: 0` 同义「未定价」。**本批不允许出现「只有一个笼统单价」的落盘形态**——规格 §7.1 实测上游是分档给用量的，而 B3 要按维度计价（断言 76：未登记维度遇到用量该笔落 `待核算`，不许用已登记维度反推、更不许拿总量乘单一单价）。**`currency` 允许空串，语义是「未定价」；给了就必须是 3 位大写字母。`priceVersion: 0` 同义「未定价」**——这两个缺省是 Task 6 的导入操作能成立的前提：从上游清单导入时用户还没填价，若此处强制必填币种，导入就只能凭空造一个假单价（§7 明令禁止「用统一单价把金额算错」，账本侧对应用 `待核算` 状态承接）。
 9. **同一模型内非空 `currency` 至多一种**（断言 41）。空串（未定价）不计入这个「至多一种」。规则不是「禁止混币」而是「禁止用统一单价把金额算错」：真要跨币得由 §2.3 的显式换算登记来承载，那是 B5/B6 的面，本批先按保存即拒守住，**绝不静默折算**。
 10. `params` 与 `modalityBudget` 是**自由格式 JSON 原文**，本批只做三件事：长度上限（各 ≤4000 字符）、过 §1 那份明文字段名单的逐个查（`api_key`/`token`/`secret`/`value` 之类出现在参数文本里就 `settings-rejected`，断言 46 第三条用例）、**逐字无损回读**（解析成 JSON 只为校验能解析，落盘写的还是用户给的那串；重新序列化会重排键序，B2/B3 读到的就不是用户写的那份）。**不拆成固定字段**——三种协议参数叫法不同，核心不发明上游没有的键（§2.3）。
 11. 预算与探测列：新增文件级私有助手 `intFieldDefault(obj, key, dflt)`（照 Task 2 的 `boolFieldDefault` 同一形态——**缺字段返回缺省值，而不是返回 0**，这是断言 46 第二条用例的立足点）。预算列合法域是 `-1 | >= 0`（`-1` = 未设置，`0` = 有意的零额度，其它负数 `settings-rejected`）；`probeMaxPerDay ∈ 0..100`（`0` 表示不排定时探测，`route/probe/run` 的手动通道仍可用，与 §5.3「软件全关时不继续产生探测费用」同一口径）；`probeEnabled` 缺省 `true`。
@@ -1226,7 +1235,7 @@ func cmDraft(id: String, bindings: String): String {
 
 func cmBinding(provider: String, model: String, order: Int64, weight: Int64): String {
     return "{\"providerId\":\"${provider}\",\"modelId\":\"${model}\",\"enabled\":true,"
-        + "\"order\":${order},\"weight\":${weight},\"priceMicro\":1000,\"priceVersion\":1,"
+        + "\"order\":${order},\"weight\":${weight},\"priceInMicro\":1000,\"priceOutMicro\":2000,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,\"priceVersion\":1,"
         + "\"currency\":\"CNY\"}"
 }
 ```
@@ -1622,7 +1631,8 @@ Expected：编译红在 `importNewModels` / `importInto`。
     // 导入 = 「候选进入调度」，不是「替用户决定价格」：币种留空=未定价，账本侧走 待核算
     private func importedBindingJson(providerId: String, modelId: String, order: Int64): String {
         return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
-            + "\"enabled\":true,\"order\":${order},\"weight\":1,\"priceMicro\":0,"
+            + "\"enabled\":true,\"order\":${order},\"weight\":1,"
+            + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,","
             + "\"priceVersion\":0,\"currency\":\"\"}"
     }
 ```
@@ -1697,7 +1707,7 @@ const rpc = (method, params = {}) => new Promise((res, rej) => {
 const draft = { id: 'code', name: '编程模型', description: '', enabled: true, category: 'coding',
   requires: ['tools', 'text-output'], mode: 'weighted', bindings: [] };
 const binding = { providerId: 'step', modelId: 'm-a', enabled: true, order: 0, weight: 1,
-  priceMicro: 1000, priceVersion: 1, currency: 'CNY' };
+  priceInMicro: 1000, priceOutMicro: 2000, priceCacheReadMicro: -1, priceCacheWriteMicro: -1, priceVersion: 1, currency: 'CNY' };
 
 test('capabilities 声明了本批新增的每个动词', async () => {
   const cap = await rpc('initialize');
