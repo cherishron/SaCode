@@ -29,7 +29,7 @@
 | 面 | 命令 | 基线 |
 | --- | --- | --- |
 | 核心单测 | `cd core && cjpm test` | **TOTAL 463 / PASSED 462 / SKIPPED 1 / FAILED 0 / ERROR 0** |
-| 桌面桥接 | `cd apps/desktop && npm test` | `bridge.test.mjs` **41** 个 `test()`；`preload.cjs` **32** 条 IPC 通道（登记值）→ **2026-10-05 在当前 HEAD 复测 33 条、工作区态 42 条**（goal-control / prompt-enhance 一线在飞）。开工第一件事除了重测 `B`，还要按规格 §9.2 那条**已实测跑通**的 awk 命令重测通道数（HEAD 33 / 工作区 42 是本批实测值；简易正则先后数出过 2、29、37 三个错数，数完必须与规格 §9.2 的名单做双向差集，只核总数核不出漏数），Task 8 里「基线 +9」的算式以重测值为准。在飞那 9 条（`goalDescribe/goalCreate/goalEdit/goalPause/goalResume/goalClear/promptEnhance/promptPoll/promptCancel`）与本批新通道名**逐个比对不重叠** |
+| 桌面桥接 | `cd apps/desktop && npm test` | `bridge.test.mjs` **41** 个 `test()`；`preload.cjs` **32** 条 IPC 通道（登记值）→ **2026-10-05 在当前 HEAD 复测 33 条、工作区态 42 条**（goal-control / prompt-enhance 一线在飞）。开工第一件事除了重测 `B`，还要按规格 §9.2 那条**已实测跑通**的 awk 命令重测通道数（HEAD 33 / 工作区 42 是本批实测值；简易正则先后数出过 2、29、37 三个错数，数完必须与规格 §9.2 的名单做双向差集，只核总数核不出漏数），Task 8 里「基线 +10」的算式以重测值为准（通道数 = Task 7 的动词数，逐一对映，见规格 §11 断言 52）。在飞那 9 条（`goalDescribe/goalCreate/goalEdit/goalPause/goalResume/goalClear/promptEnhance/promptPoll/promptCancel`）与本批新通道名**逐个比对不重叠** |
 | CLI 自检 | `cd apps/cli && cjpm build` 后逐模式 | `all` 100、`stream` 21、`tool` 11、`ext` 8、`cancel` 9、`extjs` 12、`headless` 36、`sig` 6 = **203 PASS** |
 
 读结果的方法固定：输出重定向落盘 → `sed` 剥 ANSI → `tr` 拆行 → 只认剥码后**最后一个** Summary 块里的五个计数，并与退出码交叉验证。**禁止**用 `grep -c '\[ PASSED \]'` 之类的 token 计数判通过。
@@ -1874,7 +1874,7 @@ if (!secure && !local) return '请输入有效的 HTTP 或 HTTPS 地址。';
 
 - [ ] **Step 5: 同步 IPC 面并跑绿**
 
-`preload.cjs` 按动作加通道（`customsDescribe`、`customsUpsert`、`customsRemove`、`bindingUpsert`、`bindingRemove`、`modelPull`、`modelUpstreamUpsert`、`customImportNew`、`customImportInto`），逐字段校验，**不提供「发任意方法」通路**。`bridge.test.mjs` 的基线从 **32 通道 / 41 用例** 变成 **41 通道 / 41+N 用例**（N = 新增用例数，写进 commit body）。
+`preload.cjs` 按动作加通道（`customsDescribe`、`customsUpsert`、`customsRemove`、`bindingUpsert`、`bindingRemove`、`bindingReorder`、`modelPull`、`modelUpstreamUpsert`、`customImportNew`、`customImportInto`），逐字段校验，**不提供「发任意方法」通路**。`bridge.test.mjs` 的通道基线从**开工实测值 `C`** 变成 **`C+10`**（登记时 `C`=32、复核时 HEAD=33、工作区已 42——**照抄 32 会得到一个错的基线**；用例数另算 `41+N`。**注意「32+9=41 通道」与「41 个 `test()`」同数纯属巧合，两处不许混用一个数**）（N = 新增用例数，写进 commit body）。
 
 ```bash
 cd /d/Project/sa/saai/sa-code/apps/desktop && node --test test/models-validate.test.mjs test/bridge.test.mjs > ../../target/b1-t8b.log 2>&1; echo "rc=$?"
@@ -1909,6 +1909,6 @@ git commit -m "feat(desktop): 模型页地址校验收紧为核心的子集，�
 2. 六处变异全部转红且各自归因到指定用例名：Task 4 Step 6 的四处（`unknown 不等于满足`、`绑定唯一键`、`dangling 可见`、`重排键集必须相等`），加 Task 3 的两处——(a) 把 `intFieldDefault` 的预算列缺省从 `-1` 改成 `0`，必须只让 `unsetBudgetReplaysAsMinusOneNotZero` 变红（这条杀的正是「未设置被读成额度耗尽」）；(b) 把规则 9 的币种一致性检查改成恒真，必须只让 `twoCurrenciesInOneModelAreRejectedWithoutMerge` 变红。任一变异照样全绿，就该条不变量补白盒用例，不许带着假绿过出口。
 3. `cd apps/desktop && node --test`（全量）rc=0；`bridge.test.mjs` 通道基线已按实际数字更新。
 4. `npm run ui-smoke` 输出 `UI SMOKE PASS`，或明确记 BLOCKED 及其解锁动作。
-5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`。
+5. 宿主 `initialize.capabilities` 里的十个新动词与实现逐字一致，`host-verbs.test.mjs` 对未知名返回 `-32601`；**且这十个动词与 `preload.cjs` 新增的十条通道逐个对映**（断言 52——本批实测抓到 `binding/reorder` 一度只有动词没有通道，那样核心能改顺序、桌面改不了，等于交付半成品）。
 6. 断言 1、2、3、4、31、41、46 各自有对应绿色用例（1、2→Task 5；3→Task 4；4→Task 2 的 `enabled` 与 B2 的过滤链——**本批只钉住「读得到 enabled」，过滤链那条留 B2**，出口判据里如实标注这条是部分的）；31→Task 8；41→Task 3 的 `twoCurrenciesInOneModelAreRejectedWithoutMerge`；46→Task 3 的 `paramsBudgetAndProbePolicySurviveReplay` + `unsetBudgetReplaysAsMinusOneNotZero` + `secretShapedKeyInsideParamsIsRejected` 三条（46 的三个侧面各一条，任一缺失都算部分）。
 7. `git log --oneline` 有本批 8 个提交，且每个提交的 `git show --stat` 只含本批路径（并发会话的改动没被吞）。
