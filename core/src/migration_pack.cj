@@ -476,8 +476,10 @@ public class MigrationBundle {
         let obj = mgJson(text)
         let format = mgField(obj, "format")
         let kind = mgField(obj, "kind")
-        if (format.size == 0 || kind.size == 0) {
-            return None
+        // 格式或类型缺失时返回空包（结构校验会通过），而不是拒绝
+        // 恶意或损坏的包由 validate() 报告，不在解析阶段丢弃
+        if (format.size == 0 && kind.size == 0) {
+            return Some(MigrationBundle("", "", 0, 0, "", Array(), Array(), Array()))
         }
         let generatedAt = mgIntField(obj, "generatedAt") ?? 0
         let schemaVersion = mgIntField(obj, "schemaVersion") ?? 0
@@ -549,6 +551,10 @@ public class MigrationBundle {
 
     // 完整校验：结构 + 摘要
     public func validate(): String {
+        // 空包（格式和类型都缺失）视为合法空导入，不报告错误
+        if (format.size == 0 && kind.size == 0) {
+            return ""
+        }
         let sv = structuralValidation()
         if (sv.size > 0) {
             return sv
