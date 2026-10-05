@@ -21,7 +21,7 @@
 | 远端模型清单拉取 + 连接测试：坏响应不等于「0 个模型」、摘要不带凭据 | `core/src/model_catalog.cj:101`（`:15`、`:95`） | 「拉取模型」的传输层已具备，缺的是**发现结果 → 自定义模型**的导入编排 |
 | 会话级 token 计量：账从会话日志重算、超档那笔不计入、预算只能收紧 | `core/src/meter.cj:7`（`:62` 收紧、`:52` 结算） | 这是**失控闸门**，不是模型额度；两者在 §7 明确分权。**但目标 §4「失败与取消有 usage 就记账、没 usage 不冒充零消费」这两句现有实现已经满足**：`settleTurn`（`:52`）的注释与代码就是「收到 usage 就记，取消不能抹掉已收到的用量」「尚未收到 usage 且没有 finish 时只报 `absent`，不推断为零」——账本**继承**它，不另建一套 |
 | 请求装配：标准消息与工具结果全部从会话日志重建 | `core/src/model_request.cj:7` | 调度器插在装配之前，不改变装配的纯函数性质 |
-| 真实请求的装配点，以及**每步续跑的工厂缝** | `core/src/model_agent.cj:102` 的 `start(first: Provider, nextProvider: (String) -> Provider, …)`，与 `:88` 每步都调 `nextProvider(...)`；宿主侧装配在 `apps/host/src/main.cj` 的 `let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)` 与其下一行的 `let continuation: (String) -> Provider`（**该文件不写行号，见 §4.1 的锚点纪律**） | **调度器的插入点已经存在、形状也对**：每步一个工厂。要改的是宿主传进去的那个工厂，不是 `core` 的签名（见 §4.1） |
+| 真实请求的装配点，以及**每步续跑的工厂缝** | `core/src/model_agent.cj:105` 的 `start(first: Provider, nextProvider: (String) -> Provider, …)`，与 `:91` 每步都调 `nextProvider(...)`；宿主侧装配在 `apps/host/src/main.cj` 的 `let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)` 与其下一行的 `let continuation: (String) -> Provider`（**该文件不写行号，见 §4.1 的锚点纪律**） | **调度器的插入点已经存在、形状也对**：每步一个工厂。要改的是宿主传进去的那个工厂，不是 `core` 的签名（见 §4.1） |
 
 ### 1.2 确认是空白（不是推断，是 0 命中）
 
@@ -221,7 +221,7 @@
 **插入点**：`apps/host/src/main.cj` 里真实轮次的装配段——由 `let real = DeferredProvider(...)`、`let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }` 和紧随其后的 `ModelAgentRunner().start(real, continuation, ...)` 三行构成。
 
 - 缺陷 A：**目标执行的每一步不会重新过调度**。上游第 2 步挂了仍继续朝同一 `baseUrl` 打，与目标里「一次逻辑请求可能失败后切换上游」直接不符。
-  **定位修正（2026-10-05 对 HEAD 复核，本条原先归因错了）**：`ModelAgentRunner` 早已收「每步工厂」——`model_agent.cj:102` 的签名是 `start(first: Provider, nextProvider: (String) -> Provider, …)`，且 `:88` 在每次续跑处**确实调用** `nextProvider(...)`。冻住上游的不是 core 的机制，而是宿主传进去的那一个工厂实现：`{ request => RealSseProvider(baseUrl, turnKey, request, tk) }` 里 `baseUrl` 是外层捕获的常量。
+  **定位修正（2026-10-05 对 HEAD 复核，本条原先归因错了）**：`ModelAgentRunner` 早已收「每步工厂」——`model_agent.cj:105` 的签名是 `start(first: Provider, nextProvider: (String) -> Provider, …)`，且 `:91` 在每次续跑处**确实调用** `nextProvider(...)`。冻住上游的不是 core 的机制，而是宿主传进去的那一个工厂实现：`{ request => RealSseProvider(baseUrl, turnKey, request, tk) }` 里 `baseUrl` 是外层捕获的常量。
   改法与影响面因此**缩小**：只改宿主那个工厂，让它每步向 `ModelRouter` 要一条路由（含健康过滤与预算预留），路由结果连同 `attemptId` 交给 `TransportChannel`；**`core` 的 runner 签名一个字都不用动**，B2 这一项不是 API 改造而是宿主侧替换实现。
   仓颉侧的现成约束（就写在同一处代码的注释里，`let turnKey = key` 上方那两行注释）：lambda 不得捕获可变变量却被间接调用，所以 `turnKey` 那类值是先 `let` 冻结再进闭包的。工厂里同理不能持有「上一步选中的路由」这类可变捕获——每步都重新问 `ModelRouter`，正好与调度的确定性合同一致。新增断言见 §11 第 49 条。
 - 缺陷 A 的补充缝（2026-10-05 另一会话刚落库，对本设计有利）：`core/src/deferred_provider.cj:5` 的 `DeferredProvider(makeProvider: () -> Provider, token)` 把**首步** provider 的构造推迟到第一次读流（`next()`）时才做，并记住结果。B2 把「向 `ModelRouter` 要路由 + 预算预留」放进这个工厂后，天然获得两条免费性质：轮次在起流前被取消时**既不发上游请求也不产生预留**（与 §5.2「用户取消不计入失败」、§7.3「预留必须作废」同一口径），且取消检查（`token.cancelled()`）已在该工厂的调用路径上。注意 `continuation` 那一支**目前没有包惰性壳**、直接构造 `RealSseProvider`——两支都归到同一个 `resolve` 函数才算收口。
@@ -338,7 +338,7 @@
 - **两次持锁都不跨网络**：`reserve` 与 `dispatched` 各是「取租约 → 写一条 → 归还」的短临界区，不许为了省事合并成一次持有把网络圈进去（断言 51 同样适用，且这里更容易犯，因为中间真的隔着一次发送）；
 - **存在性从 B2 起就要有**：账本挂费用是 B3 的事，但 `attempt/dispatched` 事件本身随 §5.2 那批（B2）落，否则 B2 到 B3 之间的窗口里重放闸是空的——那段时间已经在发真实请求了。
 
-另有一条以前没写的：**同一步内不换绑定重发**。`nextProvider` 工厂是**每步**调一次（`core/src/model_agent.cj:88`），这只意味着「下一步再问一次路由」，不授权「这一步失败了就地换一个再试」；一步内失败即终态收束。把每步调用读成步内循环，会同时把费用、失败计数与 usage 记账的分母按尝试数放大，而 §4 的过滤链与 §7.1 的「每次上游尝试独立记账」都没有为它记账的位置。
+另有一条以前没写的：**同一步内不换绑定重发**。`nextProvider` 工厂是**每步**调一次（`core/src/model_agent.cj:91`），这只意味着「下一步再问一次路由」，不授权「这一步失败了就地换一个再试」；一步内失败即终态收束。把每步调用读成步内循环，会同时把费用、失败计数与 usage 记账的分母按尝试数放大，而 §4 的过滤链与 §7.1 的「每次上游尝试独立记账」都没有为它记账的位置。
 - 线路健康与模型健康分开：relay/网络故障记 `channel` 档，不动 `upstream` 计数（§5.1）。
 - 加速服务自身的访问授权独立设计，**不要求先建账号体系**：现阶段是一把可撤销的访问凭据；未来接账号时换成账号权益，配置文档结构不变。
 
@@ -507,7 +507,7 @@
 
 **HEAD `d54a967` 的完整名单（42 条，按出现顺序）**——上面那份 32 条是 `8a7dc77` 时期的，留着作对账基线，新增的 10 条**插在名单里而不是追加在尾部**，所以只比尾部会漏：`projection,userSend,attachmentUpload,attachmentImageRead,goalDescribe,goalCreate,goalEdit,goalPause,goalResume,goalClear,toolsList,toolCall,approvalAsk,approvalAnswer,turnStart,taskStart,queueDescribe,queueEnqueue,queueUpdate,turnPoll,turnCancel,promptEnhance,promptPoll,promptCancel,usageStatus,usageSetBudget,appearanceGet,globalAppearanceGet,globalAppearanceSetTheme,globalAppearanceSetFontSize,sessionCatalog,sessionCreate,sessionSelect,workspaceGet,workspaceChoose,appearanceSetTheme,modelsDescribe,modelsCatalog,modelsSave,modelsRemove,modelsSetDefault,modelsList`。
 
-`apps/desktop/test/bridge.test.mjs` 现有 **40** 条 `test()`（HEAD 与工作区各数一次都是 40）。**先前登记的 41 是假数**：松散 `grep -c "test("` 会把 `bridge.test.mjs:546` 里那条正则的 `.test(m)` 也算成一条用例，必须用 `grep -c "^test("`；这条纪律与 §16.3 第 5 条同源——**计数模式本身要先反证**。
+`apps/desktop/test/bridge.test.mjs` 现有 **40** 条 `test()`（HEAD 与工作区各数一次都是 40）。**先前登记的 41 是假数**：松散 `grep -c "test("` 会把 `bridge.test.mjs:547` 里那条正则的 `.test(m)` 也算成一条用例，必须用 `grep -c "^test("`；这条纪律与 §16.3 第 5 条同源——**计数模式本身要先反证**。
 
 > **注意一处文档漂移**：`AGENTS.md` 仍写着 IPC 面是「按动作命名」的那 9 条集合，与代码差 **24** 条（HEAD 42 条 vs 那句里的 9 条，差 **33**）。**不要以那份清单为准**，改通道前先以 `preload.cjs` 与 `bridge.test.mjs` 的实际形态为基线。
 
@@ -649,7 +649,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 66 | 能力清单只有一份：`initialize.capabilities` 声明的动词集与实际可分派的动词集**双向相等**（声明未实现 → 红；实现了未声明 → 同样红），且桌面通道由这份清单派生而非另写一份（§3.1；断言 52 只核「少一条通道」，这条核「各写一份」） | 宿主手写一张 `if method ==` 表、桌面另写一张通道名单，两张各自漂移，声明面变成广告 |
 | 67 | 「内置」按 PRD 的字面义成立：**装配与使用模型中心全链路不依赖注册、登录、市场或发布**（§5「用户无需先去市场寻找必需能力」）；B1–B6 的文档面与决策面用例在断网下全绿（真实模型请求那类本就在凭据门后，不在此列） | 把模型中心做成「先装某个插件/先登录才能选模型」，或让核心在启动时够远端清单 |
 | 68 | 第三方提供方走同一扇门：经适配宿主承接的模型提供方只能通过核心注册表 + `UsageLedger` + `RouteHealth` 发请求，**不得**自开 HTTP、自写凭据、绕开 `reserve`/`settle`（§3 信任边界与 §4 账本在插件面上的对偶；§5「动态扩展通路也必须保持身份、参数及权限校验」） | 给扩展开一条「自己发模型请求」的旁路，预算、账本与健康计数同时被绕过 |
-| 69 | 「日常任务只选自定义模型」按 §2.3 那张表**五段逐段收口**：发起任务时进入决策的只有 `customModelId`，`baseUrl`/`credentialRef`/`protocol`/能力全部由路由结果派生，而不是再从 `(defaultProviderId, defaultModel)` 匹配一遍（实测两处匹配循环 `main.cj:1155`/`:1364` 是必须消失的形态） | 页面上多了一个自定义模型下拉、核心也多了一份文档，但 `turn/start` 仍按两层指针取参——第 3 层变成装饰，断言 44 的「唯一读面」在生产通路上落空 |
+| 69 | 「日常任务只选自定义模型」按 §2.3 那张表**五段逐段收口**：发起任务时进入决策的只有 `customModelId`，`baseUrl`/`credentialRef`/`protocol`/能力全部由路由结果派生，而不是再从 `(defaultProviderId, defaultModel)` 匹配一遍（实测这类匹配循环在 `apps/host/src/main.cj` 里有两处，是必须消失的形态；按 §4.1 纪律该文件只认符号不认行号，定位一律 `grep -n "registryView.defaultProviderId && registryView.defaultModel.size" apps/host/src/main.cj`，HEAD 实测命中数恰好 2） | 页面上多了一个自定义模型下拉、核心也多了一份文档，但 `turn/start` 仍按两层指针取参——第 3 层变成装饰，断言 44 的「唯一读面」在生产通路上落空 |
 | 70 | 两层指针 → 自定义模型标识的切换落成**日志里一条显式事件**，原指针值迁移后仍可回读，不做静默改写或就地删除（形态见 §16.2 第 12 行） | 迁移时直接覆盖用户既有选择；或旧机器导入后默认选择凭空变化，与迁移包对不上账 |
 | 71 | 拒绝不再一码多义：`protocol-not-supported` / `model-not-configured` / `model-credential-unavailable` / 兜底异常各回自己的类型化码（实测现状 7 处共用 `-32016`），渲染层才能按 §9.2 把子因说成人话 | 继续同码不同文案，桌面只能显示「操作失败」；或新码名与旧码名并存 |
 | 72 | 生成参数只有一个真源：任务侧推理等级面板与自定义模型自带 `params` 不得各自持久化一份（归属见 §16.2 第 13 行）；无论选哪种，两次任务的参数差异都必须能由日志解释 | 面板存 `retainedEffort`、模型条目再存 `params`，同一颗模型两次任务参数不同且账本快照解释不了 |
@@ -861,7 +861,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 9 | 未来账号批次的开工前置 | 「不因登录自动上传密钥」「账号绑定=显式重映射 owner」 | 现在不建，但 §16.1 里标「未来」的两行要等账号批次才验 | §2.4、§6 末条 |
 | 10 | 号池下的每日探测总条数 | `probe.maxPerDayGlobal = 10`（跨作用域共享，按落盘条数计） | 探测费用上限随池大小线性放大的那道闸；第 2 档探测是最小真实请求，会产生真钱 | §5.3 全局闸（断言 59）；只改常量不改语义 |
 | 11 | CLI 要不要最小非交互写面 | 建议 **B1–B6 不做**：§9.4 的四条已覆盖闭环（选模型跑任务、看费用、显式探测、迁移导入导出），CLI 只做读面 + 单发命令 | 无 GUI 机器上能否建号池。要在服务器上配池，就得把 §9.1 动词面在 CLI 再实现一遍，§9.1/§9.2 的动词与通道计数需重算 | §9.4 末条；若改判「要」，新增一个批次而不是塞进 B1 |
-| 12 | 两层默认指针（`defaultProviderId` + `defaultModel`）的退役方式 | 建议**保留字段、降为「尚未配置自定义模型时的兼容读面」，并另落一条显式迁移事件**；不建议直接删（`model/registry/set-default` 通道、`app.js:707` 的调用点与 `setDefault` 校验都在用它，删了会让 B1/B2 之间的版本读不回旧配置） | 决定是否新增 `custom/set-default` 动词与通道（**会动断言 52 的动词↔通道对称计数**），以及迁移包导入后老机器默认选择是否延续 | 断言 69、70；若改判「直接删」，§9.1/§9.2 清单与 §9.4 的 CLI 四条要重算 |
+| 12 | 两层默认指针（`defaultProviderId` + `defaultModel`）的退役方式 | 建议**保留字段、降为「尚未配置自定义模型时的兼容读面」，并另落一条显式迁移事件**；不建议直接删（`model/registry/set-default` 通道、`apps/desktop/renderer/app.js:710` 的 `window.dsh.modelsSetDefault(...)` 调用点与 `setDefault` 校验都在用它，删了会让 B1/B2 之间的版本读不回旧配置） | 决定是否新增 `custom/set-default` 动词与通道（**会动断言 52 的动词↔通道对称计数**），以及迁移包导入后老机器默认选择是否延续 | 断言 69、70；若改判「直接删」，§9.1/§9.2 清单与 §9.4 的 CLI 四条要重算 |
 | 13 | 生成参数的归属：任务侧推理等级面板 vs 自定义模型自带 `params` | 建议**默认值住在自定义模型条目里，面板只做「本次覆盖」且不持久**（现状 `model-select.ts` 的 `reasoningEffort` 写进指针、`retainedEffort` 还会持久化，等于第二份参数真源） | 决定 §2.3 的字段集是否收 `reasoningEffort`、断言 72 的判据形态，以及通道载荷要不要带 effort | 断言 72；若改判「面板可持久」，§2.3 必须显式写覆盖优先级，否则账本计价快照与实际发出去的参数解释不上 |
 | 14 | 计费维度是否全档登记 | 建议四档费率（输入 / 输出 / 缓存读 / 缓存写）各自可 `-1`＝未登记，**未登记维度一旦有用量，该笔就落 `待核算`**；不提供「用总量乘一个 blended 单价」的兜底 | 决定 §7.3 `待核算` 的命中率，以及 §2.3 绑定条目的字段数（本轮已据此把计划的单一 `priceMicro` 改成四档） | 断言 76；若改判「允许 blended」，必须同时改掉断言 41 与 §12 的统一单价禁令——那是**减需求**，本设计不接受 |
 
@@ -874,3 +874,6 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 5. **状态列本身也要机械核，不能只读一遍**。定死四条禁令，每条各配一个注入探针（先证门禁会红，再认它的绿）：状态必须落在四种口径之内；`覆盖` 行的断言列必须有三种指针之一（§11 编号 / 指名用例名 / `§` 章节指针），唯一豁免是 `待你拍板` 行允许 `—`，因为那一行不是代码能闭的；批次列必须能解析出 `B\d` 或 `每批`；`部分` 行必须用「：」写明缺的那半。四条探针全部被抓、基线违规为 0 才算核过——本轮实测 **GATE-OK 4/4**，基线状态分布 **覆盖 25 / 本轮补齐 16 / 部分 6 / 待你拍板 1**（合计 48；分布每改一次都要按列名重算，不许手数——第十五轮按**表头列名**定位状态列重算——先用按下标取列跑过一次，结果把批次列当成状态列，算出「B1 有 10 条状态」这种根本不存在的分布，正是这条规则要防的错）。这条规则第一次执行就抓到一处**假覆盖**（拿尚未新建的 `Principal` 当「已覆盖」的依据）和四处空指的 `—`，可见「写了规则不执行」与「没写规则」一样危险。
    **第十六轮的补充教训（探针自己会哑）**：改完 §16.1 的一行状态后，四条探针里有一条从 `CAUGHT` 变成静默失效——因为它把锚点绑在**整行**上，而那一行的状态列正好被改写。脚本自己打印「跳过（锚点没中，检查器需更新）」并要求 `caught == 4` 才判 `GATE-OK`，这一次才没让「基线违规 = 0」被当成通过。两条纪律由此定下：**探针锚点只绑被注入破坏的那段文字，不绑整行**；**`基线违规=0` 配不上一个哑探针**，自检输出里出现「跳过」就当红处理。
 6. **跨文档契约名对账**：把规格与批次计划里反引号包裹的符号名各取一次做集合差，凡是「计划当接口用、规格里查无此名」的都要判定——要么补进规格（它属于契约），要么明确标成计划私有（实现细节）。本轮第一次执行抓到一处：`addInstanceFromCatalog` 只出现在计划里，而 B5 的迁移导入同样要用它，属跨批次契约，已补进 §2.1 并钉死「新实例 id 从视图读回、不作返回值」。这个差集天然带大量实现细节名（本批实测 117 个），**逐条判、不做机械否决**；能机械化的只有后半句——凡被别的批次 `Consumes` 的名字，必须能在规格里查到名字。
+7. **源码引用行号本身要体检**（`node target/citation-audit.cjs`，可选 `--list` 打印每条引用真正落在哪一行）。它把两份文档里 `路径:行号` 形态的引用全抽出来（本轮实测 **原始 83 条 / 去重 50 条**），逐条读文件核五件事：文件在不在、行号越界、是不是空行或纯符号行、**承重引用（`HINTS` 表 25 条）那一行是否仍含指定符号**、裸文件名是否与仓内同名兄弟歧义。基线现 **83/83 有效、四类违规各 0**。这条门禁不是空转：第一次执行就抓到 **4 处真缺陷**——(a) `model_agent.cj` 的签名缝 `:102`→`:105`、每步工厂调用 `:88`→`:91`（HEAD 与工作区一致，是引用旧了不是代码漂了）；(b) `bridge.test.mjs` 的 `:546` 那条 `.test(m)` 已被并发提交推到 `:547`（而 `^test(` 严格计数 40、松散计数 41 两条都复验未变，§9.2 的数字仍然成立）；(c) 断言 69 里的 `main.cj` 的 `:1155`/`:1364` 两处既与 `apps/cli/src/main.cj` **同名歧义**、又违反 §4.1「该文件只认符号不认行号」，已改为符号式并写明 `grep` 命中数应为 2；(d) §16.2 第 12 行的 `app.js` 的 `:707` 同样歧义，且**指错了行**——那一行是 `const generation = ++seq;`，真正的两层指针唯一生产写点 `window.dsh.modelsSetDefault(...)` 在 `apps/desktop/renderer/app.js:710`。**歧义不是假想敌**：工作区里现在就存在一颗未被 git 跟踪、也未被 `.gitignore` 覆盖的 `apps/desktop/app.js`（1412 行，与 `renderer/app.js` 差 6 增 17 删，形态像并发会话的在飞副本——本规格既不吞并也不删除它，只登记现场），任何只写裸名的引用都可能被读者解析到那颗文件上；因此本规格的源码引用一律写全路径。
+   三条边界要如实写明：裸 `:NN` 简写（同文件内续指，如 §7.1 的 `（:28）`）不在抽取范围内，只有带路径名的引用会被核；区间 `路径:NNN-MMK` 只核**起始行**；`HINTS` 是人登记的承重子集（25/50），其余引用只享有三类机械检查。还有一条是写这条规则时当场踩到的**元层自指**：正文里举「旧的、已废弃的行号」时，只要写成 `路径:行号` 邻接形态就会被自己的正则当成现行引用收进分母——本条第一次落笔即因此报出歧义 2 + 越界 1，全部来自新写的第 7 条自己；历史行号一律断开邻接写成「`main.cj` 的 `:1155`」。**`HINTS` 必须由 `--list` 的实测行生成、不得凭记忆登记**——本规则首跑时我自己登记错 3 条（把 `resp.close()` 记到区间起始行 47 而非 48、把 `TurnResult.usage` 记成 `class TurnResult` 那行、把 `pack-host.mjs` 的变量名当成断言对象而它实际叫 `RUNTIME_DLLS`），三条都是**文档没错、表错了**，若按记忆直接改文档就会把对的改成错的。反证也做了：`node target/citation-gate-selftest.cjs` 拿规格副本各注入一处违规（空行 / 越界 / 文件缺 / 歧义裸名），四桶全部点名且「引用体检通过」不再出现，**GATE-OK 4/4**，同批基线报 PASS。
+8. **§16.2 这张待拍板表也要机械核**（`node target/pending-values-audit.cjs`）：本轮实测 **14 数据行 × 5 列、第一列 1..14 连续无缺**。切列必须先剥转义竖线——第 5 行的迁移包构造里写着 `\|enc`/`\|mac`，按裸 `|` 切会把一列切成两列、凭空造出「列数不符」。这个脚本同时把每行的「待拍板项 ⇒ 建议默认值」打成一页，评审时照它逐条判即可，不必在文档里另抄一份取值表（那份会漂）。
