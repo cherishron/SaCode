@@ -8,13 +8,15 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   const js=code=>win.webContents.executeJavaScript(code,true);
   async function waitFor(probe) {
     for(let i=0;i<120;i++) {if(await js(probe)) return;await new Promise(r=>setTimeout(r,50));}
+    const state=await require('./test-support/frame-diagnostics.cjs').recordFrameTimeout({win,bridge,outDir,probe});
+    console.log('FRAME 等待超时现场 '+JSON.stringify(state));
     throw new Error('整页状态未就绪：'+probe);
   }
   await waitFor("!!document.querySelector('#composer') && document.querySelector('.app').dataset.catalogReady==='true'");
   const reports=[];
   async function check(name,source) {
     const checks=await js(source),failed=Object.keys(checks).filter(k=>!checks[k]);
-    reports.push({name,checks,failed});console.log('FRAME '+(failed.length?'FAIL':'PASS')+' '+name+' '+failed.join(',')+(failed.length?' '+JSON.stringify(checks):''));
+    reports.push({name,checks,failed});writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));console.log('FRAME '+(failed.length?'FAIL':'PASS')+' '+name+' '+failed.join(',')+(failed.length?' '+JSON.stringify(checks):''));
   }
   const typography=await js("Object.fromEntries(['body','.hero-heading','.nav-label','#composer'].map(s=>[s,getComputedStyle(document.querySelector(s)).fontFamily]))");
   console.log('FRAME 字体',JSON.stringify(typography));
