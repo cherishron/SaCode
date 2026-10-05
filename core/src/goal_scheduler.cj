@@ -173,3 +173,74 @@ public class GoalScheduler {
         return true
     }
 }
+
+// 一轮模型工具循环的产物：本轮是否有实质进展（喂给 no-progress 判据）、
+// 模型是否提出了带证据的完成候选（喂给完成闸）。
+public class RoundOutcome {
+    public let progressed: Bool
+    public let evidence: Bool
+    public init(progressed: Bool, evidence: Bool) {
+        this.progressed = progressed
+        this.evidence = evidence
+    }
+}
+
+// 驱动结果：实际跑了多少轮，以及因何停下——completed / paused / blocked / no-goal /
+// round-limit / elapsed-limit / no-progress / budget。
+public class DriveResult {
+    public let rounds: Int64
+    public let stopReason: String
+    public init(rounds: Int64, stopReason: String) {
+        this.rounds = rounds
+        this.stopReason = stopReason
+    }
+}
+
+// 跨轮持续执行驱动：把「一轮结束 → 目标没达成且允许继续就启动下一轮」这件事收进核心。
+//
+// 关键口径——只在轮次边界重读目标状态，所以暂停/编辑/删除对「下一轮要不要开」生效，
+// 绝不打断当前轮次（runRound 一旦启动就跑到收束）。完成必须有证据；限额停止经 applyStop
+// 落成阻塞，防「目标没完成却无限空转」。真实执行里 runRound 就是跑一次模型工具循环
+// （并在其中于步骤边界送达 inbox），驱动本身不认识 inbox，也不碰模型请求的构造。
+public class GoalDriver {
+    let scheduler: GoalScheduler
+    let svc: GoalService
+
+    public init(scheduler: GoalScheduler, svc: GoalService) {
+        this.scheduler = scheduler
+        this.svc = svc
+    }
+
+    public func run(maxRounds: Int64, maxElapsed: Int64, noProgressLimit: Int64,
+        budgetExceeded: () -> Bool, runRound: () -> RoundOutcome): DriveResult {
+        var rounds = Int64(0)
+        var stopReason = ""
+        var done = false
+        // 用显式 done 标志收束循环而不是 while(true)+多处 return：仓颉不把 while(true)
+        // 当作发散，函数体尾表达式若是循环就报 Unit 与 DriveResult 类型不符。
+        while (!done) {
+            // 边界重读：上一轮收束后用户可能已暂停/编辑/删除——下一轮据此决定。
+            let snap = svc.snapshot()
+            let decision = scheduler.decide(snap.phase, maxRounds, maxElapsed, noProgressLimit, budgetExceeded())
+            if (!decision.run) {
+                scheduler.applyStop(svc, snap.revision, decision)
+                stopReason = decision.reason
+                done = true
+            } else {
+                scheduler.beginRound()
+                let outcome = runRound()
+                scheduler.endRound(outcome.progressed)
+                rounds += Int64(1)
+                if (outcome.evidence) {
+                    // 有证据才收口，基于边界重读后的当前修订做 CAS。
+                    let current = svc.snapshot()
+                    if (scheduler.completeIfEvidenced(svc, current.revision, true)) {
+                        stopReason = "completed"
+                        done = true
+                    }
+                }
+            }
+        }
+        return DriveResult(rounds, stopReason)
+    }
+}

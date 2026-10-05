@@ -28,6 +28,13 @@ func activeGoal(): (String, SessionLog, GoalService) {
     return (root, log, svc)
 }
 
+// 轮次计数器：闭包只捕获这个 let 绑定的可变对象（同 FakeClock 的写法），
+// 避免捕获 var 局部变量的编译器限制。测试专用，不进生产核心。
+class RoundCounter {
+    var n: Int64 = 0
+    func bump(): Unit { n += 1 }
+}
+
 // 轮次记账：一轮跑了 3 秒，roundsDone/elapsedSeconds 各读到什么。
 @Test
 func schedulerRoundAccountsElapsedAndRounds() {
@@ -290,5 +297,120 @@ func applyStopNonLimitReasonIsNoOp() {
     let d = s.decide("paused", Int64(100), Int64(10000), Int64(3), false)
     s.applyStop(svc, rev, d)
     @Expect(svc.snapshot().phase, "active")
+    removeIfExists(root, recursive: true)
+}
+
+// ===== 跨轮持续执行驱动（GoalDriver）=====
+// 基线点名的缺口：「目标不完成就继续启动下一轮」的调度。驱动只在轮次边界重读目标状态，
+// 所以暂停/编辑/删除对下一轮生效、绝不打断当前轮次；有证据才收口；限额停止经 applyStop 落阻塞。
+
+// 连续跑：前两轮有进展无证据，第三轮给证据 → 收口 completed，跑了 3 轮、落 3 条 goal/round。
+@Test
+func driverRunsRoundsUntilEvidencedCompletion() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let drv = GoalDriver(s, svc)
+    let calls = RoundCounter()
+    let r = drv.run(Int64(100), Int64(100000), Int64(3), { => false },
+        { =>
+            calls.bump()
+            RoundOutcome(true, calls.n == Int64(3))
+        })
+    @Expect(r.stopReason, "completed")
+    @Expect(r.rounds, Int64(3))
+    @Expect(calls.n, Int64(3))
+    @Expect(svc.snapshot().phase, "complete")
+    @Expect(s.roundsDone(), Int64(3))
+    removeIfExists(root, recursive: true)
+}
+
+// 边界生效不强杀当前轮：用户在第一轮进行中按暂停 → 本轮照常收束，第二轮不再启动；
+// paused 是非限额理由，applyStop 不去 block，目标保持 paused。
+@Test
+func driverAppliesPauseAtBoundaryWithoutKillingCurrentRound() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let drv = GoalDriver(s, svc)
+    let calls = RoundCounter()
+    let r = drv.run(Int64(100), Int64(100000), Int64(3), { => false },
+        { =>
+            calls.bump()
+            if (calls.n == Int64(1)) {
+                svc.pause(svc.snapshot().revision)
+            }
+            RoundOutcome(true, false)
+        })
+    @Expect(calls.n, Int64(1))
+    @Expect(r.rounds, Int64(1))
+    @Expect(r.stopReason, "paused")
+    @Expect(svc.snapshot().phase, "paused")
+    removeIfExists(root, recursive: true)
+}
+
+// 轮数用尽且从无证据 → 停在 round-limit，经 applyStop 落阻塞（goal-round-limit），不空转。
+@Test
+func driverBlocksOnRoundLimitWithoutEvidence() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let drv = GoalDriver(s, svc)
+    let calls = RoundCounter()
+    let r = drv.run(Int64(2), Int64(100000), Int64(3), { => false },
+        { =>
+            calls.bump()
+            RoundOutcome(true, false)
+        })
+    @Expect(r.stopReason, "round-limit")
+    @Expect(r.rounds, Int64(2))
+    @Expect(calls.n, Int64(2))
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().blockedReason, "goal-round-limit")
+    removeIfExists(root, recursive: true)
+}
+
+// 预算信号可在中途收紧：跑过一轮后 budgetExceeded 转真 → 停在 budget，落阻塞 goal-budget。
+@Test
+func driverStopsOnBudgetSignalMidRun() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let drv = GoalDriver(s, svc)
+    let calls = RoundCounter()
+    let r = drv.run(Int64(100), Int64(100000), Int64(3),
+        { => calls.n >= Int64(1) },
+        { =>
+            calls.bump()
+            RoundOutcome(true, false)
+        })
+    @Expect(r.stopReason, "budget")
+    @Expect(r.rounds, Int64(1))
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().blockedReason, "goal-budget")
+    removeIfExists(root, recursive: true)
+}
+
+// 没有活动目标：一轮都不该跑，直接停在 no-goal，runRound 一次都不被调用。
+@Test
+func driverDoesNotRunRoundWhenNoActiveGoal() {
+    let root = "core-gsched-nogoal"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let svc = GoalService(log) // 从未 create：phase none
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let drv = GoalDriver(s, svc)
+    let calls = RoundCounter()
+    let r = drv.run(Int64(100), Int64(100000), Int64(3), { => false },
+        { =>
+            calls.bump()
+            RoundOutcome(true, true)
+        })
+    @Expect(calls.n, Int64(0))
+    @Expect(r.rounds, Int64(0))
+    @Expect(r.stopReason, "no-goal")
+    @Expect(svc.snapshot().phase, "none")
     removeIfExists(root, recursive: true)
 }
