@@ -156,6 +156,18 @@
 - 已发出的请求默认允许结束；要立即停走显式取消（沿用现有 `turn/cancel`），不提供「关开关顺带撤回」。
 - 下游配置保留并显示「供应商已关闭」。
 
+### 4.1 插入点与两处必须先收的真缺陷（本批直读宿主源码）
+
+**插入点**：`apps/host/src/main.cj:1163-1174`。现状是 `RealSseProvider(baseUrl, turnKey, reqBody, tk)` 在轮次开始时装配一次，**多步续跑用的闭包 `{ request => RealSseProvider(baseUrl, turnKey, request, tk) }` 把同一个上游冻在闭包里**。
+
+- 缺陷 A：**目标执行的每一步不会重新过调度**。上游第 2 步挂了仍继续朝同一 `baseUrl` 打，与目标里「一次逻辑请求可能失败后切换上游」直接不符。
+  改法：`ModelAgentRunner` 的续跑闭包改成「向 `ModelRouter` 再要一条路由」（每步一次决策，含健康过滤与预算预留），路由结果连同 `attemptId` 一起交给 `TransportChannel`；闭包只捕获调度器与请求装配器，不捕获具体上游。
+- 缺陷 B：**`protocol` 字段被存下但从不生效**。`providerProtocols` 收三种（`openai-completions`/`openai-responses`/`anthropic-messages`，`provider_registry.cj:41`），但 `core/src/sse.cj:11` 的 `RealSseProvider` 只实现一种线格式，全仓 `anthropic`/`x-api-key` 在请求路径上 **0 命中**。后果：把供应商存成 `anthropic-messages` 仍按 OpenAI 形态发出去，认证头与请求体都不对——这是**用错协议冒充支持**。
+  改法：加 `ProtocolAdapter` 缝（`core/src/protocol_adapter.cj`），把「线格式 + 认证头形态 + 流式事件映射」按协议各一份；**只登记已实现的适配器**。调度时对未实现协议的绑定返回带类型拒绝 `adapter-unimplemented` 并把它排除出候选，同时能力页如实显示「协议适配器未实现」。**不允许**回落到 OpenAI 形态盲发。
+  顺序影响：目标 §2.1 要求「按适配器分别支持」，所以 `openai-completions`（已可用）之外两种是需求不是可选项，落在 B2（缝与拒绝语义）与后续批次逐个补实现；补一个就把它的协议从「不可调度」移到「可调度」，不改规则只改注册表。
+
+**取参通道收敛**：同一处还有三条并存的参数来源——注册表 plan（`:1082-1094`）、遗留 `ModelSettings`（`configured.baseUrl`）、环境变量兜底 `DSH_PROVIDER_BASE_URL` / `DSH_PROVIDER_KEY` / `STEPFUN_API_KEY`（`:1101`、`:1109`）。模型中心上线后必须**只剩一条**：任务输入 → 自定义模型 ID → `ModelRouter` 决策 → 凭据按 `credentialRef` 现解析。环境变量兜底降为「开发态夹具」，在产品路径（`task/start`）里**不再参与**取值，缺配置就 fail-loud（这条现有代码已具备雏形：`task/start` 无 base_url 会硬失败，而 `turn/start` 静默走假 provider——B2 一并收口，别把诊断通道当产品通道）。
+
 ---
 
 ## 5. 失败分类与健康恢复
@@ -446,6 +458,9 @@
 | 31 | 渲染层不再重述校验：非回环 `http://` 在**前端就拒**，且前端接受的形态是核心规则的真子集（核心 `provider_registry.cj:436`） | 把 `validateDraft` 的 URL 判据放宽回 `http:` 通吃（现状缺陷） |
 | 32 | 401/403 暂停的作用域，在 `credentials/rotate` 使 `revision` 变大后**立即重新纳入候选**，不等冷却窗口 | 忽略 revision，硬等到 `notBefore` |
 | 33 | `credentials/revoke` 后该作用域转「待绑定凭证」，与缺凭据态同口径、不可调度 | revoke 当无事发生 |
+| 34 | 目标执行多步时**每一步重新过调度**：第 2 步上游失败后可切到另一条路由，续跑闭包不捕获具体上游（§4.1 缺陷 A） | 保持现在冻在闭包里的单上游续跑 |
+| 35 | 未实现协议适配器的绑定被排除出候选并回 `adapter-unimplemented`，**绝不按 OpenAI 形态盲发**（§4.1 缺陷 B） | 把 `anthropic-messages` 当 `openai-completions` 发 |
+| 36 | 产品路径（`task/start`）的取参只剩一条通道：自定义模型 → 路由 → `credentialRef` 现解析；`DSH_PROVIDER_*` 兜底不参与，缺配置 fail-loud | 环境变量影子压过用户配置，或静默回落假 provider |
 
 ### 11.1 最终验收闭环的对位
 
@@ -489,3 +504,24 @@
 | 账本与文档共用目录的写竞争 | 全部经 `WriteLease`；`bridge.test.mjs` 在仓库根用 `dualtest/`，异常残留先 `rm -rf dualtest` |
 | 宿主产物过期导致的假绿 | 每批模型中心改动后重打宿主再跑桌面用例，并核 exe 的 mtime |
 | 并发会话同仓改源码 | 本设计只新增一份文档，落地时逐文件精确暂存，不吞他人改动 |
+
+---
+
+## 14. 冻结分母（提交级取证，后续批次的算术基准）
+
+在**只含提交**的隔离副本上取（`git worktree add --detach ../verify-head-modelcenter HEAD`，取的是 `e35f599`），工作区里其它会话未落库的 `core/src/goal_scheduler.cj`、`prompt_enhance.cj` 不在内：
+
+| 入口 | 命令 | 实测计数 | rc |
+| --- | --- | --- | --- |
+| 核心 | `cd core && cjpm test` | **TOTAL 463 / PASSED 462 / SKIPPED 1 / FAILED 0 / ERROR 0**（SKIPPED 1 是凭据门用例，本机无凭据） | 0，且打印 `cjpm test success` |
+| CLI | `cd apps/cli && cjpm build` → 副本根逐模式 | `all` **100**、`stream` 21、`tool` 11、`ext` 8、`cancel` 9、`extjs` 12、`headless` 36、`sig` 6 → **203 PASS** | 0 |
+| CLI `sig` 的 4 条红 | 同上 | `中断确实送达处理器`、`在途 turn 因中断收束`、`中断类型是 Ctrl+C 或 Ctrl+Break`、`取消的 turn 留下 turn/cancelled` → 按**已知本机中断投递阻塞**记 BLOCKED，不记回归（见 [[project-windows-ctrl-c-delivery-blocker]]） | — |
+| 桌面 | 未冻结 | 隔离副本没有 `apps/desktop/node_modules`，跑不了 `npm test`；**工作区态的计数不能当 HEAD 分母**。B1 若要写「N→N+k」，先在同副本 `npm install` 后单跑一次 | — |
+
+对照 `docs/evidence/handoff-model-provider-2026-10-04.md` §4：`all` 由 77 → **100**，其余六个模式计数不变。
+
+### 14.1 三个取证陷阱（本批实测踩到，写下来免得再踩）
+
+1. **干净副本里 `cjpm build` 不会把 stdx DLL 拷到 exe 同目录**，而主仓 `apps/cli/target/release/bin/` 里有 37 颗（历史打包留下的）。直接跑副本产物会 `rc=127`、**stdout 空**，逐模式 `grep -c '^PASS'` 得 0——看着像「零断言通过」，其实进程根本没起来。真因要分开捕获：`> out 2> err` 才看得见 `error while loading shared libraries: libstdx.net.tls.dll`（把 stdx 目录加进 PATH 在这台机器上仍不生效，必须拷到 exe 同目录）。
+2. **CLI 各模式的输出形态不统一**：`all/stream/tool/ext/cancel/extjs/headless/sig` 用 `^PASS`/`^FAIL`，而 `seed`/`projection` 用 `ok\t<词>\t<数>` 形态。按 `^PASS` 计数会把这两个模式读成 0 条断言，等于漏分母。
+3. 颜色码会插在 token 中间（与 `cangjie-cjpm-test-result-verification` 记的同一类陷阱），计数前必须先剥 ANSI 再匹配。
