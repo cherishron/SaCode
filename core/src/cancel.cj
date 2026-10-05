@@ -20,6 +20,8 @@ func streamChunkJson(ch: Chunk): String {
     if (let Some(v) <- ch.toolIndex) { obj.put("toolIndex", JsonInt(v)) }
     if (let Some(v) <- ch.toolId) { obj.put("toolId", JsonString(v)) }
     if (let Some(v) <- ch.toolName) { obj.put("toolName", JsonString(v)) }
+    if (let Some(v) <- ch.requestSeq) { obj.put("requestSeq", JsonInt(v)) }
+    if (let Some(v) <- ch.elapsedMs) { obj.put("elapsedMs", JsonInt(v)) }
     return obj.toString()
 }
 

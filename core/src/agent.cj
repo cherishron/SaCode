@@ -14,9 +14,12 @@ public class Chunk {
     public let toolIndex: Option<Int64>
     public let toolId: Option<String>
     public let toolName: Option<String>
+    public let requestSeq: Option<Int64>
+    public let elapsedMs: Option<Int64>
     public init(kind: String, text: String, reason: String,
         choiceIndex!: Option<Int64> = None, toolIndex!: Option<Int64> = None,
-        toolId!: Option<String> = None, toolName!: Option<String> = None) {
+        toolId!: Option<String> = None, toolName!: Option<String> = None,
+        requestSeq!: Option<Int64> = None, elapsedMs!: Option<Int64> = None) {
         this.kind = kind
         this.text = text
         this.reason = reason
@@ -24,6 +27,8 @@ public class Chunk {
         this.toolIndex = toolIndex
         this.toolId = toolId
         this.toolName = toolName
+        this.requestSeq = requestSeq
+        this.elapsedMs = elapsedMs
     }
 }
 
