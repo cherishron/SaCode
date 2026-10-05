@@ -316,6 +316,7 @@
 ### 7.2 金额表示
 
 - **固定精度十进制定点**：整数微单位（1 货币单位 = 10^6 微单位）+ ISO 币种码，不做浮点累加。
+- **上界要算准，别写大概**：`Int64` 最大值 `9223372036854775807` 除以 10^6 得 **约 9.2234×10^12 元**（本轮 Node 复算），这才是溢出边界。规格里原先那句「跨 10^13 元才溢出」把余量高估了约 8%——B3 的溢出用例如果照那个数取边界，断言会落在真实溢出点**之外**，等于钉不住。凡这类由常量推出来的数字，一律写成「算式 + 结果」，不写口算的量级。
 - 计价按绑定，单位由该上游的 `meterUnit` 决定（token / 张 / 秒 / 请求 / 文档），**不把图像音频折算成 token**。
 - 每次结算写入**计价快照**；改价只影响之后的请求，历史账单永不重算。
 - 本仓自有的 SHA-256 与账本无关；定点加法全部显式走 `Int64` 并带溢出检查——超出即拒绝结算并标 `待核算`，不允许静默回绕。
@@ -649,7 +650,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 
 ## 15. B0 密码学探针实测记录（2026-10-05，结论已据此改写 §8.2）
 
-**方法**：一次性探针包 `target/b0/`（gitignore 产物目录，不进产品源码、不进 workspace），只用 `core/cjpm.toml` 同一条 `[target.*.bin-dependencies] path-option` 指向 `stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx`；`cjpm build` 通过后把该目录全部 `*.dll` 与探针 exe 同目录放置（§14.1 第 1 条），按 `^PASS`/`^FAIL` 计数。外部对照面两个：**Node `crypto`**（HMAC-SHA256 与 PBKDF2-HMAC-SHA256）和 **`openssl enc -sm4-ctr`**（密钥流）。工具链：cjc/cjpm 1.1.3（cjnative，x86_64-w64-mingw32）。
+**方法**：一次性探针包 `target/b0/`（gitignore 产物目录，不进产品源码、不进 workspace），只用 `core/cjpm.toml` 同一条 `[target.*.bin-dependencies] path-option` 指向 `stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx`；`cjpm build` 通过后把该目录全部 `*.dll` 与探针 exe 同目录放置（§14.1 第 1 条），按 `^PASS`/`^FAIL` 计数。外部对照面两个：**Node `crypto`**（HMAC-SHA256 与 PBKDF2-HMAC-SHA256）和 **`openssl enc -sm4-ctr`**（密钥流）。工具链：cjc/cjpm 1.1.3（cjnative，x86_64-w64-mingw32）。**现场已入库**：`docs/evidence/model-center-b0-2026-10-05.md`——探针目录在 gitignore 的 `target/` 里，评审的人不该依赖某台机器上的临时目录才能复核，所以那份文件带逐字复跑命令、原样输出、与 Node `crypto` 的逐字节比对表，以及 OpenSSL 两张表的区别（取错表会得出相反结论）。
 
 **本轮总账：11 PASS / 4 FAIL**（4 条 FAIL 全部是同一条 `SM4-GCM` 路径的四个参数变体）。
 
@@ -690,7 +691,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | `openssl enc -sm4-ctr -K a299…d58 -iv 0909…09` | **与上一行逐字节一致**（独立实现复现） |
 | ETM 标签 HMAC-SHA256(macKey, header‖iv‖ct) | `31f73b01ecb866c3697674841a9d60c8091be0e1f225ffdd55d6adef5d0c36c5` |
 
-**B0 余项**：③ **已闭合，证据是现成源码而非新代码**——`core/src/approval.cj:23-26` 的 `monotonicSeconds()` 返回 `MonoTime.now() - base`，base 是**本进程启动时刻**，且 `ApprovalDesk.init(log, clock!: () -> Int64 = monotonicSeconds())` 就是既有注入形态；这条缝可直接给 `RouteHealth` 用，但**单调值一次都不能落盘**（跨进程/跨重启读它等于读随机数），于是 §5.3 补了两类时钟分工与三道墙钟护栏，§11 补断言 37–39。④ relay 的 SSE 与 usage 透传桩测仍**未跑**，归 B4 开工前；未证前不得把透传契约写成已达成。探针代码留在 gitignore 的 `target/b0/`，不进产品源码；`secret-bundle` 的正式实现要在 `core` 里按 §8.2 红先重写一遍，探针不构成防回归。
+**B0 余项**：③ **已闭合，证据是现成源码而非新代码**——`core/src/approval.cj:23-26` 的 `monotonicSeconds()` 返回 `MonoTime.now() - base`，base 是**本进程启动时刻**，且 `ApprovalDesk.init(log, clock!: () -> Int64 = monotonicSeconds())` 就是既有注入形态；这条缝可直接给 `RouteHealth` 用，但**单调值一次都不能落盘**（跨进程/跨重启读它等于读随机数），于是 §5.3 补了两类时钟分工与三道墙钟护栏，§11 补断言 37–39。④ relay 的 SSE 与 usage 透传桩测仍**未跑**，归 B4 开工前；未证前不得把透传契约写成已达成。探针代码留在 gitignore 的 `target/b0/`，不进产品源码；①② 的**现场已入库**为 `docs/evidence/model-center-b0-2026-10-05.md`（本轮 2026-10-05 重跑复现：按 token 计数 **PASS 11 / FAIL 4 / SKIP 1，总 16**；4 条 FAIL 全属 `SM4-GCM` 构造本身，1 条 SKIP 是 GCM 拿不出密文所以篡改分支无从执行——不是漏测），复现依赖的是入库文件里的命令，不是这台机器还留着目录；`secret-bundle` 的正式实现要在 `core` 里按 §8.2 红先重写一遍，探针不构成防回归。
 
 ---
 
@@ -763,7 +764,7 @@ git show HEAD:apps/desktop/preload.cjs | awk '/contextBridge.exposeInMainWorld/{
 | 1 | 冷却退避阶梯 | `30min → 1h → 2h → 4h`，同一作用域逐档抬升，上限 4h | 恢复快慢 vs 烧钱与撞额度次数 | §5.3 一处常量，全链路走注入时钟，用例不断言具体分钟数而断言单调抬升 |
 | 2 | 每作用域每日探测条数 | `probe.maxPerDay = 3` | 探测费用（`usageKind=probe`）与「额度窗一开就恢复」的及时性 | §5.3；按落盘条数计，改它是写一条事件（断言 39） |
 | 3 | 持久冷却的时间上限 | `cooldown.maxHorizon = 24h`（超长 `Retry-After` 裁剪并标「估算」） | 供应商给 3 天重置时的显示与冻结时长 | §5.3 第三道护栏（断言 38） |
-| 4 | 金额定点刻度 | Int64 微单位（1 元 = 10^6） | 溢出阈值与最小计价粒度；跨 10^13 元才溢出 | §7.2 一处常量（断言 16 钉溢出） |
+| 4 | 金额定点刻度 | Int64 微单位（1 元 = 10^6） | 溢出阈值与最小计价粒度；上界 ≈ **9.2234×10^12 元**（`Int64` 最大值 / 10^6，本轮复算；原写作 10^13 系高估，已更正） | §7.2 一处常量（断言 16 钉溢出，边界值按 §7.2 那个算式取） |
 | 5 | 迁移包加密构造 | SM4-CTR + HMAC-SHA256 的 ETM、PBKDF2 迭代不低于 600k、对外称 128 位强度 | 换机包的安全强度与解包耗时 | §8.2；算法标识写进信封头，将来换 AEAD 旧包仍可自描述解出（断言 30） |
 | 6 | 熔断作用域三档 + 冷却替代「当天累计三次即停用」 | `upstream`/`route-set`/`channel`，额度类升 `route-set` | 换自定义模型能否绕过暂停（断言 6 就是钉这个） | §5.1；这是相对目标原文的一处**加强**，不是裁剪 |
 | 7 | 导出默认不含密钥 | `kind=config` 为默认，含密钥包必须口令加密且显式选择 | 误导出成明文包的风险 | §8.1（断言 17、42） |
