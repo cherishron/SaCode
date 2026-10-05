@@ -132,8 +132,8 @@ func realModelToolRuntimeSuite(): TestSuite {
             let required = body[0..body.size - 1] + ",\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"todo_write\"}}}"
             let key = getVariable("STEPFUN_API_KEY") ?? ""
             let base = "https://api.stepfun.com/step_plan/v1"
-            let result = ModelAgentLoop().run(RealSseProvider(base, key, required, token),
-                { request => RealSseProvider(base, key, request, token) }, "step-5-preview", token,
+            let result = ModelAgentLoop().run(RequestTraceProvider(required, "stepfun", log, token, { request => RealSseProvider(base, key, request, token) }),
+                { request => RequestTraceProvider(request, "stepfun", log, token, { body => RealSseProvider(base, key, body, token) }) }, "step-5-preview", token,
                 log, DeliveryQueue(2048), false, maxSteps: Int64(4), toolRuntime: runtime)
             @Expect(result.finishReason, "stop")
             @Expect(result.interrupted, false)
@@ -142,5 +142,12 @@ func realModelToolRuntimeSuite(): TestSuite {
             @Assert(TodoStore(log).list().size == Int64(1))
             @Expect(TodoStore(log).list()[0].content, "verified-task")
             @Expect(Int64.parse(result.usage) > 0, true)
+            let traces = JsonValue.fromStr(requestTraceProjection(log.snapshotEvents().toArray())).asObject().get("requests").getOrThrow().asArray()
+            @Expect(traces.get(1).isSome(), true)
+            @Expect(traces.get(2).isNone(), true)
+            let firstTrace = traces.get(0).getOrThrow().asObject()
+            @Expect(firstTrace.get("request").getOrThrow().asObject().get("header").getOrThrow().asObject().get("config").getOrThrow().asObject().get("model").getOrThrow().asString().getValue(), "step-5-preview")
+            @Expect(firstTrace.get("prompts").getOrThrow().asArray().get(0).getOrThrow().asObject().get("content").getOrThrow().asString().getValue(), log.snapshotEvents()[0].data)
+            @Expect(firstTrace.get("end").getOrThrow().asObject().get("state").getOrThrow().asString().getValue(), "completed")
         }).build()
 }
