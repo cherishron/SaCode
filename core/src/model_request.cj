@@ -4,7 +4,7 @@ import stdx.encoding.base64.*
 import stdx.encoding.json.*
 
 // 标准消息与具有关联 ID 的工具结果全部从同一会话日志重建。
-public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = [], attachStore!: ?AttachmentStore = None): String {
+public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = [], attachStore!: ?AttachmentStore = None, supportsImages!: Bool = false): String {
     var messages = ""
     let pending = ArrayList<String>()
     // 引用事件服务的是紧跟其后的那条用户消息。「引用 → 请求字节」的物化只发生在这里：
@@ -56,7 +56,7 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
         if (messages.size > 0) { messages += "," }
         if (role == "user") {
             if (pendingRefs.size > 0) {
-                messages += userMessageWithRefs(event.data, pendingRefs, attachStore)
+                messages += userMessageWithRefs(event.data, pendingRefs, attachStore, supportsImages)
             } else {
                 messages += "{\"role\":\"user\",\"content\":\"${jsonEscapeText(event.data)}\"}"
             }
@@ -79,12 +79,14 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
 
 // 带引用事件的 user/message 走多 part 形态：文字一条，图片按引用顺序各一条。
 // 通用文件没有 provider 侧通道，所以不把它塞成 vision part（引用依旧留在日志里）。
-func userMessageWithRefs(text: String, refs: ArrayList<AttachmentRef>, attachStore: ?AttachmentStore): String {
+func userMessageWithRefs(text: String, refs: ArrayList<AttachmentRef>, attachStore: ?AttachmentStore, supportsImages: Bool): String {
     var parts = "{\"type\":\"text\",\"text\":\"${jsonEscapeText(text)}\"}"
     for (ref in refs) {
         if (ref.kind != "image") {
             continue
         }
+        // 能力来自调用方解析的模型声明；缺声明不能凭模型名猜，更不能静默删图。
+        if (!supportsImages) { throw Exception("model-image-not-supported") }
         if (let Some(store) <- attachStore) {
             let data = store.read(ref.attachmentId)
             parts += ",{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:${jsonEscapeText(ref.mediaType)};base64,${toBase64String(data)}\"}}"

@@ -23,6 +23,32 @@ const FIXTURE = join(REPO, 'scripts', 'sse-contract-server.cjs');
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAAAAAAA';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
+test('非图片模型拒绝历史图片且宿主继续服务，切换图片模型可重试', { timeout: 120000 }, async () => {
+  const { fixture, bridge } = await open('capability', false);
+  try {
+    const up = await bridge.request('attachment/upload', { kind: 'image', name: 'x.png', mediaType: 'image/png', data: PNG_B64 });
+    await bridge.request('session/append', { data: '看图', receiptIds: [up.receiptId] });
+    await assert.rejects(() => bridge.request('task/start'), /model-image-not-supported/);
+    // 拒绝不能令宿主崩溃，也不能把会话或图片引用清掉。
+    const view = await bridge.request('model/registry/describe');
+    assert.equal(view.providers[0].models[0].image, false);
+    await bridge.request('queue/describe');
+    const draft = {
+      id: 'fixture', name: 'Fixture', baseUrl: `http://127.0.0.1:${fixture.port}/vision`, protocol: 'openai-completions',
+      models: [{ id: 'vision-model', name: 'vision-model', contextWindow: '', maxTokens: '' }],
+    };
+    await bridge.request('model/registry/update', { draft, expectedRevision: view.revision });
+    await assert.rejects(() => bridge.request('task/start'), /model-image-not-supported/);
+    const unknown = await bridge.request('model/registry/describe');
+    draft.models[0].image = true;
+    await bridge.request('model/registry/update', { draft, expectedRevision: unknown.revision });
+    assert.equal((await bridge.request('task/start')).provider, 'real');
+    assert.match((await settle(bridge)).text, /parts=1\b/);
+  } finally {
+    await bridge.stop(); fixture.proc.kill();
+  }
+});
+
 async function startFixture() {
   const proc = spawn(process.execPath, [FIXTURE, '--watchdog-ms', '120000'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const port = await new Promise((res, rej) => {
@@ -35,7 +61,7 @@ async function startFixture() {
   return { proc, port: Number(port) };
 }
 
-async function open(tag) {
+async function open(tag, image = true) {
   const dir = mkdtempSync(join(tmpdir(), `sacode-queue-att-${tag}-`));
   const fixture = await startFixture();
   const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings') });
@@ -45,7 +71,7 @@ async function open(tag) {
     draft: {
       id: 'fixture', name: 'Fixture', baseUrl: `http://127.0.0.1:${fixture.port}/vision`,
       protocol: 'openai-completions',
-      models: [{ id: 'vision-model', name: 'vision-model', contextWindow: '', maxTokens: '', image: true }],
+      models: [{ id: 'vision-model', name: 'vision-model', contextWindow: '', maxTokens: '', image }],
     },
     expectedRevision: 0,
   });

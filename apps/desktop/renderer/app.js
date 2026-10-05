@@ -476,6 +476,7 @@ createApp({
       const text = draft.value, revision = draftRevision;
       if (!text.trim()) return;
       if (text.length > 8000) { error.value = "消息最多支持 8000 个字符，请缩短后重试。"; return; }
+      if (!imageDraftAllowed()) return;
       const requestId = "r" + (++rpcSeq);
       error.value = "";
       // 回合运行中发的图不能被丢掉：与发送那条路径同一道准入——没就绪就挡在这一步，
@@ -545,7 +546,7 @@ createApp({
         revision = view.revision;
         const groups = (view.providers || []).map((p) => ({
           id: p.id, name: p.name || p.id, credentialKind: "api-key",
-          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id })),
+          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id, image: m.image === true })),
         }));
         const chosen = view.defaultProviderId && view.defaultModel
           ? { provider: view.defaultProviderId, model: view.defaultModel } : null;
@@ -581,6 +582,16 @@ createApp({
       };
     })();
     void modelDirectory.load();
+
+    function imageDraftAllowed() {
+      if (!attachments.value.some((a) => a.kind === 'image')) return true;
+      const view = modelDirectory.getSnapshot();
+      const group = view.groups.find((g) => g.id === view.current?.provider);
+      const model = group?.models.find((m) => m.id === view.current?.model);
+      if (view.status === 'ready' && model?.image === true) return true;
+      error.value = "当前模型未声明支持图片，请选择支持图片的模型或移除图片附件。";
+      return false;
+    }
     void refreshQueue();
 
     async function send() {
@@ -590,6 +601,7 @@ createApp({
       const text = draft.value, revision=draftRevision;
       if (!text.trim()) return;
       const ticket=++sendTicket;
+      if (!imageDraftAllowed()) return;
       let acknowledged=false;
       // 附件还没落盘就不能发：宁可挡在发送这一步，也不发一条引用了不存在对象的消息
       if (attachments.value.some((a) => !a.receiptId)) {
@@ -685,6 +697,7 @@ createApp({
     const turnStartFailure = (code) => ({
       "model-not-configured": "还没有配置模型：消息已存入会话，请到设置 → 模型添加提供商并设为默认。",
       "model-credential-unavailable": "提供商还没有可用凭据：消息已存入会话，请到设置 → 模型填入 API 密钥。",
+      "model-image-not-supported": "当前模型未声明支持图片：会话已保留，请选择支持图片的模型后重试。",
       "over-budget": "本轮额度已用满：消息已存入会话，请新建会话继续。",
       "turn-in-flight": "上一轮还在执行，请稍候。",
       "already-owned": "会话正被另一个入口占用，请稍候再试。",

@@ -7,7 +7,7 @@ import std.convert.*
 public class ModelAgentLoop {
     public func run(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None): TurnResult {
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): TurnResult {
         if (maxSteps < 1 || maxSteps > 128) { throw Exception("bad-agent-step-limit") }
         log.append("turn/start", "")
         let todo = TodoTool(log, allowParallel)
@@ -77,11 +77,15 @@ public class ModelAgentLoop {
                 // 只有「确要去发下一次请求」的位置才摘：step-limit 已经 break，
                 // 在那之后摘走等于把消息吞进没人看的清单。
                 for (note in AgentInbox(log).claimStep()) {
-                    log.append("user/message", note.text)
+                    // 即时补充也必须结算绑定附件；仅写正文会让续跑静默丢图。
+                    if (note.attachments.size > 0) {
+                        if (let Some(store) <- attach) { store.commitMessage(note.text, note.attachments) }
+                        else { throw Exception("attachment-store-absent") }
+                    } else { log.append("user/message", note.text) }
                     sink.offer("projection:queue")
                 }
                 // 唯一请求来源是会话日志：不保留第二份 messages 状态。
-                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()], attachStore: attach))
+                provider = nextProvider(modelRequestJson(model, log.snapshotEvents().toArray(), tools: [todo.spec()], attachStore: attach, supportsImages: supportsImages))
                 providerOpen = true
             }
         } catch (e: Exception) {
@@ -97,8 +101,8 @@ public class ModelAgentLoop {
 public class ModelAgentRunner {
     public func start(first: Provider, nextProvider: (String) -> Provider, model: String,
         token: TurnToken, log: SessionLog, sink: FrameSink, allowParallel: Bool,
-        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None): TurnHandle {
-        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach) }
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false): TurnHandle {
+        let future = spawn { => ModelAgentLoop().run(first, nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages) }
         return TurnHandle(token, future)
     }
 }

@@ -134,6 +134,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await require('./test-support/todo-panel-smoke.cjs')({win,waitFor,check,outDir});
   await require('./test-support/todo-host-smoke.cjs')({win,bridge,waitFor,check});
   await require('./test-support/queue-reference-smoke.cjs')({win,bridge,waitFor,check});
+  await require('./test-support/image-capability-smoke.cjs')({win,bridge,waitFor,check});
   // 金路径放最后：它会发真实消息并起一轮，前面的夹具都按「没有答复」的状态断言。
   await require('./test-support/golden-path-smoke.cjs')({win,check,waitFor,bridge});
   writeFileSync(join(outDir,'reports.json'),JSON.stringify(reports,null,2));

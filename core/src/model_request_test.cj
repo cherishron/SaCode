@@ -57,7 +57,7 @@ func modelRequestMaterializesImageRefsOnlyAtTheRequestBoundary() {
     refs.add(img)
     store.commitMessage("看图", refs)
 
-    let body = JsonValue.fromStr(modelRequestJson("m", log.snapshotEvents().toArray(), attachStore: store)).asObject()
+    let body = JsonValue.fromStr(modelRequestJson("m", log.snapshotEvents().toArray(), attachStore: store, supportsImages: true)).asObject()
     let messages = body.get("messages").getOrThrow().asArray()
     @Expect(jsonCount(messages), Int64(1))
     let content = messages.get(0).getOrThrow().asObject().get("content").getOrThrow()
@@ -99,7 +99,7 @@ func modelRequestRefusesRefsWithoutAStoreAndMissingObjects() {
     // 有引用却没有附件仓：静默丢图等于让模型看到一条被阉割的消息，必须响亮拒绝。
     var noStore = ""
     try {
-        let sunk = modelRequestJson("m", events)
+        let sunk = modelRequestJson("m", events, supportsImages: true)
         noStore = "no-throw:${sunk.size}"
     } catch (e: Exception) {
         noStore = e.message
@@ -109,7 +109,7 @@ func modelRequestRefusesRefsWithoutAStoreAndMissingObjects() {
     removeIfExists(store.hostPath(refs[0].attachmentId), recursive: false)
     var missing = ""
     try {
-        let sunk = modelRequestJson("m", events, attachStore: store)
+        let sunk = modelRequestJson("m", events, attachStore: store, supportsImages: true)
         missing = "no-throw:${sunk.size}"
     } catch (e: Exception) {
         missing = e.message
@@ -135,6 +135,26 @@ func modelRequestDoesNotTurnGenericFilesIntoImageParts() {
     @Expect(jsonCount(parts), Int64(1))
     @Expect(parts.get(0).getOrThrow().asObject().get("type").getOrThrow().asString().getValue(), "text")
     @Expect(log.snapshotEvents()[0].data.contains("sha256:"), true)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func modelRequestRejectsImagesWithoutAnExplicitCapability() {
+    let root = "core-mreq-capability"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let store = AttachmentStore("${root}/attachments/v1", log, AttachmentLimits.localBackend())
+    let refs = ArrayList<AttachmentRef>()
+    refs.add(store.saveImage(pngBytes(Int64(2), Int64(1)), "image/png", "a.png"))
+    store.commitMessage("看图", refs)
+    // 即使底层对象缺失，也应先拒不具图片能力的模型，不能读取图片字节。
+    removeIfExists(store.hostPath(refs[0].attachmentId), recursive: false)
+    var code = ""
+    try { modelRequestJson("text-only", log.snapshotEvents().toArray(), attachStore: store) }
+    catch (e: Exception) { code = e.message }
+    @Expect(code, "model-image-not-supported")
+    @Expect(log.snapshotEvents().size, Int64(2))
     removeIfExists(root, recursive: true)
 }
 
