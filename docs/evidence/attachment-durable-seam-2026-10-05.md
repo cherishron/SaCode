@@ -267,6 +267,72 @@ CLI 交付面 `att` 由 20 条增至 23 条（多 part 物化、文字 part 共�
 的凭证（`queue/enqueue` 还不接受 `receiptIds`）；非 vision 模型的档位（不看 `image: false`
 就照发图片 part，这一档未做门控）。
 
+## 8. 提交 45db763 后的交付复验（同一构建，双入口）
+
+本批改了 `core`、宿主与 CLI，所以两个入口的打包态结论必须在新构建上重取一遍，
+不能引用 §6 那一张（那是对上一批构建的实测）。
+
+| 项 | 实测 |
+|---|---|
+| 源码重建 | `apps/host` 与 `apps/cli` 各 `cjpm build` → rc=0，`target/release/bin/main.exe` mtime 07:58（两个入口都换新） |
+| 宿主重打 | `node scripts/pack-host.mjs …` → 「host 打包完成：91 个文件」，`cmp` 包内 `dsh-host.exe` 与构建产物逐字一致 |
+| 桌面开发态 | `apps/desktop` `npm test` **独占**跑 → `# tests 139 / # pass 139 / # fail 0`，含新两条 `ok 3 - 上传的图片随消息进到 provider 请求体，而日志里仍只有引用`、`ok 4 - 没有附件的消息仍然走纯字符串 content` |
+| CLI 平台包 | `node scripts/pack-cli.mjs` → 打印 `packed 45 个文件`（这是脚本自己的计数口径，只算了它逐步 `n += 1` 的那部分，不是目录总量）；`npm pack --offline` 两 tarball（主包 1 375 B / 平台包 11 540 873 B，比上一批 +6 386 B 与本批新增代码同向）→ 离线装进仓内一次性目录，`added 2 packages` |
+| 装机目录对账 | `pack-cli.mjs:20` 先 `rmSync(out)` 再拷，目录里没有上一轮的残留；装机后 `bin/` 实到 83 项（`dsh.exe` + 82 颗 DLL），与打包源目录 `ls` 逐行 `diff` 为空 |
+| 剥 PATH 逐子命令 | `cjpm: ABSENT / cjc: ABSENT / node: 可见`；`all rc=0 PASS=100 FAIL=0`、`stream 21`、`tool 11`、`ext 8`、`cancel 9`、`extjs 12`、`headless 36`、`att 23`，全部 FAIL=0 |
+| `all` 计数算术 | 97 → 100 的 +3 与 `att` 20 → 23 同源：`apps/cli/src/main.cj:345` 是 `if (mode == "all" \|\| mode == "att")`，附件块本来就同时挂在两个档位下，不是两处各写三份 |
+| DLL 拒绝面 | 4 颗 `RUNTIME_DENY`（ast / unittest / testmacro / prop_test）在装机目录逐颗 `ABSENT-OK`；把真依赖 `libcangjie-runtime.dll` 移走后 `dsh att` 当场 `rc=127`，放回后恢复 |
+| 桌面包重打 | `npx electron-builder --config.electronDist=node_modules/electron/dist --config.directories.output=dist/electron-att` → rc=0、日志内 `⨯` 计数 0；`SaCode Setup 0.1.0.exe` 86 989 991 B，sha256 `051358e2aa7b4bedd7ae01d637a54ea0e6483f3a04b709e3d4d4c559f288d8a5`；`sacode-portable.exe` 86 837 958 B，sha256 `55a32377016c3ee039a62a22708d749539fe66e22dfa8da5ae65c2a7e40f4461`（两者都比上一批大，产物确实是新的） |
+| 三方 sha256 对账 | 源 `dist/host/bin/dsh-host.exe` = `win-unpacked/resources/host/bin/dsh-host.exe` = 从新 `SaCode Setup 0.1.0.exe` 里抽出的 `dsh-host.exe`，三者同为 `9a9bda19f06228375f7bc5fda28e737e5a94b8ceb391c5c2d1a81eb5e60f586e`（抽法同 §6.6：先取 `$PLUGINSDIR/app-64.7z`，再 `7z e -r '*dsh-host.exe'`） |
+| 装包态帧冒烟 | `win-unpacked/SaCode.exe --frame-smoke --session-dir=…` → `FRAME 汇总 {"groups":247,"checks":710,"failed":0}`，rc=0 |
+| 装包态 UI 冒烟 | 同布局 `--ui-smoke` → `UI_SMOKE PASS`，203 条 `UI OK` / 0 条 `UI FAIL`，其中 `UI OK 附件经宿主落盘后显示为就绪（实际 {"status":"ready","notice":"","attProbe":"ok:u2"}）` |
+| 真模型往返 | `node --test --test-name-pattern="真实提供商往返"`（凭据走 gitignore 的 `target/step.key`，不落任何日志）→ `ok 1`，`# pass 1 / # fail 0`：改过 `modelRequestJson` 之后真 provider 的流式回合仍然成立 |
+| 核心带凭据（第一次） | `cjpm test` 带 `STEPFUN_API_KEY` → `TOTAL: 445 / PASSED: 444, SKIPPED: 0, ERROR: 1, FAILED: 0`，`Error: cjpm test failed`。这条 ERROR 不是本批代码的回归，而是把一条**一直在赌运气**的用例照出来了，处置见 §9 |
+| 核心带凭据（修好后） | 同法复跑 → `TOTAL: 445 / PASSED: 445, SKIPPED: 0, ERROR: 0, FAILED: 0`，rc=0；`[ PASSED ] CASE: realModelSse (876812600 ns)`、`[ PASSED ] CASE: sseNetworkLongStreamOverflowReplaysEveryPersistedField (17848361700 ns)` |
+
+第一次装包态帧冒烟是红的：`FRAME FAIL Error: 本机 SSE 夹具启动超时`、rc=1。根因不是回归，
+而是**驱动方这一轮漏传了 `SACODE_SSE_FIXTURE`**——§6.7 记录的修法只给了环境变量入口，装机
+布局下默认值仍推不出仓库 `scripts/`。补上环境变量指向仓库里那份同一个夹具后整轮 710/0，
+金路径组在安装包内容里照样实跑。这条差异如实记着：打包态取证的命令必须带那个变量，
+否则红的是驱动脚本而不是被测产品。本轮这次失败进程自己退出了（`Get-CimInstance` 查
+`dist/electron-att` 下的 `SaCode.exe` 无残留），不需要额外收尸。
+
+## 9. 一条「绿灯本是运气」的用例：长流 SSE 溢出重放的看门狗预算
+
+带凭据那轮 `cjpm test` 报的不是 FAILED 而是 ERROR，剥掉转义后原文是：
+
+```
+[ ERROR  ] CASE: sseNetworkLongStreamOverflowReplaysEveryPersistedField (23451052300 ns)
+REASON: An exception has occurred:SocketException: Failed to connect 10061:
+No connection could be made because the target machine actively refused it.
+    at stdx.net.http.HttpClient1.request(...)
+```
+
+`10061 拒绝连接`说明连的时候**没人监听**，而不是解析或协议面出错。往下追：这条用例走
+`core/src/sse_test.cj` 的 `withSseNetwork`，它 `launch("node", ["../scripts/sse-contract-server.cjs"])`
+并且读两行端口；而夹具顶部 `const watchdog = setTimeout(() => process.exit(2), watchdogMs)`，
+`watchdogMs` 默认 `20000`。也就是说夹具在 **20 秒绝对时限**上自杀，而这条用例本身就要跑
+17.8～23.5 秒（同一台机器、同一份代码，两次实测分别 17 848 361 700 ns 与 23 451 052 300 ns）
+——超时限的那次留下 `exit(2)`，后面的请求就撞在 10061 上。
+
+结论要说白：**这条用例过去的绿灯本来就是赌运气**，而它违反的正是夹具自己注释里写的那条
+「不能靠碰运气没超时通过，也不能悄悄把默认值抬高」。所以修法不是抬默认值：
+
+1. 红先：`scripts/sse-fixture-watchdog.test.mjs` 两条用例钉「命令行 `--watchdog-ms` > 环境变量 > 20 秒默认」
+   的优先级，并保留撤销语义（写 stdin 退 0、到点退 2）。第一次跑第 1 条就红在
+   `expected: false / actual: true`（`exited` 为真——argv 还没被认，500 毫秒的环境变量把夹具提前杀了）；
+   第 2 条同时绿，证明默认语义没被动。实现后 `# pass 2 / # fail 0`。
+2. 夹具只加一条取值链（`watchdogArg > 0 ? argv : env || '20000'`），20 秒默认一字未改。
+3. 消费方自己声明预算：`withSseNetwork` 改传 `["…", "--watchdog-ms", "60000"]`——
+   仓颉侧 `launch` 传不了子进程环境变量，所以命令行是核心单测唯一可用的声明通道。
+
+复验（带凭据、独占）：`TOTAL: 445 / PASSED: 445, SKIPPED: 0, ERROR: 0, FAILED: 0`、rc=0，
+`realModelSse` 与 `sseNetworkLongStreamOverflowReplaysEveryPersistedField` 同轮 PASSED。
+
+其余三个夹具消费方（`apps/desktop/test/attachment-into-model.test.mjs`、`host-provider.test.mjs`、
+`message-queue.test.mjs`）仍走默认 20 秒：它们本轮 139/139 连跑两次全绿，没有证据说明需要预算，
+就不改——但这条观测留在这里：它们和那条用例的区别是单次回合只有几秒，而不是 17 秒以上的长流。
+
 
 
 

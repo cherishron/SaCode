@@ -444,7 +444,10 @@ func sseLengthMapsToMaxTokensAndInvalidatesTools() {
 }
 
 func withSseNetwork(check: (String, String) -> Unit) {
-    let proc = launch("node", ["../scripts/sse-contract-server.cjs"],
+    // 看门狗预算要显式声明：本组里最长的用例（长流溢出逐字段重放）实测 23.45 秒，
+    // 而夹具默认 20 秒硬时限——不声明就是在时限上赌运气，实测红过一次（夹具中途 exit(2)，
+    // 后续连接被拒 10061）。仓颉侧 launch 传不了子进程环境变量，所以走命令行声明。
+    let proc = launch("node", ["../scripts/sse-contract-server.cjs", "--watchdog-ms", "60000"],
         stdIn: ProcessRedirect.Pipe, stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Inherit)
     try {
         let reader = StringReader(proc.stdOutPipe)

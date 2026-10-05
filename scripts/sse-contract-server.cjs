@@ -16,7 +16,11 @@ const servers = [];
 // 启动/测试失控也不能留下服务；正常退出会撤销此看门狗。
 // 默认仍是 20 秒硬时限；需要跨多轮停滞路由的夹具（金路径）自己声明更长的预算，
 // 不能靠「碰运气没超时」通过，也不能悄悄把默认值抬高。
-const watchdogMs = Number(process.env.SSE_WATCHDOG_MS || '20000');
+// 声明通道有两个，优先级是命令行 > 环境变量：核心单测里最长的 SSE 用例实测要 23.45 秒，
+// 在 20 秒硬时限上必然赌运气（真红过一次：夹具中途 exit(2)，后续连接 10061 被拒），
+// 而仓颉侧的 launch 传不了子进程环境变量，所以命令行也得能用。
+const watchdogArg = process.argv.indexOf('--watchdog-ms');
+const watchdogMs = Number(watchdogArg > 0 ? process.argv[watchdogArg + 1] : (process.env.SSE_WATCHDOG_MS || '20000'));
 const watchdog = setTimeout(() => process.exit(2), watchdogMs);
 function later(fn, ms) { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); }
 function track(server) {
