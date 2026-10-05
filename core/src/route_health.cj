@@ -65,6 +65,17 @@ public class RouteHealthView {
         this.states = states
         this.highWater = highWater
     }
+    // 纯函数版冷却查询：路由器只拿视图，不读盘、不写状态（断言 48 的形态要求）。
+    // 与 RouteHealth.isCooling 同一条判据——水位作为「现在」的下界。
+    public func isCooling(key: String, now: Int64): Bool {
+        let effective = if (now > highWater) { now } else { highWater }
+        for (st in states) {
+            if (st.key == key && st.cooling) {
+                return effective < st.notBefore
+            }
+        }
+        return false
+    }
 }
 
 // 退避阶梯：30min → 1h → 2h → 4h，同一作用域连续冷却逐档抬升，上限 4h（可配置）
@@ -98,13 +109,7 @@ public class RouteHealth {
     // 冷却判定用「注入的 now」与读侧水位二者的大者：
     // 系统时钟被往回拨时，水位保证冷却不会被延长（也不会被错误解除）。
     public func isCooling(key: String, now: Int64): Bool {
-        let effective = if (now > view().highWater) { now } else { view().highWater }
-        for (st in view().states) {
-            if (st.key == key && st.cooling) {
-                return effective < st.notBefore
-            }
-        }
-        return false
+        return view().isCooling(key, now)
     }
 
     public func recordFailure(scope: RouteScope, failure: TransportFailure, category: String, now: Int64): Unit {
