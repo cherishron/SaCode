@@ -101,10 +101,41 @@ Host 侧模型/凭证/绑定方法（取自 77 字面集，均在 `providerSurfa
 
 **冻结口径**：模型中心一切写操作必须带 `expectedRevision`，读回必须来自 Host 而不是页面本地缓存；凭证只经 `credential/*` 一条面，渲染层与日志都不落地（`STEPFUN_API_KEY` 等只检查是否设置）。
 
-## 5. 面五：工具执行器与面六：目标起轮（只登记，不在本批收口）
+## 5. 面五：工具执行器与面六：目标起轮（P0 步骤 4 收口）
 
-- **工具执行器**：Host 面已有 `tool/*`（`toolsList`、`toolCall` 通道在 67 集内，且有渲染层引用）。执行侧仍是「注册表 + 按工具名硬编码分支」并存，未收成注册表持真实执行器。属 W40/E，且**去硬编码前必须先冻结执行器接口**（Schema→审批→guard→执行→project/finalize→结果日志），否则 E 每加一个工具都要 A 改公共入口。
-- **目标起轮**：控制面 5 方法 + `goal/describe` 已冻结（§2），CAS 字段名 `revision`，投影字段集见 `goalProjectionJson`（`id`/`revision`/`phase`/`objective`/`blockedReason`/`roundsDone`/`elapsedSeconds`/`noProgressStreak`）。跨轮自动续跑在 Host/CLI 的接线属 W50/F。
+两条面的事实全部按符号锚点实读（引用只给 `文件:符号`，不给行号——本工作区同文件多会话并改，行号必漂）。
+
+**面五 工具执行器**
+
+- **分派已收成表，但执行器注册面是私有的**：`core/src/agent.cj:ToolRuntime.executors`（`HashMap<工具名, (name, args) -> 闭包>`）由 `ToolRuntime.registerBuiltinExecutors` 登记 10 个名字（`todo_write`/`read`/`write`/`edit`/`glob`/`grep`/`bash`/`pwsh`/`run_code`/`lsp`），`ToolRuntime.pipeline` 只做 `match (executors.get(name))`——不存在长 if 链。残留按名分支两处：`ToolRuntime.shellStep`（`toolName == "pwsh"`）与 `core/src/model_agent.cj:ModelAgentLoop.run`（`call.name == "todo_write"` 走 `projection:todos`）。元数据面有公开注册方法 `core/src/ext.cj:ToolRegistry.register(ToolSpec)`，**执行器面没有公开注册方法**：外部/插件加不进执行器，JS 工具另走 `core/src/extproc.cj:ExtProcess.call` 一条不同的链。⇒ 「一切皆插件」在这一面是**结构性未达**，不是夹具问题。
+- **阶段链（冻结口径）**：`ToolRegistry.has` → 审批 `core/src/approval.cj:ApprovalDesk.ask|consume|stateOf|toolOf`（宿主发号 `apps/host/src/main.cj:modelApproval`）→ 守卫 `core/src/model_tool_runtime.cj:ModelToolRuntime.guard` → `ToolRuntime.pipeline` → 各 `*Step` → `ToolRuntime.recordCall|recordResult` 落 `tool/call|result` → `core/src/model_tools.cj:modelToolResultData` 回写 → `core/src/message_projection.cj:projectMessageRows`。真实副作用只在 `writeStep|editStep|readStep|shellStep|runCodeStep|todoStep`（`replaceFileAtomically`、`publishNewFile`、`ShellExecutor`）；审批、guard、`agent.cj:ToolDetail.stage`、`guardDenials|registryMisses` 全是记录面。`SessionLog.append` 只在进程内可见，`flush` 才跨进程持久。
+- **错误契约**：不抛异常、不用 Option，统一 `agent.cj:ApprovalOutcome(allowed, why)`，`why` 双义（成功=正文/回执，失败=错误码串）。固定码集含 `unregistered-tool:<n>`、`unknown-tool:<n>`、`guard-denied`、`bad-args`、`approval-not-granted:<state>`、`approval-tool-mismatch:<bound>`、`io-error:<path>`、`threw:<path>`、`torn-write:<path>`、`fs-stale-version:`/`post-read-error:`（`ToolRuntime.failFile`）；成功前缀 `ok:`/`ok-grep:`/`ok-shell:`。对模型包成 `{"error":"…"}`，对宿主是 `errFrame(-32010)`。唯一抛异常处是分片装配 `model_tools.cj:ModelToolCalls.push|complete`。
+- **取消**：`core/src/cancel.cj:TurnToken.cancel|cancelled` 与 `TurnHandle.cancel()`；轮询点在 `ModelAgentLoop.run`（步顶/每帧/批后）、`modelApproval` 等待循环、`core/src/sse.cj:RealSseProvider`。**执行器内部拿不到 token**（现状缺口）：置位后同批剩余调用直接以 `{"error":"cancelled"}` 结算。`cancel.cj:TurnLoop.run` 给未完成项补 `tool/result cancelled:<name>`；宿主 `turn/cancel` 用 `InflightCalls.idsForEpoch` + `ExtProcess.cancelCall` 结算在途，终态经 `turn/poll` join 后报 `settledToolCalls|pendingToolCalls`。`core/src/web_exec.cj:WebExecutor` 自带 token 检查但未接进注册表。
+- **Schema 现在是两份真源**：`ModelToolRuntime.init` 写死 9 条 `ToolSpec` 字面量 + `core/src/todo_tool.cj:TodoTool.spec()`，对外由 `ModelToolRuntime.specs()` 产出，与 `core/src/sysprompt.cj:SystemPromptBuilder`、执行期 `ToolRegistry.requiresApproval` 三处同源；而 `apps/cli/src/main.cj` 另有一份独立硬编码清单，宿主 extension 面只登记 write/read。⇒ 冻结不变量：**两入口的工具清单必须同源**，否则 CLI 与桌面会各自漂移。
+- 已有定向钉子（交 I 复核时按这些断言点验）：`apps/desktop/test/model-write-approval.test.mjs`（请求 tools 恰为 `[todo_write,read,write]`、`approval/asked` 的 `source==='model'` 且 `approvalId>0`、拒绝后 `approval-not-granted` 且不写盘）、`test/bridge.test.mjs`（`unregistered-tool:no.such`；自报 `approval:"allowed-once"` 不放行；工单复用被拒）、`test/turn-settle.test.mjs`（`turn/cancel` 后 `cancelled===true` 且日志含 `turn/cancelled`）。
+
+**面六 目标起轮**
+
+- **现状：没有任何生产调用方会自动起轮。** 唯一跨轮循环是 `core/src/goal_scheduler.cj:GoalDriver.run`，唯一把它包成真实模型轮的是 `core/src/goal_runner.cj:GoalRunner.run`，二者只被 `goal_runner_test.cj`、`model_tool_runtime_test.cj` 引用。协议面按 `core/src/goal_control.cj:isGoalControlMethod` 只有 6 个 goal 动词（`describe|create|edit|pause|resume|clear`），**没有 `goal/run`，也没有 `goal/complete`**。宿主 `task/start` 走 `core/src/model_agent.cj:ModelAgentRunner`，单轮且完全不读 goal phase；CLI `mode == "goal"` 是手搭 `GoalDriver(dsched, gsvc).run(...)` 并传合成 `runRound` 的**断言自测**，不经 `GoalRunner`。
+- **状态机**：字符串常量 5 值 `"none"|"active"|"paused"|"blocked"|"complete"`（`core/src/goal.cj:GoalSnapshot.phase`）。转换由 `GoalService.create|edit|pause|resume|complete|block|clear` 负责，非法迁移经 `GoalService.requirePhase` 抛 `invalid-goal-transition`。`GoalService.snapshot()` 从 `goal/change` 事件回放重算 ⇒ 恢复语义天然走「日志重放」，与「会话日志是唯一真源」一致。
+- **CAS**：`GoalService.cas`，control 面参数名即 `expectedRevision`；冲突抛 `stale-goal-revision` 且**不落事件**；无目标 `no-active-goal`，重复建立 `goal-already-exists`；宿主统一吞成 `errFrame(-32025, e.message)`。
+- **`-32025` 是一码两义（登记，本批不收口）**：`apps/host/src/main.cj` 的 goal 面有三处发 `-32025`——两处把 CAS/非法迁移的 `e.message` 吞成该码，另一处是 `sessionId` 与活动会话不符时发 `goal-session-changed`。调用方只能靠 message 文本区分，与本面「同一失败在两面的形状各自唯一」的口径不符。收口责任属 F/A（要动协议面就要先交契约设计），这里只把事实钉住。
+- **暂停与紧急取消是两条互不相交的通路（刻意设计，冻结）**：暂停只写一条 `goal/change="paused"` 标志事件，由 `GoalScheduler.decide` 在**轮次边界**读到才停下一轮，绝不打断当前轮；紧急取消是 `apps/host/src/main.cj:turn/cancel` → `TurnToken.cancel`，立即断流、按 `inflight.idsForEpoch` 结算在途、落 `turn/cancelled`。goal 控制面对在途 turn 无任何杀伤力。
+- **准入计量有接缝、生产链路未接**：判据是 `GoalScheduler.decide` 的 `budgetExceeded` 参数 → `reason="budget"` → `GoalScheduler.applyStop` 落 `goal-budget` 阻塞；真实读数源 `core/src/meter.cj:TokenMeter.over`。但因 `GoalRunner` 无人调用，**起轮前不存在任何预算检查路径**；`TokenMeter` 只在 `task/start` 入口拦一次（`-32014 over-budget`）；CLI 自测把 `budgetExceeded` 硬编成 `{ => false }`。
+- **完成判定不采信模型自报**：收口点 `GoalScheduler.completeIfEvidenced`——无证据直接 `return false`、目标照旧 active；有证据才经 CAS 调 `GoalService.complete`。证据本身是调用方注入的谓词 `GoalRunner.run(evidence: (TurnResult) -> Bool)`，进展侧另有 `result.successfulToolCalls > 0`。控制面刻意不含 `goal/complete`。
+
+**跨面语义表（P0 步骤 4 要求的取消 / CAS / 授权 / 错误 / 恢复五项）**
+
+| 语义 | 冻结口径 | 消费者 | 现状判定 |
+|---|---|---|---|
+| 取消 | 轮级取消 = `TurnToken`，轮边界停 = `GoalScheduler.decide`；两者不得合并成一条通路 | E（执行器内要拿得到 token）、F | 接缝在，执行器内部未接 ⇒ 缺口 |
+| 修订 CAS | 写动作一律带 `expectedRevision`，冲突不落事件、错误码 `stale-*` | B/C/D/F/G 全部写面 | 已一致（goal `-32025`、plugin 面见 §3） |
+| 授权 | 审批凭据只能是宿主发的工单号（`approvalId`），调用方自报字符串无通路 | E/D、桌面渲染层 | 已钉住（`bridge.test.mjs` 反证） |
+| 错误 | 宿主侧有限错误码集 + 模型侧 `{"error": 码串}`；同一失败在两面的形状各自唯一 | 全成员 | 已冻结，新增码要登记进本行 |
+| 恢复 | 投影从事件回放（`snapshot()`、冷进程读 `session.log`），不引入影子状态 | B、I | 回放路径在；未完成 turn/tool 的恢复属 W10，待契约评审 |
+
+- **步骤 4 门槛判定**：六条面（桌面 IPC、Host 方法面、插件状态与贡献、模型中心适配器、工具执行器、目标起轮）全部读过源码并给出冻结口径 ⇒ **P0 步骤 4 收口 PASS**。两个结构性缺口据此派单：**执行器注册面公开化 + 两入口工具清单同源 + `WebExecutor` 接进注册表**属 W40/E；**自动起轮接线（含起轮究竟是新协议动词还是宿主内部驱动）与准入计量入生产链**属 W50/F，且因触及协议面，按红线**必须先出契约设计交用户评审**，不由本计划宽泛授权直接实现。
+
 
 ## 6. 本批踩到并已固化的两个假缺口（写进门禁注释）
 
@@ -129,5 +160,8 @@ Host 侧模型/凭证/绑定方法（取自 77 字面集，均在 `providerSurfa
 | `pageToolsList`/`pageToolCall` 裸 `window` | 未修（本批只登记） | 主进程无 `window` 声明，调用即 ReferenceError；且 `pageToolCall` 把 `name` 插进 `executeJavaScript` 字符串，只转义单引号、未转义反斜杠，存在字符串提前闭合面。**必须在下一次接线时改为具名常量 + `executeJavaScript` 传参，不得原样接 UI** |
 | `pluginsInstallCancel` 恒 `cancelled:true` | 未修 | 与 `pluginsSetRowEnabled` 的写意图丢失同属「装配状态机」批次：先交契约设计给用户评审（W20/C + A） |
 | `globalSettingsSet` 动态方法名 | 未修 | `const method = "global/settings/set-" + key`，key 只校验非空字符串，等于给渲染层开了「拼任意方法名」通道；与 §2「Host 方法名必须封闭」的不变量冲突，应收口成有限具名集 |
+| P0 步骤 4 接口冻结（六条面全收口） | **PASS（本批）** | §3–§5 六条面逐条读过源码并给出冻结口径；§5 新增跨面语义表覆盖计划点名的取消/CAS/授权/错误/恢复五项。判定要读回源码，不是照抄目录名：`GoalRunner()` 全仓只出现在 `goal_runner_test.cj` 与 `model_tool_runtime_test.cj`，`ToolRuntime.registerBuiltinExecutors` 是 `private func`，两条都是实 grep 出来的 |
+| 执行器注册面私有 + 两入口工具清单不同源 | 派单 **E（W40）**，本批不代修 | `executors` 无公开注册方法 ⇒ 插件加不进执行器（「一切皆插件」结构性未达）；`apps/cli/src/main.cj` 另有一份独立硬编码 `ToolSpec` 清单，`web_exec.cj:WebExecutor` 有 token 检查但未接进注册表；执行器内部拿不到取消 token。消费者：C（插件贡献工具）、H（provider 工具）都等这条 |
+| 自动起轮与准入计量未进生产链 | 派单 **F（W50）**，且**须先交契约设计给用户评审** | 协议面无 `goal/run`，宿主 `task/start` 单轮且不读 goal phase，CLI 的 goal 自测把 `budgetExceeded` 硬编成 `{ => false }`（源码即 `{ => false }` 字面量）。要接自动跨轮就必然动协议面 ⇒ 命中计划红线，不由宽泛任务直接实现 |
 | 责任映射门禁反证 | 已完成 | 17/17 CAUGHT（上一批） |
 | 桌面 IPC 门禁反证 | 已完成 | 7/7 CAUGHT + baseline green |
