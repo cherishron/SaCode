@@ -2,6 +2,7 @@ package core
 
 import std.unittest.*
 import std.fs.*
+import std.collection.*
 
 // 文件观察面（矩阵 17 filesystem 与不变量 14 的两半）。
 // 此前全仓只有一处 File.writeTo，没有读侧工具，所以两条都测不出来：
@@ -205,4 +206,119 @@ func readResultContentSurvivesReplayAfterFileIsGone() {
     @Expect(events[events.size - 1].data, "ok-read:${f}:${body.toArray().size}\n${body}")
     @Expect(replay.deriveMessages().size, Int64(1))
     fsCleanup("replay")
+}
+
+// —— 有界读取（按行分页）—— 分页只限定「给模型与日志看多少」，
+// 观察面仍登记全量字节：版本比对不因分页而放宽。
+
+// limit 截断：只返回前 N 行，尾部带 read-truncated 标记写清窗口与总量；
+// 且这次分页读同样建立起全量观察——之后 write 照常放行。
+@Test
+func boundedReadSlicesLinesAndKeepsFullObservation() {
+    fsCleanup("paged")
+    let (rt, log) = fsSetup("paged")
+    let f = fsFile("paged")
+    File.writeTo(f, "l1\nl2\nl3\nl4\nl5".toArray())
+    let r = rt.execute("read", "{\"path\":\"${f}\",\"limit\":2}", "", true)
+    @Expect(r.allowed, true)
+    @Expect(r.why.contains("l1\nl2"), true)
+    @Expect(r.why.contains("l3"), false)
+    @Expect(r.why.contains("[read-truncated:offset=0,lines=2/5]"), true)
+    // 全量观察仍然成立：分页读后可以写（不变量 14 的观察语义不放宽也不收紧）
+    @Expect(rt.execute("write", "${f} rewritten", "allowed-once", true).allowed, true)
+    @Expect(String.fromUtf8(File.readFrom(f)), "rewritten")
+    // 日志里的正文也只进切片，不带第 3 行
+    var sawSliceInLog = false
+    for (ev in log.snapshotEvents()) {
+        if (ev.eventType == "tool/result" && ev.data.contains("ok-read:")) { sawSliceInLog = true }
+    }
+    @Expect(sawSliceInLog, true)
+    fsCleanup("paged")
+}
+
+// offset 翻页：从第 4 行起读到文件尾；覆盖到尾但因为起点非 0，仍带标记。
+@Test
+func boundedReadPagesByOffset() {
+    fsCleanup("offset")
+    let (rt, _) = fsSetup("offset")
+    let f = fsFile("offset")
+    File.writeTo(f, "l1\nl2\nl3\nl4\nl5".toArray())
+    let r = rt.execute("read", "{\"path\":\"${f}\",\"offset\":3}", "", true)
+    @Expect(r.allowed, true)
+    @Expect(r.why.contains("l4\nl5"), true)
+    @Expect(r.why.contains("[read-truncated:offset=3,lines=2/5]"), true)
+    fsCleanup("offset")
+}
+
+// 分页读不放宽版本保护：分页观察过之后文件被外部改掉，write 必须照旧按 stale 拒。
+@Test
+func boundedReadDoesNotWeakenStaleVersionProtection() {
+    fsCleanup("pagedstale")
+    let (rt, _) = fsSetup("pagedstale")
+    let f = fsFile("pagedstale")
+    File.writeTo(f, "v1-line1\nv1-line2\nv1-line3".toArray())
+    @Expect(rt.execute("read", "{\"path\":\"${f}\",\"limit\":1}", "", true).allowed, true)
+    File.writeTo(f, "v2-changed".toArray())
+    let w = rt.execute("write", "${f} v3", "allowed-once", true)
+    @Expect(w.allowed, false)
+    @Expect(w.why, "fs-stale-version:${f}")
+    fsCleanup("pagedstale")
+}
+
+// 非法分页参数归一成 bad-args：负 offset 与非正 limit 都不让进执行段。
+@Test
+func boundedReadRejectsInvalidPagination() {
+    fsCleanup("badpage")
+    let (rt, _) = fsSetup("badpage")
+    let f = fsFile("badpage")
+    File.writeTo(f, "x".toArray())
+    @Expect(rt.execute("read", "{\"path\":\"${f}\",\"offset\":-1}", "", true).allowed, false)
+    @Expect(rt.lastDetail.stage, "bad-args")
+    @Expect(rt.execute("read", "{\"path\":\"${f}\",\"limit\":0}", "", true).allowed, false)
+    @Expect(rt.lastDetail.stage, "bad-args")
+    fsCleanup("badpage")
+}
+
+// —— 受保护原子替换 —— 已有文件的写入不再走直接覆盖：
+// 独占临时文件写完整后原子改名落位，目标任意时刻都是完整的一份。
+
+// 替换后内容完整落位，且专用目录里不留下临时残片（rename 已把 staging 消耗掉）。
+@Test
+func atomicReplaceLandsWholeContentAndLeavesNoStaging() {
+    fsCleanup("atomic")
+    let dir = "core-fs-atomic-dir"
+    removeIfExists(dir, recursive: true)
+    Directory.create(dir)
+    let f = "${dir}/core-fs-atomic.txt"
+    File.writeTo(f, "before".toArray())
+    let before = ArrayList<String>()
+    for (info in Directory.readFrom(dir)) { before.add(info.path.fileName) }
+    replaceFileAtomically(f, "after".toArray())
+    @Expect(String.fromUtf8(File.readFrom(f)), "after")
+    var extraStaging = Int64(0)
+    for (info in Directory.readFrom(dir)) {
+        var known = false
+        for (n in before) {
+            if (n == info.path.fileName) { known = true }
+        }
+        if (!known) { extraStaging += 1 }
+    }
+    @Expect(extraStaging, Int64(0))
+    removeIfExists(dir, recursive: true)
+    fsCleanup("atomic")
+}
+
+// write 工具对已有文件的替换路径：观察 → 原子替换 → 重读逐字节核对，全链不变量保持。
+@Test
+func writeToolReplacesExistingFileThroughAtomicPath() {
+    fsCleanup("atomicwrite")
+    let (rt, _) = fsSetup("atomicwrite")
+    let f = fsFile("atomicwrite")
+    File.writeTo(f, "v1".toArray())
+    @Expect(rt.execute("read", f, "", true).allowed, true)
+    let w = rt.execute("write", "${f} v2-content", "allowed-once", true)
+    @Expect(w.allowed, true)
+    @Expect(w.why, "ok:${f}")
+    @Expect(String.fromUtf8(File.readFrom(f)), "v2-content")
+    fsCleanup("atomicwrite")
 }

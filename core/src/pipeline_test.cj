@@ -91,13 +91,13 @@ func snapshotRecordsPriorBytesAndVerifiesLossless() {
 func failureCodesAreDistinctPerStage() {
     let (log, reg, rt) = newRuntime("fail")
     // 「登记了但还没实现」的占位名必须真的是没实现的那个：
-    // 本批把 read 实现出来之后，再拿 read 当占位就测不出 unknown-tool 了
-    // （会先按 not-found 归一），所以换成仍无实现的 edit。
-    reg.register(ToolSpec("edit", "还没实现的工具", "path", false))
+    // 本批把 read、edit 都实现出来之后，再拿它们当占位就测不出 unknown-tool 了
+    // （会走各自步骤归一），所以换成执行器表里仍没有的 mcp。
+    reg.register(ToolSpec("mcp", "还没实现的工具", "path", false))
     let badArgs = rt.execute("write", "only-a-path", "allowed-once", true)
     @Expect(badArgs.allowed, false)
     @Expect(rt.lastDetail.stage, "bad-args")
-    let unknownImpl = rt.execute("edit", "x.txt y", "allowed-once", true)
+    let unknownImpl = rt.execute("mcp", "x.txt y", "allowed-once", true)
     @Expect(unknownImpl.allowed, false)
     @Expect(rt.lastDetail.stage, "unknown-tool")
     let ioErr = rt.execute("write", "no-such-dir/pipe-fail.txt y", "allowed-once", true)

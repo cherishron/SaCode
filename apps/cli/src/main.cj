@@ -28,7 +28,14 @@ class CliRoundTick {
 func builtinTools(): ToolRegistry {
     let reg = ToolRegistry()
     reg.register(ToolSpec("write", "写临时工作区文件", "path content", true))
-    reg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
+    reg.register(ToolSpec("read", "读文件并记录版本标记，大文件可按行分页", "path offset limit", false))
+    reg.register(ToolSpec("edit", "编辑文件：用 new_string 替换 old_string", "path old_string new_string", true))
+    reg.register(ToolSpec("glob", "查找匹配模式的文件", "pattern", false))
+    reg.register(ToolSpec("grep", "搜索文件内容", "pattern path", false))
+    reg.register(ToolSpec("bash", "执行 shell 命令", "command", true))
+    reg.register(ToolSpec("pwsh", "执行 PowerShell 命令", "command", true))
+    reg.register(ToolSpec("run_code", "执行 JavaScript 代码 (PTC)", "code", true))
+    reg.register(ToolSpec("lsp", "从文件中提取符号", "path", false))
     return reg
 }
 
@@ -661,6 +668,25 @@ main(args: Array<String>) {
         File.writeTo("probe-tool.txt", "hello".toArray())
         let gone = rt.execute("read", "no-such-dir/probe-none.txt", "", true)
         expect("读不到的路径归一成 not-found", !gone.allowed && gone.why == "not-found:no-such-dir/probe-none.txt")
+        // —— 有界读取：分页只限定「给模型看多少」，观察面仍是全量字节 ——
+        File.writeTo("probe-paged.txt", "l1\nl2\nl3\nl4\nl5".toArray())
+        let paged = rt.execute("read", "{\"path\":\"probe-paged.txt\",\"limit\":2}", "", true)
+        expect("limit 截断只交回前两行并带标记",
+            paged.allowed && paged.why.contains("l1\nl2") && !paged.why.contains("l3")
+            && paged.why.contains("[read-truncated:offset=0,lines=2/5]"))
+        let pagedByOffset = rt.execute("read", "{\"path\":\"probe-paged.txt\",\"offset\":3}", "", true)
+        expect("offset 翻页从第 4 行读到文件尾",
+            pagedByOffset.allowed && pagedByOffset.why.contains("l4\nl5")
+            && pagedByOffset.why.contains("[read-truncated:offset=3,lines=2/5]"))
+        let pagedWrite = rt.execute("write", "probe-paged.txt rewritten", "allowed-once", true)
+        expect("分页读建立的是全量观察，写照常放行且内容完整落位",
+            pagedWrite.allowed && String.fromUtf8(File.readFrom("probe-paged.txt")) == "rewritten")
+        File.writeTo("probe-paged.txt", "outside".toArray())
+        let pagedStale = rt.execute("write", "probe-paged.txt again", "allowed-once", true)
+        expect("分页观察后外部改动照样按 stale 拒", !pagedStale.allowed && pagedStale.why == "fs-stale-version:probe-paged.txt")
+        let badPage = rt.execute("read", "{\"path\":\"probe-paged.txt\",\"offset\":-1}", "", true)
+        expect("非法分页参数归一成 bad-args", !badPage.allowed && badPage.why == "bad-args")
+        removeIfExists("probe-paged.txt", recursive: false)
         let noAnswer = rt.execute("write", "x.txt y", "none", true)
         expect("无应答者 fail-closed 拒绝", !noAnswer.allowed && noAnswer.why == "approval-not-allowed-once")
         let guard = rt.execute("write", "z.txt w", "allowed-once", false)
