@@ -38,11 +38,13 @@
 
 | 档 | 通道 | 除渲染层外的引用 | 判读 |
 |---|---|---|---|
-| 真死通道 | `globalSettingsGet`、`globalSettingsSet`、`pageToolsList`、`pageToolCall` | `preload.cjs` + `main.cjs`（2026-10-06 复测；本文初稿记的「只有 `main.cjs` 自身」已被 `6fc3fbe` 推翻） | 渲染层零引用、无测试触达。**但四条里 `pageTools*` 两条的 handler 本身是坏的**：`pageToolsList` 两分支都 `return []`，`pageToolCall` 打主进程不存在的裸 `window` —— 已接线 ≠ 已可用 |
+| 真死通道 | `globalSettingsGet`、`globalSettingsSet`、`pageToolsList`、`pageToolCall` | `preload.cjs` + `main.cjs`（2026-10-06 复测；本文初稿记的「只有 `main.cjs` 自身」已被 `6fc3fbe` 推翻） | 渲染层零引用（用户入口仍缺，接 UI 是 P3/G 的活）。四条里 `pageTools*` 两条**已可用**（`42debe9` 起，见 §1 末冻结口径与 `test/page-tools-ipc.test.mjs`），`globalSettings*` 两条仍是死通道且带动态方法名风险（见 §7）—— 已接线 ≠ 已可用，这条判据保留 |
 | 仅冒烟 | `appearanceGet`、`appearanceSetTheme` | `test-support/ui-smoke.cjs` | 冒烟脚本替用户按了按钮，产品页面无入口 |
 | 仅测试 | `modelPull`、`modelUpstreamUpsert` | `test/custom-models-ipc.test.mjs`、`test-support/ui-smoke.cjs` | 有契约测试、无 UI 入口 |
 
 **冻结裁定**：新增/删除通道必须同时改 `preload.cjs` 与 `main.cjs` 并过门禁（AGENTS.md 已把该通道集合定为唯一权威，本批把它从文档说法变成机械判据）。上表 8 条**不删除**——它们是 P3「按 54 包清单补齐页面交互」的待接面，删除属于缩范围。
+
+**页面工具面冻结口径**（`42debe9` 收口，守卫 `apps/desktop/test/page-tools-ipc.test.mjs`）：清单的唯一真源是渲染层 `renderer/page-tools.js` 挂出的 `window.DshPageTools.list()`——主进程不持有工具名，也不许以空数组代替「没枚举到」。窗口解析走具名 `win` + `isDestroyed()` 守卫；无窗口与页面已关都**不抛**：`pageToolsList` 出 `[]`、`pageToolCall` 回 `{error:"no-window"}`。业务错误词表固定三个值：`no-window`、`page-tools-not-loaded`、`tool-not-found`；`bad-page-tool-name` / `bad-page-tool-args` 属主进程侧参数校验，走 IPC reject，不与业务结果混在一个返回形状里。名字与参数进 `executeJavaScript` 只能经 `JSON.stringify` 成为字面量：把值拼进源码就是注入口，这一条由「名字里带引号与反斜杠的工具仍按值命中、且页面不多执行一句」的用例钉住，不是靠注释承诺。
 
 ## 2. 面二：Host JSON-RPC 方法面（分母与语义）
 
@@ -157,7 +159,7 @@ Host 侧模型/凭证/绑定方法（取自 77 字面集，均在 `providerSurfa
 | P0 步骤 3 固定提交基线回归 | 核心/extjs/桌面 PASS，桌面面已收口；打包冒烟 BLOCKED | 在 `.qoder/worktrees/p0-head-b9dc4e3-20261006`（只含提交态）跑：**core TOTAL 718 / PASSED 716 / SKIPPED 2 / FAILED 0 / ERROR 0，rc=0**；**extjs 24/24，rc=0**；**桌面全套（私有 TMP + 副本内重建 vendor 与宿主）tests 251 / pass 240 / fail 6 / skipped 5，rc=1**。52 条红是共用 `%LOCALAPPDATA%\Temp` 的环境假红，逐条归属见 `p0-status-2026-10-02.md` 的「P0 步骤 3 桌面面收口」节。剩余 6 条：1 条 A 自有（Host `initialize` 能力清单与分派不等）已在提交级复跑 **15/15，fail 0，rc=0** 收口；3 条归 **C（W20）**（`plugin/install`/`poll`/`cancel` 宿主侧未落地，`-32601`）；2 条 **BLOCKED（环境）**（Electron 子进程退 `2147483651`，主树与提交级副本的无代码对照实验同证，见同节）。`npm run smoke`/`ui-smoke` 同受 Electron 限制，未据沉默判通过；`pack-cli`/`npm-install`/`real-model` 三步本轮未在提交级跑 |
 | P0 步骤 3 工作区态 11 条红逐条归因 | 已做（本批），无未解释红 | HEAD 推进到 `149fc24` 后在私有 TMP 定向重跑 6 个文件：**tests 17 / pass 6 / fail 11 / skipped 0，rc=1**。四类归因与判据见 `p0-status-2026-10-02.md` 新增的「P0 步骤 3 工作区态 11 条红逐条归因」节：1 条过期宿主产物（同刻实测 74 条声明 vs 重打的 82 条）、4 条 `-32601` 归 C/W20、5 条归 D/W30、1 条 Electron BLOCKED |
 | 真模型面是外部前提缺失还是本仓缺陷 | **FAIL，归 D（W30）**，本轮改判 | 上表把 `real-model` 记作「未跑」，本轮跑了并拿到定档判据：用例经 `credential/set` 自行把密钥递进宿主（`apps/desktop/test/real-provider-e2e.test.mjs` 符号 `CRED_REF`），宿主塌在 `core/src/sse.cj` 的 `http-request-error`；同机同密钥同 `BASE_URL` 同 model 直连，非流式 `http=200`、流式 `http=200 content_type=text/event-stream` 且收到 `[DONE]`。服务商/端点/模型/密钥/网络五项全好 ⇒ **不许再记 BLOCKED（凭据不可用）**，红在本仓 SSE 打开与传输路径 |
-| `pageToolsList`/`pageToolCall` 裸 `window` | **未修，且判据升级：缺陷已随 `6fc3fbe` 进 HEAD 的接线面**（本行原记「未修（本批只登记）…不得原样接 UI」，登记已过期） | 主进程无 `window` 声明，调用即 ReferenceError；`pageToolsList` 的 handler 写成 `return window.webContents ? [] : []`——**两个分支都返回空数组**，即使 `window` 存在也枚举不出任何工具；`pageToolCall` 把 `name` 插进 `executeJavaScript` 字符串，只转义单引号、未转义反斜杠，存在字符串提前闭合面。归 **A（W90）**：`main.cjs` 是 A 拥有的公共入口，按具名常量 + `executeJavaScript` 传参重写，并补「工具不存在」「参数错误」「页面已关」正反用例。这一面同时是「一切皆插件」的反例——贡献清单写死为空就是组件夹具 |
+| `pageToolsList`/`pageToolCall` 裸 `window` + 恒空清单 | **已修 `42debe9`（A/W90），红→绿→变异反证全过程留档** | 修前实测：主进程无 `window` 声明，两条 handler 调用即 `ReferenceError: window is not defined`（`main.cjs` 面 6/7 红都落在这两个点位）；`pageToolsList` 写成 `return window.webContents ? [] : []`——两分支都空，即「组件夹具冒充能力」；`pageToolCall` 把 `name` 只转义单引号拼进 `executeJavaScript`。改法见 §1 末冻结口径。**变异反证**：同一轮施加两个变异（list 退回写死 `[]`、name 退回单引号转义），红集恰为指定的两条独占受害用例 `{1,4}`，其余五条不受牵连；奇名变异下读回的错文是 `Invalid or unexpected token`，即名字确实挪动了字面量边界。回归面：所有 vm 加载 `main.cjs` 的 5 个测试文件 16/16、rc=0，`verify-all gates` 4 条（含通道 1:1 对账）绿。**剩余**：渲染层仍无用户入口（P3/G 接 UI），本批只把「已接线」变成「已可用」 |
 | `pluginsInstallCancel` 恒 `cancelled:true` | 未修 | 与 `pluginsSetRowEnabled` 的写意图丢失同属「装配状态机」批次：先交契约设计给用户评审（W20/C + A） |
 | `globalSettingsSet` 动态方法名 | 未修 | `const method = "global/settings/set-" + key`，key 只校验非空字符串，等于给渲染层开了「拼任意方法名」通道；与 §2「Host 方法名必须封闭」的不变量冲突，应收口成有限具名集 |
 | P0 步骤 4 接口冻结（六条面全收口） | **PASS（本批）** | §3–§5 六条面逐条读过源码并给出冻结口径；§5 新增跨面语义表覆盖计划点名的取消/CAS/授权/错误/恢复五项。判定要读回源码，不是照抄目录名：`GoalRunner()` 全仓只出现在 `goal_runner_test.cj` 与 `model_tool_runtime_test.cj`，`ToolRuntime.registerBuiltinExecutors` 是 `private func`，两条都是实 grep 出来的 |
