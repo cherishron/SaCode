@@ -29,4 +29,15 @@
 - 未实际安装/卸载 NSIS，未签名、发布 npm。现有用户安装目录仍可能运行旧版本。
 - 本批混合工作区不整体暂存；没有把并发会话改动打包成一个提交。
 
-最终安装器完成状态与摘要随后补入，以实际 builder 退出及文件哈希为准。
+## 最终桌面产物
+
+electron-builder 最终 rc=0，输出 D:/Temp/SaCode-main-package-20261006，未启动安装器：
+
+| 文件 | 字节 | SHA256 |
+| --- | ---: | --- |
+| SaCode Setup 0.1.0.exe | 146646635 | 5e843a07784b145c03157d66a82e5c41e65cfa24019962cca1f9b430e374ed82 |
+| sacode-portable.exe | 146494603 | 30c5a2a83fe88e44aaaa7c9d796e8686c3c4a9f6f45a8c3418849bacf45e0e70 |
+
+从 NSIS 中解出 app-64.7z 后再解出内容，Installer 内 Host 与独立打包 Host、win-unpacked Host 的三份 SHA256 一致（8a6c4ee8…）。Installer 内 app.asar 与已跑 759/0 的 win-unpacked app.asar 均为 ddf797600430fbe8c9d7b338ea3d66a33521fd0c751a9a41d8078d9416112451。提取目录 D:/Temp/SaCode-model-center-installer-check-20261006；不是实际安装证明。
+
+main/preload/customs-guard、app.js、styles/index 和 client-slots 产物共七个关键文件在当前源码与 app.asar 中逐一同哈希，明细 D:/Temp/sacode-model-center-artifact-hashes.json。包与用户现有安装目录分开，不自动更新已安装版本。

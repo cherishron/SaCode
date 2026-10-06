@@ -89,7 +89,7 @@ async function uiSmoke(context) {
   note(leaked === "undefined", `渲染层 require 类型=${leaked}（应为 undefined）`);
   // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
   // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
-  const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList','customsDescribe','customsUpsert','customsRemove','bindingUpsert','bindingRemove','bindingReorder','modelPull','modelUpstreamUpsert','customImportNew','customImportInto','goalDescribe','goalCreate','goalEdit','goalPause','goalResume','goalClear'];
+  const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','globalAppearanceSetBusySend','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList','customsDescribe','customsUpsert','customsRemove','bindingUpsert','bindingRemove','bindingReorder','modelPull','modelUpstreamUpsert','customImportNew','customImportInto','goalDescribe','goalCreate','goalEdit','goalPause','goalResume','goalClear'];
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.sacode||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
@@ -763,7 +763,7 @@ async function uiSmoke(context) {
 
     await bridge.request("credential/set", { ref: "SACODEENHKEY", value: "fixture-secret" });
     note(true, `增强夹具与测试模型已配好（端口 ${enhPort}）`);
-    await enhConfigure("/enhance");
+    await enhConfigure("/enhance-slow");
 
     note(await js("!!document.querySelector('#composer-enhance')"), "输入区有增强提示词图标");
     const enhReady = await enhState();
@@ -780,7 +780,11 @@ async function uiSmoke(context) {
     // 在途第二笔只能被宿主挡掉：界面挡一次不算数，协议面也得只有一槽。
     const second = await bridge.request("prompt/enhance", { draft: "第二条" }).then(() => "accepted").catch((e) => String(e.message || e));
     note(second.includes("enhance-in-flight"), `在途期间第二笔增强被宿主拒绝（实际「${second}」）`);
+    // 模拟已等待 11 秒，验证慢模型不会被前端的旧 10 秒期限提前丢弃。
+    await nap(250);
+    await js("window.enhanceOriginalNow=Date.now;Date.now=()=>window.enhanceOriginalNow()+11000;true");
     note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'")), "模型返回后增强图标变为回退");
+    await js("Date.now=window.enhanceOriginalNow;delete window.enhanceOriginalNow");
     note(await enhValue() === enhEcho, `增强文本直接应用到输入框，且请求只带这一条草稿（实际「${await enhValue()}」）`);
     note(await count("#messages .tr-bubble") === bubblesBefore, "增强不自动发送消息、不启动任务、不执行工具");
     note(await js("document.querySelector('#composer-enhance').dataset.state==='undo' && document.querySelector('#composer').value.length>0"), "应用后输入框仍有内容可继续编辑");

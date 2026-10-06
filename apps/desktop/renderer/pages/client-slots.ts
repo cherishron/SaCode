@@ -102,8 +102,8 @@ export function createModelCenterAssembly() {
         name: 'SaCodeModelCenterHost',
         props: ['owner', 'renderSlot'],
         setup: props => {
-          const active = ref('provider-settings');
-          const tabs = [['provider-settings','供应商'],['custom-models','自定义模型'],['budget-stats','费用统计'],['migration','迁移']];
+          const active = ref('custom-models');
+          const tabs = [['custom-models','模型'],['provider-settings','供应商'],['budget-stats','费用统计'],['migration','迁移']];
           return () => h('div', { class: 'model-center' }, [
             h('h2', '模型中心'),
             h('nav', { class: 'model-center-tabs', 'aria-label': '模型中心分类' }, tabs.map(([id,label]) =>

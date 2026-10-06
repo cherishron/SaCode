@@ -33,6 +33,7 @@
       "customs-guard.cjs",
       "paths.cjs",
       "layout-smoke.cjs",
+      "tooltip-smoke.cjs",
       "frame-smoke.cjs",
       "test-support/**",
       "package.json",

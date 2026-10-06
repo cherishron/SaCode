@@ -1,6 +1,6 @@
 // 模型中心·费用统计页：注册到 'model-center.tab' 槽位。
-// 展示会话级预算用量与自定义模型级预算限额/费率。
-// 后端目前不提供按模型/探测/加速分类的历史费用，界面如实声明缺口。
+// 三列（模型费用 / 探测费用 / 加速费用）的计量基底不同类，界面把它们分列并标注来源，
+// 不把它们加成一个「总花费」冒充账单口径。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
 
@@ -24,9 +24,11 @@ export interface ModelBudget{
   bindings:BindingRate[];
   enabled:boolean;
 }
+export interface CostColumn{amountMicro:number|null;currency:string|null;meterSource:string;note:string}
 export interface StatsView{
   session:SessionUsage;
   models:ModelBudget[];
+  costs:{model:CostColumn;probe:CostColumn;relay:CostColumn};
   writable:boolean;
   revision:string;
 }
@@ -40,6 +42,10 @@ export function formatMicro(v:number):string{
   if(v===-1)return'未设置';
   if(v<1000)return String(v)+' 微';
   return(v/1000).toLocaleString()+' 毫';
+}
+export function formatAmount(micro:number|null,currency:string|null):string{
+  if(micro===null)return'—';
+  const unit=micro/1e6;return Number(unit.toFixed(6)).toLocaleString()+' '+(currency||'');
 }
 export function formatTokens(v:number):string{
   if(v===-1)return'未设置';
@@ -83,14 +89,27 @@ export const Page=defineComponent({
     onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void load();});void load();});
     onBeforeUnmount(()=>{disposed=true;off?.();});
 
+    const costCard=(c:CostColumn,title:string)=>el('div','costCard',[
+      el('h3','costTitle',title),
+      el('div','costAmount',[el('span','costValue',formatAmount(c.amountMicro,c.currency)),el('span','costSource',c.meterSource)]),
+      c.note?el('p','costNote',c.note):null,
+    ]);
+
     return()=>{
       if(!props.adapter)return el('section','root',[el('h2',null,'费用统计'),el('p','notice','费用统计后端尚未接入。',{role:'status'})]);
 
       const v=view.value;
       return el('section','root',[
-        el('div','header',[el('h2',null,'费用统计'),el('p','intro','会话级预算用量与自定义模型级预算限额及费率。')]),
+        el('div','header',[el('h2',null,'费用统计'),el('p','intro','模型费用、探测费用与加速费用分列展示，计量基底不同类，不加总成总账单。')]),
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
+
+        // 三列费用
+        el('div','costColumns',[
+          v?costCard(v.costs.model,'模型费用'):el('div','costCard',[el('h3','costTitle','模型费用'),el('p','costNote','暂无数据。')])),
+          v?costCard(v.costs.probe,'探测费用'):el('div','costCard',[el('h3','costTitle','探测费用'),el('p','costNote','暂无数据。')])),
+          v?costCard(v.costs.relay,'加速费用'):el('div','costCard',[el('h3','costTitle','加速费用'),el('p','costNote','暂无数据。')])),
+        ]),
 
         // 会话级预算
         el('fieldset','section',[
@@ -160,12 +179,15 @@ export const Page=defineComponent({
           })(),
         ]),
 
-        // 能力缺口声明
+        // 计量来源说明
         el('fieldset','section',[
-          el('legend',null,'数据缺口'),
-          el('p','notice','后端目前不提供按「模型费用 / 探测费用 / 加速费用」分类的历史费用流水。',{role:'status'}),
-          el('p','hint','以上展示的是：会话级预算用量（来自 usageStatus）与各自定义模型的预算限额及绑定费率（来自 customsDescribe）。'),
-          el('p','hint','如需分类历史费用，需宿主新增对应 IPC 通道与投影。'),
+          el('legend',null,'计量来源'),
+          el('ul','sources',[
+            el('li',null,'模型费用与探测费用：来自上游回给的用量，按绑定登记的四档费率（输入/输出/缓存读/缓存写）计算。'),
+            el('li',null,'加速费用：来自本地记录的请求/响应字节数 × 登记的传输费率，与上游用量无关。'),
+            el('li',null,'「待核算」表示该维度已产生用量但未登记费率，或请求状态不明，不会按已登记的维度反推。'),
+            el('li',null,'本地累计费用只是本地可控消费的上界，不冒充供应商余额；远端可能延迟计量或额外计费。'),
+          ]),
         ]),
       ]);
     };

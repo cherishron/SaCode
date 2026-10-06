@@ -19,8 +19,11 @@ export interface CustomModel{
   probeEnabled:boolean;probeMaxPerDay:number;
 }
 export interface Draft extends CustomModel{}
+// ProviderRef: 供应商读面带 models[] 才能在绑定编辑里选「拉取到的上游模型」，
+// 而不是手敲 providerId/modelId——后者正是「填入的模型对不上」的来源。
+export interface ProviderRef{id:string;name:string;models?:{id:string;name:string}[]}
 export interface Adapter{
-  describe():Promise<{customs:CustomModel[];providers:{id:string;name:string}[];revision:string;writable:boolean}>;
+  describe():Promise<{customs:CustomModel[];providers:ProviderRef[];revision:string;writable:boolean}>;
   upsert(draft:Draft,expectedRevision:string):Promise<void>;
   remove(id:string,expectedRevision:string):Promise<void>;
   bindingUpsert(customId:string,binding:Binding,expectedRevision:string):Promise<void>;
@@ -70,6 +73,13 @@ const blank=():Draft=>({
   probeEnabled:true,probeMaxPerDay:3,
 });
 const blankBinding=():Binding=>({providerId:'',modelId:'',enabled:true,order:0,weight:1,priceInMicro:-1,priceOutMicro:-1,priceCacheReadMicro:-1,priceCacheWriteMicro:-1,priceVersion:0,currency:''});
+
+// 绑定编辑的选型：providerId/modelId 各自从供应商目录的已拉取模型里选，
+// 手敲会把「已拉取的模型」和「供应商 ID」拼错，导致对不上。
+export function providerChoices(providers:ProviderRef[]){return providers.map(p=>p.id);}
+export function modelChoices(providers:ProviderRef[],providerId:string){
+  const p=providers.find(r=>r.id===providerId);return p?p.models||[]:[];
+}
 
 // --- 主组件 ---
 export const Page=defineComponent({
@@ -121,14 +131,14 @@ export const Page=defineComponent({
     const reqLabels:Record<Requires,string>={'tools':'工具调用','text-output':'文本输出','image-output':'图像输出','structured-output':'结构化输出','stream':'流式'};
 
     return()=>{
-      if(!props.adapter)return el('section','root',[el('h2',null,'自定义模型'),el('p','notice','自定义模型后端尚未接入。',{role:'status'})]);
+      if(!props.adapter)return el('section','root',[el('h2',null,'模型'),el('p','notice','模型后端尚未接入。',{role:'status'})]);
       const isEditing=editing.value!==null||adding.value;
       const d=draft.value;
       return el('section','root',[
         el('div','header',[
-          el('h2',null,'自定义模型'),
-          el('p','intro','创建自定义模型，配置路由模式、上游绑定、权重与预算。'),
-          btn('+ 添加自定义模型',startAdd,'primary',{disabled:!writable.value||loading.value||isEditing}),
+          el('h2',null,'模型'),
+          el('p','intro','创建自定义模型（路由/权重/预算），绑定上游供应商的模型。'),
+          btn('+ 添加模型',startAdd,'primary',{disabled:!writable.value||loading.value||isEditing}),
         ]),
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
@@ -150,10 +160,10 @@ export const Page=defineComponent({
             btn('删除',()=>{deleting.value=c;error.value='';},'danger',{'aria-label':'删除 '+(c.name||c.id),disabled:!writable.value||loading.value}),
           ]),
         ],{key:c.id}))),
-        !customs.value.length&&!loading.value?el('p','empty','暂无自定义模型，点击"添加自定义模型"开始配置。'):null,
+        !customs.value.length&&!loading.value?el('p','empty','暂无自定义模型，点击「+ 添加模型」开始配置。'):null,
 
         isEditing?el('div','editor',[
-          el('h3',null,adding.value?'添加自定义模型':'编辑 '+(d.name||d.id)),
+          el('h3',null,adding.value?'添加模型':'编辑 '+(d.name||d.id)),
 
           // 基本信息
           el('fieldset','section',[el('legend',null,'基本信息'),
@@ -194,11 +204,12 @@ export const Page=defineComponent({
           // 上游绑定
           el('fieldset','section',[el('legend',null,'上游绑定（' + d.bindings.length + ' 个）'),
             d.mode==='weighted'?el('p','hint','加权模式：weight 为 1–1000 的整数。轮询模式：权重被忽略。'):null,
+            el('p','hint','供应商与模型均从已拉取的目录里选择，不要手敲 ID。'),
             d.bindings.map((b,i)=>el('div','binding',[
               el('div','brow',[
                 el('span','order','第 ' + (i+1) + ' 位'),
-                el('input','ipt',null,{value:b.providerId,'aria-label':'提供商 ID',placeholder:'提供商 ID',onInput:(e:Event)=>b.providerId=(e.target as HTMLInputElement).value}),
-                el('input','ipt',null,{value:b.modelId,'aria-label':'模型 ID',placeholder:'模型 ID',onInput:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value}),
+                el('label','field',[el('span','lbl','供应商'),h('select',{class:'ipt',value:b.providerId,'aria-label':'供应商',onChange:(e:Event)=>{b.providerId=(e.target as HTMLInputElement).value;b.modelId='';}},[h('option',{value:''},'选择供应商'),...providerChoices(providers.value).map(pid=>h('option',{value:pid},pid))])]),
+                el('label','field',[el('span','lbl','模型'),h('select',{class:'ipt',value:b.modelId,'aria-label':'模型',onChange:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value},[h('option',{value:''},'选择模型'),...modelChoices(providers.value,b.providerId).map(m=>h('option',{value:m.id},m.name||m.id))])]),
                 el('label','check',[h('input',{type:'checkbox',checked:b.enabled,'aria-label':'启用绑定',onChange:()=>toggleBinding(b)}),'启用']),
                 d.mode==='weighted'?el('input','ipt',null,{type:'number',min:'1',max:'1000',value:String(b.weight),'aria-label':'权重',onInput:(e:Event)=>b.weight=parseInt((e.target as HTMLInputElement).value)||1}):null,
                 btn('↑',()=>moveBinding(i,'up'),'icon',{'aria-label':'上移',disabled:i===0}),
@@ -224,7 +235,7 @@ export const Page=defineComponent({
         // 删除确认
         deleting.value?h('div',{class:'cm-dialog',role:'alertdialog','aria-label':'确认删除'},[
           el('p',null,'确认删除 '+(deleting.value.name||deleting.value.id)+'？'),
-          el('p','hint','此操作会移除自定义模型及其所有绑定。'),
+          el('p','hint','此操作会移除该模型及其所有上游绑定。'),
           el('div','actions',[btn('取消',()=>{deleting.value=null;}),btn('确认删除',()=>void remove(),'danger',{disabled:loading.value})]),
         ]):null,
       ]);
@@ -235,7 +246,7 @@ export const Page=defineComponent({
 // --- 槽位注册 ---
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
-    child.register({name:'model-center.tab',id:'custom-models',order:1,label:'自定义模型'},
+    child.register({name:'model-center.tab',id:'custom-models',order:0,label:'模型'},
       defineComponent({name:'SaCodeCustomModelsSlot',props:['owner'],setup:(props)=>()=>h(Page,{adapter:(props.owner as any)?.adapter})}));
   });
 }

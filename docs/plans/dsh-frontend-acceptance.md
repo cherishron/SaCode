@@ -37,62 +37,64 @@
 
 `ui-brand-official` 按 SaCode 命名承接保留界面；`ui-settings-account` 按 C01–C04 裁剪官方账号部分。二者均不能按整个包名直接删除或判通过，其余保留行为需逐项核验。
 
-| 冻结包 | 冻结证据路径（索引） | 当前验收登记 |
-| --- | --- | --- |
-| ui-agent-preset | `packages/client/ui-agent-preset/README.md` | 待逐项回填；无全项通过声明 |
-| ui-approval | `packages/client/ui-approval/README.md` | 待逐项回填；无全项通过声明 |
-| ui-attachment | `packages/client/ui-attachment/README.md` | 待逐项回填；无全项通过声明 |
-| ui-brand-official | `packages/client/ui-brand-official/README.md` | 待逐项回填；无全项通过声明 |
-| ui-chat | `packages/client/ui-chat/README.md` | 部分完成：冻结 client/apply.ts 已读，聊天实际由槽位注入；消息完整交互仍分项核验 |
-| ui-commands | `packages/client/ui-commands/README.md` | 待逐项回填；无全项通过声明 |
-| ui-conversation | `packages/client/ui-conversation/README.md` | 部分完成：冻结 client/apply.ts 已读，conversation.view 声明、坍缩与重装已接；全量视图装配未完成 |
-| ui-deliverables | `packages/client/ui-deliverables/README.md` | 待逐项回填；无全项通过声明 |
-| ui-directory-picker-browse | `packages/client/ui-directory-picker-browse/README.md` | 待逐项回填；无全项通过声明 |
-| ui-directory-picker-native | `packages/client/ui-directory-picker-native/README.md` | 待逐项回填；无全项通过声明 |
-| ui-dockkit | `packages/client/ui-dockkit/README.md` | 待逐项回填；无全项通过声明 |
-| ui-goal | `packages/client/ui-goal/README.md` | 待逐项回填；无全项通过声明 |
-| ui-input-trigger | `packages/client/ui-input-trigger/README.md` | 待逐项回填；无全项通过声明 |
-| ui-jobs | `packages/client/ui-jobs/README.md` | 待逐项回填；无全项通过声明 |
-| ui-layout | `packages/client/ui-layout/README.md` | 待逐项回填；无全项通过声明 |
-| ui-message-feedback | `packages/client/ui-message-feedback/README.md` | 待逐项回填；无全项通过声明 |
-| ui-model-selection | `packages/client/ui-model-selection/README.md` | 待逐项回填；无全项通过声明 |
-| ui-open-in-app | `packages/client/ui-open-in-app/README.md` | 待逐项回填；无全项通过声明 |
-| ui-permission-presets | `packages/client/ui-permission-presets/README.md` | 待逐项回填；无全项通过声明 |
-| ui-plan | `packages/client/ui-plan/README.md` | 待逐项回填；无全项通过声明 |
-| ui-plugin-manager | `packages/client/ui-plugin-manager/README.md` | 待逐项回填；无全项通过声明 |
-| ui-primitives | `packages/client/ui-primitives/README.md` | 待逐项回填；无全项通过声明 |
-| ui-reference | `packages/client/ui-reference/README.md` | 待逐项回填；无全项通过声明 |
-| ui-renderer | `packages/client/ui-renderer/README.md` | 待逐项回填；无全项通过声明 |
-| ui-schedule | `packages/client/ui-schedule/README.md` | 待逐项回填；无全项通过声明 |
-| ui-session | `packages/client/ui-session/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-account | `packages/client/ui-settings-account/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-agent-loop | `packages/client/ui-settings-agent-loop/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-general | `packages/client/ui-settings-general/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-models | `packages/client/ui-settings-models/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-plugin-inventory | `packages/client/ui-settings-plugin-inventory/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-plugins | `packages/client/ui-settings-plugins/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-session-log | `packages/client/ui-settings-session-log/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-shell | `packages/client/ui-settings-shell/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-subagent | `packages/client/ui-settings-subagent/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings-web-search | `packages/client/ui-settings-web-search/README.md` | 待逐项回填；无全项通过声明 |
-| ui-settings | `packages/client/ui-settings/README.md` | 待逐项回填；无全项通过声明 |
-| ui-shortcuts | `packages/client/ui-shortcuts/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar-browser | `packages/client/ui-sidebar-browser/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar-documentpreview | `packages/client/ui-sidebar-documentpreview/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar-files | `packages/client/ui-sidebar-files/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar-right | `packages/client/ui-sidebar-right/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar-terminal | `packages/client/ui-sidebar-terminal/README.md` | 待逐项回填；无全项通过声明 |
-| ui-sidebar | `packages/client/ui-sidebar/README.md` | 待逐项回填；无全项通过声明 |
-| ui-skill | `packages/client/ui-skill/README.md` | 待逐项回填；无全项通过声明 |
-| ui-slots | `packages/client/ui-slots/README.md` | 部分完成：README 与 src/index.ts 已读，普通槽位和 Vue 挂载已接；完整 Factory/Store/客户端模块尚未完成 |
-| ui-subagent | `packages/client/ui-subagent/README.md` | 待逐项回填；无全项通过声明 |
-| ui-theme | `packages/client/ui-theme/README.md` | 待逐项回填；无全项通过声明 |
-| ui-tool | `packages/client/ui-tool/README.md` | 待逐项回填；无全项通过声明 |
-| ui-trajectory | `packages/client/ui-trajectory/README.md` | 来源 client/index.ts 已读；实现待接，尚无真实轨迹视图、历史加载与检查器验收，不据来源核验升级状态 |
-| ui-user-questions | `packages/client/ui-user-questions/README.md` | 待逐项回填；无全项通过声明 |
-| ui-workflow-run | `packages/client/ui-workflow-run/README.md` | 待逐项回填；无全项通过声明 |
-| ui-workspace | `packages/client/ui-workspace/README.md` | 待逐项回填；无全项通过声明 |
-| session-log-export | `packages/session-query/session-log-export/README.md` | 待逐项回填；无全项通过声明 |
+W00 职责登记（2026-10-06）：`界面主责` 是唯一任务责任槽位，默认 G；模型供应商/模型设置相关界面由 D 主责，session-log-export 由 B 主责（A/G 接线）。`后端协作` 只登记具体业务成员，纯 UI 记 —；多成员协作不增加主责。模型选择及账号裁剪后的保留凭证界面归 D，凭证存取仍由 D 独占；数据迁移与 B 协调。A 独占 Host/CLI/main/preload/app.js、公共构建、pack-pages 与 package 锁文件，scope/slot 跨域经 A 接口单协调；I 独立验收，作者不得自行签验。此处仅为职责槽位，不授权在途写者身份或其他路径改动；入口、插件实际归属及冻结源码/用例仍待逐行证据。原状态与历史 PASS 保留，不宣称 P0 或全项完成。
+
+| 冻结包 | 冻结证据路径（索引） | 当前验收登记 | 界面主责 | 后端协作 |
+| --- | --- | --- | --- | --- |
+| ui-agent-preset | `packages/client/ui-agent-preset/README.md` | 待逐项回填；无全项通过声明 | G | C/F |
+| ui-approval | `packages/client/ui-approval/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-attachment | `packages/client/ui-attachment/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-brand-official | `packages/client/ui-brand-official/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-chat | `packages/client/ui-chat/README.md` | 部分完成：冻结 client/apply.ts 已读，聊天实际由槽位注入；消息完整交互仍分项核验 | G | B/C/D/E/F |
+| ui-commands | `packages/client/ui-commands/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-conversation | `packages/client/ui-conversation/README.md` | 部分完成：冻结 client/apply.ts 已读，conversation.view 声明、坍缩与重装已接；全量视图装配未完成 | G | B/C |
+| ui-deliverables | `packages/client/ui-deliverables/README.md` | 待逐项回填；无全项通过声明 | G | B/E |
+| ui-directory-picker-browse | `packages/client/ui-directory-picker-browse/README.md` | 待逐项回填；无全项通过声明 | G | B/E |
+| ui-directory-picker-native | `packages/client/ui-directory-picker-native/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-dockkit | `packages/client/ui-dockkit/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-goal | `packages/client/ui-goal/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-input-trigger | `packages/client/ui-input-trigger/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-jobs | `packages/client/ui-jobs/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-layout | `packages/client/ui-layout/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-message-feedback | `packages/client/ui-message-feedback/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-model-selection | `packages/client/ui-model-selection/README.md` | 待逐项回填；无全项通过声明 | D | D |
+| ui-open-in-app | `packages/client/ui-open-in-app/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-permission-presets | `packages/client/ui-permission-presets/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-plan | `packages/client/ui-plan/README.md` | 待逐项回填；无全项通过声明 | G | F/E |
+| ui-plugin-manager | `packages/client/ui-plugin-manager/README.md` | 待逐项回填；无全项通过声明 | G | C |
+| ui-primitives | `packages/client/ui-primitives/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-reference | `packages/client/ui-reference/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-renderer | `packages/client/ui-renderer/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-schedule | `packages/client/ui-schedule/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-session | `packages/client/ui-session/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-settings-account | `packages/client/ui-settings-account/README.md` | 待逐项回填；无全项通过声明 | D | D |
+| ui-settings-agent-loop | `packages/client/ui-settings-agent-loop/README.md` | 待逐项回填；无全项通过声明 | G | C/D/F |
+| ui-settings-general | `packages/client/ui-settings-general/README.md` | 待逐项回填；无全项通过声明 | G | B/C/D/E/F |
+| ui-settings-models | `packages/client/ui-settings-models/README.md` | 待逐项回填；无全项通过声明 | D | D/B |
+| ui-settings-plugin-inventory | `packages/client/ui-settings-plugin-inventory/README.md` | 待逐项回填；无全项通过声明 | G | C |
+| ui-settings-plugins | `packages/client/ui-settings-plugins/README.md` | 待逐项回填；无全项通过声明 | G | C |
+| ui-settings-session-log | `packages/client/ui-settings-session-log/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-settings-shell | `packages/client/ui-settings-shell/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-settings-subagent | `packages/client/ui-settings-subagent/README.md` | 待逐项回填；无全项通过声明 | G | F/D |
+| ui-settings-web-search | `packages/client/ui-settings-web-search/README.md` | 待逐项回填；无全项通过声明 | G | H/D |
+| ui-settings | `packages/client/ui-settings/README.md` | 待逐项回填；无全项通过声明 | G | C |
+| ui-shortcuts | `packages/client/ui-shortcuts/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-sidebar-browser | `packages/client/ui-sidebar-browser/README.md` | 待逐项回填；无全项通过声明 | G | H |
+| ui-sidebar-documentpreview | `packages/client/ui-sidebar-documentpreview/README.md` | 待逐项回填；无全项通过声明 | G | B/H |
+| ui-sidebar-files | `packages/client/ui-sidebar-files/README.md` | 待逐项回填；无全项通过声明 | G | B/E |
+| ui-sidebar-right | `packages/client/ui-sidebar-right/README.md` | 待逐项回填；无全项通过声明 | G | C |
+| ui-sidebar-terminal | `packages/client/ui-sidebar-terminal/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-sidebar | `packages/client/ui-sidebar/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| ui-skill | `packages/client/ui-skill/README.md` | 待逐项回填；无全项通过声明 | G | F/E |
+| ui-slots | `packages/client/ui-slots/README.md` | 部分完成：README 与 src/index.ts 已读，普通槽位和 Vue 挂载已接；完整 Factory/Store/客户端模块尚未完成 | G | C |
+| ui-subagent | `packages/client/ui-subagent/README.md` | 待逐项回填；无全项通过声明 | G | F |
+| ui-theme | `packages/client/ui-theme/README.md` | 待逐项回填；无全项通过声明 | G | — |
+| ui-tool | `packages/client/ui-tool/README.md` | 待逐项回填；无全项通过声明 | G | E |
+| ui-trajectory | `packages/client/ui-trajectory/README.md` | 来源 client/index.ts 已读；实现待接，尚无真实轨迹视图、历史加载与检查器验收，不据来源核验升级状态 | G | B/D/E/F |
+| ui-user-questions | `packages/client/ui-user-questions/README.md` | 待逐项回填；无全项通过声明 | G | F/E |
+| ui-workflow-run | `packages/client/ui-workflow-run/README.md` | 待逐项回填；无全项通过声明 | G | F/E |
+| ui-workspace | `packages/client/ui-workspace/README.md` | 待逐项回填；无全项通过声明 | G | B |
+| session-log-export | `packages/session-query/session-log-export/README.md` | 待逐项回填；无全项通过声明 | B | B |
 
 ## 本轮增量证据
 

@@ -21,6 +21,29 @@ import stdx.encoding.hex.*
 // 每个用例只准用自己独立的文件名；本文件只有 wrongPassphrase... 一条会落盘。
 let sbPersistFile = "core-test-secret-bundle-persist.bin"
 
+@Test
+func macComparisonRejectsCancellingByteDifferences() {
+    let a = Array<Byte>(32, repeat: 0)
+    let b = Array<Byte>(32, repeat: 0)
+    b[0] = 1; b[31] = 1
+    let result = secretBundleConstTimeEquals(a, b)
+    @Expect(result.equal, false)
+    @Expect(result.comparedBytes, Int64(32))
+}
+
+@Test
+func secretBundleRejectsTwoEqualTagMutationsWithoutPlaintext() {
+    let encKey = Array<Byte>(16, repeat: 3)
+    let macKey = Array<Byte>(32, repeat: 5)
+    let sealed = sealSecretBundleWithKeys(encKey, macKey, "认证篡改夹具".toArray(), 1759600000, 2)
+    let tag = Array<Byte>(sealed.tag.size, { i => sealed.tag[i] })
+    tag[0] = tag[0] ^ 1; tag[31] = tag[31] ^ 1
+    let altered = SecretBundle(sealed.header, sealed.salt, sealed.iv, sealed.ciphertext, tag)
+    let result = openSecretBundleWithKeys(encKey, macKey, altered)
+    @Expect(result.code, SECRET_BUNDLE_UNOPENABLE)
+    @Expect(result.plaintext.isSome(), false)
+}
+
 func sbTestHex(bytes: Array<Byte>): String {
     return toHexString(bytes)
 }

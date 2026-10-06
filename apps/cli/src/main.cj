@@ -160,7 +160,18 @@ func attPng(width: Int64, height: Int64): Array<Byte> {
     return out.toArray()
 }
 
+// 装配计划的拒绝面拼成一行，供 expect 做包含判断。
+// 断言写成「包含哪条码」而不是「rejected.size 是几」，是因为码本身才是用户下一步的依据。
+func planRejectedText(p: PluginAssemblyPlan): String {
+    var out = ""
+    for (r in p.rejected) {
+        out += "${r.name}=${r.reason};"
+    }
+    return out
+}
+
 func attObjectCount(dir: String): Int64 {
+
     // 「一条都没落盘」正是要证的形态，此时目录还没建；Directory.readFrom 对
     // 不存在的目录是抛而不是交回空清单，所以先探一次。
     if (!exists(dir)) {
@@ -190,8 +201,8 @@ func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
 main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal") {
-        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal" && mode != "plugin") {
+        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin]")
         return 64
     }
 
@@ -350,6 +361,72 @@ main(args: Array<String>) {
     // 附件在产品交付面的断言：npm 平台包里的 sacode.exe 离线跑的就是这一段——内容寻址落盘、
     // 准入拒绝不留对象、先持久化后事件这三条装机后就成立，不靠网络也不靠桌面壳。
     // 抛断一律用「赋值的 try/catch」：把 lambda 塞进断言宏会解到 unclosed delimiter。
+    if (mode == "all" || mode == "plugin") {
+        // 插件面在第二入口的可交付事实：装配层算出的序与拒绝码，以及安装态的读写。
+        // 这些判据与 core/src/plugin_assembly_test.cj、plugin_store_test.cj 同形——
+        // 同一套核心在两入口必须给出同一个答案，否则「一切皆插件」只在半个系统里成立。
+        let plRoot = "plugin-check"
+        removeIfExists(plRoot, recursive: true)
+        Directory.create(plRoot, recursive: true)
+        let plBase = "${plRoot}/store"
+        let plSrc = "${plRoot}/src-echo"
+        Directory.create(plSrc, recursive: true)
+        File.writeTo("${plSrc}/sacode.plugin.json",
+            "{\"name\":\"@local/sacode-tool-echo\",\"version\":\"0.1.0\",\"kind\":\"tool\",\"entry\":\"index.cjs\",\"description\":\"CLI 交付面的装配夹具\"}".toArray())
+        File.writeTo("${plSrc}/index.cjs", "module.exports = { name: 'echo', handler: () => 'ok' }\n".toArray())
+
+        let planA = PluginAssembly([
+            PluginUnit("@local/upper", "tool", true, ["@local/base"]),
+            PluginUnit("@local/base", "tool", true, []),
+            PluginUnit("@local/orphan", "tool", true, ["@local/absent"]),
+            PluginUnit("@local/panel", "ui", true, [])
+        ]).resolve()
+        expect("装配序把依赖排在前面（第二入口同一套核心）", planA.units.size == Int64(2) && planA.units[0].name == "@local/base" && planA.units[1].name == "@local/upper")
+        expect("缺依赖只坏它自己，不牵连别的包", planRejectedText(planA).contains("missing-dependency:@local/absent") && planRejectedText(planA).contains("@local/base=cycle") == false)
+        expect("未接的种类如实拒成 kind-not-wired 而不是静默不装", planRejectedText(planA).contains("@local/panel=kind-not-wired"))
+
+        let planB = PluginAssembly([
+            PluginUnit("@local/upper", "tool", true, ["@local/off"]),
+            PluginUnit("@local/off", "tool", false, [])
+        ]).resolve()
+        // 「没装」与「装了但没启用」是两个不同的下一步，合并成一条错误就等于没说。
+        expect("依赖装了但没启用说的是另一句话", planRejectedText(planB).contains("disabled-dependency:@local/off"))
+
+        let planC = PluginAssembly([
+            PluginUnit("@local/a", "tool", true, ["@local/b"]),
+            PluginUnit("@local/b", "tool", true, ["@local/a"])
+        ]).resolve()
+        expect("环整组拒而不挑一条边破环", planC.units.size == Int64(0) && planRejectedText(planC).contains("cycle"))
+
+        let planD = PluginAssembly([PluginUnit("@local/c", "tool", true, []), PluginUnit("@local/a", "tool", true, []), PluginUnit("@local/b", "tool", true, [])]).resolve()
+        let planE = PluginAssembly([PluginUnit("@local/b", "tool", true, []), PluginUnit("@local/a", "tool", true, []), PluginUnit("@local/c", "tool", true, [])]).resolve()
+        expect("装配序与输入顺序无关", planD.units[0].name == "@local/a" && planE.units[0].name == "@local/a" && planD.units[2].name == "@local/c" && planE.units[2].name == "@local/c")
+
+        let plStore = PluginStore(plBase)
+        // 检视只认绝对路径（两入口 CWD 不同，相对路径会把「装到哪儿」交给工作目录）。
+        let plAbs = canonicalize(plSrc).toString()
+        expect("检视面认得这个包", plStore.inspectSource(plAbs).contains("\"status\":\"accepted\"") && plStore.inspectSource(plAbs).contains("\"name\":\"@local/sacode-tool-echo\""))
+        expect("检视不落位（预览不是安装）", plStore.revisionOf() == Int64(0) && !exists("${plBase}/plugins"))
+        let plRec = plStore.install(plAbs)
+        expect("装上后清单里看得见", plStore.describe().packages.size == Int64(1) && plRec.name == "@local/sacode-tool-echo")
+        expect("清单 JSON 带 available 与 revision", plStore.describe().asJson().contains("\"available\":true") && plStore.describe().asJson().contains("\"revision\":"))
+        expect("清单 JSON 把空错误出成 null 而不是空串", plStore.describe().asJson().contains("\"error\":null"))
+        plStore.setEnabled("@local/sacode-tool-echo", false, plStore.revisionOf())
+        expect("停用写进事实而不是内存", plStore.describe().packages[0].enabled == false)
+        var staleRejected = false
+        try {
+            plStore.setEnabled("@local/sacode-tool-echo", true, Int64(0))
+        } catch (e: Exception) {
+            staleRejected = e.message == "settings-conflict"
+        }
+        expect("拿旧修订号写会被拒而不是静默覆盖", staleRejected)
+        expect("每一次成功的写都把修订号推进一格", plStore.revisionOf() == Int64(2))
+        plStore.uninstall("@local/sacode-tool-echo", plStore.revisionOf())
+        expect("卸载后清单为空", plStore.describe().packages.size == Int64(0))
+        expect("卸载把包目录一起撤掉", !exists("${plBase}/plugins/local-sacode-tool-echo"))
+        removeIfExists(plRoot, recursive: true)
+    }
+
     if (mode == "all" || mode == "att") {
         let attRoot = "att-check"
         let attDir = "${attRoot}/attachments/v1"

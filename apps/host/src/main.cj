@@ -679,6 +679,74 @@ func globalAppearanceRequest(method: String, body: String, idText: String): Unit
     }
 }
 
+// 通用设置：transcriptView / composerEnter / sessionLog 持久化到 user settings 目录的文本文件。
+func globalSettingsRequest(method: String, body: String, idText: String): Unit {
+    var transcriptView = "default"
+    var composerEnter = "send"
+    var sessionLog = "off"
+    try {
+        let request = JsonValue.fromStr(body).asObject()
+        if (let Some(value) <- request.get("method")) {
+            if (value.asString().getValue() != method) { throw Exception("bad-settings-request") }
+        } else { throw Exception("bad-settings-request") }
+        if (method != "global/settings/get") {
+            if (let Some(value) <- request.get("params")) {
+                let params = value.asObject()
+                if (method == "global/settings/set-transcript-view") {
+                    if (let Some(field) <- params.get("transcriptView")) { transcriptView = field.asString().getValue() }
+                    if (transcriptView != "default" && transcriptView != "compact" && transcriptView != "expanded") { throw Exception("bad-transcript-view") }
+                } else if (method == "global/settings/set-composer-enter") {
+                    if (let Some(field) <- params.get("composerEnter")) { composerEnter = field.asString().getValue() }
+                    if (composerEnter != "send" && composerEnter != "newline") { throw Exception("bad-composer-enter") }
+                } else if (method == "global/settings/set-session-log") {
+                    if (let Some(field) <- params.get("sessionLog")) { sessionLog = field.asString().getValue() }
+                    if (sessionLog != "on" && sessionLog != "off") { throw Exception("bad-session-log") }
+                }
+            } else { throw Exception("bad-settings-request") }
+        }
+    } catch (e: Exception) {
+        emit(errFrame(idText, -32602, e.message))
+        return
+    }
+    // 读现有设置（文本格式：key=value 每行一条）
+    let path = canonicalize("general-settings.txt")
+    var tv = "default"
+    var ce = "send"
+    var sl = "off"
+    if (exists(path.toString())) {
+        let content = String.fromUtf8(File.readFrom(path.toString()))
+        let lines = content.split("\n")
+        var i = 0
+        while (i < lines.size) {
+            let line = lines[i]
+            if (line.contains("transcriptView=")) { tv = line.split("transcriptView=")[1] }
+            else if (line.contains("composerEnter=")) { ce = line.split("composerEnter=")[1] }
+            else if (line.contains("sessionLog=")) { sl = line.split("sessionLog=")[1] }
+            i += 1
+        }
+    }
+    var changed = false
+    if (method == "global/settings/set-transcript-view") {
+        if (tv != transcriptView) { tv = transcriptView; changed = true }
+    } else if (method == "global/settings/set-composer-enter") {
+        if (ce != composerEnter) { ce = composerEnter; changed = true }
+    } else if (method == "global/settings/set-session-log") {
+        if (sl != sessionLog) { sl = sessionLog; changed = true }
+    }
+    // 写回文件
+    if (changed) {
+        let parent = path.parent
+        if (!exists(parent.toString())) { Directory.create(parent.toString(), recursive: true) }
+        let data = "transcriptView=${tv}\ncomposerEnter=${ce}\nsessionLog=${sl}\n"
+        File.writeTo(path.toString(), data.toArray())
+    }
+    let writeResult = if (method == "global/settings/get") { "" } else {
+        let flag = if (changed) { "true" } else { "false" }
+        ",\"saved\":true,\"changed\":${flag}"
+    }
+    emit(okFrame(idText, "{\"transcriptView\":\"${jsonEscapeText(tv)}\",\"composerEnter\":\"${jsonEscapeText(ce)}\",\"sessionLog\":\"${jsonEscapeText(sl)}\",\"scope\":\"user\"${writeResult}}"))
+}
+
 main(args: Array<String>) {
     let catalog = SessionCatalog(".")
     var activeId = "current"
@@ -825,6 +893,10 @@ main(args: Array<String>) {
         }
         if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size" || method == "global/appearance/set-busy-send") {
             globalAppearanceRequest(method, body, idText)
+            continue
+        }
+        if (method == "global/settings/get" || method == "global/settings/set-transcript-view" || method == "global/settings/set-composer-enter" || method == "global/settings/set-session-log") {
+            globalSettingsRequest(method, body, idText)
             continue
         }
         if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {

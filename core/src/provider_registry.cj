@@ -26,8 +26,29 @@ class CatalogEntry {
     }
 }
 
-// SaCode 自带目录（去品牌化：不携带上游产品命名），条目一律 declared
+// SaCode 自带目录（去品牌化：不携带上游产品命名），条目一律 declared。
+// 目录项只是模板来源（地址、协议、初始模型列表），落库时转成一份新实例；
+// 同一目录项可反复添加，每次建一份新实例（号池的存储形态）。
+// 清单共 13 家（用户 2026-10-05 明确要求，最低交付集合）：deepseek、mimo、stepfun、
+// senseaudio、sensenova、baizhi、tencentmaas、aliyuncs、modelscope、bigmodel、
+// openrouter、nvidia、y-api。modelIds 为空表示先填密钥、点「获取可用模型」再发现。
 let saCodeCatalog = [
+    CatalogEntry(
+        "deepseek",
+        "DeepSeek",
+        "https://api.deepseek.com/v1",
+        "openai-completions",
+        "SA_CODE_DEEPSEEK_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "mimo",
+        "MiMo",
+        "https://api.mimo.io/v1",
+        "openai-completions",
+        "SA_CODE_MIMO_API_KEY",
+        []
+    ),
     CatalogEntry(
         "stepfun",
         "StepFun",
@@ -37,11 +58,83 @@ let saCodeCatalog = [
         ["step-5-preview", "step-3.5-flash"]
     ),
     CatalogEntry(
+        "senseaudio",
+        "SenseAudio",
+        "https://api.senseaudio.com/v1",
+        "openai-completions",
+        "SA_CODE_SENSEAUDIO_API_KEY",
+        []
+    ),
+    CatalogEntry(
         "sensenova",
         "SenseNova",
         "https://token.sensenova.cn/v1",
         "openai-completions",
         "SA_CODE_SENSENOVA_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "baizhi",
+        "Baizhi",
+        "https://api.baizhi.ai/v1",
+        "openai-completions",
+        "SA_CODE_BAIZHI_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "tencentmaas",
+        "TencentMaaS",
+        "https://maas.tencentcloudapi.com",
+        "openai-completions",
+        "SA_CODE_TENCENTMAAS_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "aliyuncs",
+        "AliyunCS",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "openai-completions",
+        "SA_CODE_ALIYUNCS_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "modelscope",
+        "ModelScope",
+        "https://api-inference.modelscope.cn/v1",
+        "openai-completions",
+        "SA_CODE_MODELSCOPE_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "bigmodel",
+        "BigModel",
+        "https://open.bigmodel.cn/api/paas/v4",
+        "openai-completions",
+        "SA_CODE_BIGMODEL_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "openrouter",
+        "OpenRouter",
+        "https://openrouter.ai/api/v1",
+        "openai-completions",
+        "SA_CODE_OPENROUTER_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "nvidia",
+        "NVIDIA",
+        "https://integrate.api.nvidia.com/v1",
+        "openai-completions",
+        "SA_CODE_NVIDIA_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "y-api",
+        "Y-API",
+        "https://api.y-api.bestvirtualgoods.com",
+        "openai-completions",
+        "SA_CODE_Y_API_API_KEY",
         []
     )
 ]

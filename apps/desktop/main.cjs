@@ -262,6 +262,15 @@ ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
 }));
 ipcMain.handle("sacode:workspaceFiles", async () => withHost(()=>bridge.request("workspace/files")));
+ipcMain.handle("sacode:globalSettingsGet", async () => withHost(()=>bridge.request("global/settings/get")));
+ipcMain.handle("sacode:globalSettingsSet", async (_e, args) => {
+  const key = args && args.key;
+  const value = args && args.value;
+  if (!key || typeof key !== "string") throw new Error("bad-settings-key");
+  const method = "global/settings/set-" + key;
+  const params = { [key]: value };
+  return withHost(()=>bridge.request(method, params));
+});
 ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
   return withHost(()=>bridge.request("session/create", {title:args.title}));

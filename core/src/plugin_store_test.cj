@@ -41,6 +41,17 @@ func psSource(tag: String, name: String, manifestFields: String): String {
     return dir
 }
 
+// 造一个 manifest 正文由调用方逐字给定的源目录。检视面的拒绝路径要的是
+// 「文件在场但内容不合法」，用 psSource 拼不出来（它总会拼出一份合法 JSON）。
+func psSourceRaw(tag: String, suffix: String, manifestText: String): String {
+    let dir = "${psRoot(tag)}-${suffix}"
+    try { removeIfExists(dir, recursive: true); () } catch (e: Exception) {}
+    Directory.create(dir, recursive: true)
+    File.writeTo("${dir}/sacode.plugin.json", manifestText.toArray())
+    File.writeTo("${dir}/index.cjs", "module.exports = { name: 'echo', handler: () => 'ok' }\n".toArray())
+    return dir
+}
+
 // 安装结果的码。不用 lambda 取码：捕获可变变量的 lambda 不能被间接调用
 // （宿主侧 main.cj:1384 踩过），而这里连 let 捕获都不需要。
 func psInstallCode(store: PluginStore, sourcePath: String): String {
@@ -296,4 +307,104 @@ func pluginStoreRejectsReplayCorruptionInsteadOfHalfInventory() {
     psClean(tag)
     try { removeIfExists(first, recursive: true); () } catch (e: Exception) {}
     try { removeIfExists(second, recursive: true); () } catch (e: Exception) {}
+}
+
+// —— 下面是「插件清单接线」这一片（docs/evidence/plugin-manager-contract-2026-10-05.md §3.1/§3.3）。
+// 宿主不自己拼 JSON：清单视图与安装前检视都由核心序列化，宿主只做转发与错误映射。
+// 这两条序列化面一旦缺字段，界面就会「猜默认值」——猜出来的清单就是伪造快照，
+// 正是这份契约在 §3 开头明令禁止的做法。
+
+@Test
+func pluginInventoryJsonOnEmptyStoreSaysAvailableAndEmpty() {
+    let tag = "jsonempty"
+    psClean(tag)
+    let text = PluginStore(psRoot(tag)).describe().asJson()
+    // 空清单是「还没装」，不是「本部署不管理插件」：available 必须为 true，
+    // 否则界面会把空态渲染成错误态，用户以为后端坏了。
+    @Expect(text.contains("\"available\":true"), true)
+    @Expect(text.contains("\"revision\":0"), true)
+    @Expect(text.contains("\"packages\":[]"), true)
+    // 反证：把 available 硬写成 false，第一条断言必须转红。
+    psClean(tag)
+}
+
+@Test
+func pluginInventoryJsonCarriesPackageAndRowFields() {
+    let tag = "jsonshape"
+    psClean(tag)
+    let base = psRoot(tag)
+    let src = psSource(tag, "@local/sacode-tool-echo",
+        "\"tools\":[{\"name\":\"echo\",\"description\":\"回显一条消息\"}]")
+    let store = PluginStore(base)
+    @Expect(psInstallCode(store, src), "ok:@local/sacode-tool-echo@0.1.0")
+    let text = PluginStore(base).describe().asJson()
+    @Expect(text.contains("\"available\":true"), true)
+    @Expect(text.contains("\"revision\":1"), true)
+    @Expect(text.contains("\"name\":\"@local/sacode-tool-echo\""), true)
+    @Expect(text.contains("\"version\":\"0.1.0\""), true)
+    // 契约要求 installed 与 enabled 是两个独立字段：少了任何一个，
+    // 「装了但没启用」这种状态在界面上就无处表达。
+    @Expect(text.contains("\"installed\":true"), true)
+    @Expect(text.contains("\"enabled\":true"), true)
+    @Expect(text.contains("\"rows\":["), true)
+    @Expect(text.contains("\"rowId\":\"echo\""), true)
+    @Expect(text.contains("\"phase\":\"active\""), true)
+    // 坏包字段在没有错误时必须是 JSON 的 null，不能是空串——
+    // 界面按 null 判「无错误」，空串会被当成一条看不见的错误文案。
+    @Expect(text.contains("\"error\":null"), true)
+    @Expect(text.contains("\"readOnlyReason\":null"), true)
+    psClean(tag)
+    try { removeIfExists(src, recursive: true); () } catch (e: Exception) {}
+}
+
+@Test
+func pluginInspectDescribesSourceWithoutTouchingStore() {
+    let tag = "inspectok"
+    psClean(tag)
+    let base = psRoot(tag)
+    // 检视面只认绝对路径（相对路径要经宿主的工作目录才能落到盘上，两入口的 CWD 不同），
+    // 所以夹具也得给绝对形态——否则测到的是「路径形态」而不是「检视零副作用」。
+    let src = canonicalize(psSource(tag, "@local/sacode-tool-echo",
+        "\"description\":\"一个用来验证检视面的本地包\"")).toString()
+    let store = PluginStore(base)
+    let text = store.inspectSource(src)
+    @Expect(text.contains("\"status\":\"accepted\""), true)
+    @Expect(text.contains("\"name\":\"@local/sacode-tool-echo\""), true)
+    @Expect(text.contains("\"version\":\"0.1.0\""), true)
+    @Expect(text.contains("\"description\":\"一个用来验证检视面的本地包\""), true)
+    // 检视必须零副作用：还没确认就落位，等于把「预览」变成「安装」。
+    @Expect(store.revisionOf(), Int64(0))
+    @Expect(exists("${base}/plugins.log"), false)
+    @Expect(exists("${base}/plugins"), false)
+    // 反证：让 inspectSource 走 install 的 staging 落位路径，最后两条必须转红。
+    psClean(tag)
+    try { removeIfExists(src, recursive: true); () } catch (e: Exception) {}
+}
+
+@Test
+func pluginInspectRefusesMissingAndBrokenSource() {
+    let tag = "inspectbad"
+    psClean(tag)
+    let base = psRoot(tag)
+    let store = PluginStore(base)
+    // 坏 manifest 的目录先建出来，再借它的绝对形态造一个「父目录存在、子目录不存在」的路径：
+    // canonicalize 需要一个能解析的起点，而不存在的目录本身解不出绝对路径。
+    let badDir = canonicalize(psSourceRaw(tag, "badjson", "{not json")).toString()
+    let missing = "${badDir}/no-such-child"
+    // 目录不存在：problem 必须是 not-found，界面据此说「找不到这个包」。
+    @Expect(store.inspectSource(missing).contains("\"status\":\"refused\""), true)
+    @Expect(store.inspectSource(missing).contains("\"problem\":\"not-found\""), true)
+    // manifest 坏了：解析层的码原样带出，不压成 unknown——
+    // 用户能看到「哪一条规则被违反」才有下一步可走。
+    let bad = store.inspectSource(badDir)
+    @Expect(bad.contains("\"status\":\"refused\""), true)
+    @Expect(bad.contains("\"problem\":\"invalid\""), true)
+    @Expect(bad.contains("plugin-rejected"), true)
+    // 形态不对（相对路径）也要如实说 invalid，而不是当成一个不存在的目录报 not-found：
+    // 后者会把用户指向「路径打错了」，而真正的原因是协议面只接绝对路径。
+    @Expect(store.inspectSource("core-plugin-store-relative-src").contains("\"problem\":\"invalid\""), true)
+    // 拒绝同样不留痕迹
+    @Expect(store.revisionOf(), Int64(0))
+    psClean(tag)
+    try { removeIfExists(badDir, recursive: true); () } catch (e: Exception) {}
 }

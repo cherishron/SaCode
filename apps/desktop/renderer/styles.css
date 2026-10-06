@@ -486,3 +486,36 @@ body, body * {
 .cm-ipt, .mig-ipt { width:100%; box-sizing:border-box; color:inherit; background:transparent; border:1px solid var(--border); border-radius:6px; padding:8px; }
 .cm-btn, .cm-primary, .cm-danger, .mig-btn, .mig-primary, .mig-secondary { padding:8px 12px; border:1px solid var(--border); border-radius:6px; color:inherit; background:transparent; cursor:pointer; }
 .cm-error, .mig-error, .bs-error { color:var(--danger); }
+
+/* 模型中心页体 */
+.model-center h2 { margin:0 0 4px; font-size:20px; line-height:28px; }
+.model-center .header { margin:12px 0 16px; }
+.model-center .intro { margin:0; font-size:14px; line-height:22px; color:var(--text-muted); }
+.model-center .loading, .model-center .error { margin:8px 0; }
+
+/* 费用统计三列 */
+.bs-costColumns { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:12px 0; }
+.bs-costCard { border:.5px solid var(--border); border-radius:12px; padding:16px; background:var(--surface); min-width:0; }
+.bs-costTitle { margin:0; font-size:14px; line-height:20px; color:var(--text-muted); }
+.bs-costAmount { margin:8px 0; font-size:24px; line-height:32px; font-weight:600; color:var(--text); min-height:32px; }
+.bs-costSource { display:block; font-size:12px; line-height:16px; color:var(--text-muted); font-weight:400; }
+.bs-costNote { margin:0; font-size:12px; line-height:18px; color:var(--text-muted); }
+.bs-sources { margin:8px 0 0; padding-left:20px; }
+.bs-sources li { font-size:13px; line-height:20px; color:var(--text-muted); margin:4px 0; }
+.bs-stat-value.over { color:var(--danger); }
+
+/* 迁移页 */
+.mig-table { border-collapse:collapse; width:100%; font-size:13px; }
+.mig-table th, .mig-table td { text-align:left; padding:8px; border-bottom:1px solid var(--border); }
+.mig-exportActions { display:flex; gap:8px; margin-top:8px; }
+.mig-saved { color:#16835d; }
+
+/* 自定义模型绑定编辑下拉 */
+.cm-field { display:flex; flex-direction:column; gap:4px; }
+.cm-field .lbl { font-size:12px; line-height:16px; color:var(--text-muted); }
+.cm-field select { width:100%; height:32px; padding:0 10px; border:.5px solid var(--border); border-radius:6px; background:var(--panel-surface); color:var(--text); font:inherit; font-size:13px; }
+.cm-field select:focus { outline:none; border-color:var(--accent); }
+.cm-binding { margin:8px 0; }
+.cm-brow { display:flex; align-items:center; gap:6px; }
+.cm-brow .order { flex:none; font-size:12px; color:var(--text-muted); }
+.cm-pricings { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px; margin-left:42px; }

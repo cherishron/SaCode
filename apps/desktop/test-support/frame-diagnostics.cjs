@@ -9,7 +9,7 @@ async function recordFrameTimeout({win,bridge,outDir,probe}) {
       const n=document.querySelector('.conversation-scroll'),send=document.querySelector('#send'),input=document.querySelector('#composer');
       const bounds=e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height}};
       return {visible:document.visibilityState,focused:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight},
-        send:send&&{disabled:send.disabled,busy:send.getAttribute('aria-busy')},draftLength:input?.value.length??null,
+        send:send&&{disabled:send.disabled,busy:send.getAttribute('aria-busy'),label:send.getAttribute('aria-label')},draftLength:input?.value.length??null,
         messages:document.querySelectorAll('[data-msg-id]').length,
         scroll:n&&{top:n.scrollTop,height:n.scrollHeight,client:n.clientHeight,floor:n.scrollHeight-n.clientHeight,following:n.dataset.followingTail,bounds:bounds(n)},
         composer:document.querySelector('.composer-seat')&&bounds(document.querySelector('.composer-seat')),

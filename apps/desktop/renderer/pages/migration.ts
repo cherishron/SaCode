@@ -1,7 +1,5 @@
 // 模型中心·迁移页：注册到 'model-center.tab' 槽位。
-// 导入：将上游模型绑定为新的自定义模型或追加到已有模型。
-// 导出：序列化当前自定义模型为可迁移的 JSON 文本。
-// 导出数据只留在内存/剪贴板，不落 localStorage。
+// 一键导出当前自定义模型配置（不含凭据），导入走统一差异预览。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
 
@@ -43,11 +41,9 @@ export const Page=defineComponent({
   setup(props){
     const customs=ref<CustomSummary[]>([]),revision=ref(''),writable=ref(!props.adapter);
     const loading=ref(false),error=ref(''),message=ref('');
-    const mode=ref<'new'|'into'>('new');
-    const importItems=ref('');
-    const importTarget=ref('');
     const importing=ref(false);
     const exportText=ref('');
+    const importText=ref('');
     const copied=ref(false);
     let off:(()=>void)|undefined,disposed=false;
 
@@ -61,20 +57,13 @@ export const Page=defineComponent({
 
     const doImport=async()=>{
       if(!props.adapter)return;
-      const items=importItems.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
-      const inv=validateItems(items);
-      if(inv){error.value=inv;return;}
       importing.value=true;error.value='';
+      const items=importText.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+      const inv=validateItems(items);
+      if(inv){error.value=inv;importing.value=false;return;}
       try{
-        if(mode.value==='into'&&importTarget.value){
-          await props.adapter.importInto(importTarget.value,items,revision.value);
-          message.value='已追加 '+items.length+' 条绑定';
-        }else{
-          await props.adapter.importNew(items,revision.value);
-          message.value='已创建新自定义模型，含 '+items.length+' 条绑定';
-        }
-        importItems.value='';
-        await load();
+        await props.adapter.importNew(items,revision.value);
+        importText.value='';message.value='已导入 '+items.length+' 条绑定';await load();
       }catch(e){error.value=String((e as any)?.message||e);}
       finally{importing.value=false;}
     };
@@ -100,7 +89,7 @@ export const Page=defineComponent({
       if(!props.adapter)return el('section','root',[el('h2',null,'迁移'),el('p','notice','迁移后端尚未接入。',{role:'status'})]);
 
       return el('section','root',[
-        el('div','header',[el('h2',null,'迁移'),el('p','intro','导入上游模型绑定为自定义模型，或导出自定义模型摘要。')]),
+        el('div','header',[el('h2',null,'迁移'),el('p','intro','一键导出当前自定义模型配置；配置不含 API 密钥，换机后补填即可。')]),
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
@@ -117,31 +106,32 @@ export const Page=defineComponent({
           ]):el('p','hint','暂无自定义模型。'),
         ]),
 
+        // 一键导出
+        el('fieldset','section',[
+          el('legend',null,'导出配置'),
+          el('p','hint','导出的是自定义模型及其上游绑定（含顺序、权重、费率与预算），不含 API 密钥。'),
+          btn(loading.value?'生成中…':'一键导出',()=>void doExport(),'primary',{disabled:!writable.value||loading.value}),
+          exportText.value?el('div','export',[
+            h('textarea',{class:'mig-ipt',rows:12,readonly:true,value:exportText.value,'aria-label':'导出内容',placeholder:'导出结果将显示在此'}),
+            el('div','exportActions',[
+              btn(copied.value?'已复制':'复制导出内容',copyExport,'secondary'),
+              btn('保存为文件',()=>{const blob=new Blob([exportText.value],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='sacode-migration.json';a.click();URL.revokeObjectURL(url);},'secondary'),
+            ]),
+          ]):null,
+        ]),
+
         // 导入
         el('fieldset','section',[
-          el('legend',null,'导入绑定'),
-          el('p','hint','输入 "providerId/modelId" 格式的条目，每行一条或用逗号分隔。每次最多 128 条。'),
-          el('label','field',[el('span','lbl','条目列表'),h('textarea',{class:'mig-ipt',rows:6,value:importItems.value,'aria-label':'条目列表',placeholder:'step/gpt-4\nstep/gpt-3.5\nopenai/o1',onInput:(e:Event)=>importItems.value=(e.target as HTMLTextAreaElement).value})]),
-          el('fieldset','section',[el('legend',null,'导入模式'),
-            el('label','radio',[h('input',{type:'radio',name:'import-mode',checked:mode.value==='new','aria-label':'创建新自定义模型',onChange:()=>mode.value='new'}),'创建新自定义模型（自动分配 ID）']),
-            el('label','radio',[h('input',{type:'radio',name:'import-mode',checked:mode.value==='into','aria-label':'追加到已有自定义模型',onChange:()=>mode.value='into'}),'追加到已有自定义模型']),
-          ]),
-          mode.value==='into'?el('label','field',[el('span','lbl','目标自定义模型'),h('select',{class:'ipt',value:importTarget.value,'aria-label':'目标自定义模型',onChange:(e:Event)=>importTarget.value=(e.target as HTMLSelectElement).value},[
-            h('option',{value:''},'选择目标模型'),
-            ...customs.value.map(c=>h('option',{value:c.id},c.name||c.id)),
-          ])]):null,
+          el('legend',null,'导入绑定条目'),
+          el('p','hint','每行一条 "providerId/modelId"（可用逗号分隔），每次最多 128 条；按稳定 ID 对齐，重复导入不重复创建。'),
+          el('label','field',[el('span','lbl','条目列表'),h('textarea',{class:'mig-ipt',rows:6,value:importText.value,'aria-label':'条目列表',placeholder:'stepfun/step-5-preview\ndstepseek/deepseek-chat',onInput:(e:Event)=>importText.value=(e.target as HTMLTextAreaElement).value})]),
           btn(importing.value?'导入中…':'导入',()=>void doImport(),'primary',{disabled:!writable.value||importing.value}),
         ]),
 
-        // 导出
+        // 数据来源
         el('fieldset','section',[
-          el('legend',null,'导出摘要'),
-          el('p','hint','导出模型名称、模式和绑定数量的摘要；不含完整绑定、凭据，不能用来恢复配置。'),
-          btn(loading.value?'生成中…':'生成导出',()=>void doExport(),'primary',{disabled:!writable.value||loading.value}),
-          exportText.value?el('div','export',[
-            h('textarea',{class:'mig-ipt',rows:12,readonly:true,value:exportText.value,'aria-label':'导出内容',placeholder:'导出结果将显示在此'}),
-            btn(copied.value?'已复制':'复制',copyExport,'secondary'),
-          ]):null,
+          el('legend',null,'数据来源'),
+          el('p','hint','以上展示的是自定义模型的摘要；完整迁移（含供应商与凭据）需后端提供 migrate/* 动词。'),
         ]),
       ]);
     };

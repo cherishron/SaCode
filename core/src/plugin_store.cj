@@ -38,6 +38,55 @@ let pluginManifestFileName = "sacode.plugin.json"
 let pluginPackageBytesLimit = Int64(32 * 1024 * 1024)
 let pluginPackageFileLimit = Int64(4096)
 
+// —— 协议面 JSON 拼装（契约 §3.1/§3.3，docs/evidence/plugin-manager-contract-2026-10-05.md）。
+// 「空串等于没有」这条规则收在这三个函数里：散在调用点上就会漏掉一处，
+// 而漏掉的那一处表现为界面上一条看不见文案的错误。
+func optJson(field: String, value: String): String {
+    return if (value.size == 0) {
+        ",\"${field}\":null"
+    } else {
+        ",\"${field}\":\"${jsonEscapeText(value)}\""
+    }
+}
+
+func boolJson(field: String, value: Bool): String {
+    return ",\"${field}\":${if (value) { "true" } else { "false" }}"
+}
+
+// error 在契约里是对象（{code, reason}）而不是字符串。核心这一面只带一个码，
+// 所以两个字段同源；将来有独立诊断文本时只改这一个函数。
+func errorJson(value: String): String {
+    if (value.size == 0) {
+        return ",\"error\":null"
+    }
+    return ",\"error\":{\"code\":\"${jsonEscapeText(value)}\",\"reason\":\"${jsonEscapeText(value)}\"}"
+}
+
+func refusedJson(problem: String, reason: String): String {
+    return "{\"status\":\"refused\",\"problem\":\"${jsonEscapeText(problem)}\"" +
+        optJson("reason", reason) + "}"
+}
+
+// 本地安装只认绝对路径。相对路径要经宿主的工作目录才能落到盘上，
+// 那等于把「装到哪儿」交给宿主当前在哪——两入口的工作目录本来就不同。
+public func looksLikeAbsolutePath(value: String): Bool {
+    let b = value.toArray()
+    if (b.size == 0) {
+        return false
+    }
+    if (b[0] == 47) {
+        return true
+    }
+    if (b.size >= 2 && b[0] == 92 && b[1] == 92) {
+        return true
+    }
+    if (b.size >= 3 && b[1] == 58 && (b[2] == 47 || b[2] == 92)) {
+        let c = Int64(b[0])
+        return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+    }
+    return false
+}
+
 // 一个已安装插件的日志事实。字段全是 let：调用方拿到的是回放快照，
 // 改动它不会反向影响注册表。
 public class PluginRecord {
@@ -83,6 +132,20 @@ public class PluginRowView {
         this.phase = phase
         this.readOnlyReason = readOnlyReason
     }
+
+    // 契约 §3.1 的 Row。除 rowId 外全部是「可有可无」，空串一律出 JSON null：
+    // 界面按 null 判「无内容」，空串会被读成一条看不见的文案。
+    public func asJson(): String {
+        return "{\"rowId\":\"${jsonEscapeText(rowId)}\"" +
+            optJson("title", title) +
+            optJson("moduleName", moduleName) +
+            optJson("entryId", entryId) +
+            optJson("description", description) +
+            optJson("descriptionZhCN", descriptionZhCN) +
+            boolJson("enabled", enabled) +
+            optJson("phase", phase) +
+            optJson("readOnlyReason", readOnlyReason) + "}"
+    }
 }
 
 public class PluginPackageView {
@@ -115,6 +178,30 @@ public class PluginPackageView {
         this.error = error
         this.rows = rows
     }
+
+    // 契约 §3.1 的 Package。`kind` 与 `directory` 是核心内部事实，不进协议面：
+    // 目录路径出现在清单里就等于把本机布局交给界面去猜，而 directoryOf 才是定位方式。
+    public func asJson(): String {
+        var rowText = ""
+        var comma = ""
+        for (row in rows) {
+            rowText += comma + row.asJson()
+            comma = ","
+        }
+        return "{\"name\":\"${jsonEscapeText(name)}\"" +
+            optJson("title", title) +
+            optJson("version", version) +
+            optJson("description", description) +
+            optJson("descriptionZhCN", descriptionZhCN) +
+            boolJson("installed", installed) +
+            boolJson("optional", optional) +
+            boolJson("enabled", enabled) +
+            // 包级 readOnlyReason 现在恒为 null：契约里它表达「宿主为何拒绝停用/移除」，
+            // 而这条判断的输入是「内置不可移除」，那个事实已经由 optional 字段带出去了。
+            "\"readOnlyReason\":null" +
+            errorJson(error) +
+            "\"rows\":[${rowText}]}"
+    }
 }
 
 public class PluginInventory {
@@ -126,6 +213,19 @@ public class PluginInventory {
         this.available = available
         this.revision = revision
         this.packages = packages
+    }
+
+    // 宿主对 plugin/inventory 与三个写动作的统一应答体。放在核心而不是宿主里序列化，
+    // 是因为「哪些字段可以为 null」这条规则由清单视图的定义决定，宿主只该转发事实；
+    // 宿主自己拼一遍就会长出第二份字段规则，两份规则迟早对不上。
+    public func asJson(): String {
+        var text = ""
+        var comma = ""
+        for (pkg in packages) {
+            text += comma + pkg.asJson()
+            comma = ","
+        }
+        return "{\"available\":${if (available) { "true" } else { "false" }},\"revision\":${revision},\"packages\":[${text}]}"
     }
 }
 
@@ -149,6 +249,42 @@ public class PluginStore {
 
     public init(base: String) {
         this.base = base
+    }
+
+    // 与 providers.log、custom-models.log 同一个用户目录：两入口共用一份安装态，
+    // 桌面装了、CLI 重读必须看得见（契约 §1「每一个事实都来自宿主，动作后重读」）。
+    public static func forUser(): PluginStore {
+        let dir = Path(GlobalAppearanceSettings.forUser().settingsPath()).parent.toString()
+        return PluginStore(dir)
+    }
+
+    // 安装前的检视（契约 §3.3）。只读源目录里的那一份 manifest：
+    // 不落位、不记账、不留 staging——「预览」一旦能落位，用户确认之前包就已经装上了。
+    public func inspectSource(sourcePath: String): String {
+        reload()
+        if (!looksLikeAbsolutePath(sourcePath)) {
+            return refusedJson("invalid", "本地目录安装只接受绝对路径；npm 名与 git 地址这类远端源还没接")
+        }
+        if (!exists(sourcePath) || !FileInfo(sourcePath).isDirectory()) {
+            return refusedJson("not-found", "这个目录不存在")
+        }
+        let manifestPath = "${sourcePath}/${pluginManifestFileName}"
+        if (!exists(manifestPath) || !FileInfo(manifestPath).isRegular()) {
+            return refusedJson("invalid", "目录里没有 ${pluginManifestFileName}")
+        }
+        var manifest: PluginManifest
+        try {
+            manifest = parsePluginManifest(readTextFile(manifestPath))
+        } catch (e: Exception) {
+            // 解析层的码原样带出：用户能看到「哪一条规则被违反」才有下一步可走，
+            // 压成 unknown 就只剩「装不上」这三个字（与 viewOf 同一取舍）。
+            return refusedJson("invalid", e.message)
+        }
+        if (find(manifest.name).name.size > 0) {
+            return refusedJson("already-installed", "${manifest.name} 已经装过了")
+        }
+        return "{\"status\":\"accepted\",\"name\":\"${jsonEscapeText(manifest.name)}\",\"host\":null" +
+            optJson("version", manifest.version) + optJson("description", manifest.description) + "}"
     }
 
     // 事件日志即真源；与 providers.log 同一条纪律——每次操作都从盘上重放，

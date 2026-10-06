@@ -365,6 +365,21 @@ func migrationRejectsMalformedJson() {
 }
 
 @Test
+func migrationRejectsWrongJsonShapesWithoutThrowing() {
+    for (text in ["[]", "null", "{\"format\":\"sacode-migrate/1\",\"providers\":false}",
+        "{\"format\":\"sacode-migrate/1\",\"credentialRefs\":[false]}"]) {
+        @Expect(MigrationBundle.fromJson(text).isSome(), false)
+    }
+}
+
+@Test
+func migrationKeepsExplicitEmptyObjectContract() {
+    let parsed = MigrationBundle.fromJson("{}")
+    @Expect(parsed.isSome(), true)
+    if (let Some(bundle) <- parsed) { @Expect(bundle.validate(), "") }
+}
+
+@Test
 func migrationRejectsEmptyRequiredFields() {
     // 缺少 id 的 provider 条目
     let json = "{\"id\":\"\",\"name\":\"Test\",\"baseUrl\":\"https://api.example.com\","

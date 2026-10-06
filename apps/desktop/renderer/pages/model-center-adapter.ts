@@ -24,7 +24,11 @@ export function createModelCenterAdapters(api: any, providers: any) {
           limits: { dailyTokens: m.dailyTokens, monthlyTokens: m.monthlyTokens,
             dailyAmountMicro: m.dailyAmountMicro, monthlyAmountMicro: m.monthlyAmountMicro,
             maxOutputTokens: m.maxOutputTokens, probeEnabled: m.probeEnabled, probeMaxPerDay: m.probeMaxPerDay },
-        })), revision: view.revision, writable: view.writable };
+        })), costs: {
+          model: { amountMicro: null, currency: null, meterSource: '上游用量', note: '后端尚未提供按模型的历史费用流水。' },
+          probe: { amountMicro: null, currency: null, meterSource: '探测请求', note: '后端尚未提供探测费用流水。' },
+          relay: { amountMicro: null, currency: null, meterSource: '本地字节', note: '后端尚未提供加速通道费用流水。' },
+        }, revision: view.revision, writable: view.writable };
       },
     },
     migration: {

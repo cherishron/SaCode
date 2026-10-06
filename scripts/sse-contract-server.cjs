@@ -83,7 +83,7 @@ function handler(req, res) {
   // 增强这条车道的请求形状同样只有 provider 侧能证：把收到的请求体形状原样回声，
   // 多带一条会话历史、多出一个 tools、或草稿被改写了，都会在这条回文里露出来。
   // 必须排在 req.resume() 之前——resume 会把正文吃掉。
-  if (route === 'enhance') {
+  if (route === 'enhance' || route === 'enhance-slow') {
     let raw = '';
     req.setEncoding('utf8');
     req.on('data', (d) => { raw += d; });
@@ -100,9 +100,12 @@ function handler(req, res) {
         tools = Array.isArray(parsed.tools) ? parsed.tools.length : 0;
         draft = list.filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : '')).join('|');
       } catch (e) { /* 请求体不是合法 JSON 时保持默认值，让断言看得见 */ }
+      const respond = () => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(frame(`model=${model} messages=${messages} tools=${tools} draft=${draft}`));
       res.end('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"total_tokens":22}}\n\ndata: [DONE]\n\n');
+      };
+      if (route === 'enhance-slow') later(respond, 1000); else respond();
     });
     return;
   }

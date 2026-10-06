@@ -158,6 +158,10 @@ module.exports = async function ({ win, check, waitFor, bridge }) {
     await js("const n=document.querySelector('#composer');n.value='取消后留在队列的第三条';n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click();");
     await waitFor("!!document.querySelector('.composer [data-queue-dock]') && document.querySelector('.composer .queue-preview').textContent.includes('取消后留在队列的第三条')");
     const thirdQueued = await bridge.request('queue/describe');
+    // 队列投影可早于发送回执的 finally 出现；禁用按钮的 click 会被 Chromium 忽略。
+    // 等发送结算、草稿清空且真实停止入口可用，再验取消的核心效果。
+    await waitFor("!document.querySelector('#send').disabled && document.querySelector('#send').getAttribute('aria-label')==='停止执行' && !document.querySelector('#composer').value.trim()");
+    console.log('FRAME 停止入口就绪 '+JSON.stringify(await js("return ({disabled:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),label:document.querySelector('#send').getAttribute('aria-label'),draft:document.querySelector('#composer').value.length})")));
     await js("document.querySelector('#send').click();");
     await waitFor("document.querySelector('#send').getAttribute('aria-label')==='发送消息'");
     const afterCancel = await bridge.request('queue/describe');

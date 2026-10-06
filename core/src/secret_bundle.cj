@@ -409,7 +409,8 @@ public func secretBundleConstTimeEquals(a: Array<Byte>, b: Array<Byte>): Constan
     var i: Int64 = 0
     // 循环次数只由长度决定：差异出现在第 1 个字节还是最后一个字节，走的都是同一段
     while (i < n) {
-        diff = diff ^ (a[i] ^ b[i])
+        // OR 累积每一位差异；XOR 会让两处相同差异抵消，误放行不同标签。
+        diff = diff | (a[i] ^ b[i])
         i += 1
     }
     var equal = a.size == b.size

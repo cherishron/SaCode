@@ -165,7 +165,7 @@ export const Page=defineComponent({
 // --- 槽位注册 ---
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
-    child.register({name:'model-center.tab',id:'provider-settings',order:0,label:'供应商'},
+    child.register({name:'model-center.tab',id:'provider-settings',order:1,label:'供应商'},
       defineComponent({name:'SaCodeProviderSettingsSlot',props:['owner'],setup:(props)=>()=>h(ProviderEditor,{adapter:(props.owner as any)?.adapter})}));
   });
 }
