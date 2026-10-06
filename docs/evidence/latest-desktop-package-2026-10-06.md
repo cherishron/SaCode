@@ -40,3 +40,18 @@
 附 install-latest.cmd：仅为本次安装进程设置 D:\Temp\SaCode-install-temp 并启动安装器，避免默认 TEMP 写入失败；不是修改系统全局环境变量。附 build-info-latest.json。包内 build-info.json 的 verification 是构建前 pending 标记，最终实测状态以本台账及包旁验收信息为准，未在验收后修改 asar 破坏完整性。
 
 本轮只交付最新 NSIS，其他旧 portable/win-unpacked 路径未宣称更新。全面 DSH 复刻仍未完成；队列九条历史红、电脑真实输入、全部插件与外部 provider、真实模型全链路及安装升级卸载验收仍待分别收口。63 个控件与启动通过不等于63模块功能验收。
+
+## 用户安装失败追查：Windows 完整性标记
+
+用户运行最新安装器仍报 NSIS Error writing temporary file。已核对活动进程实际 exe 路径、SHA256、磁盘空间与临时目录 DACL，不能归因于拿错包或空间不足。先前仅验证 PowerShell 能写入私有 TEMP，不足以证明 NSIS 能写入。
+
+`icacls` 直接确认项目默认输出目录中的 Setup 继承 `Mandatory Label\Low Mandatory Level:(I)(NW)`；`D:/Temp/SaCode-install-temp` 没有低完整性标记。低完整性进程不能写入普通完整性对象，即使 DACL 允许写入，见 [Microsoft Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)。未查明项目目录标签最初由哪个程序设置，不推测作者。
+
+最小 NSIS 探针只执行 GetTempFileName、写诊断结果和删除自己的临时文件，不安装软件。相同字节（SHA256 `c8233d280a211f48ace11e80b59e3c2d6a53328d9a22ef0dd012158599257fec`）在相同 TEMP/TMP 下对照：
+
+- 放项目 dist/electron（继承 Low）：rc=2。
+- 放 D:/Temp/SaCode-nsis-diagnose-20261006（普通标记）：rc=0，GetTempFileName 成功，RESULT=PASS。
+
+据此更新交付路径：**D:/Releases/SaCode/SaCode Setup 0.1.0-latest.exe**。用读取源字节、在普通交付目录新建文件的方式输出，不继承源安全描述符。新文件 icacls 没有 Low 标记；与源安装包 SHA256 完全一致，仍为 `eb0f89f8547f21f614d139ebcb65c53056680d13776a6ee10123bcafb2809d23`。附同目录 install-latest.cmd 和 build-info-latest.json；项目输出目录的安装脚本改指向此交付文件。
+
+没有修改项目、TEMP 或系统的 ACL/完整性配置，没有启动真实安装器代用户安装。尚待用户实际安装后确认；这里只证明造成临时文件失败的标记差异及修正交付文件。默认 dist/electron 中的 exe 仍是构建产物，不能再次当作可直接运行的交付文件。
