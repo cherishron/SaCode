@@ -485,6 +485,27 @@ ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
   return { cancelled: true, output: "install-was-not-running" };
 });
 
+// Next SDK 页面工具：列出与调用
+ipcMain.handle("sacode:pageToolsList", async () => {
+  return window.webContents ? [] : [];
+});
+
+ipcMain.handle("sacode:pageToolCall", async (_e, args) => {
+  const name = args && args.name;
+  const callArgs = args && args.args;
+  if (!name || typeof name !== "string") throw new Error("bad-page-tool-name");
+  if (!window.webContents) return { error: "no-window" };
+  try {
+    // 在渲染层执行页面工具
+    const result = await window.webContents.executeJavaScript(
+      `window.DshPageTools && window.DshPageTools.tools ? (function(){try{const t=window.DshPageTools.tools.find(x=>x.name==='${name.replace(/'/g, "\\'")}');return t&&t.handler?JSON.stringify(await t.handler(${JSON.stringify(callArgs)})):JSON.stringify({error:'tool-not-found'});}catch(e){return JSON.stringify({error:e.message});}})() : JSON.stringify({error:'page-tools-not-loaded'})`
+    );
+    return JSON.parse(result);
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
 app.whenReady().then(async () => {

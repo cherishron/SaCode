@@ -77,4 +77,7 @@ contextBridge.exposeInMainWorld("sacode", {
   pluginsInstall: (request) => ipcRenderer.invoke("sacode:pluginsInstall", { spec: request?.spec, registry: request?.registry, requestId: request?.requestId, approvedBuilds: request?.approvedBuilds }),
   pluginsInstallPoll: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallPoll", { requestId }),
   pluginsInstallCancel: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallCancel", { requestId }),
+  // Next SDK 页面工具：列出与调用
+  pageToolsList: () => ipcRenderer.invoke("sacode:pageToolsList"),
+  pageToolCall: (name, args) => ipcRenderer.invoke("sacode:pageToolCall", { name, args }),
 });

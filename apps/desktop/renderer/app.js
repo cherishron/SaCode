@@ -5,6 +5,11 @@
 const { createApp, h, ref, onMounted, withDirectives } = window.Vue;
 const nativePlatform = new URLSearchParams(location.search).get('platform') || 'web';
 
+// Next SDK 初始化：注册 WebMCP 页面工具，让模型能调用页面工具（读 DOM、点击、输入、滚动）。
+if (globalThis.__nextSDK && globalThis.__nextSDK.initializeBuiltinWebMCP) {
+  try { globalThis.__nextSDK.initializeBuiltinWebMCP(); } catch(e) { /* SDK 初始化失败不阻塞应用 */ }
+}
+
 // 高度是草稿的派生视图；只在正文或宽度变化时测量，避免轮询重置输入滚动位置。
 const draftSize = new WeakMap();
 const autoDraftSize = {
