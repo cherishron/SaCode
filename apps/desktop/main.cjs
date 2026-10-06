@@ -1,6 +1,7 @@
 // Electron 主进程：只负责窗口、宿主生命周期与有限的 IPC 面。
 // 不做 agent 业务，不承载会话真源，不把任意命令执行暴露给渲染层。
 require('./stdio-guard.cjs').installStdioGuard();
+const { installWindowVisibility } = require('./window-visibility.cjs');
 const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
@@ -73,11 +74,9 @@ function createWindow() {
     },
   });
   // 原生平台只用于布局选择，不扩大 IPC 或业务能力。
+  // 在开始加载之前订阅事件；常规启动不能因缺失首次绘制事件永远隐藏。
+  installWindowVisibility(win, { hidden: UI_SMOKE });
   win.loadFile(join(__dirname, "renderer", "index.html"), {query:{platform:process.platform}});
-  // 常规启动显示窗口；具体冒烟按需显示以验证动画帧或原生键盘焦点。
-  win.once("ready-to-show", () => {
-    if (!UI_SMOKE) win.show();
-  });
   win.on("closed", () => (win = null));
   return win;
 }

@@ -27,6 +27,7 @@
     "files": [
       "main.cjs",
       "stdio-guard.cjs",
+      "window-visibility.cjs",
       "preload.cjs",
       "host-bridge.cjs",
       "models-guard.cjs",
