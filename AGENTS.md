@@ -29,7 +29,7 @@ DeepSeek Harness (DSH) 全系统复刻实验：一份**仓颉（Cangjie）共享
 桌面（先 `cd apps/desktop && npm install`）：
 - 单测：`npm test`（即 `node --test` 自动发现）。**不要写成 `node --test test/`**——本机 Node 会把目录当模块解析，整串失败。
 - 跑单个用例：`node --test --test-name-pattern="<name>"`
-- 冒烟：先生成宿主 `node scripts/pack-host.mjs apps/host/target/release/bin/main.exe apps/desktop/dist/host <stdx-dll-dir> <runtime-dll-dir>`，再 `npm run smoke`（期望 `SMOKE PASS`）/ `npm run ui-smoke`。dev 态宿主路径固定为 `apps/desktop/dist/host/bin/dsh-host.exe`。
+- 冒烟：先生成宿主 `node scripts/pack-host.mjs apps/host/target/release/bin/main.exe apps/desktop/dist/host <stdx-dll-dir> <runtime-dll-dir>`，再 `npm run smoke`（期望 `SMOKE PASS`）/ `npm run ui-smoke`。dev 态宿主路径固定为 `apps/desktop/dist/host/bin/sacode-host.exe`（品牌改名后不是 `dsh-host.exe`；`host-verbs` 与 `real-provider-*` 都读它，后者可用 `SACODE_HOST` 指到别处）。重打这个目录前先看有没有活的 `sacode-host.exe`：并发会话的宿主进程会锁住 `bin/*.dll`，`pack-host` 报 `EPERM: unlink` 且重试同点同错——这时改打私有输出目录自证脚本没坏，不要清理别人的进程。
 - `npm run vendor` 依次跑 `scripts/pack-vendor.mjs`（拷 Vue runtime）、`scripts/pack-tinyvue.mjs`（TinyVue 组件 → `renderer/vendor/tinyvue.iife.js` + esbuild 伴生的 `.css`）与 `scripts/pack-tinyrobot.mjs`（TinyRobot bubble 一族 → `tinyrobot.iife.js`，`dist/style.css` 原样拷成 `tinyrobot.css`）；`prestart`/`presmoke`/`preui-smoke` 自动触发。`renderer/vendor/` 已被 gitignore，属构建产物——判「产物是否可复现」要重跑 vendor 看文件是否回来，不能只 grep 脚本里有没有那个文件名。
 
 JS 扩展宿主：`cd extjs && node --test`
