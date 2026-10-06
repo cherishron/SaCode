@@ -1411,14 +1411,14 @@ createApp({
     const tracePage = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "会话轨迹"),
         el("p","note","当前会话已落盘的事件时间线（按 seq 倒序显示最近一页）。"),
-        traceError.value ? el("p","note","读取失败："+traceError.value,{role:"alert"}) : null,
-        traceBusy.value && !traceEvents.value.length ? el("p","note","加载中…",{role:"status"}) : null,
-        !traceBusy.value && !traceEvents.value.length && !traceError.value ? el("p","note","尚无已落盘事件") : null,
-        traceEvents.value.length ? el("div","trace-timeline",traceEvents.value.slice().reverse().map(ev=>el("div","trace-event",[
+        self.traceError ? el("p","note","读取失败："+self.traceError,{role:"alert"}) : null,
+        self.traceBusy && !self.traceEvents.length ? el("p","note","加载中…",{role:"status"}) : null,
+        !self.traceBusy && !self.traceEvents.length && !self.traceError ? el("p","note","尚无已落盘事件") : null,
+        self.traceEvents.length ? el("div","trace-timeline",self.traceEvents.slice().reverse().map(ev=>el("div","trace-event",[
           el("span","trace-seq","#"+ev.seq),
           el("span","trace-type",String(ev.type||"event")),
         ]))) : null,
-        traceMore.value ? el("button","btn","加载更早的事件",{onClick:()=>self.refreshTrace(false)}) : null,
+        self.traceMore ? el("button","btn","加载更早的事件",{onClick:()=>self.refreshTrace(false)}) : null,
       ], { id: "trace-panel", tabindex: -1 }),
     ], { id: "side-page-trace", role: "tabpanel", "aria-labelledby": "side-tab-trace", hidden: self.sideTab !== "trace" });
     const guide = el("div", "side-page", [
