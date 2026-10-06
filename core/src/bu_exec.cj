@@ -3,7 +3,10 @@ package core
 import std.fs.*
 import std.io.*
 import std.process.*
-import std.time.MonoTime
+import std.sync.AtomicInt64
+import std.time.*
+
+let buStampCounter = AtomicInt64(0)
 
 // 浏览器真实驱动（H/W70）：上游 `ctx.browser` 的真 headless 子进程实现。
 //
@@ -71,7 +74,7 @@ func isSafeUrlScheme(url: String): Bool {
 }
 
 func createBuUserDataDir(): String {
-    let stamp = "${(MonoTime.now().toNanoseconds() / 1000000)}"
+    let stamp = "${buStampCounter.fetchAdd(1)}"
     let dir = "core-bu-userdata-${stamp}"
     try { Directory.create(dir, recursive: true) } catch (_: Exception) {}
     return dir
