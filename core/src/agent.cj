@@ -343,8 +343,9 @@ public class ToolRuntime {
         if (raw.startsWith("{")) {
             try {
                 let obj = JsonValue.fromStr(raw).asObject()
-                // additionalProperties:false：只允许 path/offset/limit 三个键，多余字段一律拒
-                if (obj.size() > 3) { throw Exception("bad-args") }
+                // additionalProperties:false：只允许 path/offset/limit，用已知键计数法检测多余字段
+                let known = (if (obj.get("path").isSome()) { 1 } else { 0 }) + (if (obj.get("offset").isSome()) { 1 } else { 0 }) + (if (obj.get("limit").isSome()) { 1 } else { 0 })
+                if (obj.size() != known) { throw Exception("bad-args") }
                 raw = obj.get("path").getOrThrow().asString().getValue()
                 if (let Some(v) <- obj.get("offset")) { offset = v.asInt().getValue() }
                 if (let Some(v) <- obj.get("limit")) { limit = v.asInt().getValue() }
@@ -754,7 +755,9 @@ public class ToolRuntime {
         try {
             let obj = JsonValue.fromStr(trimmed).asObject()
             // additionalProperties:false：只允许 command/sandbox_mode 两个键
-            if (obj.size() > 2) { return ShellArgs("", "", "", false) }
+            // additionalProperties:false：只允许 command/sandbox_mode，用已知键计数法
+            let knownShell = (if (obj.get("command").isSome()) { 1 } else { 0 }) + (if (obj.get("sandbox_mode").isSome()) { 1 } else { 0 })
+            if (obj.size() != knownShell) { return ShellArgs("", "", "", false) }
             let cmd = obj.get("command").getOrThrow().asString().getValue()
             var sandboxMode = "workspace-write"
             if (let Some(sm) <- obj.get("sandbox_mode")) { sandboxMode = sm.asString().getValue() }

@@ -9,7 +9,7 @@ import std.fs.*
 // glob 匹配：支持 `*`（匹配不含 / 的任意字符）、`?`（匹配单个非 / 字符）、
 // `**`（匹配含 / 的任意字符）。模式按 / 分段，逐段匹配。
 func globMatchPattern(name: String, pattern: String): Bool {
-    // 单段匹配（不含 /）
+    // ** 匹配含 / 的任意字符；* 匹配不含 / 的任意字符。
     let n = name.toArray()
     let p = pattern.toArray()
     var i: Int64 = 0
@@ -18,25 +18,25 @@ func globMatchPattern(name: String, pattern: String): Bool {
     var starJ: Int64 = -1
     while (j < p.size) {
         if (Int64(p[j]) == 42) {
-            // 匹配 *
-            if (starI < 0) { starI = i; starJ = j }
-            j += 1
+            // 连续 * 合并：记录位置，跳过后续 *
+            starI = i
+            starJ = j
+            while (j < p.size && Int64(p[j]) == 42) { j += 1 }
         } else if (Int64(p[j]) == 63 || (i < n.size && Int64(p[j]) == Int64(n[i]))) {
-            // 匹配 ? 或精确字符
             i += 1
             j += 1
         } else {
             if (starI >= 0) {
-                // 回溯到上一个 *
-                i = starI + 1
-                starJ += 1
+                // 回溯：让 * 多吃一个字符
+                starI += 1
+                i = starI
                 j = starJ
+                while (j < p.size && Int64(p[j]) == 42) { j += 1 }
             } else {
                 return false
             }
         }
     }
-    // 末尾如果有 *，已经匹配了剩余部分
     while (j < p.size && Int64(p[j]) == 42) { j += 1 }
     return i == n.size
 }

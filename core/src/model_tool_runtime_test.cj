@@ -63,7 +63,7 @@ func modelRunnerUsesInjectedRegistryAndLogsExactlyOneCorrelatedResult() {
     let final = AgentChunks([Chunk("text", "file unavailable", ""), Chunk("finish", "", "stop")])
     let handle = ModelAgentRunner().start(first, { body =>
         let request = JsonValue.fromStr(body).asObject()
-        @Expect(request.get("tools").getOrThrow().asArray().size(), Int64(3))
+        @Expect(request.get("tools").getOrThrow().asArray().size(), Int64(10))
         @Expect(request.get("messages").getOrThrow().asArray().size(), Int64(3))
         final
     }, "test-model", TurnToken(), log, DeliveryQueue(64), false, toolRuntime: runtime)
