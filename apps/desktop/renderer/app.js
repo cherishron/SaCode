@@ -1490,7 +1490,7 @@ createApp({
       style:{left:left+'px'},onPointerdown:e=>self.beginFrameResize(name,e),onKeydown:e=>self.resizeFrameKey(name,e)});
     const main = el('section','pane conversation',[
       withDirectives(el('div','conversation-scroll',[
-        h(CLIENT_VIEWS.Outlet, { owner: { transcript, activeView: 'chat' }, sessionId: self.scrollSession && self.scrollSession !== 'initial' ? String(self.scrollSession) : undefined }),
+        h(CLIENT_VIEWS.Outlet, { owner: { transcript, activeView: 'chat' }, sessionId: String(self.scrollSession) }),
         el('div','composer-seat',[composer],{'data-composer-seat':''}),
       ]),[[window.SaCodeConversationScroll.directive,{
         session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
