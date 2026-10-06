@@ -1,0 +1,2947 @@
+﻿cjpm : warning[0m: unsecure character:\u{1680}
+At line:1 char:138
++ ... stem.Text.UTF8Encoding]::new($false); cd core; cjpm test 2>&1 | Out-F ...
++                                                    ~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning[0m: unsecure character:\u{1680}:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+  ==> D:\Project\sa\saai\sa-code\core\src\todo.cj:18:25:
+
+   | 
+
+18 |     let marks = [" ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", "　", "﻿"]
+
+   |                        ^ unsecure character:\u{1680}
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+ ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:8:137:
+
+  | 
+
+8 |   let ENHANCE_INSTRUCTION = "你是需求表述助手。请把用户接下来给出的这一条草稿改写得更清楚、更有条理，"
+
+  |                             ~                                                                         ^ 
+
+  |  ___________________________|
+
+9 | |     + "并保留他原本的意图、语气、感受和已经明确写出的约束。"
+
+  | |_____~ possibly confusing line terminator between '你是需求表述助手。请把用户接下来给出的这一条草稿改写得更清楚、更有条理，' and '+'
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:9:87:
+
+   | 
+
+9  |       + "并保留他原本的意图、语气、感受和已经明确写出的约束。"
+
+   |         ~                                                     ^ 
+
+   |  _______|
+
+10 | |     + "可以在必要时把内容整理成背景、目标、要求、验收条件这类结构，但不要强行套用模板，也不要让篇幅无谓变长。"
+
+   | |_____~ possibly confusing line terminator between '并保留他原本的意图、语气、感受和已经明确写出的约束。' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:10:162:
+
+   | 
+
+10 |       + "可以在必要时把内容整理成背景、目标、要求、验收条件这类结构，但不要强行套用模板，也不要让篇幅无谓变长。"
+
+   |         ~                                                                                                       ^ 
+
+   |  _______|
+
+11 | |     + "不要添加用户没有提到的功能、技术栈、时间、预算或限制。"
+
+   | |_____~ possibly confusing line terminator between '可以在必要时把内容整理成背景、目标、要求、验收条件这类结构，但不要强行套用模板，也不要让篇幅无谓变长。' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:11:90:
+
+   | 
+
+11 |       + "不要添加用户没有提到的功能、技术栈、时间、预算或限制。"
+
+   |         ~                                                       ^ 
+
+   |  _______|
+
+12 | |     + "信息不足时保留那份不确定，明确写成待确认，不要编造事实。"
+
+   | |_____~ possibly confusing line terminator between '不要添加用户没有提到的功能、技术栈、时间、预算或限制。' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:12:93:
+
+   | 
+
+12 |       + "信息不足时保留那份不确定，明确写成待确认，不要编造事实。"
+
+   |         ~                                                         ^ 
+
+   |  _______|
+
+13 | |     + "只输出改写后的草稿本身，不要解释你做了什么，也不要加前后缀说明。"
+
+   | |_____~ possibly confusing line terminator between '信息不足时保留那份不确定，明确写成待确认，不要编造事实。' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\attempt_log.cj:28:84:
+
+   | 
+
+28 |           let data = "{\"logicalRequestId\":\"${jsonEscapeText(logicalRequestId)}\","
+
+   |                      ~                                                               ^ 
+
+   |  ____________________|
+
+29 | |             + "\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"routeKey\":\"${jsonEscapeText(routeKey)}\"}"
+
+   | |_____________~ possibly confusing line terminator between '{\"logicalRequestId\":\"${jsonEscapeText(logicalReques
+tId)}\",' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:31:68:
+
+   | 
+
+31 |       return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":["
+
+   |              ~                                                       ^ 
+
+   |  ____________|
+
+32 | |         + "{\"role\":\"system\",\"content\":\"${jsonEscapeText(ENHANCE_INSTRUCTION)}\"},"
+
+   | |_________~ possibly confusing line terminator between '{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[' an
+d '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:32:90:
+
+   | 
+
+32 |           + "{\"role\":\"system\",\"content\":\"${jsonEscapeText(ENHANCE_INSTRUCTION)}\"},"
+
+   |             ~                                                                              ^ 
+
+   |  ___________|
+
+33 | |         + "{\"role\":\"user\",\"content\":\"${jsonEscapeText(draft)}\"}"
+
+   | |_________~ possibly confusing line terminator between '{\"role\":\"system\",\"content\":\"${jsonEscapeText(ENHANC
+E_INSTRUCTION)}\"},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:33:73:
+
+   | 
+
+33 |           + "{\"role\":\"user\",\"content\":\"${jsonEscapeText(draft)}\"}"
+
+   |             ~                                                             ^ 
+
+   |  ___________|
+
+34 | |         + "],\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+
+   | |_________~ possibly confusing line terminator between '{\"role\":\"user\",\"content\":\"${jsonEscapeText(draft)}\
+"}' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\attempt_log.cj:34:115:
+
+   | 
+
+34 |           let data = "{\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"kind\":\"${jsonEscapeText(failure.kind)}\"
+,"
+
+   |                      ~                                                                                            
+  ^ 
+
+   |  ____________________|
+
+35 | |             + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},\"status\":${failure.status},"
+
+   | |_____________~ possibly confusing line terminator between '{\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"kind
+\":\"${jsonEscapeText(failure.kind)}\",' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\attempt_log.cj:35:103:
+
+   | 
+
+35 |               + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},\"status\":${failure.status},"
+
+   |                 ~                                                                                       ^ 
+
+   |  _______________|
+
+36 | |             + "\"retryAfterSeconds\":${failure.retryAfterSeconds},\"bodyLen\":${failure.bodyLen},"
+
+   | |_____________~ possibly confusing line terminator between '\"reachedUpstream\":${boolText(failure.reachedUpstream
+)},\"status\":${failure.status},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\attempt_log.cj:36:99:
+
+   | 
+
+36 |               + "\"retryAfterSeconds\":${failure.retryAfterSeconds},\"bodyLen\":${failure.bodyLen},"
+
+   |                 ~                                                                                   ^ 
+
+   |  _______________|
+
+37 | |             + "\"summary\":\"${jsonEscapeText(failure.summary)}\"}"
+
+   | |_____________~ possibly confusing line terminator between '\"retryAfterSeconds\":${failure.retryAfterSeconds},\"b
+odyLen\":${failure.bodyLen},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:49:111:
+
+   | 
+
+49 |           return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
+
+   |                  ~                                                                                              ^ 
+
+   |  ________________|
+
+50 | |             + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},"
+
+   | |_____________~ possibly confusing line terminator between '{\"providerId\":\"${jsonEscapeText(providerId)}\",\"mo
+delId\":\"${jsonEscapeText(modelId)}\",' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:50:113:
+
+   | 
+
+50 |               + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},"
+
+   |                 ~                                                                                                 
+^ 
+
+   |  _______________|
+
+51 | |             + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
+
+   | |_____________~ possibly confusing line terminator between '\"enabled\":${if (enabled) { "true" } else { "false" }
+},\"order\":${order},\"weight\":${weight},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:51:85:
+
+   | 
+
+51 |               + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
+
+   |                 ~                                                                     ^ 
+
+   |  _______________|
+
+52 | |             + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
+
+   | |_____________~ possibly confusing line terminator between '\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${p
+riceOutMicro},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+  ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:52:113:
+
+   | 
+
+52 |               + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
+
+   |                 ~                                                                                                 
+^ 
+
+   |  _______________|
+
+53 | |             + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
+
+   | |_____________~ possibly confusing line terminator between '\"priceCacheReadMicro\":${priceCacheReadMicro},\"price
+CacheWriteMicro\":${priceCacheWriteMicro},' and '+'
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\sha256.cj:102:77:
+
+    | 
+
+102 |               w[t] = (UInt32(msg[base]) << 24) | (UInt32(msg[base + 1]) << 16)
+
+    |                                                                              ~^ 
+
+    |  ____________________________________________________________________________|
+
+103 | |                 | (UInt32(msg[base + 2]) << 8) | UInt32(msg[base + 3])
+
+    | |_________________~ possibly confusing line terminator between ')' and '|'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\attach.cj:115:70:
+
+    | 
+
+115 |       return byteAt(data, at) * 16777216 + byteAt(data, at + 1) * 65536
+
+    |                                                                   ~    ^ 
+
+    |  _________________________________________________________________|
+
+116 | |         + byteAt(data, at + 2) * 256 + byteAt(data, at + 3)
+
+    | |_________~ possibly confusing line terminator between '65536' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:129:89:
+
+    | 
+
+129 |           return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
+
+    |                  ~                                                                        ^ 
+
+    |  ________________|
+
+130 | |             + "\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\","
+
+    | |_____________~ possibly confusing line terminator between '{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEs
+capeText(name)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:129:96:
+
+    | 
+
+129 |           return "{${head}\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
+
+    |                  ~                                                                               ^ 
+
+    |  ________________|
+
+130 | |             + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { 
+"false" }},"
+
+    | |_____________~ possibly confusing line terminator between '{${head}\"id\":\"${jsonEscapeText(id)}\",\"name\":\"$
+{jsonEscapeText(name)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\attach.cj:130:83:
+
+    | 
+
+130 |       return byteAt(data, 0) == 71 && byteAt(data, 1) == 73 && byteAt(data, 2) == 70
+
+    |                                                                                   ~ ^ 
+
+    |  _________________________________________________________________________________|
+
+131 | |         && byteAt(data, 3) == 56 && (byteAt(data, 4) == 55 || byteAt(data, 4) == 57)
+
+    | |_________~ possibly confusing line terminator between '70' and '&&'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:130:105:
+
+    | 
+
+130 |               + "\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\","
+
+    |                 ~                                                                                         ^ 
+
+    |  _______________|
+
+131 | |             + "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } e
+lse { "false" }},"
+
+    | |_____________~ possibly confusing line terminator between '\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol
+\":\"${jsonEscapeText(protocol)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:130:124:
+
+    | 
+
+130 |               + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { 
+"false" }},"
+
+    |                 ~                                                                                                
+            ^ 
+
+    |  _______________|
+
+131 | |             + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
+
+    | |_____________~ possibly confusing line terminator between '\"description\":\"${jsonEscapeText(description)}\",\"
+enabled\":${if (enabled) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\attach.cj:131:85:
+
+    | 
+
+131 |           && byteAt(data, 3) == 56 && (byteAt(data, 4) == 55 || byteAt(data, 4) == 57)
+
+    |                                                                                      ~^ 
+
+    |  ____________________________________________________________________________________|
+
+132 | |         && byteAt(data, 5) == 97
+
+    | |_________~ possibly confusing line terminator between ')' and '&&'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:131:102:
+
+    | 
+
+131 |               + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
+
+    |                 ~                                                                                      ^ 
+
+    |  _______________|
+
+132 | |             + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
+
+    | |_____________~ possibly confusing line terminator between '\"category\":\"${jsonEscapeText(category)}\",\"requir
+es\":${req},\"bindings\":${bnd},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:131:130:
+
+    | 
+
+131 |               + "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } e
+lse { "false" }},"
+
+    |                 ~                                                                                                
+                  ^ 
+
+    |  _______________|
+
+132 | |             + "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }},"
+
+    | |_____________~ possibly confusing line terminator between '\"credentialRef\":\"${jsonEscapeText(credentialRef)}\
+",\"declared\":${if (declared) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:132:81:
+
+    | 
+
+132 |               + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
+
+    |                 ~                                                                 ^ 
+
+    |  _______________|
+
+133 | |             + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\
+","
+
+    | |_____________~ possibly confusing line terminator between '\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${
+sortOrder},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:132:100:
+
+    | 
+
+132 |               + "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }},"
+
+    |                 ~                                                                                    ^ 
+
+    |  _______________|
+
+133 | |             + "\"transport\":\"${jsonEscapeText(transport)}\",\"models\":${arr}}"
+
+    | |_____________~ possibly confusing line terminator between '\"sortOrder\":${sortOrder},\"enabled\":${if (enabled)
+ { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:133:95:
+
+    | 
+
+133 |           return "format=${format} kind=${kind} schemaVersion=${schemaVersion} cipher=${cipher}"
+
+    |                  ~                                                                              ^ 
+
+    |  ________________|
+
+134 | |             + " mac=${mac} compose=${compose} kdf=${kdf} iterations=${iterations}"
+
+    | |_____________~ possibly confusing line terminator between 'format=${format} kind=${kind} schemaVersion=${schemaV
+ersion} cipher=${cipher}' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:133:115:
+
+    | 
+
+133 |               + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\
+","
+
+    |                 ~                                                                                                
+   ^ 
+
+    |  _______________|
+
+134 | |             + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
+
+    | |_____________~ possibly confusing line terminator between '\"params\":\"${jsonEscapeText(params)}\",\"modalityBu
+dget\":\"${jsonEscapeText(modalityBudget)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:134:83:
+
+    | 
+
+134 |               + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
+
+    |                 ~                                                                   ^ 
+
+    |  _______________|
+
+135 | |             + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
+
+    | |_____________~ possibly confusing line terminator between '\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${mo
+nthlyTokens},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:134:83:
+
+    | 
+
+134 |               + " mac=${mac} compose=${compose} kdf=${kdf} iterations=${iterations}"
+
+    |                 ~                                                                   ^ 
+
+    |  _______________|
+
+135 | |             + " saltLen=${saltLen} ivLen=${ivLen} tagLen=${tagLen}"
+
+    | |_____________~ possibly confusing line terminator between ' mac=${mac} compose=${compose} kdf=${kdf} iterations=
+${iterations}' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:135:103:
+
+    | 
+
+135 |               + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
+
+    |                 ~                                                                                       ^ 
+
+    |  _______________|
+
+136 | |             + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "f
+alse" }},"
+
+    | |_____________~ possibly confusing line terminator between '\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmo
+untMicro\":${monthlyAmountMicro},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:136:122:
+
+    | 
+
+136 |               + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "f
+alse" }},"
+
+    |                 ~                                                                                                
+          ^ 
+
+    |  _______________|
+
+137 | |             + "\"probeMaxPerDay\":${probeMaxPerDay}}"
+
+    | |_____________~ possibly confusing line terminator between '\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled
+\":${if (probeEnabled) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\route_health.cj:148:107:
+
+    | 
+
+148 |           let data = "{\"key\":\"${jsonEscapeText(scope.key)}\",\"kind\":\"${jsonEscapeText(scope.kind)}\","
+
+    |                      ~                                                                                      ^ 
+
+    |  ____________________|
+
+149 | |             + "\"category\":\"${jsonEscapeText(category)}\",\"failures\":${failures},"
+
+    | |_____________~ possibly confusing line terminator between '{\"key\":\"${jsonEscapeText(scope.key)}\",\"kind\":\"
+${jsonEscapeText(scope.kind)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\route_health.cj:149:87:
+
+    | 
+
+149 |               + "\"category\":\"${jsonEscapeText(category)}\",\"failures\":${failures},"
+
+    |                 ~                                                                       ^ 
+
+    |  _______________|
+
+150 | |             + "\"cooling\":${boolText(cooling)},\"notBefore\":${notBefore},\"level\":${level},"
+
+    | |_____________~ possibly confusing line terminator between '\"category\":\"${jsonEscapeText(category)}\",\"failur
+es\":${failures},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\route_health.cj:150:96:
+
+    | 
+
+150 |               + "\"cooling\":${boolText(cooling)},\"notBefore\":${notBefore},\"level\":${level},"
+
+    |                 ~                                                                                ^ 
+
+    |  _______________|
+
+151 | |             + "\"clamped\":${boolText(clamped)},\"failureKind\":\"${jsonEscapeText(failure.kind)}\","
+
+    | |_____________~ possibly confusing line terminator between '\"cooling\":${boolText(cooling)},\"notBefore\":${notB
+efore},\"level\":${level},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\route_health.cj:151:102:
+
+    | 
+
+151 |               + "\"clamped\":${boolText(clamped)},\"failureKind\":\"${jsonEscapeText(failure.kind)}\","
+
+    |                 ~                                                                                      ^ 
+
+    |  _______________|
+
+152 | |             + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},"
+
+    | |_____________~ possibly confusing line terminator between '\"clamped\":${boolText(clamped)},\"failureKind\":\"${
+jsonEscapeText(failure.kind)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\route_health.cj:152:74:
+
+    | 
+
+152 |               + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},"
+
+    |                 ~                                                          ^ 
+
+    |  _______________|
+
+153 | |             + "\"summary\":\"${jsonEscapeText(failure.summary)}\",\"epoch\":${now}}"
+
+    | |_____________~ possibly confusing line terminator between '\"reachedUpstream\":${boolText(failure.reachedUpstrea
+m)},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:188:84:
+
+    | 
+
+188 |           if (format.size == 0 || kind.size == 0 || cipher.size == 0 || mac.size == 0
+
+    |                                                                                     ~^ 
+
+    |  ___________________________________________________________________________________|
+
+189 | |             || compose.size == 0 || kdf.size == 0) {
+
+    | |_____________~ possibly confusing line terminator between '0' and '||'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:198:97:
+
+    | 
+
+198 |           if (schemaVersion < 1 || generatedAt < 0 || iterations < 1 || saltLen <= 0 || ivLen <= 0
+
+    |                                                                                                  ~^ 
+
+    |  ________________________________________________________________________________________________|
+
+199 | |             || tagLen <= 0) {
+
+    | |_____________~ possibly confusing line terminator between '0' and '||'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:212:111:
+
+    | 
+
+212 |           return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
+
+    |                  ~                                                                                              ^
+ 
+
+    |  ________________|
+
+213 | |             + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},
+"
+
+    | |_____________~ possibly confusing line terminator between '{\"providerId\":\"${jsonEscapeText(providerId)}\",\"m
+odelId\":\"${jsonEscapeText(modelId)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:213:113:
+
+    | 
+
+213 |               + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},
+"
+
+    |                 ~                                                                                                
+ ^ 
+
+    |  _______________|
+
+214 | |             + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
+
+    | |_____________~ possibly confusing line terminator between '\"enabled\":${if (enabled) { "true" } else { "false" 
+}},\"order\":${order},\"weight\":${weight},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:214:85:
+
+    | 
+
+214 |               + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
+
+    |                 ~                                                                     ^ 
+
+    |  _______________|
+
+215 | |             + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},
+"
+
+    | |_____________~ possibly confusing line terminator between '\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${
+priceOutMicro},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:215:113:
+
+    | 
+
+215 |               + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},
+"
+
+    |                 ~                                                                                                
+ ^ 
+
+    |  _______________|
+
+216 | |             + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
+
+    | |_____________~ possibly confusing line terminator between '\"priceCacheReadMicro\":${priceCacheReadMicro},\"pric
+eCacheWriteMicro\":${priceCacheWriteMicro},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:235:83:
+
+    | 
+
+235 |           return "${header.safeSummary()} saltBytes=${salt.size} ivBytes=${iv.size}"
+
+    |                  ~                                                                  ^ 
+
+    |  ________________|
+
+236 | |             + " ctBytes=${ciphertext.size} tagBytes=${tag.size}"
+
+    | |_____________~ possibly confusing line terminator between '${header.safeSummary()} saltBytes=${salt.size} ivByte
+s=${iv.size}' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\provider_registry.cj:243:210:
+
+    | 
+
+243 |           return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"contextWindow\":\"${js
+onEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\",\"image\":${image},"
+
+    |                  ~                                                                                               
+                                                                                                  ^ 
+
+    |  ________________|
+
+244 | |             + "\"inputModalities\":${inArr},\"outputModalities\":${outArr},\"supports\":${supArr},"
+
+    | |_____________~ possibly confusing line terminator between '{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEs
+capeText(name)}\",\"contextWindow\":\"${jsonEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\"
+,\"image\":${image},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\provider_registry.cj:244:100:
+
+    | 
+
+244 |               + "\"inputModalities\":${inArr},\"outputModalities\":${outArr},\"supports\":${supArr},"
+
+    |                 ~                                                                                    ^ 
+
+    |  _______________|
+
+245 | |             + "\"meterUnit\":\"${jsonEscapeText(meterUnit)}\",\"provenance\":\"${jsonEscapeText(provenance)}\",
+\"availability\":\"${jsonEscapeText(availability)}\"}"
+
+    | |_____________~ possibly confusing line terminator between '\"inputModalities\":${inArr},\"outputModalities\":${o
+utArr},\"supports\":${supArr},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:331:89:
+
+    | 
+
+331 |           return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
+
+    |                  ~                                                                        ^ 
+
+    |  ________________|
+
+332 | |             + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { 
+"false" }},"
+
+    | |_____________~ possibly confusing line terminator between '{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEs
+capeText(name)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:332:124:
+
+    | 
+
+332 |               + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { 
+"false" }},"
+
+    |                 ~                                                                                                
+            ^ 
+
+    |  _______________|
+
+333 | |             + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
+
+    | |_____________~ possibly confusing line terminator between '\"description\":\"${jsonEscapeText(description)}\",\"
+enabled\":${if (enabled) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:333:102:
+
+    | 
+
+333 |               + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
+
+    |                 ~                                                                                      ^ 
+
+    |  _______________|
+
+334 | |             + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
+
+    | |_____________~ possibly confusing line terminator between '\"category\":\"${jsonEscapeText(category)}\",\"requir
+es\":${req},\"bindings\":${bnd},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:334:81:
+
+    | 
+
+334 |               + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
+
+    |                 ~                                                                 ^ 
+
+    |  _______________|
+
+335 | |             + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\
+","
+
+    | |_____________~ possibly confusing line terminator between '\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${
+sortOrder},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:335:115:
+
+    | 
+
+335 |               + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\
+","
+
+    |                 ~                                                                                                
+   ^ 
+
+    |  _______________|
+
+336 | |             + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
+
+    | |_____________~ possibly confusing line terminator between '\"params\":\"${jsonEscapeText(params)}\",\"modalityBu
+dget\":\"${jsonEscapeText(modalityBudget)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:336:83:
+
+    | 
+
+336 |               + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
+
+    |                 ~                                                                   ^ 
+
+    |  _______________|
+
+337 | |             + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
+
+    | |_____________~ possibly confusing line terminator between '\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${mo
+nthlyTokens},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:337:103:
+
+    | 
+
+337 |               + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
+
+    |                 ~                                                                                       ^ 
+
+    |  _______________|
+
+338 | |             + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "f
+alse" }},"
+
+    | |_____________~ possibly confusing line terminator between '\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmo
+untMicro\":${monthlyAmountMicro},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:338:122:
+
+    | 
+
+338 |               + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "f
+alse" }},"
+
+    |                 ~                                                                                                
+          ^ 
+
+    |  _______________|
+
+339 | |             + "\"probeMaxPerDay\":${probeMaxPerDay}}"
+
+    | |_____________~ possibly confusing line terminator between '\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled
+\":${if (probeEnabled) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:468:97:
+
+    | 
+
+468 |           return "{\"format\":\"${jsonEscapeText(format)}\",\"kind\":\"${jsonEscapeText(kind)}\","
+
+    |                  ~                                                                                ^ 
+
+    |  ________________|
+
+469 | |             + "\"generatedAt\":${generatedAt},\"schemaVersion\":${schemaVersion},"
+
+    | |_____________~ possibly confusing line terminator between '{\"format\":\"${jsonEscapeText(format)}\",\"kind\":\"
+${jsonEscapeText(kind)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:469:83:
+
+    | 
+
+469 |               + "\"generatedAt\":${generatedAt},\"schemaVersion\":${schemaVersion},"
+
+    |                 ~                                                                   ^ 
+
+    |  _______________|
+
+470 | |             + "\"checksum\":\"${jsonEscapeText(checksum)}\","
+
+    | |_____________~ possibly confusing line terminator between '\"generatedAt\":${generatedAt},\"schemaVersion\":${sc
+hemaVersion},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:470:62:
+
+    | 
+
+470 |               + "\"checksum\":\"${jsonEscapeText(checksum)}\","
+
+    |                 ~                                              ^ 
+
+    |  _______________|
+
+471 | |             + "\"providers\":${prov},\"customModels\":${cust},\"credentialRefs\":${refs}}"
+
+    | |_____________~ possibly confusing line terminator between '\"checksum\":\"${jsonEscapeText(checksum)}\",' and '+
+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\secret_bundle.cj:473:91:
+
+    | 
+
+473 |       if (bundle.salt.size != bundle.header.saltLen || bundle.iv.size != bundle.header.ivLen
+
+    |                                                                                        ~    ^ 
+
+    |  ______________________________________________________________________________________|
+
+474 | |         || bundle.tag.size != bundle.header.tagLen) {
+
+    | |_________~ possibly confusing line terminator between 'ivLen' and '||'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:501:111:
+
+    | 
+
+501 |           return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
+
+    |                  ~                                                                                              ^
+ 
+
+    |  ________________|
+
+502 | |             + "\"enabled\":true,\"order\":${order},\"weight\":1,"
+
+    | |_____________~ possibly confusing line terminator between '{\"providerId\":\"${jsonEscapeText(providerId)}\",\"m
+odelId\":\"${jsonEscapeText(modelId)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:502:66:
+
+    | 
+
+502 |               + "\"enabled\":true,\"order\":${order},\"weight\":1,"
+
+    |                 ~                                                  ^ 
+
+    |  _______________|
+
+503 | |             + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,
+"
+
+    | |_____________~ possibly confusing line terminator between '\"enabled\":true,\"order\":${order},\"weight\":1,' an
+d '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:503:113:
+
+    | 
+
+503 |               + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,
+"
+
+    |                 ~                                                                                                
+ ^ 
+
+    |  _______________|
+
+504 | |             + "\"priceVersion\":0,\"currency\":\"\"}"
+
+    | |_____________~ possibly confusing line terminator between '\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCache
+ReadMicro\":-1,\"priceCacheWriteMicro\":-1,' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:575:79:
+
+    | 
+
+575 |           return "format=${format} kind=${kind} schemaVersion=${schemaVersion} "
+
+    |                  ~                                                              ^ 
+
+    |  ________________|
+
+576 | |             + "providers=${providers.size} customModels=${customModels.size} "
+
+    | |_____________~ possibly confusing line terminator between 'format=${format} kind=${kind} schemaVersion=${schemaV
+ersion} ' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:576:79:
+
+    | 
+
+576 |               + "providers=${providers.size} customModels=${customModels.size} "
+
+    |                 ~                                                               ^ 
+
+    |  _______________|
+
+577 | |             + "credentialRefs=${credentialRefs.size}"
+
+    | |_____________~ possibly confusing line terminator between 'providers=${providers.size} customModels=${customMode
+ls.size} ' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:606:89:
+
+    | 
+
+606 |           return "{\"kind\":\"${jsonEscapeText(kind)}\",\"id\":\"${jsonEscapeText(id)}\","
+
+    |                  ~                                                                        ^ 
+
+    |  ________________|
+
+607 | |             + "\"action\":\"${jsonEscapeText(action)}\",\"provider\":${prov},\"customModel\":${cust}}"
+
+    | |_____________~ possibly confusing line terminator between '{\"kind\":\"${jsonEscapeText(kind)}\",\"id\":\"${json
+EscapeText(id)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:633:134:
+
+    | 
+
+633 |           return "{\"entries\":${arr},\"needsCredentialConfirmation\":${if (needsCredentialConfirmation) { "true"
+ } else { "false" }},"
+
+    |                  ~                                                                                               
+                      ^ 
+
+    |  ________________|
+
+634 | |             + "\"bundleKind\":\"${jsonEscapeText(bundleKind)}\"}"
+
+    | |_____________~ possibly confusing line terminator between '{\"entries\":${arr},\"needsCredentialConfirmation\":$
+{if (needsCredentialConfirmation) { "true" } else { "false" }},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:692:92:
+
+    | 
+
+692 |               if (providerTotals[i][0] == providerId && providerTotals[i][1] == customModelId
+
+    |                                                                                 ~            ^ 
+
+    |  _______________________________________________________________________________|
+
+693 | |                 && providerTotals[i][2] == currency) {
+
+    | |_________________~ possibly confusing line terminator between 'customModelId' and '&&'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:705:94:
+
+    | 
+
+705 |           return "{\"imported\":${imported},\"updated\":${updated},\"unchanged\":${unchanged},"
+
+    |                  ~                                                                             ^ 
+
+    |  ________________|
+
+706 | |             + "\"errors\":${errs},\"credentialRefWritten\":${credentialRefWritten}}"
+
+    | |_____________~ possibly confusing line terminator between '{\"imported\":${imported},\"updated\":${updated},\"un
+changed\":${unchanged},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:789:69:
+
+    | 
+
+789 |       return "{\"attemptId\":\"${jsonEscapeText(intent.attemptId)}\","
+
+    |              ~                                                        ^ 
+
+    |  ____________|
+
+790 | |         + "\"logicalRequestId\":\"${jsonEscapeText(intent.logicalRequestId)}\","
+
+    | |_________~ possibly confusing line terminator between '{\"attemptId\":\"${jsonEscapeText(intent.attemptId)}\",' 
+and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:790:81:
+
+    | 
+
+790 |           + "\"logicalRequestId\":\"${jsonEscapeText(intent.logicalRequestId)}\","
+
+    |             ~                                                                     ^ 
+
+    |  ___________|
+
+791 | |         + "\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\","
+
+    | |_________~ possibly confusing line terminator between '\"logicalRequestId\":\"${jsonEscapeText(intent.logicalReq
+uestId)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:791:67:
+
+    | 
+
+791 |           + "\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\","
+
+    |             ~                                                       ^ 
+
+    |  ___________|
+
+792 | |         + "\"customModelId\":\"${jsonEscapeText(intent.customModelId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\",' a
+nd '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:792:75:
+
+    | 
+
+792 |           + "\"customModelId\":\"${jsonEscapeText(intent.customModelId)}\","
+
+    |             ~                                                               ^ 
+
+    |  ___________|
+
+793 | |         + "\"providerId\":\"${jsonEscapeText(intent.providerId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"customModelId\":\"${jsonEscapeText(intent.customModelId
+)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:793:69:
+
+    | 
+
+793 |           + "\"providerId\":\"${jsonEscapeText(intent.providerId)}\","
+
+    |             ~                                                         ^ 
+
+    |  ___________|
+
+794 | |         + "\"modelId\":\"${jsonEscapeText(intent.modelId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"providerId\":\"${jsonEscapeText(intent.providerId)}\",'
+ and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:794:63:
+
+    | 
+
+794 |           + "\"modelId\":\"${jsonEscapeText(intent.modelId)}\","
+
+    |             ~                                                   ^ 
+
+    |  ___________|
+
+795 | |         + "\"reservedMicros\":${intent.reservedMicros},"
+
+    | |_________~ possibly confusing line terminator between '\"modelId\":\"${jsonEscapeText(intent.modelId)}\",' and '
++'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:795:57:
+
+    | 
+
+795 |           + "\"reservedMicros\":${intent.reservedMicros},"
+
+    |             ~                                             ^ 
+
+    |  ___________|
+
+796 | |         + "\"currency\":\"${jsonEscapeText(intent.currency)}\",\"epoch\":${intent.epoch}}"
+
+    | |_________~ possibly confusing line terminator between '\"reservedMicros\":${intent.reservedMicros},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:813:107:
+
+    | 
+
+813 |           return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\",\"code\":\"${jsonEscapeText(reason)}\","
+
+    |                  ~                                                                                          ^ 
+
+    |  ________________|
+
+814 | |             + "\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
+
+    | |_____________~ possibly confusing line terminator between '{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\",\"c
+ode\":\"${jsonEscapeText(reason)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:814:70:
+
+    | 
+
+814 |               + "\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
+
+    |                 ~                                                      ^ 
+
+    |  _______________|
+
+815 | |             + "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\"}"
+
+    | |_____________~ possibly confusing line terminator between '\"currency\":\"${jsonEscapeText(a.rates.currency)}\",
+' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:823:64:
+
+    | 
+
+823 |       return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\","
+
+    |              ~                                                   ^ 
+
+    |  ____________|
+
+824 | |         + "\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestId)}\","
+
+    | |_________~ possibly confusing line terminator between '{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\",' and '
++'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:824:76:
+
+    | 
+
+824 |           + "\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestId)}\","
+
+    |             ~                                                                ^ 
+
+    |  ___________|
+
+825 | |         + "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\","
+
+    | |_________~ possibly confusing line terminator between '\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestI
+d)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:825:62:
+
+    | 
+
+825 |           + "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\","
+
+    |             ~                                                  ^ 
+
+    |  ___________|
+
+826 | |         + "\"customModelId\":\"${jsonEscapeText(a.customModelId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"usageKind\":\"${jsonEscapeText(a.usageKind)}\",' and '+
+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:826:70:
+
+    | 
+
+826 |           + "\"customModelId\":\"${jsonEscapeText(a.customModelId)}\","
+
+    |             ~                                                          ^ 
+
+    |  ___________|
+
+827 | |         + "\"providerId\":\"${jsonEscapeText(a.providerId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"customModelId\":\"${jsonEscapeText(a.customModelId)}\",
+' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:827:64:
+
+    | 
+
+827 |           + "\"providerId\":\"${jsonEscapeText(a.providerId)}\","
+
+    |             ~                                                    ^ 
+
+    |  ___________|
+
+828 | |         + "\"modelId\":\"${jsonEscapeText(a.modelId)}\","
+
+    | |_________~ possibly confusing line terminator between '\"providerId\":\"${jsonEscapeText(a.providerId)}\",' and 
+'+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:828:58:
+
+    | 
+
+828 |           + "\"modelId\":\"${jsonEscapeText(a.modelId)}\","
+
+    |             ~                                              ^ 
+
+    |  ___________|
+
+829 | |         + "\"session\":\"${jsonEscapeText(a.session)}\","
+
+    | |_________~ possibly confusing line terminator between '\"modelId\":\"${jsonEscapeText(a.modelId)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:829:58:
+
+    | 
+
+829 |           + "\"session\":\"${jsonEscapeText(a.session)}\","
+
+    |             ~                                              ^ 
+
+    |  ___________|
+
+830 | |         + "\"goal\":\"${jsonEscapeText(a.goal)}\","
+
+    | |_________~ possibly confusing line terminator between '\"session\":\"${jsonEscapeText(a.session)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:830:52:
+
+    | 
+
+830 |           + "\"goal\":\"${jsonEscapeText(a.goal)}\","
+
+    |             ~                                        ^ 
+
+    |  ___________|
+
+831 | |         + "\"turn\":\"${jsonEscapeText(a.turn)}\","
+
+    | |_________~ possibly confusing line terminator between '\"goal\":\"${jsonEscapeText(a.goal)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:831:52:
+
+    | 
+
+831 |           + "\"turn\":\"${jsonEscapeText(a.turn)}\","
+
+    |             ~                                        ^ 
+
+    |  ___________|
+
+832 | |         + "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\","
+
+    | |_________~ possibly confusing line terminator between '\"turn\":\"${jsonEscapeText(a.turn)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:832:66:
+
+    | 
+
+832 |           + "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\","
+
+    |             ~                                                      ^ 
+
+    |  ___________|
+
+833 | |         + "\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\","
+
+    | |_________~ possibly confusing line terminator between '\"resultClass\":\"${jsonEscapeText(a.resultClass)}\",' an
+d '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:833:62:
+
+    | 
+
+833 |           + "\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\","
+
+    |             ~                                                  ^ 
+
+    |  ___________|
+
+834 | |         + "\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${jsonEscapeText(reason)}\","
+
+    | |_________~ possibly confusing line terminator between '\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\",' and '+
+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:834:95:
+
+    | 
+
+834 |           + "\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${jsonEscapeText(reason)}\","
+
+    |             ~                                                                                   ^ 
+
+    |  ___________|
+
+835 | |         + "\"input\":${a.usage.input},\"output\":${a.usage.output},"
+
+    | |_________~ possibly confusing line terminator between '\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${j
+sonEscapeText(reason)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:835:69:
+
+    | 
+
+835 |           + "\"input\":${a.usage.input},\"output\":${a.usage.output},"
+
+    |             ~                                                         ^ 
+
+    |  ___________|
+
+836 | |         + "\"cacheRead\":${a.usage.cacheRead},\"cacheWrite\":${a.usage.cacheWrite},"
+
+    | |_________~ possibly confusing line terminator between '\"input\":${a.usage.input},\"output\":${a.usage.output},'
+ and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:836:85:
+
+    | 
+
+836 |           + "\"cacheRead\":${a.usage.cacheRead},\"cacheWrite\":${a.usage.cacheWrite},"
+
+    |             ~                                                                         ^ 
+
+    |  ___________|
+
+837 | |         + "\"imageCount\":${a.imageCount},\"audioSeconds\":${a.audioSeconds},"
+
+    | |_________~ possibly confusing line terminator between '\"cacheRead\":${a.usage.cacheRead},\"cacheWrite\":${a.usa
+ge.cacheWrite},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:837:79:
+
+    | 
+
+837 |           + "\"imageCount\":${a.imageCount},\"audioSeconds\":${a.audioSeconds},"
+
+    |             ~                                                                   ^ 
+
+    |  ___________|
+
+838 | |         + "\"meterSource\":\"${jsonEscapeText(ledgerSourceOf(a.usage))}\","
+
+    | |_________~ possibly confusing line terminator between '\"imageCount\":${a.imageCount},\"audioSeconds\":${a.audio
+Seconds},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:838:76:
+
+    | 
+
+838 |           + "\"meterSource\":\"${jsonEscapeText(ledgerSourceOf(a.usage))}\","
+
+    |             ~                                                                ^ 
+
+    |  ___________|
+
+839 | |         + "\"rawField\":\"${jsonEscapeText(a.usage.rawField)}\","
+
+    | |_________~ possibly confusing line terminator between '\"meterSource\":\"${jsonEscapeText(ledgerSourceOf(a.usage
+))}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:839:66:
+
+    | 
+
+839 |           + "\"rawField\":\"${jsonEscapeText(a.usage.rawField)}\","
+
+    |             ~                                                      ^ 
+
+    |  ___________|
+
+840 | |         + "\"amountMicros\":${amount},\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
+
+    | |_________~ possibly confusing line terminator between '\"rawField\":\"${jsonEscapeText(a.usage.rawField)}\",' an
+d '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:840:93:
+
+    | 
+
+840 |           + "\"amountMicros\":${amount},\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
+
+    |             ~                                                                                 ^ 
+
+    |  ___________|
+
+841 | |         + "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\","
+
+    | |_________~ possibly confusing line terminator between '\"amountMicros\":${amount},\"currency\":\"${jsonEscapeTex
+t(a.rates.currency)}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:841:74:
+
+    | 
+
+841 |           + "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\","
+
+    |             ~                                                              ^ 
+
+    |  ___________|
+
+842 | |         + "\"rateInputMicrosPerUnit\":${a.rates.inputMicrosPerUnit},"
+
+    | |_________~ possibly confusing line terminator between '\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)
+}\",' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:842:70:
+
+    | 
+
+842 |           + "\"rateInputMicrosPerUnit\":${a.rates.inputMicrosPerUnit},"
+
+    |             ~                                                          ^ 
+
+    |  ___________|
+
+843 | |         + "\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit},"
+
+    | |_________~ possibly confusing line terminator between '\"rateInputMicrosPerUnit\":${a.rates.inputMicrosPerUnit},
+' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:843:72:
+
+    | 
+
+843 |           + "\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit},"
+
+    |             ~                                                            ^ 
+
+    |  ___________|
+
+844 | |         + "\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosPerUnit},"
+
+    | |_________~ possibly confusing line terminator between '\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit
+},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:844:78:
+
+    | 
+
+844 |           + "\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosPerUnit},"
+
+    |             ~                                                                  ^ 
+
+    |  ___________|
+
+845 | |         + "\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicrosPerUnit},"
+
+    | |_________~ possibly confusing line terminator between '\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosP
+erUnit},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:845:80:
+
+    | 
+
+845 |           + "\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicrosPerUnit},"
+
+    |             ~                                                                    ^ 
+
+    |  ___________|
+
+846 | |         + "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch},"
+
+    | |_________~ possibly confusing line terminator between '\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicro
+sPerUnit},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+   ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:846:79:
+
+    | 
+
+846 |           + "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch},"
+
+    |             ~                                                                   ^ 
+
+    |  ___________|
+
+847 | |         + "\"durationMillis\":${a.durationMillis}}"
+
+    | |_________~ possibly confusing line terminator between '\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.end
+edEpoch},' and '+'
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1067:95:
+
+     | 
+
+1067 |                   log.append("ledger/voided", "{\"attemptId\":\"${jsonEscapeText(attemptId)}\","
+
+     |                                               ~                                                 ^ 
+
+     |  _____________________________________________|
+
+1068 | |                     + "\"reason\":\"${jsonEscapeText(reason)}\",\"epoch\":${epoch}}")
+
+     | |_____________________~ possibly confusing line terminator between '{\"attemptId\":\"${jsonEscapeText(attemptId)
+}\",' and '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1187:71:
+
+     | 
+
+1187 |               totals += "{\"currency\":\"${jsonEscapeText(currency)}\","
+
+     |                         ~                                               ^ 
+
+     |  _______________________|
+
+1188 | |                 + "\"usedMicros\":${snap.used(currency)},\"inFlightMicros\":${snap.inFlight(currency)}}"
+
+     | |_________________~ possibly confusing line terminator between '{\"currency\":\"${jsonEscapeText(currency)}\",' 
+and '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1195:68:
+
+     | 
+
+1195 |               kinds += "{\"usageKind\":\"${jsonEscapeText(kv[0])}\","
+
+     |                        ~                                             ^ 
+
+     |  ______________________|
+
+1196 | |                 + "\"currency\":\"${jsonEscapeText(kv[1])}\",\"usedMicros\":${kv[2]}}"
+
+     | |_________________~ possibly confusing line terminator between '{\"usageKind\":\"${jsonEscapeText(kv[0])}\",' an
+d '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1203:73:
+
+     | 
+
+1203 |               providers += "{\"providerId\":\"${jsonEscapeText(kv[0])}\","
+
+     |                            ~                                              ^ 
+
+     |  __________________________|
+
+1204 | |                 + "\"customModelId\":\"${jsonEscapeText(kv[1])}\","
+
+     | |_________________~ possibly confusing line terminator between '{\"providerId\":\"${jsonEscapeText(kv[0])}\",' a
+nd '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1204:68:
+
+     | 
+
+1204 |                   + "\"customModelId\":\"${jsonEscapeText(kv[1])}\","
+
+     |                     ~                                                ^ 
+
+     |  ___________________|
+
+1205 | |                 + "\"currency\":\"${jsonEscapeText(kv[2])}\",\"usedMicros\":${kv[3]}}"
+
+     | |_________________~ possibly confusing line terminator between '\"customModelId\":\"${jsonEscapeText(kv[1])}\",'
+ and '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1221:66:
+
+     | 
+
+1221 |           return "{\"scopeKey\":\"${jsonEscapeText(scopeKey())}\","
+
+     |                  ~                                                 ^ 
+
+     |  ________________|
+
+1222 | |             + "\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}],"
+
+     | |_____________~ possibly confusing line terminator between '{\"scopeKey\":\"${jsonEscapeText(scopeKey())}\",' an
+d '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1222:76:
+
+     | 
+
+1222 |               + "\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}],"
+
+     |                 ~                                                        ^ 
+
+     |  _______________|
+
+1223 | |             + "\"usageKinds\":[${kinds}],\"providers\":[${providers}],"
+
+     | |_____________~ possibly confusing line terminator between '\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}],'
+ and '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: possibly confusing line terminator
+
+    ==> D:\Project\sa\saai\sa-code\core\src\ledger.cj:1223:72:
+
+     | 
+
+1223 |               + "\"usageKinds\":[${kinds}],\"providers\":[${providers}],"
+
+     |                 ~                                                        ^ 
+
+     |  _______________|
+
+1224 | |             + "\"unsettled\":[${unsettled}],\"pending\":[${pending}]}"
+
+     | |_____________~ possibly confusing line terminator between '\"usageKinds\":[${kinds}],\"providers\":[${providers
+}],' and '+'
+
+     | 
+
+     # note: this warning can be suppressed by setting the compiler option `-Woff parser`
+
+
+
+warning[0m: unused import 'std.collection.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\accel_relay.cj:3:1:
+
+  | 
+
+3 | import std.collection.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'stdx.net.http.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\accel_relay.cj:4:1:
+
+  | 
+
+4 | import stdx.net.http.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'stdx.net.tls.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\accel_relay.cj:5:1:
+
+  | 
+
+5 | import stdx.net.tls.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.io.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\cancel.cj:5:1:
+
+  | 
+
+5 | import std.io.*
+
+  | ^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.io.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\deferred_provider.cj:2:1:
+
+  | 
+
+2 | import std.io.*
+
+  | ^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'stdx.crypto.digest.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\migration_pack.cj:5:1:
+
+  | 
+
+5 | import stdx.crypto.digest.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.io.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\model_agent.cj:3:1:
+
+  | 
+
+3 | import std.io.*
+
+  | ^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.collection.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\otel.cj:2:1:
+
+  | 
+
+2 | import std.collection.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.interop.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\procwin.cj:3:1:
+
+  | 
+
+3 | import std.interop.*
+
+  | ^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.io.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:2:1:
+
+  | 
+
+2 | import std.io.*
+
+  | ^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.sync.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\prompt_enhance.cj:3:1:
+
+  | 
+
+3 | import std.sync.*
+
+  | ^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.collection.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\ptel.cj:2:1:
+
+  | 
+
+2 | import std.collection.*
+
+  | ^^^^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.io.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\request_trace.cj:3:1:
+
+  | 
+
+3 | import std.io.*
+
+  | ^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused import 'std.interop.*'
+
+ ==> D:\Project\sa\saai\sa-code\core\src\sigwin.cj:4:1:
+
+  | 
+
+4 | import std.interop.*
+
+  | ^^^^^^^^^^^^^^^^^^^^ unused import
+
+  | 
+
+  # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'deliveryId'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\webhook.cj:47:26:
+
+   | 
+
+47 |     public func dispatch(deliveryId: String, kind: String): Int64 {
+
+   |                          ^^^^^^^^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'key'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\storage.cj:68:39:
+
+   | 
+
+68 |     public func putFrom(name: String, key: String, value: String): Unit {
+
+   |                                       ^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'value'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\storage.cj:68:52:
+
+   | 
+
+68 |     public func putFrom(name: String, key: String, value: String): Unit {
+
+   |                                                    ^^^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'deliveryId'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\schedule.cj:69:22:
+
+   | 
+
+69 |     public func fire(deliveryId: String, taskId: String): Int64 {
+
+   |                      ^^^^^^^^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'nowEpoch'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\transport_failure.cj:80:51:
+
+   | 
+
+80 | public func parseRetryAfterSeconds(value: String, nowEpoch: Int64): Int64 {
+
+   |                                                   ^^^^^^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'apiKey'
+
+  ==> D:\Project\sa\saai\sa-code\core\src\model_catalog.cj:95:32:
+
+   | 
+
+95 |     public static func summary(apiKey: String, ids: Array<String>): String {
+
+   |                                ^^^^^^ unused variable
+
+   | 
+
+   # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'current'
+
+   ==> D:\Project\sa\saai\sa-code\core\src\goal.cj:154:17:
+
+    | 
+
+154 |             let current = cas(expected)
+
+    |                 ^^^^^^^ unused variable
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unused variable:'providers'
+
+   ==> D:\Project\sa\saai\sa-code\core\src\custom_model_registry.cj:443:55:
+
+    | 
+
+443 |     public func importNewModels(items: Array<String>, providers: ProviderView, expectedRevision: Int64): Array<St
+ring> {
+
+    |                                                       ^^^^^^^^^ unused variable
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+warning[0m: unreachable block in 'if' expression
+
+   ==> D:\Project\sa\saai\sa-code\core\src\agent.cj:905:22:
+
+    | 
+
+905 |         if (!closed) { tmp.close() }
+
+    |                      ^^^^^^^^^^^^^^^ unreachable block in 'if' expression
+
+    | 
+
+    # note: this warning can be suppressed by setting the compiler option `-Woff unused`
+
+
+
+134 warnings generated, 134 warnings printed.
+

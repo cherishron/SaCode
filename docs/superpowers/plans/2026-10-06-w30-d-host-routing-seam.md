@@ -184,6 +184,7 @@ for (id in attempts.lastDispatchedUnsettled()) {
 
 这些码**必须与现有错误码不撞**——请 A 先 grep 一遍 `-32` 段确认空档。
 
+<<<<<<< HEAD
 ### 3.8 请求体新增字段
 
 `turn/start` / `task/start` 的请求体里，除了已有的 `customModelId`（可选），
@@ -198,6 +199,8 @@ for (id in attempts.lastDispatchedUnsettled()) {
 如果 A 能顺手把 `usage-ledger.log` 的追加事件转发成一个 `ledger/changed` 通知，
 面板就能实时刷新；不做的话面板只会在打开时拉一次。优先级低于 §3.3。
 
+=======
+>>>>>>> c4837fd48421377f83b68c04f8515a0853ad031a
 ## 4. 约束（A 接线时必须守的）
 
 1. **`AttemptLog.markDispatched` 返回 false 时不许发请求**（断言 80 是 fail-closed，
@@ -226,6 +229,7 @@ A 接线后，D 侧用以下三条断言验：
 3. **断言 82（崩溃不重发）**：写完 `attempt/dispatched` 后杀宿主，重启读
    `lastDispatchedUnsettled()` 必须能看到那笔；同时上游调用计数不得 +1。
 
+<<<<<<< HEAD
 ## 6. 附：请求 A 接的第二个动词（费用统计面板已经等它）
 
 `apps/desktop/renderer/pages/model-center-adapter.ts` 的 `budget-stats.describe()`
@@ -275,3 +279,11 @@ D 侧已经备好的落点：`model-center-adapter.ts` 的 `budget-stats.describ
 - 探测执行器（`probeEnabled` / `probeMaxPerDay` 已进配置面，执行器未建）
 - 中转通道（B4：`TransportChannel` direct/relay）
 - 迁移包（B5）
+=======
+## 6. 不在本单范围
+
+- `sse.cj` 分档用量透传（独立变更单）
+- 中转通道（B4：`TransportChannel` direct/relay）
+- 迁移包（B5）
+- 前端 `model-center-adapter.ts` / `budget-stats.ts` 的费用统计面板（D 自有，不等 A）
+>>>>>>> c4837fd48421377f83b68c04f8515a0853ad031a
