@@ -272,3 +272,181 @@ func hasValue(list: Array<String>, value: String): Bool {
 func reject(code: String, detail: String): RouteOutcome {
     return RouteOutcome(None, Some(RouteRejection(code, detail)))
 }
+
+// ---------------------------------------------------------------------------
+// 决策 → 装配：把「选哪条绑定」展开成宿主真正发请求要用的完整计划。
+//
+// 这一段仍然是**纯决策**：不出现 CredentialStore、不发请求、不读时钟。宿主拿到
+// `AttemptPlan` 后才自己 resolve 凭据值、组装请求体、调 `Transport`。
+//
+// 为什么必须展开：`RouteDecision` 只有 providerId/modelId/protocol/bindingIndex，
+// 宿主要拿到 baseUrl 还得回注册表查一遍，要拿到费率还得回自定义模型查一遍——
+// 两处查错任何一处，账单就错了。展开成一个不可变快照，账单口径就只有一份真源。
+// ---------------------------------------------------------------------------
+
+// 一次上游尝试的完整装配计划（不可变快照）
+public class AttemptPlan {
+    public let customModelId: String
+    public let providerId: String
+    public let modelId: String
+    public let baseUrl: String
+    public let credentialRef: String
+    public let protocol: String
+    public let images: Bool
+    public let currency: String
+    public let priceVersion: String
+    public let priceInMicro: Int64
+    public let priceOutMicro: Int64
+    public let priceCacheReadMicro: Int64
+    public let priceCacheWriteMicro: Int64
+    public let dailyAmountMicro: Int64
+    public let transport: String
+    public let bindingIndex: Int64
+    public let attemptId: String
+
+    public init(customModelId: String, providerId: String, modelId: String, baseUrl: String,
+        credentialRef: String, protocol: String, images: Bool, currency: String,
+        priceVersion: String, priceInMicro: Int64, priceOutMicro: Int64,
+        priceCacheReadMicro: Int64, priceCacheWriteMicro: Int64, dailyAmountMicro: Int64,
+        transport: String, bindingIndex: Int64, attemptId: String) {
+        this.customModelId = customModelId
+        this.providerId = providerId
+        this.modelId = modelId
+        this.baseUrl = baseUrl
+        this.credentialRef = credentialRef
+        this.protocol = protocol
+        this.images = images
+        this.currency = currency
+        this.priceVersion = priceVersion
+        this.priceInMicro = priceInMicro
+        this.priceOutMicro = priceOutMicro
+        this.priceCacheReadMicro = priceCacheReadMicro
+        this.priceCacheWriteMicro = priceCacheWriteMicro
+        this.dailyAmountMicro = dailyAmountMicro
+        this.transport = transport
+        this.bindingIndex = bindingIndex
+        this.attemptId = attemptId
+    }
+
+    // 作用域键：必须与 `route` 查健康用的两把键逐字一致，否则熔断记在 A 上、查在 B 上
+    public func key(): String {
+        return "${providerId}/${modelId}"
+    }
+
+    // 本次尝试的费率卡：四档各自可 -1 = 未登记，未登记维度遇用量时落「待核算」
+    public func rateCard(): RateCard {
+        return RateCard(priceInMicro, priceOutMicro, priceCacheReadMicro,
+            priceCacheWriteMicro, currency, priceVersion)
+    }
+
+    // attemptId 由宿主分配（每次尝试一个新值），这里不自己编号
+    public func withAttemptId(next: String): AttemptPlan {
+        return AttemptPlan(customModelId, providerId, modelId, baseUrl, credentialRef,
+            protocol, images, currency, priceVersion, priceInMicro, priceOutMicro,
+            priceCacheReadMicro, priceCacheWriteMicro, dailyAmountMicro, transport,
+            bindingIndex, next)
+    }
+}
+
+// 装配失败的带类型拒绝：与路由阶段的拒绝共用一个码空间，宿主可以一套错误表处理
+public class RoutingAttempt {
+    public let plan: Option<AttemptPlan>
+    public let reject: Option<RouteRejection>
+    public init(plan: Option<AttemptPlan>, reject: Option<RouteRejection>) {
+        this.plan = plan
+        this.reject = reject
+    }
+}
+
+// 把路由决策展开成装配计划。缺供应商 / 缺上游模型 / 决策与绑定对不上，一律
+// 返回 `route-expand-failed`——宁可拒，不可按名字猜 baseUrl 或凭据引用。
+public func planFor(customId: String, decision: RouteDecision, customs: CustomModelView,
+    providers: ProviderView): Option<AttemptPlan> {
+    var custom: Option<CustomModelRecord> = None
+    for (m in customs.models) {
+        if (m.id == customId) { custom = Some(m) }
+    }
+    if (custom.isNone()) { return None }
+    let model = custom.getOrThrow()
+    var binding: Option<BindingRecord> = None
+    var pos: Int64 = 0
+    while (pos < Int64(model.bindings.size)) {
+        if (pos == decision.bindingIndex) { binding = Some(model.bindings[pos]) }
+        pos += 1
+    }
+    if (binding.isNone()) { return None }
+    let b = binding.getOrThrow()
+    // 决策里带的 provider/model 必须与绑定条目逐字相等：绑定被改过就重路由，不复用旧决策
+    if (b.providerId != decision.providerId || b.modelId != decision.modelId) { return None }
+    var provider: Option<ProviderRecord> = None
+    for (p in providers.providers) {
+        if (p.id == decision.providerId) { provider = Some(p) }
+    }
+    if (provider.isNone()) { return None }
+    let p = provider.getOrThrow()
+    var spec: Option<ModelSpec> = None
+    for (s in p.models) {
+        if (s.id == decision.modelId) { spec = Some(s) }
+    }
+    if (spec.isNone()) { return None }
+    let s = spec.getOrThrow()
+    return Some(AttemptPlan(model.id, p.id, decision.modelId, p.baseUrl, p.credentialRef,
+        p.protocol, s.image, b.currency, b.priceVersion.toString(), b.priceInMicro,
+        b.priceOutMicro, b.priceCacheReadMicro, b.priceCacheWriteMicro,
+        model.dailyAmountMicro, p.transport, decision.bindingIndex, ""))
+}
+
+// 失败归因：按**实际受影响范围**选最窄的一档作用域，返回该档 + 是否计数。
+public class FailureRoute {
+    public let scope: RouteScope
+    public let category: String
+    public init(scope: RouteScope, category: String) {
+        this.scope = scope
+        this.category = category
+    }
+}
+
+// 归因规则（断言 6、9、55、81）：
+//   401/403      → credential：不消耗三次机会，但立即暂停该凭证档
+//   未到达上游    → channel：请求字节没进线路，不计入模型三次失败
+//   protocol/read → unknown：归因不明，不判为模型故障
+//   429          → effective + route-set：额度按凭证给，换模型也躲不掉
+//   5xx          → effective + upstream：模型自身故障
+//   其余 4xx     → request：请求本身的问题，不算模型故障
+//   cancelled    → cancelled：调用方主动放弃，不计入任何计数
+public func classifyFailure(failure: TransportFailure, providerId: String, modelId: String,
+    credentialRef: String, transport: String): FailureRoute {
+    let upstream = RouteScope("${providerId}/${modelId}", "upstream")
+    if (failure.kind == "cancelled") {
+        return FailureRoute(upstream, "cancelled")
+    }
+    if (failure.status == Int64(401) || failure.status == Int64(403)) {
+        return FailureRoute(RouteScope(credentialRef, "route-set"), "credential")
+    }
+    if (!failure.reachedUpstream) {
+        return FailureRoute(RouteScope(transport, "channel"), "channel")
+    }
+    if (failure.kind == "protocol" || failure.kind == "read") {
+        return FailureRoute(upstream, "unknown")
+    }
+    if (failure.status == Int64(429)) {
+        return FailureRoute(RouteScope(credentialRef, "route-set"), "effective")
+    }
+    if (failure.status >= Int64(500)) {
+        return FailureRoute(upstream, "effective")
+    }
+    return FailureRoute(upstream, "request")
+}
+
+// 凭据视图只暴露「哪些引用已配置」这一个事实。这里唯一一次触到 store 的地方
+// 是宿主：它拿到列表后才交给 `route`，store 本身永远不进调度函数。
+public func credentialViewOf(providers: ProviderView, store: CredentialStore): CredentialView {
+    let refs = ArrayList<String>()
+    for (p in providers.providers) {
+        if (store.resolve(p.credentialRef).isNone()) { continue }
+        var seen = false
+        for (r in refs) { if (r == p.credentialRef) { seen = true } }
+        if (!seen) { refs.add(p.credentialRef) }
+    }
+    return CredentialView(refs.toArray())
+}
