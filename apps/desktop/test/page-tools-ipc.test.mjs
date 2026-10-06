@@ -10,14 +10,14 @@ const nodeRequire = createRequire(import.meta.url);
 // 页面注册表用 renderer/page-tools.js 的真实源码加载：主进程调的是 window.DshPageTools
 // 的 tools/list()，夹具必须出自那份脚本，否则测的是「我以为渲染层长什么样」。
 // 计时器给空实现，否则注册表末尾的轮询会把测试进程吊住。
-function makePage({ withRegistry = true } = {}) {
+function makePage({ withRegistry = true, modelContext = null } = {}) {
   const elements = {
     '#btn': { innerText: '按钮', tagName: 'BUTTON', clicked: false, click() { this.clicked = true; } },
   };
   const doc = {
     URL: 'file:///renderer/index.html',
     body: { innerText: '页面正文' },
-    modelContext: null,
+    modelContext,
     querySelector: (sel) => elements[sel] || null,
     createTreeWalker: () => ({ nextNode: () => false, currentNode: null }),
   };
@@ -193,4 +193,65 @@ test('pageToolCall 的名字与参数仍是主进程逐字段校验，假名假�
   for (const bad of [{ name: 'page.readState', args: 'nope' }, { name: 'page.readState', args: 42 }, { name: 'page.readState', args: null }, { name: 'page.readState', args: [1] }]) {
     await assert.rejects(call(m, 'pageToolCall', bad), /bad-page-tool-args/);
   }
+});
+
+// Next SDK 的注册校验器（vendor/next-sdk.iife.js 里那条 'Tool "execute" must be a function'）
+// 要的是 execute=函数；注册表原先交的是 parameters+handler，于是每一次注册都抛，
+// 又被 catch 注释成「modelContext 未初始化时忽略」吞掉——对模型其实一个工具都没暴露。
+// 这里按 vendor 真正执行的那几条判定来造夹具，不多发明要求：name/description 必填，
+// inputSchema/outputSchema 可选，execute 必须是函数。
+function sdkModelContext({ reject = null } = {}) {
+  const registered = [];
+  return {
+    registered,
+    registerTool(tool) {
+      if (typeof tool.name !== 'string' || !tool.name) throw new TypeError('Tool "name" is required');
+      if (typeof tool.description !== 'string') throw new TypeError('Tool "description" is required');
+      if (typeof tool.execute !== 'function') throw new TypeError('Tool "execute" must be a function');
+      if (reject) throw reject;
+      registered.push(tool);
+    },
+  };
+}
+
+test('页面工具交出去的是 WebMCP 形状，四个都真的挂进了 modelContext', () => {
+  const mc = sdkModelContext();
+  const page = makePage({ modelContext: mc });
+  const listed = plain(page.host.window.DshPageTools.list());
+  // 先钉分母非空，否则「一个都没注册」也能让下面的逐条断言空转
+  assert.ok(listed.length >= 4, `注册表本身只剩 ${listed.length} 条，夹具没加载起来`);
+  assert.equal(mc.registered.length, listed.length, '注册表条数与 modelContext 实收条数不等：有工具被静默丢掉');
+  assert.ok(mc.registered.length >= 4);
+  for (const tool of mc.registered) {
+    assert.equal(typeof tool.execute, 'function', `${tool.name} 的 execute 不是函数`);
+    assert.equal(tool.inputSchema && tool.inputSchema.type, 'object', `${tool.name} 没带 inputSchema，模型拿不到参数形状`);
+    assert.equal('parameters' in tool, false, `${tool.name} 仍把 parameters 交给校验器，那份 schema 会被静默忽略`);
+  }
+});
+
+test('注册被校验器拒绝时如实登记，list() 不许把没挂上的工具说成可用', () => {
+  const mc = sdkModelContext({ reject: new TypeError('Tool "execute" must be a function') });
+  const page = makePage({ modelContext: mc });
+  assert.equal(mc.registered.length, 0, '夹具本该全拒，却有工具注册成功');
+  const listed = plain(page.host.window.DshPageTools.list());
+  assert.ok(listed.length >= 4);
+  for (const tool of listed) {
+    assert.equal(tool.registered, false, `${tool.name} 没挂上却说已注册`);
+    assert.match(String(tool.error), /execute/, `${tool.name} 的失败原因没被记下来，等于继续装没发生`);
+  }
+});
+
+test('WebMCP 侧的 execute 走主进程那一道，不在渲染层就地动手', async () => {
+  const mc = sdkModelContext();
+  const page = makePage({ modelContext: mc });
+  const calls = [];
+  page.host.window.sacode = {
+    pageToolCall: async (name, args) => { calls.push({ name, args }); return { ok: 'mediated' }; },
+  };
+  const clicked = mc.registered.find((t) => t.name === 'page.clickElement');
+  assert.ok(clicked, '没有 page.clickElement 这条注册');
+  const out = await clicked.execute({ selector: '#btn' });
+  assert.deepEqual(plain(calls), [{ name: 'page.clickElement', args: { selector: '#btn' } }]);
+  assert.equal(page.elements['#btn'].clicked, false, 'handler 在渲染层就地执行了，绕开了主进程那道');
+  assert.deepEqual(plain(out), { ok: 'mediated' });
 });

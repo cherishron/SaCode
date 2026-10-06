@@ -9,14 +9,33 @@
 
   // 注册页面工具
   function register(name, description, parameters, handler) {
-    tools.push({ name, description, parameters, handler });
-    // 同步到 document.modelContext
-    if (document && document.modelContext) {
-      try {
-        document.modelContext.registerTool({ name, description, parameters, handler });
-      } catch (e) {
-        // modelContext 未初始化时忽略
-      }
+    const tool = { name, description, parameters, handler, registered: false, error: '' };
+    tools.push(tool);
+    publishToModelContext(tool);
+    return tool;
+  }
+
+  // WebMCP 校验器只认 inputSchema 与 execute：交 parameters+handler 会被静默丢键，再因 execute 不是函数而抛。
+  // execute 回主进程 pageToolCall 那一道，与另一条页面工具入口共用同一次校验；挂不上就记状态，不再吞成「还没初始化」。
+  function publishToModelContext(tool) {
+    if (!document || !document.modelContext) return;
+    try {
+      document.modelContext.registerTool({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.parameters,
+        execute: function (args) {
+          if (!window.sacode || typeof window.sacode.pageToolCall !== 'function') {
+            return Promise.resolve({ error: 'page-tools-unavailable' });
+          }
+          return window.sacode.pageToolCall(tool.name, args || {});
+        },
+      });
+      tool.registered = true;
+      tool.error = '';
+    } catch (e) {
+      tool.registered = false;
+      tool.error = (e && e.message) || String(e);
     }
   }
 
@@ -101,7 +120,8 @@
     get tools() { return tools; },
     list: function() {
       return tools.map(function(t) {
-        return { name: t.name, description: t.description, parameters: t.parameters };
+        // registered/error 是给上游那一眼看的真话：本地有条目不等于模型侧收得到
+        return { name: t.name, description: t.description, parameters: t.parameters, registered: t.registered, error: t.error };
       });
     }
   };
@@ -109,13 +129,7 @@
   // 当 Next SDK 初始化完成后，同步注册到 modelContext
   function syncToModelContext() {
     if (document && document.modelContext) {
-      for (const tool of tools) {
-        try {
-          document.modelContext.registerTool({ name: tool.name, description: tool.description, parameters: tool.parameters, handler: tool.handler });
-        } catch (e) {
-          // 忽略
-        }
-      }
+      for (const tool of tools) publishToModelContext(tool);
     }
   }
 
