@@ -119,3 +119,7 @@ apps/desktop/renderer/vendor/
 # pack-tinyvue 的临时折叠入口（esbuild 解析要靠它待在 apps/desktop 下）
 apps/desktop/.tinyvue-*/
 apps/desktop/.tinyrobot-*/
+
+# 桌面 model-pages 用例的一次性运行目录（Electron user-data：GPU/leveldb/缓存，
+# 实测 44 个未忽略文件，下一轮 git add -A 会把二进制缓存吞进基线）
+apps/desktop/.tmp-test/
