@@ -1282,7 +1282,7 @@ createApp({
     const tracePage = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "会话轨迹"),
         el("p","note","显示当前会话的事件时间线。"),
-        self.proj.events>0 ? el("div","trace-timeline",null,Array.from({length:Math.min(self.proj.events,20)},(_,i)=>el("div","trace-event",[
+        self.proj.events>0 ? el("div","trace-timeline",Array.from({length:Math.min(self.proj.events,20)},(_,i)=>el("div","trace-event",[
           el("span","trace-seq","#"+(self.proj.events-i)),
           el("span","trace-type",["session","user","assistant","tool","system"][i%5]||"event"),
           el("span","trace-time",""),

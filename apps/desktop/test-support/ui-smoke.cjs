@@ -102,6 +102,9 @@ async function uiSmoke(context) {
   // 侧栏工作区分组和附件卡片在同一次根渲染 flush 里：这一段的 props 一旦错位，patch 当场抛
   // InvalidCharacterError，整次更新（含附件卡片）都不会落到 DOM，所以先单独钉住结构。
   note(await js(`!!document.querySelector('section.workspace-group[data-workspace-group]')`), '侧栏工作区分组带着 class 与目录凭证挂进 DOM');
+  // 轨迹时间线同样在根渲染里：它的子节点数组曾经落到 props 位，父 div 就带着数字属性键进 patch 并抛。
+  const tlProbe = await js(`(()=>{const t=document.querySelector('.trace-timeline');return JSON.stringify({tl:!!t,kids:t?t.children.length:-1,attrs:t?t.getAttributeNames().join('|'):'-'})})()`);
+  note(await js(`(()=>{const t=document.querySelector('.trace-timeline');return !!t&&t.children.length>0})()`), `会话轨迹时间线把事件落成真实子节点（探针 ${tlProbe}）`);
   // 附件入口必须是真的：字节交给宿主落盘，界面只拿得到凭证与引用，移除要真撤下卡片。
   await js(`const dt=new DataTransfer();dt.items.add(new File([Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,2,0,0,0,1,8,6,0,0,0,0,0,0,0])],'真图.png',{type:'image/png'}));const inp=document.querySelector('.attachments-picker input[type="file"]');inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))`);
   await waitFor(() => js(`(()=>{const c=document.querySelector('[data-attachment-id]');return !!c&&c.dataset.uploadStatus!=='uploading'})()`));
