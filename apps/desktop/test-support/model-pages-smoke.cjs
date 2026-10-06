@@ -20,23 +20,38 @@ app.whenReady().then(async()=>{
       if(writable&&add){add.click();await settle();check(title+'新增表单打开',!!root.querySelector('input[aria-label="'+(title==='供应商'?'Provider ID':'ID')+'"]'));}
       ui.unmount();await settle();
     }
-    window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
+    window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.()));
+    // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
+    // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
     for(const writable of [false,true]){
-      const adapter={load:async()=>({providers:[provider],catalog:[],revision:1,writable}),save:async()=>{},remove:async()=>{},listModels:async()=>[{id:'pulled-model',name:'拉取候选',contextWindow:'',maxTokens:'',image:false}]};
+      const providerView={providers:[provider],revision:1,writable,defaultProviderId:provider.id,defaultModel:(provider.models[0]||{}).id||null};
+      const bump=(rev)=>({...providerView,revision:(rev||1)+1});
+      const fakeApi={
+        modelsDescribe:async()=>providerView,
+        modelsCatalog:async()=>[],
+        modelsSave:async()=>bump(providerView.revision),
+        modelsRemove:async()=>({...bump(providerView.revision),providers:[]}),
+        modelsSort:async()=>bump(providerView.revision),
+        modelsSetEnabled:async()=>bump(providerView.revision),
+        modelPull:async()=>({...bump(providerView.revision),providers:[{...provider,models:[{id:'pulled-model',name:'拉取候选',contextWindow:'',maxTokens:'',image:false}]}]}),
+        customsDescribe:async()=>({models:[custom],revision:'r1',writable}),
+        usageStatus:async()=>({used:0,budget:0,over:false,verdict:''}),
+      };
       const assembly=ModelPages.createModelCenterAssembly();
-      const owner={adapters:ModelPages.createModelCenterAdapters({},adapter)};
+      const owner={adapters:ModelPages.createModelCenterAdapters(fakeApi)};
       const ui=Vue.createApp({setup:()=>()=>Vue.h(assembly.Outlet,{owner})});ui.config.errorHandler=e=>errors.push(String(e));ui.mount(root);await settle();
-      check('真实供应商槽位读取旧适配器 '+writable,root.textContent.includes(provider.name)&&!root.textContent.includes('is not a function'));
+      // 默认活动标签是「模型」，要先点「供应商」切过去再断言供应商 DOM。
+      const tabBtn=root.querySelector('button[data-model-center-tab="provider-settings"]');
+      if(tabBtn){tabBtn.click();await settle();}
+      check('供应商槽位读取适配器 '+writable,root.textContent.includes(provider.name)&&!root.textContent.includes('is not a function'));
       const edit=root.querySelector('button[aria-label="编辑 '+provider.name+'"]');
-      const add=root.querySelector('#models-add-provider'),remove=root.querySelector('button[aria-label="删除 '+provider.name+'"]');
-      check('真实供应商槽位只读护栏 '+writable,!!edit&&!!add&&!!remove&&add.disabled===!writable&&remove.disabled===!writable);
-      if(writable&&edit){
-        edit.click();await settle();
-        check('真实供应商槽位保留密钥编辑',!!root.querySelector('input[aria-label="API 密钥"]'));
-        const fetch=[...root.querySelectorAll('button')].find(b=>b.textContent==='获取可用模型');
-        if(fetch){fetch.click();await settle();}
-        check('真实供应商槽位可拉取候选',root.textContent.includes('拉取候选'));
-      }
+      const add=root.querySelector('button[aria-label="添加供应商"]');
+      const remove=root.querySelector('button[aria-label="删除 '+provider.name+'"]');
+      check('供应商槽位只读护栏 '+writable,!!edit&&!!add&&!!remove&&add.disabled===!writable&&remove.disabled===!writable&&edit.disabled===!writable);
+      if(writable&&edit){edit.click();await settle();check('供应商编辑打开字段',!!root.querySelector('input[aria-label="显示名称"]'));}
+      const cancel=[...root.querySelectorAll('button')].find(b=>b.textContent==='取消');if(cancel){cancel.click();await settle();}
+      if(writable&&add){add.click();await settle();check('供应商新增表单打开',!!root.querySelector('input[aria-label="Provider ID"]')&&!!root.querySelector('input[aria-label="API 密钥"]'));}
+      if(writable){const pull=root.querySelector('button[aria-label="拉取 '+provider.name+' 模型目录"]');if(pull){pull.click();await settle();}check('供应商槽位可拉取候选',root.textContent.includes('拉取候选')||root.textContent.includes('拉取中'));}
       ui.unmount();assembly.dispose();await settle();
     }
     check('无 Vue 渲染异常',errors.length===0);return {checks,errors};

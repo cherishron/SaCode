@@ -46,7 +46,36 @@ test("握手声明协议与能力", async () => {
   assert.ok(r.capabilities.includes("global/appearance/get"));
   assert.ok(r.capabilities.includes("global/appearance/set-font-size"));
   assert.ok(r.capabilities.includes("global/appearance/set-busy-send"));
+  // 供应商单列写：sort/set-enabled 必须在能力表里声明，否则客户端无从判断能否走这两列。
+  assert.ok(r.capabilities.includes("model/registry/sort"), "能力表缺 model/registry/sort");
+  assert.ok(r.capabilities.includes("model/registry/set-enabled"), "能力表缺 model/registry/set-enabled");
   await b.stop();
+});
+
+test("workspace/files 按 path 列子目录且拒绝越界", async () => {
+  // 自建会话目录：session.log 只放一条已结算记录，不带未完成 turn——
+  // 否则宿主启动时会把未完成 turn 续跑进后台，workspace/files 的首帧就追不上。
+  const root = jj(REPO, "dualtest");
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(jj(root, "wf-"));
+  writeFileSync(join(dir, "session.log"), "1\tsystem\tready\n");
+  mkdirSync(join(dir, "sub"), { recursive: true });
+  writeFileSync(join(dir, "sub", "inner.txt"), "hello");
+  if (!existsSync(HOST)) throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
+  const b = new HostBridge(HOST, fixtureHostEnv(dir));
+  await b.start(dir);
+  try {
+    await b.request("initialize"); // 真实桌面总是先握手，测试也照此契约
+    const top = await b.request("workspace/files", { path: "" });
+    assert.ok(Array.isArray(top.files), "根目录应返回文件数组");
+    assert.ok(top.files.some((f) => f.name === "sub" && f.isDir), "根目录应含 sub 目录");
+    const sub = await b.request("workspace/files", { path: "sub" });
+    assert.ok(sub.files.some((f) => f.name === "inner.txt" && !f.isDir), "path=sub 应列出 inner.txt");
+    // 越界路径必须被拒：宿主侧 canonicalize 边界复核，不把文件系统交给协议面猜。
+    await assert.rejects(() => b.request("workspace/files", { path: ".." }), /bad-workspace-path/);
+  } finally {
+    await b.stop();
+  }
 });
 
 test("投影与 CLI 同源", async () => {

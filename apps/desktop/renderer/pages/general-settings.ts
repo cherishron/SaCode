@@ -11,8 +11,11 @@ export function createGeneralSettingsAssembly() {
     const scope=new ClientScope(name,slots);scopes.set(name,scope);
     try{scope.apply(setup);}catch(e){scopes.delete(name);throw e;}
   }
+  // owner 是按行 id 索引的子 owner 映射：busy-send 行读 .value/.change/.busy/.note/.error/.retry，
+  // transcript-view/composer-enter/session-log 行只读 .value/.change。缺键回落到整份 owner，
+  // 只读行不读 owner 字段，回落对它们无害——旧的单 owner 调用方仍能跑。
   const Host=defineComponent({props:['owner'],setup:props=>()=>h('div',{class:'general-plugin-rows'},
-    slots.dispatch(host.entry,'settings.general.row',props.owner).map(({entry})=>h(entry.component as any,{key:entry.sequence,owner:props.owner})))});
+    slots.dispatch(host.entry,'settings.general.row',props.owner).map(({entry})=>h(entry.component as any,{key:entry.sequence,owner:(props.owner&&props.owner[entry.id])||props.owner})))});
   const scope=new ClientScope('ui-settings-general',slots);scopes.set('ui-settings-general',scope);
   const host=scope.register({name:'root',children:{'settings.general.row':{kind:'list',scope:'root'}}},Host);
   install('ui-conversation-preferences',child=>child.inject('settings.general.row',row=>{

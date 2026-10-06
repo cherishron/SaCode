@@ -2,7 +2,6 @@
 // 所有读写穿过宿主适配器，界面不留第二份提供商状态。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
-import {Page as ProviderEditor} from './models-page';
 
 // --- 类型 ---
 export type Protocol='openai-completions'|'openai-responses'|'anthropic-messages';
@@ -165,7 +164,9 @@ export const Page=defineComponent({
 // --- 槽位注册 ---
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
+    // 供应商页吃 describe/save/remove/reorder/pullModels 适配器；缺适配器时
+    // 页面自己显示「后端尚未接入」，不用 models-page 的编辑器冒充。
     child.register({name:'model-center.tab',id:'provider-settings',order:1,label:'供应商'},
-      defineComponent({name:'SaCodeProviderSettingsSlot',props:['owner'],setup:(props)=>()=>h(ProviderEditor,{adapter:(props.owner as any)?.adapter})}));
+      defineComponent({name:'SaCodeProviderSettingsSlot',props:['owner'],setup:(props)=>()=>h(Page,{adapter:(props.owner as any)?.adapter})}));
   });
 }

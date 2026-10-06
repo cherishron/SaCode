@@ -1,6 +1,9 @@
 // 模型配置草稿的字段守卫：白名单之外的字段一律丢弃（凭据名由核心按 ID 派生，渲染层
 // 没有覆盖通路），能承载明文的键位不是「忽略」而是拒收——静默丢弃会让页面以为密钥已存进去。
+// sortOrder/enabled/transport 是供应商页会编辑的三列：守卫不认识它们时宿主会按缺省重放，
+// 一次「保存名称」就把用户排好的顺序和启停状态静默清零——按列白名单放行，不整条放行。
 const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
+const TRANSPORTS = ['direct', 'relay'];
 const SECRET_SLOTS = ['apiKey', 'api_key', 'key', 'token', 'secret', 'value'];
 const isStr = (v) => typeof v === 'string';
 
@@ -24,7 +27,13 @@ function sanitizeDraft(d) {
       || typeof m.image !== 'boolean') bad('bad-model-draft');
     return { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, image: m.image };
   });
-  return { id: d.id, name: d.name, baseUrl: d.baseUrl, protocol: d.protocol, models };
+  const sortOrder = d.sortOrder === undefined ? 0 : d.sortOrder;
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1e9) bad('bad-model-draft');
+  const enabled = d.enabled === undefined ? true : d.enabled;
+  if (typeof enabled !== 'boolean') bad('bad-model-draft');
+  const transport = d.transport === undefined ? 'direct' : d.transport;
+  if (!TRANSPORTS.includes(transport)) bad('bad-model-draft');
+  return { id: d.id, name: d.name, baseUrl: d.baseUrl, protocol: d.protocol, models, sortOrder, enabled, transport };
 }
 
 // 版本号是乐观并发的凭据：非整数与负数在主进程就拒收，不拿去让核心猜。

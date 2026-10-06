@@ -41,11 +41,14 @@ contextBridge.exposeInMainWorld("sacode", {
   globalAppearanceSetFontSize: (fontSize) => ipcRenderer.invoke("sacode:globalAppearanceSetFontSize", { fontSize }),
   globalAppearanceSetBusySend: (busySend) => ipcRenderer.invoke("sacode:globalAppearanceSetBusySend", { busySend }),
   sessionCatalog: () => ipcRenderer.invoke("sacode:sessionCatalog"),
+  // 已落盘事件流（轨迹视图）：只回放 durable 事件，cursor 之后 limit 之内。
+  sessionEvents: (cursor, limit) => ipcRenderer.invoke("sacode:sessionEvents", { cursor, limit }),
   sessionCreate: (title) => ipcRenderer.invoke("sacode:sessionCreate", { title }),
   sessionSelect: (sessionId) => ipcRenderer.invoke("sacode:sessionSelect", { sessionId }),
   workspaceGet: () => ipcRenderer.invoke("sacode:workspaceGet"),
   workspaceChoose: () => ipcRenderer.invoke("sacode:workspaceChoose"),
-  workspaceFiles: () => ipcRenderer.invoke("sacode:workspaceFiles"),
+  // path 为空串时列工作区根；目录树展开时按相对子路径取子目录。
+  workspaceFiles: (path) => ipcRenderer.invoke("sacode:workspaceFiles", { path: path || "" }),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("sacode:appearanceSetTheme", { theme }),
   globalSettingsGet: () => ipcRenderer.invoke("sacode:globalSettingsGet"),
   globalSettingsSet: (key, value) => ipcRenderer.invoke("sacode:globalSettingsSet", { key, value }),
@@ -55,6 +58,9 @@ contextBridge.exposeInMainWorld("sacode", {
   modelsSave: (draft, key, expectedRevision) => ipcRenderer.invoke("sacode:modelsSave", { draft, key, expectedRevision }),
   modelsRemove: (id, expectedRevision) => ipcRenderer.invoke("sacode:modelsRemove", { id, expectedRevision }),
   modelsSetDefault: (providerId, model, expectedRevision) => ipcRenderer.invoke("sacode:modelsSetDefault", { providerId, model, expectedRevision }),
+  // 供应商单列写：拖动排序与启停都不重写整条记录（内置供应商拒绝整条 update，但不拒绝这两列）。
+  modelsSort: (providerId, sortOrder, expectedRevision) => ipcRenderer.invoke("sacode:modelsSort", { providerId, sortOrder, expectedRevision }),
+  modelsSetEnabled: (providerId, enabled, expectedRevision) => ipcRenderer.invoke("sacode:modelsSetEnabled", { providerId, enabled, expectedRevision }),
   modelsList: (request) => ipcRenderer.invoke("sacode:modelsList", { baseUrl: request.baseUrl, apiKey: request.apiKey }),
   // 第 3 层自定义模型与模型目录写面：一个动作一条通道，字段形状由主进程守卫
   // （customs-guard.cjs），渲染层拼不出任意宿主方法，也没有「发任意请求」的通道。

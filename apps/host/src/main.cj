@@ -379,25 +379,8 @@ func providerViewJson(view: ProviderView, creds: CredentialStore): String {
     return "{\"providers\":${arr},\"revision\":${view.revision},\"writable\":${boolText(view.writable)},\"defaultProviderId\":\"${jsonEscapeText(view.defaultProviderId)}\",\"defaultModel\":\"${jsonEscapeText(view.defaultModel)}\"}"
 }
 
-// 插件清单视图的 JSON 序列化：渲染层适配器 normalizeInventory/normalizePackage/normalizeRow
-// 期望的字段全部在此产出，缺字段或类型不符会让适配器 fail-loud（不冒充本地状态）。
-func pluginInventoryJson(view: PluginInventory): String {
-    var arr = "["
-    for (i in 0..view.packages.size) {
-        if (i > 0) { arr += "," }
-        let p = view.packages[i]
-        var rows = "["
-        for (j in 0..p.rows.size) {
-            if (j > 0) { rows += "," }
-            let r = p.rows[j]
-            rows += "{\"rowId\":\"${jsonEscapeText(r.rowId)}\",\"title\":\"${jsonEscapeText(r.title)}\",\"moduleName\":\"${jsonEscapeText(r.moduleName)}\",\"entryId\":\"${jsonEscapeText(r.entryId)}\",\"description\":\"${jsonEscapeText(r.description)}\",\"descriptionZhCN\":\"${jsonEscapeText(r.descriptionZhCN)}\",\"enabled\":${boolText(r.enabled)},\"phase\":\"${jsonEscapeText(r.phase)}\",\"readOnlyReason\":\"${jsonEscapeText(r.readOnlyReason)}\"}"
-        }
-        rows += "]"
-        arr += "{\"name\":\"${jsonEscapeText(p.name)}\",\"version\":\"${jsonEscapeText(p.version)}\",\"title\":\"${jsonEscapeText(p.title)}\",\"description\":\"${jsonEscapeText(p.description)}\",\"descriptionZhCN\":\"${jsonEscapeText(p.descriptionZhCN)}\",\"kind\":\"${jsonEscapeText(p.kind)}\",\"directory\":\"${jsonEscapeText(p.directory)}\",\"installed\":${boolText(p.installed)},\"optional\":${boolText(p.optional)},\"enabled\":${boolText(p.enabled)},\"error\":\"${jsonEscapeText(p.error)},\"rows\":${rows}}"
-    }
-    arr += "]"
-    return "{\"available\":${boolText(view.available)},\"revision\":${view.revision},\"packages\":${arr}}"
-}
+// 插件清单序列化只用核心 PluginInventory.asJson()：哪些字段可为 null 由清单视图定义决定，
+// 宿主自己拼第二份字段规则迟早对不上（此前手写版就丢了 error 字段的闭合引号）。
 
 // 协议面不接受「没点名修订号」的写：缺失就拒，而不是静默当成无条件写。
 // 核心侧的 -1 = 无条件写是给 CLI 自测与测试用的，不能变成协议面的默认——
@@ -449,7 +432,7 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
     let registry = ProviderRegistry.forUser()
     let creds = CredentialStore.forUser()
     try {
-        if (method == "model/registry/describe" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog") {
+        if (method == "model/registry/describe" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "model/registry/sort" || method == "model/registry/set-enabled") {
             if (method == "model/registry/update") {
                 let request = JsonValue.fromStr(body).asObject()
                 var draft: Option<JsonObject> = None
@@ -469,6 +452,12 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
                 registry.setDefault(jsonStr(body, "providerId"), jsonStr(body, "model"), jsonNum(body, "expectedRevision"))
             } else if (method == "model/registry/add-catalog") {
                 registry.addFromCatalog(jsonStr(body, "id"), jsonStr(body, "credentialRef"))
+            } else if (method == "model/registry/sort") {
+                // 拖动排序只改一列：核心 setSortOrder 不重写整条记录，别处刚改过的 baseUrl 不会被盖回去。
+                registry.setSortOrder(jsonStr(body, "providerId"), jsonNum(body, "sortOrder"), jsonNum(body, "expectedRevision"))
+            } else if (method == "model/registry/set-enabled") {
+                // 启停同样走单列写：内置（declared）供应商拒绝整条 update，但不拒绝关断。
+                registry.setEnabled(jsonStr(body, "providerId"), jsonStr(body, "enabled") == "true", jsonNum(body, "expectedRevision"))
             }
             emit(okFrame(idText, providerViewJson(registry.describe(), creds)))
             return
@@ -866,7 +855,7 @@ main(args: Array<String>) {
             } catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
             continue
         }
-        if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list" || method == "custom/describe" || method == "custom/upsert" || method == "custom/remove" || method == "binding/upsert" || method == "binding/remove" || method == "binding/reorder" || method == "model/pull" || method == "model/upstream/upsert" || method == "custom/import/new" || method == "custom/import/into") {
+        if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "model/registry/sort" || method == "model/registry/set-enabled" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list" || method == "custom/describe" || method == "custom/upsert" || method == "custom/remove" || method == "binding/upsert" || method == "binding/remove" || method == "binding/reorder" || method == "model/pull" || method == "model/upstream/upsert" || method == "custom/import/new" || method == "custom/import/into") {
             // 在途轮次里只放行读面：改提供商或换凭据不该打断正在流式返回的这一轮
             let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe" || method == "custom/describe"
             if (turnBusy && !configReadSide) { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
@@ -876,16 +865,15 @@ main(args: Array<String>) {
         // 插件清单：逐条通道落地，缺通道适配器保持 unconnected（不冒充本地状态）
         if (method == "plugin/describe" || method == "plugin/uninstall" || method == "plugin/set-enabled") {
             try {
-                let store = PluginStore("plugins")
-                if (method == "plugin/describe") {
-                    emit(okFrame(idText, pluginInventoryJson(store.describe())))
-                } else if (method == "plugin/uninstall") {
+                // 与 providers.log 同一个用户目录：两入口共用一份安装态，相对路径会随宿主 CWD 漂移。
+                let store = PluginStore.forUser()
+                if (method == "plugin/uninstall") {
                     store.uninstall(jsonStr(body, "name"), jsonNum(body, "expectedRevision"))
-                    emit(okFrame(idText, "{}"))
                 } else if (method == "plugin/set-enabled") {
                     store.setEnabled(jsonStr(body, "name"), jsonStr(body, "enabled") == "true", jsonNum(body, "expectedRevision"))
-                    emit(okFrame(idText, "{}"))
                 }
+                // 三个动作统一回最新清单：写后回 {} 会逼界面再发一次 describe，还要自己处理两帧之间的漂移。
+                emit(okFrame(idText, store.describe().asJson()))
             } catch (e: Exception) {
                 emit(errFrame(idText, -32030, e.message))
             }
@@ -917,7 +905,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
@@ -1844,26 +1832,56 @@ main(args: Array<String>) {
             }
             let ws2 = SessionWorkspace(target2, fallback: canonicalize(".").toString())
             let dir = ws2.effectiveDirectory()
+            // 子目录浏览：path 是工作区内的相对路径（目录树展开用）。
+            // 逐段拒绝 ".."、反斜杠与控制字符，且规范化后必须仍落在工作区内——
+            // 拼上来的路径越界就当成参数错误，不把文件系统交给协议面去猜。
+            var sub = jsonStr(body, "path")
+            var listing = dir
+            if (sub.size > 0) {
+                if (sub.size > 512 || sub.contains("\\") || sub.contains("\u{0}")) {
+                    emit(errFrame(idText, -32602, "bad-workspace-path")); continue
+                }
+                // 先整段判定再决定拒绝：for-in 里的 continue 只跳迭代，不能当请求级拒绝用。
+                var badPath = false
+                for (one in sub.split("/")) {
+                    if (one == ".." || one == "." || one.size == 0) { badPath = true }
+                }
+                if (badPath) { emit(errFrame(idText, -32602, "bad-workspace-path")); continue }
+                listing = dir + "/" + sub
+                try {
+                    let canonListing = canonicalize(listing).toString()
+                    let canonDir = canonicalize(dir).toString()
+                    // 前缀必须落在目录边界上：D:\ws 不能给 D:\ws2 的内容背书。
+                    let inside = canonListing.startsWith(canonDir + "/") || canonListing.startsWith(canonDir + "\\")
+                    if (!inside || !FileInfo(canonListing).isDirectory()) {
+                        emit(errFrame(idText, -32602, "bad-workspace-path")); continue
+                    }
+                } catch (e: Exception) {
+                    emit(errFrame(idText, -32602, "bad-workspace-path")); continue
+                }
+            }
             var entries = "["
             var count = 0
             try {
                 var i2 = 0
-                for (info in Directory.readFrom(dir)) {
+                for (info in Directory.readFrom(listing)) {
                     if (count >= 200) { break }
                     let name = info.name
                     let entryDir = if (info.isDirectory()) { "true" } else { "false" }
                     var entrySize = Int64(0)
-                    if (!info.isDirectory()) { entrySize = FileInfo(dir + "/" + name).size }
+                    if (!info.isDirectory()) { entrySize = FileInfo(listing + "/" + name).size }
                     if (count > 0) { entries = entries + "," }
                     entries = entries + "{\"name\":\"${jsonEscapeText(name)}\",\"isDir\":${entryDir},\"size\":${entrySize}}"
                     count += 1
                     i2 += 1
                 }
             } catch (e: Exception) {
+                entries = entries + "]"
                 emit(okFrame(idText, "{\"files\":${entries},\"error\":\"${jsonEscapeText(e.message)}\"}"))
                 continue
             }
-            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(dir)}\",\"files\":${entries}}"))
+            entries = entries + "]"
+            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(dir)}\",\"path\":\"${jsonEscapeText(sub)}\",\"files\":${entries}}"))
             continue
         }
         if (method == "workspace/set-directory") {

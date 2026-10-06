@@ -46,6 +46,50 @@ const roleName = (role) => ({ system: "系统", developer: "开发者", user: "�
 const verdictName = (verdict) => ({ recorded: "已计量", "over-budget": "超出预算", absent: "未收到用量", "bad-usage": "用量格式异常" }[verdict] || "未计量");
 const navIcon = (path) => h("svg", { class: "nav-symbol", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, [h("path", { d: path })]);
 
+// 目录树递归渲染：目录在前文件在后，展开目录递归取下一层；数据每次都从宿主取，
+// 展开态只是 UI 记忆。depth 控制缩进——不靠 CSS 嵌套，方便跨深度的对齐。
+const FILE_ICON = "M3 5h7l2 3h9v12H3z";
+const formatBytes = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + "MB" : n > 1024 ? (n / 1024).toFixed(1) + "KB" : n + "B";
+// contextWindow 在注册表里是带后缀的字符串（"128K"/"1M"），用量条要数字分母。
+// 解析规则与核心 checkCapacity 对齐：数字 + 可选单个 k/K/m/M；空串与无法解析返回 undefined。
+const parseCapacity = (s) => {
+  if (typeof s !== "string") return undefined;
+  const m = /^(\d+(?:\.\d+)?)([kKmM])?$/.exec(s.trim());
+  if (!m) return undefined;
+  let n = parseFloat(m[1]);
+  if (m[2] === "k" || m[2] === "K") n *= 1024;
+  else if (m[2] === "m" || m[2] === "M") n *= 1024 * 1024;
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
+};
+const renderTreeEntries = (entries, prefix, depth, ctx) => {
+  const dirs = entries.filter((f) => f.isDir);
+  const files = entries.filter((f) => !f.isDir);
+  const indent = { style: { marginLeft: depth * 14 + "px" } };
+  const nodes = [];
+  for (const d of dirs) {
+    const childPath = prefix ? prefix + "/" + d.name : d.name;
+    const open = ctx.open.has(childPath);
+    nodes.push(h("div", Object.assign({ class: "file-tree-entry file-tree-dir", role: "button", "aria-label": "目录 " + d.name, tabindex: 0, onClick: () => ctx.toggle(childPath) }, indent), [
+      h("span", { class: "file-chevron" + (open ? " is-open" : ""), "aria-hidden": "true" }, open ? "▾" : "▸"),
+      navIcon(FILE_ICON),
+      h("span", null, d.name),
+      h("span", { class: "file-size" }, ctx.busy === childPath ? "加载中…" : "目录"),
+    ]));
+    if (open) {
+      const kids = ctx.children[childPath];
+      if (Array.isArray(kids)) nodes.push(...renderTreeEntries(kids, childPath, depth + 1, ctx));
+    }
+  }
+  for (const f of files) {
+    nodes.push(h("div", Object.assign({ class: "file-tree-entry file-tree-file", "aria-label": f.name }, indent), [
+      navIcon(FILE_ICON),
+      h("span", null, f.name),
+      h("span", { class: "file-size" }, formatBytes(f.size)),
+    ]));
+  }
+  return nodes;
+};
+
 // TinyVue 组件由 scripts/pack-tinyvue.mjs 在构建期折叠成 vendor/tinyvue.iife.js（经典脚本）：
 // 组件库自身是 ESM-only，而这里跑在 file:// + CSP script-src 'self' 上，既不能加载 ES module
 // 也没有运行时模板编译器，所以只有折叠产物这一条路。用的还是上面那份 Vue runtime（构建期把
@@ -210,11 +254,113 @@ createApp({
     async function refreshWorkspaceFiles() {
       workspaceFilesBusy.value=true;
       try {
-        const result = await window.sacode.workspaceFiles();
+        const result = await window.sacode.workspaceFiles("");
         workspaceFiles.value = result.files || [];
       } catch(e) { workspaceFiles.value = []; }
       workspaceFilesBusy.value=false;
     }
+    // 目录树展开态：openPaths 收已展开的相对子路径，treeChildren 收各路径的子目录列表，
+    // 数据每次都从宿主拿——展开状态只是 UI 记忆，不是第二份文件系统事实。
+    const fileTreeOpen=ref(new Set()), fileTreeChildren=ref({}), fileTreeBusy=ref("");
+    async function toggleTreeDir(path) {
+      const nextOpen = new Set(fileTreeOpen.value);
+      if (nextOpen.has(path)) { nextOpen.delete(path); fileTreeOpen.value = nextOpen; return; }
+      nextOpen.add(path); fileTreeOpen.value = nextOpen;
+      if (fileTreeChildren.value[path]) return;
+      fileTreeBusy.value = path;
+      try {
+        const result = await window.sacode.workspaceFiles(path);
+        fileTreeChildren.value = { ...fileTreeChildren.value, [path]: result.files || [] };
+      } catch (e) { fileTreeChildren.value = { ...fileTreeChildren.value, [path]: [] }; }
+      fileTreeBusy.value = "";
+    }
+    // 会话轨迹：只回放已落盘（durable）事件——投影里的 pending 不算已发生的事实。
+    const traceEvents=ref([]), traceCursor=ref(0), traceMore=ref(false), traceBusy=ref(false), traceError=ref("");
+    let traceGeneration = 0;
+    async function refreshTrace(reset) {
+      const session = scrollSession.value;
+      if (!session || session === "initial") { traceEvents.value = []; traceCursor.value = 0; traceMore.value = false; traceError.value = ""; return; }
+      const generation = ++traceGeneration;
+      const cursor = reset ? 0 : traceCursor.value;
+      traceBusy.value = true; traceError.value = "";
+      try {
+        const r = await window.sacode.sessionEvents(cursor, 64);
+        if (generation !== traceGeneration) return;
+        const events = Array.isArray(r && r.events) ? r.events : [];
+        const merged = reset ? events : [...traceEvents.value, ...events];
+        traceEvents.value = merged;
+        traceCursor.value = (r && typeof r.nextCursor === "number") ? r.nextCursor : cursor;
+        traceMore.value = !!(r && r.more);
+      } catch (e) {
+        if (generation === traceGeneration) traceError.value = String((e && e.message) || e);
+      } finally {
+        if (generation === traceGeneration) traceBusy.value = false;
+      }
+    }
+    window.Vue.watch(() => [sideTab.value, scrollSession.value], ([tab]) => {
+      if (tab === "trace") void refreshTrace(true);
+    });
+    // 通用设置的三个持久化偏好：值与保存都走宿主 global/settings，失败时回显真实回读值。
+    const generalPrefs = ref({ transcriptView: "default", composerEnter: "send", sessionLog: "off" });
+    const generalPrefsBusy = ref("");
+    async function refreshGeneralPrefs() {
+      try {
+        const r = await window.sacode.globalSettingsGet();
+        if (r && typeof r === "object") {
+          generalPrefs.value = {
+            transcriptView: r.transcriptView === "compact" || r.transcriptView === "expanded" ? r.transcriptView : "default",
+            composerEnter: r.composerEnter === "newline" ? "newline" : "send",
+            sessionLog: r.sessionLog === "on" ? "on" : "off",
+          };
+        }
+      } catch (e) { /* 读不到就保留默认值，行内显示仍以后端回读为准 */ }
+    }
+    async function setGeneralPref(key, value) {
+      if (generalPrefsBusy.value) return;
+      generalPrefsBusy.value = key;
+      try {
+        const r = await window.sacode.globalSettingsSet(key, value);
+        if (r && typeof r === "object") {
+          generalPrefs.value = {
+            transcriptView: r.transcriptView === "compact" || r.transcriptView === "expanded" ? r.transcriptView : "default",
+            composerEnter: r.composerEnter === "newline" ? "newline" : "send",
+            sessionLog: r.sessionLog === "on" ? "on" : "off",
+          };
+        }
+      } finally { generalPrefsBusy.value = ""; }
+    }
+    void refreshGeneralPrefs();
+    // 插件清单适配器：宿主 packages 的每一项是一个已装插件；有工具行的包也作为会话预设组。
+    // 全局插件列表 = 全部包；会话预设 = 有 rows 的包，每包一组。坏包只坏自己，不连坐。
+    const pluginsInventoryAdapter = {
+      async list() {
+        const r = await window.sacode.pluginsDescribe();
+        const packages = Array.isArray(r && r.packages) ? r.packages : [];
+        const entries = packages.map((p) => ({
+          moduleName: p.name, entryId: null,
+          title: p.title || p.name, description: p.description, descriptionZhCN: p.descriptionZhCN,
+          enabled: p.enabled === true,
+          phase: p.error ? "failed" : p.installed === false ? null : "active",
+          metadataError: p.error && p.error.reason ? p.error.reason : undefined,
+        }));
+        const presets = [];
+        for (const p of packages) {
+          const rows = Array.isArray(p.rows) ? p.rows : [];
+          if (!rows.length) continue;
+          presets.push({
+            id: p.name, name: p.title || p.name,
+            isDefault: presets.length === 0,
+            broken: p.error && p.error.reason ? p.error.reason : undefined,
+            rows: rows.map((r) => ({
+              moduleName: r.moduleName, entryId: r.entryId || null,
+              title: r.title || r.name, description: r.description, descriptionZhCN: r.descriptionZhCN,
+              enabled: r.enabled === true, phase: r.phase || null,
+            })),
+          });
+        }
+        return { entries, presets };
+      },
+    };
     async function refreshWorkspace() {
       const generation=sessionGeneration, result=await window.sacode.workspaceGet();
       if(generation===sessionGeneration) workspace.value=result;
@@ -688,44 +834,10 @@ createApp({
       }
     }
 
-    // 模型页的每一次读写都穿过宿主：渲染层不留第二份提供商状态。
-    // 宿主错误码要翻成页面认识的两类——「别人先改过」与「内容不合法」是两句不同的话。
-    const modelsError = (error) => {
-      const text = String((error && error.message) || error);
-      const code = /settings-conflict/.test(text) ? "model-conflict" : /read-only/.test(text) ? "model-read-only" : "";
-      return code ? Object.assign(Error(text), { code }) : error;
-    };
-    const modelsAdapter = {
-      async load() {
-        const view = await window.sacode.modelsDescribe().catch(modelsError);
-        const catalogView = await window.sacode.modelsCatalog().catch(modelsError);
-        const catalog = Array.isArray(catalogView) ? catalogView : [];
-        const byId = {};
-        for (const c of catalog) byId[c.id] = c;
-        const providers = (view.providers || []).map((p) => {
-          const base = byId[p.id];
-          return { ...p, defaultModels: base ? base.models : undefined,
-            modelsCustomized: base ? JSON.stringify(p.models) !== JSON.stringify(base.models) : true };
-        });
-        return { providers, catalog, revision: view.revision, writable: view.writable };
-      },
-      async save(draft, expectedRevision) {
-        const { key, ...rest } = draft;
-        await window.sacode.modelsSave(rest, key || "", expectedRevision).catch(modelsError);
-        void modelDirectory.load();
-      },
-      async remove(id, expectedRevision) {
-        await window.sacode.modelsRemove(id, expectedRevision).catch(modelsError);
-        void modelDirectory.load();
-      },
-      async listModels(draft) {
-        const r = await window.sacode.modelsList({ baseUrl: draft.baseUrl, apiKey: draft.key }).catch(modelsError);
-        return (r.models || []).map((id) => ({ id, name: id, contextWindow: "", maxTokens: "", image: false }));
-      },
-    };
-
     // 输入区的模型选择器共用同一份注册表：选定即写默认指针，下一轮请求就按它装配。
     // 目录状态只在宿主里，这里只做快照投影与订阅通知，不留第二份「已选模型」。
+    // 供应商管理页的适配器由 pages/model-center-adapter.ts 按宿主动词逐条映射，
+    // 这里只在供应商写动作之后刷新目录——两处是同一份注册表的投影，不能一新一旧。
     const modelDirectory = (() => {
       let snapshot = { current: null, groups: [], failures: [], status: "idle", pending: null, error: null, routable: null };
       const listeners = new Set();
@@ -735,13 +847,17 @@ createApp({
         revision = view.revision;
         const groups = (view.providers || []).map((p) => ({
           id: p.id, name: p.name || p.id, credentialKind: "api-key",
-          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id, image: m.image === true })),
+          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id, image: m.image === true, contextWindow: m.contextWindow })),
         }));
         const chosen = view.defaultProviderId && view.defaultModel
           ? { provider: view.defaultProviderId, model: view.defaultModel } : null;
         const routable = groups.some((g) => chosen && g.id === chosen.provider
           && g.models.some((m) => m.id === chosen.model));
-        publish({ current: chosen, groups, failures: [], status: "ready", pending: null, error: null, routable });
+        // 选定模型的 contextWindow 是用量条的分母：保留原始字符串，由 ContextMeter 的
+        // contextOccupancy 解析（k/K/m/M 后缀规则与核心 checkCapacity 一致）。
+        const chosenModel = chosen && groups.find((g) => g.id === chosen.provider)
+          && groups.find((g) => g.id === chosen.provider).models.find((m) => m.id === chosen.model);
+        publish({ current: chosen, groups, failures: [], status: "ready", pending: null, error: null, routable, contextWindow: chosenModel ? chosenModel.contextWindow : "" });
       };
       return {
         getSnapshot: () => snapshot,
@@ -771,9 +887,15 @@ createApp({
       };
     })();
     void modelDirectory.load();
-    modelCenterOwner.value = {
-      adapters: window.SaCodeSlots.createModelCenterAdapters(window.sacode, modelsAdapter),
-    };
+    const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
+    // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
+    for (const verb of ["save", "remove", "reorder", "pullModels"]) {
+      const inner = modelCenterAdapters["provider-settings"][verb].bind(modelCenterAdapters["provider-settings"]);
+      modelCenterAdapters["provider-settings"][verb] = async (...args) => {
+        try { return await inner(...args); } finally { void modelDirectory.load(); }
+      };
+    }
+    modelCenterOwner.value = { adapters: modelCenterAdapters };
 
     function imageDraftAllowed() {
       if (!attachments.value.some((a) => a.kind === 'image')) return true;
@@ -1056,9 +1178,13 @@ createApp({
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
       proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen, pluginManagerAdapter,
-      appearanceBusy, appearanceNote, setTheme, modelsAdapter, modelDirectory,
+      appearanceBusy, appearanceNote, setTheme, modelDirectory,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       generalSettings, busySendSaving, busySendNote, busySendError, setBusySend,
+      fileTreeOpen, fileTreeChildren, fileTreeBusy, toggleTreeDir,
+      traceEvents, traceMore, traceBusy, traceError, refreshTrace,
+      generalPrefs, generalPrefsBusy, setGeneralPref,
+      pluginsInventoryAdapter,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
@@ -1277,18 +1403,22 @@ createApp({
       el("section", "side-section", [el("h2", null, "工作区文件"),
         self.workspaceFilesBusy ? el("p", "note", "加载中…", { role: "status", "aria-live": "polite" }) :
         !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录") : null,
-        ...self.workspaceFiles.filter(f=>f.isDir).map(d=>el("div","file-tree-entry file-tree-dir",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,d.name),el("span","file-size","目录")],{'aria-label':'目录 '+d.name})),
-        ...self.workspaceFiles.filter(f=>!f.isDir).map(f=>el("div","file-tree-entry file-tree-file",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,f.name),el("span","file-size",f.size>1048576?(f.size/1048576).toFixed(1)+'MB':f.size>1024?(f.size/1024).toFixed(1)+'KB':f.size+'B')],{'aria-label':f.name})),
+        ...renderTreeEntries(self.workspaceFiles, "", 0, {
+          open: self.fileTreeOpen, children: self.fileTreeChildren, busy: self.fileTreeBusy, toggle: self.toggleTreeDir,
+        }),
       ], { id: "files-panel", tabindex: -1 }),
     ], { id: "side-page-files", role: "tabpanel", "aria-labelledby": "side-tab-files", hidden: self.sideTab !== "files" });
     const tracePage = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "会话轨迹"),
-        el("p","note","显示当前会话的事件时间线。"),
-        self.proj.events>0 ? el("div","trace-timeline",Array.from({length:Math.min(self.proj.events,20)},(_,i)=>el("div","trace-event",[
-          el("span","trace-seq","#"+(self.proj.events-i)),
-          el("span","trace-type",["session","user","assistant","tool","system"][i%5]||"event"),
-          el("span","trace-time",""),
-        ]))) : el("p","note","尚无事件"),
+        el("p","note","当前会话已落盘的事件时间线（按 seq 倒序显示最近一页）。"),
+        traceError.value ? el("p","note","读取失败："+traceError.value,{role:"alert"}) : null,
+        traceBusy.value && !traceEvents.value.length ? el("p","note","加载中…",{role:"status"}) : null,
+        !traceBusy.value && !traceEvents.value.length && !traceError.value ? el("p","note","尚无已落盘事件") : null,
+        traceEvents.value.length ? el("div","trace-timeline",traceEvents.value.slice().reverse().map(ev=>el("div","trace-event",[
+          el("span","trace-seq","#"+ev.seq),
+          el("span","trace-type",String(ev.type||"event")),
+        ]))) : null,
+        traceMore.value ? el("button","btn","加载更早的事件",{onClick:()=>self.refreshTrace(false)}) : null,
       ], { id: "trace-panel", tabindex: -1 }),
     ], { id: "side-page-trace", role: "tabpanel", "aria-labelledby": "side-tab-trace", hidden: self.sideTab !== "trace" });
     const guide = el("div", "side-page", [
@@ -1387,7 +1517,8 @@ createApp({
         // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
         onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
       ]),
-      h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession}),
+      h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,
+        pressure: (function(){ const v=self.modelDirectory.getSnapshot(); const ctxWin=parseCapacity(v&&v.contextWindow); const used=self.usage&&Number.isFinite(self.usage.used)?self.usage.used:undefined; return ctxWin&&used!==undefined?{projectedTokens:used,contextWindow:ctxWin}:undefined; })() }),
     ]);
 
     const detail = h(window.SaCodeDialog, { open: !!self.detailTool, title: "工具详情",
@@ -1444,10 +1575,19 @@ createApp({
             ]),
           ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
         ],{'aria-busy':self.fontBusy}),
-        h(self.generalSettings.Outlet,{owner:{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance}}),
+        h(self.generalSettings.Outlet,{owner:{
+          'busy-send':{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance},
+          'transcript-view':{value:self.generalPrefs.transcriptView,change:(v)=>self.setGeneralPref('transcript-view',v)},
+          'composer-enter':{value:self.generalPrefs.composerEnter,change:(v)=>self.setGeneralPref('composer-enter',v)},
+          'session-log':{value:self.generalPrefs.sessionLog,change:(v)=>self.setGeneralPref('session-log',v)},
+        }}),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
       self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
-      el("section", "settings-page", [h(window.SaCodePlugins.Page, { tools: self.tools }),
+      el("section", "settings-page", [h(window.SaCodePlugins.Page, {
+        tools: self.tools,
+        // 插件清单适配器：包 = 已装插件，行 = 包内声明的工具。映射只搬数据，不冒充本地状态。
+        adapter: self.pluginsInventoryAdapter,
+      }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
       ]),
       ]),

@@ -266,15 +266,33 @@ ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   if(!Array.isArray(choice.filePaths) || choice.filePaths.length!==1 || !isStr(choice.filePaths[0])) throw new Error("bad directory selection");
   return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
 }));
-ipcMain.handle("sacode:workspaceFiles", async () => withHost(()=>bridge.request("workspace/files")));
+ipcMain.handle("sacode:workspaceFiles", async (_e, args) => {
+  // path 只收相对子路径：反斜杠、控制字符与超长一律拒，绝对路径也拒（宿主侧还会做边界复核）。
+  const path = args && args.path;
+  if (path !== undefined && (!isStr(path) || path.length > 512 || /[\\:\x00-\x1f]/.test(path) || /^[a-zA-Z]:/.test(path) || path.startsWith("/") || path.includes(".."))) {
+    throw new Error("bad-workspace-path");
+  }
+  return withHost(()=>bridge.request("workspace/files", {path: path || ""}));
+});
 ipcMain.handle("sacode:globalSettingsGet", async () => withHost(()=>bridge.request("global/settings/get")));
+// 通用设置键 → 宿主动词与参数名：宿主侧按驼峰参数名校验（transcriptView 等），
+// 键名连字符只是渲染层的说法，不能拿它直接当宿主参数名。
 ipcMain.handle("sacode:globalSettingsSet", async (_e, args) => {
   const key = args && args.key;
   const value = args && args.value;
-  if (!key || typeof key !== "string") throw new Error("bad-settings-key");
+  const KEY_TO_PARAM = { "transcript-view": "transcriptView", "composer-enter": "composerEnter", "session-log": "sessionLog" };
+  if (!isStr(key) || !Object.prototype.hasOwnProperty.call(KEY_TO_PARAM, key)) throw new Error("bad-settings-key");
+  if (!isStr(value)) throw new Error("bad-settings-value");
   const method = "global/settings/set-" + key;
-  const params = { [key]: value };
-  return withHost(()=>bridge.request(method, params));
+  return withHost(()=>bridge.request(method, { [KEY_TO_PARAM[key]]: value }));
+});
+// 已落盘事件流（轨迹视图）：cursor/limit 都是整数，limit 夹在 1..64（宿主同款上限）。
+ipcMain.handle("sacode:sessionEvents", async (_e, args) => {
+  const cursor = args && args.cursor;
+  const limit = args && args.limit;
+  if (typeof cursor !== "number" || !Number.isInteger(cursor) || cursor < 0) throw new Error("bad-cursor");
+  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 64)) throw new Error("bad-limit");
+  return withHost(()=>bridge.request("session/subscribe", { cursor, limit: limit ?? 64 }));
 });
 ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
@@ -356,6 +374,27 @@ ipcMain.handle("sacode:modelsSetDefault", async (_e, args) => {
   if (!isStr(model) || model.length === 0 || model.length > 200) throw new Error("bad-model-name");
   return withHost(() => bridge.request("model/registry/set-default", {
     providerId, model, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
+  }));
+});
+
+// 供应商单列写：排序只改 sortOrder、启停只改 enabled，宿主核心不重写整条记录。
+ipcMain.handle("sacode:modelsSort", async (_e, args) => {
+  const providerId = args && args.providerId;
+  const sortOrder = args && args.sortOrder;
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
+  if (typeof sortOrder !== "number" || !Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1e9) throw new Error("bad-sort-order");
+  return withHost(() => bridge.request("model/registry/sort", {
+    providerId, sortOrder, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
+  }));
+});
+
+ipcMain.handle("sacode:modelsSetEnabled", async (_e, args) => {
+  const providerId = args && args.providerId;
+  const enabled = args && args.enabled;
+  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
+  if (typeof enabled !== "boolean") throw new Error("bad-enabled-flag");
+  return withHost(() => bridge.request("model/registry/set-enabled", {
+    providerId, enabled: enabled ? "true" : "false", expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
   }));
 });
 
