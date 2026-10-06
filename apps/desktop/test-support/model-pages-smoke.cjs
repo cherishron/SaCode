@@ -20,6 +20,25 @@ app.whenReady().then(async()=>{
       if(writable&&add){add.click();await settle();check(title+'新增表单打开',!!root.querySelector('input[aria-label="'+(title==='供应商'?'Provider ID':'ID')+'"]'));}
       ui.unmount();await settle();
     }
+    window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
+    for(const writable of [false,true]){
+      const adapter={load:async()=>({providers:[provider],catalog:[],revision:1,writable}),save:async()=>{},remove:async()=>{},listModels:async()=>[{id:'pulled-model',name:'拉取候选',contextWindow:'',maxTokens:'',image:false}]};
+      const assembly=ModelPages.createModelCenterAssembly();
+      const owner={adapters:ModelPages.createModelCenterAdapters({},adapter)};
+      const ui=Vue.createApp({setup:()=>()=>Vue.h(assembly.Outlet,{owner})});ui.config.errorHandler=e=>errors.push(String(e));ui.mount(root);await settle();
+      check('真实供应商槽位读取旧适配器 '+writable,root.textContent.includes(provider.name)&&!root.textContent.includes('is not a function'));
+      const edit=root.querySelector('button[aria-label="编辑 '+provider.name+'"]');
+      const add=root.querySelector('#models-add-provider'),remove=root.querySelector('button[aria-label="删除 '+provider.name+'"]');
+      check('真实供应商槽位只读护栏 '+writable,!!edit&&!!add&&!!remove&&add.disabled===!writable&&remove.disabled===!writable);
+      if(writable&&edit){
+        edit.click();await settle();
+        check('真实供应商槽位保留密钥编辑',!!root.querySelector('input[aria-label="API 密钥"]'));
+        const fetch=[...root.querySelectorAll('button')].find(b=>b.textContent==='获取可用模型');
+        if(fetch){fetch.click();await settle();}
+        check('真实供应商槽位可拉取候选',root.textContent.includes('拉取候选'));
+      }
+      ui.unmount();assembly.dispose();await settle();
+    }
     check('无 Vue 渲染异常',errors.length===0);return {checks,errors};
   })()`);console.log(JSON.stringify(checks));app.exit(checks.checks.some(c=>!c.ok)?1:0);
 }).catch(e=>{console.error(e);app.exit(1);});

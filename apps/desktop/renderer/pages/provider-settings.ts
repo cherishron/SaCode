@@ -2,6 +2,7 @@
 // 所有读写穿过宿主适配器，界面不留第二份提供商状态。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
+import {Page as ProviderEditor} from './models-page';
 
 // --- 类型 ---
 export type Protocol='openai-completions'|'openai-responses'|'anthropic-messages';
@@ -165,6 +166,6 @@ export const Page=defineComponent({
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
     child.register({name:'model-center.tab',id:'provider-settings',order:0,label:'供应商'},
-      defineComponent({name:'SaCodeProviderSettingsSlot',props:['owner'],setup:(props)=>()=>h((props.owner as any)?.providerPage||Page,{adapter:(props.owner as any)?.adapter})}));
+      defineComponent({name:'SaCodeProviderSettingsSlot',props:['owner'],setup:(props)=>()=>h(ProviderEditor,{adapter:(props.owner as any)?.adapter})}));
   });
 }
