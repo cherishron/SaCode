@@ -6,7 +6,7 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
-const host=process.env.DSH_HOST||fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
+const host=process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
 test('历史投影附件只属于对应用户消息，宿主重启和尾部裁切保留稳定身份',async()=>{
  const root=mkdtempSync(join(tmpdir(),'sacode-history-attachment-'));
  let bridge=new HostBridge(host,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});

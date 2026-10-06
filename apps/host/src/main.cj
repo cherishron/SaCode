@@ -6,12 +6,29 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.env.*
 import std.fs.*
+import std.sync.*
 
 // 帧：NDJSON，一行一条 JSON-RPC 2.0 报文（读侧用 readln，写侧补 LF）。
 // stdout 只走协议帧，诊断走 stderr。只用已证实的 API：String.split / toArray() /
 // Array.size / String.fromUtf8 / ArrayList，不用 String.find 与切片。
+//
+// turn 线程也要发帧（模型侧审批通知）：stdout 的写必须互斥，否则主循环的
+// 应答帧与通知帧会交错成半行，把协议撕开。锁只圈「一行写完整」。
+let emitMtx = Mutex()
+
 func emit(body: String) {
-    getStdOut().write((body + String.fromUtf8(Array<Byte>(1, { _ => 10 }))).toArray())
+    emitMtx.lock()
+    try {
+        getStdOut().write((body + String.fromUtf8(Array<Byte>(1, { _ => 10 }))).toArray())
+    } finally {
+        emitMtx.unlock()
+    }
+}
+
+// 通知帧（无 id）：宿主主动推给调用方的事件，不应答、不占请求号。
+// 模型侧发起的一次性审批工单走这条——读侧（桌面/测试桥）按无 id 分拣。
+func notifyFrame(method: String, params: String): String {
+    return "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":${params}}"
 }
 
 func errFrame(id: String, code: Int64, message: String): String {
@@ -297,6 +314,16 @@ func loadForWrite(log: SessionLog, meter: TokenMeter): Bool {
     }
     meter.rebuild()
     return true
+}
+
+// 日志里有没有系统提示：只认 system/message 事件本身，不猜、不留第二真源。
+// 有就复用盘上那条（同一会话后续轮次），没有才补——补多条只会让请求里
+// 堆一串重复的 system 消息。
+func hasSystemMessage(log: SessionLog): Bool {
+    for (ev in log.snapshotEvents()) {
+        if (ev.eventType == "system/message") { return true }
+    }
+    return false
 }
 
 func boolText(value: Bool): String {
@@ -588,6 +615,7 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
 func globalAppearanceRequest(method: String, body: String, idText: String): Unit {
     var theme = ""
     var size: Int64 = -1
+    var busySend = ""
     try {
         let request = JsonValue.fromStr(body).asObject()
         if (let Some(value) <- request.get("method")) {
@@ -599,6 +627,9 @@ func globalAppearanceRequest(method: String, body: String, idText: String): Unit
                 if (method == "global/appearance/set-theme") {
                     if (let Some(field) <- params.get("theme")) { theme = field.asString().getValue() }
                     if (!SessionAppearance.validTheme(theme)) { throw Exception("bad-theme") }
+                } else if (method == "global/appearance/set-busy-send") {
+                    if (let Some(field) <- params.get("busySend")) { busySend = field.asString().getValue() }
+                    if (!GlobalAppearanceSettings.validBusySend(busySend)) { throw Exception("bad-busy-send") }
                 } else {
                     if (let Some(field) <- params.get("fontSize")) { size = field.asInt().getValue() }
                     if (!GlobalAppearanceSettings.validFontSize(size)) { throw Exception("bad-font-size") }
@@ -615,12 +646,13 @@ func globalAppearanceRequest(method: String, body: String, idText: String): Unit
         var changed = false
         if (method == "global/appearance/set-theme") { changed = settings.setTheme(theme) }
         if (method == "global/appearance/set-font-size") { changed = settings.setFontSize(size) }
+        if (method == "global/appearance/set-busy-send") { changed = settings.setBusySend(busySend) }
         let snapshot = settings.read()
         let writeResult = if (method == "global/appearance/get") { "" } else {
             let flag = if (changed) { "true" } else { "false" }
             ",\"saved\":true,\"changed\":${flag}"
         }
-        emit(okFrame(idText, "{\"theme\":\"${snapshot.theme}\",\"fontSize\":${snapshot.fontSize},\"scope\":\"user\"${writeResult}}"))
+        emit(okFrame(idText, "{\"theme\":\"${snapshot.theme}\",\"fontSize\":${snapshot.fontSize},\"busySend\":\"${snapshot.busySend}\",\"scope\":\"user\"${writeResult}}"))
     } catch (e: Exception) {
         let code: Int64 = if (e.message == "settings-already-owned") { -32001 } else { -32003 }
         emit(errFrame(idText, code, e.message))
@@ -686,7 +718,8 @@ main(args: Array<String>) {
     var enhanceHandle: Option<EnhanceHandle> = None
     var enhanceModel = ""
     // 同一笔用量只能进账一次；租约取不到时保持 false，让下一次轮询补记。
-    var enhanceBilled = false
+    var enhanceCharge: Option<EnhanceCharge> = None
+    let enhanceCharges = ArrayList<EnhanceCharge>()
     while (true) {
         var body = ""
         var eof = false
@@ -712,6 +745,11 @@ main(args: Array<String>) {
             emit(errFrame("null", -32700, "parse error"))
             continue
         }
+        var chargeIndex = Int64(enhanceCharges.size) - 1
+        while (chargeIndex >= 0) {
+            if (enhanceCharges[chargeIndex].settle()) { enhanceCharges.remove(at: chargeIndex) }
+            chargeIndex -= 1
+        }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
         if (method == "model/get" || method == "model/configure" || method == "model/use-key") {
@@ -731,10 +769,10 @@ main(args: Array<String>) {
                     modelKeyRef = reference; modelKey = key
                     emit(okFrame(idText, "{\"loaded\":true}")); continue
                 }
-                let url = if (saved.baseUrl.size > 0) { saved.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
-                let name = if (saved.model.size > 0) { saved.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "" }
+                let url = if (saved.baseUrl.size > 0) { saved.baseUrl } else { getVariable("SACODE_PROVIDER_BASE_URL") ?? "" }
+                let name = if (saved.model.size > 0) { saved.model } else { getVariable("SACODE_PROVIDER_MODEL") ?? "" }
                 let environment = saved.baseUrl.size == 0
-                let environmentKey = (getVariable("DSH_PROVIDER_KEY") ?? "").size > 0 || (getVariable("STEPFUN_API_KEY") ?? "").size > 0
+                let environmentKey = (getVariable("SACODE_PROVIDER_KEY") ?? "").size > 0 || (getVariable("STEPFUN_API_KEY") ?? "").size > 0
                 let readyKey = (environment && environmentKey) || (modelKeyRef == saved.credentialRef && modelKey.size > 0)
                 emit(okFrame(idText, "{\"baseUrl\":\"${jsonEscapeText(url)}\",\"model\":\"${jsonEscapeText(name)}\",\"credentialRef\":\"${jsonEscapeText(saved.credentialRef)}\",\"environment\":${environment},\"keyLoaded\":${readyKey}}"))
             } catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
@@ -747,7 +785,7 @@ main(args: Array<String>) {
             providerSurfaceRequest(method, body, idText)
             continue
         }
-        if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size") {
+        if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size" || method == "global/appearance/set-busy-send") {
             globalAppearanceRequest(method, body, idText)
             continue
         }
@@ -769,7 +807,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
@@ -1121,6 +1159,17 @@ main(args: Array<String>) {
             continue
         }
         if (method == "queue/enqueue") {
+            var accelerated = false
+            var sendMode = "queue"
+            try {
+                let params = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                if (let Some(value) <- params.get("accelerated")) { accelerated = value.asBool().getValue() }
+                let preference = GlobalAppearanceSettings.forUser().read().busySend
+                sendMode = GlobalAppearanceSettings.sendMode(preference, turnBusy, accelerated)
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32602, "bad-send-policy"))
+                continue
+            }
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
@@ -1167,7 +1216,8 @@ main(args: Array<String>) {
             }
             if (enqueueFailure.size == 0) {
                 try {
-                    inbox.queue(newId, text, rpcId, attachments: boundRefs)
+                    if (sendMode == "steer") { inbox.step(newId, text, rpcId, attachments: boundRefs) }
+                    else { inbox.queue(newId, text, rpcId, attachments: boundRefs) }
                 } catch (e: Exception) {
                     enqueueFailure = if (e.message == "inbox-empty-text") { "queue-edit-blank" } else { e.message }
                 }
@@ -1181,7 +1231,7 @@ main(args: Array<String>) {
                 // 入队即消费：凭证换成条目上的引用，同一个凭证第二次使用没有通路
                 attReceipts.remove(rid)
             }
-            emit(okFrame(idText, "{\"accepted\":true,\"deduped\":false,\"id\":\"${newId}\"}"))
+            emit(okFrame(idText, "{\"accepted\":true,\"deduped\":false,\"id\":\"${newId}\",\"mode\":\"${sendMode}\"}"))
             continue
         }
         if (method == "queue/update") {
@@ -1305,15 +1355,15 @@ main(args: Array<String>) {
                 emit(errFrame(idText, -32016, "protocol-not-supported:${planProtocol}"))
                 continue
             }
-            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
-            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
+            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("SACODE_PROVIDER_BASE_URL") ?? "" }
+            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("SACODE_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
             var key = ""
             if (fromRegistry) {
                 key = resolveCredentialKey(planRef)
             } else if (configured.credentialRef.size > 0) {
                 if (modelKeyRef == configured.credentialRef && modelKey.size > 0) { key = modelKey } else { key = resolveCredentialKey(configured.credentialRef) }
             } else {
-                key = getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
+                key = getVariable("SACODE_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
             }
             if (method == "task/start" && baseUrl.size == 0) { emit(errFrame(idText, -32016, "model-not-configured")); continue }
             if (method == "task/start" && key.size == 0 && !baseUrl.startsWith("http://127.0.0.1:") && !baseUrl.startsWith("http://localhost:")) {
@@ -1347,6 +1397,45 @@ main(args: Array<String>) {
                 emit(errFrame(idText, -32014, "over-budget"))
                 continue
             }
+            // 起轮共用的身份先建：模型侧审批回调要在 turn 线程里判「这一轮还在不在」。
+            let tk = TurnToken()
+            // 模型工具面：todo_write + read + write 同一个 ModelToolRuntime——请求里的
+            // tools、系统提示里的工具清单、执行时的注册表三者同源，与人调的 extension/*
+            // 收敛到同一套实现（agent.cj 的 read/write 管线 + TodoTool）。不传 toolRuntime
+            // 会落到 files=false 的默认分支只登记 todo_write，真实模型于是只调得动一个工具。
+            var modelTools: ?ModelToolRuntime = None
+            if (baseUrl.size > 0) {
+                // 冻结再闭包：仓颉不允许捕获可变变量的 Lambda 被间接调用（同下面的 turnKey）。
+                let modelDesk = approvalDesk
+                // 模型侧审批与人类调用同一条工单制度：desk 发号、一次性消费、asked/decided
+                // 都进同一份日志。发起方在 turn 线程，所以发号后先把工单通知推给调用方，
+                // 再在本线程等到决答——等待期间主循环照常读 stdin，cancel 追得上。
+                let modelApproval: (ModelToolCall) -> Int64 = { call =>
+                    let aid = modelDesk.ask(call.name)
+                    emit(notifyFrame("approval/asked",
+                        "{\"approvalId\":${aid},\"tool\":\"${jsonEscapeText(call.name)}\",\"source\":\"model\"}"))
+                    // 等到决答/过期/取消：过期由真实单调钟决定（默认 30s），
+                    // 不给「永远等下去」留位置；取消则立刻放弃，票留着由人处置。
+                    var spins: Int64 = 0
+                    while (spins < 1200) {
+                        if (tk.cancelled()) { break }
+                        if (modelDesk.stateOf(aid) != "pending") { break }
+                        sleep(25 * Duration.millisecond)
+                        spins += 1
+                    }
+                    aid
+                }
+                modelTools = Some(ModelToolRuntime(shared, false, files: true, desk: modelDesk, approval: modelApproval))
+            }
+            // 系统提示必须落日志再进请求：modelRequestJson 只从会话日志重建 messages，
+            // 内存里拼一条不发进日志，模型永远收不到（「Model-visible means logged」）。
+            // 只补一次：同一会话后续轮次复用盘上那条（工具集不变，内容也不变）。
+            // 诊断 turn/start 不走这里——它的请求形状由本地夹具按位置钉死。
+            if (method == "task/start" && baseUrl.size > 0 && !hasSystemMessage(shared)) {
+                if (let Some(mt) <- modelTools) {
+                    shared.append("system/message", SystemPromptBuilder(mt.registry).build())
+                }
+            }
             // 轮次边界：从队列里摘恰好一条（上游 core.md:275「one next-turn message at a turn
             // boundary」），送达本身是另一件事——它作为独立的 user/message 落进日志，
             // 队列事件不进模型可见历史，两条账互不冒充。
@@ -1363,7 +1452,6 @@ main(args: Array<String>) {
             }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
-            let tk = TurnToken()
             turnEpoch += 1
             // 产品 task/start 必须有真实配置；示例 provider 只保留给诊断 turn/start。
             var providerKind = "fake"
@@ -1374,12 +1462,16 @@ main(args: Array<String>) {
                 let turnAtt = AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
                 try {
                     let imageCapability = planImages
-                    let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: [TodoTool(shared, false).spec()], attachStore: turnAtt, supportsImages: imageCapability)
+                    // 请求里的 tools 与执行器同源：就是 ModelToolRuntime 的注册表
+                    // （todo_write + read + write）。此前这里只写死 TodoTool 一个 spec，
+                    // 模型看不到 read/write，调用也会被「未登记」拒。
+                    let toolSpecs = modelTools.getOrThrow().specs()
+                    let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability)
                     // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
                     let turnKey = key
                     let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)
                     let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }
-                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: imageCapability))
+                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: imageCapability, toolRuntime: modelTools))
                     providerKind = "real"
                 } catch (e: Exception) {
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，
@@ -1508,15 +1600,15 @@ main(args: Array<String>) {
             if (fromRegistry && planProtocol != "openai-completions") {
                 emit(errFrame(idText, -32016, "protocol-not-supported:${planProtocol}")); continue
             }
-            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("DSH_PROVIDER_BASE_URL") ?? "" }
-            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
+            let baseUrl = if (fromRegistry) { planBaseUrl } else if (configured.baseUrl.size > 0) { configured.baseUrl } else { getVariable("SACODE_PROVIDER_BASE_URL") ?? "" }
+            let model = if (fromRegistry) { planModel } else if (configured.model.size > 0) { configured.model } else { getVariable("SACODE_PROVIDER_MODEL") ?? "gpt-3.5-turbo" }
             var key = ""
             if (fromRegistry) {
                 key = resolveCredentialKey(planRef)
             } else if (configured.credentialRef.size > 0) {
                 if (modelKeyRef == configured.credentialRef && modelKey.size > 0) { key = modelKey } else { key = resolveCredentialKey(configured.credentialRef) }
             } else {
-                key = getVariable("DSH_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
+                key = getVariable("SACODE_PROVIDER_KEY") ?? getVariable("STEPFUN_API_KEY") ?? ""
             }
             // 没配就是没配：宁可报错，也不悄悄换一颗模型顶上——用户看到的写法
             // 来自哪一家，界面永远分辨不出来，所以这里不能替他猜。
@@ -1536,7 +1628,10 @@ main(args: Array<String>) {
             let factory: () -> Provider = { => RealSseProvider(baseUrl, enhanceKey, request, tk) }
             enhanceHandle = Some(EnhanceRunner().start(factory, tk))
             enhanceModel = model
-            enhanceBilled = false
+            if (let Some(h) <- enhanceHandle) {
+                let charge = EnhanceCharge(h, shared, meter, lease)
+                enhanceCharge = Some(charge); enhanceCharges.add(charge)
+            }
             emit(okFrame(idText, "{\"started\":true,\"model\":\"${jsonEscapeText(model)}\"}"))
             continue
         }
@@ -1558,24 +1653,7 @@ main(args: Array<String>) {
                     // 增强花的 token 和轮次花的是同一份预算，所以记在同一本账上；
                     // 但轮询是幂等读，同一笔只能进账一次。
                     var verdict = "absent"
-                    if (enhanceBilled) {
-                        verdict = meter.verdict()
-                    } else if (o.usage.size > 0 || o.finishReason.size > 0) {
-                        var held = leaseHeld
-                        if (!held) {
-                            // 账本归租约持有者写：抢不到就这一笔先不记，留给下一次轮询补，
-                            // 绝不另开一份内存计数冒充账。
-                            if (lease.takeoverIfStale()) {
-                                if (loadForWrite(shared, meter)) { held = true; leaseHeld = true } else { lease.release() }
-                            }
-                        }
-                        if (held) {
-                            verdict = meter.record(o.usage)
-                            enhanceBilled = true
-                        } else {
-                            verdict = "lease-busy"
-                        }
-                    }
+                    if (let Some(charge) <- enhanceCharge) { charge.settle(); verdict = charge.verdict }
                     let oFlag = if (meter.over()) { "true" } else { "false" }
                     tail = ",\"model\":\"${jsonEscapeText(enhanceModel)}\",\"ok\":${okText},\"cancelled\":${cancelText},\"error\":\"${jsonEscapeText(o.error)}\",\"text\":\"${jsonEscapeText(o.text)}\",\"usage\":\"${jsonEscapeText(o.usage)}\",\"finishReason\":\"${jsonEscapeText(o.finishReason)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                 }
@@ -1653,7 +1731,7 @@ main(args: Array<String>) {
             }
             enhanceHandle = None
             enhanceModel = ""
-            enhanceBilled = false
+            enhanceCharge = None
             let wanted = jsonStr(body, "sessionId")
             // 未完成审批与扩展调用仍归原会话；必须由用户先结算，不能默默丢掉。
             if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
@@ -1937,6 +2015,10 @@ main(args: Array<String>) {
             continue
         }
         emit(errFrame(idText, -32601, "method not found"))
+    }
+    for (charge in enhanceCharges) {
+        charge.handle.cancel(); charge.handle.result()
+        if (!charge.settle()) { getStdErr().writeln("host-exit-enhance-usage: ${charge.verdict}") }
     }
     // stdin 关闭时若仍有在途 turn：先取消再 join，绝不留一个「没人回答的在途请求」，
     // 且必须在线程收束之后才落盘与归还租约。

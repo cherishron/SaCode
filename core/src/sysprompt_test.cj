@@ -3,7 +3,7 @@ package core
 import std.unittest.*
 
 // 系统提示的组装：此前 `apps/cli/src/main.cj` 把系统提示硬编成一条
-// `system/message "you are dsh"`，没有从 ToolRegistry 这份真源读出工具清单——
+// `system/message "you are SaCode"`，没有从 ToolRegistry 这份真源读出工具清单——
 // 工具增减时系统提示不会跟着变，模型看到的工具集和核心实际登记的不一致。
 // 这几条用例把「组装」钉死：SystemPromptBuilder 从注册表读工具名与描述，
 // 增减工具时提示自动跟着变。
@@ -38,8 +38,8 @@ func systemPromptStartsWithRoleThenTools() {
     let reg = ToolRegistry()
     reg.register(ToolSpec("write", "写文件", "path content", true))
     let prompt = SystemPromptBuilder(reg).build()
-    // 角色定义 "you are dsh" 必须出现，且工具 "write" 出现在它之后
-    let parts = prompt.split("you are dsh")
+    // 角色定义 "you are SaCode" 必须出现，且工具 "write" 出现在它之后
+    let parts = prompt.split("you are SaCode")
     @Expect(parts.size >= Int64(2), true)
     @Expect(prompt.contains("write"), true)
 }
@@ -54,7 +54,7 @@ func systemPromptInjectsActiveGoalAndEvidenceRule() {
     let reg = ToolRegistry()
     let g = GoalSnapshot("goal-1", Int64(1), "active", "把 49 个模块复刻到底", "")
     let prompt = SystemPromptBuilder(reg).build(goal: g, rounds: Int64(3), elapsed: Int64(42))
-    @Expect(prompt.contains("you are dsh"), true)
+    @Expect(prompt.contains("you are SaCode"), true)
     @Expect(prompt.contains("当前目标"), true)
     @Expect(prompt.contains("把 49 个模块复刻到底"), true)
     @Expect(prompt.contains("实际证据"), true)

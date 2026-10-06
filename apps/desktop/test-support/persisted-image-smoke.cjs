@@ -12,10 +12,10 @@ const root=mkdtempSync(join(process.env.SACODE_IMAGE_SMOKE_ROOT||tmpdir(),'sacod
 app.setPath('userData',join(root,'electron'));
 let bridge,window;
 app.whenReady().then(async()=>{
- bridge=new HostBridge(process.env.DSH_HOST,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});await bridge.start(root);
+ bridge=new HostBridge(process.env.SACODE_HOST,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});await bridge.start(root);
  const uploaded=await bridge.request('attachment/upload',{kind:'image',name:'可解码图片.png',mediaType:'image/png',data:png.toString('base64')});
  await bridge.request('queue/enqueue',{text:'图片',rpcId:'image-electron',receiptIds:[uploaded.receiptId]});
- ipcMain.handle('dsh:attachmentImageRead',(_event,args)=>bridge.request('attachment/image-read',args));
+ ipcMain.handle('sacode:attachmentImageRead',(_event,args)=>bridge.request('attachment/image-read',args));
  const renderer=join(__dirname,'..','renderer');
  for(const file of ['vue.runtime.global.prod.js','composer-attachments.iife.js'])copyFileSync(join(renderer,'vendor',file),join(root,file));
  copyFileSync(join(renderer,'composer-attachments.css'),join(root,'images.css'));

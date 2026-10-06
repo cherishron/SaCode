@@ -90,15 +90,15 @@ async function uiSmoke(context) {
   // 暴露面只登记一份：列表、长度、额外键三处以前各写各的，加一条通道就得记得改三遍
   // （实测加完四个键后长度那处还写着旧数字，直接把自己判红）。
   const PRELOAD_API = ['projection','userSend','attachmentUpload','attachmentImageRead','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','appearanceSetTheme','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','sessionCatalog','sessionCreate','sessionSelect','workspaceGet','workspaceChoose','modelsDescribe','modelsCatalog','modelsSave','modelsRemove','modelsSetDefault','modelsList','customsDescribe','customsUpsert','customsRemove','bindingUpsert','bindingRemove','bindingReorder','modelPull','modelUpstreamUpsert','customImportNew','customImportInto','goalDescribe','goalCreate','goalEdit','goalPause','goalResume','goalClear'];
-  const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.dsh||{})[k]).join(',')`);
+  const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.sacode||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
-  const apiExtra = await js(`Object.keys(window.dsh||{}).filter(k => ${JSON.stringify(PRELOAD_API)}.indexOf(k) < 0).join(',')`);
+  const apiExtra = await js(`Object.keys(window.sacode||{}).filter(k => ${JSON.stringify(PRELOAD_API)}.indexOf(k) < 0).join(',')`);
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
   // 附件入口必须是真的：字节交给宿主落盘，界面只拿得到凭证与引用，移除要真撤下卡片。
   await js(`const dt=new DataTransfer();dt.items.add(new File([Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,2,0,0,0,1,8,6,0,0,0,0,0,0,0])],'真图.png',{type:'image/png'}));const inp=document.querySelector('.attachments-picker input[type="file"]');inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))`);
   await waitFor(() => js(`(()=>{const c=document.querySelector('[data-attachment-id]');return !!c&&c.dataset.uploadStatus!=='uploading'})()`));
-  const attProbe = await js(`Promise.race([window.dsh.attachmentUpload('file','探针.txt','','YWJj').then(v=>'ok:'+v.receiptId).catch(e=>'err:'+String(e.message||e)),new Promise(r=>setTimeout(()=>r('IPC 无回执'),4000))])`);
+  const attProbe = await js(`Promise.race([window.sacode.attachmentUpload('file','探针.txt','','YWJj').then(v=>'ok:'+v.receiptId).catch(e=>'err:'+String(e.message||e)),new Promise(r=>setTimeout(()=>r('IPC 无回执'),4000))])`);
   const attState = await js(`(()=>{const card=document.querySelector('[data-attachment-id]');return {status:card?card.dataset.uploadStatus:'无卡片',notice:(document.getElementById('error')||{}).textContent||''}})()`);
   note(attState.status === "ready", `附件经宿主落盘后显示为就绪（实际 ${JSON.stringify({ ...attState, attProbe })}）`);
   note(await js(`document.querySelectorAll('[data-attachment-id]').length`) === 1, '一次选择只生成一张附件卡片');
@@ -107,12 +107,12 @@ async function uiSmoke(context) {
 
   // 排队这条 IPC 也要能把凭证交出去：真 preload → 主进程逐字段校验 → 仓颉宿主 → 会话日志。
   // 回合中发的图此前会被静默丢掉（enqueueDraft 从不读 attachments），这里用真实通道钉住。
-  await js(`window.dsh.attachmentUpload('file','排队探针.txt','','YWJj').then(v=>{window.__qReceipt=v.receiptId})`);
+  await js(`window.sacode.attachmentUpload('file','排队探针.txt','','YWJj').then(v=>{window.__qReceipt=v.receiptId})`);
   await waitFor(() => js(`!!window.__qReceipt`));
-  const qReject = await js(`window.dsh.queueEnqueue('自报凭证的排队','rpc-bad',['r-foreign-0000']).then(()=>'accepted').catch(e=>'err:'+String(e.message||e))`);
+  const qReject = await js(`window.sacode.queueEnqueue('自报凭证的排队','rpc-bad',['r-foreign-0000']).then(()=>'accepted').catch(e=>'err:'+String(e.message||e))`);
   note(qReject.indexOf('bad arguments') >= 0 && qReject.indexOf('err:') === 0,
     `外来凭证在 preload/主进程这层就被挡掉（实际「${qReject}」）`);
-  const qAccept = await js(`window.dsh.queueEnqueue('带一张图的排队','rpc-att',[window.__qReceipt]).then(v=>'ok:'+v.accepted).catch(e=>'err:'+String(e.message||e))`);
+  const qAccept = await js(`window.sacode.queueEnqueue('带一张图的排队','rpc-att',[window.__qReceipt]).then(v=>'ok:'+v.accepted).catch(e=>'err:'+String(e.message||e))`);
   note(qAccept === 'ok:true', `宿主发放的凭证随排队条目一起被接受（实际「${qAccept}」）`);
   // append 只在宿主实例内可见，flush 才跨进程：读盘前要先让核心落一次
   await bridge.request('session/flush');
@@ -206,13 +206,13 @@ async function uiSmoke(context) {
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='15' && getComputedStyle(document.querySelector('#composer')).fontSize==='15px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='25px'")), "字号控件保存后正文与输入区共用字号轴");
   note((await bridge.request('global/appearance/get')).fontSize===15 && !require('node:fs').readFileSync(SESSION_LOG,'utf8').includes('settings/font-size'), "字号保存在独立全局配置，不写会话日志");
   for(const size of [22,10,14]) {
-    await js(`window.dsh.globalAppearanceSetFontSize(${size})`);win.reload();
+    await js(`window.sacode.globalAppearanceSetFontSize(${size})`);win.reload();
     note(await waitFor(()=>js(`document.querySelector('#font-value').textContent==='${size}' && getComputedStyle(document.querySelector('#composer')).fontSize==='${size}px'`)), `重载从核心恢复全局字号=${size}`);
     await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
     await waitFor(()=>js("!!document.querySelector('.settings-dialog[open]')"));
     if(size!==14) note(await js(`document.querySelector('#font-${size===22?'increase':'decrease'}').disabled`), `字号边界禁用越界按钮=${size}`);
   }
-  note(await js("window.dsh.globalAppearanceSetFontSize(14.5).then(()=>false,e=>String(e.message).includes('bad-font-size'))"), "IPC 拒绝非法字号而不交给渲染层伪造配置");
+  note(await js("window.sacode.globalAppearanceSetFontSize(14.5).then(()=>false,e=>String(e.message).includes('bad-font-size'))"), "IPC 拒绝非法字号而不交给渲染层伪造配置");
   const fontLease=join(SESSION_DIR,'user-settings','user-settings.log.lease');
   require('node:fs').writeFileSync(fontLease,`writer=${process.pid}-ui-font-test`);
   try {
@@ -221,28 +221,28 @@ async function uiSmoke(context) {
     await click('#font-increase');
     note(await waitFor(()=>js("document.querySelector('#font-note').textContent.includes('另一入口') && document.querySelector('#font-value').textContent==='14' && getComputedStyle(document.querySelector('#composer')).fontSize==='14px'")), "字号保存被拒时保留核心读数和原排版");
   } finally {require('node:fs').unlinkSync(fontLease);}
-  note(await js("window.dsh.globalAppearanceSetTheme('blue').then(()=>false,e=>String(e.message).includes('bad-theme'))") && nativeTheme.themeSource==='system', "非法主题被 IPC 拒绝且窗口主题不变");
+  note(await js("window.sacode.globalAppearanceSetTheme('blue').then(()=>false,e=>String(e.message).includes('bad-theme'))") && nativeTheme.themeSource==='system', "非法主题被 IPC 拒绝且窗口主题不变");
   await bridge.request('global/appearance/set-theme',{theme:'dark'});
   await click('#font-increase');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='15' && document.querySelector('#theme-dark').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='dark', "字号保存返回的完整用户快照同步另一入口修改的主题");
-  await js("window.dsh.globalAppearanceSetFontSize(14)");
+  await js("window.sacode.globalAppearanceSetFontSize(14)");
   await click('#theme-system');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14' && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "主题保存保持另一字段字号并恢复系统主题");
-  await click('#settings-tab-models');
-  note(!(await text('#settings-page-models')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并由宿主交出读写面");
-  await js("document.querySelector('#settings-tab-models').focus()");
+  await click('#settings-tab-model-center');
+  note(!(await text('#settings-page-model-center')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并由宿主交出读写面");
+  await js("document.querySelector('#settings-tab-model-center').focus()");
   const settingsFrameBefore=await js("(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:r.width,height:r.height};})()");
   await chord('Down',[]);
   const settingsKeyReady=await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden"));
   note(settingsKeyReady, "设置分类支持键盘切换与焦点同步" + (settingsKeyReady?'':await js("JSON.stringify({focus:document.activeElement.id,selected:document.querySelector('.settings-tab[aria-selected=true]').id,hidden:document.querySelector('#settings-page-plugins').hidden})")));
   note(await js(`(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return Math.abs(r.width-${settingsFrameBefore.width})<1 && Math.abs(r.height-${settingsFrameBefore.height})<1;})()`), "设置分类切换不会改变面板尺寸");
   await chord('Up',[]);
-  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-models' && !document.querySelector('#settings-page-models').hidden")), "纵向分类向上切换同步内容");
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-model-center' && !document.querySelector('#settings-page-model-center').hidden")), "纵向分类向上切换同步内容");
   await chord('Home',[]);
   note(await waitFor(()=>js("document.activeElement.id==='settings-tab-general' && !document.querySelector('#settings-page-general').hidden")), "分类 Home 返回通用页");
   await chord('End',[]);
   note(await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden")), "分类 End 进入最后一页");
-  note(await js("(async()=>{const r=await window.dsh.toolsList();const rows=[...document.querySelectorAll('.settings-tool')];return rows.length===r.tools.length && r.tools.every(t=>rows.some(e=>e.dataset.toolName===t.name && e.textContent.includes(t.description)));})()"), "设置工具清单逐项对应核心响应");
+  note(await js("(async()=>{const r=await window.sacode.toolsList();const rows=[...document.querySelectorAll('.settings-tool')];return rows.length===r.tools.length && r.tools.every(t=>rows.some(e=>e.dataset.toolName===t.name && e.textContent.includes(t.description)));})()"), "设置工具清单逐项对应核心响应");
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='open-settings'"), "关闭设置后焦点返回导航按钮");
 
@@ -687,7 +687,7 @@ async function uiSmoke(context) {
   note(await waitFor(()=>js("document.querySelector('#theme-dark').getAttribute('aria-pressed')==='true' && !document.querySelector('#theme-dark').disabled")) && nativeTheme.themeSource==='dark', "切换会话前保存用户级深色主题");
   await js("document.querySelector('.settings-dialog .dialog-header button').click()");
   await bridge.request('appearance/set-theme',{theme:'light'});
-  note((await js("window.dsh.appearanceGet()")).theme==='light' && nativeTheme.themeSource==='dark', "旧会话主题可读取且不会覆盖全局窗口主题");
+  note((await js("window.sacode.appearanceGet()")).theme==='light' && nativeTheme.themeSource==='dark', "旧会话主题可读取且不会覆盖全局窗口主题");
   const oldTheme=nativeTheme.themeSource;
   const catalogRequestBefore=bridge.request.bind(bridge);
   let catalogSnapshotCaptured=false, catalogSnapshotReleased=false, delayCatalogSnapshot=true;
@@ -813,6 +813,18 @@ async function uiSmoke(context) {
     note(await js("document.querySelector('#composer-enhance').dataset.state==='ready'"), "改动增强后的文本，图标立即恢复为增强");
     note(await enhHijack() === false, "继续编辑后 Ctrl+Z 交回输入框自身的撤销顺序，应用不劫持");
 
+    // 实际编辑与原生键盘必须验结果；合成 keydown 的 defaultPrevented 不证明撤销栈。
+    await setDraftForSize(enhDraft);
+    await click("#composer-enhance");
+    await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='undo'"));
+    await js("(()=>{const n=document.querySelector('#composer');n.focus();n.setSelectionRange(n.value.length,n.value.length);})()");
+    await win.webContents.insertText("用户补充");
+    note(await waitFor(()=>enhValue().then(v=>v===enhEcho+"用户补充")), "增强之后真实输入保留新编辑");
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Z',modifiers:['control']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Z',modifiers:['control']});
+    note(await waitFor(()=>enhValue().then(v=>v===enhEcho)), "真实 Ctrl+Z 首先撤销用户补充，不跳回原文");
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Z',modifiers:['control']});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Z',modifiers:['control']});
+    note(await waitFor(()=>enhValue().then(v=>v===enhDraft)), "第二次真实 Ctrl+Z 才撤销增强替换");
+
     // 迟到的结果不得覆盖：请求途中改草稿（哪怕改回同一行），返回后也必须作废
     await enhConfigure("/cancel");
     await setDraftForSize("这一条要被取消");
@@ -836,6 +848,24 @@ async function uiSmoke(context) {
     // 上一笔走的是「加载态再点一次即取消」：取消只是发请求，宿主那一槽要等它自己结算才腾出来。
     // 不等就立刻再发，撞上的 -32001 会被读成「图标没进加载态」——那是夹具时序红，不是产品红。
     note(await waitFor(() => bridge.request("prompt/poll").then((r) => r.running === false), 80), "取消结算后宿主槽位已腾出，才发下一笔");
+    // 失败路径也得在真窗口里走一遍：连不上不该吃掉草稿，也不该把图标钉在加载态。
+    await bridge.request("model/configure", { baseUrl: "http://127.0.0.1:1/enhance", model: "fixture-model", credentialRef: "SACODEENHKEY" });
+    await setDraftForSize("连不上也要留着的一条");
+    await click("#composer-enhance");
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'"), 200), "模型连不上时图标退回增强态，允许再试");
+    const failNotice = await text("#error");
+    note(await enhValue() === "连不上也要留着的一条", `失败保留草稿（界面提示 ${JSON.stringify(failNotice)}）`);
+    note(failNotice.length > 0 && !failNotice.includes("http-"), `失败给出人话提示而不是裸协议串（实际 ${JSON.stringify(failNotice)}）`);
+    // 连不上是一类，模型回非 200 是另一类（密钥填错最常落到 401）：两种都不许把状态码甩给用户。
+    await enhConfigure("/401");
+    await setDraftForSize("被拒也要留着的一条");
+    await click("#composer-enhance");
+    note(await waitFor(() => js("document.querySelector('#composer-enhance').dataset.state==='ready'"), 200), "模型返回 401 时图标退回增强态，允许再试");
+    const statusNotice = await text("#error");
+    note(await enhValue() === "被拒也要留着的一条", `401 保留草稿（界面提示 ${JSON.stringify(statusNotice)}）`);
+    note(statusNotice.length > 0 && !statusNotice.includes("http-status"), `401 给出人话提示而不是状态码（实际 ${JSON.stringify(statusNotice)}）`);
+    await enhConfigure("/enhance");
+    await js("(() => { const e=document.getElementById('error'); if (e) e.textContent=''; })()");
     // 换会话也要作废在途那一笔（目标 §四「切换会话…废弃对应的迟到结果」）。
     // 三条各钉一个失效面：迟到结果不许落进别的会话草稿、图标不许卡在加载态、宿主那一槽必须腾出来。
     await enhConfigure("/cancel");

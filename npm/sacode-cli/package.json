@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "SaCode：基于仓颉共享核心的独立 AI 编程 CLI",
   "license": "MulanPSL-2.0",
-  "bin": { "dsh": "bin/cli.js" },
+  "bin": { "sacode": "bin/cli.js" },
   "files": ["bin/cli.js"],
   "optionalDependencies": {
     "@stand-alone/sacode-win32-x64": "0.1.0"

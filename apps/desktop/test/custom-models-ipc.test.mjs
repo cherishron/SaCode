@@ -39,24 +39,24 @@ test('自定义模型 preload 十个通道逐动作逐字段，且无任意方�
   await api.customImportNew(['step/m-a'], 7);
   await api.customImportInto('code', ['step/m-c'], 8);
 
-  assert.equal(calls[0][0], 'dsh:customsDescribe'); assert.equal(calls[0].length, 1);
-  assert.equal(calls[1][0], 'dsh:customsUpsert');
+  assert.equal(calls[0][0], 'sacode:customsDescribe'); assert.equal(calls[0].length, 1);
+  assert.equal(calls[1][0], 'sacode:customsUpsert');
   assert.equal(JSON.stringify(calls[1][1]), JSON.stringify({ draft, expectedRevision: 0 }));
-  assert.equal(calls[2][0], 'dsh:customsRemove');
+  assert.equal(calls[2][0], 'sacode:customsRemove');
   assert.equal(JSON.stringify(calls[2][1]), '{"customId":"code","expectedRevision":1}');
-  assert.equal(calls[3][0], 'dsh:bindingUpsert');
+  assert.equal(calls[3][0], 'sacode:bindingUpsert');
   assert.equal(JSON.stringify(calls[3][1]), JSON.stringify({ customId: 'code', binding, expectedRevision: 2 }));
-  assert.equal(calls[4][0], 'dsh:bindingRemove');
+  assert.equal(calls[4][0], 'sacode:bindingRemove');
   assert.equal(JSON.stringify(calls[4][1]), '{"customId":"code","providerId":"step","modelId":"m-a","expectedRevision":3}');
-  assert.equal(calls[5][0], 'dsh:bindingReorder');
+  assert.equal(calls[5][0], 'sacode:bindingReorder');
   assert.equal(JSON.stringify(calls[5][1]), JSON.stringify({ customId: 'code', keys: ['step/m-a'], expectedRevision: 4 }));
-  assert.equal(calls[6][0], 'dsh:modelPull');
+  assert.equal(calls[6][0], 'sacode:modelPull');
   assert.equal(JSON.stringify(calls[6][1]), '{"providerId":"step","expectedRevision":5}');
-  assert.equal(calls[7][0], 'dsh:modelUpstreamUpsert');
+  assert.equal(calls[7][0], 'sacode:modelUpstreamUpsert');
   assert.equal(JSON.stringify(calls[7][1]), '{"providerId":"step","modelId":"m-b","expectedRevision":6}');
-  assert.equal(calls[8][0], 'dsh:customImportNew');
+  assert.equal(calls[8][0], 'sacode:customImportNew');
   assert.equal(JSON.stringify(calls[8][1]), JSON.stringify({ items: ['step/m-a'], expectedRevision: 7 }));
-  assert.equal(calls[9][0], 'dsh:customImportInto');
+  assert.equal(calls[9][0], 'sacode:customImportInto');
   assert.equal(JSON.stringify(calls[9][1]), JSON.stringify({ customId: 'code', items: ['step/m-c'], expectedRevision: 8 }));
   // 没有兜底的通用请求通道：否则这份有限集合等于不存在
   assert.equal('request' in api, false);
@@ -72,13 +72,13 @@ test('主进程守卫与宿主动词逐个对映（断言 52）', () => {
   for (const n of names) {
     assert.equal(typeof api[n], 'function', `preload 缺少通道 ${n}`);
     assert.ok(preloadSrc.includes(`${n}: (`), `preload 缺少通道定义 ${n}`);
-    // 每个通道在主进程都有同名 dsh: 前缀的 handle，且 handle 里出现对应宿主动词
+    // 每个通道在主进程都有同名 sacode: 前缀的 handle，且 handle 里出现对应宿主动词
     const verb = { customsDescribe: 'custom/describe', customsUpsert: 'custom/upsert', customsRemove: 'custom/remove',
       bindingUpsert: 'binding/upsert', bindingRemove: 'binding/remove', bindingReorder: 'binding/reorder',
       modelPull: 'model/pull', modelUpstreamUpsert: 'model/upstream/upsert',
       customImportNew: 'custom/import/new', customImportInto: 'custom/import/into' }[n];
-    const handleRe = new RegExp(`ipcMain\\.handle\\("dsh:${n}"[\\s\\S]*?bridge\\.request\\("${verb.replace('/', '\\/')}"`);
-    assert.ok(handleRe.test(mainSrc), `主进程缺少 dsh:${n} → ${verb} 的接线`);
+    const handleRe = new RegExp(`ipcMain\\.handle\\("sacode:${n}"[\\s\\S]*?bridge\\.request\\("${verb.replace('/', '\\/')}"`);
+    assert.ok(handleRe.test(mainSrc), `主进程缺少 sacode:${n} → ${verb} 的接线`);
   }
 });
 

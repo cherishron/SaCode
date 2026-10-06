@@ -8,7 +8,7 @@ const compiled=await build({entryPoints:[new URL('../renderer/pages/persisted-im
 function fixture(read){
  const created=[],revoked=[],watches=[],unmounts=[];
  const vue={defineComponent:x=>x,ref:value=>({value}),h:(type,props,children)=>({type,props,children}),watch:(_getter,callback,options)=>{watches.push(callback);if(options.immediate)callback();},onBeforeUnmount:callback=>unmounts.push(callback),onMounted:()=>{},Teleport:'teleport'};
- const ctx={module:{exports:{}},exports:{},require:()=>vue,window:{dsh:{attachmentImageRead:read}},Blob,Uint8Array,atob,URL:{createObjectURL:blob=>{created.push(blob);return 'blob:test-'+created.length;},revokeObjectURL:url=>revoked.push(url)}};
+ const ctx={module:{exports:{}},exports:{},require:()=>vue,window:{sacode:{attachmentImageRead:read}},Blob,Uint8Array,atob,URL:{createObjectURL:blob=>{created.push(blob);return 'blob:test-'+created.length;},revokeObjectURL:url=>revoked.push(url)}};
  vm.runInNewContext(compiled.outputFiles[0].text,ctx);
  return {api:ctx.module.exports,created,revoked,watches,unmounts};
 }

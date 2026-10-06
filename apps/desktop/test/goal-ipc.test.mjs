@@ -52,7 +52,7 @@ function loadMain() {
       if (id === './host-bridge.cjs') {
         return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
       }
-      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-dsh-host.exe' };
+      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => nodeRequire };
@@ -83,7 +83,7 @@ function loadMain() {
 test('目标 preload 的六个动作只带必要字段，不提供完成或任意转发',async()=>{
  const {api,calls}=loadPreload();
  await api.goalDescribe('s');await api.goalCreate('s','目标');await api.goalEdit('s',1,'新版');await api.goalPause('s',2);await api.goalResume('s',3);await api.goalClear('s',4);
- assert.deepEqual(calls.map(row=>row[0]),['dsh:goalDescribe','dsh:goalCreate','dsh:goalEdit','dsh:goalPause','dsh:goalResume','dsh:goalClear']);
+ assert.deepEqual(calls.map(row=>row[0]),['sacode:goalDescribe','sacode:goalCreate','sacode:goalEdit','sacode:goalPause','sacode:goalResume','sacode:goalClear']);
  assert.equal(JSON.stringify(calls[2][1]),JSON.stringify({sessionId:'s',revision:1,objective:'新版'}));
  assert.equal('goalComplete' in api,false);assert.equal('request' in api,false);
 });
@@ -91,7 +91,7 @@ test('目标主进程先校验会话、修订和正文，拒绝额外字段后�
  const {handlers,requests}=loadMain();
  const cases=[['goalDescribe','goal/describe',{sessionId:'s'}],['goalCreate','goal/create',{sessionId:'s',objective:'目标'}],['goalEdit','goal/edit',{sessionId:'s',revision:1,objective:'新版'}],['goalPause','goal/pause',{sessionId:'s',revision:1}],['goalResume','goal/resume',{sessionId:'s',revision:1}],['goalClear','goal/clear',{sessionId:'s',revision:1}]];
  for(const [action,method,args] of cases){
-  const handler=handlers.get('dsh:'+action);assert.equal(typeof handler,'function');
+  const handler=handlers.get('sacode:'+action);assert.equal(typeof handler,'function');
   for(const bad of [null,undefined,{}, {...args,sessionId:''},{...args,sessionId:'s'.repeat(301)},{...args,method:'goal/complete'}])await assert.rejects(handler({},bad),/bad arguments/);
   if('revision' in args)for(const revision of [0,-1,1.1,'1',NaN,Infinity])await assert.rejects(handler({},{...args,revision}),/bad arguments/);
   if('objective' in args)for(const objective of ['', ' \n ',2,'x'.repeat(8001)])await assert.rejects(handler({},{...args,objective}),/bad arguments/);

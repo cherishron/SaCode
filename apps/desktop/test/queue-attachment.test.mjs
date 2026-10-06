@@ -18,7 +18,7 @@ const { HostBridge } = require('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
-const HOST = process.env.DSH_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'dsh-host.exe');
+const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
 const FIXTURE = join(REPO, 'scripts', 'sse-contract-server.cjs');
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAAAAAAA';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));

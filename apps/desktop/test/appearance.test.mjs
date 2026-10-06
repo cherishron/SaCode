@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 const require=createRequire(import.meta.url);
 const { HostBridge }=require('../host-bridge.cjs');
-const host=process.env.DSH_HOST || resolve('dist/host/bin/dsh-host.exe');
+const host=process.env.SACODE_HOST || resolve('dist/host/bin/sacode-host.exe');
 
 test('外观保存跨落盘屏障，重启恢复且不污染模型消息', async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-appearance-'));

@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
-const HOST = process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe', import.meta.url));
+const HOST = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
 async function boot(t, prefix) {
   assert.ok(existsSync(HOST), '缺少自包含宿主');

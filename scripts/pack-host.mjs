@@ -13,7 +13,7 @@ if (!exe || !outDir || dllDirs.length === 0) {
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, "bin"), { recursive: true });
 const dst = join(outDir, "bin");
-cpSync(exe, join(dst, "dsh-host.exe"));
+cpSync(exe, join(dst, "sacode-host.exe"));
 let n = 1;
 for (const d of dllDirs) {
   for (const f of readdirSync(d)) {

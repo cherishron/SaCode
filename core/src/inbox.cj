@@ -287,10 +287,10 @@ public class AgentInbox {
         }
     }
 
-    public func step(id: String, text: String, rpcId: String): Unit {
+    public func step(id: String, text: String, rpcId: String, attachments!: ArrayList<AttachmentRef> = ArrayList<AttachmentRef>()): Unit {
         synchronized(log.mtx) {
             requireNew(id, text)
-            appendTo(TARGET_STEP, InboxMessage(id, text, rpcId, ArrayList<AttachmentRef>()))
+            appendTo(TARGET_STEP, InboxMessage(id, text, rpcId, attachments))
         }
     }
 

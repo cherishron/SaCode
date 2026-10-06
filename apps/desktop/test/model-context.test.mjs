@@ -22,8 +22,8 @@ test('真实 Host 请求携带用户正文及前文，响应落盘后可投影',
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const dir=mkdtempSync(join(tmpdir(),'sacode-model-context-'));
-  const exe=process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
-  const bridge=new HostBridge(exe,{...fixtureHostEnv(dir),DSH_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}`,DSH_PROVIDER_MODEL:'fixture-model',DSH_PROVIDER_KEY:'fixture-only'});
+  const exe=process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
+  const bridge=new HostBridge(exe,{...fixtureHostEnv(dir),SACODE_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}`,SACODE_PROVIDER_MODEL:'fixture-model',SACODE_PROVIDER_KEY:'fixture-only'});
   try {
     await bridge.start(dir);
     for(const text of ['第一轮中文任务','继续\n保留"引号"与\\路径']) {

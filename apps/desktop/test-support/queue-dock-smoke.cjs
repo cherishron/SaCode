@@ -40,7 +40,7 @@ module.exports=async function({win,check,waitFor,outDir}){
   await js(`document.querySelector('[data-queue-id=admitted] [aria-label="编辑排队消息"]').click();await Vue.nextTick();queueFixture.rows.value=queueFixture.rows.value.filter(r=>r.id!=='admitted')`);
   await check('宿主移除正在编辑的队列行后退出编辑',"({closed:!document.querySelector('#queue-fixture textarea'),removed:!document.querySelector('[data-queue-id=admitted]')})");
   await check('队列预览按 Unicode 字符截断而不拆开表情',"({unicode:SaCodeQueue.previewOf([{type:'text',text:'😀'.repeat(201)}])==='😀'.repeat(200)+'…',unknown:SaCodeQueue.previewOf([{type:'tool',text:'ignored'}])==='[tool]'})");
-  await js(`queueFixture.rows.value=[{id:'ref',content:[{type:'text',text:'查看 @[设计讨论](dsh-session:abc) 和 @src/main.cj， /plan /plan.md'}]}]`);
+  await js(`queueFixture.rows.value=[{id:'ref',content:[{type:'text',text:'查看 @[设计讨论](sacode-session:abc) 和 @src/main.cj， /plan /plan.md'}]}]`);
   await check('队列引用展示保留源文本语义且不伪造技能识别',"({session:document.querySelector('[data-ref-chip=session]').textContent==='设计讨论',file:document.querySelector('[data-ref-chip=file]').textContent==='main.cj',noSkill:!document.querySelector('#queue-fixture [data-ref-chip=skill]'),slash:document.querySelector('#queue-fixture .queue-preview').textContent.includes('/plan /plan.md')})");
   await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
   require('node:fs').writeFileSync(require('node:path').join(outDir,'queue-dock-fixture.png'),(await win.webContents.capturePage()).toPNG());

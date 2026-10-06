@@ -352,6 +352,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .settings-nav-icon { flex:none; width:16px; height:16px; background:currentColor; mask-size:contain; mask-repeat:no-repeat; mask-position:center; }
 .settings-nav-label { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .settings-page { display: flex; flex-direction: column; gap: var(--space-4); }
+.busy-send-settings { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px 16px; padding:20px 0; border-bottom:.5px solid var(--border); }
+.busy-send-copy { min-width:0; }
+.busy-send-copy label { font-size:14px; line-height:22px; }
+.busy-send-copy .note { margin:4px 0 0; }
+.busy-send-settings select { max-width:100%; border:0; border-radius:var(--radius-m); padding:10px 12px; background:var(--surface-3); color:var(--text); font:inherit; }
+.busy-send-note { grid-column:1 / -1; margin:0; }
 .appearance-settings { display:flex; flex-direction:column; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }
 .appearance-title { font-size:14px; line-height:22px; font-weight:400; margin:0; }
 .theme-choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch; gap:8px; }
@@ -447,3 +453,14 @@ body, body * {
   --elevation-prominent: var(--elevation-stroke), 0 3px 8px 0 rgb(0 0 0 / 4%), 0 0 20px 0 rgb(0 0 0 / 5%);
   --elevation-soft: var(--elevation-stroke), 0 4px 16px 0 rgb(0 0 0 / 3%), 0 0 24px 0 rgb(0 0 0 / 3%);
 }
+.model-center-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.model-center-tabs button { padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:transparent; color:inherit; cursor:pointer; }
+.model-center-tabs button[aria-pressed="true"] { background:var(--surface); font-weight:600; }
+.model-center-page { min-width:0; overflow-x:auto; }
+.model-center-page fieldset { min-width:0; margin:16px 0; padding:12px; border:1px solid var(--border); border-radius:8px; }
+.model-center-page table { border-collapse:collapse; width:100%; font-size:13px; }
+.model-center-page th, .model-center-page td { text-align:left; padding:8px; border-bottom:1px solid var(--border); }
+.cm-field, .mig-field { display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+.cm-ipt, .mig-ipt { width:100%; box-sizing:border-box; color:inherit; background:transparent; border:1px solid var(--border); border-radius:6px; padding:8px; }
+.cm-btn, .cm-primary, .cm-danger, .mig-btn, .mig-primary, .mig-secondary { padding:8px 12px; border:1px solid var(--border); border-radius:6px; color:inherit; background:transparent; cursor:pointer; }
+.cm-error, .mig-error, .bs-error { color:var(--danger); }

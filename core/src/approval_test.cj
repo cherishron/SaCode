@@ -3,6 +3,7 @@ package core
 import std.unittest.*
 import std.collection.ArrayList
 import std.fs.*
+import std.sync.*
 
 // 审批的协议面。§6.1.2 补证清单第 2 条：此前审批只是调用方随手带的一个字符串，
 // 日志里只有 tool/result denied:*，全仓没有任何 approval/* 事件——「谁批的、批了没有、
@@ -183,7 +184,7 @@ func pendingApprovalExpiresAndIsSettledOnce() {
 }
 
 // 工单号要从日志里已出现过的最大号往后发，不能从 1 重来。
-// 起因是实测到的证据：CLI 每次 `dsh call` 都是一个新进程，日志里连着出现两条
+// 起因是实测到的证据：CLI 每次 `sacode call` 都是一个新进程，日志里连着出现两条
 // `approval/asked 1:write`——号只在进程内唯一时，审计答不出「是哪一次批的」，
 // 「旧审批 ID 不可重用」这条也就只在单进程内成立。
 // 测试侧自己剥 `approval/asked` 数据里的号（只取冒号前的连续数字），
@@ -335,5 +336,63 @@ func consumeIsBoundToToolAndMisuseDoesNotBurnTicket() {
     @Expect(desk.consume(id, "read"), "")
     // 不存在的号既不放行也没有工具可报，调用方据空串走原来的「没批过」分支
     @Expect(desk.toolOf(Int64(99999)), "")
+    removeIfExists(p, recursive: false)
+}
+
+// 宿主里模型侧审批跑在 turn 线程（发号、轮询、消费），人的审批走主循环
+// （应答、查状态），两类线程同时动同一张 desk。这条把「公开方法过同一把锁」
+// 钉成可执行事实：栅栏让 4 个写者同一时刻冲进去，事后的账必须逐笔对得上——
+// 号不重（重号则审计答不出是哪一次批的）、条数不丢、一次性仍然一次性。
+@Test
+func concurrentAskAnswerConsumeKeepsTheLedgerExact() {
+    let p = apPath("concurrent")
+    removeIfExists(p, recursive: false)
+    let log = SessionLog(p)
+    let desk = ApprovalDesk(log)
+    let threads = 4
+    let perThread = 25
+    let total = threads * perThread
+    let gate = SyncCounter(threads)
+    let granted = AtomicInt64(0)
+    let reused = AtomicInt64(0)
+    let hs = ArrayList<Future<Int64>>()
+    var t: Int64 = 0
+    while (t < threads) {
+        hs.add(spawn { =>
+            gate.dec()
+            gate.waitUntilZero()
+            var i: Int64 = 0
+            while (i < perThread) {
+                let aid = desk.ask("write")
+                if (desk.answer(aid, "allowed-once")) {
+                    if (desk.consume(aid, "write") == "allowed-once") { granted.fetchAdd(1) }
+                    // 第二次消费必须拿不到：一次性就是字面意思的一次
+                    if (desk.consume(aid, "write") == "") { reused.fetchAdd(1) }
+                }
+                // 读侧与写侧交错：状态和工具归属必须随时答得出来
+                if (desk.stateOf(aid).size == 0) { throw Exception("state-missing") }
+                if (desk.toolOf(aid) != "write") { throw Exception("tool-missing") }
+                i += 1
+            }
+            Int64(perThread)
+        })
+        t += 1
+    }
+    for (f in hs) { f.get() }
+    @Expect(apEvents(log, "approval/asked"), total)
+    @Expect(apEvents(log, "approval/decided"), total)
+    @Expect(granted.load(), total)
+    @Expect(reused.load(), total)
+    @Expect(desk.pendingCount(), Int64(0))
+    // 号恰好是 1..total 各一次：条数够、无重号、最大值 = 条数，三者合起来即无跳号无重号
+    @Expect(apDupAskedIds(log), Int64(0))
+    var maxAsked: Int64 = 0
+    for (ev in log.snapshotEvents()) {
+        if (ev.eventType == "approval/asked") {
+            let v = askedIdOf(ev.data)
+            if (v > maxAsked) { maxAsked = v }
+        }
+    }
+    @Expect(maxAsked, total)
     removeIfExists(p, recursive: false)
 }

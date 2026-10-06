@@ -10,8 +10,8 @@ const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 // 真实仓颉宿主契约测试，独立目录避免影响其他测试和用户会话。
 test('真实 Host 投影待办快照、重启回放与新轮次清空', async () => {
-  const host = process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe', import.meta.url));
-  assert.ok(host && existsSync(host), '缺少真实宿主：请重建或通过 DSH_HOST 指定');
+  const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
+  assert.ok(host && existsSync(host), '缺少真实宿主：请重建或通过 SACODE_HOST 指定');
   const directory = mkdtempSync(join(tmpdir(), 'sacode-todo-host-'));
   const items = [{ content: '甲|乙\n引号"路径\\', status: 'in_progress' }, { content: '完成', status: 'completed' }];
   async function start() {

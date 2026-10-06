@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
 const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const HOST = process.env.DSH_HOST || resolve(jj(REPO, "apps", "desktop", "dist", "host", "bin", "dsh-host.exe"));
+const HOST = process.env.SACODE_HOST || resolve(jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const FIXTURE = resolve(jj(REPO, "scripts", "sse-contract-server.cjs"));
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -49,9 +49,9 @@ function freshDir(tag) {
 function hostEnv(paths, extra) {
   return {
     SACODE_USER_SETTINGS_DIR: paths.settings,
-    DSH_PROVIDER_BASE_URL: "",
-    DSH_PROVIDER_MODEL: "",
-    DSH_PROVIDER_KEY: "",
+    SACODE_PROVIDER_BASE_URL: "",
+    SACODE_PROVIDER_MODEL: "",
+    SACODE_PROVIDER_KEY: "",
     STEPFUN_API_KEY: "",
     ...extra,
   };
@@ -70,9 +70,9 @@ test("增强请求只带当前草稿与当前模型，结果不写进会话消�
   const fixture = await startFixture();
   const paths = freshDir("enh");
   const b = new HostBridge(HOST, hostEnv(paths, {
-    DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`,
-    DSH_PROVIDER_MODEL: "fixture-model",
-    DSH_PROVIDER_KEY: "fixture-secret",
+    SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`,
+    SACODE_PROVIDER_MODEL: "fixture-model",
+    SACODE_PROVIDER_KEY: "fixture-secret",
   }));
   await b.start(paths.dir);
   try {
@@ -124,9 +124,9 @@ test("增强用量进同一份 token 账", async () => {
   const fixture = await startFixture();
   const paths = freshDir("enhbill");
   const b = new HostBridge(HOST, hostEnv(paths, {
-    DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`,
-    DSH_PROVIDER_MODEL: "fixture-model",
-    DSH_PROVIDER_KEY: "fixture-secret",
+    SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`,
+    SACODE_PROVIDER_MODEL: "fixture-model",
+    SACODE_PROVIDER_KEY: "fixture-secret",
   }));
   await b.start(paths.dir);
   try {
@@ -150,12 +150,34 @@ test("增强用量进同一份 token 账", async () => {
   }
 });
 
+test("不轮询也结算增强，换会话不串账，重新启动仍保留用量", async () => {
+  const fixture = await startFixture();
+  const paths = freshDir("enh-no-poll");
+  const env = hostEnv(paths, { SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/enhance`, SACODE_PROVIDER_MODEL: "fixture-model" });
+  let b = new HostBridge(HOST, env);
+  await b.start(paths.dir);
+  try {
+    await b.request("prompt/enhance", { draft: "第一笔" });
+    await nap(300);
+    const other = await b.request("session/create", { title: "另一会话" });
+    await b.request("session/select", { sessionId: other.id });
+    assert.equal((await b.request("usage/status")).used, 0, "原会话费用不能进入新会话");
+    await b.request("session/select", { sessionId: "current" });
+    assert.equal((await b.request("usage/status")).used, 22, "没有 prompt/poll 也不能丢账");
+    await b.request("prompt/enhance", { draft: "关闭前第二笔" });
+    await nap(300);
+    await b.stop();
+    b = new HostBridge(HOST, env); await b.start(paths.dir);
+    assert.equal((await b.request("usage/status")).used, 44, "关闭窗口也要结算增强");
+  } finally { await b.stop(); stopFixture(fixture.proc); }
+});
+
 test("空白草稿被拒，不发出任何模型请求", async () => {
   const paths = freshDir("enhblank");
   const b = new HostBridge(HOST, hostEnv(paths, {
-    DSH_PROVIDER_BASE_URL: "http://127.0.0.1:1/enhance",
-    DSH_PROVIDER_MODEL: "fixture-model",
-    DSH_PROVIDER_KEY: "fixture-secret",
+    SACODE_PROVIDER_BASE_URL: "http://127.0.0.1:1/enhance",
+    SACODE_PROVIDER_MODEL: "fixture-model",
+    SACODE_PROVIDER_KEY: "fixture-secret",
   }));
   await b.start(paths.dir);
   try {
@@ -194,9 +216,9 @@ test("重复请求被挡、取消只作废增强自己", async () => {
   const fixture = await startFixture();
   const paths = freshDir("enhcancel");
   const b = new HostBridge(HOST, hostEnv(paths, {
-    DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/cancel`,
-    DSH_PROVIDER_MODEL: "fixture-model",
-    DSH_PROVIDER_KEY: "fixture-secret",
+    SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}/cancel`,
+    SACODE_PROVIDER_MODEL: "fixture-model",
+    SACODE_PROVIDER_KEY: "fixture-secret",
   }));
   await b.start(paths.dir);
   try {

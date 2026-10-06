@@ -1,0 +1,24 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+import {createRequire} from 'node:module';
+import {runInNewContext} from 'node:vm';
+import {fileURLToPath} from 'node:url';
+const require=createRequire(import.meta.url);
+test('通用设置贡献按插件卸载，父槽位释放后没有残留入口',async()=>{
+  const source=fileURLToPath(new URL('../renderer/pages/general-settings.ts',import.meta.url));
+  const result=await build({entryPoints:[source],bundle:true,write:false,platform:'node',format:'cjs',external:['vue'],logLevel:'silent'});
+  const module={exports:{}};runInNewContext(result.outputFiles[0].text,{module,exports:module.exports,require,queueMicrotask});
+  const assembly=module.exports.createGeneralSettingsAssembly(),root=assembly.slots.entries('root')[0];
+  assert.equal(root.registrant,'ui-settings-general');
+  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,1);
+  assembly.unload('ui-conversation-preferences');
+  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,0);
+  assembly.install('local-settings',scope=>scope.inject('settings.general.row',child=>child.register({name:'settings.general.row',id:'local'},{})));
+  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{})[0].entry.registrant,'local-settings');
+  assembly.unload('ui-settings-general');
+  assert.equal(assembly.slots.entries('settings.general.row').length,0);
+  assert.equal(assembly.slots.entries('root').length,0);
+  assembly.dispose();assembly.dispose();
+  assert.throws(()=>assembly.install('late',()=>{}),/settings-assembly-disposed/);
+});

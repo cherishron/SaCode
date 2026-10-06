@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
 const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const HOST = resolve(process.env.DSH_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "dsh-host.exe"));
+const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const FIXTURE = resolve(jj(REPO, "scripts", "sse-contract-server.cjs"));
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,9 +61,9 @@ test("真实 SSE provider 跑通本机夹具的 OpenAI 流", async () => {
     const dir = freshDir();
     const env = {
       ...fixtureHostEnv(dir),
-      DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}`,
-      DSH_PROVIDER_MODEL: "fixture",
-      DSH_PROVIDER_KEY: "fixture-only",
+      SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${fixture.port}`,
+      SACODE_PROVIDER_MODEL: "fixture",
+      SACODE_PROVIDER_KEY: "fixture-only",
     };
     const b = new HostBridge(HOST, env);
     await b.start(dir);

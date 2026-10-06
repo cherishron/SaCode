@@ -7,12 +7,20 @@ import std.collection.*
 public class BootSequence {
     let stages = ArrayList<String>()
     let ran = ArrayList<String>()
+    let actions = ArrayList<() -> Unit>()
     var executed = false
+    var running = false
+    var failed = false
 
     public init() {}
 
     public func register(name: String): Unit {
-        if (executed) {
+        register(name, { => })
+    }
+
+    // 显式阶段初始化；执行期冻结注册表，失败阶段不记作成功且不允许盲目重试。
+    public func register(name: String, action: () -> Unit): Unit {
+        if (executed || running || failed) {
             throw Exception("boot-already-run")
         }
         if (name.size == 0) {
@@ -24,16 +32,28 @@ public class BootSequence {
             }
         }
         stages.add(name)
+        actions.add(action)
     }
 
     public func run(): Unit {
         if (executed) {
             return
         }
-        for (s in stages) {
-            ran.add(s)
+        if (running) { throw Exception("boot-reentrant-run") }
+        if (failed) { throw Exception("boot-previously-failed") }
+        running = true
+        try {
+            for (i in 0..stages.size) {
+                actions[i]()
+                ran.add(stages[i])
+            }
+            executed = true
+        } catch (e: Exception) {
+            failed = true
+            throw e
+        } finally {
+            running = false
         }
-        executed = true
     }
 
     public func isRun(): Bool {
@@ -41,6 +61,8 @@ public class BootSequence {
     }
 
     public func history(): ArrayList<String> {
-        return ran
+        let snapshot = ArrayList<String>()
+        for (stage in ran) { snapshot.add(stage) }
+        return snapshot
     }
 }

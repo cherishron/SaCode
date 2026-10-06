@@ -191,7 +191,7 @@ main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
 
     if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal") {
-        getStdErr().writeln("usage: dsh [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal]")
+        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal]")
         return 64
     }
 
@@ -347,7 +347,7 @@ main(args: Array<String>) {
         println("cancel\tcancelled=${r.cancelled}\tdelivered=${r.delivered}\tsettled=${r.settledToolCalls}")
     }
 
-    // 附件在产品交付面的断言：npm 平台包里的 dsh.exe 离线跑的就是这一段——内容寻址落盘、
+    // 附件在产品交付面的断言：npm 平台包里的 sacode.exe 离线跑的就是这一段——内容寻址落盘、
     // 准入拒绝不留对象、先持久化后事件这三条装机后就成立，不靠网络也不靠桌面壳。
     // 抛断一律用「赋值的 try/catch」：把 lambda 塞进断言宏会解到 unclosed delimiter。
     if (mode == "all" || mode == "att") {
@@ -661,10 +661,10 @@ main(args: Array<String>) {
         expect("清单条目数等于注册表", Int64(toolsList(reg).size) == reg.count())
         let tj = toolsJson(reg)
         expect("清单标出需审批与免审批", tj.contains("\"name\":\"write\"") && tj.contains("\"approval\":true") && tj.contains("\"approval\":false"))
-        // 系统提示从注册表组装：不是硬编一条 "you are dsh"，
+        // 系统提示从注册表组装：不是硬编一条 "you are SaCode"，
         // 而是把已登记工具的名与描述追加在角色定义之后
         let sp = SystemPromptBuilder(reg).build()
-        expect("系统提示含角色定义", sp.contains("you are dsh"))
+        expect("系统提示含角色定义", sp.contains("you are SaCode"))
         expect("系统提示含已登记工具名", sp.contains("write") && sp.contains("read"))
         expect("系统提示含工具描述", sp.contains("写临时工作区文件"))
         expect("JSON 转义函数不吞反斜杠", jsonEscape("a\\b") == "a\\\\b")
@@ -680,7 +680,7 @@ main(args: Array<String>) {
         expect("未登记工具不发工单", !needsTicket(reg, "nosuch"))
         // 工单号跨进程不复用，在 CLI 交付面上的表现：把日志落盘、换一个 SessionLog
         // 对象回放，再开一张桌子——必须接在已有最大号之后，而不是又从 1 开始。
-        // 一次 `dsh call` 就是一个新进程，从 1 重来会让日志里出现两条同号的 asked。
+        // 一次 `sacode call` 就是一个新进程，从 1 重来会让日志里出现两条同号的 asked。
         hlog.flush()
         let rlog = SessionLog(hp)
         expect("重启回放能读回已落盘日志", rlog.load())
@@ -717,13 +717,13 @@ main(args: Array<String>) {
 
     if (mode == "extjs") {
         // 第二个入口：CLI 用同一份 core 把 JS 扩展宿主作为子进程拉起来跑完整生命周期。
-        // 用法：dsh extjs [node 命令] [extjs 目录]
+        // 用法：sacode extjs [node 命令] [extjs 目录]
         let nodeCmd = if (args.size > 1) { args[1] } else { "node" }
-        // 目录优先级：显式参数 > DSH_EXTJS_DIR（npm 安装态由启动包装指到包内 extjs/）> 仓库相对 "extjs"。
+        // 目录优先级：显式参数 > SACODE_EXTJS_DIR（npm 安装态由启动包装指到包内 extjs/）> 仓库相对 "extjs"。
         // 从 npm 装出来的 dsh 没有仓库目录可退，缺这一档就会在 WorkingDirectory 上炸掉。
         let hostDir = if (args.size > 2) {
             args[2]
-        } else if (let Some(d) <- getVariable("DSH_EXTJS_DIR")) {
+        } else if (let Some(d) <- getVariable("SACODE_EXTJS_DIR")) {
             d
         } else {
             "extjs"
@@ -815,7 +815,7 @@ main(args: Array<String>) {
         // 让 executeWithApproval 按 pending 拒掉。诊断与提示一律走 stderr，stdout 只放结果。
         let ps = positionals(args, 1)
         if (Int64(ps.size) == 0) {
-            getStdErr().writeln("usage: dsh call <tool> [args...] [--json]")
+            getStdErr().writeln("usage: sacode call <tool> [args...] [--json]")
             return 64
         }
         let toolName = ps[0]
@@ -878,14 +878,14 @@ main(args: Array<String>) {
     if (mode == "realstream") {
         // 真实 SSE 轮：用 RealSseProvider 对本机夹具跑完整一轮并断言。
         // env 经 shell 透传；baseUrl 空串时合法 skip（本机没起夹具）。
-        let baseUrl = getVariable("DSH_PROVIDER_BASE_URL") ?? ""
-        let model = getVariable("DSH_PROVIDER_MODEL") ?? "gpt-3.5-turbo"
-        var key = getVariable("DSH_PROVIDER_KEY") ?? ""
+        let baseUrl = getVariable("SACODE_PROVIDER_BASE_URL") ?? ""
+        let model = getVariable("SACODE_PROVIDER_MODEL") ?? "gpt-3.5-turbo"
+        var key = getVariable("SACODE_PROVIDER_KEY") ?? ""
         if (key.size == 0) {
             key = getVariable("STEPFUN_API_KEY") ?? ""
         }
         if (baseUrl.size == 0) {
-            println("skip: DSH_PROVIDER_BASE_URL unset")
+            println("skip: SACODE_PROVIDER_BASE_URL unset")
             return 0
         }
         let reqBody = "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[{\"role\":\"user\",\"content\":\"${jsonEscapeText("hello")}\"}],\"stream\":true}"

@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 const { HostBridge } = require('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOST = process.env.DSH_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'dsh-host.exe');
+const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
 
 // 2x1 的 PNG 头（33 字节），sha256 由 Node crypto 算出；base64 同源生成。
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAAAAAAA';

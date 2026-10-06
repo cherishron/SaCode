@@ -6,7 +6,7 @@ import {mkdtempSync,readdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const require=createRequire(import.meta.url),{HostBridge}=require('../host-bridge.cjs'),{png}=require('../test-support/image-fixture.cjs');
-const host=process.env.DSH_HOST||fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
+const host=process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
 
 test('真实宿主只读取当前会话持有的图片引用，删除队列即失去读取范围',async()=>{
  const root=mkdtempSync(join(tmpdir(),'sacode-image-read-'));

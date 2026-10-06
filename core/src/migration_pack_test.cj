@@ -361,9 +361,7 @@ func migrationPoolPreservation() {
 @Test
 func migrationRejectsMalformedJson() {
     let parsed = MigrationBundle.fromJson("not json at all")
-    @Expect(parsed.isSome(), true)
-    let bundle = parsed.getOrThrow()
-    @Expect(bundle.validate().size, Int64(0)) // 空包也能通过结构校验
+    @Expect(parsed.isSome(), false)
 }
 
 @Test

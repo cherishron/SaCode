@@ -52,7 +52,7 @@ function loadMain() {
       if (id === './host-bridge.cjs') {
         return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
       }
-      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-dsh-host.exe' };
+      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => nodeRequire };
@@ -83,12 +83,12 @@ function loadMain() {
 test('图片读取 preload 只有会话与引用两个参数，没有任意方法或路径',async()=>{
  const {api,calls}=loadPreload(),id='sha256:'+'a'.repeat(64);
  await api.attachmentImageRead('current',id);
- assert.equal(calls[0][0],'dsh:attachmentImageRead');
+ assert.equal(calls[0][0],'sacode:attachmentImageRead');
  assert.equal(JSON.stringify(calls[0][1]),JSON.stringify({sessionId:'current',attachmentId:id}));
  assert.equal('request' in api,false);
 });
 test('主进程图片 IPC 拒绝额外字段与非法引用，不发送宿主请求',async()=>{
- const {handlers,requests}=loadMain(),handler=handlers.get('dsh:attachmentImageRead'),id='sha256:'+'a'.repeat(64);
+ const {handlers,requests}=loadMain(),handler=handlers.get('sacode:attachmentImageRead'),id='sha256:'+'a'.repeat(64);
  assert.equal(typeof handler,'function');
  for(const bad of [null,undefined,{},'path',{sessionId:'',attachmentId:id},{sessionId:'s'.repeat(301),attachmentId:id},{sessionId:'current',attachmentId:'../../secret'},{sessionId:'current',attachmentId:'sha256:'+'A'.repeat(64)},{sessionId:'current',attachmentId:id,path:'secret'},{sessionId:'current',attachmentId:id,method:'fs/read'}])await assert.rejects(handler({},bad),/bad arguments/);
  assert.equal(requests.length,0);

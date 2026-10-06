@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
 const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const HOST = resolve(process.env.DSH_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "dsh-host.exe"));
+const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 
 async function bootFresh(tag) {
   // 落在已被 .gitignore 的 dualtest 里，不再往仓库根添新的临时目录

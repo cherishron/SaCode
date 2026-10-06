@@ -1,9 +1,9 @@
 // 对话面的纯派生层：投影行数组 → 气泡消息数组，以及长消息折叠判定。
-// 只放纯函数（挂 window.DshMsgFold），不引 Vue、不碰 DOM，这样 node 单测能在全新上下文里求值。
+// 只放纯函数（挂 window.SaCodeMsgFold），不引 Vue、不碰 DOM，这样 node 单测能在全新上下文里求值。
 // 角色映射的唯一来源就是这张表；投影行的原始前缀保留在 sourceRole 里，
 // 界面按条复述它，data-role 用映射值——两者都能在会话日志里找到出处，不造假。
 "use strict";
-window.DshMsgFold = (function () {
+window.SaCodeMsgFold = (function () {
   // 全仓唯一的折叠阈值出处。要调只改这一处；组件里不许再出现第二个数字。
   var FOLD_THRESHOLD = 240;
 

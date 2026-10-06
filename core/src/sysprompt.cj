@@ -11,7 +11,7 @@ public class SystemPromptBuilder {
     }
 
     public func build(goal!: ?GoalSnapshot = None, rounds!: Int64 = 0, elapsed!: Int64 = 0): String {
-        var out = "you are dsh\n\n"
+        var out = "you are SaCode\n\n"
         for (name in registry.list()) {
             out += "${name}: ${registry.describe(name)}\n"
         }

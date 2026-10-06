@@ -6,11 +6,11 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
-const host=process.env.DSH_HOST||fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
+const host=process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
 
 test('真实目标控制持久化且拒绝跨会话和陈旧修订，网页没有完成动作',async()=>{
  const root=mkdtempSync(join(tmpdir(),'sacode-goal-controls-'));
- const env={...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings'),DSH_PROVIDER_BASE_URL:'',DSH_PROVIDER_KEY:'',STEPFUN_API_KEY:''};
+ const env={...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings'),SACODE_PROVIDER_BASE_URL:'',SACODE_PROVIDER_KEY:'',STEPFUN_API_KEY:''};
  let bridge=new HostBridge(host,env);await bridge.start(root);
  try{
   const sessionId='current';

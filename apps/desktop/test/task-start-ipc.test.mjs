@@ -20,7 +20,7 @@ function load() {
 test('发送后跑一轮 preload 只发固定动作且不带可变负载', async () => {
   const { api, calls } = load();
   await api.taskStart();
-  assert.equal(calls[0][0], 'dsh:taskStart');
+  assert.equal(calls[0][0], 'sacode:taskStart');
   // 负载必须是那一个对象：给它塞任意方法或参数的通路等于把有限集合打开
   assert.equal(calls[0].length, 1);
   assert.equal('request' in api, false);
@@ -33,10 +33,10 @@ test('队列 preload 只发固定动作并把身份字段交给主进程校验',
   await api.queueEnqueue('排队的一条', 'r7');
   await api.queueUpdate('q12', 'edit', '改过的正文');
   await api.queueUpdate('q12', 'remove', '');
-  assert.equal(calls[0][0], 'dsh:queueDescribe'); assert.equal(calls[0].length, 1);
-  assert.equal(calls[1][0], 'dsh:queueEnqueue');
+  assert.equal(calls[0][0], 'sacode:queueDescribe'); assert.equal(calls[0].length, 1);
+  assert.equal(calls[1][0], 'sacode:queueEnqueue');
   assert.equal(JSON.stringify(calls[1][1]), '{"text":"排队的一条","rpcId":"r7"}');
-  assert.equal(calls[2][0], 'dsh:queueUpdate');
+  assert.equal(calls[2][0], 'sacode:queueUpdate');
   assert.equal(JSON.stringify(calls[2][1]), '{"itemId":"q12","kind":"edit","text":"改过的正文"}');
   assert.equal(JSON.stringify(calls[3][1]), '{"itemId":"q12","kind":"remove","text":""}');
   // 队列没有「发任意方法」的兜底通路

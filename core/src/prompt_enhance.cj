@@ -36,7 +36,8 @@ public func enhanceRequestJson(model: String, draft: String): String {
 
 public class PromptEnhancer {
     // provider 由调用方构造并注入（真实请求或夹具流都一样），这里只管跑到终态并交回文本。
-    public func run(provider: Provider, token: TurnToken): EnhanceResult {
+    public func run(provider: Provider, token: TurnToken,
+        report!: (String, String) -> Unit = { _, _ => }): EnhanceResult {
         let assembly = Assembly()
         try {
             while (!token.cancelled()) {
@@ -48,10 +49,12 @@ public class PromptEnhancer {
                 }
             }
         } finally {
+            // 即使结果为空、截断、工具违规或取消，已经收到的用量仍须结算。
+            report(assembly.usage, assembly.finishReason)
             if (let Some(resource) <- (provider as Resource)) { resource.close() }
         }
         // 取消优先于一切判定：半途而废的增强不能冒充一份可用结果。
-        if (token.cancelled()) { return EnhanceResult("", "", true, "") }
+        if (token.cancelled()) { return EnhanceResult("", assembly.usage, true, assembly.finishReason) }
         // 增强请求没给工具定义，模型却回了工具调用 —— 说明对面被当成了执行面用，
         // 宁可失败也不能把一份「模型想去动东西」的回应塞回输入框。
         if (assembly.toolCalls.size > 0) { throw Exception("enhance-unexpected-tool") }
@@ -83,14 +86,19 @@ public class EnhanceOutcome {
 // provider 的构造就是真实 HTTPS 往返（RealSseProvider 在 init 里就 send 了请求），
 // 所以构造必须和取帧一起发生在被 spawn 的那条线程上：主循环陪着它阻塞，
 // 桌面的取消就只能排在一次连接后面。构造与取帧的失败都折成同一个结算值。
+class EnhanceUsageReport {
+    var usage = ""
+    var finishReason = ""
+}
 func enhanceSettled(factory: () -> Provider, token: TurnToken): EnhanceOutcome {
+    let report = EnhanceUsageReport()
     try {
-        let r = PromptEnhancer().run(factory(), token)
+        let r = PromptEnhancer().run(factory(), token, report: { u, f => report.usage = u; report.finishReason = f })
         return EnhanceOutcome(false, !r.cancelled, "", r.text, r.usage, r.cancelled, r.finishReason)
     } catch (e: Exception) {
         // 取消途中 provider 抛出来也算正常收场：不报成故障，只报 cancelled。
-        if (token.cancelled()) { return EnhanceOutcome(false, false, "", "", "", true, "") }
-        return EnhanceOutcome(false, false, e.message, "", "", false, "")
+        if (token.cancelled()) { return EnhanceOutcome(false, false, "", "", report.usage, true, report.finishReason) }
+        return EnhanceOutcome(false, false, e.message, "", report.usage, false, report.finishReason)
     }
 }
 
@@ -102,7 +110,6 @@ public class EnhanceHandle {
     }
     public func cancel() {
         token.cancel()
-        future.cancel()
     }
     public func isRunning(): Bool {
         if (let Some(_) <- future.tryGet()) { return false }

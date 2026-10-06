@@ -197,12 +197,17 @@ module.exports = async function ({ win, check, waitFor, bridge }) {
     await js("const n=document.querySelector('#composer');n.value='补充：中途换用中文';n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click();");
     await waitFor("!!document.querySelector('.composer [data-queue-dock]') && document.querySelector('.composer [aria-label=\"即时补充\"]').disabled===false");
     await js("document.querySelector('.composer [aria-label=\"即时补充\"]').click();");
+    // 排队为默认时，Ctrl+Enter 必须走互补的插话通路，不借助队列改送按钮。
+    await js("const n=document.querySelector('#composer');n.value='快捷键补充：保留用户约束';n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();n.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true,cancelable:true}));");
+
     await waitFor("document.querySelector('#messages').textContent.includes('补充：中途换用中文') && !document.querySelector('.composer [data-queue-dock]')");
+    await waitFor("document.querySelector('#messages').textContent.includes('快捷键补充：保留用户约束')");
     const steppedQueue = await bridge.request('queue/describe');
     const stepped = await bridge.request('session/projection');
     const stillRunning = await js("return ({aria:document.querySelector('#send').getAttribute('aria-label'),dock:!!document.querySelector('.composer [data-queue-dock]')})");
     await check('即时补充在步边界送进本轮并作为用户消息落盘', '(' + JSON.stringify({
       deliveredInTranscript: users(stepped.messages).includes('user/message: 补充：中途换用中文'),
+      keyboardDelivered: users(stepped.messages).includes('user/message: 快捷键补充：保留用户约束'),
       bothListsEmpty: steppedQueue.nextTurn.length === 0 && steppedQueue.nextStep.length === 0,
       noCorruptSplice: steppedQueue.bad === 0,
       panelClearedMidTurn: stillRunning.dock === false && stillRunning.aria === '停止执行',

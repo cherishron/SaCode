@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const {HostBridge}=require('../host-bridge.cjs');
-const host=process.env.DSH_HOST || resolve('dist/host/bin/dsh-host.exe');
+const host=process.env.SACODE_HOST || resolve('dist/host/bin/sacode-host.exe');
 const boot=async()=>{
   const dir=mkdtempSync(join(tmpdir(),'sacode-workspace-'));
   const project=join(dir,'中文 项目'); mkdirSync(project);

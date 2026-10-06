@@ -6,7 +6,7 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
-const host=process.env.DSH_HOST||fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
+const host=process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
 test('排队投影返回持久附件引用，编辑保留、删除移除',async()=>{
  const root=mkdtempSync(join(tmpdir(),'sacode-queue-refs-'));
  let bridge=new HostBridge(host,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});

@@ -10,7 +10,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const HOST = resolve(here, '../dist/host/bin/dsh-host.exe');
+const HOST = resolve(here, '../dist/host/bin/sacode-host.exe');
 // 干净的设置目录：custom/describe 的「空目录」断言不能读上一批留下的文档
 const SETTINGS = resolve(here, '../../../target/host-verbs-settings');
 rmSync(SETTINGS, { recursive: true, force: true });

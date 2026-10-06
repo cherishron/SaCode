@@ -10,7 +10,7 @@ const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 // 真实 HTTP/SSE -> 仓颉循环 -> Todo 工具 -> 关联工具结果 -> 第二次模型请求。
 test('真实 Host 执行 SSE Todo 调用并携带关联结果继续请求', { timeout: 30000 }, async t => {
-  const host = process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe', import.meta.url));
+  const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
   assert.ok(existsSync(host), '缺少本轮真实宿主');
   const requests = [], failures = [];
   const args = JSON.stringify({ todos: [{ content: '  真实工具任务  ', status: 'in_progress' }] });
@@ -47,7 +47,7 @@ test('真实 Host 执行 SSE Todo 调用并携带关联结果继续请求', { ti
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const directory = mkdtempSync(join(tmpdir(), 'sacode-model-todo-'));
-  const bridge = new HostBridge(host, { ...process.env, SACODE_USER_SETTINGS_DIR: join(directory, 'settings'), DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}`, DSH_PROVIDER_MODEL: 'todo-fixture', DSH_PROVIDER_KEY: 'fixture-only' });
+  const bridge = new HostBridge(host, { ...process.env, SACODE_USER_SETTINGS_DIR: join(directory, 'settings'), SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}`, SACODE_PROVIDER_MODEL: 'todo-fixture', SACODE_PROVIDER_KEY: 'fixture-only' });
   await bridge.start(directory);
   try {
     await bridge.request('initialize');

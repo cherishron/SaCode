@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
-const HOST = process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe', import.meta.url));
+const HOST = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
 // 正文同时覆盖 引号 / 换行 / 反斜杠 / 制表 四类必须转义的字符
 const TRICKY = '他说"引用"完了\n第二行带\\反斜杠\t和一个制表';
@@ -29,9 +29,9 @@ async function realTurn(t, content) {
   const bridge = new HostBridge(HOST, {
     ...process.env,
     SACODE_USER_SETTINGS_DIR: join(dir, 'settings'),
-    DSH_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}`,
-    DSH_PROVIDER_MODEL: 'frame-fixture',
-    DSH_PROVIDER_KEY: 'fixture-only',
+    SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    SACODE_PROVIDER_MODEL: 'frame-fixture',
+    SACODE_PROVIDER_KEY: 'fixture-only',
   });
   assert.ok(existsSync(HOST), '缺少自包含宿主');
   await bridge.start(dir);

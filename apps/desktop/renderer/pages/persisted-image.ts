@@ -12,7 +12,7 @@ export async function acquireImage(sessionId:string,attachmentId:string):Promise
  if(!entry){
   const selected:Entry={users:0,promise:Promise.resolve('')};
   selected.promise=(async()=>{
-   const api=(window as any).dsh;
+   const api=(window as any).sacode;
    const result=await api.attachmentImageRead(sessionId,attachmentId);
    if(!result||result.attachmentId!==attachmentId||!['image/png','image/jpeg','image/gif'].includes(result.mediaType)||typeof result.data!=='string'||!result.data.length||result.data.length>28000000)throw Error('bad-image-response');
    const binary=atob(result.data),bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));

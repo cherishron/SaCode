@@ -175,30 +175,36 @@ process.stdin.on('end', () => process.exit(0));
 //  本机实测 `where openssl` 为空而 `D:\Program Files\Git\mingw64\bin\openssl.exe` 存在）；
 // 再次扫一遍标准安装位置。仓颉侧 launch 传不了子进程环境变量，所以这层自愈
 // 必须落在夹具内部——否则 9 条网络用例只能靠人工先设变量，否则整组 ERROR。
+function pathEntries() {
+  return (process.env.PATH || '').split(path.delimiter).map(s => s.trim()).filter(Boolean);
+}
+
+// 直接在 PATH 目录里按文件名探测，不调 where/which：子进程在编译与测试并发时
+// 会偶发超时，一次超时就会让整组网络用例变成 ERROR（实测出现过一次不可复现的 ERROR 1）。
 function resolveOnPath(name) {
-  try {
-    const probe = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(probe, [name], { encoding: 'utf8', timeout: 5000 });
-    const first = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
-    return first || null;
-  } catch (_) { return null; }
+  const names = process.platform === 'win32'
+    ? [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name]
+    : [name];
+  for (const entry of pathEntries()) {
+    for (const candidate of names) {
+      const full = path.join(entry, candidate);
+      try { if (fs.statSync(full).isFile()) return full; } catch (_) { /* 目录不存在或无权限，继续 */ }
+    }
+  }
+  return null;
 }
 
 function opensslCandidates() {
   const list = [];
   if (process.env.SSE_OPENSSL) list.push(process.env.SSE_OPENSSL);
   if (process.platform === 'win32') {
-    try {
-      const where = execFileSync('where', ['git'], { encoding: 'utf8', timeout: 5000 });
-      for (const line of where.split(/\r?\n/)) {
-        const found = line.trim();
-        if (!found) continue;
-        // <root>\cmd\git.exe 与 <root>\bin\git.exe 都上推两级拿到安装根
-        const root = path.resolve(path.dirname(found), '..');
-        list.push(path.join(root, 'mingw64', 'bin', 'openssl.exe'));
-        list.push(path.join(root, 'usr', 'bin', 'openssl.exe'));
-      }
-    } catch (_) { /* git 不在 PATH 上就只走标准位置 */ }
+    // <root>\cmd\git.exe 与 <root>\bin\git.exe 都上推两级拿到安装根
+    const git = resolveOnPath('git');
+    if (git) {
+      const root = path.resolve(path.dirname(git), '..');
+      list.push(path.join(root, 'mingw64', 'bin', 'openssl.exe'));
+      list.push(path.join(root, 'usr', 'bin', 'openssl.exe'));
+    }
     list.push(
       'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe',
       'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe',

@@ -13,7 +13,7 @@ const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
-const HOST = process.env.DSH_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'dsh-host.exe');
+const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
 const BASE_URL = 'https://api.stepfun.com/step_plan/v1';
 const MODEL = 'step-5-preview';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,12 +36,19 @@ test('真模型增强：当前会话的模型把草稿改写得更清楚，且�
   const bridge = new HostBridge(HOST, {
     ...process.env,
     SACODE_USER_SETTINGS_DIR: settingsDir,
-    DSH_PROVIDER_BASE_URL: BASE_URL,
-    DSH_PROVIDER_MODEL: MODEL,
-    STEPFUN_API_KEY: key,
+    SACODE_PROVIDER_BASE_URL: 'http://127.0.0.1:1',
+    SACODE_PROVIDER_MODEL: '不能误用的兜底模型',
+    SACODE_PROVIDER_KEY: '',
+    STEPFUN_API_KEY: '',
   });
   await bridge.start(sessionDir);
   try {
+    await bridge.request('credential/set', { ref: 'SACODE_ENH_REAL', value: key });
+    const saved = await bridge.request('model/registry/update', { expectedRevision: 0, draft: {
+      id: 'enh-real', name: '增强真实验收', baseUrl: BASE_URL, protocol: 'openai-completions', credentialRef: 'SACODE_ENH_REAL',
+      models: [{ id: MODEL, name: MODEL, contextWindow: '', maxTokens: '', image: false }],
+    } });
+    await bridge.request('model/registry/set-default', { providerId: 'enh-real', model: MODEL, expectedRevision: saved.revision });
     const draft = '想要队列能在跑的时候插一句话，别打断正在做的事';
     const started = await bridge.request('prompt/enhance', { draft });
     assert.equal(started.started, true, `增强须启动，实得: ${JSON.stringify(started)}`);

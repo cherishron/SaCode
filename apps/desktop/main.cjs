@@ -30,7 +30,7 @@ const WILL_SMOKE = FRAME_SMOKE || process.argv.includes("--smoke") || process.ar
 const FRESH_SMOKE_DIR = WILL_SMOKE && !SESSION_ARG;
 const SESSION_DIR = SESSION_ARG
   ? SESSION_ARG.slice("--session-dir=".length)
-  : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `dsh-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
+  : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `sacode-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 if(WILL_SMOKE) app.setPath('userData',join(SESSION_DIR,'electron-user-data'));
 
@@ -95,12 +95,12 @@ async function withHost(fn) {
 
 const isStr = (v) => typeof v === "string";
 
-ipcMain.handle("dsh:projection", async () => withHost(() => bridge.request("session/projection")));
+ipcMain.handle("sacode:projection", async () => withHost(() => bridge.request("session/projection")));
 
 // 暂存凭证是宿主铸造的短串，界面只能原样带回，拼不出别的形状
 const RECEIPT_RE = /^u[1-9]\d{0,6}$/;
 
-ipcMain.handle("dsh:userSend", async (_e, args) => {
+ipcMain.handle("sacode:userSend", async (_e, args) => {
   if (!args || !isStr(args.text) || args.text.length === 0 || args.text.length > 8000) {
     throw new Error("bad arguments");
   }
@@ -114,7 +114,7 @@ ipcMain.handle("dsh:userSend", async (_e, args) => {
   return withHost(() => bridge.request("session/append", params));
 });
 
-ipcMain.handle("dsh:attachmentUpload", async (_e, args) => {
+ipcMain.handle("sacode:attachmentUpload", async (_e, args) => {
   // 入参只有四格：kind、显示名、声明类型、base64。落盘位置与内容寻址 id 都在核心那一侧。
   if (!args || (args.kind !== "image" && args.kind !== "file")
     || !isStr(args.name) || args.name.length > 300
@@ -127,7 +127,7 @@ ipcMain.handle("dsh:attachmentUpload", async (_e, args) => {
   }));
 });
 
-ipcMain.handle("dsh:toolsList", async () => withHost(() => bridge.request("extension/list")));
+ipcMain.handle("sacode:toolsList", async () => withHost(() => bridge.request("extension/list")));
 
 // 固定目标动作；完成只由执行证据通道决定，不向网页开放 goalComplete。
 function goalArguments(args, fields) {
@@ -137,21 +137,21 @@ function goalArguments(args, fields) {
     || (fields.includes('objective') && (!isStr(args.objective) || !args.objective.trim() || args.objective.length > 8000))) throw Error('bad arguments');
   return Object.fromEntries(fields.map(key => [key, args[key]]));
 }
-ipcMain.handle('dsh:goalDescribe', async (_e, args) => { const params = goalArguments(args, ['sessionId']); return withHost(() => bridge.request('goal/describe', params)); });
-ipcMain.handle('dsh:goalCreate', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'objective']); return withHost(() => bridge.request('goal/create', params)); });
-ipcMain.handle('dsh:goalEdit', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision', 'objective']); return withHost(() => bridge.request('goal/edit', params)); });
-ipcMain.handle('dsh:goalPause', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/pause', params)); });
-ipcMain.handle('dsh:goalResume', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/resume', params)); });
-ipcMain.handle('dsh:goalClear', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/clear', params)); });
+ipcMain.handle('sacode:goalDescribe', async (_e, args) => { const params = goalArguments(args, ['sessionId']); return withHost(() => bridge.request('goal/describe', params)); });
+ipcMain.handle('sacode:goalCreate', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'objective']); return withHost(() => bridge.request('goal/create', params)); });
+ipcMain.handle('sacode:goalEdit', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision', 'objective']); return withHost(() => bridge.request('goal/edit', params)); });
+ipcMain.handle('sacode:goalPause', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/pause', params)); });
+ipcMain.handle('sacode:goalResume', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/resume', params)); });
+ipcMain.handle('sacode:goalClear', async (_e, args) => { const params = goalArguments(args, ['sessionId', 'revision']); return withHost(() => bridge.request('goal/clear', params)); });
 
-ipcMain.handle("dsh:attachmentImageRead", async (_e, args) => {
+ipcMain.handle("sacode:attachmentImageRead", async (_e, args) => {
   if (!args || Object.keys(args).some(key => key !== 'sessionId' && key !== 'attachmentId')
     || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length > 300
     || !isStr(args.attachmentId) || !/^sha256:[a-f0-9]{64}$/.test(args.attachmentId)) throw Error('bad arguments');
   return withHost(() => bridge.request('attachment/image-read', { sessionId: args.sessionId, attachmentId: args.attachmentId }));
 });
 
-ipcMain.handle("dsh:toolCall", async (_e, args) => {
+ipcMain.handle("sacode:toolCall", async (_e, args) => {
   // 审批凭据只能是工单号：渲染层传不动「我已经批过了」这句话——它得先去 ask/answer。
   if (!args || !isStr(args.name) || !isStr(args.args)) {
     throw new Error("bad arguments");
@@ -166,21 +166,21 @@ ipcMain.handle("dsh:toolCall", async (_e, args) => {
   return withHost(() => bridge.request("extension/call", params));
 });
 
-ipcMain.handle("dsh:approvalAsk", async (_e, args) => {
+ipcMain.handle("sacode:approvalAsk", async (_e, args) => {
   if (!args || !isStr(args.name) || args.name.length === 0 || args.name.length > 200) {
     throw new Error("bad arguments");
   }
   return withHost(() => bridge.request("approval/ask", { name: args.name }));
 });
 
-ipcMain.handle("dsh:approvalAnswer", async (_e, args) => {
+ipcMain.handle("sacode:approvalAnswer", async (_e, args) => {
   if (!args || !Number.isInteger(args.approvalId) || args.approvalId < 1 || !isStr(args.decision)) {
     throw new Error("bad arguments");
   }
   return withHost(() => bridge.request("approval/answer", { approvalId: args.approvalId, decision: args.decision }));
 });
 
-ipcMain.handle("dsh:turnStart", async (_e, args) => {
+ipcMain.handle("sacode:turnStart", async (_e, args) => {
   const limit = args ? args.limit : 0;
   if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
     throw new Error("bad arguments");
@@ -190,31 +190,33 @@ ipcMain.handle("dsh:turnStart", async (_e, args) => {
 
 // 产品发送后的起轮走这一条：task/start 只认真实配置，缺配置/缺凭据/协议不支持一律显式报错，
 // 不像 turn/start 那样在没配置时静默退回示例 provider——界面上演一场假成功比报错更糟。
-ipcMain.handle("dsh:taskStart", async () => withHost(() => bridge.request("task/start", {})));
+ipcMain.handle("sacode:taskStart", async () => withHost(() => bridge.request("task/start", {})));
 
 // 队列三动作逐字段校验：条目身份只能来自核心铸造的那串 id，
 // 渲染层拼不出「改任意一条」或「带任意正文的未知动作」。
 const QUEUE_ID = /^q\d{1,18}$/;
 const QUEUE_KINDS = ["edit", "remove", "steer"];
 
-ipcMain.handle("dsh:queueDescribe", async () => withHost(() => bridge.request("queue/describe")));
+ipcMain.handle("sacode:queueDescribe", async () => withHost(() => bridge.request("queue/describe")));
 
-ipcMain.handle("dsh:queueEnqueue", async (_e, args) => {
+ipcMain.handle("sacode:queueEnqueue", async (_e, args) => {
   if (!args || !isStr(args.text) || args.text.trim().length === 0 || args.text.length > 8000
     || !isStr(args.rpcId) || args.rpcId.length === 0 || args.rpcId.length > 128) {
     throw new Error("bad arguments");
   }
+  const accelerated = args.accelerated === undefined ? false : args.accelerated;
+  if (typeof accelerated !== 'boolean') throw new Error('bad arguments');
   // 排队也可以带附件：凭证形状与发送那条通道同一套校验，不给自报字符串留通路
   const ids = args.receiptIds == null ? [] : args.receiptIds;
   if (!Array.isArray(ids) || ids.length > 20 || !ids.every((v) => isStr(v) && RECEIPT_RE.test(v))) {
     throw new Error("bad arguments");
   }
   return withHost(() => bridge.request("queue/enqueue", ids.length
-    ? { text: args.text, rpcId: args.rpcId, receiptIds: ids }
-    : { text: args.text, rpcId: args.rpcId }));
+    ? { text: args.text, rpcId: args.rpcId, receiptIds: ids, ...(accelerated ? {accelerated} : {}) }
+    : { text: args.text, rpcId: args.rpcId, ...(accelerated ? {accelerated} : {}) }));
 });
 
-ipcMain.handle("dsh:queueUpdate", async (_e, args) => {
+ipcMain.handle("sacode:queueUpdate", async (_e, args) => {
   if (!args || !isStr(args.itemId) || !QUEUE_ID.test(args.itemId) || !QUEUE_KINDS.includes(args.kind)) {
     throw new Error("bad arguments");
   }
@@ -225,33 +227,33 @@ ipcMain.handle("dsh:queueUpdate", async (_e, args) => {
   return withHost(() => bridge.request("queue/update", { itemId: args.itemId, kind: args.kind, text }));
 });
 
-ipcMain.handle("dsh:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
+ipcMain.handle("sacode:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
 
-ipcMain.handle("dsh:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
+ipcMain.handle("sacode:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
 // 提示词增强：草稿是唯一入参，逐字段校验在这里做——空白与超长在主进程就拒收，
 // 一条都不许发到宿主。宿主因此只会收到「确实有内容的这一条」，
 // 而用哪颗模型、哪份凭据由宿主自己按当前会话定，这条通道给不出那个位置。
-ipcMain.handle("dsh:promptEnhance", async (_e, args) => {
+ipcMain.handle("sacode:promptEnhance", async (_e, args) => {
   if (!args || !isStr(args.draft) || args.draft.trim().length === 0 || args.draft.length > 8000) {
     throw new Error("bad arguments");
   }
   return withHost(() => bridge.request("prompt/enhance", { draft: args.draft }));
 });
 // 轮询与取消没有负载：增强进行到哪一步只能由宿主说，渲染层猜不出也改不了。
-ipcMain.handle("dsh:promptPoll", async () => withHost(() => bridge.request("prompt/poll")));
-ipcMain.handle("dsh:promptCancel", async () => withHost(() => bridge.request("prompt/cancel")));
-ipcMain.handle("dsh:usageStatus", async () => withHost(() => bridge.request("usage/status")));
+ipcMain.handle("sacode:promptPoll", async () => withHost(() => bridge.request("prompt/poll")));
+ipcMain.handle("sacode:promptCancel", async () => withHost(() => bridge.request("prompt/cancel")));
+ipcMain.handle("sacode:usageStatus", async () => withHost(() => bridge.request("usage/status")));
 // 预算只许收紧：非整数、负数在主进程就拒收，调大由核心回 applied:false。
 // 界面拿不到「抬高当前档位」的任何通路，也拿不到发任意方法的那条通道。
-ipcMain.handle("dsh:usageSetBudget", async (_e, args) => {
+ipcMain.handle("sacode:usageSetBudget", async (_e, args) => {
   const b = args && args.budget;
   if (typeof b !== "number" || !Number.isInteger(b) || b < 0) throw new Error("bad-budget");
   return withHost(() => bridge.request("usage/set-budget", { budget: b }));
 });
 
-ipcMain.handle("dsh:sessionCatalog", async () => bridge.request("session/catalog"));
-ipcMain.handle("dsh:workspaceGet", async () => withHost(()=>bridge.request("workspace/get")));
-ipcMain.handle("dsh:workspaceChoose", async () => withHost(async()=>{
+ipcMain.handle("sacode:sessionCatalog", async () => bridge.request("session/catalog"));
+ipcMain.handle("sacode:workspaceGet", async () => withHost(()=>bridge.request("workspace/get")));
+ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   const workspace=await bridge.request("workspace/get");
   const choice=await chooseWorkspaceDirectory({title:"选择 SaCode 项目目录", properties:["openDirectory"],
     defaultPath: workspace.configured && workspace.available ? workspace.directory : app.getPath("documents")});
@@ -259,42 +261,46 @@ ipcMain.handle("dsh:workspaceChoose", async () => withHost(async()=>{
   if(!Array.isArray(choice.filePaths) || choice.filePaths.length!==1 || !isStr(choice.filePaths[0])) throw new Error("bad directory selection");
   return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
 }));
-ipcMain.handle("dsh:sessionCreate", async (_e, args) => {
+ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
   return withHost(()=>bridge.request("session/create", {title:args.title}));
 });
-ipcMain.handle("dsh:sessionSelect", async (_e, args) => {
+ipcMain.handle("sacode:sessionSelect", async (_e, args) => {
   if (!args || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");
   return withHost(async()=>{
     const selected = await bridge.request("session/select", {sessionId:args.sessionId});
     return selected;
   });
 });
-ipcMain.handle("dsh:appearanceGet", async () => {
+ipcMain.handle("sacode:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
   return result;
 });
 // 桌面主题只取用户配置；旧会话主题仍可读取，但不再改变窗口。
-ipcMain.handle("dsh:globalAppearanceGet", async () => {
+ipcMain.handle('sacode:globalAppearanceSetBusySend', async (_e,args) => {
+  if (!args || !['queue','steer'].includes(args.busySend)) throw new Error('bad arguments');
+  return withHost(() => bridge.request('global/appearance/set-busy-send',{busySend:args.busySend}));
+});
+ipcMain.handle("sacode:globalAppearanceGet", async () => {
   const result=await withHost(() => bridge.request("global/appearance/get"));
   nativeTheme.themeSource=result.theme;
   return result;
 });
-ipcMain.handle("dsh:globalAppearanceSetTheme", async (_e, args) => {
+ipcMain.handle("sacode:globalAppearanceSetTheme", async (_e, args) => {
   if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
   const result=await withHost(() => bridge.request("global/appearance/set-theme", { theme:args.theme }));
   if (!result.saved) throw new Error("theme-not-saved");
   nativeTheme.themeSource=result.theme;
   return result;
 });
-ipcMain.handle("dsh:globalAppearanceSetFontSize", async (_e, args) => {
+ipcMain.handle("sacode:globalAppearanceSetFontSize", async (_e, args) => {
   if (!args || !Number.isInteger(args.fontSize) || args.fontSize < 10 || args.fontSize > 22) throw new Error("bad-font-size");
   const result=await withHost(() => bridge.request("global/appearance/set-font-size", { fontSize:args.fontSize }));
   if (!result.saved) throw new Error("font-size-not-saved");
   nativeTheme.themeSource=result.theme;
   return result;
 });
-ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
+ipcMain.handle("sacode:appearanceSetTheme", async (_e, args) => {
   if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
   const result=await withHost(() => bridge.request("appearance/set-theme", { theme: args.theme }));
   if (!result.saved) throw new Error("theme-not-saved");
@@ -305,10 +311,10 @@ ipcMain.handle("dsh:appearanceSetTheme", async (_e, args) => {
 // 密钥只在「写凭据」这一次调用里存在：不透传进注册表文档，不回写，不落日志。
 const modelsGuard = require("./models-guard.cjs");
 
-ipcMain.handle("dsh:modelsDescribe", async () => withHost(() => bridge.request("model/registry/describe")));
-ipcMain.handle("dsh:modelsCatalog", async () => withHost(() => bridge.request("model/registry/catalog")));
+ipcMain.handle("sacode:modelsDescribe", async () => withHost(() => bridge.request("model/registry/describe")));
+ipcMain.handle("sacode:modelsCatalog", async () => withHost(() => bridge.request("model/registry/catalog")));
 
-ipcMain.handle("dsh:modelsSave", async (_e, args) => {
+ipcMain.handle("sacode:modelsSave", async (_e, args) => {
   const draft = modelsGuard.sanitizeDraft(args && args.draft);
   const key = modelsGuard.sanitizeKey(args ? args.key : undefined);
   const expectedRevision = modelsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
@@ -322,13 +328,13 @@ ipcMain.handle("dsh:modelsSave", async (_e, args) => {
   return view;
 });
 
-ipcMain.handle("dsh:modelsRemove", async (_e, args) => {
+ipcMain.handle("sacode:modelsRemove", async (_e, args) => {
   const id = args && args.id;
   if (!isStr(id) || id.length === 0 || id.length > 64) throw new Error("bad-model-id");
   return withHost(() => bridge.request("model/registry/remove", { id, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:modelsSetDefault", async (_e, args) => {
+ipcMain.handle("sacode:modelsSetDefault", async (_e, args) => {
   const providerId = args && args.providerId;
   const model = args && args.model;
   if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
@@ -339,7 +345,7 @@ ipcMain.handle("dsh:modelsSetDefault", async (_e, args) => {
 });
 
 // 「测试连接 / 获取可用模型」：草稿还没保存就能问远端，内联明文只活在这一次调用里。
-ipcMain.handle("dsh:modelsList", async (_e, args) => {
+ipcMain.handle("sacode:modelsList", async (_e, args) => {
   const request = modelsGuard.sanitizeListRequest(args);
   return withHost(() => bridge.request("model/list", request));
 });
@@ -348,28 +354,28 @@ ipcMain.handle("dsh:modelsList", async (_e, args) => {
 // 第 3 层文档不认识 baseUrl 与凭据，草稿里出现它们一律拒收。
 const customsGuard = require("./customs-guard.cjs");
 
-ipcMain.handle("dsh:customsDescribe", async () => withHost(() => bridge.request("custom/describe")));
+ipcMain.handle("sacode:customsDescribe", async () => withHost(() => bridge.request("custom/describe")));
 
-ipcMain.handle("dsh:customsUpsert", async (_e, args) => {
+ipcMain.handle("sacode:customsUpsert", async (_e, args) => {
   const draft = customsGuard.sanitizeDraft(args && args.draft);
   const expectedRevision = customsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
   return withHost(() => bridge.request("custom/upsert", { draft, expectedRevision }));
 });
 
-ipcMain.handle("dsh:customsRemove", async (_e, args) => {
+ipcMain.handle("sacode:customsRemove", async (_e, args) => {
   const customId = args && args.customId;
   if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
   return withHost(() => bridge.request("custom/remove", { customId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:bindingUpsert", async (_e, args) => {
+ipcMain.handle("sacode:bindingUpsert", async (_e, args) => {
   const customId = args && args.customId;
   if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
   const binding = customsGuard.sanitizeBinding(args && args.binding);
   return withHost(() => bridge.request("binding/upsert", { customId, binding, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:bindingRemove", async (_e, args) => {
+ipcMain.handle("sacode:bindingRemove", async (_e, args) => {
   const customId = args && args.customId;
   const providerId = args && args.providerId;
   const modelId = args && args.modelId;
@@ -379,20 +385,20 @@ ipcMain.handle("dsh:bindingRemove", async (_e, args) => {
   return withHost(() => bridge.request("binding/remove", { customId, providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:bindingReorder", async (_e, args) => {
+ipcMain.handle("sacode:bindingReorder", async (_e, args) => {
   const customId = args && args.customId;
   if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
   const keys = customsGuard.sanitizeKeyList(args && args.keys);
   return withHost(() => bridge.request("binding/reorder", { customId, keys, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:modelPull", async (_e, args) => {
+ipcMain.handle("sacode:modelPull", async (_e, args) => {
   const providerId = args && args.providerId;
   if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
   return withHost(() => bridge.request("model/pull", { providerId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:modelUpstreamUpsert", async (_e, args) => {
+ipcMain.handle("sacode:modelUpstreamUpsert", async (_e, args) => {
   const providerId = args && args.providerId;
   const modelId = args && args.modelId;
   if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
@@ -400,12 +406,12 @@ ipcMain.handle("dsh:modelUpstreamUpsert", async (_e, args) => {
   return withHost(() => bridge.request("model/upstream/upsert", { providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:customImportNew", async (_e, args) => {
+ipcMain.handle("sacode:customImportNew", async (_e, args) => {
   const items = customsGuard.sanitizeKeyList(args && args.items);
   return withHost(() => bridge.request("custom/import/new", { items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
-ipcMain.handle("dsh:customImportInto", async (_e, args) => {
+ipcMain.handle("sacode:customImportInto", async (_e, args) => {
   const customId = args && args.customId;
   if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
   const items = customsGuard.sanitizeKeyList(args && args.items);

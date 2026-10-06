@@ -2,16 +2,32 @@
 // 后半段的提供商适配器是内存桩，只用于组件行为，不作为后端接入证据。
 module.exports = async function ({ win, check, waitFor, outDir, bridge }) {
   const js = source => win.webContents.executeJavaScript(`(async()=>{${source}})()`, true);
-  await js(`document.querySelector('#open-settings').click();document.querySelector('#settings-tab-models').click()`);
-  await waitFor("!!document.querySelector('#models-add-provider')");
-  await check('模型页真实产品入口', "({typedComponent:!!window.SaCodeModels?.Page,accountRemoved:!document.querySelector('#settings-page-models').textContent.includes('DeepSeek'),noStubNotice:!document.querySelector('#settings-page-models').textContent.includes('后端尚未接入')})");
+  await js(`document.querySelector('#open-settings').click();document.querySelector('#settings-tab-model-center').click()`);
+  await waitFor("!!document.querySelector('#models-add-provider')&&!document.querySelector('#models-add-provider').disabled");
+  await check('模型中心替换旧入口', "({singleEntry:!!document.querySelector('#settings-tab-model-center')&&!document.querySelector('#settings-tab-models'),fourTabs:document.querySelectorAll('[data-model-center-tab]').length===4,providersActive:document.querySelector('[data-model-center-tab=provider-settings]').getAttribute('aria-pressed')==='true'})");
+  await js(`document.querySelector('[data-model-center-tab="custom-models"]').click()`);
+  await waitFor("!!document.querySelector('.cm-primary')&&!document.querySelector('.cm-loading')");
+  await js(`document.querySelector('.cm-primary').click()`);
+  await js(`for(const [label,value] of [['ID','center-smoke'],['名称','模型中心验收']]){const e=document.querySelector('.cm-ipt[aria-label="'+label+'"]');e.value=value;e.dispatchEvent(new Event('input',{bubbles:true}));}`);
+  await js(`[...document.querySelectorAll('.cm-primary')].find(b=>b.textContent==='保存').click()`);
+  await waitFor("!!document.querySelector('.cm-name')&&document.querySelector('.cm-root').textContent.includes('模型中心验收')&&!document.querySelector('.cm-loading')");
+  await check('模型中心自定义模型真实保存', "(async()=>{const v=await window.sacode.customsDescribe();return {persisted:v.models.some(m=>m.id==='center-smoke'&&m.name==='模型中心验收'),onlyCurrentPage:!document.querySelector('#models-add-provider')}})()");
+  await js(`document.querySelector('[data-model-center-tab="budget-stats"]').click()`);
+  await waitFor("!!document.querySelector('.bs-table')");
+  await check('费用页读取核心限额并声明流水缺口', "({model:document.querySelector('.bs-root').textContent.includes('模型中心验收'),honest:document.querySelector('.bs-root').textContent.includes('后端目前不提供')})");
+  await js(`document.querySelector('[data-model-center-tab="migration"]').click()`);
+  await waitFor("!!document.querySelector('.mig-table')");
+  await check('迁移页呈现真实模型且摘要不冒充恢复包', "({model:document.querySelector('.mig-root').textContent.includes('模型中心验收'),summary:document.querySelector('.mig-root').textContent.includes('不能用来恢复配置'),textarea:!!document.querySelector('textarea[aria-label=\"条目列表\"]')})");
+  await js(`const v=await window.sacode.customsDescribe();await window.sacode.customsRemove('center-smoke',v.revision);document.querySelector('[data-model-center-tab="provider-settings"]').click()`);
+  await waitFor("!!document.querySelector('#models-add-provider')&&!document.querySelector('#models-add-provider').disabled");
+  await check('模型页真实产品入口', "({typedComponent:!!window.SaCodeModels?.Page,accountRemoved:!document.querySelector('#settings-page-model-center').textContent.includes('DeepSeek'),noStubNotice:!document.querySelector('#settings-page-model-center').textContent.includes('后端尚未接入')})");
   await js(`document.querySelector('#models-add-provider').click()`);
-  await check('目录来自宿主而非空表', "(()=>{const s=[...document.querySelectorAll('#settings-page-models select[aria-label=\"提供商\"]')];return {selectPresent:s.length===1,catalogNamed:s[0].textContent.includes('StepFun'),threeProtocols:document.querySelector('#settings-page-models select[aria-label=\"API 协议\"]').options.length===3}})()");
-  await check('模型页自定义添加表单', "({route:!!document.querySelector('#settings-page-models input[aria-label=\"Provider ID\"]'),keyMasked:document.querySelector('#settings-page-models input[aria-label=\"API 密钥\"]').type==='password',protocols:document.querySelector('#settings-page-models select[aria-label=\"API 协议\"]').options.length===3})");
+  await check('目录来自宿主而非空表', "(()=>{const s=[...document.querySelectorAll('#settings-page-model-center select[aria-label=\"提供商\"]')];return {selectPresent:s.length===1,catalogNamed:s[0].textContent.includes('StepFun'),threeProtocols:document.querySelector('#settings-page-model-center select[aria-label=\"API 协议\"]').options.length===3}})()");
+  await check('模型页自定义添加表单', "({route:!!document.querySelector('#settings-page-model-center input[aria-label=\"Provider ID\"]'),keyMasked:document.querySelector('#settings-page-model-center input[aria-label=\"API 密钥\"]').type==='password',protocols:document.querySelector('#settings-page-model-center select[aria-label=\"API 协议\"]').options.length===3})");
 
   // —— 真实往返：页面上填的提供商要能在另一个进程（宿主）里读回来 ——
-  const realClick = text => js(`[...document.querySelectorAll('#settings-page-models button')].find(e=>e.textContent===${JSON.stringify(text)}&&!e.closest('[hidden]')).click()`);
-  const realInput = (label, value) => js(`(()=>{const e=[...document.querySelectorAll('#settings-page-models input[aria-label=${JSON.stringify(label)}]')].find(e=>!e.closest('[hidden]'));e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  const realClick = text => js(`[...document.querySelectorAll('#settings-page-model-center button')].find(e=>e.textContent===${JSON.stringify(text)}&&!e.closest('[hidden]')).click()`);
+  const realInput = (label, value) => js(`(()=>{const e=[...document.querySelectorAll('#settings-page-model-center input[aria-label=${JSON.stringify(label)}]')].find(e=>!e.closest('[hidden]'));e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}))})()`);
   await realClick('自定义模型 API');
   await realInput('Provider ID', 'smoke-gw');
   await realInput('显示名称', '冒烟网关');
@@ -21,11 +37,11 @@ module.exports = async function ({ win, check, waitFor, outDir, bridge }) {
   await realInput('模型 ID 1', 'smoke-model');
   await realInput('显示名称 1', '冒烟模型');
   await realClick('创建提供商');
-  await waitFor("document.querySelector('#settings-page-models .models-savedNotice')?.textContent.includes('冒烟网关')");
+  await waitFor("document.querySelector('#settings-page-model-center .models-savedNotice')?.textContent.includes('冒烟网关')");
   const view = await bridge.request('model/registry/describe');
   const stored = view.providers.find(p => p.id === 'smoke-gw');
   const cred = stored ? await bridge.request('credential/describe', { ref: stored.credentialRef }) : { configured: false };
-  await check('密钥不回显在页面文本里', "(()=>{const b=document.querySelector('#settings-page-models');const t=b?b.textContent:'no-section';return {noEcho:!t.includes('smoke-secret-value'),savedShown:t.includes('冒烟网关'),dotConfigured:!!document.querySelector('#settings-page-models [aria-label=\"API 密钥已配置\"]')}})()");
+  await check('密钥不回显在页面文本里', "(()=>{const b=document.querySelector('#settings-page-model-center');const t=b?b.textContent:'no-section';return {noEcho:!t.includes('smoke-secret-value'),savedShown:t.includes('冒烟网关'),dotConfigured:!!document.querySelector('#settings-page-model-center [aria-label=\"API 密钥已配置\"]')}})()");
   await check('模型页写入落到宿主进程', '(' + JSON.stringify({
     persisted: !!stored,
     derivedRef: !!stored && stored.credentialRef === 'SA_CODE_SMOKE_GW_API_KEY',

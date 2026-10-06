@@ -11,7 +11,7 @@ const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
-const HOST = process.env.DSH_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'dsh-host.exe');
+const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
 const BASE_URL = 'https://api.stepfun.com/step_plan/v1';
 const MODEL = 'step-5-preview';
 const CRED_REF = 'STEPFUN_API_KEY';

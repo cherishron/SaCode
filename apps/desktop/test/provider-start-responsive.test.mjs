@@ -7,7 +7,7 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
-const host=process.env.DSH_HOST||fileURLToPath(new URL('../dist/host/bin/dsh-host.exe',import.meta.url));
+const host=process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url));
 
 test('提供商未交回响应头时起轮先应答，目标暂停和队列仍可操作',async()=>{
  let release;const gate=new Promise(done=>release=done);
@@ -20,7 +20,7 @@ test('提供商未交回响应头时起轮先应答，目标暂停和队列仍�
  });
  await new Promise(done=>server.listen(0,'127.0.0.1',done));
  const root=mkdtempSync(join(tmpdir(),'sacode-provider-start-'));
- const bridge=new HostBridge(host,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings'),DSH_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,DSH_PROVIDER_MODEL:'fixture',DSH_PROVIDER_KEY:'fixture'});
+ const bridge=new HostBridge(host,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings'),SACODE_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,SACODE_PROVIDER_MODEL:'fixture',SACODE_PROVIDER_KEY:'fixture'});
  const watchdog=setTimeout(release,6500);
  await bridge.start(root);
  try{

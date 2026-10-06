@@ -8,8 +8,8 @@ const SDK = sdkRoot(process.env);
 const RT = runtimeLibDir(process.env);
 const STDX = process.env.STDX_HOME || "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx";
 const OPENSSL_HOME = process.env.OPENSSL_HOME || "";
-const out = "npm/dsh-cli-win32-x64/bin";
-const extOut = "npm/dsh-cli-win32-x64/extjs";
+const out = "npm/sacode-cli-win32-x64/bin";
+const extOut = "npm/sacode-cli-win32-x64/extjs";
 // server.cjs 里 require("./host.cjs")，两个文件必须同去，少一个就是起不来的包。
 const EXT_SRC = ["extjs/server.cjs", "extjs/host.cjs"];
 // example/ 下的样例工具也要带：自检是按 "example/echo.cjs" 这种相对宿主目录的路径去加载的，
@@ -21,8 +21,8 @@ rmSync(out, { recursive: true, force: true });
 rmSync(extOut, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 mkdirSync(extOut, { recursive: true });
-cpSync(join("apps/cli", "target", "release", "bin", "main.exe"), join(out, "dsh.exe"));
-// 扩展宿主源码要随包走：从 npm 装出来的 dsh 没有仓库目录可退，`dsh extjs` 会在工作目录
+cpSync(join("apps/cli", "target", "release", "bin", "main.exe"), join(out, "sacode.exe"));
+// 扩展宿主源码要随包走：从 npm 装出来的 dsh 没有仓库目录可退，`sacode extjs` 会在工作目录
 // 这一步直接炸掉（实测 IllegalArgumentException: WorkingDirectory "extjs" not exist）。
 for (const f of EXT_SRC) {
   if (!existsSync(f)) {
@@ -88,7 +88,7 @@ for (const dll of MINGW_DLLS) {
   }
 }
 // stdx 运行期 DLL：core 直接 import stdx.net.http（RealSseProvider）与 stdx.encoding.json，
-// 平台包必须带这些 DLL，否则剥掉 SDK 后 dsh realstream 会缺 DLL 当场炸（rc=127）。
+// 平台包必须带这些 DLL，否则剥掉 SDK 后 sacode realstream 会缺 DLL 当场炸（rc=127）。
 if (!existsSync(STDX)) {
   console.error(`缺少 stdx 动态库目录 ${STDX}，装出来的 dsh 跑不了真实流`);
   process.exit(2);
@@ -107,7 +107,7 @@ if (existsSync(join(STDX, "libcangjie-dynamicLoader-opensslFFI.dll"))) {
   sx += 1;
 }
 // OpenSSL 3 运行期：libstdx.net.tls 经 tlsFFI → opensslFFI 链加载 libcrypto/libssl，
-// 不随包分发则剥掉 PATH 后 dsh realstream 会缺 DLL（rc=127 can not load openssl library）。
+// 不随包分发则剥掉 PATH 后 sacode realstream 会缺 DLL（rc=127 can not load openssl library）。
 // Git Bash 下 process.env.PATH 用 Unix 路径（/mingw64/bin），Node 在 Windows 上解析不了，
 // 需要用 OPENSSL_HOME 显式给 Windows 路径（cygpath -w 转换后的）。
 const OPENSSL_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"];

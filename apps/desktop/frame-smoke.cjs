@@ -71,6 +71,7 @@ module.exports=async function({win,nativeTheme,outDir,bridge}) {
   await waitFor("!!document.querySelector('.settings-dialog[open]')");
   await check('设置面板留白',"(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:Math.abs(r.width-800)<1,height:Math.abs(r.height-720)<1,captionClearance:r.top>=40,bottomClearance:innerHeight-r.bottom>=40}})()");
   await js("document.querySelector('.settings-close').click()");
+  await require('./test-support/busy-send-settings-smoke.cjs')({win,check,waitFor,bridge,outDir});
   await js("document.querySelector('#toggle-sidebar').click()");
   await waitFor("document.querySelector('.app').dataset.sidebarCollapsed==='true'");
   await check('手动折叠',`(()=>{const toggle=document.querySelector('#toggle-sidebar').getBoundingClientRect(),create=document.querySelector('#sidebar-new-session').getBoundingClientRect();return {track:Math.abs(document.querySelector('.navigation').getBoundingClientRect().width-${process.platform==='win32'?0:56})<1,captionToggle:${process.platform==='win32'?"Math.abs(toggle.left-12)<1 && Math.abs(toggle.top-6)<1 && Math.abs(toggle.width-28)<1":"true"},captionNewSession:${process.platform==='win32'?"Math.abs(create.left-48)<1 && Math.abs(create.top-6)<1 && Math.abs(create.width-28)<1":"true"}}})()`);
@@ -193,7 +194,13 @@ async function checkConversationScroll({js,waitFor,check}) {
     catch(e) {console.log('SCROLL_SEND_STATE',await js("({error:document.querySelector('#error')?.textContent,draft:document.querySelector('#composer').value.length,disabled:document.querySelector('#send').disabled,messages:document.querySelectorAll('[data-msg-id]').length})"));throw e;}
   }
   await js("document.querySelectorAll('.btn-fold').forEach(b=>b.click())");
-  await waitFor("(()=>{const n=document.querySelector('.conversation-scroll');return n.scrollHeight-n.clientHeight>200 && Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1})()");
+  try {await waitFor("(()=>{const n=document.querySelector('.conversation-scroll');return n.scrollHeight-n.clientHeight>200 && Math.abs(n.scrollHeight-n.clientHeight-n.scrollTop)<1})()");}
+  catch(e) {
+    // 装包态在这里红过而开发态全绿，光看布尔值判不了是「折叠过头」还是「没贴到底」：
+    // 把几何量与折叠按钮数一起打出来，红的时候能直接归因。
+    console.log('SCROLL_FOLD_STATE', await js("(()=>{const n=document.querySelector('.conversation-scroll');return {scrollHeight:n.scrollHeight,clientHeight:n.clientHeight,scrollTop:n.scrollTop,overflow:n.scrollHeight-n.clientHeight,foldButtons:document.querySelectorAll('.btn-fold').length,messages:document.querySelectorAll('[data-msg-id]').length,following:n.dataset.followingTail,viewport:{w:innerWidth,h:innerHeight}}})()"));
+    throw e;
+  }
   await js("(()=>{const n=document.querySelector('.conversation-scroll');n.dispatchEvent(new WheelEvent('wheel',{deltaY:-100}));n.scrollTop=100})()");
   await waitFor("!!document.querySelector('#scroll-to-bottom')");
   await check('真实会话回到最新按钮',"(()=>{const b=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),n=document.querySelector('.conversation-scroll').getBoundingClientRect();return {width:Math.abs(b.width-34)<1,height:Math.abs(b.height-34)<1,insideViewport:b.left>=n.left&&b.right<=n.right&&b.bottom<=n.bottom,reading:document.querySelector('.conversation-scroll').dataset.followingTail==='false'}})()");
@@ -203,7 +210,7 @@ async function checkConversationScroll({js,waitFor,check}) {
   await check('长草稿更新浮动控件位置',"(()=>{const seat=document.querySelector('.composer-seat'),button=document.querySelector('#scroll-to-bottom').getBoundingClientRect(),scroller=document.querySelector('.conversation-scroll').getBoundingClientRect();return {composerVisible:seat.getBoundingClientRect().bottom<=scroller.bottom+1,buttonClearsComposer:button.bottom<=seat.getBoundingClientRect().top-15,readingPreserved:Math.abs(document.querySelector('.conversation-scroll').scrollTop-100)<1}})()");
   await js("(()=>{const n=document.querySelector('#composer');n.value='';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await waitFor("document.querySelector('#composer').getBoundingClientRect().height<100");
-  const current=await js("(async()=>{const c=await window.dsh.sessionCatalog();return c.entries.find(e=>e.current).id})()");
+  const current=await js("(async()=>{const c=await window.sacode.sessionCatalog();return c.entries.find(e=>e.current).id})()");
   await js("document.querySelectorAll('.workspace-overflow[aria-expanded=false]').forEach(b=>b.click())");
   const other=await js(`[...document.querySelectorAll('[data-sidebar-session]')].find(n=>n.dataset.sidebarSession!==${JSON.stringify(current)}).dataset.sidebarSession`);
   await js(`document.querySelector('[data-sidebar-session="'+${JSON.stringify(other)}+'"]').click()`);

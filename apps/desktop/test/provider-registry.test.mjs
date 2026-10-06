@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
-const HOST = process.env.DSH_HOST || fileURLToPath(new URL('../dist/host/bin/dsh-host.exe', import.meta.url));
+const HOST = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
 const draft = (id, baseUrl) => ({
   id, name: '显示名', baseUrl, protocol: 'openai-completions', credentialRef: 'SA_CODE_TEST_KEY',

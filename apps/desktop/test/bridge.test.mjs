@@ -14,7 +14,7 @@ const { HostBridge } = require("../host-bridge.cjs");
 const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 // 自包含 host（exe + 全部依赖 DLL 同目录，由 scripts/pack-host.mjs 生成），
 // 因此测试不再拼 PATH，也不出现任何字面 Windows 路径。
-const HOST = resolve(process.env.DSH_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "dsh-host.exe"));
+const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
 
 async function boot() {
@@ -45,6 +45,7 @@ test("握手声明协议与能力", async () => {
   assert.ok(r.capabilities.includes("workspace/set-directory"));
   assert.ok(r.capabilities.includes("global/appearance/get"));
   assert.ok(r.capabilities.includes("global/appearance/set-font-size"));
+  assert.ok(r.capabilities.includes("global/appearance/set-busy-send"));
   await b.stop();
 });
 

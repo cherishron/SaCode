@@ -13,7 +13,7 @@ DeepSeek Harness (DSH) 全系统复刻实验：一份**仓颉（Cangjie）共享
 - `apps/host/` — 仓颉 NDJSON/JSON-RPC 宿主，由桌面端 spawn；**stdout 只走协议帧，诊断走 stderr**。
 - `apps/desktop/` — Electron 壳（`main.cjs`/`preload.cjs`/`host-bridge.cjs`/`paths.cjs` + `renderer/`）。渲染层是**纯 JS + Vue runtime，运行时无模块加载器、无模板编译器、无 TypeScript**；第三方组件由 `scripts/pack-tinyvue.mjs` 与 `scripts/pack-tinyrobot.mjs` 在**构建期**各折叠成一个经典脚本进 `renderer/vendor/`，esbuild 与组件库都只是 `apps/desktop` 的 devDependency，**产物运行时零 npm 依赖**。消息面经 `BubbleProvider + BubbleList`（`groupStrategy: "consecutive"`）渲染，正文由本仓自定义内容渲染器出（默认链会把 `role==="tool"` 交给只渲染注释节点的 ToolRole，正文会隐身），折叠阈值只在 `renderer/msgfold.js` 一处。
 - `extjs/` — 独立 Node JS 扩展宿主（NDJSON JSON-RPC），被 core 以子进程驱动。
-- `npm/dsh-cli`、`npm/dsh-cli-win32-x64` — npm 平台包；`bin/` 下二进制由脚本生成，**不入库**。
+- `npm/dsh-cli` — npm 主包，`bin/cli.js` 是必须入库的源码入口；`npm/dsh-cli-win32-x64` 的 `bin/` 二进制与 DLL 由脚本生成，**不入库**。
 - `scripts/pack-*.mjs` — 打包脚本（CLI / 宿主 / Vue vendor）。
 
 ## 环境
@@ -48,4 +48,4 @@ JS 扩展宿主：`cd extjs && node --test`
 - 宿主 exe 必须与全部依赖 DLL 同目录（靠 Windows 默认搜索序，不拼 PATH）。
 - `apps/desktop/test/bridge.test.mjs` 在仓库根使用 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
 - 注释、文档、commit 一律中文；commit 形如 `feat(core,host): 描述`，scope 用 `core/host/cli/desktop/extjs/scripts/docs`。
-- 不要提交构建产物：`target/`、`apps/desktop/dist/`、`npm/*/bin/`、`*.log` 均已在 `.gitignore`。
+- 不要提交构建产物：`target/`、`apps/desktop/dist/`、`npm/dsh-cli-*/bin/`、`*.log` 均已在 `.gitignore`。主包的 `npm/dsh-cli/bin/cli.js` 是源码，必须入库。

@@ -30,15 +30,15 @@ test('模型配置 preload 只发送固定动作与既定字段', async () => {
   await api.modelsSetDefault('gw', 'm-1', 5);
   await api.modelsList({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'inline-key' });
 
-  assert.equal(calls[0][0], 'dsh:modelsDescribe'); assert.equal(calls[0].length, 1);
-  assert.equal(calls[1][0], 'dsh:modelsCatalog'); assert.equal(calls[1].length, 1);
-  assert.equal(calls[2][0], 'dsh:modelsSave');
+  assert.equal(calls[0][0], 'sacode:modelsDescribe'); assert.equal(calls[0].length, 1);
+  assert.equal(calls[1][0], 'sacode:modelsCatalog'); assert.equal(calls[1].length, 1);
+  assert.equal(calls[2][0], 'sacode:modelsSave');
   assert.equal(JSON.stringify(calls[2][1]), JSON.stringify({ draft, key: 'plain-secret', expectedRevision: 3 }));
-  assert.equal(calls[3][0], 'dsh:modelsRemove');
+  assert.equal(calls[3][0], 'sacode:modelsRemove');
   assert.equal(JSON.stringify(calls[3][1]), '{"id":"gw","expectedRevision":4}');
-  assert.equal(calls[4][0], 'dsh:modelsSetDefault');
+  assert.equal(calls[4][0], 'sacode:modelsSetDefault');
   assert.equal(JSON.stringify(calls[4][1]), '{"providerId":"gw","model":"m-1","expectedRevision":5}');
-  assert.equal(calls[5][0], 'dsh:modelsList');
+  assert.equal(calls[5][0], 'sacode:modelsList');
   assert.equal(JSON.stringify(calls[5][1]), '{"baseUrl":"http://127.0.0.1:9/v1","apiKey":"inline-key"}');
   // 没有兜底的通用请求通道：否则这份有限集合等于不存在
   assert.equal('request' in api, false);

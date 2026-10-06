@@ -1,4 +1,4 @@
-// 对话面纯派生层的验收。msgfold.js 是经典脚本（挂 window.DshMsgFold），
+// 对话面纯派生层的验收。msgfold.js 是经典脚本（挂 window.SaCodeMsgFold），
 // 所以这里用一个空 window 求值，再把返回的引用交给断言——纯函数没有别的依赖。
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,11 +8,11 @@ import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 
 const FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "renderer", "msgfold.js");
-// msgfold.js 是渲染层用的经典脚本（挂 window.DshMsgFold）。这里在全新上下文里跑它，
+// msgfold.js 是渲染层用的经典脚本（挂 window.SaCodeMsgFold）。这里在全新上下文里跑它，
 // 只递一个 window 进去——不用 new Function/eval，也就不会把测试模块的闭包泄漏给被测代码。
 const sandbox = { window: {} };
 runInNewContext(readFileSync(FILE, "utf8"), sandbox);
-const F = sandbox.window.DshMsgFold;
+const F = sandbox.window.SaCodeMsgFold;
 
 test('附件与事件身份来自对应投影行，重复正文和尾部裁切不混用',()=>{
  const attachment={attachmentId:'sha256:a',kind:'file',name:'说明.txt',bytes:3};

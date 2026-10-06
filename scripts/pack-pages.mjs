@@ -13,11 +13,15 @@ const vueRuntime = { name: 'sacode-vue-runtime', setup(build) {
   build.onLoad({ filter: /^vue$/, namespace: 'sacode-runtime' }, () => ({ contents: 'module.exports = globalThis.Vue;', loader: 'js' }));
 } };
 const slotsOutput = join(desktop, 'renderer/vendor/client-slots.iife.js');
+const generalOutput = join(desktop, 'renderer/vendor/general-settings.iife.js');
+const generalBuild = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, 'renderer/pages/general-settings.ts')], bundle: true,
+  plugins: [vueRuntime], format: 'iife', globalName: 'SaCodeGeneralSettings', outfile: generalOutput, target: 'chrome120', metafile: true, logLevel: 'warning' });
+assertStaticRendererBundle(readFileSync(generalOutput, 'utf8'), generalBuild.metafile);
 const slotsBuild = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, 'renderer/pages/client-slots.ts')], bundle: true,
   plugins: [vueRuntime], format: 'iife', globalName: 'SaCodeSlots', outfile: slotsOutput, target: 'chrome120', metafile: true, logLevel: 'warning' });
 assertStaticRendererBundle(readFileSync(slotsOutput, 'utf8'), slotsBuild.metafile);
 if (!readFileSync(slotsOutput, 'utf8').includes('globalThis.Vue')) throw Error('槽位渲染器未接入唯一 Vue runtime');
-for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect'], ['composer-attachments','SaCodeAttachments'], ['queue-dock','SaCodeQueue'], ['context-meter','SaCodeContextMeter'], ['todo-panel','SaCodeTodo']]) {
+for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect'], ['composer-attachments','SaCodeAttachments'], ['queue-dock','SaCodeQueue'], ['context-meter','SaCodeContextMeter'], ['todo-panel','SaCodeTodo'], ['goal-bar','SaCodeGoal']]) {
   const outfile = join(desktop, `renderer/vendor/${page}.iife.js`);
   const result = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, `renderer/pages/${page}.ts`)], bundle: true,
     plugins: [vueRuntime], format: 'iife', globalName, outfile, target: 'chrome120', metafile: true, logLevel: 'warning' });

@@ -6,11 +6,11 @@ import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 const require=createRequire(import.meta.url);
 const { HostBridge }=require('../host-bridge.cjs');
-const host=process.env.DSH_HOST || resolve('dist/host/bin/dsh-host.exe');
+const host=process.env.SACODE_HOST || resolve('dist/host/bin/sacode-host.exe');
 function fixture(){
   const root=mkdtempSync(join(tmpdir(),'sacode-global-appearance-'));
   const settings=join(root,'用户配置');
-  const env={...process.env,SACODE_USER_SETTINGS_DIR:settings,DSH_PROVIDER_BASE_URL:''};
+  const env={...process.env,SACODE_USER_SETTINGS_DIR:settings,SACODE_PROVIDER_BASE_URL:''};
   return {root,settings,env};
 }
 async function start(root,name,env){
@@ -24,7 +24,7 @@ test('两个 Host 共享用户外观，跨会话与重启恢复且不覆盖另�
   try{
     const init=await a.bridge.request('initialize');
     for(const method of ['global/appearance/get','global/appearance/set-theme','global/appearance/set-font-size'])assert.ok(init.capabilities.includes(method));
-    assert.deepEqual(await a.bridge.request('global/appearance/get'),{theme:'system',fontSize:14,scope:'user'});
+    assert.deepEqual(await a.bridge.request('global/appearance/get'),{theme:'system',fontSize:14,busySend:'queue',scope:'user'});
     assert.equal((await a.bridge.request('global/appearance/set-font-size',{fontSize:22})).saved,true);
     assert.equal((await b.bridge.request('global/appearance/set-theme',{theme:'light'})).fontSize,22);
     assert.equal((await a.bridge.request('global/appearance/get')).theme,'light');
@@ -35,7 +35,7 @@ test('两个 Host 共享用户外观，跨会话与重启恢复且不覆盖另�
     assert.doesNotMatch(readFileSync(join(b.session,'session.log'),'utf8'),/settings\//);
   }finally{await a.bridge.stop();await b.bridge.stop();}
   const fresh=await start(f.root,'重启',f.env);
-  try{assert.deepEqual(await fresh.bridge.request('global/appearance/get'),{theme:'light',fontSize:22,scope:'user'});}
+  try{assert.deepEqual(await fresh.bridge.request('global/appearance/get'),{theme:'light',fontSize:22,busySend:'queue',scope:'user'});}
   finally{await fresh.bridge.stop();}
 });
 test('字体数值校验拒绝小数、字符串、布尔及越界，重复写不改配置',async()=>{

@@ -1,11 +1,17 @@
 package core
 
 import std.collection.ArrayList
+import std.sync.*
 import std.time.MonoTime
 
 // 审批的协议面：一次工具调用要经过「发号 → 应答 → 一次性消费」，
 // 而不是调用方随手带一个字符串说自己批过了。理由是可追问性——
 // 只有把 asked/decided/expired 写成事件，才答得出「谁批的、批没批、批过头没有」。
+//
+// 线程面：宿主里模型侧审批跑在 turn 线程（发号、轮询状态、消费工单），
+// 主循环同时还在应答人发起的审批——两类线程都会动 items 与日志，
+// 所以所有公开方法过同一把锁。锁只圈内存态自洽；跨进程可见仍只由
+// 日志（flush）决定，与 SessionLog 同一分工。
 //
 // 四条 fail-closed 规则：
 // 1) 认得的决定只有 `allowed-once` 与 `denied`，其余（allowed-always、空串、乱码）不改判也不成功；
@@ -58,6 +64,9 @@ public class ApprovalDesk {
     let items = ArrayList<ApprovalTicket>()
     let clock: () -> Int64
     var nextId: Int64 = 0
+    // 公开方法共用的锁：turn 线程与主循环会同时碰 items 与日志。
+    // ask() 只委托 askWithTtl()，不在外层再锁，避免自锁。
+    let mtx = Mutex()
     public let defaultTtl: Int64 = 30
 
     public init(log: SessionLog, clock!: () -> Int64 = monotonicSeconds()) {
@@ -71,63 +80,92 @@ public class ApprovalDesk {
 
     public func askWithTtl(toolName: String, ttl: Int64): Int64 {
         // 号必须从日志里已出现过的最大号往后接，不能靠进程内计数器从头数：
-        // CLI 每次 `dsh call`、桌面每次重启宿主都是新进程，计数器归零就会在日志里
+        // CLI 每次 `sacode call`、桌面每次重启宿主都是新进程，计数器归零就会在日志里
         // 再发一个 1 号，两条 `approval/asked 1:write` 让审计答不出「是哪一次批的」。
         // 读日志而不是只读自己的内存，与 TokenMeter 每次接手日志都 rebuild 同一个理由。
-        let seen = highestAskedId()
-        if (seen > nextId) {
-            nextId = seen
+        mtx.lock()
+        var id: Int64 = 0
+        try {
+            let seen = highestAskedId()
+            if (seen > nextId) {
+                nextId = seen
+            }
+            nextId += 1
+            items.add(ApprovalTicket(nextId, toolName, clock() + ttl))
+            log.append("approval/asked", "${nextId}:${toolName}")
+            id = nextId
+        } finally {
+            mtx.unlock()
         }
-        nextId += 1
-        items.add(ApprovalTicket(nextId, toolName, clock() + ttl))
-        log.append("approval/asked", "${nextId}:${toolName}")
-        return nextId
+        return id
     }
 
     public func stateOf(id: Int64): String {
-        reap()
-        let t = find(id)
-        match (t) {
-            case Some(x) => x.state
-            case None => "unknown"
+        mtx.lock()
+        var state = "unknown"
+        try {
+            reap()
+            if (let Some(x) <- find(id)) {
+                state = x.state
+            }
+        } finally {
+            mtx.unlock()
         }
+        return state
     }
 
     public func pendingCount(): Int64 {
-        reap()
+        mtx.lock()
         var n: Int64 = 0
-        for (t in items) {
-            if (t.state == "pending") {
-                n += 1
+        try {
+            reap()
+            for (t in items) {
+                if (t.state == "pending") {
+                    n += 1
+                }
             }
+        } finally {
+            mtx.unlock()
         }
         return n
     }
 
     // 切换会话时，尚待决定和已放行但未消费的工单都不能丢弃。
     public func hasOpenTickets(): Bool {
-        reap()
-        for (ticket in items) {
-            if (ticket.state == "pending" || ticket.state == "allowed-once") { return true }
+        mtx.lock()
+        var open = false
+        try {
+            reap()
+            for (ticket in items) {
+                if (ticket.state == "pending" || ticket.state == "allowed-once") {
+                    open = true
+                }
+            }
+        } finally {
+            mtx.unlock()
         }
-        return false
+        return open
     }
 
     // 应答只认 pending：已结算（含用过、被拒、过期）的工单一律拒绝改判
     public func answer(id: Int64, decision: String): Bool {
-        reap()
-        if (let Some(t) <- find(id)) {
-            if (t.state != "pending") {
-                return false
+        mtx.lock()
+        var accepted = false
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                if (t.state == "pending") {
+                    if (decision == "allowed-once" || decision == "denied") {
+                        t.state = decision
+                        log.append("approval/decided", "${id}:${decision}")
+                        accepted = true
+                    }
+                }
             }
-            if (decision != "allowed-once" && decision != "denied") {
-                return false
-            }
-            t.state = decision
-            log.append("approval/decided", "${id}:${decision}")
-            return true
+        } finally {
+            mtx.unlock()
         }
-        return false
+        return accepted
     }
 
     // 取走放行凭据：必须是「批给这一个工具」的一次性凭据，取到即作废。
@@ -136,25 +174,36 @@ public class ApprovalDesk {
     // 挪用不烧票：这张票对它真正批过的动作还得能放行一次，
     // 否则一次误用就把人已给出的审批答复作废了。
     public func consume(id: Int64, tool: String): String {
-        reap()
-        if (let Some(t) <- find(id)) {
-            if (t.tool == tool && t.state == "allowed-once") {
-                t.state = "used"
-                return "allowed-once"
+        mtx.lock()
+        var grant = ""
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                if (t.tool == tool && t.state == "allowed-once") {
+                    t.state = "used"
+                    grant = "allowed-once"
+                }
             }
+        } finally {
+            mtx.unlock()
         }
-        return ""
+        return grant
     }
 
     // 这张票批的是哪个工具；号不存在回空串。与 stateOf 同一类只读探查，
     // 让调用方能把「挪用了别的工具的票」和「压根没批/已过期」写成两种拒绝原因。
     public func toolOf(id: Int64): String {
-        reap()
-        let t = find(id)
-        match (t) {
-            case Some(x) => x.tool
-            case None => ""
+        mtx.lock()
+        var name = ""
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                name = t.tool
+            }
+        } finally {
+            mtx.unlock()
         }
+        return name
     }
 
     // 日志里出现过的最大工单号；没有 asked 事件时为 0（下一张就是 1 号）。

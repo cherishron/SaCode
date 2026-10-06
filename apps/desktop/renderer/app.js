@@ -190,8 +190,8 @@ createApp({
       ? window.SaCodePluginManager.createSacodePluginManagerAdapter(window.sacode)
       : null;
     // 模型中心装配：四页（供应商/自定义模型/预算/迁移）通过槽位系统注册。
-    const modelCenter = window.SaCodeClientSlots && window.SaCodeClientSlots.createModelCenterAssembly
-      ? window.SaCodeClientSlots.createModelCenterAssembly()
+    const modelCenter = window.SaCodeSlots && window.SaCodeSlots.createModelCenterAssembly
+      ? window.SaCodeSlots.createModelCenterAssembly()
       : null;
     window.Vue.onBeforeUnmount(()=>modelCenter && modelCenter.dispose());
     const modelCenterOwner = ref(null);
@@ -754,6 +754,10 @@ createApp({
       };
     })();
     void modelDirectory.load();
+    modelCenterOwner.value = {
+      adapters: window.SaCodeSlots.createModelCenterAdapters(window.sacode, modelsAdapter),
+      providerPage: window.SaCodeModels.Page,
+    };
 
     function imageDraftAllowed() {
       if (!attachments.value.some((a) => a.kind === 'image')) return true;
@@ -1358,7 +1362,7 @@ createApp({
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
       el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用设置"], ["models", "模型"], ["model-center", "模型中心"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id}.svg')`}}),el('span','settings-nav-label',label)], {
+      el("div", "settings-tabs", [["general", "通用设置"], ["model-center", "模型中心"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id==='model-center'?'models':id}.svg')`}}),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
         type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
@@ -1398,8 +1402,6 @@ createApp({
         ],{'aria-busy':self.fontBusy}),
         h(self.generalSettings.Outlet,{owner:{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance}}),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
-      el("section", "settings-page", [h(window.SaCodeModels.Page, { adapter: self.modelsAdapter }),
-      ], { id:"settings-page-models", role:"tabpanel", "aria-labelledby":"settings-tab-models", hidden:self.settingsTab!=="models" }),
       self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
       el("section", "settings-page", [h(window.SaCodePlugins.Page, { tools: self.tools }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),

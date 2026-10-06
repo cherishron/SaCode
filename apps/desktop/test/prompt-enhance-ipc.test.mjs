@@ -57,7 +57,7 @@ function loadMain() {
       if (id === './host-bridge.cjs') {
         return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
       }
-      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-dsh-host.exe' };
+      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => nodeRequire };
@@ -90,24 +90,24 @@ test('增强 preload 只发固定动作，负载里除了草稿没有别的字�
   await api.promptEnhance('把这条说清楚');
   await api.promptPoll();
   await api.promptCancel();
-  assert.equal(calls[0][0], 'dsh:promptEnhance');
+  assert.equal(calls[0][0], 'sacode:promptEnhance');
   // 没有 model / baseUrl / credential 的位置：渲染层报不出「用哪颗模型」
   assert.equal(JSON.stringify(calls[0][1]), '{"draft":"把这条说清楚"}');
-  assert.equal(calls[1][0], 'dsh:promptPoll');
+  assert.equal(calls[1][0], 'sacode:promptPoll');
   assert.equal(calls[1].length, 1);
-  assert.equal(calls[2][0], 'dsh:promptCancel');
+  assert.equal(calls[2][0], 'sacode:promptCancel');
   assert.equal(calls[2].length, 1);
   assert.equal('request' in api, false);
 });
 
 test('主进程逐字段校验草稿，只把草稿交给宿主', async () => {
   const { handlers, requests } = loadMain();
-  const enhance = handlers.get('dsh:promptEnhance');
-  assert.equal(typeof enhance, 'function', 'dsh:promptEnhance 通道必须存在');
-  const poll = handlers.get('dsh:promptPoll');
-  const cancel = handlers.get('dsh:promptCancel');
-  assert.equal(typeof poll, 'function', 'dsh:promptPoll 通道必须存在');
-  assert.equal(typeof cancel, 'function', 'dsh:promptCancel 通道必须存在');
+  const enhance = handlers.get('sacode:promptEnhance');
+  assert.equal(typeof enhance, 'function', 'sacode:promptEnhance 通道必须存在');
+  const poll = handlers.get('sacode:promptPoll');
+  const cancel = handlers.get('sacode:promptCancel');
+  assert.equal(typeof poll, 'function', 'sacode:promptPoll 通道必须存在');
+  assert.equal(typeof cancel, 'function', 'sacode:promptCancel 通道必须存在');
 
   for (const bad of [undefined, null, {}, { draft: 1 }, { draft: '' }, { draft: '   \n ' }, { draft: 'x'.repeat(8001) }]) {
     await assert.rejects(

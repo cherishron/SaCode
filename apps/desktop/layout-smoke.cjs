@@ -34,8 +34,8 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
   await js("document.querySelector('#tool-write').click()");
   await waitFor("!!document.querySelector('#approval')");
   // 通过真实核心创建多条会话，覆盖长中文标题与多卡片的栅格。
-  await js("window.dsh.sessionCreate('布局检查：'+'长会话标题'.repeat(10))");
-  await js("window.dsh.sessionCreate('布局检查：文档整理')");
+  await js("window.sacode.sessionCreate('布局检查：'+'长会话标题'.repeat(10))");
+  await js("window.sacode.sessionCreate('布局检查：文档整理')");
   // 通过界面发送真实长中文消息，覆盖用户气泡宽度与展开折行。
   await js("(async()=>{const n=document.querySelector('#composer');n.value='长中文消息与输入对齐。'.repeat(35);n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click();})()");
   await waitFor("[...document.querySelectorAll('.msg-text')].some(e=>e.textContent.startsWith('长中文消息与输入对齐。'))");
