@@ -67,3 +67,39 @@
 - 分发约束实测：裸运行失败 `libstdx.compress.dll: cannot open shared object file`（退出码 127）；把 `dynamic/stdx`（**41 个 DLL**）加入 `PATH` 后运行成功。→ CLI 平台包与 Electron 安装包都必须携带这些 DLL。
 - 静态路径未通过：`static/stdx` 配置后 `ld.lld` 链接失败（crypto/net 依赖系统符号；官方文档只给了 Linux 的 `compile-option = "-ldl"`，Windows 等价写法待补）。且该次链接命令仍包含 `-l:libcangjie-runtime.dll`，说明**静态 stdx 也不等于单文件交付**，仓颉运行时 DLL 仍需随包发布。
 - cjpm 工程规范实测：`cjpm.toml` 的 `[package]` 必须写 `cjc-version`；目录名、`name`、源码 `package` 三者必须一致；`path-option` 用正斜杠路径可避开源码转义坑。
+
+## 9. 本次复刻时间点与上游增量跟踪（2026-10-06）
+
+本节是本次检查时的记录，不表示持续监控，也不升级现有能力完成状态。
+
+| 项 | 本次记录 |
+|---|---|
+| 检查时间 | 2026-10-06 19:04:52 +08:00（2026-10-06T11:04:52Z） |
+| 本次复刻基线 S0 | `639ed015397290b3745d163aafe02ffee4aa3f84`，保持冻结，不自动改为 master |
+| S0 上游提交时间 | 2026-09-29 17:21:31 +08:00；首次取证日 2026-10-02 |
+| 上游仓库及分支 | `deepseek-ai/deepseek-harness` / `master`；GitHub repo API 再次确认默认分支 |
+| 本次观察到的上游 HEAD | `5badb15009ae1756c3afe0ae0cef1faafc290ccc` |
+| HEAD 上游提交时间 | 2026-10-03 11:48:13 +08:00（2026-10-03T03:48:13Z） |
+| HEAD 内容 | 合并 PR #5648，准备 DSH `0.2.1-alpha.1` |
+| 相对 S0 | GitHub compare：ahead 266 / behind 0 / total_commits 266（包括合并提交，不等于 266 项功能） |
+| 相对此前检查 | 2026-10-04 阅读记录已有 `5badb150…`；本次未发现更新的 master HEAD |
+| SaCode 写入记录前的 HEAD | `172c499c137aca51f18dab45ce3ba0957b6dc01f` / `refactor/dsh-learning`；工作区仍有在途改动，不是最终交付冻结版本 |
+
+一手证据：
+- [仓库元数据](https://api.github.com/repos/deepseek-ai/deepseek-harness)
+- [master 提交列表](https://api.github.com/repos/deepseek-ai/deepseek-harness/commits?sha=master&per_page=5)
+- [本次上游 HEAD](https://github.com/deepseek-ai/deepseek-harness/commit/5badb15009ae1756c3afe0ae0cef1faafc290ccc)
+- [S0 至本次 HEAD 比较](https://github.com/deepseek-ai/deepseek-harness/compare/639ed015397290b3745d163aafe02ffee4aa3f84...5badb15009ae1756c3afe0ae0cef1faafc290ccc)
+
+证据限制：默认 compare 响应只有 250 条 commits，而 total_commits 为 266；files 返回 300 条，已达该 API 文件列表上限。因此这不是完整提交/文件变更清单，不能据此宣称全部更新已分析。响应中可见实验 Claude Code mods、独立 npm 发布通道、vendor 预发布和 DSH 版本发布等提交，但本次没有逐文件核查或移植这些能力。浏览工具访问 API 失败；实际取证使用 PowerShell HTTPS GitHub API，成功返回结构化响应。
+
+### 后续更新处理规则
+
+1. 每次开始新的上游核查，获取默认分支完整 HEAD、提交时间和检查时间。与本节最后观察到的完整 SHA 比较；未变化则记录“无新增提交”，不重复复刻。
+2. HEAD 变化时，先分析“上次观察 HEAD → 新 HEAD”的新增更新；同时维护“S0 → 候选新基线”的累计差异。通过分页提交查询和本地 Git diff 等补齐 API 截断，不把 300 个文件当完整范围。
+3. 按新增功能、行为变化、缺陷修复、持久格式/协议、安全与授权、依赖许可、纯文档/发布变更分类；落实到现有 63 子系统、54 前端包及自有增量，注明是否涉及既定裁剪项。
+4. 每项写清上游 SHA/路径、SaCode 现有实现、影响与兼容/迁移要求、责任人、定向正反验收，再决定直接承接、扩展或不适用。不能把上游提交标题等同于已实现功能。
+5. 本轮 S0 保持不变；候选更新单独登记，完成影响分析和范围决定后才实施。需要升级复刻基线时另记新 SHA、理由、范围差集和验收，不能覆盖历史冻结记录。
+6. 每次核查后追加新的检查记录与实际移植状态；“最后观察到的 HEAD”和“已复刻基线”分开维护。最终产物另记录源码 SHA、构建时间和摘要，不能用本节的观察时间代替产物验收。
+
+后续继续在 `refactor/dsh-learning` 工作，按文件所有权串行集成公共入口，不为每次核查创建本地任务分支。
