@@ -51,6 +51,34 @@
 
 配套测试：`core/src/model_router_test.cj` 追加 4 个用例，全绿。
 
+### 2.1 顺带修掉的单位错配（预算闸）
+
+改接线时发现并修掉了一个会让预算闸永远判不出耗尽的错配：
+
+- `UsageLedger` 从头到尾**只记金额，不记 token**（`LedgerSnapshot` 里只有
+  `usedByCurrency` / `modelTotals` / `providerTotals`，全是微分）。
+- `UsageLedger.routerView(currency)` 返回的 `LedgerView.usedByModel` 因此是
+  **微分**（`ledger_test.cj` 的 `routerViewExposesLocalUsedPerCustomModelAndCurrency`
+  断言 `usedFor("cm-a") == 300000`）。
+- 但 `route()` 的预算闸拿这个值比的是 `model.dailyTokens`——**微分对 token 数**。
+  要么永远不触发（预算配得再小也判不出），要么偶然撞上误判。
+
+修法（`core/src/model_router.cj`，D 自有）：预算闸改比 `dailyAmountMicro`，
+并在 `LedgerView` 的注释里把单位写死。`dailyTokens` / `monthlyTokens` 现在只进
+配置面，**没有任何执行点**——账本不喂它们数据，拿它们判闸就是假的。
+
+给 A 的两条提醒：
+
+1. **§3.3 第 ⑤ 步的 `reserve` 才是金额限额的执行点**，路由器那道闸只是预过滤
+   （提前给类型码，省一次派发）。两处都会拒，码不同：路由器给 `budget-exhausted`，
+   `reserve` 给 `budget-<code>`。
+2. **token 预算目前无处落地**。要在桌面端做 token 预算，A 需要把 SSE 回传的
+   token 数写进一个新的事件（账本不记 token，见 §3.5 的分档用量说明）。
+   这是 §6 之后的第三个可选动词，不阻塞本单。
+
+`routerOnlySeesViewsNotStores` 已改成金额口径并新增一条断言：只设 `dailyTokens`
+不设 `dailyAmountMicro` 时，任何已用额都不拦——证明 token 闸确实是配置-only。
+
 ## 3. 请 A 接的线（`apps/host/src/main.cj`）
 
 ### 3.1 入参

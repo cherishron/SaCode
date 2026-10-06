@@ -37,7 +37,11 @@ public class CredentialView {
     }
 }
 
-// 账本视图：B2 只读**注入的**用量与在途预留来证纯函数与优先级；接真账本在 B3。
+// 账本视图：只读**注入的**已用金额（微分）来判断预算，路由器拿不到 store、
+// 也拿不到任何写面。
+// 单位是**微分不是 token**：`UsageLedger.routerView(currency)` 从
+// `snap.modelTotals`（customModelId × currency → 已结算微分）映射而来，
+// 账本从头到尾不记 token 维度。所以路由器只能拿它比金额上限。
 public class LedgerView {
     public let usedByModel: Array<(String, Int64)>
     public init(usedByModel: Array<(String, Int64)>) {
@@ -150,9 +154,15 @@ public func route(request: RouteRequest, customs: CustomModelView, providers: Pr
     if (!model.enabled) {
         return reject("custom-model-disabled", model.id)
     }
-    // 预算闸：-1 = 未设该维度上限（不是 0——0 会被读成「立刻耗尽」）
-    if (model.dailyTokens >= 0 && ledger.usedFor(model.id) >= model.dailyTokens) {
-        return reject("budget-exhausted", "${ledger.usedFor(model.id)}/${model.dailyTokens}")
+    // 预算闸：**账本只记金额，不记 token**（token 维度不落 `usage-ledger.log`，
+    // 因为计费口径是金额）。所以这里比的是金额上限 `dailyAmountMicro`，不是
+    // `dailyTokens`——后者只进配置面，没有任何地方喂数据给它，
+    // 拿它当闸会比「已用微分」和「token 数」，永远判不出耗尽。
+    // -1 = 未设该维度上限（不是 0——0 会被读成「立刻耗尽」）。
+    // 这是**预过滤**不是执行点：真正的限额判据在 `UsageLedger.reserve` 的
+    // 「已用 + 在途」上，那里才看得见并发在途，也能拒掉在途超额的派发。
+    if (model.dailyAmountMicro >= 0 && ledger.usedFor(model.id) >= model.dailyAmountMicro) {
+        return reject("budget-exhausted", "${ledger.usedFor(model.id)}/${model.dailyAmountMicro}")
     }
 
     let candidates = ArrayList<RouteCandidate>()

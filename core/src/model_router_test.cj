@@ -252,22 +252,30 @@ func routerOnlySeesViewsNotStores() {
         mrCreds([]), mrNoBudget(), Cursor(), 1000)
     @Expect(out.decision.isNone(), true)
     @Expect(out.rejection.getOrThrow().code, "credential-unconfigured")
-    // 预算耗尽 → 带类型拒绝
+    // 预算视图里是**已用微分**，不是 token 数：账本不记 token 维度。
+    // 未设金额上限（-1）时，任何已用额都不拦——0 才是「立刻耗尽」。
     let budgeted = route(RouteRequest("code", ["tools"]), customs, providers, mrHealthy(),
         mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 5000)]), Cursor(), 1000)
-    @Expect(budgeted.decision.isSome(), true)   // 未设上限（-1）时预算视图不拦
-    // 设了上限且「已用 + 在途」触顶 → 必须带类型拒绝，不是模糊失败
+    @Expect(budgeted.decision.isSome(), true)
+    // 设了金额上限且已用触顶 → 必须带类型拒绝，不是模糊失败
     let capped = CustomModelRecord("code", "编程模型", "", true, "coding", ["tools"],
-        [mrBinding("step", "m-a", 0, 1)], "round-robin", dailyTokens: 100)
+        [mrBinding("step", "m-a", 0, 1)], "round-robin", dailyAmountMicro: 100000)
     let cappedView = mrCustomView([capped])
     let exceeded = route(RouteRequest("code", ["tools"]), cappedView, providers, mrHealthy(),
-        mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 100)]), Cursor(), 1000)
+        mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 100000)]), Cursor(), 1000)
     @Expect(exceeded.decision.isNone(), true)
     @Expect(exceeded.rejection.getOrThrow().code, "budget-exhausted")
-    // 未触顶时照常可选（99 < 100）
+    // 未触顶时照常可选（99999 < 100000）
     let under = route(RouteRequest("code", ["tools"]), cappedView, providers, mrHealthy(),
-        mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 99)]), Cursor(), 1000)
+        mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 99999)]), Cursor(), 1000)
     @Expect(under.decision.isSome(), true)
+    // token 上限不设闸门：账本不喂它数据，拿它判会永远判不出耗尽
+    let tokenOnly = CustomModelRecord("code", "编程模型", "", true, "coding", ["tools"],
+        [mrBinding("step", "m-a", 0, 1)], "round-robin", dailyTokens: 100)
+    let tokenView = mrCustomView([tokenOnly])
+    let tokenIgnored = route(RouteRequest("code", ["tools"]), tokenView, providers, mrHealthy(),
+        mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 5000000)]), Cursor(), 1000)
+    @Expect(tokenIgnored.decision.isSome(), true)
 }
 
 func mrImageSpec(id: String): ModelSpec {
