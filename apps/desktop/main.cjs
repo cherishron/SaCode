@@ -261,6 +261,7 @@ ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   if(!Array.isArray(choice.filePaths) || choice.filePaths.length!==1 || !isStr(choice.filePaths[0])) throw new Error("bad directory selection");
   return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
 }));
+ipcMain.handle("sacode:workspaceFiles", async () => withHost(()=>bridge.request("workspace/files")));
 ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
   return withHost(()=>bridge.request("session/create", {title:args.title}));

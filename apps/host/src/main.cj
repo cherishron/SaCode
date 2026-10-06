@@ -1728,6 +1728,37 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(workspace.effectiveDirectory())}\",\"configured\":${configured},\"available\":${available},\"scope\":\"session\"}"))
             continue
         }
+        if (method == "workspace/files") {
+            var target2 = shared
+            if (!leaseHeld || workspaceFault) {
+                let fresh2 = SessionLog(p)
+                if (!fresh2.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                target2 = fresh2
+            }
+            let ws2 = SessionWorkspace(target2, fallback: canonicalize(".").toString())
+            let dir = ws2.effectiveDirectory()
+            var entries = "["
+            var count = 0
+            try {
+                var i2 = 0
+                for (info in Directory.readFrom(dir)) {
+                    if (count >= 200) { break }
+                    let name = info.name
+                    let entryDir = if (info.isDirectory()) { "true" } else { "false" }
+                    var entrySize = Int64(0)
+                    if (!info.isDirectory()) { entrySize = FileInfo(dir + "/" + name).size }
+                    if (count > 0) { entries = entries + "," }
+                    entries = entries + "{\"name\":\"${jsonEscapeText(name)}\",\"isDir\":${entryDir},\"size\":${entrySize}}"
+                    count += 1
+                    i2 += 1
+                }
+            } catch (e: Exception) {
+                emit(okFrame(idText, "{\"files\":${entries},\"error\":\"${jsonEscapeText(e.message)}\"}"))
+                continue
+            }
+            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(dir)}\",\"files\":${entries}}"))
+            continue
+        }
         if (method == "workspace/set-directory") {
             if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
                 emit(errFrame(idText, -32001, "session-resources-in-flight")); continue

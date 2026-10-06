@@ -201,6 +201,15 @@ createApp({
     let sessionGeneration = 0;
     let selectedScrollId = 'initial';
     const workspaceOpen=ref(false), workspace=ref(null), workspaceBusy=ref(false), workspaceNote=ref("");
+    const workspaceFiles=ref([]), workspaceFilesBusy=ref(false);
+    async function refreshWorkspaceFiles() {
+      workspaceFilesBusy.value=true;
+      try {
+        const result = await window.sacode.workspaceFiles();
+        workspaceFiles.value = result.files || [];
+      } catch(e) { workspaceFiles.value = []; }
+      workspaceFilesBusy.value=false;
+    }
     async function refreshWorkspace() {
       const generation=sessionGeneration, result=await window.sacode.workspaceGet();
       if(generation===sessionGeneration) workspace.value=result;
@@ -257,7 +266,7 @@ createApp({
       catalogNote.value="已切换，正在加载会话…";
       queuePending.value=[];
       clearAttachments();
-      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshQueue();
+      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshWorkspaceFiles(); await refreshQueue();
       await refreshGlobalAppearance();
       workspaceNote.value="";
       catalog.value=await window.sacode.sessionCatalog();
@@ -1047,7 +1056,7 @@ createApp({
       generalSettings, busySendSaving, busySendNote, busySendError, setBusySend,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
       send, runTurn, cancelTurn, askTool, answerTool,
       queueRows, queuePending, updateQueue,
     };
@@ -1223,7 +1232,7 @@ createApp({
       : [];
 
     const sideTabs = el("div", "side-tabs", [
-      ...[["inspect", "工具与预算"], ["preview", "文档预览"], ["guide", "使用指南"]].map(([id, label], index, tabs) => el("button", "side-tab", [label,
+      ...[["inspect","工具与预算"],["files","工作区文件"],["trace","轨迹"],["preview","文档预览"],["guide","使用指南"]].map(([id,label],index,tabs)=>el("button","side-tab",[label,
         id === "inspect" && self.approval ? el("span", "pending-dot", null, { "aria-hidden": "true" }) : null], {
         id: "side-tab-" + id, role: "tab", "aria-selected": self.sideTab === id,
         "aria-label": label + (id === "inspect" && self.approval ? "，待审批" : ""),
@@ -1259,6 +1268,24 @@ createApp({
         ]),
       ],{id:'developer-diagnostics',open:self.diagnosticsOpen,onToggle:e=>{self.diagnosticsOpen=e.target.open;}}),
     ], { id: "side-page-inspect", role: "tabpanel", "aria-labelledby": "side-tab-inspect", hidden: self.sideTab !== "inspect" });
+    const filesPage = el("div", "side-page", [
+      el("section", "side-section", [el("h2", null, "工作区文件"),
+        self.workspaceFilesBusy ? el("p", "note", "加载中…", { role: "status", "aria-live": "polite" }) :
+        !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录"),
+        ...self.workspaceFiles.filter(f=>f.isDir).map(d=>el("div","file-tree-entry file-tree-dir",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,d.name),el("span","file-size","目录")],{'aria-label':'目录 '+d.name})),
+        ...self.workspaceFiles.filter(f=>!f.isDir).map(f=>el("div","file-tree-entry file-tree-file",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,f.name),el("span","file-size",f.size>1048576?(f.size/1048576).toFixed(1)+'MB':f.size>1024?(f.size/1024).toFixed(1)+'KB':f.size+'B')],{'aria-label':f.name})),
+      ], { id: "files-panel", tabindex: -1 }),
+    ], { id: "side-page-files", role: "tabpanel", "aria-labelledby": "side-tab-files", hidden: self.sideTab !== "files" });
+    const tracePage = el("div", "side-page", [
+      el("section", "side-section", [el("h2", null, "会话轨迹"),
+        el("p","note","显示当前会话的事件时间线。"),
+        self.proj.events>0 ? el("div","trace-timeline",null,Array.from({length:Math.min(self.proj.events,20)},(_,i)=>el("div","trace-event",[
+          el("span","trace-seq","#"+(self.proj.events-i)),
+          el("span","trace-type",["session","user","assistant","tool","system"][i%5]||"event"),
+          el("span","trace-time",""),
+        ]))) : el("p","note","尚无事件"),
+      ], { id: "trace-panel", tabindex: -1 }),
+    ], { id: "side-page-trace", role: "tabpanel", "aria-labelledby": "side-tab-trace", hidden: self.sideTab !== "trace" });
     const guide = el("div", "side-page", [
       el("section", "side-section", [
         el("h2", null, "SaCode 使用指南"),
@@ -1296,7 +1323,7 @@ createApp({
       el('button','frame-icon','×',{id:'close-side','aria-label':'关闭侧栏',onClick:()=>{self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side').focus());}}),
     ]);
     const side = el("aside", "pane side", [sideToolbar, sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
-      el("div", "side-primary", [inspection, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
+      el("div", "side-primary", [inspection, filesPage, tracePage, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
       self.sideSplit ? el("div", "pane-divider", null, { id: "pane-divider", role: "separator", tabindex: 0,
         "aria-label": "调整右侧窗格高度", "aria-orientation": "horizontal", "aria-valuemin": 25, "aria-valuemax": 75, "aria-valuenow": self.sideRatio,
         onKeydown: (e) => {

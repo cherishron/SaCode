@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("sacode", {
   sessionSelect: (sessionId) => ipcRenderer.invoke("sacode:sessionSelect", { sessionId }),
   workspaceGet: () => ipcRenderer.invoke("sacode:workspaceGet"),
   workspaceChoose: () => ipcRenderer.invoke("sacode:workspaceChoose"),
+  workspaceFiles: () => ipcRenderer.invoke("sacode:workspaceFiles"),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("sacode:appearanceSetTheme", { theme }),
   // 模型配置面：一个动作一条通道，字段形状由主进程守卫，渲染层拼不出任意宿主方法。
   modelsDescribe: () => ipcRenderer.invoke("sacode:modelsDescribe"),
