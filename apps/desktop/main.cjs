@@ -462,15 +462,18 @@ ipcMain.handle("sacode:pluginsInspect", async (_e, args) => {
 });
 
 ipcMain.handle("sacode:pluginsInstall", async (_e, args) => {
-  return { requestId: "", phase: "failed" };
+  // 安装尚未接后端，返回 failed 状态让适配器正确显示失败
+  return { requestId: "", phase: "failed", output: "plugin-install-not-implemented" };
 });
 
 ipcMain.handle("sacode:pluginsInstallPoll", async (_e, args) => {
-  return { requestId: args && args.requestId, phase: "failed" };
+  const requestId = args && args.requestId;
+  if (!requestId) return { requestId: "", phase: "failed", output: "unknown-request" };
+  return { requestId, phase: "failed", output: "plugin-install-not-implemented" };
 });
 
 ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
-  return { cancelled: false };
+  return { cancelled: true, output: "install-was-not-running" };
 });
 
 const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
