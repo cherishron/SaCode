@@ -88,7 +88,7 @@ func goalRunnerRejectsDeniedToolsAsProgress() {
         Chunk("finish", "", "tool_calls")]) },
         { _ => AgentChunks([Chunk("finish", "", "stop")]) },
         "test-model", TurnToken(), log, DeliveryQueue(64), false, GoalScheduler(log, { => Int64(0) }), svc,
-        Int64(8), Int64(100), Int64(1), { => false }, { _ => false }, toolRuntime: runtime)
+        Int64(8), Int64(100), Int64(1), { => false }, { => false }, toolRuntime: runtime)
     @Expect(result.stopReason, "no-progress")
     @Expect(result.rounds, Int64(1))
     @Expect(svc.snapshot().blockedReason, "goal-no-progress")

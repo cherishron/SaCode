@@ -13,8 +13,9 @@ import std.collection.*
 //   1. **只回答「谁能上、谁为什么上不了」**。不 require、不 spawn、不读目录、不认识
 //      文件系统。装配顺序与拒绝理由是事实，副作用是宿主与扩展宿主的动作——把它们混在
 //      一起就没有可复现的判据可言（顺序一旦取决于 I/O 完成时刻，作用域隔离无法验证）。
-//   2. **未接的种类要如实拒，不是静默不装**。model/service/ui/preset 四类现在拒成
-//      `kind-not-wired`。静默不装会得到一个「已启用但看不见」的包，那是最难查的一类假成功。
+//   2. **未接的种类要如实拒，不是静默不装**。五类（tool/model/service/ui/preset）
+//      已全部接通激活路径；将来若有第六类未接，仍要拒成 `kind-not-wired:*`
+//      （携带种类名）。静默不装会得到一个「已启用但看不见」的包，那是最难查的一类假成功。
 //   3. **拒绝必须说得出是哪条依赖**。missing 与 disabled 是两个动作不同的下一步
 //      （去装 vs 勾回来），合并成一条错误就等于没说。
 //   4. **环整组拒，不挑一条边破环**。破环等于替用户决定哪条依赖不重要，
@@ -22,10 +23,11 @@ import std.collection.*
 //   5. **顺序与输入顺序无关**。同一份安装态在两入口必须算出同一个序，
 //      否则「CLI 装了、桌面看得见」这句话连可验证的形式都没有。
 
-// 已接的装配种类。其余四类在 resolve 里一律拒成 kind-not-wired，
-// 接一类就往这里加一名——「加了这名」是唯一能让该种类上路的动作，
-// 而不是在宿主里再多一个 if。
-let pluginWiredKinds = ["tool"]
+// 已接的装配种类：五类全部接通各自的激活路径（贡献面 SPI 见 plugin_surface.cj）。
+// 接一类就往这里加一名 + 提供对应 ContributionSurface 实现 + manifest 声明解析分支——
+// 「加这名 + 加实现」是唯一能让该种类上路的动作，而不是在宿主里再多一个 if
+// （架构不变量 5：新增插件不修改 agent 主循环与入口分派链）。
+let pluginWiredKinds = ["tool", "model", "service", "ui", "preset"]
 
 public class PluginUnit {
     public let name: String
@@ -107,7 +109,7 @@ public class PluginAssembly {
                 continue
             }
             if (!pluginWiredKinds.contains(u.kind)) {
-                rejected.add(PluginAssemblyEntry(u.name, "failed", "kind-not-wired"))
+                rejected.add(PluginAssemblyEntry(u.name, "failed", "kind-not-wired:${u.kind}"))
                 continue
             }
             let problem = dependencyProblem(u)
@@ -180,4 +182,60 @@ public class PluginAssembly {
         }
         return true
     }
+}
+// —— 拒绝理由的对外映射（单一映射层）。
+//
+// 装配层内部用短码加参数（`missing-dependency:@local/base`），契约面要稳定错误码
+// （`plugin-dependency-missing`），界面要可执行中文（「缺少依赖 X，请先安装」）。
+// 三者只该在「一条理由」上成立，所以映射收在一处——散在宿主与桌面各拼一份，
+// 迟早出现「界面显示的码在契约词表里查不到」。
+public func reasonOf(entry: PluginAssemblyEntry): String {
+    let code = reasonCodePart(entry.reason)
+    let arg = reasonArgPart(entry.reason)
+    if (code == "kind-not-wired") {
+        return "插件种类 ${arg} 尚未接通激活路径"
+    }
+    if (code == "missing-dependency") {
+        return "缺少依赖 ${arg}，请先安装它"
+    }
+    if (code == "disabled-dependency") {
+        return "依赖 ${arg} 已停用，请先启用它"
+    }
+    if (code == "cycle") {
+        return "依赖成环，本组插件全部拒绝"
+    }
+    return entry.reason
+}
+
+public func reasonCodeOf(entry: PluginAssemblyEntry): String {
+    let code = reasonCodePart(entry.reason)
+    if (code == "kind-not-wired") {
+        return "plugin-kind-not-wired"
+    }
+    if (code == "missing-dependency") {
+        return "plugin-dependency-missing"
+    }
+    if (code == "disabled-dependency") {
+        return "plugin-dependency-disabled"
+    }
+    if (code == "cycle") {
+        return "plugin-dependency-cycle"
+    }
+    return code
+}
+
+private func reasonCodePart(reason: String): String {
+    let colon = reason.indexOf(":") ?? Int64(-1)
+    if (colon < 0) {
+        return reason
+    }
+    return reason[0..colon]
+}
+
+private func reasonArgPart(reason: String): String {
+    let colon = reason.indexOf(":") ?? Int64(-1)
+    if (colon < 0) {
+        return ""
+    }
+    return reason[(colon + 1)..reason.size]
 }

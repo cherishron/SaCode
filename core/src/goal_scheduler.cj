@@ -4,10 +4,16 @@ import std.time.MonoTime
 import std.convert.*
 
 class GoalRoundTotals {
+    var admitted: Int64 = 0
     var rounds: Int64 = 0
     var elapsed: Int64 = 0
     var streak: Int64 = 0
 }
+
+// 轮次准入事件：`<开轮时目标修订>`。轮次**开跑**就落，不等它跑完——
+// 上游 roundsStarted 的口径正是「只有进入历史的 goal 消息消耗额度」。崩在轮中的
+// 那一轮照样计入上限，否则「起一轮就崩」可以无限重入绕过轮数上限。
+let ROUND_START_EVENT = "goal/round-start"
 
 // 持续目标调度器：把「一轮模型工具循环结束 → 是否已达目标 → 未达且允许就续下一轮」
 // 的决策收进共享核心，桌面与 CLI 共用同一份判据，前端只展示与提交控制、不决定目标是否完成。
@@ -42,6 +48,7 @@ public class GoalScheduler {
     // 当前这轮的起始刻度；-1 表示没有进行中的轮次。
     var roundStart: Int64 = -1
     var roundRevision: Int64 = 0
+    var roundNumber: Int64 = 0
 
     public init(log: SessionLog, clock: () -> Int64) {
         this.log = log
@@ -57,6 +64,18 @@ public class GoalScheduler {
     public func beginRound(): Unit {
         roundStart = clock()
         roundRevision = GoalService(log).snapshot().revision
+        roundNumber = totals().admitted + Int64(1)
+        log.append(ROUND_START_EVENT, "${roundRevision}")
+    }
+
+    // 开轮时的目标修订与轮次号：轮次提示与完成证据都绑在它上面，
+    // 轮内被编辑/暂停/清除后，靠它就能认出「这份结论属于旧状态」。
+    public func openRoundRevision(): Int64 {
+        return roundRevision
+    }
+
+    public func openRoundNumber(): Int64 {
+        return roundNumber
     }
 
     // 收束一轮：没有 beginRound 就拒（不谎记一轮），非正时长也拒。
@@ -71,6 +90,10 @@ public class GoalScheduler {
         log.append("goal/round", "${GoalScheduler.roundData(elapsed, progressed)}|${roundRevision}")
         roundStart = -1
     }
+
+// 已准入轮次（`goal/round-start`）：轮次上限按它判，而不是按已结算轮次。
+// 两者在正常路径上相等，差在「轮次开了却没跑完」——那正是崩溃恢复要防的重入。
+    public func roundsAdmitted(): Int64 { return totals().admitted }
 
 // 当前目标已完成轮次；新目标重置，目标内编辑/暂停/恢复保留已有计量。
     public func roundsDone(): Int64 { return totals().rounds }
@@ -94,9 +117,15 @@ public class GoalScheduler {
                 let nextPhase = ev.data.split("|")[0]
                 if (nextPhase == "active" && (phase == "none" || phase == "complete")) {
                     firstRevision = revision
-                    result.rounds = 0; result.elapsed = 0; result.streak = 0
+                    result.admitted = 0; result.rounds = 0; result.elapsed = 0; result.streak = 0
                 }
                 phase = nextPhase
+                continue
+            }
+            // 准入事件带的是开轮时的修订；替代目标的旧修订比当前门槛早，一并丢弃——
+            // 否则旧目标开出去、没跑完就换目标的那一轮会算到新目标头上。
+            if (ev.eventType == ROUND_START_EVENT) {
+                if (Int64.parse(ev.data) >= firstRevision) { result.admitted += 1 }
                 continue
             }
             if (ev.eventType != "goal/round") {
@@ -141,7 +170,7 @@ public class GoalScheduler {
         if (budgetExceeded) {
             return GoalDecision(false, "budget")
         }
-        if (roundsDone() >= maxRounds) {
+        if (roundsAdmitted() >= maxRounds) {
             return GoalDecision(false, "round-limit")
         }
         if (elapsedSeconds() >= maxElapsed) {
@@ -182,13 +211,17 @@ public class GoalScheduler {
 }
 
 // 一轮模型工具循环的产物：本轮是否有实质进展（喂给 no-progress 判据）、
-// 模型是否提出了带证据的完成候选（喂给完成闸）。
+// 本轮是否给出了可收口的完成证据、以及本轮是不是被取消掉的。
+// `evidence` 是「机械证据 ∧ 模型声明」的合取，由 GoalRunner 组装——单独一个布尔
+// 表达不了这个区别，而把它拆开就会有人拿「工具调用次数」当完成证明。
 public class RoundOutcome {
     public let progressed: Bool
     public let evidence: Bool
-    public init(progressed: Bool, evidence: Bool) {
+    public let cancelled: Bool
+    public init(progressed: Bool, evidence: Bool, cancelled!: Bool = false) {
         this.progressed = progressed
         this.evidence = evidence
+        this.cancelled = cancelled
     }
 }
 
@@ -219,7 +252,8 @@ public class GoalDriver {
     }
 
     public func run(maxRounds: Int64, maxElapsed: Int64, noProgressLimit: Int64,
-        budgetExceeded: () -> Bool, runRound: () -> RoundOutcome): DriveResult {
+        budgetExceeded: () -> Bool, runRound: () -> RoundOutcome,
+        armed!: () -> Bool = { => true }): DriveResult {
         var rounds = Int64(0)
         var stopReason = ""
         var done = false
@@ -228,24 +262,36 @@ public class GoalDriver {
         while (!done) {
             // 边界重读：上一轮收束后用户可能已暂停/编辑/删除——下一轮据此决定。
             let snap = svc.snapshot()
-            let decision = scheduler.decide(snap.phase, maxRounds, maxElapsed, noProgressLimit, budgetExceeded())
-            if (!decision.run) {
-                scheduler.applyStop(svc, snap.revision, decision)
-                stopReason = decision.reason
+            // 授权与 phase 是两道独立的闸：durable phase 仍是 active 但进程没 armed
+            // 时照样不开轮。恢复授权就落在这里——重启后 active 目标不会自己发请求。
+            if (snap.phase == "active" && !armed()) {
+                stopReason = "disarmed"
                 done = true
             } else {
-                scheduler.beginRound()
-                let outcome = runRound()
-                scheduler.endRound(outcome.progressed)
-                rounds += Int64(1)
-                if (outcome.evidence) {
-                    // 证据属于本轮开头的目标修订。轮内编辑/暂停/删除后，不能把旧证据
-                    // 重新绑定到最新修订；交回下一次边界读取处理新状态。
-                    let current = svc.snapshot()
-                    if (current.phase == "active" && current.revision == snap.revision &&
-                        scheduler.completeIfEvidenced(svc, snap.revision, true)) {
-                        stopReason = "completed"
+                let decision = scheduler.decide(snap.phase, maxRounds, maxElapsed, noProgressLimit, budgetExceeded())
+                if (!decision.run) {
+                    scheduler.applyStop(svc, snap.revision, decision)
+                    stopReason = decision.reason
+                    done = true
+                } else {
+                    scheduler.beginRound()
+                    let outcome = runRound()
+                    // 取消的那一轮照常结算时长与进展（时间确实花了），但**不再开下一轮**：
+                    // 取消绝不自动续跑，否则 stop 之后进程还在原地空转到撞上限。
+                    scheduler.endRound(outcome.progressed)
+                    rounds += Int64(1)
+                    if (outcome.cancelled) {
+                        stopReason = "cancelled"
                         done = true
+                    } else if (outcome.evidence) {
+                        // 证据属于本轮开头的目标修订。轮内编辑/暂停/删除后，不能把旧证据
+                        // 重新绑定到最新修订；交回下一次边界读取处理新状态。
+                        let current = svc.snapshot()
+                        if (current.phase == "active" && current.revision == snap.revision &&
+                            scheduler.completeIfEvidenced(svc, snap.revision, true)) {
+                            stopReason = "completed"
+                            done = true
+                        }
                     }
                 }
             }

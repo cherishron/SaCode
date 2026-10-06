@@ -348,7 +348,9 @@ func pluginInventoryJsonCarriesPackageAndRowFields() {
     @Expect(text.contains("\"enabled\":true"), true)
     @Expect(text.contains("\"rows\":["), true)
     @Expect(text.contains("\"rowId\":\"echo\""), true)
-    @Expect(text.contains("\"phase\":\"active\""), true)
+    // 装了但未激活 ⇒ pending：phase 由生命周期事实投影，不再是 enabled 硬编码。
+    // 旧断言恒 active，正是这次要修掉的假成功。
+    @Expect(text.contains("\"phase\":\"pending\""), true)
     // 坏包字段在没有错误时必须是 JSON 的 null，不能是空串——
     // 界面按 null 判「无错误」，空串会被当成一条看不见的错误文案。
     @Expect(text.contains("\"error\":null"), true)

@@ -4,8 +4,12 @@ import std.unittest.*
 
 // 把 GoalDriver 接进真实模型工具循环（GoalRunner）：一轮 = 一次 ModelAgentLoop.run。
 // 钉的是基线点名的缺口——「目标不完成就连续启动下一轮」真正落到执行，而不只是纯函数决策。
-// 三条反证：连续跑多轮直到有证据才收口；从无证据则撞轮数上限落阻塞；目标非 active 时
-// 一轮都不开（runRound/makeFirst 一次都不被调用）。
+// 四条反证：连续跑多轮直到机械证据与声明同时成立才收口；从无声明则撞轮数上限落阻塞；
+// 目标非 active 时一轮都不开（runRound/makeFirst 一次都不被调用）；
+// 取消的那一轮结算完就不再开新轮。
+//
+// evidence 现在是「机械证据 ∧ 声明」的合取：机械侧由本层按「本轮确有成功结算的副作用」
+// 落 `goal/evidence`，声明侧由 claim 闭包注入。只给 claim 不给机械证据（或反之）都不收口。
 
 // 一次性 provider：喂固定的 chunk 序列（同 model_agent_test 的 AgentChunks 形态，本文件自带一份
 // 以免跨测试文件耦合）。
@@ -71,7 +75,7 @@ func goalRunnerRunsModelTurnsAcrossRoundsUntilEvidence() {
         sched, svc,
         Int64(10), Int64(100000), Int64(0),
         { => false },
-        { _ => tick.n >= Int64(2) })
+        { => tick.n >= Int64(2) })
     @Expect(r.stopReason, "completed")
     @Expect(r.rounds, Int64(2))
     @Expect(tick.n, Int64(2))
@@ -99,7 +103,7 @@ func goalRunnerBlocksOnRoundLimitWithoutEvidence() {
         sched, svc,
         Int64(2), Int64(100000), Int64(0),
         { => false },
-        { _ => false })
+        { => false })
     @Expect(r.stopReason, "round-limit")
     @Expect(r.rounds, Int64(2))
     @Expect(tick.n, Int64(2))
@@ -128,7 +132,7 @@ func goalRunnerDoesNotRunWhenGoalNotActive() {
         sched, svc,
         Int64(10), Int64(100000), Int64(0),
         { => false },
-        { _ => true })
+        { => true })
     @Expect(r.rounds, Int64(0))
     @Expect(r.stopReason, "paused")
     @Expect(tick.n, Int64(0))
@@ -160,7 +164,7 @@ func goalRunnerDeliversQueuedTurnMessageAtRoundBoundary() {
         sched, svc,
         Int64(10), Int64(100000), Int64(0),
         { => false },
-        { _ => tick.n >= Int64(2) })
+        { => tick.n >= Int64(2) })
     @Expect(r.stopReason, "completed")
     @Expect(r.rounds, Int64(2))
     // 边界送达后队列清空，且那条补充落成恰好一条真实 user/message（第 2 轮 claimTurn 已空）
@@ -173,5 +177,142 @@ func goalRunnerDeliversQueuedTurnMessageAtRoundBoundary() {
         }
     }
     @Expect(seen, Int64(1))
+    removeIfExists(root, recursive: true)
+}
+
+// 取消的那一轮照常结算（时间确实花了、准入照样消耗额度），但**不再开下一轮**。
+// 没有这条，宿主把 GoalRunner 接上之后 turn/cancel 会变成原地空转到撞轮数上限。
+@Test
+func goalRunnerStopsAfterCancelledRoundWithoutStartingAnother() {
+    let root = "core-grunner-cancel"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("取消后不许自己续跑")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let token = TurnToken()
+    let r = GoalRunner().run(
+        { => tick.bump(); token.cancel(); toolTurnFirst("h-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", token, log, DeliveryQueue(32), false,
+        sched, svc,
+        Int64(10), Int64(100000), Int64(0),
+        { => false },
+        { => true })
+    @Expect(tick.n, Int64(1))
+    @Expect(r.rounds, Int64(1))
+    @Expect(r.stopReason, "cancelled")
+    // 取消不是限额：不落阻塞，目标仍 active，等人显式决定。
+    @Expect(svc.snapshot().phase, "active")
+    // 轮次开了就消耗额度——否则「起一轮就被取消」可以无限重入。
+    @Expect(sched.roundsAdmitted(), Int64(1))
+    removeIfExists(root, recursive: true)
+}
+
+// 恢复授权：durable phase 仍 active 但进程没 armed 时，一轮都不开。
+// 这就是重启后的形状——目标还在，不会自己发请求。
+@Test
+func goalRunnerDoesNotRunWhenContinuationDisarmed() {
+    let root = "core-grunner-disarmed"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("重启后不自己续跑")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let r = GoalRunner().run(
+        { => tick.bump(); toolTurnFirst("i-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32), false,
+        sched, svc,
+        Int64(10), Int64(100000), Int64(0),
+        { => false },
+        { => true },
+        armed: { => false })
+    @Expect(tick.n, Int64(0))
+    @Expect(r.rounds, Int64(0))
+    @Expect(r.stopReason, "disarmed")
+    @Expect(svc.snapshot().phase, "active")
+    @Expect(sched.roundsAdmitted(), Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 轮次准入提示：每轮落一条 log-only 事件，请求装配把它折成 developer 消息（模型看得见
+// 目标正文与轮次），但它不进转录——deriveMessages 里一条都不多。
+@Test
+func goalRunnerAdmitsRoundPromptIntoRequestButNotTranscript() {
+    let root = "core-grunner-prompt"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let path = "${root}/session.log"
+    let log = SessionLog(path)
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("准入提示要进请求")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let r = GoalRunner().run(
+        { => tick.bump(); toolTurnFirst("j-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32), false,
+        sched, svc,
+        Int64(10), Int64(100000), Int64(0),
+        { => false },
+        { => tick.n >= Int64(2) },
+        maxGoalRounds: Int64(8))
+    @Expect(r.stopReason, "completed")
+    @Expect(r.rounds, Int64(2))
+    // 两轮两条准入提示，都带目标正文与轮次
+    var prompts = Int64(0)
+    for (ev in log.snapshotEvents()) {
+        if (ev.eventType == GOAL_ROUND_PROMPT_EVENT) { prompts += Int64(1) }
+    }
+    @Expect(prompts, Int64(2))
+    // 模型看得见：请求体里有 developer 角色的一条续跑指令
+    let body = modelRequestJson("test-model", log.snapshotEvents().toArray())
+    @Expect(body.contains("\"role\":\"developer\""), true)
+    @Expect(body.contains("准入提示要进请求"), true)
+    @Expect(body.contains("轮次：2/8"), true)
+    // 桌面转录看不见：log-only 事件不进 deriveMessages
+    var leaked = Int64(0)
+    for (m in log.deriveMessages()) {
+        if (m.contains("goal_round")) { leaked += Int64(1) }
+    }
+    @Expect(leaked, Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 完成闸要机械证据与声明同时成立：给声明不给机械证据（本轮一个工具都没成功结算）
+// 照样不收口，撞轮数上限落阻塞。
+@Test
+func goalRunnerRequiresMechanicalEvidenceBesideClaim() {
+    let root = "core-grunner-evidence"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("只有声明不算证据")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    // 每轮都声明完成，但一轮工具都不调：只有 assistant 正文 + finish。
+    let r = GoalRunner().run(
+        { => tick.bump(); stopTurn() },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32), false,
+        sched, svc,
+        Int64(2), Int64(100000), Int64(0),
+        { => false },
+        { => true })
+    @Expect(r.stopReason, "round-limit")
+    @Expect(r.rounds, Int64(2))
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().blockedReason, "goal-round-limit")
+    @Expect(GoalEvidence(log).count(), Int64(0))
     removeIfExists(root, recursive: true)
 }

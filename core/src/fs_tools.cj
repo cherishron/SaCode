@@ -215,13 +215,30 @@ public func lspSymbols(path: String): ArrayList<String> {
     return results
 }
 
-// 从行中提取符号名（去除关键字和括号）
+// 从行中提取符号名（跳过关键字，取关键字后的标识符）
 func extractSymbolName(line: String): String {
     let trimmed = line.trimAscii()
-    let bytes = trimmed.toArray()
+    // 关键字表：出现这些词后，真正的符号名跟在后面
+    let keywords = ["func ", "function ", "def ", "class ", "struct "]
+    var rest = trimmed
+    var matched = false
+    for (kw in keywords) {
+        if (rest.startsWith(kw)) {
+            rest = rest[kw.size..rest.size]
+            matched = true
+            break
+        }
+    }
+    if (!matched) { return "" }
+    // 从 rest 中取第一个标识符
+    let bytes = rest.toArray()
     let nameBytes = ArrayList<Byte>()
     var started = false
-    for (c in bytes) {
+    // 跳过前导空白
+    var k: Int64 = 0
+    while (k < Int64(bytes.size) && (Int64(bytes[k]) == 32 || Int64(bytes[k]) == 9)) { k += 1 }
+    while (k < Int64(bytes.size)) {
+        let c = bytes[k]
         let n = Int64(c)
         let isIdentChar = (n >= 97 && n <= 122) || (n >= 65 && n <= 90) ||
                          (n >= 48 && n <= 57) || n == 95
@@ -232,8 +249,11 @@ func extractSymbolName(line: String): String {
             if (isIdentChar) {
                 nameBytes.add(c)
                 started = true
+            } else {
+                break
             }
         }
+        k += 1
     }
     return String.fromUtf8(nameBytes.toArray())
 }

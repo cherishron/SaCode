@@ -246,6 +246,9 @@ public class PluginStore {
     let base: String
     var records = ArrayList<PluginRecord>()
     var revision = Int64(0)
+    // 生命周期事实投影结果（phase/reason）。由 reload 每次从事件重建，
+    // 与 records 同源同类：都是回放快照，不是可回写的内存真源。
+    var lifecycleFacts = ArrayList<PluginLifecycleFact>()
 
     public init(base: String) {
         this.base = base
@@ -421,6 +424,71 @@ public class PluginStore {
         return leaseForLog().takeoverIfStale()
     }
 
+    // —— 生命周期事实写入（契约 §2.2.2-F）。与 install/uninstall 同一份租约与回放：
+    //    状态变更必须先落事实、后对外可见；诊断走调用方，不在这里污染协议面。——
+
+    // 开始激活或激活完成。phase 只允许 loading/active，别的取值是调用方的错，
+    // 静默收下会让清单出现一条认不出的状态。
+    public func recordActivate(name: String, phase: String): Unit {
+        reload()
+        if (find(name).name.size == 0) {
+            throw Exception("plugin-not-found")
+        }
+        if (phase != "loading" && phase != "active") {
+            throw Exception("plugin-rejected")
+        }
+        appendLifecycleEvent(pluginActivateEvent, activateEventData(name, phase))
+    }
+
+    // 停用开始（done=false）或停用完成（done=true，回落到 pending，保留安装事实）。
+    public func recordDeactivate(name: String, done: Bool): Unit {
+        reload()
+        if (find(name).name.size == 0) {
+            throw Exception("plugin-not-found")
+        }
+        appendLifecycleEvent(pluginDeactivateEvent, deactivateEventData(name, done))
+    }
+
+    // 失败事实与可执行理由。理由必须原样带出：只说「失败」用户没有下一步可走。
+    public func recordFailed(name: String, reason: String): Unit {
+        reload()
+        if (find(name).name.size == 0) {
+            throw Exception("plugin-not-found")
+        }
+        appendLifecycleEvent(pluginFailedEvent, failedEventData(name, reason))
+    }
+
+    // 重装配批次结果。批次本身不直接改单插件相位——那由随后的 activate/failed 事件推动。
+    public func recordReassemble(activated: Array<String>, rejected: Array<PluginAssemblyEntry>): Unit {
+        var text = "{\"activated\":["
+        var comma = ""
+        for (n in activated) {
+            text += comma + "\"${jsonEscapeText(n)}\""
+            comma = ","
+        }
+        text += "],\"rejected\":["
+        comma = ""
+        for (r in rejected) {
+            text += comma + "{\"name\":\"${jsonEscapeText(r.name)}\",\"phase\":\"${jsonEscapeText(r.phase)}\"" +
+                ",\"reason\":\"${jsonEscapeText(r.reason)}\"}"
+            comma = ","
+        }
+        text += "]}"
+        appendLifecycleEvent(pluginReassembleEvent, text)
+    }
+
+    private func appendLifecycleEvent(eventType: String, data: String): Unit {
+        let lease = leaseForLog()
+        if (!lease.acquire()) {
+            throw Exception("plugin-busy")
+        }
+        try {
+            commit(eventType, data)
+        } finally {
+            lease.release()
+        }
+    }
+
     // 租约的独占临时文件落在 base 里，所以 base 必须先存在。
     // 少了这一行，第一次安装前拿租约会因为目录不存在而失败，却被报成 plugin-busy——
     // 一个和「忙」无关的误导性错误，用户会以为是另一个入口占着。
@@ -460,6 +528,7 @@ public class PluginStore {
     private func reload(): Unit {
         records = ArrayList<PluginRecord>()
         revision = Int64(0)
+        lifecycleFacts = ArrayList<PluginLifecycleFact>()
         if (!exists(logPath())) {
             return
         }
@@ -467,6 +536,7 @@ public class PluginStore {
         if (!log.load() || log.isTruncatedTail()) {
             throw Exception("plugin-replay-rejected")
         }
+        let factEvents = ArrayList<LifecycleFactEvent>()
         for (ev in log.snapshotEvents()) {
             revision += 1
             if (ev.eventType == "plugin/install") {
@@ -511,8 +581,44 @@ public class PluginStore {
                     }
                     i += 1
                 }
+            } else if (ev.eventType == pluginActivateEvent) {
+                let obj = eventObject(ev.data)
+                factEvents.add(LifecycleFactEvent(pluginActivateEvent,
+                    textFieldOf(obj, "name"), textFieldOf(obj, "phase"), "", false))
+            } else if (ev.eventType == pluginDeactivateEvent) {
+                let obj = eventObject(ev.data)
+                factEvents.add(LifecycleFactEvent(pluginDeactivateEvent,
+                    textFieldOf(obj, "name"), textFieldOf(obj, "phase"), "", boolFieldOf(obj, "done")))
+            } else if (ev.eventType == pluginFailedEvent) {
+                let obj = eventObject(ev.data)
+                factEvents.add(LifecycleFactEvent(pluginFailedEvent,
+                    textFieldOf(obj, "name"), "failed", textFieldOf(obj, "reason"), false))
+            } else if (ev.eventType == pluginReassembleEvent) {
+                // 批次结果不直接改单插件相位：单插件事实由随后的 activate/failed 事件推动。
+                continue
             }
         }
+        // 事实投影：由全量事件推导每个已安装插件的 phase 与失败理由。
+        // 放在回放之后而不是循环里，是为了让「同源」这件事一眼可见——records 与
+        // lifecycleFacts 都由同一份事件算出，谁都不是另一个的派生。
+        let seeds = ArrayList<LifecycleSeed>()
+        for (rec in records) {
+            seeds.add(LifecycleSeed(rec.name, rec.enabled))
+        }
+        for (fact in LifecycleProjection.project(factEvents.toArray(), seeds.toArray())) {
+            lifecycleFacts.add(fact)
+        }
+    }
+
+    // 取某插件的生命周期事实。找不到时返回空状态——不是 pending：
+    // 「没有这条记录」与「装好了在等激活」是两件事。
+    private func lifecycleFactOf(name: String): PluginLifecycleFact {
+        for (fact in lifecycleFacts) {
+            if (fact.name == name) {
+                return fact
+            }
+        }
+        return PluginLifecycleFact(name, "", "")
     }
 
     // 逐包降级：一个坏包只让自己坏。日志回放被拒是唯一的连坐情形——
@@ -536,6 +642,10 @@ public class PluginStore {
             return degraded(rec, e.message)
         }
         let rows = ArrayList<PluginRowView>()
+        // phase 的来源从「enabled 硬编码」改为生命周期事实投影（见文件头纪律：
+        // 装了 != 跑起来了）。readOnlyReason 承载真实失败理由：只说「失败」而不说
+        // 为什么，用户没有下一步可走。
+        let fact = lifecycleFactOf(rec.name)
         for (decl in manifest.tools) {
             rows.add(PluginRowView(
                 decl.name,
@@ -545,8 +655,8 @@ public class PluginStore {
                 decl.description,
                 "",
                 rec.enabled,
-                if (rec.enabled) { "active" } else { "" },
-                ""
+                fact.phase,
+                fact.reason
             ))
         }
         return PluginPackageView(
@@ -718,5 +828,26 @@ private func enabledEventData(name: String, on: Bool): String {
     let obj = JsonObject()
     obj.put("name", JsonString(name))
     obj.put("enabled", JsonBool(on))
+    return obj.toString()
+}
+private func activateEventData(name: String, phase: String): String {
+    let obj = JsonObject()
+    obj.put("name", JsonString(name))
+    obj.put("phase", JsonString(phase))
+    return obj.toString()
+}
+
+private func deactivateEventData(name: String, done: Bool): String {
+    let obj = JsonObject()
+    obj.put("name", JsonString(name))
+    obj.put("phase", JsonString(if (done) { "pending" } else { "unloading" }))
+    obj.put("done", JsonBool(done))
+    return obj.toString()
+}
+
+private func failedEventData(name: String, reason: String): String {
+    let obj = JsonObject()
+    obj.put("name", JsonString(name))
+    obj.put("reason", JsonString(reason))
     return obj.toString()
 }

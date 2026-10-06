@@ -16,6 +16,15 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
             pendingRefs = parseAttachmentRefs(event.data)
             continue
         }
+        // 轮次准入提示是 log-only 事件：不进转录、不进 deriveMessages，但模型必须看得见——
+        // 目标正文只存在于 goal/change 里，不在这里折一次就等于「模型永远不知道要追求什么」。
+        // 折成 developer 而不是 user：它是系统的续跑指令，不是人说的话。
+        if (event.eventType == GOAL_ROUND_PROMPT_EVENT) {
+            if (pending.size > 0) { throw Exception("unsettled-model-tool-calls") }
+            if (messages.size > 0) { messages += "," }
+            messages += "{\"role\":\"developer\",\"content\":\"${jsonEscapeText(goalRoundPromptText(event.data))}\"}"
+            continue
+        }
         var role = ""
         if (event.eventType == "system/message") { role = "system" }
         else if (event.eventType == "developer/message") { role = "developer" }

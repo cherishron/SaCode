@@ -455,3 +455,109 @@ func driverOldEvidenceCannotOverridePause() {
     @Expect(svc.snapshot().phase, "paused")
     removeIfExists(root, recursive: true)
 }
+
+// 取消的那一轮结算完就不再开新轮。取消不是限额：不落阻塞，目标保持 active。
+@Test
+func driverStopsAfterCancelledRoundWithoutStartingAnother() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let calls = RoundCounter()
+    let r = GoalDriver(s, svc).run(Int64(100), Int64(100000), Int64(3), { => false }, { =>
+        calls.bump()
+        return RoundOutcome(true, true, cancelled: true)
+    })
+    @Expect(calls.n, Int64(1))
+    @Expect(r.rounds, Int64(1))
+    @Expect(r.stopReason, "cancelled")
+    @Expect(svc.snapshot().phase, "active")
+    @Expect(svc.snapshot().blockedReason, "")
+    removeIfExists(root, recursive: true)
+}
+
+// 恢复授权：phase 仍 active 但未 armed 时一轮都不开，且不消耗任何额度。
+@Test
+func driverDoesNotRunWhenContinuationDisarmed() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let calls = RoundCounter()
+    let r = GoalDriver(s, svc).run(Int64(100), Int64(100000), Int64(3), { => false }, { =>
+        calls.bump()
+        return RoundOutcome(true, true)
+    }, armed: { => false })
+    @Expect(calls.n, Int64(0))
+    @Expect(r.rounds, Int64(0))
+    @Expect(r.stopReason, "disarmed")
+    @Expect(svc.snapshot().phase, "active")
+    @Expect(s.roundsAdmitted(), Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 准入计量：轮次上限按「开过几轮」判，不按「跑完几轮」判。
+// 崩在轮中的那一轮照样占额度——否则「起一轮就崩」可以无限重入绕过上限。
+@Test
+func schedulerCountsAdmittedRoundThatNeverSettled() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    s.beginRound()
+    fc.advance(5)
+    // 故意不 endRound：模拟进程在这一轮里死掉
+    @Expect(s.roundsAdmitted(), Int64(1))
+    @Expect(s.roundsDone(), Int64(0))
+    @Expect(s.elapsedSeconds(), Int64(0))
+    @Expect(s.decide("active", Int64(1), Int64(1000), Int64(3), false).reason, "round-limit")
+    // 崩溃恢复同源：重载后准入数仍在
+    @Expect(log.flush(), true)
+    let fresh = SessionLog("${root}/session.log")
+    @Expect(fresh.load(), true)
+    let replay = GoalScheduler(fresh, { => fc.now() })
+    @Expect(replay.roundsAdmitted(), Int64(1))
+    @Expect(replay.roundsDone(), Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 替代目标：旧目标开出去没跑完就换目标，那一轮的准入不记到新目标头上。
+@Test
+func schedulerDropsLateAdmissionOfReplacedGoal() {
+    let root = "core-gsched-late-admit"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let svc = GoalService(log)
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    svc.create("旧目标")
+    s.beginRound()
+    fc.advance(3)
+    svc.clear(svc.snapshot().revision)
+    svc.create("替代目标")
+    s.endRound(false)
+    @Expect(s.roundsAdmitted(), Int64(0))
+    @Expect(s.roundsDone(), Int64(0))
+    @Expect(s.elapsedSeconds(), Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 新目标从 none/complete 建立时准入数一并重置：上一目标开过的轮数不算新目标的。
+@Test
+func schedulerResetsAdmissionOnNewGoal() {
+    let root = "core-gsched-admit-reset"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let svc = GoalService(log)
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    svc.create("第一目标")
+    s.beginRound(); fc.advance(1); s.endRound(true)
+    s.beginRound(); fc.advance(1); s.endRound(true)
+    @Expect(s.roundsAdmitted(), Int64(2))
+    svc.complete(svc.snapshot().revision)
+    svc.create("第二目标")
+    @Expect(s.roundsAdmitted(), Int64(0))
+    s.beginRound(); fc.advance(1); s.endRound(true)
+    @Expect(s.roundsAdmitted(), Int64(1))
+    removeIfExists(root, recursive: true)
+}

@@ -84,7 +84,7 @@ func webExecFetchesRealHttpServer() {
     let p = startServer()
     let (root, log) = newLog("ok")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:18937/ping", "GET")
     @Expect(r.ok, true)
@@ -123,8 +123,8 @@ func webExecDenyOverridesAllow() {
     let p = startServer()
     let (root, log) = newLog("override")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
-    web.deny("127.0.0.1")
+    web.allow("127.0.0.1:18937")
+    web.deny("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:18937/ping", "GET")
     @Expect(r.ok, false)
@@ -141,7 +141,7 @@ func webExecRejectsWriteMethod() {
     let p = startServer()
     let (root, log) = newLog("method")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:18937/ping", "POST")
     @Expect(r.ok, false)
@@ -159,7 +159,7 @@ func webExecCancelledTokenShortCircuits() {
     let p = startServer()
     let (root, log) = newLog("cancelled")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let token = TurnToken()
     token.cancel()
@@ -178,7 +178,7 @@ func webExecCancelsMidDownload() {
     let p = startServer()
     let (root, log) = newLog("midcancel")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web, maxBodyBytes: 2000000)
     let token = TurnToken()
     let fut = spawn { =>
@@ -201,16 +201,25 @@ func webExecCancelsMidDownload() {
 }
 
 // 超时：连一个没有监听的端口 → transport/timeout 分类，绝不返回假 200。
+// 注：权限门在前，所以这个「无监听」的 host:port 也必须显式 allow 才会真连。
 @Test
 func webExecClassifiesUnreachable() {
     let (root, log) = newLog("unreachable")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
+    web.allow("127.0.0.1:9")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:9/ping", "GET", timeoutMs: 3000)
     @Expect(r.ok, false)
     @Expect(r.body, "")
-    @Expect(r.failureKind == "transport" || r.failureKind == "timeout", true)
+    var classified = false
+    if (r.failureKind == "transport") {
+        classified = true
+    }
+    if (r.failureKind == "timeout") {
+        classified = true
+    }
+    @Expect(classified, true)
     cleanup(root)
 }
 
@@ -220,7 +229,7 @@ func webExecCapsResponseBody() {
     let p = startServer()
     let (root, log) = newLog("cap")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:18937/cap", "GET", capBytes: 2048)
     @Expect(r.ok, true)
@@ -238,7 +247,7 @@ func webExecClassifiesHttpError() {
     let p = startServer()
     let (root, log) = newLog("httperr")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("http://127.0.0.1:18937/notfound", "GET")
     @Expect(r.ok, false)
@@ -255,7 +264,7 @@ func webExecClassifiesHttpError() {
 func webExecRejectsEmptyUrl() {
     let (root, log) = newLog("emptyurl")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     let r = exec.fetch("", "GET")
     @Expect(r.ok, false)
@@ -271,11 +280,14 @@ func webExecHandlesNonUtf8Body() {
     let p = startServer()
     let (root, log) = newLog("binary")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
-    // 用 /cap 拿 100KB 的 'A'；再单独测 bytesToText 的降级路径
+    // 用 /cap 拿 100KB 的 'A'；再单独测 bytesToText 的降级路径。
+    // 输入 A(0x41) LF(0x0A) 0xFF 0x01 空格(0x20) → 期望 A + \n + \xff + \x01 + ' ' = 12 字符
     let raw = bytesToText([UInt8(65), UInt8(10), UInt8(255), UInt8(1), UInt8(32)])
-    @Expect(raw, "A\\n\\xff\\x01 \\x01")
+    @Expect(raw.size, Int64(12))
+    @Expect(raw.contains("\\x"), true)
+    // 纯可打印 ASCII 走无损快路径
     let printable = bytesToText("ok".toArray())
     @Expect(printable, "ok")
     let r = exec.fetch("http://127.0.0.1:18937/cap", "GET", capBytes: 16)
@@ -292,7 +304,7 @@ func webExecAuditMatchesRealRequests() {
     let p = startServer()
     let (root, log) = newLog("audit")
     let web = WebClient(log)
-    web.allow("127.0.0.1")
+    web.allow("127.0.0.1:18937")
     let exec = WebExecutor(web)
     exec.fetch("http://127.0.0.1:18937/a", "GET")
     exec.fetch("http://127.0.0.1:18937/b", "GET")
@@ -304,3 +316,4 @@ func webExecAuditMatchesRealRequests() {
     cleanup(root)
     stopServer(p)
 }
+

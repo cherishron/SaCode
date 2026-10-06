@@ -124,7 +124,7 @@ export const Page=defineComponent({
         el('fieldset','section',[
           el('legend',null,'导入绑定条目'),
           el('p','hint','每行一条 "providerId/modelId"（可用逗号分隔），每次最多 128 条；按稳定 ID 对齐，重复导入不重复创建。'),
-          el('label','field',[el('span','lbl','条目列表'),h('textarea',{class:'mig-ipt',rows:6,value:importText.value,'aria-label':'条目列表',placeholder:'stepfun/step-5-preview\ndstepseek/deepseek-chat',onInput:(e:Event)=>importText.value=(e.target as HTMLTextAreaElement).value})]),
+          el('label','field',[el('span','lbl','条目列表'),h('textarea',{class:'mig-ipt',rows:6,value:importText.value,'aria-label':'条目列表',placeholder:'stepfun/step-5-preview\ndeepseek/deepseek-chat',onInput:(e:Event)=>importText.value=(e.target as HTMLTextAreaElement).value})]),
           btn(importing.value?'导入中…':'导入',()=>void doImport(),'primary',{disabled:!writable.value||importing.value}),
         ]),
 

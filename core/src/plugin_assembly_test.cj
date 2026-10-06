@@ -85,17 +85,48 @@ func assemblyDistinguishesDisabledDependencyFromMissing() {
 }
 
 @Test
-func assemblyRefusesUnwiredKindExplicitly() {
-    // A12 末句「仅工具回调不得判通过」的执行面：模型/服务/前端贡献/预设这四类
-    // 在装配层就要如实拒掉（码就叫 plugin-kind-not-wired），而不是被当成工具装上——
-    // 装上了也不会工作，那是最难查的一类假成功。
+func assemblyActivatesEveryWiredKind() {
+    // 五类已全部接通激活路径（A12 推进）：工具之外的模型/服务/界面/预设
+    // 不再被 kind-not-wired 拒掉，而是各自进入装配序。顺序仍由名字定。
     let p = plan([
-        unit("@local/model-thing", "model", true, []),
-        unit("@local/ui-thing", "ui", true, []),
-        unit("@local/tool-ok", "tool", true, [])
+        unit("@local/tool-a", "tool", true, []),
+        unit("@local/model-a", "model", true, []),
+        unit("@local/service-a", "service", true, []),
+        unit("@local/ui-a", "ui", true, []),
+        unit("@local/preset-a", "preset", true, [])
     ])
-    @Expect(orderOf(p), "@local/tool-ok")
-    @Expect(rejectedOf(p), "@local/model-thing=kind-not-wired|@local/ui-thing=kind-not-wired")
+    @Expect(orderOf(p), "@local/model-a|@local/preset-a|@local/service-a|@local/tool-a|@local/ui-a")
+    @Expect(p.rejected.size, Int64(0))
+}
+
+@Test
+func assemblyStillRejectsKindWithoutActivationPath() {
+    // 防御位：五类之外的名字在解析层已被拒；即便有人绕过解析层造出这种单元，
+    // 装配层也要如实拒并携带种类名，而不是静默当工具装上。
+    let p = plan([unit("@local/weird", "magic", true, [])])
+    @Expect(orderOf(p), "")
+    @Expect(rejectedOf(p), "@local/weird=kind-not-wired:magic")
+}
+
+@Test
+func assemblyRejectionReasonsMapToCodesAndChinese() {
+    // 契约码与可执行中文必须由同一映射层产出：界面显示的码要能在契约词表里查到，
+    // 中文要带上具体的依赖名/种类名，用户才有下一步可走。
+    let missing = PluginAssemblyEntry("@local/upper", "failed", "missing-dependency:@local/base")
+    @Expect(reasonCodeOf(missing), "plugin-dependency-missing")
+    @Expect(reasonOf(missing).contains("@local/base"), true)
+    let disabled = PluginAssemblyEntry("@local/upper", "failed", "disabled-dependency:@local/base")
+    @Expect(reasonCodeOf(disabled), "plugin-dependency-disabled")
+    @Expect(reasonOf(disabled).contains("@local/base"), true)
+    let cycle = PluginAssemblyEntry("@local/a", "failed", "cycle")
+    @Expect(reasonCodeOf(cycle), "plugin-dependency-cycle")
+    let unwired = PluginAssemblyEntry("@local/x", "failed", "kind-not-wired:magic")
+    @Expect(reasonCodeOf(unwired), "plugin-kind-not-wired")
+    @Expect(reasonOf(unwired).contains("magic"), true)
+    // 认不出的码原样带出，不编造一条中文。
+    let other = PluginAssemblyEntry("@local/x", "failed", "something-else")
+    @Expect(reasonCodeOf(other), "something-else")
+    @Expect(reasonOf(other), "something-else")
 }
 
 @Test

@@ -343,6 +343,8 @@ public class ToolRuntime {
         if (raw.startsWith("{")) {
             try {
                 let obj = JsonValue.fromStr(raw).asObject()
+                // additionalProperties:false：只允许 path/offset/limit 三个键，多余字段一律拒
+                if (obj.size() > 3) { throw Exception("bad-args") }
                 raw = obj.get("path").getOrThrow().asString().getValue()
                 if (let Some(v) <- obj.get("offset")) { offset = v.asInt().getValue() }
                 if (let Some(v) <- obj.get("limit")) { limit = v.asInt().getValue() }
@@ -751,6 +753,8 @@ public class ToolRuntime {
         }
         try {
             let obj = JsonValue.fromStr(trimmed).asObject()
+            // additionalProperties:false：只允许 command/sandbox_mode 两个键
+            if (obj.size() > 2) { return ShellArgs("", "", "", false) }
             let cmd = obj.get("command").getOrThrow().asString().getValue()
             var sandboxMode = "workspace-write"
             if (let Some(sm) <- obj.get("sandbox_mode")) { sandboxMode = sm.asString().getValue() }
@@ -766,6 +770,8 @@ public class ToolRuntime {
         }
         try {
             let obj = JsonValue.fromStr(args).asObject()
+            // additionalProperties:false：只允许 path 一个键
+            if (obj.size() != 1) { return LspArgs("", "", false) }
             let path = obj.get("path").getOrThrow().asString().getValue()
             if (path.size == 0) { return LspArgs("", "", false) }
             return LspArgs(path, obj.toString(), true)
@@ -778,6 +784,8 @@ public class ToolRuntime {
         if (!trimmed.startsWith("{")) { return "" }
         try {
             let obj = JsonValue.fromStr(trimmed).asObject()
+            // additionalProperties:false：只允许 field 这一个键
+            if (obj.size() != 1) { return "" }
             if (let Some(v) <- obj.get(field)) { return v.asString().getValue() }
         } catch (_: Exception) {}
         return ""

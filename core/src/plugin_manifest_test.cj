@@ -225,3 +225,35 @@ func pluginManifestAcceptsEveryDeclaredKind() {
         @Expect(manifest.kind, kind)
     }
 }
+@Test
+func pluginManifestReadsNonToolContributionDecls() {
+    // 四类非工具贡献声明与 tools 并列解析；每类是自己贡献面的命名空间。
+    let text = "{\"name\":\"@local/model-thing\",\"version\":\"0.1.0\",\"kind\":\"model\",\"entry\":\"index.cjs\","
+        + "\"models\":[{\"name\":\"my-model\",\"description\":\"一个模型\",\"needsApproval\":true}],"
+        + "\"services\":[{\"name\":\"my-svc\",\"description\":\"一个服务\"}],"
+        + "\"ui\":[{\"name\":\"my-panel\",\"description\":\"一个面板\"}],"
+        + "\"presets\":[{\"name\":\"my-preset\",\"description\":\"一个预设\"}]}"
+    let m = parsePluginManifest(text)
+    @Expect(m.models.size, Int64(1))
+    @Expect(m.models[0].name, "my-model")
+    @Expect(m.models[0].needsApproval, true)
+    @Expect(m.services[0].name, "my-svc")
+    @Expect(m.ui[0].name, "my-panel")
+    @Expect(m.presets[0].name, "my-preset")
+}
+
+@Test
+func pluginManifestRejectsMalformedContributionDecls() {
+    // 非对象形态必须拒：认不出就是不认，不把看错的东西当成一类贡献装上。
+    @Expect(manifestCode("{\"name\":\"@local/x\",\"version\":\"0.1.0\",\"entry\":\"index.cjs\","
+        + "\"models\":[\"just-a-string\"]}"), "plugin-rejected")
+    // 缺名字拒。
+    @Expect(manifestCode("{\"name\":\"@local/x\",\"version\":\"0.1.0\",\"entry\":\"index.cjs\","
+        + "\"services\":[{\"description\":\"没名字\"}]}"), "plugin-rejected")
+    // 同一贡献面内重名拒：静默接受会让「被激活几次」取决于去重算法。
+    @Expect(manifestCode("{\"name\":\"@local/x\",\"version\":\"0.1.0\",\"entry\":\"index.cjs\","
+        + "\"ui\":[{\"name\":\"p\"},{\"name\":\"p\"}]}"), "plugin-rejected")
+    // 反证：合法形态照过。
+    @Expect(manifestCode("{\"name\":\"@local/x\",\"version\":\"0.1.0\",\"entry\":\"index.cjs\","
+        + "\"presets\":[{\"name\":\"p\"}]}"), "")
+}

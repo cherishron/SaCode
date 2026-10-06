@@ -104,9 +104,9 @@ func editFileReplacesString() {
     let readResult = rt.execute("read", "{\"path\":\"${f}\"}", "", true)
     @Expect(readResult.allowed, true)
     
-    // 编辑
+    // 编辑：edit 需要审批，传 allowed-once 放行
     let editArgs = "{\"path\":\"${f}\",\"old_string\":\"World\",\"new_string\":\"DSH\"}"
-    let editResult = rt.execute("edit", editArgs, "", true)
+    let editResult = rt.execute("edit", editArgs, "allowed-once", true)
     @Expect(editResult.allowed, true)
     
     // 验证结果
@@ -134,7 +134,7 @@ func editFileNotFoundReturnsError() {
     @Expect(readResult.allowed, true)
     
     let editArgs = "{\"path\":\"${f}\",\"old_string\":\"NONEXISTENT\",\"new_string\":\"x\"}"
-    let editResult = rt.execute("edit", editArgs, "", true)
+    let editResult = rt.execute("edit", editArgs, "allowed-once", true)
     @Expect(editResult.allowed, false)
     @Expect(editResult.why.contains("edit-not-found"), true)
     

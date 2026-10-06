@@ -1,1 +1,0 @@
-用法: node red_cycle_ledger.cjs --core <log> --cli <log> --host <log> --ui <log> --expect-red "名单,逗号分隔" [--baseline cli=17,ui=67] [--label mutant]

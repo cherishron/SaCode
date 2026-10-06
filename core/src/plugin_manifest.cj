@@ -60,6 +60,21 @@ public class PluginToolDecl {
     }
 }
 
+// 非工具类贡献的声明：模型、服务、界面、预设共用同一形态。
+// tools 有 params/撞内置工具名等专属规则，所以单独一支；其余四类只需
+// 「名字唯一 + 描述 + 审批声明」。name 是各自贡献面内的唯一标识。
+public class PluginContributionDecl {
+    public let name: String
+    public let description: String
+    public let needsApproval: Bool
+
+    public init(name: String, description: String, needsApproval: Bool) {
+        this.name = name
+        this.description = description
+        this.needsApproval = needsApproval
+    }
+}
+
 // 一份解析成功的 manifest。字段全是 public let：调用方拿到的是一份不可变快照，
 // 改动它不会反向影响注册表（与 ToolRegistry.list() 返回副本同一条纪律）。
 public class PluginManifest {
@@ -76,10 +91,16 @@ public class PluginManifest {
     public let dependencies: Array<String>
     public let runtimeRange: String
     public let tools: Array<PluginToolDecl>
+    public let models: Array<PluginContributionDecl>
+    public let services: Array<PluginContributionDecl>
+    public let ui: Array<PluginContributionDecl>
+    public let presets: Array<PluginContributionDecl>
 
     public init(name: String, version: String, title: String, description: String,
         descriptionZhCN: String, kind: String, entry: String, optional: Bool, enabled: Bool,
-        order: Int64, dependencies: Array<String>, runtimeRange: String, tools: Array<PluginToolDecl>) {
+        order: Int64, dependencies: Array<String>, runtimeRange: String, tools: Array<PluginToolDecl>,
+        models: Array<PluginContributionDecl>, services: Array<PluginContributionDecl>,
+        ui: Array<PluginContributionDecl>, presets: Array<PluginContributionDecl>) {
         this.name = name
         this.version = version
         this.title = title
@@ -93,6 +114,10 @@ public class PluginManifest {
         this.dependencies = dependencies
         this.runtimeRange = runtimeRange
         this.tools = tools
+        this.models = models
+        this.services = services
+        this.ui = ui
+        this.presets = presets
     }
 }
 
@@ -114,6 +139,10 @@ public func parsePluginManifest(text: String): PluginManifest {
     checkText(description, descriptionLimit)
     checkText(descriptionZhCN, descriptionLimit)
     let tools = parseToolDecls(obj)
+    let models = parseContributionDecls(obj, "models")
+    let services = parseContributionDecls(obj, "services")
+    let ui = parseContributionDecls(obj, "ui")
+    let presets = parseContributionDecls(obj, "presets")
     return PluginManifest(
         name,
         version,
@@ -127,7 +156,11 @@ public func parsePluginManifest(text: String): PluginManifest {
         intFieldDefault(obj, "order", 0),
         stringArrayField(obj, "dependencies", dependencyLimit),
         runtimeRangeOf(obj),
-        tools
+        tools,
+        models,
+        services,
+        ui,
+        presets
     )
 }
 
@@ -336,6 +369,58 @@ private func parseToolDecls(obj: JsonObject): Array<PluginToolDecl> {
         out.add(decl)
     }
     return out.toArray()
+}
+
+// 四类非工具贡献声明的解析：models/services/ui/presets 共用同一形态。
+// 参数非对象形态一律拒（与 tool params 必须为 JSON 对象同一条纪律：认不出就是不认，
+// 不把看错的东西当成一类贡献装上）。
+private func parseContributionDecls(obj: JsonObject, key: String): Array<PluginContributionDecl> {
+    if (obj.get(key).isNone()) {
+        return []
+    }
+    let value = obj.get(key).getOrThrow()
+    if (isNullValue(value)) {
+        return []
+    }
+    let arr = value.asArray()
+    let out = ArrayList<PluginContributionDecl>()
+    var pos: Int64 = 0
+    while (let Some(item) <- arr.get(pos)) {
+        pos += 1
+        if (isNullValue(item)) {
+            continue
+        }
+        var o: JsonObject
+        try {
+            o = item.asObject()
+        } catch (e: Exception) {
+            throw Exception("plugin-rejected")
+        }
+        let description = optionalTextField(o, "description")
+        checkText(description, toolDescriptionLimit)
+        let decl = PluginContributionDecl(
+            contributionNameField(o),
+            description,
+            boolFieldDefault(o, "needsApproval", false)
+        )
+        for (seen in out) {
+            if (seen.name == decl.name) {
+                throw Exception("plugin-rejected")
+            }
+        }
+        out.add(decl)
+    }
+    return out.toArray()
+}
+
+// 贡献名：非空、不超上限。不做撞内置工具名校验——内置工具名只对 tools 段成立，
+// 模型/服务/界面/预设的命名空间与工具不是同一个。
+private func contributionNameField(obj: JsonObject): String {
+    let name = textField(obj, "name")
+    if (name.size == 0 || name.size > toolNameLimit) {
+        throw Exception("plugin-rejected")
+    }
+    return name
 }
 
 // 长度上限与桌面 plugin-manager-adapter.ts 的 normalizePackage/normalizeRow 是同一个数：
