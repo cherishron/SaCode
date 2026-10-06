@@ -251,14 +251,13 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn-fold { border-radius: var(--radius-s); min-height: 28px; height: 28px; font-size: var(--fs-s); }
 .side { grid-column: 3; grid-row: 2 / -1; display: flex; flex-direction: column; overflow: hidden; border-left: 0.5px solid var(--border); }
-.side-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); padding: var(--space-2);
+.side-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-1); padding: var(--space-2);
   border-bottom: 0.5px solid var(--border); flex-shrink: 0; }
 .side-tab { display: flex; align-items: center; justify-content: center; gap: var(--space-1);
   height: var(--control-height); white-space: nowrap; padding: var(--space-1) var(--space-2); border: 0;
   border-radius: var(--radius-m); color: var(--text-muted); background: transparent; cursor: pointer; }
 .side-tab[aria-selected=true] { color: var(--accent); background: var(--surface); font-weight: 600; }
 .pending-dot { width: 6px; height: 6px; border-radius: 50%; corner-shape: round; background: var(--warn); flex-shrink: 0; }
-.side-tab:last-child { grid-column: 1 / -1; }
 .preview-path { overflow-wrap: anywhere; font-weight: 600; }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .floating-preview { position: fixed; z-index: 10; width: min(640px, calc(100vw - 48px));

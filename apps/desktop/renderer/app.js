@@ -524,7 +524,9 @@ createApp({
     }
     function pollEnhance(frozen, startTime) {
       const elapsed = Date.now() - (startTime || Date.now());
-      if (elapsed > 10000) {
+      // 推理模型可能先等待首个文本帧；前端期限须长于独立增强请求的读超时。
+      if (elapsed > 120000) {
+        void window.sacode.promptCancel().catch(() => {});
         finishEnhance(frozen, null, new Error("提示词增强超时"));
         return;
       }
@@ -756,7 +758,6 @@ createApp({
     void modelDirectory.load();
     modelCenterOwner.value = {
       adapters: window.SaCodeSlots.createModelCenterAdapters(window.sacode, modelsAdapter),
-      providerPage: window.SaCodeModels.Page,
     };
 
     function imageDraftAllowed() {
@@ -1071,7 +1072,6 @@ createApp({
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation})]),
       el("div", "header-utilities", [
-        el('button','frame-icon',[navIcon('M5 18V9 M12 18V4 M19 18v-6 M3 21h18')],{id:'open-budget','aria-label':'用量与预算',tooltip:{label:'用量与预算'},onClick:()=>self.openSide('budget-panel')}),
         el('button','frame-icon',[navIcon('M4 4h16v16H4z M14 4v16')],{id:'toggle-side','aria-label':self.sideOpen?'关闭侧栏':'打开侧栏','aria-expanded':self.sideOpen,tooltip:{label:self.sideOpen?'关闭侧栏':'打开侧栏'},onClick:()=>{self.sideOpen=!self.sideOpen;}}),
         self.approval ? el('button','frame-icon pending-approval',[navIcon('M12 3l10 18H2z M12 9v5 M12 17v1')],{'aria-label':'处理待审批请求',onClick:()=>self.openSide('tools-panel')}) : null,
       ]),
@@ -1082,7 +1082,7 @@ createApp({
         el('button','frame-icon sidebar-toggle',[navIcon('M4 4h16v16H4z M9 4v16')],{id:'toggle-sidebar','aria-label':self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',tooltip:{label:self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',side:'right'},onClick:self.toggleSidebar}),
       ]),
       el('button','nav-item new-session',[navIcon('M12 5v14 M5 12h14'),el('span','nav-label','新会话')],{id:'sidebar-new-session','aria-label':'新建会话',disabled:sessionLocked,onClick:self.startNewSession}),
-      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','工具与扩展')],{'aria-label':'工具与扩展','aria-pressed':self.pluginManagerOpen,onClick:()=>{self.pluginManagerOpen=!self.pluginManagerOpen;}}),
+      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','插件')],{'aria-label':'插件','aria-pressed':self.pluginManagerOpen,onClick:()=>{self.pluginManagerOpen=!self.pluginManagerOpen;}}),
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
@@ -1234,7 +1234,6 @@ createApp({
       self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
-      budgetBox,
       el('details','diagnostics',[
         el('summary',null,'开发诊断'),
         el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),

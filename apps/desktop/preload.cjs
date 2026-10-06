@@ -64,4 +64,14 @@ contextBridge.exposeInMainWorld("sacode", {
   modelUpstreamUpsert: (providerId, modelId, expectedRevision) => ipcRenderer.invoke("sacode:modelUpstreamUpsert", { providerId, modelId, expectedRevision }),
   customImportNew: (items, expectedRevision) => ipcRenderer.invoke("sacode:customImportNew", { items, expectedRevision }),
   customImportInto: (customId, items, expectedRevision) => ipcRenderer.invoke("sacode:customImportInto", { customId, items, expectedRevision }),
+  // 插件清单：逐字段校验通道（缺通道时适配器保持 unconnected，不冒充本地状态）
+  pluginsDescribe: () => ipcRenderer.invoke("sacode:pluginsDescribe"),
+  pluginsSetEnabled: (name, enabled, expectedRevision) => ipcRenderer.invoke("sacode:pluginsSetEnabled", { name, enabled, expectedRevision }),
+  pluginsSetRowEnabled: (entryId, enabled, expectedRevision) => ipcRenderer.invoke("sacode:pluginsSetRowEnabled", { entryId, enabled, expectedRevision }),
+  pluginsUninstall: (name, expectedRevision) => ipcRenderer.invoke("sacode:pluginsUninstall", { name, expectedRevision }),
+  pluginsRegistries: () => ipcRenderer.invoke("sacode:pluginsRegistries"),
+  pluginsInspect: (spec, registry) => ipcRenderer.invoke("sacode:pluginsInspect", { spec, registry }),
+  pluginsInstall: (request) => ipcRenderer.invoke("sacode:pluginsInstall", { spec: request?.spec, registry: request?.registry, requestId: request?.requestId, approvedBuilds: request?.approvedBuilds }),
+  pluginsInstallPoll: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallPoll", { requestId }),
+  pluginsInstallCancel: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallCancel", { requestId }),
 });

@@ -438,7 +438,9 @@ public class PluginStore {
     // 用同一个名字建目录。不自己拼 pid+时钟——那两条在快速连续安装时会撞。
     private func newStagingPath(): String {
         let parent = packagesRoot()
-        Directory.create(parent, recursive: true)
+        // 仓颉的 recursive 只创建父目录，不会忽略已经存在的目标目录。
+        // 多个插件、重装和孤儿目录检查都要复用同一父目录。
+        if (!exists(parent)) { Directory.create(parent, recursive: true) }
         let probe = File.createTemp(Path(parent))
         let unique = probe.info.path.fileName
         probe.close()

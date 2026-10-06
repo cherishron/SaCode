@@ -473,7 +473,15 @@ public class MigrationBundle {
 
     // 从 JSON 解析
     public static func fromJson(text: String): Option<MigrationBundle> {
-        let obj = mgJson(text)
+        // 解析失败必须与用户明确传入的空对象区分；不能靠 mgJson 的空对象兜底收口。
+        try {
+            return fromObject(JsonValue.fromStr(text).asObject())
+        } catch (e: Exception) {
+            return None
+        }
+    }
+
+    private static func fromObject(obj: JsonObject): Option<MigrationBundle> {
         let format = mgField(obj, "format")
         let kind = mgField(obj, "kind")
         // 格式或类型缺失时返回空包（结构校验会通过），而不是拒绝
