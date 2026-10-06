@@ -381,7 +381,7 @@ main(args: Array<String>) {
             PluginUnit("@local/orphan", "tool", true, ["@local/absent"]),
             PluginUnit("@local/panel", "ui", true, [])
         ]).resolve()
-        expect("装配序把依赖排在前面（第二入口同一套核心）", planA.units.size == Int64(2) && planA.units[0].name == "@local/base" && planA.units[1].name == "@local/upper")
+        expect("装配序把依赖排在前面（第二入口同一套核心）", planA.units.size == Int64(2) && planA.units[0] == "@local/base" && planA.units[1] == "@local/upper")
         expect("缺依赖只坏它自己，不牵连别的包", planRejectedText(planA).contains("missing-dependency:@local/absent") && planRejectedText(planA).contains("@local/base=cycle") == false)
         expect("未接的种类如实拒成 kind-not-wired 而不是静默不装", planRejectedText(planA).contains("@local/panel=kind-not-wired"))
 
@@ -400,7 +400,7 @@ main(args: Array<String>) {
 
         let planD = PluginAssembly([PluginUnit("@local/c", "tool", true, []), PluginUnit("@local/a", "tool", true, []), PluginUnit("@local/b", "tool", true, [])]).resolve()
         let planE = PluginAssembly([PluginUnit("@local/b", "tool", true, []), PluginUnit("@local/a", "tool", true, []), PluginUnit("@local/c", "tool", true, [])]).resolve()
-        expect("装配序与输入顺序无关", planD.units[0].name == "@local/a" && planE.units[0].name == "@local/a" && planD.units[2].name == "@local/c" && planE.units[2].name == "@local/c")
+        expect("装配序与输入顺序无关", planD.units[0] == "@local/a" && planE.units[0] == "@local/a" && planD.units[2] == "@local/c" && planE.units[2] == "@local/c")
 
         let plStore = PluginStore(plBase)
         // 检视只认绝对路径（两入口 CWD 不同，相对路径会把「装到哪儿」交给工作目录）。
