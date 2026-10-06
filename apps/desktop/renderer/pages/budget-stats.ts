@@ -106,9 +106,9 @@ export const Page=defineComponent({
 
         // 三列费用
         el('div','costColumns',[
-          v?costCard(v.costs.model,'模型费用'):el('div','costCard',[el('h3','costTitle','模型费用'),el('p','costNote','暂无数据。')])),
-          v?costCard(v.costs.probe,'探测费用'):el('div','costCard',[el('h3','costTitle','探测费用'),el('p','costNote','暂无数据。')])),
-          v?costCard(v.costs.relay,'加速费用'):el('div','costCard',[el('h3','costTitle','加速费用'),el('p','costNote','暂无数据。')])),
+          v?costCard(v.costs.model,'模型费用'):el('div','costCard',[el('h3','costTitle','模型费用'),el('p','costNote','暂无数据。')]),
+          v?costCard(v.costs.probe,'探测费用'):el('div','costCard',[el('h3','costTitle','探测费用'),el('p','costNote','暂无数据。')]),
+          v?costCard(v.costs.relay,'加速费用'):el('div','costCard',[el('h3','costTitle','加速费用'),el('p','costNote','暂无数据。')]),
         ]),
 
         // 会话级预算

@@ -116,8 +116,10 @@ Host 侧模型/凭证/绑定方法（取自 77 字面集，均在 `providerSurfa
 | 项 | 状态 | 解锁动作 / 归属 |
 |---|---|---|
 | Host 82 方法面常驻门禁 | 未做 | 写 `scripts/check_host_method_surface.cjs`，含自证探针；A 自有路径，不需构建 |
-| 两个新门禁接入 `scripts/verify-all.mjs` | 未做 | 公共构建文件，同一时刻不得既重构又接线；等 W10/W20 线停止改 verify-all 后由 A 单批接入 |
-| P0 步骤 3 固定提交基线回归 | **BLOCKED** | 检测到并发 `cjc.exe`/`cjpm.exe` 在飞即会撞链接互锁。等并发结束后在隔离 worktree 跑 `node scripts/verify-all.mjs`，并把 `verification-run-2026-10-06.md` 的四条红（core ERROR6/FAILED2、desktop fail3、ui-smoke FAIL2、pack-cli 缺 `libgcc_s_seh-1.dll`）逐条复现或归因 |
+| 两个新门禁接入 `scripts/verify-all.mjs` | 未做 | 公共构建文件，同一时刻不得既重构又接线；等 W10/W20 线停止改 verify-all 后由 A 单批接入（现为三个门禁：责任映射、桌面 IPC 面、路径所有权） |
+| `cjpm test` 需要专用 TMP 目录 | 未做 | 提交级复现证明：共用 `%LOCALAPPDATA%\Temp`（实测 3770 条目）会让 `std.unittest` 起 worker 时抛 `Too many attempts to create a temporary file`、整份输出零 Summary。修法是在 `verify-all.mjs` 的 core 步为本轮单独建一个空 TMP 并注入 `env`；与上一行同批做，属 A 自有公共文件 |
+| 页面 `.ts` 源在单测面无人解析 | 已钉住 | 提交态实测出并发线 `6cc063a` 在 `renderer/pages/budget-stats.ts` 写坏 3 行括号，`npm run vendor` rc=1，而 `npm test` 一路绿——因为页面源只在 `pack-pages.mjs` 的 esbuild 折叠时才被解析。新增 `apps/desktop/test/page-sources-parse.test.mjs` 把每个页面源过一遍 `transformSync(loader:'ts')`，红→修→绿全过程见 `p0-status-2026-10-02.md` 的「P0 步骤 3 提交级基线回归」节 |
+| P0 步骤 3 固定提交基线回归 | 部分 PASS，桌面面未收口 | 在 `.qoder/worktrees/p0-head-b9dc4e3-20261006`（只含提交态）跑：**core TOTAL 718 / PASSED 716 / SKIPPED 2 / FAILED 0 / ERROR 0，rc=0**；**extjs 24/24，rc=0**（读数与根因见 `p0-status-2026-10-02.md` 的「P0 步骤 3 提交级基线回归」节）。桌面面在提交级仍需先补本树 `renderer/vendor/` 与自包含宿主（`provider-registry.test.mjs` 的 `boot()` 断言在无宿主时红），未收口，不得借主树旧产物凑绿 |
 | `pageToolsList`/`pageToolCall` 裸 `window` | 未修（本批只登记） | 主进程无 `window` 声明，调用即 ReferenceError；且 `pageToolCall` 把 `name` 插进 `executeJavaScript` 字符串，只转义单引号、未转义反斜杠，存在字符串提前闭合面。**必须在下一次接线时改为具名常量 + `executeJavaScript` 传参，不得原样接 UI** |
 | `pluginsInstallCancel` 恒 `cancelled:true` | 未修 | 与 `pluginsSetRowEnabled` 的写意图丢失同属「装配状态机」批次：先交契约设计给用户评审（W20/C + A） |
 | `globalSettingsSet` 动态方法名 | 未修 | `const method = "global/settings/set-" + key`，key 只校验非空字符串，等于给渲染层开了「拼任意方法名」通道；与 §2「Host 方法名必须封闭」的不变量冲突，应收口成有限具名集 |
