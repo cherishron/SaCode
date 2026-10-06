@@ -269,3 +269,138 @@ func routerOnlySeesViewsNotStores() {
         mrCreds(["SA_CODE_STEP_API_KEY"]), LedgerView([("code", 99)]), Cursor(), 1000)
     @Expect(under.decision.isSome(), true)
 }
+
+func mrImageSpec(id: String): ModelSpec {
+    return ModelSpec(id, id, "128k", "4k", true,
+        inputModalities: ["text"], outputModalities: ["text"], supports: ["tools"],
+        meterUnit: "token", provenance: "human-confirmed", availability: "available")
+}
+
+func mrCappedCustom(id: String, dailyAmountMicro: Int64): CustomModelRecord {
+    return CustomModelRecord(id, "编程模型", "", true, "coding", ["tools", "text-output"],
+        [mrBinding("step", "m-a", 0, 1)], "round-robin", dailyAmountMicro: dailyAmountMicro)
+}
+
+func mrFail(status: Int64, reached: Bool): TransportFailure {
+    return failureOf("http-status", reached, status: status)
+}
+
+// 决策必须展开成完整装配计划：baseUrl / 凭据引用 / 协议 / 模型名 / 四档费率都
+// 来自注册表与绑定条目，宿主不许自己猜。
+@Test
+func planForExpandsTheDecisionIntoAFullPlan() {
+    let providers = mrProviderView([mrProvider("step", "SA_CODE_STEP_API_KEY", true, [
+        mrImageSpec("m-a"),
+    ])])
+    let customs = mrCustomView([mrCustom("code", "round-robin", [mrBinding("step", "m-a", 0, 1)])])
+    let decision = RouteDecision("step", "m-a", "openai-completions", 0)
+    if (let Some(p) <- planFor("code", decision, customs, providers)) {
+        @Expect(p.customModelId, "code")
+        @Expect(p.providerId, "step")
+        @Expect(p.modelId, "m-a")
+        @Expect(p.baseUrl, "https://api.example.com/v1")
+        @Expect(p.credentialRef, "SA_CODE_STEP_API_KEY")
+        @Expect(p.protocol, "openai-completions")
+        @Expect(p.images, true)
+        @Expect(p.currency, "CNY")
+        @Expect(p.priceVersion, "1")
+        @Expect(p.priceInMicro, Int64(1000))
+        @Expect(p.priceOutMicro, Int64(2000))
+        @Expect(p.priceCacheReadMicro, Int64(-1))
+        @Expect(p.priceCacheWriteMicro, Int64(-1))
+        @Expect(p.dailyAmountMicro, Int64(-1))
+        @Expect(p.bindingIndex, Int64(0))
+        @Expect(p.attemptId, "")
+        @Expect(p.key(), "step/m-a")
+        let rc = p.rateCard()
+        @Expect(rc.inputMicrosPerUnit, Int64(1000))
+        @Expect(rc.outputMicrosPerUnit, Int64(2000))
+        @Expect(rc.currency, "CNY")
+        @Expect(rc.priceVersion, "1")
+        let withId = p.withAttemptId("turn-1-a1")
+        @Expect(withId.attemptId, "turn-1-a1")
+        @Expect(withId.priceVersion, "1")
+        @Expect(p.attemptId, "")
+    } else {
+        @Expect(true, false)
+    }
+}
+
+// 缺供应商 / 缺上游模型 / 决策与绑定对不上，一律回 None——宁可 fail-loud，
+// 不许按名字猜 baseUrl 或凭据引用。
+@Test
+func planForRefusesToGuessABaseUrl() {
+    let providers = mrProviderView([mrProvider("step", "SA_CODE_STEP_API_KEY", true, [
+        mrImageSpec("m-a"),
+    ])])
+    let customs = mrCustomView([mrCustom("code", "round-robin", [mrBinding("step", "m-a", 0, 1)])])
+    @Expect(planFor("code", RouteDecision("missing", "m-a", "openai-completions", 0),
+        customs, providers).isNone(), true)
+    @Expect(planFor("code", RouteDecision("step", "m-z", "openai-completions", 0),
+        customs, providers).isNone(), true)
+    @Expect(planFor("other", RouteDecision("step", "m-a", "openai-completions", 0),
+        customs, providers).isNone(), true)
+    @Expect(planFor("code", RouteDecision("step", "m-a", "openai-completions", 5),
+        customs, providers).isNone(), true)
+}
+
+// 失败按**实际受影响范围**选最窄的一档作用域（断言 6、9、55、81）
+@Test
+func classifyFailurePicksTheNarrowestScope() {
+    let cred = "SA_CODE_STEP_API_KEY"
+    let auth = classifyFailure(mrFail(401, true), "step", "m-a", cred, "direct")
+    @Expect(auth.category, "credential")
+    @Expect(auth.scope.key, cred)
+    @Expect(auth.scope.kind, "route-set")
+    let forbidden = classifyFailure(mrFail(403, true), "step", "m-a", cred, "direct")
+    @Expect(forbidden.category, "credential")
+    @Expect(forbidden.scope.kind, "route-set")
+    let quota = classifyFailure(mrFail(429, true), "step", "m-a", cred, "direct")
+    @Expect(quota.category, "effective")
+    @Expect(quota.scope.key, cred)
+    @Expect(quota.scope.kind, "route-set")
+    let boom = classifyFailure(mrFail(503, true), "step", "m-a", cred, "direct")
+    @Expect(boom.category, "effective")
+    @Expect(boom.scope.key, "step/m-a")
+    @Expect(boom.scope.kind, "upstream")
+    let wire = classifyFailure(failureOf("transport", false, summary: "connect-refused"),
+        "step", "m-a", cred, "direct")
+    @Expect(wire.category, "channel")
+    @Expect(wire.scope.kind, "channel")
+    @Expect(wire.scope.key, "direct")
+    let cancel = classifyFailure(failureOf("cancelled", true), "step", "m-a", cred, "direct")
+    @Expect(cancel.category, "cancelled")
+    @Expect(cancel.scope.kind, "upstream")
+    let frame = classifyFailure(failureOf("protocol", true), "step", "m-a", cred, "direct")
+    @Expect(frame.category, "unknown")
+    let badRequest = classifyFailure(mrFail(400, true), "step", "m-a", cred, "direct")
+    @Expect(badRequest.category, "request")
+}
+
+// 凭据视图只暴露「哪些引用已配置」这一个事实，重复引用去重
+@Test
+func credentialViewOnlyReportsConfiguredRefs() {
+    trCleanupCreds("core-test-mr-cred-1.env")
+    let lookup: (String) -> String = { key => "" }
+    let providers = mrProviderView([
+        mrProvider("p1", "SA_CODE_P1_API_KEY", true, [mrImageSpec("m")]),
+        mrProvider("p2", "SA_CODE_P1_API_KEY", true, [mrImageSpec("m")]),
+    ])
+    @Expect(credentialViewOf(providers, CredentialStore("core-test-mr-cred-1.env", lookup)).configured.size,
+        Int64(0))
+    let store = CredentialStore("core-test-mr-cred-1.env", lookup)
+    store.set("SA_CODE_P1_API_KEY", "sk-test")
+    let view = credentialViewOf(providers, store)
+    @Expect(view.configured.size, Int64(1))
+    @Expect(view.has("SA_CODE_P1_API_KEY"), true)
+    @Expect(view.has("SA_CODE_P2_API_KEY"), false)
+    trCleanupCreds("core-test-mr-cred-1.env")
+}
+
+func trCleanupCreds(name: String): Unit {
+    for (f in [name, "${name}.lease"]) {
+        if (exists(f)) {
+            try { removeIfExists(f, recursive: false) } catch (e: Exception) {}
+        }
+    }
+}
