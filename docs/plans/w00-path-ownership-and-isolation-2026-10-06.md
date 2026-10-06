@@ -82,6 +82,7 @@
 | `apps/cli/src/main.cj` | **A** | ` M` 未提交，非本批写入（实测恰 `7 insertions(+)`，无删除） | 本行原处置成立至今：**并发那 7 行仍记「未经确认」，不进基线**。新增一条已发生的事实——`6cc063a` 已把两条按 `PluginUnit` 形状写的装配断言写进这个 A 拥有的入口文件（`units[i].name`，而 `PluginAssemblyPlan.units` 是 `Array<String>`），提交态 `cjpm build` rc=1、6 个 `'name' is not a member of struct 'String'`，两条断言从落库起从未运行。A 只取那两行的 `.name`（零语义改动）并提交 `56f3ffe`，**代修不等于认领**：装配语义仍归 C（W20）。纪律补一条：非 A 成员要往公共入口加断言或调用，必须先交接口变更单，否则红只会在提交级产物检查里才暴露 |
 | `apps/desktop/renderer/app.js` | **A** | ` M` 未提交，非本批写入 | 同上 |
 | `docs/plans/dsh-capability-matrix.md` | **A** | ` M` 未提交，非本批写入 | 矩阵是 63 行账本；A 需在合入前重跑 `node scripts/check_p0_ownership.cjs` 确认表体分母未坏 |
+| `docs/plans/dsh-capability-matrix.md` 的 `persistence` 行 | **A**（记账纠偏）／B（W10 实施） | 该行现记 **✔**，备注把「崩溃恢复合成」算作已复刻 | **实测落差，本批不动该文件**（上一行同文件有在飞改动，避免行级踩踏）：`grep -rn "interruptedTurnClosers" --include=*.cj` 与 `grep -rn '"step/end"' --include=*.cj` 均 **0 命中**，恢复合成在实现侧一个字都没有。按「标记/模拟/未接不得判完成」该行应为 ◐。纠偏随 W10 契约（`docs/plans/w10-persistence-barrier-recovery-contract-2026-10-06.md`）获批后与在飞改动分开落库 |
 | `core/src/agent.cj` | E | ` M` 未提交 | 引用了 `fs_tools.cj`/`ptc_exec.cj`/`shlex.cj` 三个**未跟踪**文件 → 整文件提交会破坏构建（悬空引用），必须与那三个文件同批落库 |
 | `core/src/model_tool_runtime.cj` | E | ` M` 未提交 | 与上一行同属 E 的 W40 批次 |
 | `core/src/{fs_tools,fs_tools_test,ptc_exec,shlex,shlex_test}.cj` | E | `??` 未跟踪 | 待 E 自己成批提交 |
