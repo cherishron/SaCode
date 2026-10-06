@@ -79,6 +79,33 @@
 `routerOnlySeesViewsNotStores` 已改成金额口径并新增一条断言：只设 `dailyTokens`
 不设 `dailyAmountMicro` 时，任何已用额都不拦——证明 token 闸确实是配置-only。
 
+### 2.2 顺带修掉的第二个错配：预算是每模型的，判据却在比账户总量
+
+`dailyAmountMicro` 挂在 `CustomModelRecord` 上（规格 §2.3 第 3 层，每模型一个
+`currency`），但 `UsageLedger.reserve` 的判据是 `snap.used(currency) +
+snap.inFlight(currency)`——**账户总量**。号池里两个模型同币种时，后果是
+「我刚建的新模型立刻预算耗尽」：它的预算被同账号里别的模型消费顶掉。
+
+修法（`core/src/ledger.cj`，D 自有）：
+
+- `liveReservations` 元组从 `(attemptId, currency, amount)` 扩成
+  `(attemptId, currency, amount, customModelId)`，回放 `ledger/reserved` 时多读一个字段。
+- 新增 `modelInFlight`（customModelId × currency × amount 聚合），与已有的
+  `modelTotals`（已结算）配对；`removeReservation` 在删全局条目时同步递减模型聚合，
+  否则在途会越攒越大、预算判据反向失真。
+- `reserve` 的判据改成「该模型自己的已结算 + 在途」，返回的 `usedMicros` /
+  `inFlightMicros` 也报模型口径。
+- **未填 `customModelId` 的旧调用方退回账户口径**，行为与改动前一致——现有测试
+  全部不动、全绿。
+
+给 A 的一条提醒：**§3.3 第 ⑤ 步的 `ReserveIntent` 必须填 `customModelId`**
+（代码块里已经写了 `customModelId: plan.customModelId`）。漏填就退回账户口径，
+上面那个症状会原样回来。
+
+新测试 `perModelBudgetDoesNotCountOtherModelsSpending` 覆盖：B 先花 90 万 →
+A（预算 100 万）95 万必须放行 → A 再来 95 万必须被 A 自己的预算挡 →
+B 再来 95 万照样放行 → A 结算后在途释放。
+
 ## 3. 请 A 接的线（`apps/host/src/main.cj`）
 
 ### 3.1 入参（当前请求体里**没有** `customModelId`，需要 A 加）

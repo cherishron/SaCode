@@ -164,6 +164,50 @@ func concurrentReservationsCannotBreakTheCeiling() {
     lgClean(tag)
 }
 
+// 预算挂在**模型**上：两个模型同币种时，账户总量不得算进另一个模型的预算。
+// 症状是「我刚建的新模型立刻预算耗尽」——它的预算被同账号里别的模型消费顶掉了。
+@Test
+func perModelBudgetDoesNotCountOtherModelsSpending() {
+    let tag = "permmodel"
+    lgClean(tag)
+    let path = lgPath(tag)
+    // 模型 B 先花 900000（同币种 CNY），自己上限很宽
+    let b = UsageLedger(path).reserve(ReserveIntent("at-b1", 900000, "CNY",
+        customModelId: "cm-b"), 10000000)
+    @Expect(b.accepted, true)
+    @Expect(UsageLedger(path).state().localInFlight("CNY"), Int64(900000))
+    // 模型 A 预算 1000000：A 自己一分钱没花，950000 必须容得下
+    let a1 = UsageLedger(path).reserve(ReserveIntent("at-a1", 950000, "CNY",
+        customModelId: "cm-a"), 1000000)
+    @Expect(a1.accepted, true)
+    @Expect(a1.usedMicros, Int64(0))
+    @Expect(a1.inFlightMicros, Int64(950000))
+    // A 再来一笔 950000：950000 + 950000 > 1000000，必须被 A 自己的预算挡住
+    let a2 = UsageLedger(path).reserve(ReserveIntent("at-a2", 950000, "CNY",
+        customModelId: "cm-a"), 1000000)
+    @Expect(a2.accepted, false)
+    @Expect(a2.code, "budget-exceeded")
+    // B 再来一笔照样放行：账户总量 1850000 没超 B 的上限
+    let b2 = UsageLedger(path).reserve(ReserveIntent("at-b2", 950000, "CNY",
+        customModelId: "cm-b"), 10000000)
+    @Expect(b2.accepted, true)
+    // 结算 A 的那一笔：A 的在途释放、金额转入 A 的模型账，账户总量不变
+    let out = UsageLedger(path).settle(AttemptAccounting("at-a1",
+        LedgerUsage(1, 1, 0, 0, "vendor"), RateCard(100000, 100000, -1, -1, "CNY", "pv1"),
+        customModelId: "cm-a"))
+    @Expect(out.status, "settled")
+    @Expect(out.amountMicros, Int64(200000))
+    let after = UsageLedger(path).state()
+    @Expect(after.localInFlight("CNY"), Int64(1850000))
+    @Expect(after.localUsed("CNY"), Int64(200000))
+    // 结算后 A 的预算腾出来了：再来一笔 950000 必须放行
+    let a3 = UsageLedger(path).reserve(ReserveIntent("at-a3", 950000, "CNY",
+        customModelId: "cm-a"), 1000000)
+    @Expect(a3.accepted, false)
+    @Expect(a3.code, "budget-exceeded")
+    lgClean(tag)
+}
+
 // 断言 13（后半）：同一 attempt 重复结算返回首次结论、不重复扣费。
 // 第二次即便带着不同用量与不同计价版本来，也绝不重算历史那一笔。
 @Test

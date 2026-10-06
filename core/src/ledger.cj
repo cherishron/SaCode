@@ -476,7 +476,11 @@ func ledgerAmountOf(a: AttemptAccounting): Option<Int64> {
 // 一次回放得到的账本视图（纯内存；不含任何跨机信息）
 class LedgerSnapshot {
     let usedByCurrency = ArrayList<(String, Int64)>()
-    let liveReservations = ArrayList<(String, String, Int64)>()
+    // 第 4 位是 customModelId：预算挂在**模型**上（`dailyAmountMicro` 属于
+    // CustomModelRecord），撤回在途时必须知道扣回哪个模型的在途。
+    let liveReservations = ArrayList<(String, String, Int64, String)>()
+    // 按模型 × 币种的在途预留聚合，与 `modelTotals`（已结算）配对
+    let modelInFlight = ArrayList<(String, String, Int64)>()
     let finalEntries = ArrayList<(String, String)>()
     let results = ArrayList<(String, String)>()
     let refusals = ArrayList<(String, String)>()
@@ -558,15 +562,22 @@ class LedgerSnapshot {
         return out
     }
 
-    func addReservation(attemptId: String, currency: String, amount: Int64): Unit {
-        removeReservation(attemptId)
-        liveReservations.add((attemptId, currency, amount))
+    func addReservation(attemptId: String, currency: String, amount: Int64, customModelId: String): Unit {
+        if (let Some(old) <- liveReservation(attemptId)) {
+            // 重复预留事件：先撤回旧的模型在途，再记新的
+            takeFromModelInFlight(old[3], old[1], old[2])
+        }
+        liveReservations.add((attemptId, currency, amount, customModelId))
+        bumpModelInFlight(customModelId, currency, amount)
     }
 
+    // 撤回在途预留：先从 liveReservations 找出该 attempt 的模型维度，
+    // 再递减模型聚合——否则 `modelInFlight` 会越攒越大，预算判据失真。
     func removeReservation(attemptId: String): Unit {
         var i: Int64 = 0
         while (i < Int64(liveReservations.size)) {
             if (liveReservations[i][0] == attemptId) {
+                takeFromModelInFlight(liveReservations[i][3], liveReservations[i][1], liveReservations[i][2])
                 liveReservations.remove(i..(i + 1))
                 return
             }
@@ -574,13 +585,64 @@ class LedgerSnapshot {
         }
     }
 
-    func liveReservation(attemptId: String): Option<(String, String, Int64)> {
+    func liveReservation(attemptId: String): Option<(String, String, Int64, String)> {
         for (r in liveReservations) {
             if (r[0] == attemptId) {
                 return Some(r)
             }
         }
         return None
+    }
+
+    // 某模型在某币种下的已结算金额（预算判据的「已用」半）
+    func usedForModel(customModelId: String, currency: String): Int64 {
+        if (customModelId.size == 0) { return 0 }
+        for (kv in modelTotals) {
+            if (kv[0] == customModelId && kv[1] == currency) { return kv[2] }
+        }
+        return 0
+    }
+
+    // 某模型在某币种下的在途预留总量（预算判据的「在途」半）
+    func inFlightForModel(customModelId: String, currency: String): Int64 {
+        if (customModelId.size == 0) { return 0 }
+        for (kv in modelInFlight) {
+            if (kv[0] == customModelId && kv[1] == currency) { return kv[2] }
+        }
+        return 0
+    }
+
+    private func bumpModelInFlight(customModelId: String, currency: String, amount: Int64): Unit {
+        if (customModelId.size == 0) { return }
+        var i: Int64 = 0
+        while (i < Int64(modelInFlight.size)) {
+            if (modelInFlight[i][0] == customModelId && modelInFlight[i][1] == currency) {
+                let old = modelInFlight[i][2]
+                if (amount > 0 && old > Int64.Max - amount) { overflowed = true; return }
+                modelInFlight[i] = (customModelId, currency, old + amount)
+                return
+            }
+            i += 1
+        }
+        modelInFlight.add((customModelId, currency, amount))
+    }
+
+    private func takeFromModelInFlight(customModelId: String, currency: String, amount: Int64): Unit {
+        if (customModelId.size == 0) { return }
+        var i: Int64 = 0
+        while (i < Int64(modelInFlight.size)) {
+            if (modelInFlight[i][0] == customModelId && modelInFlight[i][1] == currency) {
+                let old = modelInFlight[i][2]
+                if (amount > old) { overflowed = true; return }
+                if (old - amount == 0) {
+                    modelInFlight.remove(i..(i + 1))
+                } else {
+                    modelInFlight[i] = (customModelId, currency, old - amount)
+                }
+                return
+            }
+            i += 1
+        }
     }
 
     func setFinal(attemptId: String, result: String, data: String): Unit {
@@ -727,7 +789,8 @@ func ledgerReplay(events: ArrayList<SessionEvent>): Option<LedgerSnapshot> {
         let kind = ev.eventType
         if (kind == "ledger/reserved") {
             snap.addReservation(ledgerFieldText(ev.data, "attemptId"),
-                ledgerFieldText(ev.data, "currency"), ledgerFieldInt(ev.data, "reservedMicros"))
+                ledgerFieldText(ev.data, "currency"), ledgerFieldInt(ev.data, "reservedMicros"),
+                ledgerFieldText(ev.data, "customModelId"))
         } else if (kind == "ledger/settled") {
             let id = ledgerFieldText(ev.data, "attemptId")
             snap.removeReservation(id)
@@ -904,35 +967,50 @@ public class UsageLedger {
                 let snap = loaded.getOrThrow()
                 let used = snap.used(intent.currency)
                 let inFlight = snap.inFlight(intent.currency)
+                // 预算挂在**模型**上（`dailyAmountMicro` 属于 CustomModelRecord），
+                // 所以判据比的是该模型自己的「已结算 + 在途」，不是账户总量——
+                // 号池里两个模型同币种时，账户总量会把别人的消费算进自己的预算，
+                // 表现为「我刚建的新模型立刻预算耗尽」。
+                // 未填 customModelId 的旧调用方退回账户口径，行为与改动前一致。
+                let modelUsed = if (intent.customModelId.size > 0) {
+                    snap.usedForModel(intent.customModelId, intent.currency)
+                } else { used }
+                let modelInFlight = if (intent.customModelId.size > 0) {
+                    snap.inFlightForModel(intent.customModelId, intent.currency)
+                } else { inFlight }
                 // 同一 attempt 重复预留：不叠加，交回同一条预留
                 if (let Some(existing) <- snap.liveReservation(intent.attemptId)) {
-                    return LedgerDecision(true, "already-reserved", existing[2], used, inFlight)
+                    return LedgerDecision(true, "already-reserved", existing[2], modelUsed, modelInFlight)
                 }
                 if (snap.hasFinal(intent.attemptId)) {
-                    return LedgerDecision(false, "already-settled", 0, used, inFlight)
+                    return LedgerDecision(false, "already-settled", 0, modelUsed, modelInFlight)
                 }
                 if (snap.isVoided(intent.attemptId)) {
-                    return LedgerDecision(false, "attempt-voided", 0, used, inFlight)
+                    return LedgerDecision(false, "attempt-voided", 0, modelUsed, modelInFlight)
                 }
                 // 「已用 + 在途预留」不得突破上限：先查这次加法会不会回绕，再比上限
                 var over = false
-                if (used > Int64.Max - inFlight) {
+                if (modelUsed > Int64.Max - modelInFlight) {
                     over = true
                 } else {
-                    let committed = used + inFlight
+                    let committed = modelUsed + modelInFlight
                     if (intent.reservedMicros > limitMicros - committed) {
                         over = true
                     }
                 }
                 if (over) {
-                    return LedgerDecision(false, "budget-exceeded", 0, used, inFlight)
+                    return LedgerDecision(false, "budget-exceeded", 0, modelUsed, modelInFlight)
                 }
                 log.append("ledger/reserved", ledgerReservedData(intent))
                 if (!log.flush()) {
-                    return LedgerDecision(false, "ledger-write-failed", 0, used, inFlight)
+                    return LedgerDecision(false, "ledger-write-failed", 0, modelUsed, modelInFlight)
                 }
-                return LedgerDecision(true, "reserved", intent.reservedMicros, used,
-                    inFlight + intent.reservedMicros)
+                let afterInFlight = if (modelInFlight > Int64.Max - intent.reservedMicros) {
+                    Int64.Max
+                } else {
+                    modelInFlight + intent.reservedMicros
+                }
+                return LedgerDecision(true, "reserved", intent.reservedMicros, modelUsed, afterInFlight)
             } finally {
                 lease.release()
             }
