@@ -1087,6 +1087,7 @@ createApp({
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation})]),
       el("div", "header-utilities", [
+        el('button','frame-icon',[navIcon('M5 18V9 M12 18V4 M19 18v-6 M3 21h18')],{id:'open-budget','aria-label':'用量与预算',tooltip:{label:'用量与预算'},onClick:()=>self.openSide('budget-panel')}),
         el('button','frame-icon',[navIcon('M4 4h16v16H4z M14 4v16')],{id:'toggle-side','aria-label':self.sideOpen?'关闭侧栏':'打开侧栏','aria-expanded':self.sideOpen,tooltip:{label:self.sideOpen?'关闭侧栏':'打开侧栏'},onClick:()=>{self.sideOpen=!self.sideOpen;}}),
         self.approval ? el('button','frame-icon pending-approval',[navIcon('M12 3l10 18H2z M12 9v5 M12 17v1')],{'aria-label':'处理待审批请求',onClick:()=>self.openSide('tools-panel')}) : null,
       ]),
@@ -1259,6 +1260,7 @@ createApp({
       self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
+      budgetBox,
       el('details','diagnostics',[
         el('summary',null,'开发诊断'),
         el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),
