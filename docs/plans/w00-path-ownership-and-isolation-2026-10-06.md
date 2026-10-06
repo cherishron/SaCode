@@ -89,6 +89,8 @@
 | `apps/desktop/renderer/pages/budget-stats.ts` | D（费用统计页，本批刚登记进 §1 表） | 已由 A 代修并提交 | 并发线 `6cc063a` 写坏 3 行括号，提交态 `npm run vendor` rc=1。A 只删那 3 个多余 `)`（零行为改动），并新增 `apps/desktop/test/page-sources-parse.test.mjs` 让这类破口在单测面就红。**代修不等于认领**：该文件的语义改动仍须由 D 提接口变更单 |
 | `core/src/web_exec.cj`、`core/src/web_exec_test.cj` | 未登记（H 的 W70 web 线或 E 的 W40 执行世界，待裁定） | `??` 未跟踪（本轮新观测） | A 未触碰；先登记，避免下一轮把它当本批遗漏或误提交 |
 
+| `core/src/model_router.cj`、`core/src/model_router_test.cj` | D | ` M` 未提交（05:07 本轮新观测） | 与 §1 表里 D 的 W30 所有权一致，属正常在飞；A 未触碰、不代改，等 D 自己成批落库 |
+
 **三条 A 自有文件被别的会话改而未被 A 认领**，就是「主责不重叠」目前唯一的实际破口。按规则 3 的正确做法不是 A 替他们改，而是让改动方提交接口变更单。
 
 ## 5. 隔离工作安排

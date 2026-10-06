@@ -13,9 +13,20 @@ import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createPrivateTmpDir, disposePrivateTmpDir } from "./verify-tmp.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
+
+// 整轮验收用自己独占的一份临时目录，理由与实测计数写在 scripts/verify-tmp.mjs 顶部。
+// 必须写回 process.env：下面每个 run() 默认继承 process.env，
+// envWithoutElectronRunAsNode() 也是从它拷贝的，漏一处就还有步骤落在共享 TMP 里。
+const privateTmp = createPrivateTmpDir(root);
+for (const key of ["TMP", "TEMP", "TMPDIR"]) process.env[key] = privateTmp.dir;
+process.on("exit", () => {
+  try { disposePrivateTmpDir(privateTmp.dir); } catch (_) { /* 被占用就留着，人工清理 */ }
+});
+console.log(`临时目录：${privateTmp.dir}（本次运行独占，退出即清理）\n`);
 
 // 每个验证的产出解析：从合并后的输出里抓关键行，抓不到就明说「未解析到」，
 // 不猜、不静默当成通过。
