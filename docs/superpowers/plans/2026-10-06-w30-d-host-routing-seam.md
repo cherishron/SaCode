@@ -81,10 +81,29 @@
 
 ## 3. 请 A 接的线（`apps/host/src/main.cj`）
 
-### 3.1 入参
+### 3.1 入参（当前请求体里**没有** `customModelId`，需要 A 加）
 
-请求体已有 `customModelId`（可选字符串）。存在即走模型中心路径，缺失则保留现有
-两层指针兜底（向后兼容）。
+现状核查（`apps/host/src/main.cj`，2026-10-06 工作区态）：
+
+- `task/start`（约 1440 行）与 `turn/start`（约 1700 行）都是同一套写法：
+  `ProviderRegistry.forUser().describe()` → 遍历 `providers`，命中
+  `defaultProviderId` 时把 `baseUrl` / `defaultModel` / `credentialRef` / `protocol` /
+  `images` 摘出来，再走 `ModelSettings.forUser().read()` 与
+  `SACODE_PROVIDER_BASE_URL` / `SACODE_PROVIDER_MODEL` 两层兜底。
+- 请求体里**没有** `customModelId` 字段，宿主也**没有任何**
+  `RouteHealth` / `AttemptLog` / `UsageLedger` 引用（grep 全 0 命中）。
+- 已有的拒绝码占用了 `-32016`（`protocol-not-supported`）与 `-32020`，
+  §3.7 提议的 `-32010`..`-32013` 看起来是空档，**请 A 先 grep 一遍确认**。
+
+所以需要 A 做三件事：
+
+1. 在 `turn/start` 与 `task/start` 的请求体解析里加一个可选 `customModelId`
+   （字符串，空串 = 未指定）。
+2. 存在且非空时走 §3.3 的模型中心路径；缺失时**保留现有两层指针兜底**
+   （向后兼容，老会话不受影响）。
+3. 桌面端 `preload.cjs` / 渲染层如果要传 `customModelId`，那也是公共入口，
+   同样只能由 A 改。D 侧的 `budget-stats` / `custom-models` 页面已经把
+   `customModelId` 作为既有字段的**展示**用好了，但**提交**通路不在 D 手里。
 
 ### 3.2 装配句柄（在 turn 开始时一次性建立）
 
@@ -296,10 +315,16 @@ core 侧取数已经齐了，A 只需要转发：
   （B2 只做了调度核心，probe 执行器未建），这一列继续留 `null`
 - `costs.relay.amountMicro` = 需要中转通道（B4），目前留 `null`
 
-D 侧已经备好的落点：`model-center-adapter.ts` 的 `budget-stats.describe()`
-会把 `usage` 结果拼进 `StatsView`，`budget-stats.ts` 的 `formatAmount()`
-与 `costCard()` 已经把 `null` 渲染成 `—` 而不是 `0`——**不许把缺数据渲染成零**
-（断言 14）。
+D 侧**前端已经接好，A 一落 `ledger/stats` 动词就自动点亮**，不需要 D 再改一行：
+
+- `model-center-adapter.ts` 的 `budget-stats.describe()` 现在会并发调
+  `api.ledgerStats()`；动词不存在（`typeof !== 'function'`）或抛错时回 `null`，
+  `costs.model.amountMicro` 保持 `null`，note 写明「等接口变更单 §6 接线后本列自动点亮」。
+- 有数据时按 `currency` 分组：**单一币种**直接填 `amountMicro` + `currency`；
+  **多币种**不加总（断言 41），`amountMicro` 回 `null`，明细塞进 note 让界面分列显示。
+- `budget-stats.ts` 的 `formatAmount()` 与 `costCard()` 已经把 `null` 渲染成
+  `—` 而不是 `0`——**不许把缺数据渲染成零**（断言 14）。
+- `probe` / `relay` 两列继续 `null` + 各自的原因说明（探测执行器未实现 / 加速通道未实现）。
 
 ## 7. 不在本单范围
 
