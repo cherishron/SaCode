@@ -145,6 +145,7 @@ createApp({
     const viewport = ref(window.innerWidth), sidebarWidth = ref(280), rightWidth = ref(null);
     const sidebarClosed = ref(false), narrowExpanded = ref(false), sideOpen = ref(false), diagnosticsOpen = ref(false);
     const workspaceSessionLimits = ref(new Map());
+    const workspaceGroupExpanded = ref(new Set());
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
     const frameColumns = window.Vue.computed(() => window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
       sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
@@ -1046,7 +1047,7 @@ createApp({
       generalSettings, busySendSaving, busySendNote, busySendError, setBusySend,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
       send, runTurn, cancelTurn, askTool, answerTool,
       queueRows, queuePending, updateQueue,
     };
@@ -1095,12 +1096,24 @@ createApp({
           const visible=items.filter(item=>item.current&&self.turn.running || idle++<limit);
           const hidden=items.length-visible.length;
           const label=directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
-          return el('section','workspace-group',[
-            el('div','workspace-folder',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,label)],{title:directory||'尚未绑定项目目录的会话'}),
-            ...visible.map(renderSession),
+          const expanded=self.workspaceGroupExpanded.has(directory);
+          return el('section','workspace-group'+(expanded?' expanded':''),{
+            'data-workspace-group':directory,
+          },[
+            el('button','workspace-folder'+(expanded?' tree-expanded':''),{
+              'aria-expanded':expanded,
+              'aria-label':expanded?'折叠工作区':'展开工作区',
+              title:directory||'尚未绑定项目目录的会话',
+              onClick:()=>{expanded?self.workspaceGroupExpanded.delete(directory):self.workspaceGroupExpanded.add(directory);},
+            },[
+              navIcon(expanded?'M9 5l7 7-7 7':'M5 9l7 7 7-7'),
+              navIcon('M3 5h7l2 3h9v12H3z'),
+              el('span','workspace-label',label),
+            ]),
+            expanded ? [...visible.map(renderSession),
             items.length>5 ? el('button','workspace-overflow',hidden ? `显示更多（${hidden}）` : '收起会话',{
-              'data-workspace-overflow':directory,'aria-expanded':hidden===0,onClick:()=>self.workspaceSessionLimits.set(directory,hidden ? limit+5 : 5)}) : null,
-          ],{'data-workspace-group':directory});
+              'data-workspace-overflow':directory,'aria-expanded':hidden===0,onClick:()=>self.workspaceSessionLimits.set(directory,hidden ? limit+5 : 5)}) : null] : [],
+          ]);
         }),
         !sidebarSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,'暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
