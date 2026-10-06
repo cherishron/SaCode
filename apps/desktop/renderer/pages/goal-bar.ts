@@ -1,5 +1,6 @@
 // 目标栏承接冻结 DSH 的 Todo → Goal → Queue 顺序；业务状态与 CAS 均来自仓颉。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
+import {InlineEditor} from './inline-editor';
 export type Goal={id:string;revision:number;phase:string;objective:string;blockedReason:string;roundsDone:number;elapsedSeconds:number};
 export type GoalAdapter={describe:()=>Promise<Goal>;create:(text:string)=>Promise<Goal>;edit:(revision:number,text:string)=>Promise<Goal>;pause:(revision:number)=>Promise<Goal>;resume:(revision:number)=>Promise<Goal>;clear:(revision:number)=>Promise<Goal>};
 export function createGoalSurface(adapter:GoalAdapter,changed:()=>void){
@@ -23,6 +24,7 @@ export const GoalBar=defineComponent({name:'SaCodeGoalBar',props:{adapter:{type:
   onMounted(()=>{void surface.refresh();timer=setInterval(()=>void surface.refresh(),2000);});
   onBeforeUnmount(()=>{clearInterval(timer);surface.dispose();});
   const begin=()=>{draft.value=surface.state.goal?.objective||'';editing.value=true;};
+  const save=async()=>{const current=surface.state.goal,edit=!!current?.id&&['active','paused','blocked'].includes(current.phase);if(await surface.mutate(edit?'edit':'create',draft.value))editing.value=false;};
   const button=(text:string,click:()=>void)=>h('button',{type:'button',disabled:surface.state.busy,onClick:click},text);
   return()=>{void version.value;const {goal,busy,error,loaded}=surface.state,visible=!!goal?.id&&['active','paused','blocked'].includes(goal.phase);
     if(!loaded&&!error)return null;
@@ -32,8 +34,8 @@ export const GoalBar=defineComponent({name:'SaCodeGoalBar',props:{adapter:{type:
       visible?h('p',{class:'goal-objective'},goal!.objective):null,
       visible?h('p',{class:'goal-note'},'目标已保存；自动跨轮执行尚未接通。暂停将在下一轮边界生效。'):null,
       visible&&goal!.blockedReason?h('p',{class:'goal-error'},goal!.blockedReason):null,
-      editing.value?h('form',{class:'goal-editor',onSubmit:async(e:Event)=>{e.preventDefault();if(await surface.mutate(visible?'edit':'create',draft.value))editing.value=false;}},[
-        h('label',{},['目标正文',h('textarea',{value:draft.value,maxlength:8000,disabled:busy,onInput:(e:Event)=>draft.value=(e.target as HTMLTextAreaElement).value})]),
+      editing.value?h('form',{class:'goal-editor',onSubmit:(e:Event)=>{e.preventDefault();void save();}},[
+        h('label',{},['目标正文',h(InlineEditor,{value:draft.value,label:'目标正文',maxlength:8000,busy,onChange:(text:string)=>draft.value=text,onSave:()=>void save(),onCancel:()=>editing.value=false})]),
         h('div',{class:'goal-actions'},[h('button',{type:'submit',disabled:busy||!draft.value.trim()},busy?'保存中…':'保存'),button('取消',()=>editing.value=false)]),
       ]):null,
       error?h('p',{class:'goal-error',role:'alert'},error):null,

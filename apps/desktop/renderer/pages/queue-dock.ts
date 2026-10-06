@@ -1,8 +1,9 @@
 // 对照冻结上游 QueueDock；MIT 许可证见 renderer/assets/dsh-ui-LICENSE.txt。
 // 队列事实与操作结果由仓颉适配器提供，本视图不自行生成已送达消息。
-import {defineComponent,h,ref,computed,watch,nextTick,onMounted,onBeforeUnmount,type PropType} from 'vue';
+import {defineComponent,h,ref,computed,watch,onBeforeUnmount,type PropType} from 'vue';
 import {projectUserText} from './user-text';
 import {PersistedImage} from './persisted-image';
+import {InlineEditor} from './inline-editor';
 export {projectUserText} from './user-text';
 export type AttachmentRef={attachmentId:string;name:string;bytes:number};
 export type QueueProjectionRow={id:string;text:string;rpcId:string;attachments?:ReadonlyArray<AttachmentRef&{kind:'image'|'file'}>};
@@ -25,10 +26,8 @@ const Thumb=defineComponent({props:{attachment:{type:Object as PropType<Attachme
   watch(()=>[props.attachment,props.loadImage],async()=>{const ticket=++serial;url.value=null;if(!props.loadImage)return;try{const loaded=await props.loadImage(props.attachment);if(ticket===serial)url.value=loaded;}catch{}},{immediate:true});
   onBeforeUnmount(()=>{serial++;});return()=>url.value?h('img',{class:'queue-thumb',src:url.value,alt:'排队图片'}):el('span','thumb',icon('M3 3h18v18H3zM3 16l6-6 4 4 3-3 5 5'),{role:'img','aria-label':'排队图片 '+props.attachment.name,title:props.attachment.name});
 }});
-const Editor=defineComponent({props:{text:{type:String,required:true},busy:Boolean},emits:['change','save','cancel'],setup(props,{emit}){const node=ref<HTMLTextAreaElement|null>(null);
-  const fit=async()=>{await nextTick();const n=node.value;if(n){n.style.height='auto';n.style.height=(n.scrollHeight+n.offsetHeight-n.clientHeight)+'px';}};
-  onMounted(()=>{node.value?.focus();void fit();});watch(()=>props.text,()=>void fit());
-  return()=>h('textarea',{ref:node,class:'queue-editor',rows:1,'aria-label':'编辑排队消息',value:props.text,readOnly:props.busy,onInput:(e:Event)=>emit('change',(e.target as HTMLTextAreaElement).value),onKeydown:(e:KeyboardEvent)=>{if(e.isComposing||e.keyCode===229||props.busy)return;if(e.key==='Escape'){e.preventDefault();e.stopPropagation();emit('cancel');}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();e.stopPropagation();if(!e.repeat)emit('save');}}});
+const Editor=defineComponent({props:{text:{type:String,required:true},busy:Boolean},emits:['change','save','cancel'],setup(props,{emit}){
+  return()=>h(InlineEditor,{value:props.text,label:'编辑排队消息',className:'queue-editor',busy:props.busy,onChange:(text:string)=>emit('change',text),onSave:()=>emit('save'),onCancel:()=>emit('cancel')});
 }});
 export const QueueDock=defineComponent({name:'SaCodeQueueDock',props:{rows:{type:Array as PropType<QueueRow[]>,default:()=>[]},pending:{type:Array as PropType<Pending[]>,default:()=>[]},running:Boolean,mutable:{type:Boolean,default:true},sessionId:String,updateQueue:Function as PropType<(id:string,action:QueueAction)=>Promise<void>>,loadImage:Function as PropType<(a:AttachmentRef)=>Promise<string>>},emits:['notice'],setup(props,{emit}){
   const listId='sacode-queue-'+(++nextDock),editing=ref<{id:string;text:string}|null>(null),busy=ref<string|null>(null),collapsed=ref(true);let disposed=false;
