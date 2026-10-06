@@ -446,11 +446,19 @@ ipcMain.handle("sacode:pluginsUninstall", async (_e, args) => {
 });
 
 ipcMain.handle("sacode:pluginsRegistries", async () => {
-  return { registry: "", fallbackRegistries: [], resolved: "" };
+  return { registry: "https://registry.npmjs.org", fallbackRegistries: ["https://registry.npmmirror.com"], resolved: "https://registry.npmjs.org" };
 });
 
 ipcMain.handle("sacode:pluginsInspect", async (_e, args) => {
-  return { status: "refused", reason: "plugin-inspect-not-implemented" };
+  const spec = args && args.spec;
+  if (!spec || typeof spec !== "string" || spec.length === 0) {
+    return { status: "invalid", reason: "empty-spec" };
+  }
+  // 校验格式：name@version 或 name（只允许字母数字和连字符下划线点斜杠@）
+  if (!/^[a-zA-Z0-9._\-/][a-zA-Z0-9._\-/]*(?:@[a-zA-Z0-9._\-]+)?$/.test(spec)) {
+    return { status: "invalid", reason: "bad-spec-format" };
+  }
+  return { status: "valid", name: spec.split("@")[0], version: spec.includes("@") ? spec.split("@")[1] : "" };
 });
 
 ipcMain.handle("sacode:pluginsInstall", async (_e, args) => {
