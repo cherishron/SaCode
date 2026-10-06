@@ -106,6 +106,8 @@ W00 职责登记（2026-10-06）：`业务主责` 是九成员计划的唯一业
 
 A 独占 Host/CLI/main/preload/app.js、公共构建、pack-pages 与 package 锁文件的改动接线；业务成员通过 A 接线，不因本表获得这些路径写权。I 独立验收，作者不得自行签验。C 与 G 的 scope/slot 跨域协作经 A 接口单协调；D 独占凭证存取模块，与 B 协调配置迁移。skills、user-questions、plan 由 F 承担编排主责，E 协作工具及执行；client-resources 核心资源协议由 G 唯一主责，B/H 协作数据与外部资源，不另占主责。settings 按配置域与生命周期归 C，模型/凭证域归 D、数据迁移归 B，表现消费归 G；deliverables 按交付文件及工作区变更数据归 B，执行由 E 协作。
 
+表体计数（门禁 check_p0_ownership 机械复算，唯一现值口径）：**✔ 9 / ◐ 54 / ☐ 0**（63 个模块行，README 行不计）。本文其余段落里的计数都是各批当天的历史快照，不参与现值对账；改动「已复刻」列后必须重跑 `node scripts/check_p0_ownership.cjs`，由门禁把这一行钉住。
+
 | 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 | 业务主责 | 工作包 |
 |---|:-:|:-:|---|:-:|:-:|---|---|---|
 | agent-team | ✔ | ✔ | M3 | ✔ | ◐ | `core/src/team.cj` `AgentTeam`：log-only `agent-team/membership` 事件承载 `join::<id>::<role>` / `leave::<id>`；`agent-team/broadcast` 事件承载 `<text>`；空 id/role/text 各自抛；重名 join 走 noop；`init` 从事件流回放。4 条用例覆盖 join+broadcast、leave 排除、空 id 拒、log-only 表面。**上游校正**：本切片只做 roster + broadcast marker；上游 task 分派、跨代理状态同步与 `@Remote team/*` 通道未接 | F | W50 |
