@@ -55,3 +55,24 @@
 据此更新交付路径：**D:/Releases/SaCode/SaCode Setup 0.1.0-latest.exe**。用读取源字节、在普通交付目录新建文件的方式输出，不继承源安全描述符。新文件 icacls 没有 Low 标记；与源安装包 SHA256 完全一致，仍为 `eb0f89f8547f21f614d139ebcb65c53056680d13776a6ee10123bcafb2809d23`。附同目录 install-latest.cmd 和 build-info-latest.json；项目输出目录的安装脚本改指向此交付文件。
 
 没有修改项目、TEMP 或系统的 ACL/完整性配置，没有启动真实安装器代用户安装。尚待用户实际安装后确认；这里只证明造成临时文件失败的标记差异及修正交付文件。默认 dist/electron 中的 exe 仍是构建产物，不能再次当作可直接运行的交付文件。
+
+## 23:39 修订：首次设置读取导致 Host 退出与 EPIPE
+
+用户安装后报告 HostBridge.request 的 EPIPE，以及 sacode:customsDescribe 的 host-gone: exit code 1。使用实际已安装 Host 复现，stderr 指向 globalSettingsRequest：对尚不存在的 general-settings.txt 调用 canonicalize，抛出 FSException 后 Host 退出 1。先前窗口与控件检查未覆盖真实 Host 请求，不能据此判定后端正常。
+
+产品修复提交 `5e070198a3ebf9d82286d07d706348347a9e51bd`：仅规范化已存在的父目录；设置读取异常返回 -32003 并保持 Host 存活；桥接处理 stdin error、写入回调异常与宿主退出，结算全部在途请求，拒绝继续写入死管道。未改变模型配置或读取用户凭据。私有源码快照在上述旧产品快照上覆盖本次已提交的 Host/桥接差异，未吸收并行成员未提交实现。
+
+- 红先：实际旧 Host 运行新增五条回归，3 pass / 2 fail / skipped 0 / rc=1；两条实际 Host 用例失败。
+- 绿后：重编 Host（cjpm build -i，rc=0）并重新 pack-host；新增五条回归与既有桥接测试合跑，46 pass / 0 fail / skipped 0 / rc=0。缺失设置文件读取默认值后 custom/describe 仍成功；损坏设置返回协议错误后 initialize 仍成功。断管专项使用真实子进程 stdin 错误注入，并非实际 provider 验收。
+- 普通启动检查已加强：独立设置/会话/用户目录中，必须经渲染层桥接成功执行 globalSettingsGet 与 customsDescribe。新 win-unpacked：visible=true、hostReady=true、controls=62；安装器实际提取载荷：visible=true、hostReady=true、controls=68；均 STARTUP_PASS、rc=0。控件数差异是异步渲染观测，不作为功能分母。
+- NSIS 重新构建 rc=0；提取 rc=0（一条 archive warning）。源码 main/preload/host-bridge/app.js/client-slots 与 app.asar 逐项一致；重编 Host、win-unpacked Host、安装器 Host 三方哈希一致。未在构建后改写 asar。
+
+本节替代前面的旧交付哈希，交付路径仍为 `D:/Releases/SaCode/SaCode Setup 0.1.0-latest.exe`（2026-10-06 23:39，92855799 字节）。使用字节流输出后核对 SHA256，icacls 无 Low Mandatory Level。没有替用户执行真实 NSIS 安装，实际覆盖安装仍待用户验证。
+
+| 当前交付 | SHA256 |
+| --- | --- |
+| 安装器 | 2035200facea80875989a9b473c4a06687388db1b650bd2c7ba32c54f3d9415e |
+| app.asar | f89f2efc568a1b6a221a1a4a055ad4f0f18c95d94821b771ec7ddced0a375bec |
+| sacode-host.exe | 0ab6d6afe382d35eca57e2c0ebd402f387759cc7e1c9a549ba47347c9bb0d905 |
+
+可复跑：设置 SACODE_HOST 为本轮 dist/host/bin/sacode-host.exe，在 apps/desktop 执行 `node --test --test-concurrency=1 test/host-startup-recovery.test.mjs test/bridge.test.mjs`；在根目录执行 `node scripts/check-desktop-startup.mjs <本轮 SaCode.exe>`。日志位于私有取证目录：host-bootstrap-red.log、host-bootstrap-green.log、host-settings-build.log、host-fixed-package.log、host-fixed-startup.log、installer-host-fixed-startup.log。既有全面复刻与安装升级卸载等未收口项没有因本次修复升级状态。
