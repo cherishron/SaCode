@@ -1,4 +1,4 @@
-// 统一验收入口：把 9 类验证按依赖顺序串行跑完，任一步失败即停，最后输出汇总。
+// 统一验收入口：把 10 类验证按依赖顺序串行跑完，任一步失败即停，最后输出汇总。
 // 串行是硬要求——core 的测试二进合约 20MB，两个 cjpm/electron 构建并发会互撞
 // ld.lld: failed to write the output file: Permission denied，所以这里一次只跑一个。
 //
@@ -14,6 +14,7 @@ import { existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrivateTmpDir, disposePrivateTmpDir } from "./verify-tmp.mjs";
+import { GATE_SCRIPTS, verdict as gateVerdict } from "./gate-verdict.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
@@ -122,6 +123,28 @@ function parseNodeTest(out) {
 }
 
 const STEPS = [
+  {
+    key: "gates",
+    title: "接口与所有权门禁（静态对账，不构建；GATE 与 SELFTEST 都要绿）",
+    run() {
+      // 排第一步：这几条纯静态、几秒钟跑完，且拦的是「接口面漂移」这类会让后面所有构建
+      // 白跑的问题。判绿要同时有 GATE: PASS 与 SELFTEST: PASS——只有前者说明门禁没自证，
+      // 后者能绿而基线红也照样拦（多段输出里任一段 FAIL 都不算过）。
+      let code = 0;
+      let raw = "";
+      const parts = [];
+      for (const file of GATE_SCRIPTS) {
+        const plain = run("node", [join("scripts", file)], root);
+        const self = run("node", [join("scripts", file), "--selftest"], root);
+        const both = `${plain.out}\n${self.out}`;
+        const v = gateVerdict(plain.code === 0 && self.code === 0 ? 0 : 1, both);
+        if (!v.ok) code = 1;
+        parts.push(`${file.replace(/^check_/, "").replace(/\.cjs$/, "")} ${v.ok ? "绿" : "红"}`);
+        raw += `===== ${file} =====\n${both}\n`;
+      }
+      return { code, summary: `${GATE_SCRIPTS.length} 条门禁：${parts.join(" / ")}`, parsedOk: code === 0, raw };
+    },
+  },
   {
     key: "core",
     title: "核心仓颉单测（cjpm test）",
