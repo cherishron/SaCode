@@ -1276,7 +1276,7 @@ createApp({
     const filesPage = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "工作区文件"),
         self.workspaceFilesBusy ? el("p", "note", "加载中…", { role: "status", "aria-live": "polite" }) :
-        !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录"),
+        !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录") : null,
         ...self.workspaceFiles.filter(f=>f.isDir).map(d=>el("div","file-tree-entry file-tree-dir",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,d.name),el("span","file-size","目录")],{'aria-label':'目录 '+d.name})),
         ...self.workspaceFiles.filter(f=>!f.isDir).map(f=>el("div","file-tree-entry file-tree-file",[navIcon("M3 5h7l2 3h9v12H3z"),el("span",null,f.name),el("span","file-size",f.size>1048576?(f.size/1048576).toFixed(1)+'MB':f.size>1024?(f.size/1024).toFixed(1)+'KB':f.size+'B')],{'aria-label':f.name})),
       ], { id: "files-panel", tabindex: -1 }),
