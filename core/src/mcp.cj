@@ -1,6 +1,42 @@
 package core
 import std.collection.*
 
+// 冻结McpResourceRequest的三种请求形态，构造入口避免read夹带cursor。
+// 这里只编码方法参数：服务器选择、scope校验、取消及实际传输由provider承接。
+public class McpResourceRequest {
+    public let method: String
+    public let cursor: Option<String>
+    public let uri: Option<String>
+
+    private init(method: String, cursor: Option<String>, uri: Option<String>) {
+        this.method = method
+        this.cursor = cursor
+        this.uri = uri
+    }
+
+    public static func list(cursor!: Option<String> = None): McpResourceRequest {
+        return McpResourceRequest("resources/list", cursor, None)
+    }
+
+    public static func templates(cursor!: Option<String> = None): McpResourceRequest {
+        return McpResourceRequest("resources/templates/list", cursor, None)
+    }
+
+    public static func read(uri: String): McpResourceRequest {
+        return McpResourceRequest("resources/read", None, Some(uri))
+    }
+
+    public func paramsJson(): String {
+        if (let Some(value) <- uri) {
+            return "{\"uri\":\"${jsonEscapeText(value)}\"}"
+        }
+        if (let Some(value) <- cursor) {
+            return "{\"cursor\":\"${jsonEscapeText(value)}\"}"
+        }
+        return "{}"
+    }
+}
+
 // 冻结 tools.ts 的公开命名契约；调用时必须另存 rawName，不能逆解析此名字。
 // 纯函数只做命名，不代表服务器、工具Schema或连接已经准入。
 public func mcpPublicToolName(serverName: String, rawName: String): String {
