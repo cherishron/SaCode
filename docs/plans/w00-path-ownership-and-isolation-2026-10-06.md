@@ -79,7 +79,7 @@
 
 | 路径 | 表内主责 | 实测状态 | 处置 |
 |---|---|---|---|
-| `apps/cli/src/main.cj` | **A** | ` M` 未提交，非本批写入 | A 未认领该改动 → 记「未经确认」，不进基线；由写它的会话补接口变更单或撤回 |
+| `apps/cli/src/main.cj` | **A** | ` M` 未提交，非本批写入（实测恰 `7 insertions(+)`，无删除） | 本行原处置成立至今：**并发那 7 行仍记「未经确认」，不进基线**。新增一条已发生的事实——`6cc063a` 已把两条按 `PluginUnit` 形状写的装配断言写进这个 A 拥有的入口文件（`units[i].name`，而 `PluginAssemblyPlan.units` 是 `Array<String>`），提交态 `cjpm build` rc=1、6 个 `'name' is not a member of struct 'String'`，两条断言从落库起从未运行。A 只取那两行的 `.name`（零语义改动）并提交 `56f3ffe`，**代修不等于认领**：装配语义仍归 C（W20）。纪律补一条：非 A 成员要往公共入口加断言或调用，必须先交接口变更单，否则红只会在提交级产物检查里才暴露 |
 | `apps/desktop/renderer/app.js` | **A** | ` M` 未提交，非本批写入 | 同上 |
 | `docs/plans/dsh-capability-matrix.md` | **A** | ` M` 未提交，非本批写入 | 矩阵是 63 行账本；A 需在合入前重跑 `node scripts/check_p0_ownership.cjs` 确认表体分母未坏 |
 | `core/src/agent.cj` | E | ` M` 未提交 | 引用了 `fs_tools.cj`/`ptc_exec.cj`/`shlex.cj` 三个**未跟踪**文件 → 整文件提交会破坏构建（悬空引用），必须与那三个文件同批落库 |
