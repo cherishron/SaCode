@@ -33,37 +33,64 @@ export function createGeneralSettingsAssembly() {
   install('ui-settings-extra',child=>{
     child.inject('settings.general.row',row=>{
       row.register({name:'settings.general.row',id:'permission',order:10,label:'权限'},defineComponent({
-        name:'SaCodePermissionSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'权限'),h('p',{class:'note read-only-value'},'已禁用')]));
+        name:'SaCodePermissionSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'权限'),h('p',{class:'note read-only-value'},'已禁用')]),
       }));
       row.register({name:'settings.general.row',id:'language',order:20,label:'语言'},defineComponent({
-        name:'SaCodeLanguageSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'语言'),h('p',{class:'note read-only-value'},'简体中文')]));
+        name:'SaCodeLanguageSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'语言'),h('p',{class:'note read-only-value'},'简体中文')]),
       }));
       row.register({name:'settings.general.row',id:'appearance',order:30,label:'外观'},defineComponent({
-        name:'SaCodeAppearanceSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'外观'),h('p',{class:'note read-only-value'},'跟随系统')]));
+        name:'SaCodeAppearanceSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'外观'),h('p',{class:'note read-only-value'},'跟随系统')]),
       }));
       row.register({name:'settings.general.row',id:'font-size',order:40,label:'字体大小'},defineComponent({
-        name:'SaCodeFontSizeSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'字体大小'),h('p',{class:'note read-only-value'},'14px')]));
+        name:'SaCodeFontSizeSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'字体大小'),h('p',{class:'note read-only-value'},'14px')]),
       }));
       row.register({name:'settings.general.row',id:'transcript-view',order:50,label:'对话记录视图'},defineComponent({
-        name:'SaCodeTranscriptViewSetting',props:['owner'],setup:props=>{const owner=props.owner;return h('section',{class:'busy-send-settings'},[h('div',{class:'busy-send-copy'},[h('label',null,'对话记录视图'),h('p',{class:'note'},'控制对话记录的显示密度')]),h('select',{value:owner.value??'default','aria-label':'对话记录视图',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[h('option',{value:'default'},'默认'),h('option',{value:'compact'},'紧凑'),h('option',{value:'expanded'},'展开')])]);}}));
+        name:'SaCodeTranscriptViewSetting',props:['owner'],setup:props=>{
+          const owner=props.owner;
+          return h('section',{class:'busy-send-settings'},[
+            h('div',{class:'busy-send-copy'},[h('label',null,'对话记录视图'),h('p',{class:'note'},'控制对话记录的显示密度')]),
+            h('select',{value:owner.value??'default','aria-label':'对话记录视图',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[
+              h('option',{value:'default'},'默认'),h('option',{value:'compact'},'紧凑'),h('option',{value:'expanded'},'展开'),
+            ]),
+          ]);
+        },
+      }));
       row.register({name:'settings.general.row',id:'dev-tools',order:60,label:'开发者工具'},defineComponent({
-        name:'SaCodeDevToolsSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'开发者工具'),h('p',{class:'note read-only-value'},'已关闭')]));
+        name:'SaCodeDevToolsSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'开发者工具'),h('p',{class:'note read-only-value'},'已关闭')]),
       }));
       row.register({name:'settings.general.row',id:'shortcuts',order:70,label:'快捷键'},defineComponent({
-        name:'SaCodeShortcutsSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'快捷键'),h('p',{class:'note read-only-value'},'Ctrl+, 打开设置  |  Ctrl+K 命令面板')]));
+        name:'SaCodeShortcutsSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'快捷键'),h('p',{class:'note read-only-value'},'Ctrl+, 打开设置  |  Ctrl+K 命令面板')]),
       }));
       row.register({name:'settings.general.row',id:'link-opening',order:90,label:'链接打开'},defineComponent({
-        name:'SaCodeLinkOpeningSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'链接打开'),h('p',{class:'note read-only-value'},'在浏览器中打开')]));
+        name:'SaCodeLinkOpeningSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'链接打开'),h('p',{class:'note read-only-value'},'在浏览器中打开')]),
       }));
       row.register({name:'settings.general.row',id:'composer-enter',order:95,label:'编辑器 Enter'},defineComponent({
-        name:'SaCodeComposerEnterSetting',props:['owner'],setup:props=>{const owner=props.owner;return h('section',{class:'busy-send-settings'},[h('div',{class:'busy-send-copy'},[h('label',null,'编辑器 Enter'),h('p',{class:'note'},'Enter 键行为')]),h('select',{value:owner.value??'send','aria-label':'编辑器 Enter',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[h('option',{value:'send'},'Enter 发送'),h('option',{value:'newline'},'Enter 换行')])]);}}));
+        name:'SaCodeComposerEnterSetting',props:['owner'],setup:props=>{
+          const owner=props.owner;
+          return h('section',{class:'busy-send-settings'},[
+            h('div',{class:'busy-send-copy'},[h('label',null,'编辑器 Enter'),h('p',{class:'note'},'Enter 键行为')]),
+            h('select',{value:owner.value??'send','aria-label':'编辑器 Enter',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[
+              h('option',{value:'send'},'Enter 发送'),h('option',{value:'newline'},'Enter 换行'),
+            ]),
+          ]);
+        },
+      }));
       row.register({name:'settings.general.row',id:'performance',order:98,label:'性能与用量'},defineComponent({
-        name:'SaCodePerformanceSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'性能与用量'),h('p',{class:'note read-only-value'},'用量统计由模型中心管理')]));
+        name:'SaCodePerformanceSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'性能与用量'),h('p',{class:'note read-only-value'},'用量统计由模型中心管理')]),
       }));
       row.register({name:'settings.general.row',id:'session-log',order:99,label:'Session Log'},defineComponent({
-        name:'SaCodeSessionLogSetting',props:['owner'],setup:props=>{const owner=props.owner;return h('section',{class:'busy-send-settings'},[h('div',{class:'busy-send-copy'},[h('label',null,'Session Log 上传'),h('p',{class:'note'},'是否上传会话日志用于改进')]),h('select',{value:owner.value??'off','aria-label':'Session Log',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[h('option',{value:'off'},'关闭'),h('option',{value:'on'},'开启')])]);}}));
+        name:'SaCodeSessionLogSetting',props:['owner'],setup:props=>{
+          const owner=props.owner;
+          return h('section',{class:'busy-send-settings'},[
+            h('div',{class:'busy-send-copy'},[h('label',null,'Session Log 上传'),h('p',{class:'note'},'是否上传会话日志用于改进')]),
+            h('select',{value:owner.value??'off','aria-label':'Session Log',onChange:(e:Event)=>owner.change((e.target as HTMLSelectElement).value)},[
+              h('option',{value:'off'},'关闭'),h('option',{value:'on'},'开启'),
+            ]),
+          ]);
+        },
+      }));
       row.register({name:'settings.general.row',id:'version',order:100,label:'当前版本'},defineComponent({
-        name:'SaCodeVersionSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'当前版本'),h('p',{class:'note read-only-value'},'0.1.0')]));
+        name:'SaCodeVersionSetting',props:['owner'],setup:props=>()=>h('section',{class:'read-only-setting'},[h('label',null,'当前版本'),h('p',{class:'note read-only-value'},'0.1.0')]),
       }));
     });
   });

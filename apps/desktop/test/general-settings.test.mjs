@@ -11,9 +11,9 @@ test('通用设置贡献按插件卸载，父槽位释放后没有残留入口',
   const module={exports:{}};runInNewContext(result.outputFiles[0].text,{module,exports:module.exports,require,queueMicrotask});
   const assembly=module.exports.createGeneralSettingsAssembly(),root=assembly.slots.entries('root')[0];
   assert.equal(root.registrant,'ui-settings-general');
-  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,1);
+  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,13);
   assembly.unload('ui-conversation-preferences');
-  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,0);
+  assert.equal(assembly.slots.dispatch(root,'settings.general.row',{}).length,12);
   assembly.install('local-settings',scope=>scope.inject('settings.general.row',child=>child.register({name:'settings.general.row',id:'local'},{})));
   assert.equal(assembly.slots.dispatch(root,'settings.general.row',{})[0].entry.registrant,'local-settings');
   assembly.unload('ui-settings-general');
