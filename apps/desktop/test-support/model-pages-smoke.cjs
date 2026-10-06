@@ -1,6 +1,12 @@
 const {app,BrowserWindow}=require('electron');
 app.whenReady().then(async()=>{
-  const win=new BrowserWindow({show:false,webPreferences:{nodeIntegration:false,contextIsolation:true}});await win.loadFile(process.argv[2]);
+  const win=new BrowserWindow({show:false,webPreferences:{nodeIntegration:false,contextIsolation:true}});
+  // 渲染层报错时把 console 落到 stderr：executeJavaScript 只回「Script failed to execute」，
+  // 不带具体信息，调试时只能靠这里看到 <script> 加载失败或顶层 ReferenceError。
+  win.webContents.on('console-message',(_e,_lvl,msg,_line,_src)=>process.stderr.write('RENDERER: '+msg+'\n'));
+  // fixture 走末位 argv：electron 会把 --no-sandbox/--user-data-dir 等开关留在 argv 里，
+  // 按固定下标取会被标志挤偏；末位永远是测试传入的 fixture 路径。
+  await win.loadFile(process.argv[process.argv.length-1]);
   const checks=await win.webContents.executeJavaScript(`(async()=>{
     const checks=[],root=document.querySelector('#fixture'),errors=[];const check=(name,ok)=>checks.push({name,ok});
     const settle=async()=>{await Promise.resolve();await Vue.nextTick();await Promise.resolve();await Vue.nextTick();};
@@ -20,7 +26,7 @@ app.whenReady().then(async()=>{
       if(writable&&add){add.click();await settle();check(title+'新增表单打开',!!root.querySelector('input[aria-label="'+(title==='供应商'?'Provider ID':'ID')+'"]'));}
       ui.unmount();await settle();
     }
-    window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.()));
+    window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
     for(const writable of [false,true]){
