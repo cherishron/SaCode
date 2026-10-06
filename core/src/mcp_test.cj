@@ -113,3 +113,51 @@ func mcpResourceRequestsKeepOpaqueParametersAndOmitAbsentCursor() {
     @Expect(McpResourceRequest.read("doc://a/%2F?q=中文#片段").paramsJson(), "{\"uri\":\"doc://a/%2F?q=中文#片段\"}")
     @Expect(McpResourceRequest.read("a\"b\\c\n").paramsJson(), "{\"uri\":\"a\\\"b\\\\c\\n\"}")
 }
+
+@Test
+func mcpReconnectDefaultsAndCappedBackoff() {
+    let p = McpReconnectPolicy()
+    @Expect(p.enabled, true)
+    @Expect(p.initialDelayMs, 500.0)
+    @Expect(p.maxDelayMs, 30000.0)
+    @Expect(p.maxAttempts, Int64(10))
+    @Expect(p.delayForAttempt(1), 500.0)
+    @Expect(p.delayForAttempt(2), 1000.0)
+    @Expect(p.delayForAttempt(7), 30000.0)
+    @Expect(p.delayForAttempt(1000000), 30000.0)
+    let custom = McpReconnectPolicy(enabled: false, initialDelayMs: 1.25, maxDelayMs: 3.5, maxAttempts: 7.0)
+    @Expect(custom.enabled, false)
+    @Expect(custom.delayForAttempt(2), 2.5)
+    @Expect(custom.delayForAttempt(3), 3.5)
+    @Expect(custom.maxAttempts, Int64(7))
+}
+
+@Test
+func mcpReconnectRejectsInvalidConfigurationBeforeConnecting() {
+    for (values in [(0.0, 30000.0, 10.0), (-1.0, 30000.0, 10.0),
+        (2147483648.0, 2147483648.0, 10.0), (1.0, 0.0, 10.0),
+        (100.0, 5.0, 10.0), (1.0, 2.0, 0.0), (1.0, 2.0, 1.5),
+        (1.0, 2.0, 9007199254740992.0)]) {
+        var rejected = false
+        try {
+            McpReconnectPolicy(initialDelayMs: values[0], maxDelayMs: values[1], maxAttempts: values[2])
+        } catch (e: Exception) { rejected = true }
+        @Expect(rejected, true)
+    }
+    var rejected = false
+    try { McpReconnectPolicy().delayForAttempt(0) } catch (e: Exception) { rejected = true }
+    @Expect(rejected, true)
+}
+
+@Test
+func mcpReconnectRejectsNonFiniteDelays() {
+    var zero: Float64 = 0.0
+    for (value in [zero / zero, 1.0 / zero, -1.0 / zero]) {
+        var initialRejected = false
+        var ceilingRejected = false
+        try { McpReconnectPolicy(initialDelayMs: value) } catch (e: Exception) { initialRejected = true }
+        try { McpReconnectPolicy(maxDelayMs: value) } catch (e: Exception) { ceilingRejected = true }
+        @Expect(initialRejected, true)
+        @Expect(ceilingRejected, true)
+    }
+}
