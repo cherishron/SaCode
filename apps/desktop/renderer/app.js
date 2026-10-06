@@ -189,7 +189,7 @@ createApp({
     const pluginManagerAdapter = window.SaCodePluginManager && window.SaCodePluginManager.createSacodePluginManagerAdapter
       ? window.SaCodePluginManager.createSacodePluginManagerAdapter(window.sacode)
       : null;
-    // 模型中心装配：四页（供应商/自定义模型/预算/迁移）通过槽位系统注册。
+    // 模型中心装配：四页（模型/供应商/费用统计/迁移）通过槽位系统注册。
     const modelCenter = window.SaCodeSlots && window.SaCodeSlots.createModelCenterAssembly
       ? window.SaCodeSlots.createModelCenterAssembly()
       : null;
@@ -596,7 +596,7 @@ createApp({
       event.preventDefault();
       // 模态优先：全局导航与发送不能穿透上层审批/详情/设置。
       if (document.querySelector('dialog:modal')) return;
-      if (settings) settingsOpen.value=true;
+      if (settings) settingsOpen.value = !settingsOpen.value;
       else if (composer) document.getElementById('composer').focus();
       else if (preview) openSide('preview-panel');
     }
@@ -1105,7 +1105,7 @@ createApp({
         !sidebarSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,'暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
       ]),
-      el('div','nav-settings-row',[el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']}, onClick: () => { self.settingsOpen = true; } })]),
+      el('div','nav-settings-row',[el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']}, onClick: () => { self.settingsOpen = !self.settingsOpen; } })]),
     ], { "aria-label": "工作区与会话导航" });
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
@@ -1457,7 +1457,7 @@ createApp({
       })]) : null,
       self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
     ]);
-    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
