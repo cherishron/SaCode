@@ -1240,6 +1240,20 @@ public class UsageLedger {
         return out.toArray()
     }
 
+    // 按模型分组的已结算金额。`providerTotals` 抹掉了 usageKind、
+    // `usageKindTotals` 抹掉了模型，两路都回答不了「这个模型的预算用掉多少」——
+    // 预算面板的「已用 / 预算」进度条就是要它。
+    // key 与 customModelId 都填模型 ID：一个模型只有一个 currency（断言 46），
+    // 所以这里不出现同模型多币种。
+    public func modelTotals(): Array<UsageTotal> {
+        let snap = loadSnapshot()
+        let out = ArrayList<UsageTotal>()
+        for (kv in snap.modelTotals) {
+            out.add(UsageTotal(kv[0], kv[0], kv[1], kv[2]))
+        }
+        return out.toArray()
+    }
+
     // 供路由器判预算的只读视图：只给「某币种下各自定义模型的本地已用」，
     // 路由器拿不到 store、也拿不到任何写面。
     public func routerView(currency: String): LedgerView {

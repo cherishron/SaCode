@@ -23,6 +23,9 @@ export interface ModelBudget{
   limits:BudgetLimits;
   bindings:BindingRate[];
   enabled:boolean;
+  /** 该模型自己的已结算金额（账本 modelTotals）。null = 账本里没有该模型的已结算记录，
+   *  不是「花了零」——渲染成 —，不许渲染成 0（断言 14）。 */
+  used:{micro:number;currency:string}|null;
 }
 export interface CostColumn{amountMicro:number|null;currency:string|null;meterSource:string;note:string}
 export interface StatsView{
@@ -133,6 +136,7 @@ export const Page=defineComponent({
               el('th',null,'每月 Token'),
               el('th',null,'每日金额'),
               el('th',null,'每月金额'),
+              el('th',null,'已用金额'),
               el('th',null,'最大输出'),
               el('th',null,'探测'),
             ])),
@@ -142,6 +146,7 @@ export const Page=defineComponent({
               el('td',null,formatTokens(m.limits.monthlyTokens)),
               el('td',null,formatMicro(m.limits.dailyAmountMicro)),
               el('td',null,formatMicro(m.limits.monthlyAmountMicro)),
+              el('td',null,formatAmount(m.used?.micro ?? null, m.used?.currency ?? null)),
               el('td',null,formatTokens(m.limits.maxOutputTokens)),
               el('td',null,m.limits.probeEnabled?'每日 '+m.limits.probeMaxPerDay+' 次':'已禁用'),
             ]))),

@@ -609,3 +609,37 @@ func describeKeepsUsageKindAndProviderDimensions() {
     @Expect(describe.contains("local:"), true)
     lgClean(tag)
 }
+
+// `usageKindTotals` 抹掉模型维度、`providerTotals` 抹掉 usageKind，
+// 「这个模型的预算用掉多少」两路都回答不了——预算面板的「已用 / 预算」要第三条读面。
+@Test
+func modelTotalsReportsPerModelSettledAmounts() {
+    let tag = "modeltotals"
+    lgClean(tag)
+    let path = lgPath(tag)
+    // 同一模型跨两个供应商、两种 usageKind：模型账要按模型合起来
+    @Expect(UsageLedger(path).settle(AttemptAccounting("at-mt1",
+        LedgerUsage(1, 1, 0, 0, "vendor"), RateCard(100000, 100000, -1, -1, "CNY", "pv1"),
+        customModelId: "cm-a", providerId: "step-a", usageKind: "chat")).status, "settled")
+    @Expect(UsageLedger(path).settle(AttemptAccounting("at-mt2",
+        LedgerUsage(2, 0, 0, 0, "vendor"), RateCard(100000, 100000, -1, -1, "CNY", "pv1"),
+        customModelId: "cm-a", providerId: "step-b", usageKind: "probe")).status, "settled")
+    @Expect(UsageLedger(path).settle(AttemptAccounting("at-mt3",
+        LedgerUsage(1, 0, 0, 0, "vendor"), RateCard(500000, -1, -1, -1, "CNY", "pv1"),
+        customModelId: "cm-b", providerId: "step-c", usageKind: "chat")).status, "settled")
+    let models = UsageLedger(path).modelTotals()
+    @Expect(models.size, Int64(2))
+    @Expect(models[0].key, "cm-a")
+    @Expect(models[0].customModelId, "cm-a")
+    @Expect(models[0].currency, "CNY")
+    @Expect(models[0].usedMicros, Int64(400000))
+    @Expect(models[1].key, "cm-b")
+    @Expect(models[1].usedMicros, Int64(500000))
+    // 两路的合计必须等于账户总量：聚合不许漏记或重复记
+    var account = Int64(0)
+    for (kv in models) { account = account + kv.usedMicros }
+    @Expect(account, UsageLedger(path).state().localUsed("CNY"))
+    // 在途预留不算进已用（预算判据的「在途」半由 reserve 单独挡）
+    @Expect(UsageLedger(path).modelTotals().size, Int64(2))
+    lgClean(tag)
+}

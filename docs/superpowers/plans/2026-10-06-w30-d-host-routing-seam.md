@@ -258,7 +258,6 @@ for (id in attempts.lastDispatchedUnsettled()) {
 
 这些码**必须与现有错误码不撞**——请 A 先 grep 一遍 `-32` 段确认空档。
 
-<<<<<<< HEAD
 ### 3.8 请求体新增字段
 
 `turn/start` / `task/start` 的请求体里，除了已有的 `customModelId`（可选），
@@ -273,8 +272,6 @@ for (id in attempts.lastDispatchedUnsettled()) {
 如果 A 能顺手把 `usage-ledger.log` 的追加事件转发成一个 `ledger/changed` 通知，
 面板就能实时刷新；不做的话面板只会在打开时拉一次。优先级低于 §3.3。
 
-=======
->>>>>>> c4837fd48421377f83b68c04f8515a0853ad031a
 ## 4. 约束（A 接线时必须守的）
 
 1. **`AttemptLog.markDispatched` 返回 false 时不许发请求**（断言 80 是 fail-closed，
@@ -303,7 +300,6 @@ A 接线后，D 侧用以下三条断言验：
 3. **断言 82（崩溃不重发）**：写完 `attempt/dispatched` 后杀宿主，重启读
    `lastDispatchedUnsettled()` 必须能看到那笔；同时上游调用计数不得 +1。
 
-<<<<<<< HEAD
 ## 6. 附：请求 A 接的第二个动词（费用统计面板已经等它）
 
 `apps/desktop/renderer/pages/model-center-adapter.ts` 的 `budget-stats.describe()`
@@ -317,6 +313,7 @@ A 接线后，D 侧用以下三条断言验：
 // 出参（JSON）：
 {
   "providerTotals": [{"key":"step","customModelId":"code","currency":"CNY","usedMicros":12345}],
+  "modelTotals":    [{"key":"code","customModelId":"code","currency":"CNY","usedMicros":12345}],
   "usageKindTotals": [{"key":"chat","customModelId":"","currency":"CNY","usedMicros":12345}],
   "unsettledAttempts": ["turn-1-a1"],
   "pendingReservations": ["turn-1-a2"],
@@ -328,15 +325,21 @@ core 侧取数已经齐了，A 只需要转发：
 
 | 字段 | core 方法 |
 |---|---|
-| `providerTotals` | `UsageLedger.providerTotals()` → `Array<UsageTotal>`（`key`/`customModelId`/`currency`/`usedMicros`） |
-| `usageKindTotals` | `UsageLedger.usageKindTotals()` → 同上类型 |
+| `providerTotals` | `UsageLedger.providerTotals()` → `Array<UsageTotal>`（`key`=providerId / `customModelId` / `currency` / `usedMicros`） |
+| `modelTotals` | `UsageLedger.modelTotals()` → 同上类型（`key`=customModelId；一个模型只有一个 currency，断言 46） |
+| `usageKindTotals` | `UsageLedger.usageKindTotals()` → 同上类型（`key`=usageKind） |
 | `unsettledAttempts` | `UsageLedger.unsettledAttempts()` → `Array<String>` |
 | `pendingReservations` | `UsageLedger.pendingReservations()` → `Array<String>` |
 | `revision` | `UsageLedger.state().revision` |
 
+三条读面各缺一个维度，别混用：`providerTotals` 有模型没 usageKind、
+`usageKindTotals` 有 usageKind 没模型、`modelTotals` 有模型但按模型合所有 usageKind。
+预算面板的「已用 / 预算」进度条要的是 `modelTotals`；
+`costs.model` 那一列要的是 `usageKindTotals` 里 `key == "chat"`。
+
 三个成本列的填法（D 侧接住后自己填）：
 
-- `costs.model.amountMicro` = `providerTotals` 里 `usageKind == "chat"` 的合计
+- `costs.model.amountMicro` = **`usageKindTotals` 里 `key == "chat"`** 的合计
   （按 currency 分组，别跨币种相加）
 - `costs.probe.amountMicro` = 需要 `usageKind == "probe"`；目前 probe 还没实现
   （B2 只做了调度核心，probe 执行器未建），这一列继续留 `null`
@@ -344,11 +347,14 @@ core 侧取数已经齐了，A 只需要转发：
 
 D 侧**前端已经接好，A 一落 `ledger/stats` 动词就自动点亮**，不需要 D 再改一行：
 
-- `model-center-adapter.ts` 的 `budget-stats.describe()` 现在会并发调
-  `api.ledgerStats()`；动词不存在（`typeof !== 'function'`）或抛错时回 `null`，
-  `costs.model.amountMicro` 保持 `null`，note 写明「等接口变更单 §6 接线后本列自动点亮」。
-- 有数据时按 `currency` 分组：**单一币种**直接填 `amountMicro` + `currency`；
-  **多币种**不加总（断言 41），`amountMicro` 回 `null`，明细塞进 note 让界面分列显示。
+- `model-center-adapter.ts` 的 `budget-stats.describe()` 会并发调 `api.ledgerStats()`；
+  动词不存在（`typeof !== 'function'`）或抛错时回 `null`，`costs.model.amountMicro`
+  保持 `null`，note 写明「等接口变更单 §6 接线后本列自动点亮」。
+- 有数据时 `costs.model` 按 `currency` 分组：**单一币种**直接填 `amountMicro` +
+  `currency`；**多币种**不加总（断言 41），`amountMicro` 回 `null`，明细塞进 note
+  让界面分列显示。
+- 每个自定义模型还会拿到 `used: { micro, currency } | null`（来自 `modelTotals`），
+  供「已用 / 预算」进度条用；账本里没有该模型的已结算记录时是 `null`，不是 `0`。
 - `budget-stats.ts` 的 `formatAmount()` 与 `costCard()` 已经把 `null` 渲染成
   `—` 而不是 `0`——**不许把缺数据渲染成零**（断言 14）。
 - `probe` / `relay` 两列继续 `null` + 各自的原因说明（探测执行器未实现 / 加速通道未实现）。
@@ -359,11 +365,3 @@ D 侧**前端已经接好，A 一落 `ledger/stats` 动词就自动点亮**，�
 - 探测执行器（`probeEnabled` / `probeMaxPerDay` 已进配置面，执行器未建）
 - 中转通道（B4：`TransportChannel` direct/relay）
 - 迁移包（B5）
-=======
-## 6. 不在本单范围
-
-- `sse.cj` 分档用量透传（独立变更单）
-- 中转通道（B4：`TransportChannel` direct/relay）
-- 迁移包（B5）
-- 前端 `model-center-adapter.ts` / `budget-stats.ts` 的费用统计面板（D 自有，不等 A）
->>>>>>> c4837fd48421377f83b68c04f8515a0853ad031a

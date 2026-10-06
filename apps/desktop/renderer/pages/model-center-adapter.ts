@@ -52,8 +52,27 @@ export function createModelCenterAdapters(api: any, providers: any) {
         // 账本只记金额，所以这里是微分；probe / relay 各有自己的 usageKind。
         const chatGroup = groupByCurrency(((stats && stats.usageKindTotals) || [])
           .filter((r: any) => r.key === 'chat'));
+        // 每个模型自己的已结算金额——预算面板「已用 / 预算」进度条的数据源。
+        // `usageKindTotals` 抹掉模型维度、`providerTotals` 抹掉 usageKind，
+        // 两路都回答不了「这个模型用掉多少」，所以要单独的 modelTotals 读面。
+        // 一个模型只有一个币种（断言 46），所以同模型不会出现两行。
+        const usedByModel = new Map<string, { usedMicros: number; currency: string }>();
+        for (const r of ((stats && stats.modelTotals) || [])) {
+          const id = (typeof r.customModelId === 'string' && r.customModelId)
+            || (typeof r.key === 'string' ? r.key : '');
+          if (!id || typeof r.usedMicros !== 'number') continue;
+          usedByModel.set(id, {
+            usedMicros: r.usedMicros,
+            currency: typeof r.currency === 'string' ? r.currency : '',
+          });
+        }
+        const usedOf = (id: string) => {
+          const u = usedByModel.get(id);
+          return u ? { micro: u.usedMicros, currency: u.currency } : null;
+        };
         return { session: usage, models: view.customs.map((m: any) => ({
           id: m.id, name: m.name, enabled: m.enabled, bindings: m.bindings,
+          used: usedOf(m.id),
           limits: { dailyTokens: m.dailyTokens, monthlyTokens: m.monthlyTokens,
             dailyAmountMicro: m.dailyAmountMicro, monthlyAmountMicro: m.monthlyAmountMicro,
             maxOutputTokens: m.maxOutputTokens, probeEnabled: m.probeEnabled, probeMaxPerDay: m.probeMaxPerDay },
