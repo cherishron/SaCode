@@ -1,5 +1,5 @@
 // 模型中心只转换宿主投影；配置、修订号、凭据与计量仍由共享核心持有。
-export function createModelCenterAdapters(api: any, providers: any) {
+export function createModelCenterAdapters(api: any) {
   // Vue 响应式代理不能被 Electron structured clone；提交当前编辑的纯数据快照。
   const plain = (value: any) => JSON.parse(JSON.stringify(value));
   const customView = async () => {
@@ -36,7 +36,43 @@ export function createModelCenterAdapters(api: any, providers: any) {
   };
 
   return {
-    'provider-settings': providers,
+    // 供应商页适配器把页面动作逐条对到宿主动词：describe→model/registry/describe+catalog、
+    // save→update（内置供应商的启停走单列 set-enabled）、remove→remove、reorder→逐条 sort、
+    // pullModels→model/pull。核心拒绝带密钥槽位的整条草稿，密钥单走一个参数。
+    'provider-settings': {
+      async describe() {
+        const [view, catalog] = await Promise.all([api.modelsDescribe(), api.modelsCatalog()]);
+        return {
+          providers: view.providers || [],
+          catalog: Array.isArray(catalog) ? catalog : [],
+          revision: view.revision,
+          writable: view.writable,
+        };
+      },
+      async save(draft: any, expectedRevision: number) {
+        const { key, ...rest } = plain(draft);
+        // 内置（declared）供应商拒绝整条 update；它唯一可写的列是启停。
+        if (draft.declared) {
+          await api.modelsSetEnabled(draft.id, draft.enabled !== false, expectedRevision);
+          return;
+        }
+        await api.modelsSave(rest, typeof key === 'string' ? key : '', expectedRevision);
+      },
+      remove: (id: string, expectedRevision: number) => api.modelsRemove(id, expectedRevision),
+      async reorder(keys: string[], expectedRevision: number) {
+        // 只写真正变了位的条目：每条 sort 都会 bump 一次修订号，全量重写会让
+        // 一次拖动把 N 个无关条目都卷进冲突窗口。
+        const view = await api.modelsDescribe();
+        const current = new Map((view.providers || []).map((p: any) => [p.id, p.sortOrder]));
+        let revision = expectedRevision;
+        for (let i = 0; i < keys.length; i++) {
+          if (current.get(keys[i]) === i) continue;
+          const after = await api.modelsSort(keys[i], i, revision);
+          revision = after.revision;
+        }
+      },
+      pullModels: (providerId: string, expectedRevision: number) => api.modelPull(providerId, expectedRevision),
+    },
     'custom-models': {
       describe: customView,
       upsert: (draft: any, revision: number) => api.customsUpsert(plain(draft), revision),
