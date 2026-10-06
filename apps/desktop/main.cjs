@@ -190,7 +190,12 @@ ipcMain.handle("sacode:turnStart", async (_e, args) => {
 
 // 产品发送后的起轮走这一条：task/start 只认真实配置，缺配置/缺凭据/协议不支持一律显式报错，
 // 不像 turn/start 那样在没配置时静默退回示例 provider——界面上演一场假成功比报错更糟。
-ipcMain.handle("sacode:taskStart", async () => withHost(() => bridge.request("task/start", {})));
+ipcMain.handle("sacode:taskStart", async (_e, args) => {
+  const customModelId = args?.customModelId;
+  if (customModelId !== undefined && (typeof customModelId !== "string" || customModelId.length > 256)) throw Error("bad-custom-model-id");
+  return withHost(() => bridge.request("task/start", customModelId ? { customModelId } : {}));
+});
+ipcMain.handle("sacode:ledgerStats", async () => withHost(() => bridge.request("ledger/stats", {})));
 
 // 队列三动作逐字段校验：条目身份只能来自核心铸造的那串 id，
 // 渲染层拼不出「改任意一条」或「带任意正文的未知动作」。

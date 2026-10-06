@@ -917,7 +917,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
@@ -1435,9 +1435,31 @@ main(args: Array<String>) {
             emit(okFrame(idText, uploaded))
             continue
         }
+        if (method == "ledger/stats") {
+            try { emit(okFrame(idText, ledgerStatsJson())) }
+            catch (e: Exception) { emit(errFrame(idText, -32020, e.message)) }
+            continue
+        }
         if (method == "turn/start" || method == "task/start") {
+            var chosenCustom = ""
+            try {
+                if (let Some(value) <- JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject().get("customModelId")) {
+                    chosenCustom = value.asString().getValue()
+                    if (chosenCustom.size > 256) { throw Exception("bad-custom-model-id") }
+                }
+            } catch (_: Exception) { emit(errFrame(idText, -32602, "bad-custom-model-id")); continue }
+            let customModelId = chosenCustom
+            let centered = customModelId.size > 0
+            let routing = HostModelRoute(customModelId,
+                "${activeId}-${routingRequestId()}-${turnEpoch + 1}", activeId)
+            var selected: ?AttemptPlan = None
+            if (centered) {
+                try { selected = Some(routing.select(preview: true)) }
+                catch (e: Exception) { emit(errFrame(idText, -32040, e.message)); continue }
+            }
+
             var configured: ModelSettingsSnapshot
-            try { configured = ModelSettings.forUser().read() }
+            try { configured = if (centered) { ModelSettingsSnapshot("", "", "") } else { ModelSettings.forUser().read() } }
             catch (e: Exception) { emit(errFrame(idText, -32020, e.message)); continue }
             // 注册表里选定的提供商优先；没有注册表条目时才回到单路模型设置与环境变量。
             // 默认指针在校验时就保证「提供商存在且模型在其清单里」，所以这里不必再兜第二层。
@@ -1457,6 +1479,10 @@ main(args: Array<String>) {
                         if (entry.id == registryView.defaultModel) { planImages = entry.image }
                     }
                 }
+            }
+            if (let Some(plan) <- selected) {
+                planBaseUrl = plan.baseUrl; planModel = plan.modelId
+                planRef = plan.credentialRef; planProtocol = plan.protocol; planImages = plan.images
             }
             let fromRegistry = planBaseUrl.size > 0
             if (fromRegistry && planProtocol != "openai-completions") {
@@ -1576,12 +1602,21 @@ main(args: Array<String>) {
                     // （todo_write + read + write）。此前这里只写死 TodoTool 一个 spec，
                     // 模型看不到 read/write，调用也会被「未登记」拒。
                     let toolSpecs = modelTools.getOrThrow().specs()
-                    let reqBody = modelRequestJson(model, shared.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability)
+                    let reqBody = if (centered) { "" } else { modelRequestJson(model, shared.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability) }
                     // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
                     let turnKey = key
-                    let real = DeferredProvider({ => RealSseProvider(baseUrl, turnKey, reqBody, tk) }, tk)
-                    let continuation: (String) -> Provider = { request => RealSseProvider(baseUrl, turnKey, request, tk) }
-                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: imageCapability, toolRuntime: modelTools))
+                    let frozenTools = modelTools.getOrThrow()
+                    let firstLog = shared
+                    let real = DeferredProvider({ =>
+                        if (centered) { routing.open(firstLog, tk, turnAtt, frozenTools) }
+                        else { RealSseProvider(baseUrl, turnKey, reqBody, tk) }
+                    }, tk)
+                    let turnLog = shared
+                    let continuation: (String) -> Provider = { request =>
+                        if (centered) { routing.open(turnLog, tk, turnAtt, frozenTools) }
+                        else { RealSseProvider(baseUrl, turnKey, request, tk) }
+                    }
+                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: if (centered) { true } else { imageCapability }, toolRuntime: modelTools))
                     providerKind = "real"
                 } catch (e: Exception) {
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，

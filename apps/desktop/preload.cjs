@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld("sacode", {
   approvalAnswer: (approvalId, decision) => ipcRenderer.invoke("sacode:approvalAnswer", { approvalId, decision }),
   turnStart: (limit) => ipcRenderer.invoke("sacode:turnStart", { limit }),
   // 产品路径起轮：负载是空的，渲染层改不动它，也未配置时由核心显式失败
-  taskStart: () => ipcRenderer.invoke("sacode:taskStart"),
+  taskStart: (customModelId) => ipcRenderer.invoke("sacode:taskStart", { customModelId }),
+  ledgerStats: () => ipcRenderer.invoke("sacode:ledgerStats"),
   // 运行中消息队列：条目由核心铸造，界面只能排、只能改自己那一条，拿不到通用转发
   queueDescribe: () => ipcRenderer.invoke("sacode:queueDescribe"),
   queueEnqueue: (text, rpcId, receiptIds, accelerated = false) => ipcRenderer.invoke("sacode:queueEnqueue", { text, rpcId, receiptIds, ...(accelerated === false ? {} : { accelerated }) }),
