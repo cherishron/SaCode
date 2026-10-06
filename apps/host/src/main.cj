@@ -698,7 +698,8 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
         return
     }
     // 读现有设置（文本格式：key=value 每行一条）
-    let path = canonicalize("general-settings.txt")
+    // 首次启动文件尚不存在，只规范化已存在的父目录。
+    let path = Path("${canonicalize(".")}/general-settings.txt")
     var tv = "default"
     var ce = "send"
     var sl = "off"
@@ -884,7 +885,11 @@ main(args: Array<String>) {
             continue
         }
         if (method == "global/settings/get" || method == "global/settings/set-transcript-view" || method == "global/settings/set-composer-enter" || method == "global/settings/set-session-log") {
-            globalSettingsRequest(method, body, idText)
+            try {
+                globalSettingsRequest(method, body, idText)
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32003, e.message))
+            }
             continue
         }
         if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {

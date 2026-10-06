@@ -8,7 +8,7 @@ const exe = process.argv[2];
 if (!exe) throw new Error('用法：node scripts/check-desktop-startup.mjs <SaCode.exe>');
 const root = mkdtempSync(join(tmpdir(), 'sacode-normal-startup-'));
 mkdirSync(join(root, 'user-data'));
-const env = { ...process.env };
+const env = { ...process.env, SACODE_USER_SETTINGS_DIR: join(root, 'settings') };
 delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(resolve(exe), ['--inspect=0', `--user-data-dir=${join(root, 'user-data')}`, `--session-dir=${join(root, 'session')}`], { env, windowsHide: true });
 let stderr = '', ws, counter = 0, validated = false;
@@ -38,13 +38,14 @@ child.stderr.on('data', async data => {
           const w = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0];
           if (!w || w.webContents.isLoading()) return null;
           const page = await w.webContents.executeJavaScript('({ready:document.readyState,controls:document.querySelectorAll("button,input,textarea").length,bodyLength:document.body.innerText.length})');
-          return {visible:w.isVisible(),...page};
+          const hostReady = await w.webContents.executeJavaScript('Promise.all([window.sacode.globalSettingsGet(), window.sacode.customsDescribe()]).then(() => true)');
+          return {visible:w.isVisible(),hostReady,...page};
         })()`, true);
         result = reply.result?.result?.value;
-        if (result?.visible && result.ready === 'complete' && result.controls > 0 && result.bodyLength > 0) break;
+        if (result?.visible && result.hostReady && result.ready === 'complete' && result.controls > 0 && result.bodyLength > 0) break;
         await new Promise(done => setTimeout(done, 300));
       }
-      if (!result?.visible || result.ready !== 'complete' || !(result.controls > 0) || !(result.bodyLength > 0)) throw new Error('未显示真实界面：' + JSON.stringify(result));
+      if (!result?.visible || !result.hostReady || result.ready !== 'complete' || !(result.controls > 0) || !(result.bodyLength > 0)) throw new Error('界面或实际 Host 请求未就绪：' + JSON.stringify(result));
       console.log('STARTUP_PASS ' + JSON.stringify(result));
       validated = true;
       process.exitCode = 0;
