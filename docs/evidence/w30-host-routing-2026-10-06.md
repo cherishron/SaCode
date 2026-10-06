@@ -60,3 +60,10 @@
 日志：`apps/host/w30-tool-compat-tests.log`、`apps/host/w30-tool-compat-real.log`（忽略产物，不提交）。
 
 本轮没有运行全量核心单测，未升级 `ffa6d72` 中 6 条新文件操作单测的“编译通过、运行待核”状态。未合入共享主树、未重打最终 Electron 安装包；前文未闭合范围继续有效。
+## DSH 分支整合验证
+
+用户要求统一推送至 `refactor/dsh-learning`。从该分支已提交的 `c3fc67c` 建立独立整合树，顺序接入 W30 的 `f7aaf6e` / `3b7c662` 及 W70 的 `6024cc0` / `594c61b` / `c0519b4`；`ffa6d72` 已在基线，不重复移植。没有包含共享主树未提交文件。
+
+整合源码 `d8320de`：Host `cjpm build` rc=0；13/13 Host 行为测试 PASS、SKIPPED 0；IPC 专项 5/5，接口对账 7/7。私有自包含 Host 为 40 文件，SHA256 `c50702fe92ba49661c273b41353b716c30a9cf98b54a478d96a9e614367f7088`。构建和测试日志位于整合树 `apps/host/integration-build.log`、`integration-tests.log`，不入库。
+
+本次整合没有新增真模型、MCP 真实 provider 或最终安装包验收。此前“尚未合入”描述为当时状态，本段记录后续整合；其他功能未闭合范围继续有效。共享工作目录仍有作者在途改动，不在该目录执行检出或覆盖。
