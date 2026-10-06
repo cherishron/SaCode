@@ -99,3 +99,17 @@ func mcpPublicNamesMatchFrozenUpstreamGoldenValues() {
     @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_780add56f777")
     @Expect(mcpPublicToolName("A-_9", "name.with:punctuation"), "mcp__A-_9__name_with_punctuation_4fe542783064")
 }
+
+// resources provider只接受冻结契约的三种操作；server由scope分派层另行选择。
+@Test
+func mcpResourceRequestsKeepOpaqueParametersAndOmitAbsentCursor() {
+    @Expect(McpResourceRequest.list().method, "resources/list")
+    @Expect(McpResourceRequest.templates().method, "resources/templates/list")
+    @Expect(McpResourceRequest.read("doc://a").method, "resources/read")
+    @Expect(McpResourceRequest.list().paramsJson(), "{}")
+    @Expect(McpResourceRequest.templates().paramsJson(), "{}")
+    @Expect(McpResourceRequest.list(cursor: Some("")).paramsJson(), "{\"cursor\":\"\"}")
+    @Expect(McpResourceRequest.templates(cursor: Some(" 页::%2F? ")).paramsJson(), "{\"cursor\":\" 页::%2F? \"}")
+    @Expect(McpResourceRequest.read("doc://a/%2F?q=中文#片段").paramsJson(), "{\"uri\":\"doc://a/%2F?q=中文#片段\"}")
+    @Expect(McpResourceRequest.read("a\"b\\c\n").paramsJson(), "{\"uri\":\"a\\\"b\\\\c\\n\"}")
+}
