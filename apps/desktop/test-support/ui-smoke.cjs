@@ -99,6 +99,9 @@ async function uiSmoke(context) {
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
   const apiExtra = await js(`Object.keys(window.sacode||{}).filter(k => ${JSON.stringify(PRELOAD_API)}.indexOf(k) < 0).join(',')`);
   note(apiExtra === "", `preload 未登记的额外键=${apiExtra || "（无）"}`);
+  // 侧栏工作区分组和附件卡片在同一次根渲染 flush 里：这一段的 props 一旦错位，patch 当场抛
+  // InvalidCharacterError，整次更新（含附件卡片）都不会落到 DOM，所以先单独钉住结构。
+  note(await js(`!!document.querySelector('section.workspace-group[data-workspace-group]')`), '侧栏工作区分组带着 class 与目录凭证挂进 DOM');
   // 附件入口必须是真的：字节交给宿主落盘，界面只拿得到凭证与引用，移除要真撤下卡片。
   await js(`const dt=new DataTransfer();dt.items.add(new File([Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,2,0,0,0,1,8,6,0,0,0,0,0,0,0])],'真图.png',{type:'image/png'}));const inp=document.querySelector('.attachments-picker input[type="file"]');inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))`);
   await waitFor(() => js(`(()=>{const c=document.querySelector('[data-attachment-id]');return !!c&&c.dataset.uploadStatus!=='uploading'})()`));

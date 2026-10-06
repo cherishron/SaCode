@@ -1111,23 +1111,21 @@ createApp({
           const hidden=items.length-visible.length;
           const label=directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
           const expanded=self.workspaceGroupExpanded.has(directory);
-          return el('section','workspace-group'+(expanded?' expanded':''),{
-            'data-workspace-group':directory,
-          },[
-            el('button','workspace-folder'+(expanded?' tree-expanded':''),{
+          return el('section','workspace-group'+(expanded?' expanded':''),[
+            el('button','workspace-folder'+(expanded?' tree-expanded':''),[
+              navIcon(expanded?'M9 5l7 7-7 7':'M5 9l7 7 7-7'),
+              navIcon('M3 5h7l2 3h9v12H3z'),
+              el('span','workspace-label',label),
+            ],{
               'aria-expanded':expanded,
               'aria-label':expanded?'折叠工作区':'展开工作区',
               title:directory||'尚未绑定项目目录的会话',
               onClick:()=>{expanded?self.workspaceGroupExpanded.delete(directory):self.workspaceGroupExpanded.add(directory);},
-            },[
-              navIcon(expanded?'M9 5l7 7-7 7':'M5 9l7 7 7-7'),
-              navIcon('M3 5h7l2 3h9v12H3z'),
-              el('span','workspace-label',label),
-            ]),
+            }),
             expanded ? [...visible.map(renderSession),
             items.length>5 ? el('button','workspace-overflow',hidden ? `显示更多（${hidden}）` : '收起会话',{
               'data-workspace-overflow':directory,'aria-expanded':hidden===0,onClick:()=>self.workspaceSessionLimits.set(directory,hidden ? limit+5 : 5)}) : null] : [],
-          ]);
+          ],{ 'data-workspace-group':directory });
         }),
         !sidebarSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,'暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
