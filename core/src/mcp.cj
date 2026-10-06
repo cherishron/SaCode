@@ -1,6 +1,50 @@
 package core
 import std.collection.*
 
+// 冻结配置schema的默认值与限额；这里只解析typed policy，不启动重连。
+// 原始JSON的未知字段/字段类型校验及实际连接故障预算由后续provider接入。
+public class McpReconnectPolicy {
+    public let enabled: Bool
+    public let initialDelayMs: Float64
+    public let maxDelayMs: Float64
+    public let maxAttempts: Int64
+
+    public init(enabled!: Bool = true, initialDelayMs!: Float64 = 500.0,
+        maxDelayMs!: Float64 = 30000.0, maxAttempts!: Float64 = 10.0) {
+        // 正数区间判断同时拒绝NaN和Infinity；毫秒上限来自冻结timeout工具。
+        if (!(initialDelayMs > 0.0 && initialDelayMs <= 2147483647.0)) {
+            throw Exception("mcp-reconnect-initial-delay")
+        }
+        if (!(maxDelayMs > 0.0 && maxDelayMs <= 2147483647.0)) {
+            throw Exception("mcp-reconnect-max-delay")
+        }
+        if (initialDelayMs > maxDelayMs) { throw Exception("mcp-reconnect-delay-order") }
+        // Number.MAX_SAFE_INTEGER与配置schema一致；先限范围再做Int64转换。
+        if (!(maxAttempts >= 1.0 && maxAttempts <= 9007199254740991.0)) {
+            throw Exception("mcp-reconnect-attempts")
+        }
+        let attempts = Int64(maxAttempts)
+        if (Float64(attempts) != maxAttempts) { throw Exception("mcp-reconnect-attempts") }
+        this.enabled = enabled
+        this.initialDelayMs = initialDelayMs
+        this.maxDelayMs = maxDelayMs
+        this.maxAttempts = attempts
+    }
+
+    // 第一次retry的序号是1。达到上限即返回，避免巨大序号导致算术溢出或空转。
+    public func delayForAttempt(attempt: Int64): Float64 {
+        if (attempt < 1) { throw Exception("mcp-reconnect-attempt-index") }
+        var delay = initialDelayMs
+        var n: Int64 = 1
+        while (n < attempt) {
+            if (delay >= maxDelayMs / 2.0) { return maxDelayMs }
+            delay *= 2.0
+            n += 1
+        }
+        return delay
+    }
+}
+
 // 冻结McpResourceRequest的三种请求形态，构造入口避免read夹带cursor。
 // 这里只编码方法参数：服务器选择、scope校验、取消及实际传输由provider承接。
 public class McpResourceRequest {
