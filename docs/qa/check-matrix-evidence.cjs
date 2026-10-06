@@ -1,6 +1,8 @@
 // 只读审计：能力矩阵里每条 已复刻=✔/◐ 的行，备注是否真的落到了可复跑的证据上。
 // 判据行以 GATE: 结尾；rc 0=PASS 1=FAIL 2=用法/取不到基线 3=自检壳错误。
-// 用法：node scripts/check_matrix_evidence.cjs [repoRoot] [--selftest] [docPath]
+// 用法：node docs/qa/check-matrix-evidence.cjs [repoRoot] [--selftest] [docPath]
+// 放这里而不是 scripts/：§1 表把 dir scripts/ 记给 A（`node scripts/check_path_ownership.cjs`
+// 的 scripts-owned-by-a 项），QA 自用的只读审计壳归 I 的 docs/qa/，不占公共构建面。
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -277,11 +279,12 @@ function selftest(root, docPath) {
 }
 
 const argv = process.argv.slice(2);
-const root = argv[0] && !argv[0].startsWith('--') ? argv[0] : path.resolve(__dirname, '..');
-if (!fs.existsSync(root)) { console.log('用法: node scripts/check_matrix_evidence.cjs [repoRoot] [--selftest] [docPath]'); process.exit(2); }
+const hasRootArg = !!argv[0] && !argv[0].startsWith('--');
+const root = hasRootArg ? argv[0] : path.resolve(__dirname, '..', '..');
+if (!fs.existsSync(root)) { console.log('用法: node docs/qa/check-matrix-evidence.cjs [repoRoot] [--selftest] [docPath]'); process.exit(2); }
 const useSelftest = argv.includes('--selftest');
 const pos = argv.filter((a) => !a.startsWith('--'));
-const docPath = pos[1] || path.join(root, 'docs/plans/dsh-capability-matrix.md');
+const docPath = (hasRootArg ? pos[1] : pos[0]) || path.join(root, 'docs/plans/dsh-capability-matrix.md');
 try {
   process.exit(useSelftest ? selftest(root, docPath) : report(audit(root, docPath)));
 } catch (e) {
