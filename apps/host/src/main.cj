@@ -379,6 +379,26 @@ func providerViewJson(view: ProviderView, creds: CredentialStore): String {
     return "{\"providers\":${arr},\"revision\":${view.revision},\"writable\":${boolText(view.writable)},\"defaultProviderId\":\"${jsonEscapeText(view.defaultProviderId)}\",\"defaultModel\":\"${jsonEscapeText(view.defaultModel)}\"}"
 }
 
+// 插件清单视图的 JSON 序列化：渲染层适配器 normalizeInventory/normalizePackage/normalizeRow
+// 期望的字段全部在此产出，缺字段或类型不符会让适配器 fail-loud（不冒充本地状态）。
+func pluginInventoryJson(view: PluginInventory): String {
+    var arr = "["
+    for (i in 0..view.packages.size) {
+        if (i > 0) { arr += "," }
+        let p = view.packages[i]
+        var rows = "["
+        for (j in 0..p.rows.size) {
+            if (j > 0) { rows += "," }
+            let r = p.rows[j]
+            rows += "{\"rowId\":\"${jsonEscapeText(r.rowId)}\",\"title\":\"${jsonEscapeText(r.title)}\",\"moduleName\":\"${jsonEscapeText(r.moduleName)}\",\"entryId\":\"${jsonEscapeText(r.entryId)}\",\"description\":\"${jsonEscapeText(r.description)}\",\"descriptionZhCN\":\"${jsonEscapeText(r.descriptionZhCN)}\",\"enabled\":${boolText(r.enabled)},\"phase\":\"${jsonEscapeText(r.phase)}\",\"readOnlyReason\":\"${jsonEscapeText(r.readOnlyReason)}\"}"
+        }
+        rows += "]"
+        arr += "{\"name\":\"${jsonEscapeText(p.name)}\",\"version\":\"${jsonEscapeText(p.version)}\",\"title\":\"${jsonEscapeText(p.title)}\",\"description\":\"${jsonEscapeText(p.description)}\",\"descriptionZhCN\":\"${jsonEscapeText(p.descriptionZhCN)}\",\"kind\":\"${jsonEscapeText(p.kind)}\",\"directory\":\"${jsonEscapeText(p.directory)}\",\"installed\":${boolText(p.installed)},\"optional\":${boolText(p.optional)},\"enabled\":${boolText(p.enabled)},\"error\":\"${jsonEscapeText(p.error)},\"rows\":${rows}}"
+    }
+    arr += "]"
+    return "{\"available\":${boolText(view.available)},\"revision\":${view.revision},\"packages\":${arr}}"
+}
+
 // 协议面不接受「没点名修订号」的写：缺失就拒，而不是静默当成无条件写。
 // 核心侧的 -1 = 无条件写是给 CLI 自测与测试用的，不能变成协议面的默认——
 // 「没给版本」和「不在乎版本」是两件事。
@@ -783,6 +803,24 @@ main(args: Array<String>) {
             let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe" || method == "custom/describe"
             if (turnBusy && !configReadSide) { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
             providerSurfaceRequest(method, body, idText)
+            continue
+        }
+        // 插件清单：逐条通道落地，缺通道适配器保持 unconnected（不冒充本地状态）
+        if (method == "plugin/describe" || method == "plugin/uninstall" || method == "plugin/set-enabled") {
+            try {
+                let store = PluginStore("plugins")
+                if (method == "plugin/describe") {
+                    emit(okFrame(idText, pluginInventoryJson(store.describe())))
+                } else if (method == "plugin/uninstall") {
+                    store.uninstall(jsonStr(body, "name"), jsonNum(body, "expectedRevision"))
+                    emit(okFrame(idText, "{}"))
+                } else if (method == "plugin/set-enabled") {
+                    store.setEnabled(jsonStr(body, "name"), jsonStr(body, "enabled") == "true", jsonNum(body, "expectedRevision"))
+                    emit(okFrame(idText, "{}"))
+                }
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32030, e.message))
+            }
             continue
         }
         if (method == "global/appearance/get" || method == "global/appearance/set-theme" || method == "global/appearance/set-font-size" || method == "global/appearance/set-busy-send") {
@@ -1625,7 +1663,9 @@ main(args: Array<String>) {
             let request = rawRequest
             let enhanceKey = key
             let tk = TurnToken()
-            let factory: () -> Provider = { => RealSseProvider(baseUrl, enhanceKey, request, tk) }
+            // 增强使用独立的 90 秒读期限，容纳推理模型的首帧等待；取消仍只作用于 tk。
+            let factory: () -> Provider = { => RealSseProvider(baseUrl, enhanceKey, request, tk,
+                readTimeout: 90 * Duration.second) }
             enhanceHandle = Some(EnhanceRunner().start(factory, tk))
             enhanceModel = model
             if (let Some(h) <- enhanceHandle) {

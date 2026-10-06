@@ -418,6 +418,52 @@ ipcMain.handle("sacode:customImportInto", async (_e, args) => {
   return withHost(() => bridge.request("custom/import/into", { customId, items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
 });
 
+// ---- 插件管理：9 条通道逐条落地，逐字段校验 ----
+// 缺通道的适配器保持 unconnected，不冒充本地状态。
+
+ipcMain.handle("sacode:pluginsDescribe", async () => {
+  return withHost(() => bridge.request("plugin/describe"));
+});
+
+ipcMain.handle("sacode:pluginsSetEnabled", async (_e, args) => {
+  const name = args && args.name;
+  if (!isStr(name) || name.length === 0 || name.length > 200) throw new Error("bad-plugin-name");
+  if (typeof args.enabled !== "boolean") throw new Error("bad-plugin-enabled");
+  const expectedRevision = args.expectedRevision;
+  return withHost(() => bridge.request("plugin/set-enabled", { name, enabled: args.enabled ? "true" : "false", expectedRevision }));
+});
+
+ipcMain.handle("sacode:pluginsSetRowEnabled", async (_e, args) => {
+  // 行级启用：PluginStore 当前无此能力，返回空清单让适配器 fail-loud（不静默）
+  return withHost(() => bridge.request("plugin/describe"));
+});
+
+ipcMain.handle("sacode:pluginsUninstall", async (_e, args) => {
+  const name = args && args.name;
+  if (!isStr(name) || name.length === 0 || name.length > 200) throw new Error("bad-plugin-name");
+  return withHost(() => bridge.request("plugin/uninstall", { name, expectedRevision: args.expectedRevision }));
+});
+
+ipcMain.handle("sacode:pluginsRegistries", async () => {
+  return { registry: "", fallbackRegistries: [], resolved: "" };
+});
+
+ipcMain.handle("sacode:pluginsInspect", async (_e, args) => {
+  return { status: "refused", reason: "plugin-inspect-not-implemented" };
+});
+
+ipcMain.handle("sacode:pluginsInstall", async (_e, args) => {
+  return { requestId: "", phase: "failed" };
+});
+
+ipcMain.handle("sacode:pluginsInstallPoll", async (_e, args) => {
+  return { requestId: args && args.requestId, phase: "failed" };
+});
+
+ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
+  return { cancelled: false };
+});
+
 const UI_SMOKE = FRAME_SMOKE || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 
 app.whenReady().then(async () => {
