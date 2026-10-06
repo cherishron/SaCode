@@ -44,3 +44,19 @@
 - 分档 SSE 用量、实际金额计费、token/月额度、模型参数透传、全部协议 provider、探测/中转费用仍待后续契约及实现。
 - 凭据轮换后的健康恢复、全桌面回归、最终 Electron 安装包/升级卸载/无 SDK 验收未在本批执行；CLI 用户执行路径也未据此升级完成。
 - shared main 的 Host/CLI/桌面入口仍有其他会话改动；合入需保留工具管线与目标入口的在途接线，并重编、重新验收最终组合。没有复制旧二进制到主树，没有运行安装器。
+
+## 已提交工具管线兼容性复验
+
+在本独立树仅接入主树已提交的 `ffa6d72`，对应 cherry-pick 为 `3d09af5`；没有复制共享主树未提交的目标、MCP、Office、SSH 或公共入口改动。复验源码组合为 `f7aaf6e` + `3d09af5`。
+
+- `cd apps/host; cjpm build`：rc=0，重新编译共享核心及 Host。
+- 重新组装私有自包含 Host：40 文件。
+- Host SHA256：`7deaef90cf6dcb279df7b64d100ef4a884da7d0701c6075ce5c57234e8e8af90`。
+- `host-routing-ledger.test.mjs`：13/13 PASS，FAILED 0 / SKIPPED 0，rc=0。实际工具续跑覆盖新执行器表与每步模型绑定重选的组合路径。
+- task-start-ipc + custom-models-ipc：5/5 PASS，rc=0。
+- IPC 面对账：68 preload / 68 main，7 checks / 0 failed。
+- `host-routing-real.test.mjs`：PASS 0 / SKIPPED 1，rc=0；本轮指定凭据文件不可用。不能把跳过计为真实模型通过，也不能把上一版真模型成功自动转记到本组合。
+
+日志：`apps/host/w30-tool-compat-tests.log`、`apps/host/w30-tool-compat-real.log`（忽略产物，不提交）。
+
+本轮没有运行全量核心单测，未升级 `ffa6d72` 中 6 条新文件操作单测的“编译通过、运行待核”状态。未合入共享主树、未重打最终 Electron 安装包；前文未闭合范围继续有效。
