@@ -77,3 +77,25 @@ func mcpEventsAreLogOnlyAcrossReplay() {
     @Expect(McpRegistry(fresh).isRegistered("github"), true)
     removeIfExists(root, recursive: true)
 }
+
+// 金值来自冻结 tools.ts 的 publicToolName；不在测试内复写命名算法。
+// 这是纯命名契约，空原始名的函数结果不代表协议Schema允许空工具名。
+// 同一金值已有独立纯函数编译验证；完整core单测尚未运行。
+@Test
+func mcpPublicNamesMatchFrozenUpstreamGoldenValues() {
+    @Expect(mcpPublicToolName("github", "search"), "mcp__github__search")
+    @Expect(mcpPublicToolName("web", "search"), "mcp__web__search")
+    @Expect(mcpPublicToolName("fixture", "a/b"), "mcp__fixture__a_b_63aa69f30757")
+    @Expect(mcpPublicToolName("fixture", "a_b"), "mcp__fixture__a_b")
+    @Expect(mcpPublicToolName("fixture", "a b"), "mcp__fixture__a_b_d9538f025b71")
+    @Expect(mcpPublicToolName("fixture", "中文工具"), "mcp__fixture_______8c946630e1dc")
+    @Expect(mcpPublicToolName("fixture", ""), "mcp__fixture__")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_563ce0d166ec")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_67ce7c6ea70b")
+    @Expect(mcpPublicToolName("fixture", "😀"), "mcp__fixture_____bdd0c92035a6")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_02f118e33f65")
+    @Expect(mcpPublicToolName("fixture", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"), "mcp__fixture__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_780add56f777")
+    @Expect(mcpPublicToolName("A-_9", "name.with:punctuation"), "mcp__A-_9__name_with_punctuation_4fe542783064")
+}
