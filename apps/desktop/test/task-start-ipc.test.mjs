@@ -17,12 +17,17 @@ function load() {
   return { api, calls };
 }
 
-test('发送后跑一轮 preload 只发固定动作且不带可变负载', async () => {
+test('发送后跑一轮 preload 只发固定动作与点名的模型身份', async () => {
   const { api, calls } = load();
   await api.taskStart();
   assert.equal(calls[0][0], 'sacode:taskStart');
-  // 负载必须是那一个对象：给它塞任意方法或参数的通路等于把有限集合打开
-  assert.equal(calls[0].length, 1);
+  assert.equal(calls[0].length, 2);
+  assert.equal(JSON.stringify(calls[0][1]), '{}');
+  await api.taskStart('chosen');
+  assert.equal(JSON.stringify(calls[1][1]), '{"customModelId":"chosen"}');
+  await api.ledgerStats();
+  assert.equal(calls[2][0], 'sacode:ledgerStats');
+  assert.equal(calls[2].length, 1);
   assert.equal('request' in api, false);
   assert.equal(typeof api.turnStart, 'function');
 });
