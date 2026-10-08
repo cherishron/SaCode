@@ -1,0 +1,12 @@
+[package]
+  name = "daemon"
+  version = "0.1.0"
+  cjc-version = "1.1.3"
+  output-type = "executable"
+
+[dependencies]
+  core = { path = "../../core" }
+
+[target.x86_64-w64-mingw32]
+  [target.x86_64-w64-mingw32.bin-dependencies]
+    path-option = ["C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"]

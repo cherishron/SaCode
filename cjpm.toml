@@ -1,2 +1,2 @@
 [workspace]
-members = ["core", "apps/cli", "apps/host"]
+members = ["core", "apps/cli", "apps/host", "apps/daemon"]
