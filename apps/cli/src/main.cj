@@ -3,6 +3,7 @@ import core.*
 import std.fs.*
 import std.collection.ArrayList
 import std.env.*
+import stdx.encoding.json.*
 
 var failures: Int64 = 0
 
@@ -36,6 +37,16 @@ func builtinTools(): ToolRegistry {
     reg.register(ToolSpec("pwsh", "执行 PowerShell 命令", "command", true))
     reg.register(ToolSpec("run_code", "执行 JavaScript 代码 (PTC)", "code", true))
     reg.register(ToolSpec("lsp", "从文件中提取符号", "path", false))
+    // L1：7 条语义工具与模型声明面同源——名字、描述、入参清单都由核心契约那张表投影过来，
+    // CLI 只保留旧的 lsp 一条给手工调用。短参数串是本入口的既有形状，键名仍取自同一张表。
+    for (verb in lspVerbNames()) {
+        var params = ""
+        for (name in lspToolParamNames(verb)) {
+            if (params.size > 0) { params += " " }
+            params += name
+        }
+        reg.register(ToolSpec(lspToolName(verb), lspToolDescription(verb), params, false))
+    }
     return reg
 }
 
@@ -205,8 +216,64 @@ func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
     return true
 }
 
+func runJob(args: Array<String>): Int64 {
+    if (args.size != 3) {
+        getStdErr().writeln("usage: sacode job <propose|authorize|start|describe|output|stop> <JSON参数>")
+        return 64
+    }
+    let method = "execution/${args[1]}"
+    if (!ExecutionApi.handles(method)) { getStdErr().writeln("unknown-execution-method"); return 64 }
+    var lease: Option<WriteLease> = None
+    var failedPersistence = false
+    try {
+        let catalog = SessionCatalog(".")
+        let session = catalog.selectedId()
+        let path = catalog.pathFor(session)
+        let owned = WriteLease(path)
+        let log = SessionLog(path)
+        if (!ExecutionApi.readOnly(method)) {
+            if (!owned.takeoverIfStale()) { throw Exception(if (owned.held()) { "already-owned" } else { "lease-acquire-failed:${owned.acquisitionFailure()}" }) }
+            lease = Some(owned)
+        }
+        if (!log.load()) { throw Exception("replay-rejected") }
+        let service = ExecutionService(log, owned, session)
+        let desk = ApprovalDesk(log)
+        if (!ExecutionApi.readOnly(method)) { service.recover() }
+        // CLI 工单只在当前进程有效；authorize 必须在本进程明确应答新提案，不能复用上次运行的票号。
+        var params = args[2]
+        if (method == "execution/authorize") {
+            let obj = JsonValue.fromStr(params).asObject()
+            if (obj.size() != 4 || obj.get("sessionId").getOrThrow().asString().getValue() != session) { throw Exception("bad-execution-arguments") }
+            let id = obj.get("executionId").getOrThrow().asString().getValue()
+            let current = service.describe(id)
+            if (obj.get("revision").getOrThrow().asInt().getValue() != current.revision ||
+                obj.get("proposalDigest").getOrThrow().asString().getValue() != current.digest) { throw Exception("approval-mismatch") }
+            getStdErr().writeln("执行提案：${current.proposal}")
+            getStdErr().writeln("仅批准此提案一次？[y/N]")
+            getStdErr().flush()
+            let answer = decideAnswer(getStdIn().readln())
+            if (answer != "allowed-once") { throw Exception("not-authorized") }
+            let ticket = desk.askForCall("execution/start", service.approvalArguments(id))
+            if (!desk.answer(ticket, "allowed-once")) { throw Exception("not-authorized") }
+            obj.put("approvalId", JsonInt(ticket)); params = obj.toString()
+        }
+        println(ExecutionApi(service, desk, session).dispatch(method, params))
+        if (let Some(owned) <- lease) { owned.release() }
+        return 0
+    } catch (e: Exception) {
+        failedPersistence = e.message == "persistence-failed"
+        if (!failedPersistence) { if (let Some(owned) <- lease) { owned.release() } }
+        let result = JsonObject(); result.put("error", JsonString(e.message))
+        getStdErr().writeln(result.toString()); return 1
+    }
+}
+
 main(args: Array<String>) {
+    if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
+    if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
+    if (hasFlag(args, "--remote")) { return runRemote(args) }
     let mode = if (args.size > 0) { args[0] } else { "all" }
+    if (mode == "job") { return runJob(args) }
 
     if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal" && mode != "plugin") {
         getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin]")
