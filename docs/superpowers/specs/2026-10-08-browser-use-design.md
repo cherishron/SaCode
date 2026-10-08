@@ -104,7 +104,7 @@ JSON 消息类型：
 }
 ```
 
-- `history` 权限按需声明（首次使用历史查询时引导用户授予），不在首版强制。
+- `history` 权限不在首版 manifest 中声明；后续阶段首次使用历史查询时，经 `chrome.permissions.request()` 引导用户授予。
 - `debugger` 权限会在商店审核时触发人工审查，需在商店说明中正当化。
 - `host_permissions` 留空：扩展不直接请求网页内容权限，CDP 经 `chrome.debugger` 走，不经内容脚本注入。
 
@@ -127,7 +127,7 @@ JSON 消息类型：
 ### 5.1 进程模型
 
 - 由仓颉核心以子进程方式 spawn（复用 `extproc.cj` 的 NDJSON 模式）。
-- provider 导入 `playwright-core`（固定版本，从 bundle 自身位置解析）。
+- provider 导入 `playwright-core@1.62.1`（与 Qwen 相同固定版本，从 bundle 自身位置解析）。
 - provider 经 `ChromeExtensionTransport` 连接 Native Host，而非直接监听 WebSocket。
 - `playwright-core` 的 `chromium.connectOverCDP(transport)` 接受自定义 CDP transport。
 
@@ -169,7 +169,7 @@ JSON 消息类型：
 
 ### 6.1 工具注册
 
-在 `ModelToolRuntime` 的 `files` 分支内新增浏览器工具组注册（或单独的 `browser: Bool` 分支）。每个工具声明：
+在 `ModelToolRuntime` 的构造函数新增 `browser!: Bool = false` 参数；`browser` 为 true 时注册上述工具组。与 `files` 分支并列，可独立开关。
 - `name`、`description`、`params`（JSON Schema）、`requiresApproval`。
 - 写操作（navigate/click/fill/press_key/scroll/evaluate/dialog/upload/download/new/finalize）`requiresApproval = true`。
 - 只读操作（list/get/screenshot/snapshot）`requiresApproval = false`。
@@ -273,9 +273,9 @@ Native Host 安装器：
 
 | 交付物 | 路径（计划） |
 | --- | --- |
-| 浏览器扩展 | `packages/chrome-extension/` |
-| Native Host | `packages/browser-host/` |
-| Node 浏览器 provider | `packages/browser-provider/` |
+| 浏览器扩展 | `packages/chrome-extension/`（新建目录） |
+| Native Host | `packages/browser-host/`（新建目录） |
+| Node 浏览器 provider | `packages/browser-provider/`（新建目录） |
 | 核心工具注册 | `core/src/browser_tool.cj`（新） |
 | 核心审计 | `core/src/bu.cj`（扩展） |
 | 桌面 IPC | `apps/desktop/preload.cjs`（扩展） |
