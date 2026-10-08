@@ -37,6 +37,8 @@ func builtinTools(): ToolRegistry {
     reg.register(ToolSpec("pwsh", "执行 PowerShell 命令", "command", true))
     reg.register(ToolSpec("run_code", "执行 JavaScript 代码 (PTC)", "code", true))
     reg.register(ToolSpec("lsp", "从文件中提取符号", "path", false))
+    reg.register(ToolSpec("web_fetch", "从公开互联网获取网页正文并转为 Markdown", "url", false))
+    reg.register(ToolSpec("web_search", "使用配置的外部搜索提供商执行公开互联网搜索", "queries", false))
     // L1：7 条语义工具与模型声明面同源——名字、描述、入参清单都由核心契约那张表投影过来，
     // CLI 只保留旧的 lsp 一条给手工调用。短参数串是本入口的既有形状，键名仍取自同一张表。
     for (verb in lspVerbNames()) {
@@ -269,6 +271,7 @@ func runJob(args: Array<String>): Int64 {
 }
 
 main(args: Array<String>) {
+    if (args.size > 0 && args[0] == "team") { return runTeamCommand(args) }
     if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
     if (hasFlag(args, "--remote")) { return runRemote(args) }

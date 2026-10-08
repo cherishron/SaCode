@@ -6,6 +6,24 @@ import std.env.getVariable
 import std.convert.*
 import std.io.*
 
+@Test
+func modelRuntimeWebToolsRemainIndependentOfFileAccess() {
+    let root = "model-runtime-web-tools"
+    Directory.create(root, recursive: true)
+    try {
+        let settings = WebSettings("${root}/web.json")
+        settings.updateJson("{\"revision\":0,\"enabled\":true}")
+        let log = SessionLog("${root}/session.log")
+        let runtime = ModelToolRuntime(log, false, webSettings: settings)
+        @Expect(runtime.registry.has("web_fetch"), true)
+        @Expect(runtime.registry.has("web_search"), true)
+        @Expect(runtime.registry.requiresApproval("web_fetch"), false)
+        @Expect(runtime.registry.has("read"), false)
+        let outcome = runtime.execute(runtimeCall("web_fetch", "{\"url\":\"http://127.0.0.1/\"}"))
+        @Expect(outcome.allowed, false)
+    } finally { removeIfExists(root, recursive: true) }
+}
+
 func runtimeCall(name: String, args: String): ModelToolCall {
     let call = ModelToolCall(0)
     call.id = "runtime-call"
@@ -63,7 +81,8 @@ func modelRunnerUsesInjectedRegistryAndLogsExactlyOneCorrelatedResult() {
     let final = AgentChunks([Chunk("text", "file unavailable", ""), Chunk("finish", "", "stop")])
     let handle = ModelAgentRunner().start(first, { body =>
         let request = JsonValue.fromStr(body).asObject()
-        @Expect(request.get("tools").getOrThrow().asArray().size(), Int64(10))
+        // 旧的 lsp 一条换成 7 条语义工具：11 - 1 + 7
+        @Expect(request.get("tools").getOrThrow().asArray().size(), Int64(17))
         @Expect(request.get("messages").getOrThrow().asArray().size(), Int64(3))
         final
     }, "test-model", TurnToken(), log, DeliveryQueue(64), false, toolRuntime: runtime)

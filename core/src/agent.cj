@@ -89,9 +89,13 @@ public class Assembly {
 public class ApprovalOutcome {
     public let allowed: Bool
     public let why: String
-    public init(allowed: Bool, why: String) {
+    // 结构化失败（LSP 那类要带 reason 与回退线索的）走这一格：上层不再把整个对象
+    // JSON 转义进 {"error":"..."}，模型与审查侧才解析得出失败原因。
+    public let structured: Bool
+    public init(allowed: Bool, why: String, structured!: Bool = false) {
         this.allowed = allowed
         this.why = why
+        this.structured = structured
     }
 }
 
@@ -116,19 +120,66 @@ public class ToolRuntime {
     // 统一执行器表：工具名 → (工具名, 参数) → 结果。pipeline 只查这张表，
     // 手工 execute、模型 executeWithApproval 与 ModelToolRuntime 共用同一派发。
     let executors = HashMap<String, (String, String) -> ApprovalOutcome>()
+    // L1：7 个 lsp_* 工具与宿主协议面共用同一个 router；会话身份与 turn 取消令牌
+    // 由入口绑进来，缺省就是「本入口没有会话 / 没有可取消的轮次」，不是「随便造一个」。
+    let lspRouter: LspRouter
+    let lspSession: String
+    let lspToken: TurnToken
+    var lspRequestSeq: Int64 = 0
 
-    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false) {
+    public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
+        lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None) {
         this.log = log
         this.registry = registry
         this.workingDirectory = workingDirectory
         this.agentOwned = agentOwned
         this.todoAllowParallel = todoAllowParallel
         this.modelProtocol = modelProtocol
+        this.lspRouter = lspRouter
+        this.lspSession = lspSession
+        this.lspToken = lspToken
         this.shellExecutor = ShellExecutor(workingDirectory: workingDirectory)
         this.ptcExecutor = PtcExecutor(workingDirectory: workingDirectory)
         this.terminalBuffer = TerminalBuffer(log)
         this.jobStore = JobStore()
         registerBuiltinExecutors()
+        if (let Some(bound) <- team) {
+            for (spec in teamToolSpecs()) {
+                executors.add(spec.name, { name, args => teamStep(bound, name, args) })
+            }
+        }
+        if (let Some(bound) <- webTools) {
+            executors.add("web_fetch", { n, a => webStep(bound, n, a) })
+            executors.add("web_search", { n, a => webStep(bound, n, a) })
+        }
+    }
+
+    // 团队派发仍在审批与 guard 之后；身份及参数校验由绑定实例负责。
+    private func teamStep(bound: TeamTools, name: String, args: String): ApprovalOutcome {
+        let outcome = bound.execute(name, args)
+        lastDetail.argsAfterPre = args
+        lastDetail.stage = if (outcome.allowed) { "ran" } else { "team-denied" }
+        lastDetail.verified = outcome.allowed
+        recordResult(outcome.why)
+        return outcome
+    }
+
+    // 网页工具派发：web_fetch / web_search 免审批，执行器只把参数转给 WebTools。
+    private func webStep(bound: WebTools, name: String, args: String): ApprovalOutcome {
+        try {
+            let result = bound.execute(name, args, lspToken)
+            lastDetail.argsAfterPre = args
+            lastDetail.stage = "ran"
+            lastDetail.verified = true
+            recordResult(result)
+            return ApprovalOutcome(true, result)
+        } catch (error: Exception) {
+            lastDetail.argsAfterPre = args
+            lastDetail.stage = "web-error"
+            lastDetail.verified = false
+            recordResult("web-error:${error.message}")
+            return ApprovalOutcome(false, error.message)
+        }
     }
 
     // 内建执行器注册：每个工具一行，取代 pipeline 里的硬编码分支链。
@@ -136,6 +187,7 @@ public class ToolRuntime {
     // 声明了却没登记执行器的名字照旧归一成 unknown-tool。
     private func registerBuiltinExecutors(): Unit {
         executors.add("todo_write", { _, a => todoStep(a) })
+        executors.add("update_goal", { _, a => updateGoalStep(a) })
         executors.add("read", { _, a => readStep(a) })
         executors.add("write", { _, a => writeStep(a) })
         executors.add("edit", { _, a => editStep(a) })
@@ -145,6 +197,14 @@ public class ToolRuntime {
         executors.add("pwsh", { n, a => shellStep(n, a) })
         executors.add("run_code", { _, a => runCodeStep(a) })
         executors.add("lsp", { _, a => lspStep(a) })
+        // 7 个语义 verb 各一条；旧的 lsp 执行器保留给手工调用（模型声明面已换成这 7 条）。
+        executors.add("lsp_define", { _, a => lspDefineStep(a) })
+        executors.add("lsp_lookup", { _, a => lspLookupStep(a) })
+        executors.add("lsp_references", { _, a => lspReferencesStep(a) })
+        executors.add("lsp_implementation", { _, a => lspImplementationStep(a) })
+        executors.add("lsp_call_hierarchy", { _, a => lspCallHierarchyStep(a) })
+        executors.add("lsp_diagnostics", { _, a => lspDiagnosticsStep(a) })
+        executors.add("lsp_rename", { _, a => lspRenameStep(a) })
     }
 
     // 模型协议由上层统一记录关联 ID；管线审计仍入同一日志，但不重复进入模型历史。
@@ -195,7 +255,7 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
-            if (desk.consume(approvalId, name) != "allowed-once") {
+            if (desk.consumeForCall(approvalId, name, args) != "allowed-once") {
                 let bound = desk.toolOf(approvalId)
                 if (bound.size > 0 && bound != name) {
                     // 票是批给别的工具的：拒绝原因必须和「没批过」分开写，
@@ -203,6 +263,11 @@ public class ToolRuntime {
                     lastDetail.stage = "approval-mismatch"
                     recordResult( "denied:${name}:approval-mismatch:${bound}")
                     return ApprovalOutcome(false, "approval-tool-mismatch:${bound}")
+                }
+                if (bound == name && !desk.argumentsMatch(approvalId, args)) {
+                    lastDetail.stage = "approval-mismatch"
+                    recordResult("denied:${name}:approval-arguments-mismatch")
+                    return ApprovalOutcome(false, "approval-arguments-mismatch")
                 }
                 let st = desk.stateOf(approvalId)
                 lastDetail.stage = "approval-denied"
@@ -241,6 +306,43 @@ public class ToolRuntime {
     }
 
     // todo_write 工具：TodoTool 的执行器表入口，与其它工具走同一派发路径。
+    private func updateGoalStep(args: String): ApprovalOutcome {
+        var goalId = ""
+        var status = ""
+        try {
+            let obj = JsonValue.fromStr(args).asObject()
+            if (obj.size() != 2) { throw Exception("bad-args") }
+            goalId = obj.get("goal_id").getOrThrow().asString().getValue()
+            status = obj.get("status").getOrThrow().asString().getValue()
+            if (goalId.trimAscii().size == 0 || (status != "completed" && status != "in_progress")) {
+                throw Exception("bad-args")
+            }
+        } catch (_: Exception) { recordResult("bad-args"); return ApprovalOutcome(false, "bad-args") }
+        var outcome = ApprovalOutcome(false, "goal-not-active")
+        synchronized(log.mtx) {
+            let snap = GoalService(log).snapshot()
+            if (snap.phase == "none" || snap.id != goalId) {
+                recordResult("goal-not-found:${goalId}")
+                outcome = ApprovalOutcome(false, "goal-not-found")
+            } else if (snap.phase != "active") {
+                recordResult("goal-not-active:${goalId}:${snap.phase}")
+            } else {
+                let recorded = GoalClaim(log).recordStatus(goalId, snap.revision, status)
+                if (status == "completed" && !recorded) {
+                    recordResult("goal-no-open-round:${goalId}")
+                    outcome = ApprovalOutcome(false, "goal-no-open-round")
+                } else {
+                    let result = if (status == "completed") { "ok-goal-completed:${goalId}" } else { "ok-goal-update:${goalId}" }
+                    recordResult(result)
+                    lastDetail.verified = true
+                    outcome = ApprovalOutcome(true, "ok")
+                }
+            }
+        }
+        lastDetail.stage = if (outcome.allowed) { "done" } else { outcome.why }
+        return outcome
+    }
+
     private func todoStep(args: String): ApprovalOutcome {
         try {
             let result = TodoTool(log, todoAllowParallel).execute(args, agentOwned)
@@ -617,15 +719,25 @@ public class ToolRuntime {
             cwd: workingPath(""), timeoutMs: 30000, sandboxMode: parsed.sandboxMode)
         if (result.isSome()) {
             if (let Some(r) <- result) {
+                // 有退出事实不代表捕获完整；不能把编码/管道失败当成成功空输出。
+                if (!r.outputComplete || r.error.size > 0) {
+                    try { jobStore.mark(jobId, "failed") } catch (_: Exception) {}
+                    lastDetail.stage = "io-error"
+                    recordResult("io-error:shell-${toolName}:${r.error}")
+                    return ApprovalOutcome(false, "io-error:shell-${toolName}:${r.error}")
+                }
                 lastDetail.stage = "ran"
-                lastDetail.verified = true
-                let output = "${r.stdout}\n${r.stderr}"
+                lastDetail.verified = r.exitCode == 0 && !r.timedOut && !r.cancelled
+                var output = "${r.stdout}\n${r.stderr}"
+                if (r.stdoutTruncated) { output += "\n[shell-stdout-truncated:65536-bytes]" }
+                if (r.stderrTruncated) { output += "\n[shell-stderr-truncated:65536-bytes]" }
+                if (!lastDetail.verified) { output += "\n[shell-exit-code:${r.exitCode};timed-out:${r.timedOut};cancelled:${r.cancelled}]" }
                 // PTY 桥接：写入 TerminalBuffer
                 if (output.size > 0) {
                     terminalBuffer.append(jobId, output)
                 }
                 // Jobs 桥接：更新状态
-                if (r.timedOut) {
+                if (r.timedOut || r.cancelled) {
                     try { jobStore.mark(jobId, "stopping") } catch (_: Exception) {}
                     try { jobStore.mark(jobId, "killed") } catch (_: Exception) {}
                 } else if (r.exitCode == 0) {
@@ -633,8 +745,9 @@ public class ToolRuntime {
                 } else {
                     try { jobStore.mark(jobId, "failed") } catch (_: Exception) {}
                 }
-                recordResult("ok-shell:${toolName}:${r.exitCode}:${output.size}")
-                return ApprovalOutcome(true, output)
+                let prefix = if (lastDetail.verified) { "ok-shell" } else { "failed-shell" }
+                recordResult("${prefix}:${toolName}:${r.exitCode}:${output.size}")
+                return ApprovalOutcome(lastDetail.verified, output)
             }
         }
         // 执行失败：标记 Job 为 failed
@@ -687,6 +800,53 @@ public class ToolRuntime {
         recordResult("io-error:run_code")
         return ApprovalOutcome(false, "io-error:run_code")
     }
+
+    // 请求身份由本管线自己铸造：一次调用一个序号，取消与在途归属才有可对齐的名字。
+    // 序号是实例内的，跨进程不需要一致——真源仍是会话日志里那两条 call/result。
+    private func nextLspRequestId(): String {
+        lspRequestSeq += 1
+        return "lsp-${lspRequestSeq}"
+    }
+
+    // 7 个 verb 共用同一条通道：参数解析 → 契约校验 → 路由 → 形状化输出。
+    // 每个 verb 各写一份校验迟早漏一个，而漏掉的那个正好是 rename。
+    private func lspVerbStep(verb: String, args: String): ApprovalOutcome {
+        let params = lspParseParams(args, verb)
+        if (!params.ok) {
+            lastDetail.stage = "bad-args"
+            recordResult("bad-args")
+            let bad = LspResponse(); bad.ok = false; bad.reason = lspFailBadArgs; bad.verb = verb
+            return ApprovalOutcome(false, lspResponseJson(bad), structured: true)
+        }
+        let root0 = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
+        // 入口没绑会话工作区（CLI 手工面）时退回进程当前目录，而不是让请求带着空身份
+        // 落成 lsp-bad-args——那会让这 7 条工具在该入口永远走不到路由。
+        let root = if (root0.size > 0) { root0 } else { lspProcessWorkspace() }
+        let session = if (lspSession.size > 0) { lspSession } else { root }
+        let req = lspBuildRequest(session, nextLspRequestId(), verb, params, root, lspToken)
+        lastDetail.argsAfterPre = req.path
+        lastDetail.preRewrote = (req.path != params.path)
+        let resp = lspRouter.route(req)
+        let payload = lspResponseJson(resp)
+        if (resp.ok) {
+            lastDetail.stage = "ran"
+            lastDetail.verified = true
+            recordResult("ok-lsp-${verb}:${lspOutcomeCount(resp)}")
+            return ApprovalOutcome(true, payload)
+        }
+        // 失败保持失败：原因、非语义标记与回退线索都在 payload 里，不塌成空数组。
+        lastDetail.stage = "lsp-${resp.reason}"
+        recordResult("lsp-failed:${resp.reason}")
+        return ApprovalOutcome(false, payload, structured: true)
+    }
+
+    private func lspDefineStep(args: String): ApprovalOutcome { return lspVerbStep("define", args) }
+    private func lspLookupStep(args: String): ApprovalOutcome { return lspVerbStep("lookup", args) }
+    private func lspReferencesStep(args: String): ApprovalOutcome { return lspVerbStep("references", args) }
+    private func lspImplementationStep(args: String): ApprovalOutcome { return lspVerbStep("implementation", args) }
+    private func lspCallHierarchyStep(args: String): ApprovalOutcome { return lspVerbStep("call-hierarchy", args) }
+    private func lspDiagnosticsStep(args: String): ApprovalOutcome { return lspVerbStep("diagnostics", args) }
+    private func lspRenameStep(args: String): ApprovalOutcome { return lspVerbStep("rename", args) }
 
     // lsp 工具：从文件中提取符号（只读，免审批）。
     private func lspStep(args: String): ApprovalOutcome {
