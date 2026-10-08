@@ -12,9 +12,7 @@ func enCleanup(): Unit {
 }
 
 func enDraft(id: String): String {
-    return "{\"id\":\"${id}\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\","
-        + "\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\","
-        + "\"models\":[{\"id\":\"m-a\",\"name\":\"m-a\",\"contextWindow\":\"128k\",\"maxTokens\":\"4k\",\"image\":false}]}"
+    return "{\"id\":\"${id}\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\",\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\",\"models\":[{\"id\":\"m-a\",\"name\":\"m-a\",\"contextWindow\":\"128k\",\"maxTokens\":\"4k\",\"image\":false}]}"
 }
 
 @Test

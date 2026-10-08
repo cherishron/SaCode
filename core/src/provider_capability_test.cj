@@ -70,10 +70,7 @@ func nameLikeAModelDoesNotGrantCapability() {
 func legacyRecordWithoutCapabilitiesStillReplays() {
     capCleanup()
     // 现有 5 字段形态（今天盘上的样子）：新字段一律缺席
-    ProviderRegistry(capFile).update(
-        "{\"id\":\"step\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\","
-        + "\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\","
-        + "\"models\":[{\"id\":\"m-a\",\"name\":\"m-a\",\"contextWindow\":\"128k\",\"maxTokens\":\"4k\",\"image\":false}]}", -1)
+    ProviderRegistry(capFile).update("{\"id\":\"step\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\",\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\",\"models\":[{\"id\":\"m-a\",\"name\":\"m-a\",\"contextWindow\":\"128k\",\"maxTokens\":\"4k\",\"image\":false}]}", -1)
     let spec = ProviderRegistry(capFile).describe().providers[0].models[0]
     @Expect(spec.meterUnit, "unknown")
     @Expect(spec.provenance, "unknown")

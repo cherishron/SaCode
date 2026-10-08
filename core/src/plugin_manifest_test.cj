@@ -56,14 +56,7 @@ func pluginManifestKeepsUnscopedNameAsTitle() {
 
 @Test
 func pluginManifestReadsDeclaredToolsAndOptionalFields() {
-    let text = "{\"name\":\"@local/sacode-tool-echo\",\"version\":\"1.2.3\",\"title\":\"回声\","
-        + "\"description\":\"原样返回\",\"descriptionZhCN\":\"原样返回入参\","
-        + "\"kind\":\"tool\",\"entry\":\"lib/index.cjs\",\"optional\":true,\"enabled\":false,"
-        + "\"order\":7,\"dependencies\":[\"@local/sacode-tool-base\"],"
-        + "\"sacode\":{\"runtime\":\">=0.2.0\"},"
-        + "\"tools\":[{\"name\":\"echo\",\"description\":\"原样返回 text\","
-        + "\"params\":\"{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"text\\\":{\\\"type\\\":\\\"string\\\"}}}\","
-        + "\"needsApproval\":true}]}"
+    let text = "{\"name\":\"@local/sacode-tool-echo\",\"version\":\"1.2.3\",\"title\":\"回声\",\"description\":\"原样返回\",\"descriptionZhCN\":\"原样返回入参\",\"kind\":\"tool\",\"entry\":\"lib/index.cjs\",\"optional\":true,\"enabled\":false,\"order\":7,\"dependencies\":[\"@local/sacode-tool-base\"],\"sacode\":{\"runtime\":\">=0.2.0\"},\"tools\":[{\"name\":\"echo\",\"description\":\"原样返回 text\",\"params\":\"{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"text\\\":{\\\"type\\\":\\\"string\\\"}}}\",\"needsApproval\":true}]}"
     let manifest = parsePluginManifest(text)
     @Expect(manifest.title, "回声")
     @Expect(manifest.descriptionZhCN, "原样返回入参")
@@ -228,11 +221,7 @@ func pluginManifestAcceptsEveryDeclaredKind() {
 @Test
 func pluginManifestReadsNonToolContributionDecls() {
     // 四类非工具贡献声明与 tools 并列解析；每类是自己贡献面的命名空间。
-    let text = "{\"name\":\"@local/model-thing\",\"version\":\"0.1.0\",\"kind\":\"model\",\"entry\":\"index.cjs\","
-        + "\"models\":[{\"name\":\"my-model\",\"description\":\"一个模型\",\"needsApproval\":true}],"
-        + "\"services\":[{\"name\":\"my-svc\",\"description\":\"一个服务\"}],"
-        + "\"ui\":[{\"name\":\"my-panel\",\"description\":\"一个面板\"}],"
-        + "\"presets\":[{\"name\":\"my-preset\",\"description\":\"一个预设\"}]}"
+    let text = "{\"name\":\"@local/model-thing\",\"version\":\"0.1.0\",\"kind\":\"model\",\"entry\":\"index.cjs\",\"models\":[{\"name\":\"my-model\",\"description\":\"一个模型\",\"needsApproval\":true}],\"services\":[{\"name\":\"my-svc\",\"description\":\"一个服务\"}],\"ui\":[{\"name\":\"my-panel\",\"description\":\"一个面板\"}],\"presets\":[{\"name\":\"my-preset\",\"description\":\"一个预设\"}]}"
     let m = parsePluginManifest(text)
     @Expect(m.models.size, Int64(1))
     @Expect(m.models[0].name, "my-model")

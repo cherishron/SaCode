@@ -382,9 +382,7 @@ func migrationKeepsExplicitEmptyObjectContract() {
 @Test
 func migrationRejectsEmptyRequiredFields() {
     // 缺少 id 的 provider 条目
-    let json = "{\"id\":\"\",\"name\":\"Test\",\"baseUrl\":\"https://api.example.com\","
-        + "\"protocol\":\"openai-completions\",\"credentialRef\":\"KEY\",\"declared\":true,"
-        + "\"sortOrder\":0,\"enabled\":true,\"transport\":\"direct\",\"models\":[]}"
+    let json = "{\"id\":\"\",\"name\":\"Test\",\"baseUrl\":\"https://api.example.com\",\"protocol\":\"openai-completions\",\"credentialRef\":\"KEY\",\"declared\":true,\"sortOrder\":0,\"enabled\":true,\"transport\":\"direct\",\"models\":[]}"
     let parsed = MigrationProviderEntry.fromJson(JsonValue.fromStr(json).asObject())
     @Expect(parsed.isSome(), false)
 }

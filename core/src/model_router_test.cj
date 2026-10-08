@@ -165,12 +165,7 @@ func selectingNeverWritesToAnyDocument() {
     for (f in [customsFile, healthFile, "${customsFile}.lease", "${healthFile}.lease"]) {
         if (exists(f)) { try { removeIfExists(f, recursive: false) } catch (e: Exception) {} }
     }
-    CustomModelRegistry(customsFile).upsert(
-        "{\"id\":\"code\",\"name\":\"编程模型\",\"description\":\"\",\"enabled\":true,"
-        + "\"category\":\"coding\",\"requires\":[\"tools\"],\"mode\":\"round-robin\","
-        + "\"bindings\":[{\"providerId\":\"step\",\"modelId\":\"m-a\",\"enabled\":true,\"order\":0,\"weight\":1,"
-        + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,"
-        + "\"priceVersion\":0,\"currency\":\"\"}]}", -1)
+    CustomModelRegistry(customsFile).upsert("{\"id\":\"code\",\"name\":\"编程模型\",\"description\":\"\",\"enabled\":true,\"category\":\"coding\",\"requires\":[\"tools\"],\"mode\":\"round-robin\",\"bindings\":[{\"providerId\":\"step\",\"modelId\":\"m-a\",\"enabled\":true,\"order\":0,\"weight\":1,\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,\"priceVersion\":0,\"currency\":\"\"}]}", -1)
     RouteHealth(healthFile).recordFailure(RouteScope("step/m-a", "upstream"),
         failureOf("http-status", true, status: 500), "effective", 1000)
     let beforeCustoms = File.readFrom(customsFile)

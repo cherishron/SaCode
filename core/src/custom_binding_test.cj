@@ -22,18 +22,8 @@ func bdSpec(id: String, caps: String): String {
 }
 
 func bdSeedProviders(): Unit {
-    let m = bdSpec("m-a", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"text\"],"
-        + "\"supports\":[\"tools\",\"stream\"],\"meterUnit\":\"token\",\"provenance\":\"human-confirmed\","
-        + "\"availability\":\"available\"")
-        + "," + bdSpec("m-img", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"image\"],"
-        + "\"supports\":[\"image-output\"],\"meterUnit\":\"image\",\"provenance\":\"human-confirmed\","
-        + "\"availability\":\"available\"")
-        + "," + bdSpec("m-old", "")
-        + "," + bdSpec("m-unknown-avail", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"text\"],"
-        + "\"supports\":[\"tools\",\"stream\"],\"meterUnit\":\"token\",\"provenance\":\"provider-listed\"")
-    ProviderRegistry(bdFile).update(
-        "{\"id\":\"step\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\","
-        + "\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\",\"models\":[${m}]}", -1)
+    let m = bdSpec("m-a", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"text\"],\"supports\":[\"tools\",\"stream\"],\"meterUnit\":\"token\",\"provenance\":\"human-confirmed\",\"availability\":\"available\"") + "," + bdSpec("m-img", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"image\"],\"supports\":[\"image-output\"],\"meterUnit\":\"image\",\"provenance\":\"human-confirmed\",\"availability\":\"available\"") + "," + bdSpec("m-old", "") + "," + bdSpec("m-unknown-avail", ",\"inputModalities\":[\"text\"],\"outputModalities\":[\"text\"],\"supports\":[\"tools\",\"stream\"],\"meterUnit\":\"token\",\"provenance\":\"provider-listed\"")
+    ProviderRegistry(bdFile).update("{\"id\":\"step\",\"name\":\"显示名\",\"baseUrl\":\"https://api.example.com/v1\",\"protocol\":\"openai-completions\",\"credentialRef\":\"SA_KEY\",\"models\":[${m}]}", -1)
 }
 
 @Test
@@ -161,13 +151,9 @@ func reorderWithSameLengthButUnknownKeyIsRejected() {
 // 与 custom_model_registry_test.cj 的 helper 同形但不同名：package core 的
 // 顶层作用域跨文件共享，同名 func 会 overload 冲突（本批实测），不共享副本。
 func bdDraft(id: String, bindings: String): String {
-    return "{\"id\":\"${id}\",\"name\":\"编程模型\",\"description\":\"\",\"enabled\":true,"
-        + "\"category\":\"coding\",\"requires\":[\"tools\",\"text-output\"],\"mode\":\"weighted\","
-        + "\"bindings\":[${bindings}]}"
+    return "{\"id\":\"${id}\",\"name\":\"编程模型\",\"description\":\"\",\"enabled\":true,\"category\":\"coding\",\"requires\":[\"tools\",\"text-output\"],\"mode\":\"weighted\",\"bindings\":[${bindings}]}"
 }
 
 func bdBinding(provider: String, model: String, order: Int64, weight: Int64): String {
-    return "{\"providerId\":\"${provider}\",\"modelId\":\"${model}\",\"enabled\":true,"
-        + "\"order\":${order},\"weight\":${weight},\"priceInMicro\":1000,\"priceOutMicro\":2000,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,\"priceVersion\":1,"
-        + "\"currency\":\"CNY\"}"
+    return "{\"providerId\":\"${provider}\",\"modelId\":\"${model}\",\"enabled\":true,\"order\":${order},\"weight\":${weight},\"priceInMicro\":1000,\"priceOutMicro\":2000,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,\"priceVersion\":1,\"currency\":\"CNY\"}"
 }
