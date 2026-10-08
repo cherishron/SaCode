@@ -9,36 +9,78 @@ import std.fs.*
 // glob 匹配：支持 `*`（匹配不含 / 的任意字符）、`?`（匹配单个非 / 字符）、
 // `**`（匹配含 / 的任意字符）。模式按 / 分段，逐段匹配。
 func globMatchPattern(name: String, pattern: String): Bool {
-    // ** 匹配含 / 的任意字符；* 匹配不含 / 的任意字符。
-    let n = name.toArray()
-    let p = pattern.toArray()
+    // 按 / 分段后再逐段匹配，`**` 作为整段时才允许跨段。
+    let ns = name.split("/")
+    let ps = pattern.split("/")
+    return globMatchSegments(ns, Int64(0), ps, Int64(0))
+}
+
+// 整段只由 `*` 组成（`**`、`***`）才算跨段通配；单个 `*` 仍是段内通配。
+func globIsCrossSegmentSeg(seg: String): Bool {
+    if (seg.size < Int64(2)) {
+        return false
+    }
+    for (c in seg) {
+        if (Int64(c) != 42) {
+            return false
+        }
+    }
+    return true
+}
+
+// 段内匹配：`*` 匹配任意长度（本段内不含 /），`?` 匹配单个字符。
+// 外层按 name 推进；回溯时 starI 单调递增且不超过 s.size，因此对任意输入都必然终止。
+func globMatchSegment(seg: String, pat: String): Bool {
+    let s = seg.toArray()
+    let p = pat.toArray()
     var i: Int64 = 0
     var j: Int64 = 0
     var starI: Int64 = -1
-    var starJ: Int64 = -1
-    while (j < p.size) {
-        if (Int64(p[j]) == 42) {
-            // 连续 * 合并：记录位置，跳过后续 *
+    var starJ: Int64 = 0
+    while (i < s.size) {
+        if (j < p.size && Int64(p[j]) == 42) {
             starI = i
             starJ = j
-            while (j < p.size && Int64(p[j]) == 42) { j += 1 }
-        } else if (Int64(p[j]) == 63 || (i < n.size && Int64(p[j]) == Int64(n[i]))) {
+            j += 1
+        } else if (j < p.size && (Int64(p[j]) == 63 || Int64(p[j]) == Int64(s[i]))) {
             i += 1
             j += 1
+        } else if (starI >= 0) {
+            starI += 1
+            i = starI
+            j = starJ + 1
         } else {
-            if (starI >= 0) {
-                // 回溯：让 * 多吃一个字符
-                starI += 1
-                i = starI
-                j = starJ
-                while (j < p.size && Int64(p[j]) == 42) { j += 1 }
-            } else {
-                return false
-            }
+            return false
         }
     }
+    // name 已耗尽，剩余模式必须全是由 * 组成才算匹配
     while (j < p.size && Int64(p[j]) == 42) { j += 1 }
-    return i == n.size
+    return j == p.size
+}
+
+func globMatchSegments(ns: Array<String>, ni: Int64, ps: Array<String>, pi: Int64): Bool {
+    var ni2 = ni
+    var pi2 = pi
+    while (pi2 < ps.size) {
+        let pat = ps[pi2]
+        if (globIsCrossSegmentSeg(pat)) {
+            // 试探 `**` 吃掉 0 到剩余全部段
+            var k: Int64 = ni2
+            while (k <= ns.size) {
+                if (globMatchSegments(ns, k, ps, pi2 + 1)) {
+                    return true
+                }
+                k += 1
+            }
+            return false
+        }
+        if (ni2 >= ns.size || !globMatchSegment(ns[ni2], pat)) {
+            return false
+        }
+        ni2 += 1
+        pi2 += 1
+    }
+    return ni2 == ns.size
 }
 
 // 递归遍历目录，收集匹配 pattern 的所有文件路径。
