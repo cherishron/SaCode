@@ -67,17 +67,23 @@ export class TargetBridge {
 
   // 订阅目标通知；返回带 unsubscribe 的句柄。切换目标后旧订阅被 abort，
   // 上层重连新目标；不会跨目标串通知。
+  // 若 transport 支持 SSE 恢复（暴露 getLastEventId），自动带 Last-Event-ID 重连。
   async subscribe(targetId, onFrame) {
     const entry = this.targets.get(targetId);
     if (!entry) throw new Error(`target-not-found: ${targetId}`);
     const epochAtOpen = entry.connectionEpoch;
+    const opts = {};
+    if (typeof entry.transport.getLastEventId === "function") {
+      const cursor = entry.transport.getLastEventId();
+      if (cursor !== null && cursor !== undefined) opts.resumeEventId = String(cursor);
+    }
     const rawUnsub = await entry.transport.subscribeNotifications((frame, transportEpoch) => {
       // transportEpoch 由 remote-transport 传下来，与本地 connectionEpoch 对齐；
       // 若目标已切换（connectionEpoch 变化），直接丢弃帧。
       if (entry.connectionEpoch !== epochAtOpen) return;
       if (typeof transportEpoch === "number" && transportEpoch !== epochAtOpen) return;
       onFrame(frame);
-    });
+    }, opts);
     const wrappedUnsub = () => {
       entry.subscribers.delete(wrappedUnsub);
       try { rawUnsub?.(); } catch (_e) {}

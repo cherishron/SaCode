@@ -164,3 +164,41 @@ test("remove 最后一个 target：default 置 null，再 getDefault 抛 no-targ
   b.remove("only");
   assert.throws(() => b.getDefault(), /no-target-registered/);
 });
+
+test("subscribe：transport 有 getLastEventId 时自动带 resumeEventId", async () => {
+  const b = new TargetBridge();
+  const calls = [];
+  const t = {
+    async sendRequest() { return {}; },
+    async subscribeNotifications(onFrame, opts) { calls.push(opts ?? {}); return () => {}; },
+    getLastEventId() { return "42"; },
+  };
+  b.register(desc("a"), t);
+  await b.subscribe("a", () => {});
+  assert.equal(calls[0].resumeEventId, "42");
+});
+
+test("subscribe：transport 游标为 null 时不带 resumeEventId", async () => {
+  const b = new TargetBridge();
+  const calls = [];
+  const t = {
+    async sendRequest() { return {}; },
+    async subscribeNotifications(onFrame, opts) { calls.push(opts ?? {}); return () => {}; },
+    getLastEventId() { return null; },
+  };
+  b.register(desc("a"), t);
+  await b.subscribe("a", () => {});
+  assert.ok(!("resumeEventId" in calls[0]));
+});
+
+test("subscribe：transport 无 getLastEventId（本机 HostBridge）时 opts 为空", async () => {
+  const b = new TargetBridge();
+  const calls = [];
+  const t = {
+    async sendRequest() { return {}; },
+    async subscribeNotifications(onFrame, opts) { calls.push(opts ?? {}); return () => {}; },
+  };
+  b.register(desc("local", "local"), t);
+  await b.subscribe("local", () => {});
+  assert.deepEqual(calls[0], {});
+});
