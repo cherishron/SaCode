@@ -26,9 +26,11 @@
 | 26f8411 | 契约加 resourceKeys 值域严格 ⊂ {workspaceId,sessionId} 棘轮 | 11/11 rc=0 | 计划 §1 直接对应；未变异，因它自己就是从「设计口径漂移」反推出来的最小硬约束 | 已入库 |
 | 9602cb6 | 契约加 device-admin 面 desktop-only 棘轮 + requiredScope 映射落盘（48 有值 / 71 null） | 12/12 rc=0 | 变异 `auth/devices` 或 `auth/revoke` 加 mobile 消费 → 新棘轮红（fail 1）；还原回绿 | 已入库 |
 | b3f4200 | remote-transport 加 token 轮换与 SSE 现取 tokenProvider 防回归 | 24/24 rc=0 | 把 tokenProvider 改成首次调用后缓存 → 23/24 双红（fail 2）；还原回绿 | 已入库 |
+| 71f8725 | remote-transport 认证请求强制 `redirect:"manual"`，任何 3xx 归 `redirect-not-allowed` | 26/26 rc=0 | 只在 /rpc 撤 redirect:manual（保留 3xx 分支与 SSE 面）→ 仅 25 号红、26 号仍绿 | 已入库 |
+| b7b1747 | target-bridge.request 加可选 opts 参数原样透给 transport（Idempotency-Key 落到桥面） | 17/17 rc=0 | 从 sendRequest 参数列去掉 opts → 16 号红、17 号（不传 opts 兼容）仍绿 | 已入库 |
 
-**桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 24、`remote-transport-integration` 6、
-`target-bridge` 15、`multi-target-integration` 3、`tls-pin` 9，共 **85** 条断言全绿。
+**桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 6、
+`target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **89** 条断言全绿。
 **daemon 侧**：`remote-capability-contract` **12/12** rc=0。
 
 ## 在飞未完成
