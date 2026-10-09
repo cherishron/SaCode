@@ -21,7 +21,7 @@ func testBrowserExecutorRejectsCancelledBeforeAudit(): Unit {
     let exec = BrowserToolExecutor(ledger, client)
     let token = TurnToken()
     token.cancel()
-    let r = exec.perform("navigate", "{\"tabId\":1,\"url\":\"https://example.com\"}", token)
+    let r = exec.perform("navigate", "{\"tabId\":1,\"url\":\"https://example.com\"}", token: token)
     @Expect(r.ok, false)
     @Expect(r.failureKind, "cancelled")
 }
@@ -32,9 +32,9 @@ func testBrowserExecutorAuditsBeforeInvoke(): Unit {
     let ledger = BrowserUseLedger(log)
     let client = BrowserProviderClient("nonexistent-binary", Array<String>(), workingDirectory: Path("."))
     let exec = BrowserToolExecutor(ledger, client)
-    let r = exec.perform("navigate", "{\"tabId\":1,\"url\":\"https://example.com\"}", TurnToken(), timeoutMs: 500)
+    let r = exec.perform("navigate", "{\"tabId\":1,\"url\":\"https://example.com\"}", token: TurnToken(), timeoutMs: 500)
     let entries = ledger.entries()
-    @Expect(entries.size() >= 1, true)
+    @Expect(entries.size >= 1, true)
     @Expect(r.ok, false)
 }
 
@@ -44,7 +44,7 @@ func testBrowserExecutorRejectsUnknownVerb(): Unit {
     let ledger = BrowserUseLedger(log)
     let client = BrowserProviderClient("echo", Array<String>(), workingDirectory: Path("."))
     let exec = BrowserToolExecutor(ledger, client)
-    let r = exec.perform("delete-everything", "{}", TurnToken(), timeoutMs: 500)
+    let r = exec.perform("delete-everything", "{}", token: TurnToken(), timeoutMs: 500)
     @Expect(r.ok, false)
     @Expect(r.failureKind, "bad-verb")
 }

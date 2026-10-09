@@ -1,7 +1,9 @@
 package core
 
 import std.collection.ArrayList
+import std.unittest.*
 
+@Test
 func testBrowserToolSpecsCoverCoreVerbs(): Unit {
     let specs = ArrayList<ToolSpec>(browserToolSpecs())
     let names = ArrayList<String>()
@@ -22,6 +24,7 @@ func testBrowserToolSpecsCoverCoreVerbs(): Unit {
     @Assert(names.contains("browser.tabs.finalize"))
 }
 
+@Test
 func testBrowserWriteToolsRequireApproval(): Unit {
     let specs = browserToolSpecs()
     for (s in specs) {
@@ -38,6 +41,7 @@ func testBrowserWriteToolsRequireApproval(): Unit {
     }
 }
 
+@Test
 func testBrowserToolSpecCountIs12(): Unit {
     let specs = browserToolSpecs()
     @Assert(specs.size == 12)

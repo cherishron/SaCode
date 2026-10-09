@@ -24,7 +24,7 @@ func testBrowserProviderResultErrorFields(): Unit {
 @Test
 func testBrowserProviderClientNotStartedReturnsError(): Unit {
     let client = BrowserProviderClient("nonexistent-binary", Array<String>(), workingDirectory: Path("."))
-    let r = client.invoke("tabs.list", "{}", TurnToken(), timeoutMs: 500)
+    let r = client.invoke("tabs.list", "{}", token: TurnToken(), timeoutMs: 500)
     @Expect(r.ok, false)
     @Expect(r.failureKind, "provider-not-alive")
 }
@@ -34,7 +34,7 @@ func testBrowserProviderClientCancelledReturnsError(): Unit {
     let client = BrowserProviderClient("echo", Array<String>(), workingDirectory: Path("."))
     let token = TurnToken()
     token.cancel()
-    let r = client.invoke("tabs.list", "{}", token, timeoutMs: 500)
+    let r = client.invoke("tabs.list", "{}", token: token, timeoutMs: 500)
     @Expect(r.ok, false)
     @Expect(r.failureKind, "cancelled")
 }

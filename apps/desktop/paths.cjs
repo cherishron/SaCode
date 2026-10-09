@@ -35,7 +35,7 @@ function computerUsePaths({ packaged, appRoot, resourcesPath, nodeExecutable }) 
     throw new Error("appRoot 必须是绝对路径");
   }
   return {
-    providerPath: resolve(appRoot, "..", "..", "computer-use", "provider.mjs"),
+    providerPath: resolve(appRoot, "..", "..", "extjs", "computer-use", "provider.mjs"),
     nodePath: nodeExecutable,
   };
 }

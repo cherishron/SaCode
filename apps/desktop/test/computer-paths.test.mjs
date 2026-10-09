@@ -14,16 +14,16 @@ const resourcesPath = join(repo, "resources");
 const nodeName = process.platform === "win32" ? "node.exe" : "node";
 
 // 所有夹具仅为路径字符串，不创建文件、不启动 SDK；存在性检查留给运行时。
-test("开发态金路径：提供者来自仓库根，Node 保留显式绝对路径", () => {
+test("开发态金路径：提供者来自 extjs/computer-use，Node 保留显式绝对路径", () => {
   assert.deepEqual(computerUsePaths({ packaged: false, appRoot, nodeExecutable }), {
-    providerPath: join(repo, "computer-use", "provider.mjs"),
+    providerPath: join(repo, "extjs", "computer-use", "provider.mjs"),
     nodePath: nodeExecutable,
   });
 });
 
 test("开发态忽略打包资源目录", () => {
   assert.deepEqual(computerUsePaths({ packaged: false, appRoot, nodeExecutable, resourcesPath }), {
-    providerPath: join(repo, "computer-use", "provider.mjs"),
+    providerPath: join(repo, "extjs", "computer-use", "provider.mjs"),
     nodePath: nodeExecutable,
   });
 });
@@ -52,7 +52,7 @@ test("带空格的开发态及打包态路径不加引号、不截断", () => {
   const root = resolve("contract fixture", "repo with spaces");
   const node = join(root, "Node Runtime", "node.exe");
   assert.deepEqual(computerUsePaths({ packaged: false, appRoot: join(root, "apps", "desktop"), nodeExecutable: node }), {
-    providerPath: join(root, "computer-use", "provider.mjs"), nodePath: node,
+    providerPath: join(root, "extjs", "computer-use", "provider.mjs"), nodePath: node,
   });
   const resources = join(root, "App Resources");
   assert.deepEqual(computerUsePaths({ packaged: true, resourcesPath: resources }), {

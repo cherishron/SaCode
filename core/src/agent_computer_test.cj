@@ -7,7 +7,7 @@ import std.unittest.*
 
 @Test
 func computerInputRejectsSelfDeclaredApproval(): Unit {
-    let log = makeTestLog("computer-self-approval")
+    let log = SessionLog("${computerImageRoot("computer-self-approval")}/session.log")
     let registry = ToolRegistry()
     registry.register(ToolSpec("computer.click", "点击", "{}", true))
     let runtime = ToolRuntime(log, registry)
@@ -18,7 +18,7 @@ func computerInputRejectsSelfDeclaredApproval(): Unit {
 
 @Test
 func computerInputRejectsUnboundApprovalTicket(): Unit {
-    let log = makeTestLog("computer-unbound-approval")
+    let log = SessionLog("${computerImageRoot("computer-unbound-approval")}/session.log")
     let registry = ToolRegistry()
     registry.register(ToolSpec("computer.click", "点击", "{}", true))
     let runtime = ToolRuntime(log, registry)
