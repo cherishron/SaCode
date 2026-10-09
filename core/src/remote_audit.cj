@@ -47,9 +47,9 @@ public class AuditEntry {
     public let approvalRef: String     // 空串表示无关联审批
     public let denyReason: String      // outcome=denied/revoked/unauthenticated 时的原因；其他情况空串
 
-    public init(ts: Int64, principalId: String, deviceId: String, instanceId: String,
-                workspaceId: String, sessionId: String, method: String, operationId: String,
-                outcome: String, approvalRef!: String = "", denyReason!: String = "") {
+    public init(ts!: Int64, principalId!: String, deviceId!: String, instanceId!: String,
+                workspaceId!: String, sessionId!: String, method!: String, operationId!: String,
+                outcome!: String, approvalRef!: String = "", denyReason!: String = "") {
         this.ts = ts
         this.principalId = principalId
         this.deviceId = deviceId

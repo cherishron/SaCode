@@ -51,7 +51,7 @@ public class CapabilitySpec {
     public let permission: String
     public let needsWorkspace: Bool
     public let needsSession: Bool
-    public init(method: String, permission: String, needsWorkspace: Bool, needsSession: Bool) {
+    public init(method!: String, permission!: String, needsWorkspace!: Bool, needsSession!: Bool) {
         this.method = method
         this.permission = permission
         this.needsWorkspace = needsWorkspace
