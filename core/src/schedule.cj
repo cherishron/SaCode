@@ -111,6 +111,153 @@ public class ScheduleStore {
         }
         return SplitOnceResult(s[0..idx], s[(idx + sep.size)..s.size])
     }
+
+    // 扩展方法：任务定义
+    public func registerTask(id: String, cron: String, prompt: String, oneShot: Bool, maxAgeSec: Int64,
+                              workspaceDir: String, sessionLogPath: String, modelConfig: String): Unit {
+        if (id.size == 0) { throw Exception("schedule-empty-id") }
+        if (cron.size == 0) { throw Exception("schedule-empty-cron") }
+        log.append("schedule/task", "taskdef::${id}::${cron}::${prompt}::${oneShot}::${maxAgeSec}::${workspaceDir}::${sessionLogPath}::${modelConfig}")
+        ensureTaskActive(id)
+    }
+
+    public func listTasks(): ArrayList<TaskDefinition> {
+        return taskDefs
+    }
+
+    public func pauseTask(id: String): Unit {
+        let i = taskIndexOf(id)
+        if (i < 0 || !taskDefs[i].active) { return }
+        log.append("schedule/task", "taskpause::${id}")
+        taskDefs[i].active = false
+    }
+
+    public func resumeTask(id: String): Unit {
+        let i = taskIndexOf(id)
+        if (i < 0 || taskDefs[i].active) { return }
+        log.append("schedule/task", "taskresume::${id}")
+        taskDefs[i].active = true
+    }
+
+    public func deleteTask(id: String): Unit {
+        let i = taskIndexOf(id)
+        if (i < 0) { return }
+        log.append("schedule/task", "taskdelete::${id}")
+        taskDefs[i].active = false
+    }
+
+    // 扩展方法：fire 记录
+    public func recordFire(taskId: String, at: Int64): String {
+        let fireId = "f${log.eventCount()}"
+        log.append("schedule/fire", "fire::${fireId}::${taskId}::${at}")
+        fireRecords.add(FireRecord(fireId, taskId, at, "pending", ""))
+        return fireId
+    }
+
+    public func hasPendingFire(taskId: String): Bool {
+        for (r in fireRecords) {
+            if (r.taskId == taskId && r.status == "pending") { return true }
+        }
+        return false
+    }
+
+    public func updateFireResult(fireId: String, status: String, detail: String): Unit {
+        for (r in fireRecords) {
+            if (r.fireId == fireId) {
+                r.status = status
+                r.detail = detail
+                log.append("schedule/fire", "result::${fireId}::${status}::${detail}")
+                return
+            }
+        }
+    }
+
+    public func fireHistory(taskId: String): ArrayList<FireRecord> {
+        let out = ArrayList<FireRecord>()
+        for (r in fireRecords) {
+            if (r.taskId == taskId) { out.add(r) }
+        }
+        return out
+    }
+
+    public func dueTasks(minute: Int64, hour: Int64, dom: Int64, month: Int64, dow: Int64): ArrayList<String> {
+        let out = ArrayList<String>()
+        for (t in taskDefs) {
+            if (!t.active) { continue }
+            if (hasPendingFire(t.id)) { continue }
+            // 简化的 cron 匹配：此处仅用 CronSpec.parse 做完整匹配
+            try {
+                let spec = CronSpec.parse(t.cron)
+                if (spec.matches(minute, hour, dom, month, dow)) {
+                    out.add(t.id)
+                }
+            } catch (_: Exception) {}
+        }
+        return out
+    }
+
+    private let taskDefs = ArrayList<TaskDefinition>()
+    private let fireRecords = ArrayList<FireRecord>()
+
+    private func taskIndexOf(id: String): Int64 {
+        var i: Int64 = 0
+        while (i < Int64(taskDefs.size)) {
+            if (taskDefs[i].id == id) { return i }
+            i += 1
+        }
+        return Int64(-1)
+    }
+
+    private func ensureTaskActive(id: String): Unit {
+        let i = taskIndexOf(id)
+        if (i >= 0) {
+            taskDefs[i].active = true
+        } else {
+            taskDefs.add(TaskDefinition(id, "", "", false, 0))
+        }
+    }
+}
+
+// 任务定义：持久化到 schedule/task 事件
+public class TaskDefinition {
+    public let id: String
+    public let cron: String
+    public let prompt: String
+    public let oneShot: Bool
+    public let maxAgeSec: Int64
+    public let workspaceDir: String
+    public let sessionLogPath: String
+    public let modelConfig: String
+    public var active: Bool
+    public var revision: Int64
+    init(id: String, cron: String, prompt: String, oneShot: Bool, maxAgeSec: Int64) {
+        this.id = id
+        this.cron = cron
+        this.prompt = prompt
+        this.oneShot = oneShot
+        this.maxAgeSec = maxAgeSec
+        this.workspaceDir = ""
+        this.sessionLogPath = ""
+        this.modelConfig = ""
+        this.active = true
+        this.revision = 0
+    }
+}
+
+// 火次记录：fire::<fireId>::<taskId>::<at>
+public class FireRecord {
+    public let fireId: String
+    public let taskId: String
+    public let firedAt: Int64
+    public var status: String
+    public var detail: String
+    init(fireId: String, taskId: String, firedAt: Int64, status: String, detail: String) {
+        this.fireId = fireId
+        this.taskId = taskId
+        this.firedAt = firedAt
+        this.status = status
+        this.detail = detail
+    }
 }
 
 class SplitOnceResult {

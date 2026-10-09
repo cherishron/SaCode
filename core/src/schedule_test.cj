@@ -3,63 +3,84 @@ import std.collection.*
 import std.fs.*
 import std.unittest.*
 
-// 定时任务上游契约（M3）：`ctx.schedule.register(id, cronSpec)` 落 `schedule/task`
-// 事件；`pause(id)` 软删（active=false）；`fire(deliveryId, taskId)` 按任务 id
-// 匹配且只命中 active 者。本切片以 log-only `schedule/task` + `schedule/fire`
-// 事件近似；沿用 webhook 的 `active: Bool` 软删避开 ArrayList.removeAt 陷阱。
-
 @Test
-func scheduleRegisterAndFireMatchesActive() {
-    let root = "core-sched-fire"
+func scheduleTaskRegisterPersistsDefinition() {
+    let root = "core-sched-task-reg"
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
-    sc.register("nightly", "0 0 * * *")
-    sc.register("weekly", "0 0 * * 1")
-    @Expect(sc.fire("d1", "nightly"), Int64(1))
+    sc.registerTask("nightly", "0 0 * * *", "run nightly backup", false, 86400 * 7, "", "", "")
+    let tasks = sc.listTasks()
+    @Expect(tasks.size, Int64(1))
+    @Expect(tasks[0].id, "nightly")
+    @Expect(tasks[0].cron, "0 0 * * *")
+    @Expect(tasks[0].prompt, "run nightly backup")
+    @Expect(tasks[0].active, true)
     removeIfExists(root, recursive: true)
 }
 
 @Test
-func schedulePauseExcludesFromFire() {
-    let root = "core-sched-pause"
+func scheduleTaskPauseAndResume() {
+    let root = "core-sched-task-pause"
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
-    sc.register("nightly", "0 0 * * *")
-    sc.pause("nightly")
-    @Expect(sc.fire("d1", "nightly"), Int64(0))
+    sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
+    sc.pauseTask("nightly")
+    let tasks1 = sc.listTasks()
+    @Expect(tasks1[0].active, false)
+    sc.resumeTask("nightly")
+    let tasks2 = sc.listTasks()
+    @Expect(tasks2[0].active, true)
     removeIfExists(root, recursive: true)
 }
 
 @Test
-func scheduleFireUnknownTaskZeroMatches() {
-    let root = "core-sched-unknown"
+func scheduleTaskDeleteRemovesFromList() {
+    let root = "core-sched-task-del"
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
-    sc.register("nightly", "0 0 * * *")
-    @Expect(sc.fire("d1", "ghost"), Int64(0))
+    sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
+    sc.deleteTask("nightly")
+    @Expect(sc.listTasks().size, Int64(0))
     removeIfExists(root, recursive: true)
 }
 
 @Test
-func scheduleEventsAreLogOnlyAcrossReplay() {
-    let root = "core-sched-replay"
+func scheduleFireRecordsExecution() {
+    let root = "core-sched-fire-rec"
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
-    let path = "${root}/session.log"
-    let log = SessionLog(path)
+    let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
-    log.append("user/message", "开工")
-    sc.register("nightly", "0 0 * * *")
-    @Expect(log.flush(), true)
-    let fresh = SessionLog(path)
-    @Expect(fresh.load(), true)
-    @Expect(fresh.deriveMessages().size, Int64(1))
-    @Expect(ScheduleStore(fresh).countActive(), Int64(1))
+    sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
+    let fireId = sc.recordFire("nightly", 1234567890)
+    @Expect(sc.hasPendingFire("nightly"), true)
+    sc.updateFireResult(fireId, "done", "completed at 1234567890")
+    @Expect(sc.hasPendingFire("nightly"), false)
+    let hist = sc.fireHistory("nightly")
+    @Expect(hist.size, Int64(1))
+    @Expect(hist[0].status, "done")
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func scheduleDueTasksReturnsOnlyActiveWithoutPending() {
+    let root = "core-sched-due"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let sc = ScheduleStore(log)
+    sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
+    let due = sc.dueTasks(0, 0, 15, 6, 2)
+    @Expect(due.size, Int64(1))
+    @Expect(due[0], "nightly")
+    sc.recordFire("nightly", 1)
+    let due2 = sc.dueTasks(0, 0, 15, 6, 2)
+    @Expect(due2.size, Int64(0))
     removeIfExists(root, recursive: true)
 }
