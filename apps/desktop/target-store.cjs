@@ -94,6 +94,35 @@ class TargetStore {
       this.activeTargetId = next.done ? null : next.value;
     }
   }
+
+  // Trust-On-First-Use 指纹钉扎：首次连接拿到服务端证书指纹后写入；
+  // 之后每次必须一致，不一致直接拒——不给「中间人换新证书」留后门。
+  // 已钉同一个值 → 幂等返回当前 descriptor，不改动。
+  // 未钉（当前空串） → 允许钉入。已钉另一个值 → 抛 fingerprint-mismatch。
+  pinFingerprint(targetId, observedFingerprint) {
+    const t = this.targets.get(targetId);
+    if (!t) throw new TargetValidationError("target-not-found");
+    validateInstanceFingerprint(observedFingerprint);
+    if (observedFingerprint === "") throw new TargetValidationError("fingerprint-empty");
+    if (t.instanceFingerprint === "") {
+      t.instanceFingerprint = observedFingerprint;
+      return t;
+    }
+    if (t.instanceFingerprint === observedFingerprint) return t;
+    throw new TargetValidationError("fingerprint-mismatch");
+  }
+
+  // 只有显式清钉操作才能重置指纹（比如用户主动「忘记此设备并重新绑定」），
+  // 传 confirm 字符串 "rotate" 才生效，避免误调。
+  rotateFingerprint(targetId, newFingerprint, confirm) {
+    if (confirm !== "rotate") throw new TargetValidationError("rotate-requires-confirm");
+    const t = this.targets.get(targetId);
+    if (!t) throw new TargetValidationError("target-not-found");
+    validateInstanceFingerprint(newFingerprint);
+    if (newFingerprint === "") throw new TargetValidationError("fingerprint-empty");
+    t.instanceFingerprint = newFingerprint;
+    return t;
+  }
 }
 
 module.exports = { TargetStore, TargetValidationError, validateBaseUrl, validateInstanceFingerprint };

@@ -145,3 +145,60 @@ test("target store：baseUrl 空/非字符串拒 base-url-empty", () => {
   assert.throws(() => validateBaseUrl("local", 123), (e) => e.reason === "base-url-empty");
 });
 
+test("TOFU：首次连接钉入指纹（当前为空）", () => {
+  const s = new TargetStore();
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: "", credentialRef: "k" });
+  const fp = "sha256/" + "a".repeat(64);
+  const t = s.pinFingerprint("srv", fp);
+  assert.equal(t.instanceFingerprint, fp);
+});
+
+test("TOFU：钉入相同指纹幂等，不报错", () => {
+  const s = new TargetStore();
+  const fp = "sha256/" + "b".repeat(64);
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: fp, credentialRef: "k" });
+  const t = s.pinFingerprint("srv", fp);
+  assert.equal(t.instanceFingerprint, fp);
+});
+
+test("TOFU：已钉另一枚指纹必须拒，不能静默换", () => {
+  const s = new TargetStore();
+  const old = "sha256/" + "c".repeat(64);
+  const evil = "sha256/" + "d".repeat(64);
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: old, credentialRef: "k" });
+  assert.throws(() => s.pinFingerprint("srv", evil), (e) => e.reason === "fingerprint-mismatch");
+  assert.equal(s.get("srv").instanceFingerprint, old);
+});
+
+test("TOFU：pinFingerprint 空串与非法格式各自拒", () => {
+  const s = new TargetStore();
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: "", credentialRef: "k" });
+  assert.throws(() => s.pinFingerprint("srv", ""), (e) => e.reason === "fingerprint-empty");
+  assert.throws(() => s.pinFingerprint("srv", "not-a-sha"), (e) => e.reason === "fingerprint-must-be-sha256-hex");
+});
+
+test("TOFU：pinFingerprint 未知 targetId 抛 target-not-found", () => {
+  const s = new TargetStore();
+  assert.throws(() => s.pinFingerprint("nope", "sha256/" + "a".repeat(64)), (e) => e.reason === "target-not-found");
+});
+
+test("rotate：不带 confirm='rotate' 一律拒", () => {
+  const s = new TargetStore();
+  const old = "sha256/" + "e".repeat(64);
+  const neu = "sha256/" + "f".repeat(64);
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: old, credentialRef: "k" });
+  assert.throws(() => s.rotateFingerprint("srv", neu), (e) => e.reason === "rotate-requires-confirm");
+  assert.throws(() => s.rotateFingerprint("srv", neu, "yes"), (e) => e.reason === "rotate-requires-confirm");
+  assert.equal(s.get("srv").instanceFingerprint, old, "误调不得改钉");
+});
+
+test("rotate：带 confirm='rotate' 才允许覆盖已钉指纹", () => {
+  const s = new TargetStore();
+  const old = "sha256/" + "1".repeat(64);
+  const neu = "sha256/" + "2".repeat(64);
+  s.add({ targetId: "srv", displayName: "S", kind: "remote", baseUrl: "https://srv.example", instanceFingerprint: old, credentialRef: "k" });
+  const t = s.rotateFingerprint("srv", neu, "rotate");
+  assert.equal(t.instanceFingerprint, neu);
+});
+
+
