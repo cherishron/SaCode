@@ -88,6 +88,21 @@ test('每条方法 implementationAnchor 都指向 core 或 apps/*（未落地的
   }
 });
 
+// 设计 §4.2「设备列表、确认、撤销只能通过本机受保护管理入口」——
+// 移动设备面绝不能出现 device-admin 动作，即使 granted scope=management 也不能。
+// 这条是硬红线，避免有人后续给 mobile 加进 clientConsumers 开后门。
+test('device-admin 面（auth/devices/auth/revoke）只能 desktop 消费', () => {
+  const DEVICE_ADMIN = new Set(['auth/devices', 'auth/revoke']);
+  for (const row of rows) {
+    if (DEVICE_ADMIN.has(row.method)) {
+      assert.deepEqual(
+        row.clientConsumers, ['desktop'],
+        `${row.method} 只能由 desktop 消费，当前：${row.clientConsumers.join(',')}`
+      );
+    }
+  }
+});
+
 // 计划 §1「资源键只能是明确 workspaceId/sessionId，不用隐式 currentSession」——
 // 契约里若出现别的 resourceKey（deviceId/operationId/customId 之类）说明设计口径漂了。
 test('resourceKeys 值域严格 ⊂ {workspaceId, sessionId}', () => {
