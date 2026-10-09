@@ -75,3 +75,40 @@ func browserUseEventIsLogOnlyAcrossReplay() {
     @Expect(BrowserUseLedger(fresh).entries().size, Int64(1))
     removeIfExists(root, recursive: true)
 }
+
+@Test
+func testBrowserLedgerAcceptsNewVerbs(): Unit {
+    let root = "core-bu-newverbs"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let ledger = BrowserUseLedger(log)
+    ledger.perform("navigate", "https://example.com")
+    ledger.perform("click", "tab-42")
+    ledger.perform("fill", "tab-42::ref-3")
+    ledger.perform("evaluate", "tab-42")
+    ledger.perform("screenshot", "tab-42")
+    ledger.perform("snapshot", "tab-42")
+    ledger.perform("tabs.list", "chrome:Default")
+    ledger.perform("tabs.finalize", "tab-42")
+    let entries = ledger.entries()
+    @Expect(entries.size, Int64(8))
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func testBrowserLedgerRejectsUnknownVerb(): Unit {
+    let root = "core-bu-badverb"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let ledger = BrowserUseLedger(log)
+    var threw = false
+    try {
+        ledger.perform("delete-everything", "tab-42")
+    } catch (_: Exception) {
+        threw = true
+    }
+    @Expect(threw, true)
+    removeIfExists(root, recursive: true)
+}

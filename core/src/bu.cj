@@ -34,18 +34,19 @@ public class BrowserUseLedger {
     }
 
     private func allowed(verb: String): Bool {
-        if (verb == "navigate") {
-            return true
-        }
-        if (verb == "click") {
-            return true
-        }
-        if (verb == "type") {
-            return true
-        }
-        if (verb == "scroll") {
-            return true
-        }
+        if (verb == "navigate") { return true }
+        if (verb == "click") { return true }
+        if (verb == "type") { return true }
+        if (verb == "scroll") { return true }
+        if (verb == "fill") { return true }
+        if (verb == "press_key") { return true }
+        if (verb == "evaluate") { return true }
+        if (verb == "screenshot") { return true }
+        if (verb == "snapshot") { return true }
+        if (verb == "tabs.list") { return true }
+        if (verb == "tabs.get") { return true }
+        if (verb == "tabs.new") { return true }
+        if (verb == "tabs.finalize") { return true }
         return false
     }
 }
