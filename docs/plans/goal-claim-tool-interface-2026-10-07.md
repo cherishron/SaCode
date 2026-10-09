@@ -124,3 +124,16 @@ claim: () -> Bool = { => GoalClaim(log).claimedFor(revision, round) }
 - 代码：`core/src/goal_runner.cj:54`（claim 闭包接线位）
 - 代码：`core/src/goal_evidence.cj`（机械侧实现）
 - 代码：`core/src/agent.cj:137-148`（执行器注册点）
+
+
+## 7. 实施核对（2026-10-07）
+
+基线为 `35a69ca9e0f8b7b6ac51271ec76eff3515eaa820`，本次实现位于工作区，其他在途改动另存。
+
+- 当前 `ApprovalOutcome` 字段实际为 `allowed` / `why`，不修改其形状。
+- 当前 `GoalRunner.run` 的 `claim` 是调用方传入的闭包，不是文件内默认恒假。保留既有注入接口；新增同修订、同轮次 `GoalClaim` 读取，调用方传 false 也能由真实工具声明完成。
+- `completed` 只写声明，不直接调用 `GoalService.complete`；完成由 Runner 在轮结束时合并机械证据与声明，并由 Driver 再核对当前修订和 active 状态。
+- 声明只能绑定尚未结算的开放轮次。没有开放轮次返回 `goal-no-open-round`；编辑、暂停、删除使旧轮失效。`in_progress` 不改目标修订，并可撤回同轮此前的完成声明。
+- `goal/claim` 载荷包含 `goal_id`、`revision`、`round`、`status`，不进入 SurfaceEvent。落盘仍遵循 SessionLog.flush 的既有边界。
+- 模型注册表显式提供工具 schema；开轮提示给出 `goal-1` 和声明方式。`update_goal` 不计入成功工作工具数，防止声明自身生成机械证据。
+- 当前 Host / CLI 产品入口尚未调用 `GoalRunner`；本变更验证共享核心模型循环与调度闭环，不宣称桌面入口自动续跑已接通。

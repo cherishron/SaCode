@@ -17,7 +17,7 @@ test('目标编辑支持 Enter 保存、Shift+Enter 换行，IME 与长按不误
   const f=fixture();let saves=0;
   const render=f.GoalBar.setup({adapter:{describe:async()=>goal(),edit:async()=>{saves++;return goal(2);}}});
   f.mounts[0]();for(let i=0;i<12;i++)await Promise.resolve();
-  render().children[0].children.find(v=>v.children==='编辑').props.onClick();
+  render().children[0].children.find(v=>v.props?.['aria-label']==='编辑目标').props.onClick();
   const editor=render().children.find(v=>v?.type==='form').children[0].children[1];
   assert.equal(typeof editor.type,'object','目标应使用共享 InlineEditor');
   const input=editor.type.setup(editor.props,{emit:event=>editor.props['on'+event[0].toUpperCase()+event.slice(1)]?.()})();
