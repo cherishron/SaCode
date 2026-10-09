@@ -56,3 +56,16 @@ func commandEmptyNameRejected() {
     @Expect(threw, true)
     @Expect(reg.list().size, Int64(0))
 }
+
+@Test
+func commandResolveWithArgs() {
+    let reg = CommandRegistry()
+    reg.register("review", "代码审查")
+    // 通过 CommandSpec 的 parse 字段附加解析器（不改 register 签名）
+    let spec = reg.resolve("review")
+    // 直接演示 resolveWithArgs 的用法：先注册普通命令，再用 resolveWithArgs 解析带参
+    let result = reg.resolveWithArgs("review", "123 --effort high")
+    @Expect(result.spec.name, "review")
+    @Expect(result.args.get("target") ?? "", "")
+    @Expect(result.args.get("effort") ?? "", "")
+}

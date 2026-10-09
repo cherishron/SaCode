@@ -31,7 +31,15 @@ public func projectMessageRows(events: Array<SessionEvent>): ArrayList<MessagePr
     for (event in events) {
         if (event.eventType == "attachment/record") { pending = parseAttachmentRefs(event.data); continue }
         if (!isSurfaceEvent(event.eventType)) { continue }
-        let refs = if (event.eventType == "user/message") { pending } else { ArrayList<AttachmentRef>() }
+        var refs = if (event.eventType == "user/message") { pending } else { ArrayList<AttachmentRef>() }
+        // 工具结果（如桌面截图）的引用挂在 wire 里：投影要认同一份引用，
+        // UI 才拿得到「这张图属于本会话」的读取授权，而不是凭空造第二个真源。
+        if (event.eventType == "tool/result") {
+            if (let Some(wire) <- modelWireMessage(event.data)) {
+                let obj = JsonValue.fromStr(wire).asObject()
+                if (let Some(attachments) <- obj.get("attachments")) { refs = parseAttachmentRefs(attachments.toString()) }
+            }
+        }
         rows.add(MessageProjectionRow(event, refs))
         if (event.eventType == "user/message") { pending = ArrayList<AttachmentRef>() }
     }

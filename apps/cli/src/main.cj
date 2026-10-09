@@ -240,6 +240,14 @@ func runJob(args: Array<String>): Int64 {
         if (!log.load()) { throw Exception("replay-rejected") }
         let service = ExecutionService(log, owned, session)
         let desk = ApprovalDesk(log)
+        var startProposal=""
+        if(method=="execution/start") {
+            let input=JsonValue.fromStr(args[2]).asObject()
+            if(input.size()!=3||input.get("sessionId").getOrThrow().asString().getValue()!=session){throw Exception("bad-execution-arguments")}
+            let initial=service.describe(input.get("executionId").getOrThrow().asString().getValue())
+            if(input.get("revision").getOrThrow().asInt().getValue()!=initial.revision){throw Exception("revision-conflict")}
+            startProposal=initial.proposal
+        }
         if (!ExecutionApi.readOnly(method)) { service.recover() }
         // CLI 工单只在当前进程有效；authorize 必须在本进程明确应答新提案，不能复用上次运行的票号。
         var params = args[2]
@@ -259,7 +267,27 @@ func runJob(args: Array<String>): Int64 {
             if (!desk.answer(ticket, "allowed-once")) { throw Exception("not-authorized") }
             obj.put("approvalId", JsonInt(ticket)); params = obj.toString()
         }
-        println(ExecutionApi(service, desk, session).dispatch(method, params))
+        let api=ExecutionApi(service,desk,session)
+        if(method=="execution/start") {
+            let input=JsonValue.fromStr(params).asObject();let id=input.get("executionId").getOrThrow().asString().getValue()
+            let read=JsonObject();read.put("sessionId",JsonString(session));read.put("executionId",JsonString(id))
+            let visible=JsonValue.fromStr(api.dispatch("execution/describe",read.toString())).asObject()
+            if(visible.get("providerAvailable").getOrThrow().asBool().getValue()) {
+                let current=service.describe(id)
+                if(current.proposal!=startProposal){throw Exception("approval-mismatch")}
+                // 恢复只保留事实。新许可必须在本进程确认，并立即用于同一提案。
+                getStdErr().writeln("执行提案：${current.proposal}")
+                getStdErr().writeln("重新批准此完整提案并立即执行一次？[y/N]");getStdErr().flush()
+                if(decideAnswer(getStdIn().readln())!="allowed-once"){throw Exception("not-authorized")}
+                let ticket=desk.askForCall("execution/start",service.approvalArguments(id))
+                if(!desk.answer(ticket,"allowed-once")){throw Exception("not-authorized")}
+                let authorize=JsonObject();authorize.put("sessionId",JsonString(session));authorize.put("executionId",JsonString(id))
+                authorize.put("revision",JsonInt(current.revision));authorize.put("proposalDigest",JsonString(current.digest));authorize.put("approvalId",JsonInt(ticket))
+                let admitted=JsonValue.fromStr(api.dispatch("execution/authorize",authorize.toString())).asObject()
+                input.put("revision",admitted.get("revision").getOrThrow());params=input.toString()
+            }
+        }
+        println(api.dispatch(method, params))
         if (let Some(owned) <- lease) { owned.release() }
         return 0
     } catch (e: Exception) {
@@ -275,13 +303,26 @@ main(args: Array<String>) {
     if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
     if (hasFlag(args, "--remote")) { return runRemote(args) }
+    // 会话级 worktree 的两条入口都在 remote 之后路由：remote 只做透传，绝不落到本地。
+    if (args.size > 0 && args[0] == "worktree") { return runWorktreeCommand(args) }
+    if (cliSessionRequested(args)) { return runCliSession(args) }
+    var approvalMode = "build"
+    for (i in 0..Int64(args.size - 1)) {
+        if (args[i] == "--mode" && i + 1 < Int64(args.size)) {
+            approvalMode = args[i + 1]
+        }
+    }
     let mode = if (args.size > 0) { args[0] } else { "all" }
     if (mode == "job") { return runJob(args) }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal" && mode != "plugin") {
-        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal" && mode != "plugin" && mode != "tips") {
+        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin|tips]")
+        getStdErr().writeln("       sacode worktree <enter|describe|exit|agent-prepare|agent-finish|cleanup> [值] [--session <会话>]")
+        getStdErr().writeln("       sacode --worktree[=<名称>|#<PR编号>|<github pull URL>] [--resume <会话>] [--json] [\"提示词\"]")
         return 64
     }
+
+    if (mode == "tips") { return runTipsCommand(args) }
 
     if (mode == "projection") {
         let sl = SessionLog("session.log")
@@ -320,6 +361,8 @@ main(args: Array<String>) {
     }
 
     if (mode == "all" || mode == "stream") {
+        let modeCtrl = ModeController(log)
+        if (approvalMode != "build") { modeCtrl.set(approvalMode) }
         let asm = Assembly()
         for (ch in FakeProvider().script()) { asm.push(ch) }
         expect("流式装配拼回多字节半帧", asm.assembledText() == "你好，world")
@@ -970,6 +1013,7 @@ main(args: Array<String>) {
 
     if (mode == "tools") {
         // 交付面：清单只出自注册表这一份真源，和桌面入口看到的一样。
+        printCliStartupTip("tools", args, true)
         let reg = builtinTools()
         if (hasFlag(args, "--json")) {
             println(toolsJson(reg))
@@ -1017,6 +1061,7 @@ main(args: Array<String>) {
         let desk = ApprovalDesk(log)
         let rt = ToolRuntime(log, reg)
         var approvalId: Int64 = Int64(-1)
+        var hasAnswerer = true
         if (needsTicket(reg, toolName)) {
             approvalId = desk.ask(toolName)
             getStdErr().writeln("approval\task\t${approvalId}\t${toolName}")
@@ -1024,11 +1069,14 @@ main(args: Array<String>) {
             getStdErr().flush()
             let ans = decideAnswer(getStdIn().readln())
             if (ans == "") {
+                // 读不到应答 = 终端前没有人，提示也不该出。
+                hasAnswerer = false
                 getStdErr().writeln("approval\tno-answerer\t${approvalId}")
             } else if (!desk.answer(approvalId, ans)) {
                 getStdErr().writeln("approval\tanswer-rejected\t${approvalId}")
             }
         }
+        printCliStartupTip("call", args, hasAnswerer)
         let out = rt.executeWithApproval(toolName, toolArgs, approvalId, true, desk)
         let stage = rt.lastDetail.stage
         var code: Int64 = callExitCode(out.allowed, stage)

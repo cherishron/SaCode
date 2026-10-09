@@ -72,6 +72,11 @@ public class ModelToolCalls {
     }
 }
 
-public func modelToolResultData(id: String, content: String): String {
-    return modelWireData("{\"role\":\"tool\",\"tool_call_id\":\"${jsonEscapeText(id)}\",\"content\":\"${jsonEscapeText(content)}\"}")
+// refs 只随日志内部字段落盘，不进 provider 的工具消息 schema：截图字节归附件仓，
+// 工具结果本体仍是字符串，重放时由请求侧按引用重新物化。
+public func modelToolResultData(id: String, content: String, refs!: ArrayList<AttachmentRef> = ArrayList()): String {
+    let attachments = JsonArray()
+    for (ref in refs) { attachments.add(ref.toJsonObject()) }
+    let extra = if (refs.size > 0) { ",\"attachments\":${attachments.toString()}" } else { "" }
+    return modelWireData("{\"role\":\"tool\",\"tool_call_id\":\"${jsonEscapeText(id)}\",\"content\":\"${jsonEscapeText(content)}\"${extra}}")
 }

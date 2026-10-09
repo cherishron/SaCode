@@ -11,6 +11,9 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
     // 会话日志里始终只有引用与元数据，base64 不进真源（上游 attachment.en.md L5 与
     // L149-166 的 RequestImageAttachment 就是这么切的）。
     var pendingRefs = ArrayList<AttachmentRef>()
+    // 工具结果带回来的图片引用要等同一 assistant 的全部调用都结算完，才能折成紧随其后的
+    // 多模态 user：在 pending 非空时插 user，provider 会看到「工具没回完就来了新用户消息」。
+    var toolRefs = ArrayList<AttachmentRef>()
     for (event in events) {
         if (event.eventType == "attachment/record") {
             pendingRefs = parseAttachmentRefs(event.data)
@@ -53,10 +56,28 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
                         if (pending[index] == id) { pending.remove(at: index); found = true; break }
                     }
                     if (!found) { throw Exception("orphan-model-tool-result") }
+                    // 工具结果里的图片只认引用与媒体类型：日志存引用，字节留附件仓。
+                    if (let Some(refs) <- obj.get("attachments")) {
+                        for (ref in parseAttachmentRefs(refs.toString())) {
+                            if (ref.kind != "image" || !supportedMedia(ref.mediaType)) { throw Exception("bad-computer-image-ref") }
+                            toolRefs.add(ref)
+                        }
+                    }
                 }
                 obj.get("content").getOrThrow().asString()
                 if (messages.size > 0) { messages += "," }
-                messages += wire
+                // attachments 是日志内部字段，不属于 provider 的工具消息 schema。
+                let providerMessage = JsonObject()
+                for ((key, value) in obj.getFields()) {
+                    if (key != "attachments") { providerMessage.put(key, value) }
+                }
+                messages += providerMessage.toString()
+                // 同一 assistant 的工具结果全部结算完，才把截图折成紧随其后的 user 多模态消息；
+                // 半途插 user 会让「工具调用未结算」的守卫失效，模型也会看到错序的历史。
+                if (pending.size == 0 && toolRefs.size > 0) {
+                    messages += "," + userMessageWithRefs("工具返回的截图", toolRefs, attachStore, supportsImages)
+                    toolRefs = ArrayList<AttachmentRef>()
+                }
                 continue
             }
         }

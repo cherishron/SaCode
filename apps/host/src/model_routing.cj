@@ -130,10 +130,9 @@ class AccountedModelProvider <: Provider & Resource {
                 assembly.push(c)
                 if (!settled && !assembly.interrupted && inner.doneReceived && !token.cancelled()) {
                     let now = routingEpoch()
-                    // SSE 当前只有合计 token；不能伪造四档用量或零费用。
                     // 流已成功结束；账本拒收时保留 dispatched/预留，不转写成传输失败。
                     settled = true
-                    let accounting = UsageLedger.forUser().settle(AttemptAccounting(plan.attemptId, LedgerUsage.absent(), plan.rateCard(),
+                    let accounting = UsageLedger.forUser().settle(AttemptAccounting(plan.attemptId, inner.reportedUsage, plan.rateCard(),
                         logicalRequestId: logicalId, customModelId: plan.customModelId,
                         providerId: plan.providerId, modelId: plan.modelId, session: sessionId,
                         resultClass: "done", startedEpoch: started, endedEpoch: now))

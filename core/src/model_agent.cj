@@ -61,6 +61,7 @@ public class ModelAgentLoop {
                 for (call in calls) {
                     log.append("tool/call", call.wireJson())
                     var result = ""
+                    var computerRefs = ArrayList<AttachmentRef>()
                     if (token.cancelled()) { result = "{\"error\":\"cancelled\"}" }
                     else {
                         try {
@@ -70,7 +71,16 @@ public class ModelAgentLoop {
                             if (call.name == "todo_write" && outcome.allowed) { sink.offer("projection:todos") }
                         } catch (e: Exception) { result = "{\"error\":\"${jsonEscapeText(e.message)}\"}" }
                     }
-                    log.append("tool/result", modelToolResultData(call.id, result))
+                    // 截图只在「落附件仓 + 关联 tool/result 落盘」这一步离开内存：
+                    // 对象写失败或日志不耐久，就整条结果失败，不能留一张模型看得见、
+                    // 下一轮取不回的图片。
+                    if (call.name.startsWith("computer.")) {
+                        let materialized = materializeComputerResult(result, attach)
+                        result = materialized.text
+                        computerRefs = materialized.refs
+                    }
+                    log.append("tool/result", modelToolResultData(call.id, result, refs: computerRefs))
+                    if (computerRefs.size > 0 && !log.flush()) { throw Exception("computer-image-log-flush-failed") }
                     settled += 1
                 }
                 if (token.cancelled()) { break }

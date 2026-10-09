@@ -41,6 +41,12 @@ func okFrame(id: String, result: String): String {
     return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"result\":${result}}"
 }
 
+// 带 data 的错误帧：LSP 的失败必须带着「为什么失败 + 非语义回退线索」回来，
+// 只有一句 message 的话，界面与模型都答不出这是没插件还是插件不支持。
+func errFrameData(id: String, code: Int64, message: String, data: String): String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"error\":{\"code\":${code},\"message\":\"${jsonEscapeText(message)}\",\"data\":${data}}}"
+}
+
 func bytesOf(s: String): Array<Byte> {
     return s.toArray()
 }
@@ -271,7 +277,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read"
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read" || method == "worktree/describe" || isTipsMethod(method)
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -283,12 +289,39 @@ func allowedDuringTurn(method: String): Bool {
     // 增强与轮次各走各的车道：turn 在跑时也要能润色下一条草稿，
     // 反过来增强在途时桌面的取消必须答得上来——否则「支持取消」只是一句空话。
     let enhanceSide = method == "prompt/enhance" || method == "prompt/poll" || method == "prompt/cancel"
-    return turnSide || readSide || callSide || approvalSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method)
+    return turnSide || readSide || callSide || approvalSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method) || ExecutionApi.readOnly(method) || method == "execution/stop"
 }
 
 // 队列读写都是「按动作命名」的有限方法：界面说不出任意一条路径，也拿不到通用转发。
 func isQueueMethod(method: String): Bool {
     return method == "queue/describe" || method == "queue/enqueue" || method == "queue/update"
+}
+
+// LSP 协议面同样只有 7 条固定 method。分派条件写成字面量链（与 isQueueMethod 同形）：
+// 本仓的门禁是按 `method == "字面量"` 取分派集的，拼出来的方法名它收不到，
+// 而「分派了却没声明 / 声明了却没分派」正是这张协议面最不能出的漂移。
+// verb 名仍由核心契约那张表映射回来，宿主不另抄一份 verb→handler 表。
+func isLspMethod(method: String): Bool {
+    return method == "lsp/define" || method == "lsp/lookup" || method == "lsp/references" ||
+        method == "lsp/implementation" || method == "lsp/call-hierarchy" ||
+        method == "lsp/diagnostics" || method == "lsp/rename"
+}
+
+func lspVerbOfMethod(name: String): String {
+    for (verb in lspVerbNames()) {
+        if (name == lspMethodName(verb)) { return verb }
+    }
+    return ""
+}
+
+// params 整段的 JSON 文本：交给核心的 lspParseParams 逐字段校验。
+// 宿主不自己数键——键集是 verb 的函数，写死在这里就等于协议面比声明面宽。
+func paramsTextOf(body: String): String {
+    try {
+        let request = JsonValue.fromStr(body).asObject()
+        if (let Some(p) <- request.get("params")) { return p.asObject().toString() }
+    } catch (_: Exception) {}
+    return ""
 }
 
 // 条目与附件均来自核心日志投影；只交引用元数据，不交本地路径或上传字节。
@@ -739,6 +772,14 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
 
 main(args: Array<String>) {
     let catalog = SessionCatalog(".")
+    let teamRuntime = HostTeamRuntime(".", catalog)
+    let teamSchedulerToken = TurnToken()
+    let teamScheduler = spawn { =>
+        while (!teamSchedulerToken.cancelled()) {
+            try { teamRuntime.poll() } catch (e: Exception) { getStdErr().writeln("team-poll-failed:${e.message}") }
+            sleep(50 * Duration.millisecond)
+        }
+    }
     var activeId = "current"
     var startupFault = false
     var p = catalog.indexPath()
@@ -764,9 +805,15 @@ main(args: Array<String>) {
     // 读侧工具与写侧共用同一条管线；它不改盘，所以默认不要审批，
     // 但它会留下版本标记，随后同一路径的 write 要按这份标记判是否已被第三方改过。
     extReg.register(ToolSpec("read", "读文件并记录版本标记", "path", false))
-    var extRt = ToolRuntime(shared, extReg)
+    // 手工工具运行态的工作目录取会话有效目录：会话日志里已有绑定事件时它本就跟着日志走，
+    // 这一份只兜「该会话从未绑过目录」的落点——留空串会退回进程当前目录，而宿主进程 cwd
+    // 是调用方给的工作状态目录，不是项目目录。
+    var extRt = ToolRuntime(shared, extReg, workingDirectory: sessionWorkingDirectory(shared))
     // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
     var approvalDesk = ApprovalDesk(shared)
+    var executionService: Option<ExecutionService> = None
+    let executionRuns = ArrayList<ExecutionRun>()
+    var executionSettled = true
     // token 计量与预算：账只认会话日志重算出来的那份，内存计数不是第二真源，
     // 所以每次接手日志都要 rebuild，崩溃重启后不会因为「失忆」而放行。
     var meter = TokenMeter(shared)
@@ -778,6 +825,8 @@ main(args: Array<String>) {
     // 桌面 stop 才有落点。日志侧的并发由 core 的 SessionLog 锁兜住，所以这里只把
     // 「会动日志的写」串行化，读侧（投影/订阅）在 turn 在途期间照常应答。
     var turnHandle: Option<TurnHandle> = None
+    var turnComputer: ?ComputerRuntime = None
+    var turnGoal: Option<HostGoalRun> = None
     var turnBusy = false
     var turnSink = ThreadSafeDeliveryQueue(64)
     // 工具调用改成「立刻回执 + 独立线程收帧」：主循环因此能在转调期间继续读 stdin，
@@ -830,6 +879,36 @@ main(args: Array<String>) {
         }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        try {
+        if (executionRuns.size > 0) {
+            let run = executionRuns[0]
+            if (run.settled()) {
+                try { let result = run.wait(); executionSettled = result.exitObserved && result.outputComplete }
+                catch (e: Exception) { executionSettled = false; getStdErr().writeln("execution-settlement-failed: ${e.message}") }
+                executionRuns.clear()
+            }
+        }
+        // 活动执行只开放只读查询与精确停止；不能切换日志或并行开启其他副作用。
+        if (executionRuns.size > 0 || !executionSettled) {
+            let safe = method == "initialize" || ExecutionApi.readOnly(method) || method == "execution/stop" ||
+                method == "session/projection" || method == "session/subscribe" || method == "session/catalog" ||
+                method == "workspace/get" || method == "appearance/get" || method == "usage/status" ||
+                method == "goal/describe" || method == "model/get" || method == "model/registry/describe" ||
+                method == "global/appearance/get"
+            if (!safe) { emit(errFrame(idText, -32026, "execution-in-flight-or-unsettled")); continue }
+        }
+        if (shared.isDurableFrozen() && method == "execution/stop") {
+            if (executionRuns.size > 0) {
+            let run = executionRuns[0]
+                if (jsonStr(body, "sessionId") == activeId && jsonStr(body, "executionId") == run.starting.id) {
+                    try { run.cancel() } catch (_: Exception) {}
+                }
+            }
+        }
+        if (shared.isDurableFrozen() && method != "initialize" && method != "turn/poll" && method != "turn/cancel") {
+            emit(errFrame(idText, -32026, "session-durable-frozen"))
+            continue
+        }
         if (method == "model/get" || method == "model/configure" || method == "model/use-key") {
             if (turnBusy && method != "model/get") { emit(errFrame(idText, -32001, "turn-in-flight")); continue }
             try {
@@ -892,6 +971,10 @@ main(args: Array<String>) {
             }
             continue
         }
+        if (isTipsMethod(method)) {
+            tipsSurfaceRequest(method, body, idText, shared)
+            continue
+        }
         if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {
             emit(errFrame(idText, -32003, "workspace-failed-restart-required")); continue
         }
@@ -905,12 +988,65 @@ main(args: Array<String>) {
         }
         // turn 在途期间只拦「会动日志的写」：读侧走 core 的守护访问器，工具调用的
         // 发起/收帧/取消必须放得进来，否则取消永远追不上在途调用。
+        if (method == "team/approval/answer") {
+            try {
+                let params = JsonValue.fromStr(paramsTextOf(body)).asObject()
+                if (params.size() != 4) { throw Exception("bad-team-approval-arguments") }
+                let result = teamRuntime.answer(jsonStr(body, "teamSessionId"), jsonStr(body, "memberId"), jsonNum(body, "approvalId"), jsonStr(body, "decision"))
+                emit(okFrame(idText, result))
+            } catch (e: Exception) { emit(errFrame(idText, -32003, e.message)) }
+            continue
+        }
+        if (HostTeamRuntime.accepts(method)) {
+            try {
+                teamRuntime.poll()
+                let result = teamRuntime.request(method, paramsTextOf(body))
+                teamRuntime.poll()
+                emit(okFrame(idText, result))
+            } catch (e: Exception) { emit(errFrame(idText, -32003, e.message)) }
+            continue
+        }
         if (turnBusy && !allowedDuringTurn(method)) {
             emit(errFrame(idText, -32001, "turn-in-flight"))
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"task/start\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"team/describe\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            continue
+        }
+        if (ExecutionApi.handles(method)) {
+            try {
+                let params = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                if (params.get("sessionId").getOrThrow().asString().getValue() != activeId) {
+                    throw Exception("execution-session-changed")
+                }
+                if (ExecutionApi.readOnly(method)) {
+                    var source = shared
+                    if (!leaseHeld) {
+                        source = SessionLog(p)
+                        if (!source.load()) { throw Exception("replay-rejected") }
+                    }
+                    let service = if (leaseHeld) { executionService ?? ExecutionService(source, lease, activeId) }
+                        else { ExecutionService(source, lease, activeId) }
+                    emit(okFrame(idText, ExecutionApi(service, approvalDesk, activeId).dispatch(method, params.toString())))
+                } else {
+                    if (!leaseHeld) {
+                        if (!lease.takeoverIfStale()) { throw Exception("already-owned") }
+                        if (!loadForWrite(shared, meter)) { lease.release(); throw Exception("replay-rejected") }
+                        leaseHeld = true
+                        executionService = None
+                    }
+                    if (executionService.isNone()) {
+                        let service = ExecutionService(shared, lease, activeId)
+                        executionService = Some(service)
+                        service.recover()
+                    }
+                    let response = ExecutionApi(executionService.getOrThrow(), approvalDesk, activeId).dispatch(method, params.toString(),
+                        asynchronous: method == "execution/start", onStarted: { run => executionRuns.add(run) })
+                    if (executionRuns.size > 0) { executionSettled = false }
+                    emit(okFrame(idText, response))
+                }
+            } catch (e: Exception) { emit(errFrame(idText, -32026, e.message)) }
             continue
         }
         if (method == "goal/describe" || isGoalControlMethod(method)) {
@@ -1098,6 +1234,21 @@ main(args: Array<String>) {
         }
         // 只回放**已落盘**事件：cursor 之后、limit 之内，more 表示还有
 
+        if (method == "session/terminal-output") {
+            try {
+                let args = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                if (args.size() != 3) { throw Exception("bad-terminal-arguments") }
+                let session = attStr(args, "sessionId")
+                let cursor = args.get("cursor").getOrThrow().asInt().getValue()
+                let limit = args.get("limit").getOrThrow().asInt().getValue()
+                if (session != activeId) { emit(errFrame(idText, -32026, "terminal-session-changed")); continue }
+                let fresh = SessionLog(p)
+                if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                let result = terminalOutputJson(fresh, cursor, limit)
+                emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(session)}\",\"page\":${result}}"))
+            } catch (_: Exception) { emit(errFrame(idText, -32602, "bad-terminal-arguments")) }
+            continue
+        }
         if (method == "session/subscribe") {
             let fresh = SessionLog(p)
             if (!fresh.load()) {
@@ -1193,6 +1344,16 @@ main(args: Array<String>) {
         // 审批的协议面：asked/decided/expired 都进同一份日志，与 session/submit 同一持久化档位
         // （租约内内存可见，退出结算时落盘）。审批工单只在有写者时写事件，读状态不需要写者。
         if (method == "approval/ask") {
+            var boundArgs: Option<String> = None
+            try {
+                let params = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                if (let Some(value) <- params.get("args")) {
+                    let exact = value.asString().getValue()
+                    if (exact.size > 262144) { throw Exception("approval-arguments-too-large") }
+                    boundArgs = Some(exact)
+                }
+            } catch (e: Exception) { emit(errFrame(idText, -32602, "bad-approval-arguments:${e.message}")); continue }
+            if (jsonStr(body, "name").size == 0) { emit(errFrame(idText, -32602, "bad-approval-tool")); continue }
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
                     emit(errFrame(idText, -32001, "already-owned"))
@@ -1209,11 +1370,10 @@ main(args: Array<String>) {
             // ttl 只允许把窗口缩短（1..桌面默认值），不接受延长：过期是 fail-closed 的方向，
             // 让调用方能拉长就等于没有过期。缺省（jsonNum 回 -1）或越界一律走默认值。
             let askedTtl = jsonNum(body, "ttl")
-            let aid = if (askedTtl >= 1 && askedTtl < approvalDesk.defaultTtl) {
-                approvalDesk.askWithTtl(toolName, askedTtl)
-            } else {
-                approvalDesk.ask(toolName)
-            }
+            let ttl = if (askedTtl >= 1 && askedTtl < approvalDesk.defaultTtl) { askedTtl } else { approvalDesk.defaultTtl }
+            let aid = if (let Some(exact) <- boundArgs) {
+                approvalDesk.askForCall(toolName, exact, ttl: ttl)
+            } else { approvalDesk.askWithTtl(toolName, ttl) }
             emit(okFrame(idText, "{\"approvalId\":${aid},\"state\":\"pending\",\"pending\":${approvalDesk.pendingCount()}}"))
             continue
         }
@@ -1536,13 +1696,15 @@ main(args: Array<String>) {
             if (baseUrl.size > 0) {
                 // 冻结再闭包：仓颉不允许捕获可变变量的 Lambda 被间接调用（同下面的 turnKey）。
                 let modelDesk = approvalDesk
+                let modelSessionId = activeId
+                let modelRequestId = idText
                 // 模型侧审批与人类调用同一条工单制度：desk 发号、一次性消费、asked/decided
                 // 都进同一份日志。发起方在 turn 线程，所以发号后先把工单通知推给调用方，
                 // 再在本线程等到决答——等待期间主循环照常读 stdin，cancel 追得上。
                 let modelApproval: (ModelToolCall) -> Int64 = { call =>
-                    let aid = modelDesk.ask(call.name)
+                    let aid = modelDesk.askForCall(call.name, call.args)
                     emit(notifyFrame("approval/asked",
-                        "{\"approvalId\":${aid},\"tool\":\"${jsonEscapeText(call.name)}\",\"source\":\"model\"}"))
+                        "{\"approvalId\":${aid},\"tool\":\"${jsonEscapeText(call.name)}\",\"source\":\"model\",\"sessionId\":\"${jsonEscapeText(modelSessionId)}\",\"turnRequestId\":\"${jsonEscapeText(modelRequestId)}\",\"argumentsJson\":\"${jsonEscapeText(call.args)}\"}"))
                     // 等到决答/过期/取消：过期由真实单调钟决定（默认 30s），
                     // 不给「永远等下去」留位置；取消则立刻放弃，票留着由人处置。
                     var spins: Int64 = 0
@@ -1554,7 +1716,24 @@ main(args: Array<String>) {
                     }
                     aid
                 }
-                modelTools = Some(ModelToolRuntime(shared, false, files: true, desk: modelDesk, approval: modelApproval))
+                // LSP 面与协议面同源：同一个共享 router、同一条 turn 取消令牌、
+                // 同一个会话身份。换一份 router 就等于「模型问的」和「桌面问的」
+                // 不是同一个插件装配表。
+                // 起轮的工作目录取「本轮开始时」的会话有效目录（含 worktree 绑定）并冻结：
+                // PTC/JS 执行器只认这个入参、不回读会话日志，缺了它就在宿主 cwd 里跑；
+                // shell 与文件工具虽然经 SessionWorkspace(log) 解析，但会话日志尚无绑定
+                // 事件时两边会各回各的落点。不传等于「模型面的 cwd 由进程 cwd 决定」。
+                try {
+                    turnComputer = ComputerRuntime.openFromEnvironment(shared)
+                } catch (e: Exception) {
+                    if (leaseHeld && shared.flush()) { leaseHeld = false; lease.release() }
+                    emit(errFrame(idText, -32015, e.message))
+                    continue
+                }
+                let computerExecutor: ?ComputerToolExecutor = if (let Some(bound) <- turnComputer) { Some(bound.executor) } else { None }
+                modelTools = Some(ModelToolRuntime(shared, false, files: true, desk: modelDesk, approval: modelApproval, computer: computerExecutor,
+                    workingDirectory: sessionWorkingDirectory(shared),
+                    team: Some(teamRuntime.tools(activeId, activeId)), lspRouter: LspRouters.sharedRouter(), lspSession: activeId, lspToken: tk))
             }
             // 系统提示必须落日志再进请求：modelRequestJson 只从会话日志重建 messages，
             // 内存里拼一条不发进日志，模型永远收不到（「Model-visible means logged」）。
@@ -1568,6 +1747,9 @@ main(args: Array<String>) {
             // 轮次边界：从队列里摘恰好一条（上游 core.md:275「one next-turn message at a turn
             // boundary」），送达本身是另一件事——它作为独立的 user/message 落进日志，
             // 队列事件不进模型可见历史，两条账互不冒充。
+            let goalStart = method == "task/start" && GoalService(shared).snapshot().phase == "active"
+            // 持续目标由 GoalRunner 每轮消费一条；宿主不能在同一轮提前再摘一条。
+            if (!goalStart) {
             let admitted = AgentInbox(shared).claimTurn()
             if (admitted.size > 0) {
                 if (admitted[0].attachments.size > 0) {
@@ -1578,6 +1760,7 @@ main(args: Array<String>) {
                 } else {
                     shared.append("user/message", admitted[0].text)
                 }
+            }
             }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
@@ -1595,23 +1778,36 @@ main(args: Array<String>) {
                     // （todo_write + read + write）。此前这里只写死 TodoTool 一个 spec，
                     // 模型看不到 read/write，调用也会被「未登记」拒。
                     let toolSpecs = modelTools.getOrThrow().specs()
-                    let reqBody = if (centered) { "" } else { modelRequestJson(model, shared.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability) }
                     // key 是 var，仓颉不允许捕获可变变量的 Lambda 被间接调用，先冻结成 let 再闭包。
                     let turnKey = key
                     let frozenTools = modelTools.getOrThrow()
                     let firstLog = shared
-                    let real = DeferredProvider({ =>
+                    let first: () -> Provider = { => DeferredProvider({ =>
                         if (centered) { routing.open(firstLog, tk, turnAtt, frozenTools) }
-                        else { RealSseProvider(baseUrl, turnKey, reqBody, tk) }
-                    }, tk)
+                        else { RealSseProvider(baseUrl, turnKey, modelRequestJson(model, firstLog.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability), tk) }
+                    }, tk) }
                     let turnLog = shared
                     let continuation: (String) -> Provider = { request =>
                         if (centered) { routing.open(turnLog, tk, turnAtt, frozenTools) }
                         else { RealSseProvider(baseUrl, turnKey, request, tk) }
                     }
-                    turnHandle = Some(ModelAgentRunner().start(real, continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: if (centered) { true } else { imageCapability }, toolRuntime: modelTools))
+                    turnGoal = None
+                    if (goalStart) {
+                        let goalRun = HostGoalRun(shared, lease, meter.budgetValue())
+                        turnHandle = Some(goalRun.start(first, continuation, model, tk, turnSink, frozenTools, turnAtt, if (centered) { true } else { imageCapability }))
+                        turnGoal = Some(goalRun)
+                    } else {
+                        turnHandle = Some(ModelAgentRunner().start(first(), continuation, model, tk, shared, turnSink, false, attach: turnAtt, supportsImages: if (centered) { true } else { imageCapability }, toolRuntime: modelTools))
+                    }
+                    if (let Some(bound) <- turnComputer) {
+                        if (let Some(handle) <- turnHandle) {
+                            spawn { => try { handle.result() } finally { bound.close() } }
+                        }
+                    }
                     providerKind = "real"
                 } catch (e: Exception) {
+                    if (let Some(bound) <- turnComputer) { bound.close() }
+                    turnComputer = None
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，
                     // 先落盘已积攒的写入再归还租约，与 over-budget 路径同一兜底。
                     if (leaseHeld) {
@@ -1628,10 +1824,11 @@ main(args: Array<String>) {
                     continue
                 }
             } else {
+                turnGoal = None
                 turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
             }
             turnBusy = true
-            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit},\"epoch\":${turnEpoch},\"provider\":\"${providerKind}\"}"))
+            emit(okFrame(idText, "{\"started\":true,\"limit\":${limit},\"epoch\":${turnEpoch},\"provider\":\"${providerKind}\",\"goal\":${turnGoal.isSome()}}"))
             continue
         }
         if (method == "turn/cancel") {
@@ -1684,20 +1881,34 @@ main(args: Array<String>) {
                 } else {
                     // 线程已收束：join 之后才有终态可报，也才允许主线程动日志
                     let r = h.result()
+                    if (shared.isDurableFrozen()) {
+                        turnHandle = None; turnBusy = false; turnGoal = None
+                        emit(errFrameData(idText, -32026, "session-durable-frozen", "{\"finishReason\":\"${jsonEscapeText(r.finishReason)}\",\"leaseRetained\":true}"))
+                        continue
+                    }
                     runningText = "false"
                     settledText = "true"
                     let cFlag = if (r.cancelled) { "true" } else { "false" }
                     let iFlag = if (r.interrupted) { "true" } else { "false" }
-                    let verdict = meter.settleTurn(r)
+                    let goalSettled = turnGoal.isSome()
+                    if (goalSettled) { meter.rebuild() }
+                    let verdict = if (goalSettled) { meter.verdict() } else { meter.settleTurn(r) }
+                    // 占用分子只能在结算这一刻取：本轮正文已进日志投影，
+                    // 下一次用户输入一进采样即作废，不会把上一轮的数当成本轮的占用。
+                    recordTurnContextOccupancy(shared, r.usage)
                     let oFlag = if (meter.over()) { "true" } else { "false" }
                     tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${jsonEscapeText(r.text)}\",\"finishReason\":\"${jsonEscapeText(r.finishReason)}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag}"
                     turnHandle = None
+                    if (let Some(bound) <- turnComputer) { bound.close() }
+                    turnComputer = None
                     turnBusy = false
+                    turnGoal = None
                     if (leaseHeld) {
-                        if (shared.flush()) {
+                        if (if (goalSettled) { GoalCheckpoint(shared, lease).checkpoint() } else { shared.flush() }) {
                             leaseHeld = false
                             lease.release()
                         } else {
+                            if (goalSettled) { throw Exception("goal-settle-checkpoint-failed") }
                             getStdErr().writeln("turn-settle-flush-failed: lease retained")
                         }
                     }
@@ -1815,6 +2026,27 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"cancelRequested\":${requested},\"wasRunning\":${wasRunning}}"))
             continue
         }
+        if (method == "workspace/git-status" || method == "workspace/git-diff") {
+            try {
+                let args = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+                let expectedCount = if (method == "workspace/git-status") { 2 } else { 4 }
+                if (args.size() != expectedCount) { throw Exception("bad-git-arguments") }
+                let session = attStr(args, "sessionId")
+                let expectedDirectory = attStr(args, "directory")
+                if (session != activeId) { emit(errFrame(idText, -32026, "git-session-changed")); continue }
+                let target = SessionLog(p)
+                if (!target.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                let directory = SessionWorkspace(target).directory()
+                if (directory.size == 0 || directory != expectedDirectory) { emit(errFrame(idText, -32026, "git-workspace-changed")); continue }
+                let kind = if (method == "workspace/git-status") { "status" } else { "diff" }
+                let path = if (kind == "diff") { attStr(args, "path") } else { "" }
+                let scope = if (kind == "diff") { attStr(args, "scope") } else { "" }
+                let result = queryWorkspaceGit(directory, kind, path, scope)
+                let limited = if (result.truncated) { "true" } else { "false" }
+                emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(activeId)}\",\"directory\":\"${jsonEscapeText(directory)}\",\"path\":\"${jsonEscapeText(path)}\",\"scope\":\"${jsonEscapeText(scope)}\",\"output\":\"${jsonEscapeText(result.output)}\",\"diagnostic\":\"${jsonEscapeText(result.diagnostic)}\",\"exitCode\":${result.exitCode},\"truncated\":${limited},\"failure\":\"${result.failure}\"}"))
+            } catch (_: Exception) { emit(errFrame(idText, -32602, "bad-git-arguments")) }
+            continue
+        }
         if (method == "workspace/get") {
             var target = shared
             if (!leaseHeld || workspaceFault) {
@@ -1825,7 +2057,7 @@ main(args: Array<String>) {
             let workspace = SessionWorkspace(target, fallback: canonicalize(".").toString())
             let configured = if (workspace.directory().size > 0) { "true" } else { "false" }
             let available = if (workspace.available()) { "true" } else { "false" }
-            emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(workspace.effectiveDirectory())}\",\"configured\":${configured},\"available\":${available},\"scope\":\"session\"}"))
+            emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(activeId)}\",\"revision\":${workspace.revision()},\"directory\":\"${jsonEscapeText(workspace.effectiveDirectory())}\",\"configured\":${configured},\"available\":${available},\"scope\":\"session\"}"))
             continue
         }
         if (method == "workspace/files") {
@@ -1899,10 +2131,19 @@ main(args: Array<String>) {
             } catch (e: Exception) {
                 emit(errFrame(idText, -32602, "bad-workspace-directory")); continue
             }
+            var setDirFreshLease = false
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) { emit(errFrame(idText, -32001, "already-owned")); continue }
                 if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); continue }
                 leaseHeld = true
+                setDirFreshLease = true
+            }
+            // 活动 worktree 期间拒另绑目录：绑定与实际目录只能有一个真源。
+            // 必须回读日志再判——刚接手租约时内存态才是盘上那份，未接手时读到的是
+            // 上一轮的状态，两条路都放行就等于允许「界面以为在主检出、实际在工作树」。
+            if (worktreeBound(shared)) {
+                if (setDirFreshLease) { lease.release(); leaseHeld = false }
+                emit(errFrame(idText, -32001, "worktree-active-set-directory-refused")); continue
             }
             var changed = false
             try { changed = SessionWorkspace(shared).setDirectory(wanted) } catch (e: Exception) {
@@ -1910,9 +2151,54 @@ main(args: Array<String>) {
             }
             if (!shared.flush()) { workspaceFault = true; emit(errFrame(idText, -32003, "workspace-flush-failed")); continue }
             lease.release(); leaseHeld = false
-            extRt = ToolRuntime(shared, extReg)
+            extRt = ToolRuntime(shared, extReg, workingDirectory: sessionWorkingDirectory(shared))
             let flag = if (changed) { "true" } else { "false" }
             emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(SessionWorkspace(shared).directory())}\",\"configured\":true,\"available\":true,\"saved\":true,\"changed\":${flag}}"))
+            continue
+        }
+        // 会话级 worktree 的六条产品方法：入口只有这一处，Git 调用与磁盘副作用全在共享核心。
+        // describe 是读面（与 workspace/get 同一档：不持租约时现读盘上那份）；其余五条与
+        // workspace/set-directory 同一条写流程——资源门 → 接手租约 → 重载 → 核心调用 →
+        // flush → 重建手工工具运行态，让工作面立刻跟着新目录。
+        if (isWorktreeMethod(method)) {
+            if (isWorktreeWriteMethod(method) && (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive)) {
+                emit(errFrame(idText, -32001, "session-resources-in-flight")); continue
+            }
+            var worktreeTarget = shared
+            var worktreeFreshLease = false
+            if (isWorktreeWriteMethod(method)) {
+                if (!leaseHeld) {
+                    if (!lease.takeoverIfStale()) { emit(errFrame(idText, -32001, "already-owned")); continue }
+                    if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                    leaseHeld = true
+                    worktreeFreshLease = true
+                }
+            } else if (!leaseHeld) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                worktreeTarget = fresh
+            }
+            let reply = worktreeRequest(method, body, worktreeTarget)
+            if (!reply.ok) {
+                // 失败的那次核心调用可能已经往内存里追加过一半事件（先记绑定、再去建目录）。
+                // 不回读盘上那份，下一次成功的写会把半份绑定一起 flush 出去——绑定与实际目录
+                // 就此永久分叉。租约是本轮接的才归还；本来就在手的保持在手（与既有写面一致）。
+                if (worktreeFreshLease) {
+                    if (!worktreeTarget.load()) { workspaceFault = true; getStdErr().writeln("worktree-rollback-replay-rejected") }
+                    meter.rebuild()
+                    lease.release()
+                    leaseHeld = false
+                }
+                emit(errFrame(idText, reply.code, reply.text))
+                continue
+            }
+            if (isWorktreeWriteMethod(method)) {
+                if (!shared.flush()) { workspaceFault = true; emit(errFrame(idText, -32003, "worktree-flush-failed")); continue }
+                lease.release()
+                leaseHeld = false
+                extRt = ToolRuntime(shared, extReg, workingDirectory: sessionWorkingDirectory(shared))
+            }
+            emit(okFrame(idText, reply.text))
             continue
         }
         if (method == "session/create") {
@@ -1974,8 +2260,11 @@ main(args: Array<String>) {
             p = targetPath
             shared = if (p == catalog.indexPath()) { index } else { target }
             lease = WriteLease(p)
-            extRt = ToolRuntime(shared, extReg)
+            // 手工工具运行态跟着新会话的工作目录重建：日志里的绑定就是它的相对路径基准，
+            // 不重建就会拿上一份会话的目录当基准，把文件写进别的项目里。
+            extRt = ToolRuntime(shared, extReg, workingDirectory: sessionWorkingDirectory(shared))
             approvalDesk = ApprovalDesk(shared)
+            executionService = None
             meter = TokenMeter(shared)
             meter.rebuild()
             turnHandle = None
@@ -2048,6 +2337,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "usage/status") {
+            if (turnGoal.isSome()) { meter.rebuild() }
             // 读数只能由计量器给出，而计量器的账来自日志：界面没有「自己算一份」的通路。
             // 没持有租约时 shared 是空的，必须先按盘上内容重算，否则刚重启的进程会报 0。
             var mv = meter
@@ -2064,6 +2354,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "usage/set-budget") {
+            if (turnGoal.isSome()) { meter.rebuild() }
             // 预算只能收紧：调大、持平、缺参数（jsonNum 回 -1）一律 applied=false，
             // 且不改当前档位——能被界面自己抬高的防额不是防额。
             if (!leaseHeld) {
@@ -2215,8 +2506,49 @@ main(args: Array<String>) {
             }
             continue
         }
+        if (isLspMethod(method)) {
+            // L1：7 个 verb 共用与模型工具面同一个 router。没有语言插件时如实失败，
+            // 并把 lspSymbols 的文本线索作为「非语义结果」附在 error.data 上——
+            // 空结果会被读成「这个符号没有定义」，那是谎言，不发。
+            let verb = lspVerbOfMethod(method)
+            var target = shared
+            if (!leaseHeld || workspaceFault) {
+                let fresh = SessionLog(p)
+                if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+                target = fresh
+            }
+            let workspace = SessionWorkspace(target, fallback: canonicalize(".").toString())
+            let params = lspParseParams(paramsTextOf(body), verb)
+            if (!params.ok) {
+                emit(errFrameData(idText, -32602, "bad-lsp-params",
+                    "{\"reason\":\"${jsonEscapeText(lspReasonBadArgs())}\",\"verb\":\"${jsonEscapeText(verb)}\"}"))
+                continue
+            }
+            // 请求身份就是这条 JSON-RPC 的 id；会话身份绑当前活动会话，
+            // 迟到的应答不会打到切换后的另一会话。
+            let req = lspBuildRequest(activeId, idText, verb, params, workspace.effectiveDirectory(), TurnToken())
+            let resp = LspRouters.sharedRouter().route(req)
+            if (resp.ok) {
+                emit(okFrame(idText, lspResponseJson(resp)))
+            } else {
+                emit(errFrameData(idText, -32030, resp.reason, lspResponseJson(resp)))
+            }
+            continue
+        }
         emit(errFrame(idText, -32601, "method not found"))
+        } catch (e: Exception) {
+            emit(errFrame(idText, if (shared.isDurableFrozen()) { Int64(-32026) } else { Int64(-32099) }, e.message))
+        }
     }
+    // stdin EOF 不释放活任务租约；先停止当前进程拥有的执行，再确认退出事实。
+    if (executionRuns.size > 0) {
+            let run = executionRuns[0]
+        try { run.cancel() } catch (e: Exception) { getStdErr().writeln("host-exit-execution-stop: ${e.message}") }
+        try { let result = run.wait(timeoutMs: 5000); executionSettled = result.exitObserved && result.outputComplete }
+        catch (e: Exception) { executionSettled = false; getStdErr().writeln("host-exit-execution-unsettled: ${e.message}; lease retained") }
+    }
+    teamSchedulerToken.cancel()
+    if (!teamRuntime.shutdown(timeoutMs: 1000)) { getStdErr().writeln("host-exit-team-unsettled: leases retained") }
     for (charge in enhanceCharges) {
         charge.handle.cancel(); charge.handle.result()
         if (!charge.settle()) { getStdErr().writeln("host-exit-enhance-usage: ${charge.verdict}") }
@@ -2227,13 +2559,15 @@ main(args: Array<String>) {
     if (let Some(h) <- turnHandle) {
         h.cancel()
         let r = h.result()
-        let verdict = meter.settleTurn(r)
+        let verdict = if (shared.isDurableFrozen()) { "durable-frozen" } else if (turnGoal.isSome()) { meter.rebuild(); meter.verdict() } else { meter.settleTurn(r) }
         getStdErr().writeln("host-exit-usage: verdict=${verdict} used=${meter.used()}")
         getStdErr().writeln("host-exit-settled-turn: cancelled=${r.cancelled} delivered=${r.delivered}")
         turnHandle = None
         turnBusy = false
         turnSettled = true
     }
+    if (let Some(bound) <- turnComputer) { bound.close() }
+    turnComputer = None
     // 退出前必须主动结算在途工具调用：先按 callId 取消（子进程立刻回一帧 cancelled），
     // 再收束收帧线程，最后才关子进程。少了第一步，这些调用的终态只能靠子进程自己
     // shutdown 时的兜底结算，会混成 host-exiting(-32002)，分不出「本端取消的」和「宿主没了」。
@@ -2261,13 +2595,14 @@ main(args: Array<String>) {
     }
     let jf = if (jsForced) { "true" } else { "false" }
     let ts = if (turnSettled) { "true" } else { "false" }
+    let es = if (executionSettled) { "true" } else { "false" }
     // 无 id 的通知帧：调用方（Electron 主进程 / 测试）在退出前拿到一份结算账，
     // 事后能区分「在途调用被收束」和「进程直接没了」。
-    emit("{\"jsonrpc\":\"2.0\",\"method\":\"host/settled\",\"params\":{\"extensionCalls\":${extCalls},\"extensionFrames\":${extFrames},\"extensionCancelled\":${extCancelled},\"jsChildForced\":${jf},\"turnSettled\":${ts}}}")
+    emit("{\"jsonrpc\":\"2.0\",\"method\":\"host/settled\",\"params\":{\"extensionCalls\":${extCalls},\"extensionFrames\":${extFrames},\"extensionCancelled\":${extCancelled},\"jsChildForced\":${jf},\"turnSettled\":${ts},\"executionSettled\":${es}}}")
     // 干净退出前结算未 flush 的写入：落盘成功才归还租约；失败则保留租约并报警，
     // 绝不在内存态丢失后假装写提交过（fail-closed）。
     if (leaseHeld) {
-        if (shared.flush()) {
+        if (executionSettled && (if (turnGoal.isSome()) { GoalCheckpoint(shared, lease).checkpoint() } else { shared.flush() })) {
             lease.release()
         } else {
             getStdErr().writeln("host-exit-with-unflushed-writes: lease retained")

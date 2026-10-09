@@ -1310,10 +1310,10 @@ public class UsageLedger {
             }
             pending += "\"${jsonEscapeText(r[0])}\""
         }
-        return "{\"scopeKey\":\"${jsonEscapeText(scopeKey())}\","
-            + "\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}],"
-            + "\"usageKinds\":[${kinds}],\"providers\":[${providers}],"
-            + "\"unsettled\":[${unsettled}],\"pending\":[${pending}]}"
+        return "{\"scopeKey\":\"${jsonEscapeText(scopeKey())}\"," +
+            "\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}]," +
+            "\"usageKinds\":[${kinds}],\"providers\":[${providers}]," +
+            "\"unsettled\":[${unsettled}],\"pending\":[${pending}]}"
     }
 
     // 读面：损坏的账本抛错，不静默给零——把「读不出」说成「没花钱」是最坏的一种谎

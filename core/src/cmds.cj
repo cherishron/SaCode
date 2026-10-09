@@ -7,9 +7,11 @@ import std.collection.*
 public class CommandSpec {
     public let name: String
     public let help: String
-    public init(name: String, help: String) {
+    public let parse: Option<((Array<String>) -> HashMap<String, String>)>
+    public init(name: String, help: String, parse: Option<((Array<String>) -> HashMap<String, String>)> = None) {
         this.name = name
         this.help = help
+        this.parse = parse
     }
 }
 
@@ -52,5 +54,17 @@ public class CommandRegistry {
             out.add(e.spec)
         }
         return out
+    }
+
+    public func parseSimpleArgs(raw: String): Array<String> {
+        if (raw.isEmpty) { return Array<String>() }
+        return raw.split(' ').filter { it.size > 0 }
+    }
+
+    public func resolveWithArgs(name: String, rawArgs: String): {spec: CommandSpec, args: HashMap<String, String>} {
+        let spec = resolve(name)
+        let tokens = parseSimpleArgs(rawArgs)
+        let parsed = if (spec.parse != None) spec.parse!!.get()(tokens) else HashMap<String, String>()
+        return {spec: spec, args: parsed}
     }
 }

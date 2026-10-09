@@ -29,6 +29,22 @@ public func webIsPublicAddress(text: String): Bool {
     } catch (_: Exception) { return false }
 }
 
+public func webUrlEncode(text: String): String {
+    let result = ArrayList<Byte>()
+    let bytes = text.toArray()
+    for (b in bytes) {
+        if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) ||
+            b == 0x2D || b == 0x5F || b == 0x2E || b == 0x7E) {
+            result.add(b)
+        } else {
+            result.add(0x25)
+            let hex = Int64(b).toString(radix: 16).toAsciiUpper().padStart(2, padding: "0").toArray()
+            for (h in hex) { result.add(h) }
+        }
+    }
+    return String.fromUtf8(result.toArray())
+}
+
 public class WebUrlTarget {
     public let scheme: String
     public let host: String
@@ -106,4 +122,20 @@ public func webUrlAllowed(url: String): Bool {
         }
         return true
     } catch (_: Exception) { return false }
+}
+
+public func webUrlEncode(text: String): String {
+    let result = ArrayList<Byte>()
+    let bytes = text.toArray()
+    for (b in bytes) {
+        if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) ||
+            b == 0x2D || b == 0x5F || b == 0x2E || b == 0x7E) {
+            result.add(b)
+        } else {
+            result.add(0x25)
+            let hex = Int64(b).toString(radix: 16).toAsciiUpper().padStart(2, padding: "0").toArray()
+            for (h in hex) { result.add(h) }
+        }
+    }
+    return String.fromUtf8(result.toArray())
 }

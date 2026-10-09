@@ -131,7 +131,8 @@ public class ToolRuntime {
     var browserExecutor: Option<BrowserToolExecutor> = None
 
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
-        lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None) {
+        lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None,
+        worktree!: ?WorktreeTools = None, computer!: ?ComputerToolExecutor = None) {
         this.log = log
         this.registry = registry
         this.workingDirectory = workingDirectory
@@ -155,6 +156,30 @@ public class ToolRuntime {
             executors.add("web_fetch", { n, a => webStep(bound, n, a) })
             executors.add("web_search", { n, a => webStep(bound, n, a) })
         }
+        // 桌面控制：verb 从工具名尾段还原，执行器与 provider 只在入口显式开启时注入。
+        if (let Some(bound) <- computer) {
+            for (spec in computerToolSpecs()) {
+                executors.add(spec.name, { name, args => computerStep(bound, name[9..], args) })
+            }
+        }
+        // 会话 worktree 的两条工具：声明面由各入口登记，这里只接派发。
+        // 审批与 guard 仍在 pipeline 之前完成，没绑定就不登记执行器——
+        // 只声明没执行入口的名字一律归一成 unknown-tool，不会假成功。
+        if (let Some(bound) <- worktree) {
+            executors.add(worktreeEnterToolName, { n, a => worktreeStep(bound, n, a) })
+            executors.add(worktreeExitToolName, { n, a => worktreeStep(bound, n, a) })
+        }
+    }
+
+    // worktree 派发：目录、分支、三重保护与 workspace/directory 事件都在 SessionWorktree 里，
+    // 这一层只保证管线照走——参数原样交下去（不改写），结果原样落 tool/runtime/result。
+    private func worktreeStep(bound: WorktreeTools, name: String, args: String): ApprovalOutcome {
+        let outcome = bound.execute(name, args)
+        lastDetail.argsAfterPre = args
+        lastDetail.stage = if (outcome.allowed) { "ran" } else { "worktree-denied" }
+        lastDetail.verified = outcome.allowed
+        recordResult(outcome.why)
+        return outcome
     }
 
     // 团队派发仍在审批与 guard 之后；身份及参数校验由绑定实例负责。
@@ -242,6 +267,24 @@ public class ToolRuntime {
         browserExecutor = Some(exec)
     }
 
+    // 桌面工具派发：只回传真实终态。已投递动作即便随后被取消，committed/截图仍按原样保留，
+    // 这里不把「取消」改写「未执行」；完整结果走 modelProtocol 的 runtime/result，
+    // 模型可见的那条 tool/result 由轮次循环带引用另写。
+    private func computerStep(exec: ComputerToolExecutor, verb: String, args: String): ApprovalOutcome {
+        let result = exec.perform(verb, args, token: lspToken)
+        let payload = JsonObject()
+        payload.put("ok", JsonBool(result.ok))
+        payload.put("verb", JsonString(result.verb))
+        payload.put("content", JsonValue.fromStr(result.content))
+        payload.put("failureKind", JsonString(result.failureKind))
+        payload.put("message", JsonString(result.message))
+        lastDetail.argsAfterPre = args
+        lastDetail.stage = if (result.ok) { "ran" } else { "computer-${result.failureKind}" }
+        lastDetail.verified = result.ok
+        recordResult("computer.${verb}:${result.failureKind}")
+        return ApprovalOutcome(result.ok, payload.toString(), structured: true)
+    }
+
     // 模型协议由上层统一记录关联 ID；管线审计仍入同一日志，但不重复进入模型历史。
     private func recordCall(data: String): Unit {
         log.append(if (modelProtocol) { "tool/runtime/call" } else { "tool/call" }, data)
@@ -267,6 +310,21 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
+            // 桌面动作不接受自报审批：调用方说「批过了」不作数，只能凭 desk 发的精确工单走
+            // executeWithApproval()。留在这条入口上等于给绕过审批面开了一道口子。
+            if (name.startsWith("computer.")) {
+                lastDetail.stage = "approval-denied"
+                recordResult("denied:${name}:computer-exact-approval-required")
+                return ApprovalOutcome(false, "computer-exact-approval-required")
+            }
+            // 退出会话 worktree 只认 desk 发过号的工单：调用方自报「批过了」在这条路上
+            // 不作数——keep 会挪走后续所有工具的地基，remove 还要删目录，
+            // 免审批档不能替人批这两件事。
+            if (name == worktreeExitToolName) {
+                lastDetail.stage = "approval-denied"
+                recordResult("denied:${name}:worktree-exact-approval-required")
+                return ApprovalOutcome(false, "worktree-exact-approval-required")
+            }
             // fail-closed：只有 allowed-once 放行，无应答者/非法应答一律拒
             if (answer != "allowed-once") {
                 lastDetail.stage = "approval-denied"
@@ -290,7 +348,18 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
         if (registry.requiresApproval(name)) {
-            if (desk.consumeForCall(approvalId, name, args) != "allowed-once") {
+            // 桌面控制动的是真人的鼠标键盘，工单必须绑死这一次的arguments：旧式只批工具名的票
+            // 能被他挪去放行任意一次点击，这里不吃。其余工具保持原宽松语义。
+            // computer.* 与退出会话 worktree 都要「绑着原始参数」的工单：只登记工具名
+            // （desk.ask 那条旧路）的票不能放行删目录与挪地基——沿用 consumeExactForCall
+            // 这条既有语义，不另发明审批。
+            let exactApproval = name.startsWith("computer.") || name == worktreeExitToolName
+            let grant = if (exactApproval) {
+                desk.consumeExactForCall(approvalId, name, args)
+            } else {
+                desk.consumeForCall(approvalId, name, args)
+            }
+            if (grant != "allowed-once") {
                 let bound = desk.toolOf(approvalId)
                 if (bound.size > 0 && bound != name) {
                     // 票是批给别的工具的：拒绝原因必须和「没批过」分开写，
@@ -806,7 +875,11 @@ public class ToolRuntime {
         // 创建 Job 记录（PTY/Jobs 桥接）
         let label = if (code.size > 80) { code[0..80] } else { code }
         let jobId = jobStore.start("subagent", label)
-        let result = ptcExecutor.runCode(code, timeoutMs: 30000, sandboxMode: "workspace-write")
+        // 基准目录每次执行都现算：workingPath 读的是会话有效目录（会话日志里最后一条
+        // workspace/directory），不是构造期那份常量——进入/退出 worktree 之后 node 子进程
+        // 必须跟着换地方，这一点和 read/write/glob/grep/bash 走的是同一个口径。
+        let result = ptcExecutor.runCode(code, timeoutMs: 30000, sandboxMode: "workspace-write",
+            cwd: workingPath(""))
         if (result.isSome()) {
             if (let Some(r) <- result) {
                 lastDetail.stage = "ran"
