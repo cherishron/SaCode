@@ -326,6 +326,13 @@ ipcMain.handle("sacode:approvalAnswer", async (_e, args) => {
   return withHost(() => bridge.request("approval/answer", { approvalId: args.approvalId, decision: args.decision }));
 });
 
+	ipcMain.handle("sacode:approvalSetMode", async (_e, args) => {
+	  if (!args || !isStr(args.mode) || !["plan","build","auto","yolo"].includes(args.mode)) throw Error("bad-approval-mode");
+	  return withHost(() => bridge.request("approval/set-mode", { mode: args.mode }));
+	});
+	ipcMain.handle("sacode:approvalGetMode", async () => withHost(() => bridge.request("approval/get-mode")));
+
+
 ipcMain.handle("sacode:turnStart", async (_e, args) => {
   const limit = args ? args.limit : 0;
   if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
