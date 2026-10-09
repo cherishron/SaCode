@@ -240,4 +240,23 @@ public class ApprovalDesk {
             }
         }
     }
+
+    // Stub: askForCall / consumeExactForCall / consumeForCall / argumentsMatch
+    // 实际逻辑在未提交的 execution_*.cj 文件中
+    public func askForCall(toolName: String, args: String, ttl!: Int64): Int64 { return askWithTtl(toolName, ttl) }
+    public func consumeExactForCall(id: Int64, tool: String, args: String): String {
+        let grant = consume(id, tool)
+        return grant
+    }
+    public func consumeForCall(id: Int64, tool: String, args: String): String {
+        let grant = consume(id, tool)
+        return grant
+    }
+    public func argumentsMatch(id: Int64, args: String): Bool { return true }
+
+    // teamToolSpecs stub
+    public static func teamToolSpecs(): Array<ToolSpec> { return [] }
 }
+
+// global teamToolSpecs for agent.cj compatibility
+public func teamToolSpecs(): Array<ToolSpec> { return ApprovalDesk.teamToolSpecs() }
