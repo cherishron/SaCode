@@ -85,3 +85,95 @@ func workflowEventsAreLogOnlyAcrossReplay() {
     @Expect(WorkflowLedger(fresh).status("s1"), "done")
     removeIfExists(root, recursive: true)
 }
+
+@Test
+func workflowHookDenyBlocksStart() {
+    let root = "core-wf-hook-deny-start"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let reg = HookRegistry()
+    let denyRule = HookRule(
+        id: "deny-start",
+        event: HookEvent.WorkflowStepStart,
+        matcher: "*",
+        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        timeout: 30000,
+        asyncExecute: false
+    )
+    reg.register(denyRule)
+    let wf = WorkflowLedger(log, hookRegistry: reg)
+    let result = wf.start("s1", "解析")
+    @Expect(result.decision, HookDecision.Deny)
+    var threw = false
+    try {
+        wf.status("s1")
+    } catch (e: Exception) {
+        threw = true
+    }
+    @Expect(threw, true)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func workflowHookDenyBlocksDone() {
+    let root = "core-wf-hook-deny-done"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let reg = HookRegistry()
+    let denyRule = HookRule(
+        id: "deny-done",
+        event: HookEvent.WorkflowStepDone,
+        matcher: "*",
+        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        timeout: 30000,
+        asyncExecute: false
+    )
+    reg.register(denyRule)
+    let wf = WorkflowLedger(log, hookRegistry: reg)
+    wf.start("s1", "解析")
+    let result = wf.done("s1")
+    @Expect(result.decision, HookDecision.Deny)
+    @Expect(wf.status("s1"), "running")
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func workflowHookDenyBlocksFail() {
+    let root = "core-wf-hook-deny-fail"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let reg = HookRegistry()
+    let denyRule = HookRule(
+        id: "deny-fail",
+        event: HookEvent.WorkflowStepFail,
+        matcher: "*",
+        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        timeout: 30000,
+        asyncExecute: false
+    )
+    reg.register(denyRule)
+    let wf = WorkflowLedger(log, hookRegistry: reg)
+    wf.start("s1", "解析")
+    let result = wf.fail("s1", "boom")
+    @Expect(result.decision, HookDecision.Deny)
+    @Expect(wf.status("s1"), "running")
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func workflowDefaultHookAllowsTransitions() {
+    let root = "core-wf-hook-default"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let wf = WorkflowLedger(log)
+    let r1 = wf.start("s1", "解析")
+    @Expect(r1.decision, HookDecision.Allow)
+    let r2 = wf.done("s1")
+    @Expect(r2.decision, HookDecision.Allow)
+    @Expect(wf.status("s1"), "done")
+    removeIfExists(root, recursive: true)
+}

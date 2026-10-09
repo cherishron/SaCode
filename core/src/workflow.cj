@@ -17,9 +17,11 @@ class WfStep {
 public class WorkflowLedger {
     let log: SessionLog
     let steps = ArrayList<WfStep>()
+    let hookRegistry: HookRegistry
 
-    public init(log: SessionLog) {
+    public init(log: SessionLog, hookRegistry!: HookRegistry = HookRegistry()) {
         this.log = log
+        this.hookRegistry = hookRegistry
         for (event in log.snapshotEvents()) {
             if (event.eventType != "workflow/step") {
                 continue
@@ -48,30 +50,56 @@ public class WorkflowLedger {
         }
     }
 
-    public func start(id: String, label: String): Unit {
+    public func start(id: String, label: String): HookResult {
         if (id.size == 0) {
             throw Exception("workflow-empty-id")
         }
         if (indexOf(id) >= 0) {
             throw Exception("workflow-duplicate-id")
         }
+        let input = HookInput(
+            sessionId: "",
+            transcriptPath: "",
+            cwd: "",
+            hookEventName: "WorkflowStepStart",
+            timestamp: 0,
+            eventSpecific: HookEventData.WorkflowStep(id, label, Option.none<String>())
+        )
+        let result = hookRegistry.dispatch(HookEvent.WorkflowStepStart, input, id)
+        if (result.decision != HookDecision.Allow) {
+            return result
+        }
         log.append("workflow/step", "start::${id}::${label}")
         steps.add(WfStep(id, "running"))
+        return result
     }
 
-    public func done(id: String): Unit {
+    public func done(id: String): HookResult {
         let i = indexOf(id)
         if (i < 0) {
             throw Exception("workflow-unknown-id")
         }
         if (steps[i].statusValue != "running") {
             throw Exception("workflow-terminal")
+        }
+        let input = HookInput(
+            sessionId: "",
+            transcriptPath: "",
+            cwd: "",
+            hookEventName: "WorkflowStepDone",
+            timestamp: 0,
+            eventSpecific: HookEventData.WorkflowStep(id, "", Option.none<String>())
+        )
+        let result = hookRegistry.dispatch(HookEvent.WorkflowStepDone, input, id)
+        if (result.decision != HookDecision.Allow) {
+            return result
         }
         log.append("workflow/step", "done::${id}")
         steps[i].statusValue = "done"
+        return result
     }
 
-    public func fail(id: String, reason: String): Unit {
+    public func fail(id: String, reason: String): HookResult {
         let i = indexOf(id)
         if (i < 0) {
             throw Exception("workflow-unknown-id")
@@ -79,8 +107,21 @@ public class WorkflowLedger {
         if (steps[i].statusValue != "running") {
             throw Exception("workflow-terminal")
         }
+        let input = HookInput(
+            sessionId: "",
+            transcriptPath: "",
+            cwd: "",
+            hookEventName: "WorkflowStepFail",
+            timestamp: 0,
+            eventSpecific: HookEventData.WorkflowStep(id, "", Option.some(reason))
+        )
+        let result = hookRegistry.dispatch(HookEvent.WorkflowStepFail, input, id)
+        if (result.decision != HookDecision.Allow) {
+            return result
+        }
         log.append("workflow/step", "fail::${id}::${reason}")
         steps[i].statusValue = "failed"
+        return result
     }
 
     public func status(id: String): String {
