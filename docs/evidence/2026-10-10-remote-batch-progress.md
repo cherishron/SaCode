@@ -22,10 +22,14 @@
 | 3968691 | tls-pin.cjs 证书指纹钉扎校验（`tls.checkServerIdentity` + SHA-256 常数时间比较） | 9/9 rc=0 | 3 变异（去 mismatch / 去 host / 去 format）各杀受害 3 / 5+9 / 4 | 已入库 |
 | e73c521 | 批次进度表补 4be823d 与分栏 | 文档 | — | 已入库 |
 | 738b829 | core/remote_{identity,audit,authorization}.cj + 3 份测试入库（989 行） | cjpm build 库层 rc=0；运行验证 pending | 见「在飞未完成」节 | 已入库；测试执行未过 |
+| 0e90f6e | 批次进度表补 738b829/93b1f1f/3968691 与 cjpm 分栏 | 文档 | — | 已入库 |
+| 26f8411 | 契约加 resourceKeys 值域严格 ⊂ {workspaceId,sessionId} 棘轮 | 11/11 rc=0 | 计划 §1 直接对应；未变异，因它自己就是从「设计口径漂移」反推出来的最小硬约束 | 已入库 |
+| 9602cb6 | 契约加 device-admin 面 desktop-only 棘轮 + requiredScope 映射落盘（48 有值 / 71 null） | 12/12 rc=0 | 变异 `auth/devices` 或 `auth/revoke` 加 mobile 消费 → 新棘轮红（fail 1）；还原回绿 | 已入库 |
+| b3f4200 | remote-transport 加 token 轮换与 SSE 现取 tokenProvider 防回归 | 24/24 rc=0 | 把 tokenProvider 改成首次调用后缓存 → 23/24 双红（fail 2）；还原回绿 | 已入库 |
 
-**桌面侧总计（本轮）**：`target-store` 21、`remote-transport` 22、`remote-transport-integration` 6、
-`target-bridge` 15、`multi-target-integration` 3，共 67 条断言全绿。
-**daemon 侧**：`remote-capability-contract` 10/10 rc=0。
+**桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 24、`remote-transport-integration` 6、
+`target-bridge` 15、`multi-target-integration` 3、`tls-pin` 9，共 **85** 条断言全绿。
+**daemon 侧**：`remote-capability-contract` **12/12** rc=0。
 
 ## 在飞未完成
 
