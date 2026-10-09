@@ -100,3 +100,48 @@ test("target store：descriptor 里绝不出现凭据原文（credentialRef 是�
   // credentialRef 允许非空但不等于凭据原文；本文件只负责指针的存储，不管理原文。
   assert.equal(t.credentialRef, "keychain:srv-token-ref");
 });
+
+test("target store：spec 非对象抛 spec-not-object", () => {
+  const s = new TargetStore();
+  assert.throws(() => s.add(null), (e) => e.reason === "spec-not-object");
+  assert.throws(() => s.add("string"), (e) => e.reason === "spec-not-object");
+  assert.throws(() => s.add(undefined), (e) => e.reason === "spec-not-object");
+});
+
+test("target store：displayName 空抛 display-name-empty", () => {
+  const s = new TargetStore();
+  assert.throws(
+    () => s.add({ targetId: "x", displayName: "", kind: "local", baseUrl: "http://localhost:1", instanceFingerprint: "", credentialRef: "" }),
+    (e) => e.reason === "display-name-empty"
+  );
+});
+
+test("target store：IPv6 回环 [::1] 允许本机 http", () => {
+  const s = new TargetStore();
+  const t = s.add({ targetId: "v6", displayName: "v6", kind: "local", baseUrl: "http://[::1]:18937", instanceFingerprint: "", credentialRef: "" });
+  assert.equal(t.baseUrl, "http://[::1]:18937");
+});
+
+test("target store：非字符串 credentialRef 拒", () => {
+  const s = new TargetStore();
+  assert.throws(
+    () => s.add({ targetId: "x", displayName: "x", kind: "local", baseUrl: "http://localhost:1", instanceFingerprint: "", credentialRef: 42 }),
+    (e) => e.reason === "credential-ref-must-be-string"
+  );
+});
+
+test("target store：remove 非 active target 时 active 保持不变", () => {
+  const s = new TargetStore();
+  s.add({ targetId: "a", displayName: "A", kind: "local", baseUrl: "http://localhost:1", instanceFingerprint: "", credentialRef: "" });
+  s.add({ targetId: "b", displayName: "B", kind: "local", baseUrl: "http://localhost:2", instanceFingerprint: "", credentialRef: "" });
+  s.setActive("b");
+  s.remove("a");
+  assert.equal(s.active().targetId, "b");
+});
+
+test("target store：baseUrl 空/非字符串拒 base-url-empty", () => {
+  assert.throws(() => validateBaseUrl("local", ""), (e) => e.reason === "base-url-empty");
+  assert.throws(() => validateBaseUrl("local", null), (e) => e.reason === "base-url-empty");
+  assert.throws(() => validateBaseUrl("local", 123), (e) => e.reason === "base-url-empty");
+});
+
