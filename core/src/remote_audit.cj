@@ -103,9 +103,21 @@ public class RemoteAuditLog {
     // 落一条审计。白名单字段序列化产物里绝不允许出现禁用键串；
     // 若某字段值里嵌了禁词（有人把 denyReason 写成含 "credential" 键串），
     // 本条被拒并计入 rejectedBySerialization，不落盘。
+    // 检测覆盖两种形态：顶层 `"key"` 与字段值 jsonEscape 后的 `\"key\"`；
+    // 后者是攻击面（把整段 JSON 塞进 denyReason），只查前者会漏。
     public func record(entry: AuditEntry): Bool {
         let line = entry.serialize()
-        for (banned in ["\"token\"", "\"secret\"", "\"credential\"", "\"authorization\"", "\"params\"", "\"body\""]) {
+        let bannedRoot = ["\"token\"", "\"secret\"", "\"credential\"", "\"authorization\"", "\"params\"", "\"body\""]
+        let bannedEscaped = ["\\\"token\\\"", "\\\"secret\\\"", "\\\"credential\\\"", "\\\"authorization\\\"", "\\\"params\\\"", "\\\"body\\\""]
+        for (banned in bannedRoot) {
+            if ((line.indexOf(banned) ?? Int64(-1)) >= Int64(0)) {
+                lock.lock()
+                rejectedBySerialization += 1
+                lock.unlock()
+                throw Exception("audit-serialization-leak")
+            }
+        }
+        for (banned in bannedEscaped) {
             if ((line.indexOf(banned) ?? Int64(-1)) >= Int64(0)) {
                 lock.lock()
                 rejectedBySerialization += 1

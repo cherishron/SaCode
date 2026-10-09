@@ -3,7 +3,7 @@ package core
 import std.unittest.*
 import std.collection.*
 
-func lineContains(line: String, needle: Substring): Bool {
+func lineContains(line: String, needle: String): Bool {
     return (line.indexOf(needle) ?? Int64(-1)) >= Int64(0)
 }
 

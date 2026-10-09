@@ -74,7 +74,7 @@ func expiredTokenRejected() {
     let device = store.enroll(secret.value, "phone-1", "mobile")
     let token = store.exchangeToken(device.deviceId, device.credential)
     store.expireToken(token.value)
-    @Expect(store.authenticate(token.value), None)
+    @Expect(store.authenticate(token.value).isNone(), true)
 }
 
 @Test
@@ -84,7 +84,7 @@ func revokedDeviceRejected() {
     let device = store.enroll(secret.value, "phone-1", "mobile")
     let token = store.exchangeToken(device.deviceId, device.credential)
     store.revokeDevice(device.deviceId)
-    @Expect(store.authenticate(token.value), None)
+    @Expect(store.authenticate(token.value).isNone(), true)
 }
 
 @Test
@@ -108,7 +108,7 @@ func authenticateReturnsContext() {
     let device = store.enroll(secret.value, "phone-1", "mobile")
     let token = store.exchangeToken(device.deviceId, device.credential)
     let ctx = store.authenticate(token.value)
-    @Expect(ctx != None, true)
+    @Expect(ctx.isSome(), true)
     if (let Some(c) <- ctx) {
         @Expect(c.deviceId == device.deviceId, true)
         @Expect(c.principalId == "admin", true)
@@ -126,7 +126,7 @@ func revocationVersionIncrementsOnRevoke() {
     store.revokeDevice(device1.deviceId)
     let token2 = store.exchangeToken(device2.deviceId, device2.credential)
     let ctx = store.authenticate(token2.value)
-    @Expect(ctx != None, true)
+    @Expect(ctx.isSome(), true)
     if (let Some(c) <- ctx) {
         @Expect(c.revocationVersion, Int64(2))
     }
