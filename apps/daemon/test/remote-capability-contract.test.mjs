@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
-const rows = JSON.parse(readFileSync('docs/plans/remote-capability-contract.json', 'utf8'));
+// 按仓库根解析，不靠 cwd：从 apps/daemon 下跑 `node --test test/...` 时
+// 相对路径会指到 apps/daemon/docs/plans/，整份文件在 import 阶段就 ENOENT。
+const root = path.resolve(import.meta.dirname, '../../..');
+const rows = JSON.parse(readFileSync(path.join(root, 'docs/plans/remote-capability-contract.json'), 'utf8'));
 
 const validPermissions = new Set(['read', 'write', 'execute', 'approval', 'management']);
 const validConsumers = new Set(['desktop', 'mobile', 'cli']);

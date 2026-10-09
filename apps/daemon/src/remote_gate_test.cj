@@ -100,3 +100,92 @@ func gateEmptyBearerSuffixTreatedAsMissing() {
     @Expect(out.denyReason == "missing-bearer", true)
     @Expect(f.sink.size() == Int64(1), true)
 }
+
+@Test
+func gateDeniedAuditsAttemptedWorkspaceAndSession() {
+    // 设计 §7「审计保存 who/when/what/result」：拒绝条目也必须记 attempted 的
+    // workspace/session，否则事后无法还原「哪个设备试图访问哪个会话」。
+    let f = GateFixture()
+    let out = f.gate.check(bearer(f.goodToken), "auth/revoke", "ws-audit", "s-audit", "op-a")
+    @Expect(out.allowed, false)
+    @Expect(f.sink.size() == Int64(1), true)
+    let line = f.sink.at(0)
+    @Expect((line.indexOf("\"workspaceId\":\"ws-audit\"") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((line.indexOf("\"sessionId\":\"s-audit\"") ?? Int64(-1)) >= Int64(0), true)
+}
+
+@Test
+func gatePoisonedIdentifierCannotBlankAudit() {
+    // 归属字段是客户端可控串。若原样进审计，jsonEscape 后 `"` 变成 `\"`，
+    // 拼出被禁键串 `\"token\"`，RemoteAuditLog.record() 会整条拒落——
+    // 攻击者即可靠构造 workspaceId 让越权尝试「不进审计」。
+    // 净化后必须：请求照旧拒、审计照旧落一条、禁串不出现、原文不出现。
+    let f = GateFixture()
+    let out = f.gate.check(
+        bearer(f.goodToken), "auth/revoke", "a\",\"token\":\"b", "s-1", "op-1")
+    @Expect(out.allowed, false)
+    @Expect(f.sink.size() == Int64(1), true)
+    let line = f.sink.at(0)
+    @Expect((line.indexOf("sanitized-invalid") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((line.indexOf("\\\"token\\\"") ?? Int64(-1)) == Int64(-1), true)
+    @Expect((line.indexOf("\"token\"") ?? Int64(-1)) == Int64(-1), true)
+}
+
+@Test
+func gateSanitizeIdAcceptsIdentifierShapesAndCapsLength() {
+    // 正常标识符不能被净化弄坏；超长要截断到 64。
+    @Expect(RemoteRequestGate.sanitizeId("ws-1") == "ws-1", true)
+    @Expect(RemoteRequestGate.sanitizeId("a_b.c:d/e") == "a_b.c:d/e", true)
+    @Expect(RemoteRequestGate.sanitizeId("") == "", true)
+    @Expect(RemoteRequestGate.sanitizeId("带中文") == "sanitized-invalid", true)
+    var longStr = ""
+    for (_ in 0..100) { longStr += "a" }
+    @Expect(RemoteRequestGate.sanitizeId(longStr).size == Int64(64), true)
+}
+
+// 以下是 daemon.cj 里 dispatchRpcWithAuth 与 global gate slot 的接线合同。
+// 目标：证明设计 §4.2「/rpc 每次请求都认证」不只是模块能拒，而是 HTTP 分派层
+// 也真的会拦下——Gate 拒时返回 -32001 且**不**进 Host/Team/SessionCatalog 任一分支。
+@Test
+func dispatchWithoutGateKeepsLegacyPath() {
+    setRemoteGate(None)
+    let response = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", "")
+    // 未启用 gate → 0.1 旧路径不变，仍返 protocolVersion。
+    @Expect((response.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((response.indexOf("-32001") ?? Int64(-1)) == Int64(-1), true)
+}
+
+@Test
+func dispatchWithGateRejectsMissingBearer() {
+    let f = GateFixture()
+    setRemoteGate(Some(f.gate))
+    let response = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{}}", "")
+    @Expect((response.indexOf("-32001") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((response.indexOf("authz-denied:missing-bearer") ?? Int64(-1)) >= Int64(0), true)
+    // 拒时**不**执行 initialize 分支，响应不含 capabilities。
+    @Expect((response.indexOf("capabilities") ?? Int64(-1)) == Int64(-1), true)
+    // 拒也落审计。
+    @Expect(f.sink.size() == Int64(1), true)
+    setRemoteGate(None)
+}
+
+@Test
+func dispatchWithGateExtractsWorkspaceSessionOperationId() {
+    // 归属字段来自 params 顶层，不是 session/select 全局态。
+    let f = GateFixture()
+    setRemoteGate(Some(f.gate))
+    let response = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"auth/revoke\",\"params\":{\"workspaceId\":\"ws-9\",\"sessionId\":\"s-9\",\"operationId\":\"op-42\"}}",
+        bearer(f.goodToken))
+    // auth/revoke 是 management 权限，默认 view 无 scope，拒；
+    // 审计里应能看到三个归属字段都从 params 顶层取到。
+    @Expect((response.indexOf("-32001") ?? Int64(-1)) >= Int64(0), true)
+    @Expect(f.sink.size() == Int64(1), true)
+    let line = f.sink.at(0)
+    @Expect((line.indexOf("\"workspaceId\":\"ws-9\"") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((line.indexOf("\"sessionId\":\"s-9\"") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((line.indexOf("\"operationId\":\"op-42\"") ?? Int64(-1)) >= Int64(0), true)
+    setRemoteGate(None)
+}

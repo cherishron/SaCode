@@ -54,33 +54,70 @@ public class RemoteRequestGate {
         return headerValue[7..headerValue.size]
     }
 
+    // 归属字段是客户端可控字符串，序列化后若拼出被禁键串（如 workspaceId 写成
+    // `x","token"`），整条审计会被 RemoteAuditLog.record() 拒落——攻击者就能靠构造
+    // 标识符让「越权尝试」不进审计。这里先按标识符字符集净化，越界整串换成固定标记，
+    // 保证审计既不漏记也不被投毒；上限 64 与身份存储的 id 形状一致。
+    public static func sanitizeId(raw: String): String {
+        if (raw.size == 0) { return "" }
+        for (b in raw.toArray()) {
+            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+                || b == 45 || b == 46 || b == 58 || b == 95 || b == 47
+            if (!ok) { return "sanitized-invalid" }
+        }
+        if (raw.size > 64) { return raw[0..64] }
+        return raw
+    }
+
     // 判定栈：认证 → 授权 → 审计；任一步失败返回拒绝并已经写完审计。
     public func check(authHeader: String, method: String, workspaceId: String,
                       sessionId: String, operationId: String): GateOutcome {
+        let ws = RemoteRequestGate.sanitizeId(workspaceId)
+        let sid = RemoteRequestGate.sanitizeId(sessionId)
+        let op = RemoteRequestGate.sanitizeId(operationId)
         let token = extractBearer(authHeader)
         if (token.size == 0) {
-            recordDenied("", "", method, operationId, "unauthenticated-missing-bearer")
+            recordDenied("", "", method, ws, sid, op, "unauthenticated-missing-bearer")
             return GateOutcome(false, "missing-bearer", None)
         }
         let ctx = identity.authenticate(token)
         if (let Some(c) <- ctx) {
             let view = DeviceAuthzView(c)
-            let decision = authorizer.check(view, method, workspaceId, sessionId)
+            let decision = authorizer.check(view, method, ws, sid)
             if (decision.allowed) {
-                recordAllowed(c, method, workspaceId, sessionId, operationId)
+                recordAllowed(c, method, ws, sid, op)
                 return GateOutcome(true, "", ctx)
             }
-            recordDenied(c.deviceId, c.principalId, method, operationId, decision.reason)
+            recordDenied(c.deviceId, c.principalId, method, ws, sid, op, decision.reason)
             return GateOutcome(false, decision.reason, ctx)
         }
         // 未认证：token 无效/过期/被撤销——三者都归 unauthenticated-invalid。
         // 不透露是哪一种，避免旁路枚举（denied 审计仍记录）。
-        recordDenied("", "", method, operationId, "unauthenticated-invalid")
+        recordDenied("", "", method, ws, sid, op, "unauthenticated-invalid")
         return GateOutcome(false, "invalid-token", None)
     }
 
-    func recordAllowed(c: AuthenticationContext, method: String, workspaceId: String,
-                       sessionId: String, operationId: String) {
+    // 长连接建立面的认证（设计 §4.2「/rpc、/sse 每次建立/请求都认证」）。
+    // SSE 与单次 RPC 的区别是：建立时只能判「这个 token 是不是有效主体」，
+    // 逐事件资源过滤在订阅建立后按 context 做（任务 8）。这里返回 context，
+    // 让调用方持有它做后续过滤，而不是把权限判定推迟到第一帧。
+    public func checkStreamAuth(authHeader: String, operationId: String): GateOutcome {
+        let op = RemoteRequestGate.sanitizeId(operationId)
+        let token = extractBearer(authHeader)
+        if (token.size == 0) {
+            recordDenied("", "", "sse/subscribe", "", "", op, "unauthenticated-missing-bearer")
+            return GateOutcome(false, "missing-bearer", None)
+        }
+        let ctx = identity.authenticate(token)
+        if (let Some(c) <- ctx) {
+            recordAllowed(c, "sse/subscribe", "", "", op)
+            return GateOutcome(true, "", ctx)
+        }
+        recordDenied("", "", "sse/subscribe", "", "", op, "unauthenticated-invalid")
+        return GateOutcome(false, "invalid-token", None)
+    }
+
+    func recordAllowed(c: AuthenticationContext, method: String, workspaceId: String,                       sessionId: String, operationId: String) {
         let entry = AuditEntry(ts: nowMs(),
             principalId: c.principalId, deviceId: c.deviceId, instanceId: instanceId,
             workspaceId: workspaceId, sessionId: sessionId, method: method,
@@ -88,11 +125,15 @@ public class RemoteRequestGate {
         audit.record(entry)
     }
 
-    func recordDenied(deviceId: String, principalId: String,
-                      method: String, operationId: String, reason: String) {
+    // 拒绝也必须记全 who/when/what：未认证的条目 principalId/deviceId 为空，
+    // 但 attempted 的 workspace/session/operation 仍要落盘，否则事后无法还原
+    // 「哪个设备试图访问哪个会话」。
+    func recordDenied(deviceId: String, principalId: String, method: String,
+                      workspaceId: String, sessionId: String, operationId: String,
+                      reason: String) {
         let entry = AuditEntry(ts: nowMs(),
             principalId: principalId, deviceId: deviceId, instanceId: instanceId,
-            workspaceId: "", sessionId: "", method: method,
+            workspaceId: workspaceId, sessionId: sessionId, method: method,
             operationId: operationId, outcome: "denied", denyReason: reason)
         audit.record(entry)
     }

@@ -38,7 +38,83 @@ let teamHost = TeamHostBridge(bus)
 let hostProxy = HostProxyBridge(bus)
 let daemonStopping = AtomicBool(false)
 
-func dispatchRpc(body: String): String {
+// 远程接入的门面。默认 None 表示「接入未启用」，保持 0.1 无认证旧路径不变；
+// 一旦 set，dispatchRpcWithAuth 每条请求先走 gate.check(authHeader, method, workspaceId,
+// sessionId, operationId)，拒则原样回 -32001 且不进 Host.forward。
+// 这是设计 §4.2「远程接入是 daemon 内置可启停扩展」的落点。
+let remoteGateRef = AtomicBool(false)
+let remoteGateSlot = Mutex()
+var remoteGateValue: Option<RemoteRequestGate> = None
+
+func setRemoteGate(gate: Option<RemoteRequestGate>): Unit {
+    remoteGateSlot.lock()
+    remoteGateValue = gate
+    remoteGateSlot.unlock()
+    remoteGateRef.store(gate.isSome())
+}
+
+func currentRemoteGate(): Option<RemoteRequestGate> {
+    if (!remoteGateRef.load()) { return None }
+    remoteGateSlot.lock()
+    let g = remoteGateValue
+    remoteGateSlot.unlock()
+    return g
+}
+
+// 身份引导端点（POST /auth/enroll、POST /auth/token）。接入未启用时为 None，
+// 两个路由根本不注册——不是「注册了但返回 404」，免得留下可探测的面。
+let remoteEndpointsSlot = Mutex()
+var remoteEndpointsValue: Option<RemoteAccessEndpoints> = None
+
+func setRemoteEndpoints(api: Option<RemoteAccessEndpoints>): Unit {
+    remoteEndpointsSlot.lock()
+    remoteEndpointsValue = api
+    remoteEndpointsSlot.unlock()
+}
+
+func currentRemoteEndpoints(): Option<RemoteAccessEndpoints> {
+    remoteEndpointsSlot.lock()
+    let a = remoteEndpointsValue
+    remoteEndpointsSlot.unlock()
+    return a
+}
+
+// 请求头不区分大小写（HttpHeaders 内部转小写存储），缺失返空串。
+// 空串等价「未带凭据」，由 gate 归一成 missing-bearer。
+func requestHeader(request: HttpRequest, name: String): String {
+    if (let Some(v) <- request.headers.getFirst(name)) { return v }
+    return ""
+}
+
+// 设计 §7：/rpc 与 /auth/* 仅 POST、/sse 与 /health 仅 GET；业务请求 Content-Type
+// 必须是 application/json。这三条是路由级约束，不依赖 gate，未启用接入时同样生效。
+// 顺序有讲究：先按流读体（readBody 自带 1 MiB 上限），再验媒体类型——大小是传输层
+// 硬限，对任何体都成立；若先验 Content-Type，一个「又长又错类型」的请求会被归因成
+// 类型问题，把体积防线显得像可有可无的语义检查。
+func jsonBodyOf(ctx: HttpContext, wantPost: Bool): String {
+    if (ctx.request.method != (if (wantPost) { "POST" } else { "GET" })) {
+        throw Exception(if (wantPost) { "rpc-requires-post" } else { "endpoint-requires-get" })
+    }
+    if (!wantPost) { return "" }
+    let body = readBody(ctx.request.body)
+    if (!requestHeader(ctx.request, "Content-Type").startsWith("application/json")) {
+        throw Exception("content-type-must-be-json")
+    }
+    return body
+}
+
+// 限速来源取连接真实地址（request.remoteAddr），不读 X-Forwarded-For：
+// 设计 §7「来源地址不信任任意 X-Forwarded-For」。去掉 :port 只按主机归并。
+func sourceAddress(request: HttpRequest): String {
+    let addr = request.remoteAddr
+    if (let Some(i) <- addr.lastIndexOf(":")) { return addr[0..i] }
+    return addr
+}
+
+// 认证段：`remoteGateValue` 是 Some 时每条请求都过 gate.check；None 保持 0.1 旧路径。
+// 拒时 -32001 归 jsonrpc-error 但**不进** Host/Team/SessionCatalog 任何一支。
+// authHeader 从 stdx HttpRequest 传入；空串等价「无 Bearer」——若 gate 已开启即拒。
+func dispatchRpcWithAuth(body: String, authHeader: String): String {
     var idText = "null"
     var parsed: Option<JsonObject> = None
     try { parsed = Some(JsonValue.fromStr(body).asObject()) }
@@ -46,6 +122,9 @@ func dispatchRpc(body: String): String {
     let request = parsed.getOrThrow()
     var method = ""
     var params = "{}"
+    var workspaceId = ""
+    var sessionId = ""
+    var operationId = ""
     try {
         let id = request.get("id").getOrThrow()
         match (id.kind()) {
@@ -57,8 +136,23 @@ func dispatchRpc(body: String): String {
             return errRpc(idText, -32600, "invalid jsonrpc version")
         }
         method = request.get("method").getOrThrow().asString().getValue()
-        if (let Some(value) <- request.get("params")) { params = value.asObject().toString() }
+        if (let Some(value) <- request.get("params")) {
+            params = value.asObject().toString()
+            // 显式归属：设计 §5「客户端选择会话不发送全局 session/select」，
+            // workspaceId/sessionId/operationId 都从 params 顶层取；缺失即空串，
+            // 交给 gate 依 CapabilitySpec.needsWorkspace/Session 决定拒因。
+            let obj = value.asObject()
+            if (let Some(v) <- obj.get("workspaceId")) { workspaceId = v.asString().getValue() }
+            if (let Some(v) <- obj.get("sessionId")) { sessionId = v.asString().getValue() }
+            if (let Some(v) <- obj.get("operationId")) { operationId = v.asString().getValue() }
+        }
     } catch (_: Exception) { return errRpc(idText, -32600, "invalid request") }
+    if (let Some(gate) <- currentRemoteGate()) {
+        let outcome = gate.check(authHeader, method, workspaceId, sessionId, operationId)
+        if (!outcome.allowed) {
+            return errRpc(idText, -32001, "authz-denied:${outcome.denyReason}")
+        }
+    }
     if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
     try {
         if (method == "initialize") {
@@ -123,20 +217,81 @@ main(args: Array<String>): Int64 {
         if (number > 65535) { return 64 }
         port = UInt16(number)
     }
-    let server = ServerBuilder().addr("127.0.0.1").port(port).build()
+    // 接入启用时的启动校验：缺 TLS / 身份 / 策略任一项即拒绝启动，不降级裸跑。
+    let accessConfig = RemoteAccessConfig.fromEnvironment()
+    if (let Some(reason) <- accessConfig.validate()) {
+        getStdErr().writeln("remote-access-startup-refused: ${reason}")
+        getStdErr().flush()
+        return 78
+    }
+    if (accessConfig.enabled) {
+        let identity = RemoteInstanceIdentity.loadOrCreate(accessConfig.identityPath)
+        let auditSink = FileAuditSink("${accessConfig.identityPath}.audit.log")
+        let audit = RemoteAuditLog(auditSink)
+        let store = RemoteIdentityStore()
+        let authorizer = RemoteAccessAuthorizer()
+        if (let Some(reason) <- RemotePolicyLoader.load(accessConfig.policyPath, authorizer)) {
+            getStdErr().writeln("remote-access-startup-refused: ${reason}")
+            getStdErr().flush()
+            return 78
+        }
+        setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId)))
+        setRemoteEndpoints(Some(RemoteAccessEndpoints(
+            store, audit, RemoteAuthRateLimiter(), identity.instanceId)))
+    }
+
+    let server = ServerBuilder().addr(accessConfig.bind).port(port).build()
+    // /health：本机无凭据只给最小存活信息；非本机要求认证，且两种口径都不出
+    // 目录、能力、设备列表（设计 §4.2）。
     server.distributor.register("/health", {
-        ctx => ctx.responseBuilder
-            .header("Content-Type", "application/json")
-            .body("{\"status\":\"ok\",\"sseSubscribers\":${bus.subscriberCount()}}")
+        ctx =>
+        let source = sourceAddress(ctx.request)
+        let isLocal = source == "127.0.0.1" || source == "::1" || source.startsWith("127.")
+        let gate = currentRemoteGate()
+        var status: UInt16 = 200
+        var body = "{\"status\":\"ok\"}"
+        if (let Some(g) <- gate) {
+            let outcome = g.checkStreamAuth(requestHeader(ctx.request, "Authorization"), "")
+            if (!isLocal && !outcome.allowed) {
+                status = 401
+                body = "{\"error\":\"authentication-required\"}"
+            } else if (outcome.allowed) {
+                // 认证通过才给订阅计数——它属于规模/能力信息。
+                body = "{\"status\":\"ok\",\"sseSubscribers\":${bus.subscriberCount()}}"
+            }
+        } else if (isLocal) {
+            // 接入未启用（本机开发态）时保留原有存活计数。
+            body = "{\"status\":\"ok\",\"sseSubscribers\":${bus.subscriberCount()}}"
+        }
+        ctx.responseBuilder.status(status).header("Content-Type", "application/json").body(body)
     })
+    // /rpc：每次请求都认证（设计 §4.2「initialize 不例外」），未启用接入时保持旧路径。
     server.distributor.register("/rpc", {
         ctx =>
-        let response = try { dispatchRpc(readBody(ctx.request.body)) }
-            catch (e: Exception) { errRpc("null", -32600, e.message) }
+        let response = try {
+            dispatchRpcWithAuth(jsonBodyOf(ctx, true), requestHeader(ctx.request, "Authorization"))
+        } catch (e: Exception) { errRpc("null", -32600, e.message) }
         ctx.responseBuilder.header("Content-Type", "application/json").body(response)
     })
+    // /sse：建立即认证；认证不过不订阅，也不暴露 EventBus 是否存在。
+    // 这一支的返回类型必须是 Unit（响应靠 builder 就地配置 + HttpResponseWriter 流式写），
+    // 所以拒绝路径也写成「配置 builder 后 return」，不能 return builder 表达式。
     server.distributor.register("/sse", {
         ctx =>
+        if (ctx.request.method != "GET") {
+            ctx.responseBuilder.status(405).header("Content-Type", "application/json")
+                .body("{\"error\":\"sse-requires-get\"}")
+            return
+        }
+        if (let Some(g) <- currentRemoteGate()) {
+            let outcome = g.checkStreamAuth(requestHeader(ctx.request, "Authorization"),
+                requestHeader(ctx.request, "Last-Event-ID"))
+            if (!outcome.allowed) {
+                ctx.responseBuilder.status(401).header("Content-Type", "application/json")
+                    .body("{\"error\":\"authentication-required\"}")
+                return
+            }
+        }
         ctx.responseBuilder
             .header("Content-Type", "text/event-stream")
             .header("Cache-Control", "no-cache")
@@ -159,11 +314,28 @@ main(args: Array<String>): Int64 {
             }
         } finally { bus.unsubscribe(sub.id) }
     })
+    // 身份引导面只在接入启用时注册——未启用就不存在这个面，而不是返回 404。
+    if (let Some(api) <- currentRemoteEndpoints()) {
+        server.distributor.register("/auth/enroll", {
+            ctx =>
+            let resp = try { api.enroll(jsonBodyOf(ctx, true), sourceAddress(ctx.request)) }
+                catch (e: Exception) { AuthResponse(400, "{\"error\":\"${jsonEscapeText(e.message)}\"}") }
+            ctx.responseBuilder.status(UInt16(resp.status))
+                .header("Content-Type", "application/json").body(resp.body)
+        })
+        server.distributor.register("/auth/token", {
+            ctx =>
+            let resp = try { api.token(jsonBodyOf(ctx, true), sourceAddress(ctx.request)) }
+                catch (e: Exception) { AuthResponse(400, "{\"error\":\"${jsonEscapeText(e.message)}\"}") }
+            ctx.responseBuilder.status(UInt16(resp.status))
+                .header("Content-Type", "application/json").body(resp.body)
+        })
+    }
     let ready = SyncCounter(1)
     server.afterBind({ => ready.dec() })
     spawn { server.serve() }
     ready.waitUntilZero()
-    println("daemon on http://127.0.0.1:${server.port}")
+    println("daemon on http://${accessConfig.bind}:${server.port}")
     getStdOut().flush()
     while (!daemonStopping.load()) { sleep(50 * Duration.millisecond) }
     return 0
