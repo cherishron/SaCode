@@ -1,4 +1,383 @@
-# SaCode 产品需求文档
+# SaCode 产品需求与工作台方案
+
+- 版本：v1.0
+- 日期：2026-10-07
+- 状态：需求与定位已由用户确认；本版用于产品、架构与 UI 评审，不代表实现已完成。
+- 需求来源：本轮用户逐项确认的定位、完整功能范围、对话优先布局和输入运行机制。
+- 生效规则：本版是现行产品范围；文末旧版仅为历史研究与取证材料。冲突时以本版为准，不再将完整 DSH 复刻、63 模块覆盖率或原插件兼容作为产品完成标准。
+- 本文包含产品需求、用户指定的信息架构及架构边界约束，不代替高保真设计稿或具体实现设计。
+- PRD 定义需求而非执行授权；用户已另行授权第一批基线映射、接口设计与独立原型实施。提交、推送、软件安装及发布仍按各次授权执行。
+
+## 1. 定位、用户与成功标准
+
+SaCode 是面向开发者的自主 AI 编程工作台：独立桌面端配套 CLI，内置代码编辑，以中央 Agent 对话、计划、委派和执行详情为主，以右侧可扩展工作台辅助完成开发任务。以自有 Agent 为主，通过 ACP 委派外部 Agent；用户自带 API Key，支持多家模型供应商。
+
+参考 DSH 的成熟能力与交互，不承诺完整行为、数据格式或插件源码兼容。产品目标覆盖 Windows、Linux 与鸿蒙，各平台单独验收，不能由工具链文档或 Windows 通过推定其他平台可用。
+
+| 用户 | 场景与结果 |
+| --- | --- |
+| 桌面开发者 | 用对话驱动项目任务，直接修改工作区，在编辑器、差异和 Git 提交区审查与修正 |
+| CLI 开发者 | 在终端执行同一类任务，获得明确授权、退出结果、用量与恢复语义，不依赖桌面进程 |
+| 远程开发与运维使用者 | 明确目标环境后执行 SSH 命令、部署、软件安装和数据库操作 |
+| 扩展作者 | 本地编写、安装和管理插件、技能、连接器与智能体，经稳定边界贡献能力 |
+
+成功标准采用可验证的用户结果，不编造商业指标或交付日期：
+
+- 本文 F01–F20 共 20 个能力域全部保留并具备需求追踪；不是 20 个测试，也不据此计算完成率。
+- 每域至少完成正向、失败和恢复/越权三类验收，未执行项明确登记。
+- 核心链路完成“提出任务→执行→修改文件→验证→审查差异→显式暂存/提交”；失败不能假报成功。
+- 凭据明文进入普通日志、布局配置、模型可见提示或发布资产的数量必须为 0。
+- 每项最终能力都有实施归属；分批交付只改变顺序，不隐性删除范围。
+
+## 2. 产品边界与已确认约束
+
+1. AI 在授权范围内直接写入工作区，随后审查差异；不强制每次先生成待确认补丁。
+2. 手动编辑与 AI 编辑并存，冲突必须可见；撤销不能覆盖用户或其他执行者后续写入。
+3. 自有 Agent 组织主任务、委派和验证；外部 Agent 是协作者，其自述成功不是完成证据。
+4. 所有列出的功能都是最终必备能力，不以“可选插件”措辞降级产品范围。
+5. “一切皆插件”保留为架构要求；内置功能可随包提供，业务能力按契约装配，安全基础机制不能被插件绕过。
+6. 用户本机使用不依赖 SaCode 或 DSH 官方账号和订阅；第三方服务仍遵守其认证与收费要求。
+7. Git 提交/推送、远程部署、软件安装、数据库写入和电脑操控具有明确的独立授权边界；打开面板或建立连接不等于授权执行。
+8. 不承诺外部 CLI、SSH 环境、数据库驱动在三平台能力相同；支持程度和前提逐项呈现，不删最终目标。
+
+## 3. 信息架构与 UI 工作台
+
+### 3.1 左侧导航
+
+顶部为搜索、新建会话；主体为可展开的项目会话树，支持置顶、重命名、归档及状态提示。按工作模式筛选只改变对话列表，工作区始终共享；隐藏会话中的待审批事项仍有提醒。
+
+会话树下方、底部身份区上方固定知识库、自动化、扩展、连接入口。底部固定本机头像与昵称以及独立设置图标；点击头像昵称打开可配置常用入口的快捷菜单。本机资料不等于云账号登录。
+
+管理入口打开中央管理页面，返回时恢复会话、草稿和右侧布局；不销毁进行中的任务。
+
+### 3.2 中央 Agent 区
+
+中央始终是开发主线：Agent 对话、计划、委派、执行详情、审批和结果。头部显示项目、任务、工作模式、主执行者与目标环境，并提供目标入口、Workspace Actions、停止和查看改动。
+
+工具摘要在对话中呈现，完整代码、长输出、文件和网页详情按需打开右侧标签。结果到达不得抢输入焦点或替换正在编辑的标签。
+
+输入区包含草稿引用、附件、语音、提示词增强、模型与权限、上下文状态和发送/停止；消息队列位于输入框上方。计划、目标和待办是不同对象，不能用同一状态替代。
+
+### 3.3 右侧停靠工作台
+
+辅助能力全部归入右侧，不采用编辑器占中央、聊天挤侧栏的 IDE 布局，也不设置独立常驻底部终端。
+
+- 右侧支持添加标签、搜索标签类型、关闭、重排、设为常用、溢出列表、上下拆分及聚焦放大。
+- 常用标签是持久入口，不等于实例常驻或后台服务自动启动。
+- 文件、查询、终端和网页可有多个实例；相同资源默认聚焦已有实例。
+- 关闭标签、断开连接、停止任务分别处理；运行中或未保存内容须给出明确选择。
+- 标签默认单组，可上下拆成两组；退出聚焦模式恢复原布局。
+- 标签显示项目/任务归属，SSH、数据库、浏览器显示真实目标。切任务不允许迟到结果污染新任务。
+
+| 标签类别 | 必须包含 |
+| --- | --- |
+| Agent 上下文 | 记忆、子智能体、技能与 MCP、来源、产物 |
+| 代码与版本 | 文件结构、文件搜索、多标签编辑、文件预览、差异审查、Git 变更与暂存区 |
+| 执行与验证 | 终端、构建与测试输出、安全扫描结果 |
+| 网页与操控 | 网页查阅、内置浏览器、电脑操控状态；保留后续设计平台操作的扩展位置，不声称已支持 |
+| 数据与远程 | 数据库对象/查询/结果、SSH 会话、部署详情 |
+
+### 3.4 视觉、窄窗与无障碍
+
+亮色、深色、跟随系统共用语义令牌；界面、对话、编辑器、终端字号分别可调。保留 SaCode 品牌与中文固定文案，不另换已指定组件技术栈。
+
+导航与右侧可折叠、可调宽；空间不足时先收导航，再以“对话/工作台”切换保持可操作性，不强挤三列。布局切换不丢草稿、未保存文件或终端会话。具体尺寸由原型验证后冻结，不把建议尺寸当实测。
+
+所有核心流程可键盘完成，焦点可见、标签具可读名称，弹层关闭归还焦点；普通文字对比度至少 4.5:1，运行状态不能只靠颜色表达。
+
+## 4. 完整功能需求
+
+F01–F20 均为最终产品必备。阶段编号只表达依赖顺序，不表示后续能力可删。每域交互统一覆盖：入口→授权/配置前提→操作→真实结果→失败保留与重试→恢复。
+
+| ID | 能力与用户故事 | 入口与规则 | 失败与恢复边界 |
+| --- | --- | --- | --- |
+| F01 | 项目与会话：开发者管理多个项目和工作模式下的任务 | 左侧搜索与项目会话树；项目选择、会话新建/切换/命名/归档，草稿按会话保留 | 项目不可访问时不假装就绪；切换后旧结果不能覆盖新会话 |
+| F02 | 自有 Agent 主循环：开发者用对话完成计划、执行、验证与审查 | 中央对话；实际工具目录、提示与请求轨迹可查看；审批、取消、错误和重试均可追溯 | 断连和模型错误不编造终态；重启恢复真实执行状态，不自动重做有副作用的动作 |
+| F03 | 消息队列：忙碌时排队、立即发送、删除和重新编辑 | 输入框上方队列；普通发送、排队、即时补充与停止分开；支持调整顺序，正文和引用整体保存 | 编辑期间禁止消费；已接收消息不能冒充待发送条目删除；提交失败保留草稿；请求幂等防重复 |
+| F04 | 持续目标：跨轮推进具有验收条件的目标 | 中央目标入口；创建/修改/暂停/继续/结束，显示轮次、预算、受阻原因与证据 | 目标完成需验证结果与声明，不拿工具次数替代；暂停边界明确，取消后不再开新轮；陈旧编辑拒绝 |
+| F05 | 输入快捷能力：开发者便捷提供上下文和调用能力 | ＋添加附件、工作区文件、插件、技能、MCP及知识引用；@搜索文件；/搜索命令，包含压缩与 init | 本轮使用不等于安装/全局启用；失效引用明确提示；init 不覆盖已有配置；输入法不误发送 |
+| F06 | 上下文与用量：开发者掌握容量、自动压缩和预算 | 输入区状态入口；显示容量、占用、输出预留、累计用量/费用；自动及手动压缩，查看来源 | 容量未知/费用不可算如实显示，估算有标识；压缩保留原历史、目标与审批约束，失败不切换上下文 |
+| F07 | 模型中心：开发者使用自己的密钥与多供应商 | 设置与输入模型选择；供应商配置、凭据轮换、模型发现、默认模型与路由，自定义端点按能力适配 | 认证失败可重试；切换重新核算容量；不静默改变数据发送对象；秘密不回显 |
+| F08 | 代码、预览与 Git：开发者审查并修正真实改动 | 右侧文件结构/搜索/编辑/预览/差异；Git 工作区与暂存区分开，暂存/取消暂存/提交/历史/推送独立 | 外部变更和未保存缓冲冲突可见；AI 本轮差异不等同全部 Git 差异；提交失败不显示已提交，撤销不覆盖后来改动 |
+| F09 | 终端与验证：开发者交互执行命令并检查结果 | 右侧终端与构建测试输出；输入、resize、中断、退出码；任务 Header 的 Workspace Actions 使用当前任务终端 | 输出截断标记；终端关闭不冒充进程已结束；工作目录/环境明确，断连不盲目重发命令 |
+| F10 | ACP 协作：主 Agent 委派 OpenCode、CodeBuddy CLI、Qoder CLI | 外部 Agent 配置与中央委派卡片/右侧子智能体；逐产品核验 ACP 版本、认证、能力、取消与结果 | 不默认三者协议完全相同；能力不支持明确提示；独立工作区或冲突治理，外部自述不作为验证通过 |
+| F11 | 知识、记忆与个人记录：开发者复用项目和个人信息 | 左侧知识库，右侧项目/全局记忆与来源；项目/个人知识库独立；检索、编辑、删除、重建索引；速记板与回复批注 | 跨项目读取需显式范围；删除/失效来源提示；索引失败不丢原文；批注和速记保留来源但不自动发送敏感内容 |
+| F12 | 扩展管理：开发者管理本机插件、技能、连接器、智能体 | 左侧扩展；安装/配置/启停/更新/卸载/本地开发；区分已安装、已启用和实际激活，中文说明可搜索 | 新代码/安装脚本授权；依赖与名称冲突显式；卸载结算在途操作并撤销贡献，失败不造 active 状态 |
+| F13 | 自动化与 Hooks：开发者查看配置并安排任务 | 左侧自动化；项目/用户范围、触发条件、运行历史、暂停、取消；Hooks 读取用户级 settings.json，标注所属本地 Agent | 仅反映磁盘声明，不代表 CLI 已加载/执行；重复触发去重，重启错过触发策略明确；无人值守不能绕过授权 |
+| F14 | 浏览器与电脑操控：开发者浏览资料并允许 Agent 操作 | 右侧网页查阅/内置浏览器与能力管理；前台应用截图、窗口和浏览器操作，来源可引用 | 资料中的指令视为不可信数据；截图/操控授权，跨域/登录凭据隔离；面板关闭不隐藏后台控制状态 |
+| F15 | SSH 与部署：开发者针对明确远程目标执行任务 | 左侧连接管理、右侧 SSH/部署详情；密钥与主机校验，远程命令、部署、安装配置 Nginx | 首次主机信任与指纹变化需确认；命令执行状态未知不可盲重试；部署/安装独立授权，日志脱敏 |
+| F16 | 数据库面板：开发者操作项目关联的 MySQL、PostgreSQL、达梦 | 左侧连接与右侧对象树/查询/结果；分页查看、执行查询、可视化编辑、事务及结果导出 | 默认只读，写入单独授权；限制无界查询，取消真实反馈；不能可靠回滚的 DDL 提前说明，断连不假报提交 |
+| F17 | 三层安全扫描：开发者发现并审查风险修复 | 静态检查面向本轮生成代码并自动修复；轻量扫描面向增量；深度扫描跨文件跨函数数据流 | 三层能力分别验收，规则匹配不能冒充深度扫描；展示扫描范围/结果/修复差异，修复不得覆盖并发修改 |
+| F18 | 语音与提示词增强：开发者高效输入需求 | 输入区语音录制/转写/编辑；增强直接替换草稿、不弹预览，按钮及 Ctrl+Z 回退；提供方配置与权限 | 录音不自动发送；转写失败保留可恢复内容；增强失败保留原草稿，发送过程中新编辑不被旧回执清空 |
+| F19 | 数据导入：开发者从其他产品导入新增内容 | 头像快捷菜单或设置；来源选择、预览、字段映射、去重、导入报告及取消 | 单向追加，不自动同步、不改来源；重复导入不重复追加，损坏条目单独报告，不读入密钥或执行来源脚本 |
+| F20 | 设置与交付：开发者配置本机应用并独立使用双入口 | 设置包含主题/各类字号/语言/快捷键/忙碌发送/步骤显示/链接方式/用量详细度/代理/存储/凭据/更新/诊断 | 保存失败不假报成功；重启恢复；代理显示保存值与启动加载值，保存后重启生效，远程 SSH 不受其影响 |
+| F21 | LSP 语义工具：AI 从文本匹配提升到类型感知级代码理解 | 核心定义 7 个 verb 契约（define/lookup/references/rename/implementation/diagnostics/call-hierarchy），language server 由语言专用插件装配；自动按文件扩展名匹配，诊断回喂模型 | 无对应语言插件时不假报语义结果，回退文本工具并明确标注；server 启动失败/崩溃可恢复，不阻塞其他工具；rename 跨文件变更走差异审查，不直接落盘 |
+
+### 4.1 队列与目标状态规则
+
+队列至少区分排队中、编辑中、提交中、已接收、已处理、提交失败和已取消；编辑和消费通过版本/独占规则避免竞态。即时补充在当前轮安全点接收，不等于强制打断；当前执行者不支持时明确拒绝并保留消息。停止是独立控制动作。
+
+目标区分未启用、运行、暂停、受阻、完成和已结束；编辑具有修订，完成证据绑定当前目标修订。轮次/时间/费用阈值、无进展与失败策略可配置但有边界，不允许无限自动重试。自动化触发目标与人工启动采用同一权限规则。
+
+### 4.2 压缩与引用规则
+
+上下文占用、请求用量、累计消耗不能混用；容量与价格来自所选模型可用能力，未知则显示未知。压缩摘要保留目标、未完成计划、审批限制、重要工具结果和来源；原历史可查看，压缩后模型请求实际采用的新上下文须可追踪。安全点外请求压缩先排队，不破坏未结算工具关联。
+
+附件、文件选区、知识、记忆、批注和技能引用在草稿中可查看/移除；采用发送时快照或后续读取的语义明确，版本失效不能静默吞掉。队列编辑和转即时补充保留附件绑定。
+
+### 4.3 LSP 语义工具架构与分阶段实施
+
+SaCode 自有 Agent 通过 LSP 获得语义级代码理解能力，不弱于 OpenCode 等竞品。核心不 spawn 任何 language server——核心只定义 verb 契约，language server 由语言专用插件装配（"一切皆插件"约束）。仓颉 LSP server 缺失只影响"用 SaCode 开发仓颉代码"场景，不影响 TS/Go/Python 等语言。
+
+**七个 verb 契约**（免审批，只读语义操作）：
+
+| verb | LSP 方法 | 用途 | 审批 |
+| --- | --- | --- | --- |
+| `lsp/define` | `textDocument/definition` | 跳转到符号定义位置 | 免审批 |
+| `lsp/lookup` | `textDocument/hover` | 悬停查看类型签名与文档 | 免审批 |
+| `lsp/references` | `textDocument/references` | 查找符号的全部引用 | 免审批 |
+| `lsp/implementation` | `textDocument/implementation` | 跳转到接口/抽象的实现 | 免审批 |
+| `lsp/call-hierarchy` | `textDocument/prepareCallHierarchy` + `callHierarchy/incoming`/`outgoing` | 调用层次分析 | 免审批 |
+| `lsp/diagnostics` | `textDocument/publishDiagnostics` | 获取诊断（错误/警告），回喂模型 | 免审批 |
+| `lsp/rename` | `textDocument/rename` | 语义级安全重命名（跨文件） | rename 产生的变更走差异审查（F08），不直接落盘 |
+
+**分阶段实施**：
+
+| 阶段 | 内容 | 依赖 |
+| --- | --- | --- |
+| L1 契约定义 | 核心定义 7 个 verb 契约 + 插件接口规范；现有 `lspSymbols` 文本匹配保留为无插件时的回退 | F12 插件架构 |
+| L2 首个实现 | TS LSP 插件（spawn typescript-language-server --stdio），实现全部 7 个 verb；诊断回喂模型验证 | L1 + F02 Agent 闭环 |
+| L3 多语言扩展 | 按需扩展 Go（gopls）、Python（pyright）、Rust（rust-analyzer）等语言 LSP 插件；每个插件独立装配和验收 | L2 |
+
+**架构约束**：
+- 核心不引用任何具体 language server 的进程名、端口或协议细节
+- language server 生命周期由插件管理（启动/重启/关闭），核心只经 verb 契约调用
+- 多 language server 可并存（不同语言各一个），按文件扩展名路由
+- 无对应插件时 verb 返回 `lsp-no-server` 明确错误，不假报语义结果
+- `lsp/rename` 产生的文件变更不直接落盘，走 F08 差异审查流程
+- 诊断结果作为模型上下文注入，不计为工具副作用（不触发 GoalEvidence 推进判定）
+
+### 4.4 ACP 协作架构与分阶段实施
+
+SaCode 自有 Agent 作为 ACP Client，委派任务给外部 Agent（OpenCode、CodeBuddy CLI、Qoder CLI）。SaCode 经 JSON-RPC 2.0 与外部 Agent 进程通信——SaCode 是 Client 侧，外部 Agent 是 Agent 侧。核心定义委派契约与生命周期管理，不实现任何外部 Agent 的内部逻辑。
+
+**ACP v2 核心 verb 契约**：
+
+| 方向 | verb | 用途 | SaCode 角色 |
+| --- | --- | --- | --- |
+| Client→Agent | `initialize` | 协商版本与交换能力 | SaCode 发起，获取 Agent 能力声明 |
+| Client→Agent | `auth/login`、`auth/logout` | 认证（若 Agent 返回 authMethods） | SaCode 转发用户凭证或环境变量 |
+| Client→Agent | `session/new` | 创建新会话 | SaCode 为每次委派创建会话 |
+| Client→Agent | `session/prompt` | 发送任务 prompt | SaCode 发送委派任务描述 |
+| Client→Agent | `session/resume` | 恢复已有会话 | SaCode 恢复被中断的委派 |
+| Client→Agent | `session/list` | 列出已知会话 | SaCode 管理多个委派会话 |
+| Client→Agent | `session/close` | 关闭活动会话 | SaCode 结束委派时调用 |
+| Client→Agent | `session/cancel` (notification) | 取消正在进行的操作 | SaCode 取消委派任务 |
+| Agent→Client | `session/request_permission` | 请求用户授权（工具调用/命令） | SaCode 展示审批卡，用户批准后回传 |
+| Agent→Client | `session/update` (notification) | 流式推送进展 | SaCode 渲染到委派卡片/右侧子智能体标签 |
+| Agent→Client | `elicitation/create` | 向用户请求结构化信息 | SaCode 展示输入框，回传结果 |
+
+**`session/update` 内容块类型**（SaCode 须消费）：
+
+| 内容类型 | 渲染位置 |
+| --- | --- |
+| 消息块（message chunks） | 委派卡片正文 |
+| 工具调用及结果 | 委派卡片工具行 |
+| 终端状态与输出 | 右侧终端标签（按归属路由） |
+| 计划（plans） | 委派卡片计划区 |
+| 可用命令更新 | 输入区 `/` 命令列表 |
+| 配置选项更新 | 委派卡片配置区 |
+
+**三个外部 Agent 的协议差异**：
+
+| 维度 | OpenCode | CodeBuddy CLI | Qoder CLI |
+| --- | --- | --- | --- |
+| 启动方式 | `npx opencode --acp` | `codebuddy --acp` | 待核（Qoder CLI ACP 入口） |
+| 认证 | 无（或环境变量） | `CODEBUDDY_API_KEY` 环境变量 + `auth/login` 返回 `codebuddy.ai/userinfo` | 待核 |
+| `_meta` 扩展 | 标准 | `codebuddy.ai/conversationRequestId`、`teamUpdate`、`memberEvent`、`unsolicitedTurn` | 待核 |
+| 工具代理 | 标准 | 客户端声明能力后，文件/终端操作代理给客户端执行 | 待核 |
+| 多任务 | 标准 | `multitaskSupport: true`，会话级 overlay，非用户发起的轮次经 `unsolicitedTurn` 推送 | 待核 |
+| 配置选项 | 标准 | 上下文窗口档位（200K/1M），`setSessionConfigOption` | 待核 |
+| 自定义方法 | 标准 | `session/set_multitask`（方言兼容）、`loadSession`（重放历史+Team 状态） | 待核 |
+| 权限策略 | 标准 | `approve-all`/`approve-reads`/`deny-all`，非交互模式 `fail`/`deny` | 待核 |
+
+SaCode 不假设三者协议完全相同；`_meta` 扩展字段按产品逐个核验和适配，不混用。
+
+**分阶段实施**：
+
+| 阶段 | 内容 | 依赖 |
+| --- | --- | --- |
+| A1 契约与进程管理 | 核心定义 ACP Client 侧接口（`AcpClient`：spawn、initialize、session lifecycle、prompt、cancel）；定义 `AcpDelegate` 投影（委派卡片渲染数据源）；处理 `session/update` 内容块路由；审批转发（`request_permission` → SaCode 审批面） | F02 Agent 闭环 + F12 插件架构 |
+| A2 首个 Agent 接入 | OpenCode ACP 接入（spawn `npx opencode --acp`，initialize，session/new+prompt，update 渲染，cancel，close）；验证真实委派任务、工具调用展示、审批转发 | A1 + OpenCode 本机可用 |
+| A3 多产品扩展 | CodeBuddy CLI 接入（`_meta` 扩展、工具代理、multitask）；Qoder CLI 接入（ACP 入口待核）；逐产品核验 ACP 版本、认证、能力、取消与结果差异 | A2 |
+| A4 并发与冲突治理 | 多委派会话并发；独立工作区或冲突治理；跨任务结果不污染；会话绑定与超时回收 | A3 |
+
+**架构约束**：
+- SaCode 是 Client 侧，不实现任何外部 Agent 的内部逻辑
+- 外部 Agent 进程由 SaCode spawn 并管理生命周期（启动/重启/关闭）
+- 委派会话归属绑定到 SaCode 会话；切任务时迟到结果不污染新任务
+- `session/request_permission` 经 SaCode 审批面呈现，用户批准后回传——不自动批准写操作
+- 外部 Agent 自述成功不是完成证据；SaCode 验证真实副作用（文件变更、终端输出）后才标记完成
+- 外部 Agent 无法被完整拦截的动作（如直接网络请求）明确披露，不能声称统一审批已覆盖
+- `session/update` 内容块按类型路由到不同 UI 位置，不全部塞进对话气泡
+- 外部 Agent 的 `_meta` 扩展字段按产品逐个适配，不混用不猜
+- **委派失败兜底**：外部 Agent 返回错误（额度耗尽、认证失败、进程崩溃、超时、能力不支持）时，SaCode 不自动切换执行者，标明失败原因并向用户提供退路：换其他已配置外部 Agent、本机 Agent 接管或排队等待
+- **接管续工作区不续对话**：本机 Agent 接管时，从磁盘当前文件状态作为基线重新读、重新建索引、重新规划，不继承外部 Agent 的会话上下文与中间工具调用记录；外部 Agent 已成功落盘的副作用不回滚，但其自述的"已执行未落盘"步骤不采信。接管后向用户展示"已识别的外部副作用 + 本机 Agent 的新规划"两栏，由用户决定是否继续
+
+## 5. 设置目录与作用域
+
+| 设置分类 | 必备内容 |
+| --- | --- |
+| 通用与外观 | 主题、语言、界面/正文/编辑器/终端字号、启动行为、布局、常用标签、快捷键 |
+| 对话与 Agent | 工作模式筛选、忙碌发送、执行步骤展示、链接打开方式、目标预算、审批、委派、使用量详细度 |
+| 模型与凭据 | 供应商、API Key、端点、发现模型、能力、默认与路由、密钥轮换 |
+| 编辑与 Git | 保存、格式化、文件编码与差异视图、暂存与提交行为 |
+| 终端与执行 | Shell、环境变量、工作目录、Workspace Actions、输出保留 |
+| 知识与记忆 | 项目/个人库与项目/全局记忆、检索范围、存储、编辑、清理 |
+| 扩展与连接 | 插件、技能、MCP、ACP Agent、SSH、数据库驱动及目标 |
+| 自动化与 Hooks | 触发配置、运行策略、暂停、磁盘 Hooks 查看及真实状态说明 |
+| 浏览器与电脑操控 | 能力、授权、截图、网页操作、数据与会话隔离 |
+| 语音与增强 | 录制、转写提供方、增强方式、发送前确认 |
+| 数据与网络 | 导入/导出、存储位置、代理保存值和运行值、日志脱敏 |
+| 安全与诊断 | 三层扫描、修复策略、审计、版本、更新、故障信息、固定配置文件打开动作 |
+
+每个设置明确用户级/项目级/任务级；界面展示最终有效值及来源，禁止无提示地跨作用域覆盖。项目配置属于不可信输入，不能自动扩大执行授权。凭据不存入项目分享配置。
+
+## 6. 架构边界约束
+
+这是产品强约束而非详细实现选型：
+
+- 延续仓颉共享业务核心、既定桌面技术栈与独立 CLI；此文不授权另换框架。业务能力、桌面表现与平台适配拆开。
+- 工作台框架拥有导航、布局、标签生命周期、焦点与主题；插件拥有其内容，通过规定的页面/工具/命令/设置贡献契约接入，不直接改别的模块状态。
+- 生命周期、作用域、任务身份、取消、授权执行、审计和持久化基础机制稳定；内置 Agent、模型、文件、Git、终端、数据库、知识能力按可替换契约装配。
+- 会话记录是对话与执行事实真源；文件、Git、数据库、知识及配置各自有明确权威源，不把所有数据塞入会话日志。布局是偏好，不是执行状态。
+- 本机/SSH/数据库/电脑操控使用明确目标身份；建立连接不是授权。外部 Agent 无法被完整拦截的动作明确披露，不能声称统一审批已覆盖。
+- 桌面和 CLI 共用业务语义，纯视觉功能在 CLI 提供对应数据/动作，不要求同形 UI；按入口记录适用性与测试。
+- 常用标签保存用户偏好，项目布局保存资源标识，任务保存执行关联；恢复布局不自动运行命令、连接敏感目标或加载任意第三方代码。
+
+## 7. 验收标准
+
+以下每域三条最低验收，具体实现设计继续展开用例。前提/操作/预期采用可测试描述；全部未执行，不能据此声明 PASS。
+
+| ID | 正向：前提→操作→预期 | 失败/越权：前提→操作→预期 | 恢复/并发：前提→操作→预期 |
+| --- | --- | --- | --- |
+| F01 | 可用项目→新建/切会话→对应事实与草稿显示 | 不可访问项目→打开→错误与重试，无假就绪 | 切会话后旧响应到达→新会话不被覆盖 |
+| F02 | 授权工具→Agent 执行→真实文件/结果与记录一致 | 模型/工具失败→显示真实错误，不报完成 | 断连/重启→恢复事实，不自动重复副作用 |
+| F03 | 忙碌且消息含附件→排队/即时补充→仅消费一次且引用保留 | 已接收条目→编辑/删除→拒绝伪修改 | 编辑与消费竞争→只生效一个版本，草稿可恢复 |
+| F04 | 目标与预算有效→连续执行并验证→有证据才完成 | 无证据/超预算→受阻或暂停，不无限续跑 | 修订/暂停与轮结束竞争→按最新有效状态准入 |
+| F05 | 有文件与技能→＋/@选择及/命令→正确引用与执行 | init 遇既有配置→不无提示覆盖 | 引用文件改变→版本状态明确，不用静默旧内容 |
+| F06 | 接近容量且安全点→压缩→后续请求采用摘要，历史保留 | 摘要失败→不替换上下文，可重试 | 压缩中有队列/目标→约束与待发送消息不丢 |
+| F07 | 有效密钥→发现/选模型→请求发往明确供应商 | 密钥失效→错误脱敏，不暴露秘密 | 切模型→容量重新核算，旧回执不覆盖新配置 |
+| F08 | 文件变更→审差异/暂存/提交→工作区与暂存结果准确 | 提交失败→不显示成功、不擅自推送 | 用户后续改动→撤销 AI 改动不覆盖后续内容 |
+| F09 | 当前任务终端→Workspace Action→正确目录执行并见退出码 | 目标/权限不足→拒绝，不在别的环境执行 | 终端断连→显示未知/中断，不自动重发 |
+| F10 | 可用 ACP 协作者→委派→真实执行者与结果可见 | 不支持能力→明确拒绝，不伪装已调用；额度耗尽/崩溃/超时→标明原因，提供换 Agent/本机接管/排队三退路，不自动切换 | 主任务取消/并发编辑→取消边界和冲突可追踪；本机接管→从磁盘当前状态续，不续外部 Agent 对话历史，已落盘副作用不回滚 |
+| F11 | 适用知识/记忆→检索引用→来源和作用域可见 | 非授权项目→检索→不泄露 | 来源删除/索引失败→保留真实状态与修复入口 |
+| F12 | 合法本地扩展→安装启用→真实贡献可调用 | 依赖/名称冲突→失败不报 active | 在途调用时卸载→结算与资源撤销，无残留入口 |
+| F13 | 有效自动化→触发→单次执行与历史 | 只有 Hooks 声明→查看→不显示已加载/执行 | 重启/重复触发→按明确策略补偿或跳过并记录 |
+| F14 | 明确授权目标→截图/浏览操作→目标与结果一致 | 网页注入指令→作为数据，不自动越权 | 关闭/断连→后台控制状态仍可见和停止 |
+| F15 | 已核主机与授权→远程部署→真实结果可追踪 | 指纹变化/无授权→拒绝执行 | 远程状态未知→不盲目重试，不假报完成 |
+| F16 | 只读连接→分页查询→目标与结果明确 | 无写权限→编辑/DDL→拒绝 | 事务断连→标注真实或未知状态，不伪造提交 |
+| F17 | 已知漏洞夹具→三层扫描→分别检出对应风险 | 单文件规则引擎→深度扫描声明→不能冒充跨文件能力 | 自动修复遇并发改动→不覆盖，保留审查差异 |
+| F18 | 录音/原草稿→转写/增强→结果可编辑；增强直接应用，按钮及 Ctrl+Z 恢复原文 | 服务失败→原内容仍在，不自动发送或执行工具 | 用户新编辑后旧回执到达→不覆盖；继续编辑按正常撤销顺序处理 |
+| F19 | 来源可读→预览并导入→新增内容与报告 | 来源损坏/含密钥→单项报告并保护来源 | 重复导入/取消→不重复追加，不建立同步 |
+| F20 | 设置保存成功→重启→有效值与加载值一致 | 保存失败/非法设置→不假报成功 | 保存代理未重启→运行值保持原值，SSH 不被改写 |
+| F21 | 文件扩展名匹配→插件 language server→7 个 verb 返回语义结果；诊断回喂模型 | 无对应语言插件→返回 `lsp-no-server`，回退文本工具并标注 | server 崩溃→重启或报告不可用，不阻塞其他工具；rename→走差异审查不直接落盘 |
+
+交付另需覆盖：全键盘工作流、亮暗主题、窄窗、标签溢出、拆分恢复、焦点不被结果抢走、安装/卸载、无 SDK 环境、平台产物与最终源码一致。核心单测、页面夹具、开发态、打包态、真实服务分别记录，不互相替代。
+
+## 8. 当前实现证据与限制
+
+基线：2026-10-07 本轮只读检查，HEAD `35a69ca`。存在并发未提交修改；源码观察属于工作区，不自动代表 HEAD 或安装包。本次未运行构建/测试，下面不是本轮 PASS 表。
+
+程度口径：**完整** = 核心+宿主接线+桌面 UI+测试齐备；**部分** = 有核心实现但宿主/UI/执行链未闭合；**仅登记** = 只有类壳或事件名无生产调用；**不存在** = 零代码（仅有原型 tab 标签不算）。
+
+| F 域 | 现有代码落点（文件:关键符号） | 程度 | 主要缺口 |
+| --- | --- | --- | --- |
+| F01 项目与会话 | `session.cj:SessionLog`、`lease.cj:WriteLease`、`catalog.cj:SessionCatalog`、`cancel.cj:TurnToken/TurnHandle`、host `session/create,select,catalog`、app.js `selectSession/createSession/loadSession` | 完整 | CLI 子命令仅烟测断言模式，非面向用户的产品级会话管理命令 |
+| F02 AI 执行与工具 | `model_agent.cj:ModelAgentLoop/Runner`、`model_tool_runtime.cj:ModelToolRuntime`、`agent.cj:ToolRuntime`（五段管线）、`ext.cj:ToolRegistry/ListenerRegistry`、`approval.cj:ApprovalDesk`、`transport_failure.cj`、host `tool/approval/turn-cancel`、`extjs/host.cjs:ExtHost` | 完整 | — |
+| F03 对话与队列 | `inbox.cj:AgentInbox`（turn/step 双清单、edit/remove/steer、claimStep/claimTurn）、`cancel.cj:DeliveryQueue/ThreadSafeDeliveryQueue`（有界背压）、host `queue/describe,enqueue,update`+`turn/poll`、app.js `queueRows/refreshQueue/enqueueDraft`+`bubbleMessages` | 完整 | — |
+| F04 目标 | `goal.cj:GoalService`（CAS+四态）、`goal_runner.cj:GoalRunner.run`（跨轮+claimTurn+准入+合取完成闸）、`goal_scheduler.cj:GoalScheduler/GoalDriver`（限额+无进展+崩溃重算）、`goal_evidence.cj:GoalEvidence`（机械证据绑定修订+轮次）、`goal_claim.cj:GoalClaim`（声明侧+`update_goal` 工具）、`goal_activation.cj:GoalActivation`（续跑授权）、host `goal/describe,create,edit,pause,resume,clear`、app.js `goalEditorRequest` | 完整 | — |
+| F05 工作区与代码 | `workspace.cj:SessionWorkspace`、`wspace.cj:WorkspaceRegistry`、`fs_tools.cj:globFiles/grepFiles`、host `workspace/files,set-directory`、renderer `workspace-search.ts/file-preview.ts/file-editor-state.ts` | 完整 | — |
+| F06 差异审查 | renderer `file-editor-state.ts:draftDiff`、`git-workbench-state.ts:createGitWorkbench`（status+diff 只读）、`git-workbench.ts:GitWorkbench`（分组+patch 展示）、core `git_workbench.cj:queryWorkspaceGit`、host `workspace/git-status,git-diff` | 部分 | 暂存/取消暂存/提交/推送/历史**不存在**（GitWorkbench 明确标注"只读查询，暂存提交推送尚未开放"） |
+| F07 计划与任务 | `plan.cj:PlanModeController`（plan/mode log-only）、`todo.cj:TodoStore`（全量快照+并行策略）、`todo_tool.cj:TodoTool`（`todo_write` 工具）、renderer `todo-panel.ts:TodoPanel`（三态+折叠+进度）、host `session/projection` 含 todos | 完整 | 计划审阅批准流程（区别于工具权限审批）的产品闭环待核查 |
+| F08 代码、预览与 Git | renderer `file-editor.ts/createFileEditor`（编辑+草稿+审批+原子写+外部修改检测）、`file-preview.ts`、`git-workbench.ts`、core `git_workbench.cj`、host `workspace/git-status,git-diff` | 部分 | 同 F06：编辑器和预览完整，但暂存/提交/推送/历史/远程推送**不存在**；CLI 无 git 子命令 |
+| F09 上下文压缩与用量 | `compact.cj:CompactionLedger`（record/entries）、`meter.cj:TokenMeter`（used/budget/verdict/over/badCount）、`cancel.cj:DeliveryQueue`（背压）、`ledger.cj:UsageLedger`（成本账本）、host `usage/status,set-budget`+`turn/poll` 结算、app.js `refreshUsage` | 部分 | 压缩**仅登记**——`CompactionLedger` 类+测试存在但无生产调用点，实际上下文摘要生成与自动阈值调度**未实现**；用量/预算/背压完整 |
+| F10 ACP 协作 | `prototype.js:336` 仅有 "ACP Agent" 标签 marker（"能力探针与代理授权链未接入"）；core/src 无 ACP Client 代码；host 无 ACP method 分派；preload.cjs 无 ACP IPC | 不存在 | A1 契约与进程管理待 Phase 2 与 F02/F12 同步设计（§4.4） |
+| F11 模型与凭证 | `provider.cj/real_sse_provider.cj`、`custom_model_registry.cj`（多实例号池+能力适配+定价）、`secret_store.cj/secret_bundle.cj`（SM4-CTR+HMAC）、host `model/credential/custom/binding` 全套动词、main.cjs `models-guard/customs-guard`、renderer `models-page.ts/provider-settings.ts/custom-models.ts/model-center-adapter.ts` | 完整 | 远端安装（npm/git 源）返回 not-implemented；`pluginsSetRowEnabled` 为 stub |
+| F12 插件与扩展 | `plugin_store.cj`（本地 install/uninstall/setEnabled/inspectSource）、`plugin_assembly.cj`（拓扑排序+环检测）、`ext.cj/extproc.cj`（注册/子进程）、`extjs/host.cjs:ExtHost`（完整生命周期）、host `plugin/*,extension/host/*`、renderer `plugin-manager.ts/plugins-page.ts/plugin-configuration.ts` | 完整 | 远端源（npm/git）安装被拒返回 not-implemented；`inspectSource` 拒绝 npm/git 源；`pluginsSetRowEnabled` 为 stub |
+| F13 自动化与 Hooks | `webhook.cj`（register/unregister/dispatch 计数）、`schedule.cj`（register/pause/fire 命中数）、`workflow.cj`（start/done/fail/status 状态机） | 仅登记 | 三切片均带"未接真回调"注释；cron 解析、调度线程、编排执行**不存在**；core/src 无 hooks 注册表或触发点定义 |
+| F14 浏览器与电脑控制 | `web.cj:WebClient`（host 白名单+审计）、`web_exec.cj:WebExecutor`（真 HTTP 抓取 GET/HEAD/OPTIONS） | 部分 | HTTP fetch 核心完整但**未接入 host 分派**；浏览器导航/点击/截图/网页注入/电脑控制**不存在**（仅 plugin 描述串 marker + 原型 mockup） |
+| F15 SSH 与远程 | `ssh.cj:SshRegistry`（目标注册+connect/disconnect/status）、`ssh_exec.cj:SshExecutor`（真 ssh 子进程+BatchMode+StrictHostKeyChecking+取消/超时/fail-closed）、`ssh_exec.cj:sshArgv`（纯函数） | 部分 | 核心完整且测试齐备，但**未接入 host 分派**（0 匹配）；桌面无真实 UI（仅原型 mockup） |
+| F16 数据库 | — | 不存在 | core/src 无 db/database/sql 相关文件；host 无 database 方法分派；仅原型 mockup |
+| F17 安全扫描 | — | 不存在 | core/src 无 scan/security/vuln 相关文件；host 无 scan 方法分派；仅原型 tab 标签 |
+| F18 语音与提示词增强 | 提示词增强：`prompt_enhance.cj:PromptEnhancer/EnhanceRunner/EnhanceHandle`+`enhance_charge.cj:EnhanceCharge`+host `prompt/enhance,poll,cancel`+main.cjs `sacode:promptEnhance`+app.js `enhance/undoEnhance/cancelEnhance`（直接替换+Ctrl+Z 回退）。语音：`voice.cj:VoiceSession`+`voice_exec.cj:VoiceExecutor`（ASR 子进程） | 提示词增强**完整**；语音**部分** | 语音核心完整但**未接入 host 分派**；桌面无真实语音 UI（仅原型 mockup） |
+| F19 数据导入 | `custom_model_registry.cj:importNewModels/importInto`（key 派生 id+去重+整批原子）、host `custom/import/new,into`、main.cjs `sacode:customImportNew/Into`、renderer `migration.ts:validateItems/buildExport` | 完整 | 仅限模型配置导入；跨产品通用数据导入/显式字段映射**不存在** |
+| F20 设置与外观 | `settings.cj`（CAS update/replace/mutate）、`global_appearance.cj`（theme/fontSize/busySend+原子写）、`appearance.cj`（每会话主题）、host `global/appearance/*,settings/*`、main.cjs 全套 IPC、app.js 9 标签设置弹窗+主题/字号 UI、`general-settings.ts`（4 可写 8 marker） | 完整 | 6 项设置子项为 marker（同 F10） |
+| F21 LSP 语义工具 | `fs_tools.cj:lspSymbols`（文本模式匹配 func/class/struct/def）、`agent.cj:lspStep`（调 lspSymbols 返回 JSON 数组）、`model_tool_runtime.cj` 注册 `lsp` 工具（免审批）、能力矩阵 line 219 明确"无 Language Server Protocol 通信" | **仅登记** | 当前 `lspSymbols` 是文本 grep 不是真 LSP；7 个 verb 契约未定义；无 language server 进程管理；L1 契约定义待 Phase 2 与 F12 插件架构同步设计 |
+
+### 共性结构发现
+
+- **执行层孤立模式**：`ssh_exec.cj`/`web_exec.cj`/`voice_exec.cj` 三个执行层均采用同构设计（权限面+执行面+TurnToken 协作式取消+单调钟超时+fail-closed 结构化结果+审计事件），核心实现与测试齐备，但**均未被 `apps/host/src/main.cj` 引用**——执行层就绪但宿主分派未接。仅 `prompt_enhance.cj`（经 EnhanceRunner/EnhanceCharge）与 `custom_model_registry.cj`（经 custom/import/*）真正接入了 host 主循环与桌面 IPC。
+- **事件日志统一真源**：providers/custom-models/plugins/user-settings/session 全部用同一套 SessionLog 回放+WriteLease 租约+expectedRevision 乐观并发模式。两入口共用 `GlobalAppearanceSettings.forUser()` 派生的用户目录（`SACODE_USER_SETTINGS_DIR` 覆盖，默认 `~/.sacode/user`）。
+- **CLI 子命令定位**：`apps/cli/src/main.cj` 按 `seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin` 分支跑断言式自测，是测试驱动器与 npm 二进制来源，**非面向用户的产品级命令**。
+- **§8 编号待对齐**：§4 能力表（F05=输入快捷、F06=上下文与用量、F07=模型中心、F08=代码/Git、F09=终端、F10=ACP）与 §8 基线表（F05=工作区代码、F06=差异审查、F07=计划任务、F08=代码/Git、F09=压缩用量、F10=ACP已修正）的 F05–F09 编号不一致——§8 基线表用代码审计时的旧编号，§4 能力表用 v1.0 新编号。F10 已修正对齐。F05–F09 的对齐待后续修订：证据本身正确，只是 F 编号要重映射到 §4 口径。
+
+### 历史冲突登记
+
+| 冲突项 | 旧 v0.2 表述 | 新 v1.0 口径 | 处理 |
+| --- | --- | --- | --- |
+| 产品定位 | "完整复刻冻结 DSH 63 个子系统" | 自主开发者 AI 工作台，参考不承诺兼容 | v1.0 取代；旧矩阵保留作历史证据线索 |
+| F18 提示词增强 | "增强前后对照" | 直接替换草稿、不弹预览、按钮及 Ctrl+Z 回退 | 已修订（§5 F18 行、§7 F18 行） |
+| 鸿蒙壳 | "必须 ArkUI 重写" | 壳按鸿蒙形态重做，可选纯仓颉 UI 或 ArkTS 混合 | 已修订记忆；stdx 有 ohos 发行 |
+| F09 压缩 | "记录前后计数" | record/entries 仅是账面，实际摘要/裁剪/阈值调度未实现 | §8 已标"仅登记" |
+| F13 Hooks | 旧矩阵曾列 commands/skills | webhook/schedule/workflow 三切片均"未接真回调" | §8 已标"仅登记" |
+| F10 ACP | 旧 §8 标"桌面工作台"（布局/UI 壳） | §4 v1.0 F10=ACP 协作；桌面工作台证据归 §3+§6 | §8 F10 已修正为 ACP；§8 F05–F09 编号待对齐 |
+| LSP | 旧 lspSymbols 文本 grep 冒充 LSP | F21 LSP 语义工具，7 verb 契约+语言插件 | §4.3+§8 F21 已标"仅登记" |
+
+证据登记使用历史实测、当前实现、当前实测、风险候选、外部阻塞分列；验收只判 PASS/FAIL/BLOCKED，未执行写未执行。空测试集不算通过，不编造完成率。
+
+## 9. 数据、审计与可观测性
+
+默认本机记录，不默认上传产品分析；统计分析需用户明确开启，业务审计与可选分析分离。请求/工具/队列/目标/压缩/委派/改动/连接操作采用关联身份，足以解释谁在何处做了什么。不得为统计记录密钥、原始录音、截图、文件正文或完整提示词。
+
+| 事件域 | 触发与最少字段 | 用途 |
+| --- | --- | --- |
+| task/turn/tool | 创建、执行、结算；任务/轮次/调用标识、执行者、目标、结果码 | 追踪真实执行与恢复 |
+| queue/goal/compaction | 修订、提交、准入、压缩；标识、修订、状态、原因、计量来源 | 防重复、解释目标推进与上下文变化 |
+| workspace/git | 保存、差异、暂存、提交；项目、资源身份、版本、操作结果 | 审查与冲突治理，不伪造回滚 |
+| delegation/connection | 委派、取消、连接/断连；协作者/目标、能力、结果 | 明确外部控制边界 |
+| import/scan/settings | 导入、扫描、保存；来源类型、范围、成功/失败计数、配置修订 | 对账与诊断，避免泄露内容 |
+
+保留策略、导出与删除入口可配置；删除知识/记忆不会擅自删除工作区文件，清布局不会清会话事实。模型请求取证功能若包含正文，单独按敏感本地资料授权和保护，不与普通统计混存。
+
+## 10. 交付阶段、依赖与风险
+
+| 阶段 | 覆盖 | 用户结果与出口 |
+| --- | --- | --- |
+| S0 规格与取证 | F01–F21 全部映射，界面/数据/插件/平台契约 | 无遗漏需求表、架构边界、正反验收和实现证据；历史冲突显式登记 |
+| S1 工作台原型 | F01、F03、F05、F08 UI、F20 外观、右侧标签 | 亮暗/窄窗/拆分/队列和输入流程可操作；原型数据明确标注，不冒充产品闭环 |
+| S2 主 Agent 闭环 | F02–F09、F18、F21 L1 契约与权限持久化 | 真实模型和工具完成改码/验证/队列/目标/压缩/审查链路；LSP 7 verb 契约定义完成，无插件时回退文本工具 |
+| S3 完整开发与集成 | F10–F17、F19、F21 L2 TS LSP 插件、F10 A1-A2 ACP 契约+OpenCode 接入，补齐其余设置 | ACP（OpenCode 委派真实执行+审批转发+取消）、知识、扩展、自动化、浏览器/电脑、SSH/数据库、扫描、导入真实副作用和失败恢复；TS language server 7 verb 全通、诊断回喂模型 |
+| S4 平台与发布 | F20、F21 L3 多语言扩展、F10 A3-A4 多产品 ACP+并发治理，全域适用入口 | Windows/Linux/鸿蒙分别验收桌面及 CLI 适用动作、打包态和干净环境；LSP 插件按语言逐个验收；CodeBuddy/Qoder CLI 逐产品 ACP 差异核验；未支持项明确 BLOCKED 与解锁条件 |
+
+依赖允许并行：UI 和接口可以并行设计，稳定业务契约未落地的页面不能用模拟成功验收。每阶段包括设计、开发、联调、正反测试和交付复核；缺少人力与容量数据，不给虚构工时或日期。
+
+主要风险：ACP 产品协议差异、平台权限与进程能力、真实 PTY、数据库驱动及事务差异、扫描引擎能力、模型容量与计量准确性、鸿蒙组件支持、历史文档过期、共享工作区并发修改。分别以协议探针、原型验证、隔离测试、真实服务和产物验收解锁，不靠缩范围或放宽授权凑通过。
+
+## 11. 文档自检与后续设计交付
+
+- 定位、用户、需求来源、全部必备能力及非承诺范围已明确。
+- F01–F20 均有入口/规则、异常/恢复、三类验收与阶段归属。
+- 用户指定 UI 信息架构和架构边界单列；未自行换框架或指定新数据存储实现。
+- 未提供的商业增长数据、人力、日期和性能基线不编造；量化门槛采用需求覆盖与安全保证。
+- 当前实现不标为当前通过；旧文档独立归档，避免双重产品口径。
+- 下一步交付架构接口设计与高保真 UI 原型，覆盖中央对话/队列/目标/＋/@/斜杠/用量以及右侧全部标签类别；原型评审后再安排实施。
+
+---
+
+# 历史 PRD v0.2（已被上方 v1.0 取代，仅作研究与证据参考）
+
+以下旧目标、兼容要求、范围分母、旧布局与推进优先级不再约束当前产品；仅其具体历史实测可按日期和版本引用。不得将其当成新版需求的遗漏补丁或当前完成声明。
 
 - 版本：v0.2
 - 日期：2026-10-03
@@ -226,6 +605,66 @@ R0 更新：上述三条问题和待提交源码已在代码提交 `6e060ff` 收
 - 性能基准与量化阈值；后续平台支持顺序及交付排期。
 
 待核项（产品范围已定）：C01–C04 在冻结上游中的存在性、模块映射与调用依赖；凭证与官方账号的边界；遥测数据及目的地；远程认证和本地 IPC 校验的保留路径。核验结果同步回填能力矩阵，不因产品决定而勾选“上游已核”。
+
+## 12. 微信 Channels 绑定（后续规划，2026-10-09 加入）
+
+**来源**：Spike 调查 Qwen Code `channels/weixin` 功能（iLink Bot 双向通道）。
+**产品裁决**：作为低优先级（Later）后续功能计入路线图；不纳入当前 MVP 范围，待产品进一步决策后再启动设计与实现。
+**技术可行性**：extjs 宿主 + Node iLink Bot SDK 可实现；核心会话日志可作为消息面持久化来源。
+
+### 12.1 功能概述
+支持通过微信 iLink Bot 官方 API 将 SaCode 注册为机器人，实现双向私聊通道：
+- 用户可发送**文本、图片（需 vision 模型，如 qwen3.5-plus）、文件**给机器人。
+- 机器人仅回复**纯文本**（不支持富媒体出站）。
+- 仅支持**私聊**，不支持群聊。
+- 提供输入状态提示（"..."）与媒体 AES-128-ECB 解密。
+
+### 12.2 绑定与认证流程
+1. 用户在 CLI 或桌面设置中执行 `sacode channel configure-weixin`（或对应菜单入口）。
+2. 终端/界面展示二维码 URL。
+3. 用户用手机微信扫码登录。
+4. 登录凭据持久化到独立目录 `~/.sacode/channels/weixin/account.json`（不混入主配置或会话日志）。
+5. 会话可能因 errcode -14 过期，需重新扫码。
+
+### 12.3 配置与作用域
+- 配置项位于 `settings.json` 的 `"channels"` 数组下，type 为 `"weixin"`。
+- 支持 `privatePolicy`（如 `"pairing"`）、`sessionScope` 等策略。
+- 绑定与会话解耦：一个微信账号可绑定多个 SaCode 会话；一个 SaCode 会话可绑定多个外部通道。
+
+### 12.4 验收标准（Given-When-Then）
+| 编号 | 场景 | Given | When | Then |
+|------|------|-------|------|------|
+| AC1 | 首次绑定 | 用户未绑定微信 | 执行 configure-weixin 命令 | 展示二维码，扫码后 account.json 生成，状态为已连接 |
+| AC2 | 入站文本 | 机器人已绑定且在线 | 用户在微信私聊发送文本 | SaCode 收到消息，写入会话日志，Agent 产生回复 |
+| AC3 | 入站图片 | 绑定在线且配置了 vision 模型 | 用户发送图片 | 图片被解密并传递给 vision 模型，Agent 产生文本回复 |
+| AC4 | 出站回复 | Agent 产生回复 | 通道在线 | 机器人回复纯文本到微信私聊 |
+| AC5 | 会话过期 | 凭据已过期（errcode -14） | 用户尝试发送消息 | 提示重新扫码，旧凭据被清理 |
+| AC6 | 群聊拒绝 | 用户尝试在群聊中@机器人 | — | 机器人不响应或明确拒绝（不进入会话） |
+
+### 12.5 非功能要求
+- 安全：凭据文件权限 0600（或等效），不在普通日志中出现明文。
+- 兼容性：仅 Windows/Linux 桌面端与 CLI 入口；鸿蒙平台暂不纳入。
+- 性能：扫码绑定流程 < 30 秒完成；消息往返延迟与普通工具调用相当。
+
+### 12.6 依赖与风险
+| 风险 | 概率 | 影响 | 缓解 |
+|------|------|------|------|
+| iLink Bot API 变更或下线 | 中 | 通道失效 | 抽象通道接口，易于切换其他 Bot 平台 |
+| 微信审核政策收紧 | 低 | 机器人被封 | 遵守官方使用条款，不做高频/营销行为 |
+| 用户混淆「绑定」与「登录」 | 中 | 支持成本上升 | 清晰的 onboarding 文案与错误提示 |
+| 群聊误用 | 低 | 体验下降 | 明确文档说明仅支持私聊 |
+
+### 12.7 实施顺序建议（若产品批准启动）
+1. 抽象「外部通道」接口（ChannelProvider、bind、send、receive、status）。
+2. extjs 宿主实现 iLink Bot 适配器（扫码、凭据管理、消息收发）。
+3. CLI 命令 `channel configure-weixin` + 状态查询。
+4. 桌面设置页「连接的 Channels」列表与解绑入口。
+5. 核心会话日志投影支持 `channel` 元数据与消息来源标记。
+6. 端到端集成测试（绑定→消息往返→过期恢复）。
+
+**当前状态**：仅记录需求与 Spike 结论；无实现代码、无设计稿、无排期。待产品明确「是否纳入自有 Agent 入口」后再推进。
+
+---
 
 ## 9. 文档关系
 
