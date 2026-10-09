@@ -382,4 +382,49 @@ public class SessionLog {
         }
         return true
     }
+
+    public func startSession(sessionId: String, source: String): Unit {
+        append("session/start", "${sessionId}\t${source}")
+        let input = HookInput(
+            sessionId: sessionId,
+            transcriptPath: path,
+            cwd: "",
+            hookEventName: "SessionStart",
+            timestamp: 0,
+            eventSpecific: HookEventData.Session(source)
+        )
+        let reg = HookRegistry(log: this)
+        let result = reg.dispatch(HookEvent.SessionStart, input, source)
+        append("hook/decision", "SessionStart::${result.decision}")
+    }
+
+    public func endSession(sessionId: String, reason: String): Unit {
+        append("session/end", "${sessionId}\t${reason}")
+        let input = HookInput(
+            sessionId: sessionId,
+            transcriptPath: path,
+            cwd: "",
+            hookEventName: "SessionEnd",
+            timestamp: 0,
+            eventSpecific: HookEventData.End(reason)
+        )
+        let reg = HookRegistry(log: this)
+        let result = reg.dispatch(HookEvent.SessionEnd, input, reason)
+        append("hook/decision", "SessionEnd::${result.decision}")
+    }
+
+    public func deleteSession(sessionId: String): Unit {
+        append("session/delete", sessionId)
+        let input = HookInput(
+            sessionId: sessionId,
+            transcriptPath: path,
+            cwd: "",
+            hookEventName: "SessionDelete",
+            timestamp: 0,
+            eventSpecific: HookEventData.Delete
+        )
+        let reg = HookRegistry(log: this)
+        let result = reg.dispatch(HookEvent.SessionDelete, input, "")
+        append("hook/decision", "SessionDelete::${result.decision}")
+    }
 }
