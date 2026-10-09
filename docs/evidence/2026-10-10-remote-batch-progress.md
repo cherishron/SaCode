@@ -18,6 +18,10 @@
 | e68ba6d | 能力契约表 requiredScope / anchor / 客户端方法面 5 组独立检查（裸脚本迁 node:test） | 9/9 rc=0 | — | 已入库 |
 | 26c363b | TargetStore+TargetBridge+RemoteTransport 多目标集成（真 HTTP） | 3/3 rc=0 | — | 已入库 |
 | 4be823d | 契约加「全局无资源动作」白名单棘轮（防止新增管理方法忘声明 resourceKeys） | 10/10 rc=0 | 首次跑即抓出 auth/revoke 缺口，纳入白名单并写明依据 | 已入库 |
+| 93b1f1f | target-store TOFU 钉扎 + rotate 显式换钉 | 28/28 rc=0 | 静默覆盖 mismatch / 取消 confirm 检查 两个变异各杀指定受害 24/27 | 已入库 |
+| 3968691 | tls-pin.cjs 证书指纹钉扎校验（`tls.checkServerIdentity` + SHA-256 常数时间比较） | 9/9 rc=0 | 3 变异（去 mismatch / 去 host / 去 format）各杀受害 3 / 5+9 / 4 | 已入库 |
+| e73c521 | 批次进度表补 4be823d 与分栏 | 文档 | — | 已入库 |
+| 738b829 | core/remote_{identity,audit,authorization}.cj + 3 份测试入库（989 行） | cjpm build 库层 rc=0；运行验证 pending | 见「在飞未完成」节 | 已入库；测试执行未过 |
 
 **桌面侧总计（本轮）**：`target-store` 21、`remote-transport` 22、`remote-transport-integration` 6、
 `target-bridge` 15、`multi-target-integration` 3，共 67 条断言全绿。
@@ -27,9 +31,7 @@
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
-| 身份模块 core/remote_identity.cj + 11 条测试 | 工作区未提交 | cjpm test --target-dir core-remote-id 累计 30 分钟仍在链 `unittest_bin/core.exe`；cjc.exe 内存 1.35GB 缓慢增长；stdout 停在「158 warnings」后无 Summary |
-| 审计模块 core/remote_audit.cj + 6 条测试 | 同上 | 同上 |
-| 请求级授权 core/remote_authorization.cj + 12 条测试 | 同上 | 同上 |
+| 身份/审计/授权 3 模块的运行验证 | 738b829 已入库；测试文件同批 | 上一轮 `cjpm test --target-dir core-remote-id` 累计 40+ 分钟停在链接 `unittest_bin/core.exe`（cjc.exe 1.35→1.37GB 缓涨；stdout 停在 158 warnings 无 Summary）；kill 后重跑 `cjpm test --target-dir core-remote-v3` 已在后台（ID `b6eyeiryv`）跑，`cjpm build --target-dir core-build-only` 单独一次已 rc=0 通过并显示 162 warnings 中 0 条与 remote_*.cj 相关，编译级证据到手 |
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。
 
