@@ -152,3 +152,25 @@ test("集成：/rpc id 与服务端回显不匹配（模拟错帧）→ 客户�
   srv.close();
   await once(srv, "close");
 });
+
+// 用真实 undici fetch 验证 redirect:"manual" 端到端不跟随：
+// 服务端 302 到「另一个已监听端口」，如果客户端跟了会拿到目标端口 200；
+// 期望客户端直接抛 redirect-not-allowed，第二个 handler 一次都不被调。
+test("集成：真 HTTP 302 跨主机重定向 → 客户端拒收且不落到目标", async () => {
+  let targetHit = 0;
+  const target = await startServer((_req, res) => { targetHit += 1; res.writeHead(200); res.end("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"); });
+  const targetPort = target.address().port;
+  const source = await startServer((_req, res) => {
+    res.writeHead(302, { "Location": `http://127.0.0.1:${targetPort}/rpc` });
+    res.end();
+  });
+  const sourcePort = source.address().port;
+  const t = new RemoteTransport({
+    baseUrl: `http://127.0.0.1:${sourcePort}`,
+    tokenProvider: async () => "tk",
+    fetchImpl: globalThis.fetch,
+  });
+  await assert.rejects(() => t.sendRequest("m", {}), (e) => e.reason === "redirect-not-allowed");
+  assert.equal(targetHit, 0, "跨主机重定向绝不能落到目标");
+  for (const s of [target, source]) { s.closeAllConnections?.(); s.close(); await once(s, "close"); }
+});
