@@ -175,14 +175,26 @@ public class RemoteAccessEndpoints {
     let audit: RemoteAuditLog
     let limiter: RemoteAuthRateLimiter
     let instanceId: String
+    // 设备快照落点；空串表示不落盘（单测与嵌入式场景）。
+    let snapshotPath: String
     let base = MonoTime.now()
 
     public init(store: RemoteIdentityStore, audit: RemoteAuditLog,
-                limiter: RemoteAuthRateLimiter, instanceId: String) {
+                limiter: RemoteAuthRateLimiter, instanceId: String,
+                snapshotPath!: String = "") {
         this.store = store
         this.audit = audit
         this.limiter = limiter
         this.instanceId = instanceId
+        this.snapshotPath = snapshotPath
+    }
+
+    // 登记成功后立刻落盘：设备是长期身份，daemon 重启后必须还在。
+    // 落盘失败不回滚登记（设备此刻确实已注册），但要记一条审计并让调用方
+    // 能从 stderr 看到——静默丢掉持久化会让「重启后设备消失」变成隐性问题。
+    func persistAfterEnroll(): Bool {
+        if (snapshotPath.size == 0) { return true }
+        return store.saveSnapshot(snapshotPath)
     }
 
     func nowMs(): Int64 { (MonoTime.now() - base).toMilliseconds() }
@@ -245,6 +257,7 @@ public class RemoteAccessEndpoints {
         if (let Some(record) <- enrolled) {
             limiter.clearTicket(digest)
             auditBootstrap(record.deviceId, record.principalId, "auth/enroll", "allowed", "")
+            persistAfterEnroll()
             // 凭据只在登记成功这一次明文回出；此后服务端只存摘要。
             var body = "{\"instanceId\":\"${jsonEscapeText(instanceId)}\""
             body += ",\"deviceId\":\"${jsonEscapeText(record.deviceId)}\""

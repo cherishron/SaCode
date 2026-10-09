@@ -228,7 +228,14 @@ main(args: Array<String>): Int64 {
         let identity = RemoteInstanceIdentity.loadOrCreate(accessConfig.identityPath)
         let auditSink = FileAuditSink("${accessConfig.identityPath}.audit.log")
         let audit = RemoteAuditLog(auditSink)
+        // 设备身份跨重启保持：先加载快照再开服。加载失败只说明「无历史」，
+        // 不是致命项——首次启动本来就没有这个文件。
         let store = RemoteIdentityStore()
+        let deviceSnapshot = "${accessConfig.identityPath}.devices.json"
+        if (store.loadSnapshot(deviceSnapshot)) {
+            getStdErr().writeln("remote-access-devices-restored-from-snapshot")
+            getStdErr().flush()
+        }
         let authorizer = RemoteAccessAuthorizer()
         if (let Some(reason) <- RemotePolicyLoader.load(accessConfig.policyPath, authorizer)) {
             getStdErr().writeln("remote-access-startup-refused: ${reason}")
@@ -237,7 +244,8 @@ main(args: Array<String>): Int64 {
         }
         setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId)))
         setRemoteEndpoints(Some(RemoteAccessEndpoints(
-            store, audit, RemoteAuthRateLimiter(), identity.instanceId)))
+            store, audit, RemoteAuthRateLimiter(), identity.instanceId,
+            snapshotPath: deviceSnapshot)))
     }
 
     let server = ServerBuilder().addr(accessConfig.bind).port(port).build()

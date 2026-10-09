@@ -1,6 +1,8 @@
 package daemon
 import core.*
 
+import std.env.*
+import std.fs.*
 import std.unittest.*
 import std.collection.*
 import stdx.crypto.crypto.*
@@ -146,4 +148,130 @@ func concurrentEnrollmentFails() {
         threw = true
     }
     @Expect(threw, true)
+}
+
+// ==== 快照持久面（设计 §4.1「实例身份与已登记设备重启不变」）====
+// 只验公开行为：落盘→重载→继续用。快照内容单独扫一遍，证明里面没有任何原文。
+
+func snapPath(name: String): String {
+    return "${getTempDirectory().toString()}/sa-id-${name}.json"
+}
+
+func dropSnap(name: String): Unit {
+    let p = Path(snapPath(name))
+    if (exists(p)) { try { remove(p, recursive: false) } catch (_: Exception) {} }
+}
+
+@Test
+func devicesSurviveSnapshotRoundTrip() {
+    // 注册一台设备并落盘，交给「另一个进程」形状的干净 store：
+    // 它没参与注册，必须仍能凭当初发给设备的凭据换出可用令牌。
+    let name = "rt1"
+    dropSnap(name)
+    let a = RemoteIdentityStore()
+    let secret = a.createEnrollmentSecret("p-1")
+    let device = a.enroll(secret.value, "dev-rt", "mobile")
+    @Expect(a.saveSnapshot(snapPath(name)), true)
+
+    let b = RemoteIdentityStore()
+    @Expect(b.loadSnapshot(snapPath(name)), true)
+    let token = b.exchangeToken(device.deviceId, device.credential)
+    @Expect(token.deviceId == device.deviceId, true)
+    let ctx = b.authenticate(token.value)
+    @Expect(ctx.isSome(), true)
+    dropSnap(name)
+}
+
+@Test
+func snapshotCarriesNoPlaintextCredentialSecretOrToken() {
+    // 这是把 enrollments/tokens 从「按原文索引」改成「按摘要索引」的真正理由：
+    // 只要 store 里还存在可还原的原文，任何形式的持久化都是长期可用的凭据堆积。
+    let name = "rt2"
+    dropSnap(name)
+    let a = RemoteIdentityStore()
+    let secret = a.createEnrollmentSecret("p-2")
+    let device = a.enroll(secret.value, "dev-scan", "desktop")
+    let token = a.exchangeToken(device.deviceId, device.credential)
+    let text = a.snapshotText()
+    @Expect((text.indexOf(device.credential) ?? Int64(-1)) == Int64(-1), true)
+    @Expect((text.indexOf(token.value) ?? Int64(-1)) == Int64(-1), true)
+    @Expect((text.indexOf(secret.value) ?? Int64(-1)) == Int64(-1), true)
+    // 摘要必须在，否则重载后无法校验凭据。
+    @Expect((text.indexOf(device.credentialDigest) ?? Int64(-1)) >= Int64(0), true)
+    dropSnap(name)
+}
+
+@Test
+func enrollmentTicketsAndTokensAreNotPersisted() {
+    // 5 分钟一次性票据与 ≤15 分钟令牌都不落盘：重启后必须重新兑换，
+    // 不能让未消费的票据在磁盘上活到不知什么时候。
+    let name = "rt3"
+    dropSnap(name)
+    let a = RemoteIdentityStore()
+    let pending = a.createEnrollmentSecret("p-3")
+    let used = a.createEnrollmentSecret("p-3")
+    let device = a.enroll(used.value, "dev-x", "mobile")
+    let token = a.exchangeToken(device.deviceId, device.credential)
+    @Expect(a.saveSnapshot(snapPath(name)), true)
+
+    let b = RemoteIdentityStore()
+    @Expect(b.loadSnapshot(snapPath(name)), true)
+    // 未消费的票据没被带过来。
+    let threw = try {
+        b.enroll(pending.value, "hijack", "mobile")
+        false
+    } catch (_: Exception) { true }
+    @Expect(threw, true)
+    // 旧令牌也没被带过来，但同一凭据可以再换一张。
+    @Expect(b.authenticate(token.value).isNone(), true)
+    let fresh = b.exchangeToken(device.deviceId, device.credential)
+    @Expect(fresh.value.size > Int64(0), true)
+    dropSnap(name)
+}
+
+@Test
+func revokedDeviceAndWatermarkSurviveReload() {
+    let name = "rt4"
+    dropSnap(name)
+    let a = RemoteIdentityStore()
+    let s1 = a.createEnrollmentSecret("p-4")
+    let d1 = a.enroll(s1.value, "dev-rev", "mobile")
+    let t1 = a.exchangeToken(d1.deviceId, d1.credential)
+    a.revokeDevice(d1.deviceId)
+    let s2 = a.createEnrollmentSecret("p-4")
+    let d2 = a.enroll(s2.value, "dev-rev", "mobile")
+    @Expect(a.saveSnapshot(snapPath(name)), true)
+
+    let b = RemoteIdentityStore()
+    @Expect(b.loadSnapshot(snapPath(name)), true)
+    // 撤销状态是设备记录的一部分，必须跟着回来。
+    @Expect(b.authenticate(t1.value).isNone(), true)
+    // 设备 id 水位也回来了，新登记不会撞上已存在的 deviceId。
+    @Expect(d2.deviceId != d1.deviceId, true)
+    let s3 = b.createEnrollmentSecret("p-4")
+    let d3 = b.enroll(s3.value, "dev-rev", "mobile")
+    @Expect(d3.deviceId != d1.deviceId, true)
+    @Expect(d3.deviceId != d2.deviceId, true)
+    dropSnap(name)
+}
+
+@Test
+func loadSnapshotMissingOrBrokenFailsLoudNotSilentlyEmpty() {
+    // 文件不存在 → false，调用方按「无历史」继续；不能返回 true 假装恢复成功。
+    let a = RemoteIdentityStore()
+    @Expect(a.loadSnapshot(snapPath("does-not-exist")), false)
+    // 半截/非 JSON 快照同样 false，且不得把已有设备洗掉。
+    let name = "rt5"
+    dropSnap(name)
+    let broken = try { File.writeTo(Path(snapPath(name)), "{\"devices\": notjson".toArray()); true }
+        catch (_: Exception) { false }
+    @Expect(broken, true)
+    let b = RemoteIdentityStore()
+    let s = b.createEnrollmentSecret("p-5")
+    let d = b.enroll(s.value, "dev-keep", "mobile")
+    @Expect(b.loadSnapshot(snapPath(name)), false)
+    // 损坏快照不能让刚注册的设备消失。
+    let t = b.exchangeToken(d.deviceId, d.credential)
+    @Expect(t.deviceId == d.deviceId, true)
+    dropSnap(name)
 }
