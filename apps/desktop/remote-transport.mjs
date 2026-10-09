@@ -46,6 +46,7 @@ export class RemoteTransport {
     this.epoch = 0;           // 目标切换时上层调 bumpEpoch()
     this.closed = false;
     this.pendingSubscribers = new Set();
+    this.lastEventId = null;
   }
 
   bumpEpoch() {
@@ -57,7 +58,7 @@ export class RemoteTransport {
 
   currentEpoch() { return this.epoch; }
 
-  async sendRequest(method, params) {
+  async sendRequest(method, params, opts = {}) {
     if (this.closed) throw new TransportError("closed", "transport-closed");
     if (typeof method !== "string" || method.length === 0) throw new TransportError("bad-request", "method-required");
     if (this.inflightRpc >= MAX_CONCURRENT_RPC_PER_TARGET) throw new TransportError("backpressure", "rpc-concurrency-limit");
@@ -67,15 +68,29 @@ export class RemoteTransport {
     this.inflightRpc += 1;
     const controller = new AbortController();
     const timer = this.setTimeoutImpl(() => controller.abort(), RPC_TIMEOUT_MS);
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (opts.idempotencyKey !== undefined) {
+      if (typeof opts.idempotencyKey !== "string" || opts.idempotencyKey.length === 0) {
+        this.clearTimeoutImpl(timer);
+        this.inflightRpc -= 1;
+        throw new TransportError("bad-request", "idempotency-key-invalid");
+      }
+      if (opts.idempotencyKey.length > 200) {
+        this.clearTimeoutImpl(timer);
+        this.inflightRpc -= 1;
+        throw new TransportError("bad-request", "idempotency-key-too-long");
+      }
+      headers["Idempotency-Key"] = opts.idempotencyKey;
+    }
     try {
       const token = await this.tokenProvider();
       if (typeof token !== "string" || token.length === 0) throw new TransportError("auth-missing", "token-empty");
+      headers["Authorization"] = `Bearer ${token}`;
       const res = await this.fetch(`${this.baseUrl}/rpc`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
+        headers,
         body,
         signal: controller.signal,
       });
@@ -108,7 +123,7 @@ export class RemoteTransport {
     }
   }
 
-  async subscribeNotifications(onFrame) {
+  async subscribeNotifications(onFrame, opts = {}) {
     if (this.closed) throw new TransportError("closed", "transport-closed");
     if (this.inflightSse >= MAX_CONCURRENT_SSE_PER_TARGET) throw new TransportError("backpressure", "sse-concurrency-limit");
     const token = await this.tokenProvider();
@@ -117,9 +132,19 @@ export class RemoteTransport {
     this.inflightSse += 1;
     this.pendingSubscribers.add(controller);
     const epochAtOpen = this.epoch;
+    const headers = { "Authorization": `Bearer ${token}`, "Accept": "text/event-stream" };
+    if (opts.resumeEventId !== undefined && opts.resumeEventId !== null) {
+      const rid = String(opts.resumeEventId);
+      if (rid.length === 0 || rid.length > 128) {
+        this.inflightSse -= 1;
+        this.pendingSubscribers.delete(controller);
+        throw new TransportError("bad-request", "resume-event-id-invalid");
+      }
+      headers["Last-Event-ID"] = rid;
+    }
     const res = await this.fetch(`${this.baseUrl}/sse`, {
       method: "GET",
-      headers: { "Authorization": `Bearer ${token}`, "Accept": "text/event-stream" },
+      headers,
       signal: controller.signal,
     });
     if (this.epoch !== epochAtOpen) { controller.abort(); this.inflightSse -= 1; this.pendingSubscribers.delete(controller); throw new TransportError("stale-epoch", "target-switched-during-open"); }
@@ -138,11 +163,18 @@ export class RemoteTransport {
           while ((i = buf.indexOf("\n\n")) >= 0) {
             const frame = buf.slice(0, i);
             buf = buf.slice(i + 2);
+            let dataStr = null;
+            let eventId = null;
             for (const line of frame.split("\n")) {
               if (line.startsWith("data: ")) {
-                const dataStr = line.slice(6);
-                try { onFrame(JSON.parse(dataStr), epochAtOpen); } catch (_e) { /* 忽略畸形帧 */ }
+                dataStr = line.slice(6);
+              } else if (line.startsWith("id:")) {
+                eventId = line.slice(3).trim();
               }
+            }
+            if (eventId !== null) this.lastEventId = eventId;
+            if (dataStr !== null) {
+              try { onFrame(JSON.parse(dataStr), epochAtOpen); } catch (_e) { /* 忽略畸形帧 */ }
             }
           }
         }
@@ -156,6 +188,8 @@ export class RemoteTransport {
     pump();
     return () => { try { controller.abort(); } catch (_e) {} };
   }
+
+  getLastEventId() { return this.lastEventId; }
 
   close() {
     this.closed = true;

@@ -197,3 +197,89 @@ test("transport：baseUrl 无斜杠也能拼 /rpc /sse", async () => {
   await t.sendRequest("m", {});
   assert.equal(urls[0], "https://x.example/rpc");
 });
+
+test("transport：sendRequest 带 Idempotency-Key 头", async () => {
+  const calls = [];
+  const fetchImpl = async (u, init) => {
+    calls.push(init);
+    return makeResponse({ body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }) });
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await t.sendRequest("m", {}, { idempotencyKey: "op-42" });
+  assert.equal(calls[0].headers["Idempotency-Key"], "op-42");
+});
+
+test("transport：sendRequest 不带 key 时不出现 Idempotency-Key 头", async () => {
+  const calls = [];
+  const fetchImpl = async (_u, init) => {
+    calls.push(init);
+    return makeResponse({ body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) });
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await t.sendRequest("m", {});
+  assert.ok(!("Idempotency-Key" in calls[0].headers));
+});
+
+test("transport：Idempotency-Key 空串与非字符串拒发", async () => {
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl: async () => makeResponse({}) });
+  await assert.rejects(() => t.sendRequest("m", {}, { idempotencyKey: "" }), (e) => e.reason === "idempotency-key-invalid");
+  await assert.rejects(() => t.sendRequest("m", {}, { idempotencyKey: 123 }), (e) => e.reason === "idempotency-key-invalid");
+});
+
+test("transport：Idempotency-Key 超 200 字符拒发", async () => {
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl: async () => makeResponse({}) });
+  await assert.rejects(
+    () => t.sendRequest("m", {}, { idempotencyKey: "x".repeat(201) }),
+    (e) => e.reason === "idempotency-key-too-long"
+  );
+});
+
+test("transport：SSE resumeEventId 发 Last-Event-ID 头", async () => {
+  const calls = [];
+  const fetchImpl = async (_u, init) => {
+    calls.push(init);
+    return { ok: true, status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await t.subscribeNotifications(() => {}, { resumeEventId: "42" });
+  assert.equal(calls[0].headers["Last-Event-ID"], "42");
+});
+
+test("transport：SSE 不传 resumeEventId 时不带 Last-Event-ID", async () => {
+  const calls = [];
+  const fetchImpl = async (_u, init) => {
+    calls.push(init);
+    return { ok: true, status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await t.subscribeNotifications(() => {});
+  assert.ok(!("Last-Event-ID" in calls[0].headers));
+});
+
+test("transport：SSE resumeEventId 非法（空/超长）拒发", async () => {
+  const t = new RemoteTransport({
+    baseUrl: "https://x.example",
+    tokenProvider: async () => "tk",
+    fetchImpl: async () => ({ ok: true, status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } }),
+  });
+  await assert.rejects(() => t.subscribeNotifications(() => {}, { resumeEventId: "" }), (e) => e.reason === "resume-event-id-invalid");
+  await assert.rejects(() => t.subscribeNotifications(() => {}, { resumeEventId: "x".repeat(129) }), (e) => e.reason === "resume-event-id-invalid");
+});
+
+test("transport：SSE 帧中 id: 行更新 lastEventId 游标", async () => {
+  const chunks = [
+    "id: 7\ndata: {\"seq\":7}\n\n",
+    "data: {\"seq\":8}\n\n",       // 无 id，游标保持 7
+    "id: 9\ndata: {\"seq\":9}\n\n",
+  ];
+  const stream = chunkStream(chunks);
+  const fetchImpl = async () => ({ ok: true, status: 200, body: { getReader: () => stream } });
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  const frames = [];
+  await t.subscribeNotifications((f) => frames.push(f));
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.getLastEventId(), "9");
+  assert.deepEqual(frames.map((f) => f.seq), [7, 8, 9]);
+});
