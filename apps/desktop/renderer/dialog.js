@@ -77,8 +77,8 @@ window.SaCodeDialog = {
         "aria-label": props.adjustable ? "移动预览，支持方向键" : undefined,
         onPointerdown: e=>beginDrag(e,false), onKeydown:e=>keyAdjust(e,false) }, [
         h("h2", null, props.title),
-        h("button", { class: "btn", autofocus: true, "aria-label": "关闭" + props.title,
-          onClick: () => emit("close") }, "关闭"),
+        h("button", { class: "dialog-close", type: "button", autofocus: true, "aria-label": "关闭" + props.title, title: "关闭",
+          onClick: () => emit("close") }, [h("svg", { width:16, height:16, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", "stroke-width":1.6, "aria-hidden":"true" }, [h("path", { d:"M6 6l12 12M18 6L6 18" })])]),
       ]),
       h("div", { class: "dialog-body" }, slots.default ? slots.default() : []),
       props.adjustable ? h('button', {class:'float-resize', 'aria-label':'调整预览大小，支持方向键',

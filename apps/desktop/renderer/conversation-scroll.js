@@ -1,18 +1,22 @@
 /* 会话阅读位置属于 UI：不写核心日志。按冻结官方 ui-chat 的阅读策略，
  * 首次打开跟随尾部、用户上翻停止跟随、自有输入恢复跟随、按消息锚点恢复会话。
- * 当前投影尚无分页/turn 导航，因此这里只管理已经加载的消息。 */
+ * 定位的唯一所有者就是这里：历史对话侧栏要跳某条消息也走 jumpTo，不自取 scrollTop。
+ * 仍只管理已经加载进来的消息，投影没有分页。 */
 "use strict";
 (function (root) {
   const owners = new WeakMap(), memory = new Map();
   const threshold = 25; // 官方 use-chat-reading：FOLLOW_THRESHOLD + 1。
   function attach(node, binding) {
-    let session, lastUser, following = true, position = null, frame = 0, landed = 0;
+    let session, lastUser, following = true, position = null, frame = 0, landed = 0, announced;
     let value = binding, disposed = false;
     const metrics = () => ({top:node.scrollTop,floor:Math.max(0,node.scrollHeight-node.clientHeight)});
     const anchors = () => [...node.querySelectorAll('[data-msg-id]')];
     function publish() {
       node.dataset.followingTail = String(following);
       value.onChange?.(following);
+      // 在尾部时没有「正在读的历史条目」，交还 null 让导航侧栏回落到最后一轮。
+      const anchor = following ? null : position?.id ?? null;
+      if (anchor !== announced) { announced = anchor; value.onAnchor?.(anchor); }
     }
     function capture() {
       const top = node.getBoundingClientRect().top;
@@ -75,7 +79,15 @@
     const childObserver=new MutationObserver(()=>{observeChildren();schedule();});
     childObserver.observe(node,{childList:true});
     update(binding);
-    const owner={update,toBottom(){following=true;position=null;remember();reconcile();},dispose(){
+    const owner={update,toBottom(){following=true;position=null;remember();reconcile();},jumpTo(id){
+      // 跳转也由本宿主做：侧栏只交锚点，不自己改 scrollTop，否则阅读位置出现第二个所有者。
+      const el=anchors().find(e=>e.dataset.msgId===id);
+      if(!el) return false;
+      following=false; position=null;
+      jump(node.scrollTop+el.getBoundingClientRect().top-node.getBoundingClientRect().top);
+      position=capture(); remember(); publish();
+      return true;
+    },dispose(){
       disposed=true;cancelAnimationFrame(frame);frame=0;observer.disconnect();childObserver.disconnect();observed.clear();
       node.removeEventListener('scroll',onScroll);
       for(const type of ['wheel','touchstart','pointerdown','keydown']) node.removeEventListener(type,intent);
@@ -83,7 +95,8 @@
     }};
     owners.set(node,owner);return owner;
   }
-  root.SaCodeConversationScroll={attach,toBottom(node){owners.get(node)?.toBottom();},directive:{
+  root.SaCodeConversationScroll={attach,toBottom(node){owners.get(node)?.toBottom();},
+    jumpTo(node,id){return !!owners.get(node)?.jumpTo(id);},directive:{
     mounted(node,binding){attach(node,binding.value);},
     updated(node,binding){owners.get(node)?.update(binding.value);},
     beforeUnmount(node){owners.get(node)?.dispose();},

@@ -17,6 +17,53 @@ const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
 
+test('持久任务预加载仅暴露六个固定动作并保留精确提案',()=>{
+  let exposed; const calls=[]; const vm=require('node:vm');
+  vm.runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.executionPropose('current','task-1','request-1','{"argv":["中文"]}');
+  exposed.executionAuthorize('current','execution-1',2,'a'.repeat(64),8);
+  exposed.executionStart('current','execution-1',3);
+  exposed.executionDescribe('current','execution-1');
+  exposed.executionOutput('current','execution-1',-1,16);
+  exposed.executionStop('current','execution-1',4);
+  assert.deepEqual(calls.map(c=>c[0]),['Propose','Authorize','Start','Describe','Output','Stop'].map(s=>'sacode:execution'+s));
+  assert.equal(calls[0][1].proposal,'{"argv":["中文"]}');
+  assert.equal(calls[1][1].approvalId,8); assert.equal(calls[4][1].cursor,-1);
+  assert.equal(exposed.executionRequest,undefined);
+});
+
+test('预加载审批接口保留原始参数并兼容旧调用',()=>{
+  let exposed;const calls=[];const vm=require('node:vm');
+  vm.runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>{calls.push(args)},on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.approvalAsk('write','{"path":"a","content":"中文"}');
+  exposed.approvalAsk('write');
+  assert.equal(calls[0][0],'sacode:approvalAsk');
+  assert.equal(calls[0][1].args,'{"path":"a","content":"中文"}');
+  assert.equal(Object.hasOwn(calls[1][1],'args'),false);
+});
+
+test('真实 Host 精确审批拒绝换正文，原票仅允许原调用一次',async()=>{
+  const {b,dir}=await boot();
+  try{
+    await b.request('workspace/set-directory',{directory:dir});
+    const path='exact-approval.txt';writeFileSync(join(dir,path),'baseline');
+    await b.request('extension/call',{name:'read',args:JSON.stringify({path})});
+    const args=JSON.stringify({path,content:'approved 中文\n'});
+    const ticket=await b.request('approval/ask',{name:'write',args});
+    assert.equal((await b.request('approval/answer',{approvalId:ticket.approvalId,decision:'allowed-once'})).accepted,true);
+    await assert.rejects(()=>b.request('extension/call',{name:'write',args:JSON.stringify({path,content:'replaced'}),approvalId:ticket.approvalId}),/approval-arguments-mismatch/);
+    assert.equal(readFileSync(join(dir,path),'utf8'),'baseline');
+    await assert.rejects(()=>b.request('approval/ask',{name:'write',args:{path}}),/bad-approval-arguments/);
+    const saved=await b.request('extension/call',{name:'write',args,approvalId:ticket.approvalId});
+    assert.match(saved.result,/^ok:/);assert.equal(readFileSync(join(dir,path),'utf8'),'approved 中文\n');
+    await assert.rejects(()=>b.request('extension/call',{name:'write',args,approvalId:ticket.approvalId}),/approval-not-granted:used/);
+  }finally{await b.stop();}
+});
+
 async function boot() {
   // 不依赖仓库里预先存在某个临时目录：自己把它建出来
   const root = jj(REPO, "dualtest");
@@ -36,12 +83,15 @@ test("握手声明协议与能力", async () => {
   const r = await b.request("initialize");
   assert.equal(r.protocolVersion, "0.1");
   assert.ok(r.capabilities.includes("session/projection"));
+  assert.ok(r.capabilities.includes("session/terminal-output"));
   assert.ok(r.capabilities.includes("attachment/image-read"));
   for (const action of ['describe', 'create', 'edit', 'pause', 'resume', 'clear']) assert.ok(r.capabilities.includes('goal/' + action));
   assert.ok(r.capabilities.includes("session/catalog"));
   assert.ok(r.capabilities.includes("session/create"));
   assert.ok(r.capabilities.includes("session/select"));
   assert.ok(r.capabilities.includes("workspace/get"));
+  assert.ok(r.capabilities.includes('workspace/git-status'));
+  assert.ok(r.capabilities.includes('workspace/git-diff'));
   assert.ok(r.capabilities.includes("workspace/set-directory"));
   assert.ok(r.capabilities.includes("global/appearance/get"));
   assert.ok(r.capabilities.includes("global/appearance/set-font-size"));
@@ -900,5 +950,295 @@ test("换个进程只靠会话日志重算：用量、超档与预算档位都�
     await assert.rejects(() => b2.request("turn/start", { limit: 5 }), /-32014|over-budget/);
   } finally {
     await b2.stop();
+  }
+});
+
+// ---------- L1：LSP 语义工具的 IPC 面与 Host 面 ----------
+
+const LSP_ACTIONS = {
+  lspDefine: ['lsp/define', { path: 'sample.ts', line: 0, character: 9 }],
+  lspLookup: ['lsp/lookup', { path: 'sample.ts', line: 0, character: 9 }],
+  lspReferences: ['lsp/references', { path: 'sample.ts', line: 0, character: 9, includeDeclaration: false }],
+  lspImplementation: ['lsp/implementation', { path: 'sample.ts', line: 0, character: 9 }],
+  lspCallHierarchy: ['lsp/call-hierarchy', { path: 'sample.ts', line: 0, character: 9, direction: 'incoming' }],
+  lspDiagnostics: ['lsp/diagnostics', { path: 'sample.ts', documentVersion: 3 }],
+  lspRename: ['lsp/rename', { path: 'sample.ts', line: 0, character: 9, newName: 'gamma', documentVersion: 3 }],
+};
+
+function lspPreloadApi() {
+  let api;
+  const calls = [];
+  const vm = require('node:vm');
+  vm.runInNewContext(readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8'), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
+      ipcRenderer: { invoke: (...args) => { calls.push(args); return Promise.resolve(); }, on: () => {}, removeListener: () => {} },
+    }),
+  });
+  return { api, calls };
+}
+
+function lspMainHandlers() {
+  const vm = require('node:vm');
+  const handlers = new Map();
+  const requests = [];
+  const electron = {
+    app: {
+      isPackaged: false,
+      whenReady: () => new Promise(() => {}),
+      getPath: (k) => (k === 'temp' ? '/tmp' : `/tmp/sacode-lsp-ipc-${k}`),
+      setPath: () => {}, on: () => {}, quit: () => {},
+    },
+    BrowserWindow: class {
+      static getAllWindows() { return []; }
+      constructor() { this.webContents = { on: () => {}, send: () => {}, loadFile: () => Promise.resolve(), session: { on: () => {} } }; this.on = () => {}; this.loadFile = () => Promise.resolve(); this.show = () => {}; this.loadURL = () => Promise.resolve(); }
+      static getFromFile() { return null; }
+    },
+    ipcMain: { handle: (name, fn) => { handlers.set(name, fn); }, on: () => {} },
+    nativeTheme: { shouldUseDarkColors: false, on: () => {}, themeSource: 'system' },
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    shell: { openExternal: async () => {} },
+    Menu: { buildFromTemplate: () => ({ popup: () => {} }), setApplicationMenu: () => {}, getApplicationMenu: () => null },
+    Tray: class { constructor() {} on() {} setImage() {} setToolTip() {} destroy() {} },
+    safeStorage: { isEncryptionAvailable: () => false, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    screen: { on: () => {} },
+  };
+  const ctx = {
+    require: (id) => {
+      if (id === 'electron') return electron;
+      if (id === './host-bridge.cjs') {
+        return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
+      }
+      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
+      if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
+      if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
+      if (id === 'node:module') return { createRequire: (p) => require };
+      if (id === 'node:path') return require('node:path');
+      if (id === 'node:fs') return { existsSync: () => false, writeFileSync: () => {}, mkdirSync: () => {}, readFileSync: () => '', rmSync: () => {}, readdirSync: () => [], statSync: () => ({ size: 0 }) };
+      if (id === 'node:crypto') return require('node:crypto');
+      if (id === 'node:os') return require('node:os');
+      if (id === 'node:http' || id === 'node:https') return require(id);
+      if (id === 'node:child_process') return { spawn: () => ({ on: () => {}, stdio: { write: () => {} }, kill: () => {} }), execFileSync: () => '' };
+      return require(id.startsWith('.') ? jj(dirname(fileURLToPath(import.meta.url)), '..', id) : id);
+    },
+    __dirname: '/tmp',
+    process: { argv: [], env: {}, pid: 1, platform: 'win32', on: () => {}, exit: () => {}, resourcesPath: '/tmp' },
+    console: { log: () => {}, error: () => {}, warn: () => {} },
+    Buffer, setTimeout, clearTimeout, setInterval, clearInterval, URL,
+  };
+  vm.runInNewContext(readFileSync(new URL('../main.cjs', import.meta.url), 'utf8'), ctx, { filename: 'main.cjs' });
+  return { handlers, requests };
+}
+
+test('LSP preload 只交 7 个动作与必要字段，不提供通用 method 转发', async () => {
+  const { api, calls } = lspPreloadApi();
+  for (const [action, [, good]] of Object.entries(LSP_ACTIONS)) {
+    assert.equal(typeof api[action], 'function', `缺少通道 ${action}`);
+  }
+  await api.lspDefine('sample.ts', 0, 9);
+  await api.lspReferences('sample.ts', 1, 2, false);
+  await api.lspReferences('sample.ts', 1, 2);
+  await api.lspDiagnostics('sample.ts');
+  await api.lspDiagnostics('sample.ts', 7);
+  await api.lspCallHierarchy('sample.ts', 0, 1, 'outgoing');
+  await api.lspRename('sample.ts', 0, 1, 'gamma');
+  assert.deepEqual(calls.map((row) => row[0]), [
+    'sacode:lspDefine', 'sacode:lspReferences', 'sacode:lspReferences',
+    'sacode:lspDiagnostics', 'sacode:lspDiagnostics', 'sacode:lspCallHierarchy', 'sacode:lspRename',
+  ]);
+  assert.equal(JSON.stringify(calls[0][1]), JSON.stringify({ path: 'sample.ts', line: 0, character: 9 }));
+  // 省略可选字段时那一格根本不存在，而不是被填成 undefined 或 0
+  assert.equal(Object.hasOwn(calls[2][1], 'includeDeclaration'), false);
+  assert.equal(Object.hasOwn(calls[3][1], 'documentVersion'), false);
+  assert.equal(calls[4][1].documentVersion, 7);
+  assert.equal(calls[6][1].newName, 'gamma');
+  // 万能通道不该存在：渲染层拿不到「发任意 method」的能力
+  for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'lsp', 'lspCall']) {
+    assert.equal(forbidden in api, false, `预加载暴露了通用转发 ${forbidden}`);
+  }
+});
+
+test('LSP 主进程逐字段守卫负载，拒掉的不会转发到宿主', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  for (const [action, [method, good]] of Object.entries(LSP_ACTIONS)) {
+    const handler = handlers.get(`sacode:${action}`);
+    assert.equal(typeof handler, 'function', `主进程缺少 ${action} 通道`);
+    const before = requests.length;
+    await handler({}, good);
+    assert.equal(requests.length, before + 1);
+    // 负载是 vm 上下文里造的对象，原型与外层不同，deepStrictEqual 只会说「结构相同但非同一引用」，
+    // 所以按 goal-ipc 的既有做法比 JSON 串。
+    assert.equal(JSON.stringify(requests[requests.length - 1]), JSON.stringify({ method, params: good }));
+    for (const bad of [
+      null, undefined, {}, [], 'sample.ts',
+      { ...good, path: '' },
+      { ...good, path: 42 },
+      { ...good, method: 'lsp/formatting' },
+      { ...good, verb: 'define' },
+      { ...good, extra: 1 },
+      { ...good, line: -1 },
+      { ...good, character: -1 },
+      { ...good, line: 1.5 },
+      { ...good, documentVersion: -2 },
+    ]) {
+      await assert.rejects(handler({}, bad), /bad arguments/, `${action} 没挡住 ${JSON.stringify(bad)}`);
+    }
+    if (Object.hasOwn(good, 'direction')) {
+      for (const bad of ['sideways', '', 'INCOMING', 1]) {
+        await assert.rejects(handler({}, { ...good, direction: bad }), /bad arguments/, '调用层次方向不是闭集');
+      }
+    }
+    for (const key of ['line', 'character', 'direction', 'newName']) {
+      if (!Object.hasOwn(good, key)) continue;
+      const missing = { ...good };
+      delete missing[key];
+      await assert.rejects(handler({}, missing), /bad arguments/, `${action} 未拒绝缺少 ${key}`);
+    }
+    if (Object.hasOwn(good, 'newName')) {
+      for (const bad of ['', 42, 'x'.repeat(501)]) {
+        await assert.rejects(handler({}, { ...good, newName: bad }), /bad arguments/, 'rename 没挡住空 newName');
+      }
+    }
+    assert.equal(requests.length, before + 1, `${action} 把被拒的负载也转给了宿主`);
+  }
+});
+
+test('LSP 位置动作携带文档版本并拒绝不安全整数', async () => {
+  const { api, calls } = lspPreloadApi();
+  await api.lspDefine('sample.ts', 0, 1, 7);
+  await api.lspLookup('sample.ts', 0, 1, 7);
+  await api.lspImplementation('sample.ts', 0, 1, 7);
+  await api.lspReferences('sample.ts', 0, 1, undefined, 7);
+  await api.lspCallHierarchy('sample.ts', 0, 1, 'incoming', 7);
+  for (const [, args] of calls) assert.equal(args.documentVersion, 7);
+  const { handlers, requests } = lspMainHandlers();
+  for (const [channel, args] of calls) {
+    const handler = handlers.get(channel);
+    await handler({}, args);
+    assert.equal(requests.at(-1).params.documentVersion, 7);
+    await assert.rejects(handler({}, { ...args, line: Number.MAX_SAFE_INTEGER + 1 }), /bad arguments/);
+    await assert.rejects(handler({}, { ...args, documentVersion: Number.MAX_SAFE_INTEGER + 1 }), /bad arguments/);
+  }
+});
+
+test('真实宿主 7 个 LSP 请求在无插件时如实失败并附非语义线索', async () => {
+  const { b, dir } = await boot();
+  try {
+    writeFileSync(join(dir, 'sample.ts'), 'function alpha() {\n  return 1\n}\n');
+    await b.request('workspace/set-directory', { directory: dir });
+    const init = await b.request('initialize');
+    for (const [, [method]] of Object.entries(LSP_ACTIONS)) {
+      assert.ok(init.capabilities.includes(method), `能力表少了 ${method}`);
+    }
+    const cases = [
+      ['lsp/define', { path: 'sample.ts', line: 0, character: 9 }],
+      ['lsp/lookup', { path: 'sample.ts', line: 0, character: 9 }],
+      ['lsp/references', { path: 'sample.ts', line: 0, character: 9, includeDeclaration: true }],
+      ['lsp/implementation', { path: 'sample.ts', line: 0, character: 9 }],
+      ['lsp/call-hierarchy', { path: 'sample.ts', line: 0, character: 9, direction: 'incoming' }],
+      ['lsp/diagnostics', { path: 'sample.ts' }],
+      ['lsp/rename', { path: 'sample.ts', line: 0, character: 9, newName: 'gamma' }],
+    ];
+    for (const [method, params] of cases) {
+      const err = await b.request(method, params).then(() => null, (e) => e);
+      assert.ok(err, `${method} 本该失败却返回了成功`);
+      assert.match(String(err.message), /lsp-no-server/, `${method} 的失败原因不是 lsp-no-server`);
+      assert.ok(err.data, `${method} 的错误帧没有 data`);
+      assert.equal(err.data.reason, 'lsp-no-server');
+      assert.equal(err.data.nonSemantic, true);
+      assert.equal(err.data.ok, false);
+      assert.equal(err.data.serverId, '', `${method} 不该凭空带出服务器身份`);
+      // 文本线索是真的扫出来的，但仍标注为非语义结果
+      assert.ok(err.data.clues.some((c) => String(c).includes('function:alpha')), `${method} 缺文本线索`);
+      assert.equal(err.data.locations.length, 0, `${method} 把文本线索塞进了语义字段`);
+      assert.equal(err.data.diagnostics.length, 0);
+      assert.equal(err.data.editFiles.length, 0);
+      assert.equal(err.data.diagnosticSnapshot, 'none');
+    }
+    // 参数错误不落到扫描：宿主自己就拒，data.reason 说的是 bad-args
+    const bad = await b.request('lsp/call-hierarchy', { path: 'sample.ts', line: 0, character: 0, direction: 'sideways' }).then(() => null, (e) => e);
+    assert.ok(bad);
+    assert.equal(bad.data.reason, 'lsp-bad-args');
+    assert.equal((bad.data.clues ?? []).length, 0);
+    for (const [method, params] of cases) {
+      if (method === 'lsp/diagnostics') continue;
+      for (const key of ['line', 'character']) {
+        const missing = { ...params };
+        delete missing[key];
+        const rejected = await b.request(method, missing).then(() => null, e => e);
+        assert.ok(rejected, `${method} 缺少 ${key} 却成功`);
+        assert.match(String(rejected.message), /bad-lsp-params/);
+        assert.equal(rejected.data.reason, 'lsp-bad-args');
+        assert.equal((rejected.data.clues ?? []).length, 0);
+      }
+    }
+    // 未知 method 仍然走协议面的「找不到」，不会被 LSP 分派兜住
+    await assert.rejects(() => b.request('lsp/formatting', { path: 'sample.ts' }), /-32601|method not found/);
+  } finally {
+    await b.stop();
+  }
+});
+
+// IPC 面的唯一权威是 preload.cjs 里 contextBridge.exposeInMainWorld 的顶层 key（AGENTS.md）。
+// 这份清单与计数是 2026-10-09 在工作区态实测的：105 条，本批新增会话级工作树进出面 4 条
+// （worktreeDescribe / worktreeEnter / worktreeExit / worktreeCleanup）。
+// 增删通道必须同时改 preload.cjs 与这里：整串比对，为的就是「悄悄多出一条发任意方法的口子」当场红。
+test('预加载 IPC 面恰好 105 条按动作命名的通道，且没有发任意方法的口子', () => {
+  const vm = require('node:vm');
+  let exposed;
+  vm.runInNewContext(readFileSync(jj(REPO, 'apps/desktop/preload.cjs'), 'utf8'), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld: (_name, value) => { exposed = value; } },
+      ipcRenderer: { invoke: () => {}, on: () => {}, removeListener: () => {} },
+    }),
+  });
+  assert.deepEqual(Object.keys(exposed).sort(), [
+    'appearanceGet', 'appearanceSetTheme', 'approvalAnswer', 'approvalAsk', 'attachmentImageRead', 'attachmentUpload',
+    'bindingRemove', 'bindingReorder', 'bindingUpsert', 'customImportInto', 'customImportNew', 'customsDescribe',
+    'customsRemove', 'customsUpsert', 'executionAuthorize', 'executionDescribe', 'executionOutput', 'executionPropose',
+    'executionStart', 'executionStop', 'globalAppearanceGet', 'globalAppearanceSetBusySend', 'globalAppearanceSetFontSize', 'globalAppearanceSetTheme',
+    'globalSettingsGet', 'globalSettingsSet', 'goalClear', 'goalCreate', 'goalDescribe', 'goalEdit',
+    'goalPause', 'goalResume', 'ledgerStats', 'lspCallHierarchy', 'lspDefine', 'lspDiagnostics',
+    'lspImplementation', 'lspLookup', 'lspReferences', 'lspRename', 'modelPull', 'modelUpstreamUpsert',
+    'modelsCatalog', 'modelsDescribe', 'modelsList', 'modelsRemove', 'modelsSave', 'modelsSetDefault',
+    'modelsSetEnabled', 'modelsSort', 'pageToolCall', 'pageToolsList', 'pluginsDescribe', 'pluginsInspect',
+    'pluginsInstall', 'pluginsInstallCancel', 'pluginsInstallPoll', 'pluginsRegistries', 'pluginsSetEnabled', 'pluginsSetRowEnabled',
+    'pluginsUninstall', 'projection', 'promptCancel', 'promptEnhance', 'promptPoll', 'queueDescribe',
+    'queueEnqueue', 'queueUpdate', 'sessionCatalog', 'sessionCreate', 'sessionEvents', 'sessionSelect',
+    'taskStart', 'teamApprovalAnswer', 'teamDescribe', 'teamMemberCreate', 'teamMemberStop', 'teamMessageBroadcast',
+    'teamMessageSend', 'teamTaskAssign', 'teamTaskClaim', 'teamTaskComplete', 'teamTaskCreate', 'terminalOutput',
+    'tipsAfterReply', 'tipsGet', 'tipsSetHidden', 'tipsStartup', 'toolCall', 'toolsList',
+    'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userSend',
+    'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'worktreeCleanup',
+    'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
+  ]);
+  assert.equal(Object.keys(exposed).length, 105, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
+  // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
+  for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
+    assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
+  }
+});
+
+// 两条面必须一一对应：预加载每调出一个通道名，主进程就得有那么一个按动作命名的 handler；
+// 主进程也不许多出预加载够不到的口子（那等于留了一条只能由别处触发的隐藏命令）。
+// 这里不数行数、不 grep 字面量——把 main.cjs 装进 vm 真跑一遍模块作用域的注册序列。
+test('预加载调用的通道集合与主进程注册的 handler 集合完全相等（含工作树四条）', () => {
+  const vm = require('node:vm');
+  const { handlers } = lspMainHandlers();
+  let api;
+  const invoked = [];
+  vm.runInNewContext(readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8'), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
+      ipcRenderer: { invoke: (channel) => { invoked.push(channel); return Promise.resolve({}); }, on: () => {}, removeListener: () => {} },
+    }),
+  });
+  // 每个动作都以「满参数」调用一次：任一通道在 invoke 之前抛掉，集合就会短一截，当场红。
+  for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
+  assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
+  assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
+  assert.equal(handlers.size, 105, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
+  for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
+    assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }
 });

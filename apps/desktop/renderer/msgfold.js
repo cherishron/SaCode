@@ -6,6 +6,9 @@
 window.SaCodeMsgFold = (function () {
   // 全仓唯一的折叠阈值出处。要调只改这一处；组件里不许再出现第二个数字。
   var FOLD_THRESHOLD = 240;
+  // 历史导航的标题与摘要上限，同样只在这里出现一次。
+  var OUTLINE_TITLE_LIMIT = 60;
+  var OUTLINE_TEXT_LIMIT = 120;
 
   // 按声明顺序匹配投影行前缀：[前缀, 气泡角色, 定位, 形状]
   var ROLE_MAP = [
@@ -22,17 +25,28 @@ window.SaCodeMsgFold = (function () {
     return { role: line.slice(0, i), text: line.slice(i + 1).replace(/^ /, "") };
   }
 
+  // 角色映射只有一个入口，大纲与气泡不许各判一次（否则同一行在两处得到两个角色）。
+  function bubbleRole(prefix) {
+    for (var k = 0; k < ROLE_MAP.length; k++) {
+      if (prefix.indexOf(ROLE_MAP[k][0]) === 0) return ROLE_MAP[k][1];
+    }
+    return "system";
+  }
+
+  // 截断带省略号后总长正好是上限；组件里不许出现第二套上限数字。
+  function clip(text, limit) {
+    return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
+  }
+
+  function rowId(rows, i) {
+    return rows && rows[i] ? rows[i].id : "m" + i;
+  }
+
   function toBubbleMessages(lines, rows, sessionId) {
     var out = [];
     for (var i = 0; i < lines.length; i++) {
       var parts = splitMsg(lines[i]);
-      var role = "system";
-      for (var k = 0; k < ROLE_MAP.length; k++) {
-        if (parts.role.indexOf(ROLE_MAP[k][0]) === 0) {
-          role = ROLE_MAP[k][1];
-          break;
-        }
-      }
+      var role = bubbleRole(parts.role);
       var metadata = rows && rows[i];
       var message = { id: metadata ? metadata.id : "m" + i, role: role, content: parts.text, sourceRole: parts.role, attachments: metadata ? metadata.attachments : [] };
       if (sessionId) message.sessionId = sessionId;
@@ -72,10 +86,39 @@ window.SaCodeMsgFold = (function () {
     return null;
   }
 
+  // 会话内历史对话导航的轮次大纲：条目只取投影里真实存在的用户提问，
+  // 锚点 id 与气泡消息同一来源（同一行、同一取法），点了才有确定的落点。
+  // 第一条提问之前的系统/开发者消息不建条目——侧栏不造界面上跳不到的锚点。
+  function turnOutline(lines, rows) {
+    var out = [];
+    for (var i = 0; i < (lines || []).length; i++) {
+      var parts = splitMsg(lines[i]);
+      var role = bubbleRole(parts.role);
+      var text = parts.text || "";
+      if (role === "user") {
+        var head = "";
+        var paragraphs = text.split("\n");
+        for (var k = 0; k < paragraphs.length && !head; k++) head = paragraphs[k].trim();
+        out.push({
+          id: rowId(rows, i),
+          title: clip(head, OUTLINE_TITLE_LIMIT) || "（空消息）",
+          content: clip(text.trim(), OUTLINE_TEXT_LIMIT),
+          replies: []
+        });
+      } else if (out.length && (role === "assistant" || role === "tool")) {
+        out[out.length - 1].replies.push({ id: rowId(rows, i), role: role, text: clip(text.trim(), OUTLINE_TEXT_LIMIT) });
+      }
+    }
+    return out;
+  }
+
   return {
     FOLD_THRESHOLD: FOLD_THRESHOLD,
+    OUTLINE_TITLE_LIMIT: OUTLINE_TITLE_LIMIT,
+    OUTLINE_TEXT_LIMIT: OUTLINE_TEXT_LIMIT,
     ROLE_MAP: ROLE_MAP,
     toBubbleMessages: toBubbleMessages,
+    turnOutline: turnOutline,
     roleConfigs: roleConfigs,
     foldPlan: foldPlan,
     latestReadPreview: latestReadPreview

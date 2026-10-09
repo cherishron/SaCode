@@ -7,9 +7,7 @@ export type Attachment={id:string;kind:'image'|'file';file:File;previewUrl?:stri
 export type Upload={status:'uploading';loaded?:number;total?:number}|{status:'ready'}|{status:'error';message?:string};
 const el=(tag:string,cls:string,children:any,props:any={})=>h(tag,{class:'attachments-'+cls,...props},children);
 const sizeText=(n:number)=>n<1024?n+' B':n<1024*1024?(n/1024).toFixed(1)+' KB':(n/1024/1024).toFixed(1)+' MB';
-export const AddButton=defineComponent({name:'SaCodeAddAttachment',props:{disabled:Boolean},emits:['add'],setup(props,{emit}){const input=ref<HTMLInputElement|null>(null);return()=>el('div','picker',[
-  el('button','add','＋',{type:'button','aria-label':'添加附件',disabled:props.disabled,title:props.disabled?'当前暂不能添加附件':undefined,onClick:()=>input.value?.click()}),h('input',{ref:input,type:'file',multiple:true,hidden:true,disabled:props.disabled,'aria-label':'选择附件',onChange:(e:Event)=>{const node=e.target as HTMLInputElement;if(!props.disabled&&node.files?.length)emit('add',Array.from(node.files),new Set<File>());node.value='';}}),
-]);}});
+export {AddButton} from './composer-menu';
 export const Composer=defineComponent({name:'SaCodeComposerAttachments',props:{attachments:{type:Array as PropType<Attachment[]>,default:()=>[]},uploads:{type:Object as PropType<Record<string,Upload>>,default:()=>({})},canAcceptDrop:Boolean,showAdd:{type:Boolean,default:true},active:{type:Boolean,default:true},limits:Object as PropType<{count:number;size:string}>},emits:['add','remove','retry'],setup(props,{emit}){
   const rail=ref<HTMLDivElement|null>(null),fileInput=ref<HTMLInputElement|null>(null),left=ref(false),right=ref(false),dragging=ref(false),preview=ref<string|null>(null);
   let depth=0,previousCount:number|null=null,observer:ResizeObserver|null=null,disposed=false;

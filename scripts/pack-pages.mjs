@@ -21,7 +21,7 @@ const slotsBuild = await require('esbuild').build({ absWorkingDir: root, entryPo
   plugins: [vueRuntime], format: 'iife', globalName: 'SaCodeSlots', outfile: slotsOutput, target: 'chrome120', metafile: true, logLevel: 'warning' });
 assertStaticRendererBundle(readFileSync(slotsOutput, 'utf8'), slotsBuild.metafile);
 if (!readFileSync(slotsOutput, 'utf8').includes('globalThis.Vue')) throw Error('槽位渲染器未接入唯一 Vue runtime');
-for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect'], ['composer-attachments','SaCodeAttachments'], ['queue-dock','SaCodeQueue'], ['context-meter','SaCodeContextMeter'], ['todo-panel','SaCodeTodo'], ['goal-bar','SaCodeGoal']]) {
+for (const [page, globalName] of [['models-page', 'SaCodeModels'], ['plugins-page', 'SaCodePlugins'], ['plugin-configuration', 'SaCodeConfiguration'], ['subagent-settings','SaCodeSubagent'], ['plugin-manager','SaCodePluginManager'], ['model-select','SaCodeModelSelect'], ['composer-attachments','SaCodeAttachments'], ['queue-dock','SaCodeQueue'], ['context-meter','SaCodeContextMeter'], ['todo-panel','SaCodeTodo'], ['goal-bar','SaCodeGoal'], ['tips-bar','SaCodeTips']]) {
   const outfile = join(desktop, `renderer/vendor/${page}.iife.js`);
   const result = await require('esbuild').build({ absWorkingDir: root, entryPoints: [join(desktop, `renderer/pages/${page}.ts`)], bundle: true,
     plugins: [vueRuntime], format: 'iife', globalName, outfile, target: 'chrome120', metafile: true, logLevel: 'warning' });

@@ -1,6 +1,15 @@
 import { defineComponent, h, onBeforeUnmount, ref, type Component, type PropType } from 'vue';
 import { ClientScope, SlotCore, type Entry, type OwnerProps } from './slot-core';
 export { ClientScope, SlotCore } from './slot-core';
+export {WorkbenchTabs} from './workbench-tabs';
+export {createFilePreview} from './file-preview';
+export {AccountMenu} from './account-menu';
+export {PermissionMenu} from './permission-menu';
+export {WorkspaceSearch} from './workspace-search';
+export {FileEditor,createFileEditor} from './file-editor';
+export {GitWorkbench} from './git-workbench';
+export {TerminalOutput} from './terminal-output';
+export {TeamPanel} from './team-panel';
 import * as providerSettings from './provider-settings';
 import * as customModels from './custom-models';
 import * as budgetStats from './budget-stats';

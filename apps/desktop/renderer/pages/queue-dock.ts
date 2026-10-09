@@ -30,31 +30,31 @@ const Editor=defineComponent({props:{text:{type:String,required:true},busy:Boole
   return()=>h(InlineEditor,{value:props.text,label:'编辑排队消息',className:'queue-editor',busy:props.busy,onChange:(text:string)=>emit('change',text),onSave:()=>emit('save'),onCancel:()=>emit('cancel')});
 }});
 export const QueueDock=defineComponent({name:'SaCodeQueueDock',props:{rows:{type:Array as PropType<QueueRow[]>,default:()=>[]},pending:{type:Array as PropType<Pending[]>,default:()=>[]},running:Boolean,mutable:{type:Boolean,default:true},sessionId:String,updateQueue:Function as PropType<(id:string,action:QueueAction)=>Promise<void>>,loadImage:Function as PropType<(a:AttachmentRef)=>Promise<string>>},emits:['notice'],setup(props,{emit}){
-  const listId='sacode-queue-'+(++nextDock),editing=ref<{id:string;text:string}|null>(null),busy=ref<string|null>(null),collapsed=ref(true);let disposed=false;
+  const listId='sacode-queue-'+(++nextDock),editing=ref<{id:string;text:string}|null>(null),busy=ref<string|null>(null),collapsed=ref(false);let disposed=false;
   const rows=computed(()=>{const transcript=new Set(props.pending.filter(p=>p.placement==='transcript').map(p=>p.requestId));return props.rows.filter(r=>r.source?.kind!=='user'||!r.source.rpcId||!transcript.has(r.source.rpcId));});
   const pending=computed(()=>{const admitted=new Set(rows.value.filter(r=>r.source?.kind==='user').map(r=>r.source?.rpcId));return props.pending.filter(p=>p.placement==='queued'&&!admitted.has(p.requestId));});
   const count=computed(()=>rows.value.length+pending.value.length);
   watch([count,rows,()=>props.mutable],()=>{if(!count.value)collapsed.value=true;if(editing.value&&(!props.mutable||!rows.value.some(r=>r.id===editing.value?.id)))editing.value=null;});
   onBeforeUnmount(()=>{disposed=true;});
-  const apply=async(id:string,action:QueueAction)=>{if(busy.value||!props.mutable||!props.updateQueue)return false;busy.value=id;try{await props.updateQueue(id,action);return !disposed;}catch{if(!disposed)emit('notice','error',({edit:'编辑排队消息失败，请重试。',remove:'删除排队消息失败，请重试。',steer:'即时补充失败，请重试。'} as const)[action.kind]);return false;}finally{if(!disposed&&busy.value===id)busy.value=null;}};
+  const apply=async(id:string,action:QueueAction)=>{if(busy.value||!props.mutable||!props.updateQueue)return false;busy.value=id;try{await props.updateQueue(id,action);return !disposed;}catch{if(!disposed)emit('notice','error',({edit:'编辑排队消息失败，请重试。',remove:'删除排队消息失败，请重试。',steer:'引导失败，请重试。'} as const)[action.kind]);return false;}finally{if(!disposed&&busy.value===id)busy.value=null;}};
   const save=async()=>{const draft=editing.value;if(!draft?.text.trim())return;if(await apply(draft.id,{kind:'edit',content:[{type:'text',text:draft.text}]}))if(editing.value===draft)editing.value=null;};
   const button=(name:keyof typeof glyphs,label:string,fn:()=>void,disabled=false,title?:string)=>{const n=el('button','action',icon(glyphs[name]),{type:'button','aria-label':label,disabled,title,onClick:fn});return !disabled&&(window as any).SaCodeTooltip?(window as any).SaCodeTooltip.wrap(n,{label,side:'bottom',delayMs:500}):n;};
   const file=(a:AttachmentRef)=>el('span','file',[icon('M6 3h8l4 4v14H6zM14 3v5h4'),el('span','fileName',a.name),el('span','fileSize',sizeText(a.bytes))],{'aria-label':'排队文件 '+a.name,title:a.name});
-  return()=>{if(!count.value)return null;const active=props.mutable&&!!(editing.value||busy.value),expanded=!collapsed.value||active,visible=count.value===1||expanded,locked=busy.value!==null||!props.updateQueue;
+  return()=>{if(!count.value)return null;const active=props.mutable&&!!(editing.value||busy.value),expanded=!collapsed.value||active,visible=expanded,locked=busy.value!==null||!props.updateQueue;
     return el('div','dock',[el('div','panel',[
-      count.value>1?el('button','header',[icon('M3 6h18M3 12h18M3 18h12'),el('span','count',`${count.value} 条排队消息`),!visible&&pending.value.length?el('span','status','发送中…',{role:'status'}):null,icon(expanded?'M6 9l6 6 6-6':'M6 15l6-6 6 6')],{type:'button','aria-controls':listId,'aria-expanded':expanded,disabled:active,onClick:()=>collapsed.value=!collapsed.value}):null,
+      count.value>0?el('button','header',[icon('M3 6h18M3 12h18M3 18h12'),el('span','count',`${count.value} 条排队消息`),!visible&&pending.value.length?el('span','status','发送中…',{role:'status'}):null,icon(expanded?'M6 9l6 6 6-6':'M6 15l6-6 6 6')],{type:'button','aria-controls':listId,'aria-expanded':expanded,disabled:active,onClick:()=>collapsed.value=!collapsed.value}):null,
       el('ul','list',visible?[
         ...rows.value.map(row=>{const edit=editing.value?.id===row.id,text=textOf(row.content),attachments=row.content.filter(b=>(b.type==='image'||b.type==='file')&&b.attachment);return el('li','row',[
           count.value===1?icon('M3 6h18M3 12h18M3 18h12'):null,
           edit?h(Editor,{text:editing.value!.text,busy:locked,onChange:(text:string)=>editing.value={id:row.id,text},onSave:()=>void save(),onCancel:()=>editing.value=null}):[
             attachments.length?el('span','attachments',attachments.map((b,index)=>b.type==='image'?props.sessionId?h(PersistedImage,{key:b.attachment!.attachmentId+':'+index,attachment:b.attachment!,sessionId:props.sessionId,mode:'queue',label:'排队图片'}):h(Thumb,{key:b.attachment!.attachmentId+':'+index,attachment:b.attachment!,loadImage:props.loadImage}):file(b.attachment!))):null,
-            el('span','preview',projectUserText(previewOf(row.content))),
+            el('span','preview',projectUserText(row.content.filter(b=>b.type==='text').map(b=>b.text||'').join('\n')||previewOf(row.content))),
           ],
           props.mutable?el('div','actions',edit?[
             button('save','保存排队消息',()=>void save(),locked||!editing.value!.text.trim()),button('cancel','取消编辑',()=>editing.value=null,locked),
-          ]:[button('edit','编辑排队消息',()=>{if(text!==null)editing.value={id:row.id,text};},locked||text===null,text===null?'包含非文本内容的消息暂不支持编辑':undefined),button('remove','删除排队消息',()=>void apply(row.id,{kind:'remove'}),locked),button('steer','即时补充',()=>void apply(row.id,{kind:'steer'}),locked||!props.running,!props.running?'当前没有运行中的任务':undefined)]):null,
+          ]:[button('edit','编辑排队消息',()=>{if(text!==null)editing.value={id:row.id,text};},locked||text===null,text===null?'包含非文本内容的消息暂不支持编辑':undefined),button('remove','删除排队消息',()=>void apply(row.id,{kind:'remove'}),locked),button('steer','引导',()=>void apply(row.id,{kind:'steer'}),locked||!props.running,!props.running?'当前没有运行中的任务':undefined)]):null,
         ],{key:row.id,'data-queue-id':row.id});}),
-        ...pending.value.map(p=>el('li','row pending',[p.attachments.length?el('span','attachments',p.attachments.map(a=>a.type==='image'?h('img',{class:'queue-thumb',src:a.previewUrl,alt:'排队图片'}):file(a.attachment))):null,el('span','preview',p.text),el('span','status','发送中…',{role:'status'}),props.mutable?el('div','actions',[button('edit','编辑排队消息',()=>{},true,'发送中…'),button('remove','删除排队消息',()=>{},true,'发送中…'),button('steer','即时补充',()=>{},true,'发送中…')]):null],{key:p.requestId,'data-submission-echo':p.requestId})),
+        ...pending.value.map(p=>el('li','row pending',[p.attachments.length?el('span','attachments',p.attachments.map(a=>a.type==='image'?h('img',{class:'queue-thumb',src:a.previewUrl,alt:'排队图片'}):file(a.attachment))):null,el('span','preview',p.text),el('span','status','发送中…',{role:'status'}),props.mutable?el('div','actions',[button('edit','编辑排队消息',()=>{},true,'发送中…'),button('remove','删除排队消息',()=>{},true,'发送中…'),button('steer','引导',()=>{},true,'发送中…')]):null],{key:p.requestId,'data-submission-echo':p.requestId})),
       ]:[],{id:listId,hidden:!visible}),
     ])],{'data-queue-dock':''});
   };

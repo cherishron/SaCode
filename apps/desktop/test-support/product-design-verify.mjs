@@ -1,0 +1,25 @@
+import {spawn,execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {dirname,join,resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const dir=dirname(fileURLToPath(import.meta.url)),desktop=resolve(dir,'..');
+const require=createRequire(join(desktop,'package.json'));
+const exe=process.env.SACODE_ELECTRON_TEST_EXE||require('electron');
+const root=process.env.SACODE_DESIGN_SMOKE_DIR||join(desktop,'.tmp-test','product-design-'+Date.now());
+mkdirSync(root,{recursive:true});
+const env={...process.env,SACODE_DESIGN_SMOKE_DIR:root,TEMP:root,TMP:root};delete env.ELECTRON_RUN_AS_NODE;
+const sha=execFileSync('git',['rev-parse','HEAD'],{cwd:desktop,encoding:'utf8'}).trim();
+const hash=path=>createHash('sha256').update(readFileSync(path)).digest('hex');
+writeFileSync(join(root,'baseline.json'),JSON.stringify({sourceSha:sha,state:'working-tree',hostSha256:hash(join(desktop,'dist/host/bin/sacode-host.exe')),designSha256:hash(join(desktop,'renderer/product-design.css')),electron:exe},null,2));
+const child=spawn(exe,[join(dir,'product-design-smoke.cjs')],{env,windowsHide:true});
+let log='',timedOut=false;
+const timer=setTimeout(()=>{timedOut=true;child.kill();},50000);
+child.stdout.on('data',d=>log+=d);child.stderr.on('data',d=>log+=d);
+child.on('error',error=>{clearTimeout(timer);console.error(error);process.exitCode=1;});
+child.on('close',code=>{
+  clearTimeout(timer);writeFileSync(join(root,'smoke.log'),log);writeFileSync(join(root,'exit-code.txt'),String(code));
+  console.log(log);console.log('PRODUCT_DESIGN_EVIDENCE='+root);console.log('ELECTRON_RC='+code);
+  process.exitCode=!timedOut&&code===0&&log.includes('PRODUCT_DESIGN_PASS')?0:1;
+});

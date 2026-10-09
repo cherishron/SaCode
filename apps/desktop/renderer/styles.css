@@ -1,7 +1,7 @@
 /* SaCode 桌面规范：4px 基础栅格，控件共享高度，内容区独立滚动。 */
 :root {
   color-scheme: light;
-  --surface: #f6f7f9;
+  --surface: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #eceef2;
   --surface-bubble: var(--surface);
@@ -44,9 +44,9 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --surface: #17191d;
-    --surface-2: #202329;
-    --surface-3: #2a2e36;
+    --surface: #151517;
+    --surface-2: #1b1b1c;
+    --surface-3: #2a2a2c;
     --surface-bubble: var(--surface-3);
     --text: #e8eaee;
     --text-muted: #9aa2ae;
@@ -74,7 +74,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 h1, h2, h3, p { margin: 0; }
 h1 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
-.app { display: grid; grid-template-columns: 184px minmax(0, 1fr) 280px;
+.app { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px;
   grid-template-rows: auto minmax(0, 1fr) auto; height: 100dvh; overflow: hidden; }
 .navigation { grid-column: 1; grid-row: 1 / -1; display: flex; flex-direction: column;
   gap: var(--space-2); padding: var(--space-5) var(--space-3); border-right: 0.5px solid var(--border); }
@@ -221,6 +221,8 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .composer-card textarea:focus { outline: none; }
 .composer-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .composer-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:2px 8px 6px; min-width:0; container-type:inline-size; }
+.composer-customSelect { max-width:200px; height:28px; padding:0 8px; border:.5px solid var(--border); border-radius:8px; background:var(--panel-surface); color:var(--text); font:inherit; font-size:12px; }
+.composer-customSelect:disabled { opacity:.5; }
 .composer-trailing { display:flex; align-items:center; flex:none; margin-left:auto; gap:12px; }
 .composer-primary { display:grid; place-items:center; flex:none; width:34px; height:34px; padding:0; border:0; border-radius:999px; corner-shape:round; background:var(--send-fill); color:#fff; font:13px/20px var(--font-ui); cursor:pointer; transition:background-color 100ms ease; transform:translateY(-2px); }
 .composer-primary:hover:not(:disabled) { background:var(--send-hover); }
@@ -321,6 +323,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .approval { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3);
   border: 1px solid var(--warn); border-radius: var(--radius-l); background: var(--surface); }
 .approval-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.model-approval-arguments { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
 .outcome { font-size: var(--fs-m); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .outcome-denied { color: var(--danger); }
 .note { font-size: var(--fs-s); line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
@@ -356,6 +359,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .workspace-panel { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);
   padding: var(--space-3); border: 0.5px solid var(--border); border-radius: var(--radius-xl); }
 .workspace-path { max-width: 100%; overflow-wrap: anywhere; font-size: var(--fs-m); }
+/* 隔离工作树面板：退出对话框嵌在同一张卡片内，未提交/独有提交计数在点删除之前就说清楚。 */
+.worktree-panel { width: 100%; }
+.worktree-panel > p { max-width: 100%; }
+.worktree-dialog { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2);
+  width: 100%; padding: var(--space-3); border: 0.5px solid var(--border); border-radius: var(--radius-l); }
+.worktree-dialog-actions { display: flex; gap: var(--space-2); }
 .catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .catalog-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .catalog-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
@@ -380,6 +389,18 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .busy-send-copy .note { margin:4px 0 0; }
 .busy-send-settings select { max-width:100%; border:0; border-radius:var(--radius-m); padding:10px 12px; background:var(--surface-3); color:var(--text); font:inherit; }
 .busy-send-note { grid-column:1 / -1; margin:0; }
+.tips-bar { display:flex; align-items:center; gap:8px; margin:0 0 8px; padding:8px 12px; border:.5px solid var(--border); border-radius:var(--radius-m); background:var(--surface-3); color:var(--text); font-size:13px; line-height:20px; }
+.tips-bar-mark { flex:none; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--surface); font-size:12px; }
+.tips-bar-text { flex:1 1 auto; min-width:0; }
+.tips-bar-hide { flex:none; border:0; background:transparent; color:var(--text); font:inherit; font-size:12px; padding:2px 6px; border-radius:var(--radius-s); cursor:pointer; }
+.tips-bar-hide:hover:not(:disabled) { background:var(--surface); }
+.tips-bar-hide:disabled { cursor:default; opacity:.6; }
+.tips-settings { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px 16px; padding:20px 0; border-bottom:.5px solid var(--border); }
+.tips-settings-copy { min-width:0; }
+.tips-settings-copy label { font-size:14px; line-height:22px; }
+.tips-settings-copy .note { margin:4px 0 0; }
+.tips-settings select { max-width:100%; border:0; border-radius:var(--radius-m); padding:10px 12px; background:var(--surface-3); color:var(--text); font:inherit; }
+.tips-settings-note { grid-column:1 / -1; margin:0; }
 .appearance-settings { display:flex; flex-direction:column; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }
 .appearance-title { font-size:14px; line-height:22px; font-weight:400; margin:0; }
 .theme-choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch; gap:8px; }
@@ -394,7 +415,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .settings-tool h3 { font-size: var(--fs-m); line-height: 1.5; }
 .settings-tool .note { grid-column: 1; }
 .settings-tool .badge { grid-column: 2; grid-row: 1 / 3; }
-@media (max-width: 1040px) {
+@media (max-width: 1023px) {
   .app { grid-template-columns: 64px minmax(0, 1fr) 256px; }
   .navigation { padding: var(--space-4) var(--space-2); }
   .brand { padding: 0 0 var(--space-4); justify-content: center; }

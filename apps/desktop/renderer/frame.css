@@ -1,12 +1,12 @@
 /* 完整框架依据官方 AppFrame / SidebarRoot / ConversationRoot；旧工作台几何由此替换。 */
-:root { --surface:rgb(249,250,251); --surface-2:#fff; --surface-3:rgb(235,238,242); --text:rgb(15,17,21); --text-muted:rgb(97,102,107); --border:rgb(0 0 0 / 12%); --input-surface:#fff; --panel-surface:#fff; --new-session-fill:#fff; }
+:root { --surface:#fff; --surface-2:#fff; --surface-3:rgb(235,238,242); --text:rgb(15,17,21); --text-muted:rgb(97,102,107); --border:rgb(0 0 0 / 12%); --input-surface:#fff; --panel-surface:#fff; --new-session-fill:#fff; }
 @media(prefers-color-scheme:dark) {
-  :root { --surface:rgb(27,27,28); --surface-2:rgb(21,21,23); --surface-3:rgb(35,35,36); --text:rgb(249,250,251); --text-muted:rgb(173,178,184); --border:rgb(255 255 255 / 12%); --input-surface:rgb(44,44,46); --panel-surface:rgb(44,44,46); --new-session-fill:rgb(67,69,74); }
+  :root { --surface:#151517; --surface-2:#1b1b1c; --surface-3:rgb(35,35,36); --text:rgb(249,250,251); --text-muted:rgb(173,178,184); --border:rgb(255 255 255 / 12%); --input-surface:rgb(44,44,46); --panel-surface:rgb(44,44,46); --new-session-fill:rgb(67,69,74); }
 }
-.app { position:relative; grid-template-rows:minmax(0,1fr); padding-top:40px; }
-.window-caption { position:absolute; top:0; left:0; right:0; height:40px; -webkit-app-region:drag; }
+.app { position:relative; grid-template-rows:minmax(0,1fr); padding-top:42px; }
+.window-caption { position:absolute; top:0; left:0; right:0; height:42px; -webkit-app-region:drag; }
 .navigation { grid-column:1; grid-row:1; gap:6px; padding:0 12px 6px; background:var(--surface); font-size:14px; }
-.sidebar-brand-row { display:flex; height:40px; align-items:center; gap:8px; margin-top:-40px; z-index:1; }
+.sidebar-brand-row { display:flex; height:42px; align-items:center; gap:8px; margin-top:-42px; z-index:1; }
 .brand { display:flex; border:0; background:transparent; color:var(--text); padding:0; gap:10px; flex:1; min-width:0; cursor:pointer; font:600 20px/28px var(--font-ui); -webkit-app-region:no-drag; }
 .brand img { flex:none; width:24px; height:24px; padding:0; background:transparent; border-radius:0; }
 .frame-icon { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; flex:none; border:0; border-radius:8px; background:transparent; color:var(--text-muted); padding:4px; cursor:pointer; -webkit-app-region:no-drag; }
@@ -16,6 +16,16 @@
 .new-session { justify-content:center; margin:6px 0; background:var(--new-session-fill); box-shadow:var(--elevation-stroke); }
 .workspace-heading { display:flex; align-items:center; gap:4px; margin-top:12px; color:var(--text-muted); }
 .workspace-heading>.nav-label { flex:1; padding-left:4px; }
+/* 会话检索与状态筛选：PRD §3.1 的「顶部为搜索」，过滤对象是核心目录投影出的会话树。 */
+.sidebar-search-box { display:flex; align-items:center; gap:6px; height:32px; min-height:32px; margin-top:8px; padding:0 8px; border:.5px solid var(--border); border-radius:8px; background:var(--input-surface); color:var(--text-muted); }
+.sidebar-search { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--text); font:13px/20px var(--font-ui); }
+.sidebar-search::placeholder { color:var(--text-muted); }
+.sidebar-search-box:focus-within { border-color:var(--text-muted); }
+.sidebar-filter { display:flex; gap:4px; margin-top:6px; }
+.sidebar-filter-btn { height:22px; padding:0 8px; border:.5px solid var(--border); border-radius:11px; background:transparent; color:var(--text-muted); font:11px/16px var(--font-ui); cursor:pointer; }
+.sidebar-filter-btn:hover { color:var(--text); }
+.sidebar-filter-btn[aria-pressed=true] { background:var(--surface-3); color:var(--text); }
+.sidebar-filter-btn:disabled,.sidebar-search:disabled { opacity:.5; cursor:default; }
 .sidebar-session-list { flex:1; min-height:0; overflow:auto; margin-right:-2px; }
 .workspace-group+.workspace-group { margin-top:4px; }
 .workspace-overflow { display:flex; align-items:center; width:100%; height:28px; padding:0 12px 0 28px; border:0; border-radius:8px; background:transparent; color:var(--text-muted); font:12px/20px var(--font-ui); cursor:pointer; }
@@ -33,14 +43,14 @@
 .nav-settings-row { margin-top:auto; flex:none; }
 .nav-settings { margin-top:auto; flex:none; }
 .app[data-sidebar-collapsed=true] .navigation { padding:18px 10px 6px; gap:12px; }
-.app[data-sidebar-collapsed=true] .sidebar-brand-row { margin-top:-40px; height:40px; margin-bottom:6px; justify-content:center; }
+.app[data-sidebar-collapsed=true] .sidebar-brand-row { margin-top:-42px; height:42px; margin-bottom:6px; justify-content:center; }
 .app[data-sidebar-collapsed=true] .brand { flex:none; justify-content:center; width:36px; }
-.app[data-sidebar-collapsed=true] :is(.brand>span,.sidebar-toggle,.nav-label,.sidebar-session-list) { display:none; }
+.app[data-sidebar-collapsed=true] :is(.brand>span,.sidebar-toggle,.nav-label,.sidebar-session-list,.sidebar-search-box,.sidebar-filter) { display:none; }
 .app[data-sidebar-collapsed=true] .nav-item { padding:8px; width:36px; justify-content:center; margin:0; }
 .app[data-sidebar-collapsed=true] .workspace-heading { flex-direction:column; gap:12px; margin:0; }
 .app[data-sidebar-collapsed=true] .workspace-heading .frame-icon { width:36px; height:36px; }
 .app[data-sidebar-collapsed=true] .nav-settings { margin-top:auto; }
-/* Windows 原生桌面没有折叠图标轨道：入口留在 40px 标题栏，中央列获得全部宽度。 */
+/* Windows 原生桌面没有折叠图标轨道：入口留在 42px 标题栏，中央列获得全部宽度。 */
 .app[data-platform=win32]:not([data-sidebar-collapsed=true]) .navigation { gap:0; padding-top:6px; }
 .app[data-platform=win32] .sidebar-brand-row { margin-top:0; }
 .app[data-platform=win32] .brand { padding-left:4px; gap:8px; font-size:18px; line-height:24px; font-weight:400; }
@@ -53,7 +63,7 @@
 .app[data-platform=win32] .nav-settings { height:42px; min-height:42px; padding:0 10px 0 8px; margin:0; line-height:22px; }
 .app[data-platform=win32][data-sidebar-collapsed=true] .navigation { padding:0; gap:0; width:0; overflow:visible; border:0; }
 .app[data-platform=win32][data-sidebar-collapsed=true] .sidebar-brand-row { height:0; margin:0; }
-.app[data-platform=win32][data-sidebar-collapsed=true] :is(.brand,.workspace-heading,.sidebar-session-list,.nav-settings-row,.nav-settings,.nav-item:not(.new-session)) { display:none; }
+.app[data-platform=win32][data-sidebar-collapsed=true] :is(.brand,.workspace-heading,.sidebar-session-list,.sidebar-search-box,.sidebar-filter,.nav-settings-row,.nav-settings,.nav-item:not(.new-session)) { display:none; }
 .app[data-platform=win32][data-sidebar-collapsed=true] :is(.sidebar-toggle,.new-session) { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border-radius:50%; color:var(--text-muted); }
 .app[data-platform=win32][data-sidebar-collapsed=true] .new-session { position:fixed; top:6px; left:48px; min-height:28px; margin:0; border:0; z-index:30; background:transparent; box-shadow:none; -webkit-app-region:no-drag; }
 .conversation-center { grid-column:2; grid-row:1; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border-top-left-radius:16px; background:var(--surface-2); --chat-width:clamp(680px,calc(var(--conversation-width)*.64),920px); }
@@ -66,6 +76,21 @@
 .to-bottom-slot { position:absolute; right:0; bottom:calc(var(--composer-height,152px) + 16px); left:0; height:0; display:flex; justify-content:flex-end; padding-right:max(32px,calc((100% - var(--chat-width))/2)); pointer-events:none; z-index:8; }
 .to-bottom { display:flex; align-items:center; justify-content:center; width:34px; height:34px; margin-top:-34px; padding:0; border:0; border-radius:100px; color:var(--text); background:var(--input-surface); box-shadow:0 2px 8px #0002; cursor:pointer; pointer-events:auto; }
 .to-bottom:hover { background:var(--surface-3); }
+/* 会话内历史对话侧栏：覆盖在对话区右缘，条目取自投影里的用户提问，点一条就把那条钉到顶部。
+ * 不改 .conversation 的盒子——框架列宽判据拿的是它的左右边。 */
+.turn-nav { position:absolute; top:64px; bottom:calc(var(--composer-height,152px) + 24px); right:6px; width:152px; display:flex; flex-direction:column; gap:2px; overflow-y:auto; z-index:6; }
+.turn-nav-entry { position:relative; display:flex; align-items:center; gap:6px; height:22px; min-height:22px; padding:0 6px; border:0; border-radius:6px; background:transparent; color:var(--text-muted); font:11px/16px var(--font-ui); cursor:pointer; text-align:left; }
+.turn-nav-entry:hover { background:var(--surface-3); color:var(--text); }
+.turn-nav-entry.active { color:var(--text); }
+.turn-nav-tick { flex:none; width:12px; height:2px; border-radius:1px; background:currentColor; opacity:.5; }
+.turn-nav-entry.active .turn-nav-tick { width:18px; opacity:1; }
+.turn-nav-title { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.turn-nav-card { display:none; position:absolute; top:22px; left:0; z-index:8; width:152px; max-height:170px; overflow:hidden; flex-direction:column; gap:4px; padding:8px 10px; border:.5px solid var(--border); border-radius:10px; background:var(--panel-surface); box-shadow:var(--elevation-prominent); color:var(--text); }
+.turn-nav-entry:nth-last-child(-n+3) .turn-nav-card { top:auto; bottom:22px; }
+.turn-nav-entry:hover .turn-nav-card,.turn-nav-entry:focus-visible .turn-nav-card { display:flex; }
+.turn-nav-card-title { font:600 12px/18px var(--font-ui); }
+.turn-nav-card-text { font:12px/18px var(--font-ui); white-space:pre-wrap; }
+.turn-nav-card-meta { font:11px/16px var(--font-ui); color:var(--text-muted); }
 .conversation-scroll { display:flex; flex-direction:column; padding:0; margin-right:2px; overflow-anchor:none; }
 .conversation-scroll::-webkit-scrollbar-track { margin:2px; }
 .conversation-content { flex:1 0 auto; min-height:auto; padding:16px 32px; }
@@ -88,7 +113,7 @@
 .workspace-chip:hover { background:var(--surface-3); }
 .is-empty .composer-card textarea { min-height:52px; }
 .side { grid-column:3; grid-row:1; }
-.frame-divider { position:absolute; top:40px; bottom:0; width:8px; transform:translateX(-4px); z-index:9; cursor:col-resize; touch-action:none; }
+.frame-divider { position:absolute; top:42px; bottom:0; width:8px; transform:translateX(-4px); z-index:9; cursor:col-resize; touch-action:none; }
 .frame-divider:hover,.frame-divider:focus-visible { background:color-mix(in srgb,var(--accent) 20%,transparent); }
 .diagnostics { padding:12px 0; border-top:.5px solid var(--border); }
 .diagnostics summary { cursor:pointer; color:var(--text-muted); }
@@ -97,8 +122,8 @@
 .diagnostics .counters { margin:0; }
 .sacode-dialog { background:var(--panel-surface); }
 
-/* 官方 SettingsRoot：桌面遮罩留白取标题栏 40px，两侧共 80px。 */
-.settings-dialog { height:min(800px,calc(100dvh - 80px)); }
+/* 官方 SettingsRoot：桌面遮罩留白取标题栏 42px，两侧共 84px。 */
+.settings-dialog { height:min(800px,calc(100dvh - 84px)); }
 /* 通用设置依照官方 GeneralSection 连续排列，分隔线属于各行，不叠加列间距。 */
 #settings-page-general { gap:0; }
 .settings-row { display:flex; align-items:center; gap:8px; padding:16px 0; border-bottom:.5px solid var(--border); }

@@ -115,3 +115,58 @@ test("foldPlan：空串与短串都不折叠，shown 原文返回", () => {
   assert.equal(F.foldPlan("", F.FOLD_THRESHOLD).folded, false);
   assert.equal(F.foldPlan("短正文", F.FOLD_THRESHOLD).shown, "短正文");
 });
+
+// ── 会话内历史对话导航（轮次大纲）──
+// 条目只能是日志投影里真实存在的用户提问，锚点 id 必须与气泡消息同一个来源，
+// 否则侧栏点进去会跳到一个界面临时造出来的位置。
+// 被测模块在 vm 上下文里求值，它返回的数组带着另一个 realm 的原型，
+// 所以这里一律整串比对，不用 deepEqual 比对象。
+const asJson = (v) => JSON.stringify(v);
+
+test("turnOutline：每条用户提问成一个轮次，锚点取自对应投影行", () => {
+  const lines = ["user/message: 第一问", "assistant/message: 第一答", "user/message: 第二问"];
+  const rows = [{ id: "event-2" }, { id: "event-5" }, { id: "event-8" }];
+  const outline = F.turnOutline(lines, rows);
+  assert.equal(outline.length, 2);
+  assert.equal(asJson(outline.map((e) => e.id)), asJson(["event-2", "event-8"]));
+  assert.equal(asJson(outline.map((e) => e.title)), asJson(["第一问", "第二问"]));
+  assert.equal(asJson(outline[0].replies.map((r) => [r.id, r.role])), asJson([["event-5", "assistant"]]));
+  assert.equal(asJson(outline[1].replies), asJson([]));
+});
+
+test("turnOutline：首条提问之前的系统与开发者消息不造锚点", () => {
+  const outline = F.turnOutline(["system/message: s", "developer/message: d", "tool/result ok: t"], [{ id: "event-1" }, { id: "event-2" }, { id: "event-3" }]);
+  assert.equal(asJson(outline), asJson([]));
+});
+
+test("turnOutline：标题取提问首行并按 60 字符截断，正文与回复各自成摘要", () => {
+  const long = "头行" + "字".repeat(80) + "\n次行不该进标题";
+  const outline = F.turnOutline([`user/message: ${long}`, "assistant/message: 答" + "话".repeat(200)], []);
+  assert.equal(outline[0].title, "头行" + "字".repeat(57) + "…");
+  assert.ok(!outline[0].title.includes("\n"));
+  assert.ok(outline[0].content.includes("次行不该进标题"));
+  assert.equal(outline[0].replies[0].role, "assistant");
+  assert.equal(outline[0].replies[0].text.length, 120);
+  assert.ok(outline[0].replies[0].text.endsWith("…"));
+  const single = F.turnOutline([`user/message: ${"问".repeat(200)}`], []);
+  assert.equal(single[0].content.length, 120);
+  assert.ok(single[0].content.endsWith("…"));
+  // 没有投影行时锚点回落到按位次的稳定 id，与 toBubbleMessages 同一套。
+  assert.equal(F.turnOutline([`user/message: ${long}`], [])[0].id, "m0");
+});
+
+test("turnOutline：同一轮内的工具结果归到该轮回复，多行提问保留原始换行", () => {
+  const outline = F.turnOutline(
+    ["user/message: 第一行\n第二行", "tool/result: ok", "assistant/message: 完成", "user/message: 追问"],
+    [{ id: "event-1" }, { id: "event-2" }, { id: "event-3" }, { id: "event-4" }]
+  );
+  assert.equal(asJson(outline.map((e) => e.id)), asJson(["event-1", "event-4"]));
+  assert.ok(outline[0].content.includes("\n第二行"));
+  assert.equal(asJson(outline[0].replies.map((r) => r.role)), asJson(["tool", "assistant"]));
+});
+
+test("turnOutline：空提问与纯空白提问给出确定标题，不留空条目", () => {
+  assert.equal(F.turnOutline(["user/message:"], [{ id: "event-1" }])[0].title, "（空消息）");
+  assert.equal(F.turnOutline(["user/message:    "], [{ id: "event-1" }])[0].title, "（空消息）");
+  assert.equal(asJson(F.turnOutline([], [])), asJson([]));
+});

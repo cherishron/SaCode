@@ -15,7 +15,7 @@ async function poll(b) {
   for (let i=0;i<300;i++) { const r=await b.request('turn/poll'); if(r.settled) return r; await pause(20); }
   throw Error('回合没有结算');
 }
-async function setup(b, url, extra={}) {
+async function setup(b, url, extra={}, prices={}) {
   const bridge=b;
   b={request:async(method,params)=> {try {return await bridge.request(method,params);} catch(e) {throw Error(method+': '+e.message);} }};
   await b.request('model/registry/update', {draft:{id:'p',name:'测试供应商',baseUrl:url,protocol:'openai-completions',models:[{id:'upstream',name:'实际模型',contextWindow:'',maxTokens:'',image:false,availability:'available',outputModalities:['text']},{id:'legacy',name:'旧默认模型',contextWindow:'',maxTokens:'',image:false,availability:'available',outputModalities:['text']}]},expectedRevision:0});
@@ -23,9 +23,9 @@ async function setup(b, url, extra={}) {
   const v=await b.request('model/registry/describe');
   await b.request('credential/set',{ref:v.providers[0].credentialRef,value:'local-fixture-secret'});
   await b.request('custom/upsert',{draft:{id:'chosen',name:'会话模型',description:'',enabled:true,category:'coding',requires:['text-output'],mode:'weighted',bindings:[],...extra},expectedRevision:0});
-  await b.request('binding/upsert',{customId:'chosen',binding:{providerId:'p',modelId:'upstream',enabled:true,order:0,weight:1,priceInMicro:1000,priceOutMicro:2000,priceCacheReadMicro:-1,priceCacheWriteMicro:-1,priceVersion:1,currency:'CNY'},expectedRevision:1});
+  await b.request('binding/upsert',{customId:'chosen',binding:{providerId:'p',modelId:'upstream',enabled:true,order:0,weight:1,priceInMicro:1000,priceOutMicro:2000,priceCacheReadMicro:-1,priceCacheWriteMicro:-1,priceVersion:1,currency:'CNY',...prices},expectedRevision:1});
 }
-async function fixture(status=200, tools=false, hold=false, beforeEnd=()=>{}) {
+async function fixture(status=200, tools=false, hold=false, beforeEnd=()=>{}, usage) {
   const requests=[];const responses=[];
   const server=createServer(async(req,res)=> {
     let raw='';for await(const c of req) raw+=c;
@@ -34,7 +34,7 @@ async function fixture(status=200, tools=false, hold=false, beforeEnd=()=>{}) {
     res.writeHead(200,{'content-type':'text/event-stream'});
     if(hold) {responses.push(res);res.flushHeaders();res.write('data: '+JSON.stringify({choices:[{index:0,delta:{content:'处理中'}}]})+'\n\n');return;}
     const part = tools && requests.length===1 ? {delta:{tool_calls:[{index:0,id:'todo-1',type:'function',function:{name:'todo_write',arguments:'{"todos":[]}'}}]},finish_reason:'tool_calls'} : {delta:{content:'真实回环答复'},finish_reason:'stop'};
-    beforeEnd();res.end('data: '+JSON.stringify({choices:[{index:0,...part}]})+'\n\ndata: [DONE]\n\n');
+    beforeEnd();res.end('data: '+JSON.stringify({choices:[{index:0,...part}]})+'\n\n'+(usage ? 'data: '+JSON.stringify({usage})+'\n\n' : '')+'data: [DONE]\n\n');
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
   return {requests,responses,url:'http://127.0.0.1:'+server.address().port,close:()=>new Promise(r=>{server.closeAllConnections();server.close(r);})};
@@ -71,6 +71,62 @@ test('会话自定义模型进入真实请求，逐步派发且费用未知不�
     assert.equal(f.requests.length,2,'重启不得自动重发已派发尝试');
   } finally {await b.stop();await f.close();}
 });
+for (const [name,usage,input,read,write,amount] of [
+  ['OpenAI兼容', {prompt_tokens:100,completion_tokens:10,total_tokens:110,prompt_tokens_details:{cached_tokens:60,cache_creation_input_tokens:20}},20,60,20,76000],
+  ['DeepSeek', {prompt_tokens:100,completion_tokens:10,total_tokens:110,prompt_cache_hit_tokens:70,prompt_cache_miss_tokens:30},30,70,-1,57000],
+]) {
+ test(`${name}缓存用量真实结算不重复收费且重启不重复入账`,{timeout:30000},async()=>{
+  const f=await fixture(200,false,false,()=>{},usage);const {b,dir,settings}=await boot();
+  try {
+   await setup(b,f.url,{}, {priceCacheReadMicro:100,priceCacheWriteMicro:1500});
+   await b.request('session/submit',{eventType:'user/message',data:'缓存计费测试'});
+   await b.request('task/start',{customModelId:'chosen'});
+   assert.equal((await poll(b)).interrupted,false);
+   assert.equal(f.requests[0].stream_options.include_usage,true);
+   const stats=await b.request('ledger/stats');
+   assert.equal(stats.unsettledAttempts.length,0);
+   assert.equal(stats.providerTotals.length,1);
+   assert.equal(stats.providerTotals[0].usedMicros,amount);
+   const rows=readFileSync(join(settings,'usage-ledger.log'),'utf8').trim().split(/\r?\n/).map(line=>JSON.parse(line.split('\t')[2].replace(/\\([\\tnr])/g,(_,c)=>({'\\':'\\',t:'\t',n:'\n',r:'\r'}[c]))));
+   const row=rows.find(r=>r.input===input&&r.cacheRead===read&&r.cacheWrite===write);
+   assert.ok(row,'实际分项必须落入账本');assert.equal(row.output,10);assert.equal(row.meterSource,'vendor');
+   await b.stop();await b.start(dir);
+   assert.equal((await b.request('ledger/stats')).providerTotals[0].usedMicros,amount);
+   assert.equal(f.requests.length,1);
+  } finally {await b.stop();await f.close();}
+ });
+}
+
+test('仅缓存分项落盘但缺输入输出时仍待核算',{timeout:30000},async()=>{
+ const f=await fixture(200,false,false,()=>{},{total_tokens:9,prompt_tokens_details:{cached_tokens:5}});const {b,settings}=await boot();
+ try {
+  await setup(b,f.url,{}, {priceCacheReadMicro:100});
+  await b.request('task/start',{customModelId:'chosen'});
+  assert.equal((await poll(b)).interrupted,false);
+  const stats=await b.request('ledger/stats');
+  assert.equal(stats.unsettledAttempts.length,1);
+  assert.equal(stats.providerTotals.length,0);
+  const raw=readFileSync(join(settings,'usage-ledger.log'),'utf8');
+  assert.ok(raw.includes('"cacheRead":5'));
+  assert.ok(raw.includes('usage-unspecified'));
+ } finally {await b.stop();await f.close();}
+});
+
+test('缓存用量有回传但缓存单价未登记时保留待核算',{timeout:30000},async()=>{
+ const f=await fixture(200,false,false,()=>{},{prompt_tokens:100,completion_tokens:10,prompt_tokens_details:{cached_tokens:60}});const {b,settings}=await boot();
+ try {
+  await setup(b,f.url);
+  await b.request('task/start',{customModelId:'chosen'});
+  assert.equal((await poll(b)).interrupted,false);
+  const stats=await b.request('ledger/stats');
+  assert.equal(stats.unsettledAttempts.length,1);
+  assert.equal(stats.providerTotals.length,0);
+  const raw=readFileSync(join(settings,'usage-ledger.log'),'utf8');
+  assert.ok(raw.includes('"cacheRead":60'));
+  assert.ok(raw.includes('rate-unregistered:cacheRead'));
+ } finally {await b.stop();await f.close();}
+});
+
 test('无效会话模型明确拒绝，不退回默认供应商', {timeout:15000},async()=>{
   const f=await fixture();const {b}=await boot();
   try {await setup(b,f.url);await assert.rejects(b.request('task/start',{customModelId:'missing'}),/custom-model-not-found/);assert.equal(f.requests.length,0);}

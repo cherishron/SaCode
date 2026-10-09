@@ -46,6 +46,8 @@ const roleName = (role) => ({ system: "系统", developer: "开发者", user: "�
 const verdictName = (verdict) => ({ recorded: "已计量", "over-budget": "超出预算", absent: "未收到用量", "bad-usage": "用量格式异常" }[verdict] || "未计量");
 const navIcon = (path) => h("svg", { class: "nav-symbol", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, [h("path", { d: path })]);
 
+// 状态段的取值直接抄核心目录投影发的那三个 status，界面不另立一套状态词。
+
 // 目录树递归渲染：目录在前文件在后，展开目录递归取下一层；数据每次都从宿主取，
 // 展开态只是 UI 记忆。depth 控制缩进——不靠 CSS 嵌套，方便跨深度的对齐。
 const FILE_ICON = "M3 5h7l2 3h9v12H3z";
@@ -81,7 +83,7 @@ const renderTreeEntries = (entries, prefix, depth, ctx) => {
     }
   }
   for (const f of files) {
-    nodes.push(h("div", Object.assign({ class: "file-tree-entry file-tree-file", "aria-label": f.name }, indent), [
+    nodes.push(h("div", Object.assign({ class: "file-tree-entry file-tree-file", role:"button", tabindex:0, "aria-label": "打开文件 "+f.name, onClick:()=>ctx.select?.(prefix?prefix+"/"+f.name:f.name),onKeydown:e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();ctx.select?.(prefix?prefix+"/"+f.name:f.name);}} }, indent), [
       navIcon(FILE_ICON),
       h("span", null, f.name),
       h("span", { class: "file-size" }, formatBytes(f.size)),
@@ -188,16 +190,60 @@ createApp({
     // 投影行 → 气泡消息。这只是同一份 proj.messages 的视图派生：不写日志、不发协议帧。
     const bubbleMessages = window.Vue.computed(() => FOLD.toBubbleMessages(proj.value.messages || [], proj.value.messageRows, String(scrollSession.value)));
     const readPreview = window.Vue.computed(() => FOLD.latestReadPreview(proj.value.messages || [], proj.value.messageRows));
+    // 会话内历史对话导航：条目取自投影里的用户提问，当前条目取自唯一滚动宿主播报的锚点。
+    // 在尾部时宿主交还空锚点，高亮就回落到最后一轮——侧栏不自算滚动位置，避免出现第二个定位所有者。
+    const turnAnchor = ref("");
+    const turnOutline = window.Vue.computed(() => FOLD.turnOutline(proj.value.messages || [], proj.value.messageRows));
+    const turnActive = window.Vue.computed(() => {
+      const entries = turnOutline.value;
+      if (!entries.length) return -1;
+      if (!turnAnchor.value) return entries.length - 1;
+      const ids = bubbleMessages.value.map((m) => m.id);
+      const at = ids.indexOf(turnAnchor.value);
+      if (at < 0) return -1;
+      let active = -1;
+      for (let i = 0; i < entries.length; i++) {
+        const entryAt = ids.indexOf(entries[i].id);
+        if (entryAt < 0 || entryAt > at) break;
+        active = i;
+      }
+      return active;
+    });
     const tools = ref([]);
     const detailName = ref("");
-    const sideTab = ref("inspect");
-    const viewport = ref(window.innerWidth), sidebarWidth = ref(280), rightWidth = ref(null);
+    const goalEditorRequest = ref(0);
+    const sideTab = ref("inspect"), workbenchExpanded = ref(false);
+    const filePreviewRevision = ref(0);
+    const fileEditorRevision = ref(0);
+    function editorRead(path){
+      if(turn.value.running||sendBusy.value||catalogBusy.value||workspaceBusy.value||approval.value)throw Error('请先结算任务与当前会话操作。');
+      const tool=tools.value.find(t=>t.name==='read');
+      if(!tool||tool.needsApproval)throw Error('当前读取工具不可用于文件编辑。');
+      return window.sacode.toolCall('read',JSON.stringify({path}),0);
+    }
+    const fileEditor=window.SaCodeSlots.createFileEditor({read:editorRead,ask:(path,text)=>window.sacode.approvalAsk('write',JSON.stringify({path,content:text})),answer:(id,decision)=>window.sacode.approvalAnswer(id,decision),write:(path,text,id)=>window.sacode.toolCall('write',JSON.stringify({path,content:text}),id)},()=>{fileEditorRevision.value++;});
+    function openFileEditor(path){sideOpen.value=true;sideTab.value='editor';void fileEditor.open(path);}
+    window.Vue.onBeforeUnmount(()=>fileEditor.dispose());
+    const filePreview = window.SaCodeSlots.createFilePreview(async path=>{
+      if(fileEditor.state.busy)throw Error('文件编辑正在读取或保存，请稍后重试。');
+      if(turn.value.running)throw Error("任务正在执行，请在本轮结束后读取文件。");
+      const tool=tools.value.find(t=>t.name==="read");
+      if(!tool)throw Error("读取工具尚未登记。");
+      if(tool.needsApproval)throw Error("该读取工具需要审批，请先在工具页处理。");
+      return window.sacode.toolCall("read",path,0);
+    },()=>{filePreviewRevision.value++;});
+    window.Vue.onBeforeUnmount(()=>filePreview.dispose());
+    function openWorkspaceFile(path){sideOpen.value=true;sideTab.value="preview";void filePreview.open(path);}
+    window.Vue.watch(()=>scrollSession.value,()=>filePreview.close());
+    const viewport = ref(window.innerWidth), sidebarWidth = ref(280), rightWidth = ref(380);
     const sidebarClosed = ref(false), narrowExpanded = ref(false), sideOpen = ref(false), diagnosticsOpen = ref(false);
     const workspaceSessionLimits = ref(new Map());
     const workspaceGroupExpanded = ref(new Set());
+    // 检索词与状态筛选是核心目录投影上的纯派生量：不发宿主请求，也不写回用户的展开记忆。
+    const sidebarQuery = ref('');
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
-    const frameColumns = window.Vue.computed(() => window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
-      sideOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
+    const frameColumns = window.Vue.computed(() => workbenchExpanded.value&&!pluginManagerOpen.value?{sidebar:0,center:0,rightbar:viewport.value}:window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
+      sideOpen.value&&!pluginManagerOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
     function toggleSidebar() {
       if (viewport.value < 1024) { narrowExpanded.value = sidebarCollapsed.value; sidebarClosed.value = false; }
       else sidebarClosed.value = !sidebarClosed.value;
@@ -300,9 +346,59 @@ createApp({
     window.Vue.watch(() => [sideTab.value, scrollSession.value], ([tab]) => {
       if (tab === "trace") void refreshTrace(true);
     });
+    const teamSessionId = ref(""), teamSnapshot = ref(null), teamBusy = ref(false), teamError = ref("");
+    let teamTimer = null, teamGeneration = 0, teamNavigationId = "", teamDisposed = false;
+    const teamActive = () => !teamDisposed && sideOpen.value && sideTab.value === "agents" && !pluginManagerOpen.value;
+    function stopTeamRefresh() {
+      if (teamTimer !== null) clearInterval(teamTimer);
+      teamTimer = null; teamGeneration += 1; teamBusy.value = false;
+    }
+    async function readTeamSnapshot(id, generation) {
+      const snapshot = await window.sacode.teamDescribe(id);
+      if (!snapshot || !["members", "tasks", "messages"].every(key => Array.isArray(snapshot[key]))) throw Error("团队快照格式异常：需要 members/tasks/messages 数组。");
+      if (generation === teamGeneration && teamActive() && id === teamSessionId.value) teamSnapshot.value = snapshot;
+    }
+    async function refreshTeam() {
+      if (!teamActive() || teamBusy.value || !teamSessionId.value) return;
+      const id = teamSessionId.value, generation = teamGeneration;
+      teamBusy.value = true;
+      try { await readTeamSnapshot(id, generation); if (generation === teamGeneration) teamError.value = ""; }
+      catch (e) { if (generation === teamGeneration) teamError.value = String(e.message || e); }
+      finally { if (generation === teamGeneration) teamBusy.value = false; }
+    }
+    async function writeTeam(method, args) {
+      if (!teamActive() || teamBusy.value || !teamSessionId.value) return;
+      const id = teamSessionId.value, generation = teamGeneration;
+      teamBusy.value = true; teamError.value = "";
+      try {
+        await window.sacode[method](id, ...args);
+        if (generation === teamGeneration && teamActive()) await readTeamSnapshot(id, generation);
+      } catch (e) { if (generation === teamGeneration) teamError.value = String(e.message || e); }
+      finally { if (generation === teamGeneration) teamBusy.value = false; }
+    }
+    const addTeamMember = ({name, role}) => writeTeam("teamMemberCreate", [name, role]);
+    const sendTeamMessage = ({target, text}) => writeTeam("teamMessageSend", [target, text]);
+    const createTeamTask = ({title, dependencies}) => writeTeam("teamTaskCreate", [title, dependencies]);
+    const assignTeamTask = ({taskId, memberId}) => writeTeam("teamTaskAssign", [taskId, memberId]);
+    const stopTeamMember = memberId => writeTeam("teamMemberStop", [memberId]);
+    async function selectTeamSession(id) {
+      teamNavigationId = id;
+      await selectSession(id);
+      if (selectedScrollId !== id) { teamNavigationId = ""; teamError.value = "成员会话未切换，请检查当前会话操作或会话列表错误。"; }
+    }
+    window.Vue.watch(() => [sideOpen.value, sideTab.value, pluginManagerOpen.value, scrollSession.value], () => {
+      const current = String(scrollSession.value || "");
+      if (current && current !== "initial" && current !== teamNavigationId && current !== teamSessionId.value) {
+        stopTeamRefresh(); teamSessionId.value = current; teamSnapshot.value = null; teamError.value = ""; teamNavigationId = "";
+      }
+      if (!teamActive()) { stopTeamRefresh(); return; }
+      if (!teamSessionId.value) { teamError.value = "请先选择可用会话，再读取团队。"; return; }
+      if (teamTimer === null) { void refreshTeam(); teamTimer = setInterval(refreshTeam, 3000); }
+    });
+    window.Vue.onBeforeUnmount(() => { teamDisposed = true; stopTeamRefresh(); });
     // 通用设置的三个持久化偏好：值与保存都走宿主 global/settings，失败时回显真实回读值。
-    const generalPrefs = ref({ transcriptView: "default", composerEnter: "send", sessionLog: "off" });
-    const generalPrefsBusy = ref("");
+    const generalPrefs = ref({ transcriptView: null, composerEnter: null, sessionLog: null });
+    const generalPrefsBusy = ref(""), generalPrefsNote = ref("");
     async function refreshGeneralPrefs() {
       try {
         const r = await window.sacode.globalSettingsGet();
@@ -313,11 +409,11 @@ createApp({
             sessionLog: r.sessionLog === "on" ? "on" : "off",
           };
         }
-      } catch (e) { /* 读不到就保留默认值，行内显示仍以后端回读为准 */ }
+      } catch (e) { generalPrefsNote.value="配置读取失败："+String(e.message||e); }
     }
     async function setGeneralPref(key, value) {
       if (generalPrefsBusy.value) return;
-      generalPrefsBusy.value = key;
+      generalPrefsBusy.value = key;generalPrefsNote.value="";
       try {
         const r = await window.sacode.globalSettingsSet(key, value);
         if (r && typeof r === "object") {
@@ -327,7 +423,7 @@ createApp({
             sessionLog: r.sessionLog === "on" ? "on" : "off",
           };
         }
-      } finally { generalPrefsBusy.value = ""; }
+      } catch(e) { generalPrefsNote.value="保存失败："+String(e.message||e); } finally { generalPrefsBusy.value = ""; }
     }
     void refreshGeneralPrefs();
     // 插件清单适配器：宿主 packages 的每一项是一个已装插件；有工具行的包也作为会话预设组。
@@ -365,11 +461,28 @@ createApp({
       const generation=sessionGeneration, result=await window.sacode.workspaceGet();
       if(generation===sessionGeneration) workspace.value=result;
     }
+    // 会话级隔离工作树：绑定按会话生效，面板只消费主进程逐字段校验过的 describe 视图。
+    // 用 reactive 而不是 ref：输入草稿、在途标记与拒绝原因都落在同一个对象上，
+    // 失败时一个也不清空——草稿是用户的输入，不是可以随手丢弃的中间状态。
+    const worktreeState = window.Vue.reactive({ view: null, name: "", reference: "", error: "", busy: false, dialog: null, discardChanges: false, cleaned: null });
+    function resetWorktreePanel() {
+      worktreeState.name = ""; worktreeState.reference = ""; worktreeState.dialog = null;
+      worktreeState.cleaned = null; worktreeState.error = ""; worktreeState.view = null;
+    }
+    const worktreeController = window.SaCodeWorktree.createController(worktreeState, window.sacode, async () => {
+      // 进入与退出都换了会话的有效目录：目录显示、文件树与投影一起重读，
+      // 不能让面板说「在隔离工作树里」而文件树还指着原目录。
+      await refreshWorkspace(); await refreshWorkspaceFiles(); await refresh();
+    });
+    // 在途轮次、待审批工单与发送中都锁面板：本轮的 workingDirectory 已在宿主冻结，
+    // 这时切目录只会得到「两个入口说的是两个不同目录」。
+    function worktreeLocked() { return turn.value.running === true || !!approval.value || sendBusy.value === true; }
     async function openWorkspace() {
       workspaceOpen.value=true;
       try {await refreshWorkspace(); await refreshCatalog();} catch(e) {workspaceNote.value=catalogError(e);}
     }
     async function chooseWorkspace() {
+      if(fileEditor.state.busy||fileEditor.dirty()){workspaceNote.value='请先保存或放弃文件编辑中的修改。';return;}
       if(sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
       workspaceBusy.value=true; workspaceNote.value="请选择项目目录…";
       try {
@@ -398,10 +511,12 @@ createApp({
       return Object.entries(reasons).find(([key])=>message.includes(key))?.[1] || message;
     }
     async function applySelection(id) {
+      if(fileEditor.state.busy||fileEditor.dirty())throw Error('请先保存或放弃文件编辑中的修改，再切换会话。');
       if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
       if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后切换。");
       const oldId=catalog.value?.entries.find(item=>item.current)?.id;
       await window.sacode.sessionSelect(id);
+      fileEditor.reset();
       sessionGeneration += 1;
       selectedScrollId=id;
       if (oldId) sessionDrafts.set(oldId,draft.value);
@@ -416,8 +531,10 @@ createApp({
       previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
       catalogNote.value="已切换，正在加载会话…";
       queuePending.value=[];
-      clearAttachments();
+      clearAttachments(); selectedCustomModel.value = ""; void loadCustomModels();
       await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshWorkspaceFiles(); await refreshQueue();
+      // 换会话=换绑定：上一个会话的名称草稿与状态都必须收起，面板重新读这一条会话的绑定。
+      resetWorktreePanel(); await worktreeController.restore();
       await refreshGlobalAppearance();
       workspaceNote.value="";
       catalog.value=await window.sacode.sessionCatalog();
@@ -433,6 +550,7 @@ createApp({
       finally { catalogBusy.value=false; }
     }
     async function createSession() {
+      if(fileEditor.state.busy||fileEditor.dirty()){catalogNote.value='请先保存或放弃文件编辑中的修改。';return;}
       if (catalogBusy.value || !newSessionTitle.value.trim()) return;
       catalogBusy.value=true; catalogNote.value="正在新建会话…";
       try {
@@ -446,6 +564,7 @@ createApp({
       finally { catalogBusy.value=false; }
     }
     async function startNewSession() {
+      if(fileEditor.state.busy||fileEditor.dirty()){catalogNote.value='请先保存或放弃文件编辑中的修改。';return;}
       if(sendBusy.value || catalogBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value || turn.value.running || approval.value) return;
       newSessionTitle.value='新会话';
       await createSession();
@@ -464,6 +583,35 @@ createApp({
       finally { catalogBusy.value = false; }
     }
     function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
+    // 使用提醒条：正文不进消息投影，占用比例全部由核心算——
+    // 核心没给可靠分子时，这里连百分比都不会出现。
+    const tips=ref(null),tipsHidden=ref(null),tipsPressure=ref(undefined),tipsBusy=ref(false),tipsNote=ref(''),tipsError=ref(false);
+    const showStartupTip=async()=>{
+      try{const r=await window.sacode.tipsStartup();if(r&&r.id&&r.text)tips.value={kind:'startup',text:r.text,reliable:false};}
+      catch(e){tipsError.value=true;tipsNote.value=catalogError(e);}
+    };
+    const showContextTip=async()=>{
+      try{
+        const r=await window.sacode.tipsAfterReply();
+        if(r&&Number.isFinite(r.window)&&r.window>0&&Number.isFinite(r.used)&&r.used>=0)tipsPressure.value={projectedTokens:r.used,contextWindow:r.window};
+        if(r&&r.id&&r.text)tips.value={kind:'context',text:r.text,reliable:Number.isFinite(r.percent)};
+      }catch(e){tipsError.value=true;tipsNote.value=catalogError(e);}
+    };
+    const refreshTips=async()=>{
+      try{
+        const r=await window.sacode.tipsGet();
+        tipsHidden.value=!!r.hidden;tipsError.value=false;
+        if(r.reliable&&Number.isFinite(r.window)&&r.window>0&&Number.isFinite(r.used))tipsPressure.value={projectedTokens:r.used,contextWindow:r.window};
+      }catch(e){tipsError.value=true;}
+    };
+    const setTipsHidden=async(value)=>{
+      if(tipsBusy.value)return;
+      tipsBusy.value=true;tipsError.value=false;tipsNote.value='正在保存提醒偏好…';
+      try{const r=await window.sacode.tipsSetHidden(value);tipsHidden.value=!!r.hidden;tipsNote.value='已保存，界面立即停止出提醒。';if(value)tips.value=null;}
+      catch(e){tipsError.value=true;tipsNote.value=fontError(e);}
+      finally{tipsBusy.value=false;}
+    };
+    const dismissTips=()=>setTipsHidden(true);
     const globalAppearance = ref({theme:null,fontSize:null,busySend:null}), fontBusy=ref(false), fontNote=ref('');
     const busySendSaving=ref(false),busySendNote=ref(''),busySendError=ref(false);
     async function setBusySend(value) {
@@ -737,6 +885,7 @@ createApp({
     }
 
     let pollTimer = null;
+    let pollGeneration = 0, modelApprovalsSuppressed = false, modelTurnRequestId = null;
     function desktopKeys(event) {
       if (event.isComposing || event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return;
       const key=event.key.toLowerCase();
@@ -753,12 +902,14 @@ createApp({
       const settings=key===',' && !event.shiftKey;
       const composer=key==='l' && !event.shiftKey;
       const preview=key==='p' && event.shiftKey;
-      if (!settings && !composer && !preview) return;
+      const search=key==='k' && !event.shiftKey;
+      if (!settings && !composer && !preview && !search) return;
       event.preventDefault();
       // 模态优先：全局导航与发送不能穿透上层审批/详情/设置。
       if (document.querySelector('dialog:modal')) return;
       if (settings) settingsOpen.value = !settingsOpen.value;
       else if (composer) document.getElementById('composer').focus();
+      else if (search) document.getElementById('sidebar-search').focus();
       else if (preview) openSide('preview-panel');
     }
     onMounted(() => window.addEventListener('keydown', desktopKeys));
@@ -887,6 +1038,17 @@ createApp({
       };
     })();
     void modelDirectory.load();
+    // 发送入口的自定义模型候选只从核心读（custom/describe 的 models），
+    // 未启用的条目不给选；空选中态表示「不指定」，Host 沿用注册表默认指针。
+    const customModels = ref([]), selectedCustomModel = ref("");
+    async function loadCustomModels() {
+      try {
+        const view = await window.sacode.customsDescribe();
+        customModels.value = (view.models || []).filter((m) => m.enabled === true);
+        if (selectedCustomModel.value && !customModels.value.some((m) => m.id === selectedCustomModel.value)) selectedCustomModel.value = "";
+      } catch (e) { customModels.value = []; }
+    }
+    void loadCustomModels();
     const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
     // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
     for (const verb of ["save", "remove", "reorder", "pullModels"]) {
@@ -909,6 +1071,7 @@ createApp({
     void refreshQueue();
 
     async function send(accelerated=false) {
+      if(fileEditor.state.busy){error.value='文件正在读取或保存，请稍后发送。';return;}
       if(sendBusy.value) return;
       if(turn.value.running){await enqueueDraft(accelerated);return;}
       const generation=sessionGeneration;
@@ -947,6 +1110,7 @@ createApp({
     }
 
     function stopPolling() {
+      pollGeneration += 1;
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
@@ -956,10 +1120,18 @@ createApp({
     function startPolling() {
       stopPolling();
       const generation=sessionGeneration;
+      const epoch=pollGeneration;
+      let polling=false;
       pollTimer = setInterval(async () => {
+        if(polling) return;
+        polling=true;
         try {
           const p = await window.sacode.turnPoll();
-          if (generation!==sessionGeneration) return;
+          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
+          if(!modelApprovalsSuppressed) {
+            const proposal=window.SaCodeModelApproval.selectProposal(p.approvalRequests,String(selectedScrollId),p.running && p.turnRequestId===modelTurnRequestId,modelTurnRequestId);
+            if(proposal && !approval.value) approval.value=proposal;
+          }
           for (const f of p.frames) {
             const i = f.indexOf(":");
             const kind = i < 0 ? f : f.slice(0, i);
@@ -972,8 +1144,10 @@ createApp({
             else if (kind === "usage") turn.value.text += "\n[usage " + body + "]";
             else if (kind === "tool-call-delta") turn.value.text += "\n[tool-call " + body + "]";
           }
+          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
           turn.value.running = p.running;
           if (p.settled) {
+            if(approval.value?.source==='model') approval.value=null;
             turn.value.settled = true;
             turn.value.finishReason = p.finishReason || "";
             turn.value.cancelled = !!p.cancelled;
@@ -981,6 +1155,8 @@ createApp({
             turn.value.delivered = p.delivered || 0;
             // 用量读数只能取自核心的结算帧：界面不另算一份账，也不显示自己推算的预算。
             usage.value = { used: p.used, budget: p.budget, over: !!p.over, verdict: p.usageVerdict || "" };
+            // 回复结算后取一次容量提醒：分子是核心在结算那一刻登记的采样，界面不参与推算。
+            void showContextTip();
             stopPolling();
             await refresh();
             await refreshTools();
@@ -999,9 +1175,12 @@ createApp({
             }
           }
         } catch (e) {
-          if (generation!==sessionGeneration) return;
+          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
+          if(approval.value?.source==='model') approval.value=null;
           error.value = String(e.message || e);
           stopPolling();
+        } finally {
+          polling=false;
         }
       }, 60);
     }
@@ -1017,16 +1196,21 @@ createApp({
       "already-owned": "会话正被另一个入口占用，请稍候再试。",
       "replay-rejected": "会话日志回放被拒，消息未起轮；请检查会话文件是否完整。",
       "provider-init-failed": "连不上模型服务：消息已存入会话，请检查 API 地址与网络。",
-      "flush-failed": "会话未能落盘，消息只在内存里可见。",
+      "flush-failed": "会话未能落盘，消息只在内存里可见。", "custom-model-not-found": "这个自定义模型已经不在清单里：消息已存入会话，发送入口已改回默认模型，请直接重试。",
     })[code] || ("起轮失败：" + code);
 
     async function startTask() {
+      if(approval.value || turn.value.running) {error.value='请先处理当前任务和审批请求。';return;}
+      stopPolling();
       const generation = sessionGeneration;
+      modelApprovalsSuppressed=false;
+      modelTurnRequestId=null;
       error.value = "";
       turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
       try {
-        await window.sacode.taskStart();
+        const started=await window.sacode.taskStart(selectedCustomModel.value || undefined);
         if (generation !== sessionGeneration) return;
+        modelTurnRequestId=started.turnRequestId;
         startPolling();
       } catch (e) {
         if (generation !== sessionGeneration) return;
@@ -1034,12 +1218,16 @@ createApp({
         // 所以按「数字 + 空白 + 标识」取符号码；带后缀的（provider-init-failed:xxx）取到主码即止。
         const text = String(cleanErr(e));
         const code = text.match(/\d+\s+([a-z][a-z0-9-]*)/);
+        // 自定义模型在模型中心被删掉时核心回 custom-model-not-found：清回默认指针，
+        // 否则下一条消息还会带着同一个已经不存在的 id 反复被拒。
+        if (code && code[1] === "custom-model-not-found") selectedCustomModel.value = "";
         error.value = turnStartFailure(code ? code[1] : text);
         turn.value.running = false;
       }
     }
 
     async function runTurn(limit) {
+      if(fileEditor.state.busy){error.value='文件正在读取或保存，请稍后执行。';return;}
       const generation=sessionGeneration;
       error.value = "";
       turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
@@ -1055,11 +1243,14 @@ createApp({
     }
 
     async function cancelTurn() {
+      const generation=sessionGeneration, epoch=pollGeneration;
       error.value = "";
+      modelApprovalsSuppressed=true;
+      if(approval.value?.source==='model') approval.value=null;
       try {
         await window.sacode.turnCancel();
       } catch (e) {
-        error.value = String(e.message || e);
+        if(generation===sessionGeneration && epoch===pollGeneration) error.value = String(e.message || e);
       }
     }
 
@@ -1067,6 +1258,8 @@ createApp({
     const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': /, "");
 
     async function askTool(t) {
+      if(t.needsApproval && (turn.value.running || approval.value)) {error.value='请先处理当前任务和审批请求。';return;}
+      if(fileEditor.state.busy){error.value='文件编辑正在处理工具请求，请稍后重试。';return;}
       const generation=sessionGeneration;
       outcome.value = "";
       outcomeKind.value = "";
@@ -1089,10 +1282,21 @@ createApp({
     }
 
     async function answerTool(approvalAnswer) {
+      if(fileEditor.state.busy)return;
       const generation=sessionGeneration;
       const a = approval.value;
       approval.value = null;
       if (!a) return;
+      if(a.source==='model') {
+        const epoch=pollGeneration;
+        const current=()=>generation===sessionGeneration && epoch===pollGeneration && !modelApprovalsSuppressed && turn.value.running && a.sessionId===String(selectedScrollId) && a.turnRequestId===modelTurnRequestId;
+        try {
+          const result=await window.SaCodeModelApproval.answer(window.sacode,a,approvalAnswer,current);
+          if(!current() || result.stale) return;
+          if(!result.accepted) {outcomeKind.value='outcome outcome-denied';outcome.value='模型审批工单已失效：'+result.state;}
+        } catch(e) {if(current()){outcomeKind.value='outcome outcome-denied';outcome.value='应答失败：'+cleanErr(e);}}
+        return;
+      }
       try {
         const r = await window.sacode.approvalAnswer(a.approvalId, approvalAnswer);
         if (generation!==sessionGeneration) return;
@@ -1112,6 +1316,7 @@ createApp({
     }
 
     async function callTool(name, approvalId) {
+      if(fileEditor.state.busy)return;
       const generation=sessionGeneration;
       if (!name) return;
       // 各工具按自己的参数契约给 args：只读工具的路径就是整串参数，
@@ -1169,27 +1374,38 @@ createApp({
         await refreshUsage();
         await refreshCatalog();
         await refreshWorkspace();
+        // 开机就把绑定读出来：工作树是会话状态的一部分，不该等用户点「恢复当前状态」才知道自己在哪。
+        await worktreeController.restore();
       } catch (e) {
         error.value = catalogError(e);
       }
+      // 提醒面单独吞错：读不到提示不能让工作台变成一屏错误。
+      await refreshTips();
+      if (tipsHidden.value !== true) await showStartupTip();
     });
 
     return {
+      fileEditor,fileEditorRevision,openFileEditor,
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
+      worktreeState, worktreeController, worktreeLocked,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen, pluginManagerAdapter,
-      appearanceBusy, appearanceNote, setTheme, modelDirectory,
+      appearanceBusy, appearanceNote, setTheme, modelDirectory, customModels, selectedCustomModel,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
-      generalSettings, busySendSaving, busySendNote, busySendError, setBusySend,
+      generalSettings, generalPrefsNote, busySendSaving, busySendNote, busySendError, setBusySend,
+      tips, tipsHidden, tipsBusy, tipsNote, tipsError, tipsPressure, setTipsHidden, dismissTips, refreshTips,
       fileTreeOpen, fileTreeChildren, fileTreeBusy, toggleTreeDir,
       traceEvents, traceMore, traceBusy, traceError, refreshTrace,
+      teamSessionId, teamSnapshot, teamBusy, teamError, refreshTeam, addTeamMember, sendTeamMessage, createTeamTask, assignTeamTask, stopTeamMember, selectTeamSession,
+      turnOutline, turnActive, turnAnchor,
       generalPrefs, generalPrefsBusy, setGeneralPref,
       pluginsInventoryAdapter,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
+      sidebarQuery,
       send, runTurn, cancelTurn, askTool, answerTool,
-      queueRows, queuePending, updateQueue,
+      queueRows, queuePending, updateQueue, goalEditorRequest,
     };
   },
   render() {
@@ -1200,20 +1416,29 @@ createApp({
     const workspaceName = self.workspace?.configured ? self.workspace.directory.split(/[\\/]/).filter(Boolean).pop() : '工作区';
     // 默认空日志尚未形成持久会话，不在产品导航里制造一条占位会话。
     const sidebarSessions = (self.catalog?.entries || []).filter(item=>item.durable>0);
+    // 检索匹配会话标题或所在工作区名；状态按核心目录发出的 status 原值筛，不在界面再造第二套状态词。
+    const groupLabel = (directory)=>directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
+    const sidebarQueryText = String(self.sidebarQuery || '').trim().toLowerCase();
+    const sidebarSearching = sidebarQueryText.length > 0;
+    const matchingSessions = sidebarSessions.filter((item)=>{
+      if (!sidebarQueryText) return true;
+      return (item.title || '未命名会话').toLowerCase().includes(sidebarQueryText)
+        || groupLabel(item.workspaceDirectory || '').toLowerCase().includes(sidebarQueryText);
+    });
     // 分组键来自核心的逐会话工作区投影；不根据当前目录或路径相似度猜测归属。
     const workspaceGroups = new Map();
-    for (const item of sidebarSessions) {
+    for (const item of matchingSessions) {
       const directory = item.workspaceDirectory || '';
       if (!workspaceGroups.has(directory)) workspaceGroups.set(directory, []);
       workspaceGroups.get(directory).push(item);
     }
-    if (self.workspace?.configured && !workspaceGroups.has(self.workspace.directory)) workspaceGroups.set(self.workspace.directory, []);
+    // 「当前工作区还没有会话」的占位分组只在无检索时有意义：筛选中留空组只会制造一条点不动的树。
+    if (self.workspace?.configured && !sidebarSearching && !workspaceGroups.has(self.workspace.directory)) workspaceGroups.set(self.workspace.directory, []);
     const renderSession = item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
-      'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>self.selectSession(item.id)});
+      'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>{self.pluginManagerOpen=false;self.selectSession(item.id);}});
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation})]),
       el("div", "header-utilities", [
-        el('button','frame-icon',[navIcon('M5 18V9 M12 18V4 M19 18v-6 M3 21h18')],{id:'open-budget','aria-label':'用量与预算',tooltip:{label:'用量与预算'},onClick:()=>self.openSide('budget-panel')}),
         el('button','frame-icon',[navIcon('M4 4h16v16H4z M14 4v16')],{id:'toggle-side','aria-label':self.sideOpen?'关闭侧栏':'打开侧栏','aria-expanded':self.sideOpen,tooltip:{label:self.sideOpen?'关闭侧栏':'打开侧栏'},onClick:()=>{self.sideOpen=!self.sideOpen;}}),
         self.approval ? el('button','frame-icon pending-approval',[navIcon('M12 3l10 18H2z M12 9v5 M12 17v1')],{'aria-label':'处理待审批请求',onClick:()=>self.openSide('tools-panel')}) : null,
       ]),
@@ -1224,7 +1449,11 @@ createApp({
         el('button','frame-icon sidebar-toggle',[navIcon('M4 4h16v16H4z M9 4v16')],{id:'toggle-sidebar','aria-label':self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',tooltip:{label:self.sidebarCollapsed?'打开侧边栏':'收起侧边栏',side:'right'},onClick:self.toggleSidebar}),
       ]),
       el('button','nav-item new-session',[navIcon('M12 5v14 M5 12h14'),el('span','nav-label','新会话')],{id:'sidebar-new-session','aria-label':'新建会话',disabled:sessionLocked,onClick:self.startNewSession}),
-      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','插件')],{'aria-label':'插件','aria-pressed':self.pluginManagerOpen,onClick:()=>{self.pluginManagerOpen=!self.pluginManagerOpen;}}),
+      el('button','nav-item nav-panel',[navIcon('M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'),el('span','nav-label','扩展')],{id:'open-extensions','aria-label':'扩展管理','aria-pressed':self.pluginManagerOpen,onClick:()=>{self.pluginManagerOpen=!self.pluginManagerOpen;}}),
+      el('label','sidebar-search-box',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5'),
+        el('input','sidebar-search',null,{id:'sidebar-search',type:'search',value:self.sidebarQuery,placeholder:'搜索会话',
+          'aria-label':'搜索会话','aria-keyshortcuts':'Control+K Meta+K',disabled:sessionLocked,
+          onInput:(e)=>{self.sidebarQuery=e.target.value;}})]),
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
@@ -1236,10 +1465,16 @@ createApp({
           let idle=0;
           const visible=items.filter(item=>item.current&&self.turn.running || idle++<limit);
           const hidden=items.length-visible.length;
-          const label=directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
-          const expanded=self.workspaceGroupExpanded.has(directory);
+          const label=groupLabel(directory);
+          // 检索/筛选中整棵树强制展开：命中却藏在折叠分组里等于没搜到。
+          // 展开只由筛选派生，不写进 workspaceGroupExpanded——清掉筛选词后仍回到用户自己的记忆。
+          const expanded=sidebarSearching || self.workspaceGroupExpanded.has(directory);
           return el('section','workspace-group'+(expanded?' expanded':''),[
-            el('button','workspace-folder'+(expanded?' tree-expanded':''),[
+            // 筛选中分组不可折叠（折叠一个只剩命中的树没有意义），所以这一行退化成纯标题，不留点不动的箭头。
+            sidebarSearching ? el('div','workspace-folder',[
+              navIcon('M3 5h7l2 3h9v12H3z'),
+              el('span','workspace-label',label),
+            ],{ title:directory||'尚未绑定项目目录的会话' }) : el('button','workspace-folder'+(expanded?' tree-expanded':''),[
               navIcon(expanded?'M9 5l7 7-7 7':'M5 9l7 7 7-7'),
               navIcon('M3 5h7l2 3h9v12H3z'),
               el('span','workspace-label',label),
@@ -1254,9 +1489,10 @@ createApp({
               'data-workspace-overflow':directory,'aria-expanded':hidden===0,onClick:()=>self.workspaceSessionLimits.set(directory,hidden ? limit+5 : 5)}) : null] : [],
           ],{ 'data-workspace-group':directory });
         }),
-        !sidebarSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,'暂无会话')]) : null,
+        !matchingSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,sidebarSessions.length ? '无匹配会话' : '暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
       ]),
+      h(window.SaCodeSlots.AccountMenu,{theme:self.globalAppearance.theme,busy:self.appearanceBusy||self.fontBusy,note:self.appearanceNote,onTheme:self.setTheme,onSettings:id=>{self.settingsTab=id;self.settingsOpen=true;}}),
       el('div','nav-settings-row',[el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']}, onClick: () => { self.settingsOpen = !self.settingsOpen; } })]),
     ], { "aria-label": "工作区与会话导航" });
 
@@ -1297,8 +1533,6 @@ createApp({
     // 用量呈现：数字与判决只来自核心（开机读 usage/status，跑完一轮取结算帧），界面不推算、不补默认值。
     // 还没拿到数时显示 ?，而不是 0/0——0/0 看起来像「已经花光了」。
     const u = self.usage;
-    const usageText = "用量 " + (u.used === null ? "?" : u.used) + "/" + (u.budget === null ? "?" : u.budget)
-      + " · " + verdictName(u.verdict) + (u.over ? " · 已超档" : "");
     // 超过档就不给再开新轮：界面先把按钮锁住，核心那侧的 -32014 仍是真正的闸门，
     // 两者都要在——只靠界面禁用等于换个客户端就能继续花。
     const turnLocked = self.turn.running || u.over;
@@ -1314,28 +1548,6 @@ createApp({
       el("button", "btn btn-danger", "停止", { id: "stop-turn", onClick: self.cancelTurn, disabled: !self.turn.running }),
       el("span", "badge", "状态 " + turnState, { id: "turn-state", "aria-live": "polite" }),
     ]);
-    const renderBudget = (prefix) => el("section", "side-section", [
-      el("h2", null, "用量与预算"),
-      el("span", "badge" + (u.over ? " badge-warn" : ""), usageText, { id: prefix === "budget" ? "turn-usage" : prefix + "-usage", "aria-live": "polite" }),
-      el("label", "field-label", "收紧预算", { for: prefix + "-input" }),
-      el("div", "budget-controls", [
-      h("input", {
-        class: "input",
-        id: prefix + "-input",
-        type: "number",
-        min: "0",
-        step: "1",
-        placeholder: "收紧预算到",
-        value: self.budgetDraft,
-        disabled: self.budgetBusy,
-        onInput: (e) => (self.budgetDraft = e.target.value),
-      }),
-      el("button", "btn", "收紧预算", { id: prefix === "budget" ? "apply-budget" : prefix + "-apply", onClick: self.setBudget, disabled: self.budgetBusy }),
-      ]),
-      el("p", "note", self.budgetNote || "预算只能收紧；耗尽后停止执行。", { id: prefix + "-note", "aria-live": "polite" }),
-    ], { id: prefix + "-panel", tabindex: -1, "aria-busy": self.budgetBusy });
-    const budgetBox = renderBudget("budget");
-
     // 会话正文和驻留输入区在同一滚动宿主中，输入 DOM 跨空会话/活跃会话保持不变。
     const transcript = el('div','conversation-content',[el("div", "stream", msgs, { id: "messages" }), streamBox],{hidden:emptyConversation});
 
@@ -1354,6 +1566,7 @@ createApp({
     const approvalBox = self.approval
       ? [el("div", "approval", [
           el("p", null, "审批：" + ({ write: "写入文件", read: "读取文件" }[self.approval.name] || self.approval.name) + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
+          self.approval.source==='model' ? el('pre','model-approval-arguments',self.approval.displayArguments,{tabindex:0,'aria-label':'完整工具参数'}) : null,
           el("div", "approval-row", [
             el("button", "btn btn-primary", "允许一次", { id: "allow-once", onClick: () => self.answerTool("allowed-once") }),
             el("button", "btn btn-danger", "拒绝", { id: "deny", onClick: () => self.answerTool("denied") }),
@@ -1361,24 +1574,12 @@ createApp({
         ], { id: "approval" })]
       : [];
 
-    const sideTabs = el("div", "side-tabs", [
-      ...[["inspect","工具与预算"],["files","工作区文件"],["trace","轨迹"],["preview","文档预览"],["guide","使用指南"]].map(([id,label],index,tabs)=>el("button","side-tab",[label,
-        id === "inspect" && self.approval ? el("span", "pending-dot", null, { "aria-hidden": "true" }) : null], {
-        id: "side-tab-" + id, role: "tab", "aria-selected": self.sideTab === id,
-        "aria-label": label + (id === "inspect" && self.approval ? "，待审批" : ""),
-        tooltip:{label:label + (id === "inspect" && self.approval ? "，待审批" : ""),side:'bottom'},
-        "aria-controls": "side-page-" + id, tabindex: self.sideTab === id ? 0 : -1,
-        onClick: () => { self.sideTab = id; },
-        onKeydown: (e) => {
-          const offset = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-          if (!offset && e.key !== "Home" && e.key !== "End") return;
-          e.preventDefault();
-          const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (index + offset + tabs.length) % tabs.length;
-          self.sideTab = tabs[next][0];
-          window.Vue.nextTick(() => document.getElementById("side-tab-" + self.sideTab).focus());
-        },
-      })),
-    ], { role: "tablist", "aria-label": "右侧栏页面" });
+    const sideTabs = h(window.SaCodeSlots.WorkbenchTabs,{active:self.sideTab,pendingApproval:!!self.approval,expanded:self.workbenchExpanded,split:self.sideSplit,
+      onSelect:id=>{self.sideTab=id;},onClose:id=>{if(id==='preview')self.filePreview.close();},
+      onExpand:()=>{self.workbenchExpanded=!self.workbenchExpanded;window.Vue.nextTick(()=>document.getElementById('expand-workbench')?.focus());},
+      onSplit:()=>{self.sideSplit=!self.sideSplit;},
+      onClosePanel:()=>{self.workbenchExpanded=false;self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side')?.focus());},
+    });
     const inspection = el("div", "side-page", [
       el("section", "side-section", [el("h2", null, "工具与审批"),
       toolBtns,
@@ -1386,7 +1587,6 @@ createApp({
       self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
-      budgetBox,
       el('details','diagnostics',[
         el('summary',null,'开发诊断'),
         el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),
@@ -1404,7 +1604,7 @@ createApp({
         self.workspaceFilesBusy ? el("p", "note", "加载中…", { role: "status", "aria-live": "polite" }) :
         !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录") : null,
         ...renderTreeEntries(self.workspaceFiles, "", 0, {
-          open: self.fileTreeOpen, children: self.fileTreeChildren, busy: self.fileTreeBusy, toggle: self.toggleTreeDir,
+          open: self.fileTreeOpen, children: self.fileTreeChildren, busy: self.fileTreeBusy, toggle: self.toggleTreeDir, select:self.openWorkspaceFile,
         }),
       ], { id: "files-panel", tabindex: -1 }),
     ], { id: "side-page-files", role: "tabpanel", "aria-labelledby": "side-tab-files", hidden: self.sideTab !== "files" });
@@ -1434,12 +1634,21 @@ createApp({
         ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
       ], { id: "guide-panel", tabindex: -1 }),
     ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
+    void self.filePreviewRevision;
     const previewBody = (prefix) => [
       el("section", "side-section", [
         el("div", "preview-heading", [el("h2", null, "文档预览"),
           prefix !== "float-preview" ? el("button", "btn", "浮动预览", { id: prefix + "-float", onClick: () => { self.previewFloating = true; } }) : null,
         ]),
-        self.readPreview ? [
+        self.filePreview.state.path && prefix!=="split-preview" ? [
+          el("p","preview-path",self.filePreview.state.path),
+          self.filePreview.state.busy?el("p","note","正在通过读取工具获取文件…",{role:"status"}):null,
+          self.filePreview.state.error?el("div","file-preview-error",[el("p","note",self.filePreview.state.error,{role:"alert"}),el("button","btn","重新读取",{onClick:()=>self.openWorkspaceFile(self.filePreview.state.path)})]):null,
+          self.filePreview.state.loaded?el("pre","preview-text",self.filePreview.state.text,{tabindex:0}):null,
+          el("p","note","本次工具读取快照；内容可能按核心规则截断，重新读取会走工具授权与记录流程。"),
+          el('button','btn','编辑文件',{disabled:!self.filePreview.state.loaded||self.filePreview.state.busy,onClick:()=>self.openFileEditor(self.filePreview.state.path)}),
+          el("p","note","编辑可查看保存前差异；Git 标签可查看索引与工作区变更。"),
+        ] : self.readPreview ? [
           el("p", "preview-path", self.readPreview.path, { id: prefix + "-path" }),
           el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: prefix + "-meta" }),
           el("pre", "preview-text", self.readPreview.text, { id: prefix + "-text", tabindex: 0 }),
@@ -1451,14 +1660,15 @@ createApp({
         ], { id: prefix + "-empty" }),
       ], { id: prefix + "-panel", tabindex: -1 }),
     ];
+    const searchPage = el('div','side-page',[h(window.SaCodeSlots.WorkspaceSearch,{key:'search-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='search'&&!self.pluginManagerOpen,configured:!!self.workspace?.configured,directory:self.workspace?.directory||'',listFiles:path=>window.sacode.workspaceFiles(path),onOpen:self.openWorkspaceFile,onChoose:self.openWorkspace})],{id:'side-page-search',role:'tabpanel','aria-labelledby':'side-tab-search',hidden:self.sideTab!=='search'});
+    const editorPage=el('div','side-page',[h(window.SaCodeSlots.FileEditor,{editor:self.fileEditor,revision:self.fileEditorRevision})],{id:'side-page-editor',role:'tabpanel','aria-labelledby':'side-tab-editor',hidden:self.sideTab!=='editor'});
+    const terminalPage=el('div','side-page',[h(window.SaCodeSlots.TerminalOutput,{key:'terminal-'+self.scrollSession,executionApi:window.sacode,sessionId:String(self.scrollSession),active:self.sideOpen&&self.sideTab==='terminal'&&!self.pluginManagerOpen,read:cursor=>window.sacode.terminalOutput(String(self.scrollSession),cursor,16)})],{id:'side-page-terminal',role:'tabpanel','aria-labelledby':'side-tab-terminal',hidden:self.sideTab!=='terminal'});
+    const gitPage=el('div','side-page',[h(window.SaCodeSlots.GitWorkbench,{key:'git-'+self.scrollSession,sessionId:String(self.scrollSession),directory:self.workspace?.directory||'',configured:!!self.workspace?.configured,active:self.sideOpen&&self.sideTab==='git'&&!self.pluginManagerOpen,status:()=>window.sacode.workspaceGitStatus(String(self.scrollSession),self.workspace.directory),diff:(path,scope)=>window.sacode.workspaceGitDiff(String(self.scrollSession),self.workspace.directory,path,scope),onOpen:self.openWorkspaceFile,onBrowse:path=>{self.sideTab='files';self.toggleTreeDir(path.slice(0,-1));},onChoose:self.openWorkspace}),window.SaCodeWorktree.renderPanel(h,self.worktreeState,self.worktreeController,self.worktreeLocked())],{id:'side-page-git',role:'tabpanel','aria-labelledby':'side-tab-git',hidden:self.sideTab!=='git'});
+    const diffPage=el('div','side-page',[h(window.SaCodeSlots.FileEditor,{editor:self.fileEditor,revision:self.fileEditorRevision,diffOnly:true})],{id:'side-page-diff',role:'tabpanel','aria-labelledby':'side-tab-diff',hidden:self.sideTab!=='diff'});
     const preview = el("div", "side-page", previewBody("preview"), { id: "side-page-preview", role: "tabpanel", "aria-labelledby": "side-tab-preview", hidden: self.sideTab !== "preview" });
-    const sideToolbar = el("div", "side-toolbar", [el("span", "note", "右侧工作区"),
-      el("button", "btn", self.sideSplit ? "合并窗格" : "拆分窗格", { id: "split-side", "aria-pressed": self.sideSplit,
-        onClick: () => { self.sideSplit = !self.sideSplit; if (self.sideSplit) self.sideTab = "inspect"; } }),
-      el('button','frame-icon','×',{id:'close-side','aria-label':'关闭侧栏',onClick:()=>{self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side').focus());}}),
-    ]);
-    const side = el("aside", "pane side", [sideToolbar, sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
-      el("div", "side-primary", [inspection, filesPage, tracePage, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
+    const teamPage=el('div','side-page',[self.teamSnapshot?h(window.SaCodeSlots.TeamPanel,{key:self.teamSessionId,snapshot:self.teamSnapshot,busy:self.teamBusy,error:self.teamError,onAddMember:self.addTeamMember,onSendMessage:self.sendTeamMessage,onCreateTask:self.createTeamTask,onAssignTask:self.assignTeamTask,onStopMember:self.stopTeamMember,onSelectSession:self.selectTeamSession,onRefresh:self.refreshTeam}):el('section','team-panel',[el('h2',null,'智能体团队'),self.teamBusy?el('p','note','正在读取团队…',{role:'status'}):null,self.teamError?el('p','note',self.teamError,{role:'alert'}):null,el('button','btn','刷新',{disabled:self.teamBusy,onClick:self.refreshTeam})])],{id:'side-page-agents',role:'tabpanel','aria-labelledby':'side-tab-agents',hidden:self.sideTab!=='agents'});
+    const side = el("aside", "pane side", [sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
+      el("div", "side-primary", [!self.sideTab?el("div","empty-card",[el("h3",null,"暂无打开的资源"),el("p","note","使用右上角 ＋ 添加工作台标签。")]):null,inspection, filesPage, searchPage, editorPage, diffPage, gitPage, terminalPage, teamPage, tracePage, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
       self.sideSplit ? el("div", "pane-divider", null, { id: "pane-divider", role: "separator", tabindex: 0,
         "aria-label": "调整右侧窗格高度", "aria-orientation": "horizontal", "aria-valuemin": 25, "aria-valuemax": 75, "aria-valuenow": self.sideRatio,
         onKeydown: (e) => {
@@ -1471,8 +1681,9 @@ createApp({
       }) : null,
       self.sideSplit ? el("div", "side-secondary", previewBody("split-preview"), { role: "region", "aria-label": "文档预览副窗格", style: { flex: 100-self.sideRatio } }) : null,
     ])], {
-      "aria-label": "工具、预算与指南",
+      "aria-label": "工作台",
       hidden:!self.sideOpen || self.frameColumns.rightbar===0,
+      onKeydown:e=>{if(e.key==="Escape"&&self.workbenchExpanded){e.preventDefault();self.workbenchExpanded=false;window.Vue.nextTick(()=>document.getElementById("expand-workbench")?.focus());}},
     });
 
     const composer = el("footer", "composer", [
@@ -1481,8 +1692,10 @@ createApp({
         el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
       ]) : null,
       h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
-      self.scrollSession!=='initial' && self.scrollSession!==0 ? h(window.SaCodeGoal.GoalBar,{key:'goal-'+self.scrollSession,adapter:{describe:()=>window.sacode.goalDescribe(String(self.scrollSession)),create:text=>window.sacode.goalCreate(String(self.scrollSession),text),edit:(revision,text)=>window.sacode.goalEdit(String(self.scrollSession),revision,text),pause:revision=>window.sacode.goalPause(String(self.scrollSession),revision),resume:revision=>window.sacode.goalResume(String(self.scrollSession),revision),clear:revision=>window.sacode.goalClear(String(self.scrollSession),revision)}}):null,
       h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,sessionId:String(self.scrollSession),rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
+      self.scrollSession!=='initial' && self.scrollSession!==0 ? h(window.SaCodeGoal.GoalBar,{key:'goal-'+self.scrollSession,hideCreate:true,editRequest:self.goalEditorRequest,adapter:{describe:()=>window.sacode.goalDescribe(String(self.scrollSession)),create:text=>window.sacode.goalCreate(String(self.scrollSession),text),edit:(revision,text)=>window.sacode.goalEdit(String(self.scrollSession),revision,text),pause:revision=>window.sacode.goalPause(String(self.scrollSession),revision),resume:revision=>window.sacode.goalResume(String(self.scrollSession),revision),clear:revision=>window.sacode.goalClear(String(self.scrollSession),revision)}}):null,
+      // 使用提醒条：贴在输入区上方，与会话正文分开——它不是消息，也不进投影。
+      h(window.SaCodeTips.TipsBar,{key:'tips-'+self.scrollSession,entry:self.tips,busy:self.tipsBusy,onDismiss:self.dismissTips}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
@@ -1497,7 +1710,7 @@ createApp({
         submit:accelerated=>self.send(accelerated),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{disabled:false,onAdd:(files,dirs)=>self.addAttachments(files,dirs)}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),self.customModels.length ? el("select", "composer-customSelect", [h("option", { value: "" }, "默认模型")].concat(self.customModels.map((m) => h("option", { value: m.id, key: m.id }, m.name || m.id))), { id: "composer-custom-model", "aria-label": "本会话使用的自定义模型", value: self.selectedCustomModel, disabled: self.turn.running, onChange: (e) => { self.selectedCustomModel = e.target.value; } }) : null,el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         // 同一颗图标位换三副面孔：进行中转圈、可回退时换回退箭头，用户一改就转回增强。
         self.enhance.busy
           ? h('path',{d:'M8 1.6a6.4 6.4 0 1 1-6.3 7.5',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round'})
@@ -1508,7 +1721,7 @@ createApp({
         disabled:!self.enhance.busy && !self.enhance.undo && !self.draft.trim(),
         tooltip:{label:self.enhance.busy?'取消增强':(self.enhance.undo?'回退增强（Ctrl+Z）':'用当前模型把这条说得更清楚'),side:'top',delayMs:500},
         // 与发送按钮一样不把焦点从输入框挪走：增强完还要接着改草稿。
-        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el('button','composer-voice',[navIcon('M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8')],{type:'button',disabled:true,'aria-label':'语音输入待接入',title:'当前版本尚未支持语音输入'}),h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,pressure:(()=>{const v=self.modelDirectory.getSnapshot();const s=self.tipsPressure;return {contextWindow:parseCapacity(v&&v.contextWindow)||undefined,projectedTokens:(s&&Number.isFinite(s.projectedTokens))?s.projectedTokens:undefined};})()}),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
@@ -1517,8 +1730,6 @@ createApp({
         // 鼠标发送不挪走输入焦点，键盘仍可 Tab 到可用的发送/停止按钮。
         onMousedown:e=>e.preventDefault(),onClick:()=>self.turn.running && !self.draft.trim()?self.cancelTurn():self.send() })])]),
       ]),
-      h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,
-        pressure: (function(){ const v=self.modelDirectory.getSnapshot(); const ctxWin=parseCapacity(v&&v.contextWindow); const used=self.usage&&Number.isFinite(self.usage.used)?self.usage.used:undefined; return ctxWin&&used!==undefined?{projectedTokens:used,contextWindow:ctxWin}:undefined; })() }),
     ]);
 
     const detail = h(window.SaCodeDialog, { open: !!self.detailTool, title: "工具详情",
@@ -1537,7 +1748,7 @@ createApp({
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
       el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用设置"], ["model-center", "模型中心"], ["plugins", "内置插件"]].map(([id,label],index,tabs) => el("button", "settings-tab", [el('span','settings-nav-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/settings-${id==='model-center'?'models':id}.svg')`}}),el('span','settings-nav-label',label)], {
+      el("div", "settings-tabs", [["general", "通用"], ["appearance", "外观"], ["conversation", "对话与输入"], ["model-center", "模型中心"], ["plugins", "内置插件"], ["shortcuts", "快捷键"], ["privacy", "隐私与数据"], ["profile", "个人资料"], ["about", "关于"]].map(([id,label],index,tabs) => el("button", "settings-tab", [navIcon(({general:'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6',appearance:'M12 3v2M12 19v2M3 12h2M19 12h2M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0',conversation:'M4 4h16v13H9l-5 4z','model-center':'M3 4h7v7H3zM14 4h7v7h-7zM3 15h7v7H3zM14 15h7v7h-7z',plugins:'M9 3h6v5h5v6h-5v6H9v-6H4V8h5z',shortcuts:'M3 6h18v12H3zM6 10h2M10 10h2M14 10h2M6 14h12',privacy:'M12 3l8 4v5c0 5-8 9-8 9s-8-4-8-9V7z',profile:'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0',about:'M12 8v1M12 11v7M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0'})[id]),el('span','settings-nav-label',label)], {
         id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
         type:'button',autofocus:self.settingsTab===id,
         "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
@@ -1558,7 +1769,12 @@ createApp({
       el('div','dialog-body settings-options',[
       el("section", "settings-page", [
         el('section','settings-row language-settings',[el('span','settings-row-title','语言'),el('output','settings-fixed-value','中文',{'aria-label':'界面语言'})]),
-        el("section", "appearance-settings", [el("h2", "appearance-title", "外观"),
+        el('section','settings-row',[el('div',null,[el('strong',null,'新会话默认权限'),el('p','note','Plan / Build / Yolo / Auto Review 的默认权限契约尚未接入。')]),el('button','btn','待接入',{disabled:true})]),
+        el('section','settings-row',[el('div',null,[el('strong',null,'开机自启'),el('p','note','尚无系统启动项接口，当前不会修改系统设置。')]),el('button','btn','待接入',{disabled:true})]),
+      ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
+      el("section", "settings-page", [
+        el('h2','settings-section-title','外观'),
+        el("section", "appearance-settings", [el("h2", "appearance-title", "主题"),
           el("div", "theme-choices", [["light","浅色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
             el("button", "theme-choice", [el('span','theme-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/theme-${id}.svg')`}}),el('span','theme-label',label)], { id:"theme-"+id, type:'button', "aria-pressed":self.globalAppearance.theme===id,
               disabled:self.appearanceBusy || self.fontBusy || self.globalAppearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"全局主题" }),
@@ -1575,13 +1791,29 @@ createApp({
             ]),
           ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
         ],{'aria-busy':self.fontBusy}),
-        h(self.generalSettings.Outlet,{owner:{
+      ], { id:"settings-page-appearance", role:"tabpanel", "aria-labelledby":"settings-tab-appearance", hidden:self.settingsTab!=="appearance" }),
+      el("section", "settings-page", [el('h2','settings-section-title','对话与输入'),
+        h(self.generalSettings.Outlet,{owner:{visibleRows:['busy-send','transcript-view','composer-enter','tips'],
           'busy-send':{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance},
-          'transcript-view':{value:self.generalPrefs.transcriptView,change:(v)=>self.setGeneralPref('transcript-view',v)},
-          'composer-enter':{value:self.generalPrefs.composerEnter,change:(v)=>self.setGeneralPref('composer-enter',v)},
-          'session-log':{value:self.generalPrefs.sessionLog,change:(v)=>self.setGeneralPref('session-log',v)},
+          'tips':{value:self.tipsHidden,busy:self.tipsBusy,note:self.tipsNote,error:self.tipsError,change:self.setTipsHidden,retry:self.refreshTips},
+          'transcript-view':{value:self.generalPrefs.transcriptView,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('transcript-view',v)},
+          'composer-enter':{value:self.generalPrefs.composerEnter,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('composer-enter',v)},
+          'session-log':{value:self.generalPrefs.sessionLog,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('session-log',v)},
         }}),
-      ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
+        el('p','note',self.generalPrefsNote,{role:'status','aria-live':'polite'}),
+        el('p','note','Shift+Enter 始终换行；增强直接替换草稿，Ctrl/Cmd+Z 回退。'),
+      ], { id:"settings-page-conversation", role:"tabpanel", "aria-labelledby":"settings-tab-conversation", hidden:self.settingsTab!=="conversation" }),
+      el('section','settings-page',[el('h2','settings-section-title','快捷键'),
+        ...[['打开设置','Ctrl / Cmd + ,'],['聚焦输入框','Ctrl / Cmd + L'],['打开文件预览','Ctrl / Cmd + Shift + P'],['回退提示词增强','Ctrl / Cmd + Z'],['关闭弹窗或菜单','Esc']].map(([label,key])=>el('div','settings-row',[el('span',null,label),el('kbd',null,key)])),
+        el('p','note','以上为当前桌面绑定，快捷键自定义尚未接入。'),
+      ],{id:'settings-page-shortcuts',role:'tabpanel','aria-labelledby':'settings-tab-shortcuts',hidden:self.settingsTab!=='shortcuts'}),
+      el('section','settings-page',[el('h2','settings-section-title','隐私与数据'),
+        h(self.generalSettings.Outlet,{owner:{visibleRows:['session-log'],'session-log':{value:self.generalPrefs.sessionLog,busy:!!self.generalPrefsBusy,change:v=>self.setGeneralPref('session-log',v)}}}),
+        el('p','note',self.generalPrefsNote,{role:'status','aria-live':'polite'}),
+        el('p','note','此项仅保存日志偏好；上传服务是否执行需单独验收。数据导出、清理与保留管理尚未接入。'),
+      ],{id:'settings-page-privacy',role:'tabpanel','aria-labelledby':'settings-tab-privacy',hidden:self.settingsTab!=='privacy'}),
+      el('section','settings-page',[el('h2','settings-section-title','个人资料'),el('div','profile-summary',[navIcon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0'),el('div',null,[el('strong',null,'本地用户'),el('p','note','无需官方账号')])]),el('p','note','昵称、头像与资料持久化接口尚未接入。')],{id:'settings-page-profile',role:'tabpanel','aria-labelledby':'settings-tab-profile',hidden:self.settingsTab!=='profile'}),
+      el('section','settings-page',[el('h2','settings-section-title','SaCode'),el('p',null,'自主开发工作台'),el('p','note','仓颉共享核心 · Electron · Vue runtime · OpenTiny'),el('p','note','版本与更新检测接口尚未接入，不显示猜测版本。')],{id:'settings-page-about',role:'tabpanel','aria-labelledby':'settings-tab-about',hidden:self.settingsTab!=='about'}),
       self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
       el("section", "settings-page", [h(window.SaCodePlugins.Page, {
         tools: self.tools,
@@ -1635,17 +1867,27 @@ createApp({
       ]),[[window.SaCodeConversationScroll.directive,{
         session:self.scrollSession,lastUser:self.bubbleMessages.filter(m=>m.role==='user').at(-1)?.id,
         onChange:following=>{self.followingTail=following;},
+        onAnchor:id=>{self.turnAnchor=id;},
       }]]),
       !self.followingTail && !emptyConversation ? el('div','to-bottom-slot',[el('button','to-bottom',[navIcon('M6 9l6 6 6-6')],{
         id:'scroll-to-bottom','aria-label':'回到最新消息',tooltip:{label:'回到最新消息'},
         onClick:()=>window.SaCodeConversationScroll.toBottom(document.querySelector('.conversation-scroll')),
       })]) : null,
+      // 历史对话侧栏：覆盖在对话区右缘，不改 .conversation 的盒子（框架列宽判据依赖它）。
+      // 窄对话列或不足两轮时不出现——一条历史不需要导航。
+      self.frameColumns.center>=760 && self.turnOutline.length>1 ? el('nav','turn-nav',self.turnOutline.map((entry,index)=>el('button','turn-nav-entry'+(index===self.turnActive?' active':''),[
+        el('span','turn-nav-tick'),el('span','turn-nav-title',entry.title),
+        el('span','turn-nav-card',[el('span','turn-nav-card-title',entry.title),el('span','turn-nav-card-text',entry.content),
+          el('span','turn-nav-card-meta',entry.replies.length ? `回复 ${entry.replies.length} 条 · ${entry.replies[0].role==='assistant'?'助手':'工具'}：${entry.replies[0].text}` : '该轮还没有回复')]),
+      ],{type:'button','data-turn-anchor':entry.id,'aria-label':`跳到第 ${index+1} 轮：${entry.title}`,
+        'aria-current':index===self.turnActive?'true':null,
+        onClick:()=>window.SaCodeConversationScroll.jumpTo(document.querySelector('.conversation-scroll'),entry.id)})),{'aria-label':'历史对话导航'}) : null,
       self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
     ]);
-    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[el('header','management-header',[el('h1',null,'扩展管理'),el('button','btn',[navIcon('m14 6-6 6 6 6'),el('span',null,'返回对话')],{id:'back-to-chat',type:'button',onClick:()=>{self.pluginManagerOpen=false;window.Vue.nextTick(()=>document.getElementById('open-extensions')?.focus());}})]),h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
-      !self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
-      self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
-      detail, floating, settings, catalogDialog, workspaceDialog],{style:{...fontAxis,gridTemplateColumns:`${self.frameColumns.sidebar}px minmax(0,1fr) ${self.frameColumns.rightbar}px`},'data-platform':nativePlatform,'data-sidebar-collapsed':String(self.sidebarCollapsed),'data-empty-conversation':String(emptyConversation),'data-catalog-ready':String(!!self.catalog)});
+      !self.workbenchExpanded&&!self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
+      !self.workbenchExpanded&&self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,
+      detail, floating, settings, catalogDialog, workspaceDialog],{style:{...fontAxis,gridTemplateColumns:`${self.frameColumns.sidebar}px minmax(0,1fr) ${self.frameColumns.rightbar}px`},'data-platform':nativePlatform,'data-management-page':self.pluginManagerOpen?'extensions':'chat','data-workbench-expanded':String(self.workbenchExpanded),'data-sidebar-collapsed':String(self.sidebarCollapsed),'data-empty-conversation':String(emptyConversation),'data-catalog-ready':String(!!self.catalog)});
   },
 }).mount("#app");

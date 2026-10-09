@@ -2,12 +2,14 @@
 // 不做 agent 业务，不承载会话真源，不把任意命令执行暴露给渲染层。
 require('./stdio-guard.cjs').installStdioGuard();
 const { installWindowVisibility } = require('./window-visibility.cjs');
+const modelApproval = require('./renderer/model-approval.js');
+let modelTurnRequestId = null;
 const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
 const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
 const { HostBridge } = require("./host-bridge.cjs");
-const { hostExePath } = require("./paths.cjs");
+const { hostExePath, computerUsePaths } = require("./paths.cjs");
 
 // 自包含宿主：exe 与全部依赖 DLL 同目录，因此不需要设置 PATH。
 // 打包态下必须从 resourcesPath 取（extraResources 落点），__dirname 那时在 asar 里。
@@ -36,10 +38,25 @@ const SESSION_LOG = join(SESSION_DIR, "session.log");
 if(WILL_SMOKE) app.setPath('userData',join(SESSION_DIR,'electron-user-data'));
 
 // 冒烟只使用自己的配置根，不能修改真实用户的全局外观。
-const bridge = new HostBridge(HOST, WILL_SMOKE
-  ? { ...process.env, SACODE_USER_SETTINGS_DIR: join(SESSION_DIR, 'user-settings') }
-  : process.env);
+const hostEnvironment = WILL_SMOKE
+  ? { ...process.env, SACODE_USER_SETTINGS_DIR: join(SESSION_DIR, 'user-settings'), SACODE_COMPUTER_USE: '0' }
+  : { ...process.env };
+if (!WILL_SMOKE && hostEnvironment.SACODE_COMPUTER_USE === '1') {
+  const computerPaths = computerUsePaths({
+    packaged: app.isPackaged,
+    appRoot: __dirname,
+    resourcesPath: process.resourcesPath,
+    nodeExecutable: hostEnvironment.SACODE_COMPUTER_NODE,
+  });
+  hostEnvironment.SACODE_COMPUTER_NODE = computerPaths.nodePath;
+  hostEnvironment.SACODE_COMPUTER_PROVIDER = computerPaths.providerPath;
+}
+const bridge = new HostBridge(HOST, hostEnvironment);
 let win = null;
+// 关闭守卫的两次闸门：worktreeGuardRunning 防重入（连点关闭只走一次确认），
+// worktreeClosed 是「已结算」标记——只有守卫放行后自己重开关闭时才不再拦。
+let worktreeGuardRunning = false;
+let worktreeClosed = false;
 let chooseWorkspaceDirectory = (options) => dialog.showOpenDialog(win, options);
 
 function seedIfNeeded() {
@@ -56,12 +73,12 @@ function seedIfNeeded() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1100,
-    height: 720,
-    minWidth: 860,
+    width: 1280,
+    height: 820,
+    minWidth: 520,
     minHeight: 600,
     title: "SaCode",
-    ...(process.platform === 'win32' ? {titleBarStyle:'hidden',titleBarOverlay:{color:nativeTheme.shouldUseDarkColors?'#1b1b1c':'#f9fafb',symbolColor:nativeTheme.shouldUseDarkColors?'#f9fafb':'#0f1115',height:40}} : {}),
+    ...(process.platform === 'win32' ? {titleBarStyle:'hidden',titleBarOverlay:{color:'#00000000',symbolColor:'#0F1115',height:42},backgroundMaterial:'acrylic'} : {}),
     icon: join(__dirname, "renderer", "assets", "sacode-icon.png"),
     show: false,
     webPreferences: {
@@ -77,11 +94,37 @@ function createWindow() {
   // 在开始加载之前订阅事件；常规启动不能因缺失首次绘制事件永远隐藏。
   installWindowVisibility(win, { hidden: UI_SMOKE });
   win.loadFile(join(__dirname, "renderer", "index.html"), {query:{platform:process.platform}});
+  // 活动工作树没结算不许直接关窗：先拦下这次关闭，走与面板同一套保留/删除/取消确认，
+  // 只有守卫放行（或读不到状态时明确选择「什么都没删」）才由自己重开关闭。
+  // 冒烟态没有人工确认，交给原有的 window-all-closed 结算路径。
+  win.on("close", (event) => {
+    if (WILL_SMOKE || worktreeClosed) return;
+    event.preventDefault();
+    if (worktreeGuardRunning) return;
+    worktreeGuardRunning = true;
+    // 读不到绑定 == 不知道有没有东西要删：唯一安全动作是什么都不删（等价于保留）。
+    let stateUnknown = false;
+    const request = (method, args) => worktreeRequest(method, args).catch((error) => {
+      if (method === "worktree/describe") stateUnknown = true;
+      throw error;
+    });
+    protectClose({ request, choose: chooseWorktreeClose, confirmDelete: confirmWorktreeRemoval })
+      .then((proceed) => settleWorktreeClose(proceed))
+      .catch((error) => resolveWorktreeCloseFailure(error, stateUnknown).then(settleWorktreeClose));
+  });
   win.on("closed", () => (win = null));
   return win;
 }
+// 守卫结论落地：不放行就收起闸门让用户继续处理；放行时先落「已结算」再真正关窗。
+// 此刻 bridge.stop() 仍由 window-all-closed 负责，工作树没结算的字节不会假装已经落盘。
+function settleWorktreeClose(proceed) {
+  worktreeGuardRunning = false;
+  if (!proceed) return;
+  worktreeClosed = true;
+  if (win && !win.isDestroyed()) win.close();
+}
 nativeTheme.on('updated',()=>{
-  if(process.platform==='win32' && win && !win.isDestroyed()) win.setTitleBarOverlay({color:nativeTheme.shouldUseDarkColors?'#1b1b1c':'#f9fafb',symbolColor:nativeTheme.shouldUseDarkColors?'#f9fafb':'#0f1115',height:40});
+  if(process.platform==='win32' && win && !win.isDestroyed()) win.setTitleBarOverlay({color:'#00000000',symbolColor:'#0F1115',height:42});
 });
 
 // IPC 面：每个通道只做一件事、参数逐字段校验类型与范围，方法名由主进程写死。
@@ -93,6 +136,108 @@ async function withHost(fn) {
 }
 
 const isStr = (v) => typeof v === "string";
+
+require('./team-ipc.cjs').registerTeamIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
+
+// 会话级隔离工作树：进出面 4 个通道（进入/描述/退出/清理）的逐字段校验都在 worktree-ipc.cjs。
+// git 建树与 PR 抓取天生比常规调用慢（契约里 PR 抓取最长等 30 秒），所以这一面单独给一个
+// 有界超时，而不是抬高全局默认值（那会把真卡死的调用也放更久）。
+const WORKTREE_TIMEOUT = 45000;
+const { registerWorktreeIpc, protectClose } = require('./worktree-ipc.cjs');
+const worktreeRequest = (method, args) => withHost(() => bridge.request(method, args, WORKTREE_TIMEOUT));
+
+// 原生模态只在人工运行的窗口里弹：冒烟态没有人在键盘前，
+// 拿不到确认就等于没确认——绝不允许替用户点「删除」。
+const worktreeDialog = (options) => (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+
+// 删除确认只有这一个实现：面板删除与关闭时删除共用，所以两处「代价说明」必然一致。
+// 选项固定 删除/取消，defaultId 落在取消上；未提交数与独有提交数取自刚核实的权威状态。
+async function confirmWorktreeRemoval(state, discardChanges) {
+  if (WILL_SMOKE) return false;
+  const { response } = await worktreeDialog({
+    type: 'warning',
+    buttons: ['取消', '删除工作树'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '删除隔离工作树',
+    message: `要删除工作树 ${state.name} 吗？`,
+    detail: [
+      `分支 ${state.branch}`,
+      `未提交文件 ${state.uncommittedCount} 个 · 独有提交 ${state.uniqueCommits} 个`,
+      discardChanges ? '已允许丢弃未提交更改；独有提交没有任何强制通路，存在时删除会被拒绝。'
+        : '目录里有未提交更改时删除会被拒绝；需要丢弃请回来勾选对应选项。',
+    ].join('\n'),
+  });
+  return response === 1;
+}
+
+// 关闭时的保留/删除/取消三选项，与渲染层退出对话框同一套语义、同一份计数来源。
+async function chooseWorktreeClose(state) {
+  if (WILL_SMOKE) return 'cancel';
+  const { response } = await worktreeDialog({
+    type: 'question',
+    buttons: ['保留', '删除', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    title: '仍有活动的隔离工作树',
+    message: `关闭前如何处理工作树 ${state.name}？`,
+    detail: [
+      `分支 ${state.branch} · 目录 ${state.directory}`,
+      `未提交文件 ${state.uncommittedCount} 个 · 独有提交 ${state.uniqueCommits} 个`,
+      '保留=退出但留着目录与分支，下次进入同一会话仍绑在这里；删除=退出并删目录（有独有提交时会被拒绝）；取消=不关闭。',
+    ].join('\n'),
+  });
+  return ['keep', 'remove', 'cancel'][response];
+}
+
+// 关闭守卫失败后的处置：把原因原样端出来，绝不「静默强删」。
+// 读不到状态（宿主起不来/已断线）时唯一安全的选择是「保留」——绑定写在会话日志里，
+// 进程重启后依旧生效，什么都没删；这时允许关闭并说明。
+// 用户已选保留/删除而宿主拒绝时（独有提交、脏目录），默认停在原地，重试或明确选择保留后才关。
+async function resolveWorktreeCloseFailure(error, stateUnknown) {
+  console.error(`[worktree] 关闭守卫失败: ${error && error.message ? error.message : error}`);
+  if (WILL_SMOKE) return true;
+  const { response } = await worktreeDialog({
+    type: 'error',
+    buttons: stateUnknown ? ['知道了，保留工作树并关闭'] : ['留在应用里', '保留工作树并关闭'],
+    defaultId: 0,
+    cancelId: 0,
+    title: stateUnknown ? '无法确认隔离工作树状态' : '工作树未结算',
+    message: String(error && error.message ? error.message : error),
+    detail: stateUnknown
+      ? '读不到工作树绑定，因此不会删除任何东西；绑定仍在会话日志里，下次进入同一会话时依旧生效。'
+      : '没有删除任何东西。工作树仍在原地，可以先留在应用里处理，或选择保留后关闭（下次进入仍绑在这里）。',
+  });
+  return stateUnknown || response === 1;
+}
+
+registerWorktreeIpc({
+  ipcMain,
+  request: worktreeRequest,
+  confirmDelete: (state, discardChanges) => confirmWorktreeRemoval(state, discardChanges),
+});
+
+const executionActions = {
+  executionPropose: ['execution/propose', ['sessionId','taskId','requestId','proposal']],
+  executionAuthorize: ['execution/authorize', ['sessionId','executionId','revision','proposalDigest','approvalId']],
+  executionStart: ['execution/start', ['sessionId','executionId','revision']],
+  executionDescribe: ['execution/describe', ['sessionId','executionId']],
+  executionOutput: ['execution/output', ['sessionId','executionId','cursor','limit']],
+  executionStop: ['execution/stop', ['sessionId','executionId','revision']],
+};
+for (const [action,[method,fields]] of Object.entries(executionActions)) {
+  ipcMain.handle(`sacode:${action}`, async (_event, args) => {
+    if (!args || Object.keys(args).length !== fields.length || fields.some(key => !Object.hasOwn(args,key))) throw Error('bad-execution-arguments');
+    for (const key of fields) {
+      const value=args[key];
+      if (['revision','approvalId','cursor','limit'].includes(key)) {
+        if (!Number.isSafeInteger(value) || (key==='cursor' ? value < -1 : value < 1) || (key==='limit' && value > 16)) throw Error('bad-execution-arguments');
+      } else if (!isStr(value) || !value.trim() || Buffer.byteLength(value,'utf8') > (key==='proposal' ? 1024 : 256)) throw Error('bad-execution-arguments');
+    }
+    if ('proposalDigest' in args && !/^[0-9a-f]{64}$/.test(args.proposalDigest)) throw Error('bad-execution-arguments');
+    return withHost(() => bridge.request(method,args));
+  });
+}
 
 ipcMain.handle("sacode:projection", async () => withHost(() => bridge.request("session/projection")));
 
@@ -169,7 +314,9 @@ ipcMain.handle("sacode:approvalAsk", async (_e, args) => {
   if (!args || !isStr(args.name) || args.name.length === 0 || args.name.length > 200) {
     throw new Error("bad arguments");
   }
-  return withHost(() => bridge.request("approval/ask", { name: args.name }));
+  if (Object.prototype.hasOwnProperty.call(args, 'args') && (!isStr(args.args) || args.args.length > 262144)) throw new Error("bad arguments");
+  const proposal = Object.prototype.hasOwnProperty.call(args, 'args') ? { name: args.name, args: args.args } : { name: args.name };
+  return withHost(() => bridge.request("approval/ask", proposal));
 });
 
 ipcMain.handle("sacode:approvalAnswer", async (_e, args) => {
@@ -192,7 +339,13 @@ ipcMain.handle("sacode:turnStart", async (_e, args) => {
 ipcMain.handle("sacode:taskStart", async (_e, args) => {
   const customModelId = args?.customModelId;
   if (customModelId !== undefined && (typeof customModelId !== "string" || customModelId.length > 256)) throw Error("bad-custom-model-id");
-  return withHost(() => bridge.request("task/start", customModelId ? { customModelId } : {}));
+  return withHost(async () => {
+    const turnRequestId = String(bridge.nextId);
+    const started = await bridge.request("task/start", customModelId ? { customModelId } : {});
+    modelTurnRequestId = turnRequestId;
+    modelApproval.discardPreviousRequests(bridge, turnRequestId);
+    return { ...started, turnRequestId };
+  });
 });
 ipcMain.handle("sacode:ledgerStats", async () => withHost(() => bridge.request("ledger/stats", {})));
 
@@ -231,7 +384,11 @@ ipcMain.handle("sacode:queueUpdate", async (_e, args) => {
   return withHost(() => bridge.request("queue/update", { itemId: args.itemId, kind: args.kind, text }));
 });
 
-ipcMain.handle("sacode:turnPoll", async () => withHost(() => bridge.request("turn/poll")));
+ipcMain.handle("sacode:turnPoll", async () => withHost(async () => {
+  const turnRequestId = modelTurnRequestId;
+  const poll = await bridge.request("turn/poll");
+  return { ...poll, turnRequestId, approvalRequests: modelApproval.takeRequests(bridge, turnRequestId) };
+}));
 
 ipcMain.handle("sacode:turnCancel", async () => withHost(() => bridge.request("turn/cancel")));
 // 提示词增强：草稿是唯一入参，逐字段校验在这里做——空白与超长在主进程就拒收，
@@ -273,6 +430,18 @@ ipcMain.handle("sacode:workspaceFiles", async (_e, args) => {
   }
   return withHost(()=>bridge.request("workspace/files", {path: path || ""}));
 });
+ipcMain.handle('sacode:terminalOutput',async(_e,args)=>{
+  if(!args||Object.keys(args).length!==3||!isStr(args.sessionId)||!args.sessionId||args.sessionId.length>300||!Number.isSafeInteger(args.cursor)||args.cursor<0||!Number.isInteger(args.limit)||args.limit<1||args.limit>16)throw Error('bad-terminal-arguments');
+  return withHost(()=>bridge.request('session/terminal-output',{sessionId:args.sessionId,cursor:args.cursor,limit:args.limit}));
+});
+function gitArguments(args,diff) {
+  const fields=diff?['sessionId','directory','path','scope']:['sessionId','directory'];
+  if(!args||Object.keys(args).some(k=>!fields.includes(k))||!isStr(args.sessionId)||!args.sessionId||args.sessionId.length>300||!isStr(args.directory)||!args.directory||args.directory.length>2048)throw Error('bad-git-arguments');
+  if(diff&&(!isStr(args.path)||!args.path||args.path.length>512||/[\\:\x00-\x1f]/.test(args.path)||args.path.startsWith('/')||args.path.split('/').some(p=>!p||p==='.'||p==='..')||!['working','index'].includes(args.scope)))throw Error('bad-git-path');
+  return Object.fromEntries(fields.map(k=>[k,args[k]]));
+}
+ipcMain.handle('sacode:workspaceGitStatus',async(_e,args)=>{const params=gitArguments(args,false);return withHost(()=>bridge.request('workspace/git-status',params));});
+ipcMain.handle('sacode:workspaceGitDiff',async(_e,args)=>{const params=gitArguments(args,true);return withHost(()=>bridge.request('workspace/git-diff',params));});
 ipcMain.handle("sacode:globalSettingsGet", async () => withHost(()=>bridge.request("global/settings/get")));
 // 通用设置键 → 宿主动词与参数名：宿主侧按驼峰参数名校验（transcriptView 等），
 // 键名连字符只是渲染层的说法，不能拿它直接当宿主参数名。
@@ -307,6 +476,22 @@ ipcMain.handle("sacode:sessionSelect", async (_e, args) => {
 ipcMain.handle("sacode:appearanceGet", async () => {
   const result=await withHost(() => bridge.request("appearance/get"));
   return result;
+});
+// 使用提醒：主进程只补两个事实——屏幕阅读器在不在（Chromium 检测到读屏器会置位
+// app.accessibilitySupportEnabled），以及宿主自证用的显式环境变量。
+// 占用比例、轮换与冷却全部在仓颉核心算，这里不传任何分子分母。
+const tipsParams = (extra) => {
+  let accessibility = false;
+  try { accessibility = app.accessibilitySupportEnabled === true; } catch {}
+  if (process.env.SACODE_ACCESSIBILITY === "1") accessibility = true;
+  return { accessibility, ...extra };
+};
+ipcMain.handle("sacode:tipsGet", () => withHost(() => bridge.request("tips/get", tipsParams())));
+ipcMain.handle("sacode:tipsStartup", () => withHost(() => bridge.request("tips/startup", tipsParams())));
+ipcMain.handle("sacode:tipsAfterReply", () => withHost(() => bridge.request("tips/after-reply", tipsParams())));
+ipcMain.handle("sacode:tipsSetHidden", async (_e, args) => {
+  if (!args || typeof args.hidden !== "boolean") throw new Error("bad-tips-arguments");
+  return withHost(() => bridge.request("tips/set-hidden", tipsParams({ hidden: args.hidden })));
 });
 // 桌面主题只取用户配置；旧会话主题仍可读取，但不再改变窗口。
 ipcMain.handle('sacode:globalAppearanceSetBusySend', async (_e,args) => {
@@ -526,6 +711,69 @@ ipcMain.handle("sacode:pluginsInstallPoll", async (_e, args) => {
 
 ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
   return { cancelled: true, output: "install-was-not-running" };
+});
+
+// LSP 语义工具（L1）：7 个动作、7 条通道，method 名在主进程写死。
+// 键集是 verb 的函数：渲染层说不出第四个键，更没有「发任意 method」的通路。
+// 没有语言插件时宿主如实回 error（data.reason=lsp-no-server + 非语义线索），
+// 主进程不在此把失败改写成空数组——空数组会被界面读成「这个符号没有定义」。
+const lspKeyGuard = {
+  path: (v) => isStr(v) && v.trim().length > 0 && v.length <= 1000,
+  line: (v) => Number.isSafeInteger(v) && v >= 0,
+  character: (v) => Number.isSafeInteger(v) && v >= 0,
+  documentVersion: (v) => Number.isSafeInteger(v) && v >= 0,
+  direction: (v) => v === "incoming" || v === "outgoing",
+  includeDeclaration: (v) => typeof v === "boolean",
+  newName: (v) => isStr(v) && v.trim().length > 0 && v.length <= 500,
+};
+
+function lspArguments(args, extras) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("bad arguments");
+  // 键集校验与取值校验同一条循环走完：allowed 里的每个名字都必须在 lspKeyGuard
+  // 里有一格，否则漏写守卫的键会直接 TypeError，而不是拒掉。
+  const allowed = new Set(["path", ...extras]);
+  for (const key of Object.keys(args)) {
+    if (!allowed.has(key)) throw new Error("bad arguments");
+    if (!lspKeyGuard[key]) throw new Error("bad arguments");
+    if (!lspKeyGuard[key](args[key])) throw new Error("bad arguments");
+  }
+  if (!lspKeyGuard.path(args.path)) throw new Error("bad arguments");
+  for (const key of ["line", "character", "direction", "newName"]) {
+    if (extras.includes(key) && !Object.hasOwn(args, key)) throw new Error("bad arguments");
+  }
+  const params = { path: args.path };
+  for (const key of extras) { if (args[key] !== undefined) params[key] = args[key]; }
+  return params;
+}
+
+ipcMain.handle("sacode:lspDefine", async (_e, args) => {
+  const params = lspArguments(args, ["line", "character", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/define", params));
+});
+ipcMain.handle("sacode:lspLookup", async (_e, args) => {
+  const params = lspArguments(args, ["line", "character", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/lookup", params));
+});
+ipcMain.handle("sacode:lspReferences", async (_e, args) => {
+  const params = lspArguments(args, ["line", "character", "includeDeclaration", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/references", params));
+});
+ipcMain.handle("sacode:lspImplementation", async (_e, args) => {
+  const params = lspArguments(args, ["line", "character", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/implementation", params));
+});
+ipcMain.handle("sacode:lspCallHierarchy", async (_e, args) => {
+  const params = lspArguments(args, ["line", "character", "direction", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/call-hierarchy", params));
+});
+ipcMain.handle("sacode:lspDiagnostics", async (_e, args) => {
+  const params = lspArguments(args, ["documentVersion"]);
+  return withHost(() => bridge.request("lsp/diagnostics", params));
+});
+ipcMain.handle("sacode:lspRename", async (_e, args) => {
+  // 只有预览：应用变更归 F08 的审查、冲突检测与授权链，这条通道不写盘。
+  const params = lspArguments(args, ["line", "character", "newName", "documentVersion"]);
+  return withHost(() => bridge.request("lsp/rename", params));
 });
 
 // Next SDK 页面工具：清单的唯一真源是渲染层那份 window.DshPageTools 注册表，
