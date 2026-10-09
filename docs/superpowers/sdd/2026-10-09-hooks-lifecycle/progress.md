@@ -37,10 +37,15 @@
   与注册表的唯一运行证据。
 - 归因更正（记录以免重犯）：后台任务回报「exit code 0」是命令链末尾 `grep` 的退出码，
   不是 cjpm 的；cjpm 真实结果写在日志里是 `Error: cjpm test failed`。
-- 待处理缺陷（未盲改）：`hook_executor.cj:276-277` 编译器报
-  `unreachable block in 'if' expression`，即 finally 里关闭 response 与 client 的两段
-  被判不可达——存在每次 http hook 泄漏连接的风险。需要先定根因（try 各分支都在
-  response 赋值后 return 造成的流分析结果，还是赋值路径真的不可达），再改并在隔离包复验。
+- 已判定的非缺陷：`hook_executor.cj:276-277` 编译器报
+  `unreachable block in 'if' expression`（finally 里关闭 response 与 client 两段）。
+  用可观察副作用定根因：在隔离副本这两段里 `setVariable`，另起本机夹具跑一次真实 2xx
+  请求后断言两个变量皆为 `Some("1")`——`cjpm test` rc=0，TOTAL 19 / PASSED 19 / FAILED 0 /
+  ERROR 0，即两段清理确实执行，警告是流分析误报，不存在连接泄漏。同形态也见于既有
+  `web_http.cj:117` 与 `web_search_service.cj:144`，互为佐证。探针只活在本轮新建的
+  `hookreg/` 隔离包（`hook_executor.cj` 从真源新拷，非上轮已验副本），用完即删；真源
+  全程未改，事后与 HEAD 逐字核对为空输出。不补常驻用例：剩下的可观测判据只有套接字
+  计数，会把计时抖动引进单测，比不测更糟。
 
 ## 验证边界（2026-10-09 记录，避免误读）
 
