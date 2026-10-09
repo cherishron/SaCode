@@ -33,6 +33,20 @@
 | 6faccf9 | RemoteRequestGate 5 条行为用例真跑绿 | cjpm test daemon：TOTAL 5 / PASSED 5 / FAILED 0 rc=0 | 删掉 recordDenied 的 missing-bearer 分支 → 三条依赖该路径的用例同时变红（FAILED 3 / PASSED 2），invalid-token 与 authz-denied 独立受害者仍绿；还原回绿 | 已入库 |
 | e572a78 | 三模块 34 条 Cangjie 单测真跑绿（daemon 侧运行，绕开 core 链接 40 分钟卡）；补 jsonEscape 后 escaped 禁词检测 | cjpm test --target-dir daemon-fix：**TOTAL 34 / PASSED 34 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0** | auditRejectsValueContainingBannedKey 首跑红（漏检 `\"credential\"`）→ 加 bannedEscaped 分支后绿；authz 未知方法变异（默认拒改默认允）→ 只 authzUnknownMethodRejected 一条红，其余 33 条绿；还原回绿 | 已入库 |
 | c619910 | 任务 6 第二批：远程接入 HTTP 面接线。dispatchRpc→dispatchRpcWithAuth 贯通 Authorization 头与 params 顶层归属；/sse 建立即认证；/health 本机匿名最小存活 + 非本机认证；新增 remote_access.cj（/auth/enroll + /auth/token 两面、16KiB 认证体、每来源 10/分、每票据 5 次锁定、实例身份文件跨重启稳定、生产 FileAuditSink、按契约表逐行装策略且坏行整体拒启动）；启动校验缺项即拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 58 / PASSED 58 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**；新增 `test/remote-auth.test.mjs` 真 HTTP socket：**15/15 rc=0**；`remote-capability-contract` **12/12 rc=0** | 三组变异各杀指定受害后还原回绿：① 撤 dispatch 层 gate 检查 → 仅 `dispatchWithGateRejectsMissingBearer`(FAILED) + `dispatchWithGateExtractsWorkspaceSessionOperationId`(ERROR) 两条红，`dispatchWithoutGateKeepsLegacyPath` 仍绿；② denied 归属写回空串 → `gateDeniedAuditsAttemptedWorkspaceAndSession` / `gatePoisonedIdentifierCannotBlankAudit` / dispatch 归属用例三条红；③ sanitizeId 改透传 → `gatePoisonedIdentifierCannotBlankAudit` / `gateSanitizeIdAcceptsIdentifierShapesAndCapsLength` 两条红。还原用 cp 备份 + `diff` 空输出证逐字一致 | 已入库 |
+| ca3d698 | 任务 6 第三批：登记票据跨进程可见 + 本地管理入口。快照升 `snapshotVersion:2` 带票据摘要与**绝对 unix 毫秒**到期；`reloadTicketsFrom` 在受理登记前合入磁盘新票；daemon 二进制加 `--manage enroll-ticket <storePath> <principalId>` 子命令（网络面仍只两面）；`/auth/token` 的 `expiresInMs` 改由 store 钟算并夹 0 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 67 / PASSED 67 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（63→67）；`remote-auth` **17/17 rc=0**（含新建票→HTTP 登记→兑换→Bearer 过授权面端到端 + 管理入口参数形状两条）；`remote-capability-contract` **12/12 rc=0** | 两个语义变异同一轮施加、受害者互不重叠：① 撤 `enroll()` 里的 `reloadTicketsFrom` → 端到端用例红（401 `invalid-enrollment`）；② `toStoreRelative` 改成原样返回（把绝对 unix 毫秒当相对刻度）→ 仅 `crossProcessTicketUsesAbsoluteExpiryNotStoreRelativeClock` 红，其余 66 条绿。还原 cp + `diff` 空输出，两侧各自复跑回绿（67/67、17/17、12/12）。**首轮 ① 是存活的**，见下节 | 已入库 |
+
+### ca3d698 抓到的两处问题
+
+1. **`expiresInMs` 报得比名义 TTL 还长（实测 900001 > 900000）**。引导层 `RemoteAccessEndpoints`
+   有自己的 `MonoTime` 基准，`t.expiresAt - nowMs()` 混用了两个基准，差 1ms 就把「还剩多久」
+   报多；客户端按它安排续期点会晚于令牌真实失效点。改 `RemoteIdentityStore.tokenRemainingMs(token)`
+   （store 自己的钟 + 夹 0），Cangjie 侧 `reportedTokenWindowComesFromStoreClockAndNeverExceedsTtl` 钉住。
+2. **我自己写的端到端用例是假绿**——这条比第 1 条更值得记。首版把 `--manage` 建票放在
+   `boot()` **之前**，daemon 启动时的 `loadSnapshot` 顺带把票据捞进来了，于是
+   「受理登记前重新读一次磁盘票据」这条活路径整段没被执行：撤掉它的变异体照样 17/17 全绿。
+   真实用法恰恰是 daemon 长期运行、管理员之后才建票。改成 `boot()` 后再建票，同一变体立刻红
+   （401 `invalid-enrollment`）。**结论：变异反证不只用来验实现，也用来验用例本身；
+   顺序型夹具的先后关系就是断言的一部分。**
 
 ### 8278245 身份摘要键 + 设备跨重启保持
 
@@ -90,17 +104,20 @@
 
 **桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 7、
 `target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **90** 条断言全绿。
-**daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **15/15** rc=0。
-**daemon Cangjie 侧**：`cjpm test` **TOTAL 63 / PASSED 63 / FAILED 0 rc=0**
-（身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15 + 设备持久面 5）。
+**daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **17/17** rc=0（ca3d698 轮）。
+**daemon Cangjie 侧**：`cjpm test` **TOTAL 67 / PASSED 67 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（ca3d698 轮）
+（身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15 + 设备持久面 4
+ + 票据跨进程与管理入口 5；上一轮 63 条里的 `enrollmentTicketsAndTokensAreNotPersisted` 与「票据不落盘」
+ 的新契约互斥，已替换为 `ticketFromAnotherProcessIsConsumableButTokensAreNotPersisted`）。
 
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
-| 登记秘密的**创建与确认**入口（任务 6 剩余） | 设计 §4.2 要求「目标端本地管理入口创建一次性登记秘密」，且网络面限定只有 `/auth/enroll` + `/auth/token` | `RemoteIdentityStore` 目前只在 daemon 进程内存里，`createEnrollmentSecret` 没有可从 daemon 之外触达的本地入口。因此 HTTP 面只能验「未知票据 401 / 413 / 429」，**端到端登记→兑换→Bearer 通过的正面链路只在 Cangjie 侧 `tokenExchangeThenBearerPassesGate` 证过**，HTTP 端到端仍缺。解锁需要先定身份存储的持久化与跨进程可见性方案（不能塞第三个网络端点，也不能靠环境变量传秘密）。 |
-| 每设备 8 并发 RPC / 2 条 SSE、实例 64 条 SSE、请求头与体 10 秒超时 | 设计 §7 限额，`remote_access.cj` 已落 16KiB 认证体与来源限速 | 并发与超时计数尚未接入 daemon 路由；`ServerBuilder` 侧超时项需核实 stdx 能力后决定是配置项还是自计。 |
+| TLS 只做了启动校验、没接进 `ServerBuilder`（**ca3d698 轮新发现的真实缺口**） | `remote_access.cj:336` 校验 `certPath/keyPath` 存在；`daemon.cj` 建服务时从未调 `.tlsConfig(...)` | 后果：配了证书也照样明文服务，客户端以为 bearer 走在 TLS 上。设计 §4「所有网络，包括内网，都禁止明文 bearer」未满足。红先用例已写好（`apps/daemon/test/remote-tls.test.mjs`：https 可达 + 明文打不进 + 启动行须报 `https://` + 坏证书拒启动 78），下一批接 `.tlsConfig(TlsServerConfig(X509Certificate.decodeFromPem, PrivateKey.decodeFromPem))`；本机 stdx 有 `net.tls`，openssl 3.5.4 可出自签 SAN=IP:127.0.0.1 夹具。 |
+| 设备轮换、设备列表与撤销的本地管理面（任务 6 剩余） | `remote_identity.cj` 只有 `generateCredential`/`revokeDevice`，没有按 deviceId 轮换凭据与列设备的公开方法；`--manage` 目前只有 `enroll-ticket` | 规格 §4 要求「设备列表、确认、撤销只能通过本机受保护管理入口或具有显式管理权限的认证 RPC」。CLI 半边可在本仓补（`--manage list-devices` / `revoke-device`，快照里本就有 revoked），带管理 scope 的认证 RPC 半边属任务 7 的授权分派。 |
+| 每设备 8 并发 RPC / 2 条 SSE、实例 64 条 SSE、请求头与体 10 秒超时 | 设计 §7 限额，`remote_access.cj` 已落 16KiB 认证体与来源限速 | 并发与超时计数尚未接入 daemon 路由。**stdx 能力已核实**（`http_server/README.md` 第 55-58 行）：`ServerBuilder.readHeaderTimeout(Duration)` / `readTimeout(Duration)` / `writeTimeout` / `maxRequestHeaderSize` 是配置项，10 秒超时直接配；每设备并发数无现成配置项，需要自计（`GateOutcome.context` 已带 deviceId，可在 `/rpc` 与 `/sse` 两支做有界计数）。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 
 

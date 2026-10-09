@@ -138,7 +138,7 @@ for (const row of rows) {
 **接口：**服务端 AuthenticationContext 由可信入口构造，包含 instanceId/principalId/deviceId/revocationVersion；认证失败不产生 context。登记/兑换 HTTP schema 依规格 §4，业务方法只能消费 context，不能由 params 构造。
 
 - [ ] 写无凭据调用 initialize、过期/撤销凭据、跨证书、并发登记兑换、匿名 SSE 的集成红灯；验证拒绝发生在 Host.forward 前。
-- [ ] 接入开关默认关闭、回环监听；外部开启缺 TLS/身份/策略均启动失败。实现两条最小 auth 端点及安全本地登记确认。
+- [x] 接入开关默认关闭、回环监听；外部开启缺 TLS/身份/策略均启动失败。实现两条最小 auth 端点及安全本地登记确认。（c619910 + ca3d698：`--manage enroll-ticket` 建票落盘只存摘要，daemon 运行中新建的票可被 `/auth/enroll` 消费，端到端 17/17 rc=0；TLS 证书「配了就必须以 TLS 服务」仍未接线，见证据文档在飞项）
 - [ ] 使用经过任务 2 验证的 CSPRNG/摘要/常数时间校验和安全存储；凭据至少256bit、登记至少128bit/5分钟单次、token至多15分钟。禁止自行写密码学算法。
 - [ ] 添加设备轮换、撤销、每RPC认证、SSE到期/撤销关闭。无header回包不泄漏证书秘密、目录与用户列表。
 - [ ] 加入16KiB认证体、1MiB RPC体、方法/深度/并发/连接数/超时/认证限速；保留当前白名单及明确错误。
