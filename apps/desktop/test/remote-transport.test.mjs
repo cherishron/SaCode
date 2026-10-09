@@ -283,3 +283,47 @@ test("transport：SSE 帧中 id: 行更新 lastEventId 游标", async () => {
   assert.equal(t.getLastEventId(), "9");
   assert.deepEqual(frames.map((f) => f.seq), [7, 8, 9]);
 });
+
+// 设计 §4.2「access token 最长 15 分钟，长连接到期关闭并续接」——
+// transport 绝不能把 tokenProvider 的返回值缓存到构造时刻，否则一旦
+// 上层轮换 token，这里还在带旧 token 请求，服务端一律 401。
+test("transport：sendRequest 每次读 tokenProvider（token 轮换立即生效）", async () => {
+  const seen = [];
+  const calls = [];
+  let current = "tk-1";
+  const fetchImpl = async (_url, init) => {
+    calls.push(init.headers.Authorization);
+    const req = JSON.parse(init.body);
+    return makeResponse({ body: JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { ok: true } }) });
+  };
+  const t = new RemoteTransport({
+    baseUrl: "https://x.example",
+    tokenProvider: async () => { seen.push(current); return current; },
+    fetchImpl,
+  });
+  await t.sendRequest("session/catalog", {});
+  current = "tk-2";
+  await t.sendRequest("session/catalog", {});
+  assert.deepEqual(seen, ["tk-1", "tk-2"], "tokenProvider 必须每次调用");
+  assert.deepEqual(calls, ["Bearer tk-1", "Bearer tk-2"], "Bearer 头必须反映最新 token");
+});
+
+// SSE 面同样：subscribe 建立前必须现取 token，不能沿用构造时快照。
+test("transport：subscribeNotifications 建立连接也走 tokenProvider", async () => {
+  let current = "sse-tk-1";
+  const seen = [];
+  const stream = chunkStream([]);
+  const fetchImpl = async (_url, init) => {
+    seen.push(init.headers.Authorization);
+    return { ok: true, status: 200, body: { getReader: () => stream } };
+  };
+  const t = new RemoteTransport({
+    baseUrl: "https://x.example",
+    tokenProvider: async () => current,
+    fetchImpl,
+  });
+  await t.subscribeNotifications(() => {});
+  current = "sse-tk-2";
+  await t.subscribeNotifications(() => {});
+  assert.deepEqual(seen, ["Bearer sse-tk-1", "Bearer sse-tk-2"]);
+});
