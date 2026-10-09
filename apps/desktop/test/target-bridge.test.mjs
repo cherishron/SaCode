@@ -16,8 +16,8 @@ function makeFakeTransport(id) {
     get closeCalls() { return closeCalls; },
     get bumpCalls() { return bumpCalls; },
     _pendingResolvers: [],
-    async sendRequest(method, params) {
-      const rec = { method, params, resolve: null, reject: null };
+    async sendRequest(method, params, opts) {
+      const rec = { method, params, opts, resolve: null, reject: null };
       sent.push(rec);
       return new Promise((resolve, reject) => {
         rec.resolve = resolve;
@@ -201,4 +201,27 @@ test("subscribe：transport 无 getLastEventId（本机 HostBridge）时 opts �
   b.register(desc("local", "local"), t);
   await b.subscribe("local", () => {});
   assert.deepEqual(calls[0], {});
+});
+
+// 计划 §5「所有写操作使用 operationId」——Idempotency-Key 从 renderer 侧一路
+// 透到 transport，中间 bridge 层不能吞；否则服务端按 operationId 建幂等账就没入口。
+test("request：opts.idempotencyKey 必须透传到 transport.sendRequest", async () => {
+  const b = new TargetBridge();
+  const t = makeFakeTransport("a");
+  b.register(desc("a"), t);
+  const p = b.request("a", "session/submit", { text: "hi" }, { idempotencyKey: "op-17" });
+  assert.equal(t.sent.length, 1);
+  assert.deepEqual(t.sent[0].opts, { idempotencyKey: "op-17" }, "bridge 必须把 opts 原样递给 transport");
+  t.sent[0].resolve({ ok: 1 });
+  await p;
+});
+
+test("request：不传 opts 时第三参为 undefined，不改变旧行为", async () => {
+  const b = new TargetBridge();
+  const t = makeFakeTransport("a");
+  b.register(desc("a"), t);
+  const p = b.request("a", "session/catalog", {});
+  assert.deepEqual(t.sent[0].opts, undefined);
+  t.sent[0].resolve({ ok: 1 });
+  await p;
 });

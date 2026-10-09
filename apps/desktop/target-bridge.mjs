@@ -52,11 +52,13 @@ export class TargetBridge {
 
   // 明确 targetId 的请求；上层 renderer 从当前页面上下文带 targetId 进来。
   // 未知 targetId 一律抛，不 fallback。
-  async request(targetId, method, params) {
+  // opts 原样透给 transport（RemoteTransport 用 opts.idempotencyKey 加 Idempotency-Key 头），
+  // 计划 §5「所有写操作使用 operationId」的落点。
+  async request(targetId, method, params, opts) {
     const entry = this.targets.get(targetId);
     if (!entry) throw new Error(`target-not-found: ${targetId}`);
     const epochAtSend = entry.connectionEpoch;
-    const result = await entry.transport.sendRequest(method, params);
+    const result = await entry.transport.sendRequest(method, params, opts);
     // 在途目标切换：transport 内部已按自己 epoch 丢，但一层再核一次，
     // 免得 remote transport 的 bumpEpoch 语义与这里不同步。
     if (entry.connectionEpoch !== epochAtSend) {
