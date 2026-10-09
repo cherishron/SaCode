@@ -3,29 +3,29 @@ import std.collection.ArrayList
 import std.regex.Regex
 
 public enum HookEvent {
-    PreToolUse
-    PostToolUse
-    PostToolUseFailure
-    UserPromptSubmit
-    SessionStart
-    SessionEnd
-    SessionDelete
-    MessageDisplay
-    Stop
-    StopFailure
-    SubagentStart
-    SubagentStop
-    PreCompact
-    PostCompact
-    Notification
-    PermissionRequest
-    PermissionDenied
-    TodoCreated
-    TodoCompleted
-    WebhookDelivery
-    ScheduleFire
-    WorkflowStepStart
-    WorkflowStepDone
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
+    UserPromptSubmit,
+    SessionStart,
+    SessionEnd,
+    SessionDelete,
+    MessageDisplay,
+    Stop,
+    StopFailure,
+    SubagentStart,
+    SubagentStop,
+    PreCompact,
+    PostCompact,
+    Notification,
+    PermissionRequest,
+    PermissionDenied,
+    TodoCreated,
+    TodoCompleted,
+    WebhookDelivery,
+    ScheduleFire,
+    WorkflowStepStart,
+    WorkflowStepDone,
     WorkflowStepFail
 }
 
