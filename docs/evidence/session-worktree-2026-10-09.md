@@ -69,6 +69,32 @@
 
 纯本批、可干净入库的：`core/src/ptc_exec.cj`（7 行全为本批 `cwd!`）、`core/src/worktree_setup.cj`（守卫形态 4 行）、`core/src/worktree_setup_test.cj`（改名 2 行）、`core/src/worktree.cj`（编译必需的 1 行 import）、`docs/`（本批 23 行）。
 
-## 7. 核心全量计数
+## 7. 提交态全量计数：拿不到，归因表与停止点
 
-（待 `cjpm test` 出 Summary 后按剥码五计数补写，并注明取证态。）
+取证通道升级到**纯提交态**：`git -C D:/Temp/wtfp-20261009 checkout -f --detach ea51552`（`ea51552 feat(core): 恢复 LSP L1 契约实现` 为本批接线入库后的分支头）。私有 `TMP=D:/Temp/wtfp-tmp2`、独立 `--target-dir D:/Temp/wtfp-tg2`。结果按轮次（每轮都读剥码后的 `N errors generated, M printed` 与 `rc`）：
+
+| 轮 | 副本状态 | 结果 |
+|---|---|---|
+| 8 | 纯 `ea51552`，仅补 acp 夹具的 `import std.fs.*` | `87 errors generated, 8 printed`，rc=1，首条 `expected declaration, found ','` → `hook_registry.cj:6:15` |
+| 9 | 上一轮 + `HookEvent` 逗号改换行 | `64 errors`，rc=1，仍报 `expected declaration, found PostToolUse` |
+| 10 | 按官方文档给 `HookEvent` 补 `\|` 前缀 | `41 errors`，rc=1，暴露 `HookDecision`（`hook_registry.cj:33`）与 `cmds.cj:11` |
+| 11 | 上一轮 + `HookDecision` 补 `\|` + `cmds.cj` 取别路工作区在飞版 | `35 errors`，rc=1，继续报 `expected declaration, found Session` / `End` |
+
+**停止点与理由**：错误来源不在本批，全部集中在 Hooks 那条线已入库（并已推送）的文件——`public enum HookEvent { PreToolUse, PostToolUse, … }` 与 `public enum HookDecision { Allow, Deny, Block, Ask }` 都缺仓颉必需的构造器 `\|`（官方文档形状是 `enum Direction { \| Up \| Down \| Left \| Right }`，见 `cangjie-skills/cangjie-lang-features/enum/README.md`）。判据不是推测：主树在飞版与提交态这两份文件 `cmp` **逐字相同**，`grep -c "import std.fs" core/src/acp_delegation_test.cj` = 0 且该文件与 HEAD 零差异，即这条线自己也跑不了 `cjpm test`。继续修等于由我替它重写模块，且他们此刻正在改这些文件（`git status` 里 `core/src/cmds.cj`、`core/src/hook_registry.cj` 均为脏），会把他们的在飞实现算进我的取证。**所以本轮不出核心全量计数，记 BLOCKED**，不缩范围、不造桩、不删用例。
+
+解锁动作（归各自线，之后本批可一次跑完）：
+1. Hooks 线：给 `HookEvent`/`HookDecision`（以及同类写法）补 `\|`，让 `core` 包过编译门。
+2. ACP 线：把 `import std.fs.*` 补回已入库的 `core/src/acp_delegation_test.cj`（09:54 副本 `.qoder/wtverify/src/` 里那行本来就在，是后续写入丢的）。
+3. LSP/CLI 线：`core/src/cmds.cj:11` 的 `parse: Option<((Array<String>) -> HashMap<String, String>)> = None` 被编译器拒绝（`expected ',' or ')' here`），该线正在工作区改。
+
+### 7.1 本轮实际拿到的数（各自标明取证态）
+
+| 面 | 命令 | 结果 | 取证态 |
+|---|---|---|---|
+| 桌面 worktree | `node --test test/worktree.test.mjs test/worktree-render.test.mjs` | `# tests 22 / # pass 22 / # fail 0` | 工作区 |
+| 桌面变异反证 | 删 `keep+discardChanges` 检查后跑 | 变异前 15/15 全绿（暴露假绿）→ 补用例后 `not ok 2`、`# pass 14 / # fail 1` → 还原 `diff` 空、复跑 15/15 | 工作区 |
+| JS 扩展宿主 | `cd extjs && node --test` | `# tests 73 / # pass 73 / # fail 0` | 工作区（非本批，证共享面未被打断） |
+| 核心库层编译 | 副本 `cjpm build -i` | `cjpm build success`，rc=0，174 告警 0 错误 | 11:4x 工作区快照（**该副本树内无 `hook_registry.cj`**，不能读成整包可编） |
+| 本批文件编译器归因 | 副本 `cjpm test` round 4 | `7 errors generated, 7 errors printed`，7 条全在 `web_network.cj`，本批文件与回补接线文件 0 条（打印未触顶） | 工作区快照 + 3 个别路 web 文件钉回提交态 |
+| 核心全量 Summary | 副本 round 8–11 | **BLOCKED**（见 §7） | 纯提交态 `ea51552` |
+| 宿主 13 条 / daemon 12 条 / cli 54 条 | `node --test` | **BLOCKED-on-build**：宿主与守护进程二进制未产出（`Cannot read properties of undefined (reading 'method')`） | 工作区 |
