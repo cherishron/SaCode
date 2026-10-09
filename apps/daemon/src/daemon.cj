@@ -206,6 +206,21 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
 }
 
 main(args: Array<String>): Int64 {
+    // 本地管理入口（设计 §4.2「首次登记由目标端本地管理入口创建一次性登记秘密」）。
+    // 这是 CLI 子命令，不是第三个网络端点：网络面仍只有 /auth/enroll 与 /auth/token。
+    // 秘密原文只打到本命令的 stdout 给操作者（扫码/手动输入），
+    // 落盘的快照里只有它的摘要。
+    if (args.size == 4 && args[0] == "--manage" && args[1] == "enroll-ticket") {
+        let storePath = args[2]
+        let principalId = args[3]
+        let manageStore = RemoteIdentityStore()
+        manageStore.loadSnapshot(storePath)
+        let ticket = manageStore.createTicketForManagement(principalId, storePath)
+        println("enrollment-ticket-for ${principalId}")
+        println("${ticket.value}")
+        getStdOut().flush()
+        return 0
+    }
     var port: UInt16 = 18937
     if (args.size != 0) {
         if (args.size != 2 || args[0] != "--port" || args[1].size == 0 || args[1].size > 5) { return 64 }

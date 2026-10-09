@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -302,5 +303,87 @@ test('实例身份文件跨重启不变', async () => {
   await second.stop();
   const after = await readFile(idPath, 'utf8');
   assert.equal(after.trim(), before.trim(), '重启不得换实例身份——否则客户端绑定静默失效');
+  await rm(dir, { recursive: true, force: true });
+});
+
+// 本地管理入口（设计 §4.2「首次登记由目标端本地管理入口创建一次性登记秘密」）。
+// 它是 daemon 二进制的子命令，不是第三个网络端点：这里同时钉住
+// 「网络面仍只有 /auth/enroll 与 /auth/token」和「建票→登记→兑换→过授权面」整条链路。
+async function manage(args) {
+  const proc = spawn(daemonExe, args, { env: baseEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  proc.stdout.on('data', d => { out += d; });
+  proc.stderr.on('data', d => { err += d; });
+  const code = await new Promise(resolve => proc.on('close', c => resolve(c)));
+  return { code, out, err };
+}
+
+test('本地管理入口建票 → 真 HTTP 登记兑换 → Bearer 通过授权面（端到端）', async () => {
+  const dir = await mkdtemp(path.join(root, 'target', 'sacode-remote-mgr-'));
+  const identity = path.join(dir, 'instance.id');
+  const snapshot = `${identity}.devices.json`;
+  // 顺序按真实用法来：daemon 先长期运行，管理员之后才为某台设备建票。
+  // 建票放在 boot 之前会被启动时的 loadSnapshot 顺带捞到，
+  // 那就钉不住「受理登记前重新读一次票据」这条活路径（变异反证已实测到这一点）。
+  const d = await boot({
+    ...accessEnv(dir),
+    SACODE_REMOTE_IDENTITY: identity,
+  });
+  try {
+    const created = await manage(['--manage', 'enroll-ticket', snapshot, 'p-mobile']);
+    assert.equal(created.code, 0, `管理入口应成功建票：${created.err}`);
+    const lines = created.out.replace(/\r/g, '').trim().split('\n');
+    assert.equal(lines[0], 'enrollment-ticket-for p-mobile');
+    const ticket = lines[1];
+    assert.match(ticket, /^[0-9a-f]{32}$/, '登记秘密是 16 字节 hex');
+    // 落盘快照里只有摘要：管理入口把原文打到 stdout 给操作者，磁盘上不留原文。
+    const snapText = await readFile(snapshot, 'utf8');
+    assert.ok(!snapText.includes(ticket), '快照不得含登记秘密原文');
+    assert.ok(snapText.includes(createHash('sha256').update(ticket).digest('hex')),
+      '快照必须含票据摘要，否则 daemon 侧无从校验');
+
+    const enroll = await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: ticket, deviceName: 'phone-a', kind: 'mobile' }));
+    const text = await enroll.text();
+    assert.equal(enroll.status, 200, `daemon 运行中新建的票必须能用：${text}`);
+    const dev = JSON.parse(text);
+    assert.equal(dev.deviceId, 'phone-a-1');
+    assert.match(dev.credential, /^[0-9a-f]{64}$/, '凭据 32 字节 hex，仅此一次明文回出');
+
+    const again = await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: ticket, deviceName: 'phone-b', kind: 'mobile' }));
+    assert.equal(again.status, 401, '票据一次消费，跨进程也不例外');
+    assert.equal((await again.json()).error, 'invalid-enrollment');
+
+    const tokRes = await d.post('/auth/token',
+      JSON.stringify({ deviceId: dev.deviceId, credential: dev.credential }));
+    assert.equal(tokRes.status, 200);
+    const tok = JSON.parse(await tokRes.text());
+    assert.equal(tok.tokenType, 'Bearer');
+    assert.ok(tok.expiresInMs > 0 && tok.expiresInMs <= 15 * 60 * 1000,
+      `令牌最长 15 分钟，回给客户端的是剩余窗口：${JSON.stringify(tok)}`);
+
+    const init = await d.rpc('initialize', {}, {
+      headers: { authorization: `Bearer ${tok.accessToken}` },
+    });
+    assert.equal(init.status, 200);
+    assert.match(init.body, /protocolVersion/, '认证通过的 initialize 必须真的执行');
+    assert.doesNotMatch(init.body, /-32001/);
+  } finally {
+    await d.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('管理入口参数不合形状一律拒绝，不落半张票据', async () => {
+  const dir = await mkdtemp(path.join(root, 'target', 'sacode-remote-mgrbad-'));
+  const snapshot = path.join(dir, 'instance.id.devices.json');
+  // 少一个参数：不能当成 --port 解析后照跑，也不能建票。
+  const short = await manage(['--manage', 'enroll-ticket', snapshot]);
+  assert.equal(short.code, 64, `参数不足必须退出码 64：${short.err}`);
+  assert.ok(!/^[0-9a-f]{32}$/.test(short.out.trim()), '拒绝时不得输出票据');
+  const badVerb = await manage(['--manage', 'revoke-device', snapshot, 'p-1']);
+  assert.equal(badVerb.code, 64, '未实现的管理动作不能静默成功');
   await rm(dir, { recursive: true, force: true });
 });

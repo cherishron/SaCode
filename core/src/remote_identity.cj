@@ -123,6 +123,22 @@ public class RemoteIdentityStore {
         return sha256Hex(secret.toArray())
     }
 
+    // 跨进程票据用**绝对 unix 毫秒**表达到期：store 内部的 nowMs() 是「本 store
+    // 建立以来的相对毫秒」，管理入口进程与 daemon 进程的两个 base 不同，
+    // 把相对值直接写进快照，恢复端会算错剩余窗口（可能把已过期票据当有效）。
+    static func wallNowMs(): Int64 {
+        return DateTime.nowUTC().toUnixTimeStamp().toMilliseconds()
+    }
+
+    // 恢复时把绝对 unix 毫秒换算回本 store 的相对刻度；可为负（即已过期）。
+    func toStoreRelative(absoluteUnixMs: Int64): Int64 {
+        return absoluteUnixMs - RemoteIdentityStore.wallNowMs() + nowMs()
+    }
+
+    func toAbsoluteUnixMs(relativeMs: Int64): Int64 {
+        return relativeMs + RemoteIdentityStore.wallNowMs() - nowMs()
+    }
+
     // 生成 256-bit 设备凭据。value 只在返回给调用方的一刻存在，store 不落任何原文。
     public func generateCredential(): DeviceCredential {
         let value = randomHex(32)
@@ -206,6 +222,16 @@ public class RemoteIdentityStore {
         throw Exception("device-not-found")
     }
 
+    // 令牌剩余窗口必须由 **store 自己的钟**算。引导层（HTTP 端点）另有 MonoTime 基准，
+    // 两个基准差 1 毫秒就会把「还剩多久」报成比名义 TTL 还长（实测 900001），
+    // 客户端据此安排的续期点会晚于真实失效点。
+    public func tokenRemainingMs(token: AccessToken): Int64 {
+        lock.lock()
+        let left = token.expiresAt - nowMs()
+        lock.unlock()
+        return if (left < Int64(0)) { Int64(0) } else { left }
+    }
+
     // 测试辅助：把令牌到期时间改到过去。
     public func expireToken(value: String): Unit {
         lock.lock()
@@ -278,13 +304,27 @@ public class RemoteIdentityStore {
             comma = ","
         }
         devicesJson += "]"
+        // 票据只以摘要键 + 绝对到期出现：管理入口创建的票据必须能被
+        // daemon 进程看到，否则 `/auth/enroll` 永远拿不到有效票据。
+        var ticketJson = "["
+        comma = ""
+        for ((digest, e) in enrollments) {
+            ticketJson += "${comma}{\"digest\":\"${jsonEscape(digest)}\""
+            ticketJson += ",\"principalId\":\"${jsonEscape(e.principalId)}\""
+            ticketJson += ",\"expiresAtUnixMs\":${toAbsoluteUnixMs(e.expiresAt)}"
+            ticketJson += ",\"consumed\":${if (e.consumed) { "true" } else { "false" }}"
+            ticketJson += "}"
+            comma = ","
+        }
+        ticketJson += "]"
         let rv = revocationVersion
         let nid = nextDeviceId
         lock.unlock()
-        var out = "{\"snapshotVersion\":1"
+        var out = "{\"snapshotVersion\":2"
         out += ",\"revocationVersion\":${rv}"
         out += ",\"nextDeviceId\":${nid}"
-        out += ",\"devices\":${devicesJson}}"
+        out += ",\"devices\":${devicesJson}"
+        out += ",\"enrollments\":${ticketJson}}"
         return out
     }
 
@@ -312,6 +352,8 @@ public class RemoteIdentityStore {
         let text = try { String.fromUtf8(File.readFrom(p)) } catch (_: Exception) { return false }
         let root = try { JsonValue.fromStr(text).asObject() } catch (_: Exception) { return false }
         lock.lock()
+        // 持锁段内一律不 return：早退会漏 unlock，之后整台 daemon 的认证都卡在锁上。
+        var ok = true
         var sawDevices = false
         if (let Some(node) <- root.get("devices")) {
             var arr = JsonArray()
@@ -321,32 +363,105 @@ public class RemoteIdentityStore {
                 var i: Int64 = 0
                 while (i < arr.size()) {
                     if (let Some(item) <- arr.get(i)) {
-                        let obj = try { item.asObject() } catch (_: Exception) { return false }
-                        let deviceId = RemoteIdentityStore.strField(obj, "deviceId")
-                        let digest = RemoteIdentityStore.strField(obj, "credentialDigest")
-                        if (deviceId.size > 0 && digest.size > 0) {
-                            let record = DeviceRecord(
-                                deviceId, RemoteIdentityStore.strField(obj, "principalId"), digest,
-                                RemoteIdentityStore.strField(obj, "kind"), "")
-                            record.revoked = RemoteIdentityStore.boolField(obj, "revoked")
-                            devices.add(deviceId, record)
+                        let obj = RemoteIdentityStore.objectOf(item)
+                        if (let Some(o) <- obj) {
+                            let deviceId = RemoteIdentityStore.strField(o, "deviceId")
+                            let digest = RemoteIdentityStore.strField(o, "credentialDigest")
+                            if (deviceId.size > 0 && digest.size > 0) {
+                                let record = DeviceRecord(
+                                    deviceId, RemoteIdentityStore.strField(o, "principalId"), digest,
+                                    RemoteIdentityStore.strField(o, "kind"), "")
+                                record.revoked = RemoteIdentityStore.boolField(o, "revoked")
+                                devices.add(deviceId, record)
+                            }
+                        } else {
+                            ok = false
                         }
                     }
                     i += 1
                 }
             }
         }
-        if (!sawDevices) { lock.unlock(); return false }
-        if (let Some(node) <- root.get("revocationVersion")) {
-            let v = try { node.asInt().getValue() } catch (_: Exception) { revocationVersion }
-            if (v > revocationVersion) { revocationVersion = v }
-        }
-        if (let Some(node) <- root.get("nextDeviceId")) {
-            let v = try { node.asInt().getValue() } catch (_: Exception) { nextDeviceId }
-            if (v > nextDeviceId) { nextDeviceId = v }
+        if (ok && sawDevices) {
+            mergeEnrollmentsLocked(root)
+            if (let Some(node) <- root.get("revocationVersion")) {
+                let v = try { node.asInt().getValue() } catch (_: Exception) { revocationVersion }
+                if (v > revocationVersion) { revocationVersion = v }
+            }
+            if (let Some(node) <- root.get("nextDeviceId")) {
+                let v = try { node.asInt().getValue() } catch (_: Exception) { nextDeviceId }
+                if (v > nextDeviceId) { nextDeviceId = v }
+            }
         }
         lock.unlock()
-        return true
+        // 「没有 devices 数组」按「无可恢复历史」处理并返回 false：调用方据此知道
+        // 快照形状不对，而不是拿到一个「看起来恢复成功」的空 store。
+        return ok && sawDevices
+    }
+
+    // 票据合入（须持锁调用）。同键已存在时 consumed 只单调地从 false 变 true，
+    // 不会因为另一进程手上的旧快照把已消费票据复活。
+    func mergeEnrollmentsLocked(root: JsonObject): Unit {
+        if (let Some(node) <- root.get("enrollments")) {
+            var arr = JsonArray()
+            let isArr = try { arr = node.asArray(); true } catch (_: Exception) { false }
+            if (isArr) {
+                var j: Int64 = 0
+                while (j < arr.size()) {
+                    if (let Some(item) <- arr.get(j)) {
+                        if (let Some(o) <- RemoteIdentityStore.objectOf(item)) {
+                            let digest = RemoteIdentityStore.strField(o, "digest")
+                            if (digest.size > 0) {
+                                let absExpiry = try {
+                                    o.get("expiresAtUnixMs").getOrThrow().asInt().getValue()
+                                } catch (_: Exception) { Int64(0) }
+                                let consumed = RemoteIdentityStore.boolField(o, "consumed")
+                                if (let Some(existing) <- enrollments.get(digest)) {
+                                    if (consumed) { existing.consumed = true }
+                                } else {
+                                    let restored = EnrollmentSecret("",
+                                        RemoteIdentityStore.strField(o, "principalId"),
+                                        toStoreRelative(absExpiry))
+                                    restored.consumed = consumed
+                                    enrollments.add(digest, restored)
+                                }
+                            }
+                        }
+                    }
+                    j += 1
+                }
+            }
+        }
+    }
+
+    // 受理登记前把本地管理入口新建的票据读进来。只合入票据，不动设备与令牌，
+    // 因此不会把 daemon 自己刚发的设备状态回退成旧快照的样子。
+    public func reloadTicketsFrom(path: String): Unit {
+        let p = Path(path)
+        if (!exists(p)) { return }
+        let text = try { String.fromUtf8(File.readFrom(p)) } catch (_: Exception) { return }
+        let root = try { JsonValue.fromStr(text).asObject() } catch (_: Exception) { return }
+        lock.lock()
+        mergeEnrollmentsLocked(root)
+        lock.unlock()
+    }
+
+    // 本地管理入口（设计 §4.2：由目标端本地管理入口创建登记秘密）。
+    // 建票 + 落盘一次做完；返回值里的 secret 原文只在这里出现一次，
+    // 快照里存的是它的摘要。落盘失败要抛——「票据只在内存里、
+    // daemon 永远看不见」比直接报错更难诊断。
+    public func createTicketForManagement(principalId: String, path: String): EnrollmentSecret {
+        let secret = createEnrollmentSecret(principalId)
+        if (!saveSnapshot(path)) { throw Exception("enrollment-ticket-unpersistable") }
+        return secret
+    }
+
+    // asObject() 对非对象形状是**抛异常**而不是回 Option，快照里一行坏了不该
+    // 让整份恢复崩掉，所以收成 Option 由调用方决定是「跳过」还是「判整份不可用」。
+    static func objectOf(item: JsonValue): Option<JsonObject> {
+        var out: Option<JsonObject> = None
+        let parsed = try { out = Some(item.asObject()); true } catch (_: Exception) { false }
+        return if (parsed) { out } else { None }
     }
 
     static func strField(obj: JsonObject, name: String): String {

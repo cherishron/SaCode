@@ -238,6 +238,9 @@ public class RemoteAccessEndpoints {
         if (secret.size == 0 || deviceName.size == 0) {
             return AuthResponse.deny(400, "enroll-fields-missing")
         }
+        // 受理前先合入本地管理入口新建的票据：store 与建票进程不是同一个，
+        // 不做这步的话 /auth/enroll 永远查不到刚创建的票据。
+        if (snapshotPath.size > 0) { store.reloadTicketsFrom(snapshotPath) }
         let digest = sha256Hex(secret.toArray())
         if (limiter.ticketFailures(digest) >= AUTH_PER_TICKET_MAX_FAILS) {
             auditBootstrap("", "", "auth/enroll", "denied", "ticket-failures-exceeded")
@@ -291,7 +294,7 @@ public class RemoteAccessEndpoints {
         if (let Some(t) <- exchanged) {
             auditBootstrap(deviceId, "", "auth/token", "allowed", "")
             var body = "{\"accessToken\":\"${jsonEscapeText(t.value)}\""
-            body += ",\"expiresInMs\":${t.expiresAt - nowMs()}"
+            body += ",\"expiresInMs\":${store.tokenRemainingMs(t)}"
             body += ",\"tokenType\":\"Bearer\"}"
             return AuthResponse(200, body)
         }

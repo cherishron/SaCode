@@ -202,30 +202,117 @@ func snapshotCarriesNoPlaintextCredentialSecretOrToken() {
 }
 
 @Test
-func enrollmentTicketsAndTokensAreNotPersisted() {
-    // 5 分钟一次性票据与 ≤15 分钟令牌都不落盘：重启后必须重新兑换，
-    // 不能让未消费的票据在磁盘上活到不知什么时候。
+func ticketFromAnotherProcessIsConsumableButTokensAreNotPersisted() {
+    // 本地管理入口（另一个进程形状的 store）建的票，必须能被 daemon 侧 store 消费；
+    // 同时访问令牌仍然只活在本进程内存里——重启后必须重新兑换。
     let name = "rt3"
     dropSnap(name)
+    let mgr = RemoteIdentityStore()
+    let pending = mgr.createTicketForManagement("p-3", snapPath(name))
+    // 快照里只有票据摘要，没有原文。
+    let text = mgr.snapshotText()
+    @Expect((text.indexOf(pending.value) ?? Int64(-1)) == Int64(-1), true)
+    @Expect((text.indexOf(sha256Hex(pending.value.toArray())) ?? Int64(-1)) >= Int64(0), true)
+
+    let daemonStore = RemoteIdentityStore()
+    daemonStore.reloadTicketsFrom(snapPath(name))
+    let device = daemonStore.enroll(pending.value, "dev-x", "mobile")
+    @Expect(device.deviceId.size > Int64(0), true)
+    let token = daemonStore.exchangeToken(device.deviceId, device.credential)
+    @Expect(daemonStore.saveSnapshot(snapPath(name)), true)
+
+    // 令牌不落盘：重启后的 store 认不得旧令牌，但同一凭据能再换一张。
+    let after = RemoteIdentityStore()
+    @Expect(after.loadSnapshot(snapPath(name)), true)
+    @Expect(after.authenticate(token.value).isNone(), true)
+    let fresh = after.exchangeToken(device.deviceId, device.credential)
+    @Expect(fresh.value.size > Int64(0), true)
+    dropSnap(name)
+}
+
+@Test
+func consumedTicketDoesNotResurrectAcrossReload() {
+    // consumed 必须单调：另一进程手上的旧快照不能把已消费票据变回未消费。
+    let name = "rt6"
+    dropSnap(name)
     let a = RemoteIdentityStore()
-    let pending = a.createEnrollmentSecret("p-3")
-    let used = a.createEnrollmentSecret("p-3")
-    let device = a.enroll(used.value, "dev-x", "mobile")
-    let token = a.exchangeToken(device.deviceId, device.credential)
+    let t = a.createTicketForManagement("p-6", snapPath(name))
+    let d = a.enroll(t.value, "dev-once", "mobile")
     @Expect(a.saveSnapshot(snapPath(name)), true)
+    let snapshotAfterUse = a.snapshotText()
+    @Expect((snapshotAfterUse.indexOf("\"consumed\":true") ?? Int64(-1)) >= Int64(0), true)
 
     let b = RemoteIdentityStore()
-    @Expect(b.loadSnapshot(snapPath(name)), true)
-    // 未消费的票据没被带过来。
+    b.reloadTicketsFrom(snapPath(name))
     let threw = try {
-        b.enroll(pending.value, "hijack", "mobile")
+        b.enroll(t.value, "hijack", "mobile")
         false
     } catch (_: Exception) { true }
     @Expect(threw, true)
-    // 旧令牌也没被带过来，但同一凭据可以再换一张。
-    @Expect(b.authenticate(token.value).isNone(), true)
-    let fresh = b.exchangeToken(device.deviceId, device.credential)
-    @Expect(fresh.value.size > Int64(0), true)
+    // 真设备没被弄坏：持有设备的那一侧、以及走「完整恢复」的那一侧都还认它。
+    let tok = a.exchangeToken(d.deviceId, d.credential)
+    @Expect(a.authenticate(tok.value).isSome(), true)
+    let full = RemoteIdentityStore()
+    @Expect(full.loadSnapshot(snapPath(name)), true)
+    let restored = full.exchangeToken(d.deviceId, d.credential)
+    @Expect(full.authenticate(restored.value).isSome(), true)
+    // 反向对照：reloadTicketsFrom 只合票据、不动设备表——否则 daemon 自己刚发的
+    // 设备状态会被另一进程手上的旧快照回退掉。
+    var onlyTickets = false
+    let notKnown = try {
+        b.exchangeToken(d.deviceId, d.credential)
+        false
+    } catch (e: Exception) { onlyTickets = e.message == "device-not-found"; true }
+    @Expect(notKnown && onlyTickets, true)
+    dropSnap(name)
+}
+
+@Test
+func createTicketForManagementFailsLoudWhenSnapshotUnwritable() {
+    // 建票后落不了盘必须抛：否则票据只在本进程内存里，
+    // daemon 永远看不见，症状是「票据有效却总是 401」，极难诊断。
+    let a = RemoteIdentityStore()
+    let threw = try {
+        a.createTicketForManagement("p-7",
+            "${getTempDirectory().toString()}/no-such-dir-9f3a/tickets.json")
+        false
+    } catch (_: Exception) { true }
+    @Expect(threw, true)
+}
+
+@Test
+func crossProcessTicketUsesAbsoluteExpiryNotStoreRelativeClock() {
+    // 跨进程到期口径：快照里的到期必须是**绝对 unix 毫秒**。
+    // 手写一份数字很小的快照：300000 按「本 store 相对毫秒」读是「还有 5 分钟」，
+    // 按 unix 毫秒读是 1970 年，早已过期。恢复端必须判过期，否则建票进程写下的
+    // 窗口会被恢复端凭空延长。
+    let name = "rt8"
+    dropSnap(name)
+    let secret = "0123456789abcdef0123456789abcdef"
+    let digest = sha256Hex(secret.toArray())
+    let crafted = "{\"snapshotVersion\":2,\"revocationVersion\":0,\"nextDeviceId\":1,"
+        + "\"devices\":[],\"enrollments\":[{\"digest\":\"${digest}\","
+        + "\"principalId\":\"p-8\",\"expiresAtUnixMs\":300000,\"consumed\":false}]}"
+    @Expect(try { File.writeTo(Path(snapPath(name)), crafted.toArray()); true }
+        catch (_: Exception) { false }, true)
+    let b = RemoteIdentityStore()
+    b.reloadTicketsFrom(snapPath(name))
+    var reason = ""
+    let threwOld = try { b.enroll(secret, "late", "mobile"); false }
+        catch (e: Exception) { reason = e.message; true }
+    @Expect(threwOld, true)
+    // 归因必须是「已过期」而不是「票据不存在」：后者意味着合入压根没发生，
+    // 那这条断言会因为完全无关的原因假绿。
+    @Expect(reason == "enrollment-expired", true)
+
+    // 对照：同一份路径换成管理入口自己写的真·绝对到期，必须登记成功，
+    // 证明上面拒的是到期口径而不是快照形状不合。
+    let a = RemoteIdentityStore()
+    let t = a.createTicketForManagement("p-8b", snapPath(name))
+    let c = RemoteIdentityStore()
+    c.reloadTicketsFrom(snapPath(name))
+    let d = c.enroll(t.value, "fresh", "mobile")
+    @Expect(d.deviceId.size > Int64(0), true)
     dropSnap(name)
 }
 
@@ -274,4 +361,21 @@ func loadSnapshotMissingOrBrokenFailsLoudNotSilentlyEmpty() {
     let t = b.exchangeToken(d.deviceId, d.credential)
     @Expect(t.deviceId == d.deviceId, true)
     dropSnap(name)
+}
+
+@Test
+func reportedTokenWindowComesFromStoreClockAndNeverExceedsTtl() {
+    // /auth/token 回给客户端的剩余窗口必须由 store 自己的钟算：引导层另有一个
+    // MonoTime 基准，两个基准差 1 毫秒就会报出 900001 这种「比名义 TTL 还长」的窗口，
+    // 客户端按它安排的续期点会晚于令牌真实失效点。
+    let store = RemoteIdentityStore()
+    let secret = store.createEnrollmentSecret("p-9")
+    let device = store.enroll(secret.value, "phone-9", "mobile")
+    let token = store.exchangeToken(device.deviceId, device.credential)
+    let left = store.tokenRemainingMs(token)
+    @Expect(left > Int64(0), true)
+    @Expect(left <= Int64(900000), true)
+    // 已过期必须夹到 0，不能回负数（负 TTL 会让客户端立刻进入重兑循环）。
+    store.expireToken(token.value)
+    @Expect(store.tokenRemainingMs(token), Int64(0))
 }
