@@ -38,6 +38,19 @@
 
 结果（`round 4`，`rc` 非零）：`7 errors generated, 7 errors printed`，七条全部落在 `web_network.cj`；**本批文件与三个被回补的接线文件命中 0 条**（`grep -A2 "^error:" | grep -c "worktree|agent.cj|ptc_exec|model_tool_runtime"` = 0）。打印数未触顶，故「本批无错」是正向证据而不是配额缺席。
 
+### 4.1 库层：编译通过（round 7）
+
+同一份副本撤掉 `lsp_contract` 脚手架后 `cjpm build -i` → **`cjpm build success`，`rc=0`**（174 条告警，0 条错误）。这份副本的 `core/src` 与本批相关的文件同本地 HEAD 的关系是：`worktree.cj`/`worktree_setup.cj`/`worktree_test.cj`/`worktree_setup_test.cj`/`worktree_tools.cj`/`worktree_tools_test.cj` **逐字一致**（`cmp -s` 对 `git show HEAD:<文件>` 逐个跑过）；`agent.cj`/`ptc_exec.cj`/`model_tool_runtime.cj` 副本比 HEAD 旧约 1KB（11:4x–12:0x 之间别路又加了内容），但本批 6 处标记在 HEAD 版里逐条命中（`worktree!: ?WorktreeTools`、`executors.add(worktreeEnterToolName`、`private func worktreeStep`、`name == worktreeExitToolName`、`let exactApproval`、`cwd: workingPath("")`、`cwd!: String = ""`）。**结论只覆盖库层**：`cjpm build` 在本工程不编 `*_test.cj`（实测：build 日志 `_test.cj` 命中 0，test 日志命中 51），所以这不等于测试层通过。
+
+### 4.2 测试层：今天拿不到全量 Summary，两处外部断点
+
+`cjpm test`（含 `*_test.cj`）在本仓当前状态下无法整体构建，断点都不在本批：
+
+1. `core/src/acp_delegation_test.cj` **与 HEAD 逐字一致**却缺 `import std.fs.*`，产生 7 条 `undeclared identifier 'Path'`（09:54 的副本 `.qoder/wtverify/src/acp_delegation_test.cj` 里那行 import 还在，说明是后续写入丢的）。本轮只在副本内补回该导入作脚手架，主树未动。
+2. `core/src/lsp_contract.cj` 被截成 63 行桩（`LspRouter.route` 直接返回空响应，没有 `LspServer`、没有 `register`）。本批用例 15 的探针 `class WtToolsLspProbe <: LspServer`（`worktree_tools_test.cj:151`）因此报 `undeclared type name 'LspServer'`。**没有删用例，也没有自造桩凑绿**。把 09:54 的 968 行真实版塞回副本试过一轮：`55 errors generated, 8 printed`，报 `missing argument prefix 'token:'` 与 `undeclared identifier 'buildParallelMcpRequest'`——真实版与当前树也不合（别路已按桩的形状改了调用面），故该脚手架已撤回。
+
+解锁动作（都不属本批）：LSP 那条线把与当前调用面一致的真实 `lsp_contract.cj` 提交回来；ACP 那条线把 `import std.fs.*` 补进已入库的 `acp_delegation_test.cj`。两者到位后 `cjpm test` 才能出可归因的五计数。
+
 ## 5. 双入口与桌面
 
 - 桌面 JS（工作区取证态）：`cd apps/desktop && node --test test/worktree.test.mjs test/worktree-render.test.mjs` → `# tests 22 / # pass 22 / # fail 0`。
