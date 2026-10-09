@@ -1,6 +1,7 @@
 package core
 
 import std.collection.ArrayList
+import std.convert.*
 import std.env.*
 import std.fs.*
 import std.io.InputStream

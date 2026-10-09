@@ -79,9 +79,10 @@ func wsSymlinkDirectories(file: String): Option<Array<String>> {
                 var item: JsonValue = JsonString("")
                 try { item = list.get(index).getOrThrow() }
                 catch (e: Exception) { wsFail("worktree-settings-invalid", detail: "${file}:entry") }
-                let text = item.asString()
-                if (text.isNone()) { wsFail("worktree-settings-invalid", detail: "${file}:entry") }
-                entries.add(text.getOrThrow())
+                var text = ""
+                try { text = item.asString().getValue() }
+                catch (e: Exception) { wsFail("worktree-settings-invalid", detail: "${file}:entry") }
+                entries.add(text)
             }
             return Some(entries.toArray())
         }

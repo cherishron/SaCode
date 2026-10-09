@@ -85,6 +85,29 @@
 
 另一处更正（2026-10-09 直读 `core/src/agent.cj` 后）：本节原先写「进入 worktree 后 shell 与文件工具仍在主检出执行」，**归因过宽**。`workingPath()`（`core/src/agent.cj`）与 `lspVerbStep` 一直是执行时读 `SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()`，`workspace/directory` 事件优先于入口 fallback，因此 read/write/edit/glob/grep/bash/pwsh/LSP 本就跟会话目录走。真实冻结点只有 `run_code`：`PtcExecutor` 只用构造期那份目录且原先没有 `cwd` 形参——本批改为 `runCode(..., cwd!: String = "")` 并补指定用例（去掉 `cwd:` 即红）。Host 侧仍需显式传 `workingDirectory` 作 fallback，但它是「补齐基准」而非「修一个全程跑错目录的大 bug」。
 
+## 事故记录（2026-10-09 10:04–10:12）
+
+本批六份核心文件（`worktree.cj` 49482 / `worktree_test.cj` 45570 / `worktree_setup.cj` 11631 / `worktree_setup_test.cj` 16747 / `worktree_tools.cj` 10574 / `worktree_tools_test.cj` 33780）在工作区中被删除，`worktree.cj`、`worktree_setup.cj` 一度只剩 163/121 字节存根。全盘搜索（含隐藏目录）确认无 `.cj.bak`、无暂存副本、原件不可回。
+
+- 归因：同一工作区存在另一条会话当轮做 git 操作（今日 `6c98559` 仅加 `agent.cj` 35 行、两份 docs 提交、一次 `reset: moving to HEAD`），且未跟踪数在 10:04–10:07 骤降。**未提交也未入索引的文件在这种环境里没有存续保证。**
+- 恢复来源：各子代理轨迹中的 Write/Edit，按记录时间戳回放。结果四份与磁盘最后读数逐字节一致（49482/16747/10574/33747+13 处 edit），`worktree_test.cj` 45562（差 8 字节）。
+- 未恢复的部分：09:41 那一轮的编译修形（`detail:` 标签）不在重建基线里。已用引号/括号感知的 codemod 重做：`worktree.cj` 56 处、`worktree_setup.cj` 19 处。
+- 编译器权威结论（`cjc` 实测，非推断）：`func f(a: String, b!: String = "")` 的位置传参被拒（`missing argument prefix 'b:'`），而 `b: String = ""` 也非法（`expected ',' or ')', found '='`）——**带默认值的参数必须声明为 `name!`，且调用点必须带标签**。故只能改调用点，不能改声明。
+- 现在起的保护动作：本批 17 个路径已 `git add` 进索引（不提交），`git clean -fd` 不再能删；仓外另有 `D:/Temp/sacode-worktree-recovery-20261009/` 一份完整备份。
+- 取证通道：并发线在飞的 `core/src/web_search_service.cj`（当时 +112 行 `searchWithFailover`）会整包挡住核心编译，而它不是本批文件。改在**工作区快照** `.qoder/wtsnap/`（`git ls-files -co --exclude-standard` 生成，814 文件）里取证，真实工作区一行不动。该并发改动已于 10:2x 自行撤走（现 73 行）。
+
+上一节里「worktree.cj 56 处、worktree_setup.cj 19 处」要更正：实测是 **55 与 18 处调用点**，第 56/19 处是 `func wtFail/ wsFail` 声明行本身——codemod 把声明也当调用点补了标签，写出 `detail: detail!: String = ""`，编译器报 `unclosed delimiter`。判「只加了标签、没改坏」的机械办法：对输出剥掉所有 ` detail:` 后与输入逐字相等（本轮 247 行文件实测成立）。另两处踩坑：codemod 循环 `break` 与返回处各追加一次尾部，导致末行之后整段重放（247→260、1075→1138），修复后行数必须逐文件回等；工作区快照 `.qoder/wtsnap/` 取的是**跟踪文件的 HEAD 态**，跟不上主树的在飞改动（`lsp_contract.cj`/`team_web_exec.cj`/`shell_http_exec.cj` 于 11:01 被改后签名即变），因此核心编译取证只能回到主树、用私有 TMP + 独立 `--target-dir` 跑。
+
+## 事故记录二（2026-10-09 10:45–11:10）：暂存被别路整批提交，HEAD 双处编译断裂
+
+- 10:45:27 另一条会话产生提交 `90f3e23 docs: Hooks spec 更新为统一方案（2026-10-09）`，**内容是本批暂存的 17 个路径（7507 行）加上它自己那一份 hooks 设计文档**，共 18 个文件。本会话从头到尾没有执行过 `git commit`，只做 `git add`（原本正是为了防止未跟踪文件被清扫）。教训：在共享工作区里，「暂存但不提交」并不安全——别人的一次 `git add -A` 或主题不符的裸提交会把我的整批内容按其名义带走。
+- 该提交带走的是**未补标签**的版本，故提交态核心编不过。`git show HEAD:core/src/worktree.cj | grep -c detail:` 实测 **0**，而工作区当时是 55；`worktree_setup.cj` 同为 0 对 18。按本轮 `cjc` 实测的标签律（带默认值参数必须 `name!` 且调用点必须带标签），这 73 处在提交态全是 `missing argument prefix`。
+- 第二处断裂不属本批：HEAD 的 `core/src/agent.cj` 调用 `lspBuildRequest(..., lspToken)`（6 元实参），而全仓唯一的定义在未入库的 `core/src/lsp_contract.cj:41`（`git status` 为 `??`），且入库的 `core/src/lsp.cj` 并不含该符号——即上一轮把调用写进了已提交文件，却没把定义文件一起提交。本批不替别路补这个洞。
+- 本批已入库的修复：`d3997f4 fix(core): worktree 失败码调用点补齐 detail: 参数标签`，只含 `core/src/worktree.cj`、`core/src/worktree_setup.cj` 两个文件，73 增 73 删，且「去掉 ` detail:` 后与 HEAD 逐行相等」已作断言跑过。并发方在我文件里加的 `import std.convert.*` 一行**没有**随本提交带走（`grep -nE "tryParse|parseInt|\.toInt\(|Json|encode\(|parseFloat"` 在本文件命中 0，倾向非必需，最终以编译器为准），它仍留在工作区。
+- 同轮另一处必须回退的改动：`worktree_setup.cj` 原 `let text = item.asString(); if (text.isNone()) { wsFail("worktree-settings-invalid", ...) }; entries.add(text.getOrThrow())` 被改成 `item.asString().getValue()` + `entries.add(text)`，把「条目不是字符串当场拒」的守卫换成空值中止；而 `core/src/worktree_setup_test.cj:113-114` 用 `{"worktree":{"symlinkDirectories":[1]}}` 钉着错误码 `worktree-settings-invalid`。`getOrThrow()` 在库内另有已编译用法（`core/src/acp_env.cj:97`），说明原写法不是编译错误，因此按测试要求恢复守卫版。
+- 11:04 前后本批文件再次被清扫：`core/src/worktree_setup_test.cj` 一度从工作区消失（因 10:45 已被别路提交成跟踪文件，才能用快照副本原样补回并与 HEAD 零差异）。本批 6 份核心文件的当前存亡、行数与标签数已逐一登记，恢复副本在 `.qoder/wtsnap/core/src/` 与仓外 `D:/Temp/sacode-worktree-recovery-20261009/`。
+- 桌面 JS 面本轮独立跑绿：`node --test test/worktree.test.mjs test/worktree-render.test.mjs` → **22 tests / 22 pass / 0 fail**（取证态＝工作区，非提交态）。`apps/daemon/test/host-proxy.test.mjs`（12 条）与 `apps/cli/test/worktree.test.mjs`（54 条）当前红，失败原文是宿主/守护进程二进制未产出（`Cannot read properties of undefined (reading 'method')`），记 BLOCKED-on-build，不计入本批缺陷。
+
 ## 冻结契约（四条实现线共用，签名不得各写一份）
 
 ```

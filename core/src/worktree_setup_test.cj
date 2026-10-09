@@ -215,8 +215,8 @@ func wsTHooksPreferMainRepoHuskyThenGitPath() {
     // 主仓有 .husky：优先它，不再用 .git/hooks。
     Directory.create(Path(repo).join(".husky"), recursive: false)
     wsTWrite(Path(repo).join(".husky").join("pre-commit"), "#!/bin/sh".toArray())
-    let with = WorktreeSetup(repo, userSettingsFile: absent, projectSettingsFile: absent)
-    @Expect(wsTNorm(with.hooksDirectory()),
+    let withHusky = WorktreeSetup(repo, userSettingsFile: absent, projectSettingsFile: absent)
+    @Expect(wsTNorm(withHusky.hooksDirectory()),
         wsTNorm(canonicalize(Path(repo).join(".husky")).toString()))
     // 链接工作树里问同一个问题，git 交回的还是主仓 common 的 hooks（本机 git 2.52 实测）：
     // 没有 .husky 时钩子本来就共享，所以那种情况下 plan 不再建 .husky 链。
