@@ -8,13 +8,12 @@
 
 ### 1.2 范围
 
-- **包含**：20 种生命周期事件的注册表、matcher 匹配、command/http 执行器、决策返回路径、会话日志集成、settings.json 配置读取、安全模型
-- **不包含**：cron 引擎（schedule.cj 保留）、工作流编排（workflow.cj 保留）、外部 webhook 投递（webhook.cj 保留）、UI 配置界面
+- **包含**：25 种事件的注册表（20 种生命周期 + 5 种 webhook/schedule/workflow）、matcher 匹配、command/http 执行器、决策返回路径、会话日志集成、settings.json 配置读取、安全模型、webhook/schedule/workflow 统一迁移
+- **不包含**：UI 配置界面
 
 ### 1.3 非目标
 
 - 不替代 approval.cj（Hook 优先、approval 回退）
-- 不统一 webhook/schedule/workflow（共存，职责分离）
 - 不提供 function/prompt 执行器类型（仅 command/http）
 
 ### 1.4 成功标准
@@ -31,7 +30,7 @@
 
 新增 `core/src/hook_registry.cj`，包含：
 
-- `HookEvent`：20 种事件的枚举
+- `HookEvent`：25 种事件的枚举（20 种生命周期 + 5 种 webhook/schedule/workflow）
 - `HookRule`：注册规则（id, event, matcher, executor, timeout, async, active）
 - `HookRegistry`：集中注册表
   - `register(rule)`：注册规则，重复 id 抛 `duplicate-hook-rule-id`
@@ -66,16 +65,16 @@ Core 内注册+执行：
   - PreToolUse allow → 跳过审批
   - PreToolUse deny/block → 拒绝
   - PreToolUse ask / 无 hook → 进入 approval CAS
-- **与 webhook/schedule/workflow**：共存，职责分离
-  - webhook.cj：外部事件投递
-  - schedule.cj：定时任务
-  - workflow.cj：工作流状态机
-  - hook_registry.cj：生命周期拦截
+- **与 webhook/schedule/workflow**：统一进 HookRegistry，三个文件变事件源
+  - webhook.cj：收到外部投递 → `HookRegistry.dispatch(WebhookDelivery, ...)`，保留 kind 匹配入口
+  - schedule.cj：cron 触发 → `HookRegistry.dispatch(ScheduleFire, ...)`，保留 cron 解析与注册/pause 状态
+  - workflow.cj：状态转换 → `HookRegistry.dispatch(WorkflowStepStart/Done/Fail, ...)`，保留状态机（running→done/failed 不可逆）
+  - 三者的 dispatch/执行/决策统一走 HookRegistry，不再各自返回 count/0-1
 - **与会话日志**：全量写入（`hook/dispatch`、`hook/result`、`hook/decision`）
 
 ## 3. Hook 事件定义
 
-### 3.1 20 种事件
+### 3.1 25 种事件
 
 | 事件 | 触发时机 | Matcher 目标 | 决策返回 | Fire-and-forget |
 |------|----------|-------------|----------|-----------------|
@@ -98,6 +97,11 @@ Core 内注册+执行：
 | `PermissionDenied` | AUTO 模式拒绝工具 | 工具 id | ✅ | ❌ |
 | `TodoCreated` | 创建新 todo 项 | 无 | ✅ | ❌ |
 | `TodoCompleted` | todo 项标记完成 | 无 | ✅ | ❌ |
+| `WebhookDelivery` | 外部 webhook 投递 | kind | ✅ | ❌ |
+| `ScheduleFire` | 定时任务触发 | taskId | ✅ | ❌ |
+| `WorkflowStepStart` | 工作流步骤开始 | stepId | ✅ | ❌ |
+| `WorkflowStepDone` | 工作流步骤完成 | stepId | ✅ | ❌ |
+| `WorkflowStepFail` | 工作流步骤失败 | stepId | ✅ | ❌ |
 
 ### 3.2 HookInput 契约
 
@@ -127,6 +131,9 @@ public enum HookEventData {
     Notification { type: String }
     Permission { toolId: String }
     Todo { todoId: String, content: String }
+    Webhook { deliveryId: String, kind: String }
+    Schedule { taskId: String, cron: String }
+    WorkflowStep { stepId: String, label: String, reason: Option<String> }
 }
 ```
 
@@ -234,6 +241,9 @@ public enum HookDecision {
 | `compaction.cj` | Pre/PostCompact | fire-and-forget |
 | `todo.cj` | TodoCreated/Completed | deny 阻止创建 |
 | 投影层 | MessageDisplay/Notification | fire-and-forget |
+| `webhook.cj` | WebhookDelivery | 统一走 HookRegistry，返回决策 |
+| `schedule.cj` | ScheduleFire | 统一走 HookRegistry，返回决策 |
+| `workflow.cj` | WorkflowStepStart/Done/Fail | 统一走 HookRegistry，返回决策 |
 
 ### 5.2 集成约束
 
@@ -276,6 +286,7 @@ public enum HookDecision {
 - [ ] PreToolUse allow 跳过审批，deny 拒绝执行
 - [ ] Hook 事件全量写入会话日志
 - [ ] settings.json 配置生效（项目级优先）
+- [ ] WebhookDelivery/ScheduleFire/WorkflowStep* 统一走 HookRegistry，返回决策
 
 ### 7.2 安全验收
 
@@ -295,6 +306,7 @@ public enum HookDecision {
 
 - 实现 `core/src/hook_registry.cj` + `hook_registry_test.cj`
 - 在 `pipeline.cj`/`session.cj`/`approval.cj` 等插入 dispatch 调用
+- 迁移 `webhook.cj`/`schedule.cj`/`workflow.cj`：dispatch 统一走 HookRegistry
 - 实现 settings.json 读取（复用 worktree_setup.cj）
 - 实现 SSRF 防护与 URL 白名单
 - 编写集成测试与变异反证
@@ -307,7 +319,7 @@ public enum HookDecision {
 - 2026-10-09：Hook 优先、approval 回退（用户裁决）
 - 2026-10-09：全量写入会话日志（用户裁决）
 - 2026-10-09：集中注册表 + 事件分派（用户裁决）
-- 2026-10-09：与 webhook/schedule/workflow 共存（设计假设，待用户确认）
+- 2026-10-09：webhook/schedule/workflow 统一进 HookRegistry（用户裁决）
 
 **来源**：
 - Qwen Code Hooks 文档：https://qwenlm.github.io/qwen-code-docs/zh/users/features/hooks/
