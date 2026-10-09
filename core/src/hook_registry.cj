@@ -2,7 +2,9 @@ package core
 import std.collection.ArrayList
 import std.collection.HashMap
 import std.regex.Regex
+import std.deriving.*
 
+@Derive[Equatable, ToString]
 public enum HookEvent {
     | PreToolUse
     | PostToolUse
@@ -30,11 +32,50 @@ public enum HookEvent {
     | WorkflowStepFail
 }
 
+@Derive[Equatable, ToString]
 public enum HookDecision {
     | Allow
     | Deny
     | Block
     | Ask
+}
+
+public func hookEventName(event: HookEvent): String {
+    return match (event) {
+        case PreToolUse => "PreToolUse"
+        case PostToolUse => "PostToolUse"
+        case PostToolUseFailure => "PostToolUseFailure"
+        case UserPromptSubmit => "UserPromptSubmit"
+        case SessionStart => "SessionStart"
+        case SessionEnd => "SessionEnd"
+        case SessionDelete => "SessionDelete"
+        case MessageDisplay => "MessageDisplay"
+        case Stop => "Stop"
+        case StopFailure => "StopFailure"
+        case SubagentStart => "SubagentStart"
+        case SubagentStop => "SubagentStop"
+        case PreCompact => "PreCompact"
+        case PostCompact => "PostCompact"
+        case Notification => "Notification"
+        case PermissionRequest => "PermissionRequest"
+        case PermissionDenied => "PermissionDenied"
+        case TodoCreated => "TodoCreated"
+        case TodoCompleted => "TodoCompleted"
+        case WebhookDelivery => "WebhookDelivery"
+        case ScheduleFire => "ScheduleFire"
+        case WorkflowStepStart => "WorkflowStepStart"
+        case WorkflowStepDone => "WorkflowStepDone"
+        case WorkflowStepFail => "WorkflowStepFail"
+    }
+}
+
+public func hookDecisionName(decision: HookDecision): String {
+    return match (decision) {
+        case Allow => "Allow"
+        case Deny => "Deny"
+        case Block => "Block"
+        case Ask => "Ask"
+    }
 }
 
 public struct HookInput {
@@ -46,10 +87,10 @@ public struct HookInput {
     public let agentId: Option<String>
     public let agentType: Option<String>
     public let eventSpecific: HookEventData
-    public init(sessionId: String, transcriptPath: String, cwd: String, hookEventName: String,
-                timestamp: Int64, agentId!: Option<String> = Option.none<String>(),
-                agentType!: Option<String> = Option.none<String>(),
-                eventSpecific: HookEventData) {
+    public init(sessionId!: String, transcriptPath!: String, cwd!: String, hookEventName!: String,
+                timestamp!: Int64, eventSpecific!: HookEventData,
+                agentId!: Option<String> = None,
+                agentType!: Option<String> = None) {
         this.sessionId = sessionId
         this.transcriptPath = transcriptPath
         this.cwd = cwd
@@ -88,11 +129,11 @@ public class HookResult {
     public let continueFlag: Bool
     public let suppressOutput: Bool
     public let systemMessage: Option<String>
-    public init(decision: HookDecision, reason!: Option<String> = Option.none<String>(),
-                additionalContext!: Option<String> = Option.none<String>(),
-                updatedInput!: Option<String> = Option.none<String>(),
+    public init(decision!: HookDecision, reason!: Option<String> = None,
+                additionalContext!: Option<String> = None,
+                updatedInput!: Option<String> = None,
                 continueFlag!: Bool = true, suppressOutput!: Bool = false,
-                systemMessage!: Option<String> = Option.none<String>()) {
+                systemMessage!: Option<String> = None) {
         this.decision = decision
         this.reason = reason
         this.additionalContext = additionalContext
@@ -116,8 +157,8 @@ public class HookRule {
     public let timeout: Int64
     public let asyncExecute: Bool
     public var active: Bool
-    public init(id: String, event: HookEvent, matcher: String, executor: HookExecutorConfig,
-                timeout: Int64, asyncExecute: Bool, active!: Bool = true) {
+    public init(id!: String, event!: HookEvent, matcher!: String, executor!: HookExecutorConfig,
+                timeout!: Int64, asyncExecute!: Bool, active!: Bool = true) {
         this.id = id
         this.event = event
         this.matcher = matcher
@@ -130,11 +171,14 @@ public class HookRule {
 
 public class HookRegistry {
     let rules = ArrayList<HookRule>()
-    var log: Option<SessionLog> = Option.none<SessionLog>()
+    var log: Option<SessionLog> = None
 
-    public init() {}
-    public init(log: SessionLog) {
-        this.log = Option.some(log)
+    let policy: HookSecurityPolicy
+
+    public init(policy!: HookSecurityPolicy = HookSecurityPolicy()) { this.policy = policy }
+    public init(log!: SessionLog, policy!: HookSecurityPolicy = HookSecurityPolicy()) {
+        this.log = Some(log)
+        this.policy = policy
     }
 
     public func register(rule: HookRule): Unit {
@@ -159,7 +203,7 @@ public class HookRegistry {
         throw Exception("unknown-hook-rule-id")
     }
 
-    public func match(event: HookEvent, target: String): ArrayList<HookRule> {
+    public func findMatchingRules(event: HookEvent, target: String): ArrayList<HookRule> {
         let result = ArrayList<HookRule>()
         for (r in rules) {
             if (!r.active || r.event != event) {
@@ -171,7 +215,7 @@ public class HookRegistry {
             }
             try {
                 let regex = Regex(r.matcher)
-                if (regex.matcher(target).matches()) {
+                if (regex.matches(target)) {
                     result.add(r)
                 }
             } catch (_: Exception) {
@@ -184,15 +228,16 @@ public class HookRegistry {
     }
 
     public func dispatch(event: HookEvent, input: HookInput, target: String): HookResult {
+        let name = hookEventName(event)
         if (let Some(l) <- log) {
-            l.append("hook/dispatch", "${event}::${target}")
+            l.append("hook/dispatch", "${name}::${target}")
         }
-        let matched = match(event, target)
+        let matched = findMatchingRules(event, target)
         var finalResult = HookResult(decision: HookDecision.Allow)
         for (r in matched) {
             let res = executeRule(r, input)
             if (let Some(l) <- log) {
-                l.append("hook/result", "${event}::${res.decision}::${res.reason.getOrElse("")}")
+                l.append("hook/result", "${name}::${hookDecisionName(res.decision)}::${res.reason ?? ""}")
             }
             if (res.decision == HookDecision.Deny || res.decision == HookDecision.Block) {
                 finalResult = res
@@ -203,7 +248,7 @@ public class HookRegistry {
             }
         }
         if (let Some(l) <- log) {
-            l.append("hook/decision", "${event}::${finalResult.decision}")
+            l.append("hook/decision", "${name}::${hookDecisionName(finalResult.decision)}")
         }
         return finalResult
     }
@@ -213,53 +258,9 @@ public class HookRegistry {
             case Command(cmd, shell, env) =>
                 return HookExecutor.executeCommand(cmd, shell, env, input, rule.timeout)
             case Http(url, headers, allowedEnv) =>
-                return HookExecutor.executeHttp(url, headers, allowedEnv, input, rule.timeout)
+                return HookExecutor.executeHttp(url, headers, allowedEnv, input, rule.timeout, policy: policy)
         }
         return HookResult(decision: HookDecision.Allow)
     }
 }
 
-public class HookExecutor {
-    public static func executeCommand(command: String, shell: Option<String>,
-                                      env: HashMap<String, String>,
-                                      input: HookInput, timeout: Int64): HookResult {
-        if (command == "exit 2") {
-            return HookResult(decision: HookDecision.Deny,
-                              reason: Option.some("blocking error: exit code 2"),
-                              continueFlag: false)
-        }
-        return HookResult(decision: HookDecision.Allow)
-    }
-
-    public static func executeHttp(url: String, headers: HashMap<String, String>,
-                                   allowedEnvVars: Array<String>,
-                                   input: HookInput, timeout: Int64): HookResult {
-        if (isPrivateIp(url)) {
-            return HookResult(decision: HookDecision.Deny,
-                              reason: Option.some("private ip blocked"),
-                              continueFlag: false)
-        }
-        if (isCloudMetadata(url)) {
-            return HookResult(decision: HookDecision.Deny,
-                              reason: Option.some("cloud metadata endpoint blocked"),
-                              continueFlag: false)
-        }
-        return HookResult(decision: HookDecision.Allow)
-    }
-
-    static func isPrivateIp(url: String): Bool {
-        if (url.contains("10.")) { return true }
-        if (url.contains("192.168.")) { return true }
-        if (url.contains("172.16.") || url.contains("172.17.") || url.contains("172.18.") ||
-            url.contains("172.19.") || url.contains("172.20.") || url.contains("172.21.") ||
-            url.contains("172.22.") || url.contains("172.23.") || url.contains("172.24.") ||
-            url.contains("172.25.") || url.contains("172.26.") || url.contains("172.27.") ||
-            url.contains("172.28.") || url.contains("172.29.") || url.contains("172.30.") ||
-            url.contains("172.31.")) { return true }
-        return false
-    }
-
-    static func isCloudMetadata(url: String): Bool {
-        return url.contains("169.254.169.254")
-    }
-}

@@ -52,7 +52,6 @@ func webhookUnregisterRemovesRuleAndUnknownIdThrows() {
 func testWebhookDispatchReturnsHookResult() {
     let rt = WebhookRuntime()
     rt.register("rule-A", "github")
-    let result = rt.dispatch("delivery-1", "github")
-    assert(result is HookResult)
+    let result: HookResult = rt.dispatch("delivery-1", "github")
     @Expect(result.decision, HookDecision.Allow)
 }

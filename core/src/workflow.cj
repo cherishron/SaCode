@@ -63,7 +63,7 @@ public class WorkflowLedger {
             cwd: "",
             hookEventName: "WorkflowStepStart",
             timestamp: 0,
-            eventSpecific: HookEventData.WorkflowStep(id, label, Option.none<String>())
+            eventSpecific: HookEventData.WorkflowStep(id, label, None)
         )
         let result = hookRegistry.dispatch(HookEvent.WorkflowStepStart, input, id)
         if (result.decision != HookDecision.Allow) {
@@ -88,7 +88,7 @@ public class WorkflowLedger {
             cwd: "",
             hookEventName: "WorkflowStepDone",
             timestamp: 0,
-            eventSpecific: HookEventData.WorkflowStep(id, "", Option.none<String>())
+            eventSpecific: HookEventData.WorkflowStep(id, "", None)
         )
         let result = hookRegistry.dispatch(HookEvent.WorkflowStepDone, input, id)
         if (result.decision != HookDecision.Allow) {
@@ -113,7 +113,7 @@ public class WorkflowLedger {
             cwd: "",
             hookEventName: "WorkflowStepFail",
             timestamp: 0,
-            eventSpecific: HookEventData.WorkflowStep(id, "", Option.some(reason))
+            eventSpecific: HookEventData.WorkflowStep(id, "", Some(reason))
         )
         let result = hookRegistry.dispatch(HookEvent.WorkflowStepFail, input, id)
         if (result.decision != HookDecision.Allow) {

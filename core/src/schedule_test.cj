@@ -94,7 +94,6 @@ func testScheduleFireReturnsHookResult() {
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
     let result = sc.fire("d1", "nightly")
-    assert(result != null)
-    assert(result.decision == HookDecision.Allow)
+    @Expect(result.decision, HookDecision.Allow)
     removeIfExists(root, recursive: true)
 }

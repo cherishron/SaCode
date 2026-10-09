@@ -97,7 +97,7 @@ func workflowHookDenyBlocksStart() {
         id: "deny-start",
         event: HookEvent.WorkflowStepStart,
         matcher: "*",
-        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("exit 2", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
@@ -126,7 +126,7 @@ func workflowHookDenyBlocksDone() {
         id: "deny-done",
         event: HookEvent.WorkflowStepDone,
         matcher: "*",
-        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("exit 2", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
@@ -150,7 +150,7 @@ func workflowHookDenyBlocksFail() {
         id: "deny-fail",
         event: HookEvent.WorkflowStepFail,
         matcher: "*",
-        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("exit 2", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )

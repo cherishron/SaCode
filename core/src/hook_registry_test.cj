@@ -1,11 +1,12 @@
 package core
 
 import std.unittest.*
+import std.collection.HashMap
 
 @Test
 public func testHookEventEnumExists() {
     let e = HookEvent.PreToolUse
-    assert(e != null)
+    @Expect(e, HookEvent.PreToolUse)
 }
 
 @Test
@@ -18,7 +19,9 @@ public func testHookInputStructExists() {
         timestamp: 1000,
         eventSpecific: HookEventData.Tool("run_shell_command", "{}")
     )
-    assert(input != null)
+    @Expect(input.sessionId, "s1")
+    @Expect(input.agentId, None<String>)
+    @Expect(input.agentType, None<String>)
 }
 
 @Test
@@ -28,14 +31,16 @@ public func testHookResultStructExists() {
         continueFlag: true,
         suppressOutput: false
     )
-    assert(result != null)
+    @Expect(result.decision, HookDecision.Allow)
+    @Expect(result.continueFlag, true)
+    @Expect(result.suppressOutput, false)
 }
 
 @Test
 public func testExecuteCommandExit2ReturnsDeny() {
     let result = HookExecutor.executeCommand(
         "exit 2",
-        Option.none<String>(),
+        None,
         HashMap<String, String>(),
         HookInput(
             sessionId: "s1",
@@ -47,7 +52,7 @@ public func testExecuteCommandExit2ReturnsDeny() {
         ),
         30000
     )
-    assert(result.decision == HookDecision.Deny)
+    @Assert(result.decision == HookDecision.Deny)
 }
 
 @Test
@@ -66,7 +71,7 @@ public func testExecuteHttpPrivateIpDenied() {
         ),
         5000
     )
-    assert(result.decision == HookDecision.Deny)
+    @Assert(result.decision == HookDecision.Deny)
 }
 
 @Test
@@ -85,7 +90,7 @@ public func testExecuteHttpCloudMetadataBlocked() {
         ),
         5000
     )
-    assert(result.decision == HookDecision.Deny)
+    @Assert(result.decision == HookDecision.Deny)
 }
 
 @Test
@@ -95,16 +100,16 @@ public func testRegisterDuplicateIdThrows() {
         id: "r1",
         event: HookEvent.PreToolUse,
         matcher: "*",
-        executor: HookExecutorConfig.Command("echo", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("echo", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
     reg.register(r1)
     try {
         reg.register(r1)
-        assert(false)
+        @Assert(false)
     } catch (e: Exception) {
-        assert(e.message == "duplicate-hook-rule-id")
+        @Assert(e.message == "duplicate-hook-rule-id")
     }
 }
 
@@ -115,7 +120,7 @@ public func testMatchWildcardReturnsAllActive() {
         id: "r1",
         event: HookEvent.PreToolUse,
         matcher: "*",
-        executor: HookExecutorConfig.Command("echo", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("echo", None, HashMap<String, String>()),
         timeout: 60000,
         asyncExecute: false
     )
@@ -123,14 +128,14 @@ public func testMatchWildcardReturnsAllActive() {
         id: "r2",
         event: HookEvent.PreToolUse,
         matcher: "run_.*",
-        executor: HookExecutorConfig.Command("echo", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("echo", None, HashMap<String, String>()),
         timeout: 60000,
         asyncExecute: false
     )
     reg.register(r1)
     reg.register(r2)
-    let matched = reg.match(HookEvent.PreToolUse, "run_shell_command")
-    assert(matched.size == 2)
+    let matched = reg.findMatchingRules(HookEvent.PreToolUse, "run_shell_command")
+    @Assert(matched.size == 2)
 }
 
 @Test
@@ -140,7 +145,7 @@ public func testDispatchDenyPriority() {
         id: "r1",
         event: HookEvent.PreToolUse,
         matcher: "*",
-        executor: HookExecutorConfig.Command("echo", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("echo", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
@@ -148,7 +153,7 @@ public func testDispatchDenyPriority() {
         id: "r2",
         event: HookEvent.PreToolUse,
         matcher: "*",
-        executor: HookExecutorConfig.Command("exit 2", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("exit 2", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
@@ -163,7 +168,7 @@ public func testDispatchDenyPriority() {
         eventSpecific: HookEventData.Tool("run_shell_command", "{}")
     )
     let result = reg.dispatch(HookEvent.PreToolUse, input, "run_shell_command")
-    assert(result.decision == HookDecision.Deny)
+    @Assert(result.decision == HookDecision.Deny)
 }
 
 @Test
@@ -173,12 +178,12 @@ public func testUnregisterSoftDelete() {
         id: "r1",
         event: HookEvent.PreToolUse,
         matcher: "*",
-        executor: HookExecutorConfig.Command("echo", Option.none<String>(), HashMap<String, String>()),
+        executor: HookExecutorConfig.Command("echo", None, HashMap<String, String>()),
         timeout: 30000,
         asyncExecute: false
     )
     reg.register(r1)
     reg.unregister("r1")
-    let matched = reg.match(HookEvent.PreToolUse, "run_shell_command")
-    assert(matched.size == 0)
+    let matched = reg.findMatchingRules(HookEvent.PreToolUse, "run_shell_command")
+    @Assert(matched.size == 0)
 }
