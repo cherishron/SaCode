@@ -17,9 +17,11 @@
 | e42dbb6 | remote-transport 走真实 Node HTTP/SSE 服务器集成测试 | 6/6 rc=0 | — | 已入库 |
 | e68ba6d | 能力契约表 requiredScope / anchor / 客户端方法面 5 组独立检查（裸脚本迁 node:test） | 9/9 rc=0 | — | 已入库 |
 | 26c363b | TargetStore+TargetBridge+RemoteTransport 多目标集成（真 HTTP） | 3/3 rc=0 | — | 已入库 |
+| 4be823d | 契约加「全局无资源动作」白名单棘轮（防止新增管理方法忘声明 resourceKeys） | 10/10 rc=0 | 首次跑即抓出 auth/revoke 缺口，纳入白名单并写明依据 | 已入库 |
 
 **桌面侧总计（本轮）**：`target-store` 21、`remote-transport` 22、`remote-transport-integration` 6、
-`target-bridge` 15、`multi-target-integration` 3、`remote-capability-contract` 9，共 76 条断言全绿。
+`target-bridge` 15、`multi-target-integration` 3，共 67 条断言全绿。
+**daemon 侧**：`remote-capability-contract` 10/10 rc=0。
 
 ## 在飞未完成
 
