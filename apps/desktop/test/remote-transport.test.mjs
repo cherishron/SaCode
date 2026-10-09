@@ -327,3 +327,35 @@ test("transport：subscribeNotifications 建立连接也走 tokenProvider", asyn
   await t.subscribeNotifications(() => {});
   assert.deepEqual(seen, ["Bearer sse-tk-1", "Bearer sse-tk-2"]);
 });
+
+// 设计 §4.2「认证请求不跟随跨主机重定向」——Bearer 头绝不能被 fetch 默认
+// redirect:"follow" 带到第三方主机。RPC 与 SSE 两条面都强制 manual，
+// 且 3xx 响应必须原样上报，交给调用方显式决定（而非静默跟随后 200）。
+test("transport：sendRequest 用 redirect:manual，3xx 直接判 redirect-not-allowed", async () => {
+  const inits = [];
+  const fetchImpl = async (_url, init) => {
+    inits.push(init);
+    return { ok: false, status: 302, async text() { return ""; } };
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await assert.rejects(
+    () => t.sendRequest("session/catalog", {}),
+    (e) => e.reason === "redirect-not-allowed",
+    "3xx 必须归 redirect-not-allowed，不能落到 http-server-error 或 http-client-error",
+  );
+  assert.equal(inits[0].redirect, "manual", "fetch init 必须显式带 redirect:\"manual\"");
+});
+
+test("transport：subscribeNotifications 用 redirect:manual，3xx 直接拒", async () => {
+  const inits = [];
+  const fetchImpl = async (_url, init) => {
+    inits.push(init);
+    return { ok: false, status: 307, body: null };
+  };
+  const t = new RemoteTransport({ baseUrl: "https://x.example", tokenProvider: async () => "tk", fetchImpl });
+  await assert.rejects(
+    () => t.subscribeNotifications(() => {}),
+    (e) => e.reason === "redirect-not-allowed",
+  );
+  assert.equal(inits[0].redirect, "manual");
+});

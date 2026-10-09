@@ -93,8 +93,14 @@ export class RemoteTransport {
         headers,
         body,
         signal: controller.signal,
+        // 设计 §4.2「认证请求不跟随跨主机重定向」——redirect 默认 follow 会把
+        // Bearer 头带到第三方主机；这里显式 manual，并把任何 3xx 归为拒因。
+        redirect: "manual",
       });
       if (this.epoch !== epochAtSend) throw new TransportError("stale-epoch", "target-switched-before-response");
+      if (res.status >= 300 && res.status < 400) {
+        throw new TransportError("redirect", "redirect-not-allowed");
+      }
       if (!res.ok && res.status >= 400 && res.status < 500) {
         // 4xx：客户端契约错——不自动重试，明确上抛
         throw new TransportError("http-client-error", `status-${res.status}`);
@@ -146,8 +152,13 @@ export class RemoteTransport {
       method: "GET",
       headers,
       signal: controller.signal,
+      redirect: "manual",
     });
     if (this.epoch !== epochAtOpen) { controller.abort(); this.inflightSse -= 1; this.pendingSubscribers.delete(controller); throw new TransportError("stale-epoch", "target-switched-during-open"); }
+    if (res.status >= 300 && res.status < 400) {
+      controller.abort(); this.inflightSse -= 1; this.pendingSubscribers.delete(controller);
+      throw new TransportError("redirect", "redirect-not-allowed");
+    }
     if (!res.ok) { controller.abort(); this.inflightSse -= 1; this.pendingSubscribers.delete(controller); throw new TransportError("http-error", `status-${res.status}`); }
     // 逐 chunk 读 SSE，按 \n\n 分帧；: keepalive 或 : connected 忽略。
     const reader = res.body.getReader();
