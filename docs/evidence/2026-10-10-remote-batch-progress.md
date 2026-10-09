@@ -21,25 +21,30 @@
 | 93b1f1f | target-store TOFU 钉扎 + rotate 显式换钉 | 28/28 rc=0 | 静默覆盖 mismatch / 取消 confirm 检查 两个变异各杀指定受害 24/27 | 已入库 |
 | 3968691 | tls-pin.cjs 证书指纹钉扎校验（`tls.checkServerIdentity` + SHA-256 常数时间比较） | 9/9 rc=0 | 3 变异（去 mismatch / 去 host / 去 format）各杀受害 3 / 5+9 / 4 | 已入库 |
 | e73c521 | 批次进度表补 4be823d 与分栏 | 文档 | — | 已入库 |
-| 738b829 | core/remote_{identity,audit,authorization}.cj + 3 份测试入库（989 行） | cjpm build 库层 rc=0；运行验证 pending | 见「在飞未完成」节 | 已入库；测试执行未过 |
+| 738b829 | core/remote_{identity,audit,authorization}.cj + 3 份测试入库（989 行） | cjpm build 库层 rc=0；运行验证由 e572a78 的 daemon 副本达成 | 见 e572a78 | 已入库；运行验证通过（daemon 侧） |
 | 0e90f6e | 批次进度表补 738b829/93b1f1f/3968691 与 cjpm 分栏 | 文档 | — | 已入库 |
 | 26f8411 | 契约加 resourceKeys 值域严格 ⊂ {workspaceId,sessionId} 棘轮 | 11/11 rc=0 | 计划 §1 直接对应；未变异，因它自己就是从「设计口径漂移」反推出来的最小硬约束 | 已入库 |
 | 9602cb6 | 契约加 device-admin 面 desktop-only 棘轮 + requiredScope 映射落盘（48 有值 / 71 null） | 12/12 rc=0 | 变异 `auth/devices` 或 `auth/revoke` 加 mobile 消费 → 新棘轮红（fail 1）；还原回绿 | 已入库 |
 | b3f4200 | remote-transport 加 token 轮换与 SSE 现取 tokenProvider 防回归 | 24/24 rc=0 | 把 tokenProvider 改成首次调用后缓存 → 23/24 双红（fail 2）；还原回绿 | 已入库 |
 | 71f8725 | remote-transport 认证请求强制 `redirect:"manual"`，任何 3xx 归 `redirect-not-allowed` | 26/26 rc=0 | 只在 /rpc 撤 redirect:manual（保留 3xx 分支与 SSE 面）→ 仅 25 号红、26 号仍绿 | 已入库 |
 | b7b1747 | target-bridge.request 加可选 opts 参数原样透给 transport（Idempotency-Key 落到桥面） | 17/17 rc=0 | 从 sendRequest 参数列去掉 opts → 16 号红、17 号（不传 opts 兼容）仍绿 | 已入库 |
+| 46a27e9 | 真 HTTP 302 跨主机重定向集成测试（redirect:manual 端到端） | 7/7 rc=0 | 源端口 302 → 目标端口 handler 断言 targetHit==0；测试直接依赖 71f8725 加的 redirect:manual | 已入库 |
+| 4d28627 | RemoteRequestGate 落 daemon/src；AuditEntry/CapabilitySpec 改命名参（`!`） | cjpm build daemon rc=0；162 core warn（0 指本文件）+ 2 daemon warn | 见下条 e572a78 的 34 条运行验证 | 已入库 |
+| 6faccf9 | RemoteRequestGate 5 条行为用例真跑绿 | cjpm test daemon：TOTAL 5 / PASSED 5 / FAILED 0 rc=0 | 删掉 recordDenied 的 missing-bearer 分支 → 三条依赖该路径的用例同时变红（FAILED 3 / PASSED 2），invalid-token 与 authz-denied 独立受害者仍绿；还原回绿 | 已入库 |
+| e572a78 | 三模块 34 条 Cangjie 单测真跑绿（daemon 侧运行，绕开 core 链接 40 分钟卡）；补 jsonEscape 后 escaped 禁词检测 | cjpm test --target-dir daemon-fix：**TOTAL 34 / PASSED 34 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0** | auditRejectsValueContainingBannedKey 首跑红（漏检 `\"credential\"`）→ 加 bannedEscaped 分支后绿；authz 未知方法变异（默认拒改默认允）→ 只 authzUnknownMethodRejected 一条红，其余 33 条绿；还原回绿 | 已入库 |
 
-**桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 6、
-`target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **89** 条断言全绿。
-**daemon 侧**：`remote-capability-contract` **12/12** rc=0。
+**桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 7、
+`target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **90** 条断言全绿。
+**daemon Node 侧**：`remote-capability-contract` **12/12** rc=0。
+**daemon Cangjie 侧**：`cjpm test --target-dir daemon-fix` **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**（身份 11 + 审计 6 + 授权 12 + gate 5）。
 
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
-| 身份/审计/授权 3 模块的运行验证 | 738b829 已入库；测试文件同批 | 上一轮 `cjpm test --target-dir core-remote-id` 累计 40+ 分钟停在链接 `unittest_bin/core.exe`（cjc.exe 1.35→1.37GB 缓涨；stdout 停在 158 warnings 无 Summary）；kill 后重跑 `cjpm test --target-dir core-remote-v3` 已在后台（ID `b6eyeiryv`）跑，`cjpm build --target-dir core-build-only` 单独一次已 rc=0 通过并显示 162 warnings 中 0 条与 remote_*.cj 相关，编译级证据到手 |
+| 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
 
-三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。
+三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
 
 ## 后续批次依赖
 
