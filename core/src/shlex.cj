@@ -13,6 +13,10 @@ public class ShellResult {
     public let stderr: String
     public let timedOut: Bool
     public let error: String
+    public var outputComplete: Bool = true
+    public var cancelled: Bool = false
+    public var stdoutTruncated: Bool = false
+    public var stderrTruncated: Bool = false
 
     public init(exitCode: Int64, stdout: String, stderr: String, timedOut: Bool, error: String) {
         this.exitCode = exitCode

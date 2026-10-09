@@ -36,9 +36,12 @@ public class PtcExecutor {
 
     // 执行 JavaScript 代码。
     // code: 要执行的 JS 代码；timeoutMs: 超时毫秒数。
+    // cwd: 本次执行的工作目录；空串退回构造时那份（与 ShellExecutor.run 同一口径）。
+    //      工具管线传的是「会话有效目录」，不是构造期常量——会话换过 worktree，
+    //      node 子进程就得跟着换，否则代码里写的相对路径会落到上一个目录。
     // 返回 None 表示执行失败（node 不存在、沙箱拒绝等）。
     public func runCode(code: String, timeoutMs!: Int64 = 30000,
-                        sandboxMode!: String = "workspace-write"): Option<PtcExecResult> {
+                        sandboxMode!: String = "workspace-write", cwd!: String = ""): Option<PtcExecResult> {
         // 沙箱策略检查
         let fullArgs = ArrayList<String>()
         fullArgs.add("node")
@@ -50,7 +53,7 @@ public class PtcExecutor {
             return None
         }
 
-        let resolvedCwd = workingDirectory
+        let resolvedCwd = if (cwd.size > 0) { cwd } else { workingDirectory }
         var wdOpt: Option<Path> = None
         if (resolvedCwd.size > 0) { wdOpt = Some(Path(resolvedCwd)) }
 

@@ -1,0 +1,31 @@
+// 实际仓颉执行器与 Windows Shell；所有文件与进程均由私有夹具创建。
+import {spawnSync} from 'node:child_process';
+import {mkdirSync,writeFileSync,readFileSync,copyFileSync} from 'node:fs';
+import {resolve,dirname,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+import {release} from 'node:os';
+if(process.platform!=='win32')throw Error('本探针只验证 Windows cmd 与 Windows PowerShell');
+const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
+const root=join(repo,'apps/desktop/.tmp-test','shell-quoting-'+Date.now());
+const workspace=join(root,"quoted 中文' path");mkdirSync(workspace,{recursive:true});
+const node=join(workspace,'node quoted.exe');copyFileSync(process.execPath,node);
+const fixture=join(workspace,'read args.cjs');writeFileSync(fixture,'console.log(JSON.stringify(process.argv.slice(2)));console.log(process.cwd());');
+const sleep=join(workspace,'hold pipe.cjs');writeFileSync(sleep,"console.log('opened');setTimeout(()=>{},8000);");
+const sources=['core/src/shlex.cj','core/src/sandbox.cj','core/test-support/shell-execution-probe.cj'].map(p=>join(repo,p));
+const env={...process.env,TEMP:root,TMP:root,SACODE_QUOTE_PROBE:'expanded-value'};
+const providerScript="[Console]::WriteLine($PSVersionTable.PSVersion.ToString());[Console]::WriteLine([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName);[Console]::WriteLine([Environment]::Version.ToString());";
+const provider=spawnSync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(providerScript,'utf16le').toString('base64')],{cwd:root,env,encoding:'utf8',windowsHide:true,timeout:10000});
+writeFileSync(join(root,'provider.log'),(provider.stdout||'')+(provider.stderr||'')+(provider.error?.message||''));writeFileSync(join(root,'provider-exit.txt'),String(provider.status));
+if(provider.status!==0)throw Error('PowerShell 提供方探针失败：'+root);
+const [version,path,dotnet]=provider.stdout.trim().split(/\r?\n/);
+writeFileSync(join(root,'provider.json'),JSON.stringify({windows:release(),node:process.version,powershell:{version,path,sha256:createHash('sha256').update(readFileSync(path)).digest('hex'),dotnet}},null,2));
+const exe=join(root,'probe.exe');const command=['-O0',...sources,'-o',exe];
+const build=spawnSync('cjc',command,{cwd:repo,env,encoding:'utf8',windowsHide:true,timeout:60000});
+writeFileSync(join(root,'build.log'),(build.stdout||'')+(build.stderr||'')+(build.error?.message||''));writeFileSync(join(root,'build-exit.txt'),String(build.status));
+if(build.status!==0){console.error('构建失败：'+root);process.exit(1);}
+const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+writeFileSync(join(root,'baseline.json'),JSON.stringify({sourceSha:spawnSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).stdout.trim(),state:'working-tree',sources:Object.fromEntries(sources.map(p=>[p,hash(p)])),probeSha256:hash(exe),command:['cjc',...command]},null,2));
+const run=spawnSync(exe,[node,'quoting',fixture,workspace,sleep],{cwd:root,env,encoding:'utf8',windowsHide:true,timeout:30000});
+writeFileSync(join(root,'run.log'),(run.stdout||'')+(run.stderr||'')+(run.error?.message||''));writeFileSync(join(root,'run-exit.txt'),String(run.status));console.log(run.stdout);console.log('SHELL_QUOTING_EVIDENCE='+root);
+process.exitCode=run.status===0&&run.stdout.includes('SHELL_QUOTING_PROBE_PASS 13')?0:1;
