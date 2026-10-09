@@ -19,10 +19,12 @@ class ScheduleEntry {
 
 public class ScheduleStore {
     let log: SessionLog
+    let hookRegistry: HookRegistry
     let entries = ArrayList<ScheduleEntry>()
 
-    public init(log: SessionLog) {
+    public init(log: SessionLog, hookRegistry!: HookRegistry = HookRegistry()) {
         this.log = log
+        this.hookRegistry = hookRegistry
         for (event in log.snapshotEvents()) {
             if (event.eventType != "schedule/task") {
                 continue
@@ -66,12 +68,25 @@ public class ScheduleStore {
         entries[i].active = false
     }
 
-    public func fire(deliveryId: String, taskId: String): Int64 {
+    public func fire(deliveryId: String, taskId: String): HookResult {
         let i = indexOf(taskId)
         if (i < 0 || !entries[i].active) {
-            return Int64(0)
+            return HookResult(decision: HookDecision.Allow)
         }
-        return Int64(1)
+        var cron = ""
+        let ti = taskIndexOf(taskId)
+        if (ti >= 0) {
+            cron = taskDefs[ti].cron
+        }
+        let input = HookInput(
+            sessionId: "",
+            transcriptPath: "",
+            cwd: "",
+            hookEventName: "ScheduleFire",
+            timestamp: 0,
+            eventSpecific: HookEventData.Schedule(taskId, cron)
+        )
+        return hookRegistry.dispatch(HookEvent.ScheduleFire, input, taskId)
     }
 
     public func countActive(): Int64 {

@@ -84,3 +84,17 @@ func scheduleDueTasksReturnsOnlyActiveWithoutPending() {
     @Expect(due2.size, Int64(0))
     removeIfExists(root, recursive: true)
 }
+
+@Test
+func testScheduleFireReturnsHookResult() {
+    let root = "core-sched-fire-hook"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    let sc = ScheduleStore(log)
+    sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
+    let result = sc.fire("d1", "nightly")
+    assert(result != null)
+    assert(result.decision == HookDecision.Allow)
+    removeIfExists(root, recursive: true)
+}
