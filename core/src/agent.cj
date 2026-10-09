@@ -126,6 +126,9 @@ public class ToolRuntime {
     let lspSession: String
     let lspToken: TurnToken
     var lspRequestSeq: Int64 = 0
+    // 浏览器工具执行器：由上层入口注入后 browser.* 工具名才可经 pipeline() 分发。
+    // 声明了却未注入执行器的 browser.* 工具名照旧归一成 unknown-tool。
+    var browserExecutor: Option<BrowserToolExecutor> = None
 
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
         lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None) {
@@ -205,6 +208,38 @@ public class ToolRuntime {
         executors.add("lsp_call_hierarchy", { _, a => lspCallHierarchyStep(a) })
         executors.add("lsp_diagnostics", { _, a => lspDiagnosticsStep(a) })
         executors.add("lsp_rename", { _, a => lspRenameStep(a) })
+        // 浏览器工具：执行器由上层入口注入 browserExecutor 后才可用。
+        // 声明了却未注入执行器的 browser.* 工具名照旧归一成 unknown-tool.
+        executors.add("browser.tabs.list", { _, a => browserStep("tabs.list", a) })
+        executors.add("browser.tabs.get", { _, a => browserStep("tabs.get", a) })
+        executors.add("browser.tabs.new", { _, a => browserStep("tabs.new", a) })
+        executors.add("browser.tabs.finalize", { _, a => browserStep("tabs.finalize", a) })
+        executors.add("browser.navigate", { _, a => browserStep("navigate", a) })
+        executors.add("browser.screenshot", { _, a => browserStep("screenshot", a) })
+        executors.add("browser.snapshot", { _, a => browserStep("snapshot", a) })
+        executors.add("browser.click", { _, a => browserStep("click", a) })
+        executors.add("browser.fill", { _, a => browserStep("fill", a) })
+        executors.add("browser.press_key", { _, a => browserStep("press_key", a) })
+        executors.add("browser.scroll", { _, a => browserStep("scroll", a) })
+        executors.add("browser.evaluate", { _, a => browserStep("evaluate", a) })
+    }
+
+    // 浏览器工具派发：提取 verb（去掉 browser. 前缀），委托 BrowserToolExecutor 执行。
+    // 未注入执行器时返回 browser-provider-not-injected，pipeline 会将其归一成 unknown-tool。
+    private func browserStep(verb: String, args: String): ApprovalOutcome {
+        if (let Some(exec) <- browserExecutor) {
+            let result = exec.perform(verb, args, token: lspToken)
+            if (result.ok) {
+                return ApprovalOutcome(true, result.content)
+            } else {
+                return ApprovalOutcome(false, "browser-${result.failureKind}::${result.message}")
+            }
+        }
+        return ApprovalOutcome(false, "browser-provider-not-injected")
+    }
+
+    public func setBrowserExecutor(exec: BrowserToolExecutor): Unit {
+        browserExecutor = Some(exec)
     }
 
     // 模型协议由上层统一记录关联 ID；管线审计仍入同一日志，但不重复进入模型历史。
